@@ -1,0 +1,31 @@
+<div class="modal fade" id="login_modal" role="dialog">
+ <div class="modal-dialog">
+  <div class="modal-content">
+   <div class="modal-header">
+    <h4 class="modal-title">Přihlášení</h4>
+    <button type="button" class="close" data-dismiss="modal">&times;</button>
+   </div>
+   <div class="modal-body">
+    <div class="alert alert-danger" id="error-message" style="display: none"></div>
+    <div class="small">
+     <div class="text-red bold mb-1">Proč se mám přihlašovat?</div>
+     <div class="mb-2">Přihlášení uživatelé mohou <span class="bold">ZDARMA</span> stahovat soubory, přehrávat video online a přispívat do diskuze.</div>
+     <div>Nemáte ještě registraci? <a class="bold text-red" onclick="getPage('registration')">Zaregistrujte se ZDE</a>.</div>
+    </div>
+    <br />
+    <form id="login">
+     <label>Uživatelské jméno nebo e-mail:</label>
+     <input class="form-control mb-3" type="text" id="login_username" name="user" placeholder="Uživatelské jméno nebo e-mail" required />
+     <label>Heslo:</label>
+     <input class="form-control mb-3" type="password" name="pass" placeholder="Heslo" required />
+     <label>Potvrzení:</label>
+     <div id="login-captcha"></div>
+    </form>
+   </div>
+   <div class="modal-footer">
+    <button type="button" class="btn btn-default" data-dismiss="modal">Storno</button>
+    <button type="button" class="btn btn-success" onclick="getLogin()">Přihlásit</button>
+   </div>
+  </div>
+ </div>
+</div>

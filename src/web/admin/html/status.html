@@ -1,0 +1,115 @@
+<ol class="breadcrumb bg-danger text-light">
+ <li class="breadcrumb-item active">Stav serveru</li>
+</ol>
+<div class="card form-size-md mb-3">
+ <div class="card-header bg-admin text-white bold">Systémové informace</div>
+ <div class="card-body table-responsive">
+  <table class="table table-sm">
+   <tr>
+    <th>Linux verze:</th>
+    <td>{version-linux}</td>
+   </tr>
+   <tr>
+    <th>PHP verze:</th>
+    <td>{version-php}</td>
+   </tr>
+   <tr>
+    <th>MySQL verze:</th>
+    <td>{version-mysql}</td>
+   </tr>
+   <tr>
+    <th>Využití CPU:</th>
+    <td>{cpu-usage}</td>
+   </tr>
+   <tr>
+    <th>Využití RAM:</th>
+    <td>
+     <table class="table">
+      <tr>
+       <th class="table-label"></th>
+       <td>
+        <div class="progress progress-thick bg-progress">
+         <div class="progress-bar progress-bar-striped bg-danger" role="progressbar" style="width: {ram-used-percent}%">{ram-used-percent}%</div>
+        </div>
+       </td>
+      </tr>
+      <tr>
+       <th class="table-label">Využito:</th>
+       <td>{ram-used}</td>
+      </tr>
+      <tr>
+       <th class="table-label">Volno:</th>
+       <td>{ram-free}</td>
+      </tr>
+      <tr>
+       <th class="table-label">Celkem:</th>
+       <td>{ram-total}</td>
+      </tr>
+     </table>
+    </td>
+   </tr>
+   <tr>
+    <th>Využití úložiště:</th>
+    <td>{storage}</td>
+   </tr>
+   <tr>
+    <th>Využití sítě:</th>
+    <td>
+     <span id="net"
+      ><img class="loading" src="./template/img/loading.gif" /> Načítám ...
+      <script>
+       getNetworkUsage();
+      </script></span
+     >
+    </td>
+   </tr>
+  </table>
+ </div>
+</div>
+<div class="card form-size-md">
+ <div class="card-header bg-admin text-white bold">Položky na serveru</div>
+ <div class="card-body table-responsive">
+  <h4 class="bold">Produkty:</h4>
+  <table class="table short table-sm table-hover table-light">
+   <tr>
+    <th>Produktů (celkem / viditelných / skrytých):</th>
+    <td>{products} / {products-visible} / {products-hidden}</td>
+   </tr>
+   <tr>
+    <th>Souborů:</th>
+    <td>{products-files}</td>
+   </tr>
+   <tr>
+    <th>Velikost:</th>
+    <td>{products-files-size}</td>
+   </tr>
+   <tr>
+    <th>Návštěv na produkty (celkem / dle session / dle IP):</th>
+    <td>{products-visits} / {products-visits-by-session} / {products-visits-by-ip}</td>
+   </tr>
+   <tr>
+    <th>Stažení souborů (celkem / dle session / dle IP):</th>
+    <td>{products-files-downloads} / {products-files-downloads-by-session} / {products-files-downloads-by-ip}</td>
+   </tr>
+   <tr>
+    <th>Přehrání souborů (celkem / dle session / dle IP):</th>
+    <td>{products-files-plays} / {products-files-plays-by-session} / {products-files-plays-by-ip}</td>
+   </tr>
+  </table>
+  <h4 class="bold">Uploady:</h4>
+  <table class="table short table-sm table-hover table-light">
+   <tr>
+    <th>Souborů:</th>
+    <td>{uploads-count}</td>
+   </tr>
+   <tr>
+    <th>Velikost:</th>
+    <td>{uploads-size}</td>
+   </tr>
+   <tr>
+    <th>Stažení (celkem / dle session / dle IP):</th>
+    <td>{uploads-downloads} / {uploads-downloads-by-session} / {uploads-downloads-by-ip}</td>
+   </tr>
+  </table>
+ </div>
+</div>

@@ -1,0 +1,176 @@
+html {
+ position:relative; 
+ min-height: 100%;
+}
+
+body {
+ background-image: url('../img/background.jpg');
+}
+
+main {
+ margin-bottom: 56px;
+}
+
+footer {
+ position: absolute;
+ bottom: 0px;
+ width: 100%;
+}
+
+footer a {
+ color: #FFFFFF;
+ font-weight: bold;
+}
+
+footer a:hover {
+ color: #FFFFAA;
+}
+
+.navbar-logo {
+ height: 32px;
+}
+
+.navbar-icon {
+ width: 20px;
+ height: 20px;
+}
+
+.nav-item {
+ cursor: pointer;
+ padding-left: 5px;
+ padding-right: 5px;
+}
+
+.nav-item .active {
+ background-color: #454575;
+ border-radius: 5px;
+}
+
+.navbar-nav .nav-link {
+ padding-left: 10px;
+ padding-right: 10px;
+}
+
+.nav-link {
+ display: flex;
+ align-items: center;
+}
+
+.nav-link:hover {
+ background-color: #252555;
+ border-radius: 5px;
+}
+
+.nav-link img, .navbar-brand img {
+ margin-right: 10px;
+}
+
+.dropdown-item {
+ display: flex;
+ align-items: center;
+}
+
+.dropdown-item:hover {
+ background-color: #D5D5FF;
+}
+
+.table-icon {
+ width: 20px;
+ height: 20px;
+}
+
+.short {
+ width: auto;
+}
+
+.bg-admin {
+ background-color: #050535;
+}
+
+.loading {
+ width: 32px;
+ height: 32px;
+}
+
+.bold {
+ font-weight: bold;
+}
+
+.table-label {
+ width: 100px;
+}
+
+.table .thead-admin th {
+ color: #fff;
+ background-color: #050535;
+ border-color: #A5A5D5;
+}
+
+.table a {
+ font-weight: bold;
+}
+
+.progress-thick {
+ height: 32px;
+ font-size: 1.25rem;
+}
+
+.bg-progress {
+ background-color: #FFCCCC;
+}
+
+.breadcrumb-item + .breadcrumb-item:before {
+ color: #DDDDDD;
+ content: '>';
+}
+
+.breadcrumb-item {
+ font-size: 16pt;
+ font-weight: bold;
+ color: #DDDDDD;
+}
+
+.breadcrumb-item a {
+ color: #DDDDDD;
+}
+
+.breadcrumb-item.active {
+ color: #FFFFFF;
+}
+
+.card-sm {
+ max-width: 512px;
+}
+
+.center {
+ margin: 0 auto;
+}
+
+.pointer {
+ cursor: pointer;
+}
+
+.font-small {
+ font-size: 9pt;
+}
+
+.btn-admin {
+ color: #fff;
+ background-color: #050535;
+ border-color: #000000;
+}
+
+.btn-admin:hover {
+ color: #fff;
+ background-color: #151565;
+ border-color: #000000;
+}
+
+#product-name {
+ display: flex;
+ align-items: center;
+}
+
+.img-stat {
+ width: 768px;
+}

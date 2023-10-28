@@ -1,0 +1,55 @@
+<ol class="breadcrumb bg-danger text-light">
+ <li class="breadcrumb-item"><a href="./?page=files">Soubory produktů</a></li>
+ <li class="breadcrumb-item active">Úprava souboru</li>
+</ol>
+<div class="card card-sm mb-3 center">
+ <div class="card-header bg-admin text-white bold">Úprava souboru - {name}</div>
+ <div class="card-body">
+  {error}
+  <form action="./file-edit.php" method="post">
+   <div class="form-group">
+    <label>Název souboru:</label>
+    <input type="text" id="name" class="form-control" name="name" maxlength="255" value="{name}" placeholder="Název souboru" required autofocus />
+   </div>
+   <div class="form-group">
+    <label>Produkt:</label>
+    <input id="products-search" class="form-control" type="text" oninput="getProductsDropdown();" placeholder="Vyhledání produktu" />
+    <div id="product-name"></div>
+   </div>
+   <input id="id-product" type="hidden" name="id_product" value="" />
+   <div class="form-group custom-control custom-checkbox">
+    <input name="playable" type="checkbox" class="custom-control-input" id="playable" {playable} />
+    <label class="custom-control-label" for="playable">Určeno k přehrávání</label>
+   </div>
+   <div class="form-group">
+    <table>
+     <tr>
+      <th class="pr-3">Produkt:</th>
+      <td>{product-name}</td>
+     </tr>
+     <tr>
+      <th class="pr-3">Velikost:</th>
+      <td>{size}</td>
+     </tr>
+     <tr>
+      <th class="pr-3">IP uploadera:</th>
+      <td>{ip}</td>
+     </tr>
+     <tr>
+      <th class="pr-3">Link:</th>
+      <td>{link}</td>
+     </tr>
+     <tr>
+      <th class="pr-3">Vytvořen:</th>
+      <td>{created}</td>
+     </tr>
+    </table>
+   </div>
+   <input type="hidden" name="id" value="{id}" />
+   <input type="submit" value="Upravit" class="btn btn-lg btn-primary btn-size btn-block" />
+  </form>
+ </div>
+</div>
+<script>
+ setProductItem('{id-product}', '{product-name}');
+</script>

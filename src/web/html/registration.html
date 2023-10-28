@@ -1,0 +1,87 @@
+<div class="modal-header">
+ <span class="modal-title">Registration</span>
+ <span class="modal-close" onclick="closeModalN()">&times;</span>
+</div>
+<div class="modal-body scrollbar">
+ <div class="p-3">
+  <div class="card form-size-sm mb-3 center">
+   <div class="card-body">
+    <form id="registration" action="/api/set_registration" method="POST">
+     <div class="notice red" id="registration-error" style="display: none"></div>
+     <div class="form-group">
+      <label>Username: <span class="text-red">*</span></label>
+      <input type="text" class="form-control" name="username" />
+     </div>
+     <div class="form-group">
+      <label>E-mail address: <span class="text-red">*</span></label>
+      <input type="email" class="form-control" name="email" />
+     </div>
+     <div class="form-group">
+      <label>First name:</label>
+      <input type="text" class="form-control" name="firstname" />
+     </div>
+     <div class="form-group">
+      <label>Surname:</label>
+      <input type="text" class="form-control" name="lastname" />
+     </div>
+     <div class="form-group-row">
+      <label>Sex: <span class="text-red">*</span></label
+      ><br />
+      <div class="custom-control custom-radio custom-control-inline">
+       <input type="radio" class="custom-control-input" id="sex-male" name="sex" value="1" />
+       <label class="custom-control-label" for="sex-male">Muž</label>
+      </div>
+      <div class="custom-control custom-radio custom-control-inline">
+       <input type="radio" class="custom-control-input" id="sex-female" name="sex" value="0" />
+       <label class="custom-control-label" for="sex-female">Žena</label>
+      </div>
+     </div>
+     <div class="form-group-row">
+      <label class="mb-3">Birthdate: <span class="text-red">*</span></label>
+      <div class="form-inline">
+       <select class="form-control" name="day">
+        <option value="">- Day -</option>
+        {DAYS}</select
+       >&nbsp;.&nbsp;
+       <select class="form-control" name="month">
+        <option value="">- Month -</option>
+        {MONTHS}</select
+       >&nbsp;.&nbsp;
+       <select class="form-control" name="year">
+        <option value="">- Year -</option>
+        {YEARS}
+       </select>
+      </div>
+     </div>
+     <div class="form-group">
+      <label>Password: <span class="text-red">*</span></label>
+      <input type="password" class="form-control" name="password" />
+     </div>
+     <div class="form-group">
+      <label>Password: <span class="text-red">*</span></label>
+      <input type="password" class="form-control" name="password2" />
+     </div>
+     <div class="form-group-row custom-control custom-checkbox">
+      <input name="terms" type="checkbox" class="custom-control-input" id="terms" />
+      <label class="custom-control-label" for="terms">I agree with <a href="./podminky" target="_blank">the registration terms.</a>. <span class="text-red">*</span></label>
+     </div>
+     <div class="form-group">
+      <div id="static-captcha">
+       <div class="captch">
+        <img id="captcha-container" src="" alt="" />
+        <img class="reload-icon" src="../img/reload.svg" onclick="regenCaptcha()" alt="" />
+       </div>
+       <input type="text" id="cid" name="cid" style="display: none !important" />
+       <input type="text" name="captcha" class="form-control" id="captcha-input" placeholder="Enter text from image" />
+      </div>
+     </div>
+     <div class="small pb-3">
+      <span class="bold text-red">WARNING:</span> Fields marked with an asterisk are required!
+      <span class="toggle" onclick="openModal('login')">Already have account - login</span>
+     </div>
+     <button type="button" class="btn btn-lg btn-success btn-size" onclick="submitForm('registration')">Register</button>
+    </form>
+   </div>
+  </div>
+ </div>
+</div>

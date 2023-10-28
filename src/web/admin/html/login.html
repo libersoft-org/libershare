@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+ <head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+  <title>{product} - {admin-area}</title>
+  <link rel="stylesheet" href="../css/font.css" type="text/css" />
+  <link rel="stylesheet" href="../css/login.css" type="text/css" />
+  <link rel="icon" href="../favicon.ico" />
+ </head>
+ <body class="text-center bg-login">
+  <script src="js/functions.js"></script>
+  <div class="form bg-white rounded p-3">
+   <div id="error" style="display: none">
+    <div class="alert alert-danger">
+     <span class="bold">Chyba:</span>
+     <span id="error-message"></span>
+    </div>
+   </div>
+   <a href="../"><img class="logo mb-3" src="../img/logo.png" alt="{product}" /></a>
+   <div class="h4 mb-3">{admin-area}</div>
+   <form id="login">
+    <input class="form-control mb-3" type="text" name="user" placeholder="Uživatelské jméno" required autofocus />
+    <input class="form-control mb-3" type="password" name="pass" placeholder="Heslo" required />
+    <button class="btn btn-lg btn-danger btn-block" type="submit">Přihlásit</button>
+   </form>
+   <p class="mt-4 mb-4">Copyright &copy; <a href="../">{product}</a>, {year-from} - {year-to}</p>
+  </div>
+ </body>
+</html>

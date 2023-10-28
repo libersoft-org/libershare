@@ -1,0 +1,35 @@
+<!-- prettier-ignore -->
+<!DOCTYPE html>
+<html>
+ <head>
+  <title>{PRODUCT}</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="{OG-URL}" />
+  <meta property="og:title" content="{PRODUCT}" />
+  <meta property="og:description" content="{OG-DESCRIPTION}" />
+  <meta property="og:image" content="{OG-IMAGE}" />
+  <link rel="stylesheet" href="css/common.css" type="text/css" />
+  <link rel="stylesheet" href="css/style.css" type="text/css" />
+  <link rel="shortcut icon" href="favicon.ico" />
+  <script src="functions.js"></script>
+  <script src="https://unpkg.com/dropzone@5/dist/min/dropzone.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/dropzone@5/dist/min/dropzone.min.css" type="text/css" />
+ </head>
+ <body>
+  <div id="header" class="shadow">
+   <a onclick="menu()"><img class="menu-toggler" src="./img/menu.svg" alt="Menu" /></a>
+   <a class="logo" onclick="getPage('')"><img src="img/logo.webp" alt="{PRODUCT}" /></a>
+   <div id="menu-desktop"></div>
+  </div>
+  <div id="menu-mobile" class="shadow"></div>
+  <div id="menu-overlay" onclick="menuClose()"></div>
+  <div id="content" class="scrollbar"></div>
+  <div id="modal-win">
+   <div class="modal-overlay">
+    <div id="modal-content"></div>
+   </div>
+  </div>
+ </body>
+</html>

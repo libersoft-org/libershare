@@ -1,0 +1,15 @@
+<tr>
+ <td><a href="./?page=category-edit&amp;id={id}">{name}</a></td>
+ <td class="text-center">{products} / {products-visible} / {products-hidden}</td>
+ <td class="text-center">{size}</td>
+ <td class="text-center">{visits} / {visits-by-session} / {visits-by-ip}</td>
+ <td>{created}</td>
+ <td>
+  <a class="mr-1" href="./?page=category-edit&amp;id={id}">
+   <img class="table-icon" src="template/img/edit.svg" alt="Upravit" />
+  </a>
+  <a class="mr-1 pointer" onclick="confirmDelete('category-delete.php?id={id}', '{name}')">
+   <img class="table-icon" src="template/img/delete.svg" alt="Smazat" />
+  </a>
+ </td>
+</tr>

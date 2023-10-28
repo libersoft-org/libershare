@@ -1,0 +1,43 @@
+<ol class="breadcrumb bg-danger text-light">
+ <li class="breadcrumb-item active">Rozdíly DB / FS</li>
+</ol>
+<div class="card mb-3">
+ <div class="card-header bg-admin text-white bold">Soubory v databázi, které chybí na disku</div>
+ <div class="card-body table-responsive">
+  <table class="table table-sm">
+   {files-fs]]
+  </table>
+  <h5>Celkem položek: <span class="bold">{files-fs-count]]</span></h5>
+  <a class="btn btn-primary bold text-white pointer" onclick="confirmDelete('diffs-delete-files-fs.php', 'všechny soubory v databázi, které chybí na disku')">Smazat všechny chybějící z databáze</a>
+ </div>
+</div>
+<div class="card mb-3">
+ <div class="card-header bg-admin text-white bold">Soubory na disku, které chybí v databázi</div>
+ <div class="card-body table-responsive">
+  <table class="table table-sm">
+   {files-db]]
+  </table>
+  <h5>Celkem položek: <span class="bold">{files-db-count]]</span></h5>
+  <a class="btn btn-primary bold text-white pointer" onclick="confirmDelete('diffs-delete-files-db.php', 'všechny soubory na disku, které chybí v databázi')">Smazat všechny chybějící z disku</a>
+ </div>
+</div>
+<div class="card mb-3">
+ <div class="card-header bg-admin text-white bold">Uploady v databázi, které chybí na disku</div>
+ <div class="card-body table-responsive">
+  <table class="table table-sm">
+   {uploads-fs]]
+  </table>
+  <h5>Celkem položek: <span class="bold">{uploads-fs-count]]</span></h5>
+  <a class="btn btn-primary bold text-white pointer" onclick="confirmDelete('diffs-delete-uploads-fs.php', 'všechny uploady v databázi, které chybí na disku')">Smazat všechny chybějící z databáze</a>
+ </div>
+</div>
+<div class="card mb-3">
+ <div class="card-header bg-admin text-white bold">Uploady na disku, které chybí v databázi</div>
+ <div class="card-body table-responsive">
+  <table class="table table-sm">
+   {uploads-db]]
+  </table>
+  <h5>Celkem položek: <span class="bold">{uploads-db-count]]</span></h5>
+  <a class="btn btn-primary bold text-white pointer" onclick="confirmDelete('diffs-delete-uploads-db.php', 'všechny uploady na disku, které chybí v databázi')">Smazat všechny chybějící z disku</a>
+ </div>
+</div>

@@ -1,0 +1,46 @@
+{
+ "news": {
+  "label": "News",
+  "file": "news.html"
+ },
+ "categories": {
+  "label": "Categories",
+  "file": "categories.html"
+ },
+ "upload": {
+  "label": "Upload",
+  "file": "upload.html"
+ },
+ "forum": {
+  "label": "Forum",
+  "file": "forum.html"
+ },
+ "faq": {
+  "label": "FAQ",
+  "file": "faq.html"
+ },
+ "terms": {
+  "label": "Terms and conditions",
+  "file": "terms.html"
+ },
+ "contact": {
+  "label": "Contact",
+  "file": "contact.html"
+ },
+ "search": {
+  "label": "Search",
+  "file": "search.html"
+ },
+ "activation": {
+  "label": "Activation",
+  "file": "activation.html"
+ },
+ "product": {
+  "label": "Product",
+  "file": "product.html"
+ },
+ "notfound": {
+  "label": "Page not found",
+  "file": "notfound.html"
+ }
+}

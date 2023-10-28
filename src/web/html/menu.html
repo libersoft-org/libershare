@@ -1,0 +1,20 @@
+<div class="left">
+ <a class="item menu-news" onclick="getPage('news')"><img class="icon" src="img/news.svg" alt="News" />News</a>
+ <a class="item menu-categories" onclick="getPage('categories')"><img class="icon" src="img/categories.svg" alt="Categories" />Categories</a>
+ <a class="item menu-upload" onclick="getPage('upload')"><img class="icon" src="img/upload.svg" alt="Upload" />Upload</a>
+ <a class="item menu-forum" onclick="getPage('forum')"><img class="icon" src="img/forum.svg" alt="Forum" />Forum</a>
+ <a class="item menu-faq" onclick="getPage('faq')"><img class="icon" src="img/faq.svg" alt="FAQ" />FAQ</a>
+ <a class="item menu-terms" onclick="getPage('terms')"><img class="icon" src="img/terms.svg" alt="Terms" />Terms</a>
+ <a class="item menu-contact" onclick="getPage('contact')"><img class="icon" src="img/contact.svg" alt="Contact" />Contact</a>
+</div>
+<div class="right menu-right">
+ <input type="search" name="phrase" value="" placeholder="Search" autofocus />
+ <a class="button" onclick="getPage('search')">Search</a>
+ <span class="menu-username"></span>
+ <div class="need-login">
+  <a class="item menu-login" onclick="openModal('login')"><img class="icon" src="img/login.svg" alt="Login" />Login</a>
+ </div>
+ <div class="need-logout">
+  <a class="item menu-login" onclick="logout()"><img src="img/logout.svg" class="icon" alt="Logout" />Logout</a>
+ </div>
+</div>

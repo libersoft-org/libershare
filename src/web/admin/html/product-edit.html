@@ -1,0 +1,62 @@
+<ol class="breadcrumb bg-danger text-light">
+ <li class="breadcrumb-item"><a href="./?page=products">Produkty</a></li>
+ <li class="breadcrumb-item active">Úprava produktu</li>
+</ol>
+<div class="card card-sm mb-3 center">
+ <div class="card-header bg-admin text-white bold">Úprava produktu - {name}</div>
+ <div class="card-body">
+  {error}
+  <form enctype="multipart/form-data" action="./product-edit.php" method="post">
+   <div class="form-group">
+    <input id="name" class="form-control" name="name" maxlength="255" value="{name}" placeholder="Název produktu" oninput="getLink();" required autofocus />
+   </div>
+   <div class="form-group">
+    <input id="link" class="form-control" name="link" maxlength="255" value="{link}" placeholder="Odkaz produktu" required />
+   </div>
+   <div class="form-group">
+    <label>Kategorie:</label>
+    <select class="form-control" name="id_category" required>
+     <option value="">-</option>
+     {categories}
+    </select>
+   </div>
+   <div class="form-group">
+    <label>Video:</label>
+    <select class="form-control" name="id_video">
+     <option value="">-</option>
+     {videos}
+    </select>
+   </div>
+   <div class="form-group custom-control custom-checkbox">
+    <input name="adult" type="checkbox" class="custom-control-input" id="adult" {adult-checked} />
+    <label class="custom-control-label" for="adult">Pouze pro dospělé</label>
+   </div>
+   <div class="form-group custom-control custom-checkbox">
+    <input name="hidden" type="checkbox" class="custom-control-input" id="hidden" {hidden-checked} />
+    <label class="custom-control-label" for="hidden">Skrytý</label>
+   </div>
+   <div class="form-group">{image-edit}</div>
+   <input type="hidden" name="id" value="{id}" />
+   <input type="submit" value="Upravit" class="btn btn-lg btn-primary btn-size btn-block" />
+  </form>
+ </div>
+</div>
+<div class="table-responsive">
+ <table class="table table-sm table-hover table-light">
+  <thead class="thead-admin">
+   <tr>
+    <th>Název</th>
+    <th class="text-center">K přehrání</th>
+    <th>Velikost</th>
+    <th>IP odesílatele</th>
+    <th class="text-center">Stažení<br /><span class="font-small">(celkem / dle session / dle IP)</span></th>
+    <th class="text-center">Přehrání<br /><span class="font-small">(celkem / dle session / dle IP)</span></th>
+    <th>Vytvořeno</th>
+    <th>Akce</th>
+   </tr>
+  </thead>
+  <tbody>
+   {table-files}
+  </tbody>
+ </table>
+</div>

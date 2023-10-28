@@ -1,0 +1,35 @@
+{
+ "yellow": {
+  "primary": "hsl(49, 97%, 53%)",
+  "primary-lighter": "hsl(49, 97%, 80%)",
+  "primary-light": "hsl(49, 97%, 93%)",
+  "primary-darker": "hsl(49, 97%, 46%)",
+  "primary-dark": "hsl(49, 97%, 40%)",
+  "secondary": "hsl(345, 6%, 13%)",
+  "secondary-light": "hsl(345, 6%, 63%)",
+  "background": "F0F0F0",
+  "text": "#000000"
+ },
+ "red": {
+  "primary": "hsl(0, 97%, 53%)",
+  "primary-lighter": "hsl(0, 97%, 80%)",
+  "primary-light": "hsl(0, 97%, 93%)",
+  "primary-darker": "hsl(0, 97%, 46%)",
+  "primary-dark": "hsl(0, 97%, 40%)",
+  "secondary": "hsl(345, 6%, 13%)",
+  "secondary-light": "hsl(345, 6%, 63%)",
+  "background": "F0F0F0",
+  "text": "#FFFFFF"
+ },
+ "black": {
+  "primary": "hsl(49, 97%, 53%)",
+  "primary-lighter": "hsl(49, 97%, 80%)",
+  "primary-light": "hsl(49, 97%, 93%)",
+  "primary-darker": "hsl(49, 97%, 46%)",
+  "primary-dark": "hsl(49, 97%, 40%)",
+  "secondary": "hsl(345, 6%, 13%)",
+  "secondary-light": "hsl(345, 6%, 63%)",
+  "background": "000000",
+  "text": "#FFFFFF"
+ }
+}

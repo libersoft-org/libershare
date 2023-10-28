@@ -1,0 +1,44 @@
+<ol class="breadcrumb">
+ <li><a href="./categories">Home</a></li>
+ <li><a href="./category-{CATEGORY-LINK}">{CATEGORY}</a></li>
+ <li class="active">{NAME}</li>
+</ol>
+<div class="separator"></div>
+<div class="card medium center">
+ <div class="body">
+  <div class="product center">
+   <a href="#files">
+    <img class="image" src="{IMAGE}" alt="{NAME}" />
+   </a>
+   <div class="float-right" style="float: right">
+    <a onclick="getPage('contact')">Report</a>
+   </div>
+  </div>
+  <div class="share-button">
+   <a class="button text-center" href="{FB-SHARE-LINK}" target="_blank">
+    <div class="image"><img src="img/facebook.svg" alt="Share on Facebook" /></div>
+    <div class="span"><span>Share on Facebook</span></div>
+   </a>
+  </div>
+  <div id="files">
+   <table class="table center">
+    <thead>
+     <tr>
+      <th>Files</th>
+     </tr>
+    </thead>
+    <tbody>
+     {FILES}
+    </tbody>
+   </table>
+   <div class="separator"></div>
+   <div class="loader"></div>
+   <div class="separator"></div>
+  </div>
+  <div class="text-center">
+   <span class="text-red bold">ATTENTION:</span>
+   <span>If "Play online" button does not work for you, please take a look at <a onclick="getPage('faq')">this manual</a></span
+   >.
+  </div>
+ </div>
+</div>
