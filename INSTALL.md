@@ -2,7 +2,7 @@
 
 These are the installation instruction for **Debian Linux** (logged in as root):
 
-**1. Install system dependencies, download Bun and create the settings file**
+## 1. Install system dependencies, download Bun and create the settings file
 
 ```bash
 apt update
@@ -15,7 +15,7 @@ cd libershare/src
 ./start.sh --create-settings
 ```
 
-**2. Edit the settings.json file**
+## 2. Edit the "settings.json" file
 
 ```bash
 nano settings.json
@@ -44,7 +44,7 @@ Here you need to set up:
   - **log_to_file** - if you'd like to log to console and log file (true) or to console only (false)
   - **log_file** - the path to your log file (ignored if log_to_file is false)
 
-**3. Set the NGINX site host config file**
+## 3. Set the NGINX site host config file
 
 The following applies only for unix socket server. Skip this step if you're running standalone server.
 
@@ -94,7 +94,7 @@ service nginx restart
 
 You can also add the HTTPS certificate using **certbot** if needed.
 
-**4. Create the MariaDB user and grant privileges to your database**
+## 4. Create the MariaDB user and grant privileges to your database
 
 ```bash
 mysql -u root -p
@@ -117,13 +117,13 @@ GRANT ALL ON some_database.* TO 'some_user'@'localhost';
 
 ... after that exit the database simply by "**exit**" command.
 
-**5. Create the database**
+## 5. Create the database
 
 ```bash
 ./start.sh --create-database
 ```
 
-**6. Start the server application**
+## 6. Start the server application
 
 a) to start the server in **console** using **bun**:
 
@@ -149,7 +149,7 @@ d) to start the server in **screen** by **bun** in **hot reload** (dev) mode:
 ./start-hot-screen.sh
 ```
 
-**7. Open the web browser and navigate to your website or web admin**
+## 7. Open the web browser and navigate to your website or web admin
 
 For example:
 - User frontend: **https://your-server.com/**
