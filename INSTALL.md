@@ -109,6 +109,8 @@ CREATE USER 'some_user'@'localhost' IDENTIFIED BY 'some_password';
 GRANT ALL ON some_database.* TO 'some_user'@'localhost';
 ```
 
+... after that exit the database simply by "**exit**" command.
+
 **9. Create the database**
 
 ```bash
