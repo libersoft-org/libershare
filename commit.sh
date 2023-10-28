@@ -8,7 +8,7 @@ USER="libersoft-org"
 PASS=`cat ./.secret_git`
 
 cd src
-npm run format
+bun run format
 cd ..
 
 if [ "$#" -eq 0 ]; then
