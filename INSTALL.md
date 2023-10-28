@@ -117,13 +117,13 @@ GRANT ALL ON some_database.* TO 'some_user'@'localhost';
 
 ... after that exit the database simply by "**exit**" command.
 
-**9. Create the database**
+**5. Create the database**
 
 ```bash
 ./start.sh --create-database
 ```
 
-**10. Start the server application**
+**6. Start the server application**
 
 a) to start the server in **console** using **bun**:
 
@@ -149,7 +149,7 @@ d) to start the server in **screen** by **bun** in **hot reload** (dev) mode:
 ./start-hot-screen.sh
 ```
 
-**11. Open the web browser and navigate to your website or web admin**
+**7. Open the web browser and navigate to your website or web admin**
 
 For example:
 - User frontend: **https://your-server.com/**
