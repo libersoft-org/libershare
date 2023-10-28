@@ -12,7 +12,6 @@ curl -fsSL https://bun.sh/install | bash
 source /root/.bashrc
 git clone https://github.com/libersoft-org/libershare.git
 cd src
-bun i
 ./start.sh --create-settings
 ```
 
