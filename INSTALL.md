@@ -7,11 +7,11 @@ These are the installation instruction for **Debian Linux** (logged in as root):
 ```bash
 apt update
 apt -y upgrade
-apt install curl git mariadb-server mariadb-client
+apt install curl unzip git mariadb-server mariadb-client
 curl -fsSL https://bun.sh/install | bash
 source /root/.bashrc
 git clone https://github.com/libersoft-org/libershare.git
-cd src
+cd libershare/src
 ./start.sh --create-settings
 ```
 
