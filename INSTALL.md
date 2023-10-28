@@ -68,7 +68,7 @@ The example of NGINX site host config file:
 server {
  listen 80;
  listen [::]:80;
- server_name libershare.com *.libershare.com;
+ server_name your-server.com *.your-server.com;
 
  location / {
   proxy_pass http://server;
@@ -78,6 +78,12 @@ server {
 upstream server {
  server unix:/run/libershare.sock;
 }
+```
+
+Now enable the site:
+
+```bash
+ln -s /etc/nginx/sites-available/your-server.com.conf /etc/nginx/sites-enabled/your-server.com.conf
 ```
 
 Then restart the NGINX server:
