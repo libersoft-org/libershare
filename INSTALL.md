@@ -69,7 +69,7 @@ server {
  listen 80;
  listen [::]:80;
  server_name libershare.com *.libershare.com;
- 
+
  location / {
   proxy_pass http://server;
  }
