@@ -1,19 +1,16 @@
-const { Common, validateEmail, checkDate } = require('./common.js');
 const Data = require('./data.js');
-const { response } = require('express');
 
 const validCaptchas = {};
 
 function cleanupOldCaptchas() {
  const currentTime = new Date().getTime();
  for (const captchaId in validCaptchas) {
-  if (currentTime - validCaptchas[captchaId].timestamp > 10 * 60 * 1000) {
-   delete validCaptchas[captchaId];
-  }
+  if (currentTime - validCaptchas[captchaId].timestamp > 10 * 60 * 1000) delete validCaptchas[captchaId];
  }
 }
 
 setInterval(cleanupOldCaptchas, 60 * 1000);
+
 class API {
  constructor() {
   this.apiMethods = {
@@ -120,20 +117,18 @@ class API {
 
   // Generate SVG
   const svg = `
-        <svg width="120" height="40" xmlns="http://www.w3.org/2000/svg" style="background-color: gray;">
-            <!-- Background Dots -->
-            ${backgroundDots}
-            <!-- Captcha Text -->
-            ${coloredText}
-        </svg>
-    `;
+   <svg width="120" height="40" xmlns="http://www.w3.org/2000/svg" style="background-color: gray;">
+    <!-- Background Dots -->
+    ${backgroundDots}
+    <!-- Captcha Text -->
+    ${coloredText}
+   </svg>
+  `;
 
   // Convert SVG to base64
   const base64Image = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
-
   const captchaId = new Date().getTime() + Math.random().toString(36).substr(2, 9);
   validCaptchas[captchaId] = captchaText;
-
   return {
    image: base64Image,
    capid: captchaId
@@ -774,7 +769,6 @@ class API {
  }
 
  async validateLogin(params) {
-  console.log;
   if (!this.validateCaptcha(params.cid, params.captcha)) return { error: 1, message: 'Wrong captcha!' };
   const res = await this.data.validateLogin(params);
   if (res.error) return res;
@@ -782,7 +776,7 @@ class API {
  }
 
  async isValidSession(params) {
-  // Kontrola existence sessionGuid v databázi
+  // Existence check of sessionGuid in database
   const resp = await this.data.isValidSession(params.sessionguid);
   if (!resp) return { error: 1, message: 'Session is not valid' };
   return { error: 0, data: params.sessionguid };

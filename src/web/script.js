@@ -1,140 +1,13 @@
-// TODO - get page name from backend:
-const pageName = 'LiberShare';
-let pages;
-let menuOpened = false;
+const framework = new Framework();
 
-const DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const YEARS = Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i);
-
-const ALLOWED_EXTENSIONS = ['mp4', 'mp3', 'avi', 'webm'];
-
-window.onload = async () => {
- const pg = location.pathname.substring(location.pathname.lastIndexOf('/') + 1);
- pages = JSON.parse(await getFileContent('pages.json'));
- getMenu();
- getReload(pg);
- window.addEventListener('popstate', async function (e) {
-  const currentPage = location.pathname.substring(location.pathname.lastIndexOf('/') + 1);
-  getReload(currentPage);
- });
-
- document.querySelector('.modal-overlay').addEventListener('click', closeModalN);
-
- document.querySelector('#modal-content').addEventListener('click', function (event) {
-  event.stopPropagation();
- });
+window.onload = () => {
+ framework.init();
 };
 
-async function getMenu() {
- const menu = await getFileContent('html/menu.html');
- qs('#menu-desktop').innerHTML = menu;
- qs('#menu-mobile').innerHTML = menu;
-}
-
-function menu() {
- if (menuOpened) menuClose();
- else menuOpen();
-}
-
-function menuClose() {
- menuOpened = false;
- qs('#header .menu-toggler').src = 'img/menu.svg';
- qs('#menu-mobile').style.transform = 'translateX(-110%)'; // Slide out to the left
- qs('#menu-overlay').style.transform = 'translateX(-110%)'; // Slide out to the left
- qs('#header').classList.add('shadow');
-}
-
-function menuOpen() {
- menuOpened = true;
- qs('#header .menu-toggler').src = 'img/close.svg';
- qs('#menu-mobile').style.transform = 'translateX(0)'; // Slide out to the left
- qs('#menu-overlay').style.transform = 'translateX(0)'; // Slide out to the left
- qs('#header').classList.remove('shadow');
-}
-
-async function getReload(page) {
- window.history.replaceState('', '', page == '' ? '' : page);
- await getPageContent(page);
-}
-
-async function getPage(page) {
- if (menuOpened) menuClose();
- window.history.pushState('', '', page == '' ? '/' : page);
- await getPageContent(page);
-}
-
-async function getPageContent(page) {
- if (page == '') page = 'news';
- let content = '';
- if (qsa('#menu-desktop .item.active').length == 1) qsa('#menu-desktop .item.active')[0].classList.remove('active');
- if (qsa('#menu-mobile .item.active').length == 1) qsa('#menu-mobile .item.active')[0].classList.remove('active');
- if (page in pages) {
-  document.title = pageName + ' - ' + pages[page].label;
-  if (qs('#menu-desktop .item.menu-' + page)) qs('#menu-desktop .item.menu-' + page).classList.add('active');
-  if (qs('#menu-mobile .item.menu-' + page)) qs('#menu-mobile .item.menu-' + page).classList.add('active');
-  // TODO: only if page exists:
-  content = await getFileContent('html/' + pages[page].file);
- } else if (page.includes('-')) {
-  if (page.startsWith('product-')) content = await getFileContent('html/product.html');
-  else if (page.startsWith('category-')) content = await getFileContent('html/category.html');
-  else {
-   document.title = pageName + ' - ' + pages['notfound'].label;
-   content = await getFileContent('html/notfound.html');
-  }
- } else {
-  document.title = pageName + ' - ' + pages['notfound'].label;
-  content = await getFileContent('html/notfound.html');
- }
- qs('#content').innerHTML = content;
- if (page === 'news') await getPageNews();
- else if (page === 'categories') await getPageCategories();
- else if (page == 'upload') await getPageUpload();
- else if (page == 'search') await getPageSearch();
- else if (page == 'forum') await getPageForum();
- else if (page.startsWith('category-')) await getPageCategory(page.substring(9));
- else if (page.startsWith('product-')) await getPageProduct(page.split('-')[1]);
- var headers = document.querySelectorAll('.accordion .header');
- headers.forEach(function (header) {
-  header.addEventListener('click', function () {
-   var body = this.nextElementSibling;
-   if (body.style.height === '0px' || body.style.height === '') {
-    body.style.height = body.scrollHeight + 'px';
-    header.firstElementChild.style.transform = 'translateY(-50%) rotate(180deg)'; // Otočení šipky směrem nahoru
-   } else {
-    body.style.height = '0px';
-    header.firstElementChild.style.transform = 'translateY(-50%) rotate(0deg)'; // Otočení šipky směrem nahoru
-   }
-  });
- });
-
- const sess = localStorage.getItem('libershare_session_guid');
- if (sess && sess.length > 16) {
-  document.querySelector('.menu-username').textContent = localStorage.getItem('libershare_username');
-
-  document.querySelectorAll('.need-login').forEach((element) => {
-   element.classList.add('hidden-important');
-   element.classList.remove('flex-important');
-  });
-
-  document.querySelectorAll('.need-logout').forEach((element) => {
-   element.classList.remove('hidden-important');
-   element.classList.add('flex-important');
-  });
- } else {
-  document.querySelectorAll('.need-login').forEach((element) => {
-   element.classList.remove('hidden-important');
-   element.classList.add('flex-important');
-  });
-
-  document.querySelectorAll('.need-logout').forEach((element) => {
-   element.classList.add('hidden-important');
-   element.classList.remove('flex-important');
-  });
-
-  document.querySelector('.menu-username').textContent = '';
- }
-}
+const days = Array.from({ length: 31 }, (_, i) => i + 1);
+const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const years = Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i);
+const videoExtensions = ['mp4', 'mp3', 'avi', 'webm'];
 
 async function getPageNews() {
  const image_default = 'img/item-default.webp'; // TODO: no mention - why?
@@ -216,8 +89,8 @@ async function getPageProduct(id) {
   for (const f of files.data) {
    const fileExtension = f.file_name.split('.').pop().toLowerCase();
    let repl = await getFileContent('html/product-play-button.html');
-   if (!ALLOWED_EXTENSIONS.includes(fileExtension)) repl = '';
-   if (f.file_name && ALLOWED_EXTENSIONS.includes(fileExtension)) {
+   if (!videoExtensions.includes(fileExtension)) repl = '';
+   if (f.file_name && videoExtensions.includes(fileExtension)) {
     rows += translate(temp_files, {
      '{NAME}': f.file_name,
      '{SIZE}': getHumanSize(f.size),
@@ -400,111 +273,6 @@ async function getPageUpload() {
  qs('#content .files').innerHTML = rows;
 }
 
-async function getFileContent(file) {
- const content = await fetch(file, {
-  headers: { 'cache-control': 'no-cache' }
- });
- return content.text();
-}
-
-async function getAPI(name, body = null) {
- const post =
-  body != null
-   ? {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-     }
-   : {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-     };
- const res = await fetch('api/' + name, post);
- if (res.ok) return await res.json();
- else return false;
-}
-
-async function getModal(title, body) {
- const html = await getFileContent('html/modal.html');
- const modal = document.createElement('div');
- modal.innerHTML = html.replace('{TITLE}', title).replace('{BODY}', body);
- qs('body').appendChild(modal);
-}
-
-function closeModal() {
- qs('.modal').remove();
-}
-
-function getLoader() {
- return '<div class="loader"></div>';
-}
-
-function escapeHTML(text) {
- let map = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#039;'
- };
- return text.replace(/[&<>"']/g, function (m) {
-  return map[m];
- });
-}
-
-function getHumanSize(bytes) {
- const type = ['', 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y'];
- let i = 0;
- while (bytes >= 1024) {
-  bytes /= 1024;
-  i++;
- }
- return Math.round(bytes * 100) / 100 + ' ' + type[i] + 'B';
-}
-
-function translate(template, dictionary) {
- for (const key in dictionary) template = template.replaceAll(key, dictionary[key]);
- return template;
-}
-
-function qs(query) {
- return document.querySelector(query);
-}
-
-function qsa(query) {
- return document.querySelectorAll(query);
-}
-
-async function generateCaptcha() {
- try {
-  const response = await fetch('/api/generate_captcha', { method: 'GET' });
-
-  if (!response.ok) {
-   throw new Error('Network response was not ok');
-  }
-
-  const data = await response.json(); // Převedení odpovědi na JSON
-
-  return data;
- } catch (error) {
-  return null;
- }
-}
-
-function verifyCaptcha() {
- const userResponse = document.getElementById('captcha-input').value;
- const captchaText = document.querySelector('#captcha-container canvas').getAttribute('data-captcha');
-
- if (userResponse === captchaText) {
-  alert('CAPTCHA je správná!');
- } else {
-  alert('CAPTCHA je nesprávná. Zkuste to znovu.');
-  document.getElementById('captcha-input').value = '';
-  document.getElementById('captcha-container').innerHTML = '';
-  generateCaptcha();
- }
-}
-
 function toggleLoginRegister(mode) {
  const modalTitle = document.querySelector('.modal-title');
  const llog = document.querySelector('.l-log');
@@ -523,88 +291,16 @@ function toggleLoginRegister(mode) {
  }
 }
 
-function openLoginModal() {
- const modal = document.getElementById('login_modal');
- modal.style.display = 'block';
-}
-
-function makeDraggable(modal) {
- let isDragging = false;
- let offsetX, offsetY;
- const header = modal.querySelector('.modal-header');
-
- header.addEventListener('mousedown', (e) => {
-  isDragging = true;
-  offsetX = e.clientX - modal.getBoundingClientRect().left;
-  offsetY = e.clientY - modal.getBoundingClientRect().top;
- });
-
- document.addEventListener('mousemove', (e) => {
-  if (!isDragging) return;
-  let top = e.clientY - offsetY;
-  let left = e.clientX - offsetX;
-
-  left = Math.max(left, 0);
-  top = Math.max(top, 0);
-  left = Math.min(left, window.innerWidth - modal.offsetWidth);
-  top = Math.min(top, window.innerHeight - modal.offsetHeight);
-
-  modal.style.left = left + 'px';
-  modal.style.top = top + 'px';
- });
-
- document.addEventListener('mouseup', () => {
-  isDragging = false;
- });
-}
-
-async function openModal(type) {
- let content;
- if (type === 'login') {
-  content = await getFileContent('html/login.html');
- } else if (type === 'registration') {
-  content = await getFileContent('html/registration.html');
-  content = content.replace('{DAYS}', DAYS.map((day) => `<option value="${day}">${day}</option>`).join(''));
-  content = content.replace('{MONTHS}', MONTHS.map((month, index) => `<option value="${index + 1}">${month}</option>`).join(''));
-  content = content.replace('{YEARS}', YEARS.map((year) => `<option value="${year}">${year}</option>`).join(''));
- }
- const modwin = document.querySelector('#modal-win');
- modwin.style.display = 'flex';
- modwin.querySelector('#modal-content').innerHTML = content;
- makeDraggable(modwin.querySelector('#modal-content'));
- setTimeout(async () => {
-  capt = await generateCaptcha();
-  const imgElement = document.querySelector('#captcha-container');
-  imgElement.style.backgroundColor = 'red';
-  imgElement.src = capt.image;
-  const cid = document.querySelector('#cid');
-  cid.value = capt.capid;
- });
-}
-
-function closeModalN() {
- document.querySelector('#modal-win').style.display = 'none';
-}
-
 function logout() {
  localStorage.removeItem('libershare_session_guid');
  localStorage.removeItem('libershare_username');
  getPage('');
-}
-async function regenCaptcha() {
- const capt = await generateCaptcha();
- const imgElement = document.querySelector('#captcha-container');
- imgElement.style.backgroundColor = 'red';
- imgElement.src = capt.image;
- const cid = document.querySelector('#cid');
- cid.value = capt.capid;
 }
 
 function submitForm(type) {
  let formId;
  let apiUrl;
  let errorElementId;
-
  if (type === 'registration') {
   formId = 'registration';
   apiUrl = 'set_registration';
@@ -613,25 +309,13 @@ function submitForm(type) {
   formId = 'login';
   apiUrl = 'validate_login';
   errorElementId = '#login-error';
- } else {
-  return;
- }
-
+ } else return;
  const form = document.getElementById(formId);
  const formData = new FormData(form);
  const formObject = {};
-
  formData.forEach((value, key) => {
   formObject[key] = value;
  });
-
- //fetch(apiUrl, {
- // method: 'POST',
- // headers: {
- //  'Content-Type': 'application/json'
- // },
- // body: JSON.stringify(formObject)
- //})
  getAPI(apiUrl, formObject)
   .then((data) => {
    if (data.error && data.error !== 0) {
@@ -651,12 +335,6 @@ function submitForm(type) {
    el.innerHTML = `${type.charAt(0).toUpperCase() + type.slice(1)} error: ${error.message}`;
    el.style.display = 'block';
   });
-}
-
-// Funkce pro zavření modálního okna
-function closeLoginModal() {
- const modal = document.getElementById('login_modal');
- modal.style.display = 'none';
 }
 
 /* FROM E-MAIL SENDER APP - DELETE WHEN NOT NEEDED ANYMORE:
@@ -1038,8 +716,6 @@ function replaceAll (search, replace, what) {
  return what.replace(new RegExp(search.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&"), 'g'), replace);
 };
 
-
-
 function GetPage(page, params) {
  switch (page) {
   case 'hledat':
@@ -1251,8 +927,6 @@ function Done(originalFile, newFile) {
   }
  });
 }
-
-
 
 function LoadUploaderTemplate() {
  getAPI({

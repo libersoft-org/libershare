@@ -1,6 +1,6 @@
+const crypto = require('crypto');
 const Database = require('./database.js');
 const { Common, validateEmail, checkDate } = require('./common.js');
-const crypto = require('crypto');
 
 class Data {
  constructor() {

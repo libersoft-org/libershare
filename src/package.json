@@ -1,14 +1,13 @@
 {
-  "dependencies": {
-    "canvas": "^2.11.2",
-    "express": "*",
-    "mysql2": "*",
-    "prettier": "^3.0.3",
-    "crypto": "*",
-    "parse-multipart-data": "*",
-    "path": "^0.12.7"
-  },
-  "scripts": {
-    "format": "prettier --write \"**/*.{js,ts,html,css}\""
-  }
+ "dependencies": {
+  "canvas": "*",
+  "mysql2": "*",
+  "prettier": "*",
+  "crypto": "*",
+  "parse-multipart-data": "*",
+  "path": "*"
+ },
+ "scripts": {
+  "format": "prettier --write \"**/*.{js,ts,html,css}\""
+ }
 }
