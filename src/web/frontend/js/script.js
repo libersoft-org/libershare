@@ -85,21 +85,21 @@ async function getPageProduct(id) {
   const files = await f.getAPI('get_files', { id_product: prod.data[0].id });
   let temp_files = await f.getFileContent('html/product-file.html');
   let rows = '';
-  for (const f of files.data) {
-   const fileExtension = f.file_name.split('.').pop().toLowerCase();
+  for (const fd of files.data) {
+   const fileExtension = fd.file_name.split('.').pop().toLowerCase();
    let repl = await f.getFileContent('html/product-play-button.html');
    if (!videoExtensions.includes(fileExtension)) repl = '';
-   if (f.file_name && videoExtensions.includes(fileExtension)) {
+   if (fd.file_name && videoExtensions.includes(fileExtension)) {
     rows += f.translate(temp_files, {
-     '{NAME}': f.file_name,
-     '{SIZE}': getHumanSize(f.size),
-     '{LINK-DOWNLOAD}': 'download?id=' + f.name,
+     '{NAME}': fd.file_name,
+     '{SIZE}': f.getHumanSize(fd.size),
+     '{LINK-DOWNLOAD}': 'download?id=' + fd.name,
      '{PLAY-ONLINE}': repl
     });
    } else {
     rows += f.translate(temp_files, {
-     '{NAME}': f.file_name,
-     '{SIZE}': getHumanSize(f.size),
+     '{NAME}': fd.file_name,
+     '{SIZE}': f.getHumanSize(fd.size),
      '{LINK-DOWNLOAD}': 'download?id=' + f.name,
      '{PLAY-ONLINE}': ''
     });
