@@ -1,7 +1,7 @@
-const framework = new Framework();
+const f = new Framework();
 
-window.onload = () => {
- framework.init();
+window.onload = async () => {
+ await f.init();
 };
 
 const days = Array.from({ length: 31 }, (_, i) => i + 1);
@@ -11,12 +11,12 @@ const videoExtensions = ['mp4', 'mp3', 'avi', 'webm'];
 
 async function getPageNews() {
  const image_default = 'img/item-default.webp'; // TODO: no mention - why?
- const temp_cat = await getFileContent('html/news-category.html');
- const temp_prod = await getFileContent('html/products-item.html');
- const cats = await getAPI('get_categories');
+ const temp_cat = await f.getFileContent('html/news-category.html');
+ const temp_prod = await f.getFileContent('html/products-item.html');
+ const cats = await f.getAPI('get_categories');
  for (let i = 0; i < cats.data.length; i++) {
   if (cats.data[i].products_count - cats.data[i].products_count_hidden !== 0) {
-   const prods = await getAPI('get_products', {
+   const prods = await f.getAPI('get_products', {
     id_category: cats.data[i].id,
     h: 2,
     d: true,
@@ -26,35 +26,35 @@ async function getPageNews() {
    for (let j = 0; j < prods.data.length; j++) {
     let imgee = image_default;
     if (prods.data[j].image_sm) imgee = `img/products/${prods.data[j].image_sm}`;
-    let prow = translate(temp_prod, {
+    let prow = f.translate(temp_prod, {
      '{NAME}': prods.data[j].name,
      '{LINK}': prods.data[j].id + '-' + prods.data[j].link,
      '{IMAGE}': prods.data[j].adult === 0 ? imgee : 'img/item-censored.webp'
     });
     prows += prow;
    }
-   const crow = translate(temp_cat, {
+   const crow = f.translate(temp_cat, {
     '{LINK}': cats.data[i].link,
     '{CATEGORY}': cats.data[i].name,
     '{ITEMS}': prows
    });
-   qs('#content .news').innerHTML += crow;
+   f.qs('#content .news').innerHTML += crow;
   }
  }
- qs('#content .loader').remove();
+ f.qs('#content .loader').remove();
 }
 
 async function getPageCategories() {
  const image_default = 'img/item-default.webp'; // TODO: no mention - why?
- const temp = await getFileContent('html/categories-item.html');
- const cats = await getAPI('get_categories');
+ const temp = await f.getFileContent('html/categories-item.html');
+ const cats = await f.getAPI('get_categories');
  let prods_count = 0;
  let crows = '';
  for (let i = 0; i < cats.data.length; i++) {
   if (cats.data[i].products_count - cats.data[i].products_count_hidden !== 0) {
    let imgee = image_default;
    if (cats.data[i].image) imgee = `img/categories/${cats.data[i].image}`;
-   const crow = translate(temp, {
+   const crow = f.translate(temp, {
     '{LINK}': cats.data[i].link,
     '{NAME}': cats.data[i].name,
     '{IMAGE}': imgee,
@@ -64,41 +64,41 @@ async function getPageCategories() {
    crows += crow;
   }
  }
- let all = translate(temp, {
+ let all = f.translate(temp, {
   '{LINK}': 'all',
   '{NAME}': 'All',
   '{IMAGE}': 'img/item-all.webp',
   '{COUNT}': prods_count
  });
- qs('#content .categories .items').innerHTML = all + crows;
- qs('#content .loader').remove();
+ f.qs('#content .categories .items').innerHTML = all + crows;
+ f.qs('#content .loader').remove();
 }
 
 async function getPageProduct(id) {
  const image_default = 'img/item-default.webp'; // TODO: no mention - why?
- let temp = await getFileContent('html/product-detail.html');
- const prod = await getAPI('get_product', { id: id });
+ let temp = await f.getFileContent('html/product-detail.html');
+ const prod = await f.getAPI('get_product', { id: id });
  if (prod.data.length == 1) {
-  const cat = await getAPI('get_category_by_id', {
+  const cat = await f.getAPI('get_category_by_id', {
    id: prod.data[0].id_categories
   });
   prod.data[0].id_categories;
-  const files = await getAPI('get_files', { id_product: prod.data[0].id });
-  let temp_files = await getFileContent('html/product-file.html');
+  const files = await f.getAPI('get_files', { id_product: prod.data[0].id });
+  let temp_files = await f.getFileContent('html/product-file.html');
   let rows = '';
   for (const f of files.data) {
    const fileExtension = f.file_name.split('.').pop().toLowerCase();
-   let repl = await getFileContent('html/product-play-button.html');
+   let repl = await f.getFileContent('html/product-play-button.html');
    if (!videoExtensions.includes(fileExtension)) repl = '';
    if (f.file_name && videoExtensions.includes(fileExtension)) {
-    rows += translate(temp_files, {
+    rows += f.translate(temp_files, {
      '{NAME}': f.file_name,
      '{SIZE}': getHumanSize(f.size),
      '{LINK-DOWNLOAD}': 'download?id=' + f.name,
      '{PLAY-ONLINE}': repl
     });
    } else {
-    rows += translate(temp_files, {
+    rows += f.translate(temp_files, {
      '{NAME}': f.file_name,
      '{SIZE}': getHumanSize(f.size),
      '{LINK-DOWNLOAD}': 'download?id=' + f.name,
@@ -108,28 +108,28 @@ async function getPageProduct(id) {
   }
   let imgee = image_default;
   if (prod.data[0].image) imgee = `img/products/${prod.data[0].image}`;
-  const html = translate(temp, {
+  const html = f.translate(temp, {
    '{CATEGORY-LINK}': cat.data[0].link,
    '{CATEGORY}': cat.data[0].name,
    '{NAME}': prod.data[0].name,
    '{IMAGE}': imgee, //'{FB-SHARE-LINK}': '',
    '{FILES}': rows
   });
-  qs('#content').innerHTML = html;
- } else qs('#content').innerHTML = 'Product not found'; // TODO: replace for HTML page
+  f.qs('#content').innerHTML = html;
+ } else f.qs('#content').innerHTML = 'Product not found'; // TODO: replace for HTML page
 }
 
 async function getPageCategory(link) {
  const image_default = 'img/item-default.webp'; // TODO: no mention - why?
- const cat = await getAPI('get_category_by_link', { link: link });
+ const cat = await f.getAPI('get_category_by_link', { link: link });
  if (cat.data.length == 1) {
-  const temp_cat = await getFileContent('html/category-detail.html');
-  const html = translate(temp_cat, {
+  const temp_cat = await f.getFileContent('html/category-detail.html');
+  const html = f.translate(temp_cat, {
    '{CATEGORY}': cat.data[0].name
   });
-  qs('#content').innerHTML = html;
-  const temp_prod = await getFileContent('html/products-item.html');
-  const prods = await getAPI('get_products', {
+  f.qs('#content').innerHTML = html;
+  const temp_prod = await f.getFileContent('html/products-item.html');
+  const prods = await f.getAPI('get_products', {
    id_category: cat.data[0].id,
    h: 2,
    d: true,
@@ -139,16 +139,16 @@ async function getPageCategory(link) {
   for (let i = 0; i < prods.data.length; i++) {
    let imgee = image_default;
    if (prods.data[i].image_sm) imgee = `img/products/${prods.data[i].image_sm}`;
-   let prow = translate(temp_prod, {
+   let prow = f.translate(temp_prod, {
     '{NAME}': prods.data[i].name,
     '{LINK}': prods.data[i].id + '-' + prods.data[i].link,
     '{IMAGE}': prods.data[i].adult === 0 ? imgee : 'img/item-censored.webp'
    });
    prows += prow;
   }
-  qs('#content .items').innerHTML = prows;
+  f.qs('#content .items').innerHTML = prows;
   //qs('#content .loader').remove();
- } else qs('#content').innerHTML = 'Category not found'; // TODO: replace for HTML page
+ } else f.qs('#content').innerHTML = 'Category not found'; // TODO: replace for HTML page
 }
 
 async function getPageForum() {
@@ -157,21 +157,21 @@ async function getPageForum() {
 }
 
 async function getPageForumThreads(count, page = 1) {
- const temp_thread = await getFileContent('html/forum-row.html');
- const table = qs('#content .forum tbody');
+ const temp_thread = await f.getFileContent('html/forum-row.html');
+ const table = f.qs('#content .forum tbody');
  // TODO: if div with class "more" is not visible, return, otherwise load more threads
  //if (!table.length) return;
  //if (!table.isVisible()) return;
- const threads = await getAPI('get_forum_threads', {
+ const threads = await f.getAPI('get_forum_threads', {
   count: count,
   offset: (page - 1) * count
  });
  if (threads.data.length == 0) return;
  let rows = '';
  for (let item of threads.data) {
-  rows += translate(temp_thread, {
+  rows += f.translate(temp_thread, {
    '{ID}': item.id,
-   '{TOPIC}': escapeHTML(item.topic),
+   '{TOPIC}': f.escapeHTML(item.topic),
    '{USERNAME}': item.username,
    '{POSTS}': item.posts_count,
    '{CREATED}': new Date(item.created).toLocaleString(),
@@ -184,100 +184,25 @@ async function getPageForumThreads(count, page = 1) {
 }
 
 async function getPageUpload() {
- var dropzone = new Dropzone('#demo-upload', {
-  url: '/api/upload',
-  previewTemplate: document.querySelector('#preview-template').innerHTML,
-  parallelUploads: 2,
-  thumbnailHeight: 120,
-  thumbnailWidth: 120,
-  maxFilesize: 2048,
-  filesizeBase: 1000,
-  autoProcessQueue: false, // Zakázání automatického zpracování fronty
-  addRemoveLinks: true, // Přidání odkazů pro odstranění souborů
-  thumbnail: function (file, dataUrl) {
-   if (file.previewElement) {
-    file.previewElement.classList.remove('dz-file-preview');
-    var images = file.previewElement.querySelectorAll('[data-dz-thumbnail]');
-    for (var i = 0; i < images.length; i++) {
-     var thumbnailElement = images[i];
-     thumbnailElement.alt = file.name;
-     thumbnailElement.src = dataUrl;
-    }
-    setTimeout(function () {
-     file.previewElement.classList.add('dz-image-preview');
-    }, 1);
-   }
-  }
- });
-
- // Now fake the file upload, since GitHub does not handle file uploads
- // and returns a 404
-
- var minSteps = 6,
-  maxSteps = 60,
-  timeBetweenSteps = 100,
-  bytesPerStep = 100000;
-
- dropzone.uploadFiles = function (files) {
-  var self = this;
-
-  for (var i = 0; i < files.length; i++) {
-   var file = files[i];
-   totalSteps = Math.round(Math.min(maxSteps, Math.max(minSteps, file.size / bytesPerStep)));
-
-   for (var step = 0; step < totalSteps; step++) {
-    var duration = timeBetweenSteps * (step + 1);
-    setTimeout(
-     (function (file, totalSteps, step) {
-      return function () {
-       file.upload = {
-        progress: (100 * (step + 1)) / totalSteps,
-        total: file.size,
-        bytesSent: ((step + 1) * file.size) / totalSteps
-       };
-
-       self.emit('uploadprogress', file, file.upload.progress, file.upload.bytesSent);
-       if (file.upload.progress === 100) {
-        file.status = Dropzone.SUCCESS;
-        self.emit('success', file, 'success', null);
-        self.emit('complete', file);
-        self.processQueue();
-        //document.getElementsByClassName("dz-success-mark").style.opacity = "1";
-       }
-      };
-     })(file, totalSteps, step),
-     duration
-    );
-   }
-  }
- };
- const temp_file = await getFileContent('html/upload-file.html');
- document.querySelector('#upload-button').addEventListener('click', function () {
-  console.log('--- upload ---');
-  dropzone.processQueue();
- });
- const files = await getAPI('get_uploads', {
-  o: 'created',
-  d: true,
-  count: 10
- });
+ const temp_file = await f.getFileContent('html/upload-file.html');
+ const files = await f.getAPI('get_uploads', { o: 'created', d: true, count: 10 });
  // TODO: check if files.data exists, otherwise remove table
  let rows = '';
  for (const item of files.data) {
-  rows += translate(temp_file, {
+  rows += f.translate(temp_file, {
    '{NAME}': item.real_name,
-   '{SIZE}': getHumanSize(item.size),
+   '{SIZE}': f.getHumanSize(item.size),
    '{LINK}': './download?id=' + item.file_name
   });
  }
- qs('#content .files').innerHTML = rows;
+ f.qs('#content .files').innerHTML = rows;
 }
 
 function toggleLoginRegister(mode) {
- const modalTitle = document.querySelector('.modal-title');
- const llog = document.querySelector('.l-log');
- const lreg = document.querySelector('.l-reg');
- const modalButton = document.querySelector('.btn-lr');
+ const modalTitle = f.qs('.modal-title');
+ const llog = f.qs('.l-log');
+ const lreg = f.qs('.l-reg');
+ const modalButton = f.qs('.btn-lr');
  if (mode === 'login') {
   modalTitle.textContent = 'Login';
   modalButton.textContent = 'Login';
@@ -294,7 +219,7 @@ function toggleLoginRegister(mode) {
 function logout() {
  localStorage.removeItem('libershare_session_guid');
  localStorage.removeItem('libershare_username');
- getPage('');
+ f.getPage('');
 }
 
 function submitForm(type) {
@@ -316,22 +241,22 @@ function submitForm(type) {
  formData.forEach((value, key) => {
   formObject[key] = value;
  });
- getAPI(apiUrl, formObject)
+ f.getAPI(apiUrl, formObject)
   .then((data) => {
    if (data.error && data.error !== 0) {
     throw new Error(data.message);
    } else {
     localStorage.setItem('libershare_session_guid', data.data.sessionguid);
     localStorage.setItem('libershare_username', data.data.username);
-    closeModalN();
-    getPage('');
+    f.closeModalN();
+    f.getPage('');
    }
   })
   .catch((error) => {
    setTimeout(() => {
     regenCaptcha();
    }, 50);
-   const el = document.querySelector(errorElementId);
+   const el = f.qs(errorElementId);
    el.innerHTML = `${type.charAt(0).toUpperCase() + type.slice(1)} error: ${error.message}`;
    el.style.display = 'block';
   });
@@ -342,13 +267,13 @@ function submitForm(type) {
  await getModal('Edit campaign', '<div class="error">' + res.message + '</div>');
 
 async function deleteLinkModal(id, name) {
- await getModal('Delete link', await getFileContent('html/links-delete.html'));
- const body = qs('.modal .body');
+ await getModal('Delete link', await f.getFileContent('html/links-delete.html'));
+ const body = f.qs('.modal .body');
  body.innerHTML = body.innerHTML.replaceAll('{ID}', id).replaceAll('{NAME}', name);
 }
 
 async function addServerModal() {
- await getModal('New server', await getFileContent('html/servers-add.html'));
+ await getModal('New server', await f.getFileContent('html/servers-add.html'));
 }
 */
 
@@ -800,22 +725,22 @@ window.uploaders = [];
 
 LoadUploaderTemplate();
 
-qs('#files').on('change', function() {
- qs('#uploaders').empty();
+f.qs('#files').on('change', function() {
+ f.qs('#uploaders').empty();
  window.uploaders = [];
  for (let i = 0; i < this.files.length; i++) {
   AddUploader(this.files[i]);
  }
 });
 
-qs('#upload').click(function() {
+f.qs('#upload').click(function() {
  StartUpload(window.uploaders.shift());
- qs('#files-buttons').hide();
+ f.qs('#files-buttons').hide();
 });
 
 function AddUploader(file) {
  let uploader = $('<div>' + window.tmplUploader + '</div>').clone();
- qs('#uploaders').append(uploader);
+ f.qs('#uploaders').append(uploader);
  uploader.find('.filename').text(file.name);
  let stateHTML = '<tr><td>Stav:</td><td class="status bold pl-2" style="color: #DD6000;">Ve frontě ...</td></tr>';
  stateHTML += '<tr><td>Velikost souboru:</td><td class="pl-2">' + getHumanSize(file.size) + '</td></tr>';
@@ -829,7 +754,7 @@ function AddUploader(file) {
 function StartUpload(uploader) {
  window.currentUi = uploader['ui'];
  window.currentFile = uploader['file'];
- getAPI({
+ f.getAPI({
   url: 'set_upload',
   data: { 'action': 'new' },
   success: function(data) {
@@ -856,7 +781,7 @@ function Add(filename, blob) {
  fd.append('files', blob);
  fd.append('action', 'add');
  fd.append('filename', filename);
- getAPI({
+ f.getAPI({
   contentType: false,
   processData: false,
   url: 'set_upload',
@@ -903,7 +828,7 @@ function GetBlob() {
 }
 
 function Done(originalFile, newFile) {
- getAPI({
+ f.getAPI({
   url: 'set_upload',
   data: {
    action: 'done',
@@ -929,7 +854,7 @@ function Done(originalFile, newFile) {
 }
 
 function LoadUploaderTemplate() {
- getAPI({
+ f.getAPI({
   url: 'html/upload-item.html',
   success: function(data) {
    window.tmplUploader = data;

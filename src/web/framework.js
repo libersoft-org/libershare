@@ -8,80 +8,80 @@ class Framework {
 
  async init() {
   const pg = location.pathname.substring(location.pathname.lastIndexOf('/') + 1);
-  pages = JSON.parse(await getFileContent('json/pages.json'));
-  getMenu();
-  getReload(pg);
+  this.pages = JSON.parse(await this.getFileContent('json/pages.json'));
+  this.getMenu();
+  this.getReload(pg);
   window.addEventListener('popstate', async function (e) {
    const currentPage = location.pathname.substring(location.pathname.lastIndexOf('/') + 1);
-   getReload(currentPage);
+   this.getReload(currentPage);
   });
-  qs('.modal-overlay').addEventListener('click', closeModalN);
-  qs('#modal-content').addEventListener('click', function (event) {
+  this.qs('.modal-overlay').addEventListener('click', this.closeModalN);
+  this.qs('#modal-content').addEventListener('click', function (event) {
    event.stopPropagation();
   });
  }
 
  async getMenu() {
-  const menu = await getFileContent('html/menu.html');
-  qs('#menu-desktop').innerHTML = menu;
-  qs('#menu-mobile').innerHTML = menu;
+  const menu = await this.getFileContent('html/menu.html');
+  this.qs('#menu-desktop').innerHTML = menu;
+  this.qs('#menu-mobile').innerHTML = menu;
  }
 
  menu() {
-  if (menuOpened) menuClose();
+  if (this.menuOpened) menuClose();
   else menuOpen();
  }
 
  menuClose() {
-  menuOpened = false;
-  qs('#header .menu-toggler').src = 'img/menu.svg';
-  qs('#menu-mobile').style.transform = 'translateX(-110%)';
-  qs('#menu-overlay').style.transform = 'translateX(-110%)';
-  qs('#header').classList.add('shadow');
+  this.menuOpened = false;
+  this.qs('#header .menu-toggler').src = 'img/menu.svg';
+  this.qs('#menu-mobile').style.transform = 'translateX(-110%)';
+  this.qs('#menu-overlay').style.transform = 'translateX(-110%)';
+  this.qs('#header').classList.add('shadow');
  }
 
  menuOpen() {
-  menuOpened = true;
-  qs('#header .menu-toggler').src = 'img/close.svg';
-  qs('#menu-mobile').style.transform = 'translateX(0)';
-  qs('#menu-overlay').style.transform = 'translateX(0)';
-  qs('#header').classList.remove('shadow');
+  this.menuOpened = true;
+  this.qs('#header .menu-toggler').src = 'img/close.svg';
+  this.qs('#menu-mobile').style.transform = 'translateX(0)';
+  this.qs('#menu-overlay').style.transform = 'translateX(0)';
+  this.qs('#header').classList.remove('shadow');
  }
 
  async getReload(page) {
   window.history.replaceState('', '', page == '' ? '' : page);
-  await getPageContent(page);
+  await f.getPageContent(page);
  }
 
  async getPage(page) {
-  if (menuOpened) menuClose();
+  if (this.menuOpened) menuClose();
   window.history.pushState('', '', page == '' ? '/' : page);
-  await getPageContent(page);
+  await f.getPageContent(page);
  }
 
  async getPageContent(page) {
   if (page == '') page = 'news';
   let content = '';
-  if (qsa('#menu-desktop .item.active').length == 1) qsa('#menu-desktop .item.active')[0].classList.remove('active');
-  if (qsa('#menu-mobile .item.active').length == 1) qsa('#menu-mobile .item.active')[0].classList.remove('active');
-  if (page in pages) {
-   document.title = pageName + ' - ' + pages[page].label;
-   if (qs('#menu-desktop .item.menu-' + page)) qs('#menu-desktop .item.menu-' + page).classList.add('active');
-   if (qs('#menu-mobile .item.menu-' + page)) qs('#menu-mobile .item.menu-' + page).classList.add('active');
+  if (this.qsa('#menu-desktop .item.active').length == 1) this.qsa('#menu-desktop .item.active')[0].classList.remove('active');
+  if (this.qsa('#menu-mobile .item.active').length == 1) this.qsa('#menu-mobile .item.active')[0].classList.remove('active');
+  if (page in this.pages) {
+   document.title = this.pageName + ' - ' + this.pages[page].label;
+   if (this.qs('#menu-desktop .item.menu-' + page)) this.qs('#menu-desktop .item.menu-' + page).classList.add('active');
+   if (this.qs('#menu-mobile .item.menu-' + page)) this.qs('#menu-mobile .item.menu-' + page).classList.add('active');
    // TODO: only if page exists:
-   content = await getFileContent('html/' + pages[page].file);
+   content = await this.getFileContent('html/' + this.pages[page].file);
   } else if (page.includes('-')) {
-   if (page.startsWith('product-')) content = await getFileContent('html/product.html');
-   else if (page.startsWith('category-')) content = await getFileContent('html/category.html');
+   if (page.startsWith('product-')) content = await this.getFileContent('html/product.html');
+   else if (page.startsWith('category-')) content = await this.getFileContent('html/category.html');
    else {
-    document.title = pageName + ' - ' + pages['notfound'].label;
-    content = await getFileContent('html/notfound.html');
+    document.title = this.pageName + ' - ' + this.pages['notfound'].label;
+    content = await this.getFileContent('html/notfound.html');
    }
   } else {
-   document.title = pageName + ' - ' + pages['notfound'].label;
-   content = await getFileContent('html/notfound.html');
+   document.title = this.pageName + ' - ' + this.pages['notfound'].label;
+   content = await this.getFileContent('html/notfound.html');
   }
-  qs('#content').innerHTML = content;
+  this.qs('#content').innerHTML = content;
   if (page === 'news') await getPageNews();
   else if (page === 'categories') await getPageCategories();
   else if (page == 'upload') await getPageUpload();
@@ -89,7 +89,7 @@ class Framework {
   else if (page == 'forum') await getPageForum();
   else if (page.startsWith('category-')) await getPageCategory(page.substring(9));
   else if (page.startsWith('product-')) await getPageProduct(page.split('-')[1]);
-  var headers = qsa('.accordion .header');
+  var headers = this.qsa('.accordion .header');
   headers.forEach(function (header) {
    header.addEventListener('click', function () {
     var body = this.nextElementSibling;
@@ -104,25 +104,25 @@ class Framework {
   });
   const sess = localStorage.getItem('libershare_session_guid');
   if (sess && sess.length > 16) {
-   qs('.menu-username').textContent = localStorage.getItem('libershare_username');
-   qsa('.need-login').forEach((element) => {
+   this.qs('.menu-username').textContent = localStorage.getItem('libershare_username');
+   this.qsa('.need-login').forEach((element) => {
     element.classList.add('hidden-important');
     element.classList.remove('flex-important');
    });
-   qsa('.need-logout').forEach((element) => {
+   this.qsa('.need-logout').forEach((element) => {
     element.classList.remove('hidden-important');
     element.classList.add('flex-important');
    });
   } else {
-   qsa('.need-login').forEach((element) => {
+   this.qsa('.need-login').forEach((element) => {
     element.classList.remove('hidden-important');
     element.classList.add('flex-important');
    });
-   qsa('.need-logout').forEach((element) => {
+   this.qsa('.need-logout').forEach((element) => {
     element.classList.add('hidden-important');
     element.classList.remove('flex-important');
    });
-   qs('.menu-username').textContent = '';
+   this.qs('.menu-username').textContent = '';
   }
  }
 
@@ -151,14 +151,14 @@ class Framework {
  }
 
  async getModal(title, body) {
-  const html = await getFileContent('html/modal.html');
+  const html = await this.getFileContent('html/modal.html');
   const modal = document.createElement('div');
   modal.innerHTML = html.replace('{TITLE}', title).replace('{BODY}', body);
-  qs('body').appendChild(modal);
+  this.qs('body').appendChild(modal);
  }
 
  closeModal() {
-  qs('.modal').remove();
+  this.qs('.modal').remove();
  }
 
  getLoader() {
@@ -213,19 +213,19 @@ class Framework {
  }
 
  verifyCaptcha() {
-  const userResponse = qs('#captcha-input').value;
-  const captchaText = qs('#captcha-container canvas').getAttribute('data-captcha');
+  const userResponse = this.qs('#captcha-input').value;
+  const captchaText = this.qs('#captcha-container canvas').getAttribute('data-captcha');
   if (userResponse === captchaText) alert('CAPTCHA je správná!');
   else {
    alert('CAPTCHA je nesprávná. Zkuste to znovu.');
-   qs('#captcha-input').value = '';
-   qs('#captcha-container').innerHTML = '';
+   this.qs('#captcha-input').value = '';
+   this.qs('#captcha-container').innerHTML = '';
    generateCaptcha();
   }
  }
 
  openLoginModal() {
-  const modal = qs('#login_modal');
+  const modal = this.qs('#login_modal');
   modal.style.display = 'block';
  }
 
@@ -259,41 +259,41 @@ class Framework {
 
  async openModal(type) {
   let content;
-  if (type === 'login') content = await getFileContent('html/login.html');
+  if (type === 'login') content = await this.getFileContent('html/login.html');
   else if (type === 'registration') {
-   content = await getFileContent('html/registration.html');
+   content = await this.getFileContent('html/registration.html');
    content = content.replace('{DAYS}', days.map((day) => `<option value="${day}">${day}</option>`).join(''));
    content = content.replace('{MONTHS}', months.map((month, index) => `<option value="${index + 1}">${month}</option>`).join(''));
    content = content.replace('{YEARS}', years.map((year) => `<option value="${year}">${year}</option>`).join(''));
   }
-  const modwin = qs('#modal-win');
+  const modwin = this.qs('#modal-win');
   modwin.style.display = 'flex';
   modwin.querySelector('#modal-content').innerHTML = content;
   makeDraggable(modwin.querySelector('#modal-content'));
   setTimeout(async () => {
    capt = await generateCaptcha();
-   const imgElement = qs('#captcha-container');
+   const imgElement = this.qs('#captcha-container');
    imgElement.style.backgroundColor = 'red';
    imgElement.src = capt.image;
-   const cid = qs('#cid');
+   const cid = this.qs('#cid');
    cid.value = capt.capid;
   });
  }
 
  closeModalN() {
-  qs('#modal-win').style.display = 'none';
+  this.qs('#modal-win').style.display = 'none';
  }
 
  async regenCaptcha() {
   const capt = await generateCaptcha();
-  const imgElement = qs('#captcha-container');
+  const imgElement = this.qs('#captcha-container');
   imgElement.style.backgroundColor = 'red';
   imgElement.src = capt.image;
-  const cid = qs('#cid');
+  const cid = this.qs('#cid');
   cid.value = capt.capid;
  }
 
  closeLoginModal() {
-  qs('#login_modal').style.display = 'none';
+  this.qs('#login_modal').style.display = 'none';
  }
 }
