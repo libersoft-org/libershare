@@ -287,7 +287,8 @@ input[type='file'] {
  padding: 0.9375rem 0.625rem;
  color: var(--secondary-color);
  box-sizing: border-box;
- background-color: #fff;
+ background: url('../img/background.svg') repeat;
+ background-size: 15rem;
 
  & .button {
   margin-right: 0.625rem;
