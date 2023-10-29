@@ -143,7 +143,7 @@ class API {
   return false;
  }
 
- async getCategories(params = null) {
+ async getCategories(p = {}) {
   /*
    require_once('./api_functions.php');
    $o = SQLEscape($_GET['o']);
@@ -158,11 +158,11 @@ class API {
   */
   return {
    error: 0,
-   data: await this.data.getCategories(params.o, params.d, params.search, params.count, params.offset)
+   data: await this.data.getCategories(p.o, p.d, p.search, p.count, p.offset)
   };
  }
 
- async getCategoryByID(params = null) {
+ async getCategoryByID(p = {}) {
   /*
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
@@ -172,13 +172,13 @@ class API {
     else echo json_encode(array('error' => 2, 'message' => 'Category doesn\'t exist'));
    } else echo json_encode(array('error' => 1, 'message' => 'Category ID is empty'));
   */
-  if (params.id == null || params.id == '') return { error: 1, message: 'Category ID is empty' };
-  const res = await this.data.getCategoryByID(params.id);
+  if (p.id == null || p.id == '') return { error: 1, message: 'Category ID is empty' };
+  const res = await this.data.getCategoryByID(p.id);
   if (res.length == 0) return { error: 2, message: 'Category does not exist' };
   else return { error: 0, data: res };
  }
 
- async getCategoryByLink(params = null) {
+ async getCategoryByLink(p = {}) {
   /*
    require_once('./api_functions.php');
    $link = SQLEscape($_GET['link']);
@@ -188,13 +188,13 @@ class API {
     else echo json_encode(array('error' => 2, 'message' => 'Category doesn\'t exist'));
    } else echo json_encode(array('error' => 1, 'message' => 'Category link is empty'));
   */
-  if (params.link == null || params.link == '') return { error: 1, message: 'Category link is empty' };
-  const res = await this.data.getCategoryByLink(params.link);
+  if (p.link == null || p.link == '') return { error: 1, message: 'Category link is empty' };
+  const res = await this.data.getCategoryByLink(p.link);
   if (res.length == 0) return { error: 2, message: 'Category does not exist' };
   else return { error: 0, data: res };
  }
 
- async getFileByID(params = null) {
+ async getFileByID(p = {}) {
   /*
    require_once('../settings.php');
    require_once('./api_functions.php');
@@ -208,13 +208,13 @@ class API {
     } else echo json_encode(array('error' => 2, 'message' => 'File doesn\'t exist'));
    } else echo json_encode(array('error' => 1, 'message' => 'File ID is empty'));
   */
-  if (params.id == null || params.id == '') return { error: 1, message: 'File ID is empty' };
-  const res = await data.getFileByID(params.id);
+  if (p.id == null || p.id == '') return { error: 1, message: 'File ID is empty' };
+  const res = await data.getFileByID(p.id);
   if (res.length == 0) return { error: 2, message: 'File does not exist' };
   else return { error: 0, data: res };
  }
 
- async getFile(params = null) {
+ async getFile(p = {}) {
   /*
    require_once('../settings.php');
    require_once('./api_functions.php');
@@ -228,8 +228,8 @@ class API {
     } else echo json_encode(array('error' => 2, 'message' => 'File doesn\'t exist'));
    } else echo json_encode(array('error' => 1, 'message' => 'File ID is empty'));
   */
-  if (params.id == null || params.id == '') return { error: 1, message: 'File ID is empty' };
-  const res = await data.getFile(params.id);
+  if (p.id == null || p.id == '') return { error: 1, message: 'File ID is empty' };
+  const res = await data.getFile(p.id);
   if (res.length != 1) return { error: 2, message: 'File does not exist' };
   else {
    res[0].type = this.getMimeType(path + '/' + res[0].name);
@@ -237,7 +237,7 @@ class API {
   }
  }
 
- async getFiles(params = null) {
+ async getFiles(p = {}) {
   /*
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
@@ -259,13 +259,13 @@ class API {
    $sql = 'SELECT f.id, f.name, f.filename, p.id AS product_id, p.name AS product_name, p.link AS product_link, f.size, f.playable, f.ip, (SELECT COUNT(*) FROM file_downloads WHERE id_file = f.id) AS downloads, (SELECT COUNT(DISTINCT session) FROM file_downloads WHERE id_file = f.id) AS downloads_by_session, (SELECT COUNT(DISTINCT ip) FROM file_downloads WHERE id_file = f.id) AS downloads_by_ip, (SELECT COUNT(*) FROM file_plays WHERE id_file = f.id) AS plays, (SELECT COUNT(DISTINCT session) FROM file_plays WHERE id_file = f.id) AS plays_by_session, (SELECT COUNT(DISTINCT ip) FROM file_plays WHERE id_file = f.id) AS plays_by_ip, f.created FROM file f, product p WHERE f.id_product = p.id' . ($id != '' ? ' AND f.id_product = "' . $id . '"' : '') . ($p == '1' || $p == '2' ? ' AND f.playable = "' . ($p == 1 ? '1' : '0') . '"' : '') . ($search != '' ? ' AND MATCH(f.filename) AGAINST ("' . $search .'")' : '') . ($search == '' ? ' ORDER BY ' . ($o != '' ? $o : 'f.created') . ' ' . ($d == 'asc' ? 'ASC' : 'DESC') . ', f.id ' . ($d == 'asc' ? 'ASC' : 'DESC') : '') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
-  if (params.id_product == null || params.id_product == '') return { error: 1, message: 'Product ID is empty' };
-  if (!(await this.data.getProductExists(params.id_product))) return { error: 2, message: 'Product does not exist' };
-  const res = await this.data.getFiles(params.id_product, params.o, params.d, params.p, params.search, params.count, params.offset);
+  if (p.id_product == null || p.id_product == '') return { error: 1, message: 'Product ID is empty' };
+  if (!(await this.data.getProductExists(p.id_product))) return { error: 2, message: 'Product does not exist' };
+  const res = await this.data.getFiles(p.id_product, p.o, p.d, p.p, p.search, p.count, p.offset);
   return { error: 0, data: res };
  }
 
- async getForumThreads(params = null) {
+ async getForumThreads(p = {}) {
   /*
    require_once('./api_functions.php');
    $o = SQLEscape($_GET['o']);
@@ -277,11 +277,11 @@ class API {
    $sql = 'SELECT t.id, t.id_users, u.username, u.sex, t.topic, (SELECT COUNT(*) FROM forum_post WHERE id_forum_thread = t.id) AS posts_count, DATE_FORMAT(t.created , "%e.%c.%Y %H:%i:%s") AS created FROM forum_thread t, users u WHERE u.id = t.id_users ORDER BY ' . ($o != '' ? $o : 't.created') . ' ' . ($d == 'asc' ? 'ASC' : 'DESC') . ', id ' . ($d == 'asc' ? 'ASC' : 'DESC') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
-  const res = await this.data.getForumThreads(params.o, params.d, params.count, params.offset);
+  const res = await this.data.getForumThreads(p.o, p.d, p.count, p.offset);
   return { error: 0, data: res };
  }
 
- async getForumThread(params = null) {
+ async getForumThread(p = {}) {
   /*
    require_once('./api_functions.php');
    $sql = 'SELECT t.id, t.id_users, u.username, u.sex, t.topic, t.body, DATE_FORMAT(t.created , "%e.%c.%Y %H:%i:%s") AS created FROM forum_thread t, users u WHERE u.id = t.id_users AND t.id = "' . SQLEscape($_GET['id']) . '"';
@@ -289,7 +289,7 @@ class API {
   */
  }
 
- async getForumPosts(params = null) {
+ async getForumPosts(p = {}) {
   /*
    require_once('./api_functions.php');
    $sql = 'SELECT p.id, p.id_users, u.username, u.sex, p.body, DATE_FORMAT(p.created , "%e.%c.%Y %H:%i:%s") AS created FROM forum_post p, users u WHERE u.id = p.id_users AND id_forum_thread = "' . SQLEscape($_GET['id']) . '" ORDER BY p.created ASC';
@@ -297,7 +297,7 @@ class API {
   */
  }
 
- async getLogin(params = null) {
+ async getLogin(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -336,7 +336,7 @@ class API {
   */
  }
 
- async getProducts(params = null) {
+ async getProducts(p = {}) {
   /*
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
@@ -389,14 +389,15 @@ class API {
      . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
-  if (params.id_category != null && params.id_category != '' && params.id_category != 0) {
-   if (!(await this.data.getCategoryExists(params.id_category))) return { error: 1, message: 'Category does not exist' };
+  //if (!'id_category' in p) p.id_category = null;
+  if (p.id_category && p.id_category != 0) {
+   if (!(await this.data.getCategoryExists(p.id_category))) return { error: 1, message: 'Category does not exist' };
   }
-  const res = await this.data.getProducts(params.id_category, params.o, params.d, params.h, params.a, params.i, params.search, params.count, params.offset);
+  const res = await this.data.getProducts(p.id_category, p.o, p.d, p.h, p.a, p.i, p.search, p.count, p.offset);
   return { error: 0, data: res };
  }
 
- async getProduct(params = null) {
+ async getProduct(p = {}) {
   /*
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
@@ -423,11 +424,11 @@ class API {
     else echo json_encode(array('error' => 2, 'message' => 'Product doesn\'t exist'));
    } else echo json_encode(array('error' => 1, 'message' => 'Product ID is empty'));
   */
-  const res = await this.data.getProduct(params.id, params.hidden);
+  const res = await this.data.getProduct(p.id, p.hidden);
   return { error: 0, data: res };
  }
 
- async getProductsAutoComplete(params = null) {
+ async getProductsAutoComplete(p = {}) {
   /*
    require_once('./api_functions.php');
    $search = SQLEscape($_GET['search']);
@@ -443,7 +444,7 @@ class API {
   */
  }
 
- async getProductsInfo(params = null) {
+ async getProductsInfo(p = {}) {
   /*
    require_once('./api_functions.php');
    echo SQL2JSON('
@@ -466,7 +467,7 @@ class API {
   */
  }
 
- async getUploads(params = null) {
+ async getUploads(p = {}) {
   /*
    require_once('./api_functions.php');
    $o = SQLEscape($_GET['o']);
@@ -493,11 +494,11 @@ class API {
     . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
-  const res = await this.data.getUploads(params.o, params.d, params.count, params.offset, params.search);
+  const res = await this.data.getUploads(p.o, p.d, p.count, p.offset, p.search);
   return { error: 0, data: res };
  }
 
- async getUploadsInfo(params = null) {
+ async getUploadsInfo(p = {}) {
   /*
    require_once('./api_functions.php');
    echo SQL2JSON('
@@ -511,7 +512,7 @@ class API {
   */
  }
 
- async getUpload(params = null) {
+ async getUpload(p = {}) {
   /*
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
@@ -523,7 +524,7 @@ class API {
   */
  }
 
- async getUploadByID(params = null) {
+ async getUploadByID(p = {}) {
   /*
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
@@ -547,7 +548,7 @@ class API {
   */
  }
 
- async setCategoryVisit(params = null) {
+ async setCategoryVisit(p = {}) {
   /*
   if (session_status() == PHP_SESSION_NONE) session_start();
   require_once('api_functions.php');
@@ -563,7 +564,7 @@ class API {
   */
  }
 
- async setContact(params = null) {
+ async setContact(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -624,7 +625,7 @@ class API {
   */
  }
 
- async setFileDownload(params = null) {
+ async setFileDownload(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -633,7 +634,7 @@ class API {
   */
  }
 
- async setFilePlay(params = null) {
+ async setFilePlay(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -647,7 +648,7 @@ class API {
   */
  }
 
- async setFileWebPlay(params = null) {
+ async setFileWebPlay(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -661,7 +662,7 @@ class API {
   */
  }
 
- async setForumThreadAdd(params = null) {
+ async setForumThreadAdd(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -686,7 +687,7 @@ class API {
   */
  }
 
- async setForumPostAdd(params = null) {
+ async setForumPostAdd(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -712,7 +713,7 @@ class API {
   */
  }
 
- async setProductVisit(params = null) {
+ async setProductVisit(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -725,7 +726,7 @@ class API {
   */
  }
 
- async setRegistration(params = null) {
+ async setRegistration(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -763,26 +764,25 @@ class API {
     } else echo json_encode(array('error' => 2, 'message' => 'User name must be 3 to 24 characters long and can contain only upper and lower case letters and numbers!'));
    } else echo json_encode(array('error' => 1, 'message' => 'Wrong recaptcha!'));
   */
-  console.log(params);
-  if (!this.validateCaptcha(params.cid, params.captcha)) return { error: 1, message: 'Wrong captcha!' };
-  return await this.data.setRegistration(params);
+  if (!this.validateCaptcha(p.cid, p.captcha)) return { error: 1, message: 'Wrong captcha!' };
+  return await this.data.setRegistration(p);
  }
 
- async validateLogin(params) {
-  if (!this.validateCaptcha(params.cid, params.captcha)) return { error: 1, message: 'Wrong captcha!' };
-  const res = await this.data.validateLogin(params);
+ async validateLogin(p = {}) {
+  if (!this.validateCaptcha(p.cid, p.captcha)) return { error: 1, message: 'Wrong captcha!' };
+  const res = await this.data.validateLogin(p);
   if (res.error) return res;
   return { error: 0, data: res.data };
  }
 
- async isValidSession(params) {
+ async isValidSession(p = {}) {
   // Existence check of sessionGuid in database
-  const resp = await this.data.isValidSession(params.sessionguid);
+  const resp = await this.data.isValidSession(p.sessionguid);
   if (!resp) return { error: 1, message: 'Session is not valid' };
-  return { error: 0, data: params.sessionguid };
+  return { error: 0, data: p.sessionguid };
  }
 
- async setRegistrationConfirmation(params = null) {
+ async setRegistrationConfirmation(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -795,7 +795,7 @@ class API {
   */
  }
 
- async setSearch(params = null) {
+ async setSearch(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -803,7 +803,7 @@ class API {
   */
  }
 
- async setUpload(params = null) {
+ async setUpload(p = {}) {
   /*
    require_once('api_functions.php');
    require_once('../settings.php');
@@ -862,7 +862,7 @@ class API {
   */
  }
 
- async setUploadDownload(params = null) {
+ async setUploadDownload(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -871,7 +871,7 @@ class API {
   */
  }
 
- async getAdminAdmins(params = null) {
+ async getAdminAdmins(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -881,7 +881,7 @@ class API {
   */
  }
 
- async getAdminLog(params = null) {
+ async getAdminLog(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -898,7 +898,7 @@ class API {
   */
  }
 
- async getAdminLogin(params = null) {
+ async getAdminLogin(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -923,7 +923,7 @@ class API {
   */
  }
 
- async getAdminSearchStats(params = null) {
+ async getAdminSearchStats(p = {}) {
   /*
    require_once('./api_functions.php');
    $o = SQLEscape($_GET['o']);
@@ -937,7 +937,7 @@ class API {
   */
  }
 
- async setAdminCategoryDelete(params = null) {
+ async setAdminCategoryDelete(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -963,7 +963,7 @@ class API {
   */
  }
 
- async setAdminCategoryEdit(params = null) {
+ async setAdminCategoryEdit(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1000,7 +1000,7 @@ class API {
   */
  }
 
- async setAdminCategoryIconDelete(params = null) {
+ async setAdminCategoryIconDelete(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1021,7 +1021,7 @@ class API {
   */
  }
 
- async setAdminCategoryAdd(params = null) {
+ async setAdminCategoryAdd(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1055,7 +1055,7 @@ class API {
   */
  }
 
- async setAdminDiffsDeleteFilesDB(params = null) {
+ async setAdminDiffsDeleteFilesDB(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1073,7 +1073,7 @@ class API {
   */
  }
 
- async setAdminDiffsDeleteFilesFS(params = null) {
+ async setAdminDiffsDeleteFilesFS(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1095,7 +1095,7 @@ class API {
   */
  }
 
- async setAdminDiffsDeleteUploadsDB(params = null) {
+ async setAdminDiffsDeleteUploadsDB(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1113,7 +1113,7 @@ class API {
   */
  }
 
- async setAdminDiffsDeleteUploadsFS(params = null) {
+ async setAdminDiffsDeleteUploadsFS(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1134,7 +1134,7 @@ class API {
   */
  }
 
- async setAdminFileDelete(params = null) {
+ async setAdminFileDelete(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1158,7 +1158,7 @@ class API {
   */
  }
 
- async setAdminFileEdit(params = null) {
+ async setAdminFileEdit(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1181,7 +1181,7 @@ class API {
   */
  }
 
- async setAdminLog(params = null) {
+ async setAdminLog(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1189,7 +1189,7 @@ class API {
   */
  }
 
- async setAdminProductDelete(params = null) {
+ async setAdminProductDelete(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1218,7 +1218,7 @@ class API {
   */
  }
 
- async setAdminProductEdit(params = null) {
+ async setAdminProductEdit(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1261,7 +1261,7 @@ class API {
   */
  }
 
- async setAdminProductImageDelete(params = null) {
+ async setAdminProductImageDelete(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1284,7 +1284,7 @@ class API {
   */
  }
 
- async setAdminProductAdd(params = null) {
+ async setAdminProductAdd(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1323,7 +1323,7 @@ class API {
   */
  }
 
- async setAdminUploadDelete(params = null) {
+ async setAdminUploadDelete(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1345,7 +1345,7 @@ class API {
   */
  }
 
- async setAdminUploadEdit(params = null) {
+ async setAdminUploadEdit(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1363,7 +1363,7 @@ class API {
   */
  }
 
- async setAdminUploadMove(params = null) {
+ async setAdminUploadMove(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');

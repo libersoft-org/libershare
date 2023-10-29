@@ -45,32 +45,31 @@ async function getPageNews() {
 }
 
 async function getPageCategories() {
- const image_default = 'img/item-default.webp'; // TODO: no mention - why?
  const temp = await f.getFileContent('html/categories-item.html');
  const cats = await f.getAPI('get_categories');
- let prods_count = 0;
+ let prodsCount = 0;
  let crows = '';
- for (let i = 0; i < cats.data.length; i++) {
-  if (cats.data[i].products_count - cats.data[i].products_count_hidden !== 0) {
-   let imgee = image_default;
-   if (cats.data[i].image) imgee = `img/categories/${cats.data[i].image}`;
-   const crow = f.translate(temp, {
-    '{LINK}': cats.data[i].link,
-    '{NAME}': cats.data[i].name,
-    '{IMAGE}': imgee,
-    '{COUNT}': cats.data[i].products_count - cats.data[i].products_count_hidden
+ for (const cat of cats.data) {
+  const prodCount = cat.products_count - cat.products_count_hidden;
+  if (prodCount != 0) {
+   let img = 'img/item-default.webp';
+   if (cat.image) img = 'img/categories/' + cat.image;
+   crows += f.translate(temp, {
+    '{LINK}': cat.link,
+    '{NAME}': cat.name,
+    '{IMAGE}': img,
+    '{COUNT}': prodCount
    });
-   prods_count += cats.data[i].products_count - cats.data[i].products_count_hidden;
-   crows += crow;
+   prodsCount += prodCount;
   }
  }
- let all = f.translate(temp, {
-  '{LINK}': 'all',
-  '{NAME}': 'All',
-  '{IMAGE}': 'img/item-all.webp',
-  '{COUNT}': prods_count
- });
- f.qs('#content .categories .items').innerHTML = all + crows;
+ f.qs('#content .categories .items').innerHTML =
+  f.translate(temp, {
+   '{LINK}': 'all',
+   '{NAME}': 'All',
+   '{IMAGE}': 'img/item-all.webp',
+   '{COUNT}': prodsCount
+  }) + crows;
  f.qs('#content .loader').remove();
 }
 
@@ -198,6 +197,29 @@ async function getPageUpload() {
  f.qs('#content .files').innerHTML = rows;
 }
 
+async function getLoginModal(type) {
+ let content;
+ if (type === 'login') content = await f.getFileContent('html/login.html');
+ else if (type === 'registration') {
+  content = await f.getFileContent('html/registration.html');
+  content = content.replace('{DAYS}', days.map((day) => `<option value="${day}">${day}</option>`).join(''));
+  content = content.replace('{MONTHS}', months.map((month, index) => `<option value="${index + 1}">${month}</option>`).join(''));
+  content = content.replace('{YEARS}', years.map((year) => `<option value="${year}">${year}</option>`).join(''));
+ }
+ const modwin = f.qs('#modal-win');
+ modwin.style.display = 'flex';
+ modwin.querySelector('#modal-content').innerHTML = content;
+ makeDraggable(modwin.querySelector('#modal-content'));
+ setTimeout(async () => {
+  capt = await generateCaptcha();
+  const imgElement = f.qs('#captcha-container');
+  imgElement.style.backgroundColor = 'red';
+  imgElement.src = capt.image;
+  const cid = f.qs('#cid');
+  cid.value = capt.capid;
+ });
+}
+
 function toggleLoginRegister(mode) {
  const modalTitle = f.qs('.modal-title');
  const llog = f.qs('.l-log');
@@ -214,6 +236,18 @@ function toggleLoginRegister(mode) {
   llog.style.display = 'block';
   lreg.style.display = 'none';
  }
+}
+
+function openLoginModal() {
+ f.qs('#login_modal').style.display = 'block';
+}
+
+function closeLoginModal() {
+ f.qs('#login_modal').style.display = 'none';
+}
+
+function closeModalN() {
+ f.qs('#modal-win').style.display = 'none';
 }
 
 function logout() {

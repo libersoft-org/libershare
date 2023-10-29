@@ -75,22 +75,22 @@ class Data {
     (SELECT COUNT(*) FROM products WHERE id_categories = categories.id AND hidden = 1) AS products_count_hidden,
     created
    FROM categories
-   ${search != null && search != '' ? 'WHERE MATCH(name) AGAINST (?) ' : ''}
-   ORDER BY ${o != null && o != '' ? o : 'created'} ${d ? 'DESC' : 'ASC'}, id ${d ? 'DESC' : 'ASC'}
-   ${count != null && count != '' && offset != null && offset != '' ? 'LIMIT ? OFFSET ?' : ''}
+   ${search ? 'WHERE MATCH(name) AGAINST (?) ' : ''}
+   ORDER BY ${o ? o : 'created'} ${o && d ? 'DESC' : 'ASC'}, id ${d ? 'DESC' : 'ASC'}
+   ${count && offset ? 'LIMIT ? OFFSET ?' : ''}
   `;
   const params = [];
-  if (search != null && search != '') params.push(search);
-  if (count != null && count != '' && offset != null && offset != '') params.push(count, offset);
+  if (search) params.push(search);
+  if (count && offset) params.push(count, offset);
   return await this.db.query(query, params);
  }
 
  /* TODO: stats for all categories
-   (SELECT SUM((SELECT SUM(size) FROM files WHERE id_products = products.id)) FROM products WHERE id_categories = categories.id) AS size,
-   (SELECT COUNT(*) FROM categories_visits WHERE id_categories = categories.id) AS visits,
-   (SELECT COUNT(DISTINCT session) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_session,
-   (SELECT COUNT(DISTINCT ip) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_ip,
-   */
+  (SELECT SUM((SELECT SUM(size) FROM files WHERE id_products = products.id)) FROM products WHERE id_categories = categories.id) AS size,
+  (SELECT COUNT(*) FROM categories_visits WHERE id_categories = categories.id) AS visits,
+  (SELECT COUNT(DISTINCT session) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_session,
+  (SELECT COUNT(DISTINCT ip) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_ip,
+ */
 
  async getCategoryByID(id) {
   return await this.db.query('SELECT id, name, link, image, created FROM categories WHERE id = ?', [id]);

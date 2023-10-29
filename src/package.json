@@ -1,11 +1,9 @@
 {
  "dependencies": {
-  "canvas": "*",
+  "express": "*",
   "mysql2": "*",
-  "prettier": "*",
   "crypto": "*",
-  "parse-multipart-data": "*",
-  "path": "*"
+  "prettier": "*"
  },
  "scripts": {
   "format": "prettier --write \"**/*.{js,ts,html,css}\""

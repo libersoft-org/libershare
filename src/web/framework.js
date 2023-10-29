@@ -7,18 +7,13 @@ class Framework {
  }
 
  async init() {
-  const pg = location.pathname.substring(location.pathname.lastIndexOf('/') + 1);
+  const getPath = () => location.pathname.substring(location.pathname.lastIndexOf('/') + 1);
   this.pages = JSON.parse(await this.getFileContent('json/pages.json'));
   this.getMenu();
-  this.getReload(pg);
-  window.addEventListener('popstate', async function (e) {
-   const currentPage = location.pathname.substring(location.pathname.lastIndexOf('/') + 1);
-   this.getReload(currentPage);
-  });
+  this.getReload(getPath());
+  window.addEventListener('popstate', () => this.getReload(getPath()));
   this.qs('.modal-overlay').addEventListener('click', this.closeModalN);
-  this.qs('#modal-content').addEventListener('click', function (event) {
-   event.stopPropagation();
-  });
+  this.qs('#modal-content').addEventListener('click', (event) => event.stopPropagation());
  }
 
  async getMenu() {
@@ -28,8 +23,7 @@ class Framework {
  }
 
  menu() {
-  if (this.menuOpened) menuClose();
-  else menuOpen();
+  this.menuOpened ? this.menuClose() : this.menuOpen();
  }
 
  menuClose() {
@@ -49,7 +43,7 @@ class Framework {
  }
 
  async getReload(page) {
-  window.history.replaceState('', '', page == '' ? '' : page);
+  window.history.replaceState('', '', page == '' ? '/' : page);
   await f.getPageContent(page);
  }
 
@@ -82,6 +76,8 @@ class Framework {
    content = await this.getFileContent('html/notfound.html');
   }
   this.qs('#content').innerHTML = content;
+
+  // TODO: move this to script.js:
   if (page === 'news') await getPageNews();
   else if (page === 'categories') await getPageCategories();
   else if (page == 'upload') await getPageUpload();
@@ -105,49 +101,38 @@ class Framework {
   const sess = localStorage.getItem('libershare_session_guid');
   if (sess && sess.length > 16) {
    this.qs('.menu-username').textContent = localStorage.getItem('libershare_username');
-   this.qsa('.need-login').forEach((element) => {
-    element.classList.add('hidden-important');
-    element.classList.remove('flex-important');
+   this.qsa('.need-login').forEach((el) => {
+    el.classList.add('hidden-important');
+    el.classList.remove('flex-important');
    });
-   this.qsa('.need-logout').forEach((element) => {
-    element.classList.remove('hidden-important');
-    element.classList.add('flex-important');
+   this.qsa('.need-logout').forEach((el) => {
+    el.classList.remove('hidden-important');
+    el.classList.add('flex-important');
    });
   } else {
-   this.qsa('.need-login').forEach((element) => {
-    element.classList.remove('hidden-important');
-    element.classList.add('flex-important');
+   this.qsa('.need-login').forEach((el) => {
+    el.classList.remove('hidden-important');
+    el.classList.add('flex-important');
    });
-   this.qsa('.need-logout').forEach((element) => {
-    element.classList.add('hidden-important');
-    element.classList.remove('flex-important');
+   this.qsa('.need-logout').forEach((el) => {
+    el.classList.add('hidden-important');
+    el.classList.remove('flex-important');
    });
    this.qs('.menu-username').textContent = '';
   }
  }
 
  async getFileContent(file) {
-  const content = await fetch(file, { headers: { 'cache-control': 'no-cache' } });
-  return content.text();
+  return (await fetch(file, { headers: { 'cache-control': 'no-cache' } })).text();
  }
 
  async getAPI(name, body = null) {
-  let post;
-  if (body != null) {
-   post = {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-   };
-  } else {
-   post = {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' }
-   };
-  }
-  const res = await fetch('api/' + name, post);
-  if (res.ok) return await res.json();
-  else return false;
+  const res = await fetch('api/' + name, {
+   method: 'POST',
+   headers: { 'Content-Type': 'application/json' },
+   body: body && JSON.stringify(body)
+  });
+  return res.ok ? await res.json() : false;
  }
 
  async getModal(title, body) {
@@ -161,31 +146,27 @@ class Framework {
   this.qs('.modal').remove();
  }
 
- getLoader() {
-  return '<div class="loader"></div>';
- }
-
- escapeHTML(text) {
-  let map = {
-   '&': '&amp;',
-   '<': '&lt;',
-   '>': '&gt;',
-   '"': '&quot;',
-   "'": '&#039;'
-  };
-  return text.replace(/[&<>"']/g, function (m) {
-   return map[m];
+ makeDraggable(modal) {
+  let isDragging = false;
+  let offsetX, offsetY;
+  const header = modal.querySelector('.modal-header');
+  header.addEventListener('mousedown', (e) => {
+   isDragging = true;
+   offsetX = e.clientX - modal.getBoundingClientRect().left;
+   offsetY = e.clientY - modal.getBoundingClientRect().top;
   });
- }
-
- getHumanSize(bytes) {
-  const type = ['', 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y'];
-  let i = 0;
-  while (bytes >= 1024) {
-   bytes /= 1024;
-   i++;
-  }
-  return Math.round(bytes * 100) / 100 + ' ' + type[i] + 'B';
+  document.addEventListener('mousemove', (e) => {
+   if (!isDragging) return;
+   let top = e.clientY - offsetY;
+   let left = e.clientX - offsetX;
+   left = Math.max(left, 0);
+   top = Math.max(top, 0);
+   left = Math.min(left, window.innerWidth - modal.offsetWidth);
+   top = Math.min(top, window.innerHeight - modal.offsetHeight);
+   modal.style.left = left + 'px';
+   modal.style.top = top + 'px';
+  });
+  document.addEventListener('mouseup', () => (isDragging = false));
  }
 
  translate(template, dictionary) {
@@ -201,12 +182,17 @@ class Framework {
   return document.querySelectorAll(query);
  }
 
+ escapeHTML(text) {
+  let map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+  return text.replace(/[&<>"']/g, (m) => map[m]);
+ }
+
+ // TODO: use getAPI instead of fetch:
  async generateCaptcha() {
   try {
-   const response = await fetch('/api/generate_captcha', { method: 'GET' });
+   const response = await fetch('/api/generate_captcha');
    if (!response.ok) throw new Error('Network response was not OK');
-   const data = await response.json();
-   return data;
+   return await response.json();
   } catch (error) {
    return null;
   }
@@ -215,73 +201,13 @@ class Framework {
  verifyCaptcha() {
   const userResponse = this.qs('#captcha-input').value;
   const captchaText = this.qs('#captcha-container canvas').getAttribute('data-captcha');
-  if (userResponse === captchaText) alert('CAPTCHA je správná!');
+  if (userResponse === captchaText) alert('CAPTCHA is OK!');
   else {
-   alert('CAPTCHA je nesprávná. Zkuste to znovu.');
+   alert('Wrong captcha.');
    this.qs('#captcha-input').value = '';
    this.qs('#captcha-container').innerHTML = '';
    generateCaptcha();
   }
- }
-
- openLoginModal() {
-  const modal = this.qs('#login_modal');
-  modal.style.display = 'block';
- }
-
- makeDraggable(modal) {
-  let isDragging = false;
-  let offsetX, offsetY;
-  const header = modal.querySelector('.modal-header');
-
-  header.addEventListener('mousedown', (e) => {
-   isDragging = true;
-   offsetX = e.clientX - modal.getBoundingClientRect().left;
-   offsetY = e.clientY - modal.getBoundingClientRect().top;
-  });
-
-  document.addEventListener('mousemove', (e) => {
-   if (!isDragging) return;
-   let top = e.clientY - offsetY;
-   let left = e.clientX - offsetX;
-   left = Math.max(left, 0);
-   top = Math.max(top, 0);
-   left = Math.min(left, window.innerWidth - modal.offsetWidth);
-   top = Math.min(top, window.innerHeight - modal.offsetHeight);
-   modal.style.left = left + 'px';
-   modal.style.top = top + 'px';
-  });
-
-  document.addEventListener('mouseup', () => {
-   isDragging = false;
-  });
- }
-
- async openModal(type) {
-  let content;
-  if (type === 'login') content = await this.getFileContent('html/login.html');
-  else if (type === 'registration') {
-   content = await this.getFileContent('html/registration.html');
-   content = content.replace('{DAYS}', days.map((day) => `<option value="${day}">${day}</option>`).join(''));
-   content = content.replace('{MONTHS}', months.map((month, index) => `<option value="${index + 1}">${month}</option>`).join(''));
-   content = content.replace('{YEARS}', years.map((year) => `<option value="${year}">${year}</option>`).join(''));
-  }
-  const modwin = this.qs('#modal-win');
-  modwin.style.display = 'flex';
-  modwin.querySelector('#modal-content').innerHTML = content;
-  makeDraggable(modwin.querySelector('#modal-content'));
-  setTimeout(async () => {
-   capt = await generateCaptcha();
-   const imgElement = this.qs('#captcha-container');
-   imgElement.style.backgroundColor = 'red';
-   imgElement.src = capt.image;
-   const cid = this.qs('#cid');
-   cid.value = capt.capid;
-  });
- }
-
- closeModalN() {
-  this.qs('#modal-win').style.display = 'none';
  }
 
  async regenCaptcha() {
@@ -293,7 +219,17 @@ class Framework {
   cid.value = capt.capid;
  }
 
- closeLoginModal() {
-  this.qs('#login_modal').style.display = 'none';
+ getHumanSize(bytes) {
+  const type = ['', 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y'];
+  let i = 0;
+  while (bytes >= 1024) {
+   bytes /= 1024;
+   i++;
+  }
+  return Math.round(bytes * 100) / 100 + ' ' + type[i] + 'B';
+ }
+
+ getLoader() {
+  return '<div class="loader"></div>';
  }
 }
