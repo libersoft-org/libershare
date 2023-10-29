@@ -34,7 +34,7 @@ class Common {
     color = '\x1b[31m';
   }
   console.log('\x1b[96m' + date + '\x1b[0m [' + color + typeText + '\x1b[0m] ' + msg);
-  if (this.settings && this.settings.other && this.settings.other.log_to_file) fs.appendFileSync(this.appPath + this.settings.other.log_file, date + ' - ' + typeText + ': ' + msg + os.EOL);
+  if (this.settings && this.settings.other && this.settings.other.log_to_file) fs.appendFileSync(this.appPath + this.settings.other.log_file, date + ' [' + typeText + '] ' + msg + os.EOL);
  }
 
  static getDateTime() {
