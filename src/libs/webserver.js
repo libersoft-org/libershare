@@ -19,7 +19,8 @@ class WebServer {
  // TODO - add HTTPS support, change to something faster, than express:
  async startServer() {
   const app = express();
-  app.use('/api/:name', async (req, res) => res.type('json').send(JSON.stringify(await this.api.processAPI(req.params.name))));
+  app.use(express.json());
+  app.use('/api/:name', async (req, res) => res.type('json').send(JSON.stringify(await this.api.processAPI(req.params.name, req.body))));
   app.use('/img/categories/', express.static(path.join(Common.settings.storage.images + 'categories')));
   app.use('/img/products/', express.static(path.join(Common.settings.storage.images, 'products')));
   app.use('/admin/', express.static(path.join(__dirname, '../web/admin/'), { fallthrough: true }));

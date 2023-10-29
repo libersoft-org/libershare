@@ -188,7 +188,7 @@ class API {
     else echo json_encode(array('error' => 2, 'message' => 'Category doesn\'t exist'));
    } else echo json_encode(array('error' => 1, 'message' => 'Category link is empty'));
   */
-  if (p.link == null || p.link == '') return { error: 1, message: 'Category link is empty' };
+  if (!p.link) return { error: 1, message: 'Category link is empty' };
   const res = await this.data.getCategoryByLink(p.link);
   if (res.length == 0) return { error: 2, message: 'Category does not exist' };
   else return { error: 0, data: res };
