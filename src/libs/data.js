@@ -199,22 +199,22 @@ class Data {
 
  async getProducts(id_category, o, d, h, a, i, search, count, offset) {
   let query = `
-        SELECT
-            p.id,
-            p.name,
-            p.link,
-            p.image,
-            p.image_sm,
-            p.id_categories,
-            c.name AS category_name,
-            c.link AS category_link,
-            (SELECT COUNT(*) FROM files WHERE id_products = p.id) AS files,
-            p.adult,
-            p.hidden,
-            p.created
-        FROM products p, categories c
-        WHERE p.id_categories = c.id
-    `;
+   SELECT
+    p.id,
+    p.name,
+    p.link,
+    p.image,
+    p.image_sm,
+    p.id_categories,
+    c.name AS category_name,
+    c.link AS category_link,
+    (SELECT COUNT(*) FROM files WHERE id_products = p.id) AS files,
+    p.adult,
+    p.hidden,
+    p.created
+   FROM products p, categories c
+   WHERE p.id_categories = c.id
+  `;
 
   let params = [];
 
