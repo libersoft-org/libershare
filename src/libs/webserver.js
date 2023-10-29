@@ -40,7 +40,7 @@ class WebServer {
 
 module.exports = WebServer;
 
-/* OLD Bun.serve only without middleware - DELETE WHEN NOT NEEDED ANYMORE:
+/* OLD Bun.serve (without middleware) - DELETE WHEN NOT NEEDED ANYMORE:
 const multipart = require('parse-multipart-data');
 
 startServer() {
