@@ -27,7 +27,7 @@ class WebServer {
   app.use('/admin/', (req, res) => res.sendFile(path.join(__dirname, '../web/admin/index.html')));
   app.use('/products/:name', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
   app.use('/categories/:name', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
-  app.use('/forum/:thread/:name', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
+  app.use('/forum/:thread/:id', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
   app.use('/', express.static(path.join(__dirname, '../web/frontend'), { fallthrough: true }));
   app.use('/', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
   app.use((req, res) => res.status(404).send('404 Not found'));
