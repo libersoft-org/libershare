@@ -322,17 +322,21 @@ captch .reload-icon {
 
 @media (min-width: 90.0625rem) {
  #menu-mobile {
-  display: none !important;
+  display: none;
  }
 
  #menu-overlay {
-  display: none !important;
+  display: none;
  }
 }
 
 @media (max-width: 90rem) {
  #header .menu-toggler {
   display: block;
+ }
+
+ #menu-desktop .left {
+  display: none;
  }
 }
 

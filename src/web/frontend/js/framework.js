@@ -48,7 +48,7 @@ class Framework {
  }
 
  async getPage(page) {
-  if (this.menuOpened) menuClose();
+  if (this.menuOpened) this.menuClose();
   window.history.pushState('', '', page == '' ? '/' : page);
   await f.getPageContent(page);
  }
