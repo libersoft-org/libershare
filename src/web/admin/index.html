@@ -1,54 +1,35 @@
 <!doctype html>
 <html lang="en">
  <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
-  <title>{product} - {admin-area} - {title}</title>
-  <link rel="icon" href="../favicon.ico" />
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{PRODUCT} - admin area</title>
   <link rel="stylesheet" href="../css/common.css" type="text/css" />
-  <link rel="stylesheet" href="../css/admin.css.bak" type="text/css" />
+  <link rel="stylesheet" href="../css/admin.css" type="text/css" />
+  <link rel="shortcut icon" href="favicon.ico" />
+  <script src="../js/framework.js"></script>
+  <script src="../js/script.js"></script>
  </head>
  <body>
-  <script src="functions.js"></script>
-  <header>
-   <nav class="navbar navbar-expand-xl navbar-toggleable-md navbar-dark bg-admin">
-    <a class="navbar-brand" href="../"><img src="../img/logo.png" class="d-inline-block align-top navbar-logo" alt="{product}" /></a>
-    <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav">
-     <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="navbar-collapse collapse" id="navbarNav">
-     <ul class="navbar-nav">
-      <li class="nav-item">
-       <a class="nav-link{active-status}" href="./"><img src="img/status.svg" class="navbar-icon" alt="Stav" /> Stav</a>
-      </li>
-      <li class="nav-item dropdown">
-       <a class="nav-link dropdown-toggle{active-content}" id="navbarNav" data-toggle="dropdown"><img src="img/content.svg" class="navbar-icon" alt="Stav" /> Obsah</a>
-       <div class="dropdown-menu">
-        <a class="dropdown-item" href="./categories"><img class="navbar-icon" src="img/categories.svg" alt="Kategorie" />&nbsp;&nbsp;Kategorie</a>
-        <a class="dropdown-item" href="./products"><img class="navbar-icon" src="img/products.svg" alt="Produkty" />&nbsp;&nbsp;Produkty</a>
-        <a class="dropdown-item" href="./files"><img class="navbar-icon" src="img/files.svg" alt="Soubory" />&nbsp;&nbsp;Soubory</a>
-        <a class="dropdown-item" href="./uploads"><img class="navbar-icon" src="img/upload.svg" alt="Uploady" />&nbsp;&nbsp;Uploady</a>
-       </div>
-      </li>
-      <li class="nav-item">
-       <a class="nav-link{active-diffs}" href="./diffs"><img src="img/diffs.svg" class="navbar-icon" alt="Rozdíly DB / FS" /> Rozdíly DB / FS</a>
-      </li>
-      <li class="nav-item">
-       <a class="nav-link{active-search}" href="./search"><img src="img/search.svg" class="navbar-icon" alt="Statistika hledání" />Statistika hledání</a>
-      </li>
-     </ul>
-     <ul class="navbar-nav ml-auto">
-      <li class="nav-item">
-       <a class="nav-link{active-log}" href="./log"><img src="img/log.svg" class="navbar-icon" alt="Log" /> Log</a>
-      </li>
-      <li class="nav-item">
-       <a class="nav-link" href="./logout.php"><img src="img/logout.svg" class="navbar-icon" alt="Odhlásit" /> Odhlásit</a>
-      </li>
-     </ul>
-    </div>
-   </nav>
-  </header>
-  <main class="p-3">{content}</main>
-  <footer class="p-3 text-light bg-admin">Copyright &copy; <a href="../">{product}</a>, {year-from} - {year-to}</footer>
+  <div id="header" class="shadow">
+   <a onclick="menu()"><img class="menu-toggler" src="./img/menu.svg" alt="Menu" /></a>
+   <a class="logo" onclick="getPage('')"><img src="img/logo.webp" alt="{PRODUCT}" /></a>
+   <div id="menu-desktop"></div>
+  </div>
+  <div id="menu-mobile" class="shadow"></div>
+  <div id="menu-overlay" onclick="menuClose()"></div>
+
+  <a class="nav-link{active-status}" href="./"><img src="img/status.svg" class="navbar-icon" alt="Stav" />Stav</a>
+  <a class="dropdown-item" href="./categories"><img class="navbar-icon" src="img/categories.svg" alt="Kategorie" />&nbsp;&nbsp;Kategorie</a>
+  <a class="nav-link dropdown-toggle{active-content}" id="navbarNav" data-toggle="dropdown"><img src="img/content.svg" class="navbar-icon" alt="Stav" /> Obsah</a>
+  <a class="dropdown-item" href="./products"><img class="navbar-icon" src="img/products.svg" alt="Produkty" />&nbsp;&nbsp;Produkty</a>
+  <a class="dropdown-item" href="./files"><img class="navbar-icon" src="img/files.svg" alt="Soubory" />&nbsp;&nbsp;Soubory</a>
+  <a class="dropdown-item" href="./uploads"><img class="navbar-icon" src="img/upload.svg" alt="Uploady" />&nbsp;&nbsp;Uploady</a>
+  <a class="nav-link{active-diffs}" href="./diffs"><img src="img/diffs.svg" class="navbar-icon" alt="Rozdíly DB / FS" /> Rozdíly DB / FS</a>
+  <a class="nav-link{active-search}" href="./search"><img src="img/search.svg" class="navbar-icon" alt="Statistika hledání" />Statistika hledání</a>
+  <a class="nav-link{active-log}" href="./log"><img src="img/log.svg" class="navbar-icon" alt="Log" /> Log</a>
+  <a class="nav-link" href="./logout.php"><img src="img/logout.svg" class="navbar-icon" alt="Odhlásit" /> Odhlásit</a>
+
+  <div class="content">{content}</div>
  </body>
 </html>

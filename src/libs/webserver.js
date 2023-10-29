@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
-
 const API = require('./api.js');
 const { Common } = require('./common.js');
 
@@ -17,24 +16,29 @@ class WebServer {
   }
  }
 
- // TODO - add HTTPS support:
+ // TODO - add HTTPS support, change to something faster, than express:
  async startServer() {
   const app = express();
   app.use('/api/:name', async (req, res) => res.type('json').send(JSON.stringify(await this.api.processAPI(req.params.name))));
-  app.use('/img/categories', express.static(path.join(Common.settings.storage.images + 'categories')));
-  app.use('/img/products', express.static(path.join(Common.settings.storage.images, 'products')));
-  app.use('/', express.static(path.join(__dirname, '../web')));
-  app.use('/', express.static(path.join(__dirname, 'web/index.html')));
+  app.use('/img/categories/', express.static(path.join(Common.settings.storage.images + 'categories')));
+  app.use('/img/products/', express.static(path.join(Common.settings.storage.images, 'products')));
+  app.use('/admin/', express.static(path.join(__dirname, '../web/admin/'), { fallthrough: true }));
+  app.use('/admin/', (req, res) => res.sendFile(path.join(__dirname, '../web/admin/index.html')));
+  app.use('/products/:name', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
+  app.use('/categories/:name', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
+  app.use('/', express.static(path.join(__dirname, '../web/frontend'), { fallthrough: true }));
+  app.use('/', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
   app.use((req, res) => res.status(404).send('404 Not found'));
-  app.listen(Common.settings.web.standalone ? Common.settings.web.port : Common.settings.web.socket_path);
-  if (!Common.settings.web.standalone) fs.chmodSync(Common.settings.web.socket_path, '777');
-  Common.addLog('Web server is running on ' + (Common.settings.web.standalone ? 'port: ' + Common.settings.web.port : 'Unix socket: ' + Common.settings.web.socket_path));
+  app.listen(Common.settings.web.standalone ? Common.settings.web.port : Common.settings.web.socket_path, () => {
+   if (!Common.settings.web.standalone) fs.chmodSync(Common.settings.web.socket_path, '777');
+   Common.addLog('Web server is running on ' + (Common.settings.web.standalone ? 'port: ' + Common.settings.web.port : 'Unix socket: ' + Common.settings.web.socket_path));
+  });
  }
 }
 
 module.exports = WebServer;
 
-/* OLD Bun.serve only (DELETE WHEN NOT NEEDED ANYMORE):
+/* OLD Bun.serve only without middleware - DELETE WHEN NOT NEEDED ANYMORE:
 const multipart = require('parse-multipart-data');
 
 startServer() {
