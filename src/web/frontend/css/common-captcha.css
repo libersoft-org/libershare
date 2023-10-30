@@ -1,0 +1,31 @@
+.captch {
+ display: flex;
+ flex-direction: row;
+ align-items: flex-end;
+}
+
+.captch .reload-icon {
+ width: 2rem;
+ height: auto;
+ margin-bottom: 0.5rem;
+ margin-left: 0.25rem;
+ cursor: pointer;
+}
+
+#captcha-container {
+ margin-top: 0.1875rem;
+}
+
+#captcha-container .modal-footer {
+ padding: 0.75rem;
+}
+
+#captcha-container .modal-footer button {
+ font-weight: bold;
+ font-size: 1em;
+ padding: 0.5rem;
+ margin-right: 0.625rem;
+ background-color: var(--primary-color);
+ border-radius: 0.625rem;
+ border: 0.0625rem solid var(--secondary-color);
+}

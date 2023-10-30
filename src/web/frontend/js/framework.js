@@ -206,12 +206,12 @@ class Framework {
    alert('Wrong captcha.');
    this.qs('#captcha-input').value = '';
    this.qs('#captcha-container').innerHTML = '';
-   generateCaptcha();
+   this.generateCaptcha();
   }
  }
 
  async regenCaptcha() {
-  const capt = await generateCaptcha();
+  const capt = await this.generateCaptcha();
   const imgElement = this.qs('#captcha-container');
   imgElement.style.backgroundColor = 'red';
   imgElement.src = capt.image;

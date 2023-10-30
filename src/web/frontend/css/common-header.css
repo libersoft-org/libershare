@@ -1,0 +1,32 @@
+#header {
+ z-index: 100;
+ position: fixed;
+ display: flex;
+ align-items: center;
+ top: 0;
+ padding: 0 0.625rem;
+ gap: 0.625rem;
+ width: calc(100% - 1.25rem);
+ height: var(--header-height);
+ background-color: var(--primary-color);
+}
+
+#header img {
+ height: 1.5rem;
+}
+
+#header .button {
+ display: flex;
+ justify-content: center;
+ align-items: center;
+ padding: 0.5rem;
+ border-radius: 0.625rem;
+ font-weight: bold;
+ background-color: var(--secondary-color);
+ color: #fff;
+}
+
+#header .menu-toggler {
+ display: none;
+ padding: 0.625rem;
+}

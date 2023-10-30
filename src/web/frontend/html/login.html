@@ -12,17 +12,15 @@
       <label>Username: <span class="text-red"></span></label>
       <input type="text" class="form-control" name="username" />
      </div>
-
      <div class="form-group">
       <label>Password: <span class="text-red"></span></label>
       <input type="password" class="form-control" name="password" />
      </div>
-
      <div class="form-group">
       <div id="static-captcha">
        <div class="captch">
         <img id="captcha-container" src="" alt="" />
-        <img class="reload-icon" src="../img/reload.svg" onclick="regenCaptcha()" alt="" />
+        <img class="reload-icon" src="../img/reload.svg" onclick="f.regenCaptcha()" alt="" />
        </div>
        <input type="text" id="cid" name="cid" style="display: none !important" />
        <input type="text" name="captcha" class="form-control" id="captcha-input" placeholder="Enter text from image" />

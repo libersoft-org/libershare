@@ -209,9 +209,9 @@ async function getLoginModal(type) {
  const modwin = f.qs('#modal-win');
  modwin.style.display = 'flex';
  modwin.querySelector('#modal-content').innerHTML = content;
- makeDraggable(modwin.querySelector('#modal-content'));
+ f.makeDraggable(modwin.querySelector('#modal-content'));
  setTimeout(async () => {
-  capt = await generateCaptcha();
+  capt = await f.generateCaptcha();
   const imgElement = f.qs('#captcha-container');
   imgElement.style.backgroundColor = 'red';
   imgElement.src = capt.image;
@@ -238,14 +238,17 @@ function toggleLoginRegister(mode) {
  }
 }
 
+// TODO: unify modals to 1 function only
 function openLoginModal() {
  f.qs('#login_modal').style.display = 'block';
 }
 
+// TODO: unify modals to 1 function only
 function closeLoginModal() {
  f.qs('#login_modal').style.display = 'none';
 }
 
+// TODO: unify modals to 1 function only
 function closeModalN() {
  f.qs('#modal-win').style.display = 'none';
 }
@@ -288,7 +291,7 @@ function submitForm(type) {
   })
   .catch((error) => {
    setTimeout(() => {
-    regenCaptcha();
+    f.regenCaptcha();
    }, 50);
    const el = f.qs(errorElementId);
    el.innerHTML = `${type.charAt(0).toUpperCase() + type.slice(1)} error: ${error.message}`;

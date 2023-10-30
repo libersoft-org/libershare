@@ -1,0 +1,10 @@
+:root {
+ --header-height: 3.125rem;
+ --primary-color: hsl(49, 97%, 53%);
+ --primary-color-lighter: hsl(49, 97%, 80%);
+ --primary-color-light: hsl(49, 97%, 93%);
+ --primary-color-darker: hsl(49, 97%, 46%);
+ --primary-color-dark: hsl(49, 97%, 40%);
+ --secondary-color: hsl(345, 6%, 13%);
+ --secondary-color-light: hsl(345, 6%, 63%);
+}

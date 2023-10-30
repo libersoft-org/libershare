@@ -11,30 +11,17 @@
 <div class="card small center">
  <div class="header">Kontaktní formulář</div>
  <div class="body">
-  <form id="contact">
-   <div class="alert alert-danger" id="contact-error" style="display: none"></div>
-   <div class="alert alert-success" id="contact-success" style="display: none"></div>
-   <div class="form-group">
-    <label>Vaše celé jméno:</label>
-    <input type="text" class="form-control" name="name" />
-   </div>
-   <div class="form-group">
-    <label>Vaše e-mailová adresa:</label>
-    <input type="email" class="form-control" name="email" placeholder="@" />
-   </div>
-   <div class="form-group">
-    <label>Předmět zprávy:</label>
-    <input type="text" class="form-control" name="subject" />
-   </div>
-   <div class="form-group">
-    <label>Text zprávy:</label>
-    <textarea class="form-control" name="body" rows="5"></textarea>
-   </div>
-   <div class="form-group">
-    <label>Potvrzení:</label>
-    <div id="static-captcha"></div>
-   </div>
-   <input type="submit" value="Odeslat" class="btn btn-lg btn-success btn-size" />
-  </form>
+  <div>Name:</div>
+  <input type="text" name="name" />
+  <div>E-mail address:</div>
+  <input type="email" name="email" placeholder="@" />
+  <div>Subject:</div>
+  <input type="text" name="subject" />
+  <div>Message:</div>
+  <textarea name="body" rows="5"></textarea>
+  <div>Confirmation:</div>
+  <div class="captcha"></div>
+  <div class="notice red"><span class="bold">Error</span>: Message cannot be sent!</div>
+  <a class="button">Send</a>
  </div>
 </div>
