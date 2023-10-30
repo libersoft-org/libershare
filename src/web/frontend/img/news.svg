@@ -1,3 +1,19 @@
-<svg aria-hidden="true" data-prefix="fas" data-icon="clock" class="svg-inline--fa fa-clock fa-w-16" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
- <path fill="#231F20" d="M256 8C119 8 8 119 8 256s111 248 248 248 248-111 248-248S393 8 256 8zm57.1 350.1L224.9 294c-3.1-2.3-4.9-5.9-4.9-9.7V116c0-6.6 5.4-12 12-12h48c6.6 0 12 5.4 12 12v137.7l63.5 46.2c5.4 3.9 6.5 11.4 2.6 16.8l-28.2 38.8c-3.9 5.3-11.4 6.5-16.8 2.6z"/>
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 26.4.1, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" id="Vrstva_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 viewBox="0 0 118.7 118.7" style="enable-background:new 0 0 118.7 118.7;" xml:space="preserve">
+<g>
+	<g>
+		<g>
+			<polygon points="71.8,69.4 94.1,59.4 94.1,59.4 94.1,59.4 62.7,45.2 48.5,13.8 34.3,45.2 2.9,59.4 2.9,59.4 2.9,59.4 23.8,68.8 
+				34.3,73.6 39,84 48.5,105 58,84 62.7,73.6 			"/>
+		</g>
+		<g>
+			<polygon points="94.1,43.4 100.9,28.5 115.8,21.7 100.9,15 94.1,0 87.4,15 72.4,21.7 87.4,28.5 			"/>
+		</g>
+		<g>
+			<polygon points="94.1,75.3 87.4,90.3 72.4,97 87.4,103.8 94.1,118.7 100.9,103.8 115.8,97 100.9,90.3 			"/>
+		</g>
+	</g>
+</g>
 </svg>

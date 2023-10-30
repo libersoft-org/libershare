@@ -1,1 +1,11 @@
-<svg aria-hidden="true" data-prefix="fas" data-icon="search" class="svg-inline--fa fa-search fa-w-16" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="white" d="M505 442.7L405.3 343c-4.5-4.5-10.6-7-17-7H372c27.6-35.3 44-79.7 44-128C416 93.1 322.9 0 208 0S0 93.1 0 208s93.1 208 208 208c48.3 0 92.7-16.4 128-44v16.3c0 6.4 2.5 12.5 7 17l99.7 99.7c9.4 9.4 24.6 9.4 33.9 0l28.3-28.3c9.4-9.4 9.4-24.6.1-34zM208 336c-70.7 0-128-57.2-128-128 0-70.7 57.2-128 128-128 70.7 0 128 57.2 128 128 0 70.7-57.2 128-128 128z"></path></svg>
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 26.4.1, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" id="Vrstva_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 viewBox="0 0 118.7 118.7" style="enable-background:new 0 0 118.7 118.7;" xml:space="preserve">
+<g>
+	<path d="M118.7,107.7L91.5,80.5c6.1-8.4,9.8-18.7,9.8-29.8C101.3,22.7,78.6,0,50.6,0C22.7,0,0,22.7,0,50.6
+		c0,27.9,22.7,50.6,50.6,50.6c11.1,0,21.5-3.6,29.8-9.8l27.2,27.2L118.7,107.7z M50.6,85.7c-19.3,0-35-15.7-35-35
+		c0-19.3,15.7-35,35-35s35,15.7,35,35C85.7,70,70,85.7,50.6,85.7z"/>
+	<path d="M38,50.6H22.4c0,15.5,12.7,28.2,28.2,28.2V63.2C43.7,63.2,38,57.6,38,50.6z"/>
+</g>
+</svg>
