@@ -1,11 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Generator: Adobe Illustrator 26.4.1, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
-<svg version="1.1" id="Vrstva_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
-	 viewBox="0 0 118.7 118.7" style="enable-background:new 0 0 118.7 118.7;" xml:space="preserve">
-<g>
-	<path d="M118.7,107.7L91.5,80.5c6.1-8.4,9.8-18.7,9.8-29.8C101.3,22.7,78.6,0,50.6,0C22.7,0,0,22.7,0,50.6
-		c0,27.9,22.7,50.6,50.6,50.6c11.1,0,21.5-3.6,29.8-9.8l27.2,27.2L118.7,107.7z M50.6,85.7c-19.3,0-35-15.7-35-35
-		c0-19.3,15.7-35,35-35s35,15.7,35,35C85.7,70,70,85.7,50.6,85.7z"/>
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 118.7 118.7" style="enable-background:new 0 0 118.7 118.7;" xml:space="preserve">
+	<path d="M118.7,107.7L91.5,80.5c6.1-8.4,9.8-18.7,9.8-29.8C101.3,22.7,78.6,0,50.6,0C22.7,0,0,22.7,0,50.6	c0,27.9,22.7,50.6,50.6,50.6c11.1,0,21.5-3.6,29.8-9.8l27.2,27.2L118.7,107.7z M50.6,85.7c-19.3,0-35-15.7-35-35	c0-19.3,15.7-35,35-35s35,15.7,35,35C85.7,70,70,85.7,50.6,85.7z"/>
 	<path d="M38,50.6H22.4c0,15.5,12.7,28.2,28.2,28.2V63.2C43.7,63.2,38,57.6,38,50.6z"/>
-</g>
 </svg>

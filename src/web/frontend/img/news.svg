@@ -1,19 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Generator: Adobe Illustrator 26.4.1, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
-<svg version="1.1" id="Vrstva_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
-	 viewBox="0 0 118.7 118.7" style="enable-background:new 0 0 118.7 118.7;" xml:space="preserve">
-<g>
-	<g>
-		<g>
-			<polygon points="71.8,69.4 94.1,59.4 94.1,59.4 94.1,59.4 62.7,45.2 48.5,13.8 34.3,45.2 2.9,59.4 2.9,59.4 2.9,59.4 23.8,68.8 
-				34.3,73.6 39,84 48.5,105 58,84 62.7,73.6 			"/>
-		</g>
-		<g>
-			<polygon points="94.1,43.4 100.9,28.5 115.8,21.7 100.9,15 94.1,0 87.4,15 72.4,21.7 87.4,28.5 			"/>
-		</g>
-		<g>
-			<polygon points="94.1,75.3 87.4,90.3 72.4,97 87.4,103.8 94.1,118.7 100.9,103.8 115.8,97 100.9,90.3 			"/>
-		</g>
-	</g>
-</g>
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 118.7 118.7" style="enable-background:new 0 0 118.7 118.7;" xml:space="preserve">
+ <polygon points="71.8,69.4 94.1,59.4 94.1,59.4 94.1,59.4 62.7,45.2 48.5,13.8 34.3,45.2 2.9,59.4 2.9,59.4 2.9,59.4 23.8,68.8 34.3,73.6 39,84 48.5,105 58,84 62.7,73.6"/>
+ <polygon points="94.1,43.4 100.9,28.5 115.8,21.7 100.9,15 94.1,0 87.4,15 72.4,21.7 87.4,28.5"/>
+ <polygon points="94.1,75.3 87.4,90.3 72.4,97 87.4,103.8 94.1,118.7 100.9,103.8 115.8,97 100.9,90.3"/>
 </svg>
