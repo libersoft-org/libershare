@@ -1,25 +1,25 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a href="./?page=products">Produkty</a></li>
- <li class="breadcrumb-item active">Nový</li>
+ <li class="breadcrumb-item"><a href="./?page=products">Products</a></li>
+ <li class="breadcrumb-item active">New</li>
 </ol>
 <div class="card card-sm mb-3 center">
- <div class="card-header bg-admin text-white bold">Nový produkt</div>
+ <div class="card-header bg-admin text-white bold">New product</div>
  <div class="card-body">
-  {error}
+  {ERROR}
   <form enctype="multipart/form-data" action="./product-new.php" method="post">
    <div class="form-group">
-    <label>Název produktu:</label>
-    <input class="form-control" type="text" name="name" id="name" maxlength="255" placeholder="Název produktu" oninput="getLink();" required autofocus />
+    <label>Product name:</label>
+    <input class="form-control" type="text" name="name" id="name" maxlength="255" placeholder="Product name" oninput="getLink();" required autofocus />
    </div>
    <div class="form-group">
-    <label>Odkaz produktu:</label>
-    <input class="form-control" type="text" name="link" id="link" maxlength="255" placeholder="Odkaz produktu" required />
+    <label>Product link:</label>
+    <input class="form-control" type="text" name="link" id="link" maxlength="255" placeholder="Product link" required />
    </div>
    <div class="form-group">
-    <label>Kategorie:</label>
+    <label>Category:</label>
     <select class="form-control" name="id_category" required>
      <option value="">-</option>
-     {categories}
+     {CATEGORIES}
     </select>
    </div>
    <div class="form-group custom-control custom-checkbox">
@@ -31,10 +31,10 @@
     <label class="custom-control-label" for="hidden">Skrytý</label>
    </div>
    <div class="form-group">
-    <label>Obrázek produktu: (JPG / PNG)</label>
+    <label>Product image: (JPG / PNG)</label>
     <input class="form-control-file" type="file" name="image" />
    </div>
-   <input type="submit" value="Vytvořit" class="btn btn-lg btn-primary btn-size btn-block" />
+   <input type="submit" value="Create" class="button" />
   </form>
  </div>
 </div>

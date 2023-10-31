@@ -1,3 +1,58 @@
+.modal {
+ z-index: 200;
+ position: absolute;
+ box-sizing: border-box;
+ top: 50%;
+ left: 50%;
+ max-width: calc(100% - 20px);
+ max-height: calc(100% - 20px);
+ transform: translate(-50%, -50%);
+ border: 1px solid #000000;
+ border-radius: 10px;
+ background-color: #ffffff;
+ overflow: hidden;
+ box-shadow: var(--shadow);
+}
+
+.modal .title {
+ box-sizing: border-box;
+ font-weight: bold;
+ color: #ffffff;
+ background-color: #2a2a2a;
+ overflow: auto;
+}
+
+.modal .title .inside {
+ float: left;
+ padding: 10px;
+}
+
+.modal .title .close {
+ float: right;
+ padding: 10px;
+}
+
+.modal .title .close img {
+ width: 20px;
+ height: 20px;
+}
+
+.modal .body {
+ padding: 10px;
+ overflow-y: scroll;
+}
+
+.modal .body .form-item {
+ width: 100%;
+ margin-bottom: 10px;
+}
+
+.modal .body .error {
+ font-weight: bold;
+ color: #ff0000;
+}
+
+/*
 #login_modal {
  display: none;
  position: fixed;
@@ -205,3 +260,4 @@
 #modal-win button:hover {
  background-color: var(--primary-color-darker);
 }
+*/

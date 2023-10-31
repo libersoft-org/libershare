@@ -1,23 +1,23 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a href="./?page=categories">Kategorie</a></li>
- <li class="breadcrumb-item active">Úprava kategorie</li>
+ <li class="breadcrumb-item"><a href="./?page=categories">Categories</a></li>
+ <li class="breadcrumb-item active">Edit</li>
 </ol>
 <div class="card card-sm mb-3 center">
- <div class="card-header bg-admin text-white bold">Úprava kategorie - {name}</div>
+ <div class="card-header bg-admin text-white bold">Category edit - {NAME}</div>
  <div class="card-body">
-  {error}
+  {ERROR}
   <form enctype="multipart/form-data" action="./category-edit.php" method="post">
    <div class="form-group">
-    <label>Název kategorie:</label>
-    <input class="form-control" type="text" name="name" id="name" maxlength="64" value="{name}" placeholder="Název kategorie" oninput="getLink();" required autofocus />
+    <label>Category name:</label>
+    <input class="form-control" type="text" name="name" id="name" maxlength="64" value="{NAME}" placeholder="Category name" oninput="getLink();" required autofocus />
    </div>
    <div class="form-group">
-    <label>Odkaz kategorie:</label>
-    <input class="form-control" type="text" name="link" id="link" maxlength="64" value="{link}" placeholder="Odkaz kategorie" required />
+    <label>Category link:</label>
+    <input class="form-control" type="text" name="link" id="link" maxlength="64" value="{LINK}" placeholder="Category link" required />
    </div>
-   <div class="form-group">{icon-edit}</div>
+   <div class="form-group">{ICON-EDIT}</div>
    <input type="hidden" name="id" value="{id}" />
-   <input type="submit" value="Upravit" class="btn btn-lg btn-primary btn-size btn-block" />
+   <input type="submit" value="Upravit" class="button" />
   </form>
  </div>
 </div>

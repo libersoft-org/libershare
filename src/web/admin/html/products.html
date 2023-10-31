@@ -1,52 +1,52 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item active">Produkty</li>
+ <li class="breadcrumb-item active">Products</li>
 </ol>
 <div class="mb-3">
  <form action="./" method="get">
-  <a class="btn btn-admin mt-1 mb-1 mr-1 bold" href="./?page=product-new">Nový produkt</a>
+  <a class="button" href="./?page=product-new">New product</a>
   <span class="dropdown">
-   <button class="btn btn-primary dropdown-toggle mt-1 mb-1 mr-1 bold" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Kategorie: {cat-selected}</button>
+   <button class="button" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Category: {CAT-SELECTED}</button>
    <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
-    <a class="dropdown-item" href="{cat-link-all}">Vše</a>
+    <a class="dropdown-item" href="{CAT-LINK-ALL}">Vše</a>
     {categories}
    </div>
   </span>
   <span class="dropdown">
-   <button class="btn btn-primary dropdown-toggle mt-1 mb-1 mr-1 bold" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Obrázek: {image-selected}</button>
+   <button class="button" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Image: {IMAGE-SELECTED}</button>
    <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
-    <a class="dropdown-item" href="{image-link-all}">Vše</a>
-    <a class="dropdown-item" href="{image-link-yes}">Ano</a>
-    <a class="dropdown-item" href="{image-link-no}">Ne</a>
+    <a class="dropdown-item" href="{IMAGE-LINK-ALL}">Vše</a>
+    <a class="dropdown-item" href="{IMAGE-LINK-YES}">Ano</a>
+    <a class="dropdown-item" href="{IMAGE-LINK-NO}">Ne</a>
    </div>
   </span>
   <span class="dropdown">
-   <button class="btn btn-primary dropdown-toggle mt-1 mb-1 mr-1 bold" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Pro dospělé: {adult-selected}</button>
+   <button class="button" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Adult: {ADULT-SELECTED}</button>
    <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
-    <a class="dropdown-item" href="{adult-link-all}">Vše</a>
-    <a class="dropdown-item" href="{adult-link-yes}">Ano</a>
-    <a class="dropdown-item" href="{adult-link-no}">Ne</a>
+    <a class="dropdown-item" href="{ADULT-LINK-ALL}">Vše</a>
+    <a class="dropdown-item" href="{ADULT-LINK-YES}">Ano</a>
+    <a class="dropdown-item" href="{ADULT-LINK-NO}">Ne</a>
    </div>
   </span>
   <span class="dropdown">
-   <button class="btn btn-primary dropdown-toggle mt-1 mb-1 mr-1 bold" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Skrytý: {hidden-selected}</button>
+   <button class="button" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Hidden: {HIDDEN-SELECTED}</button>
    <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
-    <a class="dropdown-item" href="{hidden-link-all}">Vše</a>
-    <a class="dropdown-item" href="{hidden-link-yes}">Ano</a>
-    <a class="dropdown-item" href="{hidden-link-no}">Ne</a>
+    <a class="dropdown-item" href="{HIDDEN-LINK-ALL}">Vše</a>
+    <a class="dropdown-item" href="{HIDDEN-LINK-YES}">Ano</a>
+    <a class="dropdown-item" href="{HIDDEN-LINK-NO}">Ne</a>
    </div>
   </span>
   <span class="dropdown">
-   <button class="btn btn-primary dropdown-toggle mt-1 mb-1 mr-1 bold" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Video: {video-selected}</button>
+   <button class="button" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Video: {VIDEO-SELECTED}</button>
    <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
-    <a class="dropdown-item" href="{video-link-all}">Vše</a>
-    <a class="dropdown-item" href="{video-link-yes}">Ano</a>
-    <a class="dropdown-item" href="{video-link-no}">Ne</a>
+    <a class="dropdown-item" href="{VIDEO-LINK-ALL}">Vše</a>
+    <a class="dropdown-item" href="{VIDEO-LINK-YES}">Ano</a>
+    <a class="dropdown-item" href="{VIDEO-LINK-NO}">Ne</a>
    </div>
   </span>
   <span>
-   {search-values}
-   <input class="form-control d-inline w-auto" type="text" name="search" value="{phrase}" placeholder="Hledat" autofocus />
-   <input class="btn btn-admin mt-1 mb-1 mr-1 bold" type="submit" value="Hledat" />
+   {SEARCH-VALUES}
+   <input class="form-control d-inline w-auto" type="text" name="search" value="{phrase}" placeholder="Search" autofocus />
+   <input class="button" type="submit" value="Search" />
   </span>
  </form>
 </div>
@@ -56,40 +56,59 @@
   <thead class="thead-admin">
    <tr>
     <th>
-     Název <a href="{order-name-asc}"><img class="table-icon" src="template/img/up.svg" alt="Název vzestupně" /></a><a href="{order-name-desc}"><img class="table-icon" src="template/img/down.svg" alt="Název sestupně" /></a>
+     <span>Name</span>
+     <a href="{ORDER-NAME-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-NAME-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th>
-     Kategorie <a href="{order-category-asc}"><img class="table-icon" src="template/img/up.svg" alt="Kategorie vzestupně" /></a><a href="{order-category-desc}"><img class="table-icon" src="template/img/down.svg" alt="Kategorie sestupně" /></a>
+     <span>Category</span>
+     <a href="{ORDER-CATEGORY-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-CATEGORY-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-     Souborů <a href="{order-files-asc}"><img class="table-icon" src="template/img/up.svg" alt="Souborů vzestupně" /></a><a href="{order-files-desc}"><img class="table-icon" src="template/img/down.svg" alt="Souborů sestupně" /></a>
+     <span>Files</span>
+     <a href="{ORDER-FILES-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-FILES-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-     Obrázek <a href="{order-image-asc}"><img class="table-icon" src="template/img/up.svg" alt="Obrázek vzestupně" /></a><a href="{order-image-desc}"><img class="table-icon" src="template/img/down.svg" alt="Obrázek sestupně" /></a>
+     <span>Image</span>
+     <a href="{ORDER-IMAGE-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-IMAGE-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-     Video <a href="{order-video-asc}"><img class="table-icon" src="template/img/up.svg" alt="Video vzestupně" /></a><a href="{order-video-desc}"><img class="table-icon" src="template/img/down.svg" alt="Video sestupně" /></a>
+     <span>Video</span>
+     <a href="{ORDER-VIDEO-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-VIDEO-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-     Pro dospělé <a href="{order-adult-asc}"><img class="table-icon" src="template/img/up.svg" alt="Pro dospělé vzestupně" /></a><a href="{order-adult-desc}"><img class="table-icon" src="template/img/down.svg" alt="Pro dospělé sestupně" /></a>
+     <span>Adult only</span>
+     <a href="{ORDER-ADULT-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-ADULT-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-     Skrytý <a href="{order-hidden-asc}"><img class="table-icon" src="template/img/up.svg" alt="Skrytý vzestupně" /></a><a href="{order-hidden-desc}"><img class="table-icon" src="template/img/down.svg" alt="Skrytý sestupně" /></a>
+     <span>Hidden</span>
+     <a href="{ORDER-HIDDEN-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-HIDDEN-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-     Návštěv <a href="{order-visits-asc}"><img class="table-icon" src="template/img/up.svg" alt="Návštěv vzestupně" /></a><a href="{order-visits-desc}"><img class="table-icon" src="template/img/down.svg" alt="Návštěv sestupně" /></a><br /><span class="font-small">(celkem / dle session / dle IP)</span>
+     <span>Visits</span>
+     <a href="{ORDER-VISITS-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-VISITS-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+     <span class="font-small">(all / by session / by IP)</span>
     </th>
     <th>
-     Vytvořeno <a href="{order-created-asc}"><img class="table-icon" src="template/img/up.svg" alt="Vytvořeno vzestupně" /></a><a href="{order-created-desc}"><img class="table-icon" src="template/img/down.svg" alt="Vytvořeno sestupně" /></a>
+     <span>Created</span>
+     <a href="{ORDER-CREATED-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-CREATED-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
-    <th>Akce</th>
+    <th>Action</th>
    </tr>
   </thead>
   <tbody>
-   {products}
+   {PRODUCTS}
   </tbody>
   <script>
-   GetPage('products', {{params}});
+   getPage('products', {{params}});
   </script>
  </table>
 </div>

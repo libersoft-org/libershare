@@ -1,25 +1,25 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a href="./?page=categories">Kategorie</a></li>
- <li class="breadcrumb-item active">Nová</li>
+ <li class="breadcrumb-item"><a href="./?page=categories">Categories</a></li>
+ <li class="breadcrumb-item active">New</li>
 </ol>
 <div class="card card-sm mb-3 center">
- <div class="card-header bg-admin text-white bold">Nová kategorie</div>
+ <div class="card-header bg-admin text-white bold">New category</div>
  <div class="card-body">
-  {error}
+  {ERROR}
   <form enctype="multipart/form-data" action="./category-new.php" method="post">
    <div class="form-group">
-    <label>Název kategorie:</label>
-    <input class="form-control" type="text" name="name" id="name" maxlength="64" placeholder="Název kategorie" oninput="getLink();" required autofocus />
+    <label>Category name:</label>
+    <input class="form-control" type="text" name="name" id="name" maxlength="64" placeholder="Category name" oninput="getLink();" required autofocus />
    </div>
    <div class="form-group">
-    <label>Odkaz kategorie:</label>
-    <input class="form-control" type="text" name="link" id="link" maxlength="64" placeholder="Odkaz kategorie" required />
+    <label>Category link:</label>
+    <input class="form-control" type="text" name="link" id="link" maxlength="64" placeholder="Category link" required />
    </div>
    <div class="form-group">
-    <label>Ikona: (SVG / GIF / PNG / JPG)</label>
+    <label>Icon: (SVG / GIF / PNG / JPG)</label>
     <input class="form-control-file" type="file" name="icon" />
    </div>
-   <input type="submit" value="Vytvořit" class="btn btn-lg btn-primary btn-size btn-block" />
+   <input type="submit" value="Vytvořit" class="button" />
   </form>
  </div>
 </div>

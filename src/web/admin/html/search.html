@@ -1,12 +1,12 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item active">Statistika hledání</li>
+ <li class="breadcrumb-item active">Search stats</li>
 </ol>
 <div class="mb-3">
  <form action="./" method="get">
   <span>
-   {search-values}
-   <input class="form-control d-inline w-auto" type="text" name="search" value="{phrase}" placeholder="Hledat" autofocus />
-   <input class="btn btn-admin mt-1 mb-1 mr-1 bold" type="submit" value="Hledat" />
+   {SEARCH-VALUES}
+   <input class="form-control d-inline w-auto" type="text" name="search" value="{PHRASE}" placeholder="Search" autofocus />
+   <input class="button" type="submit" value="Search" />
   </span>
  </form>
 </div>
@@ -15,27 +15,37 @@
   <thead class="thead-admin">
    <tr>
     <th>
-     Fráze <a href="{order-phrase-asc}"><img class="table-icon" src="template/img/up.svg" alt="Fráze vzestupně" /></a><a href="{order-phrase-desc}"><img class="table-icon" src="template/img/down.svg" alt="Fráze sestupně" /></a>
+     <span>Phrase</span>
+     <a href="{ORDER-PHRASE-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-PHRASE-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-     Počet vyhledání <a href="{order-searches-asc}"><img class="table-icon" src="template/img/up.svg" alt="Počet vyhledání vzestupně" /></a><a href="{order-searches-desc}"><img class="table-icon" src="template/img/down.svg" alt="Počet vyhledání sestupně" /></a>
+     <span>Searches</span>
+     <a href="{ORDER-SEARCHES-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-SEARCHES-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-     Počet vyhledání dle session <a href="{order-searches-by-session-asc}"><img class="table-icon" src="template/img/up.svg" alt="Počet vyhledání dle session vzestupně" /></a><a href="{order-searches-by-session-desc}"><img class="table-icon" src="template/img/down.svg" alt="Počet vyhledání dle session sestupně" /></a>
+     <span>Searches by session</span>
+     <a href="{ORDER-SEARCHES-BY-SESSION-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-SEARCHES-BY-SESSION-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-     Počet vyhledání dle IP <a href="{order-searches-by-ip-asc}"><img class="table-icon" src="template/img/up.svg" alt="Počet vyhledání dle IP vzestupně" /></a><a href="{order-searches-by-ip-desc}"><img class="table-icon" src="template/img/down.svg" alt="Počet vyhledání dle IP sestupně" /></a>
+     <span>Searches by IP</span>
+     <a href="{ORDER-SEARCHES-BY-IP-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-SEARCHES-BY-IP-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-     Počet výsledků hledání <a href="{order-results-asc}"><img class="table-icon" src="template/img/up.svg" alt="Počet výsledků hledání vzestupně" /></a><a href="{order-results-desc}"><img class="table-icon" src="template/img/down.svg" alt="Počet výsledků hledání sestupně" /></a>
+     <span>Search results</span>
+     <a href="{ORDER-RESULTS-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-RESULTS-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
    </tr>
   </thead>
   <tbody>
-   {table-search}
+   {TABLE-SEARCH}
   </tbody>
   <script>
-   GetPage('search', {{params}});
+   getPage('search', {{params}});
   </script>
  </table>
 </div>

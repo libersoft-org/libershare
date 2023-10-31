@@ -1,44 +1,74 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item active">Kategorie</li>
+ <li class="breadcrumb-item active">Categories</li>
 </ol>
 <div class="mb-3">
  <form action="./" method="get">
-  <a class="btn btn-admin mt-1 mb-1 mr-1 bold" href="./?page=category-new">Nová kategorie</a>
+  <a class="button" href="./?page=category-new">New category</a>
   <span>
-   {search-values}
-   <input class="form-control d-inline w-auto" type="text" name="search" value="{phrase}" placeholder="Hledat" autofocus />
-   <input class="btn btn-admin mt-1 mb-1 mr-1 bold" type="submit" value="Hledat" />
+   {SEARCH-VALUES}
+   <input class="form-control d-inline w-auto" type="text" name="search" value="{PHRASE}" placeholder="Search" autofocus />
+   <input class="button" type="submit" value="Search" />
   </span>
  </form>
 </div>
-{error}
+{ERROR}
 <div class="table-responsive">
  <table class="table table-sm table-hover table-light">
   <thead class="thead-admin">
    <tr>
     <th>
-     Název <a href="{order-name-asc}"><img class="table-icon" src="template/img/up.svg" alt="Název vzestupně" /></a><a href="{order-name-desc}"><img class="table-icon" src="template/img/down.svg" alt="Název sestupně" /></a>
+     <span>Name</span>
+     <a href="{ORDER-NAME-ASC}">
+      <img class="table-icon" src="img/up.svg" alt="Ascending" />
+     </a>
+     <a href="{ORDER-NAME-DESC}">
+      <img class="table-icon" src="img/down.svg" alt="Descending" />
+     </a>
     </th>
     <th class="text-center">
-     Produktů <a href="{order-products-asc}"><img class="table-icon" src="template/img/up.svg" alt="Produktů vzestupně" /></a><a href="{order-products-desc}"><img class="table-icon" src="template/img/down.svg" alt="Produktů sestupně" /></a><br /><span class="font-small">(celkem / viditelných / skrytých)</span>
+     <span>Products</span>
+     <a href="{ORDER-PRODUCTS-ASC}">
+      <img class="table-icon" src="img/up.svg" alt="Ascending" />
+     </a>
+     <a href="{ORDER-PRODUCTS-DESC}">
+      <img class="table-icon" src="img/down.svg" alt="Descending" />
+     </a>
+     <span class="font-small">(all / visible / hidden)</span>
     </th>
     <th class="text-center">
-     Velikost <a href="{order-size-asc}"><img class="table-icon" src="template/img/up.svg" alt="Velikost vzestupně" /></a><a href="{order-size-desc}"><img class="table-icon" src="template/img/down.svg" alt="Velikost sestupně" /></a>
+     <span>Size</span>
+     <a href="{ORDER-SIZE-ASC}">
+      <img class="table-icon" src="img/up.svg" alt="Ascending" />
+     </a>
+     <a href="{ORDER-SIZE-DESC}"> <img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-     Návštěv <a href="{order-visits-asc}"><img class="table-icon" src="template/img/up.svg" alt="Návštěv vzestupně" /></a><a href="{order-visits-desc}"><img class="table-icon" src="template/img/down.svg" alt="Návštěv sestupně" /></a><br /><span class="font-small">(celkem / dle session / dle IP)</span>
+     <span>Visits</span>
+     <a href="{ORDER-VISITS-ASC}">
+      <img class="table-icon" src="img/up.svg" alt="Ascending" />
+     </a>
+     <a href="{ORDER-VISITS-DESC}">
+      <img class="table-icon" src="img/down.svg" alt="Descending" />
+     </a>
+     <span class="font-small">(all / by session / by IP)</span>
     </th>
     <th>
-     Vytvořeno <a href="{order-created-asc}"><img class="table-icon" src="template/img/up.svg" alt="Vytvořeno vzestupně" /></a><a href="{order-created-desc}"><img class="table-icon" src="template/img/down.svg" alt="Vytvořeno sestupně" /></a>
+     <span>Created</span>
+     <a href="{ORDER-CREATED-ASC}">
+      <img class="table-icon" src="img/up.svg" alt="Ascending" />
+     </a>
+     <a href="{ORDER-CREATED-DESC}">
+      <img class="table-icon" src="img/down.svg" alt="Descending" />
+     </a>
     </th>
-    <th>Akce</th>
+    <th>Action</th>
    </tr>
   </thead>
   <tbody>
-   {categories}
+   {CATEGORIES}
   </tbody>
   <script>
-   GetPage('categories', {{params}});
+   GetPage('categories', {{PARAMS}});
   </script>
  </table>
 </div>

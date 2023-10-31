@@ -1,20 +1,18 @@
 <div class="p-3">
  <div class="card form-size-md mb-3 center">
   <div class="card-body">
-   <div class="alert alert-danger" id="error-message" style="display: none"></div>
-   <form id="forum-new-post">
-    <div class="form-group">
-     <label>Text odpovědi:</label>
-     <textarea class="form-control" name="body" rows="5"></textarea>
-    </div>
-    <div class="form-group">
-     <label>Opište kód z obrázku:</label>
-     <div class="pb-3"><input type="text" class="form-control" name="captcha" /></div>
-     <div><img src="captcha.php?code={captcha}" alt="Kód" /></div>
-    </div>
-    <input type="hidden" name="thread_id" value="{THREAD-ID}" />
-    <input type="submit" value="Odeslat" class="btn btn-lg btn-success btn-size" />
-   </form>
+   <div class="notice red" id="error-message" style="display: none"></div>
+   <div class="form-group">
+    <label>Message:</label>
+    <textarea class="form-control" name="body" rows="5"></textarea>
+   </div>
+   <div class="form-group">
+    <label>Write image from picture:</label>
+    <div class="pb-3"><input type="text" class="form-control" name="captcha" /></div>
+    <div><img src="captcha.php?code={CAPTCHA}" alt="Captcha" /></div>
+   </div>
+   <input type="hidden" name="thread_id" value="{THREAD-ID}" />
+   <a class="button" onclick="send('forum-new-post')">Send</a>
   </div>
  </div>
 </div>

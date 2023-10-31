@@ -201,9 +201,8 @@ class Framework {
  verifyCaptcha() {
   const userResponse = this.qs('#captcha-input').value;
   const captchaText = this.qs('#captcha-container canvas').getAttribute('data-captcha');
-  if (userResponse === captchaText) alert('CAPTCHA is OK!');
-  else {
-   alert('Wrong captcha.');
+  if (userResponse != captchaText) {
+   // TODO - error message?
    this.qs('#captcha-input').value = '';
    this.qs('#captcha-container').innerHTML = '';
    this.generateCaptcha();

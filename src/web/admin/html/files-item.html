@@ -1,14 +1,14 @@
 <tr>
- <td><a href="./?page=file-edit&amp;id={id}">{name}</a></td>
- <td><a href="./?page=product-edit&amp;id={id_product}">{product_name}</a></td>
- <td class="text-center"><img class="table-icon" src="template/img/{playable}.svg" alt="{playable-alt}" /></td>
- <td>{size}</td>
- <td>{ip}</td>
- <td class="text-center">{downloads} / {downloads-by-session} / {downloads-by-ip}</td>
- <td class="text-center">{plays} / {plays-by-session} / {plays-by-ip}</td>
- <td>{created}</td>
+ <td><a href="./?page=file-edit&amp;id={id}">{NAME}</a></td>
+ <td><a href="./?page=product-edit&amp;id={id_product}">{PRODUCT-NAME}</a></td>
+ <td class="text-center"><img class="table-icon" src="template/img/{PLAYABLE}.svg" alt="{PLAYABLE-ALT}" /></td>
+ <td>{SIZE}</td>
+ <td>{IP}</td>
+ <td class="text-center">{DOWNLOADS} / {DOWNLOADS-BY-SESSION} / {DOWNLOADS-BY-IP}</td>
+ <td class="text-center">{PLAYS} / {PLAYS-BY-SESSION} / {PLAYS-BY-IP}</td>
+ <td>{CREATED}</td>
  <td>
-  <a class="mr-1" href="./?page=file-edit&amp;id={id}"><img class="table-icon" src="template/img/edit.svg" alt="Upravit" /></a>
-  <a class="mr-1 pointer" onclick="confirmDelete('file-delete.php?id={id}', '{name}')"><img class="table-icon" src="template/img/delete.svg" alt="Smazat" /></a>
+  <a class="mr-1" href="./?page=file-edit&amp;id={ID}"><img class="table-icon" src="img/edit.svg" alt="Edit" /></a>
+  <a class="mr-1 pointer" onclick="confirmDelete('file-delete.php?id={id}', '{name}')"><img class="table-icon" src="img/delete.svg" alt="Delete" /></a>
  </td>
 </tr>
