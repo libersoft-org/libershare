@@ -10,9 +10,9 @@ const years = Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i
 const videoExtensions = ['mp4', 'mp3', 'avi', 'webm'];
 
 async function getPageNews() {
- const image_default = '/img/item-default.webp'; // TODO: no mention - why?
- const temp_cat = await f.getFileContent('/html/news-category.html');
- const temp_prod = await f.getFileContent('/html/products-item.html');
+ const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
+ const temp_cat = await f.getFileContent(f.pathHTML + 'news-category.html');
+ const temp_prod = await f.getFileContent(f.pathHTML + 'products-item.html');
  const cats = await f.getAPI('get_categories');
  for (let i = 0; i < cats.data.length; i++) {
   if (cats.data[i].products_count - cats.data[i].products_count_hidden !== 0) {
@@ -25,11 +25,11 @@ async function getPageNews() {
    let prows = '';
    for (let j = 0; j < prods.data.length; j++) {
     let imgee = image_default;
-    if (prods.data[j].image_sm) imgee = `/img/products/${prods.data[j].image_sm}`;
+    if (prods.data[j].image_sm) imgee = f.pathImages + 'products/' + prods.data[j].image_sm;
     let prow = f.translate(temp_prod, {
      '{NAME}': prods.data[j].name,
      '{LINK}': prods.data[j].id + '-' + prods.data[j].link,
-     '{IMAGE}': prods.data[j].adult === 0 ? imgee : '/img/item-censored.webp'
+     '{IMAGE}': prods.data[j].adult === 0 ? imgee : f.pathImages + 'item-censored.webp'
     });
     prows += prow;
    }
@@ -45,15 +45,15 @@ async function getPageNews() {
 }
 
 async function getPageCategories() {
- const temp = await f.getFileContent('/html/categories-item.html');
+ const temp = await f.getFileContent(f.pathHTML + 'categories-item.html');
  const cats = await f.getAPI('get_categories');
  let prodsCount = 0;
  let crows = '';
  for (const cat of cats.data) {
   const prodCount = cat.products_count - cat.products_count_hidden;
   if (prodCount != 0) {
-   let img = '/img/item-default.webp';
-   if (cat.image) img = '/img/categories/' + cat.image;
+   let img = f.pathImages + 'item-default.webp';
+   if (cat.image) img = f.pathImages + 'categories/' + cat.image;
    crows += f.translate(temp, {
     '{LINK}': cat.link,
     '{NAME}': cat.name,
@@ -67,15 +67,15 @@ async function getPageCategories() {
   f.translate(temp, {
    '{LINK}': 'all',
    '{NAME}': 'All',
-   '{IMAGE}': '/img/item-all.webp',
+   '{IMAGE}': f.pathImages + 'item-all.webp',
    '{COUNT}': prodsCount
   }) + crows;
  f.qs('#content .loader').remove();
 }
 
 async function getPageProduct(id) {
- const image_default = '/img/item-default.webp'; // TODO: no mention - why?
- let temp = await f.getFileContent('/html/product-detail.html');
+ const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
+ let temp = await f.getFileContent(f.pathHTML + 'product-detail.html');
  const prod = await f.getAPI('get_product', { id: id });
  if (prod.data.length == 1) {
   const cat = await f.getAPI('get_category_by_id', {
@@ -83,11 +83,11 @@ async function getPageProduct(id) {
   });
   prod.data[0].id_categories;
   const files = await f.getAPI('get_files', { id_product: prod.data[0].id });
-  let temp_files = await f.getFileContent('/html/product-file.html');
+  let temp_files = await f.getFileContent(f.pathHTML + 'product-file.html');
   let rows = '';
   for (const fd of files.data) {
    const fileExtension = fd.file_name.split('.').pop().toLowerCase();
-   let repl = await f.getFileContent('/html/product-play-button.html');
+   let repl = await f.getFileContent(f.pathHTML + 'product-play-button.html');
    if (!videoExtensions.includes(fileExtension)) repl = '';
    if (fd.file_name && videoExtensions.includes(fileExtension)) {
     rows += f.translate(temp_files, {
@@ -106,7 +106,7 @@ async function getPageProduct(id) {
    }
   }
   let imgee = image_default;
-  if (prod.data[0].image) imgee = `/img/products/${prod.data[0].image}`;
+  if (prod.data[0].image) imgee = f.pathImages + 'products/' + prod.data[0].image;
   const html = f.translate(temp, {
    '{CATEGORY-LINK}': cat.data[0].link,
    '{CATEGORY}': cat.data[0].name,
@@ -119,15 +119,15 @@ async function getPageProduct(id) {
 }
 
 async function getPageCategory(link) {
- const image_default = '/img/item-default.webp'; // TODO: no mention - why?
+ const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
  const cat = await f.getAPI('get_category_by_link', { link: link });
  if (cat.data.length == 1) {
-  const temp_cat = await f.getFileContent('/html/category-detail.html');
+  const temp_cat = await f.getFileContent(f.pathHTML + 'category-detail.html');
   const html = f.translate(temp_cat, {
    '{CATEGORY}': cat.data[0].name
   });
   f.qs('#content').innerHTML = html;
-  const temp_prod = await f.getFileContent('/html/products-item.html');
+  const temp_prod = await f.getFileContent(f.pathHTML + 'products-item.html');
   const prods = await f.getAPI('get_products', {
    id_category: cat.data[0].id,
    h: 2,
@@ -137,11 +137,11 @@ async function getPageCategory(link) {
   let prows = '';
   for (let i = 0; i < prods.data.length; i++) {
    let imgee = image_default;
-   if (prods.data[i].image_sm) imgee = `/img/products/${prods.data[i].image_sm}`;
+   if (prods.data[i].image_sm) imgee = f.pathImages + 'products/' + prods.data[i].image_sm;
    let prow = f.translate(temp_prod, {
     '{NAME}': prods.data[i].name,
     '{LINK}': prods.data[i].id + '-' + prods.data[i].link,
-    '{IMAGE}': prods.data[i].adult === 0 ? imgee : '/img/item-censored.webp'
+    '{IMAGE}': prods.data[i].adult === 0 ? imgee : f.pathImages + 'item-censored.webp'
    });
    prows += prow;
   }
@@ -156,7 +156,7 @@ async function getPageForum() {
 }
 
 async function getPageForumThreads(count, page = 1) {
- const temp_thread = await f.getFileContent('/html/forum-row.html');
+ const temp_thread = await f.getFileContent(f.pathHTML + 'forum-row.html');
  const table = f.qs('#content .forum tbody');
  // TODO: if div with class "more" is not visible, return, otherwise load more threads
  //if (!table.length) return;
@@ -183,7 +183,7 @@ async function getPageForumThreads(count, page = 1) {
 }
 
 async function getPageUpload() {
- const temp_file = await f.getFileContent('/html/upload-file.html');
+ const temp_file = await f.getFileContent(f.pathHTML + 'upload-file.html');
  const files = await f.getAPI('get_uploads', { o: 'created', d: true, count: 10 });
  // TODO: check if files.data exists, otherwise remove table
  let rows = '';
@@ -198,7 +198,7 @@ async function getPageUpload() {
 }
 
 async function getLoginModal() {
- const body = await f.getFileContent('/html/login.html');
+ const body = await f.getFileContent(f.pathHTML + 'login.html');
  await f.getModal('Login', body);
  f.makeDraggable(modwin.querySelector('.modal'));
  setTimeout(async () => {
@@ -212,7 +212,7 @@ async function getLoginModal() {
 }
 
 async function getRegistrationModal() {
- let body = await f.getFileContent('/html/registration.html');
+ let body = await f.getFileContent(f.pathHTML + 'registration.html');
  body = body.replace('{DAYS}', days.map((day) => `<option value="${day}">${day}</option>`).join(''));
  body = body.replace('{MONTHS}', months.map((month, index) => `<option value="${index + 1}">${month}</option>`).join(''));
  body = body.replace('{YEARS}', years.map((year) => `<option value="${year}">${year}</option>`).join(''));
@@ -279,13 +279,13 @@ function submitForm(type) {
  await getModal('Edit campaign', '<div class="error">' + res.message + '</div>');
 
 async function deleteLinkModal(id, name) {
- await getModal('Delete link', await f.getFileContent('/html/links-delete.html'));
+ await getModal('Delete link', await f.getFileContent(f.pathHTML + 'links-delete.html'));
  const body = f.qs('.modal .body');
  body.innerHTML = body.innerHTML.replaceAll('{ID}', id).replaceAll('{NAME}', name);
 }
 
 async function addServerModal() {
- await getModal('New server', await f.getFileContent('/html/servers-add.html'));
+ await getModal('New server', await f.getFileContent(f.pathHTML + 'servers-add.html'));
 }
 */
 
@@ -495,7 +495,7 @@ $(document).ready(function() {
 });
 
 function getHeaderCategories(path_image_categories) {
- $.get('/html/header-category.html', function(category_template) {
+ $.get(f.pathHTML + 'header-category.html', function(category_template) {
   $.get('get_categories', function (data) {
    let result = jQuery.parseJSON(data);
    let rows = '';
@@ -517,9 +517,9 @@ function getHeaderCategories(path_image_categories) {
 function getPageCategory(link, productcount, elem) {
  let cpt = '';
  let clm = '';
- $.get('/html/category-load-more.html', function(data) {
+ $.get(f.pathHTML + 'category-load-more.html', function(data) {
   clm = data;
-  $.get('/html/products-item.html', function(data) {
+  $.get(f.pathHTML + 'products-item.html', function(data) {
    cpt = data;
    $.get('get_category_by_link?link=' + link, function(data) {
     let cat = jQuery.parseJSON(data);
@@ -563,9 +563,9 @@ function getPageCategoryNext(productcount, elem, product_template, product_more_
 function getPageSearch(phrase, productcount, elem) {
  let cpt = '';
  let clm = '';
- $.get('/html/search-load-more.html', function(data) {
+ $.get(f.pathHTML + 'search-load-more.html', function(data) {
   slm = data;
-  $.get('/html/item.html', function(data) {
+  $.get(f.pathHTML + 'item.html', function(data) {
    spt = data;
    window.page = 1;
    window.canLoadMore = true;
@@ -603,8 +603,8 @@ function getPageSearchNext(productcount, elem, product_template, product_more_te
 }
 
 function getPageUpload(filecount, elem) {
- $.get('/html/upload-file.html', function(upload_template) {
-  $.get('/html/upload-load-more.html', function(upload_more_template) {
+ $.get(f.pathHTML + 'upload-file.html', function(upload_template) {
+  $.get(f.pathHTML + 'upload-load-more.html', function(upload_more_template) {
    window.page = 1;
    window.canLoadMore = true;
    $(document).ready(function() { getPageUploadNext(filecount, elem, upload_template, upload_more_template); });
@@ -642,7 +642,7 @@ function getPageUploadNext(filecount, elem, upload_template, upload_more_templat
 }
 
 function getVideo(src, type) {
- $.get('/html/product-video-player.html', function(data) {
+ $.get(f.pathHTML + 'product-video-player.html', function(data) {
   data = replaceAll('{SRC}', src, data);
   data = replaceAll('{TYPE}', type, data);
   $('#video-box').replaceWith(data);
@@ -867,7 +867,7 @@ function Done(originalFile, newFile) {
 
 function LoadUploaderTemplate() {
  f.getAPI({
-  url: '/html/upload-item.html',
+  url: f.pathHTML + 'upload-item.html',
   success: function(data) {
    window.tmplUploader = data;
   }

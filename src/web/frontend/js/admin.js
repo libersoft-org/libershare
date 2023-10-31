@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', function () {
- var loginForm = document.getElementById('login');
+ var loginForm = f.qs('#login');
  if (loginForm) {
   loginForm.addEventListener('submit', function (e) {
    e.preventDefault();
@@ -9,8 +9,8 @@ document.addEventListener('DOMContentLoaded', function () {
    xhr.onload = function () {
     if (xhr.status === 200) {
      var result = JSON.parse(xhr.responseText);
-     var errorElem = document.getElementById('error');
-     var errorMessageElem = document.getElementById('error-message');
+     var errorElem = f.qs('#error');
+     var errorMessageElem = f.qs('#error-message');
      if (result.error !== 0) {
       errorElem.style.display = 'block';
       var err = 'Neznámá chyba';
@@ -38,15 +38,15 @@ function getNetworkUsage() {
  xhr.open('POST', 'net_usage.php', true);
  xhr.onload = function () {
   if (xhr.status === 200) {
-   document.getElementById('net').innerHTML = xhr.responseText;
+   f.qs('#net').innerHTML = xhr.responseText;
   }
  };
  xhr.send();
 }
 
 function getLink() {
- var nameElem = document.getElementById('name');
- var linkElem = document.getElementById('link');
+ var nameElem = f.qs('#name');
+ var linkElem = f.qs('#link');
  var s = getEnglishChars(nameElem.value);
  s = s
   .replace(/[^a-zA-Z0-9]|\s+/g, '-')
@@ -100,7 +100,7 @@ function GetPage(page, params) {
 }
 
 function LoadItems(file, params) {
- var elem = document.querySelector('#more');
+ var elem = f.qs('#more');
  window.page = 1;
  window.canLoadMore = true;
  LoadMoreHTML(elem, file, params);
@@ -141,7 +141,7 @@ function isVisible(element) {
 }
 
 function getProductsDropdown() {
- var productSearchElem = document.getElementById('products-search');
+ var productSearchElem = f.qs('#products-search');
  var xhr = new XMLHttpRequest();
  xhr.open('GET', '/api/get_products_autocomplete.php?search=' + productSearchElem.value, true);
  xhr.onload = function () {
@@ -191,24 +191,24 @@ function getProductsDropdown() {
 }
 
 function clearAutocomplete() {
- var autocompleteItems = document.getElementsByClassName('autocomplete-items');
+ var autocompleteItems = f.qsa('.autocomplete-items');
  for (var i = 0; i < autocompleteItems.length; i++) {
   autocompleteItems[i].parentNode.removeChild(autocompleteItems[i]);
  }
 }
 
 function setProductItem(id, name) {
- document.getElementById('id-product').value = id;
- document.getElementById('products-search').style.display = 'none';
- var productNameElem = document.getElementById('product-name');
+ f.qs('#id-product').value = id;
+ f.qs('#products-search').style.display = 'none';
+ var productNameElem = f.qs('#product-name');
  productNameElem.innerHTML = '<img class="table-icon pointer" src="img/no.svg" alt="Odebrat" onclick="setProductRemove();" /><div class="pl-2">' + name + '</div>';
  productNameElem.style.display = 'block';
 }
 
 function setProductRemove() {
- document.getElementById('id-product').value = '';
- document.getElementById('products-search').style.display = 'block';
- document.getElementById('product-name').style.display = 'none';
- document.getElementById('products-search').value = '';
- document.getElementById('products-search').focus();
+ f.qs('#id-product').value = '';
+ f.qs('#products-search').style.display = 'block';
+ f.qs('#product-name').style.display = 'none';
+ f.qs('#products-search').value = '';
+ f.qs('#products-search').focus();
 }

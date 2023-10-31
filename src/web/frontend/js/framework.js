@@ -4,11 +4,15 @@ class Framework {
   this.pageName = 'LiberShare';
   this.pages;
   this.menuOpened = false;
+  this.pathAPI = '/api/';
+  this.pathHTML = '/html/';
+  this.pathJSON = '/json/';
+  this.pathImages = '/img/';
  }
 
  async init() {
   const getPath = () => location.pathname.substring(location.pathname.lastIndexOf('/') + 1);
-  this.pages = JSON.parse(await this.getFileContent('json/pages.json'));
+  this.pages = JSON.parse(await this.getFileContent(this.pathJSON + 'pages.json'));
   this.getMenu();
   this.getReload(getPath());
   window.addEventListener('popstate', () => this.getReload(getPath()));
@@ -17,7 +21,7 @@ class Framework {
  }
 
  async getMenu() {
-  const menu = await this.getFileContent('/html/menu.html');
+  const menu = await this.getFileContent(this.pathHTML + 'menu.html');
   this.qs('#menu-desktop').innerHTML = menu;
   this.qs('#menu-mobile').innerHTML = menu;
  }
@@ -28,7 +32,7 @@ class Framework {
 
  menuClose() {
   this.menuOpened = false;
-  this.qs('#header .menu-toggler').src = 'img/menu.svg';
+  this.qs('#header .menu-toggler').src = this.pathImages + 'menu.svg';
   this.qs('#menu-mobile').style.transform = 'translateX(-110%)';
   this.qs('#menu-overlay').style.transform = 'translateX(-110%)';
   this.qs('#header').classList.add('shadow');
@@ -36,7 +40,7 @@ class Framework {
 
  menuOpen() {
   this.menuOpened = true;
-  this.qs('#header .menu-toggler').src = 'img/close.svg';
+  this.qs('#header .menu-toggler').src = this.pathImages + 'close.svg';
   this.qs('#menu-mobile').style.transform = 'translateX(0)';
   this.qs('#menu-overlay').style.transform = 'translateX(0)';
   this.qs('#header').classList.remove('shadow');
@@ -63,17 +67,17 @@ class Framework {
    if (this.qs('#menu-desktop .item.menu-' + page)) this.qs('#menu-desktop .item.menu-' + page).classList.add('active');
    if (this.qs('#menu-mobile .item.menu-' + page)) this.qs('#menu-mobile .item.menu-' + page).classList.add('active');
    // TODO: only if page exists:
-   content = await this.getFileContent('/html/' + this.pages[page].file);
+   content = await this.getFileContent(this.pathHTML + this.pages[page].file);
   } else if (page.includes('-')) {
-   if (page.startsWith('product-')) content = await this.getFileContent('/html/product.html');
-   else if (page.startsWith('category-')) content = await this.getFileContent('/html/category.html');
+   if (page.startsWith('product-')) content = await this.getFileContent(this.pathHTML + 'product.html');
+   else if (page.startsWith('category-')) content = await this.getFileContent(this.pathHTML + 'category.html');
    else {
     document.title = this.pageName + ' - ' + this.pages['notfound'].label;
-    content = await this.getFileContent('/html/notfound.html');
+    content = await this.getFileContent(this.pathHTML + 'notfound.html');
    }
   } else {
    document.title = this.pageName + ' - ' + this.pages['notfound'].label;
-   content = await this.getFileContent('/html/notfound.html');
+   content = await this.getFileContent(this.pathHTML + 'notfound.html');
   }
   this.qs('#content').innerHTML = content;
 
@@ -110,7 +114,7 @@ class Framework {
  }
 
  async getAPI(name, body = null) {
-  const res = await fetch('/api/' + name, {
+  const res = await fetch(this.pathAPI + name, {
    method: 'POST',
    headers: { 'Content-Type': 'application/json' },
    body: body && JSON.stringify(body)
@@ -119,7 +123,7 @@ class Framework {
  }
 
  async getModal(title, body) {
-  const html = await this.getFileContent('/html/modal.html');
+  const html = await this.getFileContent(this.pathHTML + 'modal.html');
   const modal = document.createElement('div');
   modal.innerHTML = html.replace('{TITLE}', title).replace('{BODY}', body);
   this.qs('body').appendChild(modal);
@@ -173,7 +177,7 @@ class Framework {
  // TODO: use getAPI instead of fetch:
  async generateCaptcha() {
   try {
-   const response = await fetch('/api/generate_captcha');
+   const response = await fetch(this.pathAPI + 'generate_captcha');
    if (!response.ok) throw new Error('Network response was not OK');
    return await response.json();
   } catch (error) {

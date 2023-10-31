@@ -1,14 +1,16 @@
 .notice {
  padding: 10px;
- border: 10px solid var(--secondary-color);
  border-radius: 10px;
 }
+
 .notice.red {
  background-color: #fdd;
  color: #600000;
+ border: 1px solid #600000;
 }
 
 .notice.green {
  background-color: #bfb;
  color: #004000;
+ border: 1px solid #004000;
 }
