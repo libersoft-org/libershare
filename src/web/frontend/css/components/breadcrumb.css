@@ -1,0 +1,22 @@
+.breadcrumb {
+ margin: 0;
+ padding: 10px;
+ border-radius: 10px;
+ background-color: var(--secondary-color);
+ color: #fff;
+}
+
+.breadcrumb li {
+ display: inline;
+ font-size: 16px;
+ font-weight: bold;
+}
+
+.breadcrumb:not(:first-child)::before {
+ padding: 8px;
+ content: '>';
+}
+
+.breadcrumb a {
+ color: #ccc;
+}

@@ -4,36 +4,36 @@
  width: calc(100%);
  height: calc(100% - var(--header-height));
  overflow: auto;
- padding: 0.9375rem 0.625rem;
+ padding: 15px 10px;
  color: var(--secondary-color);
  box-sizing: border-box;
  background: url('/img/background.svg') repeat;
- background-size: 15rem;
+ background-size: 240px;
 }
 
 #content .button {
- margin-right: 0.625rem;
- padding: 0.5rem;
- border-radius: 0.625rem;
+ margin-right: 10px;
+ padding: 8px;
+ border-radius: 10px;
  font-weight: bold;
- border: 0.0625rem solid var(--secondary-color);
+ border: 1px solid var(--secondary-color);
  background-color: var(--primary-color);
  color: var(--secondary-color);
 }
 
 #content img {
- width: 1.5rem;
+ width: 24px;
 }
 
 #content .files.center td .button {
- padding: 0.25rem;
- margin-right: 0rem;
+ padding: 4px;
+ margin-right: 0;
 }
 
 #content .share-button {
  display: inline-flex;
  flex-direction: row;
- margin: 0 auto 1.25rem auto;
+ margin: 0 auto 20px auto;
 }
 
 #content .share-button .text-center {
@@ -45,7 +45,7 @@
 }
 
 #content .share-button .image {
- margin-right: 0.625rem;
+ margin-right: 10px;
  width: auto;
  height: 100%;
  align-items: stretch;
@@ -53,139 +53,16 @@
 }
 
 #content .separator {
- height: 0.9375rem;
-}
-
-#content .card {
- border: 0.0625rem solid var(--secondary-color);
- border-radius: 0.625rem;
- overflow: hidden;
-}
-
-#content .card.small {
- max-width: 31.25rem;
-}
-
-#content .card.medium {
- max-width: var(--content-width);
-}
-
-#content .card .header {
- padding: 0.625rem;
- font-weight: bold;
- background-color: var(--primary-color);
-}
-
-#content .card .body {
- padding: 0.625rem;
- background-color: #f0f0f0;
- display: flex;
- flex-direction: column;
-}
-
-#content .accordion {
- border: 0.0625rem solid var(--secondary-color);
- border-radius: 0.625rem;
- overflow: hidden;
-}
-
-#content .accordion .header {
- padding: 0.625rem;
- background-color: var(--primary-color);
- font-weight: bold;
- cursor: pointer;
- position: relative;
- padding-right: 1.25rem;
-}
-
-#content .accordion .body {
- height: 0;
- overflow: hidden;
- padding: 0 !important;
- transition: height 0.3s ease-in-out;
-}
-
-#content .accordion .inner-body {
- padding: 0.625rem;
+ height: 15px;
 }
 
 #content .arrow {
  position: absolute;
- right: 0.3125rem;
+ right: 5px;
  top: 50%;
  transform: translateY(-50%) rotate(0deg);
  transition: transform 0.3s ease-in-out;
  fill: #000;
-}
-
-#content .breadcrumb {
- margin: 0;
- padding: 0.625rem;
- border-radius: 0.625rem;
- background-color: var(--secondary-color);
- color: #fff;
-}
-
-#content .breadcrumb li {
- display: inline;
- font-size: 1rem;
- font-weight: bold;
-}
-
-#content .breadcrumb:not(:first-child)::before {
- padding: 0.5rem;
- content: '>';
-}
-
-#content .breadcrumb a {
- color: #ccc;
-}
-
-#content .items {
- display: flex;
- flex-wrap: wrap;
- justify-content: center;
- gap: 0.9375rem;
-}
-
-#content .items .item {
- position: relative;
- display: flex;
- justify-content: center;
- align-items: center;
- flex: 1 1 15.625rem;
- max-width: 25rem;
- overflow: hidden;
- border: 0.0625rem solid var(--secondary-color);
- border-radius: 0.625rem;
- transition-duration: 0.3s;
- background-color: #fff;
-}
-
-#content .items .item:hover {
- transform: scale(1.05);
-}
-
-#content .items img {
- display: block;
- width: 100%;
- height: auto;
-}
-
-#content .items .text {
- position: absolute;
- white-space: normal;
- bottom: 0;
- left: 0;
- padding: 0.3125rem;
- width: calc(100% - 0.625rem);
- text-align: center;
- font-weight: bold;
- font-size: 1rem;
- background-color: rgba(0, 0, 0, 0.75);
- color: #fff;
- border-bottom-left-radius: 0.625rem;
- border-bottom-right-radius: 0.625rem;
 }
 
 #content .product {
@@ -197,8 +74,8 @@
 #content .product .image {
  width: 100%;
  max-width: 100%;
- border: 0.0625rem solid var(--secondary-color);
- border-radius: 0.625rem;
+ border: 1px solid var(--secondary-color);
+ border-radius: 10px;
 }
 
 #content .files {

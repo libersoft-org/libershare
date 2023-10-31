@@ -7,25 +7,25 @@
 .captch .reload-icon {
  width: 2rem;
  height: auto;
- margin-bottom: 0.5rem;
- margin-left: 0.25rem;
+ margin-bottom: 8rem;
+ margin-left: 4px;
  cursor: pointer;
 }
 
 #captcha-container {
- margin-top: 0.1875rem;
+ margin-top: 3px;
 }
 
 #captcha-container .modal-footer {
- padding: 0.75rem;
+ padding: 12px;
 }
 
 #captcha-container .modal-footer button {
  font-weight: bold;
- font-size: 1em;
- padding: 0.5rem;
- margin-right: 0.625rem;
+ font-size: 16px;
+ padding: 8px;
+ margin-right: 10px;
  background-color: var(--primary-color);
- border-radius: 0.625rem;
- border: 0.0625rem solid var(--secondary-color);
+ border-radius: 10px;
+ border: 10px solid var(--secondary-color);
 }

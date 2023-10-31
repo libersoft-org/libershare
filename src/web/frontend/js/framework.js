@@ -100,25 +100,8 @@ class Framework {
   });
   const sess = localStorage.getItem('libershare_session_guid');
   if (sess && sess.length > 16) {
-   this.qs('.menu-username').textContent = localStorage.getItem('libershare_username');
-   this.qsa('.need-login').forEach((el) => {
-    el.classList.add('hidden-important');
-    el.classList.remove('flex-important');
-   });
-   this.qsa('.need-logout').forEach((el) => {
-    el.classList.remove('hidden-important');
-    el.classList.add('flex-important');
-   });
-  } else {
-   this.qsa('.need-login').forEach((el) => {
-    el.classList.remove('hidden-important');
-    el.classList.add('flex-important');
-   });
-   this.qsa('.need-logout').forEach((el) => {
-    el.classList.add('hidden-important');
-    el.classList.remove('flex-important');
-   });
-   this.qs('.menu-username').textContent = '';
+   this.qs('.menu .username').textContent = localStorage.getItem('libershare_username');
+   this.qs('.menu .username').textContent = '';
   }
  }
 

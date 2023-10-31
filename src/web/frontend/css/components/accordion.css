@@ -1,0 +1,25 @@
+.accordion {
+ border: 1px solid var(--secondary-color);
+ border-radius: 10px;
+ overflow: hidden;
+}
+
+.accordion .header {
+ padding: 10px;
+ background-color: var(--primary-color);
+ font-weight: bold;
+ cursor: pointer;
+ position: relative;
+ padding-right: 20px;
+}
+
+.accordion .body {
+ height: 0;
+ overflow: hidden;
+ padding: 0 !important;
+ transition: height 0.3s ease-in-out;
+}
+
+.accordion .inner-body {
+ padding: 10px;
+}

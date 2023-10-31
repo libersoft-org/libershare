@@ -1,0 +1,17 @@
+.loader {
+ margin: 0 auto;
+ width: 50px;
+ height: 50px;
+ border-radius: 50%;
+ background:
+  radial-gradient(farthest-side, var(--secondary-color) 94%, transparent) top/8px 8px no-repeat,
+  conic-gradient(transparent 30%, var(--secondary-color));
+ -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 8px), var(--secondary-color) 0);
+ animation: loader 1s infinite linear;
+}
+
+@keyframes loader {
+ 100% {
+  transform: rotate(1turn);
+ }
+}

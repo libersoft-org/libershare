@@ -1,0 +1,14 @@
+.scrollbar {
+ scrollbar-color: var(--secondary-color) var(--secondary-color-light);
+ scrollbar-width: thin;
+}
+
+.scrollbar::-webkit-scrollbar {
+ width: 10px;
+ background-color: var(--secondary-color-light);
+}
+
+.scrollbar::-webkit-scrollbar-thumb {
+ background-color: var(--secondary-color);
+ border-radius: 5px;
+}
