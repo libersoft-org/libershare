@@ -5,7 +5,7 @@ document.addEventListener('DOMContentLoaded', function () {
    e.preventDefault();
    var formData = new URLSearchParams(new FormData(loginForm)).toString();
    var xhr = new XMLHttpRequest();
-   xhr.open('GET', '../api/get_admin_login.php?' + formData, true);
+   xhr.open('GET', '/api/get_admin_login.php?' + formData, true);
    xhr.onload = function () {
     if (xhr.status === 200) {
      var result = JSON.parse(xhr.responseText);
@@ -143,7 +143,7 @@ function isVisible(element) {
 function getProductsDropdown() {
  var productSearchElem = document.getElementById('products-search');
  var xhr = new XMLHttpRequest();
- xhr.open('GET', '../api/get_products_autocomplete.php?search=' + productSearchElem.value, true);
+ xhr.open('GET', '/api/get_products_autocomplete.php?search=' + productSearchElem.value, true);
  xhr.onload = function () {
   if (xhr.status === 200) {
    var items = JSON.parse(xhr.responseText);
@@ -201,7 +201,7 @@ function setProductItem(id, name) {
  document.getElementById('id-product').value = id;
  document.getElementById('products-search').style.display = 'none';
  var productNameElem = document.getElementById('product-name');
- productNameElem.innerHTML = '<img class="table-icon pointer" src="./template/img/no.svg" alt="Odebrat" onclick="setProductRemove();" /><div class="pl-2">' + name + '</div>';
+ productNameElem.innerHTML = '<img class="table-icon pointer" src="img/no.svg" alt="Odebrat" onclick="setProductRemove();" /><div class="pl-2">' + name + '</div>';
  productNameElem.style.display = 'block';
 }
 

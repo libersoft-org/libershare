@@ -17,7 +17,7 @@ class Framework {
  }
 
  async getMenu() {
-  const menu = await this.getFileContent('html/menu.html');
+  const menu = await this.getFileContent('/html/menu.html');
   this.qs('#menu-desktop').innerHTML = menu;
   this.qs('#menu-mobile').innerHTML = menu;
  }
@@ -63,17 +63,17 @@ class Framework {
    if (this.qs('#menu-desktop .item.menu-' + page)) this.qs('#menu-desktop .item.menu-' + page).classList.add('active');
    if (this.qs('#menu-mobile .item.menu-' + page)) this.qs('#menu-mobile .item.menu-' + page).classList.add('active');
    // TODO: only if page exists:
-   content = await this.getFileContent('html/' + this.pages[page].file);
+   content = await this.getFileContent('/html/' + this.pages[page].file);
   } else if (page.includes('-')) {
-   if (page.startsWith('product-')) content = await this.getFileContent('html/product.html');
-   else if (page.startsWith('category-')) content = await this.getFileContent('html/category.html');
+   if (page.startsWith('product-')) content = await this.getFileContent('/html/product.html');
+   else if (page.startsWith('category-')) content = await this.getFileContent('/html/category.html');
    else {
     document.title = this.pageName + ' - ' + this.pages['notfound'].label;
-    content = await this.getFileContent('html/notfound.html');
+    content = await this.getFileContent('/html/notfound.html');
    }
   } else {
    document.title = this.pageName + ' - ' + this.pages['notfound'].label;
-   content = await this.getFileContent('html/notfound.html');
+   content = await this.getFileContent('/html/notfound.html');
   }
   this.qs('#content').innerHTML = content;
 
@@ -127,7 +127,7 @@ class Framework {
  }
 
  async getAPI(name, body = null) {
-  const res = await fetch('api/' + name, {
+  const res = await fetch('/api/' + name, {
    method: 'POST',
    headers: { 'Content-Type': 'application/json' },
    body: body && JSON.stringify(body)
@@ -136,7 +136,7 @@ class Framework {
  }
 
  async getModal(title, body) {
-  const html = await this.getFileContent('html/modal.html');
+  const html = await this.getFileContent('/html/modal.html');
   const modal = document.createElement('div');
   modal.innerHTML = html.replace('{TITLE}', title).replace('{BODY}', body);
   this.qs('body').appendChild(modal);
