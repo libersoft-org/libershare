@@ -202,7 +202,7 @@ async function getLoginModal() {
  await f.getModal('Login', body);
  f.makeDraggable(modwin.querySelector('.modal'));
  setTimeout(async () => {
-  capt = await f.generateCaptcha();
+  capt = await f.getAPI('get_captcha');
   const imgElement = f.qs('#captcha-container');
   imgElement.style.backgroundColor = 'red';
   imgElement.src = capt.image;
@@ -219,7 +219,7 @@ async function getRegistrationModal() {
  await f.getModal('Registration', body);
  f.makeDraggable(modwin.querySelector('.modal'));
  setTimeout(async () => {
-  capt = await f.generateCaptcha();
+  capt = await f.getAPI('get_captcha');
   const imgElement = f.qs('#captcha-container');
   imgElement.style.backgroundColor = 'red';
   imgElement.src = capt.image;

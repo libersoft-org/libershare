@@ -177,7 +177,7 @@ class Framework {
  // TODO: use getAPI instead of fetch:
  async generateCaptcha() {
   try {
-   const response = await fetch(this.pathAPI + 'generate_captcha');
+   const response = await fetch(this.pathAPI + 'get_captcha');
    if (!response.ok) throw new Error('Network response was not OK');
    return await response.json();
   } catch (error) {

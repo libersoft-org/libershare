@@ -401,7 +401,7 @@ class Data {
   return { data: { username: params.username, sessionguid: sessionGuid } };
  }
 
- async isValidSession(sessionGuid) {
+ async setSession(sessionGuid) {
   // Kontrola existence sessionGuid v databázi
   const session = await this.db.query('SELECT COUNT(*) AS cnt FROM sessions WHERE session_guid = ?', [sessionGuid]);
 

@@ -14,9 +14,7 @@ setInterval(cleanupOldCaptchas, 60 * 1000);
 class API {
  constructor() {
   this.apiMethods = {
-   generate_captcha: this.generateCaptcha,
-   validate_login: this.validateLogin,
-   validate_session: this.isValidSession,
+   get_captcha: this.getCaptcha,
    get_categories: this.getCategories,
    get_category_by_id: this.getCategoryByID,
    get_category_by_link: this.getCategoryByLink,
@@ -35,6 +33,8 @@ class API {
    get_uploads_info: this.getUploadsInfo,
    get_upload: this.getUpload,
    get_upload_by_id: this.getUploadByID,
+   set_login: this.setLogin,
+   set_session: this.setSession,
    set_category_visit: this.setCategoryVisit,
    set_contact: this.setContact,
    set_file_download: this.setFileDownload,
@@ -87,7 +87,7 @@ class API {
   else return { error: 1, message: 'API not found' };
  }
 
- async generateCaptcha() {
+ async getCaptcha() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz123456789';
   let captchaText = '';
   for (let i = 0; i < 5; i++) {
@@ -767,16 +767,16 @@ class API {
   return await this.data.setRegistration(p);
  }
 
- async validateLogin(p = {}) {
+ async setLogin(p = {}) {
   if (!this.validateCaptcha(p.cid, p.captcha)) return { error: 1, message: 'Wrong captcha!' };
   const res = await this.data.validateLogin(p);
   if (res.error) return res;
   return { error: 0, data: res.data };
  }
 
- async isValidSession(p = {}) {
+ async setSession(p = {}) {
   // Existence check of sessionGuid in database
-  const resp = await this.data.isValidSession(p.sessionguid);
+  const resp = await this.data.setSession(p.sessionguid);
   if (!resp) return { error: 1, message: 'Session is not valid' };
   return { error: 0, data: p.sessionguid };
  }
