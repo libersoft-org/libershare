@@ -35,7 +35,7 @@
  bottom: 0;
  left: 0;
  padding: 5px;
- width: calc(100% - 0.625rem);
+ width: calc(100% - 10px);
  text-align: center;
  font-weight: bold;
  font-size: 16px;

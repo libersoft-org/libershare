@@ -57,8 +57,8 @@
  display: none;
  position: fixed;
  background-color: var(--primary-color-light);
- border-radius: 1.25rem;
- border: 0.125rem solid var(--secondary-color);
+ border-radius: 20px;
+ border: 2px solid var(--secondary-color);
  box-sizing: border-box;
  margin: 0 auto;
  overflow: hidden;
@@ -70,7 +70,7 @@
 
 #login_modal .modal-dialog .modal-header {
  display: flex;
- padding: 0.5rem;
+ padding: 8px;
  justify-content: space-between;
  background-color: var(--primary-color);
 }
@@ -78,21 +78,21 @@
 #login_modal .modal-dialog .modal-header button {
  background: transparent;
  border: transparent;
- font-size: 2em;
+ font-size: 32px;
  font-weight: bold;
 }
 
 #login_modal .modal-title,
 #login_modal .modal-footer {
- margin: 0.25rem;
+ margin: 4px;
 }
 
 #login_modal .modal-body {
- margin: 0.75rem;
+ margin: 12px;
 }
 
 #login_modal .modal-body .mb-2 {
- margin-bottom: 0.625rem;
+ margin-bottom: 10px;
  user-select: none;
 }
 
@@ -135,8 +135,8 @@
 #modal-win .modal-overlay #modal-content {
  position: absolute;
  width: var(--content-width);
- min-width: 15rem;
- border-radius: 1.25rem;
+ min-width: 240px;
+ border-radius: 20px;
  display: flex;
  flex-direction: column;
  background-color: white;
@@ -151,17 +151,17 @@
 
 #modal-win .modal-overlay #modal-content #static-captcha #captcha-container {
  display: block;
- border-radius: 0.625rem;
- height: 5em;
- width: 14em;
- border: 0.0625rem solid var(--secondary-color);
- margin: 0.625rem 0;
+ border-radius: 10px;
+ height: 80px;
+ width: 224px;
+ border: 1px solid var(--secondary-color);
+ margin: 10px 0;
 }
 
 #modal-win .modal-overlay #modal-content #captcha-input {
- height: 2em;
- font-size: 1em;
- padding-left: 0.3125rem;
+ height: 32px;
+ font-size: 16px;
+ padding-left: 5px;
  display: flex;
 }
 
@@ -170,32 +170,32 @@
  cursor: move;
  flex-grow: 1;
  justify-content: space-between;
- height: 2em;
+ height: 32px;
  user-select: none;
  background-color: var(--primary-color);
- padding: 0.5rem 0.5rem 0.2rem 0.5rem;
+ padding: 8px 8px 3px 8px;
 }
 
 #modal-win .modal-header .modal-title {
- font-size: 1.2em;
+ font-size: 20px;
  font-weight: bold;
- height: 1.2em;
- padding: 0.125rem;
+ height: 20px;
+ padding: 2px;
  cursor: default;
 }
 
 #modal-win .modal-close {
- font-size: 1.6em;
+ font-size: 25px;
  text-align: center;
  font-weight: bold;
- height: 1.2em;
- width: 1em;
+ height: 25px;
+ width: 16px;
  cursor: pointer;
 }
 
 #modal-win .modal-body {
  overflow-y: auto;
- padding: 1em;
+ padding: 16px;
  user-select: none;
 }
 
@@ -213,43 +213,43 @@
 #modal-win .modal-body #login .form-group {
  display: flex;
  flex-direction: column;
- margin-bottom: 0.3125rem;
- margin-top: 0.3125rem;
+ margin-bottom: 5px;
+ margin-top: 5px;
 }
 
 #modal-win .modal-body #login label {
- margin-bottom: 0.3125rem;
- padding: 0.125rem;
+ margin-bottom: 5px;
+ padding: 2px;
 }
 
 #modal-win .modal-body #login input {
- height: 2em;
- font-size: 1em;
- padding-left: 0.3125rem;
+ height: 32px;
+ font-size: 16px;
+ padding-left: 5px;
 }
 
 #modal-win .modal-body .form-group-row {
  display: flex;
  flex-direction: row;
- margin-bottom: 0.3125rem;
- margin-top: 0.3125rem;
+ margin-bottom: 5px;
+ margin-top: 5px;
 }
 
 #modal-win .modal-body .form-inline {
- margin-left: 0.5rem;
+ margin-left: 8px;
 }
 
 #modal-win .modal-body .form-control {
- padding: 0.125rem;
+ padding: 2px;
 }
 
 #modal-win button {
- margin-top: 1rem;
- padding: 0.5rem;
- border-radius: 0.625rem;
+ margin-top: 16px;
+ padding: 8px;
+ border-radius: 10px;
  font-weight: bold;
- font-size: 1em;
- border: 0.0625rem solid var(--secondary-color);
+ font-size: 16px;
+ border: 1px solid var(--secondary-color);
  background-color: var(--primary-color);
  color: var(--secondary-color);
  width: max-content;

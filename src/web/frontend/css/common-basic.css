@@ -1,5 +1,6 @@
 :root {
  --content-width: 800px;
+ --header-height: 50px;
 }
 
 body {

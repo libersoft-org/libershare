@@ -5,9 +5,9 @@
 }
 
 .captch .reload-icon {
- width: 2rem;
+ width: 32px;
  height: auto;
- margin-bottom: 8rem;
+ margin-bottom: 128px;
  margin-left: 4px;
  cursor: pointer;
 }

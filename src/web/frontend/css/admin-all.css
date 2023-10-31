@@ -98,7 +98,7 @@ main {
 
 .progress-thick {
  height: 32px;
- font-size: 1.25rem;
+ font-size: 20px;
 }
 
 .bg-progress {
@@ -111,7 +111,7 @@ main {
 }
 
 .breadcrumb-item {
- font-size: 16pt;
+ font-size: 22px;
  font-weight: bold;
  color: #dddddd;
 }
@@ -137,7 +137,7 @@ main {
 }
 
 .font-small {
- font-size: 9pt;
+ font-size: 12px;
 }
 
 #product-name {
