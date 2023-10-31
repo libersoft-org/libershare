@@ -13,30 +13,30 @@
   <thead class="thead-admin">
    <tr>
     <th>
-     <span></span>Name</span>
+     <span>Name</span>
      <a href="{ORDER-NAME-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
      <a href="{ORDER-NAME-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th>
-    <span>Size</span>
-    <a href="{ORDER-SIZE-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-    <a href="{ORDER-SIZE-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+     <span>Size</span>
+     <a href="{ORDER-SIZE-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-SIZE-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th>
-    <span>IP address</span>
-    <a href="{ORDER-IP-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-    <a href="{ORDER-IP-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+     <span>IP address</span>
+     <a href="{ORDER-IP-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-IP-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
-    <span>Downloads</span>
-    <a href="{ORDER-DOWNLOADS-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-    <a href="{ORDER-DOWNLOADS-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
-    <span class="font-small">(all / by session / by IP)</span>
+     <span>Downloads</span>
+     <a href="{ORDER-DOWNLOADS-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-DOWNLOADS-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+     <span class="font-small">(all / by session / by IP)</span>
     </th>
     <th>
-    <span>Created</span>
-    <a href="{ORDER-CREATED-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-    <a href="{ORDER-CREATED-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+     <span>Created</span>
+     <a href="{ORDER-CREATED-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-CREATED-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
     </th>
     <th>Action</th>
    </tr>
@@ -44,6 +44,8 @@
   <tbody>
    {uploads}
   </tbody>
-  <script>getPage('uploads', {{params}});</script>
+  <script>
+   getPage('uploads', {{params}});
+  </script>
  </table>
 </div>
