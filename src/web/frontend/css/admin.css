@@ -1,5 +1,6 @@
 @import 'components/accordion.css';
 @import 'components/breadcrumb.css';
+@import 'components/button.css';
 @import 'components/captcha.css';
 @import 'components/card.css';
 @import 'components/items.css';
@@ -7,10 +8,9 @@
 @import 'components/modal.css';
 @import 'components/notice.css';
 @import 'components/scrollbar.css';
-@import 'common-font.css';
 @import 'common-basic.css';
-@import 'common-captcha.css';
-@import 'common-header.css';
 @import 'common-content.css';
+@import 'common-font.css';
+@import 'common-header.css';
 @import 'common-menu.css';
 @import 'admin-colors.css';

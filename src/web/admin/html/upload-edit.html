@@ -1,38 +1,32 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a href="./?page=uploads">Uploads</a></li>
+ <li class="breadcrumb-item"><a onclick="getPage('uploads')">Uploads</a></li>
  <li class="breadcrumb-item active">Edit</li>
 </ol>
 <div class="card card-sm mb-3 center">
  <div class="card-header bg-admin text-white bold">Upload edit - {NAME}</div>
  <div class="card-body">
   {ERROR}
-  <form action="./upload-edit.php" method="post">
-   <div class="form-group">
-    <label>File name:</label>
-    <input type="text" id="name" class="form-control" name="name" maxlength="255" value="{NAME}" placeholder="Název souboru" required autofocus />
-   </div>
-   <div class="form-group">
-    <table>
-     <tr>
-      <th class="pr-3">Velikost:</th>
-      <td>{SIZE}</td>
-     </tr>
-     <tr>
-      <th class="pr-3">IP uploadera:</th>
-      <td>{IP}</td>
-     </tr>
-     <tr>
-      <th class="pr-3">Link:</th>
-      <td>{LINK}</td>
-     </tr>
-     <tr>
-      <th class="pr-3">Vytvořen:</th>
-      <td>{CREATED}</td>
-     </tr>
-    </table>
-   </div>
-   <input type="hidden" name="id" value="{ID}" />
-   <input type="submit" value="Edit" class="button" />
-  </form>
+  <label>File name:</label>
+  <input type="text" id="name" class="form-control" name="name" maxlength="255" value="{NAME}" placeholder="File name" required autofocus />
+  <table>
+   <tr>
+    <th class="pr-3">Size:</th>
+    <td>{SIZE}</td>
+   </tr>
+   <tr>
+    <th class="pr-3">IP address:</th>
+    <td>{IP}</td>
+   </tr>
+   <tr>
+    <th class="pr-3">Link:</th>
+    <td>{LINK}</td>
+   </tr>
+   <tr>
+    <th class="pr-3">Created:</th>
+    <td>{CREATED}</td>
+   </tr>
+  </table>
+  <input type="hidden" name="id" value="{ID}" />
+  <a class="button primary" onclick="uploadEdit()">Edit</a>
  </div>
 </div>

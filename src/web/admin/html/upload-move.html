@@ -6,43 +6,35 @@
  <div class="card-header bg-admin text-white bold">Move upload - {NAME}</div>
  <div class="card-body">
   {error}
-  <form action="./upload-move.php" method="post">
-   <div class="form-group">
-    <label>Přesunout do produktu:</label>
-    <div id="product-name" style="display: none"></div>
-    <input id="products-search" class="form-control" type="text" oninput="getProductsDropdown();" placeholder="Product search" autofocus />
-   </div>
-   <input id="id-product" type="hidden" name="id_product" value="" />
-   <div class="form-group custom-control custom-checkbox">
-    <input name="playable" type="checkbox" class="custom-control-input" id="playable" />
-    <label class="custom-control-label" for="playable">Playable</label>
-   </div>
-   <div class="form-group">
-    <table>
-     <tr>
-      <th class="pr-3">File name:</th>
-      <td>{NAME}</td>
-     </tr>
-     <tr>
-      <th class="pr-3">Size:</th>
-      <td>{SIZE}</td>
-     </tr>
-     <tr>
-      <th class="pr-3">IP uploadera:</th>
-      <td>{IP}</td>
-     </tr>
-     <tr>
-      <th class="pr-3">Link:</th>
-      <td>{LINK}</td>
-     </tr>
-     <tr>
-      <th class="pr-3">Created:</th>
-      <td>{CREATED}</td>
-     </tr>
-    </table>
-   </div>
-   <input type="hidden" name="id" value="{ID}" />
-   <input type="submit" value="Přesunout" class="button" />
-  </form>
+  <label>Přesunout do produktu:</label>
+  <div id="product-name" style="display: none"></div>
+  <input id="products-search" class="form-control" type="text" oninput="getProductsDropdown();" placeholder="Product search" autofocus />
+  <input id="id-product" type="hidden" name="id_product" value="" />
+  <input name="playable" type="checkbox" class="custom-control-input" id="playable" />
+  <label class="custom-control-label" for="playable">Playable</label>
+  <table>
+   <tr>
+    <th class="pr-3">File name:</th>
+    <td>{NAME}</td>
+   </tr>
+   <tr>
+    <th class="pr-3">Size:</th>
+    <td>{SIZE}</td>
+   </tr>
+   <tr>
+    <th class="pr-3">IP uploadera:</th>
+    <td>{IP}</td>
+   </tr>
+   <tr>
+    <th class="pr-3">Link:</th>
+    <td>{LINK}</td>
+   </tr>
+   <tr>
+    <th class="pr-3">Created:</th>
+    <td>{CREATED}</td>
+   </tr>
+  </table>
+  <input type="hidden" name="id" value="{ID}" />
+  <a class="button primary" onclick="uploadMove()">Přesunout</a>
  </div>
 </div>

@@ -15,17 +15,6 @@
  height: 24px;
 }
 
-#header .button {
- display: flex;
- justify-content: center;
- align-items: center;
- padding: 8px;
- border-radius: 10px;
- font-weight: bold;
- background-color: var(--secondary-color);
- color: #fff;
-}
-
 #header .menu-toggler {
  display: none;
  padding: 10px;

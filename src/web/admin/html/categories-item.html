@@ -1,15 +1,15 @@
 <tr>
- <td><a href="./?page=category-edit&amp;id={id}">{NAME}</a></td>
+ <td><a onclick="getPage('category-edit?id={ID}')">{NAME}</a></td>
  <td class="text-center">{PRODUCTS} / {PRODUCTS-VISIBLE} / {PRODUCTS-HIDDEN}</td>
  <td class="text-center">{SIZE}</td>
  <td class="text-center">{VISITS} / {VISITS-BY-SESSION} / {VISITS-BY-IP}</td>
  <td>{CREATED}</td>
  <td>
-  <a class="mr-1" href="./?page=category-edit&amp;id={ID}">
-   <img class="table-icon" src="template/img/edit.svg" alt="Edit" />
+  <a class="mr-1" onclick="getPage('category-edit?id={ID}')">
+   <img class="table-icon" src="/img/edit.svg" alt="Edit" />
   </a>
   <a class="mr-1 pointer" onclick="confirmDelete('category-delete.php?id={ID}', '{NAME}')">
-   <img class="table-icon" src="template/img/delete.svg" alt="Delete" />
+   <img class="table-icon" src="/img/delete.svg" alt="Delete" />
   </a>
  </td>
 </tr>

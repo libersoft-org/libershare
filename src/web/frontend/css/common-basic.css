@@ -104,6 +104,23 @@ input[type='file'] {
  box-shadow: 0 0 10px 0 rgba(0, 0, 0, 0.75);
 }
 
+.separator {
+ height: 15px;
+}
+
+.product {
+ display: flex;
+ flex-direction: column;
+ text-align: center;
+}
+
+.product .image {
+ width: 100%;
+ max-width: 100%;
+ border: 1px solid var(--secondary-color);
+ border-radius: 10px;
+}
+
 /*
 .need-logout,
 .need-login {

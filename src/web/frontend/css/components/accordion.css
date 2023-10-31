@@ -23,3 +23,12 @@
 .accordion .inner-body {
  padding: 10px;
 }
+
+.accordion .arrow {
+ position: absolute;
+ right: 5px;
+ top: 50%;
+ transform: translateY(-50%) rotate(0deg);
+ transition: transform 0.3s ease-in-out;
+ fill: #000;
+}

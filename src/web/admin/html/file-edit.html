@@ -1,55 +1,47 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a href="./?page=files">Soubory produktů</a></li>
- <li class="breadcrumb-item active">Úprava souboru</li>
+ <li class="breadcrumb-item"><a onclick="getPage('files')">Product files</a></li>
+ <li class="breadcrumb-item active">Edit file</li>
 </ol>
 <div class="card card-sm mb-3 center">
- <div class="card-header bg-admin text-white bold">Úprava souboru - {name}</div>
+ <div class="card-header bg-admin text-white bold">Edit file - {NAME}</div>
  <div class="card-body">
   {ERROR}
-  <form action="./file-edit.php" method="post">
-   <div class="form-group">
-    <label>Název souboru:</label>
-    <input type="text" id="name" class="form-control" name="name" maxlength="255" value="{NAME}" placeholder="Název souboru" required autofocus />
-   </div>
-   <div class="form-group">
-    <label>Produkt:</label>
-    <input id="products-search" class="form-control" type="text" oninput="getProductsDropdown();" placeholder="Vyhledání produktu" />
-    <div id="product-name"></div>
-   </div>
-   <input id="id-product" type="hidden" name="id_product" value="" />
-   <div class="form-group custom-control custom-checkbox">
-    <input name="playable" type="checkbox" class="custom-control-input" id="playable" {PLAYABLE} />
-    <label class="custom-control-label" for="playable">Určeno k přehrávání</label>
-   </div>
-   <div class="form-group">
-    <table>
-     <tr>
-      <th class="pr-3">Produkt:</th>
-      <td>{PRODUCT-NAME}</td>
-     </tr>
-     <tr>
-      <th class="pr-3">Velikost:</th>
-      <td>{SIZE}</td>
-     </tr>
-     <tr>
-      <th class="pr-3">IP uploadera:</th>
-      <td>{IP}</td>
-     </tr>
-     <tr>
-      <th class="pr-3">Link:</th>
-      <td>{LINK}</td>
-     </tr>
-     <tr>
-      <th class="pr-3">Vytvořen:</th>
-      <td>{CREATED}</td>
-     </tr>
-    </table>
-   </div>
-   <input type="hidden" name="id" value="{id}" />
-   <input type="submit" value="Upravit" class="button" />
-  </form>
+  <label>Název souboru:</label>
+  <input type="text" id="name" class="form-control" name="name" maxlength="255" value="{NAME}" placeholder="Název souboru" required autofocus />
+  <label>Produkt:</label>
+  <input id="products-search" class="form-control" type="text" oninput="getProductsDropdown();" placeholder="Vyhledání produktu" />
+  <div id="product-name"></div>
+  <input id="id-product" type="hidden" name="id_product" value="" />
+  <div class="form-group custom-control custom-checkbox">
+   <input name="playable" type="checkbox" class="custom-control-input" id="playable" {PLAYABLE} />
+   <label class="custom-control-label" for="playable">Určeno k přehrávání</label>
+   <table>
+    <tr>
+     <th class="pr-3">Product:</th>
+     <td>{PRODUCT-NAME}</td>
+    </tr>
+    <tr>
+     <th class="pr-3">Size:</th>
+     <td>{SIZE}</td>
+    </tr>
+    <tr>
+     <th class="pr-3">IP address:</th>
+     <td>{IP}</td>
+    </tr>
+    <tr>
+     <th class="pr-3">Link:</th>
+     <td>{LINK}</td>
+    </tr>
+    <tr>
+     <th class="pr-3">Created:</th>
+     <td>{CREATED}</td>
+    </tr>
+   </table>
+   <input type="hidden" name="id" value="{ID}" />
+   <a onclick="getPage('file-edit')">Edit</a>
+  </div>
  </div>
+ <script>
+  setProductItem('{ID-PRODUCT}', '{PRODUCT-NAME}');
+ </script>
 </div>
-<script>
- setProductItem('{id-product}', '{product-name}');
-</script>

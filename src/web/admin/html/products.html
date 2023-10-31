@@ -3,16 +3,16 @@
 </ol>
 <div class="mb-3">
  <form action="./" method="get">
-  <a class="button" href="./?page=product-new">New product</a>
+  <a class="button primary" href="./?page=product-new">New product</a>
   <span class="dropdown">
-   <button class="button" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Category: {CAT-SELECTED}</button>
+   <a class="button primary">Category: {CAT-SELECTED}</a>
    <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
     <a class="dropdown-item" href="{CAT-LINK-ALL}">Vše</a>
     {categories}
    </div>
   </span>
   <span class="dropdown">
-   <button class="button" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Image: {IMAGE-SELECTED}</button>
+   <a class="button primary">Image: {IMAGE-SELECTED}</a>
    <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
     <a class="dropdown-item" href="{IMAGE-LINK-ALL}">Vše</a>
     <a class="dropdown-item" href="{IMAGE-LINK-YES}">Ano</a>
@@ -20,7 +20,7 @@
    </div>
   </span>
   <span class="dropdown">
-   <button class="button" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Adult: {ADULT-SELECTED}</button>
+   <a class="button primary">Adult: {ADULT-SELECTED}</a>
    <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
     <a class="dropdown-item" href="{ADULT-LINK-ALL}">Vše</a>
     <a class="dropdown-item" href="{ADULT-LINK-YES}">Ano</a>
@@ -28,7 +28,7 @@
    </div>
   </span>
   <span class="dropdown">
-   <button class="button" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Hidden: {HIDDEN-SELECTED}</button>
+   <a class="button primary" id="dropdownMenuButton">Hidden: {HIDDEN-SELECTED}</a>
    <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
     <a class="dropdown-item" href="{HIDDEN-LINK-ALL}">Vše</a>
     <a class="dropdown-item" href="{HIDDEN-LINK-YES}">Ano</a>
@@ -36,7 +36,7 @@
    </div>
   </span>
   <span class="dropdown">
-   <button class="button" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Video: {VIDEO-SELECTED}</button>
+   <a class="button primary" id="dropdownMenuButton">Video: {VIDEO-SELECTED}</a>
    <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
     <a class="dropdown-item" href="{VIDEO-LINK-ALL}">Vše</a>
     <a class="dropdown-item" href="{VIDEO-LINK-YES}">Ano</a>
@@ -46,7 +46,7 @@
   <span>
    {SEARCH-VALUES}
    <input class="form-control d-inline w-auto" type="text" name="search" value="{phrase}" placeholder="Search" autofocus />
-   <input class="button" type="submit" value="Search" />
+   <a class="button primary" onclick="search()">Search</a>
   </span>
  </form>
 </div>
