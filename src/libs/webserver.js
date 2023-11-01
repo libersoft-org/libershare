@@ -19,6 +19,10 @@ class WebServer {
  // TODO - add HTTPS support, change to something faster, than express:
  async startServer() {
   const app = express();
+  app.use((req, res, next) => {
+   Common.addLog('Request from: ' + (req.ip || req.headers['x-forwarded-for'] || 'Unknown') + ', URL path: ' + req.url);
+   next();
+  });
   app.use(express.json());
   app.use('/api/:name', async (req, res) => res.type('json').send(JSON.stringify(await this.api.processAPI(req.params.name, req.body))));
   app.use('/img/categories/', express.static(path.join(Common.settings.storage.images + 'categories')));
@@ -38,11 +42,14 @@ class WebServer {
   app.use('/download/:hash/:name', (req, res) => {
    res.setHeader('Content-Disposition', 'attachment; filename=' + req.params.name);
    // TODO: PREVENT FROM PATH INJECTION !!!!!!!!!!!!!!!! (../../root/...):
+   // TODO - BUG: crashes with big files (1,2 GB+)
    res.sendFile(path.join(Common.settings.storage.download, req.params.hash));
+   //express.static(path.join(Common.settings.storage.download, req.params.hash));
   });
   app.use('/', express.static(path.join(__dirname, '../web/frontend'), { fallthrough: true }));
   app.use('/', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
   app.use((req, res) => res.status(404).send('404 Not found'));
+  if (!Common.settings.web.standalone) fs.unlinkSync(Common.settings.web.socket_path);
   app.listen(Common.settings.web.standalone ? Common.settings.web.port : Common.settings.web.socket_path, () => {
    if (!Common.settings.web.standalone) fs.chmodSync(Common.settings.web.socket_path, '777');
    Common.addLog('Web server is running on ' + (Common.settings.web.standalone ? 'port: ' + Common.settings.web.port : 'Unix socket: ' + Common.settings.web.socket_path));
