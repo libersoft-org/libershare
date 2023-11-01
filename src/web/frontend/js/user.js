@@ -115,11 +115,12 @@ async function getPageItem(pathArr = null) {
   });
   item.data[0].id_categories;
   const files = await f.getAPI('get_files', { id_item: item.data[0].id });
-  let temp_files = await f.getFileContent(f.pathHTML + 'item-file.html');
+  const temp_files = await f.getFileContent(f.pathHTML + 'item-file.html');
+  const temp_play = await f.getFileContent(f.pathHTML + 'item-play-button.html');
   let rows = '';
   for (const fd of files.data) {
    const fileExtension = fd.file_name.split('.').pop().toLowerCase();
-   let repl = await f.getFileContent(f.pathHTML + 'item-play-button.html');
+   let repl = temp_play;
    if (!videoExtensions.includes(fileExtension)) repl = '';
    if (fd.file_name && videoExtensions.includes(fileExtension)) {
     rows += f.translate(temp_files, {
