@@ -43,31 +43,22 @@ class Framework {
   this.qs('#header').classList.remove('shadow');
  }
 
- // TODO: posilam tam path nekdy jen jako "categories", jindy jako "/product/neco/":
- // path doplnit lomitkama, pokud nezacina a nekonci lomitkem
- // pak ty funkce getReload a getPage nejak udelat tak, aby se neduplikovala vetsina kodu
- // rozdil je jen v pushState / replaceState
- async getReload(path) {
-  if (path) {
-   if (!path.endsWith('/')) path += '/';
-   if (!path.startsWith('/')) path = '/' + path;
-  } else path = '/';
-  const pathArr = path.split('/').filter((item) => item !== '');
-
-  window.history.replaceState('', '', path);
-  await f.getPageContent(pathArr);
+ getReload(path) {
+  return this.processPath(path, 'replaceState');
  }
 
- async getPage(path) {
+ getPage(path) {
   if (this.menuOpened) this.menuClose();
+  return this.processPath(path, 'pushState');
+ }
 
+ async processPath(path, historyMethod) {
   if (path) {
    if (!path.endsWith('/')) path += '/';
    if (!path.startsWith('/')) path = '/' + path;
   } else path = '/';
   const pathArr = path.split('/').filter((item) => item !== '');
-
-  window.history.pushState('', '', path);
+  window.history[historyMethod]('', '', path);
   await f.getPageContent(pathArr);
  }
 

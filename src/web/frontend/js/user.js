@@ -140,7 +140,7 @@ async function getPageCategory(link) {
    if (prods.data[i].image_sm) imgee = f.pathImages + 'products/' + prods.data[i].image_sm;
    let prow = f.translate(temp_prod, {
     '{NAME}': prods.data[i].name,
-    '{LINK}': prods.data[i].id + '-' + prods.data[i].link,
+    '{LINK}': prods.data[i].link,
     '{IMAGE}': prods.data[i].adult === 0 ? imgee : f.pathImages + 'item-censored.webp'
    });
    prows += prow;
