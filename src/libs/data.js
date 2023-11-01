@@ -166,7 +166,7 @@ class Data {
 
  async getLogin() {}
 
- async getProduct(id, hidden) {
+ async getProductByID(id, hidden) {
   return await this.db.query(
    `
    SELECT
@@ -185,6 +185,28 @@ class Data {
    FROM products
    WHERE id = ? ${!hidden ? 'AND hidden = 0' : ''}`,
    [id]
+  );
+ }
+
+ async getProductByLink(link, hidden) {
+  return await this.db.query(
+   `
+   SELECT
+    id,
+    id_categories,
+    name,
+    link,
+    image,
+    image_sm,
+    adult,
+    hidden,
+    (SELECT COUNT(*) FROM products_visits WHERE id_products = products.id) AS visits,
+    (SELECT COUNT(DISTINCT session) FROM products_visits WHERE id_products = products.id) AS visits_by_session,
+    (SELECT COUNT(DISTINCT ip) FROM products_visits WHERE id_products = products.id) AS visits_by_ip,
+    created
+   FROM products
+   WHERE link = ? ${!hidden ? 'AND hidden = 0' : ''}`,
+   [link]
   );
  }
 

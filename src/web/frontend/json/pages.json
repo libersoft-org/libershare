@@ -36,7 +36,11 @@
   "file": "activation.html"
  },
  "product": {
-  "label": "Product",
+  "label": "{PRODUCT}",
+  "file": "product.html"
+ },
+ "category": {
+  "label": "{CATEGORY}",
   "file": "product.html"
  },
  "notfound": {

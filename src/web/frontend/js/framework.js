@@ -43,35 +43,45 @@ class Framework {
   this.qs('#header').classList.remove('shadow');
  }
 
- // TODO: posilam tam pole (path), ale mela by to bejt cesta
+ // TODO: posilam tam path nekdy jen jako "categories", jindy jako "/product/neco/":
+ // path doplnit lomitkama, pokud nezacina a nekonci lomitkem
+ // pak ty funkce getReload a getPage nejak udelat tak, aby se neduplikovala vetsina kodu
+ // rozdil je jen v pushState / replaceState
  async getReload(path) {
-  console.log(path);
+  if (path) {
+   if (!path.endsWith('/')) path += '/';
+   if (!path.startsWith('/')) path = '/' + path;
+  } else path = '/';
   const pathArr = path.split('/').filter((item) => item !== '');
-  console.log(pathArr);
+
   window.history.replaceState('', '', path);
-  await f.getPageContent(pathArr[0]);
+  await f.getPageContent(pathArr);
  }
 
  async getPage(path) {
   if (this.menuOpened) this.menuClose();
-  console.log(path);
+
+  if (path) {
+   if (!path.endsWith('/')) path += '/';
+   if (!path.startsWith('/')) path = '/' + path;
+  } else path = '/';
   const pathArr = path.split('/').filter((item) => item !== '');
-  console.log(pathArr);
+
   window.history.pushState('', '', path);
-  await f.getPageContent(pathArr[0]);
+  await f.getPageContent(pathArr);
  }
 
- async getPageContent(page) {
-  if (page == '') page = 'news';
+ async getPageContent(pageArr) {
+  if (!pageArr || pageArr.length == 0) pageArr = ['news'];
   let content = '';
   if (this.qsa('#menu-desktop .item.active').length == 1) this.qsa('#menu-desktop .item.active')[0].classList.remove('active');
   if (this.qsa('#menu-mobile .item.active').length == 1) this.qsa('#menu-mobile .item.active')[0].classList.remove('active');
-  if (page in this.pages) {
-   document.title = this.pageName + ' - ' + this.pages[page].label;
-   if (this.qs('#menu-desktop .item.menu-' + page)) this.qs('#menu-desktop .item.menu-' + page).classList.add('active');
-   if (this.qs('#menu-mobile .item.menu-' + page)) this.qs('#menu-mobile .item.menu-' + page).classList.add('active');
+  if (pageArr[0] in this.pages) {
+   document.title = this.pageName + ' - ' + this.pages[pageArr[0]].label;
+   if (this.qs('#menu-desktop .item.menu-' + pageArr[0])) this.qs('#menu-desktop .item.menu-' + pageArr[0]).classList.add('active');
+   if (this.qs('#menu-mobile .item.menu-' + pageArr[0])) this.qs('#menu-mobile .item.menu-' + pageArr[0]).classList.add('active');
    // TODO: only if page exists:
-   content = await this.getFileContent(this.pathHTML + this.pages[page].file);
+   content = await this.getFileContent(this.pathHTML + this.pages[pageArr[0]].file);
   } else {
    document.title = this.pageName + ' - ' + this.pages['notfound'].label;
    content = await this.getFileContent(this.pathHTML + 'notfound.html');
@@ -79,13 +89,13 @@ class Framework {
   this.qs('#content').innerHTML = content;
 
   // TODO: move this to user.js:
-  if (page === 'news') await getPageNews();
-  else if (page === 'categories') await getPageCategories();
-  else if (page == 'upload') await getPageUpload();
-  else if (page == 'search') await getPageSearch();
-  else if (page == 'forum') await getPageForum();
-  else if (page == 'category') await getPageCategory(page.lastIndexOf('/'));
-  else if (page == 'product') await getPageProduct(page.lastIndexOf('/'));
+  if (pageArr[0] === 'news') await getPageNews();
+  else if (pageArr[0] === 'categories') await getPageCategories();
+  else if (pageArr[0] == 'upload') await getPageUpload();
+  else if (pageArr[0] == 'search') await getPageSearch();
+  else if (pageArr[0] == 'forum') await getPageForum();
+  else if (pageArr[0] == 'category') await getPageCategory(pageArr[1]);
+  else if (pageArr[0] == 'product') await getPageProduct(pageArr[1]);
   // TODO: move somewhere else related to accordion (or replace with CSS only)
   this.qsa('.accordion .header').forEach((header) => {
    header.onclick = () => {

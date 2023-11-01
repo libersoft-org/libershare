@@ -26,7 +26,8 @@ class API {
    get_forum_posts: this.getForumPosts,
    get_login: this.getLogin,
    get_products: this.getProducts,
-   get_product: this.getProduct,
+   get_product_by_id: this.getProductByID,
+   get_product_by_link: this.getProductByLink,
    get_products_auto_complete: this.getProductsAutoComplete,
    get_products_info: this.getProductsInfo,
    get_uploads: this.getUploads,
@@ -396,7 +397,7 @@ class API {
   return { error: 0, data: res };
  }
 
- async getProduct(p = {}) {
+ async getProductByID(p = {}) {
   /*
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
@@ -423,7 +424,12 @@ class API {
     else echo json_encode(array('error' => 2, 'message' => 'Product doesn\'t exist'));
    } else echo json_encode(array('error' => 1, 'message' => 'Product ID is empty'));
   */
-  const res = await this.data.getProduct(p.id, p.hidden);
+  const res = await this.data.getProductByID(p.id, p.hidden);
+  return { error: 0, data: res };
+ }
+
+ async getProductByLink(p = {}) {
+  const res = await this.data.getProductByLink(p.link, p.hidden);
   return { error: 0, data: res };
  }
 

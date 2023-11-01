@@ -73,11 +73,11 @@ async function getPageCategories() {
  f.qs('#content .loader').remove();
 }
 
-async function getPageProduct(id) {
+async function getPageProduct(link) {
  const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
  let temp = await f.getFileContent(f.pathHTML + 'product-detail.html');
- const prod = await f.getAPI('get_product', { id: id });
- if (prod.data.length == 1) {
+ const prod = await f.getAPI('get_product_by_link', { link: link });
+ if (prod.data && prod.data.length == 1) {
   const cat = await f.getAPI('get_category_by_id', {
    id: prod.data[0].id_categories
   });
@@ -105,13 +105,13 @@ async function getPageProduct(id) {
     });
    }
   }
-  let imgee = image_default;
-  if (prod.data[0].image) imgee = f.pathImages + 'products/' + prod.data[0].image;
+  let image = image_default;
+  if (prod.data[0].image) image = f.pathImages + 'products/' + prod.data[0].image;
   const html = f.translate(temp, {
    '{CATEGORY-LINK}': cat.data[0].link,
    '{CATEGORY}': cat.data[0].name,
    '{NAME}': prod.data[0].name,
-   '{IMAGE}': imgee, //'{FB-SHARE-LINK}': '',
+   '{IMAGE}': image, //'{FB-SHARE-LINK}': '',
    '{FILES}': rows
   });
   f.qs('#content').innerHTML = html;
