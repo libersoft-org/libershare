@@ -108,13 +108,13 @@ input[type='file'] {
  height: 15px;
 }
 
-.item {
+.detail {
  display: flex;
  flex-direction: column;
  text-align: center;
 }
 
-.item .image {
+.detail .image {
  width: 100%;
  max-width: 100%;
  border: 1px solid var(--secondary-color);
