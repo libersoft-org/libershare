@@ -125,24 +125,20 @@ class Framework {
  }
 
  async getModal(title, body) {
+  this.closeModal();
   const html = await this.getFileContent(this.pathHTML + 'modal.html');
   const modal = document.createElement('div');
   modal.innerHTML = this.translate(html, { '{TITLE}': title, '{BODY}': body });
-  modal.querySelector('.modal-overlay').onclick = this.closeModal();
-  modal.querySelector('#modal-content').onclick = (event) => event.stopPropagation();
-  this.qs('body').appendChild(modal);
- }
+  //modal.querySelector('.modal-overlay').onclick = this.closeModal();
+  //modal.querySelector('#modal-content').onclick = (event) => event.stopPropagation();
 
- closeModal() {
-  this.qs('.modal').remove();
- }
-
- makeDraggable(modal) {
-  let isDragging = false,
-   offsetX,
-   offsetY;
-  const header = modal.querySelector('.modal-header');
+  // DRAGABLE:
+  let isDragging = false;
+  let offsetX = 0;
+  let offsetY = 0;
+  const header = modal.querySelector('.title');
   header.onmousedown = (e) => {
+   e.preventDefault();
    isDragging = true;
    const rect = modal.getBoundingClientRect();
    offsetX = e.clientX - rect.left;
@@ -150,10 +146,18 @@ class Framework {
   };
   document.onmousemove = (e) => {
    if (!isDragging) return;
-   modal.style.left = Math.min(window.innerWidth - modal.offsetWidth, Math.max(0, e.clientX - offsetX)) + 'px';
-   modal.style.top = Math.min(window.innerHeight - modal.offsetHeight, Math.max(0, e.clientY - offsetY)) + 'px';
+   modal.style.left = e.clientX - offsetX + 'px';
+   modal.style.top = e.clientY - offsetY + 'px';
   };
   document.onmouseup = () => (isDragging = false);
+  document.body.appendChild(modal);
+ }
+
+ closeModal() {
+  const m = this.qs('.modal');
+  const mo = this.qs('.modal-overlay');
+  if (m) m.remove();
+  if (mo) mo.remove();
  }
 
  translate(template, dictionary) {

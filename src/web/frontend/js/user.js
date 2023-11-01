@@ -197,35 +197,30 @@ async function getPageUpload() {
  f.qs('#content .files').innerHTML = rows;
 }
 
-async function getLoginModal() {
- const body = await f.getFileContent(f.pathHTML + 'login.html');
- await f.getModal('Login', body);
- f.makeDraggable(modwin.querySelector('.modal'));
- setTimeout(async () => {
-  capt = await f.getAPI('get_captcha');
-  const imgElement = f.qs('#captcha-container');
-  imgElement.style.backgroundColor = 'red';
-  imgElement.src = capt.image;
-  const cid = f.qs('#cid');
-  cid.value = capt.capid;
- });
+async function getModalLogin() {
+ await f.getModal('Login', await f.getFileContent(f.pathHTML + 'modal-login.html'));
+
+ const captcha = await f.getAPI('get_captcha');
+ const elCaptcha = f.qs('.modal .body .captcha');
+ elCaptcha.style.backgroundColor = 'red';
+ elCaptcha.src = captcha.image;
+ const cid = f.qs('#cid');
+ cid.value = captcha.capid;
 }
 
-async function getRegistrationModal() {
- let body = await f.getFileContent(f.pathHTML + 'registration.html');
- body = body.replace('{DAYS}', days.map((day) => `<option value="${day}">${day}</option>`).join(''));
- body = body.replace('{MONTHS}', months.map((month, index) => `<option value="${index + 1}">${month}</option>`).join(''));
- body = body.replace('{YEARS}', years.map((year) => `<option value="${year}">${year}</option>`).join(''));
+async function getModalRegistration() {
+ let body = await f.getFileContent(f.pathHTML + 'modal-registration.html');
+ body = body.replace('{DAYS}', days.map((day) => '<option value="' + day + '">' + day + '</option>').join(''));
+ body = body.replace('{MONTHS}', months.map((month, index) => '<option value="' + (index + 1) + '">' + month + '</option>').join(''));
+ body = body.replace('{YEARS}', years.map((year) => '<option value="' + year + '">' + year + '</option>').join(''));
  await f.getModal('Registration', body);
- f.makeDraggable(modwin.querySelector('.modal'));
- setTimeout(async () => {
-  capt = await f.getAPI('get_captcha');
-  const imgElement = f.qs('#captcha-container');
-  imgElement.style.backgroundColor = 'red';
-  imgElement.src = capt.image;
-  const cid = f.qs('#cid');
-  cid.value = capt.capid;
- });
+
+ capt = await f.getAPI('get_captcha');
+ const imgElement = f.qs('#captcha-container');
+ imgElement.style.backgroundColor = 'red';
+ imgElement.src = capt.image;
+ const cid = f.qs('#cid');
+ cid.value = capt.capid;
 }
 
 function logout() {
@@ -234,6 +229,9 @@ function logout() {
  f.getPage('');
 }
 
+function getPageSearch() {}
+
+/*
 function submitForm(type) {
  let formId;
  let apiUrl;
@@ -273,8 +271,7 @@ function submitForm(type) {
    el.style.display = 'block';
   });
 }
-
-function getPageSearch() {}
+*/
 
 /* FROM E-MAIL SENDER APP - DELETE WHEN NOT NEEDED ANYMORE:
  await getModal('Edit campaign', html);

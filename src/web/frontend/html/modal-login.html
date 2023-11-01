@@ -9,15 +9,13 @@
 <div id="static-captcha">
  <div class="captch">
   <img id="captcha-container" src="" alt="" />
-  <img class="reload-icon" src="../img/reload.svg" onclick="f.regenCaptcha()" alt="" />
+  <img class="reload-icon" src="/img/reload.svg" onclick="f.regenCaptcha()" alt="" />
  </div>
- <input type="text" id="cid" name="cid" style="display: none" />
- <input type="text" name="captcha" id="captcha-input" placeholder="Enter the text from image" />
+ <input type="text" id="cid" name="cid" />
+ <input type="text" name="captcha" class="captcha-input" placeholder="Enter the text from image" />
 </div>
-<div onclick="openModal('registration')">Don't have your free account? - register now!</div>
-<!--
- <div class="red bold">Proč se mám přihlašovat?</div>
- <div>Přihlášení uživatelé mohou <span class="bold">ZDARMA</span> stahovat soubory, přehrávat video online a přispívat do diskuze.</div>
--->
-<div class="notice red" id="login-error" style="display: none"></div>
+<div>Don't have your free account? - <a onclick="getModalRegistration()">register now!</a></div>
+<div class="red bold">Why should I log in?</div>
+<div>Logged users can download files, play video and discuss in forum <span class="bold">FOR FREE</span>.</div>
+<div class="notice red"></div>
 <a class="button primary" onclick="login()">Login</a>
