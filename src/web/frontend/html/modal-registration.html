@@ -11,18 +11,17 @@
 <div>Last name:</div>
 <input type="text" name="lastname" />
 <div>Sex:</div>
-<input type="radio" name="sex" value="1" />Muž
-<input type="radio" name="sex" value="0" />Žena
+<input type="radio" name="sex" value="1" />Muž <input type="radio" name="sex" value="0" />Žena
 <div>Birthdate:</div>
 <div>
  <select name="day">
   <option value="">- Day -</option>
-  {DAYS}
- </select>.
+  {DAYS}</select
+ >.
  <select name="month">
   <option value="">- Month -</option>
-  {MONTHS}
- </select>.
+  {MONTHS}</select
+ >.
  <select name="year">
   <option value="">- Year -</option>
   {YEARS}
@@ -33,14 +32,15 @@
 <div>Password:</div>
 <input type="password" name="password2" />
 <input type="checkbox" name="terms" />
-I agree with <a onclick="getPage('terms')" target="_blank">the registration terms.</a>.</div>
+<div>I agree with <a onclick="getPage('terms')" target="_blank">the registration terms.</a>.</div>
 <div id="static-captcha">
-<div class="captch">
- <img id="captcha-container" src="" alt="" />
- <img class="reload-icon" src="/img/reload.svg" onclick="regenCaptcha()" alt="" />
+ <div class="captch">
+  <img id="captcha-container" src="" alt="" />
+  <img class="reload-icon" src="/img/reload.svg" onclick="regenCaptcha()" alt="" />
+ </div>
+ <input type="text" id="cid" name="cid" style="display: none !important" />
+ <input type="text" name="captcha" id="captcha-input" placeholder="Enter text from image" />
+ <div>Already have account? - <a onclick="openModal('login')">login</a>.</div>
+ <div class="notice red"></div>
+ <a class="button primary" onclick="register()">Register</a>
 </div>
-<input type="text" id="cid" name="cid" style="display: none !important" />
-<input type="text" name="captcha" id="captcha-input" placeholder="Enter text from image" />
-<div>Already have account? - <a onclick="openModal('login')">login</a>.</div>
-<div class="notice red"></div>
-<a class="button primary" onclick="register()">Register</a>
