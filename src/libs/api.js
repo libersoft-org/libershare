@@ -1,3 +1,4 @@
+const fs = require('fs');
 const Data = require('./data.js');
 
 const validCaptchas = {};
@@ -259,7 +260,7 @@ class API {
    $sql = 'SELECT f.id, f.name, f.filename, p.id AS item_id, p.name AS item_name, p.link AS item_link, f.size, f.playable, f.ip, (SELECT COUNT(*) FROM file_downloads WHERE id_file = f.id) AS downloads, (SELECT COUNT(DISTINCT session) FROM file_downloads WHERE id_file = f.id) AS downloads_by_session, (SELECT COUNT(DISTINCT ip) FROM file_downloads WHERE id_file = f.id) AS downloads_by_ip, (SELECT COUNT(*) FROM file_plays WHERE id_file = f.id) AS plays, (SELECT COUNT(DISTINCT session) FROM file_plays WHERE id_file = f.id) AS plays_by_session, (SELECT COUNT(DISTINCT ip) FROM file_plays WHERE id_file = f.id) AS plays_by_ip, f.created FROM file f, item p WHERE f.id_item = p.id' . ($id != '' ? ' AND f.id_item = "' . $id . '"' : '') . ($p == '1' || $p == '2' ? ' AND f.playable = "' . ($p == 1 ? '1' : '0') . '"' : '') . ($search != '' ? ' AND MATCH(f.filename) AGAINST ("' . $search .'")' : '') . ($search == '' ? ' ORDER BY ' . ($o != '' ? $o : 'f.created') . ' ' . ($d == 'asc' ? 'ASC' : 'DESC') . ', f.id ' . ($d == 'asc' ? 'ASC' : 'DESC') : '') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
-  if (p.id_item == null || p.id_item == '') return { error: 1, message: 'Item ID is empty' };
+  if (!p.id_item) return { error: 1, message: 'Item ID is empty' };
   if (!(await this.data.getItemExists(p.id_item))) return { error: 2, message: 'Item does not exist' };
   const res = await this.data.getFiles(p.id_item, p.o, p.d, p.p, p.search, p.count, p.offset);
   return { error: 0, data: res };

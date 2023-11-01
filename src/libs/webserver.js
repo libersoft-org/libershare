@@ -35,6 +35,11 @@ class WebServer {
   app.use('/faq/', express.static(path.join(__dirname, '../web/frontend')));
   app.use('/terms/', express.static(path.join(__dirname, '../web/frontend')));
   app.use('/contact/', express.static(path.join(__dirname, '../web/frontend')));
+  app.use('/download/:hash/:name', (req, res) => {
+   res.setHeader('Content-Disposition', 'attachment; filename=' + req.params.name);
+   // TODO: PREVENT FROM PATH INJECTION !!!!!!!!!!!!!!!! (../../root/...):
+   res.sendFile(path.join(Common.settings.storage.download, req.params.hash));
+  });
   app.use('/', express.static(path.join(__dirname, '../web/frontend'), { fallthrough: true }));
   app.use('/', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
   app.use((req, res) => res.status(404).send('404 Not found'));
