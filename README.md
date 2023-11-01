@@ -15,7 +15,7 @@
 
 **LiberShare** is a file sharing web service written in:
 
-- **Backend**: [**Bun**](https://bun.sh) + [**MariaDB**](https://mariadb.org/) (JavaScript)
+- **Backend**: [**Bun**](https://bun.sh) + [**MariaDB**](https://mariadb.org/)
 - **Frontend**: [**HTML**](https://www.w3.org/html/) + [**CSS**](https://www.w3.org/Style/CSS/) + [**JavaScript**](https://www.ecma-international.org/publications-and-standards/standards/ecma-262/)
 
 This software enables users to effortlessly upload files on the server, after which administrators can categorize them into products and categories. Additionally it offers a forum for community engagement, along with a comprehensive admin web UI for efficient server management.
