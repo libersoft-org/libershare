@@ -12,7 +12,7 @@ class Framework {
 
  async init() {
   this.pages = JSON.parse(await this.getFileContent(this.pathJSON + 'pages.json'));
-  this.getMenu();
+  await this.getMenu();
   this.getReload(location.pathname);
   window.addEventListener('popstate', () => this.getReload(location.pathname));
  }
@@ -65,12 +65,12 @@ class Framework {
  async getPageContent(pathArr) {
   if (!pathArr || pathArr.length == 0) pathArr = ['news'];
   let content = '';
-  if (this.qsa('#menu-desktop .item.active').length == 1) this.qsa('#menu-desktop .item.active')[0].classList.remove('active');
-  if (this.qsa('#menu-mobile .item.active').length == 1) this.qsa('#menu-mobile .item.active')[0].classList.remove('active');
+  if (this.qsa('#menu-desktop .menu-item.active').length == 1) this.qsa('#menu-desktop .menu-item.active')[0].classList.remove('active');
+  if (this.qsa('#menu-mobile .menu-item.active').length == 1) this.qsa('#menu-mobile .menu-item.active')[0].classList.remove('active');
   if (pathArr[0] in this.pages) {
    document.title = this.pageName + ' - ' + this.pages[pathArr[0]].label;
-   if (this.qs('#menu-desktop .item.menu-' + pathArr[0])) this.qs('#menu-desktop .item.menu-' + pathArr[0]).classList.add('active');
-   if (this.qs('#menu-mobile .item.menu-' + pathArr[0])) this.qs('#menu-mobile .item.menu-' + pathArr[0]).classList.add('active');
+   if (this.qs('#menu-desktop .menu-item.menu-' + pathArr[0])) this.qs('#menu-desktop .menu-item.menu-' + pathArr[0]).classList.add('active');
+   if (this.qs('#menu-mobile .menu-item.menu-' + pathArr[0])) this.qs('#menu-mobile .menu-item.menu-' + pathArr[0]).classList.add('active');
    // TODO: only if page exists:
    content = await this.getFileContent(this.pathHTML + this.pages[pathArr[0]].file);
   } else {
