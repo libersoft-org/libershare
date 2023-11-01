@@ -12,11 +12,11 @@
  font-weight: bold;
 }
 
-.breadcrumb:not(:first-child)::before {
+.breadcrumb li:not(:first-child)::before {
  padding: 8px;
  content: '>';
 }
 
-.breadcrumb a {
+.breadcrumb li a {
  color: #ccc;
 }
