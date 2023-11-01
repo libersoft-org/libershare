@@ -1,9 +1,9 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item active">Products</li>
+ <li class="breadcrumb-item active">Items</li>
 </ol>
 <div class="mb-3">
  <form action="./" method="get">
-  <a class="button primary" href="./?page=product-new">New product</a>
+  <a class="button primary" href="./?page=item-new">New item</a>
   <span class="dropdown">
    <a class="button primary">Category: {CAT-SELECTED}</a>
    <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
@@ -105,10 +105,10 @@
    </tr>
   </thead>
   <tbody>
-   {PRODUCTS}
+   {ITEMS}
   </tbody>
   <script>
-   getPage('products', {{params}});
+   getPage('items', {{params}});
   </script>
  </table>
 </div>

@@ -35,13 +35,13 @@
   "label": "Activation",
   "file": "activation.html"
  },
- "product": {
-  "label": "{PRODUCT}",
-  "file": "product.html"
+ "item": {
+  "label": "{ITEM}",
+  "file": "item.html"
  },
  "category": {
   "label": "{CATEGORY}",
-  "file": "product.html"
+  "file": "item.html"
  },
  "notfound": {
   "label": "Page not found",

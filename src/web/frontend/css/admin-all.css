@@ -140,7 +140,7 @@ main {
  font-size: 12px;
 }
 
-#product-name {
+#item-name {
  display: flex;
  align-items: center;
 }

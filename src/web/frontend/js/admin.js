@@ -81,8 +81,8 @@ function GetPage(page, params) {
   case 'categories':
    LoadItems('categories-load-items.php', params);
    break;
-  case 'products':
-   LoadItems('products-load-items.php', params);
+  case 'items':
+   LoadItems('items-load-items.php', params);
    break;
   case 'files':
    LoadItems('files-load-items.php', params);
@@ -140,39 +140,39 @@ function isVisible(element) {
  return (rect.height > 0 || rect.width > 0) && rect.bottom >= 0 && rect.right >= 0 && rect.top <= (window.innerHeight || document.documentElement.clientHeight) && rect.left <= (window.innerWidth || document.documentElement.clientWidth);
 }
 
-function getProductsDropdown() {
- var productSearchElem = f.qs('#products-search');
+function getItemsDropdown() {
+ var itemSearchElem = f.qs('#items-search');
  var xhr = new XMLHttpRequest();
- xhr.open('GET', '/api/get_products_autocomplete.php?search=' + productSearchElem.value, true);
+ xhr.open('GET', '/api/get_items_autocomplete.php?search=' + itemSearchElem.value, true);
  xhr.onload = function () {
   if (xhr.status === 200) {
    var items = JSON.parse(xhr.responseText);
-   var product_items = [];
+   var item_items = [];
    items.forEach(function (item) {
-    product_items.push({ id: item.id, value: item.name });
+    item_items.push({ id: item.id, value: item.name });
    });
 
    // Autocomplete
    var autocompleteList = document.createElement('div');
    autocompleteList.setAttribute('id', 'autocomplete-list');
    autocompleteList.setAttribute('class', 'autocomplete-items');
-   productSearchElem.parentNode.appendChild(autocompleteList);
+   itemSearchElem.parentNode.appendChild(autocompleteList);
 
-   productSearchElem.addEventListener('input', function () {
+   itemSearchElem.addEventListener('input', function () {
     var val = this.value;
     clearAutocomplete();
     if (!val) {
      return false;
     }
-    product_items.forEach(function (item) {
+    item_items.forEach(function (item) {
      if (item.value.substr(0, val.length).toUpperCase() == val.toUpperCase()) {
       var listItem = document.createElement('div');
       listItem.innerHTML = '<strong>' + item.value.substr(0, val.length) + '</strong>';
       listItem.innerHTML += item.value.substr(val.length);
       listItem.innerHTML += "<input type='hidden' value='" + item.value + "'>";
       listItem.addEventListener('click', function () {
-       productSearchElem.value = this.getElementsByTagName('input')[0].value;
-       setProductItem(item.id, item.value);
+       itemSearchElem.value = this.getElementsByTagName('input')[0].value;
+       setItem(item.id, item.value);
        clearAutocomplete();
       });
       autocompleteList.appendChild(listItem);
@@ -181,7 +181,7 @@ function getProductsDropdown() {
    });
 
    document.addEventListener('click', function (e) {
-    if (e.target != productSearchElem && e.target.parentNode != productSearchElem) {
+    if (e.target != itemSearchElem && e.target.parentNode != itemSearchElem) {
      clearAutocomplete();
     }
    });
@@ -197,18 +197,18 @@ function clearAutocomplete() {
  }
 }
 
-function setProductItem(id, name) {
- f.qs('#id-product').value = id;
- f.qs('#products-search').style.display = 'none';
- var productNameElem = f.qs('#product-name');
- productNameElem.innerHTML = '<img class="table-icon pointer" src="img/no.svg" alt="Odebrat" onclick="setProductRemove();" /><div class="pl-2">' + name + '</div>';
- productNameElem.style.display = 'block';
+function setItem(id, name) {
+ f.qs('#id-item').value = id;
+ f.qs('#items-search').style.display = 'none';
+ var itemNameElem = f.qs('#item-name');
+ itemNameElem.innerHTML = '<img class="table-icon pointer" src="img/no.svg" alt="Odebrat" onclick="setItemRemove();" /><div class="pl-2">' + name + '</div>';
+ itemNameElem.style.display = 'block';
 }
 
-function setProductRemove() {
- f.qs('#id-product').value = '';
- f.qs('#products-search').style.display = 'block';
- f.qs('#product-name').style.display = 'none';
- f.qs('#products-search').value = '';
- f.qs('#products-search').focus();
+function setItemRemove() {
+ f.qs('#id-item').value = '';
+ f.qs('#items-search').style.display = 'block';
+ f.qs('#item-name').style.display = 'none';
+ f.qs('#items-search').value = '';
+ f.qs('#items-search').focus();
 }

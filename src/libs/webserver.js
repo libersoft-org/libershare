@@ -22,13 +22,13 @@ class WebServer {
   app.use(express.json());
   app.use('/api/:name', async (req, res) => res.type('json').send(JSON.stringify(await this.api.processAPI(req.params.name, req.body))));
   app.use('/img/categories/', express.static(path.join(Common.settings.storage.images + 'categories')));
-  app.use('/img/products/', express.static(path.join(Common.settings.storage.images, 'products')));
+  app.use('/img/items/', express.static(path.join(Common.settings.storage.images, 'items')));
   app.use('/admin/', express.static(path.join(__dirname, '../web/admin/'), { fallthrough: true }));
   app.use('/admin/', (req, res) => res.sendFile(path.join(__dirname, '../web/admin/index.html')));
   app.use('/news/', express.static(path.join(__dirname, '../web/frontend')));
   app.use('/categories/', express.static(path.join(__dirname, '../web/frontend')));
   app.use('/category/:name', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
-  app.use('/product/:name', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
+  app.use('/item/:name', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
   app.use('/upload/', express.static(path.join(__dirname, '../web/frontend')));
   app.use('/forum/', express.static(path.join(__dirname, '../web/frontend')));
   app.use('/forum/:id', express.static(path.join(__dirname, '../web/frontend')));

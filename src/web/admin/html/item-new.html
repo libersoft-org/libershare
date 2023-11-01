@@ -1,19 +1,19 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a href="./?page=products">Products</a></li>
+ <li class="breadcrumb-item"><a href="./?page=items">Items</a></li>
  <li class="breadcrumb-item active">New</li>
 </ol>
 <div class="card card-sm mb-3 center">
- <div class="card-header bg-admin text-white bold">New product</div>
+ <div class="card-header bg-admin text-white bold">New item</div>
  <div class="card-body">
   {ERROR}
-  <form enctype="multipart/form-data" action="./product-new.php" method="post">
+  <form enctype="multipart/form-data" action="./item-new.php" method="post">
    <div class="form-group">
-    <label>Product name:</label>
-    <input class="form-control" type="text" name="name" id="name" maxlength="255" placeholder="Product name" oninput="getLink();" required autofocus />
+    <label>Item name:</label>
+    <input class="form-control" type="text" name="name" id="name" maxlength="255" placeholder="Item name" oninput="getLink();" required autofocus />
    </div>
    <div class="form-group">
-    <label>Product link:</label>
-    <input class="form-control" type="text" name="link" id="link" maxlength="255" placeholder="Product link" required />
+    <label>Item link:</label>
+    <input class="form-control" type="text" name="link" id="link" maxlength="255" placeholder="Item link" required />
    </div>
    <div class="form-group">
     <label>Category:</label>
@@ -31,10 +31,10 @@
     <label class="custom-control-label" for="hidden">Skrytý</label>
    </div>
    <div class="form-group">
-    <label>Product image: (JPG / PNG)</label>
+    <label>Item image: (JPG / PNG)</label>
     <input class="form-control-file" type="file" name="image" />
    </div>
-   <a class="button primary" onclick="productNew()">Create</a>
+   <a class="button primary" onclick="itemNew()">Create</a>
   </form>
  </div>
 </div>

@@ -51,9 +51,9 @@ class Data {
   await this.db.query('CREATE TABLE IF NOT EXISTS uploads_downloads (id int PRIMARY KEY AUTO_INCREMENT, id_uploads int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_uploads) REFERENCES uploads(id))');
   await this.db.query('CREATE TABLE IF NOT EXISTS categories (id int PRIMARY KEY AUTO_INCREMENT, name varchar(64) NOT NULL UNIQUE, link varchar(64) NOT NULL UNIQUE, image varchar(255) NULL UNIQUE, created timestamp DEFAULT current_timestamp(), FULLTEXT (name))');
   await this.db.query('CREATE TABLE IF NOT EXISTS categories_visits (id int PRIMARY KEY AUTO_INCREMENT, id_categories int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_categories) REFERENCES categories(id))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS products (id int PRIMARY KEY AUTO_INCREMENT, id_categories int NOT NULL, name varchar(255) NOT NULL, link varchar(255) NOT NULL UNIQUE, image varchar(32) NULL UNIQUE, image_sm varchar(32) NULL UNIQUE, adult bool NOT NULL DEFAULT 0, hidden bool NOT NULL DEFAULT 0, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_categories) REFERENCES categories(id), FULLTEXT (name))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS products_visits (id int NOT NULL AUTO_INCREMENT, id_products int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), PRIMARY KEY (id), FOREIGN KEY (id_products) REFERENCES products(id))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS files (id int PRIMARY KEY AUTO_INCREMENT, id_products int NULL, name varchar(255) NOT NULL UNIQUE, file_name varchar(255) NOT NULL UNIQUE, size bigint(20) NOT NULL DEFAULT 0, ip varchar(64) NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_products) REFERENCES products(id), FULLTEXT (file_name))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS items (id int PRIMARY KEY AUTO_INCREMENT, id_categories int NOT NULL, name varchar(255) NOT NULL, link varchar(255) NOT NULL UNIQUE, image varchar(32) NULL UNIQUE, image_sm varchar(32) NULL UNIQUE, adult bool NOT NULL DEFAULT 0, hidden bool NOT NULL DEFAULT 0, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_categories) REFERENCES categories(id), FULLTEXT (name))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS items_visits (id int NOT NULL AUTO_INCREMENT, id_items int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), PRIMARY KEY (id), FOREIGN KEY (id_items) REFERENCES items(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS files (id int PRIMARY KEY AUTO_INCREMENT, id_items int NULL, name varchar(255) NOT NULL UNIQUE, file_name varchar(255) NOT NULL UNIQUE, size bigint(20) NOT NULL DEFAULT 0, ip varchar(64) NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_items) REFERENCES items(id), FULLTEXT (file_name))');
   await this.db.query('CREATE TABLE IF NOT EXISTS files_downloads (id int PRIMARY KEY AUTO_INCREMENT, id_files int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_files) REFERENCES files(id))');
   await this.db.query('CREATE TABLE IF NOT EXISTS files_plays (id int PRIMARY KEY AUTO_INCREMENT, id_files int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_files) REFERENCES files(id))');
   await this.db.query('CREATE TABLE IF NOT EXISTS files_plays_web (id int PRIMARY KEY AUTO_INCREMENT, id_files int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_files) REFERENCES files(id))');
@@ -71,8 +71,8 @@ class Data {
     name,
     link,
     image,
-    (SELECT COUNT(*) FROM products WHERE id_categories = categories.id) AS products_count,
-    (SELECT COUNT(*) FROM products WHERE id_categories = categories.id AND hidden = 1) AS products_count_hidden,
+    (SELECT COUNT(*) FROM items WHERE id_categories = categories.id) AS items_count,
+    (SELECT COUNT(*) FROM items WHERE id_categories = categories.id AND hidden = 1) AS items_count_hidden,
     created
    FROM categories
    ${search ? 'WHERE MATCH(name) AGAINST (?) ' : ''}
@@ -86,7 +86,7 @@ class Data {
  }
 
  /* TODO: stats for all categories
-  (SELECT SUM((SELECT SUM(size) FROM files WHERE id_products = products.id)) FROM products WHERE id_categories = categories.id) AS size,
+  (SELECT SUM((SELECT SUM(size) FROM files WHERE id_items = items.id)) FROM items WHERE id_categories = categories.id) AS size,
   (SELECT COUNT(*) FROM categories_visits WHERE id_categories = categories.id) AS visits,
   (SELECT COUNT(DISTINCT session) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_session,
   (SELECT COUNT(DISTINCT ip) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_ip,
@@ -111,15 +111,15 @@ class Data {
   return rows[0].cnt == 1;
  }
 
- async getFiles(id_product, o, d, p, search, count, offset) {
+ async getFiles(id_item, o, d, p, search, count, offset) {
   let query = `
    SELECT
     f.id,
     f.name,
     f.file_name,
-    p.id AS products_id,
-    p.name AS product_name,
-    p.link AS product_link,
+    p.id AS items_id,
+    p.name AS item_name,
+    p.link AS item_link,
     f.size,
     f.ip,
     (SELECT COUNT(*) FROM files_downloads WHERE id_files = f.id) AS downloads,
@@ -129,9 +129,9 @@ class Data {
     (SELECT COUNT(DISTINCT session) FROM files_plays WHERE id_files = f.id) AS plays_by_session,
     (SELECT COUNT(DISTINCT ip) FROM files_plays WHERE id_files = f.id) AS plays_by_ip,
     f.created
-   FROM files f, products p
-   WHERE f.id_products = p.id`;
-  query += id_product != '' ? ' AND f.id_products = "' + id_product + '"' : '';
+   FROM files f, items p
+   WHERE f.id_items = p.id`;
+  query += id_item != '' ? ' AND f.id_items = "' + id_item + '"' : '';
   query += search != null && search != '' ? ' AND MATCH(f.file_name) AGAINST ("' + search + '")' : '';
   query += search == '' ? ' ORDER BY ' + (o != null && o != '' ? o : 'f.created') + ' ' + (d ? 'DESC' : 'ASC') + ', f.id ' + (d ? 'DESC' : 'ASC') : '';
   query += count != null && count != '' ? ' LIMIT ' + count + (offset != null && offset != '' ? ' OFFSET ' + offset : '') : '';
@@ -166,7 +166,7 @@ class Data {
 
  async getLogin() {}
 
- async getProductByID(id, hidden) {
+ async getItemByID(id, hidden) {
   return await this.db.query(
    `
    SELECT
@@ -178,17 +178,17 @@ class Data {
     image_sm,
     adult,
     hidden,
-    (SELECT COUNT(*) FROM products_visits WHERE id_products = products.id) AS visits,
-    (SELECT COUNT(DISTINCT session) FROM products_visits WHERE id_products = products.id) AS visits_by_session,
-    (SELECT COUNT(DISTINCT ip) FROM products_visits WHERE id_products = products.id) AS visits_by_ip,
+    (SELECT COUNT(*) FROM items_visits WHERE id_items = items.id) AS visits,
+    (SELECT COUNT(DISTINCT session) FROM items_visits WHERE id_items = items.id) AS visits_by_session,
+    (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = items.id) AS visits_by_ip,
     created
-   FROM products
+   FROM items
    WHERE id = ? ${!hidden ? 'AND hidden = 0' : ''}`,
    [id]
   );
  }
 
- async getProductByLink(link, hidden) {
+ async getItemByLink(link, hidden) {
   return await this.db.query(
    `
    SELECT
@@ -200,26 +200,26 @@ class Data {
     image_sm,
     adult,
     hidden,
-    (SELECT COUNT(*) FROM products_visits WHERE id_products = products.id) AS visits,
-    (SELECT COUNT(DISTINCT session) FROM products_visits WHERE id_products = products.id) AS visits_by_session,
-    (SELECT COUNT(DISTINCT ip) FROM products_visits WHERE id_products = products.id) AS visits_by_ip,
+    (SELECT COUNT(*) FROM items_visits WHERE id_items = items.id) AS visits,
+    (SELECT COUNT(DISTINCT session) FROM items_visits WHERE id_items = items.id) AS visits_by_session,
+    (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = items.id) AS visits_by_ip,
     created
-   FROM products
+   FROM items
    WHERE link = ? ${!hidden ? 'AND hidden = 0' : ''}`,
    [link]
   );
  }
 
- async getProductExists(id) {
-  const res = await this.db.query('SELECT COUNT(*) AS cnt FROM products WHERE id = ?', [id]);
+ async getItemExists(id) {
+  const res = await this.db.query('SELECT COUNT(*) AS cnt FROM items WHERE id = ?', [id]);
   return res[0].cnt === 1;
  }
 
- async getProductsAutoComplete() {}
+ async getItemsAutoComplete() {}
 
- async getProductsInfo() {}
+ async getItemsInfo() {}
 
- async getProducts(id_category, o, d, h, a, i, search, count, offset) {
+ async getItems(id_category, o, d, h, a, i, search, count, offset) {
   let query = `
    SELECT
     p.id,
@@ -230,11 +230,11 @@ class Data {
     p.id_categories,
     c.name AS category_name,
     c.link AS category_link,
-    (SELECT COUNT(*) FROM files WHERE id_products = p.id) AS files,
+    (SELECT COUNT(*) FROM files WHERE id_items = p.id) AS files,
     p.adult,
     p.hidden,
     p.created
-   FROM products p, categories c
+   FROM items p, categories c
    WHERE p.id_categories = c.id
   `;
 
@@ -279,9 +279,9 @@ class Data {
  }
 
  /*
-    (SELECT COUNT(*) FROM products_visits WHERE id_products = p.id) AS visits,
-    (SELECT COUNT(DISTINCT session) FROM products_visits WHERE id_products = p.id) AS visits_by_session,
-    (SELECT COUNT(DISTINCT ip) FROM products_visits WHERE id_products = p.id) AS visits_by_ip,
+    (SELECT COUNT(*) FROM items_visits WHERE id_items = p.id) AS visits,
+    (SELECT COUNT(DISTINCT session) FROM items_visits WHERE id_items = p.id) AS visits_by_session,
+    (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = p.id) AS visits_by_ip,
    */
  async getUpload() {}
 
@@ -322,7 +322,7 @@ class Data {
 
  async setForumThreadAdd() {}
 
- async setProductVisit() {}
+ async setItemVisit() {}
 
  async setRegistration(params) {
   if (!/^[A-Za-z0-9]{3,24}$/.test(params.username)) {
@@ -471,13 +471,13 @@ class Data {
 
  async setAdminLog() {}
 
- async setAdminProductDelete() {}
+ async setAdminItemDelete() {}
 
- async setAdminProductEdit() {}
+ async setAdminItemEdit() {}
 
- async setAdminProductImageDelete() {}
+ async setAdminItemImageDelete() {}
 
- async setAdminProductAdd() {}
+ async setAdminItemAdd() {}
 
  async setAdminUploadDelete() {}
 

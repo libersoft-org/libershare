@@ -1,114 +1,114 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item active">Stav serveru</li>
+ <li class="breadcrumb-item active">Server status</li>
 </ol>
 <div class="card form-size-md mb-3">
- <div class="card-header bg-admin text-white bold">Systémové informace</div>
+ <div class="card-header bg-admin text-white bold">System info</div>
  <div class="card-body table-responsive">
   <table class="table table-sm">
    <tr>
-    <th>Linux verze:</th>
-    <td>{version-linux}</td>
+    <th>Linux version:</th>
+    <td>{VERSION-LINUX}</td>
    </tr>
    <tr>
-    <th>PHP verze:</th>
-    <td>{version-php}</td>
+    <th>PHP version:</th>
+    <td>{VERSION-PHP}</td>
    </tr>
    <tr>
-    <th>MySQL verze:</th>
-    <td>{version-mysql}</td>
+    <th>MySQL version:</th>
+    <td>{VERSION-MYSQL}</td>
    </tr>
    <tr>
-    <th>Využití CPU:</th>
-    <td>{cpu-usage}</td>
+    <th>CPU usage:</th>
+    <td>{CPU-USAGE}</td>
    </tr>
    <tr>
-    <th>Využití RAM:</th>
+    <th>RAM usage:</th>
     <td>
      <table class="table">
       <tr>
        <th class="table-label"></th>
        <td>
         <div class="progress progress-thick bg-progress">
-         <div class="progress-bar progress-bar-striped bg-danger" role="progressbar" style="width: {ram-used-percent}%">{ram-used-percent}%</div>
+         <div class="progress-bar progress-bar-striped bg-danger" role="progressbar" style="width: {RAM-USED-PERCENT}%">{RAM-USED-PERCENT}%</div>
         </div>
        </td>
       </tr>
       <tr>
-       <th class="table-label">Využito:</th>
-       <td>{ram-used}</td>
+       <th class="table-label">Used:</th>
+       <td>{RAM-USED}</td>
       </tr>
       <tr>
-       <th class="table-label">Volno:</th>
-       <td>{ram-free}</td>
+       <th class="table-label">Free:</th>
+       <td>{RAM-FREE}</td>
       </tr>
       <tr>
-       <th class="table-label">Celkem:</th>
-       <td>{ram-total}</td>
+       <th class="table-label">All:</th>
+       <td>{RAM-TOTAL}</td>
       </tr>
      </table>
     </td>
    </tr>
    <tr>
-    <th>Využití úložiště:</th>
-    <td>{storage}</td>
+    <th>Storage usage:</th>
+    <td>{STORAGE}</td>
    </tr>
    <tr>
     <th>Využití sítě:</th>
     <td>
      <span id="net"
-      ><img class="loading" src="./template/img/loading.gif" /> Načítám ...
+      ><img class="loading" src="./template/img/loading.gif" /> Loading ...
       <script>
        getNetworkUsage();
-      </script></span
-     >
+      </script>
+     </span>
     </td>
    </tr>
   </table>
  </div>
 </div>
 <div class="card form-size-md">
- <div class="card-header bg-admin text-white bold">Položky na serveru</div>
+ <div class="card-header bg-admin text-white bold">Items on server</div>
  <div class="card-body table-responsive">
-  <h4 class="bold">Produkty:</h4>
+  <h4 class="bold">Items:</h4>
   <table class="table short table-sm table-hover table-light">
    <tr>
-    <th>Produktů (celkem / viditelných / skrytých):</th>
-    <td>{products} / {products-visible} / {products-hidden}</td>
+    <th>Items (all / visible / hidden):</th>
+    <td>{ITEMS} / {ITEMS-VISIBLE} / {ITEMS-HIDDEN}</td>
    </tr>
    <tr>
-    <th>Souborů:</th>
-    <td>{products-files}</td>
+    <th>Files:</th>
+    <td>{ITEMS-FILES}</td>
    </tr>
    <tr>
-    <th>Velikost:</th>
-    <td>{products-files-size}</td>
+    <th>Size:</th>
+    <td>{ITEMS-FILES-SIZE}</td>
    </tr>
    <tr>
-    <th>Návštěv na produkty (celkem / dle session / dle IP):</th>
-    <td>{products-visits} / {products-visits-by-session} / {products-visits-by-ip}</td>
+    <th>Items visits (all / by session / by IP):</th>
+    <td>{ITEMS-VISITS} / {ITEMS-VISITS-BY-SESSION} / {ITEMS-VISITS-BY-IP}</td>
    </tr>
    <tr>
-    <th>Stažení souborů (celkem / dle session / dle IP):</th>
-    <td>{products-files-downloads} / {products-files-downloads-by-session} / {products-files-downloads-by-ip}</td>
+    <th>Files downloads (all / by session / by IP):</th>
+    <td>{ITEMS-FILES-DOWNLOADS} / {ITEMS-FILES-DOWNLOADS-BY-SESSION} / {ITEMS-FILES-DOWNLOADS-BY-IP}</td>
    </tr>
    <tr>
-    <th>Přehrání souborů (celkem / dle session / dle IP):</th>
-    <td>{products-files-plays} / {products-files-plays-by-session} / {products-files-plays-by-ip}</td>
+    <th>Files plays (all / by session / by IP):</th>
+    <td>{ITEMS-FILES-PLAYS} / {ITEMS-FILES-PLAYS-BY-SESSION} / {ITEMS-FILES-PLAYS-BY-IP}</td>
    </tr>
   </table>
-  <h4 class="bold">Uploady:</h4>
+  <h4 class="bold">Uploads:</h4>
   <table class="table short table-sm table-hover table-light">
    <tr>
-    <th>Souborů:</th>
-    <td>{uploads-count}</td>
+    <th>Files:</th>
+    <td>{UPLOADS-COUNT}</td>
    </tr>
    <tr>
-    <th>Velikost:</th>
-    <td>{uploads-size}</td>
+    <th>Size:</th>
+    <td>{UPLOADS-SIZE}</td>
    </tr>
    <tr>
-    <th>Stažení (celkem / dle session / dle IP):</th>
-    <td>{uploads-downloads} / {uploads-downloads-by-session} / {uploads-downloads-by-ip}</td>
+    <th>Downloads (all / by session / by IP):</th>
+    <td>{UPLOADS-DOWNLOADS} / {UPLOADS-DOWNLOADS-BY-SESSION} / {UPLOADS-DOWNLOADS-BY-IP}</td>
    </tr>
   </table>
  </div>

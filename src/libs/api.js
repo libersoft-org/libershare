@@ -25,11 +25,11 @@ class API {
    get_forum_thread: this.getForumThread,
    get_forum_posts: this.getForumPosts,
    get_login: this.getLogin,
-   get_products: this.getProducts,
-   get_product_by_id: this.getProductByID,
-   get_product_by_link: this.getProductByLink,
-   get_products_auto_complete: this.getProductsAutoComplete,
-   get_products_info: this.getProductsInfo,
+   get_items: this.getItems,
+   get_item_by_id: this.getItemByID,
+   get_item_by_link: this.getItemByLink,
+   get_items_auto_complete: this.getItemsAutoComplete,
+   get_items_info: this.getItemsInfo,
    get_uploads: this.getUploads,
    get_uploads_info: this.getUploadsInfo,
    get_upload: this.getUpload,
@@ -43,7 +43,7 @@ class API {
    set_file_web_play: this.setFileWebPlay,
    set_forum_thread_add: this.setForumThreadAdd,
    set_forum_post_add: this.setForumPostAdd,
-   set_product_visit: this.setProductVisit,
+   set_item_visit: this.setItemVisit,
    set_registration: this.setRegistration,
    set_registration_confirmation: this.setRegistrationConfirmation,
    set_search: this.setSearch,
@@ -64,10 +64,10 @@ class API {
    set_admin_file_delete: this.setAdminFileDelete,
    set_admin_file_edit: this.setAdminFileEdit,
    set_admin_log: this.setAdminLog,
-   set_admin_product_delete: this.setAdminProductDelete,
-   set_admin_product_edit: this.setAdminProductEdit,
-   set_admin_product_image_delete: this.setAdminProductImageDelete,
-   set_admin_product_add: this.setAdminProductAdd,
+   set_admin_item_delete: this.setAdminItemDelete,
+   set_admin_item_edit: this.setAdminItemEdit,
+   set_admin_item_image_delete: this.setAdminItemImageDelete,
+   set_admin_item_add: this.setAdminItemAdd,
    set_admin_upload_delete: this.setAdminUploadDelete,
    set_admin_upload_edit: this.setAdminUploadEdit,
    set_admin_upload_move: this.setAdminUploadMove
@@ -154,7 +154,7 @@ class API {
    $offset = SQLEscape($_GET['offset']);
    $count = (isset($count) && $count != '') ? intval($count) : '18446744073709551615';
    $offset = intval($offset);
-   $sql = 'SELECT id, name, link, image, (SELECT SUM((SELECT SUM(size) FROM file WHERE id_product = product.id)) FROM product WHERE id_category = category.id) AS size, (SELECT COUNT(*) FROM product WHERE id_category = category.id) AS products_count, (SELECT COUNT(*) FROM product WHERE id_category = category.id AND hidden = 1) AS products_count_hidden, (SELECT COUNT(*) FROM category_visits WHERE id_category = category.id) AS visits, (SELECT COUNT(DISTINCT session) FROM category_visits WHERE id_category = category.id) AS visits_by_session, (SELECT COUNT(DISTINCT ip) FROM category_visits WHERE id_category = category.id) AS visits_by_ip, created FROM category ' . ($search != '' ? ' WHERE MATCH(name) AGAINST ("' . $search .'")' : '') . ($search == '' ? 'ORDER BY ' . ($o != '' ? $o : 'created') . ' ' . ($d == 'desc' ? 'DESC' : 'ASC') . ', id ' . ($d == 'desc' ? 'DESC' : 'ASC') : '') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
+   $sql = 'SELECT id, name, link, image, (SELECT SUM((SELECT SUM(size) FROM file WHERE id_item = item.id)) FROM item WHERE id_category = category.id) AS size, (SELECT COUNT(*) FROM item WHERE id_category = category.id) AS items_count, (SELECT COUNT(*) FROM item WHERE id_category = category.id AND hidden = 1) AS items_count_hidden, (SELECT COUNT(*) FROM category_visits WHERE id_category = category.id) AS visits, (SELECT COUNT(DISTINCT session) FROM category_visits WHERE id_category = category.id) AS visits_by_session, (SELECT COUNT(DISTINCT ip) FROM category_visits WHERE id_category = category.id) AS visits_by_ip, created FROM category ' . ($search != '' ? ' WHERE MATCH(name) AGAINST ("' . $search .'")' : '') . ($search == '' ? 'ORDER BY ' . ($o != '' ? $o : 'created') . ' ' . ($d == 'desc' ? 'DESC' : 'ASC') . ', id ' . ($d == 'desc' ? 'DESC' : 'ASC') : '') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
   return {
@@ -200,7 +200,7 @@ class API {
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
    if ($id != '') {
-    $result = SQLQuery('SELECT f.id, f.id_product, p.name AS product_name, p.link AS product_link, f.name, f.filename, f.size, f.playable, f.ip, (SELECT COUNT(*) FROM file_downloads WHERE id_file = f.id) AS downloads, (SELECT COUNT(DISTINCT session) FROM file_downloads WHERE id_file = f.id) AS downloads_by_session, (SELECT COUNT(DISTINCT ip) FROM file_downloads WHERE id_file = f.id) AS downloads_by_ip, (SELECT COUNT(*) FROM file_plays WHERE id_file = f.id) AS plays, (SELECT COUNT(DISTINCT session) FROM file_plays WHERE id_file = f.id) AS plays_by_session, (SELECT COUNT(DISTINCT ip) FROM file_plays WHERE id_file = f.id) AS plays_by_ip, f.created FROM file f, product p WHERE f.id_product = p.id AND f.id = "' . $id . '"');
+    $result = SQLQuery('SELECT f.id, f.id_item, p.name AS item_name, p.link AS item_link, f.name, f.filename, f.size, f.playable, f.ip, (SELECT COUNT(*) FROM file_downloads WHERE id_file = f.id) AS downloads, (SELECT COUNT(DISTINCT session) FROM file_downloads WHERE id_file = f.id) AS downloads_by_session, (SELECT COUNT(DISTINCT ip) FROM file_downloads WHERE id_file = f.id) AS downloads_by_ip, (SELECT COUNT(*) FROM file_plays WHERE id_file = f.id) AS plays, (SELECT COUNT(DISTINCT session) FROM file_plays WHERE id_file = f.id) AS plays_by_session, (SELECT COUNT(DISTINCT ip) FROM file_plays WHERE id_file = f.id) AS plays_by_ip, f.created FROM file f, item p WHERE f.id_item = p.id AND f.id = "' . $id . '"');
     if (SQLNumRows($result) == 1) {
      $arr = SQLArray($result);
      $arr[0]['type'] = mime_content_type('../' . $GLOBALS['path-files'] . '/' . $arr[0]['name']);
@@ -220,7 +220,7 @@ class API {
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
    if ($id != '') {
-    $result = SQLQuery('SELECT id, id_product, name, filename, size, playable, ip, (SELECT COUNT(*) FROM file_downloads WHERE id_file = file.id) AS downloads, (SELECT COUNT(DISTINCT session) FROM file_downloads WHERE id_file = file.id) AS downloads_by_session, (SELECT COUNT(DISTINCT ip) FROM file_downloads WHERE id_file = file.id) AS downloads_by_ip, (SELECT COUNT(*) FROM file_plays WHERE id_file = file.id) AS plays, (SELECT COUNT(DISTINCT session) FROM file_plays WHERE id_file = file.id) AS plays_by_session, (SELECT COUNT(DISTINCT ip) FROM file_plays WHERE id_file = file.id) AS plays_by_ip, created FROM file WHERE name = "' . $id . '"');
+    $result = SQLQuery('SELECT id, id_item, name, filename, size, playable, ip, (SELECT COUNT(*) FROM file_downloads WHERE id_file = file.id) AS downloads, (SELECT COUNT(DISTINCT session) FROM file_downloads WHERE id_file = file.id) AS downloads_by_session, (SELECT COUNT(DISTINCT ip) FROM file_downloads WHERE id_file = file.id) AS downloads_by_ip, (SELECT COUNT(*) FROM file_plays WHERE id_file = file.id) AS plays, (SELECT COUNT(DISTINCT session) FROM file_plays WHERE id_file = file.id) AS plays_by_session, (SELECT COUNT(DISTINCT ip) FROM file_plays WHERE id_file = file.id) AS plays_by_ip, created FROM file WHERE name = "' . $id . '"');
     if (SQLNumRows($result) == 1) {
      $arr = SQLArray($result);
      $arr[0]['type'] = mime_content_type('../' . $GLOBALS['path-files'] . '/' . $arr[0]['name']);
@@ -250,18 +250,18 @@ class API {
    $count = (isset($count) && $count != '') ? intval($count) : '18446744073709551615';
    $offset = intval($offset);
    if ($id != '') {
-    $result = SQLQuery('SELECT id FROM product WHERE id = "' . $id . '"');
+    $result = SQLQuery('SELECT id FROM item WHERE id = "' . $id . '"');
     if (SQLNumRows($result) != 1) {
-     echo json_encode(array('error' => 1, 'message' => 'Product doesn\'t exist'));
+     echo json_encode(array('error' => 1, 'message' => 'Item doesn\'t exist'));
      die;
     }
    }
-   $sql = 'SELECT f.id, f.name, f.filename, p.id AS product_id, p.name AS product_name, p.link AS product_link, f.size, f.playable, f.ip, (SELECT COUNT(*) FROM file_downloads WHERE id_file = f.id) AS downloads, (SELECT COUNT(DISTINCT session) FROM file_downloads WHERE id_file = f.id) AS downloads_by_session, (SELECT COUNT(DISTINCT ip) FROM file_downloads WHERE id_file = f.id) AS downloads_by_ip, (SELECT COUNT(*) FROM file_plays WHERE id_file = f.id) AS plays, (SELECT COUNT(DISTINCT session) FROM file_plays WHERE id_file = f.id) AS plays_by_session, (SELECT COUNT(DISTINCT ip) FROM file_plays WHERE id_file = f.id) AS plays_by_ip, f.created FROM file f, product p WHERE f.id_product = p.id' . ($id != '' ? ' AND f.id_product = "' . $id . '"' : '') . ($p == '1' || $p == '2' ? ' AND f.playable = "' . ($p == 1 ? '1' : '0') . '"' : '') . ($search != '' ? ' AND MATCH(f.filename) AGAINST ("' . $search .'")' : '') . ($search == '' ? ' ORDER BY ' . ($o != '' ? $o : 'f.created') . ' ' . ($d == 'asc' ? 'ASC' : 'DESC') . ', f.id ' . ($d == 'asc' ? 'ASC' : 'DESC') : '') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
+   $sql = 'SELECT f.id, f.name, f.filename, p.id AS item_id, p.name AS item_name, p.link AS item_link, f.size, f.playable, f.ip, (SELECT COUNT(*) FROM file_downloads WHERE id_file = f.id) AS downloads, (SELECT COUNT(DISTINCT session) FROM file_downloads WHERE id_file = f.id) AS downloads_by_session, (SELECT COUNT(DISTINCT ip) FROM file_downloads WHERE id_file = f.id) AS downloads_by_ip, (SELECT COUNT(*) FROM file_plays WHERE id_file = f.id) AS plays, (SELECT COUNT(DISTINCT session) FROM file_plays WHERE id_file = f.id) AS plays_by_session, (SELECT COUNT(DISTINCT ip) FROM file_plays WHERE id_file = f.id) AS plays_by_ip, f.created FROM file f, item p WHERE f.id_item = p.id' . ($id != '' ? ' AND f.id_item = "' . $id . '"' : '') . ($p == '1' || $p == '2' ? ' AND f.playable = "' . ($p == 1 ? '1' : '0') . '"' : '') . ($search != '' ? ' AND MATCH(f.filename) AGAINST ("' . $search .'")' : '') . ($search == '' ? ' ORDER BY ' . ($o != '' ? $o : 'f.created') . ' ' . ($d == 'asc' ? 'ASC' : 'DESC') . ', f.id ' . ($d == 'asc' ? 'ASC' : 'DESC') : '') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
-  if (p.id_product == null || p.id_product == '') return { error: 1, message: 'Product ID is empty' };
-  if (!(await this.data.getProductExists(p.id_product))) return { error: 2, message: 'Product does not exist' };
-  const res = await this.data.getFiles(p.id_product, p.o, p.d, p.p, p.search, p.count, p.offset);
+  if (p.id_item == null || p.id_item == '') return { error: 1, message: 'Item ID is empty' };
+  if (!(await this.data.getItemExists(p.id_item))) return { error: 2, message: 'Item does not exist' };
+  const res = await this.data.getFiles(p.id_item, p.o, p.d, p.p, p.search, p.count, p.offset);
   return { error: 0, data: res };
  }
 
@@ -336,7 +336,7 @@ class API {
   */
  }
 
- async getProducts(p = {}) {
+ async getItems(p = {}) {
   /*
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
@@ -369,14 +369,14 @@ class API {
      p.id_category,
      c.name AS category_name,
      c.link AS category_link,
-     (SELECT COUNT(*) FROM file WHERE id_product = p.id) AS files,
+     (SELECT COUNT(*) FROM file WHERE id_item = p.id) AS files,
      p.adult,
      p.hidden,
-     (SELECT COUNT(*) FROM product_visits WHERE id_product = p.id) AS visits,
-     (SELECT COUNT(DISTINCT session) FROM product_visits WHERE id_product = p.id) AS visits_by_session,
-     (SELECT COUNT(DISTINCT ip) FROM product_visits WHERE id_product = p.id) AS visits_by_ip,
+     (SELECT COUNT(*) FROM item_visits WHERE id_item = p.id) AS visits,
+     (SELECT COUNT(DISTINCT session) FROM item_visits WHERE id_item = p.id) AS visits_by_session,
+     (SELECT COUNT(DISTINCT ip) FROM item_visits WHERE id_item = p.id) AS visits_by_ip,
      p.created
-    FROM product p, category c
+    FROM item p, category c
     WHERE
      p.id_category = c.id'
      . ($h == '1' || $h == '2' ? ' AND p.hidden = "' . ($h == 1 ? '1' : '0') . '"' : '')
@@ -393,11 +393,11 @@ class API {
   if (p.id_category && p.id_category != 0) {
    if (!(await this.data.getCategoryExists(p.id_category))) return { error: 1, message: 'Category does not exist' };
   }
-  const res = await this.data.getProducts(p.id_category, p.o, p.d, p.h, p.a, p.i, p.search, p.count, p.offset);
+  const res = await this.data.getItems(p.id_category, p.o, p.d, p.h, p.a, p.i, p.search, p.count, p.offset);
   return { error: 0, data: res };
  }
 
- async getProductByID(p = {}) {
+ async getItemByID(p = {}) {
   /*
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
@@ -414,26 +414,26 @@ class API {
      image_sm,
      adult,
      hidden,
-     (SELECT COUNT(*) FROM products_visits WHERE id_products = products.id) AS visits,
-     (SELECT COUNT(DISTINCT session) FROM products_visits WHERE id_products = products.id) AS visits_by_session,
-     (SELECT COUNT(DISTINCT ip) FROM products_visits WHERE id_products = products.id) AS visits_by_ip,
+     (SELECT COUNT(*) FROM items_visits WHERE id_items = items.id) AS visits,
+     (SELECT COUNT(DISTINCT session) FROM items_visits WHERE id_items = items.id) AS visits_by_session,
+     (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = items.id) AS visits_by_ip,
      created
-    FROM products
+    FROM items
     WHERE id = "' . $id . '"' . ($hidden == '1' ? ' AND hidden = 0' : ''));
     if (SQLNumRows($result) == 1) echo json_encode(SQLArray($result));
-    else echo json_encode(array('error' => 2, 'message' => 'Product doesn\'t exist'));
-   } else echo json_encode(array('error' => 1, 'message' => 'Product ID is empty'));
+    else echo json_encode(array('error' => 2, 'message' => 'Item doesn\'t exist'));
+   } else echo json_encode(array('error' => 1, 'message' => 'Item ID is empty'));
   */
-  const res = await this.data.getProductByID(p.id, p.hidden);
+  const res = await this.data.getItemByID(p.id, p.hidden);
   return { error: 0, data: res };
  }
 
- async getProductByLink(p = {}) {
-  const res = await this.data.getProductByLink(p.link, p.hidden);
+ async getItemByLink(p = {}) {
+  const res = await this.data.getItemByLink(p.link, p.hidden);
   return { error: 0, data: res };
  }
 
- async getProductsAutoComplete(p = {}) {
+ async getItemsAutoComplete(p = {}) {
   /*
    require_once('./api_functions.php');
    $search = SQLEscape($_GET['search']);
@@ -442,33 +442,33 @@ class API {
      id,
      name,
      link
-    FROM product'
+    FROM item'
     . ($search != '' ? ' WHERE name LIKE "%' . $search .'%"' : '')
     . ' ORDER BY name ASC LIMIT 20';
    echo SQL2JSON($sql);
   */
  }
 
- async getProductsInfo(p = {}) {
+ async getItemsInfo(p = {}) {
   /*
    require_once('./api_functions.php');
    echo SQL2JSON('
     SELECT
      COUNT(*) AS count,
-     (SELECT COUNT(*) FROM product WHERE hidden = 1) AS count_hidden,
+     (SELECT COUNT(*) FROM item WHERE hidden = 1) AS count_hidden,
      (SELECT COUNT(*) FROM file) AS files_count,
      (SELECT SUM(size) FROM file) AS files_size,
-     (SELECT COUNT(*) FROM product_visits) AS visits,
+     (SELECT COUNT(*) FROM item_visits) AS visits,
      (SELECT SUM(total)
     FROM
-     (SELECT COUNT(DISTINCT session) AS total FROM product_visits GROUP BY id_product) AS visits_session_table) AS visits_session,
-     (SELECT SUM(total) FROM (SELECT COUNT(DISTINCT ip) AS total FROM product_visits GROUP BY id_product) AS visits_ip_table) AS visits_ip,
+     (SELECT COUNT(DISTINCT session) AS total FROM item_visits GROUP BY id_item) AS visits_session_table) AS visits_session,
+     (SELECT SUM(total) FROM (SELECT COUNT(DISTINCT ip) AS total FROM item_visits GROUP BY id_item) AS visits_ip_table) AS visits_ip,
      (SELECT COUNT(*) FROM file_downloads) AS downloads,
      (SELECT SUM(total) FROM (SELECT COUNT(DISTINCT session) AS total FROM file_downloads GROUP BY id_file) AS downloads_session_table) AS downloads_session,
      (SELECT SUM(total) FROM (SELECT COUNT(DISTINCT ip) AS total FROM file_downloads GROUP BY id_file) AS downloads_ip_table) AS downloads_ip,
      (SELECT COUNT(*) FROM file_plays) AS plays,
      (SELECT SUM(total) FROM (SELECT COUNT(DISTINCT session) AS total FROM file_plays GROUP BY id_file) AS plays_session_table) AS plays_session,
-     (SELECT SUM(total) FROM (SELECT COUNT(DISTINCT ip) AS total FROM file_plays GROUP BY id_file) AS plays_ip_table) AS plays_ip FROM product');
+     (SELECT SUM(total) FROM (SELECT COUNT(DISTINCT ip) AS total FROM file_plays GROUP BY id_file) AS plays_ip_table) AS plays_ip FROM item');
   */
  }
 
@@ -591,8 +591,8 @@ class API {
         $aPHPMail = new PHPMailer(true);
         try {
          $email_from = $GLOBALS['mail-from'];
-         $name_from = $GLOBALS['product'];
-         $subject = 'Nová zpráva z formuláře z webu ' . $GLOBALS['product'] . ' - ' . $subject_input;
+         $name_from = $GLOBALS['item'];
+         $subject = 'Nová zpráva z formuláře z webu ' . $GLOBALS['item'] . ' - ' . $subject_input;
          $message_array = array(
           '[[name-to]]'       => $name_to,
           '[[email-to]]'      => $email_to,
@@ -718,14 +718,14 @@ class API {
   */
  }
 
- async setProductVisit(p = {}) {
+ async setItemVisit(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
-   $id = $product[0]['id'];
-   if (SQLNumRows(SQLQuery('SELECT id FROM product WHERE id = "' . $id . '"')) == '1')
-    SQLQuery('INSERT INTO product_visits
-     (id_product, ip, session, user_agent)
+   $id = $item[0]['id'];
+   if (SQLNumRows(SQLQuery('SELECT id FROM item WHERE id = "' . $id . '"')) == '1')
+    SQLQuery('INSERT INTO item_visits
+     (id_item, ip, session, user_agent)
     VALUES
      ("' . $id . '", "' . getIP() . '", "' . session_id() . '", "' . (isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '') . '")');
   */
@@ -938,7 +938,7 @@ class API {
    $offset = SQLEscape($_GET['offset']);
    $count = (isset($count) && $count != '') ? intval($count) : '18446744073709551615';
    $offset = intval($offset);
-   echo SQL2JSON('SELECT phrase, COUNT(phrase) AS count_total, COUNT(DISTINCT session) AS count_session, COUNT(DISTINCT ip) AS count_ip, (SELECT COUNT(*) FROM product WHERE name LIKE CONCAT("%", search.phrase, "%")) AS count_results FROM search ' . ($search != '' ? 'WHERE phrase LIKE "%' . $search .'%" ' : '') . 'GROUP BY phrase ORDER BY ' . ($o != '' ? $o : 'count_total') . ' ' . ($d == 'asc' ? 'ASC' : 'DESC') . ', id ' . ($d == 'asc' ? 'ASC' : 'DESC') . ' LIMIT ' . $count . ' OFFSET ' . $offset);
+   echo SQL2JSON('SELECT phrase, COUNT(phrase) AS count_total, COUNT(DISTINCT session) AS count_session, COUNT(DISTINCT ip) AS count_ip, (SELECT COUNT(*) FROM item WHERE name LIKE CONCAT("%", search.phrase, "%")) AS count_results FROM search ' . ($search != '' ? 'WHERE phrase LIKE "%' . $search .'%" ' : '') . 'GROUP BY phrase ORDER BY ' . ($o != '' ? $o : 'count_total') . ' ' . ($d == 'asc' ? 'ASC' : 'DESC') . ', id ' . ($d == 'asc' ? 'ASC' : 'DESC') . ' LIMIT ' . $count . ' OFFSET ' . $offset);
   */
  }
 
@@ -953,7 +953,7 @@ class API {
      if (SQLNumRows($result) == 1) {
       $rows = SQLArray($result);
       $image = trim(SQLEscape($rows[0]['image']));
-      $result = SQLQuery('SELECT id FROM product WHERE id_category = "' . $id . '"');
+      $result = SQLQuery('SELECT id FROM item WHERE id_category = "' . $id . '"');
       if (SQLNumRows($result) == 0) {
        require_once('../settings.php');
        $img = '../' . $GLOBALS['path-image-categories'] . '/' . $image;
@@ -961,7 +961,7 @@ class API {
        SQLQuery('DELETE FROM category_visits WHERE id_category = "' . $id . '"');
        SQLQuery('DELETE FROM category WHERE id = "' . $id . '"');
        $answer = array('error' => 0, 'message' => 'OK!');
-      } else $answer = array('error' => 4, 'message' => 'Cannot delete this category. It still contains products!');
+      } else $answer = array('error' => 4, 'message' => 'Cannot delete this category. It still contains items!');
      } else $answer = array('error' => 3, 'message' => 'Category with this ID does not exist!');
     } else $answer = array('error' => 2, 'message' => 'Category ID is not set!');
    } else $answer = array('error' => 1, 'message' => 'Admin is not logged in!');
@@ -1169,17 +1169,17 @@ class API {
    require_once('api_functions.php');
    $id = trim(SQLEscape($_POST['id']));
    $name = trim(SQLEscape($_POST['name']));
-   $id_product = trim(SQLEscape($_POST['id_product']));
+   $id_item = trim(SQLEscape($_POST['id_item']));
    $playable = trim(SQLEscape($_POST['playable']));
    if ($_SESSION['admin-login'] == 1) {
     $result = SQLQuery('SELECT id FROM file WHERE id = "' . $id . '"');
     if (SQLNumRows($result) == 1) {
      if ($name != '') {
-      $result = SQLQuery('SELECT id FROM product WHERE id = "' . $id_product . '"');
+      $result = SQLQuery('SELECT id FROM item WHERE id = "' . $id_item . '"');
       if (SQLNumRows($result) == 1) {
-       SQLQuery('UPDATE file SET id_product = "' . $id_product . '", filename = "' . $name . '", playable = "' . ($playable == 'on' ? '1' : '0') . '" WHERE id = "' . $id . '"');
+       SQLQuery('UPDATE file SET id_item = "' . $id_item . '", filename = "' . $name . '", playable = "' . ($playable == 'on' ? '1' : '0') . '" WHERE id = "' . $id . '"');
        $answer = array('error' => 0, 'message' => 'OK!');
-      } else $answer = array('error' => 4, 'message' => 'Product ID does not exist!');  
+      } else $answer = array('error' => 4, 'message' => 'Item ID does not exist!');  
      } else $answer = array('error' => 3, 'message' => 'File name is not set!');
     } else $answer = array('error' => 2, 'message' => 'File ID does not exist!');
    } else $answer = array('error' => 1, 'message' => 'Admin is not logged in!');
@@ -1194,36 +1194,36 @@ class API {
   */
  }
 
- async setAdminProductDelete(p = {}) {
+ async setAdminItemDelete(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
    $id = trim(SQLEscape($_GET['id']));
    if ($_SESSION['admin-login'] == 1) {
     if ($id != '') {
-     $result = SQLQuery('SELECT id, image, image_sm FROM product WHERE id = "' . $id . '"');
+     $result = SQLQuery('SELECT id, image, image_sm FROM item WHERE id = "' . $id . '"');
      if (SQLNumRows($result) == 1) {
       $rows = SQLArray($result);
       $image = trim(SQLEscape($rows[0]['image']));
       $image_small = trim(SQLEscape($rows[0]['image_sm']));
-      $result = SQLQuery('SELECT id FROM file WHERE id_product = "' . $id . '"');
+      $result = SQLQuery('SELECT id FROM file WHERE id_item = "' . $id . '"');
       if (SQLNumRows($result) == 0) {
        require_once('../settings.php');
-       $img = '../' . $GLOBALS['path-image-products'] . '/' . $image;
-       $img_small = '../' . $GLOBALS['path-image-products'] . '/' . $image_small;
+       $img = '../' . $GLOBALS['path-image-items'] . '/' . $image;
+       $img_small = '../' . $GLOBALS['path-image-items'] . '/' . $image_small;
        if (file_exists($img) && is_file($img)) unlink($img);
        if (file_exists($img_small) && is_file($img_small)) unlink($img_small);
-       SQLQuery('DELETE FROM product_visits WHERE id_product = "' . $id . '"');
-       SQLQuery('DELETE FROM product WHERE id = "' . $id . '"');
+       SQLQuery('DELETE FROM item_visits WHERE id_item = "' . $id . '"');
+       SQLQuery('DELETE FROM item WHERE id = "' . $id . '"');
        $answer = array('error' => 0, 'message' => 'OK!');
-      } else $answer = array('error' => 4, 'message' => 'Cannot delete this product. It still contains files!');
-     } else $answer = array('error' => 3, 'message' => 'Product with this ID does not exist!');
-    } else $answer = array('error' => 2, 'message' => 'Product ID is not set!');
+      } else $answer = array('error' => 4, 'message' => 'Cannot delete this item. It still contains files!');
+     } else $answer = array('error' => 3, 'message' => 'Item with this ID does not exist!');
+    } else $answer = array('error' => 2, 'message' => 'Item ID is not set!');
    } else $answer = array('error' => 1, 'message' => 'Admin is not logged in!');
   */
  }
 
- async setAdminProductEdit(p = {}) {
+ async setAdminItemEdit(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1235,61 +1235,61 @@ class API {
    $adult = trim(SQLEscape($_POST['adult']));
    $hidden = trim(SQLEscape($_POST['hidden']));
    if ($_SESSION['admin-login'] == 1) {
-    $result = SQLQuery('SELECT id FROM product WHERE id = "' . $id . '"');
+    $result = SQLQuery('SELECT id FROM item WHERE id = "' . $id . '"');
     if (SQLNumRows($result) == 1) {
      if ($name != '') {
       if ($link != '') {
        $result = SQLQuery('SELECT id FROM category WHERE id = "' . $id_category . '"');
        if (SQLNumRows($result) == 1) {
-        $result = SQLQuery('SELECT link FROM product WHERE link = "' . $link . '" AND id != "' . $id . '"');
+        $result = SQLQuery('SELECT link FROM item WHERE link = "' . $link . '" AND id != "' . $id . '"');
         if (SQLNumRows($result) == 0) {
-         SQLQuery('UPDATE product SET id_category = "' . $id_category . '", name = "' . $name . '", link = "' . $link . '", id_file_video = ' . ($id_video != '' ? '"' . $id_video . '"' : 'NULL') . ', adult = "' . ($adult == 'on' ? '1' : '0') . '", hidden = "' . ($hidden == 'on' ? '1' : '0') . '" WHERE id = "' . $id . '"');
+         SQLQuery('UPDATE item SET id_category = "' . $id_category . '", name = "' . $name . '", link = "' . $link . '", id_file_video = ' . ($id_video != '' ? '"' . $id_video . '"' : 'NULL') . ', adult = "' . ($adult == 'on' ? '1' : '0') . '", hidden = "' . ($hidden == 'on' ? '1' : '0') . '" WHERE id = "' . $id . '"');
          if (count($_FILES) == 1) {
           if ($_FILES['image']['error'] == 0) {
            if (isImage($_FILES['image']['type'])) {
             require_once('../settings.php');
             $img_name = $id . '.' . getImageExt($_FILES['image']['type']);
             $img_name_sm = $id . '_sm.jpg';
-            move_uploaded_file($_FILES['image']['tmp_name'], '../' . $GLOBALS['path-image-products'] . '/' . $img_name);
-            makeThumbnail('../' . $GLOBALS['path-image-products'] . '/' . $img_name, '../' . $GLOBALS['path-image-products'] . '/' . $img_name_sm, $GLOBALS['thumbnail-width'], $GLOBALS['thumbnail-quality']);
-            SQLQuery('UPDATE product SET image = "' . $img_name . '", image_sm = "' . $img_name_sm . '" WHERE id = "' . $id . '"');
+            move_uploaded_file($_FILES['image']['tmp_name'], '../' . $GLOBALS['path-image-items'] . '/' . $img_name);
+            makeThumbnail('../' . $GLOBALS['path-image-items'] . '/' . $img_name, '../' . $GLOBALS['path-image-items'] . '/' . $img_name_sm, $GLOBALS['thumbnail-width'], $GLOBALS['thumbnail-quality']);
+            SQLQuery('UPDATE item SET image = "' . $img_name . '", image_sm = "' . $img_name_sm . '" WHERE id = "' . $id . '"');
            }
           }
          }
          $answer = array('error' => 0, 'message' => 'OK!');
-        } else $answer = array('error' => 6, 'message' => 'Other product with the same link already exists!');
+        } else $answer = array('error' => 6, 'message' => 'Other item with the same link already exists!');
        } else $answer = array('error' => 5, 'message' => 'Category ID does not exist!');  
-      } else $answer = array('error' => 4, 'message' => 'Product link is not set!');  
-     } else $answer = array('error' => 3, 'message' => 'Product name is not set!');
-    } else $answer = array('error' => 2, 'message' => 'Product ID does not exist!');
+      } else $answer = array('error' => 4, 'message' => 'Item link is not set!');  
+     } else $answer = array('error' => 3, 'message' => 'Item name is not set!');
+    } else $answer = array('error' => 2, 'message' => 'Item ID does not exist!');
    } else $answer = array('error' => 1, 'message' => 'Admin is not logged in!');
   */
  }
 
- async setAdminProductImageDelete(p = {}) {
+ async setAdminItemImageDelete(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
    $id = trim(SQLEscape($_GET['id']));
    if ($_SESSION['admin-login'] == 1) {
     if ($id != '') {
-     $result = SQLQuery('SELECT id, image, image_sm FROM product WHERE id = "' . $id . '"');
+     $result = SQLQuery('SELECT id, image, image_sm FROM item WHERE id = "' . $id . '"');
      if (SQLNumRows($result) == 1) {
       $rows = SQLArray($result);
       require_once('../settings.php');
-      $img = '../' . $GLOBALS['path-image-products'] . '/' . $rows[0]['image'];
-      $img_sm = '../' . $GLOBALS['path-image-products'] . '/' . $rows[0]['image_sm'];
+      $img = '../' . $GLOBALS['path-image-items'] . '/' . $rows[0]['image'];
+      $img_sm = '../' . $GLOBALS['path-image-items'] . '/' . $rows[0]['image_sm'];
       if (file_exists($img) && is_file($img)) unlink($img);
       if (file_exists($img_sm) && is_file($img_sm)) unlink($img_sm);
-      SQLQuery('UPDATE product SET image = NULL, image_sm = NULL WHERE id = "' . $rows[0]['id'] . '"');
+      SQLQuery('UPDATE item SET image = NULL, image_sm = NULL WHERE id = "' . $rows[0]['id'] . '"');
       $answer = array('error' => 0, 'message' => 'OK!');
-     } else $answer = array('error' => 3, 'message' => 'Product with this ID does not exist!');
-    } else $answer = array('error' => 2, 'message' => 'Product ID is not set!');
+     } else $answer = array('error' => 3, 'message' => 'Item with this ID does not exist!');
+    } else $answer = array('error' => 2, 'message' => 'Item ID is not set!');
    } else $answer = array('error' => 1, 'message' => 'Admin is not logged in!');
   */
  }
 
- async setAdminProductAdd(p = {}) {
+ async setAdminItemAdd(p = {}) {
   /*
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
@@ -1303,27 +1303,27 @@ class API {
      if ($link != '') {
       $result = SQLQuery('SELECT id FROM category WHERE id = "' . $id_category . '"');
       if (SQLNumRows($result) == 1) {
-       $result = SQLQuery('SELECT link FROM product WHERE link = "' . $link . '"');
+       $result = SQLQuery('SELECT link FROM item WHERE link = "' . $link . '"');
        if (SQLNumRows($result) == 0) {
-        SQLQuery('INSERT INTO product (id_category, name, link, adult, hidden) VALUES ("' . $id_category . '", "' . $name . '", "' . $link . '", "' . ($adult == 'on' ? '1' : '0') . '", "' . ($hidden == 'on' ? '1' : '0') . '")');
+        SQLQuery('INSERT INTO item (id_category, name, link, adult, hidden) VALUES ("' . $id_category . '", "' . $name . '", "' . $link . '", "' . ($adult == 'on' ? '1' : '0') . '", "' . ($hidden == 'on' ? '1' : '0') . '")');
         if (count($_FILES) == 1) {
          if ($_FILES['image']['error'] == 0) {
-          if (isProductImage($_FILES['image']['type'])) {
-           $rows = SQLArray(SQLQuery('SELECT id FROM product WHERE link = "' . $link . '"'));
+          if (isItemImage($_FILES['image']['type'])) {
+           $rows = SQLArray(SQLQuery('SELECT id FROM item WHERE link = "' . $link . '"'));
            require_once('../settings.php');
-           $img_name = $rows[0]['id'] . '.' . getProductImageExt($_FILES['image']['type']);
+           $img_name = $rows[0]['id'] . '.' . getItemImageExt($_FILES['image']['type']);
            $img_name_sm = $rows[0]['id'] . '_sm.jpg';
-           move_uploaded_file($_FILES['image']['tmp_name'], '../' . $GLOBALS['path-image-products'] . '/' . $img_name);
-           makeThumbnail('../' . $GLOBALS['path-image-products'] . '/' . $img_name, '../' . $GLOBALS['path-image-products'] . '/' . $img_name_sm, $GLOBALS['thumbnail-width'], $GLOBALS['thumbnail-quality']);
-           SQLQuery('UPDATE product SET image = "' . $img_name . '", image_sm = "' . $img_name_sm . '" WHERE id = "' . $rows[0]['id'] . '"');
+           move_uploaded_file($_FILES['image']['tmp_name'], '../' . $GLOBALS['path-image-items'] . '/' . $img_name);
+           makeThumbnail('../' . $GLOBALS['path-image-items'] . '/' . $img_name, '../' . $GLOBALS['path-image-items'] . '/' . $img_name_sm, $GLOBALS['thumbnail-width'], $GLOBALS['thumbnail-quality']);
+           SQLQuery('UPDATE item SET image = "' . $img_name . '", image_sm = "' . $img_name_sm . '" WHERE id = "' . $rows[0]['id'] . '"');
           }
          }
         }
         $answer = array('error' => 0, 'message' => 'OK!');
-       } else $answer = array('error' => 5, 'message' => 'Product with the same link already exists!');
+       } else $answer = array('error' => 5, 'message' => 'Item with the same link already exists!');
       } else $answer = array('error' => 4, 'message' => 'Category ID does not exist!');  
-     } else $answer = array('error' => 3, 'message' => 'Product link is not set!');  
-    } else $answer = array('error' => 2, 'message' => 'Product name is not set!');
+     } else $answer = array('error' => 3, 'message' => 'Item link is not set!');  
+    } else $answer = array('error' => 2, 'message' => 'Item name is not set!');
    } else $answer = array('error' => 1, 'message' => 'Admin is not logged in!');
   */
  }
@@ -1373,19 +1373,19 @@ class API {
    if (session_status() == PHP_SESSION_NONE) session_start();
    require_once('api_functions.php');
    $id = trim(SQLEscape($_POST['id']));
-   $id_product = trim(SQLEscape($_POST['id_product']));
+   $id_item = trim(SQLEscape($_POST['id_item']));
    $playable = trim(SQLEscape($_POST['playable']));
    if ($_SESSION['admin-login'] == 1) {
     $result = SQLQuery('SELECT id FROM upload WHERE id = "' . $id . '"');
     if (SQLNumRows($result) == 1) {
-     $result = SQLQuery('SELECT id FROM product WHERE id = "' . $id_product . '"');
+     $result = SQLQuery('SELECT id FROM item WHERE id = "' . $id_item . '"');
      if (SQLNumRows($result) == 1) {
       require_once('../settings.php');
       $rows = SQLArray(SQLQuery('SELECT id, filename, realname, size, ip, created FROM upload WHERE id = "' . $id . '"'));
       $file = '../' . $GLOBALS['path-upload'] . '/' . $rows[0]['filename'];
       $file_dest = '../' . $GLOBALS['path-files'] . '/' . $rows[0]['filename'];
       if (file_exists($file)) rename($file, $file_dest);
-      SQLQuery('INSERT INTO file (id_product, name, filename, size, playable, ip, created) VALUES ("' . $id_product . '", "' . $rows[0]['filename'] . '", "' . $rows[0]['realname'] . '", "' . $rows[0]['size'] . '", "' . ($playable == 'on' ? '1' : '0') . '", "' . $rows[0]['ipa'] . '", "' . $rows[0]['created'] . '")');
+      SQLQuery('INSERT INTO file (id_item, name, filename, size, playable, ip, created) VALUES ("' . $id_item . '", "' . $rows[0]['filename'] . '", "' . $rows[0]['realname'] . '", "' . $rows[0]['size'] . '", "' . ($playable == 'on' ? '1' : '0') . '", "' . $rows[0]['ipa'] . '", "' . $rows[0]['created'] . '")');
       $rows = SQLArray(SQLQuery('SELECT id FROM file WHERE name = "' . $rows[0]['filename'] . '"'));
       $new_id = $rows[0]['id'];
       $rows = SQLArray(SQLQuery('SELECT ip, session, user_agent, created FROM upload_downloads WHERE id_upload = "' . $id . '"'));
@@ -1395,7 +1395,7 @@ class API {
       SQLQuery('DELETE FROM upload_downloads WHERE id_upload = "' . $id . '"');
       SQLQuery('DELETE FROM upload WHERE id = "' . $id . '"');
       $answer = array('error' => 0, 'message' => 'OK!');
-     } else $answer = array('error' => 3, 'message' => 'Product ID does not exist!');
+     } else $answer = array('error' => 3, 'message' => 'Item ID does not exist!');
     } else $answer = array('error' => 2, 'message' => 'Uploaded file ID does not exist!');
    } else $answer = array('error' => 1, 'message' => 'Admin is not logged in!');
   */
@@ -1411,7 +1411,7 @@ class API {
   'image/gif'     => 'gif',
   'image/svg+xml' => 'svg'
  );
- $GLOBALS['image_mime_product'] = array(
+ $GLOBALS['image_mime_item'] = array(
   'image/jpeg'    => 'jpg',
   'image/png'     => 'png',
  );

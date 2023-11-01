@@ -62,17 +62,17 @@ class Framework {
   await f.getPageContent(pathArr);
  }
 
- async getPageContent(pageArr) {
-  if (!pageArr || pageArr.length == 0) pageArr = ['news'];
+ async getPageContent(pathArr) {
+  if (!pathArr || pathArr.length == 0) pathArr = ['news'];
   let content = '';
   if (this.qsa('#menu-desktop .item.active').length == 1) this.qsa('#menu-desktop .item.active')[0].classList.remove('active');
   if (this.qsa('#menu-mobile .item.active').length == 1) this.qsa('#menu-mobile .item.active')[0].classList.remove('active');
-  if (pageArr[0] in this.pages) {
-   document.title = this.pageName + ' - ' + this.pages[pageArr[0]].label;
-   if (this.qs('#menu-desktop .item.menu-' + pageArr[0])) this.qs('#menu-desktop .item.menu-' + pageArr[0]).classList.add('active');
-   if (this.qs('#menu-mobile .item.menu-' + pageArr[0])) this.qs('#menu-mobile .item.menu-' + pageArr[0]).classList.add('active');
+  if (pathArr[0] in this.pages) {
+   document.title = this.pageName + ' - ' + this.pages[pathArr[0]].label;
+   if (this.qs('#menu-desktop .item.menu-' + pathArr[0])) this.qs('#menu-desktop .item.menu-' + pathArr[0]).classList.add('active');
+   if (this.qs('#menu-mobile .item.menu-' + pathArr[0])) this.qs('#menu-mobile .item.menu-' + pathArr[0]).classList.add('active');
    // TODO: only if page exists:
-   content = await this.getFileContent(this.pathHTML + this.pages[pageArr[0]].file);
+   content = await this.getFileContent(this.pathHTML + this.pages[pathArr[0]].file);
   } else {
    document.title = this.pageName + ' - ' + this.pages['notfound'].label;
    content = await this.getFileContent(this.pathHTML + 'notfound.html');
@@ -80,13 +80,17 @@ class Framework {
   this.qs('#content').innerHTML = content;
 
   // TODO: move this to user.js:
-  if (pageArr[0] === 'news') await getPageNews();
-  else if (pageArr[0] === 'categories') await getPageCategories();
-  else if (pageArr[0] == 'upload') await getPageUpload();
-  else if (pageArr[0] == 'search') await getPageSearch();
-  else if (pageArr[0] == 'forum') await getPageForum();
-  else if (pageArr[0] == 'category') await getPageCategory(pageArr[1]);
-  else if (pageArr[0] == 'product') await getPageProduct(pageArr[1]);
+  const pageHandlers = {
+   news: getPageNews,
+   categories: getPageCategories,
+   upload: getPageUpload,
+   search: getPageSearch,
+   forum: getPageForum,
+   item: getPageItem
+  };
+  const pageHandler = pageHandlers[pathArr[0]];
+  if (pageHandler) await pageHandler(pathArr);
+
   // TODO: move somewhere else related to accordion (or replace with CSS only)
   this.qsa('.accordion .header').forEach((header) => {
    header.onclick = () => {

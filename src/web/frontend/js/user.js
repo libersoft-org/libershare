@@ -12,24 +12,24 @@ const videoExtensions = ['mp4', 'mp3', 'avi', 'webm'];
 async function getPageNews() {
  const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
  const temp_cat = await f.getFileContent(f.pathHTML + 'news-category.html');
- const temp_prod = await f.getFileContent(f.pathHTML + 'products-item.html');
+ const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
  const cats = await f.getAPI('get_categories');
  for (let i = 0; i < cats.data.length; i++) {
-  if (cats.data[i].products_count - cats.data[i].products_count_hidden !== 0) {
-   const prods = await f.getAPI('get_products', {
+  if (cats.data[i].items_count - cats.data[i].items_count_hidden !== 0) {
+   const items = await f.getAPI('get_items', {
     id_category: cats.data[i].id,
     h: 2,
     d: true,
     count: 12
    });
    let prows = '';
-   for (let j = 0; j < prods.data.length; j++) {
+   for (let j = 0; j < items.data.length; j++) {
     let image = image_default;
-    if (prods.data[j].image_sm) image = f.pathImages + 'products/' + prods.data[j].image_sm;
-    let prow = f.translate(temp_prod, {
-     '{NAME}': prods.data[j].name,
-     '{LINK}': prods.data[j].link,
-     '{IMAGE}': prods.data[j].adult === 0 ? image : f.pathImages + 'item-censored.webp'
+    if (items.data[j].image_sm) image = f.pathImages + 'items/' + items.data[j].image_sm;
+    let prow = f.translate(temp_item, {
+     '{NAME}': items.data[j].name,
+     '{LINK}': items.data[j].link,
+     '{IMAGE}': items.data[j].adult === 0 ? image : f.pathImages + 'item-censored.webp'
     });
     prows += prow;
    }
@@ -47,20 +47,20 @@ async function getPageNews() {
 async function getPageCategories() {
  const temp = await f.getFileContent(f.pathHTML + 'categories-item.html');
  const cats = await f.getAPI('get_categories');
- let prodsCount = 0;
+ let itemsCount = 0;
  let crows = '';
  for (const cat of cats.data) {
-  const prodCount = cat.products_count - cat.products_count_hidden;
-  if (prodCount != 0) {
+  const itemCount = cat.items_count - cat.items_count_hidden;
+  if (itemCount != 0) {
    let img = f.pathImages + 'item-default.webp';
    if (cat.image) img = f.pathImages + 'categories/' + cat.image;
    crows += f.translate(temp, {
     '{LINK}': cat.link,
     '{NAME}': cat.name,
     '{IMAGE}': img,
-    '{COUNT}': prodCount
+    '{COUNT}': itemCount
    });
-   prodsCount += prodCount;
+   itemsCount += itemCount;
   }
  }
  f.qs('#content .categories .items').innerHTML =
@@ -68,26 +68,26 @@ async function getPageCategories() {
    '{LINK}': 'all',
    '{NAME}': 'All',
    '{IMAGE}': f.pathImages + 'item-all.webp',
-   '{COUNT}': prodsCount
+   '{COUNT}': itemsCount
   }) + crows;
  f.qs('#content .loader').remove();
 }
 
-async function getPageProduct(link) {
+async function getPageItem(pathArr = null) {
  const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
- let temp = await f.getFileContent(f.pathHTML + 'product-detail.html');
- const prod = await f.getAPI('get_product_by_link', { link: link });
- if (prod.data && prod.data.length == 1) {
+ let temp = await f.getFileContent(f.pathHTML + 'item-detail.html');
+ const item = await f.getAPI('get_item_by_link', { link: pathArr[1] });
+ if (item.data && item.data.length == 1) {
   const cat = await f.getAPI('get_category_by_id', {
-   id: prod.data[0].id_categories
+   id: item.data[0].id_categories
   });
-  prod.data[0].id_categories;
-  const files = await f.getAPI('get_files', { id_product: prod.data[0].id });
-  let temp_files = await f.getFileContent(f.pathHTML + 'product-file.html');
+  item.data[0].id_categories;
+  const files = await f.getAPI('get_files', { id_item: item.data[0].id });
+  let temp_files = await f.getFileContent(f.pathHTML + 'item-file.html');
   let rows = '';
   for (const fd of files.data) {
    const fileExtension = fd.file_name.split('.').pop().toLowerCase();
-   let repl = await f.getFileContent(f.pathHTML + 'product-play-button.html');
+   let repl = await f.getFileContent(f.pathHTML + 'item-play-button.html');
    if (!videoExtensions.includes(fileExtension)) repl = '';
    if (fd.file_name && videoExtensions.includes(fileExtension)) {
     rows += f.translate(temp_files, {
@@ -106,42 +106,42 @@ async function getPageProduct(link) {
    }
   }
   let image = image_default;
-  if (prod.data[0].image) image = f.pathImages + 'products/' + prod.data[0].image;
+  if (item.data[0].image) image = f.pathImages + 'items/' + item.data[0].image;
   const html = f.translate(temp, {
    '{CATEGORY-LINK}': cat.data[0].link,
    '{CATEGORY}': cat.data[0].name,
-   '{NAME}': prod.data[0].name,
+   '{NAME}': item.data[0].name,
    '{IMAGE}': image, //'{FB-SHARE-LINK}': '',
    '{FILES}': rows
   });
   f.qs('#content').innerHTML = html;
- } else f.qs('#content').innerHTML = 'Product not found'; // TODO: replace for HTML page
+ } else f.qs('#content').innerHTML = 'Item not found'; // TODO: replace for HTML page
 }
 
-async function getPageCategory(link) {
+async function getPageCategory(pathArr = null) {
  const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
- const cat = await f.getAPI('get_category_by_link', { link: link });
+ const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
  if (cat.data.length == 1) {
   const temp_cat = await f.getFileContent(f.pathHTML + 'category-detail.html');
   const html = f.translate(temp_cat, {
    '{CATEGORY}': cat.data[0].name
   });
   f.qs('#content').innerHTML = html;
-  const temp_prod = await f.getFileContent(f.pathHTML + 'products-item.html');
-  const prods = await f.getAPI('get_products', {
+  const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
+  const items = await f.getAPI('get_items', {
    id_category: cat.data[0].id,
    h: 2,
    d: true,
    count: 12
   });
   let prows = '';
-  for (let i = 0; i < prods.data.length; i++) {
+  for (let i = 0; i < items.data.length; i++) {
    let imgee = image_default;
-   if (prods.data[i].image_sm) imgee = f.pathImages + 'products/' + prods.data[i].image_sm;
-   let prow = f.translate(temp_prod, {
-    '{NAME}': prods.data[i].name,
-    '{LINK}': prods.data[i].link,
-    '{IMAGE}': prods.data[i].adult === 0 ? imgee : f.pathImages + 'item-censored.webp'
+   if (items.data[i].image_sm) imgee = f.pathImages + 'items/' + items.data[i].image_sm;
+   let prow = f.translate(temp_item, {
+    '{NAME}': items.data[i].name,
+    '{LINK}': items.data[i].link,
+    '{IMAGE}': items.data[i].adult === 0 ? imgee : f.pathImages + 'item-censored.webp'
    });
    prows += prow;
   }
@@ -273,6 +273,8 @@ function submitForm(type) {
    el.style.display = 'block';
   });
 }
+
+function getPageSearch() {}
 
 /* FROM E-MAIL SENDER APP - DELETE WHEN NOT NEEDED ANYMORE:
  await getModal('Edit campaign', html);
@@ -500,7 +502,7 @@ function getHeaderCategories(path_image_categories) {
    let result = jQuery.parseJSON(data);
    let rows = '';
    $(result).each(function (k, v) {
-    if (v.products_count - v.products_count_hidden != 0) {
+    if (v.items_count - v.items_count_hidden != 0) {
      let row = category_template;
      row = replaceAll('{LINK}', v.link, row);
      row = replaceAll('{NAME}', v.name, row);
@@ -514,45 +516,45 @@ function getHeaderCategories(path_image_categories) {
  });
 }
 
-function getPageCategory(link, productcount, elem) {
+function getPageCategory(link, itemcount, elem) {
  let cpt = '';
  let clm = '';
  $.get(f.pathHTML + 'category-load-more.html', function(data) {
   clm = data;
-  $.get(f.pathHTML + 'products-item.html', function(data) {
+  $.get(f.pathHTML + 'items-item.html', function(data) {
    cpt = data;
    $.get('get_category_by_link?link=' + link, function(data) {
     let cat = jQuery.parseJSON(data);
     let catid = cat.hasOwnProperty('error_id') ? 0 : cat[0].id;
     window.page = 1;
     window.canLoadMore = true;
-    $(document).ready(function() { getPageCategoryNext(productcount, elem, cpt, clm, cat.hasOwnProperty('error_id') ? 0 : catid); });
-    $(window).on('resize scroll', function() { getPageCategoryNext(productcount, elem, cpt, clm, cat.hasOwnProperty('error_id') ? 0 : catid); });
+    $(document).ready(function() { getPageCategoryNext(itemcount, elem, cpt, clm, cat.hasOwnProperty('error_id') ? 0 : catid); });
+    $(window).on('resize scroll', function() { getPageCategoryNext(itemcount, elem, cpt, clm, cat.hasOwnProperty('error_id') ? 0 : catid); });
    });
   });
  });
 }
 
-function getPageCategoryNext(productcount, elem, product_template, product_more_template, cat_id) {
+function getPageCategoryNext(itemcount, elem, item_template, item_more_template, cat_id) {
  if ($(elem).length) {
   if ($(elem).isVisible()) {
    if (window.canLoadMore) {
     window.canLoadMore = false;
-    $.get('get_products?id=' + cat_id + '&count=' + productcount + '&offset=' + ((window.page - 1) * productcount) + '&h=2', function (data) {
+    $.get('get_items?id=' + cat_id + '&count=' + itemcount + '&offset=' + ((window.page - 1) * itemcount) + '&h=2', function (data) {
      let result = jQuery.parseJSON(data);
      if (result.length != 0) {
       let rows = '';
       $(result).each(function (k, v) {
-       let row = product_template;
+       let row = item_template;
        row = replaceAll('{LINK}', v.id + '-' + v.link, row);
        row = replaceAll('{NAME}', v.name, row);
        row = replaceAll('{IMAGE}', 'image.php?file=' + v.image_sm, row);
        rows += row + "\r\n";
       });
-      $(elem).replaceWith(rows + product_more_template);
+      $(elem).replaceWith(rows + item_more_template);
       window.page++;
       window.canLoadMore = true;
-      getPageCategoryNext(productcount, elem, product_template, product_more_template, cat_id);
+      getPageCategoryNext(itemcount, elem, item_template, item_more_template, cat_id);
      }
     });
    }
@@ -560,7 +562,7 @@ function getPageCategoryNext(productcount, elem, product_template, product_more_
  }
 }
 
-function getPageSearch(phrase, productcount, elem) {
+function getPageSearch(phrase, itemcount, elem) {
  let cpt = '';
  let clm = '';
  $.get(f.pathHTML + 'search-load-more.html', function(data) {
@@ -569,32 +571,32 @@ function getPageSearch(phrase, productcount, elem) {
    spt = data;
    window.page = 1;
    window.canLoadMore = true;
-   $(document).ready(function() { getPageSearchNext(productcount, elem, spt, slm, phrase); });
-   $(window).on('resize scroll', function() { getPageSearchNext(productcount, elem, spt, slm, phrase); });
+   $(document).ready(function() { getPageSearchNext(itemcount, elem, spt, slm, phrase); });
+   $(window).on('resize scroll', function() { getPageSearchNext(itemcount, elem, spt, slm, phrase); });
   });
  });
 }
 
-function getPageSearchNext(productcount, elem, product_template, product_more_template, phrase) {
+function getPageSearchNext(itemcount, elem, item_template, item_more_template, phrase) {
  if ($(elem).length) {
   if ($(elem).isVisible()) {
    if (window.canLoadMore) {
     window.canLoadMore = false;
-    $.get('get_products?search=' + phrase + '&count=' + productcount + '&offset=' + ((window.page - 1) * productcount) + '&h=2', function (data) {
+    $.get('get_items?search=' + phrase + '&count=' + itemcount + '&offset=' + ((window.page - 1) * itemcount) + '&h=2', function (data) {
      let result = jQuery.parseJSON(data);
      if (result.length != 0) {
       let rows = '';
       $(result).each(function (k, v) {
-       let row = product_template;
+       let row = item_template;
        row = replaceAll('{LINK}', v.id + '-' + v.link, row);
        row = replaceAll('{NAME}', v.name, row);
        row = replaceAll('{IMAGE}', 'image.php?file=' + v.image_sm, row);
        rows += row + "\r\n";
       });
-      $(elem).replaceWith(rows + product_more_template);
+      $(elem).replaceWith(rows + item_more_template);
       window.page++;
       window.canLoadMore = true;
-      getPageSearchNext(productcount, elem, product_template, product_more_template, phrase);
+      getPageSearchNext(itemcount, elem, item_template, item_more_template, phrase);
      }
     });
    }
@@ -642,7 +644,7 @@ function getPageUploadNext(filecount, elem, upload_template, upload_more_templat
 }
 
 function getVideo(src, type) {
- $.get(f.pathHTML + 'product-video-player.html', function(data) {
+ $.get(f.pathHTML + 'item-video-player.html', function(data) {
   data = replaceAll('{SRC}', src, data);
   data = replaceAll('{TYPE}', type, data);
   $('#video-box').replaceWith(data);

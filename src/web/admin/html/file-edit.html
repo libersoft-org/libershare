@@ -1,5 +1,5 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a onclick="getPage('files')">Product files</a></li>
+ <li class="breadcrumb-item"><a onclick="getPage('files')">Item files</a></li>
  <li class="breadcrumb-item active">Edit file</li>
 </ol>
 <div class="card card-sm mb-3 center">
@@ -9,16 +9,16 @@
   <label>Název souboru:</label>
   <input type="text" id="name" class="form-control" name="name" maxlength="255" value="{NAME}" placeholder="Název souboru" required autofocus />
   <label>Produkt:</label>
-  <input id="products-search" class="form-control" type="text" oninput="getProductsDropdown();" placeholder="Vyhledání produktu" />
-  <div id="product-name"></div>
-  <input id="id-product" type="hidden" name="id_product" value="" />
+  <input id="items-search" class="form-control" type="text" oninput="getItemsDropdown();" placeholder="Vyhledání produktu" />
+  <div id="item-name"></div>
+  <input id="id-item" type="hidden" name="id_item" value="" />
   <div class="form-group custom-control custom-checkbox">
    <input name="playable" type="checkbox" class="custom-control-input" id="playable" {PLAYABLE} />
    <label class="custom-control-label" for="playable">Určeno k přehrávání</label>
    <table>
     <tr>
-     <th class="pr-3">Product:</th>
-     <td>{PRODUCT-NAME}</td>
+     <th class="pr-3">Item:</th>
+     <td>{ITEM-NAME}</td>
     </tr>
     <tr>
      <th class="pr-3">Size:</th>
@@ -42,6 +42,6 @@
   </div>
  </div>
  <script>
-  setProductItem('{ID-PRODUCT}', '{PRODUCT-NAME}');
+  setItem('{ID-ITEM}', '{ITEM-NAME}');
  </script>
 </div>
