@@ -24,12 +24,12 @@ async function getPageNews() {
    });
    let prows = '';
    for (let j = 0; j < prods.data.length; j++) {
-    let imgee = image_default;
-    if (prods.data[j].image_sm) imgee = f.pathImages + 'products/' + prods.data[j].image_sm;
+    let image = image_default;
+    if (prods.data[j].image_sm) image = f.pathImages + 'products/' + prods.data[j].image_sm;
     let prow = f.translate(temp_prod, {
      '{NAME}': prods.data[j].name,
-     '{LINK}': prods.data[j].id + '-' + prods.data[j].link,
-     '{IMAGE}': prods.data[j].adult === 0 ? imgee : f.pathImages + 'item-censored.webp'
+     '{LINK}': prods.data[j].link,
+     '{IMAGE}': prods.data[j].adult === 0 ? image : f.pathImages + 'item-censored.webp'
     });
     prows += prow;
    }

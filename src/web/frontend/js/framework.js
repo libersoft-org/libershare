@@ -6,18 +6,15 @@ class Framework {
   this.menuOpened = false;
   this.pathAPI = '/api/';
   this.pathHTML = '/html/';
-  this.pathJSON = '/json/';
   this.pathImages = '/img/';
+  this.pathJSON = '/json/';
  }
 
  async init() {
-  const getPath = () => location.pathname.substring(location.pathname.lastIndexOf('/') + 1);
   this.pages = JSON.parse(await this.getFileContent(this.pathJSON + 'pages.json'));
   this.getMenu();
-  this.getReload(getPath());
-  window.addEventListener('popstate', () => this.getReload(getPath()));
-  this.qs('.modal-overlay').addEventListener('click', this.closeModalN);
-  this.qs('#modal-content').addEventListener('click', (event) => event.stopPropagation());
+  this.getReload(location.pathname);
+  window.addEventListener('popstate', () => this.getReload(location.pathname));
  }
 
  async getMenu() {
@@ -46,15 +43,22 @@ class Framework {
   this.qs('#header').classList.remove('shadow');
  }
 
- async getReload(page) {
-  window.history.replaceState('', '', page == '' ? '/' : page);
-  await f.getPageContent(page);
+ // TODO: posilam tam pole (path), ale mela by to bejt cesta
+ async getReload(path) {
+  console.log(path);
+  const pathArr = path.split('/').filter((item) => item !== '');
+  console.log(pathArr);
+  window.history.replaceState('', '', path);
+  await f.getPageContent(pathArr[0]);
  }
 
- async getPage(page) {
+ async getPage(path) {
   if (this.menuOpened) this.menuClose();
-  window.history.pushState('', '', page == '' ? '/' : page);
-  await f.getPageContent(page);
+  console.log(path);
+  const pathArr = path.split('/').filter((item) => item !== '');
+  console.log(pathArr);
+  window.history.pushState('', '', path);
+  await f.getPageContent(pathArr[0]);
  }
 
  async getPageContent(page) {
@@ -68,39 +72,32 @@ class Framework {
    if (this.qs('#menu-mobile .item.menu-' + page)) this.qs('#menu-mobile .item.menu-' + page).classList.add('active');
    // TODO: only if page exists:
    content = await this.getFileContent(this.pathHTML + this.pages[page].file);
-  } else if (page.includes('-')) {
-   if (page.startsWith('product-')) content = await this.getFileContent(this.pathHTML + 'product.html');
-   else if (page.startsWith('category-')) content = await this.getFileContent(this.pathHTML + 'category.html');
-   else {
-    document.title = this.pageName + ' - ' + this.pages['notfound'].label;
-    content = await this.getFileContent(this.pathHTML + 'notfound.html');
-   }
   } else {
    document.title = this.pageName + ' - ' + this.pages['notfound'].label;
    content = await this.getFileContent(this.pathHTML + 'notfound.html');
   }
   this.qs('#content').innerHTML = content;
 
-  // TODO: move this to script.js:
+  // TODO: move this to user.js:
   if (page === 'news') await getPageNews();
   else if (page === 'categories') await getPageCategories();
   else if (page == 'upload') await getPageUpload();
   else if (page == 'search') await getPageSearch();
   else if (page == 'forum') await getPageForum();
-  else if (page.startsWith('category-')) await getPageCategory(page.substring(9));
-  else if (page.startsWith('product-')) await getPageProduct(page.split('-')[1]);
-  var headers = this.qsa('.accordion .header');
-  headers.forEach(function (header) {
-   header.addEventListener('click', function () {
-    var body = this.nextElementSibling;
-    if (body.style.height === '0px' || body.style.height === '') {
+  else if (page == 'category') await getPageCategory(page.lastIndexOf('/'));
+  else if (page == 'product') await getPageProduct(page.lastIndexOf('/'));
+  // TODO: move somewhere else related to accordion (or replace with CSS only)
+  this.qsa('.accordion .header').forEach((header) => {
+   header.onclick = () => {
+    let body = this.nextElementSibling;
+    if (body.style.height == '0px' || body.style.height == '') {
      body.style.height = body.scrollHeight + 'px';
      header.firstElementChild.style.transform = 'translateY(-50%) rotate(180deg)';
     } else {
      body.style.height = '0px';
      header.firstElementChild.style.transform = 'translateY(-50%) rotate(0deg)';
     }
-   });
+   };
   });
   const sess = localStorage.getItem('libershare_session_guid');
   if (sess && sess.length > 16) {
@@ -125,7 +122,9 @@ class Framework {
  async getModal(title, body) {
   const html = await this.getFileContent(this.pathHTML + 'modal.html');
   const modal = document.createElement('div');
-  modal.innerHTML = html.replace('{TITLE}', title).replace('{BODY}', body);
+  modal.innerHTML = this.translate(html, { '{TITLE}': title, '{BODY}': body });
+  modal.querySelector('.modal-overlay').onclick = this.closeModal();
+  modal.querySelector('#modal-content').onclick = (event) => event.stopPropagation();
   this.qs('body').appendChild(modal);
  }
 
@@ -134,26 +133,22 @@ class Framework {
  }
 
  makeDraggable(modal) {
-  let isDragging = false;
-  let offsetX, offsetY;
+  let isDragging = false,
+   offsetX,
+   offsetY;
   const header = modal.querySelector('.modal-header');
-  header.addEventListener('mousedown', (e) => {
+  header.onmousedown = (e) => {
    isDragging = true;
-   offsetX = e.clientX - modal.getBoundingClientRect().left;
-   offsetY = e.clientY - modal.getBoundingClientRect().top;
-  });
-  document.addEventListener('mousemove', (e) => {
+   const rect = modal.getBoundingClientRect();
+   offsetX = e.clientX - rect.left;
+   offsetY = e.clientY - rect.top;
+  };
+  document.onmousemove = (e) => {
    if (!isDragging) return;
-   let top = e.clientY - offsetY;
-   let left = e.clientX - offsetX;
-   left = Math.max(left, 0);
-   top = Math.max(top, 0);
-   left = Math.min(left, window.innerWidth - modal.offsetWidth);
-   top = Math.min(top, window.innerHeight - modal.offsetHeight);
-   modal.style.left = left + 'px';
-   modal.style.top = top + 'px';
-  });
-  document.addEventListener('mouseup', () => (isDragging = false));
+   modal.style.left = Math.min(window.innerWidth - modal.offsetWidth, Math.max(0, e.clientX - offsetX)) + 'px';
+   modal.style.top = Math.min(window.innerHeight - modal.offsetHeight, Math.max(0, e.clientY - offsetY)) + 'px';
+  };
+  document.onmouseup = () => (isDragging = false);
  }
 
  translate(template, dictionary) {
@@ -173,7 +168,7 @@ class Framework {
   let map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
   return text.replace(/[&<>"']/g, (m) => map[m]);
  }
-
+ /*
  // TODO: use getAPI instead of fetch:
  async generateCaptcha() {
   try {
@@ -184,7 +179,7 @@ class Framework {
    return null;
   }
  }
-
+*/
  verifyCaptcha() {
   const userResponse = this.qs('#captcha-input').value;
   const captchaText = this.qs('#captcha-container canvas').getAttribute('data-captcha');
@@ -206,13 +201,13 @@ class Framework {
  }
 
  getHumanSize(bytes) {
-  const type = ['', 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y'];
+  const units = ['', 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y'];
   let i = 0;
-  while (bytes >= 1024) {
+  while (bytes >= 1024 && i < units.length - 1) {
    bytes /= 1024;
    i++;
   }
-  return Math.round(bytes * 100) / 100 + ' ' + type[i] + 'B';
+  return bytes.toFixed(2) + ' ' + units[i] + 'B';
  }
 
  getLoader() {
