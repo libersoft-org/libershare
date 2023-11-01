@@ -132,7 +132,7 @@ class Framework {
   //modal.querySelector('.modal-overlay').onclick = this.closeModal();
   //modal.querySelector('#modal-content').onclick = (event) => event.stopPropagation();
 
-  // DRAGABLE:
+  // TODO - DRAGABLE NOT WORKING:
   let isDragging = false;
   let offsetX = 0;
   let offsetY = 0;
@@ -150,6 +150,7 @@ class Framework {
    modal.style.top = e.clientY - offsetY + 'px';
   };
   document.onmouseup = () => (isDragging = false);
+
   document.body.appendChild(modal);
  }
 

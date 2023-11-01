@@ -20,13 +20,13 @@ for (let i of items) {
 items = await db.query('SELECT * FROM product');
 for (let i of items) {
  const created = i.created.toISOString();
- console.log(`INSERT INTO products (id, id_categories, name, link, image, image_sm, adult, hidden, created) VALUES (${i.id}, ${i.id_category}, "${i.name}", "${i.link}", "${i.image}", "${i.image_sm}", ${i.adult}, ${i.hidden}, "${created}");`);
+ console.log(`INSERT INTO items (id, id_categories, name, link, image, image_sm, adult, hidden, created) VALUES (${i.id}, ${i.id_category}, "${i.name}", "${i.link}", "${i.image}", "${i.image_sm}", ${i.adult}, ${i.hidden}, "${created}");`);
 }
 
 items = await db.query('SELECT * FROM file');
 for (let i of items) {
  const created = i.created.toISOString();
- console.log(`INSERT INTO files (id, id_products, name, file_name, size, playable, ip, created) VALUES (${i.id}, ${i.id_product}, "${i.name}", "${i.filename}", "${i.size}", ${i.playable}, "${i.ip}", "${created}");`);
+ console.log(`INSERT INTO files (id, id_items, name, file_name, size, playable, ip, created) VALUES (${i.id}, ${i.id_product}, "${i.name}", "${i.filename}", "${i.size}", ${i.playable}, "${i.ip}", "${created}");`);
 }
 
 items = await db.query('SELECT * FROM file_downloads');
@@ -50,7 +50,7 @@ for (let i of items) {
 items = await db.query('SELECT * FROM product_visits');
 for (let i of items) {
  const created = i.created.toISOString();
- console.log(`INSERT INTO products_visits (id, id_products, ip, session, user_agent, created) VALUES (${i.id}, ${i.id_product}, "${i.ip}", "${i.session}", "${i.user_agent}", "${created}");`);
+ console.log(`INSERT INTO items_visits (id, id_items, ip, session, user_agent, created) VALUES (${i.id}, ${i.id_product}, "${i.ip}", "${i.session}", "${i.user_agent}", "${created}");`);
 }
 
 items = await db.query('SELECT * FROM search');

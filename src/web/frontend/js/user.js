@@ -44,33 +44,65 @@ async function getPageNews() {
  f.qs('#content .loader').remove();
 }
 
-async function getPageCategories() {
- const temp = await f.getFileContent(f.pathHTML + 'categories-item.html');
- const cats = await f.getAPI('get_categories');
- let itemsCount = 0;
- let crows = '';
- for (const cat of cats.data) {
-  const itemCount = cat.items_count - cat.items_count_hidden;
-  if (itemCount != 0) {
-   let img = f.pathImages + 'item-default.webp';
-   if (cat.image) img = f.pathImages + 'categories/' + cat.image;
-   crows += f.translate(temp, {
-    '{LINK}': cat.link,
-    '{NAME}': cat.name,
-    '{IMAGE}': img,
-    '{COUNT}': itemCount
+async function getPageCategories(pathArr = null) {
+ if (pathArr.length == 2) {
+  const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
+  const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
+  if (cat.data.length == 1) {
+   const temp_cat = await f.getFileContent(f.pathHTML + 'category-detail.html');
+   const html = f.translate(temp_cat, {
+    '{CATEGORY}': cat.data[0].name
    });
-   itemsCount += itemCount;
+   f.qs('#content').innerHTML = html;
+   const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
+   const items = await f.getAPI('get_items', {
+    id_category: cat.data[0].id,
+    h: 2,
+    d: true,
+    count: 12
+   });
+   let prows = '';
+   for (let i = 0; i < items.data.length; i++) {
+    let imgee = image_default;
+    if (items.data[i].image_sm) imgee = f.pathImages + 'items/' + items.data[i].image_sm;
+    let prow = f.translate(temp_item, {
+     '{NAME}': items.data[i].name,
+     '{LINK}': items.data[i].link,
+     '{IMAGE}': items.data[i].adult === 0 ? imgee : f.pathImages + 'item-censored.webp'
+    });
+    prows += prow;
+   }
+   f.qs('#content .items').innerHTML = prows;
+   //qs('#content .loader').remove();
+  } else f.qs('#content').innerHTML = 'Category not found'; // TODO: replace for HTML page
+ } else {
+  const temp = await f.getFileContent(f.pathHTML + 'categories-item.html');
+  const cats = await f.getAPI('get_categories');
+  let itemsCount = 0;
+  let crows = '';
+  for (const cat of cats.data) {
+   const itemCount = cat.items_count - cat.items_count_hidden;
+   if (itemCount != 0) {
+    let img = f.pathImages + 'item-default.webp';
+    if (cat.image) img = f.pathImages + 'categories/' + cat.image;
+    crows += f.translate(temp, {
+     '{LINK}': cat.link,
+     '{NAME}': cat.name,
+     '{IMAGE}': img,
+     '{COUNT}': itemCount
+    });
+    itemsCount += itemCount;
+   }
   }
+  f.qs('#content .categories .items').innerHTML =
+   f.translate(temp, {
+    '{LINK}': 'all',
+    '{NAME}': 'All',
+    '{IMAGE}': f.pathImages + 'item-all.webp',
+    '{COUNT}': itemsCount
+   }) + crows;
+  f.qs('#content .loader').remove();
  }
- f.qs('#content .categories .items').innerHTML =
-  f.translate(temp, {
-   '{LINK}': 'all',
-   '{NAME}': 'All',
-   '{IMAGE}': f.pathImages + 'item-all.webp',
-   '{COUNT}': itemsCount
-  }) + crows;
- f.qs('#content .loader').remove();
 }
 
 async function getPageItem(pathArr = null) {
@@ -116,38 +148,6 @@ async function getPageItem(pathArr = null) {
   });
   f.qs('#content').innerHTML = html;
  } else f.qs('#content').innerHTML = 'Item not found'; // TODO: replace for HTML page
-}
-
-async function getPageCategory(pathArr = null) {
- const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
- const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
- if (cat.data.length == 1) {
-  const temp_cat = await f.getFileContent(f.pathHTML + 'category-detail.html');
-  const html = f.translate(temp_cat, {
-   '{CATEGORY}': cat.data[0].name
-  });
-  f.qs('#content').innerHTML = html;
-  const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
-  const items = await f.getAPI('get_items', {
-   id_category: cat.data[0].id,
-   h: 2,
-   d: true,
-   count: 12
-  });
-  let prows = '';
-  for (let i = 0; i < items.data.length; i++) {
-   let imgee = image_default;
-   if (items.data[i].image_sm) imgee = f.pathImages + 'items/' + items.data[i].image_sm;
-   let prow = f.translate(temp_item, {
-    '{NAME}': items.data[i].name,
-    '{LINK}': items.data[i].link,
-    '{IMAGE}': items.data[i].adult === 0 ? imgee : f.pathImages + 'item-censored.webp'
-   });
-   prows += prow;
-  }
-  f.qs('#content .items').innerHTML = prows;
-  //qs('#content .loader').remove();
- } else f.qs('#content').innerHTML = 'Category not found'; // TODO: replace for HTML page
 }
 
 async function getPageForum() {
