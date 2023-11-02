@@ -19,3 +19,10 @@
  display: none;
  padding: 10px;
 }
+
+#header .search {
+ background-image: url('../img/search.svg');
+ background-repeat: no-repeat;
+ background-position: right 10px center;
+ background-size: 20px 20px;
+}
