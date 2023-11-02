@@ -7,9 +7,9 @@
   "label": "Categories",
   "file": "categories.html"
  },
- "upload": {
-  "label": "Upload",
-  "file": "upload.html"
+ "uploads": {
+  "label": "Uploads",
+  "file": "uploads.html"
  },
  "forum": {
   "label": "Forum",

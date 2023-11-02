@@ -83,7 +83,7 @@ class Framework {
   const pageHandlers = {
    news: getPageNews,
    categories: getPageCategories,
-   upload: getPageUpload,
+   uploads: getPageUploads,
    search: getPageSearch,
    forum: getPageForum,
    item: getPageItem
@@ -97,19 +97,6 @@ class Framework {
    this.qs('.menu .username').textContent = localStorage.getItem('libershare_username');
    this.qs('.menu .username').textContent = '';
   }
- }
-
- async getFileContent(file) {
-  return (await fetch(file, { headers: { 'cache-control': 'no-cache' } })).text();
- }
-
- async getAPI(name, body = null) {
-  const res = await fetch(this.pathAPI + name, {
-   method: 'POST',
-   headers: { 'Content-Type': 'application/json' },
-   body: body && JSON.stringify(body)
-  });
-  return res.ok ? await res.json() : false;
  }
 
  async getModal(title, body) {
@@ -142,6 +129,13 @@ class Framework {
   document.body.appendChild(modal);
  }
 
+ closeModal() {
+  const m = this.qs('.modal');
+  const mo = this.qs('.modal-overlay');
+  if (m) m.remove();
+  if (mo) mo.remove();
+ }
+
  accordionToggle(el) {
   const caret = el.querySelector('.caret');
   const body = el.parentElement.querySelector('.body');
@@ -160,11 +154,49 @@ class Framework {
   });
  }
 
- closeModal() {
-  const m = this.qs('.modal');
-  const mo = this.qs('.modal-overlay');
-  if (m) m.remove();
-  if (mo) mo.remove();
+ /* TODO: use getAPI instead of fetch:
+ async getCaptcha() {
+  try {
+   const response = await fetch(this.pathAPI + 'get_captcha');
+   if (!response.ok) throw new Error('Network response was not OK');
+   return await response.json();
+  } catch (error) {
+   return null;
+  }
+ }
+*/
+
+verifyCaptcha() {
+ const userResponse = this.qs('#captcha-input').value;
+ const captchaText = this.qs('#captcha-container canvas').getAttribute('data-captcha');
+ if (userResponse != captchaText) {
+  // TODO - error message?
+  this.qs('#captcha-input').value = '';
+  this.qs('#captcha-container').innerHTML = '';
+  this.generateCaptcha();
+ }
+}
+
+async regenCaptcha() {
+ const capt = await this.generateCaptcha();
+ const imgElement = this.qs('#captcha-container');
+ imgElement.style.backgroundColor = 'red';
+ imgElement.src = capt.image;
+ const cid = this.qs('#cid');
+ cid.value = capt.capid;
+}
+
+ async getFileContent(file) {
+  return (await fetch(file, { headers: { 'cache-control': 'no-cache' } })).text();
+ }
+
+ async getAPI(name, body = null) {
+  const res = await fetch(this.pathAPI + name, {
+   method: 'POST',
+   headers: { 'Content-Type': 'application/json' },
+   body: body && JSON.stringify(body)
+  });
+  return res.ok ? await res.json() : false;
  }
 
  translate(template, dictionary) {
@@ -183,37 +215,6 @@ class Framework {
  escapeHTML(text) {
   let map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
   return text.replace(/[&<>"']/g, (m) => map[m]);
- }
- /*
- // TODO: use getAPI instead of fetch:
- async generateCaptcha() {
-  try {
-   const response = await fetch(this.pathAPI + 'get_captcha');
-   if (!response.ok) throw new Error('Network response was not OK');
-   return await response.json();
-  } catch (error) {
-   return null;
-  }
- }
-*/
- verifyCaptcha() {
-  const userResponse = this.qs('#captcha-input').value;
-  const captchaText = this.qs('#captcha-container canvas').getAttribute('data-captcha');
-  if (userResponse != captchaText) {
-   // TODO - error message?
-   this.qs('#captcha-input').value = '';
-   this.qs('#captcha-container').innerHTML = '';
-   this.generateCaptcha();
-  }
- }
-
- async regenCaptcha() {
-  const capt = await this.generateCaptcha();
-  const imgElement = this.qs('#captcha-container');
-  imgElement.style.backgroundColor = 'red';
-  imgElement.src = capt.image;
-  const cid = this.qs('#cid');
-  cid.value = capt.capid;
  }
 
  getHumanSize(bytes) {

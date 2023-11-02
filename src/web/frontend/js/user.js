@@ -106,10 +106,10 @@ async function getPageCategories(pathArr = null) {
 }
 
 async function getPageItem(pathArr = null) {
- const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
- let temp = await f.getFileContent(f.pathHTML + 'item-detail.html');
  const item = await f.getAPI('get_item_by_link', { link: pathArr[1] });
  if (item.data && item.data.length == 1) {
+  const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
+  const temp = await f.getFileContent(f.pathHTML + 'item-detail.html');
   const cat = await f.getAPI('get_category_by_id', {
    id: item.data[0].id_categories
   });
@@ -122,21 +122,17 @@ async function getPageItem(pathArr = null) {
    const fileExtension = fd.file_name.split('.').pop().toLowerCase();
    let repl = temp_play;
    if (!videoExtensions.includes(fileExtension)) repl = '';
-   if (fd.file_name && videoExtensions.includes(fileExtension)) {
-    rows += f.translate(temp_files, {
-     '{NAME}': fd.file_name,
-     '{SIZE}': f.getHumanSize(fd.size),
-     '{LINK-DOWNLOAD}': 'download?id=' + fd.name,
-     '{PLAY-ONLINE}': repl
-    });
-   } else {
-    rows += f.translate(temp_files, {
-     '{NAME}': fd.file_name,
-     '{SIZE}': f.getHumanSize(fd.size),
-     '{LINK-DOWNLOAD}': 'download?id=' + f.name,
-     '{PLAY-ONLINE}': ''
-    });
-   }
+   else repl = f.translate(repl, {
+    '{HASH}': fd.name,
+    '{NAME}': fd.file_name,
+   });
+   rows += f.translate(temp_files, {
+    '{NAME}': fd.file_name,
+    '{SIZE}': f.getHumanSize(fd.size),
+    '{DOWNLOAD-HASH}': fd.name,
+    '{DOWNLOAD-NAME}': fd.file_name,
+    '{PLAY-ONLINE}': repl
+   });
   }
   let image = image_default;
   if (item.data[0].image) image = f.pathImages + 'items/' + item.data[0].image;
@@ -144,7 +140,7 @@ async function getPageItem(pathArr = null) {
    '{CATEGORY-LINK}': cat.data[0].link,
    '{CATEGORY}': cat.data[0].name,
    '{NAME}': item.data[0].name,
-   '{IMAGE}': image, //'{FB-SHARE-LINK}': '',
+   '{IMAGE}': image,
    '{FILES}': rows
   });
   f.qs('#content').innerHTML = html;
@@ -183,8 +179,8 @@ async function getPageForumThreads(count, page = 1) {
  //getPageForumThreads(count, page);
 }
 
-async function getPageUpload() {
- const temp_file = await f.getFileContent(f.pathHTML + 'upload-file.html');
+async function getPageUploads() {
+ const temp_file = await f.getFileContent(f.pathHTML + 'uploads-file.html');
  const files = await f.getAPI('get_uploads', { o: 'created', d: true, count: 10 });
  // TODO: check if files.data exists, otherwise remove table
  let rows = '';
@@ -192,7 +188,7 @@ async function getPageUpload() {
   rows += f.translate(temp_file, {
    '{NAME}': item.real_name,
    '{SIZE}': f.getHumanSize(item.size),
-   '{LINK}': './download?id=' + item.file_name
+   '{LINK}': '/upload/' + item.file_name + '/' +  item.real_name
   });
  }
  f.qs('#content .files').innerHTML = rows;
@@ -228,6 +224,11 @@ function logout() {
  localStorage.removeItem('libershare_session_guid');
  localStorage.removeItem('libershare_username');
  f.getPage('');
+}
+
+async function playVideo(link) {
+ const temp_video = await f.getFileContent(f.pathHTML + 'item-video.html');
+ f.qs('.play').innerHTML = f.translate (temp_video, { '{SRC}': link });
 }
 
 function getPageSearch() {}
@@ -867,7 +868,7 @@ function Done(originalFile, newFile) {
 
 function LoadUploaderTemplate() {
  f.getAPI({
-  url: f.pathHTML + 'upload-item.html',
+  url: f.pathHTML + 'uploads-item.html',
   success: function(data) {
    window.tmplUploader = data;
   }
