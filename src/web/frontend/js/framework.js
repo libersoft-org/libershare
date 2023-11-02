@@ -92,18 +92,6 @@ class Framework {
   if (pageHandler) await pageHandler(pathArr);
 
   // TODO: move somewhere else related to accordion (or replace with CSS only)
-  this.qsa('.accordion .header').forEach((header) => {
-   header.onclick = () => {
-    let body = this.nextElementSibling;
-    if (body.style.height == '0px' || body.style.height == '') {
-     body.style.height = body.scrollHeight + 'px';
-     header.firstElementChild.style.transform = 'translateY(-50%) rotate(180deg)';
-    } else {
-     body.style.height = '0px';
-     header.firstElementChild.style.transform = 'translateY(-50%) rotate(0deg)';
-    }
-   };
-  });
   const sess = localStorage.getItem('libershare_session_guid');
   if (sess && sess.length > 16) {
    this.qs('.menu .username').textContent = localStorage.getItem('libershare_username');
@@ -152,6 +140,24 @@ class Framework {
   document.onmouseup = () => (isDragging = false);
 
   document.body.appendChild(modal);
+ }
+
+ accordionToggle(el) {
+  const caret = el.querySelector('.caret');
+  const body = el.parentElement.querySelector('.body');
+  caret.classList.toggle('open');
+  if (body.style.height === '0px' || body.style.height === '') {
+   const bodyHeight = body.scrollHeight;
+   body.style.height = bodyHeight + 'px';
+  } else {
+   body.style.height = body.scrollHeight + 'px';
+   window.getComputedStyle(body).height;
+   body.style.height = '0px';
+  }
+  body.addEventListener('transitionend', function transitionEndListener() {
+   if (body.style.height !== '0px') body.style.height = 'auto';
+   body.removeEventListener('transitionend', transitionEndListener);
+  });
  }
 
  closeModal() {

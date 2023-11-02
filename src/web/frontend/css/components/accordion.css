@@ -4,6 +4,14 @@
  overflow: hidden;
 }
 
+.accordion.small {
+ max-width: 500px;
+}
+
+.accordion.medium {
+ max-width: var(--content-width);
+}
+
 .accordion .header {
  padding: 10px;
  background-color: var(--primary-color);
@@ -11,24 +19,32 @@
  cursor: pointer;
  position: relative;
  padding-right: 20px;
+ border-bottom: 1px solid var(--secondary-color);
 }
 
 .accordion .body {
- height: 0;
+ height: 0px;
  overflow: hidden;
- padding: 0 !important;
  transition: height 0.3s ease-in-out;
 }
 
-.accordion .inner-body {
+.accordion .body.open {
+ height: auto;
+}
+
+.accordion .inner {
  padding: 10px;
 }
 
-.accordion .arrow {
+.accordion .caret {
  position: absolute;
- right: 5px;
+ right: 10px;
  top: 50%;
+ width: 15px;
  transform: translateY(-50%) rotate(0deg);
  transition: transform 0.3s ease-in-out;
- fill: #000;
+}
+
+.accordion .caret.open {
+ transform: translateY(-50%) rotate(180deg);
 }

@@ -23,27 +23,3 @@
  height: 20px;
  padding-right: 10px;
 }
-
-/*
-#content .share-button {
- display: inline-flex;
- flex-direction: row;
- margin: 0 auto 20px auto;
-}
-
-#content .share-button .text-center {
- display: flex;
- align-items: center;
- flex-direction: row;
- justify-content: center;
- height: 100%;
-}
-
-#content .share-button .image {
- margin-right: 10px;
- width: auto;
- height: 100%;
- align-items: stretch;
- display: flex;
-}
-*/

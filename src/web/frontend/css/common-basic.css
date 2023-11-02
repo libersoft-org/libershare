@@ -124,6 +124,10 @@ input[type='file'] {
  white-space: nowrap;
 }
 
+.icon-invert {
+ filter: invert(1);
+}
+
 /*
 .need-logout,
 .need-login {

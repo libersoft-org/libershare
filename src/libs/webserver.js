@@ -29,7 +29,7 @@ class WebServer {
   app.use('/img/items/', express.static(path.join(Common.settings.storage.images, 'items')));
   app.use('/admin/', express.static(path.join(__dirname, '../web/admin/'), { fallthrough: true }));
   app.use('/admin/', (req, res) => res.sendFile(path.join(__dirname, '../web/admin/index.html')));
-  app.use(new RegExp(`(${['/news/', '/categories/', '/categories/:category/', '/item/:item', '/upload/', '/forum/', '/forum/:id/', '/faq/', '/terms/', '/contact/'].join('|')})`), (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
+  app.use(new RegExp(`(${['/news/', '/categories/', '/categories/:category/', '/item/:item/', '/upload/', '/forum/', '/forum/new/', '/forum/thread/:id/', '/faq/', '/terms/', '/contact/'].join('|')})`), (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
   app.use('/download/:hash/:name', (req, res) => {
    // TODO - PREVENT FROM PATH INJECTION !!!!!!!!!!!!!!!! (../../root/...):
    // TODO - BUG: crashes with big files (1,2 GB+) in Bun (in Node.js OK) - switch to Elysia?
