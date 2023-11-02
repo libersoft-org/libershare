@@ -102,7 +102,7 @@
  background-color: rgba(0, 0, 0, 0.85);
 }
 
-@media (min-width: 1441px) {
+@media (min-width: 1300px) {
  #menu-mobile {
   display: none;
  }
@@ -112,7 +112,7 @@
  }
 }
 
-@media (max-width: 1440px) {
+@media (max-width: 1299px) {
  #header .menu-toggler {
   display: block;
  }

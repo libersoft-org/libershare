@@ -231,7 +231,14 @@ async function playVideo(link) {
  f.qs('.play').innerHTML = f.translate (temp_video, { '{SRC}': link });
 }
 
-function getPageSearch() {}
+function search() {
+ if ((event.keyCode == 13 || event.which == 13) && f.qs('#header .search').value.trim() != '') f.getPage('search');
+}
+
+function getPageSearch() {
+ const phrase = f.qs('#header .search').value.trim();
+ f.qs('#content .breadcrumb .active').innerHTML = 'Search: ' + phrase;
+}
 
 /*
 function submitForm(type) {
