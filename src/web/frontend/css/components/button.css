@@ -1,6 +1,8 @@
 .button {
- margin-right: 10px;
+ display: inline-block;
+ gap: 5px;
  padding: 8px;
+ margin: 4px;
  border-radius: 10px;
  font-weight: bold;
  border: 1px solid var(--secondary-color);
@@ -17,7 +19,9 @@
 }
 
 .button img {
- width: 24px;
+ vertical-align: center;
+ height: 20px;
+ padding-right: 10px;
 }
 
 /*

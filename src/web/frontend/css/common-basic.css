@@ -91,13 +91,12 @@ input[type='file'] {
  margin: 0 auto;
 }
 
-.center .float-right {
- text-align: right;
- margin: 5px 0;
-}
-
 .text-center {
  text-align: center;
+}
+
+.text-right {
+ text-align: right;
 }
 
 .shadow {
@@ -119,6 +118,10 @@ input[type='file'] {
  max-width: 100%;
  border: 1px solid var(--secondary-color);
  border-radius: 10px;
+}
+
+.nowrap {
+ white-space: nowrap;
 }
 
 /*
