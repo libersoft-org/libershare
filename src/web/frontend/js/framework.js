@@ -2,25 +2,51 @@ class Framework {
  constructor() {
   // TODO - get page name from backend
   this.pageName = 'LiberShare';
-  this.pages;
   this.menuOpened = false;
   this.pathAPI = '/api/';
   this.pathHTML = '/html/';
   this.pathImages = '/img/';
   this.pathJSON = '/json/';
+  this.eventPageLoaded = new Event('page-loaded');
  }
 
  async init() {
   this.pages = JSON.parse(await this.getFileContent(this.pathJSON + 'pages.json'));
-  await this.getMenu();
-  this.getReload(location.pathname);
-  window.addEventListener('popstate', () => this.getReload(location.pathname));
+  this.setPath(location.pathname);
+  this.getMenu();
+  await this.getReload();
+  window.addEventListener('popstate', async () => await this.getReload());
+ }
+
+ setPath(path) {
+  if (path) {
+   if (!path.endsWith('/')) path += '/';
+   if (!path.startsWith('/')) path = '/' + path;
+  } else path = '/';
+  this.path = path;
+  this.pathArr = path.split('/').filter((item) => item !== '');
  }
 
  async getMenu() {
   const menu = await this.getFileContent(this.pathHTML + 'menu.html');
   this.qs('#menu-desktop').innerHTML = menu;
   this.qs('#menu-mobile').innerHTML = menu;
+  this.getMenuSwitch();
+ }
+
+ getMenuSwitch() {
+  const mdActive = this.qsa('#menu-desktop .menu-item.active');
+  const mmActive = this.qsa('#menu-mobile .menu-item.active');
+  if (mdActive.length == 1) mdActive[0].classList.remove('active');
+  if (mmActive.length == 1) mmActive[0].classList.remove('active');
+  var item = this.pathArr[0];
+  if (!item) item = 'news';
+  if (this.pathArr[0] in this.pages) {
+   const mdItem = this.qs('#menu-desktop .menu-item.menu-' + item);
+   const mmItem = this.qs('#menu-mobile .menu-item.menu-' + item);
+   if (mdItem) mdItem.classList.add('active');
+   if (mmItem) mmItem.classList.add('active');
+  }
  }
 
  menu() {
@@ -43,60 +69,25 @@ class Framework {
   this.qs('#header').classList.remove('shadow');
  }
 
- getReload(path) {
-  return this.processPath(path, 'replaceState');
+ async getReload() {
+  return await this.processPath(this.path, 'replaceState');
  }
 
- getPage(path) {
+ async getPage(path) {
   if (this.menuOpened) this.menuClose();
-  return this.processPath(path, 'pushState');
+  return await this.processPath(path, 'pushState');
  }
 
  async processPath(path, historyMethod) {
-  if (path) {
-   if (!path.endsWith('/')) path += '/';
-   if (!path.startsWith('/')) path = '/' + path;
-  } else path = '/';
-  const pathArr = path.split('/').filter((item) => item !== '');
-  window.history[historyMethod]('', '', path);
-  await f.getPageContent(pathArr);
- }
-
- async getPageContent(pathArr) {
-  if (!pathArr || pathArr.length == 0) pathArr = ['news'];
+  this.setPath(path);
+  window.history[historyMethod]('', '', this.path);
+  this.getMenuSwitch();
+  if (!this.pathArr || this.pathArr.length == 0) this.pathArr = ['news'];
   let content = '';
-  if (this.qsa('#menu-desktop .menu-item.active').length == 1) this.qsa('#menu-desktop .menu-item.active')[0].classList.remove('active');
-  if (this.qsa('#menu-mobile .menu-item.active').length == 1) this.qsa('#menu-mobile .menu-item.active')[0].classList.remove('active');
-  if (pathArr[0] in this.pages) {
-   document.title = this.pageName + ' - ' + this.pages[pathArr[0]].label;
-   if (this.qs('#menu-desktop .menu-item.menu-' + pathArr[0])) this.qs('#menu-desktop .menu-item.menu-' + pathArr[0]).classList.add('active');
-   if (this.qs('#menu-mobile .menu-item.menu-' + pathArr[0])) this.qs('#menu-mobile .menu-item.menu-' + pathArr[0]).classList.add('active');
-   // TODO: only if page exists:
-   content = await this.getFileContent(this.pathHTML + this.pages[pathArr[0]].file);
-  } else {
-   document.title = this.pageName + ' - ' + this.pages['notfound'].label;
-   content = await this.getFileContent(this.pathHTML + 'notfound.html');
-  }
+  document.title = this.pageName + ' - ' + this.pages[(this.pathArr[0] in this.pages ? this.pathArr[0] : 'notfound')].label;
+  content = await this.getFileContent(this.pathHTML + (this.pathArr[0] in this.pages ? this.pages[this.pathArr[0]].file : 'notfound.html'));
   this.qs('#content').innerHTML = content;
-
-  // TODO: move this to user.js:
-  const pageHandlers = {
-   news: getPageNews,
-   categories: getPageCategories,
-   uploads: getPageUploads,
-   search: getPageSearch,
-   forum: getPageForum,
-   item: getPageItem
-  };
-  const pageHandler = pageHandlers[pathArr[0]];
-  if (pageHandler) await pageHandler(pathArr);
-
-  // TODO: move somewhere else related to accordion (or replace with CSS only)
-  const sess = localStorage.getItem('libershare_session_guid');
-  if (sess && sess.length > 16) {
-   this.qs('.menu .username').textContent = localStorage.getItem('libershare_username');
-   this.qs('.menu .username').textContent = '';
-  }
+  document.dispatchEvent(this.eventPageLoaded);
  }
 
  async getModal(title, body) {
@@ -104,15 +95,14 @@ class Framework {
   const html = await this.getFileContent(this.pathHTML + 'modal.html');
   const modal = document.createElement('div');
   modal.innerHTML = this.translate(html, { '{TITLE}': title, '{BODY}': body });
-  //modal.querySelector('.modal-overlay').onclick = this.closeModal();
-  //modal.querySelector('#modal-content').onclick = (event) => event.stopPropagation();
-
+  
   // TODO - DRAGABLE NOT WORKING:
   let isDragging = false;
   let offsetX = 0;
   let offsetY = 0;
   const header = modal.querySelector('.title');
   header.onmousedown = (e) => {
+   //e.stopPropagation();
    e.preventDefault();
    isDragging = true;
    const rect = modal.getBoundingClientRect();
@@ -154,7 +144,7 @@ class Framework {
   });
  }
 
- /* TODO: use getAPI instead of fetch:
+ // TODO: use getAPI instead of fetch:
  async getCaptcha() {
   try {
    const response = await fetch(this.pathAPI + 'get_captcha');
@@ -164,27 +154,26 @@ class Framework {
    return null;
   }
  }
-*/
 
-verifyCaptcha() {
- const userResponse = this.qs('#captcha-input').value;
- const captchaText = this.qs('#captcha-container canvas').getAttribute('data-captcha');
- if (userResponse != captchaText) {
-  // TODO - error message?
-  this.qs('#captcha-input').value = '';
-  this.qs('#captcha-container').innerHTML = '';
-  this.generateCaptcha();
+ verifyCaptcha() {
+  const userResponse = this.qs('#captcha-input').value;
+  const captchaText = this.qs('#captcha-container canvas').getAttribute('data-captcha');
+  if (userResponse != captchaText) {
+   // TODO - error message?
+   this.qs('#captcha-input').value = '';
+   this.qs('#captcha-container').innerHTML = '';
+   this.generateCaptcha();
+  }
  }
-}
 
-async regenCaptcha() {
- const capt = await this.generateCaptcha();
- const imgElement = this.qs('#captcha-container');
- imgElement.style.backgroundColor = 'red';
- imgElement.src = capt.image;
- const cid = this.qs('#cid');
- cid.value = capt.capid;
-}
+ async regenCaptcha() {
+  const capt = await this.generateCaptcha();
+  const imgElement = this.qs('#captcha-container');
+  imgElement.style.backgroundColor = 'red';
+  imgElement.src = capt.image;
+  const cid = this.qs('#cid');
+  cid.value = capt.capid;
+ }
 
  async getFileContent(file) {
   return (await fetch(file, { headers: { 'cache-control': 'no-cache' } })).text();

@@ -1,13 +1,35 @@
 const f = new Framework();
-window.onload = async () => { await f.init(); };
+window.onload = async () => {
+ document.addEventListener('page-loaded', () => getPageContent());
+ await f.init();
+};
 
 const days = Array.from({ length: 31 }, (_, i) => i + 1);
 const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const years = Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i);
 const videoExtensions = ['mp4', 'mp3', 'avi', 'webm'];
 
+async function getPageContent() {
+ const pageHandlers = {
+  news: getPageNews,
+  categories: getPageCategories,
+  uploads: getPageUploads,
+  search: getPageSearch,
+  forum: getPageForum,
+  item: getPageItem
+ };
+ const pageHandler = pageHandlers[f.pathArr[0]];
+ if (pageHandler) await pageHandler(f.pathArr);
+
+ const sess = localStorage.getItem('libershare_session_guid');
+ if (sess && sess.length > 16) {
+  this.qs('.menu .username').textContent = localStorage.getItem('libershare_username');
+  this.qs('.menu .username').textContent = '';
+ }
+}
+
 async function getPageNews() {
- const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
+ const image_default = f.pathImages + 'item-default.webp';
  const temp_cat = await f.getFileContent(f.pathHTML + 'news-category.html');
  const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
  const cats = await f.getAPI('get_categories');
@@ -218,7 +240,7 @@ async function getModalRegistration() {
 function logout() {
  localStorage.removeItem('libershare_session_guid');
  localStorage.removeItem('libershare_username');
- f.getPage('');
+ getPage('');
 }
 
 async function playVideo(link) {
@@ -227,7 +249,7 @@ async function playVideo(link) {
 }
 
 function search() {
- if ((event.keyCode == 13 || event.which == 13) && f.qs('#header .search').value.trim() != '') f.getPage('search');
+ if ((event.keyCode == 13 || event.which == 13) && f.qs('#header .search').value.trim() != '') getPage('search');
 }
 
 async function getPageSearch() {
@@ -283,7 +305,7 @@ function submitForm(type) {
     localStorage.setItem('libershare_session_guid', data.data.sessionguid);
     localStorage.setItem('libershare_username', data.data.username);
     f.closeModalN();
-    f.getPage('');
+    getPage('');
    }
   })
   .catch((error) => {

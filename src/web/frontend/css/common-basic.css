@@ -128,6 +128,12 @@ input[type='file'] {
  filter: invert(1);
 }
 
+.notfound {
+ font-size: 28px;
+ font-weight: bold;
+ margin-bottom: 15px;
+}
+
 /*
 .need-logout,
 .need-login {
