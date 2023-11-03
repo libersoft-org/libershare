@@ -30,7 +30,7 @@
  background-size: 20px 20px;
 }
 
-@media (max-width: 1250px) {
+@media (max-width: 1300px) {
  #header .menu-toggler {
   display: block;
  }

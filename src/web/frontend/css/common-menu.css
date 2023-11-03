@@ -110,7 +110,7 @@
  user-select: none;
 }
 
-@media (max-width: 1299px) {
+@media (max-width: 1300px) {
  #menu-desktop .left {
   display: none;
  }
