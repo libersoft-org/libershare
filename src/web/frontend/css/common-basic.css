@@ -38,7 +38,7 @@ table th {
 
 table thead tr {
  background-color: var(--secondary-color);
- color: #fff;
+ color: #FFF;
 }
 
 table tbody tr:nth-child(odd) {
@@ -61,6 +61,7 @@ input[type='text'],
 input[type='search'],
 input[type='password'],
 input[type='email'],
+select,
 textarea {
  padding: 8px;
  border: 1px solid var(--secondary-color);

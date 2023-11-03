@@ -1,11 +1,15 @@
 <tr>
- <td class="bold">{NAME}</td>
- <td class="text-center nowrap">{SIZE}</td>
- <td class="text-right nowrap">
-  {PLAY-ONLINE}
-  <a class="button secondary" href="/download/{DOWNLOAD-HASH}/{DOWNLOAD-NAME}">
-   <span><img class="icon-invert" src="/img/download.svg" alt="Download" /></span>
-   <span>Download</span>
-  </a>
+ <td>
+  <div class="bold">{NAME}</div>
+  <div class="separator"></div>
+  <div><span class="bold">Size:</span> {SIZE}</div>
+  <div class="separator"></div>
+  <div class="buttons">
+   <a class="button secondary" href="/download/{DOWNLOAD-HASH}/{DOWNLOAD-NAME}">
+    <img class="icon-invert" src="/img/download.svg" alt="Download" />
+    <div>Download</div>
+   </a>
+   {PLAY-ONLINE}
+  </div>
  </td>
 </tr>

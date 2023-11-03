@@ -1,8 +1,16 @@
-.button {
- display: inline-block;
+.buttons {
+ display: flex;
  gap: 5px;
+}
+
+.buttons.middle {
+ justify-content: center;
+}
+
+.button {
+ display: flex;
+ align-items: center;
  padding: 8px;
- margin: 4px;
  border-radius: 10px;
  font-weight: bold;
  border: 1px solid var(--secondary-color);
@@ -15,11 +23,10 @@
 
 .button.secondary {
  background-color: var(--secondary-color);
- color: #fff;
+ color: #FFF;
 }
 
 .button img {
- vertical-align: center;
  height: 20px;
  padding-right: 10px;
 }

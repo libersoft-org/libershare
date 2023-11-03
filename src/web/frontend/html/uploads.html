@@ -2,22 +2,20 @@
  <div class="body">
   <div class="notice red"><span class="bold">ATTENTION</span>: Please read the <a onclick="f.getPage('terms')">Terms of use</a> carefully before uploading files. By uploading files you agree to these Terms.</div>
   <div class="separator"></div>
-  <a class="button primary">Select files</a>
-  <a class="button primary">Upload</a>
+  <div class="buttons">
+   <a class="button primary">Select files</a>
+   <a class="button primary"><img src="/img/upload.svg" alt="Upload" />Upload</a>
+  </div>
   <input id="files" type="file" name="file" multiple />
   <hr />
   <div id="uploaders"></div>
   <div class="notice red"><span class="bold">ATTENTION</span>: This list contains unsorted files, which was uploaded from various users, it was not verified by antivirus software and may not contain what you may expect by it's file name.</div>
   <div class="separator"></div>
-  <table class="files center">
+  <table>
    <thead>
-    <tr>
-     <th>Name</th>
-     <th>Size</th>
-     <th>Downloads</th>
-    </tr>
+    <tr><th>Files</th></tr>
    </thead>
-   <tbody></tbody>
+   <tbody class="files"></tbody>
   </table>
   <div class="separator"></div>
   <div class="loader"></div>
