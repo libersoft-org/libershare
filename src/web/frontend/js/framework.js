@@ -96,25 +96,28 @@ class Framework {
   const modal = document.createElement('div');
   modal.innerHTML = this.translate(html, { '{TITLE}': title, '{BODY}': body });
   
-  // TODO - DRAGABLE NOT WORKING:
+  // TODO - DRAGABLE NOT WORKING PROPERLY - can reach off window boundaries and shrinks when on right side:
+  const mod = modal.querySelector('.modal');
   let isDragging = false;
   let offsetX = 0;
   let offsetY = 0;
-  const header = modal.querySelector('.title');
+  const header = mod.querySelector('.title');
   header.onmousedown = (e) => {
    //e.stopPropagation();
    e.preventDefault();
    isDragging = true;
-   const rect = modal.getBoundingClientRect();
-   offsetX = e.clientX - rect.left;
-   offsetY = e.clientY - rect.top;
+   offsetX = e.clientX - mod.offsetLeft;
+   offsetY = e.clientY - mod.offsetTop;
+
+   document.onmousemove = (e) => {
+    if (!isDragging) return;
+    mod.style.left = e.clientX - offsetX + 'px';
+    mod.style.top = e.clientY - offsetY + 'px';
+   };
+
+   document.onmouseup = () => (isDragging = false);
   };
-  document.onmousemove = (e) => {
-   if (!isDragging) return;
-   modal.style.left = e.clientX - offsetX + 'px';
-   modal.style.top = e.clientY - offsetY + 'px';
-  };
-  document.onmouseup = () => (isDragging = false);
+  
 
   document.body.appendChild(modal);
  }

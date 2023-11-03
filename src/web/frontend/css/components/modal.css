@@ -27,6 +27,7 @@
  align-items: center;
  justify-content: space-between;
  padding-left: 10px;
+ cursor: pointer;
  font-weight: bold;
  color: var(--secondary-color);
  background-color: var(--primary-color);
