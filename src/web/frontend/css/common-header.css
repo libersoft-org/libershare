@@ -4,25 +4,39 @@
  display: flex;
  align-items: center;
  top: 0;
- padding: 0 10px;
- gap: 10px;
- width: calc(100% - 20px);
+ gap: 5px;
+ width: 100%;
  height: var(--header-height);
  background-color: var(--primary-color);
 }
 
-#header img {
- height: 20px;
-}
-
 #header .menu-toggler {
  display: none;
+ height: 20px;
  padding: 10px;
 }
 
+#header .logo {
+ padding-left: 10px;
+ padding-right: 10px;
+ max-width: 160px;
+}
+
 #header .search {
+ width: 170px;
  background-image: url('../img/search.svg');
  background-repeat: no-repeat;
  background-position: right 10px center;
  background-size: 20px 20px;
+}
+
+@media (max-width: 1250px) {
+ #header .menu-toggler {
+  display: block;
+ }
+
+ #header .logo {
+  max-width: 100px;
+  padding-left: 0;
+ }
 }

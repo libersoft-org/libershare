@@ -68,10 +68,6 @@ textarea {
  border-radius: 10px;
 }
 
-input[type='search'] {
- margin-left: 10px;
-}
-
 input[type='file'] {
  display: none;
 }
