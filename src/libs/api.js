@@ -92,57 +92,36 @@ class API {
  async getCaptcha() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz123456789';
   let captchaText = '';
-  for (let i = 0; i < 5; i++) {
-   captchaText += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-
-  // Generate random colors for SVG
-  const randomColor = () => `rgb(${Math.floor(Math.random() * 160)},${Math.floor(Math.random() * 160)},${Math.floor(Math.random() * 160)})`;
-  const randomColorL = () => `rgb(${Math.floor(Math.random() * 128 + 128)},${Math.floor(Math.random() * 128 + 128)},${Math.floor(Math.random() * 128 + 128)})`;
-
-  // Generate background dots
+  for (let i = 0; i < 5; i++) captchaText += chars.charAt(Math.floor(Math.random() * chars.length));
+  const randomColor = () => 'rgb(' + Math.floor(Math.random() * 160) + ',' + Math.floor(Math.random() * 160) + ',' + Math.floor(Math.random() * 160) + ')';
+  const randomColorL = () => 'rgb(' + Math.floor(Math.random() * 128 + 128) + ',' + Math.floor(Math.random() * 128 + 128) + ',' + Math.floor(Math.random() * 128 + 128) + ')';
   let backgroundDots = '';
   for (let x = 0; x < 120; x += 6) {
-   for (let y = 0; y < 40; y += 6) {
-    backgroundDots += `<circle cx="${x}" cy="${y}" r="3" fill="${randomColor()}" />`;
-   }
+   for (let y = 0; y < 40; y += 6) backgroundDots += '<circle cx="' + x + '" cy="' + y + '" r="3" fill="' + randomColor() + '" />';
   }
-
-  // Generate each letter of the captcha text with a different color and random rotation
-  let xPosition = 10; // Starting position adjusted for wider canvas
+  let xPosition = 10;
   let coloredText = '';
   for (let i = 0; i < captchaText.length; i++) {
-   const rotation = Math.floor(Math.random() * 30) - 15; // Random rotation between -15 and 15 degrees
-   coloredText += `<text x="${xPosition}" y="30" font-family="Arial" font-size="22" font-weight="bold" fill="${randomColorL()}" transform="rotate(${rotation} ${xPosition},30)">${captchaText[i]}</text>`;
-   xPosition += 22; // Adjusted spacing for larger font size
+   const rotation = Math.floor(Math.random() * 30) - 15;
+   coloredText += '<text x="' + xPosition + '" y="30" font-family="Arial" font-size="22" font-weight="bold" fill="' + randomColorL() + '" transform="rotate(' + rotation + ' ' + xPosition + ',30)">' + captchaText[i] + '</text>';
+   xPosition += 22;
   }
-
-  // Generate SVG
   const svg = `
    <svg width="120" height="40" xmlns="http://www.w3.org/2000/svg" style="background-color: gray;">
-    <!-- Background Dots -->
     ${backgroundDots}
-    <!-- Captcha Text -->
     ${coloredText}
    </svg>
   `;
-
-  // Convert SVG to base64
-  const base64Image = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
-  const captchaId = new Date().getTime() + Math.random().toString(36).substr(2, 9);
+  const base64Image = 'data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64');
+  const captchaId = new Date().getTime() + Math.random().toString(36).substring(2, 9);
   validCaptchas[captchaId] = captchaText;
-  return {
-   image: base64Image,
-   capid: captchaId
-  };
+  return { image: base64Image, capid: captchaId };
  }
 
  validateCaptcha(key, value) {
-  if (validCaptchas.hasOwnProperty(key) && validCaptchas[key] === value) {
-   delete validCaptchas[key];
-   return true;
-  }
-  return false;
+  if (!validCaptchas.hasOwnProperty(key) || !validCaptchas[key] === value) return false;
+  delete validCaptchas[key];
+  return true;
  }
 
  async getCategories(p = {}) {
@@ -158,9 +137,7 @@ class API {
    $sql = 'SELECT id, name, link, image, (SELECT SUM((SELECT SUM(size) FROM file WHERE id_item = item.id)) FROM item WHERE id_category = category.id) AS size, (SELECT COUNT(*) FROM item WHERE id_category = category.id) AS items_count, (SELECT COUNT(*) FROM item WHERE id_category = category.id AND hidden = 1) AS items_count_hidden, (SELECT COUNT(*) FROM category_visits WHERE id_category = category.id) AS visits, (SELECT COUNT(DISTINCT session) FROM category_visits WHERE id_category = category.id) AS visits_by_session, (SELECT COUNT(DISTINCT ip) FROM category_visits WHERE id_category = category.id) AS visits_by_ip, created FROM category ' . ($search != '' ? ' WHERE MATCH(name) AGAINST ("' . $search .'")' : '') . ($search == '' ? 'ORDER BY ' . ($o != '' ? $o : 'created') . ' ' . ($d == 'desc' ? 'DESC' : 'ASC') . ', id ' . ($d == 'desc' ? 'DESC' : 'ASC') : '') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
-  return {
-   error: 0,
-   data: await this.data.getCategories(p.o, p.d, p.search, p.count, p.offset)
+  return { error: 0, data: await this.data.getCategories(p.order, p.direction, p.search, p.count, p.offset)
   };
  }
 
@@ -262,7 +239,7 @@ class API {
   */
   if (!p.id_item) return { error: 1, message: 'Item ID is empty' };
   if (!(await this.data.getItemExists(p.id_item))) return { error: 2, message: 'Item does not exist' };
-  const res = await this.data.getFiles(p.id_item, p.o, p.d, p.p, p.search, p.count, p.offset);
+  const res = await this.data.getDownloadFiles(p.id_item, p.order, p.direction, p.search, p.count, p.offset);
   return { error: 0, data: res };
  }
 
@@ -278,7 +255,7 @@ class API {
    $sql = 'SELECT t.id, t.id_users, u.username, u.sex, t.topic, (SELECT COUNT(*) FROM forum_post WHERE id_forum_thread = t.id) AS posts_count, DATE_FORMAT(t.created , "%e.%c.%Y %H:%i:%s") AS created FROM forum_thread t, users u WHERE u.id = t.id_users ORDER BY ' . ($o != '' ? $o : 't.created') . ' ' . ($d == 'asc' ? 'ASC' : 'DESC') . ', id ' . ($d == 'asc' ? 'ASC' : 'DESC') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
-  const res = await this.data.getForumThreads(p.o, p.d, p.count, p.offset);
+  const res = await this.data.getForumThreads(p.order, p.direction, p.count, p.offset);
   return { error: 0, data: res };
  }
 
@@ -341,12 +318,12 @@ class API {
   /*
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
-   $o = SQLEscape($_GET['o']);
-   $d = SQLEscape($_GET['d']);
-   $h = SQLEscape($_GET['h']);
-   $a = SQLEscape($_GET['a']);
-   $i = SQLEscape($_GET['i']);
-   $v = SQLEscape($_GET['v']);
+   $order = SQLEscape($_GET['o']);
+   $direction = SQLEscape($_GET['d']);
+   $hidden = SQLEscape($_GET['h']);
+   $adult = SQLEscape($_GET['a']);
+   $image = SQLEscape($_GET['i']);
+   $video = SQLEscape($_GET['v']);
    $search = SQLEscape($_GET['search']);
    $count = SQLEscape($_GET['count']);
    $offset = SQLEscape($_GET['offset']);
@@ -361,40 +338,39 @@ class API {
    }
    $sql = '
     SELECT
-     p.id,
-     p.name,
-     p.link,
-     p.id_file_video,
-     p.image,
-     p.image_sm,
-     p.id_category,
+     i.id,
+     i.name,
+     i.link,
+     i.id_file_video,
+     i.image,
+     i.image_sm,
+     i.id_category,
      c.name AS category_name,
      c.link AS category_link,
-     (SELECT COUNT(*) FROM file WHERE id_item = p.id) AS files,
-     p.adult,
-     p.hidden,
-     (SELECT COUNT(*) FROM item_visits WHERE id_item = p.id) AS visits,
-     (SELECT COUNT(DISTINCT session) FROM item_visits WHERE id_item = p.id) AS visits_by_session,
-     (SELECT COUNT(DISTINCT ip) FROM item_visits WHERE id_item = p.id) AS visits_by_ip,
-     p.created
-    FROM item p, category c
+     (SELECT COUNT(*) FROM file WHERE id_item = i.id) AS files,
+     i.adult,
+     i.hidden,
+     (SELECT COUNT(*) FROM item_visits WHERE id_item = i.id) AS visits,
+     (SELECT COUNT(DISTINCT session) FROM item_visits WHERE id_item = i.id) AS visits_by_session,
+     (SELECT COUNT(DISTINCT ip) FROM item_visits WHERE id_item = i.id) AS visits_by_ip,
+     i.created
+    FROM item i, category c
     WHERE
-     p.id_category = c.id'
-     . ($h == '1' || $h == '2' ? ' AND p.hidden = "' . ($h == 1 ? '1' : '0') . '"' : '')
-     . ($a == '1' || $a == '2' ? ' AND p.adult = "' . ($a == 1 ? '1' : '0') . '"' : '')
-     . ($i == '1' || $i == '2' ? ' AND p.image IS ' . ($i == 1 ? 'NOT NULL' : 'NULL') : '')
-     . ($v == '1' || $v == '2' ? ' AND p.id_file_video IS ' . ($v == 1 ? 'NOT NULL' : 'NULL') : '')
-     . ($id != '' && $id != '0' ? ' AND p.id_category = "' . $id .'"' : '')
-     . ($search != '' ? ' AND MATCH(p.name) AGAINST ("' . $search .'")' : '')
-     . ($search == '' ? ' ORDER BY ' . ($o != '' ? $o : 'created') . ' ' . ($d == 'asc' ? 'ASC' : 'DESC') . ', id ' . ($d == 'asc' ? 'ASC' : 'DESC') : '')
+     i.id_category = c.id'
+     . ($hidden == '1' || $hidden == '2' ? ' AND i.hidden = "' . ($hidden == 1 ? '1' : '0') . '"' : '')
+     . ($adult == '1' || $adult == '2' ? ' AND i.adult = "' . ($adult == 1 ? '1' : '0') . '"' : '')
+     . ($image == '1' || $image == '2' ? ' AND i.image IS ' . ($image == 1 ? 'NOT NULL' : 'NULL') : '')
+     . ($video == '1' || $video == '2' ? ' AND i.id_file_video IS ' . ($video == 1 ? 'NOT NULL' : 'NULL') : '')
+     . ($id != '' && $id != '0' ? ' AND i.id_category = "' . $id .'"' : '')
+     . ($search != '' ? ' AND MATCH(i.name) AGAINST ("' . $search .'")' : '')
+     . ($search == '' ? ' ORDER BY ' . ($order != '' ? $order : 'created') . ' ' . ($direction == 'asc' ? 'ASC' : 'DESC') . ', id ' . ($direction == 'asc' ? 'ASC' : 'DESC') : '')
      . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
-  //if (!'id_category' in p) p.id_category = null;
   if (p.id_category && p.id_category != 0) {
    if (!(await this.data.getCategoryExists(p.id_category))) return { error: 1, message: 'Category does not exist' };
   }
-  const res = await this.data.getItems(p.id_category, p.o, p.d, p.h, p.a, p.i, p.search, p.count, p.offset);
+  const res = await this.data.getItems(p.id_category, p.order, p.direction, p.hidden, p.adult, p.image, p.search, p.count, p.offset);
   return { error: 0, data: res };
  }
 
@@ -500,7 +476,7 @@ class API {
     . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
-  const res = await this.data.getUploads(p.o, p.d, p.count, p.offset, p.search);
+  const res = await this.data.getUploads(p.order, p.direction, p.count, p.offset, p.search);
   return { error: 0, data: res };
  }
 
@@ -782,7 +758,6 @@ class API {
  }
 
  async setSession(p = {}) {
-  // Existence check of sessionGuid in database
   const resp = await this.data.setSession(p.sessionguid);
   if (!resp) return { error: 1, message: 'Session is not valid' };
   return { error: 0, data: p.sessionguid };

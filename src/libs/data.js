@@ -14,7 +14,6 @@ class Data {
   this.startConnectionCheck();
  }
  async removeExpiredSessions() {
-  // Odstranění sessions, které jsou starší než 1 den
   await this.db.query(`DELETE FROM sessions WHERE last_access < DATE_SUB(NOW(), INTERVAL ${Common.settings.web.session_user_lifetime} SECOND)`);
  }
 
@@ -28,14 +27,13 @@ class Data {
  }
 
  startConnectionCheck() {
-  setInterval(() => this.checkConnection(), 60000); // Check every minute
+  setInterval(() => this.checkConnection(), 60000);
  }
 
  startSessionCleanup() {
-  // Spustí funkci removeExpiredSessions každou hodinu
   setInterval(async () => {
    await this.removeExpiredSessions();
-  }, 3600000); // 3600000 ms = 1 hodina
+  }, 3600000);
  }
 
  async dbCreate() {
@@ -64,7 +62,7 @@ class Data {
   await this.db.close();
  }
 
- async getCategories(o = null, d = null, search = null, count = null, offset = null) {
+ async getCategories(order = null, direction = null, search = null, count = null, offset = null) {
   const query = `
    SELECT
     id,
@@ -76,7 +74,7 @@ class Data {
     created
    FROM categories
    ${search ? 'WHERE MATCH(name) AGAINST (?) ' : ''}
-   ORDER BY ${o ? o : 'created'} ${o && d ? 'DESC' : 'ASC'}, id ${d ? 'DESC' : 'ASC'}
+   ORDER BY ${order ? order : 'created'} ${order && direction ? 'DESC' : 'ASC'}, id ${direction ? 'DESC' : 'ASC'}
    ${count && offset ? 'LIMIT ? OFFSET ?' : ''}
   `;
   const params = [];
@@ -111,15 +109,15 @@ class Data {
   return rows[0].cnt == 1;
  }
 
- async getFiles(id_item, o, d, p, search, count, offset) {
+ async getDownloadFiles(id_item, order, direction, search, count, offset) {
   let query = `
    SELECT
     f.id,
     f.name,
     f.file_name,
-    p.id AS items_id,
-    p.name AS item_name,
-    p.link AS item_link,
+    i.id AS items_id,
+    i.name AS item_name,
+    i.link AS item_link,
     f.size,
     f.ip,
     (SELECT COUNT(*) FROM files_downloads WHERE id_files = f.id) AS downloads,
@@ -129,20 +127,20 @@ class Data {
     (SELECT COUNT(DISTINCT session) FROM files_plays WHERE id_files = f.id) AS plays_by_session,
     (SELECT COUNT(DISTINCT ip) FROM files_plays WHERE id_files = f.id) AS plays_by_ip,
     f.created
-   FROM files f, items p
-   WHERE f.id_items = p.id`;
+   FROM files f, items i
+   WHERE f.id_items = i.id`;
   query += id_item != '' ? ' AND f.id_items = "' + id_item + '"' : '';
   query += search != null && search != '' ? ' AND MATCH(f.file_name) AGAINST ("' + search + '")' : '';
-  query += search == '' ? ' ORDER BY ' + (o != null && o != '' ? o : 'f.created') + ' ' + (d ? 'DESC' : 'ASC') + ', f.id ' + (d ? 'DESC' : 'ASC') : '';
+  query += search == '' ? ' ORDER BY ' + (order != null && order != '' ? order : 'f.created') + ' ' + (direction ? 'DESC' : 'ASC') + ', f.id ' + (direction ? 'DESC' : 'ASC') : '';
   query += count != null && count != '' ? ' LIMIT ' + count + (offset != null && offset != '' ? ' OFFSET ' + offset : '') : '';
   return await this.db.query(query);
  }
 
- async getFile() {}
+ async getDownloadFile() {}
 
  async getFileByID() {}
 
- async getForumThreads(o, d, count, offset) {
+ async getForumThreads(order, direction, count, offset) {
   let query = `
    SELECT
     t.id,
@@ -156,8 +154,8 @@ class Data {
     forum_threads t, users u
    WHERE u.id = t.id_users
    ORDER BY
-    ${o != null && o != '' ? o : 't.created'}
-    ${d != null && d != '' ? 'DESC' : 'ASC' + ', id ' + (d ? 'DESC' : 'ASC')}
+    ${order != null && order != '' ? order : 't.created'}
+    ${direction != null && direction != '' ? 'DESC' : 'ASC' + ', id ' + (direction ? 'DESC' : 'ASC')}
     ${count != null && count != '' ? 'LIMIT ' + count + (offset != null && offset != '' ? 'OFFSET ' + offset : '') : ''}`;
   return await this.db.query(query);
  }
@@ -215,58 +213,62 @@ class Data {
   return res[0].cnt === 1;
  }
 
- async getItemsAutoComplete() {}
+ async getItemsAutoComplete() {
 
- async getItemsInfo() {}
+ }
 
- async getItems(id_category, o, d, h, a, i, search, count, offset) {
+ async getItemsInfo() {
+
+ }
+
+ async getItems(id_category, order, direction, hidden, adult, image, search, count, offset) {
   let query = `
    SELECT
-    p.id,
-    p.name,
-    p.link,
-    p.image,
-    p.image_sm,
-    p.id_categories,
+    i.id,
+    i.name,
+    i.link,
+    i.image,
+    i.image_sm,
+    i.id_categories,
     c.name AS category_name,
     c.link AS category_link,
-    (SELECT COUNT(*) FROM files WHERE id_items = p.id) AS files,
-    p.adult,
-    p.hidden,
-    p.created
-   FROM items p, categories c
-   WHERE p.id_categories = c.id
+    (SELECT COUNT(*) FROM files WHERE id_items = i.id) AS files,
+    i.adult,
+    i.hidden,
+    i.created
+   FROM items i, categories c
+   WHERE i.id_categories = c.id
   `;
 
   let params = [];
 
-  if (h === '1' || h === '2') {
-   query += ' AND p.hidden = ?';
-   params.push(h === '1' ? '1' : '0');
+  if (hidden === '1' || hidden === '2') {
+   query += ' AND i.hidden = ?';
+   params.push(hidden === '1' ? '1' : '0');
   }
 
-  if (a === '1' || a === '2') {
-   query += ' AND p.adult = ?';
-   params.push(a === '1' ? '1' : '0');
+  if (adult === '1' || adult === '2') {
+   query += ' AND i.adult = ?';
+   params.push(adult === '1' ? '1' : '0');
   }
 
-  if (i === '1' || i === '2') {
-   query += ' AND p.image IS ' + (i === '1' ? 'NOT NULL' : 'NULL');
+  if (image === '1' || image === '2') {
+   query += ' AND i.image IS ' + (image === '1' ? 'NOT NULL' : 'NULL');
   }
 
   if (id_category) {
-   query += ' AND p.id_categories = ?';
+   query += ' AND i.id_categories = ?';
    params.push(id_category);
   }
 
   if (search) {
-   query += ' AND MATCH(p.name) AGAINST (?)';
+   query += ' AND MATCH(i.name) AGAINST (?)';
    params.push(search);
   }
 
   if (!search) {
-   query += ' ORDER BY ? ' + (d ? 'DESC' : 'ASC') + ', id ' + (d ? 'DESC' : 'ASC');
-   params.push(o || 'created');
+   query += ' ORDER BY ? ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC');
+   params.push(order || 'created');
   }
 
   if (count) {
@@ -279,27 +281,27 @@ class Data {
  }
 
  /*
-    (SELECT COUNT(*) FROM items_visits WHERE id_items = p.id) AS visits,
-    (SELECT COUNT(DISTINCT session) FROM items_visits WHERE id_items = p.id) AS visits_by_session,
-    (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = p.id) AS visits_by_ip,
-   */
+  (SELECT COUNT(*) FROM items_visits WHERE id_items = i.id) AS visits,
+  (SELECT COUNT(DISTINCT session) FROM items_visits WHERE id_items = i.id) AS visits_by_session,
+  (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = i.id) AS visits_by_ip,
+ */
  async getUpload() {}
 
  async getUploadByID() {}
 
  async getUploads(o, d, count, offset, search) {
-  var query = `
-    SELECT
-     id,
-     file_name,
-     real_name,
-     size,
-     ip,
-     (SELECT COUNT(*) FROM uploads_downloads WHERE id_uploads = uploads.id) AS downloads,
-     (SELECT COUNT(DISTINCT session) FROM uploads_downloads WHERE id_uploads = uploads.id) AS downloads_by_session,
-     (SELECT COUNT(DISTINCT ip) FROM uploads_downloads WHERE id_uploads = uploads.id) AS downloads_by_ip,
-     created
-    FROM uploads`;
+  let query = `
+   SELECT
+    id,
+    file_name,
+    real_name,
+    size,
+    ip,
+    (SELECT COUNT(*) FROM uploads_downloads WHERE id_uploads = uploads.id) AS downloads,
+    (SELECT COUNT(DISTINCT session) FROM uploads_downloads WHERE id_uploads = uploads.id) AS downloads_by_session,
+    (SELECT COUNT(DISTINCT ip) FROM uploads_downloads WHERE id_uploads = uploads.id) AS downloads_by_ip,
+    created
+   FROM uploads`;
   query += search != null && search != '' ? ' WHERE MATCH(realname) AGAINST ("' + search + '")' : '';
   query += search == null || search == '' ? ' ORDER BY ' + (o != null && o != '' ? o : 'created') + ' ' + (d ? 'DESC' : 'ASC') + ', id ' + (d ? 'DESC' : 'ASC') : '';
   query += count != null && count != '' ? ' LIMIT ' + count + (offset != null && offset != '' ? ' OFFSET ' + offset : '') : '';
@@ -325,66 +327,35 @@ class Data {
  async setItemVisit() {}
 
  async setRegistration(params) {
-  if (!/^[A-Za-z0-9]{3,24}$/.test(params.username)) {
-   return { error: 2, message: 'User name must be 3 to 24 characters long and can contain only upper and lower case letters and numbers!' };
-  }
-
-  if (!validateEmail(params.email)) {
-   return { error: 4, message: 'E-mail is in invalid format!' };
-  }
-
-  if (!(params.sex === '0' || params.sex === '1')) {
-   return { error: 6, message: 'You have to choose the right sex!' };
-  }
-
-  if (!params.month || !params.day || !params.year || !checkDate(params.month, params.day, params.year)) {
-   return { error: 7, message: 'The date is in invalid format!' };
-  }
-
-  if (params.password.length < 3) {
-   return { error: 8, message: 'The minimum password length is 3 characters!' };
-  }
-
-  if (params.password !== params.password2) {
-   return { error: 9, message: 'Passwords does not match!' };
-  }
-
-  if (!params.terms) {
-   return { error: 10, message: 'You have to agree with registration terms!' };
-  }
+  if (!/^[A-Za-z0-9]{3,24}$/.test(params.username)) return { error: 2, message: 'User name must be 3 to 24 characters long and can contain only letters and numbers!' };
+  if (!validateEmail(params.email)) return { error: 4, message: 'E-mail is in invalid format!' };
+  if (!(params.sex === '0' || params.sex === '1')) return { error: 6, message: 'You have to choose the right sex!' };
+  if (!params.month || !params.day || !params.year || !checkDate(params.month, params.day, params.year)) return { error: 7, message: 'The date is in invalid format!' };
+  if (params.password.length < 3) return { error: 8, message: 'The minimum password length is 3 characters!' };
+  if (params.password !== params.password2) return { error: 9, message: 'Passwords does not match!' };
+  if (!params.terms) return { error: 10, message: 'You have to agree with registration terms!' };
   if (!params.ip) params.ip = 'not available';
   if (!params.session) params.session = 'not available';
-
-  // Kontrola podmínek, které vyžadují přístup k databázi
   const usernameExists = await this.db.query('SELECT COUNT(*) AS cnt FROM users WHERE username = ?', [params.username]);
-  if (usernameExists[0].cnt > 0) {
-   return { error: 3, message: 'User name already exists!' };
-  }
+  if (usernameExists[0].cnt > 0) return { error: 3, message: 'User name already exists!' };
   const emailExists = await this.db.query('SELECT COUNT(*) AS cnt FROM users WHERE email = ?', [params.email]);
-  if (emailExists[0].cnt > 0) {
-   return { error: 5, message: 'Account with the same e-mail already exists!' };
-  }
-
+  if (emailExists[0].cnt > 0) return { error: 5, message: 'Account with the same e-mail already exists!' };
   const hash = crypto.createHash('sha1');
   hash.update(new Date().getTime() + Math.random().toString());
   const confirmation = hash.digest('hex');
-
   const passwordHash = crypto.createHash('sha1').update(params.password).digest('hex');
   try {
-   const result = await this.db.query(
-    `
-        INSERT INTO users
-        (username, password, email, first_name, last_name, sex, birthdate, confirmation, reg_ip, reg_session, reg_user_agent)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [params.username, passwordHash, params.email, params.firstname, params.lastname, params.sex, `${params.year}-${params.month}-${params.day}`, confirmation, params.ip, params.session, params.useragent]
+   const result = await this.db.query(`
+    INSERT INTO users
+    (username, password, email, first_name, last_name, sex, birthdate, confirmation, reg_ip, reg_session, reg_user_agent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [params.username, passwordHash, params.email, params.firstname, params.lastname, params.sex, params.year + '-' + params.month + '-' + params.day, confirmation, params.ip, params.session, params.useragent]
    );
-
    //if (!sendConfirmationEmail(confirmation, params.email, params.username, params.firstname, params.lastname)) {
-   //    return { error: 11, message: 'Error while sending confirmation e-mail!' };
-   // }
+   // return { error: 11, message: 'Error while sending confirmation e-mail!' };
+   //}
    const userId = result.insertId;
    const res = await this.validateLogin(params);
-
    if (res.error) return res;
    return { error: 0, data: res.data };
   } catch (error) {
@@ -393,46 +364,23 @@ class Data {
  }
 
  async validateLogin(params) {
-  // Kontrola existence uživatele a získání jeho hesla z databáze
   const user = await this.db.query('SELECT id, password FROM users WHERE username = ?', [params.username]);
-  if (user.length === 0) {
-   return { error: '1', message: 'User not found' };
-  }
-
+  if (user.length === 0) return { error: '1', message: 'User not found' };
   const storedHashedPassword = user[0].password;
   const inputHashedPassword = crypto.createHash('sha1').update(params.password).digest('hex');
-
-  // Kontrola, zda hash zadaného hesla odpovídá hashi hesla uloženého v databázi
-  if (storedHashedPassword !== inputHashedPassword) {
-   return { error: '2', message: 'Incorrect password' };
-  }
-
+  if (storedHashedPassword !== inputHashedPassword) return { error: '2', message: 'Incorrect password' };
   const userId = user[0].id;
   const timestampHex = Date.now().toString(16);
   const sessionGuid = crypto.randomBytes(16).toString('hex') + timestampHex;
-
-  // Vložení nové session do databáze
-  await this.db.query(
-   `
-        INSERT INTO sessions
-        (user_id, session_guid, last_access)
-        VALUES (?, ?, ?)`,
-   [userId, sessionGuid, new Date()]
-  );
-
+  await this.db.query('INSERT INTO sessions (user_id, session_guid, last_access) VALUES (?, ?, ?)', [userId, sessionGuid, new Date()]);
   return { data: { username: params.username, sessionguid: sessionGuid } };
  }
 
  async setSession(sessionGuid) {
-  // Kontrola existence sessionGuid v databázi
   const session = await this.db.query('SELECT COUNT(*) AS cnt FROM sessions WHERE session_guid = ?', [sessionGuid]);
-
-  if (session[0].cnt === 0) {
-   return false; // Session neexistuje
-  }
+  if (session[0].cnt === 0) return false;
   await this.db.query('UPDATE sessions SET last_access = NOW() WHERE session_guid = ?', [sessionGuid]);
-
-  return true; // Session existuje
+  return true;
  }
 
  async setRegistrationConfirmation() {}

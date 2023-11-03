@@ -1,8 +1,5 @@
 const f = new Framework();
-
-window.onload = async () => {
- await f.init();
-};
+window.onload = async () => { await f.init(); };
 
 const days = Array.from({ length: 31 }, (_, i) => i + 1);
 const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -14,28 +11,28 @@ async function getPageNews() {
  const temp_cat = await f.getFileContent(f.pathHTML + 'news-category.html');
  const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
  const cats = await f.getAPI('get_categories');
- for (let i = 0; i < cats.data.length; i++) {
-  if (cats.data[i].items_count - cats.data[i].items_count_hidden !== 0) {
+ for (const cat of cats.data) {
+  if (cat.items_count - cat.items_count_hidden !== 0) {
    const items = await f.getAPI('get_items', {
-    id_category: cats.data[i].id,
-    h: 2,
-    d: true,
+    id_category: cat.id,
+    hidden: 2,
+    direction: true,
     count: 12
    });
    let prows = '';
-   for (let j = 0; j < items.data.length; j++) {
+   for (const item of items.data) {
     let image = image_default;
-    if (items.data[j].image_sm) image = f.pathImages + 'items/' + items.data[j].image_sm;
+    if (item.image_sm) image = f.pathImages + 'items/' + item.image_sm;
     let prow = f.translate(temp_item, {
-     '{NAME}': items.data[j].name,
-     '{LINK}': items.data[j].link,
-     '{IMAGE}': items.data[j].adult === 0 ? image : f.pathImages + 'item-censored.webp'
+     '{NAME}': item.name,
+     '{LINK}': item.link,
+     '{IMAGE}': item.adult === 0 ? image : f.pathImages + 'item-censored.webp'
     });
     prows += prow;
    }
    const crow = f.translate(temp_cat, {
-    '{LINK}': cats.data[i].link,
-    '{CATEGORY}': cats.data[i].name,
+    '{LINK}': cat.link,
+    '{CATEGORY}': cat.name,
     '{ITEMS}': prows
    });
    f.qs('#content .news').innerHTML += crow;
@@ -46,29 +43,27 @@ async function getPageNews() {
 
 async function getPageCategories(pathArr = null) {
  if (pathArr.length == 2) {
-  const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
+  const image_default = f.pathImages + 'item-default.webp';
   const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
   if (cat.data.length == 1) {
    const temp_cat = await f.getFileContent(f.pathHTML + 'category-detail.html');
-   const html = f.translate(temp_cat, {
-    '{CATEGORY}': cat.data[0].name
-   });
+   const html = f.translate(temp_cat, { '{CATEGORY}': cat.data[0].name });
    f.qs('#content').innerHTML = html;
    const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
    const items = await f.getAPI('get_items', {
     id_category: cat.data[0].id,
-    h: 2,
-    d: true,
+    hidden: 2,
+    direction: true,
     count: 12
    });
    let prows = '';
-   for (let i = 0; i < items.data.length; i++) {
-    let imgee = image_default;
-    if (items.data[i].image_sm) imgee = f.pathImages + 'items/' + items.data[i].image_sm;
+   for (const item of items.data) {
+    let image = image_default;
+    if (item.image_sm) image = f.pathImages + 'items/' + item.image_sm;
     let prow = f.translate(temp_item, {
-     '{NAME}': items.data[i].name,
-     '{LINK}': items.data[i].link,
-     '{IMAGE}': items.data[i].adult === 0 ? imgee : f.pathImages + 'item-censored.webp'
+     '{NAME}': item.name,
+     '{LINK}': item.link,
+     '{IMAGE}': item.adult === 0 ? image : f.pathImages + 'item-censored.webp'
     });
     prows += prow;
    }
@@ -108,7 +103,7 @@ async function getPageCategories(pathArr = null) {
 async function getPageItem(pathArr = null) {
  const item = await f.getAPI('get_item_by_link', { link: pathArr[1] });
  if (item.data && item.data.length == 1) {
-  const image_default = f.pathImages + 'item-default.webp'; // TODO: no mention - why?
+  const image_default = f.pathImages + 'item-default.webp';
   const temp = await f.getFileContent(f.pathHTML + 'item-detail.html');
   const cat = await f.getAPI('get_category_by_id', {
    id: item.data[0].id_categories
@@ -164,7 +159,7 @@ async function getPageForumThreads(count, page = 1) {
  });
  if (threads.data.length == 0) return;
  let rows = '';
- for (let item of threads.data) {
+ for (const item of threads.data) {
   rows += f.translate(temp_thread, {
    '{ID}': item.id,
    '{TOPIC}': f.escapeHTML(item.topic),
@@ -181,7 +176,7 @@ async function getPageForumThreads(count, page = 1) {
 
 async function getPageUploads() {
  const temp_file = await f.getFileContent(f.pathHTML + 'uploads-file.html');
- const files = await f.getAPI('get_uploads', { o: 'created', d: true, count: 10 });
+ const files = await f.getAPI('get_uploads', { order: 'created', direction: true, count: 10 });
  // TODO: check if files.data exists, otherwise remove table
  let rows = '';
  for (const item of files.data) {
@@ -235,9 +230,29 @@ function search() {
  if ((event.keyCode == 13 || event.which == 13) && f.qs('#header .search').value.trim() != '') f.getPage('search');
 }
 
-function getPageSearch() {
+async function getPageSearch() {
  const phrase = f.qs('#header .search').value.trim();
  f.qs('#content .breadcrumb .active').innerHTML = 'Search: ' + phrase;
+ const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
+ const image_default = f.pathImages + 'item-default.webp';
+ const items = await f.getAPI('get_items', {
+  search: phrase,
+  hidden: 2,
+  direction: true,
+  count: 12
+ });
+ let prows = '';
+ for (const item of items.data) {
+  let image = image_default;
+  if (item.image_sm) image = f.pathImages + 'items/' + item.image_sm;
+  let prow = f.translate(temp_item, {
+   '{NAME}': item.name,
+   '{LINK}': item.link,
+   '{IMAGE}': item.adult === 0 ? image : f.pathImages + 'item-censored.webp'
+  });
+  prows += prow;
+ }
+ f.qs('#content .items').innerHTML = prows;
 }
 
 /*
