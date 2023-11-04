@@ -370,7 +370,6 @@ class API {
   if (p.id_category) {
    if (!(await this.data.getCategoryExists(p.id_category))) return { error: 1, message: 'Category does not exist' };
   }
-  console.log(p);
   const res = await this.data.getItems(p.id_category, p.order, p.direction, p.hidden, p.adult, p.files, p.image, p.search, p.count, p.offset);
   return { error: 0, data: res };
  }

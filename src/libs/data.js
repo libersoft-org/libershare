@@ -239,7 +239,6 @@ class Data {
    FROM items i, categories c
    WHERE i.id_categories = c.id
   `;
-
   const params = [];
   if (hidden == true || hidden == false) query += ' AND i.hidden = ' + (hidden ? 1 : 0);
   if (adult == true || adult == false) query += ' AND i.adult = ' + (adult ? 1 : 0);
@@ -262,8 +261,6 @@ class Data {
    params.push(count);
    if (offset) params.push(offset);
   }
-  console.log(query);
-  console.log(params);
   return await this.db.query(query, params);
  }
 
