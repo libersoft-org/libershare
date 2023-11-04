@@ -24,9 +24,9 @@
    <tr>
     <th>RAM usage:</th>
     <td>
-     <table class="table">
+     <table>
       <tr>
-       <th class="table-label"></th>
+       <th></th>
        <td>
         <div class="progress progress-thick bg-progress">
          <div class="progress-bar progress-bar-striped bg-danger" role="progressbar" style="width: {RAM-USED-PERCENT}%">{RAM-USED-PERCENT}%</div>
@@ -34,15 +34,15 @@
        </td>
       </tr>
       <tr>
-       <th class="table-label">Used:</th>
+       <th>Used:</th>
        <td>{RAM-USED}</td>
       </tr>
       <tr>
-       <th class="table-label">Free:</th>
+       <th>Free:</th>
        <td>{RAM-FREE}</td>
       </tr>
       <tr>
-       <th class="table-label">All:</th>
+       <th>All:</th>
        <td>{RAM-TOTAL}</td>
       </tr>
      </table>
@@ -53,13 +53,11 @@
     <td>{STORAGE}</td>
    </tr>
    <tr>
-    <th>Využití sítě:</th>
+    <th>Network usage:</th>
     <td>
-     <span id="net"
-      ><img class="loading" src="./template/img/loading.gif" /> Loading ...
-      <script>
-       getNetworkUsage();
-      </script>
+     <span id="net">
+      <div class="loader"></div>
+      <script>getNetworkUsage();</script>
      </span>
     </td>
    </tr>

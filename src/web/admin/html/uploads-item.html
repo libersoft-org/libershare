@@ -1,12 +1,12 @@
 <tr>
- <td><a href="./?page=upload-edit&amp;id={id}">{name}</a></td>
- <td>{size}</td>
- <td>{ip}</td>
- <td class="text-center">{downloads} / {downloads-by-session} / {downloads-by-ip}</td>
- <td>{created}</td>
+ <td><a onclick="getPage('upload-edit/{ID}')">{NAME}</a></td>
+ <td>{SIZE}</td>
+ <td>{IP}</td>
+ <td class="text-center">{DOWNLOADS} / {DOWNLOADS-BY-SESSION} / {DOWNLOADS-BY-IP}</td>
+ <td>{CREATED}</td>
  <td>
-  <a class="mr-1" href="./?page=upload-move&amp;id={id}"><img class="table-icon" src="template/img/move.svg" alt="Přesunout" /></a>
-  <a class="mr-1" href="./?page=upload-edit&amp;id={id}"><img class="table-icon" src="template/img/edit.svg" alt="Upravit" /></a>
-  <a class="mr-1 pointer" onclick="confirmDelete('upload-delete.php?id={id}&amp;o={order}&amp;d={sort}', '{escaped-name}')"><img class="table-icon" src="template/img/delete.svg" alt="Smazat" /></a>
+  <a onclick="getPage('upload-move/{ID}')"><img src="/img/move.svg" alt="Move" /></a>
+  <a onclick="getPage('upload-edit/{ID}')"><img src="/img/edit.svg" alt="Edit" /></a>
+  <a onclick="confirmDelete('upload-delete/{ID}&amp;o={ORDER}&amp;d={SORT}', '{ESCAPED-NAME}')"><img src="/img/delete.svg" alt="Delete" /></a>
  </td>
 </tr>

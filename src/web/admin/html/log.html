@@ -3,43 +3,43 @@
 </ol>
 <span class="dropdown">
  <a class="button primary" id="dropdownMenuButton" data-toggle="dropdown">Admin: {ADMIN-SELECTED}</a>
- <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
-  <a class="dropdown-item" href="{ADMIN-LINK-ALL}">All</a>
+ <div class="dropdown-menu">
+  <a class="dropdown-item" onclick="sort('{ADMIN-LINK-ALL}')">All</a>
   {ADMINS}
  </div>
 </span>
-<table class="table">
+<table>
  <thead>
   <tr>
    <th>
     <span>Admin name</span>
-    <a href="{ORDER-NAME-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-    <a href="{ORDER-NAME-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+    <a onclick="sort('{ORDER-NAME-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-NAME-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
    </th>
    <th>
     <span>Message</span>
-    <a href="{ORDER-MESSAGE-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-    <a href="{ORDER-MESSAGE-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+    <a onclick="sort('{ORDER-MESSAGE-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-MESSAGE-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
    </th>
    <th>
     <span>IP address</span>
-    <a href="{ORDER-IP-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-    <a href="{ORDER-IP-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+    <a onclick="sort('{ORDER-IP-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-IP-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
    </th>
    <th>
     <span>Session ID</span>
-    <a href="{ORDER-SESSION-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-    <a href="{ORDER-SESSION-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+    <a onclick="sort('{ORDER-SESSION-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-SESSION-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
    </th>
    <th>
     <span>User agent</span>
-    <a href="{ORDER-USERAGENT-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-    <a href="{ORDER-USERAGENT-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+    <a onclick="sort('{ORDER-USERAGENT-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-USERAGENT-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
    </th>
    <th>
     <span>Date and time</span>
-    <a href="{ORDER-CREATED-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-    <a href="{ORDER-CREATED-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+    <a onclick="sort('{ORDER-CREATED-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-CREATED-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
    </th>
   </tr>
  </thead>

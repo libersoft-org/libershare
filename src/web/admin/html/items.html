@@ -5,102 +5,100 @@
 <span class="dropdown">
  <a class="button primary">Category: {CAT-SELECTED}</a>
  <div class="dropdown-menu">
-  <a class="dropdown-item" href="{CAT-LINK-ALL}">Vše</a>
-  {categories}
+  <a class="dropdown-item" onclick="category('{CAT-LINK-ALL}')">Vše</a>
+  {CATEGORIES}
  </div>
 </span>
 <span class="dropdown">
  <a class="button primary">Image: {IMAGE-SELECTED}</a>
  <div class="dropdown-menu">
-  <a class="dropdown-item" href="{IMAGE-LINK-ALL}">Vše</a>
-  <a class="dropdown-item" href="{IMAGE-LINK-YES}">Ano</a>
-  <a class="dropdown-item" href="{IMAGE-LINK-NO}">Ne</a>
+  <a class="dropdown-item" onclick="select('{IMAGE-LINK-ALL}')">Vše</a>
+  <a class="dropdown-item" onclick="select('{IMAGE-LINK-YES}')">Ano</a>
+  <a class="dropdown-item" onclick="select('{IMAGE-LINK-NO}')">Ne</a>
  </div>
 </span>
 <span class="dropdown">
  <a class="button primary">Adult: {ADULT-SELECTED}</a>
  <div class="dropdown-menu">
-  <a class="dropdown-item" href="{ADULT-LINK-ALL}">Vše</a>
-  <a class="dropdown-item" href="{ADULT-LINK-YES}">Ano</a>
-  <a class="dropdown-item" href="{ADULT-LINK-NO}">Ne</a>
+  <a class="dropdown-item" onclick="select('{ADULT-LINK-ALL}')">Vše</a>
+  <a class="dropdown-item" onclick="select('{ADULT-LINK-YES}')">Ano</a>
+  <a class="dropdown-item" onclick="select('{ADULT-LINK-NO}')">Ne</a>
  </div>
 </span>
 <span class="dropdown">
  <a class="button primary" id="dropdownMenuButton">Hidden: {HIDDEN-SELECTED}</a>
  <div class="dropdown-menu">
-  <a class="dropdown-item" href="{HIDDEN-LINK-ALL}">Vše</a>
-  <a class="dropdown-item" href="{HIDDEN-LINK-YES}">Ano</a>
-  <a class="dropdown-item" href="{HIDDEN-LINK-NO}">Ne</a>
+  <a class="dropdown-item" onclick="select('{HIDDEN-LINK-ALL}')">Vše</a>
+  <a class="dropdown-item" onclick="select('{HIDDEN-LINK-YES}')">Ano</a>
+  <a class="dropdown-item" onclick="select('{HIDDEN-LINK-NO}')">Ne</a>
  </div>
 </span>
 <span class="dropdown">
  <a class="button primary" id="dropdownMenuButton">Video: {VIDEO-SELECTED}</a>
  <div class="dropdown-menu">
-  <a class="dropdown-item" href="{VIDEO-LINK-ALL}">Vše</a>
-  <a class="dropdown-item" href="{VIDEO-LINK-YES}">Ano</a>
-  <a class="dropdown-item" href="{VIDEO-LINK-NO}">Ne</a>
+  <a class="dropdown-item" onclick="select('{VIDEO-LINK-ALL}')">Vše</a>
+  <a class="dropdown-item" onclick="select('{VIDEO-LINK-YES}')">Ano</a>
+  <a class="dropdown-item" onclick="select('{VIDEO-LINK-NO}')">Ne</a>
  </div>
 </span>
 <span>
  {SEARCH-VALUES}
- <input type="text" name="search" value="{phrase}" placeholder="Search" autofocus />
+ <input type="text" name="search" value="{PHRASE}" placeholder="Search" autofocus />
  <a class="button primary" onclick="search()">Search</a>
 </span>
 {error}
-<div class="table-responsive">
- <table class="table table-sm table-hover table-light">
-  <thead class="thead-admin">
-   <tr>
-    <th>
-     <span>Name</span>
-     <a href="{ORDER-NAME-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-NAME-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th>
-     <span>Category</span>
-     <a href="{ORDER-CATEGORY-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-CATEGORY-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th class="text-center">
-     <span>Files</span>
-     <a href="{ORDER-FILES-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-FILES-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th class="text-center">
-     <span>Image</span>
-     <a href="{ORDER-IMAGE-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-IMAGE-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th class="text-center">
-     <span>Video</span>
-     <a href="{ORDER-VIDEO-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-VIDEO-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th class="text-center">
-     <span>Adult only</span>
-     <a href="{ORDER-ADULT-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-ADULT-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th class="text-center">
-     <span>Hidden</span>
-     <a href="{ORDER-HIDDEN-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-HIDDEN-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th class="text-center">
-     <span>Visits</span>
-     <a href="{ORDER-VISITS-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-VISITS-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-     <span class="font-small">(all / by session / by IP)</span>
-    </th>
-    <th>
-     <span>Created</span>
-     <a href="{ORDER-CREATED-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-CREATED-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th>Action</th>
-   </tr>
-  </thead>
-  <tbody>{ITEMS}</tbody>
-  <script>getPage('items', {{params}});</script>
- </table>
-</div>
+<table>
+ <thead>
+  <tr>
+   <th>
+    <span>Name</span>
+    <a onclick="sort('{ORDER-NAME-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-NAME-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th>
+    <span>Category</span>
+    <a onclick="sort('{ORDER-CATEGORY-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-CATEGORY-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th class="text-center">
+    <span>Files</span>
+    <a onclick="sort('{ORDER-FILES-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-FILES-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th class="text-center">
+    <span>Image</span>
+    <a onclick="sort('{ORDER-IMAGE-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-IMAGE-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th class="text-center">
+    <span>Video</span>
+    <a onclick="sort('{ORDER-VIDEO-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-VIDEO-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th class="text-center">
+    <span>Adult only</span>
+    <a onclick="sort('{ORDER-ADULT-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-ADULT-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th class="text-center">
+    <span>Hidden</span>
+    <a onclick="sort('{ORDER-HIDDEN-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-HIDDEN-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th class="text-center">
+    <span>Visits</span>
+    <a onclick="sort('{ORDER-VISITS-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-VISITS-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+    <span class="font-small">(all / by session / by IP)</span>
+   </th>
+   <th>
+    <span>Created</span>
+    <a onclick="sort('{ORDER-CREATED-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-CREATED-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th>Action</th>
+  </tr>
+ </thead>
+ <tbody>{ITEMS}</tbody>
+ <script>getPage('items', {{params}});</script>
+</table>

@@ -2,18 +2,18 @@
  <td><a onclick="f.getPage('item/edit/{ID}')">{NAME}</a></td>
  <td>{CATEGORY-NAME}</td>
  <td class="text-center">{FILES}</td>
- <td class="text-center"><img class="table-icon" src="/img/{IMAGE}.svg" alt="{IMAGE-ALT}" /></td>
- <td class="text-center"><img class="table-icon" src="/img/{VIDEO}.svg" alt="{VIDEO-ALT}" /></td>
- <td class="text-center"><img class="table-icon" src="/img/{ADULT}.svg" alt="{ADULT-ALT}" /></td>
- <td class="text-center"><img class="table-icon" src="/img/{HIDDEN}.svg" alt="{HIDDEN-ALT}" /></td>
+ <td class="text-center"><img src="/img/{IMAGE}.svg" alt="{IMAGE-ALT}" /></td>
+ <td class="text-center"><img src="/img/{VIDEO}.svg" alt="{VIDEO-ALT}" /></td>
+ <td class="text-center"><img src="/img/{ADULT}.svg" alt="{ADULT-ALT}" /></td>
+ <td class="text-center"><img src="/img/{HIDDEN}.svg" alt="{HIDDEN-ALT}" /></td>
  <td class="text-center">{VISITS} / {VISITS-BY-SESSION} / {VISITS-BY-IP}</td>
  <td>{CREATED}</td>
  <td>
-  <a class="mr-1" onclick="f.getPage('item/edit/{ID}')">
-   <img class="table-icon" src="template/img/edit.svg" alt="Edit" />
+  <a onclick="f.getPage('item/edit/{ID}')">
+   <img src="/img/edit.svg" alt="Edit" />
   </a>
-  <a class="mr-1 pointer" onclick="confirmDelete('item-delete.php?id={ID}', '{NAME}')">
-   <img class="table-icon" src="/img/delete.svg" alt="Delete" />
+  <a onclick="confirmDelete('item-delete.php?id={ID}', '{NAME}')">
+   <img src="/img/delete.svg" alt="Delete" />
   </a>
  </td>
 </tr>

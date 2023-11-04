@@ -18,10 +18,10 @@
    <option value="">-</option>
    {VIDEOS}
   </select>
-  <input name="adult" type="checkbox" class="custom-control-input" id="adult" {ADULT-CHECKED} />
-  <label class="custom-control-label" for="adult">Adult only</label>
-  <input name="hidden" type="checkbox" class="custom-control-input" id="hidden" {HIDDEN-CHECKED} />
-  <label class="custom-control-label" for="hidden">Hidden</label>
+  <input name="adult" type="checkbox" id="adult" {ADULT-CHECKED} />
+  <label for="adult">Adult only</label>
+  <input name="hidden" type="checkbox" id="hidden" {HIDDEN-CHECKED} />
+  <label for="hidden">Hidden</label>
   {IMAGE-EDIT}
   <input type="hidden" name="id" value="{ID}" />
   <a class="button primary" onclick="itemEdit()">Edit</a>

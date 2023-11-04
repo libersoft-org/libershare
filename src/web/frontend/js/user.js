@@ -198,7 +198,7 @@ async function getPageForum() {
 async function getPageForumThreads(count, page = 1) {
  const temp_thread = await f.getFileContent(f.pathHTML + 'forum-row.html');
  const table = f.qs('#content .forum tbody');
- // TODO: if div with class "more" is not visible, return, otherwise load more threads
+ // TODO: if loader is not visible, return, otherwise load more threads
  //if (!table.length) return;
  //if (!table.isVisible()) return;
  const threads = await f.getAPI('get_forum_threads', {

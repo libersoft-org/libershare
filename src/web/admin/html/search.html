@@ -8,37 +8,37 @@
   <a class="button primary" onclick="search()">Search</a>
  </span>
 </div>
- <table class="table table-sm table-hover table-light">
-  <thead class="thead-admin">
-   <tr>
-    <th>
-     <span>Phrase</span>
-     <a href="{ORDER-PHRASE-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-PHRASE-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th class="text-center">
-     <span>Searches</span>
-     <a href="{ORDER-SEARCHES-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-SEARCHES-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th class="text-center">
-     <span>Searches by session</span>
-     <a href="{ORDER-SEARCHES-BY-SESSION-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-SEARCHES-BY-SESSION-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th class="text-center">
-     <span>Searches by IP</span>
-     <a href="{ORDER-SEARCHES-BY-IP-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-SEARCHES-BY-IP-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th class="text-center">
-     <span>Search results</span>
-     <a href="{ORDER-RESULTS-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-RESULTS-DESC}"><img src="img/down.svg" alt="Descending" /></a>
-    </th>
-   </tr>
-  </thead>
-  <tbody>{TABLE-SEARCH}</tbody>
- </table>
- <script>getPage('search', {{params}});</script>
+<table>
+ <thead>
+  <tr>
+   <th>
+    <span>Phrase</span>
+    <a onclick="sort('{ORDER-PHRASE-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-PHRASE-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th class="text-center">
+    <span>Searches</span>
+    <a onclick="sort('{ORDER-SEARCHES-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-SEARCHES-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th class="text-center">
+    <span>Searches by session</span>
+    <a onclick="sort('{ORDER-SEARCHES-BY-SESSION-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-SEARCHES-BY-SESSION-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th class="text-center">
+    <span>Searches by IP</span>
+    <a onclick="sort('{ORDER-SEARCHES-BY-IP-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-SEARCHES-BY-IP-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th class="text-center">
+    <span>Search results</span>
+    <a onclick="sort('{ORDER-RESULTS-ASC}')"><img src="img/up.svg" alt="Ascending" /></a>
+    <a onclick="sort('{ORDER-RESULTS-DESC}')"><img src="img/down.svg" alt="Descending" /></a>
+   </th>
+  </tr>
+ </thead>
+ <tbody>{TABLE-SEARCH}</tbody>
+</table>
+<script>getPage('search', {{params}});</script>
 
