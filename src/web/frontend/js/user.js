@@ -240,7 +240,7 @@ async function getModalRegistration() {
 function logout() {
  localStorage.removeItem('libershare_session_guid');
  localStorage.removeItem('libershare_username');
- getPage('');
+ f.getPage('');
 }
 
 async function playVideo(link) {
@@ -249,11 +249,11 @@ async function playVideo(link) {
 }
 
 function search() {
- if ((event.keyCode == 13 || event.which == 13) && f.qs('#header .search').value.trim() != '') getPage('search');
+ if ((event.keyCode == 13 || event.which == 13) && f.qs('#header .search').value.trim() != '') f.getPage('search');
 }
 
 async function getPageSearch() {
- const phrase = f.qs('#header .search').value.trim();
+ const phrase = f.escapeHTML(f.qs('#header .search').value.trim());
  f.qs('#content .breadcrumb .active').innerHTML = 'Search: ' + phrase;
  const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
  const image_default = f.pathImages + 'item-default.webp';
@@ -305,7 +305,7 @@ function submitForm(type) {
     localStorage.setItem('libershare_session_guid', data.data.sessionguid);
     localStorage.setItem('libershare_username', data.data.username);
     f.closeModalN();
-    getPage('');
+    f.getPage('');
    }
   })
   .catch((error) => {

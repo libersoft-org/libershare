@@ -4,29 +4,28 @@
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{PRODUCT} - admin area</title>
-  <link rel="stylesheet" href="../css/admin.css" type="text/css" />
+  <link rel="stylesheet" href="/css/admin.css" type="text/css" />
   <link rel="shortcut icon" href="favicon.svg" />
-  <script src="js/framework.js"></script>
-  <script src="js/admin.js"></script>
+  <script src="/js/framework.js"></script>
+  <script src="/js/admin.js"></script>
  </head>
  <body>
   <div id="header" class="shadow">
    <a onclick="menu()"><img class="menu-toggler" src="img/menu.svg" alt="Menu" /></a>
-   <a class="logo" onclick="getPage('')"><img src="img/logo.webp" alt="{PRODUCT}" /></a>
+   <a class="logo" onclick="f.getPage('')"><img src="img/logo.webp" alt="{PRODUCT}" /></a>
    <div id="menu-desktop"></div>
   </div>
   <div id="menu-mobile" class="shadow"></div>
   <div id="menu-overlay" onclick="menuClose()"></div>
-  <a class="nav-link{active-status}" href="./"><img src="img/status.svg" class="navbar-icon" alt="Stav" />Stav</a>
-  <a class="dropdown-item" href="./categories"><img class="navbar-icon" src="img/categories.svg" alt="Kategorie" />&nbsp;&nbsp;Kategorie</a>
-  <a class="nav-link dropdown-toggle{active-content}" id="navbarNav" data-toggle="dropdown"><img src="img/content.svg" class="navbar-icon" alt="Stav" /> Obsah</a>
-  <a class="dropdown-item" href="./products"><img class="navbar-icon" src="img/products.svg" alt="Produkty" />&nbsp;&nbsp;Produkty</a>
-  <a class="dropdown-item" href="./files"><img class="navbar-icon" src="img/files.svg" alt="Soubory" />&nbsp;&nbsp;Soubory</a>
-  <a class="dropdown-item" href="./uploads"><img class="navbar-icon" src="img/upload.svg" alt="Uploady" />&nbsp;&nbsp;Uploady</a>
-  <a class="nav-link{active-diffs}" href="./diffs"><img src="img/diffs.svg" class="navbar-icon" alt="Rozdíly DB / FS" /> Rozdíly DB / FS</a>
-  <a class="nav-link{active-search}" href="./search"><img src="img/search.svg" class="navbar-icon" alt="Statistika hledání" />Statistika hledání</a>
-  <a class="nav-link{active-log}" href="./log"><img src="img/log.svg" class="navbar-icon" alt="Log" /> Log</a>
-  <a class="nav-link" href="./logout.php"><img src="img/logout.svg" class="navbar-icon" alt="Odhlásit" /> Odhlásit</a>
+  <a class="menu-item" onclick="f.getPage('')"><img src="img/status.svg" alt="Status" />Status</a>
+  <a class="menu-item" onclick="f.getPage('categories')"><img src="img/categories.svg" alt="Categories" />Categories</a>
+  <a class="menu-item" onclick="f.getPage('products')"><img src="img/products.svg" alt="Items" />Items</a>
+  <a class="menu-item" onclick="f.getPage('files')"><img src="img/files.svg" alt="Files" />Files</a>
+  <a class="menu-item" onclick="f.getPage('uploads')"><img src="img/upload.svg" alt="Uploads" />Uploads</a>
+  <a class="menu-item" onclick="f.getPage('diffs')"><img src="img/diffs.svg" alt="DB / FS diffs" />DB / FS diffs</a>
+  <a class="menu-item" onclick="f.getPage('search')"><img src="img/search.svg" alt="Search stats" />Search stats</a>
+  <a class="menu-item" onclick="f.getPage('log')"><img src="img/log.svg" alt="Log" />Log</a>
+  <a class="menu-item" onclick="f.getPage('logout.php')"><img src="img/logout.svg" alt="Logout" />Logout</a>
   <div class="content">{content}</div>
  </body>
 </html>

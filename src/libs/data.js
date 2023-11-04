@@ -221,7 +221,7 @@ class Data {
 
  }
 
- async getItems(id_category, order, direction, hidden, adult, image, search, count, offset) {
+ async getItems(id_category, order, direction, hidden, adult, files, image, search, count, offset) {
   let query = `
    SELECT
     i.id,
@@ -232,51 +232,38 @@ class Data {
     i.id_categories,
     c.name AS category_name,
     c.link AS category_link,
-    (SELECT COUNT(*) FROM files WHERE id_items = i.id) AS files,
     i.adult,
     i.hidden,
+    (SELECT COUNT(*) FROM files WHERE id_items = i.id) AS files,
     i.created
    FROM items i, categories c
    WHERE i.id_categories = c.id
   `;
 
-  let params = [];
-
-  if (hidden === '1' || hidden === '2') {
-   query += ' AND i.hidden = ?';
-   params.push(hidden === '1' ? '1' : '0');
-  }
-
-  if (adult === '1' || adult === '2') {
-   query += ' AND i.adult = ?';
-   params.push(adult === '1' ? '1' : '0');
-  }
-
-  if (image === '1' || image === '2') {
-   query += ' AND i.image IS ' + (image === '1' ? 'NOT NULL' : 'NULL');
-  }
-
+  const params = [];
+  if (hidden == true || hidden == false) query += ' AND i.hidden = ' + (hidden ? 1 : 0);
+  if (adult == true || adult == false) query += ' AND i.adult = ' + (adult ? 1 : 0);
+  if (image == true || image == false) query += ' AND i.image IS ' + (image ? 'NOT NULL' : 'NULL');
   if (id_category) {
    query += ' AND i.id_categories = ?';
    params.push(id_category);
   }
-
   if (search) {
    query += ' AND MATCH(i.name) AGAINST (?)';
    params.push(search);
   }
-
+  if (files == true || files == false) query += ' HAVING files ' + (files ? '> 0' : '= 0');
   if (!search) {
    query += ' ORDER BY ? ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC');
    params.push(order || 'created');
   }
-
   if (count) {
    query += ' LIMIT ?' + (offset ? ' OFFSET ?' : '');
-   params.push(Number(count));
-   if (offset) params.push(Number(offset));
+   params.push(count);
+   if (offset) params.push(offset);
   }
-
+  console.log(query);
+  console.log(params);
   return await this.db.query(query, params);
  }
 

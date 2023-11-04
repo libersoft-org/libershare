@@ -1,5 +1,5 @@
 <ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a onclick="getPage('categories')">Categories</a></li>
+ <li class="breadcrumb-item"><a onclick="f.getPage('categories')">Categories</a></li>
  <li class="breadcrumb-item active">New</li>
 </ol>
 <div class="card card-sm mb-3 center">
@@ -7,9 +7,9 @@
  <div class="card-body">
   {ERROR}
   <div>Category name:</div>
-  <input class="form-control" type="text" name="name" id="name" maxlength="64" placeholder="Category name" oninput="getLink();" required autofocus />
+  <input type="text" name="name" id="name" maxlength="64" placeholder="Category name" oninput="getLink();" required autofocus />
   <div>Category link:</div>
-  <input class="form-control" type="text" name="link" id="link" maxlength="64" placeholder="Category link" required />
+  <input type="text" name="link" id="link" maxlength="64" placeholder="Category link" required />
   <div>Icon: (SVG / GIF / PNG / JPG)</div>
   <input class="form-control-file" type="file" name="icon" />
   <a class="button primary" onclick="categoryNew()">Create</a>
