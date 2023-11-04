@@ -1,15 +1,16 @@
 const f = new Framework();
+const count = 12;
+let offset = 0;
+let loading = false;
+
 window.onload = async () => {
  document.addEventListener('page-loaded', () => getPageContent());
  await f.init();
 };
 
-const days = Array.from({ length: 31 }, (_, i) => i + 1);
-const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const years = Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i);
-const videoExtensions = ['mp4', 'mp3', 'avi', 'webm'];
-
 async function getPageContent() {
+ offset = 0;
+ loading = false;
  const pageHandlers = {
   news: getPageNews,
   categories: getPageCategories,
@@ -20,7 +21,6 @@ async function getPageContent() {
  };
  const pageHandler = pageHandlers[f.pathArr[0]];
  if (pageHandler) await pageHandler(f.pathArr);
-
  const sess = localStorage.getItem('libershare_session_guid');
  if (sess && sess.length > 16) {
   this.qs('.menu .username').textContent = localStorage.getItem('libershare_username');
@@ -37,9 +37,11 @@ async function getPageNews() {
   if (cat.items_count - cat.items_count_hidden !== 0) {
    const items = await f.getAPI('get_items', {
     id_category: cat.id,
-    hidden: 2,
+    hidden: false,
+    files: true,
     direction: true,
-    count: 12
+    count: count,
+    offset: 0
    });
    let prows = '';
    for (const item of items.data) {
@@ -65,33 +67,15 @@ async function getPageNews() {
 
 async function getPageCategories(pathArr = null) {
  if (pathArr.length == 2) {
-  const image_default = f.pathImages + 'item-default.webp';
   const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
+  const content = f.qs('#content');
   if (cat.data.length == 1) {
    const temp_cat = await f.getFileContent(f.pathHTML + 'category-detail.html');
    const html = f.translate(temp_cat, { '{CATEGORY}': cat.data[0].name });
-   f.qs('#content').innerHTML = html;
-   const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
-   const items = await f.getAPI('get_items', {
-    id_category: cat.data[0].id,
-    hidden: 2,
-    direction: true,
-    count: 12
-   });
-   let prows = '';
-   for (const item of items.data) {
-    let image = image_default;
-    if (item.image_sm) image = f.pathImages + 'items/' + item.image_sm;
-    let prow = f.translate(temp_item, {
-     '{NAME}': item.name,
-     '{LINK}': item.link,
-     '{IMAGE}': item.adult === 0 ? image : f.pathImages + 'item-censored.webp'
-    });
-    prows += prow;
-   }
-   f.qs('#content .items').innerHTML = prows;
-   //qs('#content .loader').remove();
-  } else f.qs('#content').innerHTML = 'Category not found'; // TODO: replace for HTML page
+   content.innerHTML = html;
+   await getPageCategoriesMore(cat.data[0].id);
+   if (!content.onscroll) content.onscroll = () => getPageCategoriesMore(cat.data[0].id); 
+  } else content.innerHTML = 'Category not found'; // TODO: replace for HTML page 
  } else {
   const temp = await f.getFileContent(f.pathHTML + 'categories-item.html');
   const cats = await f.getAPI('get_categories');
@@ -111,14 +95,54 @@ async function getPageCategories(pathArr = null) {
     itemsCount += itemCount;
    }
   }
-  f.qs('#content .categories .items').innerHTML =
-   f.translate(temp, {
-    '{LINK}': 'all',
-    '{NAME}': 'All',
-    '{IMAGE}': f.pathImages + 'item-all.webp',
-    '{COUNT}': itemsCount
+  f.qs('#content .categories .items').innerHTML = f.translate(temp, {
+   '{LINK}': 'all',
+   '{NAME}': 'All',
+   '{IMAGE}': f.pathImages + 'item-all.webp',
+   '{COUNT}': itemsCount
    }) + crows;
   f.qs('#content .loader').remove();
+ }
+}
+
+async function getPageCategoriesMore(id) {
+ console.log(offset, loading);
+ const loader = f.qs('.loader');
+ if (isElementVisible(loader)) {
+  if (!loading) {
+   loading = true;
+   const items = await f.getAPI('get_items', {
+    id_category: id,
+    hidden: false,
+    files: true,
+    direction: true,
+    count: count,
+    offset: offset
+   });
+   if (items && 'data' in items && items.data.length == 0) {
+    loader.remove();
+    loading = false;
+   } else {
+    const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
+    const image_default = f.pathImages + 'item-default.webp';
+    let prows = '';
+    for (const item of items.data) {
+     let image = image_default;
+     if (item.image_sm) image = f.pathImages + 'items/' + item.image_sm;
+     let prow = f.translate(temp_item, {
+      '{NAME}': item.name,
+      '{LINK}': item.link,
+      '{IMAGE}': item.adult === 0 ? image : f.pathImages + 'item-censored.webp'
+     });
+     prows += prow;
+    }
+    f.qs('#content .items').innerHTML += prows;
+    offset += count;
+    loading = false;
+    if (count >= items.data.length) getPageCategoriesMore(id);
+    else loader.remove();
+   }
+  }
  }
 }
 
@@ -135,9 +159,11 @@ async function getPageItem(pathArr = null) {
   const temp_files = await f.getFileContent(f.pathHTML + 'item-file.html');
   const temp_play = await f.getFileContent(f.pathHTML + 'item-play-button.html');
   let rows = '';
+  const videoExtensions = ['mp4', 'mp3', 'webm'];
   for (const fd of files.data) {
    const fileExtension = fd.file_name.split('.').pop().toLowerCase();
    let repl = temp_play;
+   
    if (!videoExtensions.includes(fileExtension)) repl = '';
    else repl = f.translate(repl, {
     '{HASH}': fd.name,
@@ -211,6 +237,33 @@ async function getPageUploads() {
  f.qs('#content .files').innerHTML = rows;
 }
 
+async function getPageSearch() {
+ const phrase = f.escapeHTML(f.qs('#header .search').value.trim());
+ f.qs('#content .breadcrumb .active').innerHTML = 'Search: ' + phrase;
+ const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
+ const image_default = f.pathImages + 'item-default.webp';
+ const items = await f.getAPI('get_items', {
+  search: phrase,
+  hidden: false,
+  files: true,
+  direction: true,
+  count: 12,
+  offset: 0
+ });
+ let prows = '';
+ for (const item of items.data) {
+  let image = image_default;
+  if (item.image_sm) image = f.pathImages + 'items/' + item.image_sm;
+  let prow = f.translate(temp_item, {
+   '{NAME}': item.name,
+   '{LINK}': item.link,
+   '{IMAGE}': item.adult === 0 ? image : f.pathImages + 'item-censored.webp'
+  });
+  prows += prow;
+ }
+ f.qs('#content .items').innerHTML = prows;
+}
+
 async function getModalLogin() {
  await f.getModal('Login', await f.getFileContent(f.pathHTML + 'modal-login.html'));
 
@@ -223,12 +276,14 @@ async function getModalLogin() {
 }
 
 async function getModalRegistration() {
+ const days = Array.from({ length: 31 }, (_, i) => i + 1);
+ const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+ const years = Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i);
  let body = await f.getFileContent(f.pathHTML + 'modal-registration.html');
  body = body.replace('{DAYS}', days.map((day) => '<option value="' + day + '">' + day + '</option>').join(''));
  body = body.replace('{MONTHS}', months.map((month, index) => '<option value="' + (index + 1) + '">' + month + '</option>').join(''));
  body = body.replace('{YEARS}', years.map((year) => '<option value="' + year + '">' + year + '</option>').join(''));
  await f.getModal('Registration', body);
-
  capt = await f.getAPI('get_captcha');
  const imgElement = f.qs('#captcha-container');
  imgElement.style.backgroundColor = 'red';
@@ -252,29 +307,15 @@ function search() {
  if ((event.keyCode == 13 || event.which == 13) && f.qs('#header .search').value.trim() != '') f.getPage('search');
 }
 
-async function getPageSearch() {
- const phrase = f.escapeHTML(f.qs('#header .search').value.trim());
- f.qs('#content .breadcrumb .active').innerHTML = 'Search: ' + phrase;
- const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
- const image_default = f.pathImages + 'item-default.webp';
- const items = await f.getAPI('get_items', {
-  search: phrase,
-  hidden: 2,
-  direction: true,
-  count: 12
- });
- let prows = '';
- for (const item of items.data) {
-  let image = image_default;
-  if (item.image_sm) image = f.pathImages + 'items/' + item.image_sm;
-  let prow = f.translate(temp_item, {
-   '{NAME}': item.name,
-   '{LINK}': item.link,
-   '{IMAGE}': item.adult === 0 ? image : f.pathImages + 'item-censored.webp'
-  });
-  prows += prow;
- }
- f.qs('#content .items').innerHTML = prows;
+function isElementVisible(el) {
+ if (!el) return false;
+ var rect = el.getBoundingClientRect();
+ return (
+  rect.top < (window.innerHeight || document.documentElement.clientHeight) &&
+  rect.left < (window.innerWidth || document.documentElement.clientWidth) &&
+  rect.bottom > 0 &&
+  rect.right > 0
+ );
 }
 
 /*

@@ -1,51 +1,44 @@
-<ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item active">Search stats</li>
+<ol class="breadcrumb">
+ <li class="item active">Search stats</li>
 </ol>
-<div class="mb-3">
- <form action="./" method="get">
-  <span>
-   {SEARCH-VALUES}
-   <input class="form-control d-inline w-auto" type="text" name="search" value="{PHRASE}" placeholder="Search" autofocus />
-   <a class="button primary" onclick="search()">Search</a>
-  </span>
- </form>
+<div>
+ <span>
+  {SEARCH-VALUES}
+  <input type="text" name="search" value="{PHRASE}" placeholder="Search" autofocus />
+  <a class="button primary" onclick="search()">Search</a>
+ </span>
 </div>
-<div class="table-responsive">
  <table class="table table-sm table-hover table-light">
   <thead class="thead-admin">
    <tr>
     <th>
      <span>Phrase</span>
-     <a href="{ORDER-PHRASE-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-PHRASE-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+     <a href="{ORDER-PHRASE-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-PHRASE-DESC}"><img src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
      <span>Searches</span>
-     <a href="{ORDER-SEARCHES-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-SEARCHES-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+     <a href="{ORDER-SEARCHES-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-SEARCHES-DESC}"><img src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
      <span>Searches by session</span>
-     <a href="{ORDER-SEARCHES-BY-SESSION-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-SEARCHES-BY-SESSION-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+     <a href="{ORDER-SEARCHES-BY-SESSION-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-SEARCHES-BY-SESSION-DESC}"><img src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
      <span>Searches by IP</span>
-     <a href="{ORDER-SEARCHES-BY-IP-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-SEARCHES-BY-IP-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+     <a href="{ORDER-SEARCHES-BY-IP-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-SEARCHES-BY-IP-DESC}"><img src="img/down.svg" alt="Descending" /></a>
     </th>
     <th class="text-center">
      <span>Search results</span>
-     <a href="{ORDER-RESULTS-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-RESULTS-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+     <a href="{ORDER-RESULTS-ASC}"><img src="img/up.svg" alt="Ascending" /></a>
+     <a href="{ORDER-RESULTS-DESC}"><img src="img/down.svg" alt="Descending" /></a>
     </th>
    </tr>
   </thead>
-  <tbody>
-   {TABLE-SEARCH}
-  </tbody>
-  <script>
-   getPage('search', {{params}});
-  </script>
+  <tbody>{TABLE-SEARCH}</tbody>
  </table>
-</div>
+ <script>getPage('search', {{params}});</script>
+

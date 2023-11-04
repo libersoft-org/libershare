@@ -1,47 +1,41 @@
-<ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a onclick="f.getPage('files')">Item files</a></li>
- <li class="breadcrumb-item active">Edit file</li>
+<ol class="breadcrumb">
+ <li class="item"><a onclick="f.getPage('files')">Item files</a></li>
+ <li class="item active">Edit file</li>
 </ol>
-<div class="card card-sm mb-3 center">
- <div class="card-header bg-admin text-white bold">Edit file - {NAME}</div>
- <div class="card-body">
+<div class="card center">
+ <div class="header">Edit file - {NAME}</div>
+ <div class="body">
   {ERROR}
-  <label>Název souboru:</label>
-  <input type="text" id="name" class="form-control" name="name" maxlength="255" value="{NAME}" placeholder="Název souboru" required autofocus />
-  <label>Produkt:</label>
-  <input id="items-search" class="form-control" type="text" oninput="getItemsDropdown();" placeholder="Vyhledání produktu" />
+  <label>File name:</label>
+  <input type="text" id="name" name="name" maxlength="255" value="{NAME}" placeholder="File name" required autofocus />
+  <label>Item:</label>
+  <input id="items-search" type="text" oninput="getItemsDropdown();" placeholder="Search item" />
   <div id="item-name"></div>
   <input id="id-item" type="hidden" name="id_item" value="" />
-  <div class="form-group custom-control custom-checkbox">
-   <input name="playable" type="checkbox" class="custom-control-input" id="playable" {PLAYABLE} />
-   <label class="custom-control-label" for="playable">Určeno k přehrávání</label>
-   <table>
-    <tr>
-     <th class="pr-3">Item:</th>
-     <td>{ITEM-NAME}</td>
-    </tr>
-    <tr>
-     <th class="pr-3">Size:</th>
-     <td>{SIZE}</td>
-    </tr>
-    <tr>
-     <th class="pr-3">IP address:</th>
-     <td>{IP}</td>
-    </tr>
-    <tr>
-     <th class="pr-3">Link:</th>
-     <td>{LINK}</td>
-    </tr>
-    <tr>
-     <th class="pr-3">Created:</th>
-     <td>{CREATED}</td>
-    </tr>
-   </table>
-   <input type="hidden" name="id" value="{ID}" />
-   <a onclick="f.getPage('file-edit')">Edit</a>
-  </div>
+  <table>
+   <tr>
+    <th class="pr-3">Item:</th>
+    <td>{ITEM-NAME}</td>
+   </tr>
+   <tr>
+    <th class="pr-3">Size:</th>
+    <td>{SIZE}</td>
+   </tr>
+   <tr>
+    <th class="pr-3">IP address:</th>
+    <td>{IP}</td>
+   </tr>
+   <tr>
+    <th class="pr-3">Link:</th>
+    <td>{LINK}</td>
+   </tr>
+   <tr>
+    <th class="pr-3">Created:</th>
+    <td>{CREATED}</td>
+   </tr>
+  </table>
+  <input type="hidden" name="id" value="{ID}" />
+  <a onclick="f.getPage('file-edit')">Edit</a>
  </div>
- <script>
-  setItem('{ID-ITEM}', '{ITEM-NAME}');
- </script>
+ <script>setItem('{ID-ITEM}', '{ITEM-NAME}');</script>
 </div>

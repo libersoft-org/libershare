@@ -1,62 +1,45 @@
-<ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a onclick="f.getPage('items')">Items</a></li>
- <li class="breadcrumb-item active">Edit</li>
+<ol class="breadcrumb">
+ <li class="item"><a onclick="f.getPage('items')">Items</a></li>
+ <li class="item active">Edit</li>
 </ol>
-<div class="card card-sm mb-3 center">
- <div class="card-header bg-admin text-white bold">Item edit - {NAME}</div>
- <div class="card-body">
+<div class="card center">
+ <div class="header">Item edit - {NAME}</div>
+ <div class="body">
   {ERROR}
-  <form enctype="multipart/form-data" action="./item-edit.php" method="post">
-   <div class="form-group">
-    <input id="name" class="form-control" name="name" maxlength="255" value="{NAME}" placeholder="Item name" oninput="getLink();" required autofocus />
-   </div>
-   <div class="form-group">
-    <input id="link" class="form-control" name="link" maxlength="255" value="{LINK}" placeholder="Item link" required />
-   </div>
-   <div class="form-group">
-    <label>Kategorie:</label>
-    <select class="form-control" name="id_category" required>
-     <option value="">-</option>
-     {CATEGORIES}
-    </select>
-   </div>
-   <div class="form-group">
-    <label>Video:</label>
-    <select class="form-control" name="id_video">
-     <option value="">-</option>
-     {VIDEOS}
-    </select>
-   </div>
-   <div class="form-group custom-control custom-checkbox">
-    <input name="adult" type="checkbox" class="custom-control-input" id="adult" {ADULT-CHECKED} />
-    <label class="custom-control-label" for="adult">Adult only</label>
-   </div>
-   <div class="form-group custom-control custom-checkbox">
-    <input name="hidden" type="checkbox" class="custom-control-input" id="hidden" {HIDDEN-CHECKED} />
-    <label class="custom-control-label" for="hidden">Hidden</label>
-   </div>
-   <div class="form-group">{IMAGE-EDIT}</div>
-   <input type="hidden" name="id" value="{ID}" />
-   <a class="button primary" onclick="itemEdit()">Edit</a>
-  </form>
+  <input id="name" name="name" maxlength="255" value="{NAME}" placeholder="Item name" oninput="getLink();" required autofocus />
+  <input id="link" name="link" maxlength="255" value="{LINK}" placeholder="Item link" required />
+  <label>Kategorie:</label>
+  <select name="id_category" required>
+   <option value="">-</option>
+   {CATEGORIES}
+  </select>
+  <label>Video:</label>
+  <select name="id_video">
+   <option value="">-</option>
+   {VIDEOS}
+  </select>
+  <input name="adult" type="checkbox" class="custom-control-input" id="adult" {ADULT-CHECKED} />
+  <label class="custom-control-label" for="adult">Adult only</label>
+  <input name="hidden" type="checkbox" class="custom-control-input" id="hidden" {HIDDEN-CHECKED} />
+  <label class="custom-control-label" for="hidden">Hidden</label>
+  {IMAGE-EDIT}
+  <input type="hidden" name="id" value="{ID}" />
+  <a class="button primary" onclick="itemEdit()">Edit</a>
  </div>
 </div>
-<div class="table-responsive">
- <table class="table table-sm table-hover table-light">
-  <thead class="thead-admin">
-   <tr>
-    <th>Name</th>
-    <th class="text-center">Playable</th>
-    <th>Size</th>
-    <th>IP address</th>
-    <th class="text-center">Downloads<br /><span class="font-small">(all / by session / by IP)</span></th>
-    <th class="text-center">Plays<br /><span class="font-small">(all / by session / by IP)</span></th>
-    <th>Created</th>
-    <th>Action</th>
-   </tr>
-  </thead>
-  <tbody>
-   {TABLE-FILES}
-  </tbody>
- </table>
-</div>
+<table>
+ <thead>
+  <tr>
+   <th>Name</th>
+   <th class="text-center">Playable</th>
+   <th>Size</th>
+   <th>IP address</th>
+   <th class="text-center">Downloads<br /><span class="font-small">(all / by session / by IP)</span></th>
+   <th class="text-center">Plays<br /><span class="font-small">(all / by session / by IP)</span></th>
+   <th>Created</th>
+   <th>Action</th>
+  </tr>
+ </thead>
+ <tbody>{TABLE-FILES}</tbody>
+</table>
+

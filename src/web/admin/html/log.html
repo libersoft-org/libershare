@@ -1,56 +1,48 @@
-<ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item active">Log</li>
+<ol class="breadcrumb">
+ <li class="item active">Log</li>
 </ol>
-<div class="mb-3">
- <span class="dropdown">
-  <a class="button primary" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Admin: {ADMIN-SELECTED}</a>
-  <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
-   <a class="dropdown-item" href="{ADMIN-LINK-ALL}">All</a>
-   {ADMINS}
-  </div>
- </span>
-</div>
-<div class="table-responsive">
- <table class="table table-sm table-hover table-light">
-  <thead class="thead-admin">
-   <tr>
-    <th>
-     <span>Admin name</span>
-     <a href="{ORDER-NAME-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-NAME-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th>
-     <span>Message</span>
-     <a href="{ORDER-MESSAGE-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-MESSAGE-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th>
-     <span>IP address</span>
-     <a href="{ORDER-IP-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-IP-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th>
-     <span>Session ID</span>
-     <a href="{ORDER-SESSION-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-SESSION-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th>
-     <span>User agent</span>
-     <a href="{ORDER-USERAGENT-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-USERAGENT-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
-    </th>
-    <th>
-     <span>Date and time</span>
-     <a href="{ORDER-CREATED-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
-     <a href="{ORDER-CREATED-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
-    </th>
-   </tr>
-  </thead>
-  <tbody>
-   {TABLE-LOG}
-  </tbody>
-  <script>
-   getPage('log', {{params}});
-  </script>
- </table>
-</div>
+<span class="dropdown">
+ <a class="button primary" id="dropdownMenuButton" data-toggle="dropdown">Admin: {ADMIN-SELECTED}</a>
+ <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
+  <a class="dropdown-item" href="{ADMIN-LINK-ALL}">All</a>
+  {ADMINS}
+ </div>
+</span>
+<table class="table">
+ <thead>
+  <tr>
+   <th>
+    <span>Admin name</span>
+    <a href="{ORDER-NAME-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+    <a href="{ORDER-NAME-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th>
+    <span>Message</span>
+    <a href="{ORDER-MESSAGE-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+    <a href="{ORDER-MESSAGE-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th>
+    <span>IP address</span>
+    <a href="{ORDER-IP-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+    <a href="{ORDER-IP-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th>
+    <span>Session ID</span>
+    <a href="{ORDER-SESSION-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+    <a href="{ORDER-SESSION-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th>
+    <span>User agent</span>
+    <a href="{ORDER-USERAGENT-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+    <a href="{ORDER-USERAGENT-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+   </th>
+   <th>
+    <span>Date and time</span>
+    <a href="{ORDER-CREATED-ASC}"><img class="table-icon" src="img/up.svg" alt="Ascending" /></a>
+    <a href="{ORDER-CREATED-DESC}"><img class="table-icon" src="img/down.svg" alt="Descending" /></a>
+   </th>
+  </tr>
+ </thead>
+ <tbody>{TABLE-LOG}</tbody>
+ <script>getPage('log', {{params}});</script>
+</table>

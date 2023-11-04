@@ -151,7 +151,7 @@ class API {
     else echo json_encode(array('error' => 2, 'message' => 'Category doesn\'t exist'));
    } else echo json_encode(array('error' => 1, 'message' => 'Category ID is empty'));
   */
-  if (p.id == null || p.id == '') return { error: 1, message: 'Category ID is empty' };
+  if (!p || !p.id) return { error: 1, message: 'Category ID not specified' };
   const res = await this.data.getCategoryByID(p.id);
   if (res.length == 0) return { error: 2, message: 'Category does not exist' };
   else return { error: 0, data: res };
@@ -167,8 +167,9 @@ class API {
     else echo json_encode(array('error' => 2, 'message' => 'Category doesn\'t exist'));
    } else echo json_encode(array('error' => 1, 'message' => 'Category link is empty'));
   */
+  if (!p || !p.link) return { error: 1, message: 'Category link not specified' }
   const res = await this.data.getCategoryByLink(p.link);
-  if (res.length == 0) return { error: 1, message: 'Category does not exist' };
+  if (res && res.length == 0) return { error: 2, message: 'Category does not exist' };
   else return { error: 0, data: res };
  }
 

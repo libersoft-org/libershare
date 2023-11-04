@@ -1,23 +1,17 @@
-<ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a href="./?page=categories">Categories</a></li>
- <li class="breadcrumb-item active">Edit</li>
+<ol class="breadcrumb">
+ <li class="item"><a onclick="f.getPage('categories')">Categories</a></li>
+ <li class="item active">Edit</li>
 </ol>
-<div class="card card-sm mb-3 center">
- <div class="card-header bg-admin text-white bold">Category edit - {NAME}</div>
- <div class="card-body">
+<div class="card">
+ <div class="header">Category edit - {NAME}</div>
+ <div class="body">
   {ERROR}
-  <form enctype="multipart/form-data" action="./category-edit.php" method="post">
-   <div class="form-group">
-    <label>Category name:</label>
-    <input class="form-control" type="text" name="name" id="name" maxlength="64" value="{NAME}" placeholder="Category name" oninput="getLink();" required autofocus />
-   </div>
-   <div class="form-group">
-    <label>Category link:</label>
-    <input class="form-control" type="text" name="link" id="link" maxlength="64" value="{LINK}" placeholder="Category link" required />
-   </div>
-   <div class="form-group">{ICON-EDIT}</div>
-   <input type="hidden" name="id" value="{ID}" />
-   <a class="button primary" onclick="categoryEdit()">Upravit</a>
-  </form>
+  <label>Category name:</label>
+  <input type="text" name="name" id="name" maxlength="64" value="{NAME}" placeholder="Category name" oninput="getLink();" required autofocus />
+  <label>Category link:</label>
+  <input type="text" name="link" id="link" maxlength="64" value="{LINK}" placeholder="Category link" required />
+  {ICON-EDIT}
+  <input type="hidden" name="id" value="{ID}" />
+  <a class="button primary" onclick="categoryEdit()">Edit</a>
  </div>
 </div>

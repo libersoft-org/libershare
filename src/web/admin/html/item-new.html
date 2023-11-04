@@ -1,40 +1,26 @@
-<ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a href="./?page=items">Items</a></li>
- <li class="breadcrumb-item active">New</li>
+<ol class="breadcrumb">
+ <li class="item"><a onclick="getPage('items')">Items</a></li>
+ <li class="item active">New</li>
 </ol>
-<div class="card card-sm mb-3 center">
- <div class="card-header bg-admin text-white bold">New item</div>
- <div class="card-body">
+<div class="card center">
+ <div class="header">New item</div>
+ <div class="body">
   {ERROR}
-  <form enctype="multipart/form-data" action="./item-new.php" method="post">
-   <div class="form-group">
-    <label>Item name:</label>
-    <input class="form-control" type="text" name="name" id="name" maxlength="255" placeholder="Item name" oninput="getLink();" required autofocus />
-   </div>
-   <div class="form-group">
-    <label>Item link:</label>
-    <input class="form-control" type="text" name="link" id="link" maxlength="255" placeholder="Item link" required />
-   </div>
-   <div class="form-group">
-    <label>Category:</label>
-    <select class="form-control" name="id_category" required>
-     <option value="">-</option>
-     {CATEGORIES}
-    </select>
-   </div>
-   <div class="form-group custom-control custom-checkbox">
-    <input name="adult" type="checkbox" class="custom-control-input" id="adult" />
-    <label class="custom-control-label" for="adult">Pouze pro dospělé</label>
-   </div>
-   <div class="form-group custom-control custom-checkbox">
-    <input name="hidden" type="checkbox" class="custom-control-input" id="hidden" />
-    <label class="custom-control-label" for="hidden">Skrytý</label>
-   </div>
-   <div class="form-group">
-    <label>Item image: (JPG / PNG)</label>
-    <input class="form-control-file" type="file" name="image" />
-   </div>
-   <a class="button primary" onclick="itemNew()">Create</a>
-  </form>
+  <label>Item name:</label>
+  <input type="text" name="name" id="name" maxlength="255" placeholder="Item name" oninput="getLink();" required autofocus />
+  <label>Item link:</label>
+  <input type="text" name="link" id="link" maxlength="255" placeholder="Item link" required />
+  <label>Category:</label>
+  <select name="id_category" required>
+   <option value="">-</option>
+   {CATEGORIES}
+  </select>
+  <input name="adult" type="checkbox" class="custom-control-input" id="adult" />
+  <label for="adult">Adult only</label>
+  <input name="hidden" type="checkbox" class="custom-control-input" id="hidden" />
+  <label for="hidden">Hidden</label>
+  <label>Item image: (JPG / PNG)</label>
+  <input type="file" name="image" />
  </div>
+ <a class="button primary" onclick="itemNew()">Create</a>
 </div>

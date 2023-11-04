@@ -1,22 +1,14 @@
-<div class="p-3">
- <div class="card form-size-sm mb-3 center">
-  <div class="card-header bg-web text-white bold">New thread</div>
-  <div class="card-body">
-   <div class="notice red" id="error-message" style="display: none"></div>
-   <div class="form-group">
-    <label>Subject:</label>
-    <input type="text" class="form-control" name="subject" />
-   </div>
-   <div class="form-group">
-    <label>Message text:</label>
-    <textarea class="form-control" name="body" rows="5"></textarea>
-   </div>
-   <div class="form-group">
-    <label>Write a text from the image:</label>
-    <div class="pb-3"><input type="text" class="form-control" name="captcha" /></div>
-    <div><img src="captcha.php?code={CAPTCHA}" alt="Captcha" /></div>
-   </div>
-   <a class="button primary" onclick="send('forum-new-thread')">Odeslat</a>
-  </div>
+<div class="card center">
+ <div class="header">New thread</div>
+ <div class="body">
+  <div class="notice red" id="error-message"></div>
+  <label>Subject:</label>
+  <input type="text" name="subject" />
+  <label>Message text:</label>
+  <textarea name="body" rows="5"></textarea>
+  <label>Write a text from the image:</label>
+  <input type="text" name="captcha" />
+  <div><img src="captcha/{CAPTCHA}" alt="Captcha" /></div>
+  <a class="button primary" onclick="send('forum-new-thread')">Send</a>
  </div>
 </div>

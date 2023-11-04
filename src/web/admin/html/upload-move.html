@@ -1,40 +1,23 @@
-<ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item"><a onclick="f.getPage('uploads')">Uploads</a></li>
- <li class="breadcrumb-item active">Move upload</li>
+<ol class="breadcrumb">
+ <li class="item"><a onclick="f.getPage('uploads')">Uploads</a></li>
+ <li class="item active">Move upload</li>
 </ol>
-<div class="card card-sm mb-3 center">
- <div class="card-header bg-admin text-white bold">Move upload - {NAME}</div>
- <div class="card-body">
-  {error}
-  <label>Přesunout do produktu:</label>
+<div class="card center">
+ <div class="header">Move upload - {NAME}</div>
+ <div class="body">
+  {ERROR}
+  <label>Move to item:</label>
   <div id="item-name" style="display: none"></div>
-  <input id="items-search" class="form-control" type="text" oninput="getItemsDropdown();" placeholder="Item search" autofocus />
+  <input id="items-search" type="text" oninput="getItemsDropdown();" placeholder="Item search" autofocus />
   <input id="id-item" type="hidden" name="id_item" value="" />
-  <input name="playable" type="checkbox" class="custom-control-input" id="playable" />
-  <label class="custom-control-label" for="playable">Playable</label>
   <table>
-   <tr>
-    <th class="pr-3">File name:</th>
-    <td>{NAME}</td>
-   </tr>
-   <tr>
-    <th class="pr-3">Size:</th>
-    <td>{SIZE}</td>
-   </tr>
-   <tr>
-    <th class="pr-3">IP uploadera:</th>
-    <td>{IP}</td>
-   </tr>
-   <tr>
-    <th class="pr-3">Link:</th>
-    <td>{LINK}</td>
-   </tr>
-   <tr>
-    <th class="pr-3">Created:</th>
-    <td>{CREATED}</td>
-   </tr>
+   <tr><th>File name:</th><td>{NAME}</td></tr>
+   <tr><th>Size:</th><td>{SIZE}</td></tr>
+   <tr><th>IP uploadera:</th><td>{IP}</td></tr>
+   <tr><th>Link:</th><td>{LINK}</td></tr>
+   <tr><th>Created:</th><td>{CREATED}</td></tr>
   </table>
   <input type="hidden" name="id" value="{ID}" />
-  <a class="button primary" onclick="uploadMove()">Přesunout</a>
+  <a class="button primary" onclick="uploadMove()">Move</a>
  </div>
 </div>

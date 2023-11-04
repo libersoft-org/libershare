@@ -1,43 +1,35 @@
-<ol class="breadcrumb bg-danger text-light">
- <li class="breadcrumb-item active">Rozdíly DB / FS</li>
+<ol class="breadcrumb">
+ <li class="item active">DB / FS diffs</li>
 </ol>
-<div class="card mb-3">
- <div class="card-header bg-admin text-white bold">Soubory v databázi, které chybí na disku</div>
- <div class="card-body table-responsive">
-  <table class="table table-sm">
-   {FILES-FS}
-  </table>
-  <h5>Celkem položek: <span class="bold">{FILES-FS-COUNT}</span></h5>
-  <a class="button primary" onclick="confirmDelete('diffs-delete-files-fs.php', 'všechny soubory v databázi, které chybí na disku')">Smazat všechny chybějící z databáze</a>
+<div class="card">
+ <div class="header">Item files in DB, missing on FS</div>
+ <div class="body">
+  <table>{FILES-FS}</table>
+  <h5>Total items: <span class="bold">{FILES-FS-COUNT}</span></h5>
+  <a class="button primary" onclick="confirmDelete('diffs-delete-files-fs', 'all item files in DB, mission on FS')">Delete all item files missing from DB</a>
  </div>
 </div>
-<div class="card mb-3">
- <div class="card-header bg-admin text-white bold">Soubory na disku, které chybí v databázi</div>
- <div class="card-body table-responsive">
-  <table class="table table-sm">
-   {FILES-DB}
-  </table>
-  <h5>Celkem položek: <span class="bold">{FILES-DB-COUNT}</span></h5>
-  <a class="button primary" onclick="confirmDelete('diffs-delete-files-db.php', 'všechny soubory na disku, které chybí v databázi')">Smazat všechny chybějící z disku</a>
+<div class="card">
+ <div class="header">Item files on FS, missing in DB</div>
+ <div class="body">
+  <table>{FILES-DB}</table>
+  <h5>Total items: <span class="bold">{FILES-DB-COUNT}</span></h5>
+  <a class="button primary" onclick="confirmDelete('diffs-delete-files-db', 'all item files on FS, missing in DB')">Delete all item files missing from FS</a>
  </div>
 </div>
-<div class="card mb-3">
- <div class="card-header bg-admin text-white bold">Uploady v databázi, které chybí na disku</div>
- <div class="card-body table-responsive">
-  <table class="table table-sm">
-   {UPLOADS-FS}
-  </table>
-  <h5>Celkem položek: <span class="bold">{UPLOADS-FS-COUNT}</span></h5>
-  <a class="button primary" onclick="confirmDelete('diffs-delete-uploads-fs.php', 'všechny uploady v databázi, které chybí na disku')">Smazat všechny chybějící z databáze</a>
+<div class="card">
+ <div class="header">Uploads in DB, missing on FS</div>
+ <div class="body">
+  <table>{UPLOADS-FS}</table>
+  <h5>Total items: <span class="bold">{UPLOADS-FS-COUNT}</span></h5>
+  <a class="button primary" onclick="confirmDelete('diffs-delete-uploads-fs', 'all uploads in DB, missing on FS')">Delete all upload files missing from DB</a>
  </div>
 </div>
-<div class="card mb-3">
- <div class="card-header bg-admin text-white bold">Uploady na disku, které chybí v databázi</div>
- <div class="card-body table-responsive">
-  <table class="table table-sm">
-   {UPLOADS-DB}
-  </table>
-  <h5>Celkem položek: <span class="bold">{UPLOADS-DB-COUNT}</span></h5>
-  <a class="button primary" onclick="confirmDelete('diffs-delete-uploads-db.php', 'všechny uploady na disku, které chybí v databázi')">Smazat všechny chybějící z disku</a>
+<div class="card">
+ <div class="header">Uploads on FS, missing in DB</div>
+ <div class="body">
+  <table>{UPLOADS-DB}</table>
+  <h5>Total items: <span class="bold">{UPLOADS-DB-COUNT}</span></h5>
+  <a class="button primary" onclick="confirmDelete('diffs-delete-uploads-db', 'all uploads on FS, missing in DB')">Delete all upload files missing from FS</a>
  </div>
 </div>
