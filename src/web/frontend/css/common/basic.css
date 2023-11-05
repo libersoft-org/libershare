@@ -130,6 +130,14 @@ input[type='file'] {
  text-align: right;
 }
 
+.text-red {
+ color: #F00;
+}
+
+.text-blue {
+ color: #00F;
+}
+
 .shadow {
  box-shadow: 0 0 10px 0 rgba(0, 0, 0, 0.75);
 }

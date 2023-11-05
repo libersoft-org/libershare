@@ -50,15 +50,15 @@ class Framework {
  }
 
  getMenuSwitch() {
-  const mdActive = this.qsa('#menu-desktop .menu-item.active');
-  const mmActive = this.qsa('#menu-mobile .menu-item.active');
+  const mdActive = this.qsa('#menu-desktop .item.active');
+  const mmActive = this.qsa('#menu-mobile .item.active');
   if (mdActive.length == 1) mdActive[0].classList.remove('active');
   if (mmActive.length == 1) mmActive[0].classList.remove('active');
   var item = this.pathArr[0];
   if (!item) item = 'news';
-  if (this.pathArr[0] in this.pages) {
-   const mdItem = this.qs('#menu-desktop .menu-item.menu-' + item);
-   const mmItem = this.qs('#menu-mobile .menu-item.menu-' + item);
+  if (item in this.pages) {
+   const mdItem = this.qs('#menu-desktop .item.menu-' + item);
+   const mmItem = this.qs('#menu-mobile .item.menu-' + item);
    if (mdItem) mdItem.classList.add('active');
    if (mmItem) mmItem.classList.add('active');
   }

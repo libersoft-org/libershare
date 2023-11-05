@@ -594,7 +594,7 @@ class API {
         try {
          $email_from = $GLOBALS['mail-from'];
          $name_from = $GLOBALS['item'];
-         $subject = 'Nová zpráva z formuláře z webu ' . $GLOBALS['item'] . ' - ' . $subject_input;
+         $subject = 'New message from web form ' . $GLOBALS['item'] . ' - ' . $subject_input;
          $message_array = array(
           '[[name-to]]'       => $name_to,
           '[[email-to]]'      => $email_to,
@@ -833,8 +833,8 @@ class API {
      if (is_writable('../' . $GLOBALS['path-upload-temp'])) {
       touch($file);
       echo json_encode(array('error' => 0, 'message' => $name));
-     } else echo json_encode(array('error' => 2, 'message' => 'Nepodařilo se vytvořit nový soubor.'));
-    } else echo json_encode(array('error' => 1, 'message' => 'Tento soubor již existuje.'));
+     } else echo json_encode(array('error' => 2, 'message' => 'Creating a new file unsuccessful.'));
+    } else echo json_encode(array('error' => 1, 'message' => 'This file already exists.'));
    }
    
    function Add($filename) {
@@ -842,7 +842,7 @@ class API {
      $data = fopen($_FILES['files']['tmp_name'], 'r');
      file_put_contents('../' . $GLOBALS['path-upload-temp'] . '/' . $filename, $data, FILE_APPEND);
      echo json_encode(array('error' => 0, 'message' => 'OK'));
-    } else echo json_encode(array('error' => 1, 'message' => 'Soubor neexistuje.'));
+    } else echo json_encode(array('error' => 1, 'message' => 'File does not exist.'));
    }
    
    function Done($original, $new) {
@@ -858,12 +858,12 @@ class API {
          if (SQLNumRows(SQLQuery('SELECT id FROM upload WHERE filename = "' . $filename . '"')) == 0) {
           SQLQuery('INSERT INTO upload (filename, realname, size, ip) VALUES ("' . $filename . '", "' . $realname . '", "' . filesize('../' . $GLOBALS['path-upload'] . '/' . $filename) . '", "' . $ip . '")');
           echo json_encode(array('error' => 0, 'message' => 'OK'));
-         } else echo json_encode(array('error' => 6, 'message' => 'Tento soubor je již v databázi.'));
-        } else echo json_encode(array('error' => 5, 'message' => 'Uploadovaný soubor neexistuje.'));
-       } else echo json_encode(array('error' => 4, 'message' => 'Nepodařilo se uložit soubor, protože jiný soubor na serveru se stejným jménem již existuje.'));
-      } else echo json_encode(array('error' => 3, 'message' => 'Nepodažilo se přesunout nahraný soubor do cílové složky.'));
-     } else echo json_encode(array('error' => 2, 'message' => 'Zadané jméno souboru není soubor, ale adresář.'));
-    } else echo json_encode(array('error' => 1, 'message' => 'Soubor neexistuje.'));
+         } else echo json_encode(array('error' => 6, 'message' => 'This file is already in database.'));
+        } else echo json_encode(array('error' => 5, 'message' => 'Uploaded file does not exist.'));
+       } else echo json_encode(array('error' => 4, 'message' => 'Saving file unsuccessful, because other file with the same name already exists on server.'));
+      } else echo json_encode(array('error' => 3, 'message' => 'Moving file to destination folder unsuccessful.'));
+     } else echo json_encode(array('error' => 2, 'message' => 'Provided file name is not a file, but a directory.'));
+    } else echo json_encode(array('error' => 1, 'message' => 'File does not exist.'));
    }
   */
  }

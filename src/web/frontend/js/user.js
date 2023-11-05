@@ -65,46 +65,49 @@ async function getPageNews() {
 }
 
 async function getPageCategories(pathArr = null) {
+ const elCategory = f.qs('#content .categories');
  if (pathArr.length == 2) {
   const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
-  const elCategory = f.qs('#content .categories');
   if (cat && cat.data && cat.data.length == 1) {
    const temp_cat = f.getHTML('categories-category');
-   const html = f.translate(temp_cat, { '{CATEGORY}': cat.data[0].name });
-   elCategory.innerHTML = html;
+   elCategory.innerHTML = f.translate(temp_cat, { '{CATEGORY}': cat.data[0].name });
    await getPageCategoriesMore(cat.data[0].id);
-   if (!elCategory.onscroll) elCategory.onscroll = () => getPageCategoriesMore(cat.data[0].id); 
-  } else elCategory.innerHTML = f.getHTML('categories-category-notfound'); // TODO: replace for HTML page 
+   // TODO: onscroll is not working
+   if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data[0].id);
+  } else elCategory.innerHTML = f.getHTML('categories-category-notfound'); // TODO: replace for HTML page
  } else {
-  const temp = f.getHTML('categories-item');
+  elCategory.innerHTML = f.getHTML('categories-list');
+  const temp_item = f.getHTML('categories-item');
   const cats = await f.getAPI('get_categories');
   let itemsCount = 0;
   let crows = '';
-  for (const cat of cats.data) {
-   const itemCount = cat.items_count - cat.items_count_hidden;
-   if (itemCount != 0) {
-    let img = f.pathImages + 'item-default.webp';
-    if (cat.image) img = f.pathImages + 'categories/' + cat.image;
-    crows += f.translate(temp, {
-     '{LINK}': cat.link,
-     '{NAME}': cat.name,
-     '{IMAGE}': img,
-     '{COUNT}': itemCount
-    });
-    itemsCount += itemCount;
+  if (cats && cats.data) {
+   for (const cat of cats.data) {
+    const itemCount = cat.items_count - cat.items_count_hidden;
+    if (itemCount != 0) {
+     let img = f.pathImages + 'item-default.webp';
+     if (cat.image) img = f.pathImages + 'categories/' + cat.image;
+     crows += f.translate(temp_item, {
+      '{LINK}': cat.link,
+      '{NAME}': cat.name,
+      '{IMAGE}': img,
+      '{COUNT}': itemCount
+     });
+     itemsCount += itemCount;
+    }
    }
   }
-  f.qs('#content .categories .items').innerHTML = f.translate(temp, {
+  f.qs('#content .categories .items').innerHTML = f.translate(temp_item, {
    '{LINK}': 'all',
    '{NAME}': 'All',
    '{IMAGE}': f.pathImages + 'item-all.webp',
    '{COUNT}': itemsCount
-   }) + crows;
-  f.qs('#content .loader').remove();
+  }) + crows;
  }
 }
 
 async function getPageCategoriesMore(id) {
+ console.log(new Date());
  const loader = f.qs('#content .loader');
  if (isElementVisible(loader)) {
   if (!loading) {
@@ -137,7 +140,7 @@ async function getPageCategoriesMore(id) {
     f.qs('#content .items').innerHTML += prows;
     offset += count;
     loading = false;
-    if (count >= items.data.length) getPageCategoriesMore(id);
+    if (items.data.length == count) getPageCategoriesMore(id);
     else loader.remove();
    }
   }
@@ -196,6 +199,7 @@ async function getPageForum() {
 async function getPageForumThreads(count, page = 1) {
  const temp_thread = f.getHTML('forum-row');
  const table = f.qs('#content .forum tbody');
+ console.log(table);
  // TODO: if loader is not visible, return, otherwise load more threads
  //if (!table.length) return;
  //if (!table.isVisible()) return;
@@ -203,7 +207,7 @@ async function getPageForumThreads(count, page = 1) {
   count: count,
   offset: (page - 1) * count
  });
- if (threads.data.length == 0) return;
+ if (!threads || !threads.data || threads.data.length == 0) return;
  let rows = '';
  for (const item of threads.data) {
   rows += f.translate(temp_thread, {
