@@ -40,7 +40,14 @@ class WebServer {
    '/forum/thread/:id/',
    '/faq/',
    '/terms/',
-   '/contact/'].join('|')})`), (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
+   '/contact/'].join('|')})`), (req, res) => {
+    res.send(Common.translate(fs.readFileSync(path.join(__dirname, '../web/frontend/index.html'), 'utf8'), {
+    '{TITLE}': Common.settings.web.name,
+    '{OG-URL}': req.url,
+    '{OG-DESCRIPTION}': Common.settings.web.description,
+    '{OG-IMAGE}': '/img/logo-og.webp'
+   }));
+  });
   app.use('/download/:hash/:name', (req, res) => {
    // TODO - PREVENT FROM PATH INJECTION !!!!!!!!!!!!!!!! (../../root/...):
    // TODO - BUG: crashes with big files (1.2 GB+) in Bun (in Node.js OK) - switch to Elysia?

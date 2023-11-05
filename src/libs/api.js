@@ -1,4 +1,6 @@
+const os = require('os');
 const fs = require('fs');
+const path = require('path');
 const Data = require('./data.js');
 
 const validCaptchas = {};
@@ -15,6 +17,8 @@ setInterval(cleanupOldCaptchas, 60 * 1000);
 class API {
  constructor() {
   this.apiMethods = {
+   get_html_files: this.getHTMLFiles,
+   get_css_files: this.getCSSFiles,
    get_captcha: this.getCaptcha,
    get_categories: this.getCategories,
    get_category_by_id: this.getCategoryByID,
@@ -87,6 +91,26 @@ class API {
   const method = this.apiMethods[name];
   if (method) return await method.call(this, params);
   else return { error: 1, message: 'API not found' };
+ }
+
+ getHTMLFiles() {
+  const dir = path.join(__dirname, '../web/frontend/html/');
+  const files = fs.readdirSync(dir).filter(file => file.endsWith('.html'));
+  let html = {};
+  for (const file of files) html[file.replace(/\.html$/, '')] = fs.readFileSync(path.join(dir, file), 'utf8');
+  return { error: 0, data: html };
+ }
+
+ getCSSFiles(p = {}) {
+  let css = '';
+  // TODO: FIX THE POTENTIAL FS INJECTION (p.group) !!!!!!!!!!!!!!!!:
+  const cssRoot = path.join(__dirname, '../web/frontend/css/');
+  for (const group of p.groups) {
+   const dir = path.join(cssRoot + group + '/');
+   const files = fs.readdirSync(dir).filter(file => file.endsWith('.css'));
+   for (const file of files) css += fs.readFileSync(path.join(dir, file), 'utf8') + os.EOL;
+  }
+  return { error: 0, data: css };
  }
 
  async getCaptcha() {

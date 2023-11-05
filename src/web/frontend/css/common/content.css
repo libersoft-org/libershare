@@ -7,6 +7,4 @@
  padding: 15px 10px;
  color: var(--secondary-color);
  box-sizing: border-box;
- background: url('/img/background.svg') repeat;
- background-size: 240px;
 }

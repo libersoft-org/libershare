@@ -1,0 +1,37 @@
+body {
+ background: url('/img/background.svg') repeat;
+ background-size: 240px;
+}
+
+#splash {
+ display: flex;
+ flex-direction: column;
+ align-items: center;
+ justify-content: center;
+ height: calc(100vh - 40px);
+ padding: 20px;
+}
+
+#splash img {
+ width: 300px;
+ max-width: 100%;
+ margin-bottom: 20px;
+}
+
+#splash .loader {
+ margin: 0 auto;
+ width: 50px;
+ height: 50px;
+ border-radius: 50%;
+ background:
+  radial-gradient(farthest-side, #000 94%, transparent) top/8px 8px no-repeat,
+  conic-gradient(transparent 30%, #000);
+ -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 8px), #000 0);
+ animation: loader 1s infinite linear;
+}
+
+@keyframes loader {
+ 100% {
+  transform: rotate(1turn);
+ }
+}

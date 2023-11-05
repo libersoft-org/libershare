@@ -1,50 +1,50 @@
 {
  "news": {
   "label": "News",
-  "file": "news.html"
+  "file": "news"
  },
  "categories": {
   "label": "Categories",
-  "file": "categories.html"
+  "file": "categories"
  },
  "uploads": {
   "label": "Uploads",
-  "file": "uploads.html"
+  "file": "uploads"
  },
  "forum": {
   "label": "Forum",
-  "file": "forum.html"
+  "file": "forum"
  },
  "faq": {
   "label": "FAQ",
-  "file": "faq.html"
+  "file": "faq"
  },
  "terms": {
   "label": "Terms and conditions",
-  "file": "terms.html"
+  "file": "terms"
  },
  "contact": {
   "label": "Contact",
-  "file": "contact.html"
+  "file": "contact"
  },
  "search": {
   "label": "Search",
-  "file": "search.html"
+  "file": "search"
  },
  "activation": {
   "label": "Activation",
-  "file": "activation.html"
+  "file": "activation"
  },
  "item": {
   "label": "{ITEM}",
-  "file": "item.html"
+  "file": "item"
  },
  "category": {
   "label": "{CATEGORY}",
-  "file": "item.html"
+  "file": "item"
  },
  "notfound": {
   "label": "Page not found",
-  "file": "notfound.html"
+  "file": "notfound"
  }
 }

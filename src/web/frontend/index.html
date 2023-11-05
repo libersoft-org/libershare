@@ -1,27 +1,23 @@
 <!doctype html>
 <html>
  <head>
-  <title>{PRODUCT}</title>
+  <title>{TITLE}</title>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta property="og:type" content="article" />
   <meta property="og:url" content="{OG-URL}" />
-  <meta property="og:title" content="{PRODUCT}" />
+  <meta property="og:title" content="{TITLE}" />
   <meta property="og:description" content="{OG-DESCRIPTION}" />
   <meta property="og:image" content="{OG-IMAGE}" />
-  <link rel="stylesheet" href="/css/user.css" type="text/css" />
+  <link id="splash-style" rel="stylesheet" href="/css/splash.css" type="text/css" />
   <link rel="shortcut icon" href="/favicon.svg" />
   <script src="/js/framework.js"></script>
   <script src="/js/user.js"></script>
  </head>
  <body>
-  <div id="header" class="shadow">
-   <a onclick="f.menu()"><img class="menu-toggler" src="/img/menu.svg" alt="Menu" /></a>
-   <a onclick="f.getPage('')"><img class="logo" src="/img/logo.webp" alt="{PRODUCT}" /></a>
-   <div id="menu-desktop"></div>
+  <div id="splash">
+   <img src="/img/logo.webp" alt="{TITLE}"/>
+   <div class="loader"></div>
   </div>
-  <div id="menu-mobile" class="shadow"></div>
-  <div id="menu-overlay" onclick="f.menuClose()"></div>
-  <div id="content" class="scrollbar"></div>
  </body>
 </html>

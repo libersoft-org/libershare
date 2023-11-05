@@ -65,6 +65,8 @@ class App {
   } else {
    let settings = {
     web: {
+     name: 'LiberShare',
+     description: 'Share your files!',
      standalone: true,
      port: 80,
      socket_path: '/run/libershare.sock',

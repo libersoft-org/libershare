@@ -4,7 +4,6 @@ class Framework {
   this.pageName = 'LiberShare';
   this.menuOpened = false;
   this.pathAPI = '/api/';
-  this.pathHTML = '/html/';
   this.pathImages = '/img/';
   this.pathJSON = '/json/';
   this.eventPageLoaded = new Event('page-loaded');
@@ -12,10 +11,27 @@ class Framework {
 
  async init() {
   this.pages = JSON.parse(await this.getFileContent(this.pathJSON + 'pages.json'));
+  await this.getHTMLFiles();
+  document.head.appendChild(document.createElement('style')).textContent = await this.getCSS();
+  this.qs('#splash-style').remove();
+  document.body.innerHTML = this.getHTML('main');
   this.setPath(location.pathname);
   this.getMenu();
-  await this.getReload();
-  window.addEventListener('popstate', async () => await this.getReload());
+  this.getReload();
+  window.addEventListener('popstate', () => this.getReload());
+ }
+
+ async getHTMLFiles() {
+  this.htmlArr = (await f.getAPI('get_html_files')).data;
+ }
+
+ getHTML(name) {
+  if (!this.htmlArr.hasOwnProperty(name)) return '';
+  return this.htmlArr[name];
+ }
+
+ async getCSS() {
+  return (await f.getAPI('get_css_files', { groups: ['user', 'common', 'components'] })).data;
  }
 
  setPath(path) {
@@ -27,10 +43,9 @@ class Framework {
   this.pathArr = path.split('/').filter((item) => item !== '');
  }
 
- async getMenu() {
-  const menu = await this.getFileContent(this.pathHTML + 'menu.html');
-  this.qs('#menu-desktop').innerHTML = menu;
-  this.qs('#menu-mobile').innerHTML = menu;
+ getMenu() {
+  this.qs('#menu-desktop').innerHTML = this.getHTML('menu');
+  this.qs('#menu-mobile').innerHTML = this.getHTML('menu');
   this.getMenuSwitch();
  }
 
@@ -69,30 +84,28 @@ class Framework {
   this.qs('#header').classList.remove('shadow');
  }
 
- async getReload() {
-  return await this.processPath(this.path, 'replaceState');
+ getReload() {
+  return this.processPath(this.path, 'replaceState');
  }
 
- async getPage(path) {
+ getPage(path) {
   if (this.menuOpened) this.menuClose();
-  return await this.processPath(path, 'pushState');
+  return this.processPath(path, 'pushState');
  }
 
- async processPath(path, historyMethod) {
+ processPath(path, historyMethod) {
   this.setPath(path);
   window.history[historyMethod]('', '', this.path);
   this.getMenuSwitch();
   if (!this.pathArr || this.pathArr.length == 0) this.pathArr = ['news'];
-  let content = '';
   document.title = this.pageName + ' - ' + this.pages[(this.pathArr[0] in this.pages ? this.pathArr[0] : 'notfound')].label;
-  content = await this.getFileContent(this.pathHTML + (this.pathArr[0] in this.pages ? this.pages[this.pathArr[0]].file : 'notfound.html'));
-  this.qs('#content').innerHTML = content;
+  this.qs('#content').innerHTML = this.getHTML(this.pathArr[0] in this.pages ? this.pages[this.pathArr[0]].file : 'notfound');
   document.dispatchEvent(this.eventPageLoaded);
  }
 
  async getModal(title, body) {
   this.closeModal();
-  const html = await this.getFileContent(this.pathHTML + 'modal.html');
+  const html = this.getHTML('modal');
   const modal = document.createElement('div');
   modal.innerHTML = this.translate(html, { '{TITLE}': title, '{BODY}': body });
   
@@ -108,16 +121,13 @@ class Framework {
    isDragging = true;
    offsetX = e.clientX - mod.offsetLeft;
    offsetY = e.clientY - mod.offsetTop;
-
    document.onmousemove = (e) => {
     if (!isDragging) return;
     mod.style.left = e.clientX - offsetX + 'px';
     mod.style.top = e.clientY - offsetY + 'px';
    };
-
    document.onmouseup = () => (isDragging = false);
   };
-  
 
   document.body.appendChild(modal);
  }

@@ -30,8 +30,8 @@ async function getPageContent() {
 
 async function getPageNews() {
  const image_default = f.pathImages + 'item-default.webp';
- const temp_cat = await f.getFileContent(f.pathHTML + 'news-category.html');
- const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
+ const temp_cat = f.getHTML('news-category');
+ const temp_item = f.getHTML('items-item');
  const cats = await f.getAPI('get_categories');
  for (const cat of cats.data) {
   if (cat.items_count - cat.items_count_hidden !== 0) {
@@ -47,12 +47,11 @@ async function getPageNews() {
    for (const item of items.data) {
     let image = image_default;
     if (item.image_sm) image = f.pathImages + 'items/' + item.image_sm;
-    let prow = f.translate(temp_item, {
+    prows += f.translate(temp_item, {
      '{NAME}': item.name,
      '{LINK}': item.link,
      '{IMAGE}': item.adult === 0 ? image : f.pathImages + 'item-censored.webp'
     });
-    prows += prow;
    }
    const crow = f.translate(temp_cat, {
     '{LINK}': cat.link,
@@ -68,16 +67,16 @@ async function getPageNews() {
 async function getPageCategories(pathArr = null) {
  if (pathArr.length == 2) {
   const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
-  const content = f.qs('#content');
-  if (cat.data.length == 1) {
-   const temp_cat = await f.getFileContent(f.pathHTML + 'category-detail.html');
+  const elCategory = f.qs('#content .categories');
+  if (cat && cat.data && cat.data.length == 1) {
+   const temp_cat = f.getHTML('categories-category');
    const html = f.translate(temp_cat, { '{CATEGORY}': cat.data[0].name });
-   content.innerHTML = html;
+   elCategory.innerHTML = html;
    await getPageCategoriesMore(cat.data[0].id);
-   if (!content.onscroll) content.onscroll = () => getPageCategoriesMore(cat.data[0].id); 
-  } else content.innerHTML = 'Category not found'; // TODO: replace for HTML page 
+   if (!elCategory.onscroll) elCategory.onscroll = () => getPageCategoriesMore(cat.data[0].id); 
+  } else elCategory.innerHTML = f.getHTML('categories-category-notfound'); // TODO: replace for HTML page 
  } else {
-  const temp = await f.getFileContent(f.pathHTML + 'categories-item.html');
+  const temp = f.getHTML('categories-item');
   const cats = await f.getAPI('get_categories');
   let itemsCount = 0;
   let crows = '';
@@ -106,8 +105,7 @@ async function getPageCategories(pathArr = null) {
 }
 
 async function getPageCategoriesMore(id) {
- console.log(offset, loading);
- const loader = f.qs('.loader');
+ const loader = f.qs('#content .loader');
  if (isElementVisible(loader)) {
   if (!loading) {
    loading = true;
@@ -123,7 +121,7 @@ async function getPageCategoriesMore(id) {
     loader.remove();
     loading = false;
    } else {
-    const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
+    const temp_item = f.getHTML('items-item');
     const image_default = f.pathImages + 'item-default.webp';
     let prows = '';
     for (const item of items.data) {
@@ -150,14 +148,14 @@ async function getPageItem(pathArr = null) {
  const item = await f.getAPI('get_item_by_link', { link: pathArr[1] });
  if (item.data && item.data.length == 1) {
   const image_default = f.pathImages + 'item-default.webp';
-  const temp = await f.getFileContent(f.pathHTML + 'item-detail.html');
+  const temp = f.getHTML('item-detail');
   const cat = await f.getAPI('get_category_by_id', {
    id: item.data[0].id_categories
   });
   item.data[0].id_categories;
   const files = await f.getAPI('get_files', { id_item: item.data[0].id });
-  const temp_files = await f.getFileContent(f.pathHTML + 'item-file.html');
-  const temp_play = await f.getFileContent(f.pathHTML + 'item-play-button.html');
+  const temp_files = f.getHTML('item-file');
+  const temp_play = f.getHTML('item-play-button');
   let rows = '';
   const videoExtensions = ['mp4', 'mp3', 'webm'];
   for (const fd of files.data) {
@@ -196,7 +194,7 @@ async function getPageForum() {
 }
 
 async function getPageForumThreads(count, page = 1) {
- const temp_thread = await f.getFileContent(f.pathHTML + 'forum-row.html');
+ const temp_thread = f.getHTML('forum-row');
  const table = f.qs('#content .forum tbody');
  // TODO: if loader is not visible, return, otherwise load more threads
  //if (!table.length) return;
@@ -223,7 +221,7 @@ async function getPageForumThreads(count, page = 1) {
 }
 
 async function getPageUploads() {
- const temp_file = await f.getFileContent(f.pathHTML + 'uploads-file.html');
+ const temp_file = f.getHTML('uploads-file');
  const files = await f.getAPI('get_uploads', { order: 'created', direction: true, count: 10 });
  // TODO: check if files.data exists, otherwise remove table
  let rows = '';
@@ -240,7 +238,7 @@ async function getPageUploads() {
 async function getPageSearch() {
  const phrase = f.escapeHTML(f.qs('#header .search').value.trim());
  f.qs('#content .breadcrumb .active').innerHTML = 'Search: ' + phrase;
- const temp_item = await f.getFileContent(f.pathHTML + 'items-item.html');
+ const temp_item = f.getHTML('items-item');
  const image_default = f.pathImages + 'item-default.webp';
  const items = await f.getAPI('get_items', {
   search: phrase,
@@ -265,7 +263,7 @@ async function getPageSearch() {
 }
 
 async function getModalLogin() {
- await f.getModal('Login', await f.getFileContent(f.pathHTML + 'modal-login.html'));
+ await f.getModal('Login', f.getHTML('modal-login'));
 
  const captcha = await f.getAPI('get_captcha');
  const elCaptcha = f.qs('.modal .body .captcha');
@@ -279,7 +277,7 @@ async function getModalRegistration() {
  const days = Array.from({ length: 31 }, (_, i) => i + 1);
  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
  const years = Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i);
- let body = await f.getFileContent(f.pathHTML + 'modal-registration.html');
+ let body = f.getHTML('modal-registration');
  body = body.replace('{DAYS}', days.map((day) => '<option value="' + day + '">' + day + '</option>').join(''));
  body = body.replace('{MONTHS}', months.map((month, index) => '<option value="' + (index + 1) + '">' + month + '</option>').join(''));
  body = body.replace('{YEARS}', years.map((year) => '<option value="' + year + '">' + year + '</option>').join(''));
@@ -299,7 +297,7 @@ function logout() {
 }
 
 async function playVideo(link) {
- const temp_video = await f.getFileContent(f.pathHTML + 'item-video.html');
+ const temp_video = f.getHTML('item-video');
  f.qs('.play').innerHTML = f.translate (temp_video, { '{SRC}': link });
 }
 
