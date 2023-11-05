@@ -27,9 +27,22 @@ class WebServer {
   app.use('/api/:name', async (req, res) => res.type('json').send(JSON.stringify(await this.api.processAPI(req.params.name, req.body))));
   app.use('/img/categories/', express.static(path.join(Common.settings.storage.images + 'categories')));
   app.use('/img/items/', express.static(path.join(Common.settings.storage.images, 'items')));
+  app.use('/download/:hash/:name', (req, res) => {
+   // TODO - PREVENT FROM PATH INJECTION !!!!!!!!!!!!!!!! (../../root/...):
+   // TODO - BUG: crashes with big files (1.2 GB+) in Bun (in Node.js OK) - switch to Elysia?
+   res.setHeader('Content-Disposition', 'attachment; filename=' + req.params.name);
+   res.sendFile(path.join(Common.settings.storage.download, req.params.hash));
+  });
+  app.use('/upload/:hash/:name', (req, res) => {
+   // TODO - PREVENT FROM PATH INJECTION !!!!!!!!!!!!!!!! (../../root/...):
+   // TODO - BUG: crashes with big files (1.2 GB+) in Bun (in Node.js OK) - switch to Elysia?
+   res.setHeader('Content-Disposition', 'attachment; filename=' + req.params.name);
+   res.sendFile(path.join(Common.settings.storage.upload, req.params.hash));
+  });
   app.use('/admin/', express.static(path.join(__dirname, '../web/admin/'), { fallthrough: true }));
   app.use('/admin/', (req, res) => res.sendFile(path.join(__dirname, '../web/admin/index.html')));
   app.use(new RegExp(`(${[
+   '/',
    '/news/',
    '/categories/',
    '/categories/:category/',
@@ -48,20 +61,7 @@ class WebServer {
     '{OG-IMAGE}': '/img/logo-og.webp'
    }));
   });
-  app.use('/download/:hash/:name', (req, res) => {
-   // TODO - PREVENT FROM PATH INJECTION !!!!!!!!!!!!!!!! (../../root/...):
-   // TODO - BUG: crashes with big files (1.2 GB+) in Bun (in Node.js OK) - switch to Elysia?
-   res.setHeader('Content-Disposition', 'attachment; filename=' + req.params.name);
-   res.sendFile(path.join(Common.settings.storage.download, req.params.hash));
-  });
-  app.use('/upload/:hash/:name', (req, res) => {
-   // TODO - PREVENT FROM PATH INJECTION !!!!!!!!!!!!!!!! (../../root/...):
-   // TODO - BUG: crashes with big files (1.2 GB+) in Bun (in Node.js OK) - switch to Elysia?
-   res.setHeader('Content-Disposition', 'attachment; filename=' + req.params.name);
-   res.sendFile(path.join(Common.settings.storage.upload, req.params.hash));
-  });
   app.use('/', express.static(path.join(__dirname, '../web/frontend'), { fallthrough: true }));
-  app.use('/', (req, res) => res.sendFile(path.join(__dirname, '../web/frontend/index.html')));
   app.use((req, res) => res.status(404).send('404 Not found'));
   if (!Common.settings.web.standalone) fs.unlinkSync(Common.settings.web.socket_path);
   app.listen(Common.settings.web.standalone ? Common.settings.web.port : Common.settings.web.socket_path, () => {
