@@ -39,30 +39,21 @@ class WebServer {
    res.setHeader('Content-Disposition', 'attachment; filename=' + req.params.name);
    res.sendFile(path.join(Common.settings.storage.upload, req.params.hash));
   });
-  app.use('/admin/', express.static(path.join(__dirname, '../web/admin/'), { fallthrough: true }));
-  app.use('/admin/', (req, res) => res.sendFile(path.join(__dirname, '../web/admin/index.html')));
-  app.use(new RegExp(`(${[
-   '/',
-   '/news/',
-   '/categories/',
-   '/categories/:category/',
-   '/item/:item/',
-   '/uploads/',
-   '/forum/',
-   '/forum/new/',
-   '/forum/thread/:id/',
-   '/faq/',
-   '/terms/',
-   '/contact/'].join('|')})`), (req, res) => {
-    res.send(Common.translate(fs.readFileSync(path.join(__dirname, '../web/frontend/index.html'), 'utf8'), {
-     '{TITLE}': Common.settings.web.name,
-     '{OG-URL}': req.url,
-     '{OG-DESCRIPTION}': Common.settings.web.description,
-     '{OG-IMAGE}': '/img/logo-og.webp'
-    }));
+  app.use('/admin/', express.static(path.join(__dirname, '../web/admin/')));
+  app.use('/admin/', (req, res) => {
+   res.send(Common.translate(fs.readFileSync(path.join(__dirname, '../web/admin/index.html'), 'utf8'), {
+    '{TITLE}': Common.settings.web.name + ' - Admin area'
+   }));
   });
-  app.use('/', express.static(path.join(__dirname, '../web/frontend'), { fallthrough: true }));
-  app.use((req, res) => res.status(404).send('404 Not found'));
+  app.use('/', express.static(path.join(__dirname, '../web/frontend')));
+  app.use('/', (req, res) => {
+   res.send(Common.translate(fs.readFileSync(path.join(__dirname, '../web/frontend/index.html'), 'utf8'), {
+    '{TITLE}': Common.settings.web.name,
+    '{OG-URL}': req.url,
+    '{OG-DESCRIPTION}': Common.settings.web.description,
+    '{OG-IMAGE}': '/img/logo-og.webp'
+   }));
+  });
   if (!Common.settings.web.standalone) fs.unlinkSync(Common.settings.web.socket_path);
   app.listen(Common.settings.web.standalone ? Common.settings.web.port : Common.settings.web.socket_path, () => {
    if (!Common.settings.web.standalone) fs.chmodSync(Common.settings.web.socket_path, '777');
