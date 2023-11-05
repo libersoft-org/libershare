@@ -67,14 +67,21 @@ async function getPageNews() {
 async function getPageCategories(pathArr = null) {
  const elCategory = f.qs('#content .categories');
  if (pathArr.length == 2) {
-  const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
-  if (cat && cat.data && cat.data.length == 1) {
-   const temp_cat = f.getHTML('categories-category');
-   elCategory.innerHTML = f.translate(temp_cat, { '{CATEGORY}': cat.data[0].name });
-   await getPageCategoriesMore(cat.data[0].id);
+  const temp_cat = f.getHTML('categories-category');
+  if (pathArr[1] == 'all') {
+   elCategory.innerHTML = f.translate(temp_cat, { '{CATEGORY}': 'All' });
+   await getPageCategoriesMore();
    // TODO: onscroll is not working
    if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data[0].id);
-  } else elCategory.innerHTML = f.getHTML('categories-category-notfound'); // TODO: replace for HTML page
+  } else {
+   const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
+   if (cat && cat.data && cat.data.length == 1) {
+    elCategory.innerHTML = f.translate(temp_cat, { '{CATEGORY}': cat.data[0].name });
+    await getPageCategoriesMore(cat.data[0].id);
+    // TODO: onscroll is not working
+    if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data[0].id);
+   } else elCategory.innerHTML = f.getHTML('categories-category-notfound'); // TODO: replace for HTML page
+  }
  } else {
   elCategory.innerHTML = f.getHTML('categories-list');
   const temp_item = f.getHTML('categories-item');

@@ -55,11 +55,11 @@ class WebServer {
    '/terms/',
    '/contact/'].join('|')})`), (req, res) => {
     res.send(Common.translate(fs.readFileSync(path.join(__dirname, '../web/frontend/index.html'), 'utf8'), {
-    '{TITLE}': Common.settings.web.name,
-    '{OG-URL}': req.url,
-    '{OG-DESCRIPTION}': Common.settings.web.description,
-    '{OG-IMAGE}': '/img/logo-og.webp'
-   }));
+     '{TITLE}': Common.settings.web.name,
+     '{OG-URL}': req.url,
+     '{OG-DESCRIPTION}': Common.settings.web.description,
+     '{OG-IMAGE}': '/img/logo-og.webp'
+    }));
   });
   app.use('/', express.static(path.join(__dirname, '../web/frontend'), { fallthrough: true }));
   app.use((req, res) => res.status(404).send('404 Not found'));
