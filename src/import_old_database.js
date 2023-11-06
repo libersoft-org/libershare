@@ -26,7 +26,7 @@ for (let i of items) {
 items = await db.query('SELECT * FROM file');
 for (let i of items) {
  const created = i.created.toISOString();
- console.log(`INSERT INTO files (id, id_items, name, file_name, size, playable, ip, created) VALUES (${i.id}, ${i.id_product}, "${i.name}", "${i.filename}", "${i.size}", ${i.playable}, "${i.ip}", "${created}");`);
+ console.log(`INSERT INTO files (id, id_items, name, file_name, size, ip, created) VALUES (${i.id}, ${i.id_product}, "${i.name}", "${i.filename}", "${i.size}", "${i.ip}", "${created}");`);
 }
 
 items = await db.query('SELECT * FROM file_downloads');
