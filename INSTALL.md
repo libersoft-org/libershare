@@ -23,6 +23,8 @@ nano settings.json
 
 Here you need to set up:
 - **web** section:
+  - **name** - name of your website
+  - **description** - a website description visible in page header
   - **standalone** - true / false
     - **true** means it will run a standalone web server with network port
     - **false** means you'll run it as a unix socket and connect it through other web server (**Nginx** is recommended)
