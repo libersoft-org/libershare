@@ -20,7 +20,12 @@ class WebServer {
  // TODO - check if there is no FS injection
  async startServer() {
   const app = new Elysia();
-  app.use(this.logRequest.bind(this));
+  app.onRequest((req) => {
+   let url = req.request.url;
+   url = url.substring(url.indexOf('//') + 2);
+   url = url.substring(url.indexOf('/'));
+   Common.addLog(req.request.method + ' request from: ' + req.request.headers.get('cf-connecting-ip') + ' (' + (req.request.headers.get('cf-ipcountry') + ')') + ', URL: ' + url);
+  });
   app.get('*', async (req) => {
    //Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
    if (req.path.startsWith('/img/categories/')) return Bun.file(path.join(Common.settings.storage.images, 'categories', req.path.replace(new RegExp('^' + '/img/categories/'), '')));
@@ -43,12 +48,6 @@ class WebServer {
   Bun.serve(server);
   Common.addLog('Web server is running on ' + (Common.settings.web.standalone ? 'port: ' + Common.settings.web.port : 'Unix socket: ' + Common.settings.web.socket_path));
  }
-
- logRequest(req, next) {
-  console.log(req);
-  Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
-  next();
-}
 
  // TODO - While downloading a big file, page loading freezes
  getDownload(req) {
