@@ -29,7 +29,6 @@ class WebServer {
    else if (req.path.startsWith('/download/')) {
     const file = req.path.replace(new RegExp('^' + '/download/'), '').split('/');
     if (file.length == 2) {
-     console.log(file);
      const filePath = path.join(Common.settings.storage.download, file[0]);
      return new Response(Bun.file(filePath), {
       headers:  {
