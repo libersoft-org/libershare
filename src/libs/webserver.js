@@ -18,42 +18,20 @@ class WebServer {
 
  // TODO - add HTTPS support
  // TODO - check if there is no FS injection
- // TODO - While downloading a big file, page loading freezes
  async startServer() {
   const app = new Elysia();
+  app.use(this.logRequest.bind(this));
   app.get('*', async (req) => {
-   Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
+   //Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
    if (req.path.startsWith('/img/categories/')) return Bun.file(path.join(Common.settings.storage.images, 'categories', req.path.replace(new RegExp('^' + '/img/categories/'), '')));
    else if (req.path.startsWith('/img/items/')) return Bun.file(path.join(Common.settings.storage.images, 'items', req.path.replace(new RegExp('^' + '/img/items/'), '')));
-   else if (req.path.startsWith('/download/')) {
-    const file = req.path.replace(new RegExp('^' + '/download/'), '').split('/');
-    if (file.length == 2) {
-     const filePath = path.join(Common.settings.storage.download, file[0]);
-     return new Response(Bun.file(filePath), {
-      headers:  {
-       'Content-Type': 'application/octet-stream',
-       'Content-Disposition': 'attachment; filename="' + file[1] + '"'
-      }
-     });
-    } else return '404'; // TODO: replace for index with 404 !!!
-   } else if (req.path == '/admin/') {
-    const content = fs.readFileSync(path.join(__dirname, '../web/admin/index.html'), 'utf8');
-    return new Response(Common.translate(content, {
-     '{TITLE}': Common.settings.web.name + ' - Admin area'
-    }), { headers: { 'Content-Type': 'text/html' }});
-   } else {
+   else if (req.path.startsWith('/download/')) return this.getDownload(req);
+   else if (req.path.startsWith('/admin/')) return await this.getAdmin(req);
+   else {
     const file = path.join(__dirname, '../web/frontend/', req.path);
     if (fs.existsSync(file) && fs.lstatSync(file).isFile()) return new Response(Bun.file(path.join(__dirname, '../web/frontend/', req.path)));
-    else {
-     const content = fs.readFileSync(path.join(__dirname, '../web/frontend/index.html'), 'utf8');
-     return new Response(Common.translate(content, {
-      '{TITLE}': Common.settings.web.name,
-      '{OG-URL}': req.url,
-      '{OG-DESCRIPTION}': Common.settings.web.description,
-      '{OG-IMAGE}': '/img/logo-og.webp'
-     }), { headers: { 'Content-Type': 'text/html' }});
-    }
-   };
+    else return await this.getIndex(req);
+   }
   });
   app.post('/api/:name', async (req) => {
    Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
@@ -64,6 +42,46 @@ class WebServer {
   else server.unix = Common.settings.web.socket_path;
   Bun.serve(server);
   Common.addLog('Web server is running on ' + (Common.settings.web.standalone ? 'port: ' + Common.settings.web.port : 'Unix socket: ' + Common.settings.web.socket_path));
+ }
+
+ logRequest(req, next) {
+  console.log(req);
+  Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
+  next();
+}
+
+ // TODO - While downloading a big file, page loading freezes
+ getDownload(req) {
+  const fileLink = req.path.replace(new RegExp('^' + '/download/'), '').split('/');
+  if (fileLink.length == 2) {
+   const filePath = path.join(Common.settings.storage.download, fileLink[0]);
+   const file = Bun.file(filePath);
+   if (file.exists()) {
+    return new Response(file, {
+     headers: {
+      'Content-Type': 'application/octet-stream',
+      'Content-Disposition': 'attachment; filename="' + fileLink[1] + '"'
+     }
+    });
+   } else return this.getIndex();
+  } else return this.getIndex();
+ }
+
+ async getAdmin(req) {
+  const content = await Bun.file(path.join(__dirname, '../web/admin/index.html')).text();
+  return new Response(Common.translate(content, {
+   '{TITLE}': Common.settings.web.name + ' - Admin area'
+  }), { headers: { 'Content-Type': 'text/html' }});
+ }
+ 
+ async getIndex(req) {
+  const content = await Bun.file(path.join(__dirname, '../web/frontend/index.html')).text();
+  return new Response(Common.translate(content, {
+   '{TITLE}': Common.settings.web.name,
+   '{OG-URL}': req.url,
+   '{OG-DESCRIPTION}': Common.settings.web.description,
+   '{OG-IMAGE}': '/img/logo-og.webp'
+  }), { headers: { 'Content-Type': 'text/html' }});
  }
 }
 
