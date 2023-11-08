@@ -21,7 +21,6 @@ class WebServer {
  // TODO - While downloading a big file, page loading freezes
  async startServer() {
   const app = new Elysia();
-  app.use
   app.get('*', async (req) => {
    Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
    if (req.path.startsWith('/img/categories/')) return Bun.file(path.join(Common.settings.storage.images, 'categories', req.path.replace(new RegExp('^' + '/img/categories/'), '')));
