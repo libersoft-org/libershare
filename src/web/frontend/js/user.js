@@ -94,9 +94,7 @@ async function getPageCategories(pathArr = null) {
     const itemCount = cat.items_count - cat.items_count_hidden;
     if (itemCount != 0) imgFiles.push(cat.image);
    }
-   const imgData = await f.getAPI('get_images_categories', {
-    files: imgFiles
-   });
+   const imgData = await f.getAPI('get_images_categories', { files: imgFiles });
    console.log(imgData);
    for (const cat of cats.data) {
     const itemCount = cat.items_count - cat.items_count_hidden;
@@ -105,7 +103,7 @@ async function getPageCategories(pathArr = null) {
      crows += f.translate(temp_item, {
       '{LINK}': cat.link,
       '{NAME}': cat.name,
-      // TODO: 'item-default.webp' should be returned by API, not like this:
+      // TODO: 'item-default.webp' should be returned by static files images array (got by other API), not like this:
       '{IMAGE}': imgData.data[cat.image] ? imgData.data[cat.image] : f.pathImages + 'item-default.webp',
       '{COUNT}': itemCount
      });
