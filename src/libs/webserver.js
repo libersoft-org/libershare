@@ -25,23 +25,15 @@ class WebServer {
    url = url.substring(url.indexOf('//') + 2);
    url = url.substring(url.indexOf('/'));
    Common.addLog(req.request.method + ' request from: ' + req.request.headers.get('cf-connecting-ip') + ' (' + (req.request.headers.get('cf-ipcountry') + ')') + ', URL: ' + url);
-  });
-  app.get('*', async (req) => {
    //Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
-   if (req.path.startsWith('/img/categories/')) return Bun.file(path.join(Common.settings.storage.images, 'categories', req.path.replace(new RegExp('^' + '/img/categories/'), '')));
-   else if (req.path.startsWith('/img/items/')) return Bun.file(path.join(Common.settings.storage.images, 'items', req.path.replace(new RegExp('^' + '/img/items/'), '')));
-   else if (req.path.startsWith('/download/')) return this.getDownload(req);
-   else if (req.path.startsWith('/admin/')) return await this.getAdmin(req);
-   else {
-    const file = path.join(__dirname, '../web/frontend/', req.path);
-    if (fs.existsSync(file) && fs.lstatSync(file).isFile()) return new Response(Bun.file(path.join(__dirname, '../web/frontend/', req.path)));
-    else return await this.getIndex(req);
-   }
   });
-  app.post('/api/:name', async (req) => {
-   Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
-   return new Response(JSON.stringify(await this.api.processAPI(req.params.name, req.body)), { headers: { 'Content-Type': 'application/json' }});
-  });
+  app.post('/api/:name', async (req) => this.getAPI(req));
+  app.get('/img/categories/:name', (req) => Bun.file(path.join(Common.settings.storage.images, 'categories', req.params.name)));
+  app.get('/img/items/:name', (req) => Bun.file(path.join(Common.settings.storage.images, 'items', req.params.name)));
+  app.get('/download/:hash/:name', async (req) => this.getDownload(req));
+  app.get('/upload/:hash/:name', async (req) => this.getUpload(req));
+  app.get('/admin/', async (req) => this.getAdmin(req));
+  app.get('/*', async (req) => this.getFile(req));
   const server = { fetch: app.fetch };
   if (Common.settings.web.standalone) server.port = Common.settings.web.port;
   else server.unix = Common.settings.web.socket_path;
@@ -49,21 +41,34 @@ class WebServer {
   Common.addLog('Web server is running on ' + (Common.settings.web.standalone ? 'port: ' + Common.settings.web.port : 'Unix socket: ' + Common.settings.web.socket_path));
  }
 
- // TODO - While downloading a big file, page loading freezes
- getDownload(req) {
-  const fileLink = req.path.replace(new RegExp('^' + '/download/'), '').split('/');
-  if (fileLink.length == 2) {
-   const filePath = path.join(Common.settings.storage.download, fileLink[0]);
-   const file = Bun.file(filePath);
-   if (file.exists()) {
-    return new Response(file, {
-     headers: {
-      'Content-Type': 'application/octet-stream',
-      'Content-Disposition': 'attachment; filename="' + fileLink[1] + '"'
-     }
-    });
-   } else return this.getIndex();
-  } else return this.getIndex();
+ async getAPI(req) {
+  return new Response(JSON.stringify(await this.api.processAPI(req.params.name, req.body)), { headers: { 'Content-Type': 'application/json' }})
+ }
+
+ // TODO - While downloading a big file, page loading is extremely slow
+ async getUpload(req) {
+  if (!req.params.hash || !req.params.name) return this.getIndex(req);
+  const file = Bun.file(path.join(Common.settings.storage.upload, req.params.hash));
+  if (!(await file.exists())) return this.getIndex(req);
+  return new Response(file, {
+   headers: {
+    'Content-Type': 'application/octet-stream',
+    'Content-Disposition': 'attachment; filename="' + req.params.name + '"'
+   }
+  });
+ }
+
+ // TODO - While downloading a big file, page loading is extremely slow
+ async getDownload(req) {
+  if (!req.params.hash || !req.params.name) return this.getIndex(req);
+  const file = Bun.file(path.join(Common.settings.storage.download, req.params.hash));
+  if (!(await file.exists())) return this.getIndex(req);
+  return new Response(file, {
+   headers: {
+    'Content-Type': 'application/octet-stream',
+    'Content-Disposition': 'attachment; filename="' + req.params.name + '"'
+   }
+  });
  }
 
  async getAdmin(req) {
@@ -72,16 +77,23 @@ class WebServer {
    '{TITLE}': Common.settings.web.name + ' - Admin area'
   }), { headers: { 'Content-Type': 'text/html' }});
  }
- 
+
  async getIndex(req) {
   const content = await Bun.file(path.join(__dirname, '../web/frontend/index.html')).text();
   return new Response(Common.translate(content, {
    '{TITLE}': Common.settings.web.name,
-   '{OG-URL}': req.url,
+   // TODO: BUG: returns "http://server/..." in request.host and req.request.url, not an actual host that comes from the user
+   '{OG-URL}': req.request.url,
    '{OG-DESCRIPTION}': Common.settings.web.description,
    '{OG-IMAGE}': '/img/logo-og.webp'
   }), { headers: { 'Content-Type': 'text/html' }});
  }
+
+ async getFile(req) {
+  const file = path.join(__dirname, '../web/frontend/', req.path);
+  if (fs.existsSync(file) && fs.lstatSync(file).isFile()) return new Response(Bun.file(path.join(__dirname, '../web/frontend/', req.path)));
+  else return this.getIndex(req);
+ };
 }
 
 module.exports = WebServer;
