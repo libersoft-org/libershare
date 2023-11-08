@@ -2,16 +2,16 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const Data = require('./data.js');
+const { Common } = require('./common.js');
 
+// TODO: Move to some class
 const validCaptchas = {};
-
 function cleanupOldCaptchas() {
  const currentTime = new Date().getTime();
  for (const captchaId in validCaptchas) {
   if (currentTime - validCaptchas[captchaId].timestamp > 10 * 60 * 1000) delete validCaptchas[captchaId];
  }
 }
-
 setInterval(cleanupOldCaptchas, 60 * 1000);
 
 class API {
@@ -19,6 +19,7 @@ class API {
   this.apiMethods = {
    get_html_files: this.getHTMLFiles,
    get_css_files: this.getCSSFiles,
+   get_images_categories: this.getImagesCategories,
    get_captcha: this.getCaptcha,
    get_categories: this.getCategories,
    get_category_by_id: this.getCategoryByID,
@@ -111,6 +112,21 @@ class API {
    for (const file of files) css += fs.readFileSync(path.join(dir, file), 'utf8') + os.EOL;
   }
   return { error: 0, data: css };
+ }
+
+ async getImagesCategories(p = {}) {
+  const f = {};
+  for (const file of p.files) f[file] = await this.getBinaryFileToBase64(path.join(Common.settings.storage.images, 'categories', file));
+  return { error: 0, data: f };
+ }
+
+ async getBinaryFileToBase64(file) {
+  try {
+   const data = Bun.file(file);
+   return 'data:' + data.type + ';base64,' + Buffer.from(await data.arrayBuffer()).toString('base64');
+  } catch {
+   return null;
+  }
  }
 
  async getCaptcha() {

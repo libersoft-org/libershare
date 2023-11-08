@@ -1,4 +1,3 @@
-const fs = require('fs');
 const path = require('path');
 const { Elysia } = require('elysia');
 const API = require('./api.js');
@@ -17,23 +16,20 @@ class WebServer {
  }
 
  // TODO - add HTTPS support
- // TODO - check if there is no FS injection
  async startServer() {
-  const app = new Elysia();
-  app.onRequest((req) => {
-   let url = req.request.url;
-   url = url.substring(url.indexOf('//') + 2);
-   url = url.substring(url.indexOf('/'));
-   Common.addLog(req.request.method + ' request from: ' + req.request.headers.get('cf-connecting-ip') + ' (' + (req.request.headers.get('cf-ipcountry') + ')') + ', URL: ' + url);
-   //Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
-  });
-  app.post('/api/:name', async (req) => this.getAPI(req));
-  app.get('/img/categories/:name', (req) => Bun.file(path.join(Common.settings.storage.images, 'categories', req.params.name)));
-  app.get('/img/items/:name', (req) => Bun.file(path.join(Common.settings.storage.images, 'items', req.params.name)));
-  app.get('/download/:hash/:name', async (req) => this.getDownload(req));
-  app.get('/upload/:hash/:name', async (req) => this.getUpload(req));
-  app.get('/admin/', async (req) => this.getAdmin(req));
-  app.get('/*', async (req) => this.getFile(req));
+  const app = new Elysia()
+   .onRequest((req) => {
+    let url = '/' + req.request.url.split('/').slice(3).join('/');
+    Common.addLog(req.request.method + ' request from: ' + req.request.headers.get('cf-connecting-ip') + ' (' + (req.request.headers.get('cf-ipcountry') + ')') + ', URL: ' + url);
+    //Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
+   })
+   .post('/api/:name', async (req) => this.getAPI(req))
+   .get('/img/categories/:name', (req) => Bun.file(path.join(Common.settings.storage.images, 'categories', req.params.name)))
+   .get('/img/items/:name', (req) => Bun.file(path.join(Common.settings.storage.images, 'items', req.params.name)))
+   .get('/download/:hash/:name', async (req) => this.getDownload(req))
+   .get('/upload/:hash/:name', async (req) => this.getUpload(req))
+   .get('/admin/', async (req) => this.getAdmin(req))
+   .get('/*', async (req) => this.getFile(req));
   const server = { fetch: app.fetch };
   if (Common.settings.web.standalone) server.port = Common.settings.web.port;
   else server.unix = Common.settings.web.socket_path;
@@ -45,7 +41,6 @@ class WebServer {
   return new Response(JSON.stringify(await this.api.processAPI(req.params.name, req.body)), { headers: { 'Content-Type': 'application/json' }})
  }
 
- // TODO - While downloading a big file, page loading is extremely slow
  async getUpload(req) {
   if (!req.params.hash || !req.params.name) return this.getIndex(req);
   const file = Bun.file(path.join(Common.settings.storage.upload, req.params.hash));
@@ -58,7 +53,6 @@ class WebServer {
   });
  }
 
- // TODO - While downloading a big file, page loading is extremely slow
  async getDownload(req) {
   if (!req.params.hash || !req.params.name) return this.getIndex(req);
   const file = Bun.file(path.join(Common.settings.storage.download, req.params.hash));
@@ -90,7 +84,7 @@ class WebServer {
  }
 
  async getFile(req) {
-  const file = Bun.file(path.join(__dirname, '../web/frontend/', req.path));¨
+  const file = Bun.file(path.join(__dirname, '../web/frontend/', req.path));
   if (!await file.exists()) return this.getIndex(req);
   else return new Response(file);
  };

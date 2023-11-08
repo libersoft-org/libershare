@@ -89,15 +89,24 @@ async function getPageCategories(pathArr = null) {
   let itemsCount = 0;
   let crows = '';
   if (cats && cats.data) {
+   const imgFiles = [];
+   for (cat of cats.data) {
+    const itemCount = cat.items_count - cat.items_count_hidden;
+    if (itemCount != 0) imgFiles.push(cat.image);
+   }
+   const imgData = await f.getAPI('get_images_categories', {
+    files: imgFiles
+   });
+   console.log(imgData);
    for (const cat of cats.data) {
     const itemCount = cat.items_count - cat.items_count_hidden;
     if (itemCount != 0) {
-     let img = f.pathImages + 'item-default.webp';
-     if (cat.image) img = f.pathImages + 'categories/' + cat.image;
+     console.log(imgData[cat.image]);
      crows += f.translate(temp_item, {
       '{LINK}': cat.link,
       '{NAME}': cat.name,
-      '{IMAGE}': img,
+      // TODO: 'item-default.webp' should be returned by API, not like this:
+      '{IMAGE}': imgData.data[cat.image] ? imgData.data[cat.image] : f.pathImages + 'item-default.webp',
       '{COUNT}': itemCount
      });
      itemsCount += itemCount;
