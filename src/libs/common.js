@@ -3,7 +3,7 @@ const os = require('os');
 const { dirname } = require('path');
 
 class Common {
- static appName = 'LiberShare';
+ static appName = 'LiberShare Server';
  static appVersion = '1.00';
  static settingsFile = 'settings.json';
  static appPath = dirname(require.main.filename) + '/';
