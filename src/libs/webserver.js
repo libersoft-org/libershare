@@ -3,7 +3,6 @@ const path = require('path');
 const { Elysia } = require('elysia');
 const API = require('./api.js');
 const { Common } = require('./common.js');
-const common = require('./common.js');
 
 class WebServer {
  async run() {
