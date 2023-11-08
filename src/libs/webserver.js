@@ -49,7 +49,7 @@ class WebServer {
  async getUpload(req) {
   if (!req.params.hash || !req.params.name) return this.getIndex(req);
   const file = Bun.file(path.join(Common.settings.storage.upload, req.params.hash));
-  if (!(await file.exists())) return this.getIndex(req);
+  if (!await file.exists()) return this.getIndex(req);
   return new Response(file, {
    headers: {
     'Content-Type': 'application/octet-stream',
@@ -62,7 +62,7 @@ class WebServer {
  async getDownload(req) {
   if (!req.params.hash || !req.params.name) return this.getIndex(req);
   const file = Bun.file(path.join(Common.settings.storage.download, req.params.hash));
-  if (!(await file.exists())) return this.getIndex(req);
+  if (!await file.exists()) return this.getIndex(req);
   return new Response(file, {
    headers: {
     'Content-Type': 'application/octet-stream',
@@ -90,9 +90,9 @@ class WebServer {
  }
 
  async getFile(req) {
-  const file = path.join(__dirname, '../web/frontend/', req.path);
-  if (fs.existsSync(file) && fs.lstatSync(file).isFile()) return new Response(Bun.file(path.join(__dirname, '../web/frontend/', req.path)));
-  else return this.getIndex(req);
+  const file = Bun.file(path.join(__dirname, '../web/frontend/', req.path));¨
+  if (!await file.exists()) return this.getIndex(req);
+  else return new Response(file);
  };
 }
 
