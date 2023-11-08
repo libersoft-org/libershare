@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const express = require('express');
+const { Elysia } = require('elysia');
 const API = require('./api.js');
 const { Common } = require('./common.js');
+const common = require('./common.js');
 
 class WebServer {
  async run() {
@@ -16,7 +17,62 @@ class WebServer {
   }
  }
 
- // TODO - add HTTPS support, change to something faster, than express:
+ // TODO - add HTTPS support
+ // TODO - check if there is no FS injection
+ // TODO - While downloading a big file, page loading freezes
+ async startServer() {
+  const app = new Elysia();
+  app.use
+  app.get('*', async (req) => {
+   Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
+   if (req.path.startsWith('/img/categories/')) return Bun.file(path.join(Common.settings.storage.images, 'categories', req.path.replace(new RegExp('^' + '/img/categories/'), '')));
+   else if (req.path.startsWith('/img/items/')) return Bun.file(path.join(Common.settings.storage.images, 'items', req.path.replace(new RegExp('^' + '/img/items/'), '')));
+   else if (req.path.startsWith('/download/')) {
+    const file = req.path.replace(new RegExp('^' + '/download/'), '').split('/');
+    if (file.length == 2) {
+     console.log(file);
+     const filePath = path.join(Common.settings.storage.download, file[0]);
+     return new Response(Bun.file(filePath), {
+      headers:  {
+       'Content-Type': 'application/octet-stream',
+       'Content-Disposition': 'attachment; filename="' + file[1] + '"'
+      }
+     });
+    } else return '404'; // TODO: replace for index with 404 !!!
+   } else if (req.path == '/admin/') {
+    const content = fs.readFileSync(path.join(__dirname, '../web/admin/index.html'), 'utf8');
+    return new Response(Common.translate(content, {
+     '{TITLE}': Common.settings.web.name + ' - Admin area'
+    }), { headers: { 'Content-Type': 'text/html' }});
+   } else {
+    const file = path.join(__dirname, '../web/frontend/', req.path);
+    if (fs.existsSync(file) && fs.lstatSync(file).isFile()) return new Response(Bun.file(path.join(__dirname, '../web/frontend/', req.path)));
+    else {
+     const content = fs.readFileSync(path.join(__dirname, '../web/frontend/index.html'), 'utf8');
+     return new Response(Common.translate(content, {
+      '{TITLE}': Common.settings.web.name,
+      '{OG-URL}': req.url,
+      '{OG-DESCRIPTION}': Common.settings.web.description,
+      '{OG-IMAGE}': '/img/logo-og.webp'
+     }), { headers: { 'Content-Type': 'text/html' }});
+    }
+   };
+  });
+  app.post('/api/:name', async (req) => {
+   Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
+   return new Response(JSON.stringify(await this.api.processAPI(req.params.name, req.body)), { headers: { 'Content-Type': 'application/json' }});
+  });
+  const server = { fetch: app.fetch };
+  if (Common.settings.web.standalone) server.port = Common.settings.web.port;
+  else server.unix = Common.settings.web.socket_path;
+  Bun.serve(server);
+  Common.addLog('Web server is running on ' + (Common.settings.web.standalone ? 'port: ' + Common.settings.web.port : 'Unix socket: ' + Common.settings.web.socket_path));
+ }
+}
+
+module.exports = WebServer;
+
+/* OLD - Express.js:
  async startServer() {
   const app = express();
   app.use((req, res, next) => {
@@ -60,11 +116,9 @@ class WebServer {
    Common.addLog('Web server is running on ' + (Common.settings.web.standalone ? 'port: ' + Common.settings.web.port : 'Unix socket: ' + Common.settings.web.socket_path));
   });
  }
-}
+*/
 
-module.exports = WebServer;
-
-/* OLD Bun.serve (without middleware) - DELETE WHEN NOT NEEDED ANYMORE:
+/* OLD 2: Bun.serve (without middleware) - DELETE WHEN NOT NEEDED ANYMORE:
 const multipart = require('parse-multipart-data');
 
 startServer() {

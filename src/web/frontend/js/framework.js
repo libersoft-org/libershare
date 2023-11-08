@@ -196,7 +196,7 @@ class Framework {
   const res = await fetch(this.pathAPI + name, {
    method: 'POST',
    headers: { 'Content-Type': 'application/json' },
-   body: body && JSON.stringify(body)
+   body: body ? JSON.stringify(body) : '{}'
   });
   return res.ok ? await res.json() : false;
  }
