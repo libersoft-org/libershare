@@ -1,6 +1,5 @@
 {
  "dependencies": {
-  "express": "*",
   "elysia": "*",
   "mysql2": "*",
   "crypto": "*",
