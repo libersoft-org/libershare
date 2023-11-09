@@ -74,10 +74,7 @@ class WebServer {
   const content = await Bun.file(path.join(__dirname, '../web/static/user/index.html')).text();
   return new Response(Common.translate(content, {
    '{TITLE}': Common.settings.web.name,
-   // TODO: BUG: returns "http://server/..." in request.host and req.request.url, not an actual host that comes from the user
-   '{OG-URL}': req.request.url,
-   '{OG-DESCRIPTION}': Common.settings.web.description,
-   '{OG-IMAGE}': '/img/logo-og.webp'
+   '{DESCRIPTION}': Common.settings.web.description
   }), { headers: { 'Content-Type': 'text/html' }});
  }
 
