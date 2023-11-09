@@ -216,8 +216,8 @@ class API {
   */
   if (!p || !p.id) return { error: 1, message: 'Category ID not specified' };
   const res = await this.data.getCategoryByID(p.id);
-  if (res.length == 0) return { error: 2, message: 'Category does not exist' };
-  else return { error: 0, data: res };
+  if (res.length != 1) return { error: 2, message: 'Category does not exist' };
+  else return { error: 0, data: res[0] };
  }
 
  async getCategoryByLink(p = {}) {
@@ -232,8 +232,8 @@ class API {
   */
   if (!p || !p.link) return { error: 1, message: 'Category link not specified' }
   const res = await this.data.getCategoryByLink(p.link);
-  if (res && res.length == 0) return { error: 2, message: 'Category does not exist' };
-  else return { error: 0, data: res };
+  if (res && res.length != 1) return { error: 2, message: 'Category does not exist' };
+  else return { error: 0, data: res[0] };
  }
 
  async getFileByID(p = {}) {
@@ -465,13 +465,17 @@ class API {
     else echo json_encode(array('error' => 2, 'message' => 'Item doesn\'t exist'));
    } else echo json_encode(array('error' => 1, 'message' => 'Item ID is empty'));
   */
+  if (!p.id) return { error: 1, message: 'Item ID is empty' }
   const res = await this.data.getItemByID(p.id, p.hidden);
-  return { error: 0, data: res };
+  if (res.length != 1) return { error: 2, message: 'Item does not exist' }
+  return { error: 0, data: res[0] };
  }
 
  async getItemByLink(p = {}) {
+  if (!p.link) return { error: 1, message: 'Item link is empty' }
   const res = await this.data.getItemByLink(p.link, p.hidden);
-  return { error: 0, data: res };
+  if (res.length != 1) return { error: 2, message: 'Item does not exist' }
+  return { error: 0, data: res[0] };
  }
 
  async getItemsAutoComplete(p = {}) {

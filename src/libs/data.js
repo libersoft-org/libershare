@@ -165,8 +165,7 @@ class Data {
  async getLogin() {}
 
  async getItemByID(id, hidden) {
-  return await this.db.query(
-   `
+  return await this.db.query(`
    SELECT
     id,
     id_categories,
@@ -181,8 +180,7 @@ class Data {
     (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = items.id) AS visits_by_ip,
     created
    FROM items
-   WHERE id = ? ${!hidden ? 'AND hidden = 0' : ''}`,
-   [id]
+   WHERE id = ?${!hidden ? ' AND hidden = 0' : ''}`, [id]
   );
  }
 
@@ -203,8 +201,7 @@ class Data {
     (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = items.id) AS visits_by_ip,
     created
    FROM items
-   WHERE link = ? ${!hidden ? 'AND hidden = 0' : ''}`,
-   [link]
+   WHERE link = ?${!hidden ? ' AND hidden = 0' : ''}`, [link]
   );
  }
 

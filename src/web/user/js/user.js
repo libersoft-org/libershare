@@ -69,15 +69,15 @@ async function getPageCategories(pathArr = null) {
    elCategory.innerHTML = f.translate(temp_cat, { '{CATEGORY}': 'All' });
    await getPageCategoriesMore();
    // TODO: onscroll is not working
-   if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data[0].id);
+   if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data.id);
   } else {
    const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
-   if (cat && cat.data && cat.data.length == 1) {
-    elCategory.innerHTML = f.translate(temp_cat, { '{CATEGORY}': cat.data[0].name });
-    await getPageCategoriesMore(cat.data[0].id);
+   if (cat && cat.data) {
+    elCategory.innerHTML = f.translate(temp_cat, { '{CATEGORY}': cat.data.name });
+    await getPageCategoriesMore(cat.data.id);
     // TODO: onscroll is not working
-    if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data[0].id);
-   } else elCategory.innerHTML = f.getHTML('categories-category-notfound'); // TODO: replace for HTML page
+    if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data.id);
+   } else elCategory.innerHTML = f.getHTML('categories-category-notfound');
   }
  } else {
   elCategory.innerHTML = f.getHTML('categories-list');
@@ -159,46 +159,39 @@ async function getPageCategoriesMore(id) {
 
 async function getPageItem(pathArr = null) {
  const item = await f.getAPI('get_item_by_link', { link: pathArr[1] });
- if (item.data && item.data.length == 1) {
-  const image_default = f.pathImages + 'item-default.webp';
-  const temp = f.getHTML('item-detail');
-  const cat = await f.getAPI('get_category_by_id', {
-   id: item.data[0].id_categories
-  });
-  item.data[0].id_categories;
-  const files = await f.getAPI('get_files', { id_item: item.data[0].id });
-  const temp_files = f.getHTML('item-file');
-  const temp_play = f.getHTML('item-play-button');
+ if (item.data) {
+  const cat = await f.getAPI('get_category_by_id', { id: item.data.id_categories });
+  const files = await f.getAPI('get_files', { id_item: item.data.id });
+  const temp_files = f.translate(f.getHTML('item-file'), { '{ICON-DOWNLOAD}': f.getImage('download.svg') });
+  const temp_play = f.translate(f.getHTML('item-play-button'), { '{ICON-PLAY}': f.getImage('play.svg') });
   let rows = '';
-  const videoExtensions = ['mp4', 'mp3', 'webm'];
+  const extVideo = ['.mp4', '.webm', '.ogg'];
   for (const fd of files.data) {
-   const fileExtension = fd.file_name.split('.').pop().toLowerCase();
-   let repl = temp_play;
-   
-   if (!videoExtensions.includes(fileExtension)) repl = '';
-   else repl = f.translate(repl, {
-    '{HASH}': fd.name,
-    '{NAME}': fd.file_name,
-   });
+   let html_play = '';
+   if (extVideo.some(ext => fd.file_name.endsWith(ext))) {
+    html_play = f.translate(temp_play, {
+     '{HASH}': fd.name,
+     '{NAME}': fd.file_name,
+    });
+   }
    rows += f.translate(temp_files, {
     '{NAME}': fd.file_name,
     '{SIZE}': f.getHumanSize(fd.size),
     '{DOWNLOAD-HASH}': fd.name,
     '{DOWNLOAD-NAME}': fd.file_name,
-    '{PLAY-ONLINE}': repl
+    '{PLAY-ONLINE}': html_play
    });
   }
-  let image = image_default;
-  if (item.data[0].image) image = f.pathImages + 'items/' + item.data[0].image;
-  const html = f.translate(temp, {
-   '{CATEGORY-LINK}': cat.data[0].link,
-   '{CATEGORY}': cat.data[0].name,
-   '{NAME}': item.data[0].name,
-   '{IMAGE}': image,
+  const imgData = await f.getAPI('get_images_item', { file: item.data.image });
+  const html = f.translate(f.getHTML('item-detail'), {
+   '{CATEGORY-LINK}': cat.data.link,
+   '{CATEGORY}': cat.data.name,
+   '{NAME}': item.data.name,
+   '{IMAGE}': imgData.data ? imgData.data : f.getImage('item-default.webp'),
    '{FILES}': rows
   });
   f.qs('#content').innerHTML = html;
- } else f.qs('#content').innerHTML = 'Item not found'; // TODO: replace for HTML page
+ } else f.qs('#content').innerHTML = f.getHTML('item-detail-notfound');
 }
 
 async function getPageForum() {
