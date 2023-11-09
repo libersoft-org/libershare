@@ -73,7 +73,7 @@ class WebServer {
  }
 
  async getIndex(req) {
-  const content = await Bun.file(path.join(__dirname, '../web/frontend/index.html')).text();
+  const content = await Bun.file(path.join(__dirname, '../web/user/index.html')).text();
   return new Response(Common.translate(content, {
    '{TITLE}': Common.settings.web.name,
    // TODO: BUG: returns "http://server/..." in request.host and req.request.url, not an actual host that comes from the user
@@ -84,7 +84,7 @@ class WebServer {
  }
 
  async getFile(req) {
-  const file = Bun.file(path.join(__dirname, '../web/frontend/', req.path));
+  const file = Bun.file(path.join(__dirname, '../web/user/', req.path));
   if (!await file.exists()) return this.getIndex(req);
   else return new Response(file);
  };
@@ -121,9 +121,9 @@ module.exports = WebServer;
     '{TITLE}': Common.settings.web.name + ' - Admin area'
    }));
   });
-  app.use('/', express.static(path.join(__dirname, '../web/frontend')));
+  app.use('/', express.static(path.join(__dirname, '../web/user')));
   app.use('/', (req, res) => {
-   res.send(Common.translate(fs.readFileSync(path.join(__dirname, '../web/frontend/index.html'), 'utf8'), {
+   res.send(Common.translate(fs.readFileSync(path.join(__dirname, '../web/user/index.html'), 'utf8'), {
     '{TITLE}': Common.settings.web.name,
     '{OG-URL}': req.url,
     '{OG-DESCRIPTION}': Common.settings.web.description,

@@ -1,21 +1,9 @@
-body {
- background: url('/img/background.svg') repeat;
- background-size: 240px;
-}
-
 #splash {
  display: flex;
  flex-direction: column;
  align-items: center;
  justify-content: center;
- height: calc(100vh - 40px);
- padding: 20px;
-}
-
-#splash img {
- width: 300px;
- max-width: 100%;
- margin-bottom: 20px;
+ height: 100vh;
 }
 
 #splash .loader {

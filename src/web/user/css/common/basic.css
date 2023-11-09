@@ -37,7 +37,7 @@ body {
 
 body {
  margin: 0;
- background: url('/img/background.svg') repeat;
+ background-repeat: repeat;
  background-size: 240px;
 }
 

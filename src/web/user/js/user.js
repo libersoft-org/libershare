@@ -29,11 +29,7 @@ async function getPageContent() {
 }
 
 async function getPageNews() {
- const image_default = f.pathImages + 'item-default.webp';
- const temp_cat = f.getHTML('news-category');
- const temp_item = f.getHTML('items-item');
- const cats = await f.getAPI('get_categories');
- for (const cat of cats.data) {
+ for (const cat of (await f.getAPI('get_categories')).data) {
   if (cat.items_count - cat.items_count_hidden !== 0) {
    const items = await f.getAPI('get_items', {
     id_category: cat.id,
@@ -43,17 +39,18 @@ async function getPageNews() {
     count: count,
     offset: 0
    });
+   const imgFiles = [];
+   for (item of items.data) imgFiles.push(item.image_sm);
+   const imgData = (await f.getAPI('get_images_items', { files: imgFiles })).data;
    let prows = '';
    for (const item of items.data) {
-    let image = image_default;
-    if (item.image_sm) image = f.pathImages + 'items/' + item.image_sm;
-    prows += f.translate(temp_item, {
+    prows += f.translate(f.getHTML('items-item'), {
      '{NAME}': item.name,
      '{LINK}': item.link,
-     '{IMAGE}': item.adult === 0 ? image : f.pathImages + 'item-censored.webp'
+     '{IMAGE}': imgData[item.image_sm] ? (item.adult ? f.getImage('item-censored.webp') : imgData[item.image_sm]) : f.getImage('item-default.webp')
     });
    }
-   const crow = f.translate(temp_cat, {
+   const crow = f.translate(f.getHTML('news-category'), {
     '{LINK}': cat.link,
     '{CATEGORY}': cat.name,
     '{ITEMS}': prows
@@ -100,7 +97,6 @@ async function getPageCategories(pathArr = null) {
     // TODO: this is not necessary if we can filter it in API call (dont show hidden categories as a parameter of API call):
     const itemCount = cat.items_count - cat.items_count_hidden;
     if (itemCount != 0) {
-     console.log(imgData[cat.image]);
      crows += f.translate(temp_item, {
       '{LINK}': cat.link,
       '{NAME}': cat.name,
@@ -115,7 +111,7 @@ async function getPageCategories(pathArr = null) {
   f.qs('#content .categories .items').innerHTML = f.translate(temp_item, {
    '{LINK}': 'all',
    '{NAME}': 'All',
-   '{IMAGE}': f.pathImages + 'item-all.webp',
+   '{IMAGE}': f.getImage('item-all.webp'),
    '{COUNT}': itemsCount
   }) + crows;
  }
@@ -139,20 +135,15 @@ async function getPageCategoriesMore(id) {
     loader.remove();
     loading = false;
    } else {
-    const temp_item = f.getHTML('items-item');
     const imgFiles = [];
-    for (item of items.data) imgFiles.push(item.image);
-    const imgData = await f.getAPI('get_images_items', { files: imgFiles });
-    const image_default = f.pathImages + 'item-default.webp'; // TODO: replace with basic image array
+    for (item of items.data) imgFiles.push(item.image_sm);
+    const imgData = (await f.getAPI('get_images_items', { files: imgFiles })).data;
     let prows = '';
     for (const item of items.data) {
-     let image = image_default;
-     if (item.image_sm) image = f.pathImages + 'items/' + item.image_sm;
-     let prow = f.translate(temp_item, {
+     let prow = f.translate(f.getHTML('items-item'), {
       '{NAME}': item.name,
       '{LINK}': item.link,
-      // TODO: 'item-default.webp' should be returned by static files images array (got by other API), not like this:
-      '{IMAGE}': imgData.data[item.image] ? imgData.data[item.image] : f.pathImages + 'item-default.webp'
+      '{IMAGE}': imgData[item.image_sm] ? imgData[item.image_sm] : f.getImage('item-default.webp')
      });
      prows += prow;
     }
@@ -218,7 +209,6 @@ async function getPageForum() {
 async function getPageForumThreads(count, page = 1) {
  const temp_thread = f.getHTML('forum-row');
  const table = f.qs('#content .forum tbody');
- console.log(table);
  // TODO: if loader is not visible, return, otherwise load more threads
  //if (!table.length) return;
  //if (!table.isVisible()) return;

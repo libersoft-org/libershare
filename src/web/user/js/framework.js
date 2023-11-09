@@ -4,7 +4,6 @@ class Framework {
   this.pageName = 'LiberShare';
   this.menuOpened = false;
   this.pathAPI = '/api/';
-  this.pathImages = '/img/';
   this.pathJSON = '/json/';
   this.eventPageLoaded = new Event('page-loaded');
  }
@@ -13,8 +12,13 @@ class Framework {
   this.pages = JSON.parse(await this.getFileContent(this.pathJSON + 'pages.json'));
   await this.getHTMLFiles();
   document.head.appendChild(document.createElement('style')).textContent = await this.getCSS();
+  await this.getImagesFiles();
   this.qs('#splash-style').remove();
-  document.body.innerHTML = this.getHTML('main');
+  document.body.innerHTML = this.translate(this.getHTML('main'), {
+   '{ICON-MENU}': this.getImage('menu.svg'),
+   '{ICON-LOGO}': this.getImage('logo.webp')
+  });
+  document.body.style.backgroundImage = 'url(\'' + this.getImage('background.svg') + '\')';
   this.setPath(location.pathname);
   this.getMenu();
   this.getReload();
@@ -22,7 +26,7 @@ class Framework {
  }
 
  async getHTMLFiles() {
-  this.htmlArr = (await f.getAPI('get_html_files')).data;
+  this.htmlArr = (await this.getAPI('get_html')).data;
  }
 
  getHTML(name) {
@@ -31,7 +35,16 @@ class Framework {
  }
 
  async getCSS() {
-  return (await f.getAPI('get_css_files', { groups: ['user', 'common', 'components'] })).data;
+  return (await this.getAPI('get_css', { groups: ['common', 'user', 'components'] })).data;
+ }
+
+ async getImagesFiles() {
+  this.imgArr = (await this.getAPI('get_images_basic', { groups: ['common', 'user'] })).data;
+ }
+
+ getImage(name) {
+  if (!this.imgArr.hasOwnProperty(name)) return null;
+  return this.imgArr[name];
  }
 
  setPath(path) {
@@ -44,8 +57,20 @@ class Framework {
  }
 
  getMenu() {
-  this.qs('#menu-desktop').innerHTML = this.getHTML('menu');
-  this.qs('#menu-mobile').innerHTML = this.getHTML('menu');
+  let menu = this.translate(this.getHTML('menu'), {
+   '{ICON-NEWS}': this.getImage('news.svg'),
+   '{ICON-CATEGORIES}': this.getImage('categories.svg'),
+   '{ICON-UPLOAD}': this.getImage('upload.svg'),
+   '{ICON-FORUM}': this.getImage('forum.svg'),
+   '{ICON-FAQ}': this.getImage('faq.svg'),
+   '{ICON-TERMS}': this.getImage('terms.svg'),
+   '{ICON-CONTACT}': this.getImage('contact.svg'),
+   '{ICON-SETTINGS}': this.getImage('settings.svg'),
+   '{ICON-LOGIN}': this.getImage('login.svg')
+  });
+  this.qs('#menu-desktop').innerHTML = menu;
+  this.qs('#menu-mobile').innerHTML = menu;
+  this.qs('#header .search').style.backgroundImage = 'url(\'' + this.getImage('search.svg') + '\')';
   this.getMenuSwitch();
  }
 
@@ -70,7 +95,7 @@ class Framework {
 
  menuClose() {
   this.menuOpened = false;
-  this.qs('#header .menu-toggler').src = this.pathImages + 'menu.svg';
+  this.qs('#header .menu-toggler').src = this.getImage('menu.svg');
   this.qs('#menu-mobile').style.transform = 'translateX(-110%)';
   this.qs('#menu-overlay').style.transform = 'translateX(-110%)';
   this.qs('#header').classList.add('shadow');
@@ -78,7 +103,7 @@ class Framework {
 
  menuOpen() {
   this.menuOpened = true;
-  this.qs('#header .menu-toggler').src = this.pathImages + 'close.svg';
+  this.qs('#header .menu-toggler').src = this.getImage('close.svg');
   this.qs('#menu-mobile').style.transform = 'translateX(0)';
   this.qs('#menu-overlay').style.transform = 'translateX(0)';
   this.qs('#header').classList.remove('shadow');

@@ -17,11 +17,12 @@ setInterval(cleanupOldCaptchas, 60 * 1000);
 class API {
  constructor() {
   this.apiMethods = {
-   get_html_files: this.getHTMLFiles,
-   get_css_files: this.getCSSFiles,
+   get_html: this.getHTML,
+   get_css: this.getCSS,
    get_images_basic: this.getImagesBasic,
    get_images_categories: this.getImagesCategories,
    get_images_items: this.getImagesItems,
+   get_images_item: this.getImagesItem,
    get_captcha: this.getCaptcha,
    get_categories: this.getCategories,
    get_category_by_id: this.getCategoryByID,
@@ -96,31 +97,33 @@ class API {
   else return { error: 1, message: 'API not found' };
  }
 
- getHTMLFiles() {
-  const dir = path.join(__dirname, '../web/frontend/html/');
+ getHTML() {
+  const dir = path.join(__dirname, '../web/user/html/');
   const files = fs.readdirSync(dir).filter(file => file.endsWith('.html'));
   let html = {};
   for (const file of files) html[file.replace(/\.html$/, '')] = fs.readFileSync(path.join(dir, file), 'utf8');
   return { error: 0, data: html };
  }
 
- getCSSFiles(p = {}) {
+ getCSS(p = {}) {
   let css = '';
   // TODO: FIX THE POTENTIAL FS INJECTION (p.group) !!!!!!!!!!!!!!!!:
-  const cssRoot = path.join(__dirname, '../web/frontend/css/');
   for (const group of p.groups) {
-   const dir = path.join(cssRoot + group + '/');
+   const dir = path.join(__dirname, '../web/user/css/', group);
    const files = fs.readdirSync(dir).filter(file => file.endsWith('.css'));
    for (const file of files) css += fs.readFileSync(path.join(dir, file), 'utf8') + os.EOL;
   }
   return { error: 0, data: css };
  }
  
- // TODO: Split to common, frontend, admin
  async getImagesBasic(p = {}) {
   const f = {};
-  console.log(path.join(__dirname, 'web/frontend/img', file));
-  for (const file of p.files) f[file] = await this.getBinaryFileToBase64(path.join(__dirname, 'web/frontend/img', file));
+  const ext = ['.svg', '.jpg', '.jpeg', '.gif', '.png', '.webp', '.avif', '.heif'];
+  for (const group of p.groups) {
+   const dir = path.join(__dirname, '../web/img/', group + '/');
+   const files = fs.readdirSync(dir).filter(file => ext.some(ext => file.endsWith(ext)));
+   for (const file of files) f[file] = await this.getBinaryFileToBase64(path.join(dir, file));
+  }
   return { error: 0, data: f };
  }
 
@@ -134,6 +137,10 @@ class API {
   const f = {};
   for (const file of p.files) f[file] = await this.getBinaryFileToBase64(path.join(Common.settings.storage.images, 'items', file));
   return { error: 0, data: f };
+ }
+
+ async getImagesItem(p = {}) {
+  return { error: 0, data: await this.getBinaryFileToBase64(path.join(Common.settings.storage.images, 'items', p.file)) };
  }
 
  async getBinaryFileToBase64(file) {
