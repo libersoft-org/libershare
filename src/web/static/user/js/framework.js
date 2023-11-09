@@ -132,8 +132,12 @@ class Framework {
   this.closeModal();
   const html = this.getHTML('modal');
   const modal = document.createElement('div');
-  modal.innerHTML = this.translate(html, { '{TITLE}': title, '{BODY}': body });
-  
+  modal.innerHTML = this.translate(html, {
+   '{TITLE}': title,
+   '{BODY}': body,
+   '{ICON-CLOSE}': this.getImage('close.svg')
+  });
+
   // TODO - DRAGABLE NOT WORKING PROPERLY - can reach off window boundaries and shrinks when on right side:
   const mod = modal.querySelector('.modal');
   let isDragging = false;
