@@ -24,8 +24,6 @@ class WebServer {
     //Common.addLog(req.request.method + ' request from: ' + req.headers['cf-connecting-ip'] + ' (' + (req.headers['cf-ipcountry'] + ')') + ', URL path: ' + req.path);
    })
    .post('/api/:name', async (req) => this.getAPI(req))
-   .get('/img/categories/:name', (req) => Bun.file(path.join(Common.settings.storage.images, 'categories', req.params.name)))
-   .get('/img/items/:name', (req) => Bun.file(path.join(Common.settings.storage.images, 'items', req.params.name)))
    .get('/download/:hash/:name', async (req) => this.getDownload(req))
    .get('/upload/:hash/:name', async (req) => this.getUpload(req))
    .get('/admin/', async (req) => this.getAdmin(req))
