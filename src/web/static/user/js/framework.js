@@ -110,7 +110,7 @@ class Framework {
  }
 
  getReload() {
-  return this.processPath(this.path, 'replaceState');
+  return this.processPath(location.pathname, 'replaceState');
  }
 
  getPage(path) {

@@ -98,7 +98,7 @@ class API {
  }
 
  getHTML() {
-  const dir = path.join(__dirname, '../web/user/html/');
+  const dir = path.join(__dirname, '../web/html/user/');
   const files = fs.readdirSync(dir).filter(file => file.endsWith('.html'));
   let html = {};
   for (const file of files) html[file.replace(/\.html$/, '')] = fs.readFileSync(path.join(dir, file), 'utf8');
@@ -109,7 +109,7 @@ class API {
   let css = '';
   // TODO: FIX THE POTENTIAL FS INJECTION (p.group) !!!!!!!!!!!!!!!!:
   for (const group of p.groups) {
-   const dir = path.join(__dirname, '../web/user/css/', group);
+   const dir = path.join(__dirname, '../web/css/', group);
    const files = fs.readdirSync(dir).filter(file => file.endsWith('.css'));
    for (const file of files) css += fs.readFileSync(path.join(dir, file), 'utf8') + os.EOL;
   }

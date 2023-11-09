@@ -64,14 +64,14 @@ class WebServer {
  }
 
  async getAdmin(req) {
-  const content = await Bun.file(path.join(__dirname, '../web/admin/index.html')).text();
+  const content = await Bun.file(path.join(__dirname, '../web/static/admin/index.html')).text();
   return new Response(Common.translate(content, {
    '{TITLE}': Common.settings.web.name + ' - Admin area'
   }), { headers: { 'Content-Type': 'text/html' }});
  }
 
  async getIndex(req) {
-  const content = await Bun.file(path.join(__dirname, '../web/user/index.html')).text();
+  const content = await Bun.file(path.join(__dirname, '../web/static/user/index.html')).text();
   return new Response(Common.translate(content, {
    '{TITLE}': Common.settings.web.name,
    // TODO: BUG: returns "http://server/..." in request.host and req.request.url, not an actual host that comes from the user
@@ -82,7 +82,7 @@ class WebServer {
  }
 
  async getFile(req) {
-  const file = Bun.file(path.join(__dirname, '../web/user/', req.path));
+  const file = Bun.file(path.join(__dirname, '../web/static/user/', req.path));
   if (!await file.exists()) return this.getIndex(req);
   else return new Response(file);
  };
