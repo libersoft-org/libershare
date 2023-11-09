@@ -91,12 +91,13 @@ async function getPageCategories(pathArr = null) {
   if (cats && cats.data) {
    const imgFiles = [];
    for (cat of cats.data) {
+    // TODO: this is not necessary if we can filter it in API call (dont show hidden categories as a parameter of API call):
     const itemCount = cat.items_count - cat.items_count_hidden;
     if (itemCount != 0) imgFiles.push(cat.image);
    }
    const imgData = await f.getAPI('get_images_categories', { files: imgFiles });
-   console.log(imgData);
    for (const cat of cats.data) {
+    // TODO: this is not necessary if we can filter it in API call (dont show hidden categories as a parameter of API call):
     const itemCount = cat.items_count - cat.items_count_hidden;
     if (itemCount != 0) {
      console.log(imgData[cat.image]);
@@ -139,7 +140,10 @@ async function getPageCategoriesMore(id) {
     loading = false;
    } else {
     const temp_item = f.getHTML('items-item');
-    const image_default = f.pathImages + 'item-default.webp';
+    const imgFiles = [];
+    for (item of items.data) imgFiles.push(item.image);
+    const imgData = await f.getAPI('get_images_items', { files: imgFiles });
+    const image_default = f.pathImages + 'item-default.webp'; // TODO: replace with basic image array
     let prows = '';
     for (const item of items.data) {
      let image = image_default;
@@ -147,7 +151,8 @@ async function getPageCategoriesMore(id) {
      let prow = f.translate(temp_item, {
       '{NAME}': item.name,
       '{LINK}': item.link,
-      '{IMAGE}': item.adult === 0 ? image : f.pathImages + 'item-censored.webp'
+      // TODO: 'item-default.webp' should be returned by static files images array (got by other API), not like this:
+      '{IMAGE}': imgData.data[item.image] ? imgData.data[item.image] : f.pathImages + 'item-default.webp'
      });
      prows += prow;
     }

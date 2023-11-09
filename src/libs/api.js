@@ -19,7 +19,9 @@ class API {
   this.apiMethods = {
    get_html_files: this.getHTMLFiles,
    get_css_files: this.getCSSFiles,
+   get_images_basic: this.getImagesBasic,
    get_images_categories: this.getImagesCategories,
+   get_images_items: this.getImagesItems,
    get_captcha: this.getCaptcha,
    get_categories: this.getCategories,
    get_category_by_id: this.getCategoryByID,
@@ -113,10 +115,24 @@ class API {
   }
   return { error: 0, data: css };
  }
+ 
+ // TODO: Split to common, frontend, admin
+ async getImagesBasic(p = {}) {
+  const f = {};
+  console.log(path.join(__dirname, 'web/frontend/img', file));
+  for (const file of p.files) f[file] = await this.getBinaryFileToBase64(path.join(__dirname, 'web/frontend/img', file));
+  return { error: 0, data: f };
+ }
 
  async getImagesCategories(p = {}) {
   const f = {};
   for (const file of p.files) f[file] = await this.getBinaryFileToBase64(path.join(Common.settings.storage.images, 'categories', file));
+  return { error: 0, data: f };
+ }
+
+ async getImagesItems(p = {}) {
+  const f = {};
+  for (const file of p.files) f[file] = await this.getBinaryFileToBase64(path.join(Common.settings.storage.images, 'items', file));
   return { error: 0, data: f };
  }
 
