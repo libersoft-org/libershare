@@ -8,13 +8,13 @@
 
 #splash .loader {
  margin: 0 auto;
- width: 50px;
- height: 50px;
+ width: 100px;
+ height: 100px;
  border-radius: 50%;
  background:
-  radial-gradient(farthest-side, #000 94%, transparent) top/8px 8px no-repeat,
+  radial-gradient(farthest-side, #000 94%, transparent) top/16px 16px no-repeat,
   conic-gradient(transparent 30%, #000);
- -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 8px), #000 0);
+ -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 16px), #000 0);
  animation: loader 1s infinite linear;
 }
 

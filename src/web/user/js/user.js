@@ -17,7 +17,9 @@ async function getPageContent() {
   uploads: getPageUploads,
   search: getPageSearch,
   forum: getPageForum,
-  item: getPageItem
+  item: getPageItem,
+  faq: getPageFAQ,
+  contact: getPageContact
  };
  const pageHandler = pageHandlers[f.pathArr[0]];
  if (pageHandler) await pageHandler(f.pathArr);
@@ -195,6 +197,8 @@ async function getPageItem(pathArr = null) {
 }
 
 async function getPageForum() {
+ const temp_buttons = f.translate(f.getHTML('forum-buttons'), { '{ICON-NEW}': f.getImage('news.svg') });
+ f.qs('#content .body .buttons').innerHTML = temp_buttons;
  await getPageForumThreads(10);
  //$(window).on('resize scroll', function() { getPageForumThreadsNext(threadscount, elem, temp_thread, temp_more); });
 }
@@ -227,18 +231,21 @@ async function getPageForumThreads(count, page = 1) {
 }
 
 async function getPageUploads() {
- const temp_file = f.getHTML('uploads-file');
+ const temp_upload_detail = f.translate(f.getHTML('uploads-detail'), { '{ICON-UPLOAD}': f.getImage('upload.svg') });
+ f.qs('#content .body .upload').innerHTML = temp_upload_detail;
+ const temp_file = f.translate(f.getHTML('uploads-file'), { '{ICON-DOWNLOAD}': f.getImage('download.svg') });
  const files = await f.getAPI('get_uploads', { order: 'created', direction: true, count: 10 });
- // TODO: check if files.data exists, otherwise remove table
- let rows = '';
- for (const item of files.data) {
-  rows += f.translate(temp_file, {
-   '{NAME}': item.real_name,
-   '{SIZE}': f.getHumanSize(item.size),
-   '{LINK}': '/upload/' + item.file_name + '/' +  item.real_name
-  });
- }
- f.qs('#content .files').innerHTML = rows;
+ if (files.data) {
+  let rows = '';
+  for (const item of files.data) {
+   rows += f.translate(temp_file, {
+    '{NAME}': item.real_name,
+    '{SIZE}': f.getHumanSize(item.size),
+    '{LINK}': '/upload/' + item.file_name + '/' +  item.real_name
+   });
+  }
+  f.qs('#content .files').innerHTML = rows; 
+ } else f.qs('#content .uploads').remove();
 }
 
 async function getPageSearch() {
@@ -268,8 +275,19 @@ async function getPageSearch() {
  f.qs('#content .items').innerHTML = prows;
 }
 
+async function getPageFAQ() {
+ f.qs('#content .faq').innerHTML = f.translate(f.getHTML('faq-items'), { '{ICON-DOWN}': f.getImage('down.svg') });
+}
+
+async function getPageContact() {
+ f.qs('#content .buttons').innerHTML = f.translate(f.getHTML('contact-buttons'), { '{ICON-SEND}': f.getImage('send.svg') });
+}
+
 async function getModalLogin() {
- await f.getModal('Login', f.getHTML('modal-login'));
+ await f.getModal('Login', f.translate(f.getHTML('modal-login'), {
+  '{ICON-LOGIN}': f.getImage('login.svg'),
+  '{ICON-RELOAD}': f.getImage('reload.svg'),
+ }));
 
  const captcha = await f.getAPI('get_captcha');
  const elCaptcha = f.qs('.modal .body .captcha');
