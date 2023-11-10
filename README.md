@@ -2,7 +2,7 @@
 
 [![Created Badge](https://badges.pufler.dev/created/libersoft-org/libershare)](https://badges.pufler.dev) [![Updated Badge](https://badges.pufler.dev/updated/libersoft-org/libershare)](https://badges.pufler.dev) [![Visits Badge](https://badges.pufler.dev/visits/libersoft-org/libershare)](https://badges.pufler.dev)
 
-## Table of Contents
+## Table of contents
 - [**About**](#about)
 - [**Development state**](#development-state)
 - [**Installation**](#installation)
