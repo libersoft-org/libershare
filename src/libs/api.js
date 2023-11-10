@@ -85,8 +85,7 @@ class API {
 
  async runAPI() {
   this.data = new Data();
-  await this.data.dbPrepare();
-  this.data.startSessionCleanup();
+  await this.data.init();
  }
 
  async processAPI(name, params) {
@@ -200,7 +199,7 @@ class API {
    $sql = 'SELECT id, name, link, image, (SELECT SUM((SELECT SUM(size) FROM file WHERE id_item = item.id)) FROM item WHERE id_category = category.id) AS size, (SELECT COUNT(*) FROM item WHERE id_category = category.id) AS items_count, (SELECT COUNT(*) FROM item WHERE id_category = category.id AND hidden = 1) AS items_count_hidden, (SELECT COUNT(*) FROM category_visits WHERE id_category = category.id) AS visits, (SELECT COUNT(DISTINCT session) FROM category_visits WHERE id_category = category.id) AS visits_by_session, (SELECT COUNT(DISTINCT ip) FROM category_visits WHERE id_category = category.id) AS visits_by_ip, created FROM category ' . ($search != '' ? ' WHERE MATCH(name) AGAINST ("' . $search .'")' : '') . ($search == '' ? 'ORDER BY ' . ($o != '' ? $o : 'created') . ' ' . ($d == 'desc' ? 'DESC' : 'ASC') . ', id ' . ($d == 'desc' ? 'DESC' : 'ASC') : '') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
-  return { error: 0, data: await this.data.getCategories(p.order, p.direction, p.search, p.count, p.offset)
+  return { error: 0, data: await this.data.getCategories(p.items, p.order, p.direction, p.search, p.count, p.offset)
   };
  }
 

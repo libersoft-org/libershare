@@ -10,16 +10,7 @@ class Database {
    password: Common.settings.database.password
   });
  }
- async reconnect() {
-  try {
-   await this.open();
-   await this.query('USE ' + Common.settings.database.name);
-   Common.addLog('Database reconnected successfully.');
-  } catch (err) {
-   Common.addLog('Failed to reconnect to the database. Retrying in 5 seconds.', 2);
-   setTimeout(() => this.reconnect(), 5000);
-  }
- }
+
  close() {
   try {
    this.db.end();
@@ -30,7 +21,20 @@ class Database {
 
  async query(sql, params = []) {
   try {
+   await this.db.execute('SELECT 1');
+  } catch (err) {
+   Common.addLog('Database connection lost. Reconnecting ...', 2);
+   try {
+    await this.open();
+    await this.db.execute('USE ' + Common.settings.database.name);
+    Common.addLog('Database reconnected successfully.');
+   } catch (err) {
+    Common.addLog('Failed to reconnect to the database.', 2);
+   }
+  }
+  try {
    const [result] = await this.db.execute(sql, params);
+   Common.addLog('Query: ' + sql);
    return result;
   } catch (ex) {
    Common.addLog('Query: ' + sql, 2);
@@ -44,6 +48,14 @@ class Database {
 
  async databaseExists(name) {
   return (await this.query('SHOW DATABASES LIKE ?', [name])).length > 0;
+ }
+
+ escapeId(text) {
+  return this.db.escapeId(text);
+ }
+
+ escape(text) {
+  return this.db.escape(text);
  }
 }
 

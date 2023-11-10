@@ -71,8 +71,8 @@ class App {
      port: 80,
      socket_path: '/run/libershare.sock',
      socket_owner: 'nginx',
-     session_user_lifetime: 604800,
-     session_admin_lifetime: 604800
+     sessions_users: 604800,
+     sessions_admins: 604800
     },
     storage: {
      upload: './upload/',

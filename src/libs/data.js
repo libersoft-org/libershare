@@ -1,69 +1,52 @@
 const crypto = require('crypto');
 const Database = require('./database.js');
-const { Common, validateEmail, checkDate } = require('./common.js');
+const { Common } = require('./common.js');
 
 class Data {
  constructor() {
   this.db = new Database();
  }
 
- async dbPrepare() {
+ async init() {
   await this.db.open();
   await this.db.query('USE ' + Common.settings.database.name);
   Common.addLog('Database "' + Common.settings.database.name + '" is connected ...');
-  this.startConnectionCheck();
- }
- async removeExpiredSessions() {
-  await this.db.query(`DELETE FROM sessions WHERE last_access < DATE_SUB(NOW(), INTERVAL ${Common.settings.web.session_user_lifetime} SECOND)`);
- }
-
- async checkConnection() {
-  try {
-   await this.db.query('SELECT 1');
-  } catch (err) {
-   Common.addLog('Database connection lost. Trying to reconnect.', 2);
-   this.db.reconnect();
-  }
- }
-
- startConnectionCheck() {
-  setInterval(() => this.checkConnection(), 60000);
- }
-
- startSessionCleanup() {
   setInterval(async () => {
-   await this.removeExpiredSessions();
-  }, 3600000);
+   Common.addLog('Deleting old sessions ...');
+   await this.db.query('DELETE FROM sessions_users WHERE last < DATE_SUB(NOW(), INTERVAL ' + Common.settings.web.sessions_users + ' SECOND)');
+   await this.db.query('DELETE FROM sessions_admins WHERE last < DATE_SUB(NOW(), INTERVAL ' + Common.settings.web.sessions_admins + ' SECOND)'); 
+  }, 600000);
  }
 
  async dbCreate() {
   await this.db.open();
   await this.db.query('CREATE DATABASE IF NOT EXISTS ' + Common.settings.database.name);
   await this.db.query('USE ' + Common.settings.database.name);
-  await this.db.query('CREATE TABLE IF NOT EXISTS admins (id int PRIMARY KEY AUTO_INCREMENT, username varchar(32) NOT NULL UNIQUE, password varchar(255) NOT NULL, created timestamp DEFAULT current_timestamp())');
-  await this.db.query('CREATE TABLE IF NOT EXISTS admins_log (id int PRIMARY KEY AUTO_INCREMENT, id_admins int NOT NULL, message text NOT NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_admins) REFERENCES admins(id))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS users (id int PRIMARY KEY AUTO_INCREMENT, username varchar(24) NOT NULL UNIQUE, password varchar(255) NOT NULL, email varchar(128) NOT NULL UNIQUE, first_name varchar(64) NOT NULL, last_name varchar(64) NOT NULL, sex bool NOT NULL DEFAULT 1, birthdate date NOT NULL, blocked bool NOT NULL DEFAULT 0, confirmation varchar(128) NOT NULL, reg_ip varchar(45) NOT NULL, reg_session varchar(128) NOT NULL, reg_user_agent varchar(255) NOT NULL, created timestamp DEFAULT current_timestamp())');
-  await this.db.query('CREATE TABLE IF NOT EXISTS logins (id int PRIMARY KEY AUTO_INCREMENT, id_users int NULL, ip varchar(45) NOT NULL, session varchar(128) NOT NULL, user_agent varchar(255) NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_users) REFERENCES users(id))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS search (id int PRIMARY KEY AUTO_INCREMENT, phrase varchar(255) NOT NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp())');
-  await this.db.query('CREATE TABLE IF NOT EXISTS uploads (id int PRIMARY KEY AUTO_INCREMENT, file_name varchar(40) NOT NULL UNIQUE, real_name varchar(255) NOT NULL, size bigint(20) NOT NULL DEFAULT 0, ip varchar(64) NOT NULL, created timestamp DEFAULT current_timestamp(), FULLTEXT (real_name))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS uploads_downloads (id int PRIMARY KEY AUTO_INCREMENT, id_uploads int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_uploads) REFERENCES uploads(id))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS categories (id int PRIMARY KEY AUTO_INCREMENT, name varchar(64) NOT NULL UNIQUE, link varchar(64) NOT NULL UNIQUE, image varchar(255) NULL UNIQUE, created timestamp DEFAULT current_timestamp(), FULLTEXT (name))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS categories_visits (id int PRIMARY KEY AUTO_INCREMENT, id_categories int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_categories) REFERENCES categories(id))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS items (id int PRIMARY KEY AUTO_INCREMENT, id_categories int NOT NULL, name varchar(255) NOT NULL, link varchar(255) NOT NULL UNIQUE, image varchar(32) NULL UNIQUE, image_sm varchar(32) NULL UNIQUE, adult bool NOT NULL DEFAULT 0, hidden bool NOT NULL DEFAULT 0, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_categories) REFERENCES categories(id), FULLTEXT (name))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS items_visits (id int NOT NULL AUTO_INCREMENT, id_items int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), PRIMARY KEY (id), FOREIGN KEY (id_items) REFERENCES items(id))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS files (id int PRIMARY KEY AUTO_INCREMENT, id_items int NULL, name varchar(255) NOT NULL UNIQUE, file_name varchar(255) NOT NULL UNIQUE, size bigint(20) NOT NULL DEFAULT 0, ip varchar(64) NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_items) REFERENCES items(id), FULLTEXT (file_name))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS files_downloads (id int PRIMARY KEY AUTO_INCREMENT, id_files int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_files) REFERENCES files(id))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS files_plays (id int PRIMARY KEY AUTO_INCREMENT, id_files int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_files) REFERENCES files(id))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS files_plays_web (id int PRIMARY KEY AUTO_INCREMENT, id_files int NULL, ip varchar(45) NOT NULL, session varchar(255) NOT NULL, user_agent text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_files) REFERENCES files(id))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS forum_threads (id int PRIMARY KEY AUTO_INCREMENT, id_users int NULL, topic varchar(128) NOT NULL, body text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_users) REFERENCES users(id))');
-  await this.db.query('CREATE TABLE IF NOT EXISTS forum_posts (id int PRIMARY KEY AUTO_INCREMENT, id_users int NULL, id_forum_threads int NULL, body text NOT NULL, created timestamp DEFAULT current_timestamp(), FOREIGN KEY (id_users) REFERENCES users(id), FOREIGN KEY (id_forum_threads) REFERENCES forum_threads(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS admins (id INT PRIMARY KEY AUTO_INCREMENT, username VARCHAR(32) NOT NULL UNIQUE, password VARCHAR(255) NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP)');
+  await this.db.query('CREATE TABLE IF NOT EXISTS admins_log (id INT PRIMARY KEY AUTO_INCREMENT, id_admins INT NOT NULL, message TEXT NOT NULL, ip VARCHAR(45) NOT NULL, session VARCHAR(255) NOT NULL, user_agent TEXT NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_admins) REFERENCES admins(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS users (id INT PRIMARY KEY AUTO_INCREMENT, username VARCHAR(24) NOT NULL UNIQUE, password VARCHAR(255) NOT NULL, email VARCHAR(128) NOT NULL UNIQUE, first_name VARCHAR(64) NOT NULL, last_name VARCHAR(64) NOT NULL, sex BOOL NOT NULL DEFAULT 1, birthdate date NOT NULL, blocked BOOL NOT NULL DEFAULT 0, confirmation VARCHAR(128) NOT NULL, reg_ip VARCHAR(45) NOT NULL, reg_session VARCHAR(128) NOT NULL, reg_user_agent VARCHAR(255) NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP)');
+  await this.db.query('CREATE TABLE IF NOT EXISTS logins (id INT PRIMARY KEY AUTO_INCREMENT, id_users INT NULL, ip VARCHAR(45) NOT NULL, session VARCHAR(128) NOT NULL, user_agent VARCHAR(255) NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_users) REFERENCES users(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS search (id INT PRIMARY KEY AUTO_INCREMENT, phrase VARCHAR(255) NOT NULL, ip VARCHAR(45) NOT NULL, session VARCHAR(255) NOT NULL, user_agent TEXT NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP)');
+  await this.db.query('CREATE TABLE IF NOT EXISTS uploads (id INT PRIMARY KEY AUTO_INCREMENT, file_name VARCHAR(40) NOT NULL UNIQUE, real_name VARCHAR(255) NOT NULL, size bigINT(20) NOT NULL DEFAULT 0, ip VARCHAR(64) NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FULLTEXT (real_name))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS uploads_downloads (id INT PRIMARY KEY AUTO_INCREMENT, id_uploads INT NULL, ip VARCHAR(45) NOT NULL, session VARCHAR(255) NOT NULL, user_agent TEXT NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_uploads) REFERENCES uploads(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS categories (id INT PRIMARY KEY AUTO_INCREMENT, name VARCHAR(64) NOT NULL UNIQUE, link VARCHAR(64) NOT NULL UNIQUE, image VARCHAR(255) NULL UNIQUE, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FULLTEXT (name))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS categories_visits (id INT PRIMARY KEY AUTO_INCREMENT, id_categories INT NULL, ip VARCHAR(45) NOT NULL, session VARCHAR(255) NOT NULL, user_agent TEXT NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_categories) REFERENCES categories(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS items (id INT PRIMARY KEY AUTO_INCREMENT, id_categories INT NOT NULL, name VARCHAR(255) NOT NULL, link VARCHAR(255) NOT NULL UNIQUE, image VARCHAR(32) NULL UNIQUE, image_sm VARCHAR(32) NULL UNIQUE, adult BOOL NOT NULL DEFAULT 0, hidden BOOL NOT NULL DEFAULT 0, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_categories) REFERENCES categories(id), FULLTEXT (name))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS items_visits (id INT NOT NULL AUTO_INCREMENT, id_items INT NULL, ip VARCHAR(45) NOT NULL, session VARCHAR(255) NOT NULL, user_agent TEXT NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (id), FOREIGN KEY (id_items) REFERENCES items(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS files (id INT PRIMARY KEY AUTO_INCREMENT, id_items INT NULL, name VARCHAR(255) NOT NULL UNIQUE, file_name VARCHAR(255) NOT NULL UNIQUE, size bigINT(20) NOT NULL DEFAULT 0, ip VARCHAR(64) NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_items) REFERENCES items(id), FULLTEXT (file_name))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS files_downloads (id INT PRIMARY KEY AUTO_INCREMENT, id_files INT NULL, ip VARCHAR(45) NOT NULL, session VARCHAR(255) NOT NULL, user_agent TEXT NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_files) REFERENCES files(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS files_plays (id INT PRIMARY KEY AUTO_INCREMENT, id_files INT NULL, ip VARCHAR(45) NOT NULL, session VARCHAR(255) NOT NULL, user_agent TEXT NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_files) REFERENCES files(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS files_plays_web (id INT PRIMARY KEY AUTO_INCREMENT, id_files INT NULL, ip VARCHAR(45) NOT NULL, session VARCHAR(255) NOT NULL, user_agent TEXT NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_files) REFERENCES files(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS forum_threads (id INT PRIMARY KEY AUTO_INCREMENT, id_users INT NULL, topic VARCHAR(128) NOT NULL, body TEXT NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_users) REFERENCES users(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS forum_posts (id INT PRIMARY KEY AUTO_INCREMENT, id_users INT NULL, id_forum_threads INT NULL, body TEXT NOT NULL, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_users) REFERENCES users(id), FOREIGN KEY (id_forum_threads) REFERENCES forum_threads(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS sessions_users (id INT PRIMARY KEY AUTO_INCREMENT, id_users INT NOT NULL, session VARCHAR(255) NOT NULL, last TIMESTAMP DEFAULT CURRENT_TIMESTAMP, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_users) REFERENCES users(id))');
+  await this.db.query('CREATE TABLE IF NOT EXISTS sessions_admins (id INT PRIMARY KEY AUTO_INCREMENT, id_admins INT NOT NULL, session VARCHAR(255) NOT NULL, last TIMESTAMP DEFAULT CURRENT_TIMESTAMP, created TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (id_admins) REFERENCES admins(id))');
   await this.db.query('INSERT IGNORE INTO admins (username, password) VALUES ("admin", "d033e22ae348aeb5660fc2140aec35850c4da997")');
-  await this.db.query('CREATE TABLE IF NOT EXISTS sessions (id int PRIMARY KEY AUTO_INCREMENT, user_id int NOT NULL, session_guid varchar(255) NOT NULL, last_access timestamp DEFAULT current_timestamp(), FOREIGN KEY (user_id) REFERENCES users(id))');
   await this.db.close();
  }
 
- async getCategories(order = null, direction = null, search = null, count = null, offset = null) {
-  const query = `
+ async getCategories(items = null, order = 'created', direction = false, search = null, count = null, offset = null) {
+  let query = `
    SELECT
     id,
     name,
@@ -73,13 +56,24 @@ class Data {
     (SELECT COUNT(*) FROM items WHERE id_categories = categories.id AND hidden = 1) AS items_count_hidden,
     created
    FROM categories
-   ${search ? 'WHERE MATCH(name) AGAINST (?) ' : ''}
-   ORDER BY ${order ? order : 'created'} ${order && direction ? 'DESC' : 'ASC'}, id ${direction ? 'DESC' : 'ASC'}
-   ${count && offset ? 'LIMIT ? OFFSET ?' : ''}
   `;
   const params = [];
-  if (search) params.push(search);
-  if (count && offset) params.push(count, offset);
+  if (search) {
+   query += ' WHERE MATCH(name) AGAINST (?)';
+   params.push(search);
+  }
+  if (items === true || items === false) query += (search ? ' AND' : ' WHERE') + ' items_count - items_count_hidden ' + (items ? '!=' : '=') + ' 0';
+  query += ' ORDER BY ' + this.db.escapeId(order);
+  query += ' ' + (direction ? 'DESC' : 'ASC');
+  query += ', id ' + (direction ? 'DESC' : 'ASC');
+  if (count) {
+   query += 'LIMIT ?';
+   params.push(count);
+  }
+  if (count && offset) {
+   query += ' OFFSET ?';
+   params.push(offset);
+  }
   return await this.db.query(query, params);
  }
 
@@ -351,8 +345,8 @@ class Data {
   const inputHashedPassword = crypto.createHash('sha1').update(params.password).digest('hex');
   if (storedHashedPassword !== inputHashedPassword) return { error: '2', message: 'Incorrect password' };
   const userId = user[0].id;
-  const timestampHex = Date.now().toString(16);
-  const sessionGuid = crypto.randomBytes(16).toString('hex') + timestampHex;
+  const TIMESTAMPHex = Date.now().toString(16);
+  const sessionGuid = crypto.randomBytes(16).toString('hex') + TIMESTAMPHex;
   await this.db.query('INSERT INTO sessions (user_id, session_guid, last_access) VALUES (?, ?, ?)', [userId, sessionGuid, new Date()]);
   return { data: { username: params.username, sessionguid: sessionGuid } };
  }

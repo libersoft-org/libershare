@@ -31,8 +31,8 @@ Here you need to set up:
   - **port** - your web server's network port (ignored if you're not running a standalone server)
   - **socket_path** - path to a unix socket file (ignored if you're running standalone server)
   - **socket_owner** - owner of a unix socket file
-  - **session_user_lifetime** - for how long the web server keeps user's session (in seconds)
-  - **session_admin_lifetime** - for how long the web server keeps admin's session (in seconds)
+  - **sessions_users** - for how long the web server keeps user's session (in seconds) - 0 = never expires
+  - **sessions_admins** - for how long the web server keeps admin's session (in seconds) - 0 = never expires
 - **storage** section:
   - **upload** - the path where a sucessfully uploaded files are stored
   - **download** - the path for files that have been moved from upload path to a specific product
