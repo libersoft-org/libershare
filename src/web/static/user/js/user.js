@@ -260,21 +260,28 @@ async function getPageSearch() {
    count: 12,
    offset: 0
   });
-  let prows = '';
-  const imgFiles = [];
-  for (item of items.data) imgFiles.push(item.image_sm);
-  const imgData = (await f.getAPI('get_images_items', { files: imgFiles })).data;
-  for (const item of items.data) {
-   let prow = f.translate(f.getHTML('items-item'), {
-    '{NAME}': item.name,
-    '{LINK}': item.link,
-    '{IMAGE}': imgData[item.image_sm] ? (item.adult ? f.getImage('item-censored.webp') : imgData[item.image_sm]) : f.getImage('item-default.webp')
-   });
-   prows += prow;
+  if (items.data.length > 0) {
+   let prows = '';
+   const imgFiles = [];
+   for (item of items.data) imgFiles.push(item.image_sm);
+   const imgData = (await f.getAPI('get_images_items', { files: imgFiles })).data;
+   for (const item of items.data) {
+    let prow = f.translate(f.getHTML('items-item'), {
+     '{NAME}': item.name,
+     '{LINK}': item.link,
+     '{IMAGE}': imgData[item.image_sm] ? (item.adult ? f.getImage('item-censored.webp') : imgData[item.image_sm]) : f.getImage('item-default.webp')
+    });
+    prows += prow;
+   }
+   f.qs('#content .items').innerHTML = prows;
+  } else {
+   f.qs('#content .search-result').innerHTML = f.getHTML('search-notfound');
+   f.qs('#content .loader').remove();
   }
-  f.qs('#content .items').innerHTML = prows;
  } else {
   f.qs('#content .breadcrumb .active').innerHTML = 'Search';
+  f.qs('#content .search-result').innerHTML = f.getHTML('search-notentered');
+  f.qs('#content .loader').remove();
  }
 }
 

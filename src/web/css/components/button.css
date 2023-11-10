@@ -10,6 +10,7 @@
 .button {
  display: flex;
  align-items: center;
+ text-align: center;
  padding: 8px;
  border-radius: 10px;
  font-weight: bold;
