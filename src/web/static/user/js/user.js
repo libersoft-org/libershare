@@ -249,30 +249,33 @@ async function getPageUploads() {
 }
 
 async function getPageSearch() {
- const phrase = f.escapeHTML(f.qs('#header .search').value.trim());
- f.qs('#content .breadcrumb .active').innerHTML = 'Search: ' + phrase;
- const temp_item = f.getHTML('items-item');
- const image_default = f.pathImages + 'item-default.webp';
- const items = await f.getAPI('get_items', {
-  search: phrase,
-  hidden: false,
-  files: true,
-  direction: true,
-  count: 12,
-  offset: 0
- });
- let prows = '';
- for (const item of items.data) {
-  let image = image_default;
-  if (item.image_sm) image = f.pathImages + 'items/' + item.image_sm;
-  let prow = f.translate(temp_item, {
-   '{NAME}': item.name,
-   '{LINK}': item.link,
-   '{IMAGE}': item.adult === 0 ? image : f.pathImages + 'item-censored.webp'
+ const phrase = f.escapeHTML(f.qs('#header .search .text').value.trim());
+ if (phrase) {
+  f.qs('#content .breadcrumb .active').innerHTML = 'Search: ' + phrase;
+  const items = await f.getAPI('get_items', {
+   search: phrase,
+   hidden: false,
+   files: true,
+   direction: true,
+   count: 12,
+   offset: 0
   });
-  prows += prow;
+  let prows = '';
+  const imgFiles = [];
+  for (item of items.data) imgFiles.push(item.image_sm);
+  const imgData = (await f.getAPI('get_images_items', { files: imgFiles })).data;
+  for (const item of items.data) {
+   let prow = f.translate(f.getHTML('items-item'), {
+    '{NAME}': item.name,
+    '{LINK}': item.link,
+    '{IMAGE}': imgData[item.image_sm] ? (item.adult ? f.getImage('item-censored.webp') : imgData[item.image_sm]) : f.getImage('item-default.webp')
+   });
+   prows += prow;
+  }
+  f.qs('#content .items').innerHTML = prows;
+ } else {
+  f.qs('#content .breadcrumb .active').innerHTML = 'Search';
  }
- f.qs('#content .items').innerHTML = prows;
 }
 
 async function getPageFAQ() {
@@ -288,7 +291,6 @@ async function getModalLogin() {
   '{ICON-LOGIN}': f.getImage('login.svg'),
   '{ICON-RELOAD}': f.getImage('reload.svg'),
  }));
-
  const captcha = await f.getAPI('get_captcha');
  const elCaptcha = f.qs('.modal .body .captcha');
  elCaptcha.style.backgroundColor = 'red';
@@ -301,9 +303,7 @@ async function getModalRegistration() {
  const days = Array.from({ length: 31 }, (_, i) => i + 1);
  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
  const years = Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i);
- let body = f.translate(f.getHTML('modal-registration'), {
-  '{ICON-RELOAD}': f.getImage('reload.svg')
- });
+ let body = f.translate(f.getHTML('modal-registration'), { '{ICON-RELOAD}': f.getImage('reload.svg') });
  body = body.replace('{DAYS}', days.map((day) => '<option value="' + day + '">' + day + '</option>').join(''));
  body = body.replace('{MONTHS}', months.map((month, index) => '<option value="' + (index + 1) + '">' + month + '</option>').join(''));
  body = body.replace('{YEARS}', years.map((year) => '<option value="' + year + '">' + year + '</option>').join(''));
@@ -326,13 +326,17 @@ function logout() {
  f.getPage('');
 }
 
-async function playVideo(link) {
- const temp_video = f.getHTML('item-video');
- f.qs('.play').innerHTML = f.translate (temp_video, { '{SRC}': link });
+function searchEnter(e) {
+ if (e.keyCode == 13 || e.which == 13) search();
 }
 
 function search() {
- if ((event.keyCode == 13 || event.which == 13) && f.qs('#header .search').value.trim() != '') f.getPage('search');
+ if (f.qs('#header .search .text').value.trim() != '') f.getPage('search');
+}
+
+async function playVideo(link) {
+ const temp_video = f.getHTML('item-video');
+ f.qs('.play').innerHTML = f.translate (temp_video, { '{SRC}': link });
 }
 
 function isElementVisible(el) {
@@ -385,21 +389,6 @@ function submitForm(type) {
    el.innerHTML = `${type.charAt(0).toUpperCase() + type.slice(1)} error: ${error.message}`;
    el.style.display = 'block';
   });
-}
-*/
-
-/* FROM E-MAIL SENDER APP - DELETE WHEN NOT NEEDED ANYMORE:
- await getModal('Edit campaign', html);
- await getModal('Edit campaign', '<div class="error">' + res.message + '</div>');
-
-async function deleteLinkModal(id, name) {
- await getModal('Delete link', await f.getFileContent(f.pathHTML + 'links-delete.html'));
- const body = f.qs('.modal .body');
- body.innerHTML = body.innerHTML.replaceAll('{ID}', id).replaceAll('{NAME}', name);
-}
-
-async function addServerModal() {
- await getModal('New server', await f.getFileContent(f.pathHTML + 'servers-add.html'));
 }
 */
 

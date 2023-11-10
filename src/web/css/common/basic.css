@@ -92,7 +92,6 @@ table tbody tr[onclick] {
 }
 
 input[type='text'],
-input[type='search'],
 input[type='password'],
 input[type='email'],
 select,

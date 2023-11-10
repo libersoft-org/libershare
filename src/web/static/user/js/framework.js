@@ -65,12 +65,12 @@ class Framework {
    '{ICON-FAQ}': this.getImage('faq.svg'),
    '{ICON-TERMS}': this.getImage('terms.svg'),
    '{ICON-CONTACT}': this.getImage('contact.svg'),
+   '{ICON-SEARCH}': this.getImage('search.svg'),
    '{ICON-SETTINGS}': this.getImage('settings.svg'),
    '{ICON-LOGIN}': this.getImage('login.svg')
   });
   this.qs('#menu-desktop').innerHTML = menu;
   this.qs('#menu-mobile').innerHTML = menu;
-  this.qs('#header .search').style.backgroundImage = 'url(\'' + this.getImage('search.svg') + '\')';
   this.getMenuSwitch();
  }
 

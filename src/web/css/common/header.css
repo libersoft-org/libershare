@@ -23,10 +23,28 @@
 }
 
 #header .search {
+ display: flex;
+ align-items: center;
+ padding: 5px;
+ border: 1px solid var(--secondary-color);
+ border-radius: 10px;
+ background-color: #FFFFFF;
+}
+
+#header .search .text {
  width: 170px;
- background-repeat: no-repeat;
- background-position: right 10px center;
- background-size: 20px 20px;
+ padding: 5px;
+ border: 0;
+ border-radius: 0;
+}
+
+#header .search .text:focus {
+ outline: none;
+}
+
+#header .search img {
+ margin-left: 5px;
+ height: 24px;
 }
 
 @media (max-width: 1300px) {
