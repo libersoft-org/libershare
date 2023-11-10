@@ -46,6 +46,12 @@ class Data {
  }
 
  async getCategories(items = null, order = 'created', direction = false, search = null, count = null, offset = null) {
+  /* TODO: stats for all categories
+   (SELECT SUM((SELECT SUM(size) FROM files WHERE id_items = items.id)) FROM items WHERE id_categories = categories.id) AS size,
+   (SELECT COUNT(*) FROM categories_visits WHERE id_categories = categories.id) AS visits,
+   (SELECT COUNT(DISTINCT session) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_session,
+   (SELECT COUNT(DISTINCT ip) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_ip,
+  */
   let query = `
    SELECT
     id,
@@ -77,18 +83,21 @@ class Data {
   return await this.db.query(query, params);
  }
 
- /* TODO: stats for all categories
-  (SELECT SUM((SELECT SUM(size) FROM files WHERE id_items = items.id)) FROM items WHERE id_categories = categories.id) AS size,
-  (SELECT COUNT(*) FROM categories_visits WHERE id_categories = categories.id) AS visits,
-  (SELECT COUNT(DISTINCT session) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_session,
-  (SELECT COUNT(DISTINCT ip) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_ip,
- */
-
  async getCategoryByID(id) {
+  /* TODO: stats for category:
+   (SELECT COUNT(*) FROM category_visits WHERE id_category = category.id) AS visits,
+   (SELECT COUNT(DISTINCT session) FROM category_visits WHERE id_category = category.id) AS visits_by_session,
+   (SELECT COUNT(DISTINCT ip) FROM category_visits WHERE id_category = category.id) AS visits_by_ip
+  */
   return await this.db.query('SELECT id, name, link, image, created FROM categories WHERE id = ?', [id]);
  }
 
  async getCategoryByLink(link) {
+  /* TODO: stats for category:
+   (SELECT COUNT(*) FROM category_visits WHERE id_category = category.id) AS visits,
+   (SELECT COUNT(DISTINCT session) FROM category_visits WHERE id_category = category.id) AS visits_by_session,
+   (SELECT COUNT(DISTINCT ip) FROM category_visits WHERE id_category = category.id) AS visits_by_ip
+  */
   return await this.db.query('SELECT id, name, link, image, created FROM categories WHERE link = ?', [link]);
  }
 
@@ -154,7 +163,13 @@ class Data {
   return await this.db.query(query);
  }
 
- async getForumPosts() {}
+ async getForumThread(p = {}) {
+  return await this.db.query('SELECT t.id, t.id_users, u.username, u.sex, t.topic, t.body, t.created FROM forum_thread t, users u WHERE u.id = t.id_users AND t.id = ?', [p.id]);
+ }
+
+ async getForumPosts(p = {}) {
+  return await this.db.query('SELECT p.id, p.id_users, u.username, u.sex, p.body, p.created FROM forum_post p, users u WHERE u.id = p.id_users AND p.id_forum_thread = ? ORDER BY p.created ASC', [p.id]);
+ }
 
  async getLogin() {}
 
@@ -204,8 +219,8 @@ class Data {
   return res[0].cnt === 1;
  }
 
- async getItemsAutoComplete() {
-
+ async getItemsAutoComplete(search) {
+  await this.db.query('SELECT id, name, link FROM item WHERE name LIKE "%?%" ORDER BY name ASC LIMIT 20', [search]);
  }
 
  async getItemsInfo() {
@@ -283,7 +298,16 @@ class Data {
   return await this.db.query(query);
  }
 
- async getUploadsInfo() {}
+ async getUploadsInfo() {
+  const query = `
+   SELECT
+    COUNT(*) AS count, SUM(size) AS size,
+    (SELECT COUNT(*) FROM upload_downloads) AS downloads,
+    (SELECT COUNT(DISTINCT session) FROM upload_downloads) AS downloads_by_session,
+    (SELECT COUNT(DISTINCT ip) FROM upload_downloads) AS downloads_by_ip
+   FROM upload`;
+  return await this.db.query(query);
+ }
 
  async setCategoryVisit() {}
 

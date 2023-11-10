@@ -4,7 +4,7 @@ const path = require('path');
 const Data = require('./data.js');
 const { Common } = require('./common.js');
 
-// TODO: Move to some class
+// TODO: This shouldn't be here, move to some class
 const validCaptchas = {};
 function cleanupOldCaptchas() {
  const currentTime = new Date().getTime();
@@ -187,52 +187,21 @@ class API {
  }
 
  async getCategories(p = {}) {
-  /*
-   require_once('./api_functions.php');
-   $o = SQLEscape($_GET['o']);
-   $d = SQLEscape($_GET['d']);
-   $search = SQLEscape($_GET['search']);
-   $count = SQLEscape($_GET['count']);
-   $offset = SQLEscape($_GET['offset']);
-   $count = (isset($count) && $count != '') ? intval($count) : '18446744073709551615';
-   $offset = intval($offset);
-   $sql = 'SELECT id, name, link, image, (SELECT SUM((SELECT SUM(size) FROM file WHERE id_item = item.id)) FROM item WHERE id_category = category.id) AS size, (SELECT COUNT(*) FROM item WHERE id_category = category.id) AS items_count, (SELECT COUNT(*) FROM item WHERE id_category = category.id AND hidden = 1) AS items_count_hidden, (SELECT COUNT(*) FROM category_visits WHERE id_category = category.id) AS visits, (SELECT COUNT(DISTINCT session) FROM category_visits WHERE id_category = category.id) AS visits_by_session, (SELECT COUNT(DISTINCT ip) FROM category_visits WHERE id_category = category.id) AS visits_by_ip, created FROM category ' . ($search != '' ? ' WHERE MATCH(name) AGAINST ("' . $search .'")' : '') . ($search == '' ? 'ORDER BY ' . ($o != '' ? $o : 'created') . ' ' . ($d == 'desc' ? 'DESC' : 'ASC') . ', id ' . ($d == 'desc' ? 'DESC' : 'ASC') : '') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
-   echo SQL2JSON($sql);
-  */
-  return { error: 0, data: await this.data.getCategories(p.items, p.order, p.direction, p.search, p.count, p.offset)
-  };
+  return { error: 0, data: await this.data.getCategories(p.items, p.order, p.direction, p.search, p.count, p.offset) };
  }
 
  async getCategoryByID(p = {}) {
-  /*
-   require_once('./api_functions.php');
-   $id = SQLEscape($_GET['id']);
-   if ($id != '') {
-    $result = SQLQuery('SELECT id, name, link, image, (SELECT COUNT(*) FROM category_visits WHERE id_category = category.id) AS visits, (SELECT COUNT(DISTINCT session) FROM category_visits WHERE id_category = category.id) AS visits_by_session, (SELECT COUNT(DISTINCT ip) FROM category_visits WHERE id_category = category.id) AS visits_by_ip, created FROM category WHERE id = "' . $id . '"');
-    if (SQLNumRows($result) == 1) echo json_encode(SQLArray($result));
-    else echo json_encode(array('error' => 2, 'message' => 'Category doesn\'t exist'));
-   } else echo json_encode(array('error' => 1, 'message' => 'Category ID is empty'));
-  */
   if (!p || !p.id) return { error: 1, message: 'Category ID not specified' };
   const res = await this.data.getCategoryByID(p.id);
   if (res.length != 1) return { error: 2, message: 'Category does not exist' };
-  else return { error: 0, data: res[0] };
+  return { error: 0, data: res[0] };
  }
 
  async getCategoryByLink(p = {}) {
-  /*
-   require_once('./api_functions.php');
-   $link = SQLEscape($_GET['link']);
-   if ($link != '') {
-    $result = SQLQuery('SELECT id, name, link, image, (SELECT COUNT(*) FROM category_visits WHERE id_category = category.id) AS visits, (SELECT COUNT(DISTINCT session) FROM category_visits WHERE id_category = category.id) AS visits_by_session, (SELECT COUNT(DISTINCT ip) FROM category_visits WHERE id_category = category.id) AS visits_by_ip, created FROM category WHERE link = "' . $link . '"');
-    if (SQLNumRows($result) == 1) echo json_encode(SQLArray($result));
-    else echo json_encode(array('error' => 2, 'message' => 'Category doesn\'t exist'));
-   } else echo json_encode(array('error' => 1, 'message' => 'Category link is empty'));
-  */
   if (!p || !p.link) return { error: 1, message: 'Category link not specified' }
   const res = await this.data.getCategoryByLink(p.link);
   if (res && res.length != 1) return { error: 2, message: 'Category does not exist' };
-  else return { error: 0, data: res[0] };
+  return { error: 0, data: res[0] };
  }
 
  async getFileByID(p = {}) {
@@ -241,7 +210,25 @@ class API {
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
    if ($id != '') {
-    $result = SQLQuery('SELECT f.id, f.id_item, p.name AS item_name, p.link AS item_link, f.name, f.filename, f.size, f.playable, f.ip, (SELECT COUNT(*) FROM file_downloads WHERE id_file = f.id) AS downloads, (SELECT COUNT(DISTINCT session) FROM file_downloads WHERE id_file = f.id) AS downloads_by_session, (SELECT COUNT(DISTINCT ip) FROM file_downloads WHERE id_file = f.id) AS downloads_by_ip, (SELECT COUNT(*) FROM file_plays WHERE id_file = f.id) AS plays, (SELECT COUNT(DISTINCT session) FROM file_plays WHERE id_file = f.id) AS plays_by_session, (SELECT COUNT(DISTINCT ip) FROM file_plays WHERE id_file = f.id) AS plays_by_ip, f.created FROM file f, item p WHERE f.id_item = p.id AND f.id = "' . $id . '"');
+    $result = SQLQuery('
+     SELECT
+      f.id,
+      f.id_item,
+      p.name AS item_name,
+      p.link AS item_link,
+      f.name, f.filename,
+      f.size,
+      f.playable,
+      f.ip,
+      (SELECT COUNT(*) FROM file_downloads WHERE id_file = f.id) AS downloads,
+      (SELECT COUNT(DISTINCT session) FROM file_downloads WHERE id_file = f.id) AS downloads_by_session,
+      (SELECT COUNT(DISTINCT ip) FROM file_downloads WHERE id_file = f.id) AS downloads_by_ip,
+      (SELECT COUNT(*) FROM file_plays WHERE id_file = f.id) AS plays,
+      (SELECT COUNT(DISTINCT session) FROM file_plays WHERE id_file = f.id) AS plays_by_session,
+      (SELECT COUNT(DISTINCT ip) FROM file_plays WHERE id_file = f.id) AS plays_by_ip,
+      f.created
+     FROM file f, item p
+     WHERE f.id_item = p.id AND f.id = "' . $id . '"');
     if (SQLNumRows($result) == 1) {
      $arr = SQLArray($result);
      $arr[0]['type'] = mime_content_type('../' . $GLOBALS['path-files'] . '/' . $arr[0]['name']);
@@ -250,7 +237,7 @@ class API {
    } else echo json_encode(array('error' => 1, 'message' => 'File ID is empty'));
   */
   if (p.id == null || p.id == '') return { error: 1, message: 'File ID is empty' };
-  const res = await data.getFileByID(p.id);
+  const res = await this.data.getFileByID(p.id);
   if (res.length == 0) return { error: 2, message: 'File does not exist' };
   else return { error: 0, data: res };
  }
@@ -272,10 +259,8 @@ class API {
   if (p.id == null || p.id == '') return { error: 1, message: 'File ID is empty' };
   const res = await data.getFile(p.id);
   if (res.length != 1) return { error: 2, message: 'File does not exist' };
-  else {
-   res[0].type = this.getMimeType(path + '/' + res[0].name);
-   return { error: 0, data: res };
-  }
+  res[0].type = this.getMimeType(path + '/' + res[0].name);
+  return { error: 0, data: res };
  }
 
  async getFiles(p = {}) {
@@ -315,7 +300,19 @@ class API {
    $offset = SQLEscape($_GET['offset']);
    $count = (isset($count) && $count != '') ? intval($count) : '18446744073709551615';
    $offset = intval($offset);
-   $sql = 'SELECT t.id, t.id_users, u.username, u.sex, t.topic, (SELECT COUNT(*) FROM forum_post WHERE id_forum_thread = t.id) AS posts_count, DATE_FORMAT(t.created , "%e.%c.%Y %H:%i:%s") AS created FROM forum_thread t, users u WHERE u.id = t.id_users ORDER BY ' . ($o != '' ? $o : 't.created') . ' ' . ($d == 'asc' ? 'ASC' : 'DESC') . ', id ' . ($d == 'asc' ? 'ASC' : 'DESC') . ' LIMIT ' . $count . ' OFFSET ' . $offset;
+   $sql = '
+   SELECT
+    t.id,
+    t.id_users,
+    u.username,
+    u.sex,
+    t.topic,
+    (SELECT COUNT(*) FROM forum_post WHERE id_forum_thread = t.id) AS posts_count,
+    t.created
+   FROM forum_thread t, users u
+   WHERE u.id = t.id_users
+   ORDER BY ' . ($o != '' ? $o : 't.created') . ' ' . ($d == 'asc' ? 'ASC' : 'DESC') . ', id ' . ($d == 'asc' ? 'ASC' : 'DESC')
+   . ' LIMIT ' . $count . ' OFFSET ' . $offset;
    echo SQL2JSON($sql);
   */
   const res = await this.data.getForumThreads(p.order, p.direction, p.count, p.offset);
@@ -323,19 +320,14 @@ class API {
  }
 
  async getForumThread(p = {}) {
-  /*
-   require_once('./api_functions.php');
-   $sql = 'SELECT t.id, t.id_users, u.username, u.sex, t.topic, t.body, DATE_FORMAT(t.created , "%e.%c.%Y %H:%i:%s") AS created FROM forum_thread t, users u WHERE u.id = t.id_users AND t.id = "' . SQLEscape($_GET['id']) . '"';
-   echo SQL2JSON($sql);
-  */
+  const res = await this.data.getForumThread(p.id);
+  return { error: 0, data: res };
  }
 
  async getForumPosts(p = {}) {
-  /*
-   require_once('./api_functions.php');
-   $sql = 'SELECT p.id, p.id_users, u.username, u.sex, p.body, DATE_FORMAT(p.created , "%e.%c.%Y %H:%i:%s") AS created FROM forum_post p, users u WHERE u.id = p.id_users AND id_forum_thread = "' . SQLEscape($_GET['id']) . '" ORDER BY p.created ASC';
-   echo SQL2JSON($sql);
-  */
+  if (!p.id) return { error: 1, message: 'Thread ID is empty' };
+  const res = await this.data.getForumPosts(p.id);
+  return { error: 0, data: res };
  }
 
  async getLogin(p = {}) {
@@ -478,19 +470,9 @@ class API {
  }
 
  async getItemsAutoComplete(p = {}) {
-  /*
-   require_once('./api_functions.php');
-   $search = SQLEscape($_GET['search']);
-   $sql = '
-    SELECT
-     id,
-     name,
-     link
-    FROM item'
-    . ($search != '' ? ' WHERE name LIKE "%' . $search .'%"' : '')
-    . ' ORDER BY name ASC LIMIT 20';
-   echo SQL2JSON($sql);
-  */
+  if (!p.search) return { error: 1, message: 'Search phrase is empty' }
+  const res = await this.data.getItemsAutoComplete(p.search);
+  return { error: 0, data: res };
  }
 
  async getItemsInfo(p = {}) {
@@ -548,17 +530,8 @@ class API {
  }
 
  async getUploadsInfo(p = {}) {
-  /*
-   require_once('./api_functions.php');
-   echo SQL2JSON('
-    SELECT
-     COUNT(*) AS count,
-     SUM(size) AS size,
-     (SELECT COUNT(*) FROM upload_downloads) AS downloads,
-     (SELECT COUNT(DISTINCT session) FROM upload_downloads) AS downloads_by_session,
-     (SELECT COUNT(DISTINCT ip) FROM upload_downloads) AS downloads_by_ip
-    FROM upload');
-  */
+  const res = await this.data.getUploadsInfo(p = {});
+  return { error: 0, data: res };
  }
 
  async getUpload(p = {}) {
@@ -566,7 +539,19 @@ class API {
    require_once('./api_functions.php');
    $id = SQLEscape($_GET['id']);
    if ($id != '') {
-    $result = SQLQuery('SELECT id, filename, realname, size, ip, (SELECT COUNT(*) FROM upload_downloads WHERE id_upload = upload.id) AS downloads, (SELECT COUNT(DISTINCT session) FROM upload_downloads WHERE id_upload = upload.id) AS downloads_by_session, (SELECT COUNT(DISTINCT ip) FROM upload_downloads WHERE id_upload = upload.id) AS downloads_by_ip, created FROM upload WHERE filename = "' . $id . '"');
+    $result = SQLQuery('
+    SELECT
+     id,
+     filename,
+     realname,
+     size,
+     ip,
+     (SELECT COUNT(*) FROM upload_downloads WHERE id_upload = upload.id) AS downloads,
+     (SELECT COUNT(DISTINCT session) FROM upload_downloads WHERE id_upload = upload.id) AS downloads_by_session,
+     (SELECT COUNT(DISTINCT ip) FROM upload_downloads WHERE id_upload = upload.id) AS downloads_by_ip,
+     created
+    FROM upload
+    WHERE filename = "' . $id . '"');
     if (SQLNumRows($result) == 1) echo json_encode(SQLArray($result));
     else echo json_encode(array('error' => 2, 'message' => 'File doesn\'t exist'));
    } else echo json_encode(array('error' => 1, 'message' => 'File ID is empty'));
