@@ -55,6 +55,10 @@ class WebServer {
   if (!req.params.hash || !req.params.name) return this.getIndex(req);
   const file = Bun.file(path.join(Common.settings.storage.download, req.params.hash));
   if (!await file.exists()) return this.getIndex(req);
+  
+  // TODO: file streaming for big files - not working:
+  //const [start = 0, end = Infinity] = req.headers.get("Range").split("=").at(-1).split("-").map(Number);
+  //return new Response(file.slice(start, end), {
   return new Response(file, {
    headers: {
     'Content-Type': 'application/octet-stream',
