@@ -10,7 +10,7 @@ function cleanupOldCaptchas() {
  Common.addLog('Cleaning old captchas ...');
  const currentTime = new Date().getTime();
  for (const captchaId in validCaptchas) {
-  if (currentTime - validCaptchas[captchaId].timestamp > 10 * 60 * 1000) delete validCaptchas[captchaId];
+  if (currentTime - validCaptchas[captchaId].timestamp > 600000) delete validCaptchas[captchaId];
  }
 }
 setInterval(cleanupOldCaptchas, 60000);
