@@ -7,12 +7,13 @@ const { Common } = require('./common.js');
 // TODO: This shouldn't be here, move to some class
 const validCaptchas = {};
 function cleanupOldCaptchas() {
+ Common.addLog('Cleaning old captchas ...');
  const currentTime = new Date().getTime();
  for (const captchaId in validCaptchas) {
   if (currentTime - validCaptchas[captchaId].timestamp > 10 * 60 * 1000) delete validCaptchas[captchaId];
  }
 }
-setInterval(cleanupOldCaptchas, 60 * 1000);
+setInterval(cleanupOldCaptchas, 60000);
 
 class API {
  constructor() {
