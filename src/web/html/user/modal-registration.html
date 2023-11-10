@@ -1,46 +1,38 @@
-<!--
- /api/set_registration
--->
-
-<div>Username:</div>
-<input type="text" name="username" />
-<div>E-mail address:</div>
-<input type="email" name="email" />
-<div>First name:</div>
-<input type="text" name="firstname" />
-<div>Last name:</div>
-<input type="text" name="lastname" />
-<div>Sex:</div>
-<input type="radio" name="sex" value="1" />Muž <input type="radio" name="sex" value="0" />Žena
-<div>Birthdate:</div>
-<div>
- <select name="day">
-  <option value="">- Day -</option>
-  {DAYS}</select
- >.
- <select name="month">
-  <option value="">- Month -</option>
-  {MONTHS}</select
- >.
- <select name="year">
-  <option value="">- Year -</option>
-  {YEARS}
- </select>
-</div>
-<div>Password:</div>
-<input type="password" name="password" />
-<div>Password:</div>
-<input type="password" name="password2" />
-<input type="checkbox" name="terms" />
-<div>I agree with <a onclick="f.getPage('terms')" target="_blank">the registration terms.</a>.</div>
-<div id="static-captcha">
- <div class="captch">
-  <img id="captcha-container" src="" alt="" />
-  <img class="reload-icon" src="{ICON-RELOAD}" onclick="regenCaptcha()" alt="" />
+<!-- /api/set_registration -->
+<div class="form">
+ <div class="label">Username:</div>
+ <input type="text" name="username" />
+ <div class="label">E-mail address:</div>
+ <input type="email" name="email" />
+ <div class="label">First name:</div>
+ <input type="text" name="firstname" />
+ <div class="label">Last name:</div>
+ <input type="text" name="lastname" />
+ <div class="label">Sex:</div>
+ <input type="radio" name="sex" value="1" />Muž <input type="radio" name="sex" value="0" />Žena
+ <div class="label">Birthdate:</div>
+ <div>
+  <select name="day"><option value="">- Day -</option>{DAYS}</select>.
+  <select name="month"><option value="">- Month -</option>{MONTHS}</select>.
+  <select name="year"><option value="">- Year -</option>{YEARS}</select>
+ </div>
+ <div class="label">Password:</div>
+ <input type="password" name="password" />
+ <div class="label">Password again:</div>
+ <input type="password" name="password2" />
+ <div class="label">Write the text from the image:</div>
+ <div id="static-captcha">
+  <div class="captch">
+   <img id="captcha-container" src="" alt="" />
+   <img class="reload-icon" src="{ICON-RELOAD}" onclick="f.regenCaptcha()" alt="" />
+  </div>
  </div>
  <input type="text" id="cid" name="cid" />
- <input type="text" name="captcha" id="captcha-input" placeholder="Enter text from image" />
+ <input type="text" name="captcha" id="captcha-input" placeholder="Enter the text from image" />
+ <input type="checkbox" name="terms" />
+ <div>I agree with <a onclick="f.getPage('terms')" target="_blank">the registration terms.</a>.</div>
  <div>Already have account? - <a onclick="openModal('login')">login</a>.</div>
  <div class="notice red"></div>
  <a class="button primary" onclick="register()">Register</a>
-</div>
+ </div>
+

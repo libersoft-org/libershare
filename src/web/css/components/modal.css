@@ -8,7 +8,9 @@
 
 .modal {
  z-index: 200;
+ display: flex;
  position: fixed;
+ flex-direction: column;
  box-sizing: border-box;
  top: 50%;
  left: 50%;
@@ -31,7 +33,6 @@
  font-weight: bold;
  color: var(--secondary-color);
  background-color: var(--primary-color);
- overflow: auto;
 }
 
 .modal .title .close {
@@ -46,7 +47,7 @@
 
 .modal .body {
  padding: 10px;
- overflow-y: scroll;
+ overflow-y: auto;
 }
 
 /*

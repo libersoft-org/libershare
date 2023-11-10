@@ -301,7 +301,9 @@ async function getModalRegistration() {
  const days = Array.from({ length: 31 }, (_, i) => i + 1);
  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
  const years = Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i);
- let body = f.getHTML('modal-registration');
+ let body = f.translate(f.getHTML('modal-registration'), {
+  '{ICON-RELOAD}': f.getImage('reload.svg')
+ });
  body = body.replace('{DAYS}', days.map((day) => '<option value="' + day + '">' + day + '</option>').join(''));
  body = body.replace('{MONTHS}', months.map((month, index) => '<option value="' + (index + 1) + '">' + month + '</option>').join(''));
  body = body.replace('{YEARS}', years.map((year) => '<option value="' + year + '">' + year + '</option>').join(''));
@@ -312,6 +314,10 @@ async function getModalRegistration() {
  imgElement.src = capt.image;
  const cid = f.qs('#cid');
  cid.value = capt.capid;
+}
+
+function getModalForumNew() {
+ f.getModal('New topic', f.getHTML('modal-forum-new'));
 }
 
 function logout() {

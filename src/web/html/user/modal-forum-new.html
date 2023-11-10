@@ -1,0 +1,11 @@
+<div class="form">
+ <div class="label">Subject:</div>
+ <input type="text" name="subject" />
+ <div class="label">Message text:</div>
+ <textarea name="body" rows="5"></textarea>
+ <div class="label">Write a text from the image:</div>
+ <input type="text" name="captcha" />
+ <img src="captcha/{CAPTCHA}" alt="Captcha" />
+ <div class="notice red" id="error"></div>
+ <a class="button primary" onclick="forumNew()">Send</a>
+</div>
