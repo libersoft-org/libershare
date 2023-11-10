@@ -16,19 +16,23 @@
 <div class="card small center">
  <div class="header">Contact form</div>
  <div class="body">
-  <div>Name:</div>
-  <input type="text" name="name" />
-  <div>E-mail address:</div>
-  <input type="email" name="email" placeholder="@" />
-  <div>Subject:</div>
-  <input type="text" name="subject" />
-  <div>Message:</div>
-  <textarea name="body" rows="5"></textarea>
-  <div>Confirmation:</div>
-  <div class="captcha"></div>
-  <div class="notice red"><span class="bold">Error</span>: Message cannot be sent!</div>
-  <div class="buttons">
-   <div class="loader"></div>
+  <div class="form">
+   <div class="label">Name:</div>
+   <input type="text" name="name" />
+   <div class="label">E-mail address:</div>
+   <input type="email" name="email" placeholder="@" />
+   <div class="label">Subject:</div>
+   <input type="text" name="subject" />
+   <div class="label">Message:</div>
+   <textarea name="body" rows="5"></textarea>
+   <div class="label">Confirmation:</div>
+   <div class="captcha"></div>
+   <input type="text" name="captcha" />
+   <div class="notice red"><span class="bold">Error</span>: Message cannot be sent!</div>
+   <div class="notice green">Your message was sent successfully!</div>
+   <div class="buttons">
+    <div class="loader"></div>
+   </div>
   </div>
  </div>
 </div>
