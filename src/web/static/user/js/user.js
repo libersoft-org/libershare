@@ -92,28 +92,28 @@ async function getPageCategories(pathArr = null) {
   elCategory.innerHTML = f.getHTML('categories-list');
   const temp_item = f.getHTML('categories-item');
   const cats = await f.getAPI('get_categories', { items: true });
-  let itemsCount = 0;
+  let catsItemsCount = 0;
   let crows = '';
   if (cats && cats.data) {
    const imgFiles = [];
    for (cat of cats.data) imgFiles.push(cat.image);
    const imgData = await f.getAPI('get_images_categories', { files: imgFiles });
    for (const cat of cats.data) {
-    const itemsCount = cat.items_count - cat.items_count_hidden;
+    const catItemsCount = cat.items_count - cat.items_count_hidden;
     crows += f.translate(temp_item, {
      '{LINK}': cat.link,
      '{NAME}': cat.name,
      '{IMAGE}': imgData.data[cat.image] ? imgData.data[cat.image] : f.getImage('item-default.webp'),
-     '{COUNT}': itemsCount
+     '{COUNT}': catItemsCount
     });
-    itemsCount += itemsCount;
+    catsItemsCount += catItemsCount;
    }
   }
   f.qs('#content .categories .items').innerHTML = f.translate(temp_item, {
    '{LINK}': 'all',
    '{NAME}': 'All',
    '{IMAGE}': f.getImage('item-all.webp'),
-   '{COUNT}': itemsCount
+   '{COUNT}': catsItemsCount
   }) + crows;
  }
 }
