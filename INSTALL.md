@@ -38,6 +38,8 @@ Here you need to set up:
   - **download** - the path for files that have been moved from upload path to a specific product
   - **images** - the path for product and categories image files
   - **temp** - the path for files that are in uploading process
+  - **chunk_upload** - the size of a file chunk in bytes when uploading
+  - **chunk_download** - the size of a file chunk in bytes when downloading (applies only when request header "range" is set without the end value)
 - **database** section - the hostname, port, name, user and password to your MariaDB database
 - **email** section:
   - credentials to your e-mail server: hostname, port, user, password and encryption (tls - true / false)

@@ -78,7 +78,9 @@ class App {
      upload: './upload/',
      download: './download/',
      images: './images/',
-     temp: './temp/'
+     temp: './temp/',
+     chunk_upload: 10485760,
+     chunk_download: 1048576
     },
     database: {
      host: '127.0.0.1',

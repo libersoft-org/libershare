@@ -55,16 +55,22 @@ class WebServer {
   if (!req.params.hash || !req.params.name) return this.getIndex(req);
   const file = Bun.file(path.join(Common.settings.storage.download, req.params.hash));
   if (!await file.exists()) return this.getIndex(req);
-  
-  // TODO: file streaming for big files - not working:
-  //const [start = 0, end = Infinity] = req.headers.get("Range").split("=").at(-1).split("-").map(Number);
-  //return new Response(file.slice(start, end), {
-  return new Response(file, {
-   headers: {
-    'Content-Type': 'application/octet-stream',
-    'Content-Disposition': 'attachment; filename="' + req.params.name + '"'
-   }
-  });
+  if (req.headers.range) {
+   const chunk = Common.settings.storage.chunk_download;
+   let [start = 0, end = Infinity] = req.headers.range.split('=').at(-1).split('-').map(Number);
+   if (end == 0) end = start + chunk < file.size ? start + chunk : file.size;
+   return new Response(file.slice(start, start + chunk), {
+    status: 206,
+    headers: { 'Content-Range': 'bytes ' + start + '-' + end + '/' + file.size }
+   });
+  } else {
+   return new Response(file, {
+    headers: {
+     'Content-Type': 'application/octet-stream',
+     'Content-Disposition': 'attachment; filename="' + req.params.name + '"'
+    }
+   });
+  }
  }
 
  async getAdmin(req) {
