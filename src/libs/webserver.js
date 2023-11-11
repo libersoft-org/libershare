@@ -58,7 +58,7 @@ class WebServer {
   if (req.headers.range) {
    const chunk = Common.settings.storage.chunk_download;
    let [start = 0, end = Infinity] = req.headers.range.split('=').at(-1).split('-').map(Number);
-   if (end == 0) end = start + chunk < file.size ? start + chunk : file.size;
+   if (end == 0) end = start + chunk < file.size ? start + chunk - 1 : file.size - 1;
    return new Response(file.slice(start, start + chunk), {
     status: 206,
     headers: { 'Content-Range': 'bytes ' + start + '-' + end + '/' + file.size }
