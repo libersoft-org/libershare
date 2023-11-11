@@ -68,7 +68,7 @@ class Data {
    query += ' WHERE MATCH(name) AGAINST (?)';
    params.push(search);
   }
-  if (items === true || items === false) query += (search ? ' AND' : ' WHERE') + ' items_count - items_count_hidden ' + (items ? '!=' : '=') + ' 0';
+  if (items === true || items === false) query += ' HAVING items_count - items_count_hidden ' + (items ? '!=' : '=') + ' 0';
   query += ' ORDER BY ' + this.db.escapeId(order);
   query += ' ' + (direction ? 'DESC' : 'ASC');
   query += ', id ' + (direction ? 'DESC' : 'ASC');
@@ -89,7 +89,17 @@ class Data {
    (SELECT COUNT(DISTINCT session) FROM category_visits WHERE id_category = category.id) AS visits_by_session,
    (SELECT COUNT(DISTINCT ip) FROM category_visits WHERE id_category = category.id) AS visits_by_ip
   */
-  return await this.db.query('SELECT id, name, link, image, created FROM categories WHERE id = ?', [id]);
+  return await this.db.query(`
+   SELECT
+    id,
+    name,
+    link,
+    image,
+    (SELECT COUNT(*) FROM items WHERE id_categories = categories.id) AS items_count,
+    (SELECT COUNT(*) FROM items WHERE id_categories = categories.id AND hidden = 1) AS items_count_hidden,
+    created
+   FROM categories
+   WHERE id = ?`, [id]);
  }
 
  async getCategoryByLink(link) {
@@ -98,7 +108,17 @@ class Data {
    (SELECT COUNT(DISTINCT session) FROM category_visits WHERE id_category = category.id) AS visits_by_session,
    (SELECT COUNT(DISTINCT ip) FROM category_visits WHERE id_category = category.id) AS visits_by_ip
   */
-  return await this.db.query('SELECT id, name, link, image, created FROM categories WHERE link = ?', [link]);
+  return await this.db.query(`
+   SELECT
+    id,
+    name,
+    link,
+    image,
+    (SELECT COUNT(*) FROM items WHERE id_categories = categories.id) AS items_count,
+    (SELECT COUNT(*) FROM items WHERE id_categories = categories.id AND hidden = 1) AS items_count_hidden,
+    created
+   FROM categories
+   WHERE link = ?`, [link]);
  }
 
  /* TODO: stats for category

@@ -31,34 +31,32 @@ async function getPageContent() {
 }
 
 async function getPageNews() {
- for (const cat of (await f.getAPI('get_categories')).data) {
-  if (cat.items_count - cat.items_count_hidden !== 0) {
-   const items = await f.getAPI('get_items', {
-    id_category: cat.id,
-    hidden: false,
-    files: true,
-    direction: true,
-    count: count,
-    offset: 0
+ for (const cat of (await f.getAPI('get_categories', { items: true })).data) {
+  const items = await f.getAPI('get_items', {
+   id_category: cat.id,
+   hidden: false,
+   files: true,
+   direction: true,
+   count: count,
+   offset: 0
+  });
+  const imgFiles = [];
+  for (item of items.data) imgFiles.push(item.image_sm);
+  const imgData = (await f.getAPI('get_images_items', { files: imgFiles })).data;
+  let prows = '';
+  for (const item of items.data) {
+   prows += f.translate(f.getHTML('items-item'), {
+    '{NAME}': item.name,
+    '{LINK}': item.link,
+    '{IMAGE}': imgData[item.image_sm] ? (item.adult ? f.getImage('item-censored.webp') : imgData[item.image_sm]) : f.getImage('item-default.webp')
    });
-   const imgFiles = [];
-   for (item of items.data) imgFiles.push(item.image_sm);
-   const imgData = (await f.getAPI('get_images_items', { files: imgFiles })).data;
-   let prows = '';
-   for (const item of items.data) {
-    prows += f.translate(f.getHTML('items-item'), {
-     '{NAME}': item.name,
-     '{LINK}': item.link,
-     '{IMAGE}': imgData[item.image_sm] ? (item.adult ? f.getImage('item-censored.webp') : imgData[item.image_sm]) : f.getImage('item-default.webp')
-    });
-   }
-   const crow = f.translate(f.getHTML('news-category'), {
-    '{LINK}': cat.link,
-    '{CATEGORY}': cat.name,
-    '{ITEMS}': prows
-   });
-   f.qs('#content .news').innerHTML += crow;
   }
+  const crow = f.translate(f.getHTML('news-category'), {
+   '{LINK}': cat.link,
+   '{CATEGORY}': cat.name,
+   '{ITEMS}': prows
+  });
+  f.qs('#content .news').innerHTML += crow;
  }
  f.qs('#content .loader').remove();
 }
@@ -68,14 +66,23 @@ async function getPageCategories(pathArr = null) {
  if (pathArr.length == 2) {
   const temp_cat = f.getHTML('categories-category');
   if (pathArr[1] == 'all') {
-   elCategory.innerHTML = f.translate(temp_cat, { '{CATEGORY}': 'All' });
+   const cats = await f.getAPI('get_categories', { items: true });
+   let itemsCount = 0;
+   for (const cat of cats.data) itemsCount += cat.items_count - cat.items_count_hidden;
+   elCategory.innerHTML = f.translate(temp_cat, {
+    '{CATEGORY}': 'All',
+    '{COUNT}': itemsCount
+   });
    await getPageCategoriesMore();
    // TODO: onscroll is not working
    if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data.id);
   } else {
    const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
    if (cat && cat.data) {
-    elCategory.innerHTML = f.translate(temp_cat, { '{CATEGORY}': cat.data.name });
+    elCategory.innerHTML = f.translate(temp_cat, {
+     '{CATEGORY}': cat.data.name,
+     '{COUNT}': cat.data.items_count - cat.data.items_count_hidden,
+    });
     await getPageCategoriesMore(cat.data.id);
     // TODO: onscroll is not working
     if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data.id);
@@ -84,30 +91,22 @@ async function getPageCategories(pathArr = null) {
  } else {
   elCategory.innerHTML = f.getHTML('categories-list');
   const temp_item = f.getHTML('categories-item');
-  const cats = await f.getAPI('get_categories');
+  const cats = await f.getAPI('get_categories', { items: true });
   let itemsCount = 0;
   let crows = '';
   if (cats && cats.data) {
    const imgFiles = [];
-   for (cat of cats.data) {
-    // TODO: this is not necessary if we can filter it in API call (dont show hidden categories as a parameter of API call):
-    const itemCount = cat.items_count - cat.items_count_hidden;
-    if (itemCount != 0) imgFiles.push(cat.image);
-   }
+   for (cat of cats.data) imgFiles.push(cat.image);
    const imgData = await f.getAPI('get_images_categories', { files: imgFiles });
    for (const cat of cats.data) {
-    // TODO: this is not necessary if we can filter it in API call (dont show hidden categories as a parameter of API call):
-    const itemCount = cat.items_count - cat.items_count_hidden;
-    if (itemCount != 0) {
-     crows += f.translate(temp_item, {
-      '{LINK}': cat.link,
-      '{NAME}': cat.name,
-      // TODO: 'item-default.webp' should be returned by static files images array (got by other API), not like this:
-      '{IMAGE}': imgData.data[cat.image] ? imgData.data[cat.image] : f.pathImages + 'item-default.webp',
-      '{COUNT}': itemCount
-     });
-     itemsCount += itemCount;
-    }
+    const itemsCount = cat.items_count - cat.items_count_hidden;
+    crows += f.translate(temp_item, {
+     '{LINK}': cat.link,
+     '{NAME}': cat.name,
+     '{IMAGE}': imgData.data[cat.image] ? imgData.data[cat.image] : f.getImage('item-default.webp'),
+     '{COUNT}': itemsCount
+    });
+    itemsCount += itemsCount;
    }
   }
   f.qs('#content .categories .items').innerHTML = f.translate(temp_item, {
