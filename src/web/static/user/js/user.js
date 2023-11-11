@@ -198,19 +198,21 @@ async function getPageItem(pathArr = null) {
 async function getPageForum() {
  const temp_buttons = f.translate(f.getHTML('forum-buttons'), { '{ICON-NEW}': f.getImage('news.svg') });
  f.qs('#content .body .buttons').innerHTML = temp_buttons;
- await getPageForumThreads(10);
+ await getPageForumThreads();
  //$(window).on('resize scroll', function() { getPageForumThreadsNext(threadscount, elem, temp_thread, temp_more); });
 }
 
-async function getPageForumThreads(count, page = 1) {
+async function getPageForumThreads() {
  const temp_thread = f.getHTML('forum-row');
  const table = f.qs('#content .forum tbody');
  // TODO: if loader is not visible, return, otherwise load more threads
  //if (!table.length) return;
  //if (!table.isVisible()) return;
+ const page = 1;
  const threads = await f.getAPI('get_forum_threads', {
-  count: count,
-  offset: (page - 1) * count
+  count: 10,
+  offset: (page - 1) * count,
+  direction: true
  });
  if (!threads || !threads.data || threads.data.length == 0) return;
  let rows = '';

@@ -163,7 +163,7 @@ class Data {
 
  async getFileByID() {}
 
- async getForumThreads(order, direction, count, offset) {
+ async getForumThreads(order = 't.created', direction, count, offset) {
   let query = `
    SELECT
     t.id,
@@ -176,11 +176,19 @@ class Data {
    FROM
     forum_threads t, users u
    WHERE u.id = t.id_users
-   ORDER BY
-    ${order != null && order != '' ? order : 't.created'}
-    ${direction != null && direction != '' ? 'DESC' : 'ASC' + ', id ' + (direction ? 'DESC' : 'ASC')}
-    ${count != null && count != '' ? 'LIMIT ' + count + (offset != null && offset != '' ? 'OFFSET ' + offset : '') : ''}`;
-  return await this.db.query(query);
+  `;
+  const params = [];
+  query += 'ORDER BY ' + this.db.escapeId(order);
+  query += ' ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC');
+  if (count) {
+   query += ' LIMIT ?';
+   params.push(count);
+  }
+  if (count && offset) {
+   query += ' OFFSET ?';
+   params.push(offset);
+  }
+  return await this.db.query(query, params);
  }
 
  async getForumThread(p = {}) {
