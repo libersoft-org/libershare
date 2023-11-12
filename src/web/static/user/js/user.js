@@ -1,7 +1,7 @@
 const f = new Framework();
-const count = 12;
-let offset = 0;
+
 let loading = false;
+let offset = 0;
 
 window.onload = async () => {
  document.addEventListener('page-loaded', () => getPageContent());
@@ -9,8 +9,8 @@ window.onload = async () => {
 };
 
 async function getPageContent() {
- offset = 0;
  loading = false;
+ offset = 0;
  const pageHandlers = {
   news: getPageNews,
   categories: getPageCategories,
@@ -73,9 +73,9 @@ async function getPageCategories(pathArr = null) {
     '{CATEGORY}': 'All',
     '{COUNT}': itemsCount
    });
-   await getPageCategoriesMore();
+   await getPageCategoriesMore(null, 12);
    // TODO: onscroll is not working
-   if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data.id);
+   if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(null, 12);
   } else {
    const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
    if (cat && cat.data) {
@@ -83,9 +83,9 @@ async function getPageCategories(pathArr = null) {
      '{CATEGORY}': cat.data.name,
      '{COUNT}': cat.data.items_count - cat.data.items_count_hidden,
     });
-    await getPageCategoriesMore(cat.data.id);
+    await getPageCategoriesMore(cat.data.id, 12);
     // TODO: onscroll is not working
-    if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data.id);
+    if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data.id, 12);
    } else elCategory.innerHTML = f.getHTML('categories-category-notfound');
   }
  } else {
@@ -118,43 +118,40 @@ async function getPageCategories(pathArr = null) {
  }
 }
 
-async function getPageCategoriesMore(id) {
- console.log(new Date());
+async function getPageCategoriesMore(id = null, count = 12) {
+ console.log(id, count, offset);
  const loader = f.qs('#content .loader');
- if (isElementVisible(loader)) {
-  if (!loading) {
-   loading = true;
-   const items = await f.getAPI('get_items', {
-    id_category: id,
-    hidden: false,
-    files: true,
-    direction: true,
-    count: count,
-    offset: offset
+ if (loading || !isElementVisible(loader)) return;
+ loading = true;
+ const items = await f.getAPI('get_items', {
+  id_category: id,
+  hidden: false,
+  files: true,
+  direction: true,
+  count: count,
+  offset: offset
+ });
+ if (items && items.data && items.data.length == 0) {
+  loader.remove();
+  loading = false;
+ } else {
+  const imgFiles = [];
+  for (item of items.data) imgFiles.push(item.image_sm);
+  const imgData = (await f.getAPI('get_images_items', { files: imgFiles })).data;
+  let prows = '';
+  for (const item of items.data) {
+   let prow = f.translate(f.getHTML('items-item'), {
+    '{NAME}': item.name,
+    '{LINK}': item.link,
+    '{IMAGE}': imgData[item.image_sm] ? imgData[item.image_sm] : f.getImage('item-default.webp')
    });
-   if (items && 'data' in items && items.data.length == 0) {
-    loader.remove();
-    loading = false;
-   } else {
-    const imgFiles = [];
-    for (item of items.data) imgFiles.push(item.image_sm);
-    const imgData = (await f.getAPI('get_images_items', { files: imgFiles })).data;
-    let prows = '';
-    for (const item of items.data) {
-     let prow = f.translate(f.getHTML('items-item'), {
-      '{NAME}': item.name,
-      '{LINK}': item.link,
-      '{IMAGE}': imgData[item.image_sm] ? imgData[item.image_sm] : f.getImage('item-default.webp')
-     });
-     prows += prow;
-    }
-    f.qs('#content .items').innerHTML += prows;
-    offset += count;
-    loading = false;
-    if (items.data.length == count) getPageCategoriesMore(id);
-    else loader.remove();
-   }
+   prows += prow;
   }
+  f.qs('#content .items').innerHTML += prows;
+  offset += count;
+  loading = false;
+  if (items.data.length == count) getPageCategoriesMore(id, count, offset);
+  else loader.remove();
  }
 }
 
@@ -196,39 +193,43 @@ async function getPageItem(pathArr = null) {
 }
 
 async function getPageForum() {
- const temp_buttons = f.translate(f.getHTML('forum-buttons'), { '{ICON-NEW}': f.getImage('news.svg') });
- f.qs('#content .body .buttons').innerHTML = temp_buttons;
- await getPageForumThreads();
- //$(window).on('resize scroll', function() { getPageForumThreadsNext(threadscount, elem, temp_thread, temp_more); });
+ f.qs('#content .body .buttons').innerHTML = f.translate(f.getHTML('forum-buttons'), { '{ICON-NEW}': f.getImage('news.svg') });
+ await getPageForumThreadsMore(10);
+ const content = f.qs('#content');
+ if (!content.onscroll) content.onscroll = async () => await getPageForumThreadsMore(10);
 }
 
-async function getPageForumThreads() {
- const temp_thread = f.getHTML('forum-row');
- const table = f.qs('#content .forum tbody');
- // TODO: if loader is not visible, return, otherwise load more threads
- //if (!table.length) return;
- //if (!table.isVisible()) return;
- const page = 1;
+async function getPageForumThreadsMore(count = 10) {
+ console.log(count, offset);
+ const loader = f.qs('#content .loader');
+ if (loading  || !isElementVisible(loader)) return;
+ loading = true;
  const threads = await f.getAPI('get_forum_threads', {
-  count: 10,
-  offset: (page - 1) * count,
+  count: count,
+  offset: offset,
   direction: true
  });
- if (!threads || !threads.data || threads.data.length == 0) return;
- let rows = '';
- for (const item of threads.data) {
-  rows += f.translate(temp_thread, {
-   '{ID}': item.id,
-   '{TOPIC}': f.escapeHTML(item.topic),
-   '{USERNAME}': item.username,
-   '{POSTS}': item.posts_count,
-   '{CREATED}': new Date(item.created).toLocaleString(),
-   '{SEX}': item.sex == 1 ? 'text-blue' : 'text-red'
-  });
+ if (!threads || !threads.data || threads.data.length == 0) {
+  loader.remove();
+  loading = false;
+ } else {
+  let rows = '';
+  for (const item of threads.data) {
+   rows += f.translate(f.getHTML('forum-row'), {
+    '{ID}': item.id,
+    '{TOPIC}': f.escapeHTML(item.topic),
+    '{USERNAME}': item.username,
+    '{POSTS}': item.posts_count,
+    '{CREATED}': new Date(item.created).toLocaleString(),
+    '{SEX}': item.sex == 1 ? 'text-blue' : 'text-red'
+   });
+  }
+  f.qs('#content .forum tbody').innerHTML += rows;
+  offset += count;
+  loading = false;
+  if (threads.data.length == count) getPageForumThreadsMore(count, offset);
+  else loader.remove();
  }
- table.innerHTML = rows;
- //page++;
- //getPageForumThreads(count, page);
 }
 
 async function getPageUploads() {
