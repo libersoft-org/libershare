@@ -119,7 +119,7 @@ async function getPageCategories(pathArr = null) {
 }
 
 async function getPageCategoriesMore(id = null, count = 12) {
- console.log(id, count, offset);
+ //console.log(id, count, offset);
  const loader = f.qs('#content .loader');
  if (loading || !isElementVisible(loader)) return;
  loading = true;
@@ -205,7 +205,7 @@ async function getPageForum(pathArr = null) {
 
 async function getPageForumThreadsMore(count = 10) {
  // TODO: check why page is loading the same offset again:
- console.log(count, offset);
+ //console.log(count, offset);
  const loader = f.qs('#content .loader');
  if (loading  || !isElementVisible(loader)) return;
  loading = true;
@@ -254,7 +254,7 @@ async function getPageForumThread(id) {
 
 async function getPageForumPostsMore(id, count = 10) {
  // TODO: check why page is loading the same offset again:
- console.log(count, offset);
+ //console.log(count, offset);
  const loader = f.qs('#content .loader');
  if (loading  || !isElementVisible(loader)) return;
  loading = true;
