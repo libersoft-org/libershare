@@ -194,19 +194,12 @@ class Data {
  }
 
  async getForumPosts(id, order = 'p.created', direction = false, count = 50, offset = 0) {
+  console.log(id, order, direction, count, offset);
   return await this.db.query(`
-   SELECT
-    p.id,
-    p.id_users,
-    u.username,
-    u.sex,
-    p.body,
-    p.created
+   SELECT p.id, p.id_users, u.username, u.sex, p.body, p.created
    FROM forum_posts p, users u
-   WHERE
-    u.id = p.id_users
-    AND p.id_forum_threads = ?
-   ORDER BY ` + order + ' ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC') + `
+   WHERE u.id = p.id_users AND p.id_forum_threads = ?
+   ORDER BY ` + this.db.escapeId(order) + ' ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC') + `
    LIMIT ? OFFSET ?`, [id, count, offset]);
  }
 

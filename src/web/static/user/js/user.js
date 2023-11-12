@@ -37,7 +37,7 @@ async function getPageNews() {
    hidden: false,
    files: true,
    direction: true,
-   count: count,
+   count: 12,
    offset: 0
   });
   const imgFiles = [];
@@ -219,14 +219,14 @@ async function getPageForumThreadsMore(count = 10) {
   loading = false;
  } else {
   let rows = '';
-  for (const item of threads.data) {
+  for (const thread of threads.data) {
    rows += f.translate(f.getHTML('forum-threads-row'), {
-    '{ID}': item.id,
-    '{TOPIC}': f.escapeHTML(item.topic),
-    '{USERNAME}': item.username,
-    '{POSTS}': item.posts_count,
-    '{CREATED}': new Date(item.created).toLocaleString(),
-    '{SEX}': item.sex == 1 ? 'text-blue' : 'text-red'
+    '{ID}': thread.id,
+    '{TOPIC}': f.escapeHTML(thread.topic),
+    '{USERNAME}': thread.username,
+    '{POSTS}': thread.posts_count,
+    '{CREATED}': new Date(thread.created).toLocaleString(),
+    '{SEX}': thread.sex == 1 ? 'text-blue' : 'text-red'
    });
   }
   f.qs('#content .forum tbody').innerHTML += rows;
@@ -238,15 +238,17 @@ async function getPageForumThreadsMore(count = 10) {
 }
 
 async function getPageForumThread(id) {
- const thread = (await f.getAPI('get_forum_thread', { id: 10 })).data;
+ const thread = (await f.getAPI('get_forum_thread', { id: id })).data;
  f.qs('#content').innerHTML = f.translate(f.getHTML('forum-thread'), {
   '{THREAD-TOPIC}': thread.topic,
-  '{THREAD-USER}': thread.username,
+  '{THREAD-USER}': thread.username, //TODO: show colours based on gender (+ link to profile?)
   '{THREAD-CREATED}': new Date(thread.created).toLocaleString(),
   '{THREAD-BODY}': getTextWithLinks(thread.body),
  });
- // TODO: add posts
  getPageForumPostsMore(id, 2);
+ const elPosts = f.qs('#content .body .posts');
+ // TODO: onscroll is not working:
+ if (!elPosts.onscroll) elPosts.onscroll = async () => await getPageForumPostsMore(id, 2);
 }
 
 async function getPageForumPostsMore(id, count = 50) {
@@ -276,7 +278,7 @@ async function getPageForumPostsMore(id, count = 50) {
   f.qs('#content .body .posts').innerHTML += rows;
   offset += count;
   loading = false;
-  if (posts.data.length == count) getPageForumPostsMore(count);
+  if (posts.data.length == count) getPageForumPostsMore(id, count);
   else loader.remove();
  }
 }
