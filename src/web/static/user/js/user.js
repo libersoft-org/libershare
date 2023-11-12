@@ -244,6 +244,7 @@ async function getPageForumThread(id) {
   '{THREAD-USER}': thread.username, //TODO: show colours based on gender (+ link to profile?)
   '{THREAD-CREATED}': new Date(thread.created).toLocaleString(),
   '{THREAD-BODY}': getTextWithLinks(thread.body),
+  '{POST}': f.getHTML('forum-post-new-error')
  });
  getPageForumPostsMore(id, 2);
  const elPosts = f.qs('#content .body .posts');
