@@ -79,7 +79,7 @@ class Framework {
   const mmActive = this.qsa('#menu-mobile .item.active');
   if (mdActive.length == 1) mdActive[0].classList.remove('active');
   if (mmActive.length == 1) mmActive[0].classList.remove('active');
-  var item = this.pathArr[0];
+  let item = this.pathArr[0];
   if (!item) item = 'news';
   if (item in this.pages) {
    const mdItem = this.qs('#menu-desktop .item.menu-' + item);

@@ -403,7 +403,7 @@ async function playVideo(link) {
 
 function isElementVisible(el) {
  if (!el) return false;
- var rect = el.getBoundingClientRect();
+ let rect = el.getBoundingClientRect();
  return (
   rect.top < (window.innerHeight || document.documentElement.clientHeight) &&
   rect.left < (window.innerWidth || document.documentElement.clientWidth) &&
