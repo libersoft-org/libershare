@@ -191,12 +191,12 @@ class Data {
   return await this.db.query(query, params);
  }
 
- async getForumThread(p = {}) {
-  return await this.db.query('SELECT t.id, t.id_users, u.username, u.sex, t.topic, t.body, t.created FROM forum_thread t, users u WHERE u.id = t.id_users AND t.id = ?', [p.id]);
+ async getForumThread(id) {
+  return await this.db.query('SELECT t.id, t.id_users, u.username, u.sex, t.topic, t.body, t.created FROM forum_threads t, users u WHERE u.id = t.id_users AND t.id = ?', [id]);
  }
 
- async getForumPosts(p = {}) {
-  return await this.db.query('SELECT p.id, p.id_users, u.username, u.sex, p.body, p.created FROM forum_post p, users u WHERE u.id = p.id_users AND p.id_forum_thread = ? ORDER BY p.created ASC', [p.id]);
+ async getForumPosts(id) {
+  return await this.db.query('SELECT p.id, p.id_users, u.username, u.sex, p.body, p.created FROM forum_posts p, users u WHERE u.id = p.id_users AND p.id_forum_threads = ? ORDER BY p.created ASC', [id]);
  }
 
  async getLogin() {}

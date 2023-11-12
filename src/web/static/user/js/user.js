@@ -192,14 +192,19 @@ async function getPageItem(pathArr = null) {
  } else f.qs('#content').innerHTML = f.getHTML('item-detail-notfound');
 }
 
-async function getPageForum() {
- f.qs('#content .body .buttons').innerHTML = f.translate(f.getHTML('forum-buttons'), { '{ICON-NEW}': f.getImage('news.svg') });
- await getPageForumThreadsMore(10);
- const content = f.qs('#content');
- if (!content.onscroll) content.onscroll = async () => await getPageForumThreadsMore(10);
+async function getPageForum(pathArr = null) {
+ if (pathArr.length == 2) await getPageForumThread(pathArr[1]);
+ else {
+  f.qs('#content').innerHTML = f.getHTML('forum-threads');
+  f.qs('#content .body .buttons').innerHTML = f.translate(f.getHTML('forum-threads-buttons'), { '{ICON-NEW}': f.getImage('news.svg') });
+  await getPageForumThreadsMore(10);
+  const content = f.qs('#content');
+  if (!content.onscroll) content.onscroll = async () => await getPageForumThreadsMore(10);
+ }
 }
 
 async function getPageForumThreadsMore(count = 10) {
+ // TODO: check why page is loading the same offset again:
  console.log(count, offset);
  const loader = f.qs('#content .loader');
  if (loading  || !isElementVisible(loader)) return;
@@ -215,7 +220,7 @@ async function getPageForumThreadsMore(count = 10) {
  } else {
   let rows = '';
   for (const item of threads.data) {
-   rows += f.translate(f.getHTML('forum-row'), {
+   rows += f.translate(f.getHTML('forum-threads-row'), {
     '{ID}': item.id,
     '{TOPIC}': f.escapeHTML(item.topic),
     '{USERNAME}': item.username,
@@ -230,6 +235,17 @@ async function getPageForumThreadsMore(count = 10) {
   if (threads.data.length == count) getPageForumThreadsMore(count, offset);
   else loader.remove();
  }
+}
+
+async function getPageForumThread(id) {
+ const thread = (await f.getAPI('get_forum_thread', { id: 10 })).data;
+ f.qs('#content').innerHTML = f.translate(f.getHTML('forum-thread'), {
+  '{THREAD-TOPIC}': thread.topic,
+  '{THREAD-USER}': thread.username,
+  '{THREAD-CREATED}': new Date(thread.created).toLocaleString(),
+  '{THREAD-BODY}': getTextWithLinks(thread.body),
+ });
+ // TODO: add posts
 }
 
 async function getPageUploads() {
@@ -357,6 +373,13 @@ function isElementVisible(el) {
   rect.bottom > 0 &&
   rect.right > 0
  );
+}
+
+function getTextWithLinks(text) {
+ const urlRegex = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#/%?=~_|!:,.;]*[-A-Z0-9+&@#/%=~_|])/gi;
+ return text.replace(urlRegex, function(url) {
+  return '<a href="' + url + '">' + url + '</a>';
+ });
 }
 
 /*

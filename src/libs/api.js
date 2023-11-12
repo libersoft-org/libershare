@@ -321,8 +321,10 @@ class API {
  }
 
  async getForumThread(p = {}) {
+  if (!p.id) return { error: 1, message: 'Forum thread ID is empty' };
   const res = await this.data.getForumThread(p.id);
-  return { error: 0, data: res };
+  if (res.length != 1) return { error: 2, message: 'Forum thread does not exist' };
+  return { error: 0, data: res[0] };
  }
 
  async getForumPosts(p = {}) {
