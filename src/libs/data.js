@@ -45,7 +45,7 @@ class Data {
   await this.db.close();
  }
 
- async getCategories(items = null, order = 'created', direction = false, search = null, count = null, offset = null) {
+ async getCategories(items = null, order = 'created', direction = false, search = null, count = 12, offset = 0) {
   /* TODO: stats for all categories
    (SELECT SUM((SELECT SUM(size) FROM files WHERE id_items = items.id)) FROM items WHERE id_categories = categories.id) AS size,
    (SELECT COUNT(*) FROM categories_visits WHERE id_categories = categories.id) AS visits,
@@ -69,17 +69,10 @@ class Data {
    params.push(search);
   }
   if (items === true || items === false) query += ' HAVING items_count - items_count_hidden ' + (items ? '!=' : '=') + ' 0';
-  query += ' ORDER BY ' + this.db.escapeId(order);
-  query += ' ' + (direction ? 'DESC' : 'ASC');
-  query += ', id ' + (direction ? 'DESC' : 'ASC');
-  if (count) {
-   query += 'LIMIT ?';
-   params.push(count);
-  }
-  if (count && offset) {
-   query += ' OFFSET ?';
-   params.push(offset);
-  }
+  query += ' ORDER BY ' + this.db.escapeId(order) + ' ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC');
+  query += ' LIMIT ? OFFSET ?';
+  params.push(count);
+  params.push(offset);
   return await this.db.query(query, params);
  }
 
@@ -121,18 +114,12 @@ class Data {
    WHERE link = ?`, [link]);
  }
 
- /* TODO: stats for category
-    (SELECT COUNT(*) FROM categories_visits WHERE id_categories = categories.id) AS visits,
-    (SELECT COUNT(DISTINCT session) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_session,
-    (SELECT COUNT(DISTINCT ip) FROM categories_visits WHERE id_categories = categories.id) AS visits_by_ip,
-    */
-
  async getCategoryExists(id) {
   const rows = await this.db.query('SELECT COUNT(*) AS cnt FROM categories WHERE id = ?', [id]);
   return rows[0].cnt == 1;
  }
 
- async getDownloadFiles(id_item, order, direction, search, count, offset) {
+ async getDownloadFiles(id_item, order = 'f.created', direction = false, search = null, count = 10, offset = 0) {
   let query = `
    SELECT
     f.id,
@@ -151,19 +138,27 @@ class Data {
     (SELECT COUNT(DISTINCT ip) FROM files_plays WHERE id_files = f.id) AS plays_by_ip,
     f.created
    FROM files f, items i
-   WHERE f.id_items = i.id`;
-  query += id_item != '' ? ' AND f.id_items = "' + id_item + '"' : '';
-  query += search != null && search != '' ? ' AND MATCH(f.file_name) AGAINST ("' + search + '")' : '';
-  query += search == '' ? ' ORDER BY ' + (order != null && order != '' ? order : 'f.created') + ' ' + (direction ? 'DESC' : 'ASC') + ', f.id ' + (direction ? 'DESC' : 'ASC') : '';
-  query += count != null && count != '' ? ' LIMIT ' + count + (offset != null && offset != '' ? ' OFFSET ' + offset : '') : '';
-  return await this.db.query(query);
+   WHERE f.id_items = i.id
+    AND f.id_items = ?`;
+  const params = [];
+  params.push(id_item);
+  if (search) {
+   query += ' AND MATCH(f.file_name) AGAINST ("?")';
+   params.push(search);
+  } else {
+   if (!search) query += ' ORDER BY ' + this.db.escapeId(order) + ' ' + (direction ? 'DESC' : 'ASC') + ', f.id ' + (direction ? 'DESC' : 'ASC');
+   query += ' LIMIT ? OFFSET ?';
+   params.push(count);
+   params.push(offset);
+  }
+  return await this.db.query(query, params);
  }
 
  async getDownloadFile() {}
 
  async getFileByID() {}
 
- async getForumThreads(order = 't.created', direction, count, offset) {
+ async getForumThreads(order = 't.created', direction = false, count = 10, offset = 0) {
   let query = `
    SELECT
     t.id,
@@ -178,14 +173,9 @@ class Data {
    WHERE u.id = t.id_users ORDER BY ` + this.db.escapeId(order);
   const params = [];
   query += ' ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC');
-  if (count) {
-   query += ' LIMIT ?';
-   params.push(count);
-  }
-  if (count && offset) {
-   query += ' OFFSET ?';
-   params.push(offset);
-  }
+  query += ' LIMIT ? OFFSET ?';
+  params.push(count);
+  params.push(offset);
   return await this.db.query(query, params);
  }
 
@@ -193,8 +183,7 @@ class Data {
   return await this.db.query('SELECT t.id, t.id_users, u.username, u.sex, t.topic, t.body, t.created FROM forum_threads t, users u WHERE u.id = t.id_users AND t.id = ?', [id]);
  }
 
- async getForumPosts(id, order = 'p.created', direction = false, count = 50, offset = 0) {
-  console.log(id, order, direction, count, offset);
+ async getForumPosts(id, order = 'p.created', direction = false, count = 10, offset = 0) {
   return await this.db.query(`
    SELECT p.id, p.id_users, u.username, u.sex, p.body, p.created
    FROM forum_posts p, users u
@@ -221,13 +210,11 @@ class Data {
     (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = items.id) AS visits_by_ip,
     created
    FROM items
-   WHERE id = ?${!hidden ? ' AND hidden = 0' : ''}`, [id]
-  );
+   WHERE id = ?` + (!hidden ? ' AND hidden = 0' : ''), [id]);
  }
 
  async getItemByLink(link, hidden) {
-  return await this.db.query(
-   `
+  return await this.db.query(`
    SELECT
     id,
     id_categories,
@@ -242,8 +229,7 @@ class Data {
     (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = items.id) AS visits_by_ip,
     created
    FROM items
-   WHERE link = ?${!hidden ? ' AND hidden = 0' : ''}`, [link]
-  );
+   WHERE link = ?` + (!hidden ? ' AND hidden = 0' : ''), [link]);
  }
 
  async getItemExists(id) {
@@ -259,7 +245,12 @@ class Data {
 
  }
 
- async getItems(id_category, order, direction, hidden, adult, files, image, search, count, offset) {
+ async getItems(id_category, order = 'created', direction = false, hidden = null, adult = null, files = null, image = null, search = null, count = 12, offset = 0) {
+  /* TODO: items stats
+   (SELECT COUNT(*) FROM items_visits WHERE id_items = i.id) AS visits,
+   (SELECT COUNT(DISTINCT session) FROM items_visits WHERE id_items = i.id) AS visits_by_session,
+   (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = i.id) AS visits_by_ip,
+  */
   let query = `
    SELECT
     i.id,
@@ -290,28 +281,18 @@ class Data {
    params.push(search);
   }
   if (files == true || files == false) query += ' HAVING files ' + (files ? '> 0' : '= 0');
-  if (!search) {
-   query += ' ORDER BY ? ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC');
-   params.push(order || 'created');
-  }
-  if (count) {
-   query += ' LIMIT ?' + (offset ? ' OFFSET ?' : '');
-   params.push(count);
-   if (offset) params.push(offset);
-  }
+  if (!search) query += ' ORDER BY ' + this.db.escapeId(order) + ' ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC');
+  query += ' LIMIT ? OFFSET ?';
+  params.push(count);
+  params.push(offset);
   return await this.db.query(query, params);
  }
-
- /*
-  (SELECT COUNT(*) FROM items_visits WHERE id_items = i.id) AS visits,
-  (SELECT COUNT(DISTINCT session) FROM items_visits WHERE id_items = i.id) AS visits_by_session,
-  (SELECT COUNT(DISTINCT ip) FROM items_visits WHERE id_items = i.id) AS visits_by_ip,
- */
+ 
  async getUpload() {}
 
  async getUploadByID() {}
 
- async getUploads(o, d, count, offset, search) {
+ async getUploads(order = 'created', direction = false, count = 10, offset = 0, search = null) {
   let query = `
    SELECT
     id,
@@ -324,10 +305,15 @@ class Data {
     (SELECT COUNT(DISTINCT ip) FROM uploads_downloads WHERE id_uploads = uploads.id) AS downloads_by_ip,
     created
    FROM uploads`;
-  query += search != null && search != '' ? ' WHERE MATCH(realname) AGAINST ("' + search + '")' : '';
-  query += search == null || search == '' ? ' ORDER BY ' + (o != null && o != '' ? o : 'created') + ' ' + (d ? 'DESC' : 'ASC') + ', id ' + (d ? 'DESC' : 'ASC') : '';
-  query += count != null && count != '' ? ' LIMIT ' + count + (offset != null && offset != '' ? ' OFFSET ' + offset : '') : '';
-  return await this.db.query(query);
+  const params = [];
+  if (search) {
+   query += ' WHERE MATCH(realname) AGAINST ("?")';
+   params.push(search);
+  } else query += ' ORDER BY ' + this.db.escapeId(order) + ' ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC');
+  query += ' LIMIT ? OFFSET ?';
+  params.push(count);
+  params.push(offset);
+  return await this.db.query(query, params);
  }
 
  async getUploadsInfo() {

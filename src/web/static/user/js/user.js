@@ -252,7 +252,7 @@ async function getPageForumThread(id) {
  if (!elPosts.onscroll) elPosts.onscroll = async () => await getPageForumPostsMore(id, 2);
 }
 
-async function getPageForumPostsMore(id, count = 50) {
+async function getPageForumPostsMore(id, count = 10) {
  // TODO: check why page is loading the same offset again:
  console.log(count, offset);
  const loader = f.qs('#content .loader');
