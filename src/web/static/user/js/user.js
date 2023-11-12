@@ -226,7 +226,7 @@ async function getPageForumThreadsMore(count = 10) {
     '{USERNAME}': thread.username,
     '{POSTS}': thread.posts_count,
     '{CREATED}': new Date(thread.created).toLocaleString(),
-    '{SEX}': thread.sex == 1 ? 'text-blue' : 'text-red'
+    '{SEX}': thread.sex ? 'text-blue' : 'text-red'
    });
   }
   f.qs('#content .forum tbody').innerHTML += rows;
@@ -241,7 +241,8 @@ async function getPageForumThread(id) {
  const thread = (await f.getAPI('get_forum_thread', { id: id })).data;
  f.qs('#content').innerHTML = f.translate(f.getHTML('forum-thread'), {
   '{THREAD-TOPIC}': thread.topic,
-  '{THREAD-USER}': thread.username, //TODO: show colours based on gender (+ link to profile?)
+  '{THREAD-SEX}': thread.sex ? 'text-blue' : 'text-red',
+  '{THREAD-USER}': thread.username,
   '{THREAD-CREATED}': new Date(thread.created).toLocaleString(),
   '{THREAD-BODY}': getTextWithLinks(thread.body),
   '{POST}': f.getHTML('forum-post-new-error')
