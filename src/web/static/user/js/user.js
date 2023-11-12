@@ -232,7 +232,7 @@ async function getPageForumThreadsMore(count = 10) {
   f.qs('#content .forum tbody').innerHTML += rows;
   offset += count;
   loading = false;
-  if (threads.data.length == count) getPageForumThreadsMore(count, offset);
+  if (threads.data.length == count) getPageForumThreadsMore(count);
   else loader.remove();
  }
 }
@@ -246,6 +246,39 @@ async function getPageForumThread(id) {
   '{THREAD-BODY}': getTextWithLinks(thread.body),
  });
  // TODO: add posts
+ getPageForumPostsMore(id, 2);
+}
+
+async function getPageForumPostsMore(id, count = 50) {
+ // TODO: check why page is loading the same offset again:
+ console.log(count, offset);
+ const loader = f.qs('#content .loader');
+ if (loading  || !isElementVisible(loader)) return;
+ loading = true;
+ const posts = await f.getAPI('get_forum_posts', {
+  id: id,
+  count: count,
+  offset: offset,
+  direction: true
+ });
+ if (!posts || !posts.data || posts.data.length == 0) {
+  loader.remove();
+  loading = false;
+ } else {
+  let rows = '';
+  for (const post of posts.data) {
+   rows += f.translate(f.getHTML('forum-post-row'), {
+    '{POST-USER}': post.username,
+    '{POST-DATE}': new Date(post.created).toLocaleString(),
+    '{POST-BODY}': getTextWithLinks(post.body)
+   });
+  }
+  f.qs('#content .body .posts').innerHTML += rows;
+  offset += count;
+  loading = false;
+  if (posts.data.length == count) getPageForumPostsMore(count);
+  else loader.remove();
+ }
 }
 
 async function getPageUploads() {
@@ -378,7 +411,7 @@ function isElementVisible(el) {
 function getTextWithLinks(text) {
  const urlRegex = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#/%?=~_|!:,.;]*[-A-Z0-9+&@#/%=~_|])/gi;
  return text.replace(urlRegex, function(url) {
-  return '<a href="' + url + '">' + url + '</a>';
+  return '<a href="' + url + '"  target="_blank">' + url + '</a>';
  });
 }
 

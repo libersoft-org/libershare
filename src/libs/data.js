@@ -175,10 +175,8 @@ class Data {
     t.created
    FROM
     forum_threads t, users u
-   WHERE u.id = t.id_users
-  `;
+   WHERE u.id = t.id_users ORDER BY ` + this.db.escapeId(order);
   const params = [];
-  query += 'ORDER BY ' + this.db.escapeId(order);
   query += ' ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC');
   if (count) {
    query += ' LIMIT ?';
@@ -195,8 +193,21 @@ class Data {
   return await this.db.query('SELECT t.id, t.id_users, u.username, u.sex, t.topic, t.body, t.created FROM forum_threads t, users u WHERE u.id = t.id_users AND t.id = ?', [id]);
  }
 
- async getForumPosts(id) {
-  return await this.db.query('SELECT p.id, p.id_users, u.username, u.sex, p.body, p.created FROM forum_posts p, users u WHERE u.id = p.id_users AND p.id_forum_threads = ? ORDER BY p.created ASC', [id]);
+ async getForumPosts(id, order = 'p.created', direction = false, count = 50, offset = 0) {
+  return await this.db.query(`
+   SELECT
+    p.id,
+    p.id_users,
+    u.username,
+    u.sex,
+    p.body,
+    p.created
+   FROM forum_posts p, users u
+   WHERE
+    u.id = p.id_users
+    AND p.id_forum_threads = ?
+   ORDER BY ` + order + ' ' + (direction ? 'DESC' : 'ASC') + ', id ' + (direction ? 'DESC' : 'ASC') + `
+   LIMIT ? OFFSET ?`, [id, count, offset]);
  }
 
  async getLogin() {}
