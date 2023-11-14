@@ -32,6 +32,7 @@ class WebServer {
   if (Common.settings.web.standalone) server.port = Common.settings.web.port;
   else server.unix = Common.settings.web.socket_path;
   Bun.serve(server);
+  if (!Common.settings.web.standalone) fs.chmodSync(Common.settings.web.socket_path, '777');
   Common.addLog('Web server is running on ' + (Common.settings.web.standalone ? 'port: ' + Common.settings.web.port : 'Unix socket: ' + Common.settings.web.socket_path));
  }
 
