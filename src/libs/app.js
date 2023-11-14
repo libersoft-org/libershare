@@ -30,9 +30,7 @@ class App {
   Common.addLog('');
   const WebServer = require('./webserver.js');
   const webServer = new WebServer();
-  webServer.run().then(() => {
-   // fs.chmodSync(Common.settings.web.socket_path, '777');
-  });
+  webServer.run();  
  }
 
  getHelp() {

@@ -87,7 +87,7 @@
  display: block;
 }
 
-#menu-mobile .button :hover {
+#menu-mobile .button:hover {
  background-color: var(--secondary-color-light);
 }
 

@@ -86,6 +86,7 @@ async function getPageCategories(pathArr = null) {
     await getPageCategoriesMore(cat.data.id, 12);
     // TODO: onscroll is not working
     if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data.id, 12);
+    //f.qs('#content').onscroll = async () => await getPageCategoriesMore(cat.data.id, 12);
    } else elCategory.innerHTML = f.getHTML('categories-category-notfound');
   }
  } else {

@@ -75,11 +75,11 @@ server {
  server_name your-server.com *.your-server.com;
 
  location / {
-  proxy_pass http://server;
+  proxy_pass http://libershare;
  }
 }
 
-upstream server {
+upstream libershare {
  server unix:/run/libershare.sock;
 }
 ```
