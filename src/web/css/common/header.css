@@ -42,6 +42,10 @@
  outline: none;
 }
 
+#header .search .submit-button {
+  display: flex;
+}
+
 #header .search img {
  margin-left: 5px;
  height: 24px;

@@ -389,10 +389,10 @@ function logout() {
 }
 
 function searchEnter(e) {
- if (e.keyCode == 13 || e.which == 13) search();
+ if (e.keyCode == 13 || e.which == 13) fullSearch();
 }
 
-function search() {
+function fullSearch() {
  if (f.qs('#header .search .text').value.trim() != '') f.getPage('search');
 }
 
