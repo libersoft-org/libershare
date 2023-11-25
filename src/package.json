@@ -1,11 +1,11 @@
 {
-  "dependencies": {
-    "elysia": "*",
-    "mysql2": "*",
-    "crypto": "*",
-    "prettier": "*"
-  },
-  "scripts": {
-    "format": "prettier --write \"**/*.{js,ts,html,css}\""
-  }
+ "dependencies": {
+  "crypto": "*",
+  "elysia": "*",
+  "mysql2": "*",
+  "prettier": "*"
+ },
+ "scripts": {
+  "format": "prettier --write \"**/*.{js,ts,html,css}\""
+ }
 }

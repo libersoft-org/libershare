@@ -1,4 +1,4 @@
 #!/bin/sh
 
 [ ! -d "./node_modules/" ] && bun i
-screen -dmS libershare bun --hot libershare.js
+screen -dmS libershare bun --watch libershare.js
