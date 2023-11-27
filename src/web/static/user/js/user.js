@@ -61,6 +61,8 @@ async function getPageNews() {
  f.qs('#content .loader').remove();
 }
 
+
+
 async function getPageCategories(pathArr = null) {
  const elCategory = f.qs('#content .categories');
  if (pathArr.length == 2) {
@@ -74,8 +76,6 @@ async function getPageCategories(pathArr = null) {
     '{COUNT}': itemsCount
    });
    await getPageCategoriesMore(null, 12);
-   // TODO: onscroll is not working
-   if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(null, 12);
   } else {
    const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
    if (cat && cat.data) {
@@ -84,10 +84,9 @@ async function getPageCategories(pathArr = null) {
      '{COUNT}': cat.data.items_count - cat.data.items_count_hidden,
     });
     await getPageCategoriesMore(cat.data.id, 12);
-    // TODO: onscroll is not working
-    if (!elCategory.onscroll) elCategory.onscroll = async () => await getPageCategoriesMore(cat.data.id, 12);
-    //f.qs('#content').onscroll = async () => await getPageCategoriesMore(cat.data.id, 12);
-   } else elCategory.innerHTML = f.getHTML('categories-category-notfound');
+   } else {
+    elCategory.innerHTML = f.getHTML('categories-category-notfound');
+   }
   }
  } else {
   elCategory.innerHTML = f.getHTML('categories-list');
@@ -117,7 +116,24 @@ async function getPageCategories(pathArr = null) {
    '{COUNT}': catsItemsCount
   }) + crows;
  }
+
+  /* onscroll category items - lazy loading */
+  const contentContainer = f.qs('#content');
+  if (!contentContainer.onscroll) {
+    contentContainer.onscroll = async () => {
+      const pathArr = f.pathArr;
+      let categoryId = null;
+      if (pathArr[1] !== 'all') {
+        const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
+        if (!f.propertyTester(() => cat.data.id)) return;
+        categoryId = cat.data.id;
+      }
+      await getPageCategoriesMore(categoryId, 12);
+    }
+  }
 }
+
+
 
 async function getPageCategoriesMore(id = null, count = 12) {
  //console.log(id, count, offset);

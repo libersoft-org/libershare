@@ -261,4 +261,23 @@ class Framework {
  getLoader() {
   return '<div class="loader"></div>';
  }
+
+ /**
+ * Property tester - optional chaining
+ ** https://silvantroxler.ch/2017/avoid-cannot-read-property-of-undefined/
+ * @param {Function} - function with chaning property
+ * @param {Value} - optional overide default null value for catch return
+ * DEMO USE
+ * - if (propertyTester(() => data.plugins.superplugin.items.id)) {...
+ */
+  propertyTester(fn, defaultVal = null) {
+    if (typeof fn !== 'function') {
+      console.error('[property tester] first argument not function!');
+    }
+    try {
+      return fn();
+    } catch (e) {
+      return defaultVal;
+    }
+  }
 }
