@@ -131,41 +131,52 @@ class Framework {
  async getModal(title, body) {
   this.closeModal();
   const html = this.getHTML('modal');
-  const modal = document.createElement('div');
-  modal.innerHTML = this.translate(html, {
+  const allModalComponents = document.createElement('div');
+  allModalComponents.id = 'modal-area';
+  allModalComponents.innerHTML = this.translate(html, {
    '{TITLE}': title,
    '{BODY}': body,
    '{ICON-CLOSE}': this.getImage('close.svg')
   });
 
-  // TODO - DRAGABLE NOT WORKING PROPERLY - can reach off window boundaries and shrinks when on right side:
-  const mod = modal.querySelector('.modal');
+  const movableModalElement = allModalComponents.querySelector('.modal');
   let isDragging = false;
-  let offsetX = 0;
-  let offsetY = 0;
-  const header = mod.querySelector('.title');
+
+  const header = movableModalElement.querySelector('.title');
   header.onmousedown = (e) => {
    //e.stopPropagation();
    e.preventDefault();
    isDragging = true;
-   offsetX = e.clientX - mod.offsetLeft;
-   offsetY = e.clientY - mod.offsetTop;
+   const clickPosX = e.clientX - movableModalElement.offsetLeft;
+   const clickPosY = e.clientY - movableModalElement.offsetTop;
+   
    document.onmousemove = (e) => {
     if (!isDragging) return;
-    mod.style.left = e.clientX - offsetX + 'px';
-    mod.style.top = e.clientY - offsetY + 'px';
+
+    const modalAreaRect = document.querySelector('#modal-area').getBoundingClientRect();
+    const movableRect = movableModalElement.getBoundingClientRect();
+
+    const offsetX = e.clientX - clickPosX;
+    const offsetY = e.clientY - clickPosY;
+
+    const maxX = modalAreaRect.width - movableRect.width;
+    const maxY = modalAreaRect.height - movableRect.height;
+
+    const x = Math.min(Math.max(offsetX, 0), maxX);
+    const y = Math.min(Math.max(offsetY, 0), maxY);
+
+    movableModalElement.style.left = x + 'px';
+    movableModalElement.style.top = y + 'px';
    };
    document.onmouseup = () => (isDragging = false);
   };
 
-  document.body.appendChild(modal);
+  document.body.appendChild(allModalComponents);
  }
 
  closeModal() {
-  const m = this.qs('.modal');
-  const mo = this.qs('.modal-overlay');
-  if (m) m.remove();
-  if (mo) mo.remove();
+  const allModalComponents = this.qs('#modal-area');
+  if (allModalComponents) allModalComponents.remove();
  }
 
  accordionToggle(el) {
