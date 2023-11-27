@@ -10,6 +10,7 @@ src/bun.lockb
 src/settings.json.bak
 src/settings.json
 src/*.log
+src/images
 .secret_git
 /mycommit.sh
 /xshare.sql
