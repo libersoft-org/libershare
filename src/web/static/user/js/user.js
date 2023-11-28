@@ -117,20 +117,18 @@ async function getPageCategories(pathArr = null) {
   }) + crows;
  }
 
-  /* onscroll category items - lazy loading */
-  const contentContainer = f.qs('#content');
-  if (!contentContainer.onscroll) {
-    contentContainer.onscroll = async () => {
-      const pathArr = f.pathArr;
-      let categoryId = null;
-      if (pathArr[1] !== 'all') {
-        const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
-        if (!f.propertyTester(() => cat.data.id)) return;
-        categoryId = cat.data.id;
-      }
-      await getPageCategoriesMore(categoryId, 12);
-    }
-  }
+ let categoryId = null;
+ if (pathArr[1] !== 'all') {
+   const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
+   if (!f.propertyTester(() => cat.data.id)) return;
+   categoryId = cat.data.id;
+ }
+
+ /* onscroll category items - lazy loading */
+ const contentContainer = f.qs('#content');
+ contentContainer.onscroll = async () => {
+  await getPageCategoriesMore(categoryId, 12);
+ }
 }
 
 
@@ -411,6 +409,14 @@ function searchEnter(e) {
 
 function fullSearch() {
  if (f.qs('#header .search .text').value.trim() != '') f.getPage('search');
+}
+
+function toggleMobileSearch() {
+  if (f.qs('#mobile-search').classList.contains('show')) {
+    f.qs('#mobile-search').classList.remove('show');
+  } else {
+    f.qs('#mobile-search').classList.add('show');
+  }
 }
 
 async function playVideo(link) {

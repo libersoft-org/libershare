@@ -69,8 +69,10 @@ class Framework {
    '{ICON-SETTINGS}': this.getImage('settings.svg'),
    '{ICON-LOGIN}': this.getImage('login.svg')
   });
+  const mobileSearch = this.translate(this.getHTML('mobile-search'), {'{ICON-SEARCH}': this.getImage('search.svg')});
   this.qs('#menu-desktop').innerHTML = menu;
   this.qs('#menu-mobile').innerHTML = menu;
+  this.qs('#mobile-search').innerHTML = mobileSearch;
   this.getMenuSwitch();
  }
 
