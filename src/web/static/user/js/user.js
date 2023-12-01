@@ -2,6 +2,7 @@ const f = new Framework();
 
 let loading = false;
 let offset = 0;
+let categoryId = null;
 
 window.onload = async () => {
  document.addEventListener('page-loaded', () => getPageContent());
@@ -9,6 +10,7 @@ window.onload = async () => {
 };
 
 async function getPageContent() {
+ categoryId = null;
  loading = false;
  offset = 0;
  const pageHandlers = {
@@ -22,6 +24,7 @@ async function getPageContent() {
   contact: getPageContact
  };
  const pageHandler = pageHandlers[f.pathArr[0]];
+
  if (pageHandler) await pageHandler(f.pathArr);
  const sess = localStorage.getItem('libershare_session_guid');
  if (sess && sess.length > 16) {
@@ -66,75 +69,78 @@ async function getPageNews() {
 async function getPageCategories(pathArr = null) {
  const elCategory = f.qs('#content .categories');
  if (pathArr.length == 2) {
-  const temp_cat = f.getHTML('categories-category');
-  if (pathArr[1] == 'all') {
-   const cats = await f.getAPI('get_categories', { items: true });
-   let itemsCount = 0;
-   for (const cat of cats.data) itemsCount += cat.items_count - cat.items_count_hidden;
-   elCategory.innerHTML = f.translate(temp_cat, {
-    '{CATEGORY}': 'All',
-    '{COUNT}': itemsCount
-   });
-   await getPageCategoriesMore(null, 12);
+    const temp_cat = f.getHTML('categories-category');
+    if (pathArr[1] == 'all') {
+      const cats = await f.getAPI('get_categories', { items: true });
+      let itemsCount = 0;
+      for (const cat of cats.data) itemsCount += cat.items_count - cat.items_count_hidden;
+      elCategory.innerHTML = f.translate(temp_cat, {
+        '{CATEGORY}': 'All',
+        '{COUNT}': itemsCount
+      });
+      await getPageCategoriesMore(null, 12);
+    } else {
+      const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
+      if (cat && cat.data) {
+        elCategory.innerHTML = f.translate(temp_cat, {
+        '{CATEGORY}': cat.data.name,
+        '{COUNT}': cat.data.items_count - cat.data.items_count_hidden,
+        });
+        await getPageCategoriesMore(cat.data.id, 12);
+      } else {
+        elCategory.innerHTML = f.getHTML('categories-category-notfound');
+      }
+    }
   } else {
-   const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
-   if (cat && cat.data) {
-    elCategory.innerHTML = f.translate(temp_cat, {
-     '{CATEGORY}': cat.data.name,
-     '{COUNT}': cat.data.items_count - cat.data.items_count_hidden,
-    });
-    await getPageCategoriesMore(cat.data.id, 12);
-   } else {
-    elCategory.innerHTML = f.getHTML('categories-category-notfound');
-   }
+    categoryId = 'root'; // stop listing all items from all categories for root category list
+    elCategory.innerHTML = f.getHTML('categories-list');
+    const temp_item = f.getHTML('categories-item');
+    const cats = await f.getAPI('get_categories', { items: true });
+    let catsItemsCount = 0;
+    let crows = '';
+    if (cats && cats.data) {
+    const imgFiles = [];
+    for (cat of cats.data) imgFiles.push(cat.image);
+    const imgData = await f.getAPI('get_images_categories', { files: imgFiles });
+    for (const cat of cats.data) {
+      const catItemsCount = cat.items_count - cat.items_count_hidden;
+      crows += f.translate(temp_item, {
+      '{LINK}': cat.link,
+      '{NAME}': cat.name,
+      '{IMAGE}': imgData.data[cat.image] ? imgData.data[cat.image] : f.getImage('item-default.webp'),
+      '{COUNT}': catItemsCount
+      });
+      catsItemsCount += catItemsCount;
+    }
+    }
+    f.qs('#content .categories .items').innerHTML = f.translate(temp_item, {
+    '{LINK}': 'all',
+    '{NAME}': 'All',
+    '{IMAGE}': f.getImage('item-all.webp'),
+    '{COUNT}': catsItemsCount
+    }) + crows;
   }
- } else {
-  elCategory.innerHTML = f.getHTML('categories-list');
-  const temp_item = f.getHTML('categories-item');
-  const cats = await f.getAPI('get_categories', { items: true });
-  let catsItemsCount = 0;
-  let crows = '';
-  if (cats && cats.data) {
-   const imgFiles = [];
-   for (cat of cats.data) imgFiles.push(cat.image);
-   const imgData = await f.getAPI('get_images_categories', { files: imgFiles });
-   for (const cat of cats.data) {
-    const catItemsCount = cat.items_count - cat.items_count_hidden;
-    crows += f.translate(temp_item, {
-     '{LINK}': cat.link,
-     '{NAME}': cat.name,
-     '{IMAGE}': imgData.data[cat.image] ? imgData.data[cat.image] : f.getImage('item-default.webp'),
-     '{COUNT}': catItemsCount
-    });
-    catsItemsCount += catItemsCount;
-   }
+
+  if (f.pathArr[1] !== 'all') {
+    const categoryByLink = await f.getAPI('get_category_by_link', { link: f.pathArr[1] });
+    if (f.propertyTester(() => categoryByLink.data.id)) {
+      categoryId = categoryByLink.data.id;
+    }
   }
-  f.qs('#content .categories .items').innerHTML = f.translate(temp_item, {
-   '{LINK}': 'all',
-   '{NAME}': 'All',
-   '{IMAGE}': f.getImage('item-all.webp'),
-   '{COUNT}': catsItemsCount
-  }) + crows;
- }
 
- let categoryId = null;
- if (pathArr[1] !== 'all') {
-   const cat = await f.getAPI('get_category_by_link', { link: pathArr[1] });
-   if (!f.propertyTester(() => cat.data.id)) return;
-   categoryId = cat.data.id;
- }
-
- /* onscroll category items - lazy loading */
- const contentContainer = f.qs('#content');
- contentContainer.onscroll = async () => {
-  await getPageCategoriesMore(categoryId, 12);
- }
+  /* onscroll category items - lazy loading */
+  const contentContainer = f.qs('#content');
+  if (!contentContainer.onscroll) {
+    contentContainer.onscroll = async () => {
+      await getPageCategoriesMore(categoryId, 12);
+    }
+  }
 }
 
 
 
 async function getPageCategoriesMore(id = null, count = 12) {
- //console.log(id, count, offset);
+// console.log(id, count, offset);
  const loader = f.qs('#content .loader');
  if (loading || !isElementVisible(loader)) return;
  loading = true;
@@ -146,6 +152,13 @@ async function getPageCategoriesMore(id = null, count = 12) {
   count: count,
   offset: offset
  });
+
+  if (!items.data) {
+    loader.remove();
+    loading = false;
+    return;
+  }
+
  if (items && items.data && items.data.length == 0) {
   loader.remove();
   loading = false;
@@ -319,8 +332,14 @@ async function getPageUploads() {
 }
 
 async function getPageSearch() {
- const phrase = f.escapeHTML(f.qs('#header .search .text').value.trim());
+ let phrase = f.escapeHTML(f.qs('#header .search .text').value.trim());
+
+ if (isMobileSearchActive()) {
+  phrase = f.escapeHTML(f.qs('#mobile-search .text').value.trim());
+ }
+
  if (phrase) {
+  if (isMobileSearchActive()) toggleMobileSearch();
   f.qs('#content .breadcrumb .active').innerHTML = 'Search: ' + phrase;
   const items = await f.getAPI('get_items', {
    search: phrase,
@@ -407,8 +426,17 @@ function searchEnter(e) {
  if (e.keyCode == 13 || e.which == 13) fullSearch();
 }
 
+function isMobileSearchActive() {
+  return f.qs('#mobile-search').classList.contains('show');
+}
+
 function fullSearch() {
- if (f.qs('#header .search .text').value.trim() != '') f.getPage('search');
+  if (isMobileSearchActive()) {
+    if (f.qs('#mobile-search .text').value.trim() != '') f.getPage('search');
+    return;
+  }
+
+  if (f.qs('#header .search .text').value.trim() != '') f.getPage('search');
 }
 
 function toggleMobileSearch() {
