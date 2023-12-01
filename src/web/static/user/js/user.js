@@ -4,6 +4,7 @@ let loading = false;
 let offset = 0;
 let categoryId = null;
 
+
 window.onload = async () => {
  document.addEventListener('page-loaded', () => getPageContent());
  await f.init();
@@ -388,7 +389,7 @@ async function getModalLogin() {
   '{ICON-RELOAD}': f.getImage('reload.svg'),
  }));
  const captcha = await f.getAPI('get_captcha');
- const elCaptcha = f.qs('.modal .body .captcha');
+ const elCaptcha = f.qs('#captcha-code');
  elCaptcha.style.backgroundColor = 'red';
  elCaptcha.src = captcha.image;
  const cid = f.qs('#cid');

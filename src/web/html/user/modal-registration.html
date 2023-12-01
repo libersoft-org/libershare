@@ -1,15 +1,25 @@
 <!-- /api/set_registration -->
-<div class="form">
- <div class="label">Username:</div>
- <input type="text" name="username" />
- <div class="label">E-mail address:</div>
- <input type="email" name="email" />
- <div class="label">First name:</div>
- <input type="text" name="firstname" />
- <div class="label">Last name:</div>
- <input type="text" name="lastname" />
+<div class="modal-registration">
+
+  <div class="input-group">
+    <label for="username" class="input-label">Username</label>
+    <input type="text" name="username" />
+  </div>
+  <div class="input-group">
+    <label for="email" class="input-label">E-mail address</label>
+    <input type="email" name="email" />
+  </div>
+  <div class="input-group">
+    <label for="firstname" class="input-label">First name</label>
+    <input type="text" name="firstname" />
+  </div>
+  <div class="input-group">
+    <label for="lastname" class="input-label">Last name</label>
+    <input type="text" name="lastname" />
+  </div>
+
  <div class="label">Sex:</div>
- <input type="radio" name="sex" value="1" />Muž <input type="radio" name="sex" value="0" />Žena
+ <input type="radio" name="sex" value="1" />Men <input type="radio" name="sex" value="0" />Woman
  <div class="label">Birthdate:</div>
  <div>
   <select name="day"><option value="">- Day -</option>{DAYS}</select>.

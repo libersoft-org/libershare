@@ -1,27 +1,49 @@
 <!--
  /api/validate_login
 -->
+<div class="modal-login">
+  <div class="notice red"></div>
 
-<div>Username:</div>
-<input type="text" name="username" />
-<div>Password:</div>
-<input type="password" name="password" />
-<div id="static-captcha">
- <div class="captch">
-  <img id="captcha-container" src="" alt="" />
-  <img class="reload-icon" src="{ICON-RELOAD}" onclick="f.regenCaptcha()" alt="" />
- </div>
- <input type="text" id="cid" name="cid" />
- <input type="text" name="captcha" class="captcha-input" placeholder="Enter the text from image" />
+  <div class="input-group">
+    <label for="username" class="input-label">Username</label>
+    <input type="text" name="username" />
+  </div>
+  
+  <div class="input-group">
+    <label for="password" class="input-label">Password</label>
+    <input type="password" name="password" />
+  </div>
+
+  <div id="static-captcha">
+    <div class="captcha">
+     <img id="captcha-code" src="" alt="" />
+     <img class="captcha__reload-button" src="{ICON-RELOAD}" onclick="f.regenCaptcha()" alt="" />
+    </div>
+  </div>
+
+  <div class="input-group">
+    <label for="captcha" class="input-label">Captcha</label>
+    <input type="hidden" id="cid" name="cid" />
+    <input type="text" name="captcha" id="captcha-input" placeholder="Enter the text from image" />
+  </div>
+
+  <div class="input-group">
+    <div class="submit-button button primary" onclick="login()">
+      <img src="{ICON-LOGIN}" alt="Login" />
+      <span>Login now!</span>
+    </div>
+  </div>
+
+  <div class="registration-text">
+    <div class="registration-text__register-link">Don't have your free account? - <a onclick="getModalRegistration()">register now!</a></div>
+    <div class="registration-text__explain">
+      <div class="registration-text__explain__title">Why should I log in?</div>
+      <div>Logged users can download files, play video and discuss in forum</div> 
+      <div class="registration-text__explain__for-free">FOR FREE</div>
+    </div>
+    
+  </div>
+  
 </div>
-<div>Don't have your free account? - <a onclick="getModalRegistration()">register now!</a></div>
-<div class="red bold">Why should I log in?</div>
-<div>Logged users can download files, play video and discuss in forum <span class="bold">FOR FREE</span>.</div>
-<div class="notice red"></div>
-<div class="buttons">
- <a class="button primary" onclick="login()">
-  <img src="{ICON-LOGIN}" alt="Login" />
-  <span>Login</span>
- </a>
-</div>
+
 

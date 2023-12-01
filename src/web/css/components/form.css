@@ -8,3 +8,11 @@
  margin-top: 7px;
  margin-bottom: 2px;
 }
+
+.input-group {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 15px;
+}

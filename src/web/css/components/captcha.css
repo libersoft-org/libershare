@@ -1,19 +1,16 @@
-.captch {
+.captcha {
  display: flex;
- flex-direction: row;
- align-items: flex-end;
+ align-items: center;
 }
 
-.captch .reload-icon {
- width: 32px;
+.captcha .captcha__reload-button {
+ width: 25px;
  height: auto;
- margin-bottom: 128px;
- margin-left: 4px;
  cursor: pointer;
 }
 
-#captcha-container {
- margin-top: 3px;
+#captcha-code {
+ margin-right: 10px;
 }
 
 #captcha-container .modal-footer {

@@ -56,6 +56,72 @@
  overflow-y: auto;
 }
 
+.modal #static-captcha {
+  margin-bottom: 15px;
+}
+
+.modal-login {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 15px;
+}
+
+.modal-login .input-group label {
+  margin-right: 10px;
+  text-align: right;
+}
+
+.modal-login .input-group input[type="text"], .modal-login .input-group input[type="password"] {
+  width: 100%;
+  max-width: 250px;
+}
+
+.modal-login a {
+  text-decoration: underline;
+}
+
+.modal-login .registration-text {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+@media only screen and (max-width: 400px) {
+  .modal-login .registration-text .registration-text__register-link {
+    display: flex;
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .modal-login .registration-text .registration-text__explain {
+    text-align: center;
+  }
+}
+
+
+
+.modal-login .registration-text .registration-text__explain {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 20px;
+  color: grey;
+  font-size: 14px;
+}
+
+.modal-login .registration-text .registration-text__explain__title {
+  margin-bottom: 10px;
+  font-weight: bold;
+}
+
+.modal-login .registration-text .registration-text__explain__for-free {
+  margin-top: 10px;
+  font-weight: bold;
+}
+
+
 /*
 #login_modal {
  display: none;
