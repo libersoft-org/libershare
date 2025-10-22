@@ -1,0 +1,10 @@
+body {
+	font-family: 'Ubuntu', sans-serif;
+	margin: 0;
+	padding: 1vw;
+	background-color: #111;
+}
+
+.bold {
+	font-weight: bold;
+}
