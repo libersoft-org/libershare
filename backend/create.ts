@@ -1,6 +1,7 @@
 import { Utils } from './utils.ts';
 interface IManifest {
 	version: number;
+	id: string;
 	created: string;
 	filename: string;
 	totalSize: number;
@@ -58,8 +59,10 @@ async function createManifest(filePath: string, chunkSize: number, algo: HashAlg
 	process.stdout.write('\n');
 	const filename = filePath.split(/[\\/]/).pop() || filePath;
 	const created = new Date().toISOString();
+	const id = globalThis.crypto.randomUUID();
 	return {
 		version: MANIFEST_VERSION,
+		id,
 		created,
 		filename,
 		totalSize,
