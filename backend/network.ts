@@ -6,12 +6,12 @@ import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { identify } from '@libp2p/identify';
 import { bootstrap } from '@libp2p/bootstrap';
 import { LevelDatastore } from 'datastore-level';
-import { createEd25519PeerId, createFromProtobuf, exportToProtobuf } from '@libp2p/peer-id-factory';
+import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { Key } from 'interface-datastore';
 import { keychain } from '@libp2p/keychain';
 import type { Libp2p } from 'libp2p';
 import type { PubSub } from '@libp2p/interface';
-import type { PeerId } from '@libp2p/interface';
+import type { PeerId, PrivateKey } from '@libp2p/interface';
 import settings from './settings.json';
 interface PingMessage {
 	type: 'ping';
@@ -26,7 +26,7 @@ interface PongMessage {
 }
 const PING_TOPIC = 'libershare/ping';
 const PONG_TOPIC = 'libershare/pong';
-const PEER_ID_KEY = new Key('/local/peerid');
+const PRIVATE_KEY_KEY = new Key('/local/privatekey');
 
 type Message = PingMessage | PongMessage;
 
@@ -35,27 +35,23 @@ export class Network {
 	private pubsub: PubSub | null = null;
 	private datastore: LevelDatastore | null = null;
 
-	private async loadOrCreatePeerId(datastore: LevelDatastore): Promise<PeerId> {
+	private async loadOrCreatePrivateKey(datastore: LevelDatastore): Promise<PrivateKey> {
 		try {
-			if (await datastore.has(PEER_ID_KEY)) {
-				const bytes = await datastore.get(PEER_ID_KEY);
-				const peerId = await createFromProtobuf(bytes);
-				console.log('✓ Loaded peer ID from datastore:', peerId.toString());
-				console.log('  Private key:', peerId.privateKey ? 'present' : 'MISSING');
-				console.log('  Public key:', peerId.publicKey ? 'present' : 'MISSING');
-				return peerId;
+			if (await datastore.has(PRIVATE_KEY_KEY)) {
+				const bytes = await datastore.get(PRIVATE_KEY_KEY);
+				const privateKey = privateKeyFromProtobuf(bytes);
+				console.log('✓ Loaded private key from datastore');
+				return privateKey;
 			}
 		} catch (error) {
-			console.log('Could not load peer ID:', error);
+			console.log('Could not load private key:', error);
 		}
 
-		const peerId = await createEd25519PeerId();
-		const bytes = exportToProtobuf(peerId);
-		await datastore.put(PEER_ID_KEY, bytes);
-		console.log('✓ Saved new peer ID to datastore:', peerId.toString());
-		console.log('  Private key:', peerId.privateKey ? 'present' : 'MISSING');
-		console.log('  Public key:', peerId.publicKey ? 'present' : 'MISSING');
-		return peerId;
+		const privateKey = await generateKeyPair('Ed25519');
+		const bytes = privateKeyToProtobuf(privateKey);
+		await datastore.put(PRIVATE_KEY_KEY, bytes);
+		console.log('✓ Saved new private key to datastore');
+		return privateKey;
 	}
 	async start() {
 		console.log('Starting libp2p network...');
@@ -67,12 +63,12 @@ export class Network {
 		await this.datastore.open();
 		console.log('✓ Datastore opened at: ./datastore');
 
-		// Load or create peer ID from datastore
-		const peerId = await this.loadOrCreatePeerId(this.datastore);
+		// Load or create private key from datastore
+		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
 
-		// Create libp2p node with peerId and keychain
+		// Create libp2p node with private key
 		const config: any = {
-			peerId: peerId,
+			privateKey,
 			datastore: this.datastore,
 			addresses: {
 				listen: [`/ip4/0.0.0.0/tcp/${settings.network.port}`],
@@ -86,11 +82,7 @@ export class Network {
 					emitSelf: false,
 					allowPublishToZeroTopicPeers: true,
 				}),
-			},
-
-			keychain: {
-				pass: '123ahahahahahahahah123',
-			},
+			}
 		};
 
 		// Add bootstrap if peers are configured
