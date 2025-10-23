@@ -7,4 +7,8 @@ frontend/.svelte-kit/
 bun.lockb
 bun.lockb.txt
 package-lock.json
+**/settings.json
+**/peer-id.json
+**/datastore/
+**/*.lish
 vite.config.js.timestamp-*
