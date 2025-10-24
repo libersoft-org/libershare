@@ -137,7 +137,9 @@ async function main() {
 		const fileCount = manifest.files?.length || 0;
 		const dirCount = manifest.directories?.length || 0;
 		const linkCount = manifest.links?.length || 0;
+		const totalSize = manifest.files?.reduce((sum, file) => sum + file.size, 0) || 0;
 		console.log('Summary: ' + fileCount + ' files, ' + dirCount + ' directories, ' + linkCount + ' links');
+		console.log('Total size: ' + Utils.formatBytes(totalSize));
 	} catch (error) {
 		console.error('Error:', error);
 		process.exit(1);
