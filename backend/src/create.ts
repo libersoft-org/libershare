@@ -107,13 +107,13 @@ async function main() {
 				currentFile = info.path;
 				processedFiles.set(info.path, { size: info.size, chunks: info.chunks });
 				// Show start message without newline
-				lastProgress = `Processing: ${info.path} (${Utils.formatBytes(info.size)})`;
+				lastProgress = 'Processing: ' + info.path + ' (' + Utils.formatBytes(info.size) + ')';
 				process.stdout.write(lastProgress);
 			} else if (info.type === 'chunk' && info.path && info.current && info.total) {
 				// Update chunk progress on same line
 				const fileInfo = processedFiles.get(info.path);
 				if (fileInfo) {
-					const prefix = `Processing: ${info.path} (${Utils.formatBytes(fileInfo.size)})`;
+					const prefix = 'Processing: ' + info.path + ' (' + Utils.formatBytes(fileInfo.size) + ')';
 					lastProgress = prefix + ' - ' + info.current + '/' + info.total;
 					process.stdout.write('\r' + lastProgress);
 				}
@@ -138,7 +138,7 @@ async function main() {
 		const fileCount = manifest.files?.length || 0;
 		const dirCount = manifest.directories?.length || 0;
 		const linkCount = manifest.links?.length || 0;
-		console.log(`Summary: ${fileCount} files, ${dirCount} directories, ${linkCount} links`);
+		console.log('Summary: ' + fileCount + ' files, ' + dirCount + ' directories, ' + linkCount + ' links');
 	} catch (error) {
 		console.error('Error:', error);
 		process.exit(1);
