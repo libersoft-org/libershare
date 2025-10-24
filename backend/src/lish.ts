@@ -104,6 +104,8 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	for await (const entry of glob.scan({ cwd: dirPath, dot: true })) {
 		scannedPaths.push(entry);
 	}
+	// Sort paths alphabetically
+	scannedPaths.sort();
 	for (const entry of scannedPaths) {
 		const fullPath = `${dirPath}/${entry}`;
 		const stat = await getStats(fullPath);
@@ -218,6 +220,10 @@ export async function createManifest(inputPath: string, chunkSize: number, algo:
 		const links: ILinkEntry[] = [];
 		const inodeMap: InodeMap = {};
 		await processDirectory(inputPath, inputPath, chunkSize, algo, directories, files, links, inodeMap, onProgress);
+		// Sort all arrays alphabetically by path
+		directories.sort((a, b) => a.path.localeCompare(b.path));
+		files.sort((a, b) => a.path.localeCompare(b.path));
+		links.sort((a, b) => a.path.localeCompare(b.path));
 		// Only add arrays if they have content
 		if (directories.length > 0) manifest.directories = directories;
 		if (files.length > 0) manifest.files = files;
