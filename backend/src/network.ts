@@ -9,9 +9,8 @@ import { kadDHT } from '@libp2p/kad-dht';
 import { ping } from '@libp2p/ping';
 import { LevelDatastore } from 'datastore-level';
 import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
-import { keychain } from '@libp2p/keychain';
 import type { Libp2p } from 'libp2p';
-import type { PeerId, PrivateKey } from '@libp2p/interface';
+import type { PrivateKey } from '@libp2p/interface';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -101,6 +100,8 @@ export class Network {
 			connectionManager: {
 				minConnections: 1, // Auto-dial to maintain at least 1 connection
 				maxConnections: 100,
+				autoDial: true, // Enable auto-dialing
+				autoDialInterval: 10000, // Check every 10 seconds
 			},
 			peerStore: {
 				persistence: true,
@@ -145,14 +146,6 @@ export class Network {
 		if (dht) {
 			const mode = dht.clientMode === false ? 'server' : 'client';
 			console.log('✓ DHT running in', mode, 'mode');
-		}
-
-		// Listen to ping protocol events
-		const ping = this.node.services.ping as any;
-		if (ping) {
-			this.node.addEventListener('peer:ping', (evt: any) => {
-				console.log('🏓 Ping from', evt.detail.toString());
-			});
 		}
 
 		this.pubsub = this.node.services.pubsub as PubSub;
