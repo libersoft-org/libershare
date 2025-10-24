@@ -18,24 +18,24 @@ import { join } from 'path';
 // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 type PubSub = any;
 
-interface PingMessage {
-	type: 'ping';
+interface PinkMessage {
+	type: 'pink';
 	peerId: string;
 	timestamp: number;
 }
 
-interface PongMessage {
-	type: 'pong';
+interface PonkMessage {
+	type: 'ponk';
 	peerId: string;
 	timestamp: number;
 	replyTo: string;
 }
 
-const PING_TOPIC = 'libershare/ping';
-const PONG_TOPIC = 'libershare/pong';
+const PINK_TOPIC = 'pink';
+const PONK_TOPIC = 'ponk';
 const PRIVATE_KEY_PATH = '/local/privatekey';
 
-type Message = PingMessage | PongMessage;
+type Message = PinkMessage | PonkMessage;
 
 export class Network {
 	private node: Libp2p | null = null;
@@ -43,9 +43,11 @@ export class Network {
 	private datastore: LevelDatastore | null = null;
 	private dataDir: string;
 	private pingInterval: NodeJS.Timeout | null = null;
+	private enablePinkPonk: boolean;
 
-	constructor(dataDir: string = './data') {
+	constructor(dataDir: string = './data', enablePinkPonk: boolean = false) {
 		this.dataDir = dataDir;
+		this.enablePinkPonk = enablePinkPonk;
 	}
 
 	private async loadOrCreatePrivateKey(datastore: LevelDatastore): Promise<PrivateKey> {
@@ -129,7 +131,7 @@ export class Network {
 				bootstrap({
 					list: settings.network.bootstrapPeers,
 					timeout: 1000, // Wait 1 second before starting discovery
-					tagTTL: Infinity, // Keep bootstrap peers connected
+					//tagTTL: Infinity, // Keep bootstrap peers connected
 				}),
 			];
 		}
@@ -145,32 +147,42 @@ export class Network {
 			console.log('✓ DHT running in', mode, 'mode');
 		}
 
+		// Listen to ping protocol events
+		const ping = this.node.services.ping as any;
+		if (ping) {
+			this.node.addEventListener('peer:ping', (evt: any) => {
+				console.log('🏓 Ping from', evt.detail.toString());
+			});
+		}
+
 		this.pubsub = this.node.services.pubsub as PubSub;
 
-		// Listen to gossipsub mesh events
-		this.pubsub.addEventListener('gossipsub:heartbeat', () => {
-			const meshPeers = this.pubsub!.getMeshPeers(PING_TOPIC);
-			const subscribers = this.pubsub!.getSubscribers(PING_TOPIC);
-			const topics = this.pubsub!.getTopics();
-			console.log('💓 Heartbeat:');
-			console.log('   Connected libp2p peers:', this.node!.getPeers().length);
-			console.log('   My topics:', topics);
-			console.log('   Ping mesh peers:', meshPeers.length);
-			console.log('   Ping subscribers:', subscribers.length, subscribers.map(p => p.toString()).slice(0, 2));
-		});
+		if (this.enablePinkPonk) {
+			// Listen to gossipsub mesh events
+			this.pubsub.addEventListener('gossipsub:heartbeat', () => {
+				const meshPeers = this.pubsub!.getMeshPeers(PINK_TOPIC);
+				const subscribers = this.pubsub!.getSubscribers(PINK_TOPIC);
+				const topics = this.pubsub!.getTopics();
+				console.log('💓 Heartbeat:');
+				console.log('   Connected libp2p peers:', this.node!.getPeers().length);
+				console.log('   My topics:', topics);
+				console.log('   Pink mesh peers:', meshPeers.length);
+				console.log('   Pink subscribers:', subscribers.length, subscribers.map(p => p.toString()).slice(0, 2));
+			});
 
-		this.pubsub.addEventListener('gossipsub:graft', (evt) => {
-			console.log('🌿 GRAFT: peer joined mesh');
-			console.log('   Peer:', evt.detail.peerId);
-			console.log('   Topic:', evt.detail.topic);
-			console.log('   Total mesh peers for ping:', this.pubsub!.getMeshPeers(PING_TOPIC).length);
-		});
+			this.pubsub.addEventListener('gossipsub:graft', (evt) => {
+				console.log('🌿 GRAFT: peer joined mesh');
+				console.log('   Peer:', evt.detail.peerId);
+				console.log('   Topic:', evt.detail.topic);
+				console.log('   Total mesh peers for pink:', this.pubsub!.getMeshPeers(PINK_TOPIC).length);
+			});
 
-		this.pubsub.addEventListener('gossipsub:prune', (evt) => {
-			console.log('✂️  PRUNE: peer left mesh');
-			console.log('   Peer:', evt.detail.peerId);
-			console.log('   Topic:', evt.detail.topic);
-		});
+			this.pubsub.addEventListener('gossipsub:prune', (evt) => {
+				console.log('✂️  PRUNE: peer left mesh');
+				console.log('   Peer:', evt.detail.peerId);
+				console.log('   Topic:', evt.detail.topic);
+			});
+		}
 
 		const addresses = this.node.getMultiaddrs();
 		console.log('Node started with ID:', this.node.peerId.toString());
@@ -233,23 +245,25 @@ export class Network {
 			}
 		}
 
-		// Subscribe to ping and pong topics AFTER peer connection
-		this.pubsub.subscribe(PING_TOPIC);
-		this.pubsub.subscribe(PONG_TOPIC);
-		console.log('✓ Subscribed to topics:', this.pubsub.getTopics());
-		console.log('  Libp2p peers:', this.node.getPeers().length);
-		console.log('  Pubsub peers:', this.pubsub.getPeers().length);
-		console.log('  Pubsub peer list:', this.pubsub.getPeers().map((p: any) => p.toString()));
+		if (this.enablePinkPonk) {
+			// Subscribe to pink and ponk topics AFTER peer connection
+			this.pubsub.subscribe(PINK_TOPIC);
+			this.pubsub.subscribe(PONK_TOPIC);
+			console.log('✓ Subscribed to topics:', this.pubsub.getTopics());
+			console.log('  Libp2p peers:', this.node.getPeers().length);
+			console.log('  Pubsub peers:', this.pubsub.getPeers().length);
+			console.log('  Pubsub peer list:', this.pubsub.getPeers().map((p: any) => p.toString()));
 
-		// Handle incoming messages
-		this.pubsub.addEventListener('message', evt => {
-			this.handleMessage(evt.detail);
-		});
+			// Handle incoming messages
+			this.pubsub.addEventListener('message', evt => {
+				this.handleMessage(evt.detail);
+			});
 
-		// Start periodic ping timer (every 3 seconds)
-		this.pingInterval = setInterval(async () => {
-			await this.sendPing();
-		}, 3000);
+			// Start periodic pink timer (every 3 seconds)
+			this.pingInterval = setInterval(async () => {
+				await this.sendPing();
+			}, 3000);
+		}
 	}
 
 	private handleMessage(msgEvent: any) {
@@ -258,11 +272,11 @@ export class Network {
 			const topic = msgEvent.topic;
 			const data = new TextDecoder().decode(msgEvent.data);
 			const message: Message = JSON.parse(data);
-			if (topic === PING_TOPIC && message.type === 'ping') {
-				console.log(`Received ping from ${message.peerId} at ${new Date(message.timestamp).toISOString()}`);
+			if (topic === PINK_TOPIC && message.type === 'pink') {
+				console.log(`Received pink from ${message.peerId} at ${new Date(message.timestamp).toISOString()}`);
 				this.sendPong(message.peerId);
-			} else if (topic === PONG_TOPIC && message.type === 'pong') {
-				console.log(`Received pong from ${message.peerId} (reply to ${message.replyTo}) at ${new Date(message.timestamp).toISOString()}`);
+			} else if (topic === PONK_TOPIC && message.type === 'ponk') {
+				console.log(`Received ponk from ${message.peerId} (reply to ${message.replyTo}) at ${new Date(message.timestamp).toISOString()}`);
 			}
 		} catch (error) {
 			console.error('Error handling message:', error);
@@ -275,21 +289,21 @@ export class Network {
 			return;
 		}
 
-		// Check mesh peers for the ping topic
-		const meshPeers = this.pubsub.getMeshPeers(PING_TOPIC);
-		const subscribers = this.pubsub.getSubscribers(PING_TOPIC);
-		console.log(`Sending ping (mesh: ${meshPeers.length} peers, subscribers: ${subscribers.length} peers)`);
+		// Check mesh peers for the pink topic
+		const meshPeers = this.pubsub.getMeshPeers(PINK_TOPIC);
+		const subscribers = this.pubsub.getSubscribers(PINK_TOPIC);
+		console.log(`Sending pink (mesh: ${meshPeers.length} peers, subscribers: ${subscribers.length} peers)`);
 
-		const message: PingMessage = {
-			type: 'ping',
+		const message: PinkMessage = {
+			type: 'pink',
 			peerId: this.node.peerId.toString(),
 			timestamp: Date.now(),
 		};
 		const data = new TextEncoder().encode(JSON.stringify(message));
 		try {
-			await this.pubsub.publish(PING_TOPIC, data);
+			await this.pubsub.publish(PINK_TOPIC, data);
 		} catch (error) {
-			console.log('Error sending ping:', error);
+			console.log('Error sending pink:', error);
 		}
 	}
 
@@ -298,18 +312,18 @@ export class Network {
 			console.error('Network not started');
 			return;
 		}
-		const message: PongMessage = {
-			type: 'pong',
+		const message: PonkMessage = {
+			type: 'ponk',
 			peerId: this.node.peerId.toString(),
 			timestamp: Date.now(),
 			replyTo,
 		};
 		const data = new TextEncoder().encode(JSON.stringify(message));
 		try {
-			await this.pubsub.publish(PONG_TOPIC, data);
-			console.log(`Sent pong to ${replyTo}`);
+			await this.pubsub.publish(PONK_TOPIC, data);
+			console.log(`Sent ponk to ${replyTo}`);
 		} catch (error) {
-			console.log(`Pong reply attempted (no peers connected)`);
+			console.log(`Ponk reply attempted (no peers connected)`);
 		}
 	}
 
@@ -386,15 +400,17 @@ if (import.meta.main) {
 	// Parse command line arguments
 	const args = process.argv.slice(2);
 	let dataDir = './data';
+	let enablePinkPonk = false;
 
 	for (let i = 0; i < args.length; i++) {
 		if (args[i] === '--datadir' && i + 1 < args.length) {
 			dataDir = args[i + 1];
-			break;
+		} else if (args[i] === '--pinkponk') {
+			enablePinkPonk = true;
 		}
 	}
 
-	const network = new Network(dataDir);
+	const network = new Network(dataDir, enablePinkPonk);
 	await network.start();
 	// Keep the process running
 	process.on('SIGINT', async () => {
