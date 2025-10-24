@@ -15,7 +15,7 @@ function showHelp() {
 	console.log('LISH Manifest Creator');
 	console.log('=====================');
 	console.log('');
-	console.log('Usage: bun create.ts --input <file-or-directory> [options]');
+	console.log('Usage: ./makelish.sh --input <file-or-directory> [options]');
 	console.log('');
 	console.log('Options:');
 	console.log('  --input <path>          Input file or directory (required)');
@@ -29,9 +29,9 @@ function showHelp() {
 	console.log('  ' + SUPPORTED_ALGOS.join(', '));
 	console.log('');
 	console.log('Examples:');
-	console.log('  bun create.ts --input myfile.bin');
-	console.log('  bun create.ts --input ./mydir --output archive.lish --algo sha512');
-	console.log('  bun create.ts --input data.zip --chunksize 10485760 --description "Project documentation and user manual"');
+	console.log('  ./makelish.sh --input myfile.bin');
+	console.log('  ./makelish.sh --input ./mydir --output archive.lish --algo sha512');
+	console.log('  ./makelish.sh --input data.zip --chunksize 10485760 --description "Project documentation and user manual"');
 }
 
 function parseArgs(args: string[]): IArgs {
@@ -95,7 +95,6 @@ async function main() {
 		let lastProgress = '';
 		let currentFile = '';
 		let processedFiles = new Map<string, { size: number; chunks: number }>();
-
 		const manifest = await createManifest(inputPath, chunkSize, algo, description, info => {
 			if (info.type === 'file-start' && info.path && info.size !== undefined && info.chunks !== undefined) {
 				// Clear previous progress line if any
