@@ -1,105 +1,134 @@
 import { Utils } from './utils.ts';
-interface IManifest {
-	version: number;
-	id: string;
-	created: string;
-	filename: string;
-	totalSize: number;
-	chunkSize: number;
-	checksumAlgo: HashAlgorithm;
-	checksums: string[];
-}
+import { createManifest, SUPPORTED_ALGOS, HashAlgorithm, DEFAULT_CHUNK_SIZE, DEFAULT_ALGO } from './lish.ts';
 interface IArgs {
 	input?: string;
 	chunksize?: number;
 	output?: string;
 	algo?: string;
+	description?: string;
 }
-const SUPPORTED_ALGOS = ['sha256', 'sha512', 'blake2b256', 'blake2b512', 'blake2s256', 'shake128', 'shake256'] as const;
-type HashAlgorithm = (typeof SUPPORTED_ALGOS)[number];
-const MANIFEST_VERSION = 1;
-const DEFAULT_CHUNK_SIZE = 5242880; // 5 MB
 const DEFAULT_OUTPUT = 'output.lish';
-const DEFAULT_ALGO: HashAlgorithm = 'sha256';
+
+function showHelp() {
+	console.log('');
+	console.log('=====================');
+	console.log('LISH Manifest Creator');
+	console.log('=====================');
+	console.log('');
+	console.log('Usage: bun create.ts --input <file-or-directory> [options]');
+	console.log('');
+	console.log('Options:');
+	console.log('  --input <path>          Input file or directory (required)');
+	console.log('  --output <path>         Output LISH file (default: output.lish)');
+	console.log('  --chunksize <bytes>     Chunk size in bytes (default: 5242880 = 5MB)');
+	console.log('  --algo <algorithm>      Hash algorithm (default: sha256)');
+	console.log('  --description <text>    Optional description for the manifest');
+	console.log('  --help                  Show this help message');
+	console.log('');
+	console.log('Supported algorithms:');
+	console.log('  ' + SUPPORTED_ALGOS.join(', '));
+	console.log('');
+	console.log('Examples:');
+	console.log('  bun create.ts --input myfile.bin');
+	console.log('  bun create.ts --input ./mydir --output archive.lish --algo sha512');
+	console.log('  bun create.ts --input data.zip --chunksize 10485760 --description "Project documentation and user manual"');
+}
 
 function parseArgs(args: string[]): IArgs {
 	const parsed: IArgs = {};
+	const argMap: Record<string, keyof IArgs> = {
+		'--input': 'input',
+		'--chunksize': 'chunksize',
+		'--output': 'output',
+		'--algo': 'algo',
+		'--description': 'description',
+	};
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
-		if (arg === '--input' && i + 1 < args.length) parsed.input = args[++i];
-		else if (arg === '--chunksize' && i + 1 < args.length) parsed.chunksize = parseInt(args[++i], 10);
-		else if (arg === '--output' && i + 1 < args.length) parsed.output = args[++i];
-		else if (arg === '--algo' && i + 1 < args.length) parsed.algo = args[++i];
+		const key = argMap[arg];
+		if (key && i + 1 < args.length) {
+			const value = args[++i];
+			(parsed as any)[key] = key === 'chunksize' ? parseInt(value, 10) : value;
+		}
 	}
 	return parsed;
 }
 
-async function calculateChecksum(file: ReturnType<typeof Bun.file>, offset: number, chunkSize: number, algo: HashAlgorithm): Promise<string> {
-	const end = Math.min(offset + chunkSize, file.size);
-	const chunk = file.slice(offset, end);
-	const buffer = await chunk.arrayBuffer();
-	// Calculate checksum using Bun API with specified algorithm
-	const hasher = new Bun.CryptoHasher(algo as any);
-	hasher.update(buffer);
-	return hasher.digest('hex');
-}
-
-async function createManifest(filePath: string, chunkSize: number, algo: HashAlgorithm): Promise<IManifest> {
-	const file = Bun.file(filePath);
-	const totalSize = file.size;
-	const totalChunks = Math.ceil(totalSize / chunkSize);
-	const checksums: string[] = [];
-	let chunkIndex = 0;
-	for (let offset = 0; offset < totalSize; offset += chunkSize) {
-		chunkIndex++;
-		const checksum = await calculateChecksum(file, offset, chunkSize, algo);
-		checksums.push(checksum);
-		process.stdout.write('\rProcessing chunks: ' + chunkIndex + '/' + totalChunks);
-	}
-	process.stdout.write('\n');
-	const filename = filePath.split(/[\\/]/).pop() || filePath;
-	const created = new Date().toISOString();
-	const id = globalThis.crypto.randomUUID();
-	return {
-		version: MANIFEST_VERSION,
-		id,
-		created,
-		filename,
-		totalSize,
-		chunkSize,
-		checksumAlgo: algo,
-		checksums,
-	};
-}
-
 async function main() {
 	const args = parseArgs(Bun.argv.slice(2));
+	if (Bun.argv.includes('--help')) {
+		showHelp();
+		process.exit(0);
+	}
 	if (!args.input) {
+		showHelp();
+		console.log();
 		console.error('Error: --input parameter is required');
-		console.error('Usage: bun create.ts --input <file-path> [--chunksize <bytes>] [--output <output-file>] [--algo <algorithm>]');
-		console.error('Supported algorithms: ' + SUPPORTED_ALGOS.join(', '));
-		console.error('Example: bun create.ts --input myfile.bin --chunksize 10485760 --output ' + DEFAULT_OUTPUT + ' --algo ' + DEFAULT_ALGO);
 		process.exit(1);
 	}
-	const inputFile = args.input;
-	const chunkSize = args.chunksize || DEFAULT_CHUNK_SIZE;
+	const inputPath = args.input;
 	const outputFile = args.output || DEFAULT_OUTPUT;
+	const chunkSize = args.chunksize || DEFAULT_CHUNK_SIZE;
 	const algo = (args.algo || DEFAULT_ALGO) as HashAlgorithm;
+	const description = args.description;
 	if (!SUPPORTED_ALGOS.includes(algo as any)) {
 		console.error('Error: Unsupported algorithm "' + algo + '"');
 		console.error('Supported algorithms: ' + SUPPORTED_ALGOS.join(', '));
 		process.exit(1);
 	}
 	try {
-		const file = Bun.file(inputFile);
-		const fileSize = file.size;
-		console.log('Processing file: ' + inputFile);
-		console.log('File size: ' + Utils.formatBytes(fileSize));
+		// Get input stats
+		const file = Bun.file(inputPath);
+		const stat = await file.stat();
+		const inputType = stat.isDirectory() ? 'directory' : 'file';
+		const sizeInfo = stat.isFile() ? Utils.formatBytes(stat.size) : '';
+		const startTime = Date.now();
+		console.log('Start time: ' + new Date().toLocaleString());
+		console.log('');
+		console.log('Processing ' + inputType + ': ' + inputPath);
+		if (sizeInfo) console.log('Size: ' + sizeInfo);
 		console.log('Chunk size: ' + Utils.formatBytes(chunkSize));
 		console.log('Algorithm: ' + algo);
-		const manifest = await createManifest(inputFile, chunkSize, algo);
+		if (description) console.log('Description: ' + description);
+		console.log('');
+		// Create manifest with progress callback
+		let lastProgress = '';
+		let processedFiles = new Map<string, { size: number; chunks: number }>();
+		
+		const manifest = await createManifest(inputPath, chunkSize, algo, description, info => {
+			if (info.type === 'chunk' && info.current && info.total) {
+				lastProgress = `\rProcessing chunks: ${info.current}/${info.total}`;
+				process.stdout.write(lastProgress);
+			} else if (info.type === 'file' && info.path) {
+				// Clear previous progress line if any
+				if (lastProgress) {
+					process.stdout.write('\r' + ' '.repeat(lastProgress.length) + '\r');
+					lastProgress = '';
+				}
+				// Show file processed message
+				const fileInfo = processedFiles.get(info.path);
+				if (fileInfo) {
+					console.log(`Processed: ${info.path} (${Utils.formatBytes(fileInfo.size)}, ${fileInfo.chunks} chunks)`);
+				}
+			} else if (info.type === 'file-start' && info.path && info.size !== undefined && info.chunks !== undefined) {
+				// Store file info for later display
+				processedFiles.set(info.path, { size: info.size, chunks: info.chunks });
+			}
+		});
+		// Write chunk progress newline if we were processing a single file
+		if (lastProgress) process.stdout.write('\n');
 		await Bun.write(outputFile, JSON.stringify(manifest, null, 2));
-		console.log('LISH file saved to: ' + outputFile);
+		const endTime = Date.now();
+		const elapsedTime = (endTime - startTime) / 1000;
+		console.log('\nLISH file saved to: ' + outputFile);
+		console.log('End time: ' + new Date().toLocaleString());
+		console.log('Elapsed time: ' + elapsedTime.toFixed(2) + ' seconds');
+		console.log('');
+		// Summary
+		const fileCount = manifest.files?.length || 0;
+		const dirCount = manifest.directories?.length || 0;
+		const linkCount = manifest.links?.length || 0;
+		console.log(`Summary: ${fileCount} files, ${dirCount} directories, ${linkCount} links`);
 	} catch (error) {
 		console.error('Error:', error);
 		process.exit(1);
