@@ -12,7 +12,8 @@ import { keychain } from '@libp2p/keychain';
 import type { Libp2p } from 'libp2p';
 import type { PubSub } from '@libp2p/interface';
 import type { PeerId, PrivateKey } from '@libp2p/interface';
-import settings from './settings.json';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 interface PingMessage {
 	type: 'ping';
 	peerId: string;
@@ -34,6 +35,11 @@ export class Network {
 	private node: Libp2p | null = null;
 	private pubsub: PubSub | null = null;
 	private datastore: LevelDatastore | null = null;
+	private dataDir: string;
+
+	constructor(dataDir: string = './data') {
+		this.dataDir = dataDir;
+	}
 
 	private async loadOrCreatePrivateKey(datastore: LevelDatastore): Promise<PrivateKey> {
 		try {
@@ -54,14 +60,20 @@ export class Network {
 		return privateKey;
 	}
 	async start() {
+		// Load settings from dataDir
+		const settingsPath = join(this.dataDir, 'settings.json');
+		const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+
 		console.log('Starting libp2p network...');
+		console.log('Data directory:', this.dataDir);
 		console.log('Port:', settings.network.port);
 		console.log('Bootstrap peers:', settings.network.bootstrapPeers.length);
 
 		// Initialize datastore
-		this.datastore = new LevelDatastore('./datastore');
+		const datastorePath = join(this.dataDir, 'datastore');
+		this.datastore = new LevelDatastore(datastorePath);
 		await this.datastore.open();
-		console.log('✓ Datastore opened at: ./datastore');
+		console.log('✓ Datastore opened at:', datastorePath);
 
 		// Load or create private key from datastore
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
@@ -76,6 +88,10 @@ export class Network {
 			transports: [tcp()],
 			connectionEncryption: [noise()],
 			streamMuxers: [yamux()],
+			connectionManager: {
+				minConnections: 1, // Auto-dial to maintain at least 1 connection
+				maxConnections: 100,
+			},
 			services: {
 				identify: identify(),
 				pubsub: gossipsub({
@@ -87,9 +103,13 @@ export class Network {
 
 		// Add bootstrap if peers are configured
 		if (settings.network.bootstrapPeers.length > 0) {
+			console.log('Configuring bootstrap peers:');
+			settings.network.bootstrapPeers.forEach(peer => console.log('  -', peer));
 			config.peerDiscovery = [
 				bootstrap({
 					list: settings.network.bootstrapPeers,
+					timeout: 1000, // Wait 1 second before starting discovery
+					tagTTL: Infinity, // Keep bootstrap peers connected
 				}),
 			];
 		}
@@ -102,6 +122,20 @@ export class Network {
 		console.log('Node started with peer ID:', this.node.peerId.toString());
 		console.log('Listening on addresses:');
 		addresses.forEach(addr => console.log('  -', addr.toString()));
+
+		// Listen for peer discovery and connection events
+		this.node.addEventListener('peer:discovery', (evt) => {
+			console.log('Discovered peer:', evt.detail.id.toString());
+		});
+
+		this.node.addEventListener('peer:connect', (evt) => {
+			console.log('Connected to peer:', evt.detail.toString());
+		});
+
+		this.node.addEventListener('peer:disconnect', (evt) => {
+			console.log('Disconnected from peer:', evt.detail.toString());
+		});
+
 		// Subscribe to ping and pong topics
 		this.pubsub.subscribe(PING_TOPIC);
 		this.pubsub.subscribe(PONG_TOPIC);
@@ -235,7 +269,18 @@ export class Network {
 
 // Example usage
 if (import.meta.main) {
-	const network = new Network();
+	// Parse command line arguments
+	const args = process.argv.slice(2);
+	let dataDir = './data';
+
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === '--datadir' && i + 1 < args.length) {
+			dataDir = args[i + 1];
+			break;
+		}
+	}
+
+	const network = new Network(dataDir);
 	await network.start();
 	// Keep the process running
 	process.on('SIGINT', async () => {
