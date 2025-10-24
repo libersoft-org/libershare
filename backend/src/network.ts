@@ -5,15 +5,19 @@ import { yamux } from '@chainsafe/libp2p-yamux';
 import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { identify } from '@libp2p/identify';
 import { bootstrap } from '@libp2p/bootstrap';
+import { kadDHT } from '@libp2p/kad-dht';
+import { ping } from '@libp2p/ping';
 import { LevelDatastore } from 'datastore-level';
 import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { Key } from 'interface-datastore';
 import { keychain } from '@libp2p/keychain';
 import type { Libp2p } from 'libp2p';
-import type { PubSub } from '@libp2p/interface';
 import type { PeerId, PrivateKey } from '@libp2p/interface';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+
+// PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
+type PubSub = any;
 interface PingMessage {
 	type: 'ping';
 	peerId: string;
@@ -86,7 +90,7 @@ export class Network {
 				listen: [`/ip4/0.0.0.0/tcp/${settings.network.port}`],
 			},
 			transports: [tcp()],
-			connectionEncryption: [noise()],
+			connectionEncrypters: [noise()],
 			streamMuxers: [yamux()],
 			connectionManager: {
 				minConnections: 1, // Auto-dial to maintain at least 1 connection
@@ -94,9 +98,13 @@ export class Network {
 			},
 			services: {
 				identify: identify(),
+				ping: ping(),
 				pubsub: gossipsub({
 					emitSelf: false,
 					allowPublishToZeroTopicPeers: true,
+				}),
+				dht: kadDHT({
+					clientMode: false
 				}),
 			}
 		};
@@ -115,25 +123,49 @@ export class Network {
 		}
 
 		this.node = await createLibp2p(config);
+
 		await this.node.start();
+
+		// DHT is configured in server mode (clientMode: false) for LAN
+		const dht = this.node.services.dht as any;
+		if (dht) {
+			const mode = dht.clientMode === false ? 'server' : 'client';
+			console.log('✓ DHT running in', mode, 'mode');
+		}
 
 		this.pubsub = this.node.services.pubsub as PubSub;
 		const addresses = this.node.getMultiaddrs();
-		console.log('Node started with peer ID:', this.node.peerId.toString());
+		console.log('Node started with ID:', this.node.peerId.toString());
 		console.log('Listening on addresses:');
 		addresses.forEach(addr => console.log('  -', addr.toString()));
 
+		// Debug: Check peer store
+		console.log('Peers in store:', this.node.getPeers().length);
+		console.log('Services loaded:', Object.keys(this.node.services));
+
 		// Listen for peer discovery and connection events
-		this.node.addEventListener('peer:discovery', (evt) => {
-			console.log('Discovered peer:', evt.detail.id.toString());
+		this.node.addEventListener('peer:discovery', async (evt) => {
+			const peerId = evt.detail.id.toString();
+			console.log('🔍 Discovered peer:', peerId);
+			const multiaddrs = evt.detail.multiaddrs;
+			console.log('   Addresses:', multiaddrs.map(ma => ma.toString()));
+
+			// Try to manually dial the discovered peer
+			try {
+				console.log('   Attempting to dial...');
+				await this.node!.dial(evt.detail.id);
+				console.log('   ✓ Successfully dialed peer');
+			} catch (error) {
+				console.log('   ✗ Failed to dial:', error.message);
+			}
 		});
 
 		this.node.addEventListener('peer:connect', (evt) => {
-			console.log('Connected to peer:', evt.detail.toString());
+			console.log('✅ Connected to peer:', evt.detail.toString());
 		});
 
 		this.node.addEventListener('peer:disconnect', (evt) => {
-			console.log('Disconnected from peer:', evt.detail.toString());
+			console.log('❌ Disconnected from peer:', evt.detail.toString());
 		});
 
 		// Subscribe to ping and pong topics
@@ -146,6 +178,25 @@ export class Network {
 		// Send initial ping to network
 		await this.sendPing();
 		console.log('Network ready. Listening for pings...');
+
+		// DEBUG: Try manually dialing bootstrap peers
+		if (settings.network.bootstrapPeers.length > 0) {
+			console.log('\n[DEBUG] Attempting manual dial to bootstrap peer...');
+			try {
+				const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
+				const ma = Multiaddr(settings.network.bootstrapPeers[0]);
+				console.log('[DEBUG] Multiaddr:', ma.toString());
+				console.log('[DEBUG] Multiaddr type:', typeof ma);
+				console.log('[DEBUG] Multiaddr methods:', Object.keys(ma).slice(0, 10));
+
+				// Try dialing
+				await this.node.dial(ma);
+				console.log('[DEBUG] ✓ Manual dial successful!');
+			} catch (error) {
+				console.log('[DEBUG] ✗ Manual dial failed:', error.message);
+				console.log('[DEBUG] Full error:', error);
+			}
+		}
 	}
 
 	private handleMessage(msgEvent: any) {
