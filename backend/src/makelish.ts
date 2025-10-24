@@ -10,11 +10,6 @@ interface IArgs {
 const DEFAULT_OUTPUT = 'output.lish';
 
 function showHelp() {
-	console.log('');
-	console.log('=====================');
-	console.log('LISH Manifest Creator');
-	console.log('=====================');
-	console.log('');
 	console.log('Usage: ./makelish.sh --input <file-or-directory> [options]');
 	console.log('');
 	console.log('Options:');
@@ -55,6 +50,11 @@ function parseArgs(args: string[]): IArgs {
 }
 
 async function main() {
+	console.log('');
+	console.log('=================');
+	console.log('LISH File Creator');
+	console.log('=================');
+	console.log('');
 	const args = parseArgs(Bun.argv.slice(2));
 	if (Bun.argv.includes('--help')) {
 		showHelp();
