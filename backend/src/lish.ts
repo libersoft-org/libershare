@@ -1,10 +1,11 @@
 export interface IManifest {
 	version: number;
 	id: string;
+	name: string;
+	description?: string;
 	created: string;
 	chunkSize: number;
 	checksumAlgo: HashAlgorithm;
-	description?: string;
 	directories?: IDirectoryEntry[];
 	files?: IFileEntry[];
 	links?: ILinkEntry[];
@@ -180,12 +181,13 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	}
 }
 
-export async function createManifest(inputPath: string, chunkSize: number, algo: HashAlgorithm, description?: string, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void): Promise<IManifest> {
+export async function createManifest(inputPath: string, name: string, chunkSize: number, algo: HashAlgorithm, description?: string, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void): Promise<IManifest> {
 	const created = new Date().toISOString();
 	const id = globalThis.crypto.randomUUID();
 	const manifest: IManifest = {
 		version: MANIFEST_VERSION,
 		id,
+		name,
 		created,
 		chunkSize,
 		checksumAlgo: algo,
