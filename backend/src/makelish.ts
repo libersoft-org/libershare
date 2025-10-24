@@ -128,10 +128,14 @@ async function main() {
 		if (lastProgress) process.stdout.write('\n');
 		await Bun.write(outputFile, JSON.stringify(manifest, null, 2));
 		const endTime = Date.now();
-		const elapsedTime = (endTime - startTime) / 1000;
+		const elapsedSeconds = Math.floor((endTime - startTime) / 1000);
+		const hours = Math.floor(elapsedSeconds / 3600);
+		const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+		const seconds = elapsedSeconds % 60;
+		const timeStr = hours.toString().padStart(2, '0') + ':' + minutes.toString().padStart(2, '0') + ':' + seconds.toString().padStart(2, '0');
 		console.log('\nLISH file saved to: ' + outputFile);
 		console.log('End time: ' + new Date().toLocaleString());
-		console.log('Elapsed time: ' + elapsedTime.toFixed(2) + ' seconds');
+		console.log('Elapsed time: ' + timeStr);
 		console.log('');
 		// Summary
 		const fileCount = manifest.files?.length || 0;

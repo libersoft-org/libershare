@@ -57,6 +57,11 @@ function formatTimestamp(date: Date): string {
 	return date.toISOString();
 }
 
+// Helper to extract permission bits from mode (remove file type bits)
+function getPermissions(mode: number): number {
+	return mode & 0o777; // Keep only the last 9 bits (rwxrwxrwx)
+}
+
 // Helper to get file/directory stats
 async function getStats(fullPath: string) {
 	try {
@@ -89,7 +94,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 		// Don't add root directory itself
 		directories.push({
 			path: relativePath,
-			mode: stat.mode,
+			mode: getPermissions(stat.mode),
 			modified: formatTimestamp(new Date(stat.mtime)),
 			created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
 		});
@@ -165,7 +170,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				files.push({
 					path: relativePath,
 					size: stat.size,
-					mode: stat.mode,
+					mode: getPermissions(stat.mode),
 					modified: formatTimestamp(new Date(stat.mtime)),
 					created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
 					checksums,
@@ -206,7 +211,7 @@ export async function createManifest(inputPath: string, chunkSize: number, algo:
 			{
 				path: filename,
 				size: stat.size,
-				mode: stat.mode,
+				mode: getPermissions(stat.mode),
 				modified: formatTimestamp(new Date(stat.mtime)),
 				created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
 				checksums,
