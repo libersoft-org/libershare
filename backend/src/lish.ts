@@ -11,14 +11,14 @@ export interface IManifest {
 }
 export interface IDirectoryEntry {
 	path: string;
-	mode: number;
+	permissions?: number;
 	modified?: string;
 	created?: string;
 }
 export interface IFileEntry {
 	path: string;
 	size: number;
-	mode: number;
+	permissions?: number;
 	modified?: string;
 	created?: string;
 	checksums: string[];
@@ -94,7 +94,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 		// Don't add root directory itself
 		directories.push({
 			path: relativePath,
-			mode: getPermissions(stat.mode),
+			permissions: getPermissions(stat.mode),
 			modified: formatTimestamp(new Date(stat.mtime)),
 			created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
 		});
@@ -170,7 +170,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				files.push({
 					path: relativePath,
 					size: stat.size,
-					mode: getPermissions(stat.mode),
+					permissions: getPermissions(stat.mode),
 					modified: formatTimestamp(new Date(stat.mtime)),
 					created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
 					checksums,
@@ -211,7 +211,7 @@ export async function createManifest(inputPath: string, chunkSize: number, algo:
 			{
 				path: filename,
 				size: stat.size,
-				mode: getPermissions(stat.mode),
+				permissions: getPermissions(stat.mode),
 				modified: formatTimestamp(new Date(stat.mtime)),
 				created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
 				checksums,

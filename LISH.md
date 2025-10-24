@@ -41,7 +41,7 @@ interface IManifest {
 ```typescript
 interface IDirectoryEntry {
 	path: string; // Relative path (e.g., "docs" or "assets/images")
-	mode: number; // Unix permissions in decimal notation (e.g., 493 = 0o755)
+	permissions?: number; // Unix permissions in decimal notation (e.g., 493 = 0o755) - optional
 	modified?: string; // ISO 8601 timestamp in UTC of last modification (optional)
 	created?: string; // ISO 8601 timestamp in UTC of creation (optional)
 }
@@ -53,7 +53,7 @@ interface IDirectoryEntry {
 interface IFileEntry {
 	path: string; // Relative path (e.g., "docs/readme.txt")
 	size: number; // File size in bytes
-	mode: number; // Unix permissions in decimal notation (e.g., 420 = 0o644)
+	permissions?: number; // Unix permissions in decimal notation (e.g., 420 = 0o644) - optional
 	modified?: string; // ISO 8601 timestamp in UTC of last modification (optional)
 	created?: string; // ISO 8601 timestamp in UTC of creation (optional)
 	checksums: string[]; // Array of hex-encoded checksums for each chunk
@@ -115,13 +115,13 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 	"directories": [
 		{
 			"path": "docs",
-			"mode": 493,
+			"permissions": 493,
 			"modified": "2025-10-20T10:30:00.000Z",
 			"created": "2025-10-15T08:00:00.000Z"
 		},
 		{
 			"path": "empty-folder",
-			"mode": 493,
+			"permissions": 493,
 			"modified": "2025-10-18T12:00:00.000Z",
 			"created": "2025-10-18T12:00:00.000Z"
 		}
@@ -130,7 +130,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 		{
 			"path": "README.md",
 			"size": 1024,
-			"mode": 420,
+			"permissions": 420,
 			"modified": "2025-10-22T14:15:00.000Z",
 			"created": "2025-10-20T10:30:00.000Z",
 			"checksums": ["a1b2c3d4e5f6789..."]
@@ -138,7 +138,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 		{
 			"path": "docs/manual.pdf",
 			"size": 15728640,
-			"mode": 420,
+			"permissions": 420,
 			"modified": "2025-10-21T09:45:00.000Z",
 			"created": "2025-10-20T10:30:00.000Z",
 			"checksums": ["f2960b16993b503c...", "38a4a0a7dd7fdc94...", "3a765cf06c5e6ed9..."]
@@ -167,7 +167,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 - ✅ Directories (including empty directories)
 - ✅ Files with chunked checksums
 - ✅ Symbolic / hard links
-- ✅ Unix file permissions (mode)
+- ✅ Unix file permissions (optional)
 - ✅ Creation and modification timestamps
 - ✅ Arbitrary chunk sizes
 - ✅ Multiple hash algorithms for checksums
@@ -181,7 +181,8 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 - Checksums are hex-encoded strings (lowercase)
 - Timestamps must use ISO 8601 format in UTC timezone (e.g., "2025-10-24T15:30:00.000Z")
 - The `directories`, `files`, and `links` arrays are optional - a manifest with no entries (empty directory structure) is valid
-- The `created` and `modified` timestamps are optional - if not provided, implementations should use current time
+- The `created`, `modified`, and `permissions` fields are optional - if `permissions` is not provided, file permissions will not be modified during extraction
+- If `permissions` is omitted, implementations should use default permissions for the target platform
 
 ## Version History
 
