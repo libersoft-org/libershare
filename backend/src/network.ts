@@ -9,7 +9,6 @@ import { kadDHT } from '@libp2p/kad-dht';
 import { ping } from '@libp2p/ping';
 import { LevelDatastore } from 'datastore-level';
 import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
-import { Key } from 'interface-datastore';
 import { keychain } from '@libp2p/keychain';
 import type { Libp2p } from 'libp2p';
 import type { PeerId, PrivateKey } from '@libp2p/interface';
@@ -31,7 +30,7 @@ interface PongMessage {
 }
 const PING_TOPIC = 'libershare/ping';
 const PONG_TOPIC = 'libershare/pong';
-const PRIVATE_KEY_KEY = new Key('/local/privatekey');
+const PRIVATE_KEY_PATH = '/local/privatekey';
 
 type Message = PingMessage | PongMessage;
 
@@ -40,6 +39,7 @@ export class Network {
 	private pubsub: PubSub | null = null;
 	private datastore: LevelDatastore | null = null;
 	private dataDir: string;
+	private pingInterval: NodeJS.Timeout | null = null;
 
 	constructor(dataDir: string = './data') {
 		this.dataDir = dataDir;
@@ -47,8 +47,8 @@ export class Network {
 
 	private async loadOrCreatePrivateKey(datastore: LevelDatastore): Promise<PrivateKey> {
 		try {
-			if (await datastore.has(PRIVATE_KEY_KEY)) {
-				const bytes = await datastore.get(PRIVATE_KEY_KEY);
+			if (await datastore.has(PRIVATE_KEY_PATH as any)) {
+				const bytes = await datastore.get(PRIVATE_KEY_PATH as any);
 				const privateKey = privateKeyFromProtobuf(bytes);
 				console.log('✓ Loaded private key from datastore');
 				return privateKey;
@@ -59,7 +59,7 @@ export class Network {
 
 		const privateKey = await generateKeyPair('Ed25519');
 		const bytes = privateKeyToProtobuf(privateKey);
-		await datastore.put(PRIVATE_KEY_KEY, bytes);
+		await datastore.put(PRIVATE_KEY_PATH as any, bytes);
 		console.log('✓ Saved new private key to datastore');
 		return privateKey;
 	}
@@ -144,28 +144,19 @@ export class Network {
 		console.log('Services loaded:', Object.keys(this.node.services));
 
 		// Listen for peer discovery and connection events
-		this.node.addEventListener('peer:discovery', async (evt) => {
+		this.node.addEventListener('peer:discovery', (evt) => {
 			const peerId = evt.detail.id.toString();
 			console.log('🔍 Discovered peer:', peerId);
-			const multiaddrs = evt.detail.multiaddrs;
-			console.log('   Addresses:', multiaddrs.map(ma => ma.toString()));
-
-			// Try to manually dial the discovered peer
-			try {
-				console.log('   Attempting to dial...');
-				await this.node!.dial(evt.detail.id);
-				console.log('   ✓ Successfully dialed peer');
-			} catch (error) {
-				console.log('   ✗ Failed to dial:', error.message);
-			}
 		});
 
 		this.node.addEventListener('peer:connect', (evt) => {
 			console.log('✅ Connected to peer:', evt.detail.toString());
+			console.log('   Total connected peers:', this.node!.getPeers().length);
 		});
 
 		this.node.addEventListener('peer:disconnect', (evt) => {
 			console.log('❌ Disconnected from peer:', evt.detail.toString());
+			console.log('   Total connected peers:', this.node!.getPeers().length);
 		});
 
 		// Subscribe to ping and pong topics
@@ -179,24 +170,25 @@ export class Network {
 		await this.sendPing();
 		console.log('Network ready. Listening for pings...');
 
-		// DEBUG: Try manually dialing bootstrap peers
+		// Manually dial bootstrap peers
+		// Bootstrap module discovers peers but doesn't auto-connect
 		if (settings.network.bootstrapPeers.length > 0) {
-			console.log('\n[DEBUG] Attempting manual dial to bootstrap peer...');
-			try {
-				const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
-				const ma = Multiaddr(settings.network.bootstrapPeers[0]);
-				console.log('[DEBUG] Multiaddr:', ma.toString());
-				console.log('[DEBUG] Multiaddr type:', typeof ma);
-				console.log('[DEBUG] Multiaddr methods:', Object.keys(ma).slice(0, 10));
-
-				// Try dialing
-				await this.node.dial(ma);
-				console.log('[DEBUG] ✓ Manual dial successful!');
-			} catch (error) {
-				console.log('[DEBUG] ✗ Manual dial failed:', error.message);
-				console.log('[DEBUG] Full error:', error);
+			const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
+			for (const peerAddr of settings.network.bootstrapPeers) {
+				try {
+					const ma = Multiaddr(peerAddr);
+					await this.node.dial(ma);
+					console.log('✓ Connected to bootstrap peer:', peerAddr);
+				} catch (error: any) {
+					console.log('✗ Failed to connect to bootstrap peer:', peerAddr, '-', error.message);
+				}
 			}
 		}
+
+		// Start periodic ping timer (every 30 seconds)
+		this.pingInterval = setInterval(async () => {
+			await this.sendPing();
+		}, 3000);
 	}
 
 	private handleMessage(msgEvent: any) {
@@ -220,6 +212,11 @@ export class Network {
 			console.error('Network not started');
 			return;
 		}
+
+		// Check how many peers are subscribed to the ping topic
+		const subscribers = this.pubsub.getSubscribers(PING_TOPIC);
+		console.log(`Sending ping (${subscribers.length} peers subscribed to topic)`);
+
 		const message: PingMessage = {
 			type: 'ping',
 			peerId: this.node.peerId.toString(),
@@ -228,9 +225,8 @@ export class Network {
 		const data = new TextEncoder().encode(JSON.stringify(message));
 		try {
 			await this.pubsub.publish(PING_TOPIC, data);
-			console.log('Sent ping to network');
 		} catch (error) {
-			console.log('Ping sent (no peers connected yet)');
+			console.log('Error sending ping:', error);
 		}
 	}
 
@@ -298,6 +294,10 @@ export class Network {
 	}
 
 	async stop() {
+		if (this.pingInterval) {
+			clearInterval(this.pingInterval);
+			this.pingInterval = null;
+		}
 		if (this.node) {
 			await this.node.stop();
 			console.log('Network stopped');
