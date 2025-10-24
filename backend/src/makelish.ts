@@ -117,13 +117,13 @@ async function main() {
 				currentFile = info.path;
 				processedFiles.set(info.path, { size: info.size, chunks: info.chunks });
 				// Show start message without newline
-				lastProgress = 'Processing: ' + info.path + ' (' + Utils.formatBytes(info.size) + ')';
+				lastProgress = 'Creating checksums: ' + info.path + ' (' + Utils.formatBytes(info.size) + ')';
 				process.stdout.write(lastProgress);
 			} else if (info.type === 'chunk' && info.path && info.current && info.total) {
 				// Update chunk progress on same line
 				const fileInfo = processedFiles.get(info.path);
 				if (fileInfo) {
-					const prefix = 'Processing: ' + info.path + ' (' + Utils.formatBytes(fileInfo.size) + ')';
+					const prefix = 'Creating checksums: ' + info.path + ' (' + Utils.formatBytes(fileInfo.size) + ')';
 					lastProgress = prefix + ' - ' + info.current + '/' + info.total;
 					process.stdout.write('\r' + lastProgress);
 				}
