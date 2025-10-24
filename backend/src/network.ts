@@ -102,6 +102,10 @@ export class Network {
 				pubsub: gossipsub({
 					emitSelf: false,
 					allowPublishToZeroTopicPeers: true,
+					D: 2,  // Lower mesh size for small network
+    Dlo: 1,
+    Dhi: 3
+
 				}),
 				dht: kadDHT({
 					clientMode: false
@@ -134,6 +138,24 @@ export class Network {
 		}
 
 		this.pubsub = this.node.services.pubsub as PubSub;
+
+		// Listen to gossipsub mesh events
+		this.pubsub.addEventListener('gossipsub:heartbeat', () => {
+			console.log('gossipsub:heartbeat');
+			const meshPeers = this.pubsub!.getMeshPeers(PING_TOPIC);
+			if (meshPeers.length > 0) {
+				console.log('💓 Heartbeat - ping mesh peers:', meshPeers.length);
+			}
+		});
+
+		this.pubsub.addEventListener('gossipsub:graft', (evt) => {
+			console.log('🌿 GRAFT: peer joined mesh:', evt.detail.peerId);
+		});
+
+		this.pubsub.addEventListener('gossipsub:prune', (evt) => {
+			console.log('✂️  PRUNE: peer left mesh:', evt.detail.peerId);
+		});
+
 		const addresses = this.node.getMultiaddrs();
 		console.log('Node started with ID:', this.node.peerId.toString());
 		console.log('Listening on addresses:');
@@ -213,9 +235,10 @@ export class Network {
 			return;
 		}
 
-		// Check how many peers are subscribed to the ping topic
+		// Check mesh peers for the ping topic
+		const meshPeers = this.pubsub.getMeshPeers(PING_TOPIC);
 		const subscribers = this.pubsub.getSubscribers(PING_TOPIC);
-		console.log(`Sending ping (${subscribers.length} peers subscribed to topic)`);
+		console.log(`Sending ping (mesh: ${meshPeers.length} peers, subscribers: ${subscribers.length} peers)`);
 
 		const message: PingMessage = {
 			type: 'ping',
