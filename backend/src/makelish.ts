@@ -15,7 +15,7 @@ function showHelp() {
 	console.log('LISH Manifest Creator');
 	console.log('=====================');
 	console.log('');
-	console.log('Usage: bun create.ts --input <file-or-directory> [options]');
+	console.log('Usage: ./makelish.sh --input <file-or-directory> [options]');
 	console.log('');
 	console.log('Options:');
 	console.log('  --input <path>          Input file or directory (required)');
@@ -29,9 +29,9 @@ function showHelp() {
 	console.log('  ' + SUPPORTED_ALGOS.join(', '));
 	console.log('');
 	console.log('Examples:');
-	console.log('  bun create.ts --input myfile.bin');
-	console.log('  bun create.ts --input ./mydir --output archive.lish --algo sha512');
-	console.log('  bun create.ts --input data.zip --chunksize 10485760 --description "Project documentation and user manual"');
+	console.log('  ./makelish.sh --input myfile.bin');
+	console.log('  ./makelish.sh --input ./mydir --output archive.lish --algo sha512');
+	console.log('  ./makelish.sh --input data.zip --chunksize 10485760 --description "Project documentation and user manual"');
 }
 
 function parseArgs(args: string[]): IArgs {
@@ -93,26 +93,35 @@ async function main() {
 		console.log('');
 		// Create manifest with progress callback
 		let lastProgress = '';
+		let currentFile = '';
 		let processedFiles = new Map<string, { size: number; chunks: number }>();
-		
 		const manifest = await createManifest(inputPath, chunkSize, algo, description, info => {
-			if (info.type === 'chunk' && info.current && info.total) {
-				lastProgress = `\rProcessing chunks: ${info.current}/${info.total}`;
-				process.stdout.write(lastProgress);
-			} else if (info.type === 'file' && info.path) {
+			if (info.type === 'file-start' && info.path && info.size !== undefined && info.chunks !== undefined) {
 				// Clear previous progress line if any
 				if (lastProgress) {
-					process.stdout.write('\r' + ' '.repeat(lastProgress.length) + '\r');
+					process.stdout.write('\n');
 					lastProgress = '';
 				}
-				// Show file processed message
+				// Store file info
+				currentFile = info.path;
+				processedFiles.set(info.path, { size: info.size, chunks: info.chunks });
+				// Show start message without newline
+				lastProgress = 'Processing: ' + info.path + ' (' + Utils.formatBytes(info.size) + ')';
+				process.stdout.write(lastProgress);
+			} else if (info.type === 'chunk' && info.path && info.current && info.total) {
+				// Update chunk progress on same line
 				const fileInfo = processedFiles.get(info.path);
 				if (fileInfo) {
-					console.log(`Processed: ${info.path} (${Utils.formatBytes(fileInfo.size)}, ${fileInfo.chunks} chunks)`);
+					const prefix = 'Processing: ' + info.path + ' (' + Utils.formatBytes(fileInfo.size) + ')';
+					lastProgress = prefix + ' - ' + info.current + '/' + info.total;
+					process.stdout.write('\r' + lastProgress);
 				}
-			} else if (info.type === 'file-start' && info.path && info.size !== undefined && info.chunks !== undefined) {
-				// Store file info for later display
-				processedFiles.set(info.path, { size: info.size, chunks: info.chunks });
+			} else if (info.type === 'file' && info.path) {
+				// Just add newline after progress is done
+				if (lastProgress) {
+					process.stdout.write('\n');
+					lastProgress = '';
+				}
 			}
 		});
 		// Write chunk progress newline if we were processing a single file
@@ -128,7 +137,7 @@ async function main() {
 		const fileCount = manifest.files?.length || 0;
 		const dirCount = manifest.directories?.length || 0;
 		const linkCount = manifest.links?.length || 0;
-		console.log(`Summary: ${fileCount} files, ${dirCount} directories, ${linkCount} links`);
+		console.log('Summary: ' + fileCount + ' files, ' + dirCount + ' directories, ' + linkCount + ' links');
 	} catch (error) {
 		console.error('Error:', error);
 		process.exit(1);
