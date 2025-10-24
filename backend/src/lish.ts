@@ -59,13 +59,9 @@ function formatTimestamp(date: Date): string {
 
 // Helper to get file/directory stats
 async function getStats(fullPath: string) {
-	const file = Bun.file(fullPath);
 	try {
-		// First check if it's a file
-		const exists = await file.exists();
-		if (exists) return await file.stat();
-		// If not a file, might be a directory - use Bun.stat
-		return await Bun.file(fullPath).stat();
+		const stat = await Bun.file(fullPath).stat();
+		return stat;
 	} catch (e) {
 		throw new Error(`Cannot access path: ${fullPath}`);
 	}
@@ -101,7 +97,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	// Read directory contents
 	const glob = new Bun.Glob('*');
 	const scannedPaths: string[] = [];
-	for await (const entry of glob.scan({ cwd: dirPath, dot: true })) {
+	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) {
 		scannedPaths.push(entry);
 	}
 	// Sort paths alphabetically
@@ -138,7 +134,8 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 			const inodeKey = `${stat.dev}:${stat.ino}`;
 			const relativePath = getRelativePath(fullPath, basePath);
 			// Check if this is a hard link to an already processed file
-			if (inodeMap[inodeKey]) {
+			// Only consider it a hard link if inode is valid (non-zero) and already seen
+			if (stat.ino > 0 && inodeMap[inodeKey]) {
 				// This is a hard link
 				links.push({
 					path: relativePath,
@@ -149,7 +146,9 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				});
 			} else {
 				// First occurrence of this inode - process as regular file
-				inodeMap[inodeKey] = relativePath;
+				if (stat.ino > 0) {
+					inodeMap[inodeKey] = relativePath;
+				}
 				// Calculate checksums
 				const file = Bun.file(fullPath);
 				const totalChunks = Math.ceil(stat.size / chunkSize);
