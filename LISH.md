@@ -162,8 +162,6 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 
 ## Features
 
-### Supported
-
 - ✅ Files with chunked checksums
 - ✅ Directories (including empty directories)
 - ✅ Symbolic links
@@ -172,10 +170,6 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 - ✅ Creation and modification timestamps
 - ✅ Multiple hash algorithms
 - ✅ Arbitrary chunk sizes
-
-### Not Supported (Currently)
-
-- ❌ File encryption
 
 ## Notes
 
@@ -190,4 +184,4 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 
 ## Version History
 
-- **Version 1**: First version - supports files, directories, symlinks, permissions, and timestamps
+- **Version 1**: First version - supports files, directories, symlinks / hardlinks, permissions, and timestamps
