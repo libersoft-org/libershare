@@ -1,15 +1,15 @@
-# LISH - LiberShare Format Specification
+# LISH Data Structure Format Specification
 
 **Version:** 1
 **Last Updated:** October 24, 2025
 
 ## Overview
 
-LISH is a data structure format for describing file and directory structures with checksums for content verification and integrity. It supports files, directories, and symbolic links with Unix-style permissions and timestamps.
+LISH Data Structure Format describes file and directory structures with checksums for content verification and integrity. It supports files, directories, and symbolic links with Unix-style permissions and timestamps.
 
 ## Representation
 
-LISH defines a data structure that can be used in various forms:
+LISH Data Structure Format defines a data structure that can be used in various forms:
 
 - As objects in memory during runtime
 - Serialized to JSON format for interchange and storage
