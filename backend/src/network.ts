@@ -17,17 +17,20 @@ import { join } from 'path';
 
 // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 type PubSub = any;
+
 interface PingMessage {
 	type: 'ping';
 	peerId: string;
 	timestamp: number;
 }
+
 interface PongMessage {
 	type: 'pong';
 	peerId: string;
 	timestamp: number;
 	replyTo: string;
 }
+
 const PING_TOPIC = 'libershare/ping';
 const PONG_TOPIC = 'libershare/pong';
 const PRIVATE_KEY_PATH = '/local/privatekey';
@@ -63,6 +66,7 @@ export class Network {
 		console.log('✓ Saved new private key to datastore');
 		return privateKey;
 	}
+
 	async start() {
 		// Load settings from dataDir
 		const settingsPath = join(this.dataDir, 'settings.json');
@@ -96,21 +100,25 @@ export class Network {
 				minConnections: 1, // Auto-dial to maintain at least 1 connection
 				maxConnections: 100,
 			},
+			peerStore: {
+				persistence: true,
+				threshold: 5,
+			},
 			services: {
 				identify: identify(),
 				ping: ping(),
 				pubsub: gossipsub({
 					emitSelf: false,
 					allowPublishToZeroTopicPeers: true,
-					D: 2,  // Lower mesh size for small network
-    Dlo: 1,
-    Dhi: 3
-
+					floodPublish: true,  // Send to all peers, not just mesh (for small networks)
+					D: 8,
+					Dlo: 1,
+					Dhi: 10,
 				}),
 				dht: kadDHT({
-					clientMode: false
+					clientMode: false,
 				}),
-			}
+			},
 		};
 
 		// Add bootstrap if peers are configured
@@ -141,19 +149,27 @@ export class Network {
 
 		// Listen to gossipsub mesh events
 		this.pubsub.addEventListener('gossipsub:heartbeat', () => {
-			console.log('gossipsub:heartbeat');
 			const meshPeers = this.pubsub!.getMeshPeers(PING_TOPIC);
-			if (meshPeers.length > 0) {
-				console.log('💓 Heartbeat - ping mesh peers:', meshPeers.length);
-			}
+			const subscribers = this.pubsub!.getSubscribers(PING_TOPIC);
+			const topics = this.pubsub!.getTopics();
+			console.log('💓 Heartbeat:');
+			console.log('   Connected libp2p peers:', this.node!.getPeers().length);
+			console.log('   My topics:', topics);
+			console.log('   Ping mesh peers:', meshPeers.length);
+			console.log('   Ping subscribers:', subscribers.length, subscribers.map(p => p.toString()).slice(0, 2));
 		});
 
 		this.pubsub.addEventListener('gossipsub:graft', (evt) => {
-			console.log('🌿 GRAFT: peer joined mesh:', evt.detail.peerId);
+			console.log('🌿 GRAFT: peer joined mesh');
+			console.log('   Peer:', evt.detail.peerId);
+			console.log('   Topic:', evt.detail.topic);
+			console.log('   Total mesh peers for ping:', this.pubsub!.getMeshPeers(PING_TOPIC).length);
 		});
 
 		this.pubsub.addEventListener('gossipsub:prune', (evt) => {
-			console.log('✂️  PRUNE: peer left mesh:', evt.detail.peerId);
+			console.log('✂️  PRUNE: peer left mesh');
+			console.log('   Peer:', evt.detail.peerId);
+			console.log('   Topic:', evt.detail.topic);
 		});
 
 		const addresses = this.node.getMultiaddrs();
@@ -164,6 +180,15 @@ export class Network {
 		// Debug: Check peer store
 		console.log('Peers in store:', this.node.getPeers().length);
 		console.log('Services loaded:', Object.keys(this.node.services));
+
+		// Create promise that resolves when first peer connects
+		const firstPeerConnected = new Promise<void>((resolve) => {
+			if (this.node!.getPeers().length > 0) {
+				resolve();
+			} else {
+				this.node!.addEventListener('peer:connect', () => resolve(), { once: true });
+			}
+		});
 
 		// Listen for peer discovery and connection events
 		this.node.addEventListener('peer:discovery', (evt) => {
@@ -181,20 +206,10 @@ export class Network {
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 		});
 
-		// Subscribe to ping and pong topics
-		this.pubsub.subscribe(PING_TOPIC);
-		this.pubsub.subscribe(PONG_TOPIC);
-		// Handle incoming messages
-		this.pubsub.addEventListener('message', evt => {
-			this.handleMessage(evt.detail);
-		});
-		// Send initial ping to network
-		await this.sendPing();
-		console.log('Network ready. Listening for pings...');
-
-		// Manually dial bootstrap peers
+		// Manually dial bootstrap peers FIRST
 		// Bootstrap module discovers peers but doesn't auto-connect
 		if (settings.network.bootstrapPeers.length > 0) {
+			console.log('Connecting to bootstrap peers...');
 			const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 			for (const peerAddr of settings.network.bootstrapPeers) {
 				try {
@@ -205,9 +220,33 @@ export class Network {
 					console.log('✗ Failed to connect to bootstrap peer:', peerAddr, '-', error.message);
 				}
 			}
+
+			// Wait for first peer to connect (with timeout)
+			console.log('Waiting for peer connection...');
+			const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+			await Promise.race([firstPeerConnected, timeout]);
+
+			if (this.node.getPeers().length > 0) {
+				console.log('✓ Peer connected, proceeding with pubsub setup');
+			} else {
+				console.log('⚠️  No peers connected after timeout, continuing anyway');
+			}
 		}
 
-		// Start periodic ping timer (every 30 seconds)
+		// Subscribe to ping and pong topics AFTER peer connection
+		this.pubsub.subscribe(PING_TOPIC);
+		this.pubsub.subscribe(PONG_TOPIC);
+		console.log('✓ Subscribed to topics:', this.pubsub.getTopics());
+		console.log('  Libp2p peers:', this.node.getPeers().length);
+		console.log('  Pubsub peers:', this.pubsub.getPeers().length);
+		console.log('  Pubsub peer list:', this.pubsub.getPeers().map((p: any) => p.toString()));
+
+		// Handle incoming messages
+		this.pubsub.addEventListener('message', evt => {
+			this.handleMessage(evt.detail);
+		});
+
+		// Start periodic ping timer (every 3 seconds)
 		this.pingInterval = setInterval(async () => {
 			await this.sendPing();
 		}, 3000);
@@ -215,6 +254,7 @@ export class Network {
 
 	private handleMessage(msgEvent: any) {
 		try {
+			console.log('Received message:', msgEvent.topic);
 			const topic = msgEvent.topic;
 			const data = new TextDecoder().decode(msgEvent.data);
 			const message: Message = JSON.parse(data);
