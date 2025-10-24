@@ -63,9 +63,7 @@ async function getStats(fullPath: string) {
 	try {
 		// First check if it's a file
 		const exists = await file.exists();
-		if (exists) {
-			return await file.stat();
-		}
+		if (exists) return await file.stat();
 		// If not a file, might be a directory - use Bun.stat
 		return await Bun.file(fullPath).stat();
 	} catch (e) {
@@ -154,9 +152,14 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				const file = Bun.file(fullPath);
 				const totalChunks = Math.ceil(stat.size / chunkSize);
 				const checksums: string[] = [];
+				// Progress feedback - file start
+				if (onProgress) onProgress({ type: 'file-start', path: relativePath, size: stat.size, chunks: totalChunks });
 				for (let offset = 0; offset < stat.size; offset += chunkSize) {
+					const chunkIndex = Math.floor(offset / chunkSize) + 1;
 					const checksum = await calculateChecksum(file, offset, chunkSize, algo);
 					checksums.push(checksum);
+					// Progress feedback - chunk processed
+					if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: chunkIndex, total: totalChunks });
 				}
 				files.push({
 					path: relativePath,
@@ -166,11 +169,8 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 					created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
 					checksums,
 				});
-				// Progress feedback
-				if (onProgress) {
-					onProgress({ type: 'file-start', path: relativePath, size: stat.size, chunks: totalChunks });
-					onProgress({ type: 'file', path: relativePath });
-				}
+				// Progress feedback - file complete
+				if (onProgress) onProgress({ type: 'file', path: relativePath });
 			}
 		}
 	}
@@ -197,9 +197,7 @@ export async function createManifest(inputPath: string, chunkSize: number, algo:
 			const chunkIndex = Math.floor(offset / chunkSize) + 1;
 			const checksum = await calculateChecksum(file, offset, chunkSize, algo);
 			checksums.push(checksum);
-			if (onProgress) {
-				onProgress({ type: 'chunk', current: chunkIndex, total: totalChunks });
-			}
+			if (onProgress) onProgress({ type: 'chunk', current: chunkIndex, total: totalChunks });
 		}
 		// Get filename from path
 		const filename = inputPath.split(/[\\/]/).pop() || inputPath;
@@ -224,8 +222,6 @@ export async function createManifest(inputPath: string, chunkSize: number, algo:
 		if (directories.length > 0) manifest.directories = directories;
 		if (files.length > 0) manifest.files = files;
 		if (links.length > 0) manifest.links = links;
-	} else {
-		throw new Error('Input must be a file or directory');
-	}
+	} else throw new Error('Input must be a file or directory');
 	return manifest;
 }

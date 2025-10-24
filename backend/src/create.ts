@@ -93,26 +93,36 @@ async function main() {
 		console.log('');
 		// Create manifest with progress callback
 		let lastProgress = '';
+		let currentFile = '';
 		let processedFiles = new Map<string, { size: number; chunks: number }>();
-		
+
 		const manifest = await createManifest(inputPath, chunkSize, algo, description, info => {
-			if (info.type === 'chunk' && info.current && info.total) {
-				lastProgress = `\rProcessing chunks: ${info.current}/${info.total}`;
-				process.stdout.write(lastProgress);
-			} else if (info.type === 'file' && info.path) {
+			if (info.type === 'file-start' && info.path && info.size !== undefined && info.chunks !== undefined) {
 				// Clear previous progress line if any
 				if (lastProgress) {
-					process.stdout.write('\r' + ' '.repeat(lastProgress.length) + '\r');
+					process.stdout.write('\n');
 					lastProgress = '';
 				}
-				// Show file processed message
+				// Store file info
+				currentFile = info.path;
+				processedFiles.set(info.path, { size: info.size, chunks: info.chunks });
+				// Show start message without newline
+				lastProgress = `Processing: ${info.path} (${Utils.formatBytes(info.size)})`;
+				process.stdout.write(lastProgress);
+			} else if (info.type === 'chunk' && info.path && info.current && info.total) {
+				// Update chunk progress on same line
 				const fileInfo = processedFiles.get(info.path);
 				if (fileInfo) {
-					console.log(`Processed: ${info.path} (${Utils.formatBytes(fileInfo.size)}, ${fileInfo.chunks} chunks)`);
+					const prefix = `Processing: ${info.path} (${Utils.formatBytes(fileInfo.size)})`;
+					lastProgress = prefix + ' - ' + info.current + '/' + info.total;
+					process.stdout.write('\r' + lastProgress);
 				}
-			} else if (info.type === 'file-start' && info.path && info.size !== undefined && info.chunks !== undefined) {
-				// Store file info for later display
-				processedFiles.set(info.path, { size: info.size, chunks: info.chunks });
+			} else if (info.type === 'file' && info.path) {
+				// Just add newline after progress is done
+				if (lastProgress) {
+					process.stdout.write('\n');
+					lastProgress = '';
+				}
 			}
 		});
 		// Write chunk progress newline if we were processing a single file
