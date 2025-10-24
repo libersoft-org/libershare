@@ -29,6 +29,7 @@ interface IManifest {
 	created: string; // ISO 8601 timestamp in UTC when manifest was created
 	chunkSize: number; // Chunk size in bytes (global for all files)
 	checksumAlgo: HashAlgorithm; // Hashing algorithm used
+	description?: string; // Optional free-form text description (name, author, notes, etc.)
 	directories?: IDirectoryEntry[]; // Optional array of directories
 	files?: IFileEntry[]; // Optional array of files
 	links?: ILinkEntry[]; // Optional array of symbolic links and hard links
@@ -110,6 +111,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 	"created": "2025-10-24T15:30:00.000Z",
 	"chunkSize": 5242880,
 	"checksumAlgo": "sha256",
+	"description": "Project documentation and user manual - Created by John Doe",
 	"directories": [
 		{
 			"path": "docs",
