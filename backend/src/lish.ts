@@ -151,9 +151,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				});
 			} else {
 				// First occurrence of this inode - process as regular file
-				if (stat.ino > 0) {
-					inodeMap[inodeKey] = relativePath;
-				}
+				if (stat.ino > 0) inodeMap[inodeKey] = relativePath;
 				// Calculate checksums
 				const file = Bun.file(fullPath);
 				const totalChunks = Math.ceil(stat.size / chunkSize);
@@ -199,14 +197,16 @@ export async function createManifest(inputPath: string, chunkSize: number, algo:
 		const file = Bun.file(inputPath);
 		const totalChunks = Math.ceil(stat.size / chunkSize);
 		const checksums: string[] = [];
+		// Get filename from path
+		const filename = inputPath.split(/[\\/]/).pop() || inputPath;
+		// Progress feedback - file start
+		if (onProgress) onProgress({ type: 'file-start', path: filename, size: stat.size, chunks: totalChunks });
 		for (let offset = 0; offset < stat.size; offset += chunkSize) {
 			const chunkIndex = Math.floor(offset / chunkSize) + 1;
 			const checksum = await calculateChecksum(file, offset, chunkSize, algo);
 			checksums.push(checksum);
-			if (onProgress) onProgress({ type: 'chunk', current: chunkIndex, total: totalChunks });
+			if (onProgress) onProgress({ type: 'chunk', path: filename, current: chunkIndex, total: totalChunks });
 		}
-		// Get filename from path
-		const filename = inputPath.split(/[\\/]/).pop() || inputPath;
 		manifest.files = [
 			{
 				path: filename,
@@ -217,6 +217,8 @@ export async function createManifest(inputPath: string, chunkSize: number, algo:
 				checksums,
 			},
 		];
+		// Progress feedback - file complete
+		if (onProgress) onProgress({ type: 'file', path: filename });
 	} else if (stat.isDirectory()) {
 		// Directory processing
 		const directories: IDirectoryEntry[] = [];
