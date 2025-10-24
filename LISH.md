@@ -164,14 +164,13 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 
 ## Features
 
-- ✅ Files with chunked checksums
 - ✅ Directories (including empty directories)
-- ✅ Symbolic links
-- ✅ Hard links
+- ✅ Files with chunked checksums
+- ✅ Symbolic / hard links
 - ✅ Unix file permissions (mode)
 - ✅ Creation and modification timestamps
-- ✅ Multiple hash algorithms
 - ✅ Arbitrary chunk sizes
+- ✅ Multiple hash algorithms for checksums
 
 ## Notes
 
