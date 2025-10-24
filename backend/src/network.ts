@@ -232,13 +232,14 @@ export class Network {
 			await Promise.race([firstPeerConnected, timeout]);
 
 			if (this.node.getPeers().length > 0) {
-				console.log('✓ Peer connected, proceeding with pubsub setup');
+				console.log('✓ Peer connected, proceeding');
 			} else {
-				console.log('⚠️  No peers connected after timeout, continuing anyway');
+				console.log('⚠️  No peers connected after wait, continuing anyway');
 			}
 		}
 
 		if (this.enablePinkPonk) {
+			console.log('PinkPonk enabled: Subscribing to pink and ponk topics');
 			// Subscribe to pink and ponk topics AFTER peer connection
 			this.pubsub.subscribe(PINK_TOPIC);
 			this.pubsub.subscribe(PONK_TOPIC);
