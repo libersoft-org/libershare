@@ -31,7 +31,7 @@ export interface ILinkEntry {
 	modified?: string;
 	created?: string;
 }
-export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
+export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
 export type HashAlgorithm = (typeof SUPPORTED_ALGOS)[number];
 export const MANIFEST_VERSION = 1;
 export const DEFAULT_CHUNK_SIZE = 5242880; // 5 MB
