@@ -3,7 +3,7 @@ import { createManifest, SUPPORTED_ALGOS, HashAlgorithm, DEFAULT_CHUNK_SIZE, DEF
 interface IArgs {
 	input?: string;
 	name?: string;
-	chunksize?: number;
+	chunk?: number;
 	output?: string;
 	algo?: string;
 	description?: string;
@@ -19,7 +19,8 @@ function showHelp() {
 	console.log('  --output <path>         Output LISH file (default: output.lish)');
 	console.log('  --name <text>           Manifest name (required)');
 	console.log('  --description <text>    Optional description for the manifest');
-	console.log('  --chunksize <bytes>     Chunk size in bytes (default: 5242880 = 5MB)');
+	console.log('  --chunk <size>          Chunk size (default: 5M). Supports: K, M, G, T (multiples of 1024)');
+	console.log('                          Examples: 512K, 5M, 1G, 2T or raw bytes: 5242880');
 	console.log('  --algo <algorithm>      Hash algorithm (default: sha256)');
 	console.log('  --threads <number>      Number of worker threads (default: 1, use 0 for auto detection by number of CPU cores)');
 	console.log('  --help                  Show this help message');
@@ -30,8 +31,8 @@ function showHelp() {
 	console.log('Examples:');
 	console.log('  ./makelish.sh --input myfile.bin --name "Project documentation"');
 	console.log('  ./makelish.sh --input ./mydir --output project.lish --name "Project documentation" --algo sha512');
-	console.log('  ./makelish.sh --input data.zip --name "Project documentation" --chunksize 10485760 --description "User manual and guides - created by John Doe"');
-	console.log('  ./makelish.sh --input bigfile.iso --name "ISO image" --threads 8');
+	console.log('  ./makelish.sh --input data.zip --name "Project documentation" --chunk 1M --description "User manual and guides - created by John Doe"');
+	console.log('  ./makelish.sh --input bigfile.iso --name "ISO image" --threads 8 --chunk 50M');
 }
 
 function parseArgs(args: string[]): IArgs {
@@ -40,7 +41,7 @@ function parseArgs(args: string[]): IArgs {
 		'--input': 'input',
 		'--output': 'output',
 		'--name': 'name',
-		'--chunksize': 'chunksize',
+		'--chunk': 'chunk',
 		'--algo': 'algo',
 		'--description': 'description',
 		'--threads': 'threads',
@@ -50,7 +51,9 @@ function parseArgs(args: string[]): IArgs {
 		const key = argMap[arg];
 		if (key && i + 1 < args.length) {
 			const value = args[++i];
-			(parsed as any)[key] = key === 'chunksize' || key === 'threads' ? parseInt(value, 10) : value;
+			if (key === 'chunk') (parsed as any)[key] = Utils.parseBytes(value);
+			else if (key === 'threads') (parsed as any)[key] = parseInt(value, 10);
+			else (parsed as any)[key] = value;
 		}
 	}
 	return parsed;
@@ -59,7 +62,7 @@ function parseArgs(args: string[]): IArgs {
 async function main() {
 	console.log('');
 	console.log('=================');
-	console.log('LISH File Creator');
+	console.log('LISH file creator');
 	console.log('=================');
 	console.log('');
 	const args = parseArgs(Bun.argv.slice(2));
@@ -82,7 +85,7 @@ async function main() {
 	const inputPath = args.input;
 	const name = args.name;
 	const outputFile = args.output || DEFAULT_OUTPUT;
-	const chunkSize = args.chunksize || DEFAULT_CHUNK_SIZE;
+	const chunkSize = args.chunk || DEFAULT_CHUNK_SIZE;
 	const algo = (args.algo || DEFAULT_ALGO) as HashAlgorithm;
 	const description = args.description;
 	const threads = args.threads !== undefined ? args.threads : 1;
