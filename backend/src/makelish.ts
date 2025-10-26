@@ -101,12 +101,12 @@ async function main() {
 		const startTime = Date.now();
 		console.log('Start time: ' + new Date().toLocaleString());
 		console.log('');
-		console.log('Processing ' + inputType + ': ' + inputPath);
 		if (sizeInfo) console.log('Size: ' + sizeInfo);
 		console.log('Name: ' + name);
 		if (description) console.log('Description: ' + description);
+		console.log('Processing ' + inputType + ': ' + inputPath);
 		console.log('Chunk size: ' + Utils.formatBytes(chunkSize));
-		console.log('Algorithm: ' + algo);
+		console.log('Checksum algorithm: ' + algo);
 		console.log('Threads: ' + actualThreads + (threads === 0 ? ' (auto detect)' : ''));
 		console.log('');
 		// Create manifest with progress callback

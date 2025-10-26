@@ -12,14 +12,14 @@ export interface IManifest {
 }
 export interface IDirectoryEntry {
 	path: string;
-	permissions?: number;
+	permissions?: string;
 	modified?: string;
 	created?: string;
 }
 export interface IFileEntry {
 	path: string;
 	size: number;
-	permissions?: number;
+	permissions?: string;
 	modified?: string;
 	created?: string;
 	checksums: string[];
@@ -58,9 +58,10 @@ function formatTimestamp(date: Date): string {
 	return date.toISOString();
 }
 
-// Helper to extract permission bits from mode (remove file type bits)
-function getPermissions(mode: number): number {
-	return mode & 0o777; // Keep only the last 9 bits (rwxrwxrwx)
+// Helper to extract permission bits from mode and format as octal string (remove file type bits)
+function getPermissions(mode: number): string {
+	const perms = mode & 0o777; // Keep only the last 9 bits (rwxrwxrwx)
+	return perms.toString(8); // Convert to octal string
 }
 
 // Helper to get file/directory stats

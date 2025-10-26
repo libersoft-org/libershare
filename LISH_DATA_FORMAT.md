@@ -43,7 +43,7 @@ interface IManifest {
 ```typescript
 interface IDirectoryEntry {
 	path: string; // Relative path (e.g., "docs" or "assets/images")
-	permissions?: number; // Unix permissions in decimal notation (e.g., 493 = 0o755) - optional
+	permissions?: string; // Unix permissions in octal notation (e.g., "755" for rwxr-xr-x) - optional
 	modified?: string; // ISO 8601 timestamp in UTC of last modification (optional)
 	created?: string; // ISO 8601 timestamp in UTC of creation (optional)
 }
@@ -55,7 +55,7 @@ interface IDirectoryEntry {
 interface IFileEntry {
 	path: string; // Relative path (e.g., "docs/readme.txt")
 	size: number; // File size in bytes
-	permissions?: number; // Unix permissions in decimal notation (e.g., 420 = 0o644) - optional
+	permissions?: string; // Unix permissions in octal notation (e.g., "644" for rw-r--r--) - optional
 	modified?: string; // ISO 8601 timestamp in UTC of last modification (optional)
 	created?: string; // ISO 8601 timestamp in UTC of creation (optional)
 	checksums: string[]; // Array of hex-encoded checksums for each chunk
@@ -87,14 +87,14 @@ type HashAlgorithm = 'sha256' | 'sha512' | 'blake2b256' | 'blake2b512' | 'blake2
 
 ## Unix permissions
 
-File and directory permissions are stored as decimal numbers representing Unix octal permission modes:
+File and directory permissions are stored as octal string notation representing Unix permission modes:
 
-| Decimal | Octal | Permissions | Typical Use              |
-| ------- | ----- | ----------- | ------------------------ |
-| 420     | 0o644 | rw-r--r--   | Regular files            |
-| 493     | 0o755 | rwxr-xr-x   | Directories, executables |
-| 384     | 0o600 | rw-------   | Private files            |
-| 448     | 0o700 | rwx------   | Private directories      |
+| Octal | Permissions | Typical Use              |
+| ----- | ----------- | ------------------------ |
+| "644" | rw-r--r--   | Regular files            |
+| "755" | rwxr-xr-x   | Directories, executables |
+| "600" | rw-------   | Private files            |
+| "700" | rwx------   | Private directories      |
 
 ## Chunking
 
@@ -118,13 +118,13 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 	"directories": [
 		{
 			"path": "docs",
-			"permissions": 493,
+			"permissions": "755",
 			"modified": "2025-10-20T10:30:00.000Z",
 			"created": "2025-10-15T08:00:00.000Z"
 		},
 		{
 			"path": "empty-folder",
-			"permissions": 493,
+			"permissions": "755",
 			"modified": "2025-10-18T12:00:00.000Z",
 			"created": "2025-10-18T12:00:00.000Z"
 		}
@@ -133,7 +133,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 		{
 			"path": "README.md",
 			"size": 1024,
-			"permissions": 420,
+			"permissions": "644",
 			"modified": "2025-10-22T14:15:00.000Z",
 			"created": "2025-10-20T10:30:00.000Z",
 			"checksums": ["a1b2c3d4e5f6789..."]
@@ -141,7 +141,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 		{
 			"path": "docs/manual.pdf",
 			"size": 15728640,
-			"permissions": 420,
+			"permissions": "644",
 			"modified": "2025-10-21T09:45:00.000Z",
 			"created": "2025-10-20T10:30:00.000Z",
 			"checksums": ["f2960b16993b503c...", "38a4a0a7dd7fdc94...", "3a765cf06c5e6ed9..."]
