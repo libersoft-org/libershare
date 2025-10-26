@@ -7,6 +7,7 @@ interface IArgs {
 	output?: string;
 	algo?: string;
 	description?: string;
+	threads?: number;
 }
 const DEFAULT_OUTPUT = 'output.lish';
 
@@ -20,6 +21,7 @@ function showHelp() {
 	console.log('  --description <text>    Optional description for the manifest');
 	console.log('  --chunksize <bytes>     Chunk size in bytes (default: 5242880 = 5MB)');
 	console.log('  --algo <algorithm>      Hash algorithm (default: sha256)');
+	console.log('  --threads <number>      Number of worker threads (default: 1, use 0 for auto-detect)');
 	console.log('  --help                  Show this help message');
 	console.log('');
 	console.log('Supported algorithms:');
@@ -29,6 +31,7 @@ function showHelp() {
 	console.log('  ./makelish.sh --input myfile.bin --name "Project Documentation"');
 	console.log('  ./makelish.sh --input ./mydir --output project.lish --name "Project Documentation" --algo sha512');
 	console.log('  ./makelish.sh --input data.zip --name "Project Documentation" --chunksize 10485760 --description "User manual and guides - Created by John Doe"');
+	console.log('  ./makelish.sh --input bigfile.iso --name "ISO Image" --threads 8');
 }
 
 function parseArgs(args: string[]): IArgs {
@@ -40,13 +43,14 @@ function parseArgs(args: string[]): IArgs {
 		'--chunksize': 'chunksize',
 		'--algo': 'algo',
 		'--description': 'description',
+		'--threads': 'threads',
 	};
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		const key = argMap[arg];
 		if (key && i + 1 < args.length) {
 			const value = args[++i];
-			(parsed as any)[key] = key === 'chunksize' ? parseInt(value, 10) : value;
+			(parsed as any)[key] = key === 'chunksize' || key === 'threads' ? parseInt(value, 10) : value;
 		}
 	}
 	return parsed;
@@ -81,6 +85,8 @@ async function main() {
 	const chunkSize = args.chunksize || DEFAULT_CHUNK_SIZE;
 	const algo = (args.algo || DEFAULT_ALGO) as HashAlgorithm;
 	const description = args.description;
+	const threads = args.threads !== undefined ? args.threads : 1;
+	const actualThreads = threads === 0 ? navigator.hardwareConcurrency || 4 : threads;
 	if (!SUPPORTED_ALGOS.includes(algo as any)) {
 		console.error('Error: Unsupported algorithm "' + algo + '"');
 		console.error('Supported algorithms: ' + SUPPORTED_ALGOS.join(', '));
@@ -101,12 +107,13 @@ async function main() {
 		if (description) console.log('Description: ' + description);
 		console.log('Chunk size: ' + Utils.formatBytes(chunkSize));
 		console.log('Algorithm: ' + algo);
+		console.log('Threads: ' + actualThreads + (threads === 0 ? ' (auto detect)' : ''));
 		console.log('');
 		// Create manifest with progress callback
 		let lastProgress = '';
 		let currentFile = '';
 		let processedFiles = new Map<string, { size: number; chunks: number }>();
-		const manifest = await createManifest(inputPath, name, chunkSize, algo, description, info => {
+		const manifest = await createManifest(inputPath, name, chunkSize, algo, threads, description, info => {
 			if (info.type === 'file-start' && info.path && info.size !== undefined && info.chunks !== undefined) {
 				// Clear previous progress line if any
 				if (lastProgress) {

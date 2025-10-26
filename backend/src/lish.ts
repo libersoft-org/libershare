@@ -83,9 +83,9 @@ async function calculateChecksum(file: ReturnType<typeof Bun.file>, offset: numb
 }
 
 // Calculate checksums in parallel using workers
-async function calculateChecksumsParallel(filePath: string, fileSize: number, chunkSize: number, algo: HashAlgorithm, onProgress?: (completed: number, total: number) => void): Promise<string[]> {
+async function calculateChecksumsParallel(filePath: string, fileSize: number, chunkSize: number, algo: HashAlgorithm, maxWorkers: number, onProgress?: (completed: number, total: number) => void): Promise<string[]> {
 	const totalChunks = Math.ceil(fileSize / chunkSize);
-	const cpuCount = navigator.hardwareConcurrency || 4;
+	const cpuCount = maxWorkers > 0 ? maxWorkers : navigator.hardwareConcurrency || 1;
 	const workerCount = Math.min(cpuCount, totalChunks);
 	// Create workers
 	const workers: Worker[] = [];
@@ -131,7 +131,7 @@ interface InodeMap {
 	[inode: string]: string; // inode -> first file path encountered
 }
 
-async function processDirectory(dirPath: string, basePath: string, chunkSize: number, algo: HashAlgorithm, directories: IDirectoryEntry[], files: IFileEntry[], links: ILinkEntry[], inodeMap: InodeMap, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void): Promise<void> {
+async function processDirectory(dirPath: string, basePath: string, chunkSize: number, algo: HashAlgorithm, maxWorkers: number, directories: IDirectoryEntry[], files: IFileEntry[], links: ILinkEntry[], inodeMap: InodeMap, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void): Promise<void> {
 	const stat = await getStats(dirPath);
 	// Add directory entry
 	const relativePath = getRelativePath(dirPath, basePath);
@@ -179,7 +179,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 			}
 		} else if (stat.isDirectory()) {
 			// Recursively process subdirectory
-			await processDirectory(fullPath, basePath, chunkSize, algo, directories, files, links, inodeMap, onProgress);
+			await processDirectory(fullPath, basePath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress);
 		} else if (stat.isFile()) {
 			const inodeKey = `${stat.dev}:${stat.ino}`;
 			const relativePath = getRelativePath(fullPath, basePath);
@@ -202,7 +202,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				// Progress feedback - file start
 				if (onProgress) onProgress({ type: 'file-start', path: relativePath, size: stat.size, chunks: totalChunks });
 				// Use parallel worker-based checksum calculation
-				const checksums = await calculateChecksumsParallel(fullPath, stat.size, chunkSize, algo, (completed, total) => {
+				const checksums = await calculateChecksumsParallel(fullPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
 					if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: completed, total });
 				});
 				files.push({
@@ -220,7 +220,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	}
 }
 
-export async function createManifest(inputPath: string, name: string, chunkSize: number, algo: HashAlgorithm, description?: string, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void): Promise<IManifest> {
+export async function createManifest(inputPath: string, name: string, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void): Promise<IManifest> {
 	const created = new Date().toISOString();
 	const id = globalThis.crypto.randomUUID();
 	const manifest: IManifest = {
@@ -243,7 +243,7 @@ export async function createManifest(inputPath: string, name: string, chunkSize:
 		// Progress feedback - file start
 		if (onProgress) onProgress({ type: 'file-start', path: filename, size: stat.size, chunks: totalChunks });
 		// Use parallel worker-based checksum calculation
-		const checksums = await calculateChecksumsParallel(inputPath, stat.size, chunkSize, algo, (completed, total) => {
+		const checksums = await calculateChecksumsParallel(inputPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
 			if (onProgress) onProgress({ type: 'chunk', path: filename, current: completed, total });
 		});
 		manifest.files = [
@@ -264,7 +264,7 @@ export async function createManifest(inputPath: string, name: string, chunkSize:
 		const files: IFileEntry[] = [];
 		const links: ILinkEntry[] = [];
 		const inodeMap: InodeMap = {};
-		await processDirectory(inputPath, inputPath, chunkSize, algo, directories, files, links, inodeMap, onProgress);
+		await processDirectory(inputPath, inputPath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress);
 		// Sort all arrays alphabetically by path
 		directories.sort((a, b) => a.path.localeCompare(b.path));
 		files.sort((a, b) => a.path.localeCompare(b.path));
