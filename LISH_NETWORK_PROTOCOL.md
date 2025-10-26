@@ -63,19 +63,19 @@ Stores a decentralized database of LISH data shared in network.
 
 ```typescript
 interface ILISHDatabase {
-	data: ILISHData[]; // Array of LISH data entries
+	data: ILISHEntry[]; // Array of LISH data entries
 }
 ```
 
 ```typescript
-interface ILISHData {
-	lish: ILISH; // LISH data structure
-	publisher?: string; // PeerID who published the manifest (optional if not required by network)
+interface ILISHEntry {
+	lish: ILISHData; // LISH data structure
+	publisher?: string; // PeerID who published the LISH data (optional if not required by network)
 	published?: string; // ISO 8601 timestamp when published to network (optional if not required by network)
 }
 ```
 
-**Note**: LISH data themselves do NOT contain `networkID`. The same manifest can be shared on multiple networks.
+**Note**: LISH data themselves do NOT contain `networkID`. The same LISH data can be shared on multiple networks.
 
 ## Message types
 
@@ -83,44 +83,44 @@ All messages are JSON-encoded and transmitted over libp2p streams.
 
 ### 1. PUBLISH_MANIFEST
 
-Publishes data represented in LISH Data Format to the network.
+Publishes data represented in LISH data format to the network.
 
 ```typescript
 {
- type: 'publish_manifest',
- manifest: ILISH, // Manifest data in LISH Data Format
+ type: 'publish_lish_data',
+ lish: ILISHData, // LISH data format
 }
 ```
 
 **Usage**: Broadcast to DHT
 
-### 2. REQUEST_MANIFEST
+### 2. REQUEST_DATA
 
-Requests the full LISH manifest in LISH Data Format.
+Requests the full LISH data in LISH Data Format.
 
 ```typescript
 {
- type: 'request_manifest',
- manifestID: string,
+ type: 'request_lish_data',
+ lishID: string,
  requestID: string // Unique ID for tracking this request
 }
 ```
 
-**Response**: `MANIFEST` or `ERROR`
+**Response**: `DATA` or `ERROR`
 
-### 3. MANIFEST
+### 3. DATA
 
-Delivers the manifest in LISH Data Format to a requesting peer.
+Delivers the LISH data in LISH data format to a requesting peer.
 
 ```typescript
 {
- type: 'manifest',
- requestID: string,         // Matches REQUEST_MANIFEST.requestID
- manifest: IManifest        // Complete LISH manifest object
+ type: 'data',
+ requestID: string, // Matches REQUEST_MANIFEST.requestID
+ data: ILISH        // Complete LISH object
 }
 ```
 
-**Verification**: Receiver must verify `manifestHash` matches SHA-256 of received manifest.
+**Verification**: Receiver must verify `LISHHash` matches SHA-256 of received LISH data.
 
 ### 4. REQUEST_CHUNKS
 
@@ -129,8 +129,8 @@ Requests specific file chunks.
 ```typescript
 {
  type: 'request_chunks',
- manifestID: string,
- filePath: string,      // Relative path from manifest
+ lishID: string,
+ filePath: string,      // Relative path from LISH data
  chunkIDs: number[],    // Array of chunk indices (0-based)
  requestID: string
 }
@@ -195,12 +195,12 @@ Manages network members (owners and admins).
 
 ### 9. REMOVE_MANIFEST
 
-Removes a manifest from the network. Can be done by owners or admins only
+Removes a lish data from the network. Can be done by owners or admins only
 
 ```typescript
 {
- type: 'remove_manifest',
- manifestID: string
+ type: 'remove_data',
+ lishID: string
 }
 ```
 
