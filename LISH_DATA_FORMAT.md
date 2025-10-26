@@ -1,15 +1,16 @@
-# LISH Data Structure Format Specification
+# LISH data structure format specification
 
-**Version:** 1
-**Last Updated:** October 24, 2025
+**Version**: 1
+**Created**: 24 October 2025
+**Last update**: 26 October 2025
 
 ## Overview
 
-LISH Data Structure Format describes file and directory structures with checksums for content verification and integrity. It supports files, directories, and symbolic links with Unix-style permissions and timestamps.
+LISH data structure format describes file and directory structures with checksums for content verification and integrity. It supports files, directories, and symbolic links with Unix-style permissions and timestamps.
 
 ## Representation
 
-LISH Data Structure Format defines a data structure that can be used in various forms:
+LISH data structure format defines a data structure that can be used in various forms:
 
 - As objects in memory during runtime
 - Serialized to JSON format for interchange and storage
@@ -18,9 +19,9 @@ LISH Data Structure Format defines a data structure that can be used in various 
 
 This specification describes the logical structure, with JSON examples for clarity.
 
-## Manifest Structure
+## Manifest structure
 
-### Root Manifest Object
+### Root manifest object
 
 ```typescript
 interface IManifest {
@@ -37,7 +38,7 @@ interface IManifest {
 }
 ```
 
-### Directory Entry
+### Directory entry
 
 ```typescript
 interface IDirectoryEntry {
@@ -48,7 +49,7 @@ interface IDirectoryEntry {
 }
 ```
 
-### File Entry
+### File entry
 
 ```typescript
 interface IFileEntry {
@@ -61,7 +62,7 @@ interface IFileEntry {
 }
 ```
 
-### Link Entry
+### Link entry
 
 ```typescript
 interface ILinkEntry {
@@ -73,18 +74,18 @@ interface ILinkEntry {
 }
 ```
 
-**Note:**
+**Note**:
 
 - When `hardlink` is `true`, the `target` points to a file path in the `files` array (hard link)
 - When `hardlink` is `false` or undefined, the `target` is a filesystem path (symbolic link)
 
-## Supported Hash Algorithms
+## Supported hash algorithms
 
 ```typescript
 type HashAlgorithm = 'sha256' | 'sha512' | 'blake2b256' | 'blake2b512' | 'blake2s256' | 'shake128' | 'shake256';
 ```
 
-## Unix Permissions
+## Unix permissions
 
 File and directory permissions are stored as decimal numbers representing Unix octal permission modes:
 
@@ -110,7 +111,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 	"version": 1,
 	"id": "34aacabb-9c6f-42a2-aaf4-61fc89c45056",
 	"name": "Project Documentation",
-	"description": "User manual and guides - Created by John Doe",
+	"description": "User manual and guides - created by John Doe",
 	"created": "2025-10-24T15:30:00.000Z",
 	"chunkSize": 5242880,
 	"checksumAlgo": "sha256",
@@ -186,6 +187,6 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 - The `created`, `modified`, and `permissions` fields are optional - if `permissions` is not provided, file permissions will not be modified during extraction
 - If `permissions` is omitted, implementations should use default permissions for the target platform
 
-## Version History
+## Version history
 
-- **Version 1**: First version - supports files, directories, symlinks / hardlinks, permissions, and timestamps
+- **Version 1**: First version - supports files, directories, links, permissions, and timestamps

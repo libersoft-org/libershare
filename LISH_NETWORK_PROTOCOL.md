@@ -1,29 +1,28 @@
-# LISH Network Protocol Specification
+# LISH Network protocol specification
 
-**Version:** 1  
-**Last Updated:** October 24, 2025
+**Version**: 1  
+**Created**: 24 October 2025
+**Last update**: 26 October 2025
 
 ## Overview
 
-The LISH Protocol is a peer-to-peer communication protocol for efficient, decentralized file sharing. It enables decentralized, verifiable, and resumable file transfers with multi-source parallel downloading capabilities.
+The LISH protocol is a peer-to-peer communication protocol for file sharing. It enables decentralized, verifiable, and resumable file transfers with multi-source parallel downloading capabilities.
 
 ## Architecture
 
-### Core Components
+### Core components
 
-- **Transport Layer**: libp2p for peer-to-peer networking
+- **Transport layer**: [**libp2p**](https://en.wikipedia.org/wiki/Libp2p) for peer-to-peer networking
 - **Connection**: WebRTC for direct P2P connections with NAT traversal
-- **Discovery**: DHT (Distributed Hash Table) for peer discovery
-- **Data Structure**: LISH manifests for file metadata and integrity verification
-- **Verification**: Cryptographic checksums for data integrity
+- **Data structure**: [**LISH data format structure**](./LISH_DATA_FORMAT.md) for directory structure, permissions and integrity verification metadata
 
-### Network Topology
+### Network topology
 
-The protocol uses a **distributed hash table (DHT)** for peer discovery, allowing peers to find each other without centralized servers. The DHT implementation is built on top of **libp2p's Kademlia DHT**.
+The protocol uses a **DHT** for peer discovery, allowing peers to find each other without centralized servers. The DHT implementation is built on top of **libp2p's Kademlia DHT**.
 
-## Network Structures
+## Network structures
 
-### Network Configuration
+### Network configuration
 
 Defines a peer to peer network with access control rules.
 
@@ -36,7 +35,7 @@ interface INetworkConfig {
 }
 ```
 
-### Network Access Control
+### Network access control
 
 Defines who can perform actions within a network.
 
@@ -51,7 +50,7 @@ interface INetworkAccess {
 }
 ```
 
-**Access Levels**:
+**Access levels**:
 
 - **Owners**: Full control - can manage admins, publishers, and downloaders
 - **Admins**: Can add/remove publishers and downloaders
@@ -59,7 +58,7 @@ interface INetworkAccess {
 - **Downloaders**: Can download content from uploaders (not just from publishers)
 - **Anyone**: If restrictions are disabled (default)
 
-### Network Manifest
+### Network manifest
 
 Stores a LISH Data with a network.
 
@@ -73,7 +72,7 @@ interface IManifestDatabase {
 
 **Note**: LISH manifests themselves do NOT contain `networkId`. The same manifest can be shared on multiple networks.
 
-## Message Types
+## Message types
 
 All messages are JSON-encoded and transmitted over libp2p streams.
 
@@ -83,8 +82,8 @@ Publishes data represented in LISH Data Format to the network.
 
 ```typescript
 {
-  type: 'publish_manifest',
-  manifest: ILISH, // Manifest data in LISH Data Format
+ type: 'publish_manifest',
+ manifest: ILISH, // Manifest data in LISH Data Format
 }
 ```
 
@@ -96,9 +95,9 @@ Requests the full LISH manifest in LISH Data Format.
 
 ```typescript
 {
-  type: 'request_manifest',
-  manifestID: string,
-  requestID: string // Unique ID for tracking this request
+ type: 'request_manifest',
+ manifestID: string,
+ requestID: string // Unique ID for tracking this request
 }
 ```
 
@@ -110,9 +109,9 @@ Delivers the manifest in LISH Data Format to a requesting peer.
 
 ```typescript
 {
-  type: 'manifest',
-  requestID: string,         // Matches REQUEST_MANIFEST.requestId
-  manifest: IManifest        // Complete LISH manifest object
+ type: 'manifest',
+ requestID: string,         // Matches REQUEST_MANIFEST.requestId
+ manifest: IManifest        // Complete LISH manifest object
 }
 ```
 
@@ -124,11 +123,11 @@ Requests specific file chunks.
 
 ```typescript
 {
-  type: 'request_chunks',
-  manifestID: string,
-  filePath: string,      // Relative path from manifest
-  chunkIDs: number[],    // Array of chunk indices (0-based)
-  requestID: string
+ type: 'request_chunks',
+ manifestID: string,
+ filePath: string,      // Relative path from manifest
+ chunkIDs: number[],    // Array of chunk indices (0-based)
+ requestID: string
 }
 ```
 
@@ -138,9 +137,9 @@ Delivers chunk data.
 
 ```typescript
 {
-  type: 'chunk_data',
-  requestID: string,
-  data: Uint8Array   // Binary chunk data (base64 in JSON transport)
+ type: 'chunk_data',
+ requestID: string,
+ data: Uint8Array   // Binary chunk data (base64 in JSON transport)
 }
 ```
 
@@ -154,8 +153,8 @@ Delivers network configuration. For owners only
 
 ```typescript
 {
-  type: 'get_network_config',
-  requestID: string,
+ type: 'get_network_config',
+ requestID: string,
 }
 ```
 
@@ -165,8 +164,8 @@ Updates network configuration (owners only).
 
 ```typescript
 {
-  type: 'set_network_config',
-  sets: Partial<INetworkConfig>
+ type: 'set_network_config',
+ sets: Partial<INetworkConfig>
 }
 ```
 
@@ -176,11 +175,11 @@ Manages network members (owners and admins).
 
 ```typescript
 {
-  type: 'manage_members',
-  networkID: string,
-  action: 'add' | 'remove',
-  role: 'admin' | 'publisher' | 'downloader',
-  peerIDs: string[]
+ type: 'manage_members',
+ networkID: string,
+ action: 'add' | 'remove',
+ role: 'admin' | 'publisher' | 'downloader',
+ peerIDs: string[]
 }
 ```
 
@@ -195,8 +194,8 @@ Removes a manifest from the network. Can be done by owners or admins only
 
 ```typescript
 {
-  type: 'remove_manifest',
-  manifestID: string
+ type: 'remove_manifest',
+ manifestID: string
 }
 ```
 
