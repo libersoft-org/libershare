@@ -81,68 +81,68 @@ interface ILISHEntry {
 
 All messages are JSON-encoded and transmitted over libp2p streams.
 
-### 1. PUBLISH_MANIFEST
+### 1. Publish LISH data
 
 Publishes data represented in LISH data format to the network.
 
 ```typescript
 {
- type: 'publish_lish_data',
- lish: ILISHData, // LISH data format
+ command: 'publish_lish_data',
+ lish: ILISHData // LISH data format
 }
 ```
 
 **Usage**: Broadcast to DHT
 
-### 2. REQUEST_DATA
+### 2. Get LISH data request
 
-Requests the full LISH data in LISH Data Format.
+Requests the full LISH data in LISH data format.
 
 ```typescript
 {
- type: 'request_lish_data',
- lishID: string,
- requestID: string // Unique ID for tracking this request
+ command: 'get_lish_request',
+ requestID: string, // Unique ID for tracking this request
+	lishID: string
 }
 ```
 
 **Response**: `DATA` or `ERROR`
 
-### 3. DATA
+### 3. Get LISH data response
 
 Delivers the LISH data in LISH data format to a requesting peer.
 
 ```typescript
 {
- type: 'data',
- requestID: string, // Matches REQUEST_MANIFEST.requestID
- data: ILISH        // Complete LISH object
+ command: 'get_lish_response',
+ requestID: string, // Matches get_lish_request.requestID
+ data: ILISHData    // Complete LISH object
 }
 ```
 
 **Verification**: Receiver must verify `LISHHash` matches SHA-256 of received LISH data.
 
-### 4. REQUEST_CHUNKS
+### 4. Get chunk request
 
 Requests specific file chunks.
 
 ```typescript
 {
- type: 'request_chunks',
- lishID: string,
- filePath: string,      // Relative path from LISH data
- chunkIDs: number[],    // Array of chunk indices (0-based)
+ command: 'get_lish_request',
  requestID: string
+	lishID: string,
+ filePath: string,   // Relative path from LISH data
+ chunkIDs: number[], // Array of chunk indices (0-based)
 }
 ```
 
-### 5. CHUNK_DATA
+### 5. Get chunk response
 
 Delivers chunk data.
 
 ```typescript
 {
- type: 'chunk_data',
+ command: 'get_chunk_response',
  requestID: string,
  data: Uint8Array   // Binary chunk data (base64 in JSON transport)
 }
@@ -152,35 +152,35 @@ Delivers chunk data.
 
 - If checksum does not match with chunk data, receiver should request chunk again from different peer
 
-### 6. GET_NETWORK_CONFIG
+### 6. Get network config
 
-Delivers network configuration. For owners only
+Delivers network configuration.
 
 ```typescript
 {
- type: 'get_network_config',
+ command: 'get_network_config',
  requestID: string,
 }
 ```
 
-### 7. SET_NETWORK_CONFIG
+### 7. Set network config
 
 Updates network configuration (owners only).
 
 ```typescript
 {
- type: 'set_network_config',
+ command: 'set_network_config',
  sets: Partial<INetworkConfig>
 }
 ```
 
-### 8. MANAGE_MEMBERS
+### 8. Manage members
 
 Manages network members (owners and admins).
 
 ```typescript
 {
- type: 'manage_members',
+ command: 'manage_members',
  networkID: string,
  action: 'add' | 'remove',
  role: 'admin' | 'publisher' | 'downloader',
@@ -193,13 +193,13 @@ Manages network members (owners and admins).
 - Owners can manage all roles
 - Admins can manage publishers and downloaders only
 
-### 9. REMOVE_MANIFEST
+### 9. Remove LISH
 
 Removes a lish data from the network. Can be done by owners or admins only
 
 ```typescript
 {
- type: 'remove_data',
+ command: 'remove_data',
  lishID: string
 }
 ```
