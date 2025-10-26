@@ -28,10 +28,10 @@ function showHelp() {
 	console.log('  ' + SUPPORTED_ALGOS.join(', '));
 	console.log('');
 	console.log('Examples:');
-	console.log('  ./makelish.sh --input myfile.bin --name "Project Documentation"');
-	console.log('  ./makelish.sh --input ./mydir --output project.lish --name "Project Documentation" --algo sha512');
-	console.log('  ./makelish.sh --input data.zip --name "Project Documentation" --chunksize 10485760 --description "User manual and guides - Created by John Doe"');
-	console.log('  ./makelish.sh --input bigfile.iso --name "ISO Image" --threads 8');
+	console.log('  ./makelish.sh --input myfile.bin --name "Project documentation"');
+	console.log('  ./makelish.sh --input ./mydir --output project.lish --name "Project documentation" --algo sha512');
+	console.log('  ./makelish.sh --input data.zip --name "Project documentation" --chunksize 10485760 --description "User manual and guides - created by John Doe"');
+	console.log('  ./makelish.sh --input bigfile.iso --name "ISO image" --threads 8');
 }
 
 function parseArgs(args: string[]): IArgs {
