@@ -81,7 +81,7 @@ interface ILISHEntry {
 
 All messages are JSON-encoded and transmitted over libp2p streams.
 
-### 1. Publish LISH data
+### Publish LISH
 
 Publishes data represented in LISH data format to the network.
 
@@ -94,9 +94,52 @@ Publishes data represented in LISH data format to the network.
 
 **Usage**: Broadcast to DHT
 
-### 2. Get LISH data request
+### Remove LISH
 
-Requests the full LISH data in LISH data format.
+Removes a lish data from the network. Can be done by owners or admins only
+
+```typescript
+{
+ command: 'del_lish',
+ lishID: string
+}
+```
+
+**Usage**: Broadcast to DHT
+
+### Get LISH database request
+
+Requests the whole or partial database of LISH objects for LISH database synchronization.
+
+```typescript
+{
+ command: 'get_lish_database_req',
+ requestID: string, // Unique ID for tracking this request
+	lishIDFrom?: string // last LISH UUID that user has
+}
+```
+
+### Get LISH database response
+
+Delivers the LISH database or partial database to a requesting peer.
+
+```typescript
+{
+ command: 'get_lish_database_res',
+ requestID: string, // Matches get_lish_database_req.requestID
+ lishIDs: string[]  // Array of LISH UUIDs in the database
+}
+```
+
+**Behavior**:
+
+- If `lishIDFrom` is provided, returns only LISH IDs added after that ID
+- If `lishIDFrom` is not provided, returns all LISH IDs in the database
+- Receiver can then request individual LISH using `get_lish_req`
+
+### Get LISH request
+
+Requests the single LISH in LISH data format.
 
 ```typescript
 {
@@ -106,9 +149,7 @@ Requests the full LISH data in LISH data format.
 }
 ```
 
-**Response**: `DATA` or `ERROR`
-
-### 3. Get LISH data response
+### Get LISH response
 
 Delivers the LISH data in LISH data format to a requesting peer.
 
@@ -122,7 +163,7 @@ Delivers the LISH data in LISH data format to a requesting peer.
 
 **Verification**: Receiver must verify `LISHHash` matches SHA-256 of received LISH data.
 
-### 4. Get chunk request
+### Get chunk request
 
 Requests specific file chunks.
 
@@ -136,7 +177,7 @@ Requests specific file chunks.
 }
 ```
 
-### 5. Get chunk response
+### Get chunk response
 
 Delivers chunk data.
 
@@ -152,7 +193,7 @@ Delivers chunk data.
 
 - If checksum does not match with chunk data, receiver should request chunk again from different peer
 
-### 6. Get network config
+### Get network config
 
 Delivers network configuration.
 
@@ -163,7 +204,7 @@ Delivers network configuration.
 }
 ```
 
-### 7. Set network config
+### Set network config
 
 Updates network configuration (owners only).
 
@@ -174,7 +215,7 @@ Updates network configuration (owners only).
 }
 ```
 
-### 8. Manage members
+### Manage members
 
 Manages network members (owners and admins).
 
@@ -192,17 +233,6 @@ Manages network members (owners and admins).
 
 - Owners can manage all roles
 - Admins can manage publishers and downloaders only
-
-### 9. Remove LISH
-
-Removes a lish data from the network. Can be done by owners or admins only
-
-```typescript
-{
- command: 'remove_data',
- lishID: string
-}
-```
 
 ## TODO
 
