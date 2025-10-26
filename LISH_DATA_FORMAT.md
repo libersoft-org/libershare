@@ -82,7 +82,7 @@ interface ILinkEntry {
 ## Supported hash algorithms
 
 ```typescript
-type HashAlgorithm = 'sha256' | 'sha512' | 'blake2b256' | 'blake2b512' | 'blake2s256';
+type HashAlgorithm = 'sha256' | 'sha384' | 'sha512' | 'sha3-256' | 'sha3-384' | 'sha3-512' | 'blake2b256' | 'blake2b512' | 'blake2s256';
 ```
 
 ## Unix permissions

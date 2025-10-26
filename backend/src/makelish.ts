@@ -21,7 +21,7 @@ function showHelp() {
 	console.log('  --description <text>    Optional description for the manifest');
 	console.log('  --chunksize <bytes>     Chunk size in bytes (default: 5242880 = 5MB)');
 	console.log('  --algo <algorithm>      Hash algorithm (default: sha256)');
-	console.log('  --threads <number>      Number of worker threads (default: 1, use 0 for auto detection by number	of CPU cores)');
+	console.log('  --threads <number>      Number of worker threads (default: 1, use 0 for auto detection by number of CPU cores)');
 	console.log('  --help                  Show this help message');
 	console.log('');
 	console.log('Supported algorithms:');
