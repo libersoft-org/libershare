@@ -12,7 +12,7 @@ interface IArgs {
 const DEFAULT_OUTPUT = 'output.lish';
 
 function showHelp() {
-	console.log('Usage: ./makelish.sh --input <file-or-directory> [options]');
+	console.log('Usage: ./makelish.sh --input <file-or-directory> --name <text> [options]');
 	console.log('');
 	console.log('Options:');
 	console.log('  --input <path>          Input file or directory (required)');
@@ -21,7 +21,7 @@ function showHelp() {
 	console.log('  --description <text>    Optional description for the manifest');
 	console.log('  --chunksize <bytes>     Chunk size in bytes (default: 5242880 = 5MB)');
 	console.log('  --algo <algorithm>      Hash algorithm (default: sha256)');
-	console.log('  --threads <number>      Number of worker threads (default: 1, use 0 for auto-detect)');
+	console.log('  --threads <number>      Number of worker threads (default: 1, use 0 for auto detection by number	of CPU cores)');
 	console.log('  --help                  Show this help message');
 	console.log('');
 	console.log('Supported algorithms:');
