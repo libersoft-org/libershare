@@ -87,7 +87,7 @@ Publishes data represented in LISH data format to the network.
 
 ```typescript
 {
- command: 'publish_lish_data',
+ command: 'add_lish',
  lish: ILISHData // LISH data format
 }
 ```
@@ -100,7 +100,7 @@ Requests the full LISH data in LISH data format.
 
 ```typescript
 {
- command: 'get_lish_request',
+ command: 'get_lish_req',
  requestID: string, // Unique ID for tracking this request
 	lishID: string
 }
@@ -114,7 +114,7 @@ Delivers the LISH data in LISH data format to a requesting peer.
 
 ```typescript
 {
- command: 'get_lish_response',
+ command: 'get_lish_res',
  requestID: string, // Matches get_lish_request.requestID
  data: ILISHData    // Complete LISH object
 }
@@ -128,7 +128,7 @@ Requests specific file chunks.
 
 ```typescript
 {
- command: 'get_lish_request',
+ command: 'get_lish_req',
  requestID: string
 	lishID: string,
  filePath: string,   // Relative path from LISH data
@@ -142,7 +142,7 @@ Delivers chunk data.
 
 ```typescript
 {
- command: 'get_chunk_response',
+ command: 'get_chunk_res',
  requestID: string,
  data: Uint8Array   // Binary chunk data (base64 in JSON transport)
 }
