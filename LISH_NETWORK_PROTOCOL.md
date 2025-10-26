@@ -161,8 +161,6 @@ Delivers the LISH data in LISH data format to a requesting peer.
 }
 ```
 
-**Verification**: Receiver must verify `LISHHash` matches SHA-256 of received LISH data.
-
 ### Get chunk request
 
 Requests specific file chunks.
@@ -185,7 +183,7 @@ Delivers chunk data.
 {
  command: 'get_chunk_res',
  requestID: string,
- data: Uint8Array   // Binary chunk data (base64 in JSON transport)
+ data: Uint8Array  // Binary chunk data (base64 in JSON transport)
 }
 ```
 
