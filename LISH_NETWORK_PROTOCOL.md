@@ -39,38 +39,43 @@ interface INetworkConfig {
 
 Defines who can perform actions within a network.
 
-```typescript
-interface INetworkAccess {
-	owners: string[]; // Owner peer IDs - they have full control (edit network config, admins, publishers, downloaders)
-	admins: string[]; // Admin peer IDs - they can add/remove publishers and downloaders
-	publishers: string[]; // Publisher peer IDs - they can publish new data to the network
-	downloaders: string[]; // Downloader peer IDs - they can download content from uploaders
-	restrictPublishers?: boolean; // Publishing restrictions (optional, default: false), true = only publishers can publish new data, false/undefined = anyone can publish
-	restrictDownloaders?: boolean; // Download restrictions, true = only downloaders can download, false/undefined = anyone can download (default)
-}
-```
-
 **Access levels**:
 
-- **Owners**: Full control - can manage admins, publishers, and downloaders
-- **Admins**: Can add/remove publishers and downloaders
+- **Owners**: Can edit network configuration, add / remove admins, publishers, and downloaders
+- **Admins**: Can add / remove publishers and downloaders
 - **Publishers**: Can publish new data to the network
 - **Downloaders**: Can download content from uploaders (not just from publishers)
-- **Anyone**: If restrictions are disabled (default)
-
-### Network manifest
-
-Stores a LISH Data with a network.
 
 ```typescript
-interface IManifestDatabase {
-	data: IManifest; // Complete LISH manifest
-	publisher?: string; // PeerId who published the manifest (required only when INetworkAccess exists)
-	published?: string; // ISO 8601 timestamp when published to network (optional)
+interface INetworkAccess {
+	owners: string[]; // Owner peer IDs
+	admins: string[]; // Admin peer IDs
+	publishers: string[]; // Publisher peer IDs
+	downloaders: string[]; // Downloader peer IDs
+	restrictPublishers?: boolean; // Publishing restrictions (optional, default: false), true = only publishers can publish new data, false / undefined = anyone can publish
+	restrictDownloaders?: boolean; // Download restrictions (optional, default: false), true = only downloaders can download, false / undefined = anyone can download
 }
 ```
 
-**Note**: LISH manifests themselves do NOT contain `networkId`. The same manifest can be shared on multiple networks.
+### Network database
+
+Stores a decentralized database of LISH data shared in network.
+
+```typescript
+interface ILISHDatabase {
+	data: ILISHData[]; // Array of LISH data entries
+}
+```
+
+```typescript
+interface ILISHData {
+	lish: ILISH; // LISH data structure
+	publisher?: string; // PeerID who published the manifest (optional if not required by network)
+	published?: string; // ISO 8601 timestamp when published to network (optional if not required by network)
+}
+```
+
+**Note**: LISH data themselves do NOT contain `networkID`. The same manifest can be shared on multiple networks.
 
 ## Message types
 
@@ -110,7 +115,7 @@ Delivers the manifest in LISH Data Format to a requesting peer.
 ```typescript
 {
  type: 'manifest',
- requestID: string,         // Matches REQUEST_MANIFEST.requestId
+ requestID: string,         // Matches REQUEST_MANIFEST.requestID
  manifest: IManifest        // Complete LISH manifest object
 }
 ```
@@ -204,3 +209,4 @@ Removes a manifest from the network. Can be done by owners or admins only
 - **Compression**: Optional chunk compression (zstd, brotli, ...)
 - **Incentives**: Token-based upload/download credits
 - **Smart routing**: Route through fastest paths automatically
+- **Private networks**: Networks that hide data availability unless specific conditions are met (authentication, payment, etc.)
