@@ -154,7 +154,9 @@ async function main() {
 		const minutes = Math.floor((elapsedSeconds % 3600) / 60);
 		const seconds = elapsedSeconds % 60;
 		const timeStr = hours.toString().padStart(2, '0') + ':' + minutes.toString().padStart(2, '0') + ':' + seconds.toString().padStart(2, '0');
-		console.log('\nLISH file saved to: ' + outputFile);
+		const lishFile = Bun.file(outputFile);
+		const lishSize = lishFile.size;
+		console.log('\nLISH file saved to: ' + outputFile + ' (' + Utils.formatBytes(lishSize) + ')');
 		console.log('End time: ' + new Date().toLocaleString());
 		console.log('Elapsed time: ' + timeStr);
 		console.log('');
