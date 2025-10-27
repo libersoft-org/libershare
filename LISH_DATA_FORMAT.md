@@ -1,15 +1,16 @@
-# LISH - LiberShare Format Specification
+# LISH data structure format specification
 
-**Version:** 1
-**Last Updated:** October 24, 2025
+**Version**: 1
+**Created**: 24 October 2025
+**Last update**: 26 October 2025
 
 ## Overview
 
-LISH is a data structure format for describing file and directory structures with checksums for content verification and integrity. It supports files, directories, and symbolic links with Unix-style permissions and timestamps.
+LISH data structure format describes file and directory structures with checksums for content verification and integrity. It supports files, directories, and symbolic links with Unix-style permissions and timestamps.
 
 ## Representation
 
-LISH defines a data structure that can be used in various forms:
+LISH data structure format defines a data structure that can be used in various forms:
 
 - As objects in memory during runtime
 - Serialized to JSON format for interchange and storage
@@ -18,49 +19,50 @@ LISH defines a data structure that can be used in various forms:
 
 This specification describes the logical structure, with JSON examples for clarity.
 
-## Manifest Structure
+## Manifest structure
 
-### Root Manifest Object
+### Root manifest object
 
 ```typescript
 interface IManifest {
 	version: number; // Format version
 	id: string; // Unique UUID for this manifest
+	name: string; // Manifest name
+	description?: string; // Optional free-form text description (author, notes, etc.)
 	created: string; // ISO 8601 timestamp in UTC when manifest was created
 	chunkSize: number; // Chunk size in bytes (global for all files)
 	checksumAlgo: HashAlgorithm; // Hashing algorithm used
-	description?: string; // Optional free-form text description (name, author, notes, etc.)
 	directories?: IDirectoryEntry[]; // Optional array of directories
 	files?: IFileEntry[]; // Optional array of files
 	links?: ILinkEntry[]; // Optional array of symbolic links and hard links
 }
 ```
 
-### Directory Entry
+### Directory entry
 
 ```typescript
 interface IDirectoryEntry {
 	path: string; // Relative path (e.g., "docs" or "assets/images")
-	mode: number; // Unix permissions in decimal notation (e.g., 493 = 0o755)
+	permissions?: string; // Unix permissions in octal notation (e.g., "755" for rwxr-xr-x) - optional
 	modified?: string; // ISO 8601 timestamp in UTC of last modification (optional)
 	created?: string; // ISO 8601 timestamp in UTC of creation (optional)
 }
 ```
 
-### File Entry
+### File entry
 
 ```typescript
 interface IFileEntry {
 	path: string; // Relative path (e.g., "docs/readme.txt")
 	size: number; // File size in bytes
-	mode: number; // Unix permissions in decimal notation (e.g., 420 = 0o644)
+	permissions?: string; // Unix permissions in octal notation (e.g., "644" for rw-r--r--) - optional
 	modified?: string; // ISO 8601 timestamp in UTC of last modification (optional)
 	created?: string; // ISO 8601 timestamp in UTC of creation (optional)
 	checksums: string[]; // Array of hex-encoded checksums for each chunk
 }
 ```
 
-### Link Entry
+### Link entry
 
 ```typescript
 interface ILinkEntry {
@@ -72,27 +74,27 @@ interface ILinkEntry {
 }
 ```
 
-**Note:**
+**Note**:
 
 - When `hardlink` is `true`, the `target` points to a file path in the `files` array (hard link)
 - When `hardlink` is `false` or undefined, the `target` is a filesystem path (symbolic link)
 
-## Supported Hash Algorithms
+## Supported hash algorithms
 
 ```typescript
-type HashAlgorithm = 'sha256' | 'sha512' | 'blake2b256' | 'blake2b512' | 'blake2s256' | 'shake128' | 'shake256';
+type HashAlgorithm = 'sha256' | 'sha384' | 'sha512' | 'sha512-256' | 'sha3-256' | 'sha3-384' | 'sha3-512' | 'blake2b256' | 'blake2b512' | 'blake2s256';
 ```
 
-## Unix Permissions
+## Unix permissions
 
-File and directory permissions are stored as decimal numbers representing Unix octal permission modes:
+File and directory permissions are stored as octal string notation representing Unix permission modes:
 
-| Decimal | Octal | Permissions | Typical Use              |
-| ------- | ----- | ----------- | ------------------------ |
-| 420     | 0o644 | rw-r--r--   | Regular files            |
-| 493     | 0o755 | rwxr-xr-x   | Directories, executables |
-| 384     | 0o600 | rw-------   | Private files            |
-| 448     | 0o700 | rwx------   | Private directories      |
+| Octal | Permissions | Typical Use              |
+| ----- | ----------- | ------------------------ |
+| "644" | rw-r--r--   | Regular files            |
+| "755" | rwxr-xr-x   | Directories, executables |
+| "600" | rw-------   | Private files            |
+| "700" | rwx------   | Private directories      |
 
 ## Chunking
 
@@ -108,20 +110,21 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 {
 	"version": 1,
 	"id": "34aacabb-9c6f-42a2-aaf4-61fc89c45056",
+	"name": "Project Documentation",
+	"description": "User manual and guides - created by John Doe",
 	"created": "2025-10-24T15:30:00.000Z",
 	"chunkSize": 5242880,
 	"checksumAlgo": "sha256",
-	"description": "Project documentation and user manual - Created by John Doe",
 	"directories": [
 		{
 			"path": "docs",
-			"mode": 493,
+			"permissions": "755",
 			"modified": "2025-10-20T10:30:00.000Z",
 			"created": "2025-10-15T08:00:00.000Z"
 		},
 		{
 			"path": "empty-folder",
-			"mode": 493,
+			"permissions": "755",
 			"modified": "2025-10-18T12:00:00.000Z",
 			"created": "2025-10-18T12:00:00.000Z"
 		}
@@ -130,7 +133,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 		{
 			"path": "README.md",
 			"size": 1024,
-			"mode": 420,
+			"permissions": "644",
 			"modified": "2025-10-22T14:15:00.000Z",
 			"created": "2025-10-20T10:30:00.000Z",
 			"checksums": ["a1b2c3d4e5f6789..."]
@@ -138,7 +141,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 		{
 			"path": "docs/manual.pdf",
 			"size": 15728640,
-			"mode": 420,
+			"permissions": "644",
 			"modified": "2025-10-21T09:45:00.000Z",
 			"created": "2025-10-20T10:30:00.000Z",
 			"checksums": ["f2960b16993b503c...", "38a4a0a7dd7fdc94...", "3a765cf06c5e6ed9..."]
@@ -167,7 +170,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 - ✅ Directories (including empty directories)
 - ✅ Files with chunked checksums
 - ✅ Symbolic / hard links
-- ✅ Unix file permissions (mode)
+- ✅ Unix file permissions (optional)
 - ✅ Creation and modification timestamps
 - ✅ Arbitrary chunk sizes
 - ✅ Multiple hash algorithms for checksums
@@ -181,8 +184,9 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 - Checksums are hex-encoded strings (lowercase)
 - Timestamps must use ISO 8601 format in UTC timezone (e.g., "2025-10-24T15:30:00.000Z")
 - The `directories`, `files`, and `links` arrays are optional - a manifest with no entries (empty directory structure) is valid
-- The `created` and `modified` timestamps are optional - if not provided, implementations should use current time
+- The `created`, `modified`, and `permissions` fields are optional - if `permissions` is not provided, file permissions will not be modified during extraction
+- If `permissions` is omitted, implementations should use default permissions for the target platform
 
-## Version History
+## Version history
 
-- **Version 1**: First version - supports files, directories, symlinks / hardlinks, permissions, and timestamps
+- **Version 1**: First version - supports files, directories, links, permissions, and timestamps

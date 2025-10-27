@@ -1,7 +1,5 @@
 # LiberShare
 
-[![Created Badge](https://badges.pufler.dev/created/libersoft-org/libershare)](https://badges.pufler.dev) [![Updated Badge](https://badges.pufler.dev/updated/libersoft-org/libershare)](https://badges.pufler.dev) [![Visits Badge](https://badges.pufler.dev/visits/libersoft-org/libershare)](https://badges.pufler.dev)
-
 ## Table of contents
 
 - [**About**](#about)
@@ -16,7 +14,11 @@
 
 Official website: **https://libershare.com**
 
-This is a decentralized file sharing software.
+LiberShare is a peer-to-peer file sharing software built on modern decentralized technologies.
+
+It introduces its own [**LISH network protocol**](./LISH_NETWORK_PROTOCOL.md) and [**LISH data format**](./LISH_DATA_FORMAT.md) for efficient and secure content distribution.
+
+Unlike traditional peer-to-peer networks, LiberShare features a **decentralized database of shared files within each network**, combined with fine-grained access control. This makes it suitable for both public and private file sharing.
 
 ## Screenshot
 
