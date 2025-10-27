@@ -7,6 +7,9 @@ import { identify } from '@libp2p/identify';
 import { bootstrap } from '@libp2p/bootstrap';
 import { kadDHT } from '@libp2p/kad-dht';
 import { ping } from '@libp2p/ping';
+import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
+import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
+import { autoNAT } from '@libp2p/autonat';
 import { LevelDatastore } from 'datastore-level';
 import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import type { Libp2p } from 'libp2p';
@@ -83,13 +86,27 @@ export class Network {
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
 
 
+		// Build transports array
+		const transports = [tcp()];
+
+		// Add circuit relay transport if client mode is enabled
+		const relayClientMode = settings.relay?.client?.mode || 'force';
+		const relayClientEnabled = (relayClientMode === 'force' || relayClientMode === 'auto');
+		if (relayClientEnabled) {
+			const discoverRelays = settings.relay?.client?.discoverRelays || 2;
+			transports.push(circuitRelayTransport({
+				discoverRelays
+			}));
+			console.log(`✓ Circuit relay client enabled (mode: ${relayClientMode}, discoverRelays: ${discoverRelays})`);
+		}
+
 		const config: any = {
 			privateKey,
 			datastore: this.datastore,
 			addresses: {
 				listen: [`/ip4/0.0.0.0/tcp/${settings.network.port}`],
 			},
-			transports: [tcp()],
+			transports,
 			connectionEncrypters: [noise()],
 			streamMuxers: [yamux()],
 			connectionManager: {
@@ -118,6 +135,23 @@ export class Network {
 				}),
 			},
 		};
+
+		// Add relay server service if enabled
+		if (settings.relay?.server?.enabled) {
+			const maxReservations = settings.relay.server.maxReservations || 15;
+			config.services.relay = circuitRelayServer({
+				reservations: {
+					maxReservations
+				}
+			});
+			console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservations})`);
+		}
+
+		// Add autonat service if client mode is 'auto'
+		if (relayClientMode === 'auto') {
+			config.services.autonat = autoNAT();
+			console.log('✓ AutoNAT enabled');
+		}
 
 
 
@@ -166,15 +200,13 @@ export class Network {
 				// console.log('💓  My topics:', topics);
 				// console.log('💓  Pink mesh peers:', meshPeers.length);
 				// console.log('💓  Pink subscribers:', subscribers.length, subscribers.map(p => p.toString()).slice(0, 2));
-				console.log('💓peers:', this.node!.getPeers().length, 'mesh:', meshPeers.length, 'subs:', subscribers.length, 'topics:', topics.length);
+				//console.log('💓peers:', this.node!.getPeers().length, 'mesh:', meshPeers.length, 'subs:', subscribers.length, 'topics:', topics.length);
 
 			});
 
 			this.pubsub.addEventListener('gossipsub:graft', (evt) => {
-				console.log('🌿 GRAFT: peer joined mesh');
-				console.log('   Peer:', evt.detail.peerId);
-				console.log('   Topic:', evt.detail.topic);
-				console.log('   Total mesh peers for pink:', this.pubsub!.getMeshPeers(PINK_TOPIC).length);
+				console.log('🌿 GRAFT: ', evt.detail.peerId, ' joined ', evt.detail.topic);
+				console.log('   Total mesh peers for ', evt.detail.topic, ':', this.pubsub!.getMeshPeers(evt.detail.topic).length);
 			});
 
 			this.pubsub.addEventListener('gossipsub:prune', (evt) => {
@@ -226,6 +258,22 @@ export class Network {
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 		});
 
+		// Relay event listeners
+		this.node.addEventListener('relay:reservation', (evt: any) => {
+			console.log('🔄 Relay reservation created with:', evt.detail.relay.toString());
+		});
+
+		this.node.addEventListener('relay:advert:success', (evt: any) => {
+			console.log('📢 Successfully advertised relay address:', evt.detail.toString());
+		});
+
+		this.node.addEventListener('relay:advert:error', (evt: any) => {
+			console.log('⚠️  Relay advertisement error:', evt.detail);
+		});
+
+		this.node.addEventListener('autonat:status', (evt: any) => {
+			console.log('🌐 NAT status changed:', evt.detail);
+		});
 
 
 		// Manually dial bootstrap peers FIRST

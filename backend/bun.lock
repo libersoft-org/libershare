@@ -3,10 +3,12 @@
   "workspaces": {
     "": {
       "dependencies": {
-        "@chainsafe/libp2p-gossipsub": "github:ChainSafe/js-libp2p-gossipsub#db1bdb0",
+        "@chainsafe/libp2p-gossipsub": "github:ChainSafe/js-libp2p-gossipsub#feat/upgrade-to-libp2p-v3-api",
         "@chainsafe/libp2p-noise": "^17.0.0",
         "@chainsafe/libp2p-yamux": "^8.0.1",
+        "@libp2p/autonat": "^3.0.6",
         "@libp2p/bootstrap": "^12.0.7",
+        "@libp2p/circuit-relay-v2": "^3.0.6",
         "@libp2p/crypto": "^5.1.12",
         "@libp2p/identify": "^4.0.6",
         "@libp2p/interface": "^3.0.2",
@@ -58,7 +60,11 @@
 
     "@leichtgewicht/ip-codec": ["@leichtgewicht/ip-codec@2.0.5", "", {}, "sha512-Vo+PSpZG2/fmgmiNzYK9qWRh8h/CHrwD0mo1h1DzL4yzHNSfWYujGTYsWGreD000gcgmZ7K4Ys6Tx9TxtsKdDw=="],
 
+    "@libp2p/autonat": ["@libp2p/autonat@3.0.6", "", { "dependencies": { "@libp2p/interface": "^3.0.2", "@libp2p/interface-internal": "^3.0.6", "@libp2p/peer-collections": "^7.0.6", "@libp2p/peer-id": "^6.0.3", "@libp2p/utils": "^7.0.6", "@multiformats/multiaddr": "^13.0.1", "any-signal": "^4.1.1", "main-event": "^1.0.1", "multiformats": "^13.4.0", "protons-runtime": "^5.6.0", "uint8arraylist": "^2.4.8" } }, "sha512-NyIZr5JZcRy9CjVrGZRMUjttTyrNVHt4RSTQmbp0S/KsHXUaJfrTvNs3bqEsvwGtjlnQeKYi3ruFJJgK8yqmDg=="],
+
     "@libp2p/bootstrap": ["@libp2p/bootstrap@12.0.7", "", { "dependencies": { "@libp2p/interface": "^3.0.2", "@libp2p/interface-internal": "^3.0.6", "@libp2p/peer-id": "^6.0.3", "@multiformats/multiaddr": "^13.0.1", "@multiformats/multiaddr-matcher": "^3.0.1", "main-event": "^1.0.1" } }, "sha512-cFCflzNfTY9zedSww5rdfe7JjBnShVNm6AtCXu1yaWZpHDXCoeRo+2Amek09B0+swe/3qjv9uml0UPaaclMUvA=="],
+
+    "@libp2p/circuit-relay-v2": ["@libp2p/circuit-relay-v2@3.2.24", "", { "dependencies": { "@libp2p/crypto": "^5.1.8", "@libp2p/interface": "^2.11.0", "@libp2p/interface-internal": "^2.3.19", "@libp2p/peer-collections": "^6.0.35", "@libp2p/peer-id": "^5.1.9", "@libp2p/peer-record": "^8.0.35", "@libp2p/utils": "^6.7.2", "@multiformats/multiaddr": "^12.4.4", "@multiformats/multiaddr-matcher": "^2.0.0", "any-signal": "^4.1.1", "it-protobuf-stream": "^2.0.2", "it-stream-types": "^2.0.2", "main-event": "^1.0.1", "multiformats": "^13.3.6", "nanoid": "^5.1.5", "progress-events": "^1.0.1", "protons-runtime": "^5.5.0", "retimeable-signal": "^1.0.1", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-JXSm0dOOpPC+Yax0ngLYWqELHLFmaYPNZOhZkrr0iEtbiXwhDXuDuwT71pwmozp7h/rYd2YFoIk178AhZ4711Q=="],
 
     "@libp2p/crypto": ["@libp2p/crypto@5.1.12", "", { "dependencies": { "@libp2p/interface": "^3.0.2", "@noble/curves": "^2.0.1", "@noble/hashes": "^2.0.1", "multiformats": "^13.4.0", "protons-runtime": "^5.6.0", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-1yJS0BZj+HF4M3Uv/92y3oIbMcCar218accFBcX+nKVhBlwDbx6fkUURhs5GilIhMgDtir+qQ8Un1hwF4CgGzw=="],
 
@@ -76,13 +82,13 @@
 
     "@libp2p/multistream-select": ["@libp2p/multistream-select@7.0.6", "", { "dependencies": { "@libp2p/interface": "^3.0.2", "@libp2p/utils": "^7.0.6", "it-length-prefixed": "^10.0.1", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-nSIC28c8byIN1qlvNlCbcOSmA9WIPp8S2LBQ6/9/1HeqvbyUToOwhf4N2Hyll7u/Xgm3qq/QhjuwWMFmJJg6dg=="],
 
-    "@libp2p/peer-collections": ["@libp2p/peer-collections@6.0.35", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@libp2p/peer-id": "^5.1.9", "@libp2p/utils": "^6.7.2", "multiformats": "^13.3.6" } }, "sha512-QiloK3T7DXW7R2cpL38dBnALCHf5pMzs/TyFzlEK33WezA2YFVoj7CtOJKqbn29bmV9uspWOxMgfmLUXf8ALvA=="],
+    "@libp2p/peer-collections": ["@libp2p/peer-collections@7.0.6", "", { "dependencies": { "@libp2p/interface": "^3.0.2", "@libp2p/peer-id": "^6.0.3", "@libp2p/utils": "^7.0.6", "multiformats": "^13.4.0" } }, "sha512-vly/Gsc5wn3qCDbpHyRBNr9jHE4MUOqMIKbYQdKvOch9FC7AassBoiuQ8s5yoFcFDvYwdx3osKbHhWjMtAET7g=="],
 
     "@libp2p/peer-id": ["@libp2p/peer-id@6.0.3", "", { "dependencies": { "@libp2p/crypto": "^5.1.12", "@libp2p/interface": "^3.0.2", "multiformats": "^13.4.0", "uint8arrays": "^5.1.0" } }, "sha512-kNecI7YYeh55Jrx+ra0AxEx5CfpKB4/i+4rBJ8jRyLaMgJvwhTC055mZrKv+rUWEEfp/9VqCnDKQ8cVoDbDydA=="],
 
     "@libp2p/peer-id-factory": ["@libp2p/peer-id-factory@4.2.4", "", { "dependencies": { "@libp2p/crypto": "^4.1.9", "@libp2p/interface": "^1.7.0", "@libp2p/peer-id": "^4.2.4", "protons-runtime": "^5.4.0", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-NDQ/qIWpcAG/6xQjyut6xCkrYYAoCaI/33Z+7yzo5qFODwLfNonLzSTasnA6jhuvHn33aHnD1qhdpFkmstxtNQ=="],
 
-    "@libp2p/peer-record": ["@libp2p/peer-record@9.0.3", "", { "dependencies": { "@libp2p/crypto": "^5.1.12", "@libp2p/interface": "^3.0.2", "@libp2p/peer-id": "^6.0.3", "@multiformats/multiaddr": "^13.0.1", "multiformats": "^13.4.0", "protons-runtime": "^5.6.0", "uint8-varint": "^2.0.4", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-W1K/fdyLDZpxEEcS08JafyNyDUAKHhdjxdt2M7ZwDtBbRrM9RFseZaGHufpMEgPZxne6RriLpJp1NLeFPF9bZA=="],
+    "@libp2p/peer-record": ["@libp2p/peer-record@8.0.35", "", { "dependencies": { "@libp2p/crypto": "^5.1.8", "@libp2p/interface": "^2.11.0", "@libp2p/peer-id": "^5.1.9", "@libp2p/utils": "^6.7.2", "@multiformats/multiaddr": "^12.4.4", "multiformats": "^13.3.6", "protons-runtime": "^5.5.0", "uint8-varint": "^2.0.4", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-0818zvjKbucq5XBnusG8oSWxJ992rVry/2qlfcn/nyK/uDrZ12tjDYHNMCoOWTNeFvFUVkMg9pRkvXvTNp6Yiw=="],
 
     "@libp2p/peer-store": ["@libp2p/peer-store@12.0.6", "", { "dependencies": { "@libp2p/crypto": "^5.1.12", "@libp2p/interface": "^3.0.2", "@libp2p/peer-collections": "^7.0.6", "@libp2p/peer-id": "^6.0.3", "@libp2p/peer-record": "^9.0.3", "@multiformats/multiaddr": "^13.0.1", "interface-datastore": "^9.0.1", "it-all": "^3.0.9", "main-event": "^1.0.1", "mortice": "^3.3.1", "multiformats": "^13.4.0", "protons-runtime": "^5.6.0", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-HjjyS8Ryr59LMmaPYN8Hij9Est4zvaZQIDPqZQs2hvJzj0EppPQhL8HhDp/kHozpPTyh7AKqqG5H1MP1GEDscA=="],
 
@@ -258,6 +264,8 @@
 
     "multiformats": ["multiformats@13.4.1", "", {}, "sha512-VqO6OSvLrFVAYYjgsr8tyv62/rCQhPgsZUXLTqoFLSgdkgiUYKYeArbt1uWLlEpkjxQe+P0+sHlbPEte1Bi06Q=="],
 
+    "nanoid": ["nanoid@5.1.6", "", { "bin": { "nanoid": "bin/nanoid.js" } }, "sha512-c7+7RQ+dMB5dPwwCp4ee1/iV/q2P6aK1mTZcfr1BTuVlyW9hJYiMPybJCcnBlQtuSmTIWNeazm/zqNoZSSElBg=="],
+
     "napi-macros": ["napi-macros@2.2.2", "", {}, "sha512-hmEVtAGYzVQpCKdbQea4skABsdXW4RUh5t5mJ2zzqowJS2OyXZTU1KhDVFhx+NlWZ4ap9mqR9TcDO3LTTttd+g=="],
 
     "netmask": ["netmask@2.0.2", "", {}, "sha512-dBpDMdxv9Irdq66304OLfEmQ9tbNRFnFTuZiLo+bD+r332bBmMJ8GBLXklIXXgxd3+v9+KUnZaUR5PJMa75Gsg=="],
@@ -290,6 +298,8 @@
 
     "race-signal": ["race-signal@2.0.0", "", {}, "sha512-P31bLhE4ByBX/70QDXMutxnqgwrF1WUXea1O8DXuviAgkdbQ1iQMQotNgzJIBC9yUSn08u/acZrMUhgw7w6GpA=="],
 
+    "retimeable-signal": ["retimeable-signal@1.0.1", "", {}, "sha512-Cy26CYfbWnYu8HMoJeDhaMpW/EYFIbne3vMf6G9RSrOyWYXbPehja/BEdzpqmM84uy2bfBD7NPZhoQ4GZEtgvg=="],
+
     "sanitize-filename": ["sanitize-filename@1.6.3", "", { "dependencies": { "truncate-utf8-bytes": "^1.0.0" } }, "sha512-y/52Mcy7aw3gRm7IrcGDFx/bCk4AhRh2eI9luHOQM86nZsqwiRkkq2GekHXBBD+SmPidc8i2PqtYZl+pWJ8Oeg=="],
 
     "supports-color": ["supports-color@10.2.2", "", {}, "sha512-SS+jx45GF1QjgEXQx4NJZV9ImqmO2NPz5FNsIHrsDjh2YsHnawpan7SNQ1o8NuhrbHZy9AZhIoCUiCeaW/C80g=="],
@@ -316,11 +326,25 @@
 
     "zimmerframe": ["zimmerframe@1.1.4", "", {}, "sha512-B58NGBEoc8Y9MWWCQGl/gq9xBCe4IiKM0a2x7GZdQKOW5Exr8S1W24J6OgM1njK8xCRGvAJIL/MxXHf6SkmQKQ=="],
 
-    "@libp2p/interface-internal/@libp2p/peer-collections": ["@libp2p/peer-collections@7.0.6", "", { "dependencies": { "@libp2p/interface": "^3.0.2", "@libp2p/peer-id": "^6.0.3", "@libp2p/utils": "^7.0.6", "multiformats": "^13.4.0" } }, "sha512-vly/Gsc5wn3qCDbpHyRBNr9jHE4MUOqMIKbYQdKvOch9FC7AassBoiuQ8s5yoFcFDvYwdx3osKbHhWjMtAET7g=="],
+    "@libp2p/circuit-relay-v2/@libp2p/interface": ["@libp2p/interface@2.11.0", "", { "dependencies": { "@multiformats/dns": "^1.0.6", "@multiformats/multiaddr": "^12.4.4", "it-pushable": "^3.2.3", "it-stream-types": "^2.0.2", "main-event": "^1.0.1", "multiformats": "^13.3.6", "progress-events": "^1.0.1", "uint8arraylist": "^2.4.8" } }, "sha512-0MUFKoXWHTQW3oWIgSHApmYMUKWO/Y02+7Hpyp+n3z+geD4Xo2Rku2gYWmxcq+Pyjkz6Q9YjDWz3Yb2SoV2E8Q=="],
+
+    "@libp2p/circuit-relay-v2/@libp2p/interface-internal": ["@libp2p/interface-internal@2.3.19", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@libp2p/peer-collections": "^6.0.35", "@multiformats/multiaddr": "^12.4.4", "progress-events": "^1.0.1" } }, "sha512-v335EB0i5CaNF+0SqT01CTBp0VyjJizpy46KprcshFFjX16UQ8+/QzoTZqmot9WiAmAzwR0b87oKmlAE9cpxzQ=="],
+
+    "@libp2p/circuit-relay-v2/@libp2p/peer-collections": ["@libp2p/peer-collections@6.0.35", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@libp2p/peer-id": "^5.1.9", "@libp2p/utils": "^6.7.2", "multiformats": "^13.3.6" } }, "sha512-QiloK3T7DXW7R2cpL38dBnALCHf5pMzs/TyFzlEK33WezA2YFVoj7CtOJKqbn29bmV9uspWOxMgfmLUXf8ALvA=="],
+
+    "@libp2p/circuit-relay-v2/@libp2p/peer-id": ["@libp2p/peer-id@5.1.9", "", { "dependencies": { "@libp2p/crypto": "^5.1.8", "@libp2p/interface": "^2.11.0", "multiformats": "^13.3.6", "uint8arrays": "^5.1.0" } }, "sha512-cVDp7lX187Epmi/zr0Qq2RsEMmueswP9eIxYSFoMcHL/qcvRFhsxOfUGB8361E26s2WJvC9sXZ0oJS9XVueJhQ=="],
+
+    "@libp2p/circuit-relay-v2/@libp2p/utils": ["@libp2p/utils@6.7.2", "", { "dependencies": { "@chainsafe/is-ip": "^2.1.0", "@chainsafe/netmask": "^2.0.0", "@libp2p/crypto": "^5.1.8", "@libp2p/interface": "^2.11.0", "@libp2p/logger": "^5.2.0", "@multiformats/multiaddr": "^12.4.4", "@sindresorhus/fnv1a": "^3.1.0", "any-signal": "^4.1.1", "delay": "^6.0.0", "get-iterator": "^2.0.1", "is-loopback-addr": "^2.0.2", "is-plain-obj": "^4.1.0", "it-foreach": "^2.1.3", "it-pipe": "^3.0.1", "it-pushable": "^3.2.3", "it-stream-types": "^2.0.2", "main-event": "^1.0.1", "netmask": "^2.0.2", "p-defer": "^4.0.1", "race-event": "^1.3.0", "race-signal": "^1.1.3", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-yglVPcYErb4al3MMTdedVLLsdUvr5KaqrrxohxTl/FXMFBvBs0o3w8lo29nfnTUpnNSHFhWZ9at0ZGNnpT/C/w=="],
+
+    "@libp2p/circuit-relay-v2/@multiformats/multiaddr-matcher": ["@multiformats/multiaddr-matcher@2.0.2", "", { "dependencies": { "@multiformats/multiaddr": "^12.0.0" } }, "sha512-si7EZCI93mfBJKKRkh+u2bB9W6W5APVN3XfdwuseEJ0OS7ysg0Jno9SuAi0bRzsl5OEFESoF71SjsRqgp8PXAA=="],
+
+    "@libp2p/identify/@libp2p/peer-record": ["@libp2p/peer-record@9.0.3", "", { "dependencies": { "@libp2p/crypto": "^5.1.12", "@libp2p/interface": "^3.0.2", "@libp2p/peer-id": "^6.0.3", "@multiformats/multiaddr": "^13.0.1", "multiformats": "^13.4.0", "protons-runtime": "^5.6.0", "uint8-varint": "^2.0.4", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-W1K/fdyLDZpxEEcS08JafyNyDUAKHhdjxdt2M7ZwDtBbRrM9RFseZaGHufpMEgPZxne6RriLpJp1NLeFPF9bZA=="],
 
     "@libp2p/kad-dht/@libp2p/interface": ["@libp2p/interface@2.11.0", "", { "dependencies": { "@multiformats/dns": "^1.0.6", "@multiformats/multiaddr": "^12.4.4", "it-pushable": "^3.2.3", "it-stream-types": "^2.0.2", "main-event": "^1.0.1", "multiformats": "^13.3.6", "progress-events": "^1.0.1", "uint8arraylist": "^2.4.8" } }, "sha512-0MUFKoXWHTQW3oWIgSHApmYMUKWO/Y02+7Hpyp+n3z+geD4Xo2Rku2gYWmxcq+Pyjkz6Q9YjDWz3Yb2SoV2E8Q=="],
 
     "@libp2p/kad-dht/@libp2p/interface-internal": ["@libp2p/interface-internal@2.3.19", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@libp2p/peer-collections": "^6.0.35", "@multiformats/multiaddr": "^12.4.4", "progress-events": "^1.0.1" } }, "sha512-v335EB0i5CaNF+0SqT01CTBp0VyjJizpy46KprcshFFjX16UQ8+/QzoTZqmot9WiAmAzwR0b87oKmlAE9cpxzQ=="],
+
+    "@libp2p/kad-dht/@libp2p/peer-collections": ["@libp2p/peer-collections@6.0.35", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@libp2p/peer-id": "^5.1.9", "@libp2p/utils": "^6.7.2", "multiformats": "^13.3.6" } }, "sha512-QiloK3T7DXW7R2cpL38dBnALCHf5pMzs/TyFzlEK33WezA2YFVoj7CtOJKqbn29bmV9uspWOxMgfmLUXf8ALvA=="],
 
     "@libp2p/kad-dht/@libp2p/peer-id": ["@libp2p/peer-id@5.1.9", "", { "dependencies": { "@libp2p/crypto": "^5.1.8", "@libp2p/interface": "^2.11.0", "multiformats": "^13.3.6", "uint8arrays": "^5.1.0" } }, "sha512-cVDp7lX187Epmi/zr0Qq2RsEMmueswP9eIxYSFoMcHL/qcvRFhsxOfUGB8361E26s2WJvC9sXZ0oJS9XVueJhQ=="],
 
@@ -334,19 +358,19 @@
 
     "@libp2p/logger/interface-datastore": ["interface-datastore@9.0.2", "", { "dependencies": { "interface-store": "^7.0.0", "uint8arrays": "^5.1.0" } }, "sha512-jebn+GV/5LTDDoyicNIB4D9O0QszpPqT09Z/MpEWvf3RekjVKpXJCDguM5Au2fwIFxFDAQMZe5bSla0jMamCNg=="],
 
-    "@libp2p/peer-collections/@libp2p/interface": ["@libp2p/interface@2.11.0", "", { "dependencies": { "@multiformats/dns": "^1.0.6", "@multiformats/multiaddr": "^12.4.4", "it-pushable": "^3.2.3", "it-stream-types": "^2.0.2", "main-event": "^1.0.1", "multiformats": "^13.3.6", "progress-events": "^1.0.1", "uint8arraylist": "^2.4.8" } }, "sha512-0MUFKoXWHTQW3oWIgSHApmYMUKWO/Y02+7Hpyp+n3z+geD4Xo2Rku2gYWmxcq+Pyjkz6Q9YjDWz3Yb2SoV2E8Q=="],
-
-    "@libp2p/peer-collections/@libp2p/peer-id": ["@libp2p/peer-id@5.1.9", "", { "dependencies": { "@libp2p/crypto": "^5.1.8", "@libp2p/interface": "^2.11.0", "multiformats": "^13.3.6", "uint8arrays": "^5.1.0" } }, "sha512-cVDp7lX187Epmi/zr0Qq2RsEMmueswP9eIxYSFoMcHL/qcvRFhsxOfUGB8361E26s2WJvC9sXZ0oJS9XVueJhQ=="],
-
-    "@libp2p/peer-collections/@libp2p/utils": ["@libp2p/utils@6.7.2", "", { "dependencies": { "@chainsafe/is-ip": "^2.1.0", "@chainsafe/netmask": "^2.0.0", "@libp2p/crypto": "^5.1.8", "@libp2p/interface": "^2.11.0", "@libp2p/logger": "^5.2.0", "@multiformats/multiaddr": "^12.4.4", "@sindresorhus/fnv1a": "^3.1.0", "any-signal": "^4.1.1", "delay": "^6.0.0", "get-iterator": "^2.0.1", "is-loopback-addr": "^2.0.2", "is-plain-obj": "^4.1.0", "it-foreach": "^2.1.3", "it-pipe": "^3.0.1", "it-pushable": "^3.2.3", "it-stream-types": "^2.0.2", "main-event": "^1.0.1", "netmask": "^2.0.2", "p-defer": "^4.0.1", "race-event": "^1.3.0", "race-signal": "^1.1.3", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-yglVPcYErb4al3MMTdedVLLsdUvr5KaqrrxohxTl/FXMFBvBs0o3w8lo29nfnTUpnNSHFhWZ9at0ZGNnpT/C/w=="],
-
     "@libp2p/peer-id-factory/@libp2p/crypto": ["@libp2p/crypto@4.1.9", "", { "dependencies": { "@libp2p/interface": "^1.7.0", "@noble/curves": "^1.4.0", "@noble/hashes": "^1.4.0", "asn1js": "^3.0.5", "multiformats": "^13.1.0", "protons-runtime": "^5.4.0", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-8Cf2VKh0uC/rQLvTLSloIOMqUvf4jsSTHXgjWQRf47lDNJlNNI0wSv2S6gakT72GZsRV/jCjYwKPqRlsa5S0iA=="],
 
     "@libp2p/peer-id-factory/@libp2p/interface": ["@libp2p/interface@1.7.0", "", { "dependencies": { "@multiformats/multiaddr": "^12.2.3", "it-pushable": "^3.2.3", "it-stream-types": "^2.0.1", "multiformats": "^13.1.0", "progress-events": "^1.0.0", "uint8arraylist": "^2.4.8" } }, "sha512-/zFyaIaIGW0aihhsH7/93vQdpWInUzFocxF11RO/029Y6h0SVjs24HHbils+DqaFDTqN+L7oNlBx2rM2MnmTjA=="],
 
     "@libp2p/peer-id-factory/@libp2p/peer-id": ["@libp2p/peer-id@4.2.4", "", { "dependencies": { "@libp2p/interface": "^1.7.0", "multiformats": "^13.1.0", "uint8arrays": "^5.1.0" } }, "sha512-mvvsVxt4HkF14BrTNKbqr14VObW+KBJBWu1Oe6BFCoDttGMQLaI+PdduE1r6Tquntv5IONBqoITgD7ow5dQ+vQ=="],
 
-    "@libp2p/peer-store/@libp2p/peer-collections": ["@libp2p/peer-collections@7.0.6", "", { "dependencies": { "@libp2p/interface": "^3.0.2", "@libp2p/peer-id": "^6.0.3", "@libp2p/utils": "^7.0.6", "multiformats": "^13.4.0" } }, "sha512-vly/Gsc5wn3qCDbpHyRBNr9jHE4MUOqMIKbYQdKvOch9FC7AassBoiuQ8s5yoFcFDvYwdx3osKbHhWjMtAET7g=="],
+    "@libp2p/peer-record/@libp2p/interface": ["@libp2p/interface@2.11.0", "", { "dependencies": { "@multiformats/dns": "^1.0.6", "@multiformats/multiaddr": "^12.4.4", "it-pushable": "^3.2.3", "it-stream-types": "^2.0.2", "main-event": "^1.0.1", "multiformats": "^13.3.6", "progress-events": "^1.0.1", "uint8arraylist": "^2.4.8" } }, "sha512-0MUFKoXWHTQW3oWIgSHApmYMUKWO/Y02+7Hpyp+n3z+geD4Xo2Rku2gYWmxcq+Pyjkz6Q9YjDWz3Yb2SoV2E8Q=="],
+
+    "@libp2p/peer-record/@libp2p/peer-id": ["@libp2p/peer-id@5.1.9", "", { "dependencies": { "@libp2p/crypto": "^5.1.8", "@libp2p/interface": "^2.11.0", "multiformats": "^13.3.6", "uint8arrays": "^5.1.0" } }, "sha512-cVDp7lX187Epmi/zr0Qq2RsEMmueswP9eIxYSFoMcHL/qcvRFhsxOfUGB8361E26s2WJvC9sXZ0oJS9XVueJhQ=="],
+
+    "@libp2p/peer-record/@libp2p/utils": ["@libp2p/utils@6.7.2", "", { "dependencies": { "@chainsafe/is-ip": "^2.1.0", "@chainsafe/netmask": "^2.0.0", "@libp2p/crypto": "^5.1.8", "@libp2p/interface": "^2.11.0", "@libp2p/logger": "^5.2.0", "@multiformats/multiaddr": "^12.4.4", "@sindresorhus/fnv1a": "^3.1.0", "any-signal": "^4.1.1", "delay": "^6.0.0", "get-iterator": "^2.0.1", "is-loopback-addr": "^2.0.2", "is-plain-obj": "^4.1.0", "it-foreach": "^2.1.3", "it-pipe": "^3.0.1", "it-pushable": "^3.2.3", "it-stream-types": "^2.0.2", "main-event": "^1.0.1", "netmask": "^2.0.2", "p-defer": "^4.0.1", "race-event": "^1.3.0", "race-signal": "^1.1.3", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-yglVPcYErb4al3MMTdedVLLsdUvr5KaqrrxohxTl/FXMFBvBs0o3w8lo29nfnTUpnNSHFhWZ9at0ZGNnpT/C/w=="],
+
+    "@libp2p/peer-store/@libp2p/peer-record": ["@libp2p/peer-record@9.0.3", "", { "dependencies": { "@libp2p/crypto": "^5.1.12", "@libp2p/interface": "^3.0.2", "@libp2p/peer-id": "^6.0.3", "@multiformats/multiaddr": "^13.0.1", "multiformats": "^13.4.0", "protons-runtime": "^5.6.0", "uint8-varint": "^2.0.4", "uint8arraylist": "^2.4.8", "uint8arrays": "^5.1.0" } }, "sha512-W1K/fdyLDZpxEEcS08JafyNyDUAKHhdjxdt2M7ZwDtBbRrM9RFseZaGHufpMEgPZxne6RriLpJp1NLeFPF9bZA=="],
 
     "@libp2p/peer-store/interface-datastore": ["interface-datastore@9.0.2", "", { "dependencies": { "interface-store": "^7.0.0", "uint8arrays": "^5.1.0" } }, "sha512-jebn+GV/5LTDDoyicNIB4D9O0QszpPqT09Z/MpEWvf3RekjVKpXJCDguM5Au2fwIFxFDAQMZe5bSla0jMamCNg=="],
 
@@ -355,6 +379,8 @@
     "@libp2p/pubsub/@libp2p/interface": ["@libp2p/interface@2.11.0", "", { "dependencies": { "@multiformats/dns": "^1.0.6", "@multiformats/multiaddr": "^12.4.4", "it-pushable": "^3.2.3", "it-stream-types": "^2.0.2", "main-event": "^1.0.1", "multiformats": "^13.3.6", "progress-events": "^1.0.1", "uint8arraylist": "^2.4.8" } }, "sha512-0MUFKoXWHTQW3oWIgSHApmYMUKWO/Y02+7Hpyp+n3z+geD4Xo2Rku2gYWmxcq+Pyjkz6Q9YjDWz3Yb2SoV2E8Q=="],
 
     "@libp2p/pubsub/@libp2p/interface-internal": ["@libp2p/interface-internal@2.3.19", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@libp2p/peer-collections": "^6.0.35", "@multiformats/multiaddr": "^12.4.4", "progress-events": "^1.0.1" } }, "sha512-v335EB0i5CaNF+0SqT01CTBp0VyjJizpy46KprcshFFjX16UQ8+/QzoTZqmot9WiAmAzwR0b87oKmlAE9cpxzQ=="],
+
+    "@libp2p/pubsub/@libp2p/peer-collections": ["@libp2p/peer-collections@6.0.35", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@libp2p/peer-id": "^5.1.9", "@libp2p/utils": "^6.7.2", "multiformats": "^13.3.6" } }, "sha512-QiloK3T7DXW7R2cpL38dBnALCHf5pMzs/TyFzlEK33WezA2YFVoj7CtOJKqbn29bmV9uspWOxMgfmLUXf8ALvA=="],
 
     "@libp2p/pubsub/@libp2p/peer-id": ["@libp2p/peer-id@5.1.9", "", { "dependencies": { "@libp2p/crypto": "^5.1.8", "@libp2p/interface": "^2.11.0", "multiformats": "^13.3.6", "uint8arrays": "^5.1.0" } }, "sha512-cVDp7lX187Epmi/zr0Qq2RsEMmueswP9eIxYSFoMcHL/qcvRFhsxOfUGB8361E26s2WJvC9sXZ0oJS9XVueJhQ=="],
 
@@ -378,21 +404,23 @@
 
     "it-queueless-pushable/race-signal": ["race-signal@1.1.3", "", {}, "sha512-Mt2NznMgepLfORijhQMncE26IhkmjEphig+/1fKC0OtaKwys/gpvpmswSjoN01SS+VO951mj0L4VIDXdXsjnfA=="],
 
-    "libp2p/@libp2p/peer-collections": ["@libp2p/peer-collections@7.0.6", "", { "dependencies": { "@libp2p/interface": "^3.0.2", "@libp2p/peer-id": "^6.0.3", "@libp2p/utils": "^7.0.6", "multiformats": "^13.4.0" } }, "sha512-vly/Gsc5wn3qCDbpHyRBNr9jHE4MUOqMIKbYQdKvOch9FC7AassBoiuQ8s5yoFcFDvYwdx3osKbHhWjMtAET7g=="],
-
     "libp2p/interface-datastore": ["interface-datastore@9.0.2", "", { "dependencies": { "interface-store": "^7.0.0", "uint8arrays": "^5.1.0" } }, "sha512-jebn+GV/5LTDDoyicNIB4D9O0QszpPqT09Z/MpEWvf3RekjVKpXJCDguM5Au2fwIFxFDAQMZe5bSla0jMamCNg=="],
 
     "libp2p/p-event": ["p-event@7.0.0", "", { "dependencies": { "p-timeout": "^6.1.4" } }, "sha512-z4Xv/ieHhi6Dx3A5xbZI8WWTn+eSRo6buGTvA8Yv2iLyX+61SUIMKcBszZRHA6e2Apld6QEDSclAuha2iUntyA=="],
 
+    "@libp2p/circuit-relay-v2/@libp2p/utils/@libp2p/logger": ["@libp2p/logger@5.2.0", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@multiformats/multiaddr": "^12.4.4", "interface-datastore": "^8.3.1", "multiformats": "^13.3.6", "weald": "^1.0.4" } }, "sha512-OEFS529CnIKfbWEHmuCNESw9q0D0hL8cQ8klQfjIVPur15RcgAEgc1buQ7Y6l0B6tCYg120bp55+e9tGvn8c0g=="],
+
+    "@libp2p/circuit-relay-v2/@libp2p/utils/race-signal": ["race-signal@1.1.3", "", {}, "sha512-Mt2NznMgepLfORijhQMncE26IhkmjEphig+/1fKC0OtaKwys/gpvpmswSjoN01SS+VO951mj0L4VIDXdXsjnfA=="],
+
     "@libp2p/kad-dht/@libp2p/utils/@libp2p/logger": ["@libp2p/logger@5.2.0", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@multiformats/multiaddr": "^12.4.4", "interface-datastore": "^8.3.1", "multiformats": "^13.3.6", "weald": "^1.0.4" } }, "sha512-OEFS529CnIKfbWEHmuCNESw9q0D0hL8cQ8klQfjIVPur15RcgAEgc1buQ7Y6l0B6tCYg120bp55+e9tGvn8c0g=="],
-
-    "@libp2p/peer-collections/@libp2p/utils/@libp2p/logger": ["@libp2p/logger@5.2.0", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@multiformats/multiaddr": "^12.4.4", "interface-datastore": "^8.3.1", "multiformats": "^13.3.6", "weald": "^1.0.4" } }, "sha512-OEFS529CnIKfbWEHmuCNESw9q0D0hL8cQ8klQfjIVPur15RcgAEgc1buQ7Y6l0B6tCYg120bp55+e9tGvn8c0g=="],
-
-    "@libp2p/peer-collections/@libp2p/utils/race-signal": ["race-signal@1.1.3", "", {}, "sha512-Mt2NznMgepLfORijhQMncE26IhkmjEphig+/1fKC0OtaKwys/gpvpmswSjoN01SS+VO951mj0L4VIDXdXsjnfA=="],
 
     "@libp2p/peer-id-factory/@libp2p/crypto/@noble/curves": ["@noble/curves@1.9.7", "", { "dependencies": { "@noble/hashes": "1.8.0" } }, "sha512-gbKGcRUYIjA3/zCCNaWDciTMFI0dCkvou3TL8Zmy5Nc7sJ47a0jtOeZoTaMxkuqRo9cRhjOdZJXegxYE5FN/xw=="],
 
     "@libp2p/peer-id-factory/@libp2p/crypto/@noble/hashes": ["@noble/hashes@1.8.0", "", {}, "sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A=="],
+
+    "@libp2p/peer-record/@libp2p/utils/@libp2p/logger": ["@libp2p/logger@5.2.0", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@multiformats/multiaddr": "^12.4.4", "interface-datastore": "^8.3.1", "multiformats": "^13.3.6", "weald": "^1.0.4" } }, "sha512-OEFS529CnIKfbWEHmuCNESw9q0D0hL8cQ8klQfjIVPur15RcgAEgc1buQ7Y6l0B6tCYg120bp55+e9tGvn8c0g=="],
+
+    "@libp2p/peer-record/@libp2p/utils/race-signal": ["race-signal@1.1.3", "", {}, "sha512-Mt2NznMgepLfORijhQMncE26IhkmjEphig+/1fKC0OtaKwys/gpvpmswSjoN01SS+VO951mj0L4VIDXdXsjnfA=="],
 
     "@libp2p/pubsub/@libp2p/utils/@libp2p/logger": ["@libp2p/logger@5.2.0", "", { "dependencies": { "@libp2p/interface": "^2.11.0", "@multiformats/multiaddr": "^12.4.4", "interface-datastore": "^8.3.1", "multiformats": "^13.3.6", "weald": "^1.0.4" } }, "sha512-OEFS529CnIKfbWEHmuCNESw9q0D0hL8cQ8klQfjIVPur15RcgAEgc1buQ7Y6l0B6tCYg120bp55+e9tGvn8c0g=="],
 
