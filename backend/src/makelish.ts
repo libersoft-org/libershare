@@ -102,15 +102,15 @@ async function main() {
 		const inputType = stat.isDirectory() ? 'directory' : 'file';
 		const sizeInfo = stat.isFile() ? Utils.formatBytes(stat.size) : '';
 		const startTime = Date.now();
-		console.log('Start time: ' + new Date().toLocaleString());
+		console.log('\x1b[33mStart time:\x1b[0m ' + new Date().toLocaleString());
 		console.log('');
-		if (sizeInfo) console.log('Size: ' + sizeInfo);
-		console.log('Name: ' + name);
-		if (description) console.log('Description: ' + description);
-		console.log('Processing ' + inputType + ': ' + inputPath);
-		console.log('Chunk size: ' + Utils.formatBytes(chunkSize));
-		console.log('Checksum algorithm: ' + algo);
-		console.log('Threads: ' + actualThreads + (threads === 0 ? ' (auto detect)' : ''));
+		if (sizeInfo) console.log('\x1b[33mSize:\x1b[0m ' + sizeInfo);
+		console.log('\x1b[33mName:\x1b[0m ' + name);
+		if (description) console.log('\x1b[33mDescription:\x1b[0m ' + description);
+		console.log('\x1b[33mProcessing ' + inputType + ':\x1b[0m ' + inputPath);
+		console.log('\x1b[33mChunk size:\x1b[0m ' + Utils.formatBytes(chunkSize));
+		console.log('\x1b[33mChecksum algorithm:\x1b[0m ' + algo);
+		console.log('\x1b[33mThreads:\x1b[0m ' + actualThreads + (threads === 0 ? ' (auto detect)' : ''));
 		console.log('');
 		// Create manifest with progress callback
 		let lastProgress = '';
@@ -156,17 +156,17 @@ async function main() {
 		const timeStr = hours.toString().padStart(2, '0') + ':' + minutes.toString().padStart(2, '0') + ':' + seconds.toString().padStart(2, '0');
 		const lishFile = Bun.file(outputFile);
 		const lishSize = lishFile.size;
-		console.log('\nLISH file saved to: ' + outputFile + ' (' + Utils.formatBytes(lishSize) + ')');
-		console.log('End time: ' + new Date().toLocaleString());
-		console.log('Elapsed time: ' + timeStr);
+		console.log('\n\x1b[33mLISH file saved to:\x1b[0m ' + outputFile + ' (' + Utils.formatBytes(lishSize) + ')');
+		console.log('\x1b[33mEnd time:\x1b[0m ' + new Date().toLocaleString());
+		console.log('\x1b[33mElapsed time:\x1b[0m ' + timeStr);
 		console.log('');
 		// Summary
 		const fileCount = manifest.files?.length || 0;
 		const dirCount = manifest.directories?.length || 0;
 		const linkCount = manifest.links?.length || 0;
 		const totalSize = manifest.files?.reduce((sum, file) => sum + file.size, 0) || 0;
-		console.log('Summary: ' + fileCount + ' files, ' + dirCount + ' directories, ' + linkCount + ' links');
-		console.log('Total size: ' + Utils.formatBytes(totalSize));
+		console.log('\x1b[33mSummary:\x1b[0m ' + fileCount + ' files, ' + dirCount + ' directories, ' + linkCount + ' links');
+		console.log('\x1b[33mTotal size:\x1b[0m ' + Utils.formatBytes(totalSize));
 	} catch (error) {
 		console.error('Error:', error);
 		process.exit(1);
