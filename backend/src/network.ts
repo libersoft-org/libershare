@@ -87,17 +87,14 @@ export class Network {
 
 
 		// Build transports array
-		const transports = [tcp()];
+		const transports: any[] = [tcp()];
 
 		// Add circuit relay transport if client mode is enabled
 		const relayClientMode = settings.relay?.client?.mode || 'force';
 		const relayClientEnabled = (relayClientMode === 'force' || relayClientMode === 'auto');
 		if (relayClientEnabled) {
-			const discoverRelays = settings.relay?.client?.discoverRelays || 2;
-			transports.push(circuitRelayTransport({
-				discoverRelays
-			}));
-			console.log(`✓ Circuit relay client enabled (mode: ${relayClientMode}, discoverRelays: ${discoverRelays})`);
+			transports.push(circuitRelayTransport());
+			console.log(`✓ Circuit relay client enabled (mode: ${relayClientMode})`);
 		}
 
 		const config: any = {
@@ -174,6 +171,11 @@ export class Network {
 		console.log('Port:', settings.network.port);
 		this.node = await createLibp2p(config);
 		await this.node.start();
+		const addresses = this.node.getMultiaddrs();
+		console.log('Node started with ID:', this.node.peerId.toString());
+		console.log('Listening on addresses:');
+		addresses.forEach(addr => console.log('  -', addr.toString()));
+
 		this.pubsub = this.node.services.pubsub as PubSub;
 
 
@@ -218,10 +220,6 @@ export class Network {
 
 
 
-		const addresses = this.node.getMultiaddrs();
-		console.log('Node started with ID:', this.node.peerId.toString());
-		console.log('Listening on addresses:');
-		addresses.forEach(addr => console.log('  -', addr.toString()));
 
 
 
@@ -259,20 +257,20 @@ export class Network {
 		});
 
 		// Relay event listeners
-		this.node.addEventListener('relay:reservation', (evt: any) => {
+		this.node.addEventListener('relay:created-reservation' as any, (evt: any) => {
 			console.log('🔄 Relay reservation created with:', evt.detail.relay.toString());
 		});
 
-		this.node.addEventListener('relay:advert:success', (evt: any) => {
-			console.log('📢 Successfully advertised relay address:', evt.detail.toString());
+		this.node.addEventListener('relay:removed' as any, (evt: any) => {
+			console.log('⚠️  Relay removed:', evt.detail.relay.toString());
 		});
 
-		this.node.addEventListener('relay:advert:error', (evt: any) => {
-			console.log('⚠️  Relay advertisement error:', evt.detail);
+		this.node.addEventListener('relay:not-enough-relays' as any, (evt: any) => {
+			console.log('⚠️  Not enough relays available');
 		});
 
-		this.node.addEventListener('autonat:status', (evt: any) => {
-			console.log('🌐 NAT status changed:', evt.detail);
+		this.node.addEventListener('relay:found-enough-relays' as any, (evt: any) => {
+			console.log('✓ Found enough relays');
 		});
 
 
