@@ -217,12 +217,12 @@ export class Network {
 		});
 
 		this.node.addEventListener('peer:connect', (evt) => {
-			console.log('✅ Connected to peer:', evt.detail.toString());
+			console.log('✅ new connection with peer:', evt.detail.toString());
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 		});
 
 		this.node.addEventListener('peer:disconnect', (evt) => {
-			console.log('❌ Disconnected from peer:', evt.detail.toString());
+			console.log('❌ lost connection with peer:', evt.detail.toString());
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 		});
 
@@ -285,7 +285,7 @@ export class Network {
 
 	private handleMessage(msgEvent: any) {
 		try {
-			console.log('Received message:', msgEvent.topic);
+			//console.log('Received message:', msgEvent.topic);
 			const topic = msgEvent.topic;
 			const data = new TextDecoder().decode(msgEvent.data);
 			const message: Message = JSON.parse(data);
@@ -371,20 +371,14 @@ export class Network {
 	// 	});
 	// }
 
-	// async connectToPeer(multiaddr: string) {
-	// 	if (!this.node) {
-	// 		console.error('Network not started');
-	// 		return;
-	// 	}
-	// 	try {
-	// 		const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
-	// 		const ma = Multiaddr(multiaddr);
-	// 		await this.node.dial(ma);
-	// 		console.log('Connected to peer:', multiaddr);
-	// 	} catch (error) {
-	// 		console.error('Failed to connect to peer:', error);
-	// 	}
-	// }
+	async connectToPeer(multiaddr: string) {
+		if (!this.node) {
+			throw new Error('Network not started');
+		}
+		const ma = Multiaddr(multiaddr);
+		await this.node.dial(ma);
+		console.log('→ Connected to:', multiaddr);
+	}
 
 	async stop() {
 		if (this.pingInterval) {
@@ -402,27 +396,3 @@ export class Network {
 	}
 }
 
-// Example usage
-if (import.meta.main) {
-	// Parse command line arguments
-	const args = process.argv.slice(2);
-	let dataDir = './data';
-	let enablePink = false;
-
-	for (let i = 0; i < args.length; i++) {
-		if (args[i] === '--datadir' && i + 1 < args.length) {
-			dataDir = args[i + 1];
-		} else if (args[i] === '--pink') {
-			enablePink = true;
-		}
-	}
-
-	const network = new Network(dataDir, enablePink);
-	await network.start();
-	// Keep the process running
-	process.on('SIGINT', async () => {
-		console.log('\nShutting down...');
-		await network.stop();
-		process.exit(0);
-	});
-}
