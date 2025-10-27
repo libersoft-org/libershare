@@ -102,15 +102,15 @@ async function main() {
 		const inputType = stat.isDirectory() ? 'directory' : 'file';
 		const sizeInfo = stat.isFile() ? Utils.formatBytes(stat.size) : '';
 		const startTime = Date.now();
-		console.log('\x1b[33mStart time:\x1b[0m ' + new Date().toLocaleString());
+		console.log('\x1b[33mStart time:\x1b[0m           ' + new Date().toLocaleString());
 		console.log('');
 		if (sizeInfo) console.log('\x1b[33mSize:\x1b[0m ' + sizeInfo);
-		console.log('\x1b[33mName:\x1b[0m ' + name);
-		if (description) console.log('\x1b[33mDescription:\x1b[0m ' + description);
+		console.log('\x1b[33mName:\x1b[0m                 ' + name);
+		if (description) console.log('\x1b[33mDescription:\x1b[0m          ' + description);
 		console.log('\x1b[33mProcessing ' + inputType + ':\x1b[0m ' + inputPath);
-		console.log('\x1b[33mChunk size:\x1b[0m ' + Utils.formatBytes(chunkSize));
-		console.log('\x1b[33mChecksum algorithm:\x1b[0m ' + algo);
-		console.log('\x1b[33mThreads:\x1b[0m ' + actualThreads + (threads === 0 ? ' (auto detect)' : ''));
+		console.log('\x1b[33mChunk size:\x1b[0m           ' + Utils.formatBytes(chunkSize));
+		console.log('\x1b[33mChecksum algorithm:\x1b[0m   ' + algo);
+		console.log('\x1b[33mThreads:\x1b[0m              ' + actualThreads + (threads === 0 ? ' (auto detect)' : ''));
 		console.log('');
 		// Create manifest with progress callback
 		let lastProgress = '';
@@ -127,13 +127,13 @@ async function main() {
 				currentFile = info.path;
 				processedFiles.set(info.path, { size: info.size, chunks: info.chunks });
 				// Show start message without newline
-				lastProgress = 'Creating checksums: ' + info.path + ' (' + Utils.formatBytes(info.size) + ')';
+				lastProgress = '\x1b[33mCreating checksums:\x1b[0m   ' + info.path + ' (' + Utils.formatBytes(info.size) + ')';
 				process.stdout.write(lastProgress);
 			} else if (info.type === 'chunk' && info.path && info.current && info.total) {
 				// Update chunk progress on same line
 				const fileInfo = processedFiles.get(info.path);
 				if (fileInfo) {
-					const prefix = 'Creating checksums: ' + info.path + ' (' + Utils.formatBytes(fileInfo.size) + ')';
+					const prefix = '\x1b[33mCreating checksums:\x1b[0m   ' + info.path + ' (' + Utils.formatBytes(fileInfo.size) + ')';
 					lastProgress = prefix + ' - ' + info.current + '/' + info.total;
 					process.stdout.write('\r' + lastProgress);
 				}
@@ -156,17 +156,17 @@ async function main() {
 		const timeStr = hours.toString().padStart(2, '0') + ':' + minutes.toString().padStart(2, '0') + ':' + seconds.toString().padStart(2, '0');
 		const lishFile = Bun.file(outputFile);
 		const lishSize = lishFile.size;
-		console.log('\n\x1b[33mLISH file saved to:\x1b[0m ' + outputFile + ' (' + Utils.formatBytes(lishSize) + ')');
-		console.log('\x1b[33mEnd time:\x1b[0m ' + new Date().toLocaleString());
-		console.log('\x1b[33mElapsed time:\x1b[0m ' + timeStr);
-		console.log('');
+		console.log('\n\x1b[33mLISH file saved to:\x1b[0m   ' + outputFile + ' (' + Utils.formatBytes(lishSize) + ')');
 		// Summary
 		const fileCount = manifest.files?.length || 0;
 		const dirCount = manifest.directories?.length || 0;
 		const linkCount = manifest.links?.length || 0;
 		const totalSize = manifest.files?.reduce((sum, file) => sum + file.size, 0) || 0;
-		console.log('\x1b[33mSummary:\x1b[0m ' + fileCount + ' files, ' + dirCount + ' directories, ' + linkCount + ' links');
-		console.log('\x1b[33mTotal size:\x1b[0m ' + Utils.formatBytes(totalSize));
+		console.log('\x1b[33mSummary:\x1b[0m              ' + fileCount + ' files, ' + dirCount + ' directories, ' + linkCount + ' links');
+		console.log('\x1b[33mTotal size:\x1b[0m           ' + Utils.formatBytes(totalSize));
+		console.log('');
+		console.log('\x1b[33mEnd time:\x1b[0m             ' + new Date().toLocaleString());
+		console.log('\x1b[33mElapsed time:\x1b[0m         ' + timeStr);
 	} catch (error) {
 		console.error('Error:', error);
 		process.exit(1);
