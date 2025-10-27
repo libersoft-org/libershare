@@ -13,6 +13,7 @@ import type { Libp2p } from 'libp2p';
 import type { PrivateKey } from '@libp2p/interface';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 
 // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 type PubSub = any;
@@ -42,11 +43,11 @@ export class Network {
 	private datastore: LevelDatastore | null = null;
 	private dataDir: string;
 	private pingInterval: NodeJS.Timeout | null = null;
-	private enablePinkPonk: boolean;
+	private enablePink: boolean;
 
-	constructor(dataDir: string = './data', enablePinkPonk: boolean = false) {
+	constructor(dataDir: string = './data', enablePink: boolean = false) {
 		this.dataDir = dataDir;
-		this.enablePinkPonk = enablePinkPonk;
+		this.enablePink = enablePink;
 	}
 
 	private async loadOrCreatePrivateKey(datastore: LevelDatastore): Promise<PrivateKey> {
@@ -73,21 +74,15 @@ export class Network {
 		const settingsPath = join(this.dataDir, 'settings.json');
 		const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
 
-		console.log('Starting libp2p network...');
-		console.log('Data directory:', this.dataDir);
-		console.log('Port:', settings.network.port);
-		console.log('Bootstrap peers:', settings.network.bootstrapPeers.length);
 
 		// Initialize datastore
 		const datastorePath = join(this.dataDir, 'datastore');
 		this.datastore = new LevelDatastore(datastorePath);
 		await this.datastore.open();
 		console.log('✓ Datastore opened at:', datastorePath);
-
-		// Load or create private key from datastore
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
 
-		// Create libp2p node with private key
+
 		const config: any = {
 			privateKey,
 			datastore: this.datastore,
@@ -100,12 +95,12 @@ export class Network {
 			connectionManager: {
 				minConnections: 1, // Auto-dial to maintain at least 1 connection
 				maxConnections: 100,
-				autoDial: true, // Enable auto-dialing
-				autoDialInterval: 10000, // Check every 10 seconds
+				autoDial: true,
+				autoDialInterval: 1000,
 			},
 			peerStore: {
 				persistence: true,
-				threshold: 5,
+				threshold: 15,
 			},
 			services: {
 				identify: identify(),
@@ -124,6 +119,9 @@ export class Network {
 			},
 		};
 
+
+
+
 		// Add bootstrap if peers are configured
 		if (settings.network.bootstrapPeers.length > 0) {
 			console.log('Configuring bootstrap peers:');
@@ -137,9 +135,14 @@ export class Network {
 			];
 		}
 
-		this.node = await createLibp2p(config);
 
+
+		console.log('Port:', settings.network.port);
+		this.node = await createLibp2p(config);
 		await this.node.start();
+		this.pubsub = this.node.services.pubsub as PubSub;
+
+
 
 		// DHT is configured in server mode (clientMode: false) for LAN
 		const dht = this.node.services.dht as any;
@@ -148,19 +151,23 @@ export class Network {
 			console.log('✓ DHT running in', mode, 'mode');
 		}
 
-		this.pubsub = this.node.services.pubsub as PubSub;
 
-		if (this.enablePinkPonk) {
-			// Listen to gossipsub mesh events
+
+
+
+		//if (this.enablePink)
+		{
 			this.pubsub.addEventListener('gossipsub:heartbeat', () => {
 				const meshPeers = this.pubsub!.getMeshPeers(PINK_TOPIC);
 				const subscribers = this.pubsub!.getSubscribers(PINK_TOPIC);
 				const topics = this.pubsub!.getTopics();
-				console.log('💓 Heartbeat:');
-				console.log('   Connected libp2p peers:', this.node!.getPeers().length);
-				console.log('   My topics:', topics);
-				console.log('   Pink mesh peers:', meshPeers.length);
-				console.log('   Pink subscribers:', subscribers.length, subscribers.map(p => p.toString()).slice(0, 2));
+				// console.log('💓 Heartbeat:');
+				// console.log('💓  Connected libp2p peers:', this.node!.getPeers().length);
+				// console.log('💓  My topics:', topics);
+				// console.log('💓  Pink mesh peers:', meshPeers.length);
+				// console.log('💓  Pink subscribers:', subscribers.length, subscribers.map(p => p.toString()).slice(0, 2));
+				console.log('💓peers:', this.node!.getPeers().length, 'mesh:', meshPeers.length, 'subs:', subscribers.length, 'topics:', topics.length);
+
 			});
 
 			this.pubsub.addEventListener('gossipsub:graft', (evt) => {
@@ -177,14 +184,20 @@ export class Network {
 			});
 		}
 
+
+
 		const addresses = this.node.getMultiaddrs();
 		console.log('Node started with ID:', this.node.peerId.toString());
 		console.log('Listening on addresses:');
 		addresses.forEach(addr => console.log('  -', addr.toString()));
 
+
+
 		// Debug: Check peer store
 		console.log('Peers in store:', this.node.getPeers().length);
 		console.log('Services loaded:', Object.keys(this.node.services));
+
+
 
 		// Create promise that resolves when first peer connects
 		const firstPeerConnected = new Promise<void>((resolve) => {
@@ -194,6 +207,8 @@ export class Network {
 				this.node!.addEventListener('peer:connect', () => resolve(), { once: true });
 			}
 		});
+
+
 
 		// Listen for peer discovery and connection events
 		this.node.addEventListener('peer:discovery', (evt) => {
@@ -211,11 +226,13 @@ export class Network {
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 		});
 
+
+
 		// Manually dial bootstrap peers FIRST
 		// Bootstrap module discovers peers but doesn't auto-connect
 		if (settings.network.bootstrapPeers.length > 0) {
-			console.log('Connecting to bootstrap peers...');
-			const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
+			//console.log('Connecting to bootstrap peers...');
+
 			for (const peerAddr of settings.network.bootstrapPeers) {
 				try {
 					const ma = Multiaddr(peerAddr);
@@ -225,6 +242,7 @@ export class Network {
 					console.log('✗ Failed to connect to bootstrap peer:', peerAddr, '-', error.message);
 				}
 			}
+
 
 			// Wait for first peer to connect (with timeout)
 			console.log('Waiting for peer connection...');
@@ -238,26 +256,31 @@ export class Network {
 			}
 		}
 
-		if (this.enablePinkPonk) {
-			console.log('PinkPonk enabled: Subscribing to pink and ponk topics');
-			// Subscribe to pink and ponk topics AFTER peer connection
-			this.pubsub.subscribe(PINK_TOPIC);
-			this.pubsub.subscribe(PONK_TOPIC);
-			console.log('✓ Subscribed to topics:', this.pubsub.getTopics());
-			console.log('  Libp2p peers:', this.node.getPeers().length);
-			console.log('  Pubsub peers:', this.pubsub.getPeers().length);
-			console.log('  Pubsub peer list:', this.pubsub.getPeers().map((p: any) => p.toString()));
 
-			// Handle incoming messages
-			this.pubsub.addEventListener('message', evt => {
-				this.handleMessage(evt.detail);
-			});
+		// Subscribe to pink and ponk topics - AFTER peer connection - does this matter?
+		console.log('Subscribing to pink and ponk topics');
+		this.pubsub.subscribe(PINK_TOPIC);
+		this.pubsub.subscribe(PONK_TOPIC);
+		console.log('✓ Subscribed to topics:', this.pubsub.getTopics());
 
-			// Start periodic pink timer (every 3 seconds)
+
+
+		if (this.enablePink)
+		{
+			// console.log('  Libp2p peers:', this.node.getPeers().length);
+			// console.log('  Pubsub peers:', this.pubsub.getPeers().length);
+			// console.log('  Pubsub peer list:', this.pubsub.getPeers().map((p: any) => p.toString()));
+
 			this.pingInterval = setInterval(async () => {
 				await this.sendPing();
-			}, 3000);
+			}, 10000);
 		}
+
+		// Handle incoming messages
+		this.pubsub.addEventListener('message', evt => {
+			this.handleMessage(evt.detail);
+		});
+
 	}
 
 	private handleMessage(msgEvent: any) {
@@ -266,16 +289,15 @@ export class Network {
 			const topic = msgEvent.topic;
 			const data = new TextDecoder().decode(msgEvent.data);
 			const message: Message = JSON.parse(data);
-			if (topic === PINK_TOPIC && message.type === 'pink') {
-				console.log(`Received pink from ${message.peerId} at ${new Date(message.timestamp).toISOString()}`);
+			console.log(`Received ${JSON.stringify(message)}`);
+			if (topic === PINK_TOPIC) {
 				this.sendPong(message.peerId);
-			} else if (topic === PONK_TOPIC && message.type === 'ponk') {
-				console.log(`Received ponk from ${message.peerId} (reply to ${message.replyTo}) at ${new Date(message.timestamp).toISOString()}`);
 			}
 		} catch (error) {
-			console.error('Error handling message:', error);
+			console.error('Error in handleMessage:', error);
 		}
 	}
+
 
 	private async sendPing() {
 		if (!this.pubsub || !this.node) {
@@ -321,48 +343,48 @@ export class Network {
 		}
 	}
 
-	async broadcast(topic: string, data: any) {
-		if (!this.pubsub) {
-			console.error('Network not started');
-			return;
-		}
-		const encoded = new TextEncoder().encode(JSON.stringify(data));
-		await this.pubsub.publish(topic, encoded);
-	}
+	// async broadcast(topic: string, data: any) {
+	// 	if (!this.pubsub) {
+	// 		console.error('Network not started');
+	// 		return;
+	// 	}
+	// 	const encoded = new TextEncoder().encode(JSON.stringify(data));
+	// 	await this.pubsub.publish(topic, encoded);
+	// }
+	//
+	// async subscribe(topic: string, handler: (data: any) => void) {
+	// 	if (!this.pubsub) {
+	// 		console.error('Network not started');
+	// 		return;
+	// 	}
+	// 	this.pubsub.subscribe(topic);
+	// 	this.pubsub.addEventListener('message', evt => {
+	// 		if (evt.detail.topic === topic) {
+	// 			try {
+	// 				const data = new TextDecoder().decode(evt.detail.data);
+	// 				const parsed = JSON.parse(data);
+	// 				handler(parsed);
+	// 			} catch (error) {
+	// 				console.error('Error parsing message:', error);
+	// 			}
+	// 		}
+	// 	});
+	// }
 
-	async subscribe(topic: string, handler: (data: any) => void) {
-		if (!this.pubsub) {
-			console.error('Network not started');
-			return;
-		}
-		this.pubsub.subscribe(topic);
-		this.pubsub.addEventListener('message', evt => {
-			if (evt.detail.topic === topic) {
-				try {
-					const data = new TextDecoder().decode(evt.detail.data);
-					const parsed = JSON.parse(data);
-					handler(parsed);
-				} catch (error) {
-					console.error('Error parsing message:', error);
-				}
-			}
-		});
-	}
-
-	async connectToPeer(multiaddr: string) {
-		if (!this.node) {
-			console.error('Network not started');
-			return;
-		}
-		try {
-			const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
-			const ma = Multiaddr(multiaddr);
-			await this.node.dial(ma);
-			console.log('Connected to peer:', multiaddr);
-		} catch (error) {
-			console.error('Failed to connect to peer:', error);
-		}
-	}
+	// async connectToPeer(multiaddr: string) {
+	// 	if (!this.node) {
+	// 		console.error('Network not started');
+	// 		return;
+	// 	}
+	// 	try {
+	// 		const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
+	// 		const ma = Multiaddr(multiaddr);
+	// 		await this.node.dial(ma);
+	// 		console.log('Connected to peer:', multiaddr);
+	// 	} catch (error) {
+	// 		console.error('Failed to connect to peer:', error);
+	// 	}
+	// }
 
 	async stop() {
 		if (this.pingInterval) {
@@ -378,15 +400,6 @@ export class Network {
 			console.log('Datastore closed');
 		}
 	}
-
-	getPeerId(): string | null {
-		return this.node ? this.node.peerId.toString() : null;
-	}
-
-	getConnectedPeers(): string[] {
-		if (!this.node) return [];
-		return Array.from(this.node.getPeers()).map(peerId => peerId.toString());
-	}
 }
 
 // Example usage
@@ -394,17 +407,17 @@ if (import.meta.main) {
 	// Parse command line arguments
 	const args = process.argv.slice(2);
 	let dataDir = './data';
-	let enablePinkPonk = false;
+	let enablePink = false;
 
 	for (let i = 0; i < args.length; i++) {
 		if (args[i] === '--datadir' && i + 1 < args.length) {
 			dataDir = args[i + 1];
-		} else if (args[i] === '--pinkponk') {
-			enablePinkPonk = true;
+		} else if (args[i] === '--pink') {
+			enablePink = true;
 		}
 	}
 
-	const network = new Network(dataDir, enablePinkPonk);
+	const network = new Network(dataDir, enablePink);
 	await network.start();
 	// Keep the process running
 	process.on('SIGINT', async () => {
