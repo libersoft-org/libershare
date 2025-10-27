@@ -97,11 +97,22 @@ export class Network {
 			console.log(`✓ Circuit relay client enabled (mode: ${relayClientMode})`);
 		}
 
+		// Build listen addresses
+		const listenAddresses = [`/ip4/0.0.0.0/tcp/${settings.network.port}`];
+		if (relayClientEnabled) {
+			// Add /p2p-circuit entries - one per desired relay reservation
+			const maxRelays = settings.relay?.client?.maxRelays || 2;
+			for (let i = 0; i < maxRelays; i++) {
+				listenAddresses.push('/p2p-circuit');
+			}
+			console.log(`✓ Configured to reserve ${maxRelays} relay slots`);
+		}
+
 		const config: any = {
 			privateKey,
 			datastore: this.datastore,
 			addresses: {
-				listen: [`/ip4/0.0.0.0/tcp/${settings.network.port}`],
+				listen: listenAddresses,
 			},
 			transports,
 			connectionEncrypters: [noise()],
