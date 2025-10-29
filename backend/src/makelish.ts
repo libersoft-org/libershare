@@ -9,7 +9,6 @@ interface IArgs {
 	description?: string;
 	threads?: number;
 }
-const DEFAULT_OUTPUT = 'output.lish';
 
 function showHelp() {
 	console.log('Usage: ./makelish.sh --input <file-or-directory> --name <text> [options]');
@@ -89,7 +88,8 @@ async function main() {
 	}
 	const inputPath = args.input;
 	const name = args.name;
-	const outputTemplate = args.output || DEFAULT_OUTPUT;
+	const defaultOutput = name ? '[NAME].lish' : '[UUID].lish';
+	const outputTemplate = args.output || defaultOutput;
 	const chunkSize = args.chunk || DEFAULT_CHUNK_SIZE;
 	const algo = (args.algo || DEFAULT_ALGO) as HashAlgorithm;
 	const description = args.description;
