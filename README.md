@@ -4,6 +4,7 @@
 
 - [**About**](#about)
 - [**Screenshot**](#screenshot)
+- [**Documentation**](#documentation)
 - [**Installation**](#installation)
 - [**License**](#license)
 - [**Contribution**](#contribution)
@@ -16,13 +17,19 @@ Official website: **https://libershare.com**
 
 LiberShare is a peer-to-peer file sharing software built on modern decentralized technologies.
 
-It introduces its own [**LISH network protocol**](./LISH_NETWORK_PROTOCOL.md) and [**LISH data format**](./LISH_DATA_FORMAT.md) for efficient and secure content distribution.
+It introduces its own LISH network protocol and LISH data format for efficient and secure content distribution.
 
 Unlike traditional peer-to-peer networks, LiberShare features a **decentralized database of shared files within each network**, combined with fine-grained access control. This makes it suitable for both public and private file sharing.
 
 ## Screenshot
 
 ![LiberShare](./screenshot.webp)
+
+## Documentation
+
+- [**LISH Data Format**](./LISH_DATA_FORMAT.md) - Specification of the data structure format for files and directories
+- [**LISH Network Format**](./LISH_NETWORK_FORMAT.md) - Specification of the network structure format
+- [**LISH Network Protocol**](./LISH_NETWORK_PROTOCOL.md) - Specification of the peer-to-peer communication protocol
 
 ## Installation
 
