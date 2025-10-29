@@ -21,4 +21,16 @@ export class Utils {
 		const i = sizes.indexOf(suffix);
 		return Math.floor(parseFloat(num) * Math.pow(1024, i));
 	}
+
+	static instantiateFilenameTemplate(template: string, variables: Record<string, string>): string {
+		return template.replace(/\[(\w+)\]/g, (match, key) => {
+			const value = variables[key];
+			if (value === undefined) {
+				throw new Error(`Variable ${key} is not defined in the template`);
+			}
+			return value;
+		});
+	}
+
 }
+

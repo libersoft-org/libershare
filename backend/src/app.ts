@@ -24,7 +24,7 @@ import * as readline from 'readline';
 		terminal: false
 	});
 
-	console.log('\nCommands: p=pink, c<multiaddr>=connect, q=quit');
+	console.log('\nCommands: p=pink, c<multiaddr>=connect, f<peerid>=find, a=addresses, q=quit');
 
 	rl.on('line', async (line) => {
 		const command = line.trim();
@@ -40,11 +40,25 @@ import * as readline from 'readline';
 			} catch (error: any) {
 				console.log('✗ Connection failed:', error.message);
 			}
+		} else if (command.startsWith('f')) {
+			const peerId = command.slice(1).trim();
+			if (!peerId) {
+				console.log('Error: peer ID required after "f"');
+				return;
+			}
+			try {
+				await (network as any).cliFindPeer(peerId);
+			} catch (error: any) {
+				console.log('✗ Find peer failed:', error.message);
+			}
 		} else {
 			switch (command) {
 				case 'p':
-					await (network as any).sendPing();
+					await network.sendPing();
 					//console.log('→ Pink sent');
+					break;
+				case 'a':
+					network.printMultiaddrs();
 					break;
 				case 'q':
 					console.log('Shutting down...');

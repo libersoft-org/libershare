@@ -33,6 +33,11 @@ export interface ILinkEntry {
 }
 export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
 export type HashAlgorithm = (typeof SUPPORTED_ALGOS)[number];
+
+// Branded types for type safety
+export type LishId = string & { readonly __brand: 'LishId' };
+export type ChunkId = string & { readonly __brand: 'ChunkId' };
+
 export const MANIFEST_VERSION = 1;
 export const DEFAULT_CHUNK_SIZE = 5242880; // 5 MB
 export const DEFAULT_ALGO: HashAlgorithm = 'sha256';
@@ -159,7 +164,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 		// Check if it's a symlink by comparing realpath
 		let isSymlink = false;
 		try {
-			const realPath = await Bun.file(fullPath).realpath();
+			const realPath = await (Bun.file(fullPath) as any).realpath();
 			isSymlink = normalizePath(realPath) !== normalizePath(fullPath);
 		} catch (e) {
 			// Not a symlink or can't determine
@@ -168,7 +173,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 			// Handle symbolic link - read the link target
 			try {
 				// Unfortunately Bun doesn't expose readlink directly, so we use realpath
-				const target = await Bun.file(fullPath).realpath();
+				const target = await (Bun.file(fullPath) as any).realpath();
 				links.push({
 					path: getRelativePath(fullPath, basePath),
 					target: normalizePath(target),

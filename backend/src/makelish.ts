@@ -147,7 +147,7 @@ async function main() {
 		});
 		// Write chunk progress newline if we were processing a single file
 		if (lastProgress) process.stdout.write('\n');
-		await Bun.write(outputFile, JSON.stringify(manifest, null, 2));
+		await Bun.write(Utils.instantiateFilenameTemplate(outputFile, { 'UUID': manifest.id } ), JSON.stringify(manifest, null, 2));
 		const endTime = Date.now();
 		const elapsedSeconds = Math.floor((endTime - startTime) / 1000);
 		const hours = Math.floor(elapsedSeconds / 3600);

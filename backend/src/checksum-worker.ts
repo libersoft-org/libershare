@@ -1,5 +1,8 @@
 // Worker for parallel checksum calculation
 import type { HashAlgorithm } from './lish.ts';
+
+declare const self: Worker;
+
 export interface WorkerRequest {
 	filePath: string;
 	offset: number;
