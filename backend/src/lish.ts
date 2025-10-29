@@ -1,7 +1,7 @@
 export interface IManifest {
 	version: number;
 	id: string;
-	name: string;
+	name?: string;
 	description?: string;
 	created: string;
 	chunkSize: number;
@@ -221,7 +221,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	}
 }
 
-export async function createManifest(inputPath: string, name: string, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void, id?: string): Promise<IManifest> {
+export async function createManifest(inputPath: string, name: string | undefined, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void, id?: string): Promise<IManifest> {
 	const created = new Date().toISOString();
 	const manifestId = id || globalThis.crypto.randomUUID();
 	const manifest: IManifest = {
@@ -233,7 +233,8 @@ export async function createManifest(inputPath: string, name: string, chunkSize:
 		chunkSize,
 		checksumAlgo: algo,
 	};
-	// Remove description if undefined
+	// Remove optional fields if undefined
+	if (!name) delete manifest.name;
 	if (!description) delete manifest.description;
 	const stat = await getStats(inputPath);
 	if (stat.isFile()) {
