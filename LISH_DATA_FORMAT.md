@@ -2,7 +2,7 @@
 
 **Version**: 1
 **Created**: 24 October 2025
-**Last update**: 26 October 2025
+**Last update**: 29 October 2025
 
 ## Overview
 
@@ -19,22 +19,22 @@ LISH data structure format defines a data structure that can be used in various 
 
 This specification describes the logical structure, with JSON examples for clarity.
 
-## Manifest structure
+## LISH structure
 
-### Root manifest object
+### Root LISH object
 
 ```typescript
-interface IManifest {
-	version: number; // Format version
-	id: string; // Unique UUID for this manifest
-	name: string; // Manifest name
-	description?: string; // Optional free-form text description (author, notes, etc.)
-	created: string; // ISO 8601 timestamp in UTC when manifest was created
-	chunkSize: number; // Chunk size in bytes (global for all files)
-	checksumAlgo: HashAlgorithm; // Hashing algorithm used
-	directories?: IDirectoryEntry[]; // Optional array of directories
-	files?: IFileEntry[]; // Optional array of files
-	links?: ILinkEntry[]; // Optional array of symbolic links and hard links
+interface ILISH {
+	version: number; // Format version (required)
+	id: string; // Unique UUID for this LISH (required)
+	name?: string; // LISH name (optional)
+	description?: string; // Free-form text description such as author, notes, etc. (optional)
+	created?: string; // ISO 8601 timestamp in UTC when LISH was created (optional)
+	chunkSize: number; // Chunk size in bytes (required)
+	checksumAlgo: HashAlgorithm; // Hashing algorithm used (required)
+	directories?: IDirectoryEntry[]; // Array of directories (optional)
+	files?: IFileEntry[]; // Array of files (optional)
+	links?: ILinkEntry[]; // Array of symbolic links and hard links (optional)
 }
 ```
 
@@ -42,8 +42,8 @@ interface IManifest {
 
 ```typescript
 interface IDirectoryEntry {
-	path: string; // Relative path (e.g., "docs" or "assets/images")
-	permissions?: string; // Unix permissions in octal notation (e.g., "755" for rwxr-xr-x) - optional
+	path: string; // Relative path - e.g., "docs" or "assets/images" (required)
+	permissions?: string; // Unix permissions in octal notation - e.g., "755" for rwxr-xr-x (optional)
 	modified?: string; // ISO 8601 timestamp in UTC of last modification (optional)
 	created?: string; // ISO 8601 timestamp in UTC of creation (optional)
 }
@@ -53,12 +53,12 @@ interface IDirectoryEntry {
 
 ```typescript
 interface IFileEntry {
-	path: string; // Relative path (e.g., "docs/readme.txt")
-	size: number; // File size in bytes
-	permissions?: string; // Unix permissions in octal notation (e.g., "644" for rw-r--r--) - optional
+	path: string; // Relative path - e.g., "docs/readme.txt" (required)
+	size: number; // File size in bytes (required)
+	permissions?: string; // Unix permissions in octal notation - e.g., "644" for rw-r--r-- (optional)
 	modified?: string; // ISO 8601 timestamp in UTC of last modification (optional)
 	created?: string; // ISO 8601 timestamp in UTC of creation (optional)
-	checksums: string[]; // Array of hex-encoded checksums for each chunk
+	checksums: string[]; // Array of hex-encoded checksums for each chunk (required)
 }
 ```
 
@@ -66,9 +66,9 @@ interface IFileEntry {
 
 ```typescript
 interface ILinkEntry {
-	path: string; // Relative path of the link
-	target: string; // Target path
-	hardlink?: boolean; // True for hard links, false/undefined for symbolic links (default: false)
+	path: string; // Relative path of the link (required)
+	target: string; // Target path (required)
+	hardlink?: boolean; // True for hard links, false/undefined for symbolic links (optional, default: false)
 	modified?: string; // ISO 8601 timestamp in UTC of last modification (optional)
 	created?: string; // ISO 8601 timestamp in UTC of creation (optional)
 }
@@ -98,7 +98,7 @@ File and directory permissions are stored as octal string notation representing 
 
 ## Chunking
 
-Files are divided into fixed-size chunks specified by `chunkSize` in the manifest. Each chunk is hashed independently:
+Files are divided into fixed-size chunks specified by `chunkSize` in LISH. Each chunk is hashed independently:
 
 - The last chunk may be smaller than `chunkSize`
 - Each file's `checksums` array contains one hash per chunk
@@ -177,13 +177,13 @@ Files are divided into fixed-size chunks specified by `chunkSize` in the manifes
 
 ## Notes
 
-- All paths in the manifest are relative to the manifest's root
+- All paths in the LISH are relative to the LISH's root
 - Paths use forward slashes (`/`) as separators regardless of platform
 - Empty directories are explicitly listed to preserve structure
-- The manifest itself is not included in the file listings
+- The LISH itself is not included in the file listings
 - Checksums are hex-encoded strings (lowercase)
 - Timestamps must use ISO 8601 format in UTC timezone (e.g., "2025-10-24T15:30:00.000Z")
-- The `directories`, `files`, and `links` arrays are optional - a manifest with no entries (empty directory structure) is valid
+- The `directories`, `files`, and `links` arrays are optional - a LISH with no entries (empty directory structure) is valid
 - The `created`, `modified`, and `permissions` fields are optional - if `permissions` is not provided, file permissions will not be modified during extraction
 - If `permissions` is omitted, implementations should use default permissions for the target platform
 
