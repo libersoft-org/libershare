@@ -45,9 +45,9 @@ export class DataServer {
 
 					if (manifest.id) {
 						this.manifests.set(manifest.id as LishId, manifest);
-						console.log(`  Loaded: ${file} (id: ${manifest.id})`);
+						console.log(`  Loaded: ${filePath} (id: ${manifest.id})`);
 					} else {
-						console.log(`  Skipped: ${file} (no id field)`);
+						console.log(`  Skipped: ${filePath} (no id field)`);
 					}
 				} catch (error) {
 					console.log(`  Error loading ${file}:`, error);

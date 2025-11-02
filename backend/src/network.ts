@@ -152,6 +152,10 @@ export class Network {
 				}),
 				dht: kadDHT({
 					clientMode: false,
+					// Reduce DHT random walk spam in small networks
+					// These control how often the node queries itself to maintain routing table
+					initialQuerySelfInterval: 3600000, // 1 hour (default: 1000ms)
+					querySelfInterval: 3600000, // 1 hour (default: 10000ms)
 				}),
 			},
 		};
@@ -190,21 +194,21 @@ export class Network {
 		}
 
 
-
-		console.log('Port:', settings.network.port);
 		this.node = await createLibp2p(config);
+		console.log('Port:', settings.network.port);
+		console.log('Node ID:', this.node.peerId.toString());
 		await this.node.start();
 		const addresses = this.node.getMultiaddrs();
-		console.log('Node started with ID:', this.node.peerId.toString());
 		console.log('Listening on addresses:');
 		addresses.forEach(addr => console.log('  -', addr.toString()));
 
 		this.pubsub = this.node.services.pubsub as PubSub;
 
 		// Register lish protocol handler
+		// runOnLimitedConnection allows handling streams on relay/limited connections
 		await this.node.handle(LISH_PROTOCOL, async (stream) => {
 			await handleLishProtocol(stream, this.dataServer);
-		});
+		}, { runOnLimitedConnection: true });
 		console.log(`✓ Registered ${LISH_PROTOCOL} protocol handler`);
 
 		// DHT is configured in server mode (clientMode: false) for LAN
@@ -274,7 +278,11 @@ export class Network {
 		});
 
 		this.node.addEventListener('peer:connect', (evt) => {
-			console.log('✅ new connection with peer:', evt.detail.toString());
+			const peerId = evt.detail.toString();
+			const connections = this.node!.getConnections(evt.detail);
+			const remoteAddrs = connections.map(c => c.remoteAddr.toString());
+			console.log('✅ New peer connected:', peerId);
+			console.log('   Remote addresses:', remoteAddrs.join(', '));
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 			this.subscribeToPink();
 		});
@@ -338,7 +346,7 @@ export class Network {
 			// console.log('  Pubsub peer list:', this.pubsub.getPeers().map((p: any) => p.toString()));
 
 			this.pingInterval = setInterval(async () => {
-				await this.sendPing();
+				await this.sendPink();
 			}, 10000);
 		}
 
@@ -350,7 +358,7 @@ export class Network {
 
 		await this.subscribeToPink();
 
-		this.addressInterval = setInterval(() => {this.printMultiaddrs()}, 30000);
+		//this.addressInterval = setInterval(() => {this.printMultiaddrs()}, 30000);
 
 	}
 
@@ -381,7 +389,7 @@ export class Network {
 	}
 
 
-	public async sendPing() {
+	public async sendPink() {
 		if (!this.pubsub || !this.node) {
 			console.error('Network not started');
 			return;
@@ -507,6 +515,22 @@ export class Network {
 
 			console.log(`${emoji} ${addr.toString()}`);
 		});
+	}
+
+	// Open a stream to a peer with a specific protocol
+	async dialProtocol(peerId: string, multiaddrs: any[], protocol: string) {
+		if (!this.node) {
+			throw new Error('Network not started');
+		}
+
+		// Dial the peer
+		const connection = await this.node.dial(multiaddrs);
+
+		// Open a stream with the protocol
+		// runOnLimitedConnection allows opening streams even on relay/limited connections
+		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
+
+		return stream;
 	}
 
 	async stop() {

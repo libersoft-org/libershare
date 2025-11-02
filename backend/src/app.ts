@@ -1,4 +1,5 @@
 import { Network } from './network.ts';
+import { Downloader } from './downloader.ts';
 import * as readline from 'readline';
 
 	// Parse command line arguments
@@ -24,7 +25,7 @@ import * as readline from 'readline';
 		terminal: false
 	});
 
-	console.log('\nCommands: p=pink, c<multiaddr>=connect, f<peerid>=find, a=addresses, q=quit');
+	console.log('\nCommands: p=pink, c<multiaddr>=connect, f<peerid>=find, a=addresses, l<path>=download, q=quit');
 
 	rl.on('line', async (line) => {
 		const command = line.trim();
@@ -51,10 +52,25 @@ import * as readline from 'readline';
 			} catch (error: any) {
 				console.log('✗ Find peer failed:', error.message);
 			}
+		} else if (command.startsWith('l')) {
+			let manifestPath = command.slice(1).trim();
+			if (!manifestPath) {
+				manifestPath = '../../d/0/data/frontend.lish'
+			}
+			try {
+				const { join } = await import('path');
+				const downloadDir = join(dataDir, 'downloads');
+				const downloader = new Downloader(manifestPath, downloadDir, dataDir, network);
+				await downloader.init(manifestPath);
+				await downloader.download();
+				downloader.close();
+			} catch (error: any) {
+				console.log('✗ Download failed:', error.message);
+			}
 		} else {
 			switch (command) {
 				case 'p':
-					await network.sendPing();
+					await network.sendPink();
 					//console.log('→ Pink sent');
 					break;
 				case 'a':
