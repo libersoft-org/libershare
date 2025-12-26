@@ -112,7 +112,7 @@ export async function handleLishProtocol(stream: Stream, dataServer: DataServer)
 
 			// Write the response
 			const response: LishResponse = {
-				data: chunkData ? Array.from(chunkData) : null
+				data: chunkData ? Array.from(chunkData) : null,
 			};
 
 			const responseData = new TextEncoder().encode(JSON.stringify(response));

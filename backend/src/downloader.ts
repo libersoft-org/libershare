@@ -109,8 +109,8 @@ export class Downloader {
 	}
 
 	// Get all chunks that need to be downloaded
-	private getMissingChunks(): Array<{ fileIndex: number, chunkIndex: number, chunkId: ChunkId }> {
-		const missing: Array<{ fileIndex: number, chunkIndex: number, chunkId: ChunkId }> = [];
+	private getMissingChunks(): Array<{ fileIndex: number; chunkIndex: number; chunkId: ChunkId }> {
+		const missing: Array<{ fileIndex: number; chunkIndex: number; chunkId: ChunkId }> = [];
 
 		if (!this.manifest.files) {
 			return missing;

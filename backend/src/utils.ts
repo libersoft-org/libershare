@@ -21,6 +21,4 @@ export class Utils {
 		const i = sizes.indexOf(suffix);
 		return Math.floor(parseFloat(num) * Math.pow(1024, i));
 	}
-
 }
-

@@ -93,13 +93,12 @@ export class Network {
 		console.log('✓ Datastore opened at:', datastorePath);
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
 
-
 		// Build transports array
 		const transports: any[] = [tcp()];
 
 		// Add circuit relay transport if client mode is enabled
 		const relayClientMode = settings.relay?.client?.mode || 'force';
-		const relayClientEnabled = (relayClientMode === 'force' || relayClientMode === 'auto');
+		const relayClientEnabled = relayClientMode === 'force' || relayClientMode === 'auto';
 		if (relayClientEnabled) {
 			transports.push(circuitRelayTransport());
 			console.log(`✓ Circuit relay client enabled (mode: ${relayClientMode})`);
@@ -142,11 +141,11 @@ export class Network {
 				pubsub: gossipsub({
 					emitSelf: false,
 					allowPublishToZeroTopicPeers: true,
-					floodPublish: true,  // Send to all peers, not just mesh (for small networks)
-					D: 2,        // Optimal degree for small networks (2-3 nodes)
-					Dlo: 1,      // Minimum mesh size
-					Dhi: 3,      // Maximum mesh size
-					Dlazy: 2,    // Lazy peers (for gossip)
+					floodPublish: true, // Send to all peers, not just mesh (for small networks)
+					D: 2, // Optimal degree for small networks (2-3 nodes)
+					Dlo: 1, // Minimum mesh size
+					Dhi: 3, // Maximum mesh size
+					Dlazy: 2, // Lazy peers (for gossip)
 					heartbeatInterval: 1000, // Check mesh every second (default is 1000ms)
 					fanoutTTL: 60000,
 				}),
@@ -165,8 +164,8 @@ export class Network {
 			const maxReservations = settings.relay.server.maxReservations || 15;
 			config.services.relay = circuitRelayServer({
 				reservations: {
-					maxReservations
-				}
+					maxReservations,
+				},
 			});
 			console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservations})`);
 		}
@@ -176,9 +175,6 @@ export class Network {
 			config.services.autonat = autoNAT();
 			console.log('✓ AutoNAT enabled');
 		}
-
-
-
 
 		// Add bootstrap if peers are configured
 		if (settings.network.bootstrapPeers.length > 0) {
@@ -193,7 +189,6 @@ export class Network {
 			];
 		}
 
-
 		this.node = await createLibp2p(config);
 		console.log('Port:', settings.network.port);
 		console.log('Node ID:', this.node.peerId.toString());
@@ -206,9 +201,13 @@ export class Network {
 
 		// Register lish protocol handler
 		// runOnLimitedConnection allows handling streams on relay/limited connections
-		await this.node.handle(LISH_PROTOCOL, async (stream) => {
-			await handleLishProtocol(stream, this.dataServer);
-		}, { runOnLimitedConnection: true });
+		await this.node.handle(
+			LISH_PROTOCOL,
+			async stream => {
+				await handleLishProtocol(stream, this.dataServer);
+			},
+			{ runOnLimitedConnection: true }
+		);
 		console.log(`✓ Registered ${LISH_PROTOCOL} protocol handler`);
 
 		// DHT is configured in server mode (clientMode: false) for LAN
@@ -217,10 +216,6 @@ export class Network {
 			const mode = dht.clientMode === false ? 'server' : 'client';
 			console.log('✓ DHT running in', mode, 'mode');
 		}
-
-
-
-
 
 		//if (this.enablePink)
 		{
@@ -234,34 +229,26 @@ export class Network {
 				// console.log('💓  Pink mesh peers:', meshPeers.length);
 				// console.log('💓  Pink subscribers:', subscribers.length, subscribers.map(p => p.toString()).slice(0, 2));
 				//console.log('💓peers:', this.node!.getPeers().length, 'mesh:', meshPeers.length, 'subs:', subscribers.length, 'topics:', topics.length);
-
 			});
 
-			this.pubsub.addEventListener('gossipsub:graft', (evt) => {
+			this.pubsub.addEventListener('gossipsub:graft', evt => {
 				console.log('🌿 GRAFT: ', evt.detail.peerId, ' joined ', evt.detail.topic);
 				console.log('   Total mesh peers for ', evt.detail.topic, ':', this.pubsub!.getMeshPeers(evt.detail.topic).length);
 			});
 
-			this.pubsub.addEventListener('gossipsub:prune', (evt) => {
+			this.pubsub.addEventListener('gossipsub:prune', evt => {
 				console.log('✂️  PRUNE: peer left mesh');
 				console.log('   Peer:', evt.detail.peerId);
 				console.log('   Topic:', evt.detail.topic);
 			});
 		}
 
-
-
-
-
-
 		// Debug: Check peer store
 		console.log('Peers in store:', this.node.getPeers().length);
 		console.log('Services loaded:', Object.keys(this.node.services));
 
-
-
 		// Create promise that resolves when first peer connects
-		const firstPeerConnected = new Promise<void>((resolve) => {
+		const firstPeerConnected = new Promise<void>(resolve => {
 			if (this.node!.getPeers().length > 0) {
 				resolve();
 			} else {
@@ -269,15 +256,13 @@ export class Network {
 			}
 		});
 
-
-
 		// Listen for peer discovery and connection events
-		this.node.addEventListener('peer:discovery', (evt) => {
+		this.node.addEventListener('peer:discovery', evt => {
 			const peerId = evt.detail.id.toString();
 			console.log('🔍 Discovered peer:', peerId);
 		});
 
-		this.node.addEventListener('peer:connect', (evt) => {
+		this.node.addEventListener('peer:connect', evt => {
 			const peerId = evt.detail.toString();
 			const connections = this.node!.getConnections(evt.detail);
 			const remoteAddrs = connections.map(c => c.remoteAddr.toString());
@@ -287,7 +272,7 @@ export class Network {
 			this.subscribeToPink();
 		});
 
-		this.node.addEventListener('peer:disconnect', (evt) => {
+		this.node.addEventListener('peer:disconnect', evt => {
 			console.log('❌ lost connection with peer:', evt.detail.toString());
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 		});
@@ -295,7 +280,10 @@ export class Network {
 		// Relay event listeners
 		this.node.addEventListener('relay:created-reservation' as any, (evt: any) => {
 			console.log('🔄 Relay reservation created with:', evt.detail.relay.toString());
-			console.log('  (relay) Updated multiaddrs:', this.node!.getMultiaddrs().map(ma => ma.toString()));
+			console.log(
+				'  (relay) Updated multiaddrs:',
+				this.node!.getMultiaddrs().map(ma => ma.toString())
+			);
 		});
 
 		this.node.addEventListener('relay:removed' as any, (evt: any) => {
@@ -309,7 +297,6 @@ export class Network {
 		this.node.addEventListener('relay:found-enough-relays' as any, (evt: any) => {
 			console.log('✓ Found enough relays');
 		});
-
 
 		// Manually dial bootstrap peers FIRST
 		// Bootstrap module discovers peers but doesn't auto-connect
@@ -326,10 +313,9 @@ export class Network {
 				}
 			}
 
-
 			// Wait for first peer to connect (with timeout)
 			console.log('Waiting for peer connection...');
-			const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+			const timeout = new Promise<void>(resolve => setTimeout(resolve, 5000));
 			await Promise.race([firstPeerConnected, timeout]);
 
 			if (this.node.getPeers().length > 0) {
@@ -339,8 +325,7 @@ export class Network {
 			}
 		}
 
-		if (this.enablePink)
-		{
+		if (this.enablePink) {
 			// console.log('  Libp2p peers:', this.node.getPeers().length);
 			// console.log('  Pubsub peers:', this.pubsub.getPeers().length);
 			// console.log('  Pubsub peer list:', this.pubsub.getPeers().map((p: any) => p.toString()));
@@ -355,23 +340,18 @@ export class Network {
 			this.handleMessage(evt.detail);
 		});
 
-
 		await this.subscribeToPink();
 
 		//this.addressInterval = setInterval(() => {this.printMultiaddrs()}, 30000);
-
 	}
 
-
-	private async subscribeToPink()
-	{
+	private async subscribeToPink() {
 		// Subscribe to pink and ponk topics - AFTER peer connection - does this matter?
 		console.log('Subscribing to pink and ponk topics');
 		this.pubsub.subscribe(PINK_TOPIC);
 		this.pubsub.subscribe(PONK_TOPIC);
 		console.log('✓ Subscribed to topics:', this.pubsub.getTopics());
 	}
-
 
 	private handleMessage(msgEvent: any) {
 		try {
@@ -387,7 +367,6 @@ export class Network {
 			console.error('Error in handleMessage:', error);
 		}
 	}
-
 
 	public async sendPink() {
 		if (!this.pubsub || !this.node) {
@@ -493,9 +472,7 @@ export class Network {
 					} else if (nodeAddr.family === 4) {
 						const octets = nodeAddr.address.split('.').map(Number);
 						// Check for private IPv4 ranges
-						if (octets[0] === 10 ||
-						    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
-						    (octets[0] === 192 && octets[1] === 168)) {
+						if (octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168)) {
 							emoji = '🏢'; // LAN
 						} else {
 							emoji = '🌍'; // WAN
@@ -558,17 +535,14 @@ export class Network {
 	}
 
 	async findPeer(peerId: PeerId) {
-
 		console.log('Finding peer:');
 
 		for await (const peer of this.node.peerRouting.getClosestPeers(peerId.toMultihash().bytes)) {
-  		console.log(peer.id, peer.multiaddrs)
+			console.log(peer.id, peer.multiaddrs);
 		}
 
 		const peer: PeerInfo = await this.node.peerRouting.findPeer(peerId);
 		console.log('Found it, multiaddrs are:');
-		peer.multiaddrs.forEach((ma) => console.log(ma.toString()));
+		peer.multiaddrs.forEach(ma => console.log(ma.toString()));
 	}
-
 }
-

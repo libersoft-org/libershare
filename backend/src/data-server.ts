@@ -94,9 +94,7 @@ export class DataServer {
 					console.log(`Error reading chunk from ${dataFilePath}:`, error);
 					return null;
 				}
-			}
-			else
-			{
+			} else {
 				console.warn(`Chunk not found: ${file.path}: ${chunkId}`);
 			}
 		}
@@ -104,5 +102,4 @@ export class DataServer {
 		console.log(`Chunk not found: ${chunkId}`);
 		return null;
 	}
-
 }
