@@ -1,7 +1,8 @@
 <script lang="ts">
 	import MainMenu from '../components/MainMenu.svelte';
 	import Items from '../components/Items.svelte';
-	type Page = 'main' | 'storage' | 'movies' | 'series';
+	import ExitMenu from '../components/ExitMenu.svelte';
+	type Page = 'main' | 'storage' | 'movies' | 'series' | 'exit';
 	let currentPage = $state<Page>('main');
 	let pageHistory = $state<Page[]>([]);
 	
@@ -38,6 +39,11 @@
 		if (selectedId === 'movies') navigateTo('movies');
 		else if (selectedId === 'series') navigateTo('series');
 	}
+	
+	function handleExitMenuSelect(selectedId: string): void {
+		// TODO: Implement functionality
+		console.log('Exit menu selected:', selectedId);
+	}
 </script>
 
 <svelte:head>
@@ -48,7 +54,12 @@
 		title="LiberShare" 
 		items={mainMenuItems} 
 		onselect={handleMainMenuSelect}
-		onback={goBack}
+		onback={() => navigateTo('exit')}
+	/>
+{:else if currentPage === 'exit'}
+	<ExitMenu 
+		onselect={handleExitMenuSelect}
+		onback={() => currentPage = 'main'}
 	/>
 {:else if currentPage === 'storage'}
 	<MainMenu 
