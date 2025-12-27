@@ -21,10 +21,10 @@ class InputManager {
 	registerScope(scopeId: string, handlers: Partial<Record<InputAction, InputCallback>>): () => void {
 		// Remove existing scope if it exists
 		this.unregisterScope(scopeId);
-		
+
 		const scopeMap = new Map<InputAction, InputCallback>();
 		this.scopeCallbacks.set(scopeId, scopeMap);
-		
+
 		// Add to stack (most recent scope handles input)
 		this.scopeStack.push(scopeId);
 
@@ -47,7 +47,7 @@ class InputManager {
 			this.scopeStack = this.scopeStack.filter(id => id !== scopeId);
 		}
 	}
-	
+
 	private emit(action: InputAction): void {
 		// Only call callback from the top scope (most recently registered)
 		if (this.scopeStack.length === 0) return;
@@ -79,6 +79,7 @@ class InputManager {
 					this.emit('right');
 					break;
 				case 'Enter':
+				case ' ':
 					e.preventDefault();
 					this.emit('confirmDown');
 					setTimeout(() => this.emit('confirmUp'), 100);
