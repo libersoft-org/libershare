@@ -24,10 +24,10 @@
 	function navigate(direction: string): void {
 		switch (direction) {
 			case 'up':
-				selectedRow = Math.max(0, selectedRow - 1);
+				selectedRow = selectedRow <= 0 ? files.length - 1 : selectedRow - 1;
 				break;
 			case 'down':
-				selectedRow = Math.min(files.length - 1, selectedRow + 1);
+				selectedRow = selectedRow >= files.length - 1 ? 0 : selectedRow + 1;
 				break;
 			case 'left':
 				selectedButton = 0;
