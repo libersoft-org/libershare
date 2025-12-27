@@ -10,7 +10,6 @@ class InputManager {
 	private gamepadStarted = false;
 	private scopeStack: string[] = [];
 	private scopeCallbacks: Map<string, Map<InputAction, InputCallback>> = new Map();
-
 	// Key repeat control
 	private heldKey: string | null = null;
 	private repeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -29,13 +28,10 @@ class InputManager {
 	registerScope(scopeId: string, handlers: Partial<Record<InputAction, InputCallback>>): () => void {
 		// Remove existing scope if it exists
 		this.unregisterScope(scopeId);
-
 		const scopeMap = new Map<InputAction, InputCallback>();
 		this.scopeCallbacks.set(scopeId, scopeMap);
-
 		// Add to stack (most recent scope handles input)
 		this.scopeStack.push(scopeId);
-
 		// Register handlers
 		for (const [action, callback] of Object.entries(handlers)) {
 			if (callback) {
@@ -43,7 +39,6 @@ class InputManager {
 				scopeMap.set(inputAction, callback);
 			}
 		}
-
 		this.start();
 		return () => this.unregisterScope(scopeId);
 	}
@@ -102,36 +97,27 @@ class InputManager {
 			// Handle arrow keys with custom repeat
 			if (arrowKeys.includes(e.key)) {
 				e.preventDefault();
-
 				// If it's a repeat event from the system, ignore it (we handle repeat ourselves)
 				if (e.repeat) return;
-
 				// If same key is already held, ignore
 				if (this.heldKey === e.key) return;
-
 				// Clear any existing repeat for different key
 				clearRepeat();
-
 				const action = getActionForKey(e.key);
 				if (!action) return;
-
 				// Emit immediately on first press
 				this.emit(action);
-
 				// Set up custom repeat
 				this.heldKey = e.key;
 				this.repeatTimer = setTimeout(() => {
 					this.repeatInterval = setInterval(() => {
-						if (this.heldKey === e.key) {
-							this.emit(action);
-						}
+						if (this.heldKey === e.key) this.emit(action);
 					}, get(inputRepeatDelay));
 				}, get(inputInitialDelay));
-
 				return;
 			}
-
-			// Handle other keys normally
+			// Handle other keys normally (no repeat)
+			if (e.repeat) return;
 			switch (e.key) {
 				case 'Enter':
 				case ' ':
@@ -146,13 +132,9 @@ class InputManager {
 					break;
 			}
 		};
-
 		this.keyupHandler = (e: KeyboardEvent) => {
-			if (arrowKeys.includes(e.key) && this.heldKey === e.key) {
-				clearRepeat();
-			}
+			if (arrowKeys.includes(e.key) && this.heldKey === e.key) clearRepeat();
 		};
-
 		window.addEventListener('keydown', this.keydownHandler);
 		window.addEventListener('keyup', this.keyupHandler);
 	}
