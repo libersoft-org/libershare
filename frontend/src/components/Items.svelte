@@ -64,6 +64,7 @@
 
 	function openItem(): void {
 		selectedItem = items[selectedIndex];
+		isAPressed = false;
 		// Cleanup input when opening detail
 		cleanupInput?.();
 		cleanupInput = null;
