@@ -16,40 +16,52 @@
 		{ id: 3, name: `${itemTitle} - 2160p.mp4`, size: '26.8 GB' },
 		{ id: 4, name: `${itemTitle} - 4320p.mp4`, size: '68.2 GB' },
 	];
-	let selectedRow = $state(0);
+	let selectedRow = $state(-1); // -1 = image, 0+ = files
 	let selectedButton = $state(0); // 0 = Download, 1 = Play
 	let isAPressed = $state(false);
 	let fileElements: HTMLElement[] = $state([]);
+	let imageElement: HTMLElement;
 
 	function navigate(direction: string): void {
 		switch (direction) {
 			case 'up':
-				selectedRow = selectedRow <= 0 ? files.length - 1 : selectedRow - 1;
+				selectedRow = selectedRow <= -1 ? files.length - 1 : selectedRow - 1;
 				break;
 			case 'down':
-				selectedRow = selectedRow >= files.length - 1 ? 0 : selectedRow + 1;
+				selectedRow = selectedRow >= files.length - 1 ? -1 : selectedRow + 1;
 				break;
 			case 'left':
-				selectedButton = 0;
+				if (selectedRow >= 0) selectedButton = 0;
 				break;
 			case 'right':
-				selectedButton = 1;
+				if (selectedRow >= 0) selectedButton = 1;
 				break;
 		}
-		scrollToSelectedFile();
+		scrollToSelected();
 	}
 
-	function scrollToSelectedFile(): void {
-		const selectedElement = fileElements[selectedRow];
-		if (selectedElement) {
-			selectedElement.scrollIntoView({
+	function scrollToSelected(): void {
+		if (selectedRow === -1) {
+			imageElement?.scrollIntoView({
 				behavior: 'smooth',
 				block: 'center',
 			});
+		} else {
+			const selectedElement = fileElements[selectedRow];
+			if (selectedElement) {
+				selectedElement.scrollIntoView({
+					behavior: 'smooth',
+					block: 'center',
+				});
+			}
 		}
 	}
 
 	function selectButton(): void {
+		if (selectedRow === -1) {
+			// Image selected - no action for now
+			return;
+		}
 		const action = selectedButton === 0 ? 'download' : 'play';
 		console.log(`${action} file:`, files[selectedRow].name);
 	}
@@ -98,6 +110,14 @@
 		aspect-ratio: 16 / 9;
 		border-radius: 1vw;
 		overflow: hidden;
+		border: 3px solid transparent;
+		box-sizing: border-box;
+		transition: all 0.2s ease;
+	}
+
+	.detail .content .image.selected {
+		border-color: #fff;
+		box-shadow: 0 0 25px rgba(255, 255, 255, 0.5);
 	}
 
 	.detail .content .image img {
@@ -127,7 +147,7 @@
 <div class="detail">
 	<Breadcrumb items={[category, `${itemTitle}`]} />
 	<div class="content">
-		<div class="image">
+		<div class="image" class:selected={selectedRow === -1} bind:this={imageElement}>
 			<img src="https://picsum.photos/seed/{itemId}/800/450" alt={itemTitle} />
 		</div>
 		<div class="files">
