@@ -19,6 +19,7 @@
 	let selectedRow = $state(0);
 	let selectedButton = $state(0); // 0 = Download, 1 = Play
 	let isAPressed = $state(false);
+	let fileElements: HTMLElement[] = $state([]);
 
 	function navigate(direction: string): void {
 		switch (direction) {
@@ -34,6 +35,17 @@
 			case 'right':
 				selectedButton = 1;
 				break;
+		}
+		scrollToSelectedFile();
+	}
+
+	function scrollToSelectedFile(): void {
+		const selectedElement = fileElements[selectedRow];
+		if (selectedElement) {
+			selectedElement.scrollIntoView({
+				behavior: 'smooth',
+				block: 'center',
+			});
 		}
 	}
 
@@ -121,7 +133,9 @@
 		<div class="files">
 			<div class="title">Files</div>
 			{#each files as file, rowIndex (file.id)}
-				<FileItem name={file.name} size={file.size} selected={rowIndex === selectedRow} {selectedButton} pressed={isAPressed} />
+				<div bind:this={fileElements[rowIndex]}>
+					<FileItem name={file.name} size={file.size} selected={rowIndex === selectedRow} {selectedButton} pressed={isAPressed} />
+				</div>
 			{/each}
 		</div>
 	</div>
