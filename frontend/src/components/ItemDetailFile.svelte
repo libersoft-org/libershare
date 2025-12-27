@@ -28,24 +28,32 @@
 		border-color: rgba(255, 255, 255, 0.3);
 	}
 
-	.info {
+	.filerow .info {
 		display: flex;
 		flex-direction: column;
 		gap: 0.5vw;
 	}
 
-	.info .name {
+	.filerow .info .name {
 		font-size: 1.2vw;
 		font-weight: bold;
 		color: #fff;
 	}
 
-	.info .size {
+	.filerow.selected .info .name {
+		color: #dd0;
+	}
+
+	.filerow .info .size {
 		font-size: 1vw;
 		color: #888;
 	}
 
-	.actions {
+	.filerow.selected .info .size {
+		color: #aa0;
+	}
+
+	.filerow .actions {
 		display: flex;
 		gap: 1vw;
 	}
