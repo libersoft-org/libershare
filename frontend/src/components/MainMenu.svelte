@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getGamepadManager } from '../scripts/gamepad';
+	import { useInput } from '../scripts/input';
 	
 	interface Props {
 		title?: string;
@@ -9,14 +9,13 @@
 		onback?: () => void;
 	}
 	let { title = 'LiberShare', items, onselect, onback }: Props = $props();
-	const gamepad = getGamepadManager();
 	let selectedIndex = $state(0);
 	let isAPressed = $state(false);
 	
-	// Výpočet posunu pruhu - každá položka + gap = přibližně 280px
+	// Calculate offset - each item + gap = approximately 280px
 	let offset = $derived(selectedIndex * -280);
 	
-	// Nekonečná navigace (wrap around)
+	// Infinite navigation (wrap around)
 	function navigate(direction: string): void {
 		switch (direction) {
 			case 'left':
@@ -35,46 +34,16 @@
 	}
 	
 	onMount(() => {
-		gamepad.on('left', () => navigate('left'));
-		gamepad.on('right', () => navigate('right'));
-		gamepad.on('aDown', () => { 
-			isAPressed = true;
-			selectItem();
+		return useInput('main-menu', {
+			left: () => navigate('left'),
+			right: () => navigate('right'),
+			confirmDown: () => {
+				isAPressed = true;
+				selectItem();
+			},
+			confirmUp: () => { isAPressed = false; },
+			back: () => onback?.()
 		});
-		gamepad.on('aUp', () => { isAPressed = false; });
-		gamepad.on('bDown', () => onback?.());
-		gamepad.start();
-		
-		// Podpora klávesnice
-		const handleKeyboard = (e: KeyboardEvent) => {
-			switch(e.key) {
-				case 'ArrowLeft':
-					navigate('left');
-					break;
-				case 'ArrowRight':
-					navigate('right');
-					break;
-				case 'Enter':
-					isAPressed = true;
-					selectItem();
-					setTimeout(() => { isAPressed = false; }, 100);
-					break;
-				case 'Escape':
-					onback?.();
-					break;
-			}
-		};
-		
-		window.addEventListener('keydown', handleKeyboard);
-		
-		return () => {
-			window.removeEventListener('keydown', handleKeyboard);
-			gamepad.off('left');
-			gamepad.off('right');
-			gamepad.off('aDown');
-			gamepad.off('aUp');
-			gamepad.off('bDown');
-		};
 	});
 </script>
 

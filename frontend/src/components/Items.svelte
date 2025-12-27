@@ -1,12 +1,12 @@
 <script lang="ts">
 	import ItemsItem from './ItemsItem.svelte';
 	import { onMount } from 'svelte';
-	import { getGamepadManager } from '../scripts/gamepad';
+	import { useInput } from '../scripts/input';
 	interface Props {
 		title?: string;
 		onback?: () => void;
 	}
-	let { title = 'Položky', onback }: Props = $props();
+	let { title = 'Items', onback }: Props = $props();
 	// Some test data
 	const items = Array.from({ length: 200 }, (_, i) => ({
 		id: i + 1,
@@ -15,7 +15,6 @@
 	let selectedIndex = $state(0);
 	let isAPressed = $state(false);
 	let itemElements: HTMLElement[] = $state([]);
-	const gamepad = getGamepadManager();
 
 	// Calculate columns by comparing Y positions of items
 	function getColumnsCount(): number {
@@ -61,24 +60,15 @@
 	}
 
 	onMount(() => {
-		gamepad.on('up', () => navigate('up'));
-		gamepad.on('down', () => navigate('down'));
-		gamepad.on('left', () => navigate('left'));
-		gamepad.on('right', () => navigate('right'));
-		gamepad.on('aDown', () => { isAPressed = true; });
-		gamepad.on('aUp', () => { isAPressed = false; });
-		gamepad.on('bDown', () => onback?.());
-		gamepad.start();
-		
-		return () => {
-			gamepad.off('up');
-			gamepad.off('down');
-			gamepad.off('left');
-			gamepad.off('right');
-			gamepad.off('aDown');
-			gamepad.off('aUp');
-			gamepad.off('bDown');
-		};
+		return useInput('items', {
+			up: () => navigate('up'),
+			down: () => navigate('down'),
+			left: () => navigate('left'),
+			right: () => navigate('right'),
+			confirmDown: () => { isAPressed = true; },
+			confirmUp: () => { isAPressed = false; },
+			back: () => onback?.()
+		});
 	});
 </script>
 
