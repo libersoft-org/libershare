@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { useInput } from '../scripts/input';
+	import MenuButton from './MenuButton.svelte';
 	interface Props {
 		onselect?: (id: string) => void;
 		onback?: () => void;
@@ -72,43 +73,17 @@
 		width: 100%;
 		max-width: 400px;
 	}
-
-	.exit-menu-item {
-		padding: 1.2rem 2rem;
-		background: rgba(255, 255, 255, 0.15);
-		border: 2px solid rgba(255, 255, 255, 0.3);
-		border-radius: 12px;
-		font-size: 1.4rem;
-		color: #fff;
-		text-align: center;
-		transition: all 0.2s ease;
-		backdrop-filter: blur(10px);
-		opacity: 0.7;
-	}
-
-	.exit-menu-item.selected {
-		background: rgba(255, 255, 255, 0.3);
-		border-color: #fff;
-		border-width: 3px;
-		box-shadow: 0 0 20px rgba(255, 255, 255, 0.4);
-		font-weight: bold;
-		opacity: 1;
-		transform: scale(1.02);
-	}
-
-	.exit-menu-item.selected.pressed {
-		transform: scale(0.98);
-		background: rgba(255, 255, 255, 0.4);
-	}
 </style>
 
 <div class="exit-menu-container">
 	<h1 class="exit-menu-title">Exit</h1>
 	<div class="exit-menu-items">
 		{#each items as item, index (item.id)}
-			<div class="exit-menu-item" class:selected={index === selectedIndex} class:pressed={index === selectedIndex && isAPressed}>
-				{item.label}
-			</div>
+			<MenuButton 
+				label={item.label}
+				selected={index === selectedIndex}
+				pressed={isAPressed}
+			/>
 		{/each}
 	</div>
 </div>

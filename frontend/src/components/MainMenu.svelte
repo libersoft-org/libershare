@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { useInput } from '../scripts/input';
+	import MenuButton from './MenuButton.svelte';
 	
 	interface Props {
 		title?: string;
@@ -82,36 +83,6 @@
 		transition: transform 0.3s ease-out;
 		padding: 0 50vw;
 	}
-	
-	.menu-item {
-		flex-shrink: 0;
-		padding: 1.5rem 3rem;
-		background: rgba(255, 255, 255, 0.15);
-		border: 2px solid rgba(255, 255, 255, 0.3);
-		border-radius: 12px;
-		font-size: 1.6rem;
-		color: #fff;
-		text-align: center;
-		white-space: nowrap;
-		transition: all 0.3s ease;
-		backdrop-filter: blur(10px);
-		opacity: 0.6;
-	}
-	
-	.menu-item.center {
-		background: rgba(255, 255, 255, 0.3);
-		border-color: #fff;
-		border-width: 3px;
-		box-shadow: 0 0 30px rgba(255, 255, 255, 0.5);
-		font-weight: bold;
-		opacity: 1;
-		transform: scale(1.1);
-	}
-	
-	.menu-item.center.pressed {
-		transform: scale(1.05);
-		background: rgba(255, 255, 255, 0.4);
-	}
 </style>
 
 <div class="menu-container">
@@ -119,13 +90,11 @@
 	<div class="menu-items-wrapper">
 		<div class="menu-items" style="transform: translateX({offset}px)">
 			{#each items as item, index (item.id)}
-				<div 
-					class="menu-item"
-					class:center={index === selectedIndex}
-					class:pressed={index === selectedIndex && isAPressed}
-				>
-					{item.label}
-				</div>
+				<MenuButton 
+					label={item.label}
+					selected={index === selectedIndex}
+					pressed={isAPressed}
+				/>
 			{/each}
 		</div>
 	</div>

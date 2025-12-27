@@ -9,8 +9,8 @@ PASS=`cat ./.secret_git`
 
 if [ "$#" -eq 0 ]; then
  echo "Generating commit message using GitHub Copilot..."
-	COMMIT_MSG=$(gh copilot explain "Analyze the changes in the following context and write a brief commit message with max. 50 characters. All in one line. Do not write anything else. No chitchat at the beginning or end. Here is the list of changes: `git diff`" 2>/dev/null | grep -A2 "Explanation" | tail -1 | sed 's/^[ \t]*//' | sed 's/[ \t]*$//')
-	if [ -z "$COMMIT_MSG" ]; then
+ COMMIT_MSG=$(gh copilot explain "Analyze the changes in the following context and write a brief commit message with max. 50 characters. All in one line. Do not write anything else. No chitchat at the beginning or end. Here is the list of changes: `git diff`" 2>/dev/null | grep -A2 "Explanation" | tail -1 | sed 's/^[ \t]*//' | sed 's/[ \t]*$//')
+ if [ -z "$COMMIT_MSG" ]; then
   echo "\033[31mERROR:\033[0m Failed to generate commit message. Please provide one manually:"
   echo "Usage: $0 \"[COMMIT MESSAGE]\""
   exit 1
