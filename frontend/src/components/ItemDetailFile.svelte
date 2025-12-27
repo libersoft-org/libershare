@@ -1,6 +1,5 @@
 <script lang="ts">
 	import MenuButton from './MenuButton.svelte';
-	
 	interface Props {
 		name: string;
 		size: string;
@@ -12,46 +11,46 @@
 </script>
 
 <style>
-	.file-item {
+	.filerow {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
-		padding: 1rem;
+		justify-content: space-between;
+		padding: 1vw;
 		background: rgba(255, 255, 255, 0.05);
-		border: 2px solid transparent;
-		border-radius: 8px;
-		transition: all 0.2s ease;
+		border: 0.2vw solid transparent;
+		border-radius: 1vw;
+		transition: all 0.3s ease;
 	}
 
-	.file-item.selected {
+	.filerow.selected {
 		background: rgba(255, 255, 255, 0.1);
-		border-color: #555;
+		border-color: rgba(255, 255, 255, 0.2);
 	}
 
 	.info {
 		display: flex;
 		flex-direction: column;
-		gap: 0.3rem;
+		gap: 0.5vw;
 	}
 
-	.name {
-		font-size: 1rem;
-		font-weight: 500;
+	.info .name {
+		font-size: 1.2vw;
+		font-weight: bold;
 		color: #fff;
 	}
 
-	.size {
-		font-size: 0.9rem;
+	.info .size {
+		font-size: 1vw;
 		color: #888;
 	}
 
 	.actions {
 		display: flex;
-		gap: 1rem;
+		gap: 1vw;
 	}
 </style>
 
-<div class="file-item" class:selected>
+<div class="filerow" class:selected>
 	<div class="info">
 		<div class="name">{name}</div>
 		<div class="size">Size: {size}</div>
