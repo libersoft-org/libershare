@@ -67,6 +67,9 @@
 	}
 
 	onMount(() => {
+		// Scroll to top when opening detail
+		window.scrollTo({ top: 0, behavior: 'instant' });
+		
 		return useInput('item-detail', {
 			up: () => navigate('up'),
 			down: () => navigate('down'),

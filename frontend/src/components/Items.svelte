@@ -1,7 +1,7 @@
 <script lang="ts">
 	import ItemsItem from './ItemsItem.svelte';
 	import ItemDetail from './ItemDetail.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { useInput } from '../scripts/input';
 	interface Props {
 		title?: string;
@@ -50,11 +50,11 @@
 		scrollToSelectedItem();
 	}
 
-	function scrollToSelectedItem(): void {
+	function scrollToSelectedItem(instant = false): void {
 		const selectedElement = itemElements[selectedIndex];
 		if (selectedElement) {
 			selectedElement.scrollIntoView({
-				behavior: 'smooth',
+				behavior: instant ? 'instant' : 'smooth',
 				block: 'center',
 				inline: 'center',
 			});
@@ -66,8 +66,10 @@
 		isAPressed = false;
 	}
 
-	function closeDetail(): void {
+	async function closeDetail(): Promise<void> {
 		selectedItem = null;
+		await tick();
+		scrollToSelectedItem(true);
 	}
 
 	onMount(() => {
