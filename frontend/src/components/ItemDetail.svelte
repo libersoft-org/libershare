@@ -3,7 +3,6 @@
 	import { useInput } from '../scripts/input';
 	import Breadcrumb from './Breadcrumb.svelte';
 	import FileItem from './ItemDetailFile.svelte';
-
 	interface Props {
 		category?: string;
 		itemTitle?: string;
@@ -11,13 +10,12 @@
 		onback?: () => void;
 	}
 	let { category = 'Movies', itemTitle = 'Item', itemId = 1, onback }: Props = $props();
-
-	// Mock files data
 	const files = [
-		{ id: 1, name: `${itemTitle} - 1080p.mp4`, size: '10.5 GB' },
-		{ id: 2, name: `${itemTitle} - 2160p.mp4`, size: '26.8 GB' },
+		{ id: 1, name: `${itemTitle} - 720p.mp4`, size: '2.7 GB' },
+		{ id: 2, name: `${itemTitle} - 1080p.mp4`, size: '10.5 GB' },
+		{ id: 3, name: `${itemTitle} - 2160p.mp4`, size: '26.8 GB' },
+		{ id: 4, name: `${itemTitle} - 4320p.mp4`, size: '68.2 GB' },
 	];
-
 	let selectedRow = $state(0);
 	let selectedButton = $state(0); // 0 = Download, 1 = Play
 	let isAPressed = $state(false);
@@ -66,25 +64,28 @@
 	.detail {
 		display: flex;
 		flex-direction: column;
-		min-height: 100vh;
+		align-items: center;
 		color: #fff;
 	}
 
 	.detail .content {
-		flex: 1;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		padding: 2rem;
-		gap: 2rem;
+		gap: 1vw;
+		width: 50vw;
+		padding: 1vw;
+		margin: 1vw;
+		border-radius: 1vw;
+		background-color: rgba(255, 255, 255, 0.05);
+		box-shadow: 0 0px 2vw rgba(0, 0, 0, 0.5);
 	}
 
 	.detail .content .image {
-		width: 50vw;
+		width: 100%;
 		aspect-ratio: 16 / 9;
-		border-radius: 12px;
+		border-radius: 1vw;
 		overflow: hidden;
-		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 	}
 
 	.detail .content .image img {
@@ -97,7 +98,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1vw;
-		width: 50vw;
+		width: 100%;
 	}
 
 	.detail .content .files .title {
@@ -105,7 +106,6 @@
 		align-items: center;
 		font-size: 1.5vw;
 		font-weight: bold;
-
 		padding: 1vw;
 		border-radius: 1vw;
 		background-color: #444;
