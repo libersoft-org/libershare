@@ -16,6 +16,22 @@ for (let i = 0; i < args.length; i++) {
 	}
 }
 
+const file = Bun.file(dataDir + '/settings.json');
+if (!(await file.exists())) {
+	let settings = {
+		network: {
+			port: 9090,
+			bootstrapPeers: [],
+		},
+		relay: {
+			server: {
+				enabled: true,
+			},
+		},
+	};
+	await file.write(JSON.stringify(settings, null, 1));
+}
+
 const network = new Network(dataDir, enablePink);
 
 // Set up readline interface for stdin
