@@ -81,6 +81,7 @@ class InputManager {
 					setTimeout(() => this.emit('confirmUp'), 100);
 					break;
 				case 'Escape':
+				case 'Backspace':
 					e.preventDefault();
 					this.emit('back');
 					break;
