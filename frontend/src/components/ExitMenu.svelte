@@ -52,9 +52,10 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		min-height: 100vh;
+		height: 100vh;
 		padding: 2rem;
 		box-sizing: border-box;
+		overflow: hidden;
 	}
 
 	.exit-menu-title {
