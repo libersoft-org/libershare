@@ -62,6 +62,7 @@ class InputManager {
 		const topScope = this.scopeStack[this.scopeStack.length - 1];
 		const scopeMap = this.scopeCallbacks.get(topScope);
 		const callback = scopeMap?.get(action);
+		console.log('[input] emit', action, 'scope:', topScope, 'stack:', [...this.scopeStack]);
 		if (callback) callback();
 	}
 

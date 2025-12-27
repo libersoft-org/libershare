@@ -1,7 +1,7 @@
 <script lang="ts">
 	import ItemsItem from './ItemsItem.svelte';
 	import ItemDetail from './ItemDetail.svelte';
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import { useInput } from '../scripts/input';
 	interface Props {
 		title?: string;
@@ -17,7 +17,6 @@
 	let isAPressed = $state(false);
 	let itemElements: HTMLElement[] = $state([]);
 	let selectedItem = $state<{ id: number; title: string } | null>(null);
-	let cleanupInput: (() => void) | null = null;
 
 	// Calculate columns by comparing Y positions of items
 	function getColumnsCount(): number {
@@ -65,19 +64,14 @@
 	function openItem(): void {
 		selectedItem = items[selectedIndex];
 		isAPressed = false;
-		// Cleanup input when opening detail
-		cleanupInput?.();
-		cleanupInput = null;
 	}
 
 	function closeDetail(): void {
 		selectedItem = null;
-		// Re-register input when closing detail
-		setupInput();
 	}
 
-	function setupInput(): void {
-		cleanupInput = useInput('items', {
+	onMount(() => {
+		return useInput('items', {
 			up: () => navigate('up'),
 			down: () => navigate('down'),
 			left: () => navigate('left'),
@@ -91,14 +85,6 @@
 			},
 			back: () => onback?.(),
 		});
-	}
-
-	onMount(() => {
-		setupInput();
-	});
-
-	onDestroy(() => {
-		cleanupInput?.();
 	});
 </script>
 
