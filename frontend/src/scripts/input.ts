@@ -1,12 +1,20 @@
+import { get } from 'svelte/store';
 import { getGamepadManager } from './gamepad.ts';
+import { inputInitialDelay, inputRepeatDelay } from './settings.ts';
 export type InputAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'confirmUp' | 'back';
 export type InputCallback = () => void;
 
 class InputManager {
-	private keyboardHandler: ((e: KeyboardEvent) => void) | null = null;
+	private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+	private keyupHandler: ((e: KeyboardEvent) => void) | null = null;
 	private gamepadStarted = false;
 	private scopeStack: string[] = [];
 	private scopeCallbacks: Map<string, Map<InputAction, InputCallback>> = new Map();
+
+	// Key repeat control
+	private heldKey: string | null = null;
+	private repeatTimer: ReturnType<typeof setTimeout> | null = null;
+	private repeatInterval: ReturnType<typeof setInterval> | null = null;
 
 	start(): void {
 		this.startKeyboard();
@@ -58,26 +66,72 @@ class InputManager {
 	}
 
 	private startKeyboard(): void {
-		if (this.keyboardHandler) return;
-		this.keyboardHandler = (e: KeyboardEvent) => {
-			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-			switch (e.key) {
+		if (this.keydownHandler) return;
+		const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+		const getActionForKey = (key: string): InputAction | null => {
+			switch (key) {
 				case 'ArrowUp':
-					e.preventDefault();
-					this.emit('up');
-					break;
+					return 'up';
 				case 'ArrowDown':
-					e.preventDefault();
-					this.emit('down');
-					break;
+					return 'down';
 				case 'ArrowLeft':
-					e.preventDefault();
-					this.emit('left');
-					break;
+					return 'left';
 				case 'ArrowRight':
-					e.preventDefault();
-					this.emit('right');
-					break;
+					return 'right';
+				default:
+					return null;
+			}
+		};
+
+		const clearRepeat = () => {
+			if (this.repeatTimer) {
+				clearTimeout(this.repeatTimer);
+				this.repeatTimer = null;
+			}
+			if (this.repeatInterval) {
+				clearInterval(this.repeatInterval);
+				this.repeatInterval = null;
+			}
+			this.heldKey = null;
+		};
+
+		this.keydownHandler = (e: KeyboardEvent) => {
+			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+			// Handle arrow keys with custom repeat
+			if (arrowKeys.includes(e.key)) {
+				e.preventDefault();
+
+				// If it's a repeat event from the system, ignore it (we handle repeat ourselves)
+				if (e.repeat) return;
+
+				// If same key is already held, ignore
+				if (this.heldKey === e.key) return;
+
+				// Clear any existing repeat for different key
+				clearRepeat();
+
+				const action = getActionForKey(e.key);
+				if (!action) return;
+
+				// Emit immediately on first press
+				this.emit(action);
+
+				// Set up custom repeat
+				this.heldKey = e.key;
+				this.repeatTimer = setTimeout(() => {
+					this.repeatInterval = setInterval(() => {
+						if (this.heldKey === e.key) {
+							this.emit(action);
+						}
+					}, get(inputRepeatDelay));
+				}, get(inputInitialDelay));
+
+				return;
+			}
+
+			// Handle other keys normally
+			switch (e.key) {
 				case 'Enter':
 				case ' ':
 					e.preventDefault();
@@ -91,14 +145,36 @@ class InputManager {
 					break;
 			}
 		};
-		window.addEventListener('keydown', this.keyboardHandler);
+
+		this.keyupHandler = (e: KeyboardEvent) => {
+			if (arrowKeys.includes(e.key) && this.heldKey === e.key) {
+				clearRepeat();
+			}
+		};
+
+		window.addEventListener('keydown', this.keydownHandler);
+		window.addEventListener('keyup', this.keyupHandler);
 	}
 
 	private stopKeyboard(): void {
-		if (this.keyboardHandler) {
-			window.removeEventListener('keydown', this.keyboardHandler);
-			this.keyboardHandler = null;
+		if (this.keydownHandler) {
+			window.removeEventListener('keydown', this.keydownHandler);
+			this.keydownHandler = null;
 		}
+		if (this.keyupHandler) {
+			window.removeEventListener('keyup', this.keyupHandler);
+			this.keyupHandler = null;
+		}
+		// Clear any active repeats
+		if (this.repeatTimer) {
+			clearTimeout(this.repeatTimer);
+			this.repeatTimer = null;
+		}
+		if (this.repeatInterval) {
+			clearInterval(this.repeatInterval);
+			this.repeatInterval = null;
+		}
+		this.heldKey = null;
 	}
 
 	private startGamepad(): void {

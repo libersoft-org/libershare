@@ -1,10 +1,8 @@
-import { writable, type Writable } from 'svelte/store';
+import { writable, get, type Writable } from 'svelte/store';
+import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone } from './settings.ts';
+
 export interface GamepadConfig {
 	deadzone?: number;
-	initialDelay?: number;
-	repeatDelay?: number;
-	fastRepeatDelay?: number;
-	fastThreshold?: number;
 }
 export interface GamepadState {
 	leftStickX: number;
@@ -13,19 +11,12 @@ export interface GamepadState {
 	rightStickY: number;
 	buttons: boolean[];
 }
-const DEFAULT_CONFIG: Required<GamepadConfig> = {
-	deadzone: 0.5,
-	initialDelay: 400,
-	repeatDelay: 150,
-	fastRepeatDelay: 50,
-	fastThreshold: 1000,
-};
 
 let globalGamepadManager: GamepadManager | null = null;
 
 export class GamepadManager {
 	private animationId: number | null = null;
-	private config: Required<GamepadConfig>;
+	private deadzone: number;
 	private lastInputTime = 0;
 	private firstInputTime = 0;
 	private callbacks: Map<string, (value: number) => void> = new Map();
@@ -38,8 +29,9 @@ export class GamepadManager {
 		buttons: [],
 	});
 
-	constructor(config: GamepadConfig = {}) {
-		this.config = { ...DEFAULT_CONFIG, ...config };
+	constructor() {
+		this.deadzone = get(gamepadDeadzone);
+		gamepadDeadzone.subscribe(value => this.deadzone = value);
 	}
 
 	start(): void {
@@ -149,11 +141,10 @@ export class GamepadManager {
 			});
 			this.previousButtons = buttons;
 			const currentTime = Date.now();
-			let currentDelay = this.config.initialDelay;
-			if (this.firstInputTime > 0) {
-				const holdDuration = currentTime - this.firstInputTime;
-				if (holdDuration > this.config.fastThreshold) currentDelay = this.config.fastRepeatDelay;
-				else if (holdDuration > this.config.initialDelay) currentDelay = this.config.repeatDelay;
+			const initialDelay = get(inputInitialDelay);
+			let currentDelay = initialDelay;
+			if (this.firstInputTime > 0 && currentTime - this.firstInputTime > initialDelay) {
+				currentDelay = get(inputRepeatDelay);
 			}
 			if (currentTime - this.lastInputTime > currentDelay) {
 				let inputDetected = false;
@@ -186,7 +177,7 @@ export class GamepadManager {
 			}
 			// Reset timing if stick returned to center and no D-pad pressed
 			const isDpadPressed = buttons[12] || buttons[13] || buttons[14] || buttons[15];
-			if (Math.abs(leftStickX) <= this.config.deadzone && Math.abs(leftStickY) <= this.config.deadzone && !isDpadPressed) {
+			if (Math.abs(leftStickX) <= this.deadzone && Math.abs(leftStickY) <= this.deadzone && !isDpadPressed) {
 				this.firstInputTime = 0;
 			}
 		}
@@ -195,19 +186,19 @@ export class GamepadManager {
 
 	private getDirections(x: number, y: number): string[] {
 		const directions: string[] = [];
-		if (Math.abs(y) > this.config.deadzone) {
-			if (y < -this.config.deadzone) directions.push('up');
-			else if (y > this.config.deadzone) directions.push('down');
+		if (Math.abs(y) > this.deadzone) {
+			if (y < -this.deadzone) directions.push('up');
+			else if (y > this.deadzone) directions.push('down');
 		}
-		if (Math.abs(x) > this.config.deadzone) {
-			if (x < -this.config.deadzone) directions.push('left');
-			else if (x > this.config.deadzone) directions.push('right');
+		if (Math.abs(x) > this.deadzone) {
+			if (x < -this.deadzone) directions.push('left');
+			else if (x > this.deadzone) directions.push('right');
 		}
 		return directions;
 	}
 }
 
-export function getGamepadManager(config?: GamepadConfig): GamepadManager {
-	if (!globalGamepadManager) globalGamepadManager = new GamepadManager(config);
+export function getGamepadManager(): GamepadManager {
+	if (!globalGamepadManager) globalGamepadManager = new GamepadManager();
 	return globalGamepadManager;
 }
