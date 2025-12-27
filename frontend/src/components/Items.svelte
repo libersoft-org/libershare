@@ -10,7 +10,7 @@
 	// Some test data
 	const items = Array.from({ length: 200 }, (_, i) => ({
 		id: i + 1,
-		title: 'Item ' + (i + 1)
+		title: 'Item ' + (i + 1),
 	}));
 	let selectedIndex = $state(0);
 	let isAPressed = $state(false);
@@ -54,7 +54,7 @@
 			selectedElement.scrollIntoView({
 				behavior: 'smooth',
 				block: 'center',
-				inline: 'center'
+				inline: 'center',
 			});
 		}
 	}
@@ -65,15 +65,19 @@
 			down: () => navigate('down'),
 			left: () => navigate('left'),
 			right: () => navigate('right'),
-			confirmDown: () => { isAPressed = true; },
-			confirmUp: () => { isAPressed = false; },
-			back: () => onback?.()
+			confirmDown: () => {
+				isAPressed = true;
+			},
+			confirmUp: () => {
+				isAPressed = false;
+			},
+			back: () => onback?.(),
 		});
 	});
 </script>
 
 <style>
-	.items-container {
+	.items {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
 		gap: 1vw;
@@ -84,14 +88,14 @@
 		place-items: stretch;
 	}
 
-	.items-container :global(.item) {
+	.items :global(.item) {
 		max-width: 400px;
 		width: 100%;
 		margin: 0 auto;
 	}
 </style>
 
-<div class="items-container">
+<div class="items">
 	{#each items as item, index (item.id)}
 		<div bind:this={itemElements[index]}>
 			<ItemsItem title={item.title} isGamepadHovered={index === selectedIndex} isAPressed={isAPressed && index === selectedIndex} />

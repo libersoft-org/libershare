@@ -48,7 +48,7 @@
 </script>
 
 <style>
-	.exit-menu-container {
+	.menu {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -59,7 +59,7 @@
 		overflow: hidden;
 	}
 
-	.exit-menu-title {
+	.menu .title {
 		font-size: 2.5rem;
 		font-weight: bold;
 		margin-bottom: 3rem;
@@ -68,7 +68,7 @@
 		text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
 	}
 
-	.exit-menu-items {
+	.menu .items {
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
@@ -77,15 +77,11 @@
 	}
 </style>
 
-<div class="exit-menu-container">
-	<h1 class="exit-menu-title">Exit</h1>
-	<div class="exit-menu-items">
+<div class="menu">
+	<h1 class="title">Exit</h1>
+	<div class="items">
 		{#each items as item, index (item.id)}
-			<MenuButton 
-				label={item.label}
-				selected={index === selectedIndex}
-				pressed={isAPressed}
-			/>
+			<MenuButton label={item.label} selected={index === selectedIndex} pressed={isAPressed} />
 		{/each}
 	</div>
 </div>

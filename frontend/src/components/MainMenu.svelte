@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { useInput } from '../scripts/input';
 	import MenuButton from './MenuButton.svelte';
-	
+
 	interface Props {
 		title?: string;
 		items: Array<{ id: string; label: string }>;
@@ -12,10 +12,10 @@
 	let { title = 'LiberShare', items, onselect, onback }: Props = $props();
 	let selectedIndex = $state(0);
 	let isAPressed = $state(false);
-	
+
 	// Calculate offset - each item + gap = approximately 280px
 	let offset = $derived(selectedIndex * -280);
-	
+
 	// Infinite navigation (wrap around)
 	function navigate(direction: string): void {
 		switch (direction) {
@@ -27,13 +27,13 @@
 				break;
 		}
 	}
-	
+
 	function selectItem(): void {
 		if (items[selectedIndex]) {
 			onselect?.(items[selectedIndex].id);
 		}
 	}
-	
+
 	onMount(() => {
 		return useInput('main-menu', {
 			left: () => navigate('left'),
@@ -42,14 +42,16 @@
 				isAPressed = true;
 				selectItem();
 			},
-			confirmUp: () => { isAPressed = false; },
-			back: () => onback?.()
+			confirmUp: () => {
+				isAPressed = false;
+			},
+			back: () => onback?.(),
 		});
 	});
 </script>
 
 <style>
-	.menu-container {
+	.menu {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -59,8 +61,8 @@
 		box-sizing: border-box;
 		overflow: hidden;
 	}
-	
-	.menu-title {
+
+	.menu .title {
 		font-size: 3rem;
 		font-weight: bold;
 		margin-bottom: 4rem;
@@ -68,14 +70,14 @@
 		text-align: center;
 		text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
 	}
-	
-	.menu-items-wrapper {
+
+	.menu .items-wrapper {
 		width: 100%;
 		overflow: hidden;
 		padding: 2rem 0;
 	}
-	
-	.menu-items {
+
+	.menu .items-wrapper .items {
 		display: flex;
 		flex-direction: row;
 		align-items: center;
@@ -85,16 +87,12 @@
 	}
 </style>
 
-<div class="menu-container">
-	<h1 class="menu-title">{title}</h1>
-	<div class="menu-items-wrapper">
-		<div class="menu-items" style="transform: translateX({offset}px)">
+<div class="menu">
+	<h1 class="title">{title}</h1>
+	<div class="items-wrapper">
+		<div class="items" style="transform: translateX({offset}px)">
 			{#each items as item, index (item.id)}
-				<MenuButton 
-					label={item.label}
-					selected={index === selectedIndex}
-					pressed={isAPressed}
-				/>
+				<MenuButton label={item.label} selected={index === selectedIndex} pressed={isAPressed} />
 			{/each}
 		</div>
 	</div>

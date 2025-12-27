@@ -21,7 +21,7 @@
 		backdrop-filter: blur(10px);
 		opacity: 0.6;
 	}
-	
+
 	.menu-button.selected {
 		background: rgba(255, 255, 255, 0.3);
 		border-color: #fff;
@@ -31,17 +31,13 @@
 		opacity: 1;
 		transform: scale(1.05);
 	}
-	
+
 	.menu-button.selected.pressed {
-		transform: scale(1.0);
+		transform: scale(1);
 		background: rgba(255, 255, 255, 0.4);
 	}
 </style>
 
-<div 
-	class="menu-button"
-	class:selected
-	class:pressed={selected && pressed}
->
+<div class="menu-button" class:selected class:pressed={selected && pressed}>
 	{label}
 </div>
