@@ -14,9 +14,6 @@
 	let selectedIndex = $state(0);
 	let isAPressed = $state(false);
 
-	// Calculate offset for horizontal menu - each item + gap = approximately 280px
-	let offset = $derived(selectedIndex * -280);
-
 	function navigate(direction: 'prev' | 'next'): void {
 		if (direction === 'prev') {
 			selectedIndex = selectedIndex === 0 ? items.length - 1 : selectedIndex - 1;
@@ -66,20 +63,23 @@
 
 	.items.horizontal {
 		flex-direction: row;
-		padding: 0 50vw;
+		padding: 0 calc(50vw - 100px);
 	}
 
 	.items.vertical {
 		flex-direction: column;
-		max-width: 400px;
 		margin: 0 auto;
 		gap: 1vw;
+	}
+
+	.items.vertical :global(.menu-button) {
+		width: 100%;
 	}
 </style>
 
 {#if orientation === 'horizontal'}
 	<div class="items-wrapper">
-		<div class="items horizontal" style="transform: translateX({offset}px)">
+		<div class="items horizontal" style="transform: translateX(calc({selectedIndex} * -232px))">
 			{#each items as item, index (item.id)}
 				<MenuButton label={item.label} selected={index === selectedIndex} pressed={isAPressed} />
 			{/each}

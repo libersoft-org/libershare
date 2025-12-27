@@ -20,6 +20,8 @@
 		transition: all 0.2s ease;
 		backdrop-filter: blur(10px);
 		opacity: 0.6;
+		box-sizing: border-box;
+		min-width: 200px;
 	}
 
 	.menu-button.selected {
