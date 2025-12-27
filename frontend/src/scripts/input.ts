@@ -3,16 +3,10 @@ export type InputAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'co
 export type InputCallback = () => void;
 
 class InputManager {
-	private callbacks: Map<InputAction, Set<InputCallback>> = new Map();
 	private keyboardHandler: ((e: KeyboardEvent) => void) | null = null;
 	private gamepadStarted = false;
-	private activeScopes: Set<string> = new Set();
+	private scopeStack: string[] = [];
 	private scopeCallbacks: Map<string, Map<InputAction, InputCallback>> = new Map();
-
-	constructor() {
-		const actions: InputAction[] = ['up', 'down', 'left', 'right', 'confirmDown', 'confirmUp', 'back'];
-		actions.forEach(action => this.callbacks.set(action, new Set()));
-	}
 
 	start(): void {
 		this.startKeyboard();
@@ -25,33 +19,42 @@ class InputManager {
 	}
 
 	registerScope(scopeId: string, handlers: Partial<Record<InputAction, InputCallback>>): () => void {
+		// Remove existing scope if it exists
 		this.unregisterScope(scopeId);
+		
 		const scopeMap = new Map<InputAction, InputCallback>();
 		this.scopeCallbacks.set(scopeId, scopeMap);
-		this.activeScopes.add(scopeId);
+		
+		// Add to stack (most recent scope handles input)
+		this.scopeStack.push(scopeId);
+
+		// Register handlers
 		for (const [action, callback] of Object.entries(handlers)) {
 			if (callback) {
 				const inputAction = action as InputAction;
 				scopeMap.set(inputAction, callback);
-				this.callbacks.get(inputAction)?.add(callback);
 			}
 		}
+
 		this.start();
 		return () => this.unregisterScope(scopeId);
 	}
 	unregisterScope(scopeId: string): void {
 		const scopeMap = this.scopeCallbacks.get(scopeId);
 		if (scopeMap) {
-			for (const [action, callback] of scopeMap.entries()) {
-				this.callbacks.get(action)?.delete(callback);
-			}
 			this.scopeCallbacks.delete(scopeId);
-			this.activeScopes.delete(scopeId);
+			// Remove from stack
+			this.scopeStack = this.scopeStack.filter(id => id !== scopeId);
 		}
 	}
+	
 	private emit(action: InputAction): void {
-		const callbacks = this.callbacks.get(action);
-		if (callbacks) callbacks.forEach(callback => callback());
+		// Only call callback from the top scope (most recently registered)
+		if (this.scopeStack.length === 0) return;
+		const topScope = this.scopeStack[this.scopeStack.length - 1];
+		const scopeMap = this.scopeCallbacks.get(topScope);
+		const callback = scopeMap?.get(action);
+		if (callback) callback();
 	}
 
 	private startKeyboard(): void {
