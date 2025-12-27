@@ -1,0 +1,41 @@
+<script lang="ts">
+	interface Props {
+		items: string[];
+	}
+	let { items }: Props = $props();
+</script>
+
+<style>
+	.breadcrumb {
+		width: 100%;
+		padding: 1rem 2rem;
+		background: rgba(0, 0, 0, 0.5);
+		font-size: 1.2rem;
+		box-sizing: border-box;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.breadcrumb-item {
+		color: #888;
+	}
+
+	.breadcrumb-item.current {
+		color: #fff;
+		font-weight: bold;
+	}
+
+	.separator {
+		color: #666;
+	}
+</style>
+
+<div class="breadcrumb">
+	{#each items as item, index (index)}
+		{#if index > 0}
+			<span class="separator">&gt;</span>
+		{/if}
+		<span class="breadcrumb-item" class:current={index === items.length - 1}>{item}</span>
+	{/each}
+</div>
