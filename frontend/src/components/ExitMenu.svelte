@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { useInput } from '../scripts/input';
-	import MenuButton from './MenuButton.svelte';
+	import MenuTitle from './MenuTitle.svelte';
+	import MenuItems from './MenuItems.svelte';
+
 	interface Props {
 		onselect?: (id: string) => void;
 		onback?: () => void;
@@ -13,38 +13,6 @@
 		{ id: 'shutdown', label: 'Shutdown' },
 		{ id: 'exit', label: 'Exit Application' },
 	];
-	let selectedIndex = $state(0);
-	let isAPressed = $state(false);
-
-	function navigate(direction: string): void {
-		switch (direction) {
-			case 'up':
-				selectedIndex = selectedIndex === 0 ? items.length - 1 : selectedIndex - 1;
-				break;
-			case 'down':
-				selectedIndex = selectedIndex === items.length - 1 ? 0 : selectedIndex + 1;
-				break;
-		}
-	}
-
-	function selectItem(): void {
-		if (items[selectedIndex]) onselect?.(items[selectedIndex].id);
-	}
-
-	onMount(() => {
-		return useInput('exit-menu', {
-			up: () => navigate('up'),
-			down: () => navigate('down'),
-			confirmDown: () => {
-				isAPressed = true;
-				selectItem();
-			},
-			confirmUp: () => {
-				isAPressed = false;
-			},
-			back: () => onback?.(),
-		});
-	});
 </script>
 
 <style>
@@ -58,30 +26,9 @@
 		box-sizing: border-box;
 		overflow: hidden;
 	}
-
-	.menu .title {
-		font-size: 2.5rem;
-		font-weight: bold;
-		margin-bottom: 3rem;
-		color: #fff;
-		text-align: center;
-		text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-	}
-
-	.menu .items {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-		width: 100%;
-		max-width: 400px;
-	}
 </style>
 
 <div class="menu">
-	<h1 class="title">Exit</h1>
-	<div class="items">
-		{#each items as item, index (item.id)}
-			<MenuButton label={item.label} selected={index === selectedIndex} pressed={isAPressed} />
-		{/each}
-	</div>
+	<MenuTitle title="Exit" />
+	<MenuItems {items} orientation="vertical" scopeId="exit-menu" {onselect} {onback} />
 </div>
