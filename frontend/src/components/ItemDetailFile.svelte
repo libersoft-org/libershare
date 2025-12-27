@@ -17,15 +17,14 @@
 		justify-content: space-between;
 		padding: 1vw;
 		background: rgba(255, 255, 255, 0.05);
-		border: 0.2vw solid transparent;
-		border-color: rgba(255, 255, 255, 0.05);
+		border: 0.2vw solid rgba(255, 255, 255, 0.05);
 		border-radius: 1vw;
 		transition: all 0.3s ease;
 	}
 
 	.filerow.selected {
 		background: rgba(255, 255, 255, 0.1);
-		border-color: rgba(255, 255, 255, 0.3);
+		border-color: #aa0;
 	}
 
 	.filerow .info {
@@ -40,17 +39,9 @@
 		color: #fff;
 	}
 
-	.filerow.selected .info .name {
-		color: #dd0;
-	}
-
 	.filerow .info .size {
 		font-size: 1vw;
 		color: #888;
-	}
-
-	.filerow.selected .info .size {
-		color: #aa0;
 	}
 
 	.filerow .actions {

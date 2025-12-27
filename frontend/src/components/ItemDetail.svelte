@@ -69,7 +69,7 @@
 	onMount(() => {
 		// Scroll to top when opening detail
 		window.scrollTo({ top: 0, behavior: 'instant' });
-		
+
 		return useInput('item-detail', {
 			up: () => navigate('up'),
 			down: () => navigate('down'),
@@ -113,14 +113,13 @@
 		aspect-ratio: 16 / 9;
 		border-radius: 1vw;
 		overflow: hidden;
-		border: 3px solid transparent;
+		border: 0.2vw solid rgba(255, 255, 255, 0.05);
 		box-sizing: border-box;
 		transition: all 0.2s ease;
 	}
 
 	.detail .content .image.selected {
-		border-color: #fff;
-		box-shadow: 0 0 25px rgba(255, 255, 255, 0.5);
+		border-color: #aa0;
 	}
 
 	.detail .content .image img {
