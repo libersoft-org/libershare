@@ -46,7 +46,6 @@
 		if (selectedId === 'back') currentPage = 'main';
 		else {
 			// TODO: Implement functionality
-			console.log('Exit menu selected:', selectedId);
 		}
 	}
 </script>

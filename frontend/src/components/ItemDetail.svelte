@@ -60,18 +60,12 @@
 	}
 
 	function selectButton(): void {
-		if (selectedRow === -1) {
-			// Image selected - no action for now
-			return;
-		}
+		if (selectedRow === -1) return; // image selected, no	action
 		const action = selectedButton === 0 ? 'download' : 'play';
-		console.log(`${action} file:`, files[selectedRow].name);
 	}
 
 	onMount(() => {
-		// Scroll to top when opening detail
 		window.scrollTo({ top: 0, behavior: 'instant' });
-
 		return useInput('item-detail', {
 			up: () => navigate('up'),
 			down: () => navigate('down'),
