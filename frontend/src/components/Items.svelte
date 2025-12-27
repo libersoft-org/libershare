@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ItemsItem from './ItemsItem.svelte';
-	import { onMount } from 'svelte';
+	import ItemDetail from './ItemDetail.svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { useInput } from '../scripts/input';
 	interface Props {
 		title?: string;
@@ -15,6 +16,8 @@
 	let selectedIndex = $state(0);
 	let isAPressed = $state(false);
 	let itemElements: HTMLElement[] = $state([]);
+	let selectedItem = $state<{ id: number; title: string } | null>(null);
+	let cleanupInput: (() => void) | null = null;
 
 	// Calculate columns by comparing Y positions of items
 	function getColumnsCount(): number {
@@ -59,20 +62,42 @@
 		}
 	}
 
-	onMount(() => {
-		return useInput('items', {
+	function openItem(): void {
+		selectedItem = items[selectedIndex];
+		// Cleanup input when opening detail
+		cleanupInput?.();
+		cleanupInput = null;
+	}
+
+	function closeDetail(): void {
+		selectedItem = null;
+		// Re-register input when closing detail
+		setupInput();
+	}
+
+	function setupInput(): void {
+		cleanupInput = useInput('items', {
 			up: () => navigate('up'),
 			down: () => navigate('down'),
 			left: () => navigate('left'),
 			right: () => navigate('right'),
 			confirmDown: () => {
 				isAPressed = true;
+				openItem();
 			},
 			confirmUp: () => {
 				isAPressed = false;
 			},
 			back: () => onback?.(),
 		});
+	}
+
+	onMount(() => {
+		setupInput();
+	});
+
+	onDestroy(() => {
+		cleanupInput?.();
 	});
 </script>
 
@@ -95,10 +120,14 @@
 	}
 </style>
 
-<div class="items">
-	{#each items as item, index (item.id)}
-		<div bind:this={itemElements[index]}>
-			<ItemsItem title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={index === selectedIndex} isAPressed={isAPressed && index === selectedIndex} />
-		</div>
-	{/each}
-</div>
+{#if selectedItem}
+	<ItemDetail category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onback={closeDetail} />
+{:else}
+	<div class="items">
+		{#each items as item, index (item.id)}
+			<div bind:this={itemElements[index]}>
+				<ItemsItem title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={index === selectedIndex} isAPressed={isAPressed && index === selectedIndex} />
+			</div>
+		{/each}
+	</div>
+{/if}
