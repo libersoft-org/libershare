@@ -10,7 +10,8 @@
 		{ id: 'storage', label: 'Storage' },
 		{ id: 'downloads', label: 'Downloads' },
 		{ id: 'settings', label: 'Settings' },
-		{ id: 'about', label: 'About' }
+		{ id: 'about', label: 'About' },
+		{ id: 'exit', label: 'Exit' }
 	];
 	
 	const storageMenuItems = [
@@ -33,6 +34,7 @@
 	
 	function handleMainMenuSelect(selectedId: string): void {
 		if (selectedId === 'storage') navigateTo('storage');
+		else if (selectedId === 'exit') navigateTo('exit');
 	}
 	
 	function handleStorageMenuSelect(selectedId: string): void {
@@ -41,8 +43,12 @@
 	}
 	
 	function handleExitMenuSelect(selectedId: string): void {
-		// TODO: Implement functionality
-		console.log('Exit menu selected:', selectedId);
+		if (selectedId === 'back') {
+			currentPage = 'main';
+		} else {
+			// TODO: Implement functionality
+			console.log('Exit menu selected:', selectedId);
+		}
 	}
 </script>
 

@@ -8,6 +8,7 @@
 	}
 	let { onselect, onback }: Props = $props();
 	const items = [
+		{ id: 'back', label: 'Back' },
 		{ id: 'restart', label: 'Restart' },
 		{ id: 'shutdown', label: 'Shutdown' },
 		{ id: 'exit', label: 'Exit Application' },
