@@ -79,7 +79,7 @@
 <style>
 	.items {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
 		gap: 1vw;
 		padding: 1vw;
 		width: 100%;
@@ -89,7 +89,7 @@
 	}
 
 	.items :global(.item) {
-		max-width: 450px;
+		max-width: 400px;
 		width: 100%;
 		margin: 0 auto;
 	}
