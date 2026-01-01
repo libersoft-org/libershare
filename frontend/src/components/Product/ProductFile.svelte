@@ -16,14 +16,14 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 1vw;
-		background: rgba(255, 255, 255, 0.05);
+		background-color: rgba(255, 255, 255, 0.05);
 		border: 0.2vw solid rgba(255, 255, 255, 0.05);
 		border-radius: 1vw;
-		transition: all 0.3s ease;
+		transition: all 0.2s linear;
 	}
 
 	.filerow.selected {
-		background: rgba(255, 255, 255, 0.1);
+		background-color: rgba(255, 255, 255, 0.1);
 		border-color: #aa0;
 	}
 

@@ -29,6 +29,6 @@
 <div class="menu">
 	<MenuTitle {title} />
 	{#key `${title}-${selectedId}-${orientation}`}
-		<MenuItems {items} {orientation} scopeId="main-menu" {selectedId} {onselect} {onback} />
+		<MenuItems {items} {orientation} sceneId="menu" {selectedId} {onselect} {onback} />
 	{/key}
 </div>

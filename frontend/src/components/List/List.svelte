@@ -1,14 +1,18 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { useInput } from '../../scripts/input.ts';
+	import { registerScene, activateScene } from '../../scripts/input.ts';
+	import { focusArea, focusHeader } from '../../scripts/navigation.ts';
+	import Breadcrumb from '../Breadcrumb/Breadcrumb.svelte';
 	import ListItem from './ListItem.svelte';
 	import Product from '../Product/Product.svelte';
+	const SCENE_ID = 'list';
 	interface Props {
 		title?: string;
 		category?: string;
 		onback?: () => void;
 	}
 	let { title = 'Items', category = '', onback }: Props = $props();
+	let active = $derived($focusArea === 'content');
 	// Some test data
 	const items = Array.from({ length: 200 }, (_, i) => ({
 		id: i + 1,
@@ -71,23 +75,33 @@
 		selectedItem = null;
 		await tick();
 		scrollToSelectedItem(true);
+		activateScene(SCENE_ID);
 	}
 
 	onMount(() => {
-		return useInput('items', {
-			up: () => navigate('up'),
+		const unregister = registerScene(SCENE_ID, {
+			up: () => {
+				const cols = getColumnsCount();
+				if (selectedIndex < cols) focusHeader();
+				else navigate('up');
+			},
 			down: () => navigate('down'),
 			left: () => navigate('left'),
 			right: () => navigate('right'),
 			confirmDown: () => {
 				isAPressed = true;
-				openItem();
 			},
 			confirmUp: () => {
+				isAPressed = false;
+				openItem();
+			},
+			confirmCancel: () => {
 				isAPressed = false;
 			},
 			back: () => onback?.(),
 		});
+		activateScene(SCENE_ID);
+		return unregister;
 	});
 </script>
 
@@ -113,10 +127,11 @@
 {#if selectedItem}
 	<Product category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onback={closeDetail} />
 {:else}
+	<Breadcrumb items={[category]} />
 	<div class="items">
 		{#each items as item, index (item.id)}
 			<div bind:this={itemElements[index]}>
-				<ListItem title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={index === selectedIndex} isAPressed={isAPressed && index === selectedIndex} />
+				<ListItem title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={active && index === selectedIndex} isAPressed={active && isAPressed && index === selectedIndex} />
 			</div>
 		{/each}
 	</div>

@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useInput } from '../../scripts/input.ts';
+	import { registerScene, activateScene } from '../../scripts/input.ts';
+	import { focusArea, focusHeader, pushBackHandler } from '../../scripts/navigation.ts';
 	import Breadcrumb from '../Breadcrumb/Breadcrumb.svelte';
 	import ProductFile from './ProductFile.svelte';
+	const SCENE_ID = 'product';
 	interface Props {
 		category?: string;
 		itemTitle?: string;
@@ -10,6 +12,7 @@
 		onback?: () => void;
 	}
 	let { category = 'Movies', itemTitle = 'Item', itemId = 1, onback }: Props = $props();
+	let active = $derived($focusArea === 'content');
 	const files = [
 		{ id: 1, name: `${itemTitle} - 240p.mp4`, size: '218.32 MB' },
 		{ id: 2, name: `${itemTitle} - 480p.mp4`, size: '780.12 MB' },
@@ -66,20 +69,35 @@
 
 	onMount(() => {
 		window.scrollTo({ top: 0, behavior: 'instant' });
-		return useInput('item-detail', {
-			up: () => navigate('up'),
+		const unregisterScene = registerScene(SCENE_ID, {
+			up: () => {
+				if (selectedRow === -1) {
+					focusHeader();
+				} else {
+					navigate('up');
+				}
+			},
 			down: () => navigate('down'),
 			left: () => navigate('left'),
 			right: () => navigate('right'),
 			confirmDown: () => {
 				isAPressed = true;
-				selectButton();
 			},
 			confirmUp: () => {
+				isAPressed = false;
+				selectButton();
+			},
+			confirmCancel: () => {
 				isAPressed = false;
 			},
 			back: () => onback?.(),
 		});
+		activateScene(SCENE_ID);
+		const unregisterBack = pushBackHandler(() => onback?.());
+		return () => {
+			unregisterScene();
+			unregisterBack();
+		};
 	});
 </script>
 
@@ -111,7 +129,7 @@
 		overflow: hidden;
 		border: 0.2vw solid rgba(255, 255, 255, 0.05);
 		box-sizing: border-box;
-		transition: all 0.2s ease;
+		transition: all 0.2s linear;
 	}
 
 	.detail .content .image.selected {
@@ -145,14 +163,14 @@
 <div class="detail">
 	<Breadcrumb items={[category, `${itemTitle}`]} />
 	<div class="content">
-		<div class="image" class:selected={selectedRow === -1} bind:this={imageElement}>
+		<div class="image" class:selected={active && selectedRow === -1} bind:this={imageElement}>
 			<img src="https://picsum.photos/seed/{itemId}/800/450" alt={itemTitle} />
 		</div>
 		<div class="files">
 			<div class="title">Files</div>
 			{#each files as file, rowIndex (file.id)}
 				<div bind:this={fileElements[rowIndex]}>
-					<ProductFile name={file.name} size={file.size} selected={rowIndex === selectedRow} {selectedButton} pressed={isAPressed} />
+					<ProductFile name={file.name} size={file.size} selected={active && rowIndex === selectedRow} {selectedButton} pressed={active && isAPressed} />
 				</div>
 			{/each}
 		</div>

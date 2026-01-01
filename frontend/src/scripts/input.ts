@@ -1,19 +1,17 @@
-import { get } from 'svelte/store';
+import { getKeyboardManager } from './keyboard.ts';
 import { getGamepadManager } from './gamepad.ts';
-import { inputInitialDelay, inputRepeatDelay } from './settings.ts';
-export type InputAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'confirmUp' | 'back';
+export type InputAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'confirmUp' | 'confirmCancel' | 'back';
 export type InputCallback = () => void;
+export type InputHandlers = Partial<Record<InputAction, InputCallback>>;
 
 class InputManager {
-	private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
-	private keyupHandler: ((e: KeyboardEvent) => void) | null = null;
+	private keyboardStarted = false;
 	private gamepadStarted = false;
-	private scopeStack: string[] = [];
-	private scopeCallbacks: Map<string, Map<InputAction, InputCallback>> = new Map();
-	// Key repeat control
-	private heldKey: string | null = null;
-	private repeatTimer: ReturnType<typeof setTimeout> | null = null;
-	private repeatInterval: ReturnType<typeof setInterval> | null = null;
+	// Scene management
+	private scenes: Map<string, InputHandlers> = new Map();
+	private activeScene: string | null = null;
+	// Confirm state - tracks if confirm is "active" (not interrupted)
+	private confirmActive = false;
 
 	start(): void {
 		this.startKeyboard();
@@ -25,138 +23,86 @@ class InputManager {
 		this.stopGamepad();
 	}
 
-	registerScope(scopeId: string, handlers: Partial<Record<InputAction, InputCallback>>): () => void {
-		// Remove existing scope if it exists
-		this.unregisterScope(scopeId);
-		const scopeMap = new Map<InputAction, InputCallback>();
-		this.scopeCallbacks.set(scopeId, scopeMap);
-		// Add to stack (most recent scope handles input)
-		this.scopeStack.push(scopeId);
-		// Register handlers
-		for (const [action, callback] of Object.entries(handlers)) {
-			if (callback) {
-				const inputAction = action as InputAction;
-				scopeMap.set(inputAction, callback);
-			}
-		}
+	registerScene(sceneId: string, handlers: InputHandlers): () => void {
+		this.scenes.set(sceneId, handlers);
 		this.start();
-		return () => this.unregisterScope(scopeId);
+		return () => this.unregisterScene(sceneId);
 	}
-	unregisterScope(scopeId: string): void {
-		const scopeMap = this.scopeCallbacks.get(scopeId);
-		if (scopeMap) {
-			this.scopeCallbacks.delete(scopeId);
-			// Remove from stack
-			this.scopeStack = this.scopeStack.filter(id => id !== scopeId);
+
+	unregisterScene(sceneId: string): void {
+		this.scenes.delete(sceneId);
+		if (this.activeScene === sceneId) {
+			this.activeScene = null;
 		}
 	}
 
+	activateScene(sceneId: string): void {
+		if (this.scenes.has(sceneId)) {
+			this.activeScene = sceneId;
+		}
+	}
+
+	deactivateScene(sceneId: string): void {
+		if (this.activeScene === sceneId) {
+			this.activeScene = null;
+		}
+	}
+
+	getActiveScene(): string | null {
+		return this.activeScene;
+	}
+
 	private emit(action: InputAction): void {
-		// Only call callback from the top scope (most recently registered)
-		if (this.scopeStack.length === 0) return;
-		const topScope = this.scopeStack[this.scopeStack.length - 1];
-		const scopeMap = this.scopeCallbacks.get(topScope);
-		const callback = scopeMap?.get(action);
+		if (!this.activeScene) return;
+		const handlers = this.scenes.get(this.activeScene);
+
+		// Handle confirm state
+		if (action === 'confirmDown') {
+			this.confirmActive = true;
+		} else if (action === 'confirmUp') {
+			if (!this.confirmActive) return; // Interrupted, don't fire confirmUp
+			this.confirmActive = false;
+		} else if (action === 'confirmCancel') {
+			this.confirmActive = false;
+		} else {
+			// Any other action cancels the confirm - trigger confirmCancel to reset animation
+			if (this.confirmActive) {
+				this.confirmActive = false;
+				const cancelCallback = handlers?.['confirmCancel'];
+				if (cancelCallback) cancelCallback();
+			}
+		}
+
+		const callback = handlers?.[action];
 		if (callback) callback();
 	}
 
 	private startKeyboard(): void {
-		if (this.keydownHandler) return;
-		const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
-		const getActionForKey = (key: string): InputAction | null => {
-			switch (key) {
-				case 'ArrowUp':
-					return 'up';
-				case 'ArrowDown':
-					return 'down';
-				case 'ArrowLeft':
-					return 'left';
-				case 'ArrowRight':
-					return 'right';
-				default:
-					return null;
-			}
-		};
-
-		const clearRepeat = () => {
-			if (this.repeatTimer) {
-				clearTimeout(this.repeatTimer);
-				this.repeatTimer = null;
-			}
-			if (this.repeatInterval) {
-				clearInterval(this.repeatInterval);
-				this.repeatInterval = null;
-			}
-			this.heldKey = null;
-		};
-
-		this.keydownHandler = (e: KeyboardEvent) => {
-			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-			// Handle arrow keys with custom repeat
-			if (arrowKeys.includes(e.key)) {
-				e.preventDefault();
-				// If it's a repeat event from the system, ignore it (we handle repeat ourselves)
-				if (e.repeat) return;
-				// If same key is already held, ignore
-				if (this.heldKey === e.key) return;
-				// Clear any existing repeat for different key
-				clearRepeat();
-				const action = getActionForKey(e.key);
-				if (!action) return;
-				// Emit immediately on first press
-				this.emit(action);
-				// Set up custom repeat
-				this.heldKey = e.key;
-				this.repeatTimer = setTimeout(() => {
-					this.repeatInterval = setInterval(() => {
-						if (this.heldKey === e.key) this.emit(action);
-					}, get(inputRepeatDelay));
-				}, get(inputInitialDelay));
-				return;
-			}
-			// Handle other keys normally (no repeat)
-			if (e.repeat) return;
-			switch (e.key) {
-				case 'Enter':
-				case ' ':
-					e.preventDefault();
-					this.emit('confirmDown');
-					setTimeout(() => this.emit('confirmUp'), 100);
-					break;
-				case 'Escape':
-				case 'Backspace':
-					e.preventDefault();
-					this.emit('back');
-					break;
-			}
-		};
-		this.keyupHandler = (e: KeyboardEvent) => {
-			if (arrowKeys.includes(e.key) && this.heldKey === e.key) clearRepeat();
-		};
-		window.addEventListener('keydown', this.keydownHandler);
-		window.addEventListener('keyup', this.keyupHandler);
+		if (this.keyboardStarted) return;
+		const keyboard = getKeyboardManager();
+		keyboard.on('up', () => this.emit('up'));
+		keyboard.on('down', () => this.emit('down'));
+		keyboard.on('left', () => this.emit('left'));
+		keyboard.on('right', () => this.emit('right'));
+		keyboard.on('confirmDown', () => this.emit('confirmDown'));
+		keyboard.on('confirmUp', () => this.emit('confirmUp'));
+		keyboard.on('back', () => this.emit('back'));
+		keyboard.start();
+		this.keyboardStarted = true;
 	}
 
 	private stopKeyboard(): void {
-		if (this.keydownHandler) {
-			window.removeEventListener('keydown', this.keydownHandler);
-			this.keydownHandler = null;
-		}
-		if (this.keyupHandler) {
-			window.removeEventListener('keyup', this.keyupHandler);
-			this.keyupHandler = null;
-		}
-		// Clear any active repeats
-		if (this.repeatTimer) {
-			clearTimeout(this.repeatTimer);
-			this.repeatTimer = null;
-		}
-		if (this.repeatInterval) {
-			clearInterval(this.repeatInterval);
-			this.repeatInterval = null;
-		}
-		this.heldKey = null;
+		if (!this.keyboardStarted) return;
+		const keyboard = getKeyboardManager();
+		keyboard.off('up');
+		keyboard.off('down');
+		keyboard.off('left');
+		keyboard.off('right');
+		keyboard.off('confirmDown');
+		keyboard.off('confirmUp');
+		keyboard.off('back');
+		keyboard.stop();
+		this.keyboardStarted = false;
 	}
 
 	private startGamepad(): void {
@@ -195,7 +141,14 @@ export function getInputManager(): InputManager {
 	return globalInputManager;
 }
 
-export function useInput(scopeId: string, handlers: Partial<Record<InputAction, InputCallback>>): () => void {
-	const manager = getInputManager();
-	return manager.registerScope(scopeId, handlers);
+export function registerScene(sceneId: string, handlers: InputHandlers): () => void {
+	return getInputManager().registerScene(sceneId, handlers);
+}
+
+export function activateScene(sceneId: string): void {
+	getInputManager().activateScene(sceneId);
+}
+
+export function deactivateScene(sceneId: string): void {
+	getInputManager().deactivateScene(sceneId);
 }

@@ -2,9 +2,10 @@
 	interface Props {
 		icon: string;
 		alt?: string;
+		selected?: boolean;
 		onclick?: () => void;
 	}
-	let { icon, alt = '', onclick }: Props = $props();
+	let { icon, alt = '', selected = false, onclick }: Props = $props();
 </script>
 
 <style>
@@ -12,17 +13,24 @@
 		width: 3vw;
 		height: 3vw;
 		border-radius: 50%;
-		background: #333;
-		border: none;
+		background-color: #333;
+		border: 2px solid #555;
 		cursor: pointer;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		padding: 0.5vw;
+		transition: all 0.2s linear;
 	}
 
 	.button-circle:hover {
-		background: #444;
+		background-color: #444;
+	}
+
+	.button-circle.selected {
+		background-color: rgba(255, 221, 17, 0.2);
+		border-color: #fd1;
+		box-shadow: 0 0 15px rgba(255, 221, 17, 0.6);
 	}
 
 	.button-circle img {
@@ -32,6 +40,6 @@
 	}
 </style>
 
-<button class="button-circle" {onclick}>
+<button class="button-circle" class:selected {onclick}>
 	<img src={icon} {alt} />
 </button>

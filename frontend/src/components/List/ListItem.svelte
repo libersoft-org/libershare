@@ -50,7 +50,7 @@
 		font-size: 1.2vw;
 		font-weight: bold;
 		padding: 1vw;
-		background: rgba(0, 0, 0, 0.75);
+		background-color: rgba(0, 0, 0, 0.75);
 		backdrop-filter: blur(4px);
 	}
 </style>

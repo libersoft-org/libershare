@@ -1,17 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useInput } from '../../scripts/input.ts';
+	import { registerScene, activateScene } from '../../scripts/input.ts';
+	import { focusArea, focusHeader } from '../../scripts/navigation.ts';
 	import ButtonNormal from '../Buttons/ButtonNormal.svelte';
 
 	interface Props {
 		items: Array<{ id: string; label: string }>;
 		orientation?: 'horizontal' | 'vertical';
-		scopeId?: string;
+		sceneId?: string;
 		selectedId?: string;
 		onselect?: (id: string) => void;
 		onback?: () => void;
 	}
-	let { items, orientation = 'horizontal', scopeId = 'menu', selectedId, onselect, onback }: Props = $props();
+	let { items, orientation = 'horizontal', sceneId = 'menu', selectedId, onselect, onback }: Props = $props();
 	let selectedIndex = $state(
 		selectedId
 			? Math.max(
@@ -21,10 +22,17 @@
 			: 0
 	);
 	let isAPressed = $state(false);
+	let active = $derived($focusArea === 'content');
 
 	function navigate(direction: 'prev' | 'next'): void {
 		if (direction === 'prev') selectedIndex = selectedIndex === 0 ? items.length - 1 : selectedIndex - 1;
 		else selectedIndex = selectedIndex === items.length - 1 ? 0 : selectedIndex + 1;
+	}
+
+	function handleUp(): void {
+		if (orientation === 'vertical' && selectedIndex === 0) focusHeader();
+		else if (orientation === 'vertical') navigate('prev');
+		else focusHeader();
 	}
 
 	function selectItem(): void {
@@ -32,18 +40,23 @@
 	}
 
 	onMount(() => {
-		const handlers = orientation === 'horizontal' ? { left: () => navigate('prev'), right: () => navigate('next') } : { up: () => navigate('prev'), down: () => navigate('next') };
-		return useInput(scopeId, {
+		const handlers = orientation === 'horizontal' ? { left: () => navigate('prev'), right: () => navigate('next'), up: handleUp } : { up: handleUp, down: () => navigate('next') };
+		const unregister = registerScene(sceneId, {
 			...handlers,
 			confirmDown: () => {
 				isAPressed = true;
-				selectItem();
 			},
 			confirmUp: () => {
+				isAPressed = false;
+				selectItem();
+			},
+			confirmCancel: () => {
 				isAPressed = false;
 			},
 			back: () => onback?.(),
 		});
+		activateScene(sceneId);
+		return unregister;
 	});
 </script>
 
@@ -58,7 +71,7 @@
 		display: flex;
 		align-items: center;
 		gap: 2rem;
-		transition: transform 0.3s ease-out;
+		transition: all 0.2s linear;
 	}
 
 	.items.horizontal {
@@ -81,14 +94,14 @@
 	<div class="items-wrapper">
 		<div class="items horizontal" style="transform: translateX(calc({selectedIndex} * -232px))">
 			{#each items as item, index (item.id)}
-				<ButtonNormal label={item.label} selected={index === selectedIndex} pressed={isAPressed} />
+				<ButtonNormal label={item.label} selected={active && index === selectedIndex} pressed={isAPressed} />
 			{/each}
 		</div>
 	</div>
 {:else}
 	<div class="items vertical">
 		{#each items as item, index (item.id)}
-			<ButtonNormal label={item.label} selected={index === selectedIndex} pressed={isAPressed} />
+			<ButtonNormal label={item.label} selected={active && index === selectedIndex} pressed={isAPressed} />
 		{/each}
 	</div>
 {/if}

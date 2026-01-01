@@ -9,7 +9,7 @@
 	.breadcrumb {
 		width: 100%;
 		padding: 1rem 2rem;
-		background: rgba(0, 0, 0, 0.5);
+		background-color: rgba(0, 0, 0, 0.5);
 		font-size: 1.2rem;
 		box-sizing: border-box;
 		display: flex;

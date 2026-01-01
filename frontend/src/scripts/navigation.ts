@@ -2,6 +2,55 @@ import { writable, derived, get } from 'svelte/store';
 import type { Component } from 'svelte';
 import Items from '../components/List/List.svelte';
 import { productName } from './app.ts';
+import { activateScene, getInputManager } from './input.ts';
+export type FocusArea = 'header' | 'content';
+const focusAreaStore = writable<FocusArea>('content');
+let lastContentScene: string | null = null;
+// Back handler stack
+type BackHandler = () => void;
+const backStack: BackHandler[] = [];
+
+export function pushBackHandler(handler: BackHandler): () => void {
+	backStack.push(handler);
+	return () => {
+		const index = backStack.indexOf(handler);
+		if (index !== -1) backStack.splice(index, 1);
+	};
+}
+
+// Subscribe to focusArea changes and activate appropriate scene
+focusAreaStore.subscribe(area => {
+	if (area === 'header') {
+		activateScene('header');
+	} else if (lastContentScene) {
+		activateScene(lastContentScene);
+	}
+});
+
+export const focusArea = {
+	subscribe: focusAreaStore.subscribe,
+	set: focusAreaStore.set,
+};
+
+export function focusHeader(): void {
+	// Remember current content scene before switching to header
+	const currentScene = getInputManager().getActiveScene();
+	if (currentScene && currentScene !== 'header') {
+		lastContentScene = currentScene;
+	}
+	focusAreaStore.set('header');
+}
+
+export function focusContent(): void {
+	focusAreaStore.set('content');
+	if (lastContentScene) {
+		activateScene(lastContentScene);
+	}
+}
+
+export function setContentScene(sceneId: string): void {
+	lastContentScene = sceneId;
+}
 
 export interface MenuItem {
 	id: string;
@@ -78,9 +127,10 @@ export function createNavigation() {
 		}
 		selectedId.set(undefined);
 		path.update(p => [...p, item]);
+		focusAreaStore.set('content');
 	}
 
-	function goBack(): void {
+	function navigateBack(): void {
 		const currentPath = get(path);
 		if (currentPath.length > 0) {
 			selectedId.set(currentPath[currentPath.length - 1].id);
@@ -88,6 +138,17 @@ export function createNavigation() {
 		} else {
 			const exitItem = menuStructure.items.find(i => i.id === 'exit');
 			if (exitItem) path.set([exitItem]);
+		}
+		focusAreaStore.set('content');
+	}
+
+	function goBack(): void {
+		// If there's a custom back handler on the stack, use it
+		if (backStack.length > 0) {
+			const handler = backStack[backStack.length - 1];
+			handler();
+		} else {
+			navigateBack();
 		}
 	}
 
@@ -105,6 +166,7 @@ export function createNavigation() {
 		currentOrientation,
 		navigate,
 		goBack,
+		navigateBack,
 		reset,
 	};
 }

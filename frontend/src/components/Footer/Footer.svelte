@@ -6,7 +6,7 @@
 	.footer {
 		display: flex;
 		align-items: center;
-		background: #000;
+		background-color: #000;
 		color: #fd1;
 		padding: 1vw;
 		font-size: 1.5vw;

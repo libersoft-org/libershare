@@ -10,14 +10,14 @@
 <style>
 	.menu-button {
 		padding: 1.2rem 2.5rem;
-		background: rgba(255, 255, 255, 0.1);
+		background-color: rgba(255, 255, 255, 0.1);
 		border: 2px solid rgba(255, 255, 255, 0.3);
 		border-radius: 12px;
 		font-size: 1.4rem;
 		color: #fff;
 		text-align: center;
 		white-space: nowrap;
-		transition: all 0.2s ease;
+		transition: all 0.2s linear;
 		backdrop-filter: blur(10px);
 		opacity: 0.6;
 		box-sizing: border-box;
