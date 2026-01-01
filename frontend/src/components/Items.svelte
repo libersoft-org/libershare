@@ -5,9 +5,10 @@
 	import { useInput } from '../scripts/input';
 	interface Props {
 		title?: string;
+		category?: string;
 		onback?: () => void;
 	}
-	let { title = 'Items', onback }: Props = $props();
+	let { title = 'Items', category = '', onback }: Props = $props();
 	// Some test data
 	const items = Array.from({ length: 200 }, (_, i) => ({
 		id: i + 1,

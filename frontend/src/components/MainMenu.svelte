@@ -5,10 +5,12 @@
 	interface Props {
 		title?: string;
 		items: Array<{ id: string; label: string }>;
+		orientation?: 'horizontal' | 'vertical';
+		selectedId?: string;
 		onselect?: (id: string) => void;
 		onback?: () => void;
 	}
-	let { title = 'LiberShare', items, onselect, onback }: Props = $props();
+	let { title = 'LiberShare', items, orientation = 'horizontal', selectedId, onselect, onback }: Props = $props();
 </script>
 
 <style>
@@ -26,5 +28,7 @@
 
 <div class="menu">
 	<MenuTitle {title} />
-	<MenuItems {items} orientation="horizontal" scopeId="main-menu" {onselect} {onback} />
+	{#key `${title}-${selectedId}-${orientation}`}
+		<MenuItems {items} {orientation} scopeId="main-menu" {selectedId} {onselect} {onback} />
+	{/key}
 </div>

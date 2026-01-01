@@ -7,32 +7,32 @@
 		items: Array<{ id: string; label: string }>;
 		orientation?: 'horizontal' | 'vertical';
 		scopeId?: string;
+		selectedId?: string;
 		onselect?: (id: string) => void;
 		onback?: () => void;
 	}
-	let { items, orientation = 'horizontal', scopeId = 'menu', onselect, onback }: Props = $props();
-	let selectedIndex = $state(0);
+	let { items, orientation = 'horizontal', scopeId = 'menu', selectedId, onselect, onback }: Props = $props();
+	let selectedIndex = $state(
+		selectedId
+			? Math.max(
+					0,
+					items.findIndex(i => i.id === selectedId)
+				)
+			: 0
+	);
 	let isAPressed = $state(false);
 
 	function navigate(direction: 'prev' | 'next'): void {
-		if (direction === 'prev') {
-			selectedIndex = selectedIndex === 0 ? items.length - 1 : selectedIndex - 1;
-		} else {
-			selectedIndex = selectedIndex === items.length - 1 ? 0 : selectedIndex + 1;
-		}
+		if (direction === 'prev') selectedIndex = selectedIndex === 0 ? items.length - 1 : selectedIndex - 1;
+		else selectedIndex = selectedIndex === items.length - 1 ? 0 : selectedIndex + 1;
 	}
 
 	function selectItem(): void {
-		if (items[selectedIndex]) {
-			onselect?.(items[selectedIndex].id);
-		}
+		if (items[selectedIndex]) onselect?.(items[selectedIndex].id);
 	}
 
 	onMount(() => {
-		const handlers = orientation === 'horizontal'
-			? { left: () => navigate('prev'), right: () => navigate('next') }
-			: { up: () => navigate('prev'), down: () => navigate('next') };
-
+		const handlers = orientation === 'horizontal' ? { left: () => navigate('prev'), right: () => navigate('next') } : { up: () => navigate('prev'), down: () => navigate('next') };
 		return useInput(scopeId, {
 			...handlers,
 			confirmDown: () => {
