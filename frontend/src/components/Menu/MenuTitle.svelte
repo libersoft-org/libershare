@@ -9,7 +9,7 @@
 	.title {
 		font-size: 2.5vw;
 		font-weight: bold;
-		margin: 2vw 0;
+		margin-bottom: 2vw;
 		color: #fd1;
 		text-align: center;
 	}
