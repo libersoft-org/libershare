@@ -10,7 +10,7 @@
 <style>
 	.menu-button {
 		padding: 1.2rem 2.5rem;
-		background: rgba(255, 255, 255, 0.15);
+		background: rgba(255, 255, 255, 0.1);
 		border: 2px solid rgba(255, 255, 255, 0.3);
 		border-radius: 12px;
 		font-size: 1.4rem;
@@ -25,10 +25,11 @@
 	}
 
 	.menu-button.selected {
-		background: rgba(255, 255, 255, 0.3);
-		border-color: #fff;
+		background: rgba(255, 221, 17, 0.2);
+		color: #fd1;
+		border-color: #fd1;
 		border-width: 3px;
-		box-shadow: 0 0 25px rgba(255, 255, 255, 0.5);
+		box-shadow: 0 0 25px rgba(255, 221, 17, 0.75);
 		font-weight: bold;
 		opacity: 1;
 		transform: scale(1.05);

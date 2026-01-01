@@ -10,7 +10,7 @@
 		font-size: 2.5vw;
 		font-weight: bold;
 		margin: 2vw 0;
-		color: #fff;
+		color: #fd1;
 		text-align: center;
 	}
 </style>
