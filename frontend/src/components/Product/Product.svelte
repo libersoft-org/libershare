@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useInput } from '../scripts/input';
-	import Breadcrumb from './Breadcrumb.svelte';
-	import FileItem from './ItemDetailFile.svelte';
+	import { useInput } from '../../scripts/input.ts';
+	import Breadcrumb from '../Breadcrumb/Breadcrumb.svelte';
+	import ProductFile from './ProductFile.svelte';
 	interface Props {
 		category?: string;
 		itemTitle?: string;
@@ -152,7 +152,7 @@
 			<div class="title">Files</div>
 			{#each files as file, rowIndex (file.id)}
 				<div bind:this={fileElements[rowIndex]}>
-					<FileItem name={file.name} size={file.size} selected={rowIndex === selectedRow} {selectedButton} pressed={isAPressed} />
+					<ProductFile name={file.name} size={file.size} selected={rowIndex === selectedRow} {selectedButton} pressed={isAPressed} />
 				</div>
 			{/each}
 		</div>

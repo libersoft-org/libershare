@@ -1,5 +1,5 @@
 <script lang="ts">
-	import MenuButton from './MenuButton.svelte';
+	import MenuItemsButton from '../Menu/MenuItemsButton.svelte';
 	interface Props {
 		name: string;
 		size: string;
@@ -56,7 +56,7 @@
 		<div class="size">Size: {size}</div>
 	</div>
 	<div class="actions">
-		<MenuButton label="Download" selected={selected && selectedButton === 0} {pressed} />
-		<MenuButton label="Play" selected={selected && selectedButton === 1} {pressed} />
+		<MenuItemsButton label="Download" selected={selected && selectedButton === 0} {pressed} />
+		<MenuItemsButton label="Play" selected={selected && selectedButton === 1} {pressed} />
 	</div>
 </div>

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useInput } from '../scripts/input';
-	import MenuButton from './MenuButton.svelte';
+	import { useInput } from '../../scripts/input.ts';
+	import MenuItemsButton from './MenuItemsButton.svelte';
 
 	interface Props {
 		items: Array<{ id: string; label: string }>;
@@ -81,14 +81,14 @@
 	<div class="items-wrapper">
 		<div class="items horizontal" style="transform: translateX(calc({selectedIndex} * -232px))">
 			{#each items as item, index (item.id)}
-				<MenuButton label={item.label} selected={index === selectedIndex} pressed={isAPressed} />
+				<MenuItemsButton label={item.label} selected={index === selectedIndex} pressed={isAPressed} />
 			{/each}
 		</div>
 	</div>
 {:else}
 	<div class="items vertical">
 		{#each items as item, index (item.id)}
-			<MenuButton label={item.label} selected={index === selectedIndex} pressed={isAPressed} />
+			<MenuItemsButton label={item.label} selected={index === selectedIndex} pressed={isAPressed} />
 		{/each}
 	</div>
 {/if}

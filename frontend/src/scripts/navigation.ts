@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
 import type { Component } from 'svelte';
-import Items from '../components/Items.svelte';
+import Items from '../components/List/List.svelte';
 
 export interface MenuItem {
 	id: string;

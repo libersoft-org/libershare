@@ -1,8 +1,8 @@
 <script lang="ts">
-	import ItemsItem from './ItemsItem.svelte';
-	import ItemDetail from './ItemDetail.svelte';
 	import { onMount, tick } from 'svelte';
-	import { useInput } from '../scripts/input';
+	import { useInput } from '../../scripts/input.ts';
+	import ListItem from './ListItem.svelte';
+	import Product from '../Product/Product.svelte';
 	interface Props {
 		title?: string;
 		category?: string;
@@ -111,12 +111,12 @@
 </style>
 
 {#if selectedItem}
-	<ItemDetail category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onback={closeDetail} />
+	<Product category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onback={closeDetail} />
 {:else}
 	<div class="items">
 		{#each items as item, index (item.id)}
 			<div bind:this={itemElements[index]}>
-				<ItemsItem title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={index === selectedIndex} isAPressed={isAPressed && index === selectedIndex} />
+				<ListItem title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={index === selectedIndex} isAPressed={isAPressed && index === selectedIndex} />
 			</div>
 		{/each}
 	</div>
