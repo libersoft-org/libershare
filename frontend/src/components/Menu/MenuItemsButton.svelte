@@ -25,11 +25,11 @@
 	}
 
 	.menu-button.selected {
-		background: rgba(255, 221, 17, 0.2);
+		background-color: rgba(255, 221, 17, 0.2);
 		color: #fd1;
 		border-color: #fd1;
 		border-width: 3px;
-		box-shadow: 0 0 25px rgba(255, 221, 17, 0.75);
+		box-shadow: 0 0 25px rgba(255, 221, 17, 0.6);
 		font-weight: bold;
 		opacity: 1;
 		transform: scale(1.05);
@@ -37,7 +37,7 @@
 
 	.menu-button.selected.pressed {
 		transform: scale(1);
-		background: rgba(255, 255, 255, 0.4);
+		background-color: rgba(255, 221, 17, 0.4);
 	}
 </style>
 
