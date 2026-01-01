@@ -3,23 +3,23 @@
 	import MenuItems from './MenuItems.svelte';
 
 	interface Props {
-		title?: string;
+		title: string;
 		items: Array<{ id: string; label: string }>;
 		orientation?: 'horizontal' | 'vertical';
 		selectedId?: string;
 		onselect?: (id: string) => void;
 		onback?: () => void;
 	}
-	let { title = 'LiberShare', items, orientation = 'horizontal', selectedId, onselect, onback }: Props = $props();
+	let { title, items, orientation = 'horizontal', selectedId, onselect, onback }: Props = $props();
 </script>
 
 <style>
 	.menu {
+		flex: 1;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		height: 100vh;
 		padding: 0;
 		box-sizing: border-box;
 		overflow: hidden;
