@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { productName } from '../../scripts/app.ts';
-	import { registerScene } from '../../scripts/input.ts';
+	import { registerScene } from '../../scripts/scenes.ts';
 	import { focusArea, focusContent } from '../../scripts/navigation.ts';
 	import ButtonCircle from '../Buttons/ButtonCircle.svelte';
 	interface Props {

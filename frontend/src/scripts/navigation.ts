@@ -2,7 +2,7 @@ import { writable, derived, get } from 'svelte/store';
 import type { Component } from 'svelte';
 import Items from '../components/List/List.svelte';
 import { productName } from './app.ts';
-import { activateScene, getInputManager } from './input.ts';
+import { activateScene, getSceneManager } from './scenes.ts';
 export type FocusArea = 'header' | 'content';
 const focusAreaStore = writable<FocusArea>('content');
 let lastContentScene: string | null = null;
@@ -34,7 +34,7 @@ export const focusArea = {
 
 export function focusHeader(): void {
 	// Remember current content scene before switching to header
-	const currentScene = getInputManager().getActiveScene();
+	const currentScene = getSceneManager().getActiveScene();
 	if (currentScene && currentScene !== 'header') {
 		lastContentScene = currentScene;
 	}

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { registerScene, activateScene } from '../../scripts/input.ts';
+	import { registerScene, activateScene } from '../../scripts/scenes.ts';
 	import { focusArea, focusHeader } from '../../scripts/navigation.ts';
 	import Breadcrumb from '../Breadcrumb/Breadcrumb.svelte';
 	import ListItem from './ListItem.svelte';
