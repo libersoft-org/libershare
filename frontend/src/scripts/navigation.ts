@@ -65,7 +65,10 @@ export function createNavigation() {
 			setBreadcrumb(newPath.map(p => p.label));
 		} else {
 			const exitItem = menuStructure.items.find(i => i.id === 'exit');
-			if (exitItem) path.set([exitItem]);
+			if (exitItem) {
+				path.set([exitItem]);
+				setBreadcrumb([exitItem.label]);
+			}
 		}
 		focusAreaStore.set('content');
 	}
