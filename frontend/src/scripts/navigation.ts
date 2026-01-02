@@ -1,115 +1,14 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Component } from 'svelte';
-import Items from '../components/List/List.svelte';
-import { productName } from './app.ts';
-import { activateScene, getSceneManager } from './scenes.ts';
-export type FocusArea = 'header' | 'content';
-const focusAreaStore = writable<FocusArea>('content');
-let lastContentScene: string | null = null;
-// Back handler stack
-type BackHandler = () => void;
-const backStack: BackHandler[] = [];
+import { menuStructure, type MenuItem } from './menu.ts';
+import { getFocusAreaStore, executeBackHandler } from './focus.ts';
 
-export function pushBackHandler(handler: BackHandler): () => void {
-	backStack.push(handler);
-	return () => {
-		const index = backStack.indexOf(handler);
-		if (index !== -1) backStack.splice(index, 1);
-	};
-}
-
-// Subscribe to focusArea changes and activate appropriate scene
-focusAreaStore.subscribe(area => {
-	if (area === 'header') {
-		activateScene('header');
-	} else if (lastContentScene) {
-		activateScene(lastContentScene);
-	}
-});
-
-export const focusArea = {
-	subscribe: focusAreaStore.subscribe,
-	set: focusAreaStore.set,
-};
-
-export function focusHeader(): void {
-	// Remember current content scene before switching to header
-	const currentScene = getSceneManager().getActiveScene();
-	if (currentScene && currentScene !== 'header') {
-		lastContentScene = currentScene;
-	}
-	focusAreaStore.set('header');
-}
-
-export function focusContent(): void {
-	focusAreaStore.set('content');
-	if (lastContentScene) {
-		activateScene(lastContentScene);
-	}
-}
-
-export function setContentScene(sceneId: string): void {
-	lastContentScene = sceneId;
-}
-
-export interface MenuItem {
-	id: string;
-	label: string;
-	submenu?: MenuItem[];
-	component?: Component<any>;
-	props?: Record<string, any>;
-	action?: 'back';
-	orientation?: 'horizontal' | 'vertical';
-}
-
-export interface MenuStructure {
-	title: string;
-	items: MenuItem[];
-}
-
-export const menuStructure: MenuStructure = {
-	title: productName,
-	items: [
-		{
-			id: 'storage',
-			label: 'Storage',
-			submenu: [
-				{ id: 'movies', label: 'Movies', component: Items, props: { category: 'movies' } },
-				{ id: 'series', label: 'Series', component: Items, props: { category: 'series' } },
-				{ id: 'music', label: 'Music', component: Items, props: { category: 'music' } },
-				{ id: 'back', label: 'Back', action: 'back' },
-			],
-		},
-		{
-			id: 'downloads',
-			label: 'Downloads',
-			submenu: [{ id: 'back', label: 'Back', action: 'back' }],
-		},
-		{
-			id: 'settings',
-			label: 'Settings',
-			submenu: [{ id: 'back', label: 'Back', action: 'back' }],
-		},
-		{
-			id: 'about',
-			label: 'About',
-			submenu: [{ id: 'back', label: 'Back', action: 'back' }],
-		},
-		{
-			id: 'exit',
-			label: 'Exit',
-			orientation: 'vertical',
-			submenu: [
-				{ id: 'back', label: 'Back', action: 'back' },
-				{ id: 'restart', label: 'Restart' },
-				{ id: 'shutdown', label: 'Shutdown' },
-				{ id: 'exit-app', label: 'Exit Application' },
-			],
-		},
-	],
-};
+// Re-export commonly used items for convenience
+export { focusArea, focusHeader, focusContent, pushBackHandler, setContentScene } from './focus.ts';
+export type { FocusArea } from './focus.ts';
+export { menuStructure, type MenuItem, type MenuStructure } from './menu.ts';
 
 export function createNavigation() {
+	const focusAreaStore = getFocusAreaStore();
 	const path = writable<MenuItem[]>([]);
 	const selectedId = writable<string | undefined>(undefined);
 	const currentItems = derived(path, $path => ($path.length === 0 ? menuStructure.items : ($path[$path.length - 1].submenu ?? [])));
@@ -144,10 +43,7 @@ export function createNavigation() {
 
 	function goBack(): void {
 		// If there's a custom back handler on the stack, use it
-		if (backStack.length > 0) {
-			const handler = backStack[backStack.length - 1];
-			handler();
-		} else {
+		if (!executeBackHandler()) {
 			navigateBack();
 		}
 	}

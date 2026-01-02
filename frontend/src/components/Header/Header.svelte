@@ -10,10 +10,14 @@
 	let { onback }: Props = $props();
 
 	onMount(() => {
+		const handleBack = () => {
+			onback?.();
+			focusContent();
+		};
 		return registerScene('header', {
 			down: () => focusContent(),
-			confirmDown: () => onback?.(),
-			back: () => onback?.(),
+			confirmUp: handleBack,
+			back: handleBack,
 		});
 	});
 </script>

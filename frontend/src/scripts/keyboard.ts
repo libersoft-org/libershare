@@ -1,6 +1,5 @@
 import { get } from 'svelte/store';
 import { inputInitialDelay, inputRepeatDelay } from './settings.ts';
-
 export type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'confirmUp' | 'back';
 export type KeyboardCallback = () => void;
 
@@ -12,10 +11,13 @@ class KeyboardManager {
 	private heldKey: string | null = null;
 	private repeatTimer: ReturnType<typeof setTimeout> | null = null;
 	private repeatInterval: ReturnType<typeof setInterval> | null = null;
+	// Confirm key state
+	private confirmKeyHeld = false;
 
 	start(): void {
 		if (this.keydownHandler) return;
 		const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+		const confirmKeys = ['Enter', ' '];
 		const getActionForKey = (key: string): KeyboardAction | null => {
 			switch (key) {
 				case 'ArrowUp':
@@ -68,15 +70,18 @@ class KeyboardManager {
 				}, get(inputInitialDelay));
 				return;
 			}
+			// Handle confirm keys (Enter/Space) with real keyup
+			if (confirmKeys.includes(e.key)) {
+				e.preventDefault();
+				if (e.repeat) return;
+				if (this.confirmKeyHeld) return;
+				this.confirmKeyHeld = true;
+				this.emit('confirmDown');
+				return;
+			}
 			// Handle other keys normally (no repeat)
 			if (e.repeat) return;
 			switch (e.key) {
-				case 'Enter':
-				case ' ':
-					e.preventDefault();
-					this.emit('confirmDown');
-					setTimeout(() => this.emit('confirmUp'), 100);
-					break;
 				case 'Escape':
 				case 'Backspace':
 					e.preventDefault();
@@ -86,6 +91,11 @@ class KeyboardManager {
 		};
 		this.keyupHandler = (e: KeyboardEvent) => {
 			if (arrowKeys.includes(e.key) && this.heldKey === e.key) clearRepeat();
+			// Handle confirm key release
+			if (confirmKeys.includes(e.key) && this.confirmKeyHeld) {
+				this.confirmKeyHeld = false;
+				this.emit('confirmUp');
+			}
 		};
 		window.addEventListener('keydown', this.keydownHandler);
 		window.addEventListener('keyup', this.keyupHandler);
@@ -110,6 +120,7 @@ class KeyboardManager {
 			this.repeatInterval = null;
 		}
 		this.heldKey = null;
+		this.confirmKeyHeld = false;
 	}
 
 	on(action: string, callback: KeyboardCallback): void {

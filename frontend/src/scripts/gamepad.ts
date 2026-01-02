@@ -1,16 +1,14 @@
-import { writable, get, type Writable } from 'svelte/store';
+import { get } from 'svelte/store';
 import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone } from './settings.ts';
 
-export interface GamepadConfig {
-	deadzone?: number;
-}
-export interface GamepadState {
-	leftStickX: number;
-	leftStickY: number;
-	rightStickX: number;
-	rightStickY: number;
-	buttons: boolean[];
-}
+type GamepadCallback = () => void;
+
+const BUTTON_NAMES: Record<number, string> = {
+	0: 'a',
+	1: 'b',
+	2: 'x',
+	3: 'y',
+};
 
 let globalGamepadManager: GamepadManager | null = null;
 
@@ -19,15 +17,8 @@ export class GamepadManager {
 	private deadzone: number;
 	private lastInputTime = 0;
 	private firstInputTime = 0;
-	private callbacks: Map<string, (value: number) => void> = new Map();
+	private callbacks: Map<string, GamepadCallback> = new Map();
 	private previousButtons: boolean[] = [];
-	public state: Writable<GamepadState> = writable({
-		leftStickX: 0,
-		leftStickY: 0,
-		rightStickX: 0,
-		rightStickY: 0,
-		buttons: [],
-	});
 
 	constructor() {
 		this.deadzone = get(gamepadDeadzone);
@@ -48,12 +39,17 @@ export class GamepadManager {
 		this.lastInputTime = 0;
 	}
 
-	on(key: string, callback: (value: number) => void): void {
+	on(key: string, callback: GamepadCallback): void {
 		this.callbacks.set(key, callback);
 	}
 
 	off(key: string): void {
 		this.callbacks.delete(key);
+	}
+
+	private emit(key: string): void {
+		const callback = this.callbacks.get(key);
+		if (callback) callback();
 	}
 
 	private poll = (): void => {
@@ -62,80 +58,26 @@ export class GamepadManager {
 		if (gamepad) {
 			const leftStickX = gamepad.axes[0];
 			const leftStickY = gamepad.axes[1];
-			const rightStickX = gamepad.axes[2] || 0;
-			const rightStickY = gamepad.axes[3] || 0;
 			const buttons = gamepad.buttons.map(b => b.pressed);
 
-			this.state.set({
-				leftStickX,
-				leftStickY,
-				rightStickX,
-				rightStickY,
-				buttons,
-			});
 			// Check for button presses and releases
 			buttons.forEach((pressed, index) => {
 				const wasPressed = this.previousButtons[index];
+				const buttonName = BUTTON_NAMES[index];
 				// Button pressed (down event)
 				if (pressed && !wasPressed) {
-					const callback = this.callbacks.get(`button${index}`);
-					if (callback) callback(1);
-					const downCallback = this.callbacks.get(`button${index}Down`);
-					if (downCallback) downCallback(1);
-					// Named button aliases for Xbox controller
-					if (index === 0) {
-						// A button
-						const aCallback = this.callbacks.get('a');
-						if (aCallback) aCallback(1);
-						const aDownCallback = this.callbacks.get('aDown');
-						if (aDownCallback) aDownCallback(1);
-					}
-					if (index === 1) {
-						// B button
-						const bCallback = this.callbacks.get('b');
-						if (bCallback) bCallback(1);
-						const bDownCallback = this.callbacks.get('bDown');
-						if (bDownCallback) bDownCallback(1);
-					}
-					if (index === 2) {
-						// X button
-						const xCallback = this.callbacks.get('x');
-						if (xCallback) xCallback(1);
-						const xDownCallback = this.callbacks.get('xDown');
-						if (xDownCallback) xDownCallback(1);
-					}
-					if (index === 3) {
-						// Y button
-						const yCallback = this.callbacks.get('y');
-						if (yCallback) yCallback(1);
-						const yDownCallback = this.callbacks.get('yDown');
-						if (yDownCallback) yDownCallback(1);
+					this.emit(`button${index}`);
+					this.emit(`button${index}Down`);
+					if (buttonName) {
+						this.emit(buttonName);
+						this.emit(`${buttonName}Down`);
 					}
 				}
 				// Button released (up event)
 				if (!pressed && wasPressed) {
-					const upCallback = this.callbacks.get(`button${index}Up`);
-					if (upCallback) upCallback(1);
-					// Named button aliases for Xbox controller
-					if (index === 0) {
-						// A button
-						const aUpCallback = this.callbacks.get('aUp');
-						if (aUpCallback) aUpCallback(1);
-					}
-					if (index === 1) {
-						// B button
-						const bUpCallback = this.callbacks.get('bUp');
-						if (bUpCallback) bUpCallback(1);
-					}
-					if (index === 2) {
-						// X button
-						const xUpCallback = this.callbacks.get('xUp');
-						if (xUpCallback) xUpCallback(1);
-					}
-					if (index === 3) {
-						// Y button
-						const yUpCallback = this.callbacks.get('yUp');
-						if (yUpCallback) yUpCallback(1);
+					this.emit(`button${index}Up`);
+					if (buttonName) {
+						this.emit(`${buttonName}Up`);
 					}
 				}
 			});
@@ -163,11 +105,8 @@ export class GamepadManager {
 				const allDirections = [...new Set([...dpadDirections, ...stickDirections])];
 
 				for (const direction of allDirections) {
-					const callback = this.callbacks.get(direction);
-					if (callback) {
-						callback(1);
-						inputDetected = true;
-					}
+					this.emit(direction);
+					inputDetected = true;
 				}
 				// Update timing if input was detected
 				if (inputDetected) {
