@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { registerScene, activateScene } from '../../scripts/scenes.ts';
-	import { focusArea, focusHeader } from '../../scripts/navigation.ts';
-	import Breadcrumb from '../Breadcrumb/Breadcrumb.svelte';
+	import { focusArea, focusHeader, pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import ListItem from './ListItem.svelte';
 	import Product from '../Product/Product.svelte';
 	const SCENE_ID = 'list';
@@ -68,11 +67,13 @@
 
 	function openItem(): void {
 		selectedItem = items[selectedIndex];
+		pushBreadcrumb(items[selectedIndex].title);
 		isAPressed = false;
 	}
 
 	async function closeDetail(): Promise<void> {
 		selectedItem = null;
+		popBreadcrumb();
 		await tick();
 		scrollToSelectedItem(true);
 		activateScene(SCENE_ID);
@@ -127,7 +128,6 @@
 {#if selectedItem}
 	<Product category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onback={closeDetail} />
 {:else}
-	<Breadcrumb items={[category]} />
 	<div class="items">
 		{#each items as item, index (item.id)}
 			<div bind:this={itemElements[index]}>

@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { registerScene, activateScene } from '../../scripts/scenes.ts';
 	import { focusArea, focusHeader, pushBackHandler } from '../../scripts/navigation.ts';
-	import Breadcrumb from '../Breadcrumb/Breadcrumb.svelte';
 	import ProductFile from './ProductFile.svelte';
 	const SCENE_ID = 'product';
 	interface Props {
@@ -161,7 +160,6 @@
 </style>
 
 <div class="detail">
-	<Breadcrumb items={[category, `${itemTitle}`]} />
 	<div class="content">
 		<div class="image" class:selected={active && selectedRow === -1} bind:this={imageElement}>
 			<img src="https://picsum.photos/seed/{itemId}/800/450" alt={itemTitle} />
