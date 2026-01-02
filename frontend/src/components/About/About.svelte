@@ -112,16 +112,16 @@
 			color 0.15s;
 	}
 
-	.link.selected {
+	.links .link.selected {
 		color: #fd1;
 		background-color: rgba(255, 221, 17, 0.1);
 	}
 
-	.link.pressed {
+	.links .link.pressed {
 		background-color: rgba(255, 221, 17, 0.2);
 	}
 
-	.button-container {
+	.buttons {
 		margin-top: 1rem;
 	}
 </style>
@@ -151,7 +151,7 @@
 			{/if}
 		{/each}
 	</div>
-	<div class="button-container">
+	<div class="buttons">
 		<ButtonNormal label="OK" selected={active && selectedIndex === ITEMS.length - 1} pressed={active && selectedIndex === ITEMS.length - 1 && isAPressed} />
 	</div>
 </Dialog>
