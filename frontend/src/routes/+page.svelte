@@ -4,12 +4,15 @@
 	import Breadcrumb from '../components/Breadcrumb/Breadcrumb.svelte';
 	import Menu from '../components/Menu/Menu.svelte';
 	import Footer from '../components/Footer/Footer.svelte';
-	import { createNavigation, breadcrumbItems } from '../scripts/navigation.ts';
+	import { createNavigation, breadcrumbItems, setContentElement } from '../scripts/navigation.ts';
 	import { productName } from '../scripts/app.ts';
 	import { startInput } from '../scripts/input.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, goBack } = createNavigation();
 
+	let contentElement: HTMLElement;
+
 	onMount(() => {
+		setContentElement(contentElement);
 		startInput();
 	});
 </script>
@@ -36,7 +39,7 @@
 <div class="page">
 	<Header onback={goBack} />
 	<Breadcrumb items={$breadcrumbItems} />
-	<div class="content">
+	<div class="content" bind:this={contentElement}>
 		{#if $currentComponent}
 			<svelte:component this={$currentComponent.component} title={$currentComponent.label} {...$currentComponent.props} onback={goBack} />
 		{:else}

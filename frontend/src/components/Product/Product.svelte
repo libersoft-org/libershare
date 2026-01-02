@@ -67,7 +67,6 @@
 	}
 
 	onMount(() => {
-		window.scrollTo({ top: 0, behavior: 'instant' });
 		const unregisterScene = registerScene(SCENE_ID, {
 			up: () => {
 				if (selectedRow === -1) {

@@ -30,6 +30,19 @@ export function resetBreadcrumb(): void {
 	breadcrumbItemsStore.set(['Home']);
 }
 
+// Content scroll management
+let contentElement: HTMLElement | null = null;
+
+export function setContentElement(element: HTMLElement): void {
+	contentElement = element;
+}
+
+export function scrollContentToTop(): void {
+	if (contentElement) {
+		contentElement.scrollTo({ top: 0, behavior: 'instant' });
+	}
+}
+
 export function createNavigation() {
 	const focusAreaStore = getFocusAreaStore();
 	const path = writable<MenuItem[]>([]);

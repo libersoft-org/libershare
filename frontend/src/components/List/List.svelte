@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { registerScene, activateScene } from '../../scripts/scenes.ts';
-	import { focusArea, focusHeader, pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { focusArea, focusHeader, pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
 	import ListItem from './ListItem.svelte';
 	import Product from '../Product/Product.svelte';
 	const SCENE_ID = 'list';
@@ -68,6 +68,7 @@
 	function openItem(): void {
 		selectedItem = items[selectedIndex];
 		pushBreadcrumb(items[selectedIndex].title);
+		scrollContentToTop();
 		isAPressed = false;
 	}
 
