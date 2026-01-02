@@ -1,7 +1,7 @@
 import type { Component } from 'svelte';
 import Items from '../components/List/List.svelte';
+import About from '../components/About/About.svelte';
 import { productName } from './app.ts';
-
 export interface MenuItem {
 	id: string;
 	label: string;
@@ -11,12 +11,10 @@ export interface MenuItem {
 	action?: 'back';
 	orientation?: 'horizontal' | 'vertical';
 }
-
 export interface MenuStructure {
 	title: string;
 	items: MenuItem[];
 }
-
 export const menuStructure: MenuStructure = {
 	title: productName,
 	items: [
@@ -43,7 +41,7 @@ export const menuStructure: MenuStructure = {
 		{
 			id: 'about',
 			label: 'About',
-			submenu: [{ id: 'back', label: 'Back', action: 'back' }],
+			component: About,
 		},
 		{
 			id: 'exit',
