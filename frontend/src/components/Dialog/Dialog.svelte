@@ -10,7 +10,7 @@
 </script>
 
 <style>
-	.dialog-backdrop {
+	.dialog {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -20,7 +20,7 @@
 		flex: 1;
 	}
 
-	.dialog-content {
+	.dialog .content {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -32,8 +32,8 @@
 	}
 </style>
 
-<div class="dialog-backdrop">
-	<div class="dialog-content" style:min-width={minWidth}>
+<div class="dialog">
+	<div class="content" style:min-width={minWidth}>
 		{@render children()}
 	</div>
 </div>
