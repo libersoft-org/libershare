@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { focusHeader } from '../../scripts/navigation.ts';
 	import MenuTitle from './MenuTitle.svelte';
 	import ButtonGroup from '../Buttons/ButtonGroup.svelte';
 	import Button from '../Buttons/ButtonNormal.svelte';
@@ -10,9 +9,9 @@
 		orientation?: 'horizontal' | 'vertical';
 		selectedId?: string;
 		onselect?: (id: string) => void;
-		onback?: () => void;
+		onBack?: () => void;
 	}
-	let { title, items, orientation = 'horizontal', selectedId, onselect, onback }: Props = $props();
+	let { title, items, orientation = 'horizontal', selectedId, onselect, onBack }: Props = $props();
 	let initialIndex = $derived(
 		selectedId
 			? Math.max(
@@ -39,7 +38,7 @@
 <div class="menu">
 	<MenuTitle {title} />
 	{#key `${title}-${selectedId}-${orientation}`}
-		<ButtonGroup sceneID="menu" {initialIndex} {orientation} wrap={true} onUp={focusHeader} onBack={onback}>
+		<ButtonGroup sceneID="menu" {initialIndex} {orientation} wrap={true} {onBack}>
 			{#each items as item (item.id)}
 				<Button label={item.label} onConfirm={() => onselect?.(item.id)} />
 			{/each}

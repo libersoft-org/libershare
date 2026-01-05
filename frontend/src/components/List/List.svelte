@@ -8,9 +8,9 @@
 	interface Props {
 		title?: string;
 		category?: string;
-		onback?: () => void;
+		onBack?: () => void;
 	}
-	let { title = 'Items', category = '', onback }: Props = $props();
+	let { title = 'Items', category = '', onBack }: Props = $props();
 	let active = $derived($focusArea === 'content');
 	// Some test data
 	const items = Array.from({ length: 200 }, (_, i) => ({
@@ -100,7 +100,7 @@
 			confirmCancel: () => {
 				isAPressed = false;
 			},
-			back: () => onback?.(),
+			back: () => onBack?.(),
 		});
 		activateScene(SCENE_ID);
 		return unregister;
@@ -127,7 +127,7 @@
 </style>
 
 {#if selectedItem}
-	<Product category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onback={closeDetail} />
+	<Product category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onBack={closeDetail} />
 {:else}
 	<div class="items">
 		{#each items as item, index (item.id)}

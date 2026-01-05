@@ -7,7 +7,7 @@
 	import { createNavigation, breadcrumbItems, setContentElement } from '../scripts/navigation.ts';
 	import { productName } from '../scripts/app.ts';
 	import { startInput } from '../scripts/input.ts';
-	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, goBack } = createNavigation();
+	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 
 	let contentElement: HTMLElement;
 
@@ -37,13 +37,13 @@
 </svelte:head>
 
 <div class="page">
-	<Header onback={goBack} />
+	<Header {onBack} />
 	<Breadcrumb items={$breadcrumbItems} />
 	<div class="content" bind:this={contentElement}>
 		{#if $currentComponent}
-			<svelte:component this={$currentComponent.component} title={$currentComponent.label} {...$currentComponent.props} onback={goBack} />
+			<svelte:component this={$currentComponent.component} title={$currentComponent.label} {...$currentComponent.props} {onBack} />
 		{:else}
-			<Menu title={$currentTitle} items={$currentItems.map(i => ({ id: i.id, label: i.label }))} orientation={$currentOrientation} selectedId={$selectedId} onselect={navigate} onback={goBack} />
+			<Menu title={$currentTitle} items={$currentItems.map(i => ({ id: i.id, label: i.label }))} orientation={$currentOrientation} selectedId={$selectedId} onselect={navigate} {onBack} />
 		{/if}
 	</div>
 	<Footer />

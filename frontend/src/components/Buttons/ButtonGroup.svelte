@@ -9,8 +9,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { setContext, onMount } from 'svelte';
-	import { registerScene, activateScene } from '../../scripts/scenes.ts';
-	import { focusArea } from '../../scripts/navigation.ts';
+	import { registerScene, activateScene, activatePrevScene, activeScene } from '../../scripts/scenes.ts';
 
 	interface Props {
 		children: Snippet;
@@ -18,15 +17,14 @@
 		initialIndex?: number;
 		orientation?: 'horizontal' | 'vertical';
 		wrap?: boolean;
-		onUp?: () => void;
 		onBack?: () => void;
 	}
 
-	let { children, sceneID, initialIndex = 0, orientation = 'vertical', wrap = false, onUp, onBack }: Props = $props();
+	let { children, sceneID, initialIndex = 0, orientation = 'vertical', wrap = false, onBack }: Props = $props();
 	let selectedIndex = $state(initialIndex);
 	let isAPressed = $state(false);
 	let buttons: { onConfirm?: () => void }[] = [];
-	let active = $derived($focusArea === 'content');
+	let active = $derived($activeScene === sceneID);
 
 	setContext<ButtonGroupContext>('buttonGroup', {
 		register: button => {
@@ -46,7 +44,7 @@
 	function navigatePrev() {
 		if (selectedIndex > 0) selectedIndex--;
 		else if (wrap) selectedIndex = buttons.length - 1;
-		else onUp?.();
+		else activatePrevScene();
 	}
 
 	function navigateNext() {
@@ -55,7 +53,7 @@
 	}
 
 	onMount(() => {
-		const handlers = orientation === 'horizontal' ? { left: navigatePrev, right: navigateNext, up: () => onUp?.() } : { up: navigatePrev, down: navigateNext };
+		const handlers = orientation === 'horizontal' ? { left: navigatePrev, right: navigateNext, up: activatePrevScene } : { up: navigatePrev, down: navigateNext };
 		const unregister = registerScene(sceneID, {
 			...handlers,
 			confirmDown: () => {

@@ -23,7 +23,7 @@ export function pushBreadcrumb(item: string): void {
 }
 
 export function popBreadcrumb(): void {
-	breadcrumbItemsStore.update(items => items.length > 1 ? items.slice(0, -1) : items);
+	breadcrumbItemsStore.update(items => (items.length > 1 ? items.slice(0, -1) : items));
 }
 
 export function resetBreadcrumb(): void {
@@ -57,7 +57,7 @@ export function createNavigation() {
 		const item = items.find(i => i.id === id);
 		if (!item) return;
 		if (item.action === 'back') {
-			goBack();
+			onBack();
 			return;
 		}
 		selectedId.set(undefined);
@@ -86,7 +86,7 @@ export function createNavigation() {
 		focusAreaStore.set('content');
 	}
 
-	function goBack(): void {
+	function onBack(): void {
 		// If there's a custom back handler on the stack, use it
 		if (!executeBackHandler()) {
 			navigateBack();
@@ -107,7 +107,7 @@ export function createNavigation() {
 		currentTitle,
 		currentOrientation,
 		navigate,
-		goBack,
+		onBack,
 		navigateBack,
 		reset,
 	};

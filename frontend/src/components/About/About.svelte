@@ -1,13 +1,12 @@
 <script lang="ts">
-	import { focusHeader } from '../../scripts/navigation.ts';
 	import { productName, productVersion, buildDate, commitHash } from '../../scripts/app.ts';
 	import Dialog from '../Dialog/Dialog.svelte';
 	import ButtonGroup from '../Buttons/ButtonGroup.svelte';
 	import Button from '../Buttons/ButtonNormal.svelte';
 	interface Props {
-		onback?: () => void;
+		onBack?: () => void;
 	}
-	let { onback }: Props = $props();
+	let { onBack: onBack }: Props = $props();
 
 	function openUrl(url: string) {
 		window.open(url, '_blank');
@@ -73,10 +72,10 @@
 		</div>
 	</div>
 	<div class="links">
-		<ButtonGroup sceneID="about" initialIndex={2} onUp={focusHeader} onBack={onback}>
+		<ButtonGroup sceneID="about" initialIndex={2} {onBack}>
 			<Button label="GitHub page" padding="0.5vw" fontSize="0.7vw" borderRadius="0.5vw" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
 			<Button label="Official website" padding="0.5vw" fontSize="0.7vw" borderRadius="0.5vw" onConfirm={() => openUrl('https://libershare.com')} />
-			<Button label="OK" onConfirm={onback} />
+			<Button label="OK" onConfirm={onBack} />
 		</ButtonGroup>
 	</div>
 </Dialog>

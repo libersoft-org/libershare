@@ -8,9 +8,9 @@
 		category?: string;
 		itemTitle?: string;
 		itemId?: number;
-		onback?: () => void;
+		onBack?: () => void;
 	}
-	let { category = 'Movies', itemTitle = 'Item', itemId = 1, onback }: Props = $props();
+	let { category = 'Movies', itemTitle = 'Item', itemId = 1, onBack }: Props = $props();
 	let active = $derived($focusArea === 'content');
 	const files = [
 		{ id: 1, name: `${itemTitle} - 240p.mp4`, size: '218.32 MB' },
@@ -88,10 +88,10 @@
 			confirmCancel: () => {
 				isAPressed = false;
 			},
-			back: () => onback?.(),
+			back: () => onBack?.(),
 		});
 		activateScene(SCENE_ID);
-		const unregisterBack = pushBackHandler(() => onback?.());
+		const unregisterBack = pushBackHandler(() => onBack?.());
 		return () => {
 			unregisterScene();
 			unregisterBack();
