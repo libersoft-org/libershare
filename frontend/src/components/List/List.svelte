@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { registerScene, activateScene } from '../../scripts/scenes.ts';
+	import { registerArea, activateArea } from '../../scripts/areas.ts';
 	import { focusArea, focusHeader, pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
 	import ListItem from './ListItem.svelte';
 	import Product from '../Product/Product.svelte';
-	const SCENE_ID = 'list';
+	const AREA_ID = 'list';
 	interface Props {
 		title?: string;
 		category?: string;
@@ -77,11 +77,11 @@
 		popBreadcrumb();
 		await tick();
 		scrollToSelectedItem(true);
-		activateScene(SCENE_ID);
+		activateArea(AREA_ID);
 	}
 
 	onMount(() => {
-		const unregister = registerScene(SCENE_ID, {
+		const unregister = registerArea(AREA_ID, {
 			up: () => {
 				const cols = getColumnsCount();
 				if (selectedIndex < cols) focusHeader();
@@ -102,7 +102,7 @@
 			},
 			back: () => onBack?.(),
 		});
-		activateScene(SCENE_ID);
+		activateArea(AREA_ID);
 		return unregister;
 	});
 </script>

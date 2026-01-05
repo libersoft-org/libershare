@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { registerScene, activateScene } from '../../scripts/scenes.ts';
+	import { registerArea, activateArea } from '../../scripts/areas.ts';
 	import { focusArea, focusHeader, pushBackHandler } from '../../scripts/navigation.ts';
 	import ProductFile from './ProductFile.svelte';
-	const SCENE_ID = 'product';
+	const AREA_ID = 'product';
 	interface Props {
 		category?: string;
 		itemTitle?: string;
@@ -67,7 +67,7 @@
 	}
 
 	onMount(() => {
-		const unregisterScene = registerScene(SCENE_ID, {
+		const unregisterArea = registerArea(AREA_ID, {
 			up: () => {
 				if (selectedRow === -1) {
 					focusHeader();
@@ -90,10 +90,10 @@
 			},
 			back: () => onBack?.(),
 		});
-		activateScene(SCENE_ID);
+		activateArea(AREA_ID);
 		const unregisterBack = pushBackHandler(() => onBack?.());
 		return () => {
-			unregisterScene();
+			unregisterArea();
 			unregisterBack();
 		};
 	});

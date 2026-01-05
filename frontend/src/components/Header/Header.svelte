@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { productName } from '../../scripts/app.ts';
-	import { registerScene, activateScene, activateNextScene, activeScene } from '../../scripts/scenes.ts';
+	import { registerArea, activateArea, activateNextArea, activeArea } from '../../scripts/areas.ts';
 	import ButtonCircle from '../Buttons/ButtonCircle.svelte';
 	interface Props {
 		onBack?: () => void;
@@ -9,12 +9,12 @@
 	let { onBack }: Props = $props();
 
 	onMount(() => {
-		const unregister = registerScene('header', {
-			down: activateNextScene,
+		const unregister = registerArea('header', {
+			down: activateNextArea,
 			confirmUp: () => onBack?.(),
 			back: () => onBack?.(),
 		});
-		activateScene('header');
+		activateArea('header');
 		return unregister;
 	});
 </script>
@@ -33,6 +33,6 @@
 </style>
 
 <div class="header">
-	<ButtonCircle icon="/icons/back.svg" alt="Back" selected={$activeScene === 'header'} />
+	<ButtonCircle icon="/icons/back.svg" alt="Back" selected={$activeArea === 'header'} />
 	{productName}
 </div>

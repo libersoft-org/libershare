@@ -72,7 +72,7 @@
 		</div>
 	</div>
 	<div class="links">
-		<ButtonGroup sceneID="about" initialIndex={2} {onBack}>
+		<ButtonGroup areaID="about" initialIndex={2} {onBack}>
 			<Button label="GitHub page" padding="0.5vw" fontSize="0.7vw" borderRadius="0.5vw" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
 			<Button label="Official website" padding="0.5vw" fontSize="0.7vw" borderRadius="0.5vw" onConfirm={() => openUrl('https://libershare.com')} />
 			<Button label="OK" onConfirm={onBack} />

@@ -1,10 +1,10 @@
 import { writable } from 'svelte/store';
-import { activateScene, getSceneManager } from './scenes.ts';
+import { activateArea, getAreaManager } from './areas.ts';
 
 export type FocusArea = 'header' | 'content';
 
 const focusAreaStore = writable<FocusArea>('content');
-let lastContentScene: string | null = null;
+let lastContentArea: string | null = null;
 
 // Back handler stack
 type BackHandler = () => void;
@@ -35,12 +35,12 @@ export function executeBackHandler(): boolean {
 	return false;
 }
 
-// Subscribe to focusArea changes and activate appropriate scene
+// Subscribe to focusArea changes and activate appropriate area
 focusAreaStore.subscribe(area => {
 	if (area === 'header') {
-		activateScene('header');
-	} else if (lastContentScene) {
-		activateScene(lastContentScene);
+		activateArea('header');
+	} else if (lastContentArea) {
+		activateArea(lastContentArea);
 	}
 });
 
@@ -50,23 +50,23 @@ export const focusArea = {
 };
 
 export function focusHeader(): void {
-	// Remember current content scene before switching to header
-	const currentScene = getSceneManager().getActiveScene();
-	if (currentScene && currentScene !== 'header') {
-		lastContentScene = currentScene;
+	// Remember current content area before switching to header
+	const currentArea = getAreaManager().getActiveArea();
+	if (currentArea && currentArea !== 'header') {
+		lastContentArea = currentArea;
 	}
 	focusAreaStore.set('header');
 }
 
 export function focusContent(): void {
 	focusAreaStore.set('content');
-	if (lastContentScene) {
-		activateScene(lastContentScene);
+	if (lastContentArea) {
+		activateArea(lastContentArea);
 	}
 }
 
-export function setContentScene(sceneID: string): void {
-	lastContentScene = sceneID;
+export function setContentArea(areaID: string): void {
+	lastContentArea = areaID;
 }
 
 // Internal access for navigation

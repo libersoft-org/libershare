@@ -3,7 +3,7 @@ import { menuStructure, type MenuItem } from './menu.ts';
 import { getFocusAreaStore, executeBackHandler } from './focus.ts';
 
 // Re-export commonly used items for convenience
-export { focusArea, focusHeader, focusContent, pushBackHandler, setContentScene } from './focus.ts';
+export { focusArea, focusHeader, focusContent, pushBackHandler, setContentArea } from './focus.ts';
 export type { FocusArea } from './focus.ts';
 export { menuStructure, type MenuItem, type MenuStructure } from './menu.ts';
 

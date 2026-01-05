@@ -38,7 +38,7 @@
 <div class="menu">
 	<MenuTitle {title} />
 	{#key `${title}-${selectedId}-${orientation}`}
-		<ButtonGroup sceneID="menu" {initialIndex} {orientation} wrap={true} {onBack}>
+		<ButtonGroup areaID="menu" {initialIndex} {orientation} wrap={true} {onBack}>
 			{#each items as item (item.id)}
 				<Button label={item.label} onConfirm={() => onselect?.(item.id)} />
 			{/each}

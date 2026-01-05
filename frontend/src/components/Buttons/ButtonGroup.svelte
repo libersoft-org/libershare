@@ -9,22 +9,22 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { setContext, onMount } from 'svelte';
-	import { registerScene, activateScene, activatePrevScene, activeScene } from '../../scripts/scenes.ts';
+	import { registerArea, activateArea, activatePrevArea, activeArea } from '../../scripts/areas.ts';
 
 	interface Props {
 		children: Snippet;
-		sceneID: string;
+		areaID: string;
 		initialIndex?: number;
 		orientation?: 'horizontal' | 'vertical';
 		wrap?: boolean;
 		onBack?: () => void;
 	}
 
-	let { children, sceneID, initialIndex = 0, orientation = 'vertical', wrap = false, onBack }: Props = $props();
+	let { children, areaID, initialIndex = 0, orientation = 'vertical', wrap = false, onBack }: Props = $props();
 	let selectedIndex = $state(initialIndex);
 	let isAPressed = $state(false);
 	let buttons: { onConfirm?: () => void }[] = [];
-	let active = $derived($activeScene === sceneID);
+	let active = $derived($activeArea === areaID);
 
 	setContext<ButtonGroupContext>('buttonGroup', {
 		register: button => {
@@ -44,7 +44,7 @@
 	function navigatePrev() {
 		if (selectedIndex > 0) selectedIndex--;
 		else if (wrap) selectedIndex = buttons.length - 1;
-		else activatePrevScene();
+		else activatePrevArea();
 	}
 
 	function navigateNext() {
@@ -53,8 +53,8 @@
 	}
 
 	onMount(() => {
-		const handlers = orientation === 'horizontal' ? { left: navigatePrev, right: navigateNext, up: activatePrevScene } : { up: navigatePrev, down: navigateNext };
-		const unregister = registerScene(sceneID, {
+		const handlers = orientation === 'horizontal' ? { left: navigatePrev, right: navigateNext, up: activatePrevArea } : { up: navigatePrev, down: navigateNext };
+		const unregister = registerArea(areaID, {
 			...handlers,
 			confirmDown: () => {
 				isAPressed = true;
@@ -68,7 +68,7 @@
 			},
 			back: () => onBack?.(),
 		});
-		activateScene(sceneID);
+		activateArea(areaID);
 		return unregister;
 	});
 </script>
