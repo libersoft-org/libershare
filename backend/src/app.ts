@@ -1,6 +1,7 @@
 import { Network } from './network.ts';
 import { Downloader } from './downloader.ts';
 import * as readline from 'readline';
+import { join } from 'path';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -47,6 +48,9 @@ rl.on('line', async line => {
 	const command = line.trim();
 
 	if (command.startsWith('c')) {
+		/*
+		connect to peer by multiaddr
+		 */
 		const multiaddr = command.slice(1).trim();
 		if (!multiaddr) {
 			console.log('Error: multiaddr required after "c"');
@@ -57,7 +61,11 @@ rl.on('line', async line => {
 		} catch (error: any) {
 			console.log('✗ Connection failed:', error.message);
 		}
+
 	} else if (command.startsWith('f')) {
+		/*
+		find peer address by id
+		 */
 		const peerId = command.slice(1).trim();
 		if (!peerId) {
 			console.log('Error: peer ID required after "f"');
@@ -68,13 +76,17 @@ rl.on('line', async line => {
 		} catch (error: any) {
 			console.log('✗ Find peer failed:', error.message);
 		}
+
 	} else if (command.startsWith('l')) {
+		/*
+		given lish file, await download
+		*/
 		let manifestPath = command.slice(1).trim();
 		if (!manifestPath) {
 			manifestPath = '../../lish_files/test.lish';
 		}
 		try {
-			const { join } = await import('path');
+
 			const downloadDir = join(dataDir, 'downloads');
 			const downloader = new Downloader(manifestPath, downloadDir, dataDir, network);
 			await downloader.init(manifestPath);
@@ -103,7 +115,6 @@ rl.on('line', async line => {
 	}
 });
 
-// Keep the process running
 process.on('SIGINT', async () => {
 	console.log('\nShutting down...');
 	await network.stop();

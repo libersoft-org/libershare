@@ -177,7 +177,7 @@ export class Network {
 		}
 
 		// Add bootstrap if peers are configured
-		if (settings.network.bootstrapPeers.length > 0) {
+		if (settings.network.bootstrapPeers?.length > 0) {
 			//console.log('Configuring bootstrap peers:');
 			//settings.network.bootstrapPeers.forEach(peer => console.log('  -', peer));
 			config.peerDiscovery = [
@@ -298,9 +298,9 @@ export class Network {
 			console.log('✓ Found enough relays');
 		});
 
-		// Manually dial bootstrap peers FIRST
+		// Manually dial bootstrap peers FIRST, because config.peerDiscovery doesnt seem to work as expected
 		// Bootstrap module discovers peers but doesn't auto-connect
-		if (settings.network.bootstrapPeers.length > 0) {
+		if (settings.network.bootstrapPeers?.length > 0) {
 			//console.log('Connecting to bootstrap peers...');
 
 			for (const peerAddr of settings.network.bootstrapPeers) {
@@ -347,7 +347,7 @@ export class Network {
 
 	private async subscribeToPink() {
 		// Subscribe to pink and ponk topics - AFTER peer connection - does this matter?
-		console.log('Subscribing to pink and ponk topics');
+		//console.log('Subscribing to pink and ponk topics');
 		this.pubsub.subscribe(PINK_TOPIC);
 		this.pubsub.subscribe(PONK_TOPIC);
 		console.log('✓ Subscribed to topics:', this.pubsub.getTopics());
@@ -537,6 +537,7 @@ export class Network {
 	async findPeer(peerId: PeerId) {
 		console.log('Finding peer:');
 
+		console.log('Closest peers:');
 		for await (const peer of this.node.peerRouting.getClosestPeers(peerId.toMultihash().bytes)) {
 			console.log(peer.id, peer.multiaddrs);
 		}
