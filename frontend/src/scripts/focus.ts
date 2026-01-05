@@ -65,8 +65,8 @@ export function focusContent(): void {
 	}
 }
 
-export function setContentScene(sceneId: string): void {
-	lastContentScene = sceneId;
+export function setContentScene(sceneID: string): void {
+	lastContentScene = sceneID;
 }
 
 // Internal access for navigation

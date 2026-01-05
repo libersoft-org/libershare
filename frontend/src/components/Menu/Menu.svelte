@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { focusHeader } from '../../scripts/navigation.ts';
 	import MenuTitle from './MenuTitle.svelte';
-	import MenuItems from './MenuItems.svelte';
+	import ButtonGroup from '../Buttons/ButtonGroup.svelte';
+	import Button from '../Buttons/ButtonNormal.svelte';
 
 	interface Props {
 		title: string;
@@ -11,6 +13,14 @@
 		onback?: () => void;
 	}
 	let { title, items, orientation = 'horizontal', selectedId, onselect, onback }: Props = $props();
+	let initialIndex = $derived(
+		selectedId
+			? Math.max(
+					0,
+					items.findIndex(i => i.id === selectedId)
+				)
+			: 0
+	);
 </script>
 
 <style>
@@ -29,6 +39,10 @@
 <div class="menu">
 	<MenuTitle {title} />
 	{#key `${title}-${selectedId}-${orientation}`}
-		<MenuItems {items} {orientation} sceneId="menu" {selectedId} {onselect} {onback} />
+		<ButtonGroup sceneID="menu" {initialIndex} {orientation} wrap={true} onUp={focusHeader} onBack={onback}>
+			{#each items as item (item.id)}
+				<Button label={item.label} onConfirm={() => onselect?.(item.id)} />
+			{/each}
+		</ButtonGroup>
 	{/key}
 </div>

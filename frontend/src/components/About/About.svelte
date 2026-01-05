@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { focusArea, focusHeader } from '../../scripts/navigation.ts';
+	import { focusHeader } from '../../scripts/navigation.ts';
 	import { productName, productVersion, buildDate, commitHash } from '../../scripts/app.ts';
 	import Dialog from '../Dialog/Dialog.svelte';
 	import ButtonGroup from '../Buttons/ButtonGroup.svelte';
@@ -8,7 +8,6 @@
 		onback?: () => void;
 	}
 	let { onback }: Props = $props();
-	let active = $derived($focusArea === 'content');
 
 	function openUrl(url: string) {
 		window.open(url, '_blank');
@@ -74,7 +73,7 @@
 		</div>
 	</div>
 	<div class="links">
-		<ButtonGroup sceneID="about" {active} initialIndex={2} onUp={focusHeader} onBack={onback}>
+		<ButtonGroup sceneID="about" initialIndex={2} onUp={focusHeader} onBack={onback}>
 			<Button label="GitHub page" padding="0.5vw" fontSize="0.7vw" borderRadius="0.5vw" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
 			<Button label="Official website" padding="0.5vw" fontSize="0.7vw" borderRadius="0.5vw" onConfirm={() => openUrl('https://libershare.com')} />
 			<Button label="OK" onConfirm={onback} />

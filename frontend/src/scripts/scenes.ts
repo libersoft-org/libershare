@@ -8,26 +8,26 @@ class SceneManager {
 	// Confirm state - tracks if confirm is "active" (not interrupted)
 	private confirmActive = false;
 
-	registerScene(sceneId: string, handlers: InputHandlers): () => void {
-		this.scenes.set(sceneId, handlers);
-		return () => this.unregisterScene(sceneId);
+	registerScene(sceneID: string, handlers: InputHandlers): () => void {
+		this.scenes.set(sceneID, handlers);
+		return () => this.unregisterScene(sceneID);
 	}
 
-	unregisterScene(sceneId: string): void {
-		this.scenes.delete(sceneId);
-		if (this.activeScene === sceneId) {
+	unregisterScene(sceneID: string): void {
+		this.scenes.delete(sceneID);
+		if (this.activeScene === sceneID) {
 			this.activeScene = null;
 		}
 	}
 
-	activateScene(sceneId: string): void {
-		if (this.scenes.has(sceneId)) {
-			this.activeScene = sceneId;
+	activateScene(sceneID: string): void {
+		if (this.scenes.has(sceneID)) {
+			this.activeScene = sceneID;
 		}
 	}
 
-	deactivateScene(sceneId: string): void {
-		if (this.activeScene === sceneId) {
+	deactivateScene(sceneID: string): void {
+		if (this.activeScene === sceneID) {
 			this.activeScene = null;
 		}
 	}
@@ -69,20 +69,20 @@ export function getSceneManager(): SceneManager {
 	return globalSceneManager;
 }
 
-export function registerScene(sceneId: string, handlers: InputHandlers): () => void {
-	return getSceneManager().registerScene(sceneId, handlers);
+export function registerScene(sceneID: string, handlers: InputHandlers): () => void {
+	return getSceneManager().registerScene(sceneID, handlers);
 }
 
-export function unregisterScene(sceneId: string): void {
-	getSceneManager().unregisterScene(sceneId);
+export function unregisterScene(sceneID: string): void {
+	getSceneManager().unregisterScene(sceneID);
 }
 
-export function activateScene(sceneId: string): void {
-	getSceneManager().activateScene(sceneId);
+export function activateScene(sceneID: string): void {
+	getSceneManager().activateScene(sceneID);
 }
 
-export function deactivateScene(sceneId: string): void {
-	getSceneManager().deactivateScene(sceneId);
+export function deactivateScene(sceneID: string): void {
+	getSceneManager().deactivateScene(sceneID);
 }
 
 export function emit(action: InputAction): void {
