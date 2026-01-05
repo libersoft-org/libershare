@@ -24,9 +24,11 @@
 		display: flex;
 		align-items: center;
 		gap: 1vw;
-		background-color: #000;
-		color: #fd1;
 		padding: 1vw;
+	}
+
+	.title {
+		color: #fd1;
 		font-size: 1.5vw;
 		font-weight: bold;
 	}
@@ -34,5 +36,5 @@
 
 <div class="header">
 	<ButtonCircle icon="/icons/back.svg" alt="Back" selected={$activeArea === 'header'} />
-	{productName}
+	<div class="title">{productName}</div>
 </div>
