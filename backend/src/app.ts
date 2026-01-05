@@ -71,7 +71,7 @@ rl.on('line', async line => {
 	} else if (command.startsWith('l')) {
 		let manifestPath = command.slice(1).trim();
 		if (!manifestPath) {
-			manifestPath = '../../d/0/data/frontend.lish';
+			manifestPath = '../../lish_files/test.lish';
 		}
 		try {
 			const { join } = await import('path');
