@@ -6,22 +6,6 @@
 	import Dialog from '../Dialog/Dialog.svelte';
 	import ButtonNormal from '../Buttons/ButtonNormal.svelte';
 	const SCENE_ID = 'about';
-	const ITEMS = [
-		{
-			type: 'link',
-			label: 'GitHub: https://github.com/libersoft-org/libershare',
-			url: 'https://github.com/libersoft-org/libershare',
-		},
-		{
-			type: 'link',
-			label: 'Website: https://libershare.com',
-			url: 'https://libershare.com',
-		},
-		{
-			type: 'button',
-			label: 'OK',
-		},
-	] as const;
 
 	interface Props {
 		onback?: () => void;
@@ -29,13 +13,13 @@
 
 	let { onback }: Props = $props();
 	let active = $derived($focusArea === 'content');
-	let selectedIndex = $state(ITEMS.length - 1); // Start on OK button
+	let selectedIndex = $state(2); // Start on OK button
 	let isAPressed = $state(false);
+	let buttons: { onConfirm?: () => void }[] = [];
 
-	function handleConfirm() {
-		const item = ITEMS[selectedIndex];
-		if (item.type === 'link') window.open(item.url, '_blank');
-		else onback?.();
+	function openUrl(url: string) {
+		console.log('Opening URL:', url);
+		window.open(url, '_blank');
 	}
 
 	onMount(() => {
@@ -45,14 +29,14 @@
 				else focusHeader();
 			},
 			down: () => {
-				if (selectedIndex < ITEMS.length - 1) selectedIndex++;
+				if (selectedIndex < 2) selectedIndex++;
 			},
 			confirmDown: () => {
 				isAPressed = true;
 			},
 			confirmUp: () => {
 				isAPressed = false;
-				handleConfirm();
+				buttons[selectedIndex]?.onConfirm?.();
 			},
 			confirmCancel: () => {
 				isAPressed = false;
@@ -101,26 +85,6 @@
 		margin-top: 1vw;
 	}
 
-	.links .link {
-		color: #aaa;
-		text-decoration: none;
-		font-size: 1vw;
-		padding: 0.5vw;
-		border-radius: 0.5vw;
-		transition:
-			background-color 0.15s,
-			color 0.15s;
-	}
-
-	.links .link.selected {
-		color: #fd1;
-		background-color: rgba(255, 221, 17, 0.1);
-	}
-
-	.links .link.pressed {
-		background-color: rgba(255, 221, 17, 0.2);
-	}
-
 	.buttons {
 		margin-top: 1vw;
 	}
@@ -134,7 +98,7 @@
 			<span class="value">{productVersion}</span>
 		</div>
 		<div class="row">
-			<span class="label">Build Date:</span>
+			<span class="label">Build date:</span>
 			<span class="value">{buildDate}</span>
 		</div>
 		<div class="row">
@@ -143,15 +107,8 @@
 		</div>
 	</div>
 	<div class="links">
-		{#each ITEMS as item, i}
-			{#if item.type === 'link'}
-				<span class="link" class:selected={active && selectedIndex === i} class:pressed={active && selectedIndex === i && isAPressed}>
-					{item.label}
-				</span>
-			{/if}
-		{/each}
-	</div>
-	<div class="buttons">
-		<ButtonNormal label="OK" selected={active && selectedIndex === ITEMS.length - 1} pressed={active && selectedIndex === ITEMS.length - 1 && isAPressed} />
+		<ButtonNormal bind:this={buttons[0]} label="GitHub page" selected={active && selectedIndex === 0} pressed={active && selectedIndex === 0 && isAPressed} padding="0.5vw" fontSize="0.7vw" borderRadius="0.5vw" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
+		<ButtonNormal bind:this={buttons[1]} label="Official website" selected={active && selectedIndex === 1} pressed={active && selectedIndex === 1 && isAPressed} padding="0.5vw" fontSize="0.7vw" borderRadius="0.5vw" onConfirm={() => openUrl('https://libershare.com')} />
+		<ButtonNormal bind:this={buttons[2]} label="OK" selected={active && selectedIndex === 2} pressed={active && selectedIndex === 2 && isAPressed} onConfirm={() => onback?.()} />
 	</div>
 </Dialog>

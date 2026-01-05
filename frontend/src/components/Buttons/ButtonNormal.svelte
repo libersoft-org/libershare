@@ -3,17 +3,19 @@
 		label: string;
 		selected?: boolean;
 		pressed?: boolean;
+		padding?: string;
+		fontSize?: string;
+		borderRadius?: string;
+		onConfirm?: () => void;
 	}
-	let { label, selected = false, pressed = false }: Props = $props();
+	let { label, selected = false, pressed = false, padding = '1vw', fontSize = '1vw', borderRadius = '1vw', onConfirm }: Props = $props();
+	export { onConfirm };
 </script>
 
 <style>
 	.menu-button {
-		padding: 1vw;
 		background-color: rgba(255, 255, 255, 0.1);
 		border: 2px solid rgba(255, 255, 255, 0.3);
-		border-radius: 1vw;
-		font-size: 1vw;
 		color: #fff;
 		text-align: center;
 		white-space: nowrap;
@@ -41,6 +43,6 @@
 	}
 </style>
 
-<div class="menu-button" class:selected class:pressed={selected && pressed}>
+<div class="menu-button" class:selected class:pressed={selected && pressed} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}">
 	{label}
 </div>
