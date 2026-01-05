@@ -8,13 +8,13 @@
 <style>
 	.breadcrumb {
 		width: 100%;
-		padding: 1rem 2rem;
+		padding: 1vw;
 		background-color: #222;
-		font-size: 1.2rem;
+		font-size: 1vw;
 		box-sizing: border-box;
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 0.5vw;
 	}
 
 	.breadcrumb-item {

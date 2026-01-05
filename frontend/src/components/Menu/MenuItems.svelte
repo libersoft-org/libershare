@@ -64,13 +64,13 @@
 	.items-wrapper {
 		width: 100%;
 		overflow: hidden;
-		padding: 2rem 0;
+		padding: 1vw 0;
 	}
 
 	.items {
 		display: flex;
 		align-items: center;
-		gap: 2rem;
+		gap: 1.5vw;
 		transition: all 0.2s linear;
 	}
 

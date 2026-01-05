@@ -66,7 +66,7 @@
 
 <style>
 	.title {
-		font-size: 2vw;
+		font-size: 1.8vw;
 		font-weight: bold;
 		color: #fd1;
 	}
@@ -75,14 +75,14 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.5rem;
-		font-size: 1.1rem;
+		gap: 0.5vw;
+		font-size: 1vw;
 		color: #aaa;
 	}
 
 	.build .row {
 		display: flex;
-		gap: 0.5rem;
+		gap: 0.5vw;
 	}
 
 	.build .row .label {
@@ -97,16 +97,16 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.5rem;
-		margin-top: 1rem;
+		gap: 0.5vw;
+		margin-top: 1vw;
 	}
 
 	.links .link {
 		color: #aaa;
 		text-decoration: none;
-		font-size: 1.1rem;
-		padding: 0.5rem 1rem;
-		border-radius: 0.5rem;
+		font-size: 1vw;
+		padding: 0.5vw;
+		border-radius: 0.5vw;
 		transition:
 			background-color 0.15s,
 			color 0.15s;
@@ -122,7 +122,7 @@
 	}
 
 	.buttons {
-		margin-top: 1rem;
+		margin-top: 1vw;
 	}
 </style>
 
