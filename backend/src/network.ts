@@ -47,11 +47,11 @@ export class Network {
 	private node: Libp2p | null = null;
 	private pubsub: PubSub | null = null;
 	private datastore: LevelDatastore | null = null;
-	private dataServer: DataServer;
-	private dataDir: string;
+	private readonly dataServer: DataServer;
+	private readonly dataDir: string;
 	private pingInterval: NodeJS.Timeout | null = null;
 	private addressInterval: NodeJS.Timeout | null = null;
-	private enablePink: boolean;
+	private readonly enablePink: boolean;
 
 	constructor(dataDir: string = './data', enablePink: boolean = false) {
 		this.dataDir = dataDir;
@@ -200,12 +200,12 @@ export class Network {
 		this.pubsub = this.node.services.pubsub as PubSub;
 
 		// Register lish protocol handler
-		// runOnLimitedConnection allows handling streams on relay/limited connections
 		await this.node.handle(
 			LISH_PROTOCOL,
 			async stream => {
 				await handleLishProtocol(stream, this.dataServer);
 			},
+			// runOnLimitedConnection allows handling streams on relay/limited connections
 			{ runOnLimitedConnection: true }
 		);
 		console.log(`✓ Registered ${LISH_PROTOCOL} protocol handler`);
@@ -412,33 +412,34 @@ export class Network {
 		}
 	}
 
-	// async broadcast(topic: string, data: any) {
-	// 	if (!this.pubsub) {
-	// 		console.error('Network not started');
-	// 		return;
-	// 	}
-	// 	const encoded = new TextEncoder().encode(JSON.stringify(data));
-	// 	await this.pubsub.publish(topic, encoded);
-	// }
-	//
-	// async subscribe(topic: string, handler: (data: any) => void) {
-	// 	if (!this.pubsub) {
-	// 		console.error('Network not started');
-	// 		return;
-	// 	}
-	// 	this.pubsub.subscribe(topic);
-	// 	this.pubsub.addEventListener('message', evt => {
-	// 		if (evt.detail.topic === topic) {
-	// 			try {
-	// 				const data = new TextDecoder().decode(evt.detail.data);
-	// 				const parsed = JSON.parse(data);
-	// 				handler(parsed);
-	// 			} catch (error) {
-	// 				console.error('Error parsing message:', error);
-	// 			}
-	// 		}
-	// 	});
-	// }
+	async broadcast(topic: string, data: any) {
+		if (!this.pubsub || !this.node) {
+			console.error('Network not started');
+			return;
+		}
+		console.log(`Broadcasting to topic ${topic}:`, data.type);
+		const encoded = new TextEncoder().encode(JSON.stringify(data));
+		await this.pubsub.publish(topic, encoded);
+	}
+
+	async subscribe(topic: string, handler: (data: any) => void) {
+		if (!this.pubsub) {
+			console.error('Network not started');
+			return;
+		}
+		this.pubsub.subscribe(topic);
+		this.pubsub.addEventListener('message', evt => {
+			if (evt.detail.topic === topic) {
+				try {
+					const data = new TextDecoder().decode(evt.detail.data);
+					const parsed = JSON.parse(data);
+					handler(parsed);
+				} catch (error) {
+					console.error('Error parsing message:', error);
+				}
+			}
+		});
+	}
 
 	async connectToPeer(multiaddr: string) {
 		if (!this.node) {

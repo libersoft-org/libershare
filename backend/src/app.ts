@@ -79,16 +79,15 @@ rl.on('line', async line => {
 
 	} else if (command.startsWith('l')) {
 		/*
-		given lish file, await download
+		given lish file, start download
 		*/
 		let manifestPath = command.slice(1).trim();
 		if (!manifestPath) {
 			manifestPath = '../../lish_files/test.lish';
 		}
 		try {
-
 			const downloadDir = join(dataDir, 'downloads');
-			const downloader = new Downloader(manifestPath, downloadDir, dataDir, network);
+			const downloader = new Downloader(downloadDir, dataDir, network);
 			await downloader.init(manifestPath);
 			await downloader.download();
 			downloader.close();

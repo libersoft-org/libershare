@@ -16,16 +16,6 @@ export interface LishResponse {
 	data: number[] | null;
 }
 
-// Helper to send a length-prefixed message
-async function sendLengthPrefixed(stream: Stream, data: Uint8Array): Promise<void> {
-	// Encode the message with length prefix - returns AsyncGenerator<Uint8Array>
-	const encoded = lpEncode([data]);
-
-	// Send all chunks from the encoder
-	for await (const chunk of encoded) {
-		stream.send(chunk);
-	}
-}
 
 // Client-side stream wrapper that can send multiple requests
 export class LishClient {
@@ -128,5 +118,16 @@ export async function handleLishProtocol(stream: Stream, dataServer: DataServer)
 	} catch (error) {
 		console.error('Error handling lish protocol:', error);
 		stream.abort(error instanceof Error ? error : new Error(String(error)));
+	}
+}
+
+// Helper to send a length-prefixed message
+async function sendLengthPrefixed(stream: Stream, data: Uint8Array): Promise<void> {
+	// Encode the message with length prefix - returns AsyncGenerator<Uint8Array>
+	const encoded = lpEncode([data]);
+
+	// Send all chunks from the encoder
+	for await (const chunk of encoded) {
+		stream.send(chunk);
 	}
 }

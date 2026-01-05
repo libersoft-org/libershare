@@ -5,3 +5,9 @@
 /dataSources/
 /dataSources.local.xml
 copilot*
+
+dataSources.xml
+db-forest-config.xml
+dictionaries/
+inspectionProfiles/
+sqldialects.xml
