@@ -14,8 +14,8 @@
 		background-size: cover;
 		background-position: center;
 		background-repeat: no-repeat;
-		border: 0.3vw solid #555;
-		border-radius: 1vw;
+		border: 0.5vh solid #555;
+		border-radius: 1.5vh;
 		overflow: hidden;
 		aspect-ratio: 16 / 9;
 		box-sizing: border-box;

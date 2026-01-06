@@ -110,19 +110,35 @@
 <style>
 	.items {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-		gap: 1vw;
-		padding: 1vw;
+		gap: 2vh;
+		padding: 2vh;
 		width: 100%;
 		box-sizing: border-box;
-		justify-content: center;
-		place-items: stretch;
+		grid-template-columns: 1fr;
 	}
 
-	.items :global(.item) {
-		max-width: 500px;
-		width: 100%;
-		margin: 0 auto;
+	@media (min-width: 768px) {
+		.items {
+			grid-template-columns: repeat(3, 1fr);
+		}
+	}
+
+	@media (min-width: 1000px) {
+		.items {
+			grid-template-columns: repeat(4, 1fr);
+		}
+	}
+
+	@media (min-width: 1200px) {
+		.items {
+			grid-template-columns: repeat(5, 1fr);
+		}
+	}
+
+	@media (min-width: 1400px) {
+		.items {
+			grid-template-columns: repeat(6, 1fr);
+		}
 	}
 </style>
 

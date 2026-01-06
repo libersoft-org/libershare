@@ -23,18 +23,18 @@
 	.header {
 		display: flex;
 		align-items: center;
-		gap: 1vw;
-		padding: 1vw;
+		gap: 1vh;
+		padding: 1vh;
 	}
 
 	.title {
 		color: #fd1;
-		font-size: 1.5vw;
+		font-size: 4vh;
 		font-weight: bold;
 	}
 </style>
 
 <div class="header">
-	<Button icon="/icons/back.svg" alt="Back" selected={$activeArea === 'header'} padding="0.5vw" width="3vw" height="3vw" borderRadius="50%" />
+	<Button icon="/icons/back.svg" alt="Back" selected={$activeArea === 'header'} padding="0.5vw" width="5vh" height="5vh" borderRadius="50%" />
 	<div class="title">{productName}</div>
 </div>

@@ -7,9 +7,9 @@
 
 <style>
 	.title {
-		font-size: 2.5vw;
+		font-size: 4vh;
 		font-weight: bold;
-		margin-bottom: 2vw;
+		margin-bottom: 3vh;
 		color: #fd1;
 		text-align: center;
 	}

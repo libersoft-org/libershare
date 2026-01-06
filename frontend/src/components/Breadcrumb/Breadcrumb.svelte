@@ -8,21 +8,21 @@
 <style>
 	.breadcrumb {
 		width: 100%;
-		padding: 1vw;
+		padding: 1vh;
 		background-color: #222;
-		font-size: 1vw;
+		font-size: 2.5vh;
 		box-sizing: border-box;
 		display: flex;
 		align-items: center;
-		gap: 0.5vw;
+		gap: 2vh;
 	}
 
-	.breadcrumb-item {
+	.item {
 		color: #888;
 	}
 
-	.breadcrumb-item.current {
-		color: #fff;
+	.item.current {
+		color: #fd1;
 		font-weight: bold;
 	}
 
@@ -36,6 +36,6 @@
 		{#if index > 0}
 			<span class="separator">&gt;</span>
 		{/if}
-		<span class="breadcrumb-item" class:current={index === items.length - 1}>{item}</span>
+		<span class="item" class:current={index === items.length - 1}>{item}</span>
 	{/each}
 </div>
