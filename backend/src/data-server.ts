@@ -1,13 +1,10 @@
 import {Database} from 'bun:sqlite';
-import {mkdir, readFile, writeFile, open} from 'fs/promises';
+import {mkdir, open, readdir, access, readFile} from 'fs/promises';
 import {join, dirname} from 'path';
-import {readdir, access} from 'fs/promises';
-import {join} from 'path';
-import {readFileSync} from 'fs';
+import {existsSync} from 'fs';
 import type {IManifest, LishId, ChunkId} from './lish.ts';
 
-
-interface MissingChunk {
+export interface MissingChunk {
     fileIndex: number;
     chunkIndex: number;
     chunkId: ChunkId
@@ -49,7 +46,7 @@ export class DataServer {
             for (const file of lishFiles) {
                 try {
                     const filePath = join(this.dataPath, file);
-                    const content = readFileSync(filePath, 'utf-8');
+                    const content = await readFile(filePath, 'utf-8');
                     const manifest: IManifest = JSON.parse(content);
 
                     if (manifest.id) {
@@ -150,12 +147,10 @@ export class DataServer {
                     console.log(`Error reading chunk from ${dataFilePath}:`, error);
                     return null;
                 }
-            } else {
-                console.warn(`Chunk not found: ${file.path}: ${chunkId}`);
             }
         }
 
-        console.log(`Chunk not found: ${chunkId}`);
+        console.warn(`Chunk not found in any file: ${chunkId.slice(0, 8)}...`);
         return null;
     }
 

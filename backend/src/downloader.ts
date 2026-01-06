@@ -1,5 +1,4 @@
-import {Database} from 'bun:sqlite';
-import {mkdir, readFile, writeFile, open} from 'fs/promises';
+import {mkdir, readFile, open} from 'fs/promises';
 import {join, dirname} from 'path';
 import {existsSync} from 'fs';
 import type {IManifest, LishId, ChunkId} from './lish.ts';
@@ -7,17 +6,11 @@ import type {Network} from './network.ts';
 import type {Multiaddr} from '@multiformats/multiaddr';
 import {HaveChunks, LISH_PROTOCOL, LishClient} from './lish-protocol.ts';
 import {Mutex} from 'async-mutex';
-import {DataServer} from './data-server.ts';
+import {DataServer, MissingChunk} from './data-server.ts';
 
 export const LISH_TOPIC = 'lish';
 
 type NodeId = string;
-
-interface MissingChunk {
-    fileIndex: number;
-    chunkIndex: number;
-    chunkId: ChunkId;
-}
 
 interface PubsubMessage {
     type: 'want' | 'have';
@@ -39,12 +32,11 @@ export interface HaveMessage extends PubsubMessage {
 type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'downloading' | 'downloaded';
 
 export class Downloader {
-    private manifest: IManifest | undefined;
-    private readonly dataServer: DataServer | undefined;
+    private manifest!: IManifest;
+    private readonly dataServer: DataServer;
     private network: Network;
     private readonly downloadDir: string;
-    private readonly dataDir: string;
-    private lishId: LishId | undefined;
+    private lishId!: LishId;
     private state: State = 'added';
     private workMutex = new Mutex();
     private doMoreWork: boolean = false;
@@ -53,10 +45,8 @@ export class Downloader {
     private callForPeersInterval: NodeJS.Timeout | undefined;
 
 
-    constructor(downloadDir: string, dataDir: string, network: Network, dataServer: DataServer
-                ) {
+    constructor(downloadDir: string, network: Network, dataServer: DataServer) {
         this.downloadDir = downloadDir;
-        this.dataDir = dataDir;
         this.network = network;
         this.dataServer = dataServer;
     }
@@ -71,7 +61,7 @@ export class Downloader {
 
         console.log(`Loading manifest: ${this.manifest.name} (id: ${this.lishId})`);
 
-        this.missingChunks = this.dataServer.getMissingChunks();
+        this.missingChunks = this.dataServer.getMissingChunks(this.manifest);
         console.log(`Found ${this.missingChunks.length} chunks to download`);
         await this.network.subscribe(LISH_TOPIC, async (data) => {
             await this.handlePubsubMessage(LISH_TOPIC, data)
@@ -140,10 +130,10 @@ export class Downloader {
 
                     if (data) {
                         // Write chunk to file at correct offset
-                        await this.dataServer.writeChunk(chunk.fileIndex, chunk.chunkIndex, data);
+                        await this.dataServer.writeChunk(this.manifest, chunk.fileIndex, chunk.chunkIndex, data);
 
                         // Mark as downloaded
-                        this.dataServer.markChunkDownloaded(chunk.chunkId);
+                        this.dataServer.markChunkDownloaded(this.lishId, chunk.chunkId);
 
                         downloadedCount++;
                         console.log(`✓ Downloaded chunk ${downloadedCount}/${missingChunks.length}`);

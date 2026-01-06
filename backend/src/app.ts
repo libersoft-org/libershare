@@ -1,5 +1,6 @@
 import { Network } from './network.ts';
 import { Downloader } from './downloader.ts';
+import { DataServer } from './data-server.ts';
 import * as readline from 'readline';
 import { join } from 'path';
 
@@ -33,7 +34,17 @@ if (!(await file.exists())) {
 	await file.write(JSON.stringify(settings, null, 1));
 }
 
-const network = new Network(dataDir, enablePink);
+const dataServer = new DataServer(dataDir);
+await dataServer.init();
+
+const network = new Network(dataDir, dataServer, enablePink);
+
+async function shutdown() {
+	console.log('Shutting down...');
+	await network.stop();
+	dataServer.close();
+	process.exit(0);
+}
 
 // Set up readline interface for stdin
 const rl = readline.createInterface({
@@ -87,10 +98,9 @@ rl.on('line', async line => {
 		}
 		try {
 			const downloadDir = join(dataDir, 'downloads');
-			const downloader = new Downloader(downloadDir, dataDir, network);
+			const downloader = new Downloader(downloadDir, network, dataServer);
 			await downloader.init(manifestPath);
 			await downloader.download();
-			downloader.close();
 		} catch (error: any) {
 			console.log('✗ Download failed:', error.message);
 		}
@@ -104,9 +114,7 @@ rl.on('line', async line => {
 				network.printMultiaddrs();
 				break;
 			case 'q':
-				console.log('Shutting down...');
-				await network.stop();
-				process.exit(0);
+				await shutdown();
 				break;
 			default:
 				console.log('Unknown command:', command);
@@ -114,10 +122,6 @@ rl.on('line', async line => {
 	}
 });
 
-process.on('SIGINT', async () => {
-	console.log('\nShutting down...');
-	await network.stop();
-	process.exit(0);
-});
+process.on('SIGINT', shutdown);
 
 await network.start();

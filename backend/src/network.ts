@@ -54,10 +54,10 @@ export class Network {
 	private addressInterval: NodeJS.Timeout | null = null;
 	private readonly enablePink: boolean;
 
-	constructor(dataDir: string = './data', enablePink: boolean = false) {
+	constructor(dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
 		this.dataDir = dataDir;
 		this.enablePink = enablePink;
-		this.dataServer = new DataServer(dataDir);
+		this.dataServer = dataServer;
 	}
 
 	private async loadOrCreatePrivateKey(datastore: LevelDatastore): Promise<PrivateKey> {
@@ -83,9 +83,6 @@ export class Network {
 		// Load settings from dataDir
 		const settingsPath = join(this.dataDir, 'settings.json');
 		const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-
-		// Initialize DataServer
-		await this.dataServer.init();
 
 		// Initialize datastore
 		const datastorePath = join(this.dataDir, 'datastore');
@@ -427,7 +424,7 @@ export class Network {
 
 	private async handleWant(data: WantMessage) {
 		console.log('Handling want message for lishId:', data.lishId);
-		let manifest = this.dataserver.getManifest(data.lishId);
+		let manifest = await this.dataServer.getManifest(data.lishId);
 		if (!manifest) {
 			console.log('Manifest not found for lishId:', data.lishId);
 			return;
