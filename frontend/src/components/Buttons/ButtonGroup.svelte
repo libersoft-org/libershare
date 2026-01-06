@@ -25,6 +25,8 @@
 	let isAPressed = $state(false);
 	let buttons: { onConfirm?: () => void }[] = [];
 	let active = $derived($activeArea === areaID);
+	let itemsElement: HTMLElement;
+	let translateX = $state(0);
 
 	setContext<ButtonGroupContext>('buttonGroup', {
 		register: button => {
@@ -39,6 +41,32 @@
 		},
 		isSelected: index => active && selectedIndex === index,
 		isPressed: index => active && selectedIndex === index && isAPressed,
+	});
+
+	function updateTranslateX() {
+		if (!itemsElement || orientation !== 'horizontal') return;
+		const children = itemsElement.children;
+		if (children.length === 0) return;
+		
+		let offset = 0;
+		for (let i = 0; i < selectedIndex; i++) {
+			const child = children[i] as HTMLElement;
+			offset += child.offsetWidth;
+		}
+		// Add gaps (1.5vw converted to pixels)
+		const gap = parseFloat(getComputedStyle(itemsElement).gap) || 0;
+		offset += selectedIndex * gap;
+		// Add half of selected button width
+		const selectedChild = children[selectedIndex] as HTMLElement;
+		if (selectedChild) {
+			offset += selectedChild.offsetWidth / 2;
+		}
+		translateX = -offset;
+	}
+
+	$effect(() => {
+		selectedIndex;
+		updateTranslateX();
 	});
 
 	function navigatePrev() {
@@ -69,6 +97,7 @@
 			back: () => onBack?.(),
 		});
 		activateArea(areaID);
+		updateTranslateX();
 		return unregister;
 	});
 </script>
@@ -89,7 +118,7 @@
 
 	.items.horizontal {
 		flex-direction: row;
-		padding: 0 calc(50vw - 100px);
+		padding: 0 50vw;
 	}
 
 	.items.vertical {
@@ -104,7 +133,7 @@
 
 {#if orientation === 'horizontal'}
 	<div class="items-wrapper">
-		<div class="items horizontal" style="transform: translateX(calc({selectedIndex} * -232px))">
+		<div class="items horizontal" bind:this={itemsElement} style="transform: translateX({translateX}px)">
 			{@render children()}
 		</div>
 	</div>

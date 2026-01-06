@@ -15,7 +15,7 @@
 		background-position: center;
 		background-repeat: no-repeat;
 		border: 0.3vw solid #555;
-		border-radius: 12px;
+		border-radius: 1vw;
 		overflow: hidden;
 		aspect-ratio: 16 / 9;
 		box-sizing: border-box;
@@ -51,7 +51,7 @@
 		font-weight: bold;
 		padding: 1vw;
 		background-color: rgba(0, 0, 0, 0.75);
-		backdrop-filter: blur(4px);
+		backdrop-filter: blur(0.2vw);
 	}
 </style>
 

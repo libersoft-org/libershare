@@ -6,7 +6,7 @@
 		minWidth?: string;
 	}
 
-	let { children, minWidth = '400px' }: Props = $props();
+	let { children, minWidth = '0vw' }: Props = $props();
 </script>
 
 <style>

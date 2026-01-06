@@ -37,12 +37,12 @@
 		align-items: center;
 		justify-content: center;
 		background-color: rgba(255, 255, 255, 0.1);
-		border: 2px solid rgba(255, 255, 255, 0.3);
+		border: 0.1vw solid rgba(255, 255, 255, 0.3);
 		color: #fff;
 		text-align: center;
 		white-space: nowrap;
 		transition: all 0.2s linear;
-		backdrop-filter: blur(10px);
+		backdrop-filter: blur(1vw);
 		opacity: 0.6;
 		box-sizing: border-box;
 		min-width: 8vw;
@@ -56,7 +56,6 @@
 		background-color: rgba(255, 221, 17, 0.2);
 		color: #fd1;
 		border-color: #fd1;
-		border-width: 0.1vw;
 		box-shadow: 0 0 1vw rgba(255, 221, 17, 0.6);
 		font-weight: bold;
 		opacity: 1;

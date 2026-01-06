@@ -117,7 +117,7 @@
 		margin: 1vw;
 		border-radius: 1vw;
 		background-color: rgba(255, 255, 255, 0.05);
-		box-shadow: 0 0px 2vw rgba(0, 0, 0, 0.5);
+		box-shadow: 0 0 2vw rgba(0, 0, 0, 0.5);
 	}
 
 	.detail .content .image {
