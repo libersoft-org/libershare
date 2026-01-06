@@ -1,3 +1,8 @@
+import * as fsPromises from "node:fs/promises";
+
+export type LishId = string;
+export type ChunkId = string;
+
 export interface IManifest {
 	version: number;
 	id: string;
@@ -159,7 +164,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 		// Check if it's a symlink by comparing realpath
 		let isSymlink = false;
 		try {
-			const realPath = await Bun.file(fullPath).realpath();
+			const realPath = await fsPromises.realpath(fullPath);
 			isSymlink = normalizePath(realPath) !== normalizePath(fullPath);
 		} catch (e) {
 			// Not a symlink or can't determine
@@ -168,7 +173,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 			// Handle symbolic link - read the link target
 			try {
 				// Unfortunately Bun doesn't expose readlink directly, so we use realpath
-				const target = await Bun.file(fullPath).realpath();
+				const target = await fsPromises.realpath(fullPath);
 				links.push({
 					path: getRelativePath(fullPath, basePath),
 					target: normalizePath(target),

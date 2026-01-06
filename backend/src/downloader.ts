@@ -49,7 +49,8 @@ export class Downloader {
     private workMutex = new Mutex();
     private doMoreWork: boolean = false;
     private missingChunks: MissingChunk[] = [];
-    private peers: Map<NodeId, PeerInfo> = new Map();
+    private peers: Map<NodeId, LishClient> = new Map();
+    private callForPeersInterval: NodeJS.Timeout | undefined;
 
 
     constructor(downloadDir: string, dataDir: string, network: Network) {

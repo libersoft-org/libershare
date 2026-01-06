@@ -341,6 +341,7 @@ export class Network {
 		});
 
 		await this.subscribeToPink();
+		await this.subscribeToLish();
 
 		//this.addressInterval = setInterval(() => {this.printMultiaddrs()}, 30000);
 	}
@@ -410,6 +411,20 @@ export class Network {
 		} catch (error) {
 			console.log(`Ponk reply attempted (no peers connected)`);
 		}
+	}
+
+
+	private async subscribeToLish() {
+		if (!this.pubsub) {
+			console.error('Network not started');
+			return;
+		}
+		await this.subscribe(LISH_PROTOCOL, (data: any) => {
+			console.log('Received message on Lish protocol topic:', data);
+
+		});
+
+		console.log(`✓ Subscribed to Lish protocol topic: ${LISH_PROTOCOL}`);
 	}
 
 	async broadcast(topic: string, data: any) {
