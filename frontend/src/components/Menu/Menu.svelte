@@ -1,7 +1,7 @@
 <script lang="ts">
 	import MenuTitle from './MenuTitle.svelte';
 	import ButtonGroup from '../Buttons/ButtonGroup.svelte';
-	import Button from '../Buttons/ButtonNormal.svelte';
+	import Button from '../Buttons/Button.svelte';
 
 	interface Props {
 		title: string;

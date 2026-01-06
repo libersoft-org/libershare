@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { productName } from '../../scripts/app.ts';
 	import { registerArea, activateArea, activateNextArea, activeArea } from '../../scripts/areas.ts';
-	import ButtonCircle from '../Buttons/ButtonCircle.svelte';
+	import Button from '../Buttons/Button.svelte';
 	interface Props {
 		onBack?: () => void;
 	}
@@ -35,6 +35,6 @@
 </style>
 
 <div class="header">
-	<ButtonCircle icon="/icons/back.svg" alt="Back" selected={$activeArea === 'header'} />
+	<Button icon="/icons/back.svg" alt="Back" selected={$activeArea === 'header'} padding="0.5vw" width="3vw" height="3vw" borderRadius="50%" />
 	<div class="title">{productName}</div>
 </div>
