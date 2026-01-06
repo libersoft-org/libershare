@@ -16,13 +16,19 @@ export interface LishResponse {
 	data: number[] | null;
 }
 
+export type HaveChunks = 'all' | ChunkId[];
+
 
 // Client-side stream wrapper that can send multiple requests
 export class LishClient {
 	private stream: Stream;
 	private decoder: AsyncGenerator<Uint8Array | Uint8ArrayList>;
+	public haveChunks: HaveChunks;
 
-	constructor(stream: Stream) {
+	constructor(
+		stream: Stream,
+		onDisconnect?: () => void,
+	) {
 		this.stream = stream;
 		this.decoder = decode(stream);
 	}

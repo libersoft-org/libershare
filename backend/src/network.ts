@@ -34,7 +34,7 @@ interface PonkMessage {
 	type: 'ponk';
 	peerId: string;
 	timestamp: number;
-	replyTo: string;
+	inReplyTo: string;
 }
 
 const PINK_TOPIC = 'pink';
@@ -359,9 +359,9 @@ export class Network {
 			const topic = msgEvent.topic;
 			const data = new TextDecoder().decode(msgEvent.data);
 			const message: Message = JSON.parse(data);
-			console.log(`Received ${JSON.stringify(message)}`);
+			console.log(`pubsub Received ${JSON.stringify(message)}`);
 			if (topic === PINK_TOPIC) {
-				this.sendPong(message.peerId);
+				this.sendPonk(message.peerId);
 			}
 		} catch (error) {
 			console.error('Error in handleMessage:', error);
@@ -392,7 +392,7 @@ export class Network {
 		}
 	}
 
-	private async sendPong(replyTo: string) {
+	private async sendPonk(inReplyTo: string) {
 		if (!this.pubsub || !this.node) {
 			console.error('Network not started');
 			return;
@@ -401,12 +401,12 @@ export class Network {
 			type: 'ponk',
 			peerId: this.node.peerId.toString(),
 			timestamp: Date.now(),
-			replyTo,
+			inReplyTo,
 		};
 		const data = new TextEncoder().encode(JSON.stringify(message));
 		try {
 			await this.pubsub.publish(PONK_TOPIC, data);
-			console.log(`Sent ponk to ${replyTo}`);
+			console.log(`Sent ponk to ${inReplyTo}`);
 		} catch (error) {
 			console.log(`Ponk reply attempted (no peers connected)`);
 		}
