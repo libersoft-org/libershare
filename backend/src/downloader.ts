@@ -9,7 +9,7 @@ import {multiaddr} from '@multiformats/multiaddr';
 import {HaveChunks, LISH_PROTOCOL, LishClient} from './lish-protocol.ts';
 import {Mutex} from 'async-mutex';
 
-const LISH_TOPIC = 'lish';
+export const LISH_TOPIC = 'lish';
 
 type NodeId = string;
 
@@ -24,11 +24,11 @@ interface PubsubMessage {
     lishId: LishId;
 }
 
-interface WantMessage extends PubsubMessage {
+export interface WantMessage extends PubsubMessage {
     type: 'want';
 }
 
-interface HaveMessage extends PubsubMessage {
+export interface HaveMessage extends PubsubMessage {
     type: 'have';
     peerId: NodeId;
     multiaddrs: Multiaddr[];
@@ -212,7 +212,7 @@ export class Downloader {
             }
 
             if (this.peers.size === 0) {
-                console.log('No peers available, calling for peers...');
+                console.log('No seeders available');
                 await this.callForPeers();
             }
         }, 60000);

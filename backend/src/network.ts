@@ -20,6 +20,7 @@ import { join } from 'path';
 import { DataServer } from './data-server.ts';
 import { LISH_PROTOCOL, handleLishProtocol } from './lish-protocol.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
+import { LISH_TOPIC } from './downloader.ts';
 
 // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 type PubSub = any;
@@ -217,31 +218,29 @@ export class Network {
 			console.log('✓ DHT running in', mode, 'mode');
 		}
 
-		//if (this.enablePink)
-		{
-			this.pubsub.addEventListener('gossipsub:heartbeat', () => {
-				const meshPeers = this.pubsub!.getMeshPeers(PINK_TOPIC);
-				const subscribers = this.pubsub!.getSubscribers(PINK_TOPIC);
-				const topics = this.pubsub!.getTopics();
-				// console.log('💓 Heartbeat:');
-				// console.log('💓  Connected libp2p peers:', this.node!.getPeers().length);
-				// console.log('💓  My topics:', topics);
-				// console.log('💓  Pink mesh peers:', meshPeers.length);
-				// console.log('💓  Pink subscribers:', subscribers.length, subscribers.map(p => p.toString()).slice(0, 2));
-				//console.log('💓peers:', this.node!.getPeers().length, 'mesh:', meshPeers.length, 'subs:', subscribers.length, 'topics:', topics.length);
-			});
 
-			this.pubsub.addEventListener('gossipsub:graft', evt => {
-				console.log('🌿 GRAFT: ', evt.detail.peerId, ' joined ', evt.detail.topic);
-				console.log('   Total mesh peers for ', evt.detail.topic, ':', this.pubsub!.getMeshPeers(evt.detail.topic).length);
-			});
+		this.pubsub.addEventListener('gossipsub:heartbeat', () => {
+			const meshPeers = this.pubsub!.getMeshPeers(PINK_TOPIC);
+			const subscribers = this.pubsub!.getSubscribers(PINK_TOPIC);
+			const topics = this.pubsub!.getTopics();
+			// console.log('💓 Heartbeat:');
+			// console.log('💓  Connected libp2p peers:', this.node!.getPeers().length);
+			// console.log('💓  My topics:', topics);
+			// console.log('💓  Pink mesh peers:', meshPeers.length);
+			// console.log('💓  Pink subscribers:', subscribers.length, subscribers.map(p => p.toString()).slice(0, 2));
+			//console.log('💓peers:', this.node!.getPeers().length, 'mesh:', meshPeers.length, 'subs:', subscribers.length, 'topics:', topics.length);
+		});
 
-			this.pubsub.addEventListener('gossipsub:prune', evt => {
-				console.log('✂️  PRUNE: peer left mesh');
-				console.log('   Peer:', evt.detail.peerId);
-				console.log('   Topic:', evt.detail.topic);
-			});
-		}
+		this.pubsub.addEventListener('gossipsub:graft', evt => {
+			console.log('🌿 GRAFT: ', evt.detail.peerId, ' joined ', evt.detail.topic);
+			console.log('   Total mesh peers for ', evt.detail.topic, ':', this.pubsub!.getMeshPeers(evt.detail.topic).length);
+		});
+
+		this.pubsub.addEventListener('gossipsub:prune', evt => {
+			console.log('✂️  PRUNE: peer left mesh');
+			console.log('   Peer:', evt.detail.peerId);
+			console.log('   Topic:', evt.detail.topic);
+		});
 
 		// Debug: Check peer store
 		console.log('Peers in store:', this.node.getPeers().length);
@@ -269,7 +268,7 @@ export class Network {
 			console.log('✅ New peer connected:', peerId);
 			console.log('   Remote addresses:', remoteAddrs.join(', '));
 			console.log('   Total connected peers:', this.node!.getPeers().length);
-			this.subscribeToPink();
+			//this.subscribeToPink();
 		});
 
 		this.node.addEventListener('peer:disconnect', evt => {
@@ -340,7 +339,7 @@ export class Network {
 			this.handleMessage(evt.detail);
 		});
 
-		await this.subscribeToPink();
+		//await this.subscribeToPink();
 		await this.subscribeToLish();
 
 		//this.addressInterval = setInterval(() => {this.printMultiaddrs()}, 30000);
@@ -419,13 +418,18 @@ export class Network {
 			console.error('Network not started');
 			return;
 		}
-		await this.subscribe(LISH_PROTOCOL, (data: any) => {
-			console.log('Received message on Lish protocol topic:', data);
-
+		await this.subscribe(LISH_TOPIC, (data: any) => {
+			console.log('Received pubsub LISH_TOPIC message:', data);
+			this.handleWant(data);
 		});
-
-		console.log(`✓ Subscribed to Lish protocol topic: ${LISH_PROTOCOL}`);
+		console.log(`✓ Subscribed to LISH_TOPIC`);
 	}
+
+	private async handleWant(data: WantMessage) {
+		console.log('Handling want message for lishId:', data.lishId);
+		// Here you would integrate with your DataServer to process the want request
+		// For example, you might check if you have the requested data and respond accordingly
+
 
 	async broadcast(topic: string, data: any) {
 		if (!this.pubsub || !this.node) {
@@ -454,6 +458,7 @@ export class Network {
 				}
 			}
 		});
+		console.log(`Subscribed to topic: ${topic}`);
 	}
 
 	async connectToPeer(multiaddr: string) {
