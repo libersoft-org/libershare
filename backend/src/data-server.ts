@@ -222,4 +222,12 @@ export class DataServer {
         await fd.close();
     }
 
+
+    close(): void {
+        if (this.db) {
+            this.db.close();
+            console.log('Chunk tracking database closed');
+        }
+    }
+
 }

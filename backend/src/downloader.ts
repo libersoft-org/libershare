@@ -40,7 +40,6 @@ type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'downloadi
 
 export class Downloader {
     private manifest: IManifest | undefined;
-    private db: Database | undefined;
     private readonly dataServer: DataServer | undefined;
     private network: Network;
     private readonly downloadDir: string;
@@ -166,6 +165,7 @@ export class Downloader {
         await this.network.broadcast(LISH_TOPIC, msg);
         this.setupCallForPeersInterval();
     }
+
 
     private setupCallForPeersInterval() {
         if (this.callForPeersInterval)
@@ -299,10 +299,4 @@ export class Downloader {
         }
     }
 
-    close(): void {
-        if (this.db) {
-            this.db.close();
-            console.log('Chunk tracking database closed');
-        }
-    }
 }
