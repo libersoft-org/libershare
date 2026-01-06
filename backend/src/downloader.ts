@@ -5,9 +5,9 @@ import {existsSync} from 'fs';
 import type {IManifest, LishId, ChunkId} from './lish.ts';
 import type {Network} from './network.ts';
 import type {Multiaddr} from '@multiformats/multiaddr';
-import {multiaddr} from '@multiformats/multiaddr';
 import {HaveChunks, LISH_PROTOCOL, LishClient} from './lish-protocol.ts';
 import {Mutex} from 'async-mutex';
+import {DataServer} from './data-server.ts';
 
 export const LISH_TOPIC = 'lish';
 
@@ -41,6 +41,7 @@ type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'downloadi
 export class Downloader {
     private manifest: IManifest | undefined;
     private db: Database | undefined;
+    private readonly dataServer: DataServer | undefined;
     private network: Network;
     private readonly downloadDir: string;
     private readonly dataDir: string;
@@ -53,10 +54,12 @@ export class Downloader {
     private callForPeersInterval: NodeJS.Timeout | undefined;
 
 
-    constructor(downloadDir: string, dataDir: string, network: Network) {
+    constructor(downloadDir: string, dataDir: string, network: Network, dataServer: DataServer
+                ) {
         this.downloadDir = downloadDir;
         this.dataDir = dataDir;
         this.network = network;
+        this.dataServer = dataServer;
     }
 
     async init(manifestPath: string): Promise<void> {
@@ -69,39 +72,7 @@ export class Downloader {
 
         console.log(`Loading manifest: ${this.manifest.name} (id: ${this.lishId})`);
 
-        // Initialize SQLite database for chunk tracking in dataDir
-        const dbPath = join(this.dataDir, 'chunks.db');
-        this.db = new Database(dbPath);
-
-        // Create chunks table
-        this.db.run(`
-            CREATE TABLE IF NOT EXISTS chunks
-            (
-                lish_id
-                TEXT
-                NOT
-                NULL,
-                chunk_id
-                TEXT
-                NOT
-                NULL,
-                downloaded
-                INTEGER
-                NOT
-                NULL
-                DEFAULT
-                0,
-                PRIMARY
-                KEY
-            (
-                lish_id,
-                chunk_id
-            )
-                )
-        `);
-
-        console.log(`✓ Chunk tracking database opened at: ${dbPath}`);
-        this.missingChunks = this.getMissingChunks();
+        this.missingChunks = this.dataServer.getMissingChunks();
         console.log(`Found ${this.missingChunks.length} chunks to download`);
         await this.network.subscribe(LISH_TOPIC, async (data) => {
             await this.handlePubsubMessage(LISH_TOPIC, data)
@@ -158,7 +129,7 @@ export class Downloader {
 
     private async downloadChunks(): Promise<void> {
         let downloadedCount = 0;
-        let missingChunks = this.getMissingChunks();
+        let missingChunks = this.dataServer.getMissingChunks(this.manifest)
         try {
             // Download loop - reuse the open streams
             for (const chunk of missingChunks) {
@@ -170,10 +141,10 @@ export class Downloader {
 
                     if (data) {
                         // Write chunk to file at correct offset
-                        await this.writeChunk(chunk.fileIndex, chunk.chunkIndex, data);
+                        await this.dataServer.writeChunk(chunk.fileIndex, chunk.chunkIndex, data);
 
                         // Mark as downloaded
-                        this.markChunkDownloaded(chunk.chunkId);
+                        this.dataServer.markChunkDownloaded(chunk.chunkId);
 
                         downloadedCount++;
                         console.log(`✓ Downloaded chunk ${downloadedCount}/${missingChunks.length}`);
@@ -263,46 +234,6 @@ export class Downloader {
     }
 
 
-    // Check if a chunk has been downloaded
-    private isChunkDownloaded(chunkId: ChunkId): boolean {
-        const stmt = this.db.query('SELECT downloaded FROM chunks WHERE lish_id = ? AND chunk_id = ?');
-        const row = stmt.get(this.lishId, chunkId) as { downloaded: number } | null;
-        return row?.downloaded === 1;
-    }
-
-
-    // Mark a chunk as downloaded
-    private markChunkDownloaded(chunkId: ChunkId): void {
-        const stmt = this.db.query(`
-            INSERT INTO chunks (lish_id, chunk_id, downloaded)
-            VALUES (?, ?, 1) ON CONFLICT(lish_id, chunk_id)
-			DO
-            UPDATE SET downloaded = 1
-        `);
-        stmt.run(this.lishId, chunkId);
-    }
-
-
-    // Get all chunks that need to be downloaded
-    private getMissingChunks(): Array<{ fileIndex: number; chunkIndex: number; chunkId: ChunkId }> {
-        const missing: Array<{ fileIndex: number; chunkIndex: number; chunkId: ChunkId }> = [];
-
-        if (!this.manifest.files) {
-            return missing;
-        }
-
-        for (let fileIndex = 0; fileIndex < this.manifest.files.length; fileIndex++) {
-            const file = this.manifest.files[fileIndex];
-            for (let chunkIndex = 0; chunkIndex < file.checksums.length; chunkIndex++) {
-                const chunkId = file.checksums[chunkIndex] as ChunkId;
-                if (!this.isChunkDownloaded(chunkId)) {
-                    missing.push({fileIndex, chunkIndex, chunkId});
-                }
-            }
-        }
-
-        return missing;
-    }
 
     // Create directory structure and initialize files
     private async createDirectoryStructure(): Promise<void> {
@@ -347,22 +278,6 @@ export class Downloader {
         }
 
         console.log('✓ Directory structure and files created');
-    }
-
-    // Write a chunk to the appropriate file at the correct offset
-    private async writeChunk(fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
-        if (!this.manifest.files || fileIndex >= this.manifest.files.length) {
-            throw new Error(`Invalid file index: ${fileIndex}`);
-        }
-
-        const file = this.manifest.files[fileIndex];
-        const filePath = join(this.downloadDir, file.path);
-        const offset = chunkIndex * this.manifest.chunkSize;
-
-        // Open file and write at offset
-        const fd = await open(filePath, 'r+');
-        await fd.write(data, 0, data.length, offset);
-        await fd.close();
     }
 
     // Download a single chunk from a peer using an existing client

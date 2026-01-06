@@ -20,7 +20,7 @@ import { join } from 'path';
 import { DataServer } from './data-server.ts';
 import { LISH_PROTOCOL, handleLishProtocol } from './lish-protocol.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
-import { LISH_TOPIC } from './downloader.ts';
+import {LISH_TOPIC, WantMessage} from './downloader.ts';
 
 // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 type PubSub = any;
@@ -427,8 +427,13 @@ export class Network {
 
 	private async handleWant(data: WantMessage) {
 		console.log('Handling want message for lishId:', data.lishId);
-		// Here you would integrate with your DataServer to process the want request
-		// For example, you might check if you have the requested data and respond accordingly
+		let manifest = this.dataserver.getManifest(data.lishId);
+		if (!manifest) {
+			console.log('Manifest not found for lishId:', data.lishId);
+			return;
+		}
+		let gotChunks = 0;
+	}
 
 
 	async broadcast(topic: string, data: any) {
