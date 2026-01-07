@@ -47,13 +47,13 @@
 		if (!itemsElement || orientation !== 'horizontal') return;
 		const children = itemsElement.children;
 		if (children.length === 0) return;
-		
+
 		let offset = 0;
 		for (let i = 0; i < selectedIndex; i++) {
 			const child = children[i] as HTMLElement;
 			offset += child.offsetWidth;
 		}
-		// Add gaps (1.5vw converted to pixels)
+		// Add gaps (converted to pixels)
 		const gap = parseFloat(getComputedStyle(itemsElement).gap) || 0;
 		offset += selectedIndex * gap;
 		// Add half of selected button width
@@ -106,13 +106,13 @@
 	.items-wrapper {
 		width: 100%;
 		overflow: hidden;
-		padding: 1vw 0;
+		padding: 2vh 0;
 	}
 
 	.items {
 		display: flex;
 		align-items: center;
-		gap: 1.5vw;
+		gap: 3vh;
 		transition: all 0.2s linear;
 	}
 
@@ -123,7 +123,7 @@
 
 	.items.vertical {
 		flex-direction: column;
-		gap: 1vw;
+		gap: 2vh;
 	}
 
 	.items.vertical :global(.menu-button) {

@@ -8,8 +8,8 @@
 		align-items: center;
 		background-color: #000;
 		color: #fd1;
-		padding: 1vw;
-		font-size: 1.5vw;
+		padding: 2vh;
+		font-size: 2vh;
 	}
 </style>
 

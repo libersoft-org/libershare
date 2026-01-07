@@ -15,7 +15,7 @@
 
 <style>
 	.title {
-		font-size: 1.8vw;
+		font-size: 2.5vh;
 		font-weight: bold;
 		color: #fd1;
 	}
@@ -24,14 +24,14 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.5vw;
-		font-size: 1vw;
+		gap: 1vh;
+		font-size: 2vh;
 		color: #aaa;
 	}
 
 	.build .row {
 		display: flex;
-		gap: 0.5vw;
+		gap: 1vh;
 	}
 
 	.build .row .label {
@@ -46,12 +46,12 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.5vw;
-		margin-top: 1vw;
+		gap: 1vh;
+		margin-top: 2vh;
 	}
 
 	.buttons {
-		margin-top: 1vw;
+		margin-top: 2vh;
 	}
 </style>
 
@@ -73,8 +73,8 @@
 	</div>
 	<div class="links">
 		<ButtonGroup areaID="about" initialIndex={2} {onBack}>
-			<Button label="GitHub page" padding="0.5vw" fontSize="0.7vw" borderRadius="0.5vw" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
-			<Button label="Official website" padding="0.5vw" fontSize="0.7vw" borderRadius="0.5vw" onConfirm={() => openUrl('https://libershare.com')} />
+			<Button label="GitHub page" padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
+			<Button label="Official website" padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://libershare.com')} />
 			<Button label="OK" onConfirm={onBack} />
 		</ButtonGroup>
 	</div>
