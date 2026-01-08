@@ -47,11 +47,11 @@
 	.title {
 		position: relative;
 		color: #fff;
-		font-size: 1.2vw;
+		font-size: 2vh;
 		font-weight: bold;
-		padding: 1vw;
+		padding: 1vh;
 		background-color: rgba(0, 0, 0, 0.75);
-		backdrop-filter: blur(0.2vw);
+		backdrop-filter: blur(0.4vh);
 	}
 </style>
 

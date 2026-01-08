@@ -113,10 +113,11 @@
 		align-items: center;
 		gap: 2vh;
 		width: 1200px;
-		max-width: calc(100vw - 8vw);
+		max-width: calc(94vw);
 		padding: 2vh;
 		margin: 2vh;
 		border-radius: 2vh;
+		box-sizing: border-box;
 		background-color: rgba(255, 255, 255, 0.05);
 		box-shadow: 0 0 4vh rgba(0, 0, 0, 0.5);
 	}

@@ -35,6 +35,6 @@
 </style>
 
 <div class="header">
-	<Button icon="/icons/back.svg" alt="Back" selected={$activeArea === 'header'} padding="0.5vw" width="5vh" height="5vh" borderRadius="50%" />
+	<Button icon="/icons/back.svg" alt="Back" selected={$activeArea === 'header'} padding="1vh" width="5vh" height="5vh" borderRadius="50%" />
 	<div class="title">{productName}</div>
 </div>
