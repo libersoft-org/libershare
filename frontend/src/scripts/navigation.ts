@@ -1,11 +1,11 @@
 import { writable, derived, get } from 'svelte/store';
-import { menuStructure, type MenuItem } from './menu.ts';
+import { menuStructure, type MenuItem, type MenuAction } from './menu.ts';
 import { getFocusAreaStore, executeBackHandler } from './focus.ts';
 
 // Re-export commonly used items for convenience
 export { focusArea, focusHeader, focusContent, pushBackHandler, setContentArea } from './focus.ts';
 export type { FocusArea } from './focus.ts';
-export { menuStructure, type MenuItem, type MenuStructure } from './menu.ts';
+export { menuStructure, confirmDialogs, ConfirmDialog, type MenuItem, type MenuStructure, type MenuAction } from './menu.ts';
 
 // Breadcrumb items store
 const breadcrumbItemsStore = writable<string[]>(['Home']);
@@ -43,6 +43,26 @@ export function scrollContentToTop(): void {
 	}
 }
 
+// Confirm dialog state
+export interface ConfirmDialogState {
+	visible: boolean;
+	action: MenuAction | null;
+}
+
+const confirmDialogStore = writable<ConfirmDialogState>({ visible: false, action: null });
+
+export const confirmDialog = {
+	subscribe: confirmDialogStore.subscribe,
+};
+
+export function showConfirmDialog(action: MenuAction): void {
+	confirmDialogStore.set({ visible: true, action });
+}
+
+export function hideConfirmDialog(): void {
+	confirmDialogStore.set({ visible: false, action: null });
+}
+
 export function createNavigation() {
 	const focusAreaStore = getFocusAreaStore();
 	const path = writable<MenuItem[]>([]);
@@ -58,6 +78,11 @@ export function createNavigation() {
 		if (!item) return;
 		if (item.action === 'back') {
 			onBack();
+			return;
+		}
+		// Check if this is a confirm action (restart, shutdown, quit)
+		if (item.action && ['restart', 'shutdown', 'quit'].includes(item.action)) {
+			showConfirmDialog(item.action);
 			return;
 		}
 		selectedId.set(undefined);

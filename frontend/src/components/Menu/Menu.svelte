@@ -1,6 +1,6 @@
 <script lang="ts">
 	import MenuTitle from './MenuTitle.svelte';
-	import ButtonGroup from '../Buttons/ButtonGroup.svelte';
+	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
 
 	interface Props {
@@ -38,10 +38,10 @@
 <div class="menu">
 	<MenuTitle {title} />
 	{#key `${title}-${selectedId}-${orientation}`}
-		<ButtonGroup areaID="menu" {initialIndex} {orientation} wrap={true} {onBack}>
+		<ButtonsGroup areaID="menu" {initialIndex} {orientation} wrap={true} {onBack}>
 			{#each items as item (item.id)}
 				<Button label={item.label} onConfirm={() => onselect?.(item.id)} />
 			{/each}
-		</ButtonGroup>
+		</ButtonsGroup>
 	{/key}
 </div>

@@ -1,14 +1,16 @@
 import type { Component } from 'svelte';
 import Items from '../components/List/List.svelte';
 import About from '../components/About/About.svelte';
+import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
 import { productName } from './app.ts';
+export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
 	id: string;
 	label: string;
 	submenu?: MenuItem[];
 	component?: Component<any>;
 	props?: Record<string, any>;
-	action?: 'back';
+	action?: MenuAction;
 	orientation?: 'horizontal' | 'vertical';
 }
 export interface MenuStructure {
@@ -49,10 +51,39 @@ export const menuStructure: MenuStructure = {
 			orientation: 'vertical',
 			submenu: [
 				{ id: 'back', label: 'Back', action: 'back' },
-				{ id: 'restart', label: 'Restart' },
-				{ id: 'shutdown', label: 'Shutdown' },
-				{ id: 'quit', label: 'Quit application' },
+				{ id: 'restart', label: 'Restart', action: 'restart' },
+				{ id: 'shutdown', label: 'Shutdown', action: 'shutdown' },
+				{ id: 'quit', label: 'Quit application', action: 'quit' },
 			],
 		},
 	],
 };
+
+export const confirmDialogs: Record<string, { title: string; message: string; apiAction: string; confirmLabel: string; cancelLabel: string; defaultButton: 'confirm' | 'cancel' }> = {
+	restart: {
+		title: 'Restart',
+		message: 'Are you sure you want to restart the device?',
+		apiAction: 'restart',
+		confirmLabel: 'Yes',
+		cancelLabel: 'No',
+		defaultButton: 'cancel',
+	},
+	shutdown: {
+		title: 'Shutdown',
+		message: 'Are you sure you want to shutdown the device?',
+		apiAction: 'shutdown',
+		confirmLabel: 'Yes',
+		cancelLabel: 'No',
+		defaultButton: 'cancel',
+	},
+	quit: {
+		title: 'Quit application',
+		message: 'Are you sure you want to quit the application?',
+		apiAction: 'quit',
+		confirmLabel: 'Yes',
+		cancelLabel: 'No',
+		defaultButton: 'cancel',
+	},
+};
+
+export { ConfirmDialog };

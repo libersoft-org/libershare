@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getContext, onMount } from 'svelte';
-	import type { ButtonGroupContext } from './ButtonGroup.svelte';
+	import type { ButtonsGroupContext } from './ButtonsGroup.svelte';
 	interface Props {
 		label?: string;
 		icon?: string;
@@ -16,19 +16,19 @@
 	}
 	let { label, icon, alt = '', selected = false, pressed = false, padding = '2vh', fontSize = '2vh', borderRadius = '2vh', width, height, onConfirm }: Props = $props();
 
-	const buttonGroup = getContext<ButtonGroupContext | undefined>('buttonGroup');
+	const buttonsGroup = getContext<ButtonsGroupContext | undefined>('buttonsGroup');
 	let index = $state(-1);
 
 	onMount(() => {
-		if (buttonGroup) {
-			const { index: idx, unregister } = buttonGroup.register({ onConfirm });
+		if (buttonsGroup) {
+			const { index: idx, unregister } = buttonsGroup.register({ onConfirm });
 			index = idx;
 			return unregister;
 		}
 	});
 
-	let isSelected = $derived(buttonGroup ? buttonGroup.isSelected(index) : selected);
-	let isPressed = $derived(buttonGroup ? buttonGroup.isPressed(index) : pressed);
+	let isSelected = $derived(buttonsGroup ? buttonsGroup.isSelected(index) : selected);
+	let isPressed = $derived(buttonsGroup ? buttonsGroup.isPressed(index) : pressed);
 </script>
 
 <style>
