@@ -31,8 +31,9 @@
 
 	.filerow .info {
 		display: flex;
-		align-items: center;
-		gap: 2vh;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.5vh;
 	}
 
 	.filerow .info .name {
@@ -52,10 +53,13 @@
 	}
 
 	@media (max-width: 768px) {
-		.filerow .info {
-			flex-direction: column;
-			align-items: flex-start;
-			gap: 0.5vh;
+		.filerow .actions {
+			width: 100%;
+		}
+
+		.filerow .actions :global(.button) {
+			flex: 1;
+			min-width: unset;
 		}
 	}
 </style>
