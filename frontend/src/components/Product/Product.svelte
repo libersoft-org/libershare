@@ -158,6 +158,14 @@
 		border-radius: 2vh;
 		background-color: #444;
 	}
+
+	@media (max-width: 1199px) {
+		.detail .content {
+			max-width: calc(100vw);
+			margin: 0;
+			border-radius: 0;
+		}
+	}
 </style>
 
 <div class="detail">
