@@ -15,6 +15,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 1vh;
 		padding: 2vh;
 		background-color: rgba(255, 255, 255, 0.05);
 		border: 0.4vh solid rgba(255, 255, 255, 0.05);
@@ -29,8 +31,8 @@
 
 	.filerow .info {
 		display: flex;
-		flex-direction: column;
-		gap: 1vh;
+		align-items: center;
+		gap: 2vh;
 	}
 
 	.filerow .info .name {
@@ -47,6 +49,14 @@
 	.filerow .actions {
 		display: flex;
 		gap: 2vh;
+	}
+
+	@media (max-width: 768px) {
+		.filerow .info {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.5vh;
+		}
 	}
 </style>
 
