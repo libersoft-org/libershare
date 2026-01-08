@@ -7,6 +7,7 @@
 
 <style>
 	.breadcrumb {
+		flex-wrap: wrap;
 		width: 100%;
 		padding: 1vh;
 		background-color: #222;
