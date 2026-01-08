@@ -51,7 +51,7 @@ export const menuStructure: MenuStructure = {
 				{ id: 'back', label: 'Back', action: 'back' },
 				{ id: 'restart', label: 'Restart' },
 				{ id: 'shutdown', label: 'Shutdown' },
-				{ id: 'exit-app', label: 'Exit Application' },
+				{ id: 'quit', label: 'Quit application' },
 			],
 		},
 	],
