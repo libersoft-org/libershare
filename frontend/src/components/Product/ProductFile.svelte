@@ -15,10 +15,10 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 1vw;
+		padding: 2vh;
 		background-color: rgba(255, 255, 255, 0.05);
-		border: 0.2vw solid rgba(255, 255, 255, 0.05);
-		border-radius: 1vw;
+		border: 0.4vh solid rgba(255, 255, 255, 0.05);
+		border-radius: 2vh;
 		transition: all 0.2s linear;
 	}
 
@@ -30,23 +30,23 @@
 	.filerow .info {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5vw;
+		gap: 1vh;
 	}
 
 	.filerow .info .name {
-		font-size: 1.2vw;
+		font-size: 3vh;
 		font-weight: bold;
 		color: #fff;
 	}
 
 	.filerow .info .size {
-		font-size: 1vw;
+		font-size: 2vh;
 		color: #888;
 	}
 
 	.filerow .actions {
 		display: flex;
-		gap: 1vw;
+		gap: 2vh;
 	}
 </style>
 
