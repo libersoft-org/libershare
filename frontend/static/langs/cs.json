@@ -1,0 +1,69 @@
+{
+	"common": {
+		"back": "Zpět",
+		"ok": "OK",
+		"yes": "Ano",
+		"no": "Ne",
+		"cancel": "Zrušit"
+	},
+	"storage": {
+		"title": "Úložiště",
+		"category": {
+			"movies": "Filmy",
+			"series": "Seriály",
+			"music": "Hudba"
+		},
+		"product": {
+			"files": "Soubory",
+			"size": "Velikost",
+			"download": "Stáhnout",
+			"play": "Přehrát"
+		}
+	},
+	"downloads": {
+		"title": "Stahování",
+		"name": "Název",
+		"id": "ID",
+		"size": "Velikost",
+		"progress": "Průběh",
+		"status": "Stav",
+		"downloadingFrom": "Stahování z",
+		"uploadingTo": "Nahrávání do",
+		"downloadSpeed": "Rychlost stahování",
+		"uploadSpeed": "Rychlost nahrávání",
+		"statuses": {
+			"completed": "Dokončeno",
+			"downloading": "Stahuje se",
+			"waiting": "Čeká",
+			"paused": "Pozastaveno",
+			"error": "Chyba"
+		}
+	},
+	"settings": {
+		"title": "Nastavení",
+		"language": "Jazyk"
+	},
+	"about": {
+		"title": "O aplikaci",
+		"version": "Verze",
+		"buildDate": "Datum sestavení",
+		"commit": "Commit",
+		"githubPage": "Stránka na GitHubu",
+		"officialWebsite": "Oficiální web"
+	},
+	"exit": {
+		"title": "Ukončit",
+		"restart": {
+			"title": "Restartovat",
+			"message": "Opravdu chcete restartovat zařízení?"
+		},
+		"shutdown": {
+			"title": "Vypnout",
+			"message": "Opravdu chcete vypnout zařízení?"
+		},
+		"quitApplication": {
+			"title": "Ukončit aplikaci",
+			"message": "Opravdu chcete ukončit aplikaci?"
+		}
+	}
+}

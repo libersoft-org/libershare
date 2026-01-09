@@ -1,0 +1,69 @@
+{
+	"common": {
+		"back": "Back",
+		"ok": "OK",
+		"yes": "Yes",
+		"no": "No",
+		"cancel": "Cancel"
+	},
+	"storage": {
+		"title": "Storage",
+		"category": {
+			"movies": "Movies",
+			"series": "Series",
+			"music": "Music"
+		},
+		"product": {
+			"files": "Files",
+			"size": "Size",
+			"download": "Download",
+			"play": "Play"
+		}
+	},
+	"downloads": {
+		"title": "Downloads",
+		"name": "Name",
+		"id": "ID",
+		"size": "Size",
+		"progress": "Progress",
+		"status": "Status",
+		"downloadingFrom": "Downloading from",
+		"uploadingTo": "Uploading to",
+		"downloadSpeed": "Download speed",
+		"uploadSpeed": "Upload speed",
+		"statuses": {
+			"completed": "Completed",
+			"downloading": "Downloading",
+			"waiting": "Waiting",
+			"paused": "Paused",
+			"error": "Error"
+		}
+	},
+	"settings": {
+		"title": "Settings",
+		"language": "Language"
+	},
+	"about": {
+		"title": "About",
+		"version": "Version",
+		"buildDate": "Build date",
+		"commit": "Commit",
+		"githubPage": "GitHub page",
+		"officialWebsite": "Official website"
+	},
+	"exit": {
+		"title": "Exit",
+		"restart": {
+			"title": "Restart",
+			"message": "Are you sure you want to restart the device?"
+		},
+		"shutdown": {
+			"title": "Shutdown",
+			"message": "Are you sure you want to shutdown the device?"
+		},
+		"quitApplication": {
+			"title": "Quit application",
+			"message": "Are you sure you want to quit the application?"
+		}
+	}
+}
