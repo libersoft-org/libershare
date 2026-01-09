@@ -30,7 +30,7 @@
 			id: 1,
 			name: 'Ubuntu 24.04 LTS',
 			hash: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0',
-			progress: 67.5,
+			progress: 50,
 			size: '4.2 GB',
 			downloadPeers: 12,
 			uploadPeers: 5,
@@ -46,7 +46,7 @@
 			id: 2,
 			name: 'Fedora Workstation 40',
 			hash: 'b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1',
-			progress: 100,
+			progress: 95,
 			size: '2.1 GB',
 			downloadPeers: 0,
 			uploadPeers: 8,
@@ -58,7 +58,7 @@
 			id: 3,
 			name: 'Arch Linux 2024.01',
 			hash: 'c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2',
-			progress: 23.8,
+			progress: 45.7,
 			size: '850 MB',
 			downloadPeers: 3,
 			uploadPeers: 1,
@@ -203,14 +203,14 @@
 
 <div class="download-manager">
 	<div class="header">
-		<div class="header-cell">Název</div>
-		<div class="header-cell">Hash</div>
+		<div class="header-cell">Name</div>
+		<div class="header-cell">ID</div>
 		<div class="header-cell center">Progress</div>
-		<div class="header-cell right">Velikost</div>
-		<div class="header-cell center">↓</div>
-		<div class="header-cell center">↑</div>
-		<div class="header-cell right">↓ Speed</div>
-		<div class="header-cell right">↑ Speed</div>
+		<div class="header-cell right">Size</div>
+		<div class="header-cell center">Downloading from</div>
+		<div class="header-cell center">Uploading to</div>
+		<div class="header-cell right">Download speed</div>
+		<div class="header-cell right">Upload speed</div>
 	</div>
 	<div class="items-container">
 		{#each downloads as download, index (download.id)}

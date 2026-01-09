@@ -152,10 +152,10 @@
 		<div class="hash">{truncateHash(hash)}</div>
 		<ProgressBar {progress} completed={isCompleted} height="1.8vh" />
 		<div class="size">{size}</div>
-		<div class="peers download">↓{downloadPeers}</div>
-		<div class="peers upload">↑{uploadPeers}</div>
-		<div class="speed download">↓{downloadSpeed}</div>
-		<div class="speed upload">↑{uploadSpeed}</div>
+		<div class="peers download">{downloadPeers}</div>
+		<div class="peers upload">{uploadPeers}</div>
+		<div class="speed download">{downloadSpeed}</div>
+		<div class="speed upload">{uploadSpeed}</div>
 	</div>
 
 	{#if expanded}
