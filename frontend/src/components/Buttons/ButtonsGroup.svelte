@@ -16,11 +16,10 @@
 		areaID: string;
 		initialIndex?: number;
 		orientation?: 'horizontal' | 'vertical';
-		wrap?: boolean;
 		onBack?: () => void;
 	}
 
-	let { children, areaID, initialIndex = 0, orientation = 'vertical', wrap = false, onBack }: Props = $props();
+	let { children, areaID, initialIndex = 0, orientation = 'vertical', onBack }: Props = $props();
 	let selectedIndex = $state(initialIndex);
 	let isAPressed = $state(false);
 	let buttons: { onConfirm?: () => void }[] = [];
@@ -71,17 +70,19 @@
 
 	function navigatePrev() {
 		if (selectedIndex > 0) selectedIndex--;
-		else if (wrap) selectedIndex = buttons.length - 1;
+	}
+
+	function navigatePrevOrExit() {
+		if (selectedIndex > 0) selectedIndex--;
 		else activatePrevArea();
 	}
 
 	function navigateNext() {
 		if (selectedIndex < buttons.length - 1) selectedIndex++;
-		else if (wrap) selectedIndex = 0;
 	}
 
 	onMount(() => {
-		const handlers = orientation === 'horizontal' ? { left: navigatePrev, right: navigateNext, up: activatePrevArea } : { up: navigatePrev, down: navigateNext };
+		const handlers = orientation === 'horizontal' ? { left: navigatePrev, right: navigateNext, up: activatePrevArea } : { up: navigatePrevOrExit, down: navigateNext };
 		const unregister = registerArea(areaID, {
 			...handlers,
 			confirmDown: () => {

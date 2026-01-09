@@ -50,10 +50,10 @@ export const menuStructure: MenuStructure = {
 			label: 'Exit',
 			orientation: 'vertical',
 			submenu: [
-				{ id: 'back', label: 'Back', action: 'back' },
 				{ id: 'restart', label: 'Restart', action: 'restart' },
 				{ id: 'shutdown', label: 'Shutdown', action: 'shutdown' },
 				{ id: 'quit', label: 'Quit application', action: 'quit' },
+				{ id: 'back', label: 'Back', action: 'back' },
 			],
 		},
 	],

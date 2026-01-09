@@ -39,7 +39,7 @@
 	<MenuTitle {title} />
 	<MenuBar>
 		{#key `${title}-${selectedId}-${orientation}`}
-			<ButtonsGroup areaID="menu" {initialIndex} {orientation} wrap={true} {onBack}>
+			<ButtonsGroup areaID="menu" {initialIndex} {orientation} {onBack}>
 				{#each items as item (item.id)}
 					<Button label={item.label} onConfirm={() => onselect?.(item.id)} />
 				{/each}
