@@ -1,6 +1,7 @@
 import type { Component } from 'svelte';
 import Items from '../components/List/List.svelte';
 import About from '../components/About/About.svelte';
+import Download from '../components/Download/Download.svelte';
 import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
 import { productName } from './app.ts';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
@@ -33,7 +34,7 @@ export const menuStructure: MenuStructure = {
 		{
 			id: 'downloads',
 			label: 'Downloads',
-			submenu: [{ id: 'back', label: 'Back', action: 'back' }],
+			component: Download,
 		},
 		{
 			id: 'settings',
