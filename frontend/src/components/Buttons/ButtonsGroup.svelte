@@ -138,7 +138,9 @@
 		</div>
 	</div>
 {:else}
-	<div class="items vertical">
-		{@render children()}
+	<div class="items-wrapper">
+		<div class="items vertical">
+			{@render children()}
+		</div>
 	</div>
 {/if}
