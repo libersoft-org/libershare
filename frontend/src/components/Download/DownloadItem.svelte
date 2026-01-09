@@ -1,18 +1,19 @@
 <script lang="ts">
 	import ProgressBar from '../ProgressBar/ProgressBar.svelte';
 	import DownloadFile from './DownloadFile.svelte';
+	export type DownloadStatus = 'completed' | 'downloading' | 'waiting' | 'paused' | 'error';
 	export interface DownloadFileData {
 		id: number;
 		name: string;
 		progress: number;
 		size: string;
-		status: 'completed' | 'downloading' | 'waiting' | 'paused' | 'error';
 	}
 	interface Props {
 		name: string;
 		id: string;
 		progress: number;
 		size: string;
+		status: DownloadStatus;
 		downloadPeers: number;
 		uploadPeers: number;
 		downloadSpeed: string;
@@ -22,8 +23,15 @@
 		expanded?: boolean;
 		selectedFileIndex?: number;
 	}
-	let { name, id, progress, size, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, files, selected = false, expanded = false, selectedFileIndex = -1 }: Props = $props();
-	let isCompleted = $derived(progress >= 100);
+	let { name, id, progress, size, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, files, selected = false, expanded = false, selectedFileIndex = -1 }: Props = $props();
+
+	const statusLabels: Record<DownloadStatus, string> = {
+		completed: 'Completed',
+		downloading: 'Downloading',
+		waiting: 'Waiting',
+		paused: 'Paused',
+		error: 'Error',
+	};
 
 	function truncateID(id: string): string {
 		if (id.length <= 16) return id;
@@ -34,7 +42,7 @@
 <style>
 	.item {
 		display: grid;
-		grid-template-columns: 1fr 12vh 15vh 8vh 6vh 6vh 10vh 10vh;
+		grid-template-columns: 1fr 5vw 5vw 10vw 8vw 8vw 8vw 8vw 8vw;
 		align-items: center;
 		gap: 1vh;
 		padding: 1vh 2vh;
@@ -54,24 +62,13 @@
 		white-space: nowrap;
 	}
 
-	.item.selected .id {
-		color: var(--primary-foreground);
-	}
-
-	.item .size {
-		font-size: 1.5vh;
-		color: var(--default-foreground);
-		text-align: right;
-	}
-
-	.item .peers {
-		font-size: 1.5vh;
+	.item .status {
 		text-align: center;
-	}
-
-	.item .speed {
-		font-size: 1.4vh;
-		text-align: right;
+		padding: 0.3vh 0.6vh;
+		border: 0.2vh solid var(--secondary-softer-background);
+		border-radius: 0.5vh;
+		background-color: var(--secondary-background);
+		color: var(--secondary-foreground);
 	}
 
 	.files-wrapper {
@@ -89,20 +86,29 @@
 	.expand.expanded {
 		transform: rotate(90deg);
 	}
+
+	.center {
+		text-align: center;
+	}
+
+	.right {
+		text-align: right;
+	}
 </style>
 
 <div class="item" class:selected={selected && selectedFileIndex === -1}>
 	<div class="name">
 		<span class="expand" class:expanded>▶</span>
-		{name}
+		<span>{name}</span>
 	</div>
-	<div class="id">{truncateID(id)}</div>
-	<ProgressBar {progress} completed={isCompleted} />
-	<div class="size">{size}</div>
-	<div class="peers download">{downloadPeers}</div>
-	<div class="peers upload">{uploadPeers}</div>
-	<div class="speed download">{downloadSpeed}</div>
-	<div class="speed upload">{uploadSpeed}</div>
+	<div class="center">{truncateID(id)}</div>
+	<div class="right">{size}</div>
+	<ProgressBar {progress} />
+	<div class="status {status}">{statusLabels[status]}</div>
+	<div class="center">{downloadPeers}</div>
+	<div class="center">{uploadPeers}</div>
+	<div class="center">{downloadSpeed}</div>
+	<div class="center">{uploadSpeed}</div>
 </div>
 
 {#if expanded}
