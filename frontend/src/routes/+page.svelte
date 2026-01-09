@@ -76,17 +76,17 @@
 	}
 
 	.left.selected {
-		background-color: blue;
+		background-color: green;
 	}
 
 	.right {
 		width: 20vh;
 		height: 100%;
-		background-color: green;
+		background-color: red;
 	}
 
 	.right.selected {
-		background-color: yellow;
+		background-color: green;
 	}
 </style>
 

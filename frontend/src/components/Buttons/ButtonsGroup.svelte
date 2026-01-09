@@ -96,7 +96,7 @@
 		const handlers =
 			orientation === 'horizontal'
 				? { left: navigatePrevOrLeft, right: navigateNextOrRight, up: navigateUp }
-				: { up: navigatePrevOrExit, down: navigateNextItem };
+				: { up: navigatePrevOrExit, down: navigateNextItem, left: navigateLeft, right: navigateRight };
 		const unregister = registerArea(areaID, areaPosition, {
 			...handlers,
 			confirmDown: () => {

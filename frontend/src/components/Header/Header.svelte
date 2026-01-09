@@ -9,11 +9,15 @@
 	let { onBack }: Props = $props();
 
 	onMount(() => {
-		const unregister = registerArea('header', { x: 0, y: 0 }, {
-			down: navigateDown,
-			confirmUp: () => onBack?.(),
-			back: () => onBack?.(),
-		});
+		const unregister = registerArea(
+			'header',
+			{ x: 0, y: 0 },
+			{
+				down: navigateDown,
+				confirmUp: () => onBack?.(),
+				back: () => onBack?.(),
+			}
+		);
 		activateArea('header');
 		return unregister;
 	});

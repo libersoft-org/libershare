@@ -1,10 +1,9 @@
 import { writable, derived, get } from 'svelte/store';
 import { menuStructure, type MenuItem, type MenuAction } from './menu.ts';
-import { getFocusAreaStore, executeBackHandler } from './focus.ts';
+import { executeBackHandler, pushBackHandler } from './focus.ts';
 
 // Re-export commonly used items for convenience
-export { focusArea, focusHeader, focusContent, pushBackHandler, setContentArea } from './focus.ts';
-export type { FocusArea } from './focus.ts';
+export { pushBackHandler } from './focus.ts';
 export { menuStructure, confirmDialogs, ConfirmDialog, type MenuItem, type MenuStructure, type MenuAction } from './menu.ts';
 
 // Breadcrumb items store
@@ -64,7 +63,6 @@ export function hideConfirmDialog(): void {
 }
 
 export function createNavigation() {
-	const focusAreaStore = getFocusAreaStore();
 	const path = writable<MenuItem[]>([]);
 	const selectedId = writable<string | undefined>(undefined);
 	const currentItems = derived(path, $path => ($path.length === 0 ? menuStructure.items : ($path[$path.length - 1].submenu ?? [])));
@@ -90,7 +88,6 @@ export function createNavigation() {
 		// Update breadcrumb based on new path
 		const newPath = [...get(path)];
 		setBreadcrumb(newPath.map(p => p.label));
-		focusAreaStore.set('content');
 	}
 
 	function navigateBack(): void {
@@ -108,7 +105,6 @@ export function createNavigation() {
 				setBreadcrumb([exitItem.label]);
 			}
 		}
-		focusAreaStore.set('content');
 	}
 
 	function onBack(): void {

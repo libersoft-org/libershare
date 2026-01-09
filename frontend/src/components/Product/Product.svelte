@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { registerArea, activateArea, navigateLeft, navigateRight } from '../../scripts/areas.ts';
-	import { focusArea, focusHeader, pushBackHandler } from '../../scripts/navigation.ts';
+	import { registerArea, activateArea, activeArea, navigateUp, navigateLeft, navigateRight } from '../../scripts/areas.ts';
+	import { pushBackHandler } from '../../scripts/navigation.ts';
 	import ProductFile from './ProductFile.svelte';
 	const AREA_ID = 'product';
 	interface Props {
@@ -11,7 +11,7 @@
 		onBack?: () => void;
 	}
 	let { category = 'Movies', itemTitle = 'Item', itemId = 1, onBack }: Props = $props();
-	let active = $derived($focusArea === 'content');
+	let active = $derived($activeArea === AREA_ID);
 	const files = [
 		{ id: 1, name: `${itemTitle} - 240p.mp4`, size: '218.32 MB' },
 		{ id: 2, name: `${itemTitle} - 480p.mp4`, size: '780.12 MB' },
@@ -29,10 +29,10 @@
 	function navigate(direction: string): void {
 		switch (direction) {
 			case 'up':
-				selectedRow = selectedRow <= -1 ? files.length - 1 : selectedRow - 1;
+				if (selectedRow > -1) selectedRow--;
 				break;
 			case 'down':
-				selectedRow = selectedRow >= files.length - 1 ? -1 : selectedRow + 1;
+				if (selectedRow < files.length - 1) selectedRow++;
 				break;
 			case 'left':
 				if (selectedRow >= 0) selectedButton = 0;
@@ -70,18 +70,18 @@
 		const unregisterArea = registerArea(AREA_ID, { x: 1, y: 1 }, {
 			up: () => {
 				if (selectedRow === -1) {
-					focusHeader();
+					navigateUp();
 				} else {
 					navigate('up');
 				}
 			},
 			down: () => navigate('down'),
 			left: () => {
-				if (selectedButton === 0) navigateLeft();
+				if (selectedRow === -1 || selectedButton === 0) navigateLeft();
 				else navigate('left');
 			},
 			right: () => {
-				if (selectedButton === 1) navigateRight();
+				if (selectedRow === -1 || selectedButton === 1) navigateRight();
 				else navigate('right');
 			},
 			confirmDown: () => {

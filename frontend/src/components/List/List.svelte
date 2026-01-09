@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { registerArea, activateArea, navigateLeft, navigateRight } from '../../scripts/areas.ts';
-	import { focusArea, focusHeader, pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
+	import { registerArea, unregisterArea, activateArea, activeArea, navigateUp, navigateLeft, navigateRight } from '../../scripts/areas.ts';
+	import { pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
 	import ListItem from './ListItem.svelte';
 	import Product from '../Product/Product.svelte';
 	const AREA_ID = 'list';
@@ -11,7 +11,7 @@
 		onBack?: () => void;
 	}
 	let { title = 'Items', category = '', onBack }: Props = $props();
-	let active = $derived($focusArea === 'content');
+	let active = $derived($activeArea === AREA_ID);
 	// Some test data
 	const items = Array.from({ length: 200 }, (_, i) => ({
 		id: i + 1,
@@ -21,6 +21,36 @@
 	let isAPressed = $state(false);
 	let itemElements: HTMLElement[] = $state([]);
 	let selectedItem = $state<{ id: number; title: string } | null>(null);
+
+	const areaHandlers = {
+		up: () => {
+			const cols = getColumnsCount();
+			if (selectedIndex < cols) navigateUp();
+			else navigate('up');
+		},
+		down: () => navigate('down'),
+		left: () => {
+			const cols = getColumnsCount();
+			if (selectedIndex % cols === 0) navigateLeft();
+			else navigate('left');
+		},
+		right: () => {
+			const cols = getColumnsCount();
+			if (selectedIndex % cols === cols - 1 || selectedIndex === items.length - 1) navigateRight();
+			else navigate('right');
+		},
+		confirmDown: () => {
+			isAPressed = true;
+		},
+		confirmUp: () => {
+			isAPressed = false;
+			openItem();
+		},
+		confirmCancel: () => {
+			isAPressed = false;
+		},
+		back: () => onBack?.(),
+	};
 
 	// Calculate columns by comparing Y positions of items
 	function getColumnsCount(): number {
@@ -70,6 +100,8 @@
 		pushBreadcrumb(items[selectedIndex].title);
 		scrollContentToTop();
 		isAPressed = false;
+		// Unregister list area when showing product detail
+		unregisterArea(AREA_ID);
 	}
 
 	async function closeDetail(): Promise<void> {
@@ -77,39 +109,13 @@
 		popBreadcrumb();
 		await tick();
 		scrollToSelectedItem(true);
+		// Re-register list area when returning from product detail
+		registerArea(AREA_ID, { x: 1, y: 1 }, areaHandlers);
 		activateArea(AREA_ID);
 	}
 
 	onMount(() => {
-		const unregister = registerArea(AREA_ID, { x: 1, y: 1 }, {
-			up: () => {
-				const cols = getColumnsCount();
-				if (selectedIndex < cols) focusHeader();
-				else navigate('up');
-			},
-			down: () => navigate('down'),
-			left: () => {
-				const cols = getColumnsCount();
-				if (selectedIndex % cols === 0) navigateLeft();
-				else navigate('left');
-			},
-			right: () => {
-				const cols = getColumnsCount();
-				if (selectedIndex % cols === cols - 1 || selectedIndex === items.length - 1) navigateRight();
-				else navigate('right');
-			},
-			confirmDown: () => {
-				isAPressed = true;
-			},
-			confirmUp: () => {
-				isAPressed = false;
-				openItem();
-			},
-			confirmCancel: () => {
-				isAPressed = false;
-			},
-			back: () => onBack?.(),
-		});
+		const unregister = registerArea(AREA_ID, { x: 1, y: 1 }, areaHandlers);
 		activateArea(AREA_ID);
 		return unregister;
 	});

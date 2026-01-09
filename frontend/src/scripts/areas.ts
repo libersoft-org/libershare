@@ -121,44 +121,31 @@ class AreaManager {
 		}
 	}
 
-	navigateUp(): boolean {
-		const target = this.findAreaInDirection('up');
+	private navigate(direction: 'up' | 'down' | 'left' | 'right'): boolean {
+		const target = this.findAreaInDirection(direction);
+		console.log(`navigate${direction.charAt(0).toUpperCase() + direction.slice(1)} from`, this.activeAreaId, 'to', target, 'areas:', [...this.areas.keys()]);
 		if (target) {
 			this.activeAreaId = target;
 			activeAreaStore.set(target);
 			return true;
 		}
 		return false;
+	}
+
+	navigateUp(): boolean {
+		return this.navigate('up');
 	}
 
 	navigateDown(): boolean {
-		const target = this.findAreaInDirection('down');
-		if (target) {
-			this.activeAreaId = target;
-			activeAreaStore.set(target);
-			return true;
-		}
-		return false;
+		return this.navigate('down');
 	}
 
 	navigateLeft(): boolean {
-		const target = this.findAreaInDirection('left');
-		if (target) {
-			this.activeAreaId = target;
-			activeAreaStore.set(target);
-			return true;
-		}
-		return false;
+		return this.navigate('left');
 	}
 
 	navigateRight(): boolean {
-		const target = this.findAreaInDirection('right');
-		if (target) {
-			this.activeAreaId = target;
-			activeAreaStore.set(target);
-			return true;
-		}
-		return false;
+		return this.navigate('right');
 	}
 
 	// Legacy methods for backward compatibility
