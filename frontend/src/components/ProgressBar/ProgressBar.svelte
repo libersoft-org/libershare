@@ -40,7 +40,7 @@
 		color: var(--primary-foreground);
 	}
 
-	.progressbar .text-clip {
+	.progressbar .clip {
 		position: absolute;
 		top: 0;
 		left: 0;
@@ -48,7 +48,7 @@
 		overflow: hidden;
 	}
 
-	.progressbar .text-clip .text {
+	.progressbar .clip .text {
 		left: 0;
 		width: var(--bar-width);
 		transform: translateY(-50%);
@@ -61,7 +61,7 @@
 	<div class="fill" style="width: {clampedProgress}%"></div>
 	{#if showText}
 		<span class="text background">{clampedProgress.toFixed(1)}%</span>
-		<div class="text-clip" style="width: {clampedProgress}%; --bar-width: {barWidth}px">
+		<div class="clip" style="width: {clampedProgress}%; --bar-width: {barWidth}px">
 			<span class="text">{clampedProgress.toFixed(1)}%</span>
 		</div>
 	{/if}
