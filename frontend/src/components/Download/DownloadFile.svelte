@@ -89,7 +89,7 @@
 
 <div class="file" class:selected>
 	<div class="name">{name}</div>
-	<ProgressBar {progress} completed={status === 'completed'} height="1.5vh" />
+	<ProgressBar {progress} completed={status === 'completed'} />
 	<div class="size">{size}</div>
 	<div class="status {status}">{statusLabels[status]}</div>
 </div>

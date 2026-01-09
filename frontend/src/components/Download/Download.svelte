@@ -2,11 +2,9 @@
 	import { onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import DownloadItem, { type DownloadFileData } from './DownloadItem.svelte';
-
 	interface DownloadData {
-		id: number;
+		id: string;
 		name: string;
-		hash: string;
 		progress: number;
 		size: string;
 		downloadPeers: number;
@@ -15,7 +13,6 @@
 		uploadSpeed: string;
 		files: DownloadFileData[];
 	}
-
 	interface Props {
 		areaID: string;
 		title?: string;
@@ -23,13 +20,11 @@
 	}
 	let { areaID, title = 'Downloads', onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
-
 	// Test data
 	const downloads: DownloadData[] = [
 		{
-			id: 1,
+			id: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0',
 			name: 'Ubuntu 24.04 LTS',
-			hash: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0',
 			progress: 50,
 			size: '4.2 GB',
 			downloadPeers: 12,
@@ -43,9 +38,8 @@
 			],
 		},
 		{
-			id: 2,
+			id: 'b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1',
 			name: 'Fedora Workstation 40',
-			hash: 'b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1',
 			progress: 95,
 			size: '2.1 GB',
 			downloadPeers: 0,
@@ -55,9 +49,8 @@
 			files: [{ id: 1, name: 'Fedora-Workstation-Live-x86_64-40.iso', progress: 100, size: '2.1 GB', status: 'completed' }],
 		},
 		{
-			id: 3,
+			id: 'c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2',
 			name: 'Arch Linux 2024.01',
-			hash: 'c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2',
 			progress: 45.7,
 			size: '850 MB',
 			downloadPeers: 3,
@@ -67,9 +60,8 @@
 			files: [{ id: 1, name: 'archlinux-2024.01.01-x86_64.iso', progress: 23.8, size: '850 MB', status: 'downloading' }],
 		},
 		{
-			id: 4,
+			id: 'd4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3',
 			name: 'Linux Mint 21.3',
-			hash: 'd4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3',
 			progress: 0,
 			size: '2.8 GB',
 			downloadPeers: 0,
@@ -162,11 +154,14 @@
 </script>
 
 <style>
-	.download-manager {
+	.download {
 		display: flex;
 		flex-direction: column;
-		width: 100%;
-		height: 100%;
+		margin: 2vh;
+		border: 0.4vh solid var(--secondary-softer-background);
+		border-radius: 2vh;
+		color: var(--secondary-foreground);
+		box-shadow: 0 0 2vh var(--secondary-softer-background);
 		overflow: hidden;
 	}
 
@@ -176,46 +171,45 @@
 		gap: 1vh;
 		padding: 1vh 2vh;
 		background-color: var(--secondary-background);
-		color: var(--secondary-foreground);
-		font-size: 1.4vh;
+		font-size: 2vh;
 		font-weight: bold;
 	}
 
-	.header-cell {
+	.header .cell {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.header-cell.center {
+	.header .cell.center {
 		text-align: center;
 	}
 
-	.header-cell.right {
+	.header .cell.right {
 		text-align: right;
 	}
 
-	.items-container {
+	.items {
 		flex: 1;
 		overflow-y: auto;
 	}
 </style>
 
-<div class="download-manager">
+<div class="download">
 	<div class="header">
-		<div class="header-cell">Name</div>
-		<div class="header-cell">ID</div>
-		<div class="header-cell center">Progress</div>
-		<div class="header-cell right">Size</div>
-		<div class="header-cell center">Downloading from</div>
-		<div class="header-cell center">Uploading to</div>
-		<div class="header-cell right">Download speed</div>
-		<div class="header-cell right">Upload speed</div>
+		<div class="cell">Name</div>
+		<div class="cell">ID</div>
+		<div class="cell center">Progress</div>
+		<div class="cell center">Size</div>
+		<div class="cell center">Downloading from</div>
+		<div class="cell center">Uploading to</div>
+		<div class="cell center">Download speed</div>
+		<div class="cell center">Upload speed</div>
 	</div>
-	<div class="items-container">
+	<div class="items">
 		{#each downloads as download, index (download.id)}
 			<div bind:this={itemElements[index]}>
-				<DownloadItem name={download.name} hash={download.hash} progress={download.progress} size={download.size} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} files={download.files} selected={active && selectedIndex === index} expanded={expandedIndex === index} selectedFileIndex={selectedIndex === index ? selectedFileIndex : -1} />
+				<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} files={download.files} selected={active && selectedIndex === index} expanded={expandedIndex === index} selectedFileIndex={selectedIndex === index ? selectedFileIndex : -1} />
 			</div>
 		{/each}
 	</div>

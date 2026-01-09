@@ -13,6 +13,7 @@
 	.progressbar {
 		position: relative;
 		width: 100%;
+		border: 0.3vh solid var(--secondary-background);
 		border-radius: calc(var(--height) / 2);
 		overflow: hidden;
 		background-color: var(--secondary-background);
