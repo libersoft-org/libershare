@@ -25,10 +25,11 @@
 		align-items: center;
 		gap: 1vh;
 		padding: 1vh;
+		background-color: var(--secondary-background);
 	}
 
 	.title {
-		color: #fd1;
+		color: var(--primary-foreground);
 		font-size: 4vh;
 		font-weight: bold;
 	}

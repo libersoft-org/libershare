@@ -1,3 +1,20 @@
+:root {
+	--primary-foreground: #fd1;
+	--primary-softer-background: #550;
+	--primary-soft-background: #440;
+	--primary-background: #330;
+	--primary-hard-background: #220;
+	--primary-harder-background: #110;
+	--secondary-foreground: #fff;
+	--secondary-softer-background: #444;
+	--secondary-soft-background: #333;
+	--secondary-background: #222;
+	--secondary-hard-background: #111;
+	--secondary-harder-background: #000;
+	--disabled-foreground: #888;
+	--disabled-background: #222;
+}
+
 html,
 body {
 	margin: 0;

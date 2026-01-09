@@ -6,8 +6,8 @@
 	.footer {
 		display: flex;
 		align-items: center;
-		background-color: #000;
-		color: #fd1;
+		background-color: var(--secondary-background);
+		color: var(--primary-foreground);
 		padding: 2vh;
 		font-size: 2vh;
 	}

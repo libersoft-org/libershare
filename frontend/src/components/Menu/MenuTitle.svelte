@@ -10,8 +10,8 @@
 		font-size: 4vh;
 		font-weight: bold;
 		margin-bottom: 3vh;
-		color: #fd1;
 		text-align: center;
+		color: var(--primary-foreground);
 	}
 </style>
 

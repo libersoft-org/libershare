@@ -54,25 +54,25 @@
 </script>
 
 <style>
-	.title {
-		font-size: 4vh;
-		font-weight: bold;
-		text-align: center;
-		color: #fd1;
+	.confirm {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 3vh;
 	}
 
 	.message {
-		font-size: 3vh;
-		opacity: 0.8;
+		font-size: 2vh;
 		text-align: center;
 	}
 </style>
 
-<Dialog>
-	<div class="title">{title}</div>
-	<div class="message">{message}</div>
-	<ButtonsStatic>
-		<Button label={cancelLabel} selected={selectedButton === 'cancel'} pressed={selectedButton === 'cancel' && isPressed} onConfirm={onBack} />
-		<Button label={confirmLabel} selected={selectedButton === 'confirm'} pressed={selectedButton === 'confirm' && isPressed} {onConfirm} />
-	</ButtonsStatic>
+<Dialog {title}>
+	<div class="confirm">
+		<div class="message">{message}</div>
+		<ButtonsStatic>
+			<Button label={cancelLabel} selected={selectedButton === 'cancel'} pressed={selectedButton === 'cancel' && isPressed} onConfirm={onBack} />
+			<Button label={confirmLabel} selected={selectedButton === 'confirm'} pressed={selectedButton === 'confirm' && isPressed} {onConfirm} />
+		</ButtonsStatic>
+	</div>
 </Dialog>

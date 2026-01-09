@@ -14,44 +14,31 @@
 		background-size: cover;
 		background-position: center;
 		background-repeat: no-repeat;
-		border: 0.5vh solid #555;
-		border-radius: 1.5vh;
+		border: 0.5vh solid var(--secondary-soft-background);
+		border-radius: 2vh;
 		overflow: hidden;
 		aspect-ratio: 16 / 9;
 		box-sizing: border-box;
-		transition:
-			transform 0.3s ease,
-			border-color 0.3s ease;
-	}
-
-	.item::before {
-		content: '';
-		position: absolute;
-		bottom: 0;
-		left: 0;
-		right: 0;
-		height: 50%;
-		background: linear-gradient(to top, rgba(0, 0, 0, 0.8), transparent);
-		pointer-events: none;
+		transition: all 0.3s linear;
 	}
 
 	.item.hover {
 		transform: scale(1.05);
-		border-color: #aa0;
+		border-color: var(--primary-foreground);
 	}
 
 	.item.pressed {
-		border-color: #080;
+		transform: scale(1);
 	}
 
 	.title {
 		position: relative;
-		color: #fff;
+		color: var(--secondary-foreground);
 		font-size: 2vh;
 		font-weight: bold;
 		padding: 1vh;
-		background-color: rgba(0, 0, 0, 0.75);
-		backdrop-filter: blur(0.4vh);
+		background-color: var(--secondary-hard-background);
+		opacity: 0.8;
 	}
 </style>
 

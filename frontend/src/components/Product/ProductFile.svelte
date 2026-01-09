@@ -18,15 +18,15 @@
 		flex-wrap: wrap;
 		gap: 1vh;
 		padding: 2vh;
-		background-color: rgba(255, 255, 255, 0.05);
-		border: 0.4vh solid rgba(255, 255, 255, 0.05);
+		background-color: var(--secondary-background);
+		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
 		transition: all 0.2s linear;
 	}
 
 	.filerow.selected {
-		background-color: rgba(255, 255, 255, 0.1);
-		border-color: #aa0;
+		background-color: var(--secondary-hard-background);
+		border-color: var(--primary-foreground);
 	}
 
 	.filerow .info {
@@ -39,12 +39,12 @@
 	.filerow .info .name {
 		font-size: 3vh;
 		font-weight: bold;
-		color: #fff;
+		color: var(--secondary-foreground);
 	}
 
 	.filerow .info .size {
 		font-size: 2vh;
-		color: #888;
+		color: var(--disabled-foreground);
 	}
 
 	.filerow .actions {

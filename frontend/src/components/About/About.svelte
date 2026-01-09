@@ -14,19 +14,12 @@
 </script>
 
 <style>
-	.title {
-		font-size: 2.5vh;
-		font-weight: bold;
-		color: #fd1;
-	}
-
 	.build {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 1vh;
 		font-size: 2vh;
-		color: #aaa;
 	}
 
 	.build .row {
@@ -35,11 +28,7 @@
 	}
 
 	.build .row .label {
-		color: #888;
-	}
-
-	.build .row .value {
-		color: #fff;
+		color: var(--disabled-foreground);
 	}
 
 	.links {
@@ -55,8 +44,7 @@
 	}
 </style>
 
-<Dialog>
-	<div class="title">{productName}</div>
+<Dialog title={productName}>
 	<div class="build">
 		<div class="row">
 			<span class="label">Version:</span>

@@ -36,9 +36,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background-color: rgba(255, 255, 255, 0.1);
-		border: 0.2vh solid rgba(255, 255, 255, 0.3);
-		color: #fff;
+		background-color: var(--secondary-background);
+		color: var(--secondary-foreground);
+		border: 0.4vh solid var(--secondary-softer-background);
 		text-align: center;
 		white-space: nowrap;
 		transition: all 0.2s linear;
@@ -53,10 +53,10 @@
 	}
 
 	.button.selected {
-		background-color: rgba(255, 221, 17, 0.2);
-		color: #fd1;
-		border-color: #fd1;
-		box-shadow: 0 0 2vh rgba(255, 221, 17, 0.6);
+		background-color: var(--primary-background);
+		color: var(--primary-foreground);
+		border-color: var(--primary-foreground);
+		box-shadow: 0 0 1.5vh var(--primary-foreground);
 		font-weight: bold;
 		opacity: 1;
 		transform: scale(1.05);
@@ -64,7 +64,7 @@
 
 	.button.selected.pressed {
 		transform: scale(1);
-		background-color: rgba(255, 221, 17, 0.4);
+		background-color: var(--primary-softer-background);
 	}
 
 	.button img {
