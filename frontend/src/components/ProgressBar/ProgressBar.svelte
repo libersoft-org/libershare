@@ -10,7 +10,7 @@
 </script>
 
 <style>
-	.progress-bar {
+	.progressbar {
 		position: relative;
 		width: 100%;
 		background-color: var(--disabled-background);
@@ -18,18 +18,18 @@
 		overflow: hidden;
 	}
 
-	.progress-fill {
+	.progressbar .fill {
 		height: 100%;
 		border-radius: 1vh;
 		transition: width 0.3s ease;
 		background-color: var(--primary-background);
 	}
 
-	.progress-fill.completed {
+	.progressbar .fill.completed {
 		background-color: var(--secondary-background);
 	}
 
-	.progress-text {
+	.progressbar .text {
 		position: absolute;
 		top: 50%;
 		left: 50%;
@@ -41,9 +41,9 @@
 	}
 </style>
 
-<div class="progress-bar" style="height: {height}">
-	<div class="progress-fill" class:completed style="width: {clampedProgress}%"></div>
+<div class="progressbar" style="height: {height}">
+	<div class="fill" class:completed style="width: {clampedProgress}%"></div>
 	{#if showText}
-		<span class="progress-text">{clampedProgress.toFixed(1)}%</span>
+		<span class="text">{clampedProgress.toFixed(1)}%</span>
 	{/if}
 </div>

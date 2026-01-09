@@ -1,6 +1,5 @@
 <script lang="ts">
 	import ProgressBar from '../ProgressBar/ProgressBar.svelte';
-
 	interface Props {
 		name: string;
 		progress: number;
@@ -9,7 +8,6 @@
 		selected?: boolean;
 	}
 	let { name, progress, size, status, selected = false }: Props = $props();
-
 	const statusLabels: Record<string, string> = {
 		completed: 'Dokončeno',
 		downloading: 'Stahování',
@@ -20,7 +18,7 @@
 </script>
 
 <style>
-	.file-row {
+	.file {
 		display: grid;
 		grid-template-columns: 1fr 15vh 10vh 10vh;
 		gap: 1vh;
@@ -30,11 +28,11 @@
 		border-bottom: 1px solid var(--disabled-background);
 	}
 
-	.file-row.selected {
+	.file.selected {
 		background-color: var(--primary-background);
 	}
 
-	.file-name {
+	.file .name {
 		font-size: 1.6vh;
 		color: var(--default-foreground);
 		overflow: hidden;
@@ -42,56 +40,56 @@
 		white-space: nowrap;
 	}
 
-	.file-row.selected .file-name {
+	.file.selected .name {
 		color: var(--primary-foreground);
 	}
 
-	.file-size {
+	.file .size {
 		font-size: 1.4vh;
 		color: var(--disabled-foreground);
 		text-align: right;
 	}
 
-	.file-row.selected .file-size {
+	.file.selected .size {
 		color: var(--primary-foreground);
 	}
 
-	.file-status {
+	.file .status {
 		font-size: 1.4vh;
 		text-align: center;
 		padding: 0.3vh 0.6vh;
 		border-radius: 0.5vh;
 	}
 
-	.file-status.completed {
+	.file .status.completed {
 		background-color: var(--secondary-background);
 		color: var(--secondary-foreground);
 	}
 
-	.file-status.downloading {
+	.file .status.downloading {
 		background-color: var(--primary-background);
 		color: var(--primary-foreground);
 	}
 
-	.file-status.waiting {
+	.file .status.waiting {
 		background-color: var(--disabled-background);
 		color: var(--disabled-foreground);
 	}
 
-	.file-status.paused {
+	.file .status.paused {
 		background-color: var(--disabled-background);
 		color: var(--disabled-foreground);
 	}
 
-	.file-status.error {
+	.file .status.error {
 		background-color: #c0392b;
 		color: white;
 	}
 </style>
 
-<div class="file-row" class:selected>
-	<div class="file-name">{name}</div>
+<div class="file" class:selected>
+	<div class="name">{name}</div>
 	<ProgressBar {progress} completed={status === 'completed'} height="1.5vh" />
-	<div class="file-size">{size}</div>
-	<div class="file-status {status}">{statusLabels[status]}</div>
+	<div class="size">{size}</div>
+	<div class="status {status}">{statusLabels[status]}</div>
 </div>

@@ -35,11 +35,11 @@
 </script>
 
 <style>
-	.item-container {
+	.item-wrapper {
 		border-bottom: 1px solid var(--disabled-background);
 	}
 
-	.item-row {
+	.item {
 		display: grid;
 		grid-template-columns: 1fr 12vh 15vh 8vh 6vh 6vh 10vh 10vh;
 		gap: 1vh;
@@ -50,15 +50,15 @@
 		transition: background-color 0.15s ease;
 	}
 
-	.item-row:hover {
+	.item:hover {
 		background-color: var(--disabled-background);
 	}
 
-	.item-row.selected {
+	.item.selected {
 		background-color: var(--primary-background);
 	}
 
-	.item-name {
+	.item .name {
 		font-size: 1.8vh;
 		font-weight: bold;
 		color: var(--default-foreground);
@@ -67,99 +67,99 @@
 		white-space: nowrap;
 	}
 
-	.item-row.selected .item-name {
+	.item.selected .name {
 		color: var(--primary-foreground);
 	}
 
-	.item-hash {
+	.item .hash {
 		font-size: 1.4vh;
 		font-family: monospace;
 		color: var(--disabled-foreground);
 	}
 
-	.item-row.selected .item-hash {
+	.item.selected .hash {
 		color: var(--primary-foreground);
 		opacity: 0.8;
 	}
 
-	.item-size {
+	.item .size {
 		font-size: 1.5vh;
 		color: var(--default-foreground);
 		text-align: right;
 	}
 
-	.item-row.selected .item-size {
+	.item.selected .size {
 		color: var(--primary-foreground);
 	}
 
-	.item-peers {
+	.item .peers {
 		font-size: 1.5vh;
 		text-align: center;
 	}
 
-	.item-peers.download {
+	.item .peers.download {
 		color: var(--secondary-foreground);
 	}
 
-	.item-peers.upload {
+	.item .peers.upload {
 		color: var(--primary-foreground);
 	}
 
-	.item-row.selected .item-peers {
+	.item.selected .peers {
 		color: var(--primary-foreground);
 	}
 
-	.item-speed {
+	.item .speed {
 		font-size: 1.4vh;
 		text-align: right;
 	}
 
-	.item-speed.download {
+	.item .speed.download {
 		color: var(--secondary-foreground);
 	}
 
-	.item-speed.upload {
+	.item .speed.upload {
 		color: var(--primary-foreground);
 	}
 
-	.item-row.selected .item-speed {
+	.item.selected .speed {
 		color: var(--primary-foreground);
 	}
 
-	.files-container {
+	.files-wrapper {
 		background-color: rgba(0, 0, 0, 0.2);
 		padding: 0.5vh 0 0.5vh 4vh;
 	}
 
-	.expand-icon {
+	.expand {
 		display: inline-block;
 		margin-right: 1vh;
 		transition: transform 0.2s ease;
 		font-size: 1.4vh;
 	}
 
-	.expand-icon.expanded {
+	.expand.expanded {
 		transform: rotate(90deg);
 	}
 </style>
 
-<div class="item-container">
-	<div class="item-row" class:selected={selected && selectedFileIndex === -1}>
-		<div class="item-name">
-			<span class="expand-icon" class:expanded>▶</span>
+<div class="item-wrapper">
+	<div class="item" class:selected={selected && selectedFileIndex === -1}>
+		<div class="name">
+			<span class="expand" class:expanded>▶</span>
 			{name}
 		</div>
-		<div class="item-hash">{truncateHash(hash)}</div>
+		<div class="hash">{truncateHash(hash)}</div>
 		<ProgressBar {progress} completed={isCompleted} height="1.8vh" />
-		<div class="item-size">{size}</div>
-		<div class="item-peers download">↓{downloadPeers}</div>
-		<div class="item-peers upload">↑{uploadPeers}</div>
-		<div class="item-speed download">↓{downloadSpeed}</div>
-		<div class="item-speed upload">↑{uploadSpeed}</div>
+		<div class="size">{size}</div>
+		<div class="peers download">↓{downloadPeers}</div>
+		<div class="peers upload">↑{uploadPeers}</div>
+		<div class="speed download">↓{downloadSpeed}</div>
+		<div class="speed upload">↑{uploadSpeed}</div>
 	</div>
 
 	{#if expanded}
-		<div class="files-container">
+		<div class="files-wrapper">
 			{#each files as file, index (file.id)}
 				<DownloadFile name={file.name} progress={file.progress} size={file.size} status={file.status} selected={selected && selectedFileIndex === index} />
 			{/each}
