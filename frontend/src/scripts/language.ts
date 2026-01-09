@@ -1,4 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
+import { getStorageValue, setStorageValue } from './localStorage.ts';
 export interface Language {
 	id: string;
 	label: string;
@@ -8,7 +9,13 @@ export const languages: Language[] = [
 	{ id: 'en', label: 'English', nativeLabel: 'English' },
 	{ id: 'cs', label: 'Czech', nativeLabel: 'Čeština' },
 ];
-export const currentLanguage = writable<string>('en');
+
+function getInitialLanguage(): string {
+	const saved = getStorageValue<string>('language', 'en');
+	return languages.some(l => l.id === saved) ? saved : 'en';
+}
+
+export const currentLanguage = writable<string>(getInitialLanguage());
 // Cache for loaded language files
 const langCache: Record<string, any> = {};
 // Store for current translations
@@ -32,9 +39,10 @@ currentLanguage.subscribe(async langId => {
 	translations.set(data);
 });
 // Load initial language
-loadLanguage('en').then(data => translations.set(data));
+loadLanguage(getInitialLanguage()).then(data => translations.set(data));
 
 export function setLanguage(languageID: string): void {
+	setStorageValue('language', languageID);
 	currentLanguage.set(languageID);
 }
 
