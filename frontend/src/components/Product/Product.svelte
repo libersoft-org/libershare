@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { registerArea, activateArea, activeArea, navigateUp, navigateLeft, navigateRight } from '../../scripts/areas.ts';
+	import { registerArea, activateArea, activeArea, areaNavigate } from '../../scripts/areas.ts';
 	import { pushBackHandler } from '../../scripts/navigation.ts';
 	import ProductFile from './ProductFile.svelte';
 	const AREA_ID = 'product';
@@ -67,35 +67,39 @@
 	}
 
 	onMount(() => {
-		const unregisterArea = registerArea(AREA_ID, { x: 1, y: 1 }, {
-			up: () => {
-				if (selectedRow === -1) {
-					navigateUp();
-				} else {
-					navigate('up');
-				}
-			},
-			down: () => navigate('down'),
-			left: () => {
-				if (selectedRow === -1 || selectedButton === 0) navigateLeft();
-				else navigate('left');
-			},
-			right: () => {
-				if (selectedRow === -1 || selectedButton === 1) navigateRight();
-				else navigate('right');
-			},
-			confirmDown: () => {
-				isAPressed = true;
-			},
-			confirmUp: () => {
-				isAPressed = false;
-				selectButton();
-			},
-			confirmCancel: () => {
-				isAPressed = false;
-			},
-			back: () => onBack?.(),
-		});
+		const unregisterArea = registerArea(
+			AREA_ID,
+			{ x: 1, y: 1 },
+			{
+				up: () => {
+					if (selectedRow === -1) {
+						areaNavigate('up');
+					} else {
+						navigate('up');
+					}
+				},
+				down: () => navigate('down'),
+				left: () => {
+					if (selectedRow === -1 || selectedButton === 0) areaNavigate('left');
+					else navigate('left');
+				},
+				right: () => {
+					if (selectedRow === -1 || selectedButton === 1) areaNavigate('right');
+					else navigate('right');
+				},
+				confirmDown: () => {
+					isAPressed = true;
+				},
+				confirmUp: () => {
+					isAPressed = false;
+					selectButton();
+				},
+				confirmCancel: () => {
+					isAPressed = false;
+				},
+				back: () => onBack?.(),
+			}
+		);
 		activateArea(AREA_ID);
 		const unregisterBack = pushBackHandler(() => onBack?.());
 		return () => {

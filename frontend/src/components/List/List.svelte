@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { registerArea, unregisterArea, activateArea, activeArea, navigateUp, navigateLeft, navigateRight } from '../../scripts/areas.ts';
+	import { registerArea, unregisterArea, activateArea, activeArea, areaNavigate } from '../../scripts/areas.ts';
 	import { pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
 	import ListItem from './ListItem.svelte';
 	import Product from '../Product/Product.svelte';
@@ -25,18 +25,18 @@
 	const areaHandlers = {
 		up: () => {
 			const cols = getColumnsCount();
-			if (selectedIndex < cols) navigateUp();
+			if (selectedIndex < cols) areaNavigate('up');
 			else navigate('up');
 		},
 		down: () => navigate('down'),
 		left: () => {
 			const cols = getColumnsCount();
-			if (selectedIndex % cols === 0) navigateLeft();
+			if (selectedIndex % cols === 0) areaNavigate('left');
 			else navigate('left');
 		},
 		right: () => {
 			const cols = getColumnsCount();
-			if (selectedIndex % cols === cols - 1 || selectedIndex === items.length - 1) navigateRight();
+			if (selectedIndex % cols === cols - 1 || selectedIndex === items.length - 1) areaNavigate('right');
 			else navigate('right');
 		},
 		confirmDown: () => {

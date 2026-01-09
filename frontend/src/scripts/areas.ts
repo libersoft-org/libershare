@@ -121,9 +121,9 @@ class AreaManager {
 		}
 	}
 
-	private navigate(direction: 'up' | 'down' | 'left' | 'right'): boolean {
+	private navigateToArea(direction: 'up' | 'down' | 'left' | 'right'): boolean {
 		const target = this.findAreaInDirection(direction);
-		console.log(`navigate${direction.charAt(0).toUpperCase() + direction.slice(1)} from`, this.activeAreaId, 'to', target, 'areas:', [...this.areas.keys()]);
+		console.log(`navigate ${direction} from`, this.activeAreaId, 'to', target, 'areas:', [...this.areas.keys()]);
 		if (target) {
 			this.activeAreaId = target;
 			activeAreaStore.set(target);
@@ -132,29 +132,17 @@ class AreaManager {
 		return false;
 	}
 
-	navigateUp(): boolean {
-		return this.navigate('up');
-	}
-
-	navigateDown(): boolean {
-		return this.navigate('down');
-	}
-
-	navigateLeft(): boolean {
-		return this.navigate('left');
-	}
-
-	navigateRight(): boolean {
-		return this.navigate('right');
+	navigate(direction: 'up' | 'down' | 'left' | 'right'): boolean {
+		return this.navigateToArea(direction);
 	}
 
 	// Legacy methods for backward compatibility
 	activatePrevArea(): boolean {
-		return this.navigateUp();
+		return this.navigateToArea('up');
 	}
 
 	activateNextArea(): boolean {
-		return this.navigateDown();
+		return this.navigateToArea('down');
 	}
 
 	emit(action: InputAction): void {
@@ -211,20 +199,10 @@ export function activateNextArea(): boolean {
 	return getAreaManager().activateNextArea();
 }
 
-export function navigateUp(): boolean {
-	return getAreaManager().navigateUp();
-}
+export type Direction = 'up' | 'down' | 'left' | 'right';
 
-export function navigateDown(): boolean {
-	return getAreaManager().navigateDown();
-}
-
-export function navigateLeft(): boolean {
-	return getAreaManager().navigateLeft();
-}
-
-export function navigateRight(): boolean {
-	return getAreaManager().navigateRight();
+export function areaNavigate(direction: Direction): boolean {
+	return getAreaManager().navigate(direction);
 }
 
 export function emit(action: InputAction): void {

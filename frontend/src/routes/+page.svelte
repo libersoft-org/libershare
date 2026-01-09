@@ -9,7 +9,7 @@
 	import { productName } from '../scripts/app.ts';
 	import { startInput } from '../scripts/input.ts';
 	import { getAPILocal } from '../scripts/api.ts';
-	import { registerArea, activeArea, navigateUp, navigateRight, navigateLeft } from '../scripts/areas.ts';
+	import { registerArea, activeArea, areaNavigate } from '../scripts/areas.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	let contentElement: HTMLElement;
 
@@ -33,8 +33,8 @@
 			'left',
 			{ x: 0, y: 1 },
 			{
-				up: navigateUp,
-				right: navigateRight,
+				up: () => areaNavigate('up'),
+				right: () => areaNavigate('right'),
 			}
 		);
 
@@ -42,8 +42,8 @@
 			'right',
 			{ x: 2, y: 1 },
 			{
-				up: navigateUp,
-				left: navigateLeft,
+				up: () => areaNavigate('up'),
+				left: () => areaNavigate('left'),
 			}
 		);
 

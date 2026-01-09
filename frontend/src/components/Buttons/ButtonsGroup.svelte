@@ -9,7 +9,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { setContext, onMount } from 'svelte';
-	import { registerArea, activateArea, navigateUp, navigateLeft, navigateRight, activeArea, type AreaPosition } from '../../scripts/areas.ts';
+	import { registerArea, activateArea, areaNavigate, activeArea, type AreaPosition } from '../../scripts/areas.ts';
 
 	interface Props {
 		children: Snippet;
@@ -75,7 +75,7 @@
 
 	function navigatePrevOrExit() {
 		if (selectedIndex > 0) selectedIndex--;
-		else navigateUp();
+		else areaNavigate('up');
 	}
 
 	function navigateNextItem() {
@@ -84,19 +84,19 @@
 
 	function navigateNextOrRight() {
 		if (selectedIndex < buttons.length - 1) selectedIndex++;
-		else navigateRight();
+		else areaNavigate('right');
 	}
 
 	function navigatePrevOrLeft() {
 		if (selectedIndex > 0) selectedIndex--;
-		else navigateLeft();
+		else areaNavigate('left');
 	}
 
 	onMount(() => {
 		const handlers =
 			orientation === 'horizontal'
-				? { left: navigatePrevOrLeft, right: navigateNextOrRight, up: navigateUp }
-				: { up: navigatePrevOrExit, down: navigateNextItem, left: navigateLeft, right: navigateRight };
+				? { left: navigatePrevOrLeft, right: navigateNextOrRight, up: () => areaNavigate('up') }
+				: { up: navigatePrevOrExit, down: navigateNextItem, left: () => areaNavigate('left'), right: () => areaNavigate('right') };
 		const unregister = registerArea(areaID, areaPosition, {
 			...handlers,
 			confirmDown: () => {
