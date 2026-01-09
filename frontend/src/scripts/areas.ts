@@ -146,7 +146,6 @@ export function emit(action: InputAction): void {
 		confirmActive = false;
 		handlers.confirmCancel?.();
 	}
-
 	const directionHandler = handlers[action as Direction];
 	if (directionHandler) {
 		const handled = directionHandler();
