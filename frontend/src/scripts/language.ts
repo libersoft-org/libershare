@@ -11,8 +11,18 @@ export const languages: Language[] = [
 ];
 
 function getInitialLanguage(): string {
-	const saved = getStorageValue<string>('language', 'en');
-	return languages.some(l => l.id === saved) ? saved : 'en';
+	// First check localStorage
+	const saved = getStorageValue<string | null>('language', null);
+	if (saved && languages.some(l => l.id === saved)) {
+		return saved;
+	}
+	// Auto-detect from browser
+	const browserLang = navigator.language?.split('-')[0]; // 'cs-CZ' -> 'cs'
+	if (browserLang && languages.some(l => l.id === browserLang)) {
+		return browserLang;
+	}
+	// Default fallback
+	return 'en';
 }
 
 export const currentLanguage = writable<string>(getInitialLanguage());
