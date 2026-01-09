@@ -118,7 +118,7 @@
 
 	.items.horizontal {
 		flex-direction: row;
-		padding: 0 50vw;
+		padding: 0 50%;
 	}
 
 	.items.vertical {
