@@ -12,43 +12,33 @@
 <style>
 	.file {
 		display: grid;
-		grid-template-columns: 1fr 15vh 10vh;
-		gap: 1vh;
-		padding: 1vh 2vh;
+		grid-template-columns: 1fr 10vh 15vh;
 		align-items: center;
-		background-color: var(--default-background);
-		border-bottom: 1px solid var(--disabled-background);
+		gap: 2vh;
+		padding: 0.5vh 2vh;
+		border-bottom: 0.4vh solid var(--secondary-background);
+		color: var(--secondary-foreground);
 	}
 
 	.file.selected {
-		background-color: var(--primary-background);
+		background-color: var(--primary-foreground);
+		color: var(--primary-background);
 	}
 
 	.file .name {
 		font-size: 1.6vh;
-		color: var(--default-foreground);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.file.selected .name {
-		color: var(--primary-foreground);
-	}
-
-	.file .size {
-		font-size: 1.4vh;
-		color: var(--disabled-foreground);
-		text-align: right;
-	}
-
-	.file.selected .size {
-		color: var(--primary-foreground);
+	.center {
+		text-align: center;
 	}
 </style>
 
 <div class="file" class:selected>
 	<div class="name">{name}</div>
+	<div class="size center">{size}</div>
 	<ProgressBar {progress} />
-	<div class="size">{size}</div>
 </div>

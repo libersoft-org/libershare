@@ -172,7 +172,7 @@
 	.header {
 		display: grid;
 		grid-template-columns: 1fr 5vw 5vw 10vw 8vw 8vw 8vw 8vw 8vw;
-		gap: 1vh;
+		gap: 2vh;
 		padding: 1vh 2vh;
 		background-color: var(--secondary-background);
 		font-size: 1.6vh;

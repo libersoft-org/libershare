@@ -44,7 +44,7 @@
 		display: grid;
 		grid-template-columns: 1fr 5vw 5vw 10vw 8vw 8vw 8vw 8vw 8vw;
 		align-items: center;
-		gap: 1vh;
+		gap: 2vh;
 		padding: 1vh 2vh;
 		border-bottom: 0.4vh solid var(--secondary-softer-background);
 	}
