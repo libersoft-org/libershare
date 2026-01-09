@@ -80,6 +80,17 @@ async function main() {
 		console.error('Error: --input parameter is required');
 		process.exit(1);
 	}
+	try{
+		await makeLish(args)
+	}
+	} catch (error) {
+		console.error('Error:', error);
+		process.exit(1);
+	}
+}
+
+async function makeLish(args)
+{
 	const inputPath = args.input;
 	const name = args.name;
 	const defaultOutput = name ? '[NAME].lish' : '[UUID].lish';
@@ -176,10 +187,7 @@ async function main() {
 		console.log('');
 		console.log('\x1b[33mEnd time:\x1b[0m             ' + new Date().toLocaleString());
 		console.log('\x1b[33mElapsed time:\x1b[0m         ' + timeStr);
-	} catch (error) {
-		console.error('Error:', error);
-		process.exit(1);
-	}
 }
+
 
 main();
