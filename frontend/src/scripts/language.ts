@@ -17,7 +17,7 @@ function getInitialLanguage(): string {
 		return saved;
 	}
 	// Auto-detect from browser
-	const browserLang = navigator.language?.split('-')[0]; // 'cs-CZ' -> 'cs'
+	const browserLang = navigator.language?.split('-')[0]; // 'en-US' -> 'en'
 	if (browserLang && languages.some(l => l.id === browserLang)) {
 		return browserLang;
 	}
