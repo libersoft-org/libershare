@@ -40,7 +40,7 @@
 	}
 
 	onMount(() => {
-		const unregister = registerArea('confirm-dialog', {
+		const unregister = registerArea('confirm-dialog', { x: 1, y: 1 }, {
 			left: navigateLeft,
 			right: navigateRight,
 			confirmDown: handleConfirmDown,

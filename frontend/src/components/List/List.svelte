@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { registerArea, activateArea } from '../../scripts/areas.ts';
+	import { registerArea, activateArea, navigateLeft, navigateRight } from '../../scripts/areas.ts';
 	import { focusArea, focusHeader, pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
 	import ListItem from './ListItem.svelte';
 	import Product from '../Product/Product.svelte';
@@ -81,15 +81,23 @@
 	}
 
 	onMount(() => {
-		const unregister = registerArea(AREA_ID, {
+		const unregister = registerArea(AREA_ID, { x: 1, y: 1 }, {
 			up: () => {
 				const cols = getColumnsCount();
 				if (selectedIndex < cols) focusHeader();
 				else navigate('up');
 			},
 			down: () => navigate('down'),
-			left: () => navigate('left'),
-			right: () => navigate('right'),
+			left: () => {
+				const cols = getColumnsCount();
+				if (selectedIndex % cols === 0) navigateLeft();
+				else navigate('left');
+			},
+			right: () => {
+				const cols = getColumnsCount();
+				if (selectedIndex % cols === cols - 1 || selectedIndex === items.length - 1) navigateRight();
+				else navigate('right');
+			},
 			confirmDown: () => {
 				isAPressed = true;
 			},

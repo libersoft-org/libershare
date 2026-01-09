@@ -9,17 +9,18 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { setContext, onMount } from 'svelte';
-	import { registerArea, activateArea, activatePrevArea, activeArea } from '../../scripts/areas.ts';
+	import { registerArea, activateArea, navigateUp, navigateLeft, navigateRight, activeArea, type AreaPosition } from '../../scripts/areas.ts';
 
 	interface Props {
 		children: Snippet;
 		areaID: string;
+		areaPosition?: AreaPosition;
 		initialIndex?: number;
 		orientation?: 'horizontal' | 'vertical';
 		onBack?: () => void;
 	}
 
-	let { children, areaID, initialIndex = 0, orientation = 'vertical', onBack }: Props = $props();
+	let { children, areaID, areaPosition = { x: 1, y: 1 }, initialIndex = 0, orientation = 'vertical', onBack }: Props = $props();
 	let selectedIndex = $state(initialIndex);
 	let isAPressed = $state(false);
 	let buttons: { onConfirm?: () => void }[] = [];
@@ -74,16 +75,29 @@
 
 	function navigatePrevOrExit() {
 		if (selectedIndex > 0) selectedIndex--;
-		else activatePrevArea();
+		else navigateUp();
 	}
 
-	function navigateNext() {
+	function navigateNextItem() {
 		if (selectedIndex < buttons.length - 1) selectedIndex++;
 	}
 
+	function navigateNextOrRight() {
+		if (selectedIndex < buttons.length - 1) selectedIndex++;
+		else navigateRight();
+	}
+
+	function navigatePrevOrLeft() {
+		if (selectedIndex > 0) selectedIndex--;
+		else navigateLeft();
+	}
+
 	onMount(() => {
-		const handlers = orientation === 'horizontal' ? { left: navigatePrev, right: navigateNext, up: activatePrevArea } : { up: navigatePrevOrExit, down: navigateNext };
-		const unregister = registerArea(areaID, {
+		const handlers =
+			orientation === 'horizontal'
+				? { left: navigatePrevOrLeft, right: navigateNextOrRight, up: navigateUp }
+				: { up: navigatePrevOrExit, down: navigateNextItem };
+		const unregister = registerArea(areaID, areaPosition, {
 			...handlers,
 			confirmDown: () => {
 				isAPressed = true;

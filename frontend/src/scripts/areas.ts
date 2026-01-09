@@ -1,11 +1,11 @@
 import { writable } from 'svelte/store';
-
 export type InputAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'confirmUp' | 'confirmCancel' | 'back';
 export type InputCallback = () => void;
 export type InputHandlers = Partial<Record<InputAction, InputCallback>>;
+export type AreaPosition = { x: number; y: number };
 interface AreaEntry {
 	handlers: InputHandlers;
-	order: number;
+	position: AreaPosition;
 }
 const activeAreaStore = writable<string | null>(null);
 export const activeArea = { subscribe: activeAreaStore.subscribe };
@@ -14,10 +14,9 @@ class AreaManager {
 	private areas: Map<string, AreaEntry> = new Map();
 	private activeAreaId: string | null = null;
 	private confirmActive = false;
-	private nextOrder = 0;
 
-	registerArea(areaID: string, handlers: InputHandlers): () => void {
-		this.areas.set(areaID, { handlers, order: this.nextOrder++ });
+	registerArea(areaID: string, position: AreaPosition, handlers: InputHandlers): () => void {
+		this.areas.set(areaID, { handlers, position });
 		return () => this.unregisterArea(areaID);
 	}
 
@@ -47,44 +46,128 @@ class AreaManager {
 		return this.activeAreaId;
 	}
 
-	activatePrevArea(): boolean {
-		if (!this.activeAreaId) return false;
-		const currentEntry = this.areas.get(this.activeAreaId);
-		if (!currentEntry) return false;
-		let prevArea: string | null = null;
-		let prevOrder = -1;
+	private findClosestArea(targetX: number, targetY: number, excludeId?: string): string | null {
+		let closest: string | null = null;
+		let closestDistance = Infinity;
+
 		for (const [id, entry] of this.areas) {
-			if (entry.order < currentEntry.order && entry.order > prevOrder) {
-				prevArea = id;
-				prevOrder = entry.order;
+			if (id === excludeId) continue;
+			const dx = entry.position.x - targetX;
+			const dy = entry.position.y - targetY;
+			// Prioritize exact match on the search axis, then find closest
+			const distance = Math.abs(dx) + Math.abs(dy);
+			if (distance < closestDistance) {
+				closestDistance = distance;
+				closest = id;
 			}
 		}
-		if (prevArea) {
-			this.activeAreaId = prevArea;
-			activeAreaStore.set(prevArea);
+		return closest;
+	}
+
+	private findAreaInDirection(direction: 'up' | 'down' | 'left' | 'right'): string | null {
+		if (!this.activeAreaId) return null;
+		const currentEntry = this.areas.get(this.activeAreaId);
+		if (!currentEntry) return null;
+
+		const { x, y } = currentEntry.position;
+
+		if (direction === 'left' || direction === 'right') {
+			// Horizontal movement - must stay on same Y, find closest X in direction
+			let closest: string | null = null;
+			let closestX = direction === 'left' ? -Infinity : Infinity;
+
+			for (const [id, entry] of this.areas) {
+				if (entry.position.y !== y) continue; // Must be same row
+				if (direction === 'left') {
+					// Find closest X that is less than current X
+					if (entry.position.x < x && entry.position.x > closestX) {
+						closestX = entry.position.x;
+						closest = id;
+					}
+				} else {
+					// Find closest X that is greater than current X
+					if (entry.position.x > x && entry.position.x < closestX) {
+						closestX = entry.position.x;
+						closest = id;
+					}
+				}
+			}
+			return closest;
+		} else {
+			// Vertical movement (up/down)
+			const targetY = direction === 'up' ? y - 1 : y + 1;
+
+			// First try to find exact match on target Y with same X
+			for (const [id, entry] of this.areas) {
+				if (entry.position.x === x && entry.position.y === targetY) {
+					return id;
+				}
+			}
+
+			// If no exact match, find closest X on the target Y
+			let closest: string | null = null;
+			let closestDistance = Infinity;
+
+			for (const [id, entry] of this.areas) {
+				if (entry.position.y === targetY) {
+					const distance = Math.abs(entry.position.x - x);
+					if (distance < closestDistance) {
+						closestDistance = distance;
+						closest = id;
+					}
+				}
+			}
+			return closest;
+		}
+	}
+
+	navigateUp(): boolean {
+		const target = this.findAreaInDirection('up');
+		if (target) {
+			this.activeAreaId = target;
+			activeAreaStore.set(target);
 			return true;
 		}
 		return false;
 	}
 
-	activateNextArea(): boolean {
-		if (!this.activeAreaId) return false;
-		const currentEntry = this.areas.get(this.activeAreaId);
-		if (!currentEntry) return false;
-		let nextArea: string | null = null;
-		let nextOrder = Infinity;
-		for (const [id, entry] of this.areas) {
-			if (entry.order > currentEntry.order && entry.order < nextOrder) {
-				nextArea = id;
-				nextOrder = entry.order;
-			}
-		}
-		if (nextArea) {
-			this.activeAreaId = nextArea;
-			activeAreaStore.set(nextArea);
+	navigateDown(): boolean {
+		const target = this.findAreaInDirection('down');
+		if (target) {
+			this.activeAreaId = target;
+			activeAreaStore.set(target);
 			return true;
 		}
 		return false;
+	}
+
+	navigateLeft(): boolean {
+		const target = this.findAreaInDirection('left');
+		if (target) {
+			this.activeAreaId = target;
+			activeAreaStore.set(target);
+			return true;
+		}
+		return false;
+	}
+
+	navigateRight(): boolean {
+		const target = this.findAreaInDirection('right');
+		if (target) {
+			this.activeAreaId = target;
+			activeAreaStore.set(target);
+			return true;
+		}
+		return false;
+	}
+
+	// Legacy methods for backward compatibility
+	activatePrevArea(): boolean {
+		return this.navigateUp();
+	}
+
+	activateNextArea(): boolean {
+		return this.navigateDown();
 	}
 
 	emit(action: InputAction): void {
@@ -117,8 +200,8 @@ export function getAreaManager(): AreaManager {
 	return globalAreaManager;
 }
 
-export function registerArea(areaID: string, handlers: InputHandlers): () => void {
-	return getAreaManager().registerArea(areaID, handlers);
+export function registerArea(areaID: string, position: AreaPosition, handlers: InputHandlers): () => void {
+	return getAreaManager().registerArea(areaID, position, handlers);
 }
 
 export function unregisterArea(areaID: string): void {
@@ -139,6 +222,22 @@ export function activatePrevArea(): boolean {
 
 export function activateNextArea(): boolean {
 	return getAreaManager().activateNextArea();
+}
+
+export function navigateUp(): boolean {
+	return getAreaManager().navigateUp();
+}
+
+export function navigateDown(): boolean {
+	return getAreaManager().navigateDown();
+}
+
+export function navigateLeft(): boolean {
+	return getAreaManager().navigateLeft();
+}
+
+export function navigateRight(): boolean {
+	return getAreaManager().navigateRight();
 }
 
 export function emit(action: InputAction): void {

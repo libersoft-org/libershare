@@ -25,7 +25,8 @@
 
 <style>
 	.menu {
-		flex: 1;
+		width: 60vh;
+		/*flex: 1;*/
 		display: flex;
 		flex-direction: column;
 		align-items: center;

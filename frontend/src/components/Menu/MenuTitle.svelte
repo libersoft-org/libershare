@@ -9,7 +9,7 @@
 	.title {
 		display: flex;
 		justify-content: center;
-		width: 100%;
+		width: 60vh;
 		padding: 1vh;
 		font-size: 4vh;
 		font-weight: bold;

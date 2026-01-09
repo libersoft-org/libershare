@@ -9,6 +9,7 @@
 	import { productName } from '../scripts/app.ts';
 	import { startInput } from '../scripts/input.ts';
 	import { getAPILocal } from '../scripts/api.ts';
+	import { registerArea, activeArea, navigateUp, navigateRight, navigateLeft } from '../scripts/areas.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	let contentElement: HTMLElement;
 
@@ -27,6 +28,29 @@
 	onMount(() => {
 		setContentElement(contentElement);
 		startInput();
+
+		const unregisterLeft = registerArea(
+			'left',
+			{ x: 0, y: 1 },
+			{
+				up: navigateUp,
+				right: navigateRight,
+			}
+		);
+
+		const unregisterRight = registerArea(
+			'right',
+			{ x: 2, y: 1 },
+			{
+				up: navigateUp,
+				left: navigateLeft,
+			}
+		);
+
+		return () => {
+			unregisterLeft();
+			unregisterRight();
+		};
 	});
 </script>
 
@@ -37,11 +61,32 @@
 		height: 100vh;
 		overflow: hidden;
 	}
+
 	.content {
+		display: flex;
+		flex-direction: row;
 		flex: 1;
 		overflow-y: auto;
-		display: flex;
-		flex-direction: column;
+	}
+
+	.left {
+		width: 20vh;
+		height: 100%;
+		background-color: red;
+	}
+
+	.left.selected {
+		background-color: blue;
+	}
+
+	.right {
+		width: 20vh;
+		height: 100%;
+		background-color: green;
+	}
+
+	.right.selected {
+		background-color: yellow;
 	}
 </style>
 
@@ -53,6 +98,7 @@
 	<Header {onBack} />
 	<Breadcrumb items={$breadcrumbItems} />
 	<div class="content" bind:this={contentElement}>
+		<div class="left" class:selected={$activeArea === 'left'}>aaa</div>
 		{#if $confirmDialog.visible && $confirmDialog.action}
 			{@const dialogConfig = confirmDialogs[$confirmDialog.action]}
 			<ConfirmDialog title={dialogConfig.title} message={dialogConfig.message} confirmLabel={dialogConfig.confirmLabel} cancelLabel={dialogConfig.cancelLabel} defaultButton={dialogConfig.defaultButton} onConfirm={handleConfirm} onBack={handleCancel} />
@@ -61,6 +107,7 @@
 		{:else}
 			<Menu title={$currentTitle} items={$currentItems.map(i => ({ id: i.id, label: i.label }))} orientation={$currentOrientation} selectedId={$selectedId} onselect={navigate} {onBack} />
 		{/if}
+		<div class="right" class:selected={$activeArea === 'right'}>bbb</div>
 	</div>
 	<Footer />
 </div>

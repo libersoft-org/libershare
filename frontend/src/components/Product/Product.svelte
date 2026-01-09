@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { registerArea, activateArea } from '../../scripts/areas.ts';
+	import { registerArea, activateArea, navigateLeft, navigateRight } from '../../scripts/areas.ts';
 	import { focusArea, focusHeader, pushBackHandler } from '../../scripts/navigation.ts';
 	import ProductFile from './ProductFile.svelte';
 	const AREA_ID = 'product';
@@ -67,7 +67,7 @@
 	}
 
 	onMount(() => {
-		const unregisterArea = registerArea(AREA_ID, {
+		const unregisterArea = registerArea(AREA_ID, { x: 1, y: 1 }, {
 			up: () => {
 				if (selectedRow === -1) {
 					focusHeader();
@@ -76,8 +76,14 @@
 				}
 			},
 			down: () => navigate('down'),
-			left: () => navigate('left'),
-			right: () => navigate('right'),
+			left: () => {
+				if (selectedButton === 0) navigateLeft();
+				else navigate('left');
+			},
+			right: () => {
+				if (selectedButton === 1) navigateRight();
+				else navigate('right');
+			},
 			confirmDown: () => {
 				isAPressed = true;
 			},
