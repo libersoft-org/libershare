@@ -215,7 +215,7 @@
 	<div class="items">
 		{#each downloads as download, index (download.id)}
 			<div bind:this={itemElements[index]}>
-				<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} files={download.files} selected={active && selectedIndex === index} expanded={expandedIndex === index} selectedFileIndex={selectedIndex === index ? selectedFileIndex : -1} />
+				<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} files={download.files} selected={active && selectedIndex === index} expanded={expandedIndex === index} selectedFileIndex={selectedIndex === index ? selectedFileIndex : -1} isLast={index === downloads.length - 1} />
 			</div>
 		{/each}
 	</div>

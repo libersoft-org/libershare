@@ -22,8 +22,9 @@
 		selected?: boolean;
 		expanded?: boolean;
 		selectedFileIndex?: number;
+		isLast?: boolean;
 	}
-	let { name, id, progress, size, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, files, selected = false, expanded = false, selectedFileIndex = -1 }: Props = $props();
+	let { name, id, progress, size, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, files, selected = false, expanded = false, selectedFileIndex = -1, isLast = false }: Props = $props();
 
 	const statusLabels: Record<DownloadStatus, string> = {
 		completed: 'Completed',
@@ -47,6 +48,10 @@
 		gap: 2vh;
 		padding: 1vh 2vh;
 		border-bottom: 0.4vh solid var(--secondary-softer-background);
+	}
+
+	.item.last {
+		border-bottom: none;
 	}
 
 	.item.selected {
@@ -96,7 +101,7 @@
 	}
 </style>
 
-<div class="item" class:selected={selected && selectedFileIndex === -1}>
+<div class="item" class:selected={selected && selectedFileIndex === -1} class:last={isLast}>
 	<div class="name">
 		<span class="expand" class:expanded>▶</span>
 		<span>{name}</span>
