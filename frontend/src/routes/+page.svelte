@@ -9,7 +9,7 @@
 	import { productName } from '../scripts/app.ts';
 	import { startInput } from '../scripts/input.ts';
 	import { getAPILocal } from '../scripts/api.ts';
-	import { registerArea, activeArea, areaNavigate } from '../scripts/areas.ts';
+	import { setAreaPosition, useArea, activateArea, activeArea } from '../scripts/areas.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	let contentElement: HTMLElement;
 
@@ -26,26 +26,19 @@
 	}
 
 	onMount(() => {
+		// Setup area layout
+		setAreaPosition('header', { x: 0, y: 0 });
+		setAreaPosition('left', { x: 0, y: 1 });
+		setAreaPosition('content', { x: 1, y: 1 });
+		setAreaPosition('right', { x: 2, y: 1 });
+
+		// Setup handlers for simple areas (left/right sidebars)
+		const unregisterLeft = useArea('left', {});
+		const unregisterRight = useArea('right', {});
+
 		setContentElement(contentElement);
 		startInput();
-
-		const unregisterLeft = registerArea(
-			'left',
-			{ x: 0, y: 1 },
-			{
-				up: () => areaNavigate('up'),
-				right: () => areaNavigate('right'),
-			}
-		);
-
-		const unregisterRight = registerArea(
-			'right',
-			{ x: 2, y: 1 },
-			{
-				up: () => areaNavigate('up'),
-				left: () => areaNavigate('left'),
-			}
-		);
+		activateArea('content');
 
 		return () => {
 			unregisterLeft();
@@ -95,7 +88,7 @@
 </svelte:head>
 
 <div class="page">
-	<Header {onBack} />
+	<Header areaID="header" {onBack} />
 	<Breadcrumb items={$breadcrumbItems} />
 	<div class="content" bind:this={contentElement}>
 		<div class="left" class:selected={$activeArea === 'left'}>aaa</div>
@@ -103,9 +96,9 @@
 			{@const dialogConfig = confirmDialogs[$confirmDialog.action]}
 			<ConfirmDialog title={dialogConfig.title} message={dialogConfig.message} confirmLabel={dialogConfig.confirmLabel} cancelLabel={dialogConfig.cancelLabel} defaultButton={dialogConfig.defaultButton} onConfirm={handleConfirm} onBack={handleCancel} />
 		{:else if $currentComponent}
-			<svelte:component this={$currentComponent.component} title={$currentComponent.label} {...$currentComponent.props} {onBack} />
+			<svelte:component this={$currentComponent.component} areaID="content" title={$currentComponent.label} {...$currentComponent.props} {onBack} />
 		{:else}
-			<Menu title={$currentTitle} items={$currentItems.map(i => ({ id: i.id, label: i.label }))} orientation={$currentOrientation} selectedId={$selectedId} onselect={navigate} {onBack} />
+			<Menu areaID="content" title={$currentTitle} items={$currentItems.map(i => ({ id: i.id, label: i.label }))} orientation={$currentOrientation} selectedId={$selectedId} onselect={navigate} {onBack} />
 		{/if}
 		<div class="right" class:selected={$activeArea === 'right'}>bbb</div>
 	</div>

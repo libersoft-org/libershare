@@ -4,9 +4,10 @@
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
 	interface Props {
+		areaID: string;
 		onBack?: () => void;
 	}
-	let { onBack: onBack }: Props = $props();
+	let { areaID, onBack: onBack }: Props = $props();
 
 	function openUrl(url: string) {
 		window.open(url, '_blank');
@@ -60,7 +61,7 @@
 		</div>
 	</div>
 	<div class="links">
-		<ButtonsGroup areaID="about" initialIndex={2} {onBack}>
+		<ButtonsGroup {areaID} initialIndex={2} {onBack}>
 			<Button label="GitHub page" padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
 			<Button label="Official website" padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://libershare.com')} />
 			<Button label="OK" onConfirm={onBack} />

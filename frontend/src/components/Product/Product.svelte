@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { registerArea, activateArea, activeArea, areaNavigate } from '../../scripts/areas.ts';
+	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { pushBackHandler } from '../../scripts/navigation.ts';
 	import ProductFile from './ProductFile.svelte';
-	const AREA_ID = 'product';
 	interface Props {
+		areaID: string;
 		category?: string;
 		itemTitle?: string;
 		itemId?: number;
 		onBack?: () => void;
 	}
-	let { category = 'Movies', itemTitle = 'Item', itemId = 1, onBack }: Props = $props();
-	let active = $derived($activeArea === AREA_ID);
+	let { areaID, itemTitle = 'Item', itemId = 1, onBack }: Props = $props();
+	let active = $derived($activeArea === areaID);
 	const files = [
 		{ id: 1, name: `${itemTitle} - 240p.mp4`, size: '218.32 MB' },
 		{ id: 2, name: `${itemTitle} - 480p.mp4`, size: '780.12 MB' },
@@ -67,40 +67,48 @@
 	}
 
 	onMount(() => {
-		const unregisterArea = registerArea(
-			AREA_ID,
-			{ x: 1, y: 1 },
-			{
-				up: () => {
-					if (selectedRow === -1) {
-						areaNavigate('up');
-					} else {
-						navigate('up');
-					}
-				},
-				down: () => navigate('down'),
-				left: () => {
-					if (selectedRow === -1 || selectedButton === 0) areaNavigate('left');
-					else navigate('left');
-				},
-				right: () => {
-					if (selectedRow === -1 || selectedButton === 1) areaNavigate('right');
-					else navigate('right');
-				},
-				confirmDown: () => {
-					isAPressed = true;
-				},
-				confirmUp: () => {
-					isAPressed = false;
-					selectButton();
-				},
-				confirmCancel: () => {
-					isAPressed = false;
-				},
-				back: () => onBack?.(),
-			}
-		);
-		activateArea(AREA_ID);
+		const unregisterArea = useArea(areaID, {
+			up: () => {
+				if (selectedRow > -1) {
+					navigate('up');
+					return true;
+				}
+				return false;
+			},
+			down: () => {
+				if (selectedRow < files.length - 1) {
+					navigate('down');
+					return true;
+				}
+				return false;
+			},
+			left: () => {
+				if (selectedRow >= 0 && selectedButton > 0) {
+					navigate('left');
+					return true;
+				}
+				return false;
+			},
+			right: () => {
+				if (selectedRow >= 0 && selectedButton < 1) {
+					navigate('right');
+					return true;
+				}
+				return false;
+			},
+			confirmDown: () => {
+				isAPressed = true;
+			},
+			confirmUp: () => {
+				isAPressed = false;
+				selectButton();
+			},
+			confirmCancel: () => {
+				isAPressed = false;
+			},
+			back: () => onBack?.(),
+		});
+		activateArea(areaID);
 		const unregisterBack = pushBackHandler(() => onBack?.());
 		return () => {
 			unregisterArea();

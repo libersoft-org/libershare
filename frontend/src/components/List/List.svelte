@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { registerArea, unregisterArea, activateArea, activeArea, areaNavigate } from '../../scripts/areas.ts';
+	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
 	import ListItem from './ListItem.svelte';
 	import Product from '../Product/Product.svelte';
-	const AREA_ID = 'list';
 	interface Props {
+		areaID: string;
 		title?: string;
 		category?: string;
 		onBack?: () => void;
 	}
-	let { title = 'Items', category = '', onBack }: Props = $props();
-	let active = $derived($activeArea === AREA_ID);
+	let { areaID, title = 'Items', onBack }: Props = $props();
+	let active = $derived($activeArea === areaID);
 	// Some test data
 	const items = Array.from({ length: 200 }, (_, i) => ({
 		id: i + 1,
@@ -22,35 +22,8 @@
 	let itemElements: HTMLElement[] = $state([]);
 	let selectedItem = $state<{ id: number; title: string } | null>(null);
 
-	const areaHandlers = {
-		up: () => {
-			const cols = getColumnsCount();
-			if (selectedIndex < cols) areaNavigate('up');
-			else navigate('up');
-		},
-		down: () => navigate('down'),
-		left: () => {
-			const cols = getColumnsCount();
-			if (selectedIndex % cols === 0) areaNavigate('left');
-			else navigate('left');
-		},
-		right: () => {
-			const cols = getColumnsCount();
-			if (selectedIndex % cols === cols - 1 || selectedIndex === items.length - 1) areaNavigate('right');
-			else navigate('right');
-		},
-		confirmDown: () => {
-			isAPressed = true;
-		},
-		confirmUp: () => {
-			isAPressed = false;
-			openItem();
-		},
-		confirmCancel: () => {
-			isAPressed = false;
-		},
-		back: () => onBack?.(),
-	};
+	// Handlers will be set in onMount
+	let unregisterList: (() => void) | null = null;
 
 	// Calculate columns by comparing Y positions of items
 	function getColumnsCount(): number {
@@ -101,7 +74,10 @@
 		scrollContentToTop();
 		isAPressed = false;
 		// Unregister list area when showing product detail
-		unregisterArea(AREA_ID);
+		if (unregisterList) {
+			unregisterList();
+			unregisterList = null;
+		}
 	}
 
 	async function closeDetail(): Promise<void> {
@@ -110,14 +86,62 @@
 		await tick();
 		scrollToSelectedItem(true);
 		// Re-register list area when returning from product detail
-		registerArea(AREA_ID, { x: 1, y: 1 }, areaHandlers);
-		activateArea(AREA_ID);
+		unregisterList = useArea(areaID, areaHandlers);
+		activateArea(areaID);
 	}
 
+	const areaHandlers = {
+		up: () => {
+			const cols = getColumnsCount();
+			if (selectedIndex >= cols) {
+				navigate('up');
+				return true;
+			}
+			return false;
+		},
+		down: () => {
+			const cols = getColumnsCount();
+			if (selectedIndex + cols < items.length) {
+				navigate('down');
+				return true;
+			}
+			return false;
+		},
+		left: () => {
+			const cols = getColumnsCount();
+			if (selectedIndex % cols !== 0) {
+				navigate('left');
+				return true;
+			}
+			return false;
+		},
+		right: () => {
+			const cols = getColumnsCount();
+			if (selectedIndex % cols !== cols - 1 && selectedIndex < items.length - 1) {
+				navigate('right');
+				return true;
+			}
+			return false;
+		},
+		confirmDown: () => {
+			isAPressed = true;
+		},
+		confirmUp: () => {
+			isAPressed = false;
+			openItem();
+		},
+		confirmCancel: () => {
+			isAPressed = false;
+		},
+		back: () => onBack?.(),
+	};
+
 	onMount(() => {
-		const unregister = registerArea(AREA_ID, { x: 1, y: 1 }, areaHandlers);
-		activateArea(AREA_ID);
-		return unregister;
+		unregisterList = useArea(areaID, areaHandlers);
+		activateArea(areaID);
+		return () => {
+			if (unregisterList) unregisterList();
+		};
 	});
 </script>
 
@@ -157,7 +181,7 @@
 </style>
 
 {#if selectedItem}
-	<Product category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onBack={closeDetail} />
+	<Product {areaID} category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onBack={closeDetail} />
 {:else}
 	<div class="items">
 		{#each items as item, index (item.id)}

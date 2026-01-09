@@ -1,25 +1,20 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { productName } from '../../scripts/app.ts';
-	import { registerArea, activateArea, areaNavigate, activeArea } from '../../scripts/areas.ts';
+	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import Button from '../Buttons/Button.svelte';
 	interface Props {
+		areaID: string;
 		onBack?: () => void;
 	}
-	let { onBack }: Props = $props();
+	let { areaID, onBack }: Props = $props();
+	let active = $derived($activeArea === areaID);
 
 	onMount(() => {
-		const unregister = registerArea(
-			'header',
-			{ x: 0, y: 0 },
-			{
-				down: () => areaNavigate('down'),
-				confirmUp: () => onBack?.(),
-				back: () => onBack?.(),
-			}
-		);
-		activateArea('header');
-		return unregister;
+		return useArea(areaID, {
+			confirmUp: () => onBack?.(),
+			back: () => onBack?.(),
+		});
 	});
 </script>
 
@@ -40,6 +35,6 @@
 </style>
 
 <div class="header">
-	<Button icon="/icons/back.svg" alt="Back" selected={$activeArea === 'header'} padding="1vh" width="5vh" height="5vh" borderRadius="50%" />
+	<Button icon="/icons/back.svg" alt="Back" selected={active} padding="1vh" width="5vh" height="5vh" borderRadius="50%" />
 	<div class="title">{productName}</div>
 </div>

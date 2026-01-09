@@ -5,6 +5,7 @@
 	import Button from '../Buttons/Button.svelte';
 
 	interface Props {
+		areaID: string;
 		title: string;
 		items: Array<{ id: string; label: string }>;
 		orientation?: 'horizontal' | 'vertical';
@@ -12,7 +13,7 @@
 		onselect?: (id: string) => void;
 		onBack?: () => void;
 	}
-	let { title, items, orientation = 'horizontal', selectedId, onselect, onBack }: Props = $props();
+	let { areaID, title, items, orientation = 'horizontal', selectedId, onselect, onBack }: Props = $props();
 	let initialIndex = $derived(
 		selectedId
 			? Math.max(
@@ -40,7 +41,7 @@
 	<MenuTitle {title} />
 	<MenuBar>
 		{#key `${title}-${selectedId}-${orientation}`}
-			<ButtonsGroup areaID="menu" {initialIndex} {orientation} {onBack}>
+			<ButtonsGroup {areaID} {initialIndex} {orientation} {onBack}>
 				{#each items as item (item.id)}
 					<Button label={item.label} onConfirm={() => onselect?.(item.id)} />
 				{/each}

@@ -1,210 +1,155 @@
-import { writable } from 'svelte/store';
-export type InputAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'confirmUp' | 'confirmCancel' | 'back';
-export type InputCallback = () => void;
-export type InputHandlers = Partial<Record<InputAction, InputCallback>>;
-export type AreaPosition = { x: number; y: number };
-interface AreaEntry {
-	handlers: InputHandlers;
-	position: AreaPosition;
+import { writable, get } from 'svelte/store';
+// Types
+export type Position = { x: number; y: number };
+export type Direction = 'up' | 'down' | 'left' | 'right';
+export type InputAction = Direction | 'confirmDown' | 'confirmUp' | 'confirmCancel' | 'back';
+export type AreaHandlers = {
+	up?: () => boolean;
+	down?: () => boolean;
+	left?: () => boolean;
+	right?: () => boolean;
+	confirmDown?: () => void;
+	confirmUp?: () => void;
+	confirmCancel?: () => void;
+	back?: () => void;
+};
+// Stores
+export const areaLayout = writable<Record<string, Position>>({});
+export const activeArea = writable<string | null>(null);
+// Internal handlers map
+const areaHandlers = new Map<string, AreaHandlers>();
+let confirmActive = false;
+
+// Layout management
+export function setAreaPosition(areaID: string, position: Position): void {
+	areaLayout.update(layout => ({ ...layout, [areaID]: position }));
 }
-const activeAreaStore = writable<string | null>(null);
-export const activeArea = { subscribe: activeAreaStore.subscribe };
 
-class AreaManager {
-	private areas: Map<string, AreaEntry> = new Map();
-	private activeAreaId: string | null = null;
-	private confirmActive = false;
+export function removeArea(areaID: string): void {
+	areaLayout.update(layout => {
+		const { [areaID]: _, ...rest } = layout;
+		return rest;
+	});
+	areaHandlers.delete(areaID);
+	if (get(activeArea) === areaID) activeArea.set(null);
+}
 
-	registerArea(areaID: string, position: AreaPosition, handlers: InputHandlers): () => void {
-		this.areas.set(areaID, { handlers, position });
-		return () => this.unregisterArea(areaID);
+export function clearLayout(): void {
+	areaLayout.set({});
+	areaHandlers.clear();
+	activeArea.set(null);
+}
+
+// Handler management - called by components
+export function useArea(areaID: string, handlers: AreaHandlers): () => void {
+	areaHandlers.set(areaID, handlers);
+	return () => areaHandlers.delete(areaID);
+}
+
+// Activation
+export function activateArea(areaID: string): void {
+	const layout = get(areaLayout);
+	if (areaID in layout) activeArea.set(areaID);
+}
+
+// Navigation
+export function areaNavigate(direction: Direction): boolean {
+	const layout = get(areaLayout);
+	const current = get(activeArea);
+	if (!current || !(current in layout)) return false;
+	const currentPos = layout[current];
+	const target = findAreaInDirection(layout, currentPos, direction);
+	if (target) {
+		activeArea.set(target);
+		return true;
 	}
+	return false;
+}
 
-	unregisterArea(areaID: string): void {
-		this.areas.delete(areaID);
-		if (this.activeAreaId === areaID) {
-			this.activeAreaId = null;
-			activeAreaStore.set(null);
+function findAreaInDirection(layout: Record<string, Position>, currentPos: Position, direction: Direction): string | null {
+	const { x, y } = currentPos;
+	if (direction === 'left' || direction === 'right') {
+		// Horizontal - must stay on same Y, find closest X in direction
+		let closest: string | null = null;
+		let closestX = direction === 'left' ? -Infinity : Infinity;
+		for (const [id, pos] of Object.entries(layout)) {
+			if (pos.y !== y) continue;
+			if (direction === 'left') {
+				if (pos.x < x && pos.x > closestX) {
+					closestX = pos.x;
+					closest = id;
+				}
+			} else {
+				if (pos.x > x && pos.x < closestX) {
+					closestX = pos.x;
+					closest = id;
+				}
+			}
 		}
-	}
-
-	activateArea(areaID: string): void {
-		if (this.areas.has(areaID)) {
-			this.activeAreaId = areaID;
-			activeAreaStore.set(areaID);
+		return closest;
+	} else {
+		// Vertical - find closest on target Y
+		const targetY = direction === 'up' ? y - 1 : y + 1;
+		// First try exact X match
+		for (const [id, pos] of Object.entries(layout)) {
+			if (pos.x === x && pos.y === targetY) return id;
 		}
-	}
-
-	deactivateArea(areaID: string): void {
-		if (this.activeAreaId === areaID) {
-			this.activeAreaId = null;
-			activeAreaStore.set(null);
-		}
-	}
-
-	getActiveArea(): string | null {
-		return this.activeAreaId;
-	}
-
-	private findClosestArea(targetX: number, targetY: number, excludeId?: string): string | null {
+		// If no exact match, find closest X on target Y
 		let closest: string | null = null;
 		let closestDistance = Infinity;
-
-		for (const [id, entry] of this.areas) {
-			if (id === excludeId) continue;
-			const dx = entry.position.x - targetX;
-			const dy = entry.position.y - targetY;
-			// Prioritize exact match on the search axis, then find closest
-			const distance = Math.abs(dx) + Math.abs(dy);
-			if (distance < closestDistance) {
-				closestDistance = distance;
-				closest = id;
+		for (const [id, pos] of Object.entries(layout)) {
+			if (pos.y === targetY) {
+				const distance = Math.abs(pos.x - x);
+				if (distance < closestDistance) {
+					closestDistance = distance;
+					closest = id;
+				}
 			}
 		}
 		return closest;
 	}
-
-	private findAreaInDirection(direction: 'up' | 'down' | 'left' | 'right'): string | null {
-		if (!this.activeAreaId) return null;
-		const currentEntry = this.areas.get(this.activeAreaId);
-		if (!currentEntry) return null;
-
-		const { x, y } = currentEntry.position;
-
-		if (direction === 'left' || direction === 'right') {
-			// Horizontal movement - must stay on same Y, find closest X in direction
-			let closest: string | null = null;
-			let closestX = direction === 'left' ? -Infinity : Infinity;
-
-			for (const [id, entry] of this.areas) {
-				if (entry.position.y !== y) continue; // Must be same row
-				if (direction === 'left') {
-					// Find closest X that is less than current X
-					if (entry.position.x < x && entry.position.x > closestX) {
-						closestX = entry.position.x;
-						closest = id;
-					}
-				} else {
-					// Find closest X that is greater than current X
-					if (entry.position.x > x && entry.position.x < closestX) {
-						closestX = entry.position.x;
-						closest = id;
-					}
-				}
-			}
-			return closest;
-		} else {
-			// Vertical movement (up/down)
-			const targetY = direction === 'up' ? y - 1 : y + 1;
-
-			// First try to find exact match on target Y with same X
-			for (const [id, entry] of this.areas) {
-				if (entry.position.x === x && entry.position.y === targetY) {
-					return id;
-				}
-			}
-
-			// If no exact match, find closest X on the target Y
-			let closest: string | null = null;
-			let closestDistance = Infinity;
-
-			for (const [id, entry] of this.areas) {
-				if (entry.position.y === targetY) {
-					const distance = Math.abs(entry.position.x - x);
-					if (distance < closestDistance) {
-						closestDistance = distance;
-						closest = id;
-					}
-				}
-			}
-			return closest;
-		}
-	}
-
-	private navigateToArea(direction: 'up' | 'down' | 'left' | 'right'): boolean {
-		const target = this.findAreaInDirection(direction);
-		console.log(`navigate ${direction} from`, this.activeAreaId, 'to', target, 'areas:', [...this.areas.keys()]);
-		if (target) {
-			this.activeAreaId = target;
-			activeAreaStore.set(target);
-			return true;
-		}
-		return false;
-	}
-
-	navigate(direction: 'up' | 'down' | 'left' | 'right'): boolean {
-		return this.navigateToArea(direction);
-	}
-
-	// Legacy methods for backward compatibility
-	activatePrevArea(): boolean {
-		return this.navigateToArea('up');
-	}
-
-	activateNextArea(): boolean {
-		return this.navigateToArea('down');
-	}
-
-	emit(action: InputAction): void {
-		if (!this.activeAreaId) return;
-		const entry = this.areas.get(this.activeAreaId);
-		const handlers = entry?.handlers;
-
-		// Handle confirm state
-		if (action === 'confirmDown') this.confirmActive = true;
-		else if (action === 'confirmUp') {
-			if (!this.confirmActive) return;
-			this.confirmActive = false;
-		} else if (action === 'confirmCancel') this.confirmActive = false;
-		else {
-			if (this.confirmActive) {
-				this.confirmActive = false;
-				const cancelCallback = handlers?.['confirmCancel'];
-				if (cancelCallback) cancelCallback();
-			}
-		}
-		const callback = handlers?.[action];
-		if (callback) callback();
-	}
 }
 
-let globalAreaManager: AreaManager | null = null;
-
-export function getAreaManager(): AreaManager {
-	if (!globalAreaManager) globalAreaManager = new AreaManager();
-	return globalAreaManager;
-}
-
-export function registerArea(areaID: string, position: AreaPosition, handlers: InputHandlers): () => void {
-	return getAreaManager().registerArea(areaID, position, handlers);
-}
-
-export function unregisterArea(areaID: string): void {
-	getAreaManager().unregisterArea(areaID);
-}
-
-export function activateArea(areaID: string): void {
-	getAreaManager().activateArea(areaID);
-}
-
-export function deactivateArea(areaID: string): void {
-	getAreaManager().deactivateArea(areaID);
-}
-
-export function activatePrevArea(): boolean {
-	return getAreaManager().activatePrevArea();
-}
-
-export function activateNextArea(): boolean {
-	return getAreaManager().activateNextArea();
-}
-
-export type Direction = 'up' | 'down' | 'left' | 'right';
-
-export function areaNavigate(direction: Direction): boolean {
-	return getAreaManager().navigate(direction);
-}
-
+// Input emission - called by input system
 export function emit(action: InputAction): void {
-	getAreaManager().emit(action);
+	const current = get(activeArea);
+	if (!current) return;
+	const handlers = areaHandlers.get(current);
+	if (!handlers) return;
+	// Handle confirm state
+	if (action === 'confirmDown') {
+		confirmActive = true;
+		handlers.confirmDown?.();
+		return;
+	}
+	if (action === 'confirmUp') {
+		if (!confirmActive) return;
+		confirmActive = false;
+		handlers.confirmUp?.();
+		return;
+	}
+	if (action === 'confirmCancel') {
+		confirmActive = false;
+		handlers.confirmCancel?.();
+		return;
+	}
+	if (action === 'back') {
+		if (confirmActive) {
+			confirmActive = false;
+			handlers.confirmCancel?.();
+		}
+		handlers.back?.();
+		return;
+	}
+	// Direction actions
+	if (confirmActive) {
+		confirmActive = false;
+		handlers.confirmCancel?.();
+	}
+
+	const directionHandler = handlers[action as Direction];
+	if (directionHandler) {
+		const handled = directionHandler();
+		if (!handled) areaNavigate(action as Direction);
+	} else areaNavigate(action as Direction);
 }

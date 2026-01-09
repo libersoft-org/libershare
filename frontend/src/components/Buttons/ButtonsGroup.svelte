@@ -9,18 +9,17 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { setContext, onMount } from 'svelte';
-	import { registerArea, activateArea, areaNavigate, activeArea, type AreaPosition } from '../../scripts/areas.ts';
+	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 
 	interface Props {
 		children: Snippet;
 		areaID: string;
-		areaPosition?: AreaPosition;
 		initialIndex?: number;
 		orientation?: 'horizontal' | 'vertical';
 		onBack?: () => void;
 	}
 
-	let { children, areaID, areaPosition = { x: 1, y: 1 }, initialIndex = 0, orientation = 'vertical', onBack }: Props = $props();
+	let { children, areaID, initialIndex = 0, orientation = 'vertical', onBack }: Props = $props();
 	let selectedIndex = $state(initialIndex);
 	let isAPressed = $state(false);
 	let buttons: { onConfirm?: () => void }[] = [];
@@ -69,35 +68,30 @@
 		updateTranslateX();
 	});
 
-	function navigatePrev() {
-		if (selectedIndex > 0) selectedIndex--;
-	}
-
-	function navigatePrevOrExit() {
-		if (selectedIndex > 0) selectedIndex--;
-		else areaNavigate('up');
-	}
-
-	function navigateNextItem() {
-		if (selectedIndex < buttons.length - 1) selectedIndex++;
-	}
-
-	function navigateNextOrRight() {
-		if (selectedIndex < buttons.length - 1) selectedIndex++;
-		else areaNavigate('right');
-	}
-
-	function navigatePrevOrLeft() {
-		if (selectedIndex > 0) selectedIndex--;
-		else areaNavigate('left');
-	}
-
 	onMount(() => {
 		const handlers =
 			orientation === 'horizontal'
-				? { left: navigatePrevOrLeft, right: navigateNextOrRight, up: () => areaNavigate('up') }
-				: { up: navigatePrevOrExit, down: navigateNextItem, left: () => areaNavigate('left'), right: () => areaNavigate('right') };
-		const unregister = registerArea(areaID, areaPosition, {
+				? {
+						left: () => {
+							if (selectedIndex > 0) { selectedIndex--; return true; }
+							return false;
+						},
+						right: () => {
+							if (selectedIndex < buttons.length - 1) { selectedIndex++; return true; }
+							return false;
+						},
+					}
+				: {
+						up: () => {
+							if (selectedIndex > 0) { selectedIndex--; return true; }
+							return false;
+						},
+						down: () => {
+							if (selectedIndex < buttons.length - 1) { selectedIndex++; return true; }
+							return false;
+						},
+					};
+		const unregister = useArea(areaID, {
 			...handlers,
 			confirmDown: () => {
 				isAPressed = true;

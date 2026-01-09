@@ -3,7 +3,7 @@
 	import Dialog from './Dialog.svelte';
 	import ButtonsStatic from '../Buttons/ButtonsStatic.svelte';
 	import Button from '../Buttons/Button.svelte';
-	import { registerArea, activateArea } from '../../scripts/areas.ts';
+	import { useArea, setAreaPosition, removeArea, activateArea } from '../../scripts/areas.ts';
 	interface Props {
 		title: string;
 		message: string;
@@ -17,39 +17,36 @@
 	let selectedButton = $state<'confirm' | 'cancel'>(defaultButton);
 	let isPressed = $state(false);
 
-	function navigateLeft() {
-		selectedButton = 'cancel';
-	}
-
-	function navigateRight() {
-		selectedButton = 'confirm';
-	}
-
-	function handleConfirmDown() {
-		isPressed = true;
-	}
-
-	function handleConfirmUp() {
-		isPressed = false;
-		if (selectedButton === 'confirm') onConfirm();
-		else onBack();
-	}
-
-	function handleConfirmCancel() {
-		isPressed = false;
-	}
-
 	onMount(() => {
-		const unregister = registerArea('confirm-dialog', { x: 1, y: 1 }, {
-			left: navigateLeft,
-			right: navigateRight,
-			confirmDown: handleConfirmDown,
-			confirmUp: handleConfirmUp,
-			confirmCancel: handleConfirmCancel,
+		// Modal dialog - add to layout and register handlers
+		setAreaPosition('confirm-dialog', { x: 1, y: 1 });
+		const unregister = useArea('confirm-dialog', {
+			left: () => {
+				selectedButton = 'cancel';
+				return true;
+			},
+			right: () => {
+				selectedButton = 'confirm';
+				return true;
+			},
+			confirmDown: () => {
+				isPressed = true;
+			},
+			confirmUp: () => {
+				isPressed = false;
+				if (selectedButton === 'confirm') onConfirm();
+				else onBack();
+			},
+			confirmCancel: () => {
+				isPressed = false;
+			},
 			back: onBack,
 		});
 		activateArea('confirm-dialog');
-		return unregister;
+		return () => {
+			unregister();
+			removeArea('confirm-dialog');
+		};
 	});
 </script>
 
