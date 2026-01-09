@@ -14,8 +14,8 @@
 	let contentElement: HTMLElement;
 
 	function handleConfirm() {
-		if ($confirmDialog.action) {
-			const dialogConfig = confirmDialogs[$confirmDialog.action];
+		if ($confirmDialog.action && $confirmDialog.action !== 'back') {
+			const dialogConfig = $confirmDialogs[$confirmDialog.action as 'restart' | 'shutdown' | 'quit'];
 			if (dialogConfig) getAPILocal(dialogConfig.apiAction);
 		}
 		hideConfirmDialog();
@@ -29,7 +29,6 @@
 		// Setup area layout
 		setAreaPosition('header', { x: 0, y: 0 });
 		setAreaPosition('content', { x: 0, y: 1 });
-
 		setContentElement(contentElement);
 		startInput();
 		activateArea('content');
@@ -58,8 +57,8 @@
 	<Header areaID="header" {onBack} />
 	<Breadcrumb items={$breadcrumbItems} />
 	<div class="content" bind:this={contentElement}>
-		{#if $confirmDialog.visible && $confirmDialog.action}
-			{@const dialogConfig = confirmDialogs[$confirmDialog.action]}
+		{#if $confirmDialog.visible && $confirmDialog.action && $confirmDialog.action !== 'back'}
+			{@const dialogConfig = $confirmDialogs[$confirmDialog.action as 'restart' | 'shutdown' | 'quit']}
 			<ConfirmDialog title={dialogConfig.title} message={dialogConfig.message} confirmLabel={dialogConfig.confirmLabel} cancelLabel={dialogConfig.cancelLabel} defaultButton={dialogConfig.defaultButton} onConfirm={handleConfirm} onBack={handleCancel} />
 		{:else if $currentComponent}
 			<svelte:component this={$currentComponent.component} areaID="content" title={$currentComponent.label} {...$currentComponent.props} {onBack} />

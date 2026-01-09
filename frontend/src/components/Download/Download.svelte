@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { t } from '../../scripts/language.ts';
 	import DownloadItem, { type DownloadFileData, type DownloadStatus } from './DownloadItem.svelte';
 	interface DownloadData {
 		id: string;
@@ -202,15 +203,15 @@
 
 <div class="download">
 	<div class="header">
-		<div class="cell">Name</div>
-		<div class="cell center">ID</div>
-		<div class="cell right">Size</div>
-		<div class="cell center">Progress</div>
-		<div class="cell center">Status</div>
-		<div class="cell center">Downloading from</div>
-		<div class="cell center">Uploading to</div>
-		<div class="cell right">Download speed</div>
-		<div class="cell right">Upload speed</div>
+		<div class="cell">{$t.downloads?.name}</div>
+		<div class="cell center">{$t.downloads?.id}</div>
+		<div class="cell right">{$t.downloads?.size}</div>
+		<div class="cell center">{$t.downloads?.progress}</div>
+		<div class="cell center">{$t.downloads?.status}</div>
+		<div class="cell center">{$t.downloads?.downloadingFrom}</div>
+		<div class="cell center">{$t.downloads?.uploadingTo}</div>
+		<div class="cell right">{$t.downloads?.downloadSpeed}</div>
+		<div class="cell right">{$t.downloads?.uploadSpeed}</div>
 	</div>
 	<div class="items">
 		{#each downloads as download, index (download.id)}

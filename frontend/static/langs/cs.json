@@ -27,10 +27,10 @@
 		"size": "Velikost",
 		"progress": "Průběh",
 		"status": "Stav",
-		"downloadingFrom": "Stahování z",
-		"uploadingTo": "Nahrávání do",
+		"downloadingFrom": "Stahování od",
+		"uploadingTo": "Odesílání k",
 		"downloadSpeed": "Rychlost stahování",
-		"uploadSpeed": "Rychlost nahrávání",
+		"uploadSpeed": "Rychlost odesílání",
 		"statuses": {
 			"completed": "Dokončeno",
 			"downloading": "Stahuje se",

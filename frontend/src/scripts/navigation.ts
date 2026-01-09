@@ -65,9 +65,15 @@ export function hideConfirmDialog(): void {
 export function createNavigation() {
 	const path = writable<MenuItem[]>([]);
 	const selectedId = writable<string | undefined>(undefined);
-	const currentItems = derived(path, $path => ($path.length === 0 ? menuStructure.items : ($path[$path.length - 1].submenu ?? [])));
+	
+	// Derived stores that react to both path and menuStructure changes
+	const currentItems = derived([path, menuStructure], ([$path, $menuStructure]) => 
+		($path.length === 0 ? $menuStructure.items : ($path[$path.length - 1].submenu ?? []))
+	);
 	const currentComponent = derived(path, $path => ($path.length > 0 && $path[$path.length - 1].component ? $path[$path.length - 1] : null));
-	const currentTitle = derived(path, $path => ($path.length === 0 ? menuStructure.title : $path[$path.length - 1].label));
+	const currentTitle = derived([path, menuStructure], ([$path, $menuStructure]) => 
+		($path.length === 0 ? $menuStructure.title : $path[$path.length - 1].label)
+	);
 	const currentOrientation = derived(path, $path => ($path.length > 0 ? ($path[$path.length - 1].orientation ?? 'horizontal') : 'horizontal'));
 
 	function navigate(id: string): void {
@@ -87,7 +93,7 @@ export function createNavigation() {
 		path.update(p => [...p, item]);
 		// Update breadcrumb based on new path
 		const newPath = [...get(path)];
-		setBreadcrumb(newPath.map(p => p.label));
+		setBreadcrumb(newPath.map(p => p.label || ''));
 	}
 
 	function navigateBack(): void {
@@ -97,12 +103,13 @@ export function createNavigation() {
 			path.update(p => p.slice(0, -1));
 			// Update breadcrumb based on new path
 			const newPath = get(path);
-			setBreadcrumb(newPath.map(p => p.label));
+			setBreadcrumb(newPath.map(p => p.label || ''));
 		} else {
-			const exitItem = menuStructure.items.find(i => i.id === 'exit');
+			const $menuStructure = get(menuStructure);
+			const exitItem = $menuStructure.items.find(i => i.id === 'exit');
 			if (exitItem) {
 				path.set([exitItem]);
-				setBreadcrumb([exitItem.label]);
+				setBreadcrumb([exitItem.label || '']);
 			}
 		}
 	}

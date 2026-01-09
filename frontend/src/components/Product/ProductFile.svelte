@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Button from '../Buttons/Button.svelte';
+	import { t } from '../../scripts/language.ts';
 	interface Props {
 		name: string;
 		size: string;
@@ -67,10 +68,10 @@
 <div class="filerow" class:selected>
 	<div class="info">
 		<div class="name">{name}</div>
-		<div class="size">Size: {size}</div>
+		<div class="size">{$t.storage?.product?.size}: {size}</div>
 	</div>
 	<div class="actions">
-		<Button label="Download" selected={selected && selectedButton === 0} {pressed} />
-		<Button label="Play" selected={selected && selectedButton === 1} {pressed} />
+		<Button label={$t.storage?.product?.download} selected={selected && selectedButton === 0} {pressed} />
+		<Button label={$t.storage?.product?.play} selected={selected && selectedButton === 1} {pressed} />
 	</div>
 </div>

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { pushBackHandler } from '../../scripts/navigation.ts';
+	import { t } from '../../scripts/language.ts';
 	import ProductFile from './ProductFile.svelte';
 	interface Props {
 		areaID: string;
@@ -194,7 +195,7 @@
 			<img src="https://picsum.photos/seed/{itemId}/800/450" alt={itemTitle} />
 		</div>
 		<div class="files">
-			<div class="title">Files</div>
+			<div class="title">{$t.storage?.product?.files}</div>
 			{#each files as file, rowIndex (file.id)}
 				<div bind:this={fileElements[rowIndex]}>
 					<ProductFile name={file.name} size={file.size} selected={active && rowIndex === selectedRow} {selectedButton} pressed={active && isAPressed} />

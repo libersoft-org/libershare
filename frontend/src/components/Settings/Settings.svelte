@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '../../scripts/language.ts';
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import SettingsLanguage from './SettingsLanguage.svelte';
@@ -34,8 +35,8 @@
 {:else}
 	<div class="settings">
 		<ButtonsGroup {areaID} {onBack}>
-			<Button label="Language" onConfirm={openLanguageDialog} />
-			<Button label="Back" onConfirm={onBack} />
+			<Button label={$t.settings?.language} onConfirm={openLanguageDialog} />
+			<Button label={$t.common?.back} onConfirm={onBack} />
 		</ButtonsGroup>
 	</div>
 {/if}

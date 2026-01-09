@@ -1,10 +1,12 @@
 import type { Component } from 'svelte';
+import { derived } from 'svelte/store';
+import { productName } from './app.ts';
+import { t, tt } from './language.ts';
 import Items from '../components/List/List.svelte';
 import About from '../components/About/About.svelte';
 import Download from '../components/Download/Download.svelte';
 import Settings from '../components/Settings/Settings.svelte';
 import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
-import { productName } from './app.ts';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
 	id: string;
@@ -19,73 +21,75 @@ export interface MenuStructure {
 	title: string;
 	items: MenuItem[];
 }
-export const menuStructure: MenuStructure = {
+// Reactive menu structure - updates when language changes
+export const menuStructure = derived(t, () => ({
 	title: productName,
 	items: [
 		{
 			id: 'storage',
-			label: 'Storage',
+			label: tt('storage.title'),
 			submenu: [
-				{ id: 'movies', label: 'Movies', component: Items, props: { category: 'movies' } },
-				{ id: 'series', label: 'Series', component: Items, props: { category: 'series' } },
-				{ id: 'music', label: 'Music', component: Items, props: { category: 'music' } },
-				{ id: 'back', label: 'Back', action: 'back' },
+				{ id: 'movies', label: tt('storage.category.movies'), component: Items, props: { category: 'movies' } },
+				{ id: 'series', label: tt('storage.category.series'), component: Items, props: { category: 'series' } },
+				{ id: 'music', label: tt('storage.category.music'), component: Items, props: { category: 'music' } },
+				{ id: 'back', label: tt('common.back'), action: 'back' as const },
 			],
 		},
 		{
 			id: 'downloads',
-			label: 'Downloads',
+			label: tt('downloads.title'),
 			component: Download,
 		},
 		{
 			id: 'settings',
-			label: 'Settings',
+			label: tt('settings.title'),
 			component: Settings,
 		},
 		{
 			id: 'about',
-			label: 'About',
+			label: tt('about.title'),
 			component: About,
 		},
 		{
 			id: 'exit',
-			label: 'Exit',
-			orientation: 'vertical',
+			label: tt('exit.title'),
+			orientation: 'vertical' as const,
 			submenu: [
-				{ id: 'restart', label: 'Restart', action: 'restart' },
-				{ id: 'shutdown', label: 'Shutdown', action: 'shutdown' },
-				{ id: 'quit', label: 'Quit application', action: 'quit' },
-				{ id: 'back', label: 'Back', action: 'back' },
+				{ id: 'restart', label: tt('exit.restart.title'), action: 'restart' as const },
+				{ id: 'shutdown', label: tt('exit.shutdown.title'), action: 'shutdown' as const },
+				{ id: 'quit', label: tt('exit.quitApplication.title'), action: 'quit' as const },
+				{ id: 'back', label: tt('common.back'), action: 'back' as const },
 			],
 		},
 	],
-};
+}));
 
-export const confirmDialogs: Record<string, { title: string; message: string; apiAction: string; confirmLabel: string; cancelLabel: string; defaultButton: 'confirm' | 'cancel' }> = {
+// Reactive confirm dialogs
+export const confirmDialogs = derived(t, () => ({
 	restart: {
-		title: 'Restart',
-		message: 'Are you sure you want to restart the device?',
+		title: tt('exit.restart.title'),
+		message: tt('exit.restart.message'),
 		apiAction: 'restart',
-		confirmLabel: 'Yes',
-		cancelLabel: 'No',
-		defaultButton: 'cancel',
+		confirmLabel: tt('common.yes'),
+		cancelLabel: tt('common.no'),
+		defaultButton: 'cancel' as const,
 	},
 	shutdown: {
-		title: 'Shutdown',
-		message: 'Are you sure you want to shutdown the device?',
+		title: tt('exit.shutdown.title'),
+		message: tt('exit.shutdown.message'),
 		apiAction: 'shutdown',
-		confirmLabel: 'Yes',
-		cancelLabel: 'No',
-		defaultButton: 'cancel',
+		confirmLabel: tt('common.yes'),
+		cancelLabel: tt('common.no'),
+		defaultButton: 'cancel' as const,
 	},
 	quit: {
-		title: 'Quit application',
-		message: 'Are you sure you want to quit the application?',
+		title: tt('exit.quitApplication.title'),
+		message: tt('exit.quitApplication.message'),
 		apiAction: 'quit',
-		confirmLabel: 'Yes',
-		cancelLabel: 'No',
-		defaultButton: 'cancel',
+		confirmLabel: tt('common.yes'),
+		cancelLabel: tt('common.no'),
+		defaultButton: 'cancel' as const,
 	},
-};
+}));
 
 export { ConfirmDialog };

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { productName, productVersion, buildDate, commitHash } from '../../scripts/app.ts';
+	import { t } from '../../scripts/language.ts';
 	import Dialog from '../Dialog/Dialog.svelte';
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -48,23 +49,23 @@
 <Dialog title={productName}>
 	<div class="build">
 		<div class="row">
-			<span class="label">Version:</span>
+			<span class="label">{$t.about?.version}:</span>
 			<span class="value">{productVersion}</span>
 		</div>
 		<div class="row">
-			<span class="label">Build date:</span>
+			<span class="label">{$t.about?.buildDate}:</span>
 			<span class="value">{buildDate}</span>
 		</div>
 		<div class="row">
-			<span class="label">Commit:</span>
+			<span class="label">{$t.about?.commit}:</span>
 			<span class="value">{commitHash}</span>
 		</div>
 	</div>
 	<div class="links">
 		<ButtonsGroup {areaID} initialIndex={2} {onBack}>
-			<Button label="GitHub page" padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
-			<Button label="Official website" padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://libershare.com')} />
-			<Button label="OK" onConfirm={onBack} />
+			<Button label={$t.about?.githubPage} padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
+			<Button label={$t.about?.officialWebsite} padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://libershare.com')} />
+			<Button label={$t.common?.ok} onConfirm={onBack} />
 		</ButtonsGroup>
 	</div>
 </Dialog>

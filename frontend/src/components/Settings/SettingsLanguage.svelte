@@ -1,8 +1,8 @@
 <script lang="ts">
+	import { languages, setLanguage, t } from '../../scripts/language.ts';
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Dialog from '../Dialog/Dialog.svelte';
-	import { languages, setLanguage } from '../../scripts/language.ts';
 	interface Props {
 		areaID: string;
 		onBack?: () => void;
@@ -15,11 +15,11 @@
 	}
 </script>
 
-<Dialog title="Language">
+<Dialog title={$t.settings?.language}>
 	<ButtonsGroup {areaID} {onBack}>
 		{#each languages as lang (lang.id)}
 			<Button label={lang.label !== lang.nativeLabel ? `${lang.label} (${lang.nativeLabel})` : lang.label} onConfirm={() => selectLanguage(lang.id)} />
 		{/each}
-		<Button label="Back" onConfirm={onBack} />
+		<Button label={$t.common?.back} onConfirm={onBack} />
 	</ButtonsGroup>
 </Dialog>

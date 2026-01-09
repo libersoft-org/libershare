@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ProgressBar from '../ProgressBar/ProgressBar.svelte';
 	import DownloadFile from './DownloadFile.svelte';
+	import { t } from '../../scripts/language.ts';
 	export type DownloadStatus = 'completed' | 'downloading' | 'waiting' | 'paused' | 'error';
 	export interface DownloadFileData {
 		id: number;
@@ -25,14 +26,6 @@
 		isLast?: boolean;
 	}
 	let { name, id, progress, size, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, files, selected = false, expanded = false, selectedFileIndex = -1, isLast = false }: Props = $props();
-
-	const statusLabels: Record<DownloadStatus, string> = {
-		completed: 'Completed',
-		downloading: 'Downloading',
-		waiting: 'Waiting',
-		paused: 'Paused',
-		error: 'Error',
-	};
 
 	function truncateID(id: string): string {
 		if (id.length <= 16) return id;
@@ -109,7 +102,7 @@
 	<div class="center">{truncateID(id)}</div>
 	<div class="right">{size}</div>
 	<ProgressBar {progress} />
-	<div class="status {status}">{statusLabels[status]}</div>
+	<div class="status {status}">{$t.downloads?.statuses?.[status]}</div>
 	<div class="center">{downloadPeers}</div>
 	<div class="center">{uploadPeers}</div>
 	<div class="center">{downloadSpeed}</div>
@@ -119,7 +112,7 @@
 {#if expanded}
 	<div class="files-wrapper">
 		{#each files as file, index (file.id)}
-			<DownloadFile name={file.name} progress={file.progress} size={file.size} status={file.status} selected={selected && selectedFileIndex === index} />
+			<DownloadFile name={file.name} progress={file.progress} size={file.size} selected={selected && selectedFileIndex === index} />
 		{/each}
 	</div>
 {/if}
