@@ -3,6 +3,7 @@
 	import { volume } from '../../scripts/settings.ts';
 	import Item from './FooterItem.svelte';
 	import Separator from './FooterSeparator.svelte';
+	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
 </script>
 
@@ -30,6 +31,12 @@
 		<Item icon="download" value="12.5 MB/s" alt="Download" />
 		<Separator />
 		<Item icon="upload" value="3.2 MB/s" alt="Upload" />
+		<Separator />
+		<Bar label="CPU" progress={12} />
+		<Separator />
+		<Bar label="RAM - 12.1 / 32 GB" progress={32} />
+		<Separator />
+		<Bar label="STORAGE - 0.88 / 2 TB" progress={44.1} />
 		<Separator />
 		<Item icon="volume" value="{$volume}%" alt="Volume" />
 		<Separator />
