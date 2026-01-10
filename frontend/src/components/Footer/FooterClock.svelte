@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-
 	let time = $state(getTime());
 
 	function getTime(): string {

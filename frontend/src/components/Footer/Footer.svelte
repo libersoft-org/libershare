@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { productVersion } from '../../scripts/app.ts';
-	import Volume from './FooterVolume.svelte';
+	import { volume } from '../../scripts/settings.ts';
+	import Item from './FooterItem.svelte';
 	import Separator from './FooterSeparator.svelte';
 	import Clock from './FooterClock.svelte';
 </script>
@@ -26,7 +27,11 @@
 <div class="footer">
 	<div>Version: {productVersion}</div>
 	<div class="right">
-		<Volume />
+		<Item icon="download" value="12.5 MB/s" alt="Download" />
+		<Separator />
+		<Item icon="upload" value="3.2 MB/s" alt="Upload" />
+		<Separator />
+		<Item icon="volume" value="{$volume}%" alt="Volume" />
 		<Separator />
 		<Clock />
 	</div>
