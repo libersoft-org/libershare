@@ -1,11 +1,12 @@
 <script lang="ts">
 	interface Props {
-		icon: string;
-		value: string;
+		topLabel?: string;
+		bottomLabel?: string;
+		icon?: string;
 		alt?: string;
 	}
 
-	const { icon, value, alt = '' }: Props = $props();
+	const { topLabel, bottomLabel, icon, alt = '' }: Props = $props();
 </script>
 
 <style>
@@ -23,6 +24,13 @@
 </style>
 
 <div class="item">
-	<div class="value">{value}</div>
-	<img class="icon" src="/img/{icon}.svg" {alt} />
+	{#if topLabel}
+		<div class="value">{topLabel}</div>
+	{/if}
+	{#if icon}
+		<img class="icon" src={icon} {alt} />
+	{/if}
+	{#if bottomLabel}
+		<div class="value">{bottomLabel}</div>
+	{/if}
 </div>

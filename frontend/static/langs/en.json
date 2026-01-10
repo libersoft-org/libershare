@@ -5,7 +5,8 @@
 		"yes": "Yes",
 		"no": "No",
 		"cancel": "Cancel",
-		"volume": "Volume"
+		"volume": "Volume",
+		"version": "Version"
 	},
 	"storage": {
 		"title": "Storage",

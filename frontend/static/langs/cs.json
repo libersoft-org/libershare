@@ -5,7 +5,8 @@
 		"yes": "Ano",
 		"no": "Ne",
 		"cancel": "Zrušit",
-		"volume": "Hlasitost"
+		"volume": "Hlasitost",
+		"version": "Verze"
 	},
 	"storage": {
 		"title": "Úložiště",

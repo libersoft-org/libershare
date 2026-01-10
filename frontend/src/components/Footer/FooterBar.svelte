@@ -2,11 +2,11 @@
 	import ProgressBar from '../ProgressBar/ProgressBar.svelte';
 
 	interface Props {
-		label: string;
+		topLabel: string;
 		progress: number;
 	}
 
-	const { label, progress }: Props = $props();
+	const { topLabel: label, progress }: Props = $props();
 </script>
 
 <style>

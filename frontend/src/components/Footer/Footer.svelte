@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '../../scripts/language.ts';
 	import { productVersion } from '../../scripts/app.ts';
 	import { volume } from '../../scripts/settings.ts';
 	import Item from './FooterItem.svelte';
@@ -26,19 +27,21 @@
 </style>
 
 <div class="footer">
-	<div>Version: {productVersion}</div>
+	<div class="left"></div>
 	<div class="right">
-		<Item icon="download" value="12.5 MB/s" alt="Download" />
+		<Item topLabel={$t.common?.version} bottomLabel={productVersion} alt={$t.common?.version} />
 		<Separator />
-		<Item icon="upload" value="3.2 MB/s" alt="Upload" />
+		<Item icon="img/download.svg" topLabel="12.5 MB/s" alt={$t.common?.download} />
 		<Separator />
-		<Bar label="CPU" progress={12} />
+		<Item icon="img/upload.svg" topLabel="3.2 MB/s" alt={$t.common?.upload} />
 		<Separator />
-		<Bar label="RAM - 12.1 / 32 GB" progress={32} />
+		<Bar topLabel="CPU" progress={12} />
 		<Separator />
-		<Bar label="STORAGE - 0.88 / 2 TB" progress={44.1} />
+		<Bar topLabel="RAM - 12.1 / 32 GB" progress={32} />
 		<Separator />
-		<Item icon="volume" value="{$volume}%" alt="Volume" />
+		<Bar topLabel="STORAGE - 0.88 / 2 TB" progress={44.1} />
+		<Separator />
+		<Item icon="img/volume.svg" topLabel="{$volume}%" alt={$t.common?.volume} />
 		<Separator />
 		<Clock />
 	</div>
