@@ -14,18 +14,12 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.3vh;
+		gap: 0.5vh;
 		min-width: 10vh;
-	}
-
-	.progress {
-		width: 100%;
 	}
 </style>
 
 <div class="storage">
 	<div class="label">{label}</div>
-	<div class="progress">
-		<ProgressBar {progress} height="2vh" />
-	</div>
+	<ProgressBar {progress} width="10vh" height="2vh" backgroundColor="var(--secondary-softer-background)" />
 </div>
