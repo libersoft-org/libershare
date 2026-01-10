@@ -37,7 +37,13 @@
 	"settings": {
 		"title": "Settings",
 		"language": "Language",
-		"audio": "Sound effects"
+		"audio": "Sound effects",
+		"cursorSize": "Cursor size",
+		"cursorSizes": {
+			"small": "Small",
+			"medium": "Medium",
+			"large": "Large"
+		}
 	},
 	"about": {
 		"title": "About",

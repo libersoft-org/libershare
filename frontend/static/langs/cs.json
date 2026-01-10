@@ -37,7 +37,13 @@
 	"settings": {
 		"title": "Nastavení",
 		"language": "Jazyk",
-		"audio": "Zvukové efekty"
+		"audio": "Zvukové efekty",
+		"cursorSize": "Velikost kurzoru",
+		"cursorSizes": {
+			"small": "Malý",
+			"medium": "Střední",
+			"large": "Velký"
+		}
 	},
 	"about": {
 		"title": "O aplikaci",

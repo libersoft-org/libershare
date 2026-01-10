@@ -33,8 +33,6 @@ body {
 	position: fixed;
 	top: 0;
 	left: 0;
-	width: 5vh;
-	height: 5vh;
 	pointer-events: none;
 }
 

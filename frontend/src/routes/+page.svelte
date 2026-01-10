@@ -12,10 +12,12 @@
 	import { setAreaPosition, activateArea } from '../scripts/areas.ts';
 	import { initAudio, play } from '../scripts/audio.ts';
 	import { cursorVisible } from '../scripts/mouse.ts';
+	import { cursorSize, cursorSizes } from '../scripts/settings.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	let contentElement: HTMLElement;
 	let cursorX = $state(0);
 	let cursorY = $state(0);
+	let cursorSizeValue = $derived(cursorSizes[$cursorSize]);
 
 	function handleMouseMove(e: MouseEvent) {
 		cursorX = e.clientX;
@@ -67,7 +69,7 @@
 </svelte:head>
 <svelte:window onmousemove={handleMouseMove} />
 {#if $cursorVisible}
-	<img class="cursor" src="/img/cursor.svg" alt="" style="left: {cursorX}px; top: {cursorY}px;" />
+	<img class="cursor" src="/img/cursor.svg" alt="" style="left: {cursorX}px; top: {cursorY}px; width: {cursorSizeValue}; height: {cursorSizeValue};" />
 {/if}
 <div class="page">
 	<Header areaID="header" {onBack} />
