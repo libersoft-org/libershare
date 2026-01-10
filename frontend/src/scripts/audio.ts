@@ -51,14 +51,13 @@ function playConfirm(): void {
 	const osc = audioContext.createOscillator();
 	const gain = audioContext.createGain();
 	osc.type = 'sine';
-	osc.frequency.setValueAtTime(400, audioContext.currentTime);
-	osc.frequency.exponentialRampToValueAtTime(800, audioContext.currentTime + 0.1);
-	gain.gain.setValueAtTime(0.2, audioContext.currentTime);
-	gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.15);
+	osc.frequency.setValueAtTime(1200, audioContext.currentTime);
+	gain.gain.setValueAtTime(0.15, audioContext.currentTime);
+	gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.06);
 	osc.connect(gain);
 	gain.connect(audioContext.destination);
 	osc.start();
-	osc.stop(audioContext.currentTime + 0.15);
+	osc.stop(audioContext.currentTime + 0.06);
 }
 
 function playBack(): void {
@@ -100,26 +99,20 @@ function playWelcome(): void {
 
 function playExit(): void {
 	if (!audioContext) return;
-	// Descending arpeggio: C6, G5, E5, C5
 	const notes = [1046.5, 783.99, 659.25, 523.25];
 	const noteLength = 0.15;
 	const gap = 0.05;
-
 	notes.forEach((freq, i) => {
 		const osc = audioContext!.createOscillator();
 		const gain = audioContext!.createGain();
 		const startTime = audioContext!.currentTime + i * (noteLength + gap);
-
 		osc.type = 'sine';
 		osc.frequency.setValueAtTime(freq, startTime);
-
 		gain.gain.setValueAtTime(0, startTime);
 		gain.gain.linearRampToValueAtTime(0.15, startTime + 0.02);
 		gain.gain.exponentialRampToValueAtTime(0.001, startTime + noteLength);
-
 		osc.connect(gain);
 		gain.connect(audioContext!.destination);
-
 		osc.start(startTime);
 		osc.stop(startTime + noteLength);
 	});
