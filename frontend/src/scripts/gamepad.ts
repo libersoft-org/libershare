@@ -128,11 +128,9 @@ export class GamepadManager {
 			const volumeButton3 = buttons[3]; // Y - decrease
 			const volumeButton4 = buttons[4]; // X/LB - increase
 			const currentVolumeButton = volumeButton4 ? 4 : volumeButton3 ? 3 : null;
-
 			if (currentVolumeButton !== null) {
 				const now = Date.now();
 				let shouldTrigger = false;
-
 				if (this.volumeButtonHeld !== currentVolumeButton) {
 					// New button pressed
 					this.volumeButtonHeld = currentVolumeButton;
@@ -148,7 +146,6 @@ export class GamepadManager {
 						this.volumeLastTime = now;
 					}
 				}
-
 				if (shouldTrigger) {
 					if (currentVolumeButton === 4) increaseVolume();
 					else if (currentVolumeButton === 3) decreaseVolume();
