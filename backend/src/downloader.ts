@@ -3,7 +3,7 @@ import {join, dirname} from 'path';
 import {existsSync} from 'fs';
 import type {IManifest, LishId, ChunkId} from './lish.ts';
 import type {Network} from './network.ts';
-import type {Multiaddr} from '@multiformats/multiaddr';
+import {multiaddr, type Multiaddr} from '@multiformats/multiaddr';
 import {HaveChunks, LISH_PROTOCOL, LishClient} from './lish-protocol.ts';
 import {Mutex} from 'async-mutex';
 import {DataServer, MissingChunk} from './data-server.ts';
@@ -23,6 +23,7 @@ export interface WantMessage extends PubsubMessage {
 
 export interface HaveMessage extends PubsubMessage {
     type: 'have';
+    lishId: LishId;
     peerId: NodeId;
     multiaddrs: Multiaddr[];
     chunks: HaveChunks
@@ -130,7 +131,9 @@ export class Downloader {
 
                     if (data) {
                         // Write chunk to file at correct offset
-                        await this.dataServer.writeChunk(this.manifest, chunk.fileIndex, chunk.chunkIndex, data);
+                        await this.dataServer.writeChunk(
+                            this.downloadDir,
+                            this.manifest, chunk.fileIndex, chunk.chunkIndex, data);
 
                         // Mark as downloaded
                         this.dataServer.markChunkDownloaded(this.lishId, chunk.chunkId);
@@ -208,7 +211,8 @@ export class Downloader {
 
     private async connectToPeer(data: HaveMessage) {
         const peerId: NodeId = data.peerId;
-        const multiaddrs: Multiaddr[] = data.multiaddrs;
+        // Convert from JSON strings back to Multiaddr instances
+        const multiaddrs: Multiaddr[] = data.multiaddrs.map(ma => multiaddr(ma.toString()));
         const chunks: HaveChunks = data.chunks;
 
         try {
@@ -227,7 +231,7 @@ export class Downloader {
 
     // Create directory structure and initialize files
     private async createDirectoryStructure(): Promise<void> {
-        console.log('Creating directory structure...');
+        console.log('Creating directory structure in ', this.downloadDir);
 
         // Create directories
         if (this.manifest.directories) {

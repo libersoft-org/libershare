@@ -1,8 +1,8 @@
-import {Database} from 'bun:sqlite';
-import {mkdir, open, readdir, access, readFile} from 'fs/promises';
-import {join, dirname} from 'path';
-import {existsSync} from 'fs';
+import {mkdir, open, readdir, access, readFile, writeFile} from 'fs/promises';
+import {join, dirname, resolve} from 'path';
 import type {IManifest, LishId, ChunkId} from './lish.ts';
+import {createManifest, DEFAULT_CHUNK_SIZE, DEFAULT_ALGO} from './lish.ts';
+import type {Database} from './database.ts';
 
 export interface MissingChunk {
     fileIndex: number;
@@ -15,17 +15,17 @@ export class DataServer {
     private dataDir: string;
     private dataPath: string;
     private downloadDir: string;
-    private db!: Database;
+    private db: Database;
 
-    constructor(dataDir: string) {
+    constructor(dataDir: string, db: Database) {
         this.dataDir = dataDir;
-        this.dataPath = join(dataDir, 'data');
+        this.dataPath = join(dataDir, 'lish');
         this.downloadDir = join(dataDir, 'downloads');
+        this.db = db;
     }
 
     async init() {
         await this.loadManifests();
-        await this.initChunksDb();
     }
 
     private async loadManifests(): Promise<void> {
@@ -66,44 +66,6 @@ export class DataServer {
         }
     }
 
-
-    private async initChunksDb(): Promise<void> {
-
-        // Initialize SQLite database for chunk tracking in dataDir
-        const dbPath = join(this.dataDir, 'chunks.db');
-        this.db = new Database(dbPath);
-
-        // Create chunks table
-        this.db.run(`
-            CREATE TABLE IF NOT EXISTS chunks
-            (
-                lish_id
-                    TEXT
-                    NOT
-                        NULL,
-                chunk_id
-                    TEXT
-                    NOT
-                        NULL,
-                downloaded
-                    INTEGER
-                    NOT
-                        NULL
-                    DEFAULT
-                        0,
-                PRIMARY
-                    KEY
-                    (
-                     lish_id,
-                     chunk_id
-                    )
-            )
-        `);
-
-        console.log(`✓ Chunk tracking database opened at: ${dbPath}`);
-    }
-
-
     async getManifest(lishId: LishId): Promise<IManifest | null> {
         const manifest = this.manifests.get(lishId);
         if (!manifest) {
@@ -125,13 +87,20 @@ export class DataServer {
             return null;
         }
 
+        // Get the dataset to find where the actual data files are
+        const dataset = this.db.getDatasetByManifest(lishId);
+        if (!dataset) {
+            console.log(`Dataset not found for manifest: ${lishId}`);
+            return null;
+        }
+
         // Find the chunk by its hash across all files
         for (const file of manifest.files) {
             const chunkIndex = file.checksums.findIndex(c => c === chunkId);
 
             if (chunkIndex !== -1) {
-                // Found the chunk, read it from the data file
-                const dataFilePath = join(this.dataPath, file.path);
+                // Found the chunk, read it from the data file in the dataset directory
+                const dataFilePath = join(dataset.directory, file.path);
                 try {
                     const chunkSize = manifest.chunkSize;
                     const offset = chunkIndex * chunkSize;
@@ -141,7 +110,7 @@ export class DataServer {
                     const slice = fileHandle.slice(offset, offset + chunkSize);
                     const arrayBuffer = await slice.arrayBuffer();
 
-                    console.log(`Served chunk ${chunkId.slice(0, 8)}... from ${file.path} (index ${chunkIndex})`);
+                    console.log(`read chunk ${chunkId.slice(0, 8)}... from ${file.path} (index ${chunkIndex})`);
                     return new Uint8Array(arrayBuffer);
                 } catch (error) {
                     console.log(`Error reading chunk from ${dataFilePath}:`, error);
@@ -154,42 +123,47 @@ export class DataServer {
         return null;
     }
 
-    public isChunkDownloaded(
-        lishId: LishId,
-        chunkId: ChunkId): boolean {
-        const stmt = this.db.query('SELECT downloaded FROM chunks WHERE lish_id = ? AND chunk_id = ?');
-        const row = stmt.get(lishId, chunkId) as { downloaded: number } | null;
-        return row?.downloaded === 1;
+    public isChunkDownloaded(lishId: LishId, chunkId: ChunkId): boolean {
+        return this.db.isChunkDownloaded(lishId, chunkId);
     }
 
-
-    // Mark a chunk as downloaded
-    public markChunkDownloaded(
-        lishId: LishId,
-        chunkId: ChunkId): void {
-        const stmt = this.db.query(`
-            INSERT INTO chunks (lish_id, chunk_id, downloaded)
-            VALUES (?, ?, 1) ON CONFLICT(lish_id, chunk_id)
-			DO
-            UPDATE SET downloaded = 1
-        `);
-        stmt.run(lishId, chunkId);
+    public markChunkDownloaded(lishId: LishId, chunkId: ChunkId): void {
+        this.db.markChunkDownloaded(lishId, chunkId);
     }
 
+    public async getHaveChunks(manifest: IManifest): Promise<Set<ChunkId> | 'all'> {
+        const haveChunks = new Set<ChunkId>();
+
+        if (!manifest.files) {
+            return haveChunks;
+        }
+
+        let haveAll: boolean = true;
+        for (const file of manifest.files) {
+            for (const chunkId of file.checksums as ChunkId[]) {
+                if (this.db.isChunkDownloaded(manifest.id, chunkId)) {
+                    haveChunks.add(chunkId);
+                } else {
+                    haveAll = false;
+                }
+            }
+        }
+
+        return haveAll ? 'all' : haveChunks;
+    }
 
     // Get all chunks that need to be downloaded
     public getMissingChunks(manifest: IManifest): Array<MissingChunk> {
-        const missing: Array<{ fileIndex: number; chunkIndex: number; chunkId: ChunkId }> = [];
-
         if (!manifest.files) {
-            return missing;
+            return [];
         }
 
+        const missing: Array<MissingChunk> = [];
         for (let fileIndex = 0; fileIndex < manifest.files.length; fileIndex++) {
             const file = manifest.files[fileIndex];
             for (let chunkIndex = 0; chunkIndex < file.checksums.length; chunkIndex++) {
                 const chunkId = file.checksums[chunkIndex] as ChunkId;
-                if (!this.isChunkDownloaded(manifest.id, chunkId)) {
+                if (!this.db.isChunkDownloaded(manifest.id, chunkId)) {
                     missing.push({fileIndex, chunkIndex, chunkId});
                 }
             }
@@ -198,17 +172,20 @@ export class DataServer {
         return missing;
     }
 
-
     // Write a chunk to the appropriate file at the correct offset
     public async writeChunk(
+        downloadDir: string,
         manifest: IManifest,
-        fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
+        fileIndex: number,
+        chunkIndex: number,
+        data: Uint8Array
+    ): Promise<void> {
         if (!manifest.files || fileIndex >= manifest.files.length) {
             throw new Error(`Invalid file index: ${fileIndex}`);
         }
 
         const file = manifest.files[fileIndex];
-        const filePath = join(this.downloadDir, file.path);
+        const filePath = join(downloadDir, file.path);
         const offset = chunkIndex * manifest.chunkSize;
 
         // Open file and write at offset
@@ -217,12 +194,56 @@ export class DataServer {
         await fd.close();
     }
 
+    // Import a local file/directory as a dataset
+    public async importDataset(
+        inputPath: string,
+        onProgress?: (info: {type: string; path?: string; current?: number; total?: number}) => void
+    ): Promise<IManifest> {
+        const absolutePath = resolve(inputPath);
 
-    close(): void {
-        if (this.db) {
-            this.db.close();
-            console.log('Chunk tracking database closed');
+        // Create manifest
+        const manifest = await createManifest(
+            absolutePath,
+            undefined, // name
+            DEFAULT_CHUNK_SIZE,
+            DEFAULT_ALGO,
+            0, // auto-detect threads
+            undefined, // description
+            onProgress
+        );
+
+        const lishId = manifest.id as LishId;
+
+        // Ensure lish directory exists
+        await mkdir(this.dataPath, {recursive: true});
+
+        // Write manifest to dataDir/lish/[uuid].lish
+        const manifestPath = join(this.dataPath, `${lishId}.lish`);
+        await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+        console.log(`✓ Manifest written to: ${manifestPath}`);
+
+        // Create dataset row
+        this.db.createDataset(lishId, absolutePath);
+
+        // Mark all chunks as downloaded
+        if (manifest.files) {
+            for (const file of manifest.files) {
+                for (const chunkId of file.checksums as ChunkId[]) {
+                    this.db.markChunkDownloaded(lishId, chunkId);
+                }
+            }
         }
-    }
 
+        // Mark dataset as complete
+        const dataset = this.db.getDatasetByManifest(lishId);
+        if (dataset) {
+            this.db.markDatasetComplete(dataset.id);
+        }
+
+        // Add to in-memory manifests
+        this.manifests.set(lishId, manifest);
+        console.log(`✓ Dataset imported: ${lishId}`);
+
+        return manifest;
+    }
 }

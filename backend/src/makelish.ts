@@ -80,9 +80,8 @@ async function main() {
 		console.error('Error: --input parameter is required');
 		process.exit(1);
 	}
-	try{
-		await makeLish(args)
-	}
+	try {
+		await makeLish(args);
 	} catch (error) {
 		console.error('Error:', error);
 		process.exit(1);
@@ -111,8 +110,8 @@ async function makeLish(args)
 		console.error('Supported algorithms: ' + SUPPORTED_ALGOS.join(', '));
 		process.exit(1);
 	}
-	try {
-		const file = Bun.file(inputPath);
+
+	const file = Bun.file(inputPath);
 		const stat = await file.stat();
 		const inputType = stat.isDirectory() ? 'directory' : 'file';
 		const sizeInfo = stat.isFile() ? Utils.formatBytes(stat.size) : '';
@@ -185,9 +184,8 @@ async function makeLish(args)
 		console.log('\x1b[33mSummary:\x1b[0m              ' + fileCount + ' files, ' + dirCount + ' directories, ' + linkCount + ' links');
 		console.log('\x1b[33mTotal size:\x1b[0m           ' + Utils.formatBytes(totalSize));
 		console.log('');
-		console.log('\x1b[33mEnd time:\x1b[0m             ' + new Date().toLocaleString());
-		console.log('\x1b[33mElapsed time:\x1b[0m         ' + timeStr);
+	console.log('\x1b[33mEnd time:\x1b[0m             ' + new Date().toLocaleString());
+	console.log('\x1b[33mElapsed time:\x1b[0m         ' + timeStr);
 }
-
 
 main();

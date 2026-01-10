@@ -1,6 +1,7 @@
 import { Network } from './network.ts';
 import { Downloader } from './downloader.ts';
 import { DataServer } from './data-server.ts';
+import { Database } from './database.ts';
 import * as readline from 'readline';
 import { join } from 'path';
 
@@ -34,7 +35,10 @@ if (!(await file.exists())) {
 	await file.write(JSON.stringify(settings, null, 1));
 }
 
-const dataServer = new DataServer(dataDir);
+const db = new Database(dataDir);
+await db.init();
+
+const dataServer = new DataServer(dataDir, db);
 await dataServer.init();
 
 const network = new Network(dataDir, dataServer, enablePink);
@@ -42,7 +46,7 @@ const network = new Network(dataDir, dataServer, enablePink);
 async function shutdown() {
 	console.log('Shutting down...');
 	await network.stop();
-	dataServer.close();
+	db.close();
 	process.exit(0);
 }
 
@@ -53,12 +57,38 @@ const rl = readline.createInterface({
 	terminal: false,
 });
 
-console.log('\nCommands: p=pink, c<multiaddr>=connect, f<peerid>=find, a=addresses, l<path>=download, q=quit');
+console.log('\nCommands: i<path>=import, l<path>=download, c<multiaddr>=connect, f<peerid>=find, a=addresses, p=pink, q=quit');
 
 rl.on('line', async line => {
 	const command = line.trim();
 
-	if (command.startsWith('c')) {
+	if (command.startsWith('i')) {
+		/*
+		import a local file/directory as a dataset
+		*/
+		let inputPath = command.slice(1).trim();
+		if (!inputPath) {
+			/*console.log('Error: path required after "i"');
+			return;*/
+			inputPath = 'src'
+		}
+		try {
+			console.log(`Importing: ${inputPath}`);
+			const manifest = await dataServer.importDataset(inputPath, info => {
+				if (info.type === 'chunk' && info.current && info.total) {
+					console.log(`\r  Processing chunks: ${info.current}/${info.total}`);
+				}
+				else if (info.type === 'file' && info.path) {
+					console.log(`\r  Processing file: ${info.path}                `);
+				}
+			});
+
+			console.log(`✓ Import complete. Manifest ID: ${manifest.id}`);
+		} catch (error: any) {
+			console.log('✗ Import failed:', error.message);
+		}
+
+	} else if (command.startsWith('c')) {
 		/*
 		connect to peer by multiaddr
 		 */
@@ -97,7 +127,7 @@ rl.on('line', async line => {
 			manifestPath = '../../lish_files/test.lish';
 		}
 		try {
-			const downloadDir = join(dataDir, 'downloads');
+			const downloadDir = join(dataDir, 'downloads', Date.now().toString());
 			const downloader = new Downloader(downloadDir, network, dataServer);
 			await downloader.init(manifestPath);
 			await downloader.download();

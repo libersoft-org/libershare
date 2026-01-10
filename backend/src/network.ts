@@ -1,6 +1,6 @@
 import { createLibp2p } from 'libp2p';
 import { tcp } from '@libp2p/tcp';
-import { noise } from '@chainsafe/libp2p-noise';
+import { noise, pureJsCrypto } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { identify, identifyPush } from '@libp2p/identify';
@@ -20,7 +20,7 @@ import { join } from 'path';
 import { DataServer } from './data-server.ts';
 import { LISH_PROTOCOL, handleLishProtocol } from './lish-protocol.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
-import {LISH_TOPIC, WantMessage} from './downloader.ts';
+import {HaveMessage, LISH_TOPIC, WantMessage} from './downloader.ts';
 
 // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 type PubSub = any;
@@ -120,7 +120,7 @@ export class Network {
 				listen: listenAddresses,
 			},
 			transports,
-			connectionEncrypters: [noise()],
+			connectionEncrypters: [noise({ crypto: pureJsCrypto })],
 			streamMuxers: [yamux()],
 			connectionManager: {
 				minConnections: 1, // Auto-dial to maintain at least 1 connection
@@ -426,10 +426,31 @@ export class Network {
 		console.log('Handling want message for lishId:', data.lishId);
 		let manifest = await this.dataServer.getManifest(data.lishId);
 		if (!manifest) {
-			console.log('Manifest not found for lishId:', data.lishId);
 			return;
 		}
-		let gotChunks = 0;
+
+		let haveChunks = await this.dataServer.getHaveChunks(manifest);
+
+		console.log('mock have:', this.dataDir, (this.dataDir === '../../data1'));
+		if (this.dataDir === '../../data1') {
+			haveChunks = 'all';
+		}
+
+		if (haveChunks !== 'all' && haveChunks.size === 0) {
+			console.log('No chunks available to send Have message for lishId:', data.lishId);
+			return;
+		}
+
+		console.log('Manifest found, sending Have');
+		const haveMessage: HaveMessage = {
+			type: 'have',
+			lishId: manifest.id,
+			chunks: haveChunks === 'all' ? 'all' : Array.from(haveChunks),
+			multiaddrs: this.node!.getMultiaddrs(),
+			peerId: this.node!.peerId.toString(),
+		};
+
+		await this.broadcast(LISH_TOPIC, haveMessage);
 	}
 
 
