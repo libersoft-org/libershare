@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { useArea, activeArea } from '../../scripts/areas.ts';
 	interface Props {
 		areaID: string;
@@ -39,10 +39,13 @@
 		up: () => false,
 		down: () => false,
 		confirmDown: () => {},
-		confirmUp: () => {
+		confirmUp: async () => {
 			// Navigate to the selected breadcrumb level
 			const stepsBack = items.length - 1 - selectedIndex;
-			for (let i = 0; i < stepsBack; i++) onBack?.();
+			for (let i = 0; i < stepsBack; i++) {
+				onBack?.();
+				await tick();
+			}
 		},
 		confirmCancel: () => {},
 		back: () => onBack?.(),
