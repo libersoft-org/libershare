@@ -20,6 +20,14 @@
 		color: var(--secondary-foreground);
 	}
 
+	.file:nth-child(odd) {
+		background-color: var(--secondary-soft-background);
+	}
+
+	.file:nth-child(even) {
+		background-color: var(--secondary-background);
+	}
+
 	.file.selected {
 		background-color: var(--primary-foreground);
 		color: var(--primary-background);

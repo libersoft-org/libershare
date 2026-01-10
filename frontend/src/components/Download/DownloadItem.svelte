@@ -24,8 +24,9 @@
 		expanded?: boolean;
 		selectedFileIndex?: number;
 		isLast?: boolean;
+		odd?: boolean;
 	}
-	let { name, id, progress, size, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, files, selected = false, expanded = false, selectedFileIndex = -1, isLast = false }: Props = $props();
+	let { name, id, progress, size, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, files, selected = false, expanded = false, selectedFileIndex = -1, isLast = false, odd = false }: Props = $props();
 
 	function truncateID(id: string): string {
 		if (id.length <= 16) return id;
@@ -41,6 +42,14 @@
 		gap: 2vh;
 		padding: 1vh 2vh;
 		border-bottom: 0.4vh solid var(--secondary-softer-background);
+	}
+
+	.item.odd {
+		background-color: var(--secondary-soft-background);
+	}
+
+	.item.even {
+		background-color: var(--secondary-background);
 	}
 
 	.item.last {
@@ -146,7 +155,7 @@
 	}
 </style>
 
-<div class="item" class:selected={selected && selectedFileIndex === -1} class:last={isLast && !expanded}>
+<div class="item" class:selected={selected && selectedFileIndex === -1} class:last={isLast && !expanded} class:odd class:even={!odd}>
 	<div class="name">
 		<span class="expand" class:expanded>▶</span>
 		<span>{name}</span>
