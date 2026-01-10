@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { productVersion } from '../../scripts/app.ts';
-	import FooterVolume from './FooterVolume.svelte';
+	import Volume from './FooterVolume.svelte';
+	import Separator from './FooterSeparator.svelte';
+	import Clock from './FooterClock.svelte';
 </script>
 
 <style>
@@ -10,7 +12,7 @@
 		justify-content: space-between;
 		background-color: var(--secondary-background);
 		color: var(--primary-foreground);
-		padding: 1vh;
+		padding: 1vh 1.5vh;
 		font-size: 1.6vh;
 		border-block: 0.2vh solid var(--secondary-softer-background);
 	}
@@ -24,6 +26,8 @@
 <div class="footer">
 	<div>Version: {productVersion}</div>
 	<div class="right">
-		<FooterVolume />
+		<Volume />
+		<Separator />
+		<Clock />
 	</div>
 </div>
