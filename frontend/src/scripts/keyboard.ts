@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { inputInitialDelay, inputRepeatDelay } from './settings.ts';
+import { inputInitialDelay, inputRepeatDelay, increaseVolume, decreaseVolume } from './settings.ts';
 export type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'confirmUp' | 'back';
 export type KeyboardCallback = () => void;
 
@@ -17,6 +17,7 @@ class KeyboardManager {
 	start(): void {
 		if (this.keydownHandler) return;
 		const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+		const volumeKeys = ['+', '-'];
 		const confirmKeys = ['Enter', ' '];
 		const getActionForKey = (key: string): KeyboardAction | null => {
 			switch (key) {
@@ -28,6 +29,16 @@ class KeyboardManager {
 					return 'left';
 				case 'ArrowRight':
 					return 'right';
+				default:
+					return null;
+			}
+		};
+		const getVolumeAction = (key: string): (() => void) | null => {
+			switch (key) {
+				case '+':
+					return increaseVolume;
+				case '-':
+					return decreaseVolume;
 				default:
 					return null;
 			}
@@ -70,6 +81,23 @@ class KeyboardManager {
 				}, get(inputInitialDelay));
 				return;
 			}
+			// Handle volume keys with custom repeat
+			if (volumeKeys.includes(e.key)) {
+				e.preventDefault();
+				if (e.repeat) return;
+				if (this.heldKey === e.key) return;
+				clearRepeat();
+				const volumeAction = getVolumeAction(e.key);
+				if (!volumeAction) return;
+				volumeAction();
+				this.heldKey = e.key;
+				this.repeatTimer = setTimeout(() => {
+					this.repeatInterval = setInterval(() => {
+						if (this.heldKey === e.key) volumeAction();
+					}, get(inputRepeatDelay));
+				}, get(inputInitialDelay));
+				return;
+			}
 			// Handle confirm keys (Enter/Space) with real keyup
 			if (confirmKeys.includes(e.key)) {
 				e.preventDefault();
@@ -90,7 +118,7 @@ class KeyboardManager {
 			}
 		};
 		this.keyupHandler = (e: KeyboardEvent) => {
-			if (arrowKeys.includes(e.key) && this.heldKey === e.key) clearRepeat();
+			if ((arrowKeys.includes(e.key) || volumeKeys.includes(e.key)) && this.heldKey === e.key) clearRepeat();
 			// Handle confirm key release
 			if (confirmKeys.includes(e.key) && this.confirmKeyHeld) {
 				this.confirmKeyHeld = false;

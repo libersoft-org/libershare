@@ -17,6 +17,16 @@ export const inputInitialDelay = writable(400); // ms before repeat starts
 export const inputRepeatDelay = writable(150); // ms between repeats (4 items per second)
 // Gamepad settings
 export const gamepadDeadzone = writable(0.5);
+// Volume settings (will be replaced with system volume later)
+export const volume = writable(50);
+
+export function increaseVolume(): void {
+	volume.update(v => Math.min(100, v + 1));
+}
+
+export function decreaseVolume(): void {
+	volume.update(v => Math.max(0, v - 1));
+}
 
 export function setAudioEnabled(enabled: boolean): void {
 	audioEnabled.set(enabled);

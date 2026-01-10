@@ -4,7 +4,8 @@
 		"ok": "OK",
 		"yes": "Yes",
 		"no": "No",
-		"cancel": "Cancel"
+		"cancel": "Cancel",
+		"volume": "Volume"
 	},
 	"storage": {
 		"title": "Storage",

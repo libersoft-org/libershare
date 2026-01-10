@@ -4,7 +4,8 @@
 		"ok": "OK",
 		"yes": "Ano",
 		"no": "Ne",
-		"cancel": "Zrušit"
+		"cancel": "Zrušit",
+		"volume": "Hlasitost"
 	},
 	"storage": {
 		"title": "Úložiště",

@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone } from './settings.ts';
+import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone, increaseVolume, decreaseVolume } from './settings.ts';
 
 type GamepadCallback = () => void;
 
@@ -19,10 +19,14 @@ export class GamepadManager {
 	private firstInputTime = 0;
 	private callbacks: Map<string, GamepadCallback> = new Map();
 	private previousButtons: boolean[] = [];
+	// Volume button repeat tracking
+	private volumeButtonHeld: number | null = null;
+	private volumeFirstTime = 0;
+	private volumeLastTime = 0;
 
 	constructor() {
 		this.deadzone = get(gamepadDeadzone);
-		gamepadDeadzone.subscribe(value => this.deadzone = value);
+		gamepadDeadzone.subscribe(value => (this.deadzone = value));
 	}
 
 	start(): void {
@@ -118,6 +122,42 @@ export class GamepadManager {
 			const isDpadPressed = buttons[12] || buttons[13] || buttons[14] || buttons[15];
 			if (Math.abs(leftStickX) <= this.deadzone && Math.abs(leftStickY) <= this.deadzone && !isDpadPressed) {
 				this.firstInputTime = 0;
+			}
+
+			// Handle volume button repeat (Y = decrease, X/LB = increase)
+			const volumeButton3 = buttons[3]; // Y - decrease
+			const volumeButton4 = buttons[4]; // X/LB - increase
+			const currentVolumeButton = volumeButton4 ? 4 : volumeButton3 ? 3 : null;
+
+			if (currentVolumeButton !== null) {
+				const now = Date.now();
+				let shouldTrigger = false;
+
+				if (this.volumeButtonHeld !== currentVolumeButton) {
+					// New button pressed
+					this.volumeButtonHeld = currentVolumeButton;
+					this.volumeFirstTime = now;
+					this.volumeLastTime = now;
+					shouldTrigger = true;
+				} else {
+					// Button held - check timing
+					const elapsed = now - this.volumeFirstTime;
+					const delay = elapsed > get(inputInitialDelay) ? get(inputRepeatDelay) : get(inputInitialDelay);
+					if (now - this.volumeLastTime >= delay) {
+						shouldTrigger = true;
+						this.volumeLastTime = now;
+					}
+				}
+
+				if (shouldTrigger) {
+					if (currentVolumeButton === 4) increaseVolume();
+					else if (currentVolumeButton === 3) decreaseVolume();
+				}
+			} else {
+				// No volume button pressed
+				this.volumeButtonHeld = null;
+				this.volumeFirstTime = 0;
+				this.volumeLastTime = 0;
 			}
 		}
 		this.animationId = requestAnimationFrame(this.poll);
