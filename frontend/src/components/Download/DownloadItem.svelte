@@ -109,7 +109,7 @@
 
 	.files-wrapper {
 		background-color: rgba(0, 0, 0, 0.2);
-		padding: 0.5vh 0 0.5vh 4vh;
+		padding-left: 1.5vh;
 	}
 
 	.expand {

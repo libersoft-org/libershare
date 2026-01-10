@@ -12,7 +12,7 @@
 <style>
 	.file {
 		display: grid;
-		grid-template-columns: 1fr 10vh 15vh;
+		grid-template-columns: 1fr 10vh 20vh;
 		align-items: center;
 		gap: 2vh;
 		padding: 0.5vh 2vh;
@@ -34,6 +34,16 @@
 
 	.center {
 		text-align: center;
+	}
+
+	@media (max-width: 1199px) {
+		.file {
+			grid-template-columns: 1fr 5vh 10vh;
+		}
+
+		.file .name {
+			font-size: 1.4vh;
+		}
 	}
 </style>
 
