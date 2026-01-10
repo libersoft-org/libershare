@@ -11,8 +11,16 @@
 	import { getAPILocal } from '../scripts/api.ts';
 	import { setAreaPosition, activateArea } from '../scripts/areas.ts';
 	import { initAudio, play } from '../scripts/audio.ts';
+	import { cursorVisible } from '../scripts/mouse.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	let contentElement: HTMLElement;
+	let cursorX = $state(0);
+	let cursorY = $state(0);
+
+	function handleMouseMove(e: MouseEvent) {
+		cursorX = e.clientX;
+		cursorY = e.clientY;
+	}
 
 	function handleConfirm() {
 		if ($confirmDialog.action && $confirmDialog.action !== 'back') {
@@ -57,7 +65,10 @@
 <svelte:head>
 	<title>{productName}</title>
 </svelte:head>
-
+<svelte:window onmousemove={handleMouseMove} />
+{#if $cursorVisible}
+	<img class="cursor" src="/img/cursor.svg" alt="" style="left: {cursorX}px; top: {cursorY}px;" />
+{/if}
 <div class="page">
 	<Header areaID="header" {onBack} />
 	<Breadcrumb areaID="breadcrumb" items={$breadcrumbItems} {onBack} />

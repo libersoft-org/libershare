@@ -25,6 +25,17 @@ body {
 body {
 	font-family: 'Ubuntu', sans-serif;
 	background-color: #111;
+	cursor: none;
+}
+
+.cursor {
+	z-index: 9999;
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 10vh;
+	height: 10vh;
+	pointer-events: none;
 }
 
 .bold {

@@ -1,8 +1,9 @@
+import { writable } from 'svelte/store';
 const CURSOR_HIDE_DELAY = 2000;
+export const cursorVisible = writable(true);
 
 class MouseManager {
 	private hideTimeout: ReturnType<typeof setTimeout> | null = null;
-	private isHidden = false;
 	private mouseMoveHandler: (() => void) | null = null;
 
 	start(): void {
@@ -18,37 +19,23 @@ class MouseManager {
 			this.mouseMoveHandler = null;
 		}
 		this.clearHideTimeout();
-		this.showCursor();
+		cursorVisible.set(true);
 	}
 
 	private handleMouseMove(): void {
-		this.showCursor();
+		cursorVisible.set(true);
 		this.scheduleHide();
 	}
 
 	private scheduleHide(): void {
 		this.clearHideTimeout();
-		this.hideTimeout = setTimeout(() => this.hideCursor(), CURSOR_HIDE_DELAY);
+		this.hideTimeout = setTimeout(() => cursorVisible.set(false), CURSOR_HIDE_DELAY);
 	}
 
 	private clearHideTimeout(): void {
 		if (this.hideTimeout) {
 			clearTimeout(this.hideTimeout);
 			this.hideTimeout = null;
-		}
-	}
-
-	private showCursor(): void {
-		if (this.isHidden) {
-			document.body.style.cursor = '';
-			this.isHidden = false;
-		}
-	}
-
-	private hideCursor(): void {
-		if (!this.isHidden) {
-			document.body.style.cursor = 'none';
-			this.isHidden = true;
 		}
 	}
 }
