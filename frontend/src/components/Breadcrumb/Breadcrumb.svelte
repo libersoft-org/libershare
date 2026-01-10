@@ -16,6 +16,7 @@
 		display: flex;
 		align-items: center;
 		gap: 2vh;
+		border-bottom: 0.2vh solid var(--secondary-softer-background);
 	}
 
 	.item {

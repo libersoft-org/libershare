@@ -25,6 +25,7 @@
 		gap: 1vh;
 		padding: 1vh;
 		background-color: var(--secondary-background);
+		border-bottom: 0.2vh solid var(--secondary-softer-background);
 	}
 
 	.title {

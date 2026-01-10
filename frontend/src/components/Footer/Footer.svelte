@@ -10,6 +10,7 @@
 		color: var(--primary-foreground);
 		padding: 2vh;
 		font-size: 2vh;
+		border-top: 0.2vh solid var(--secondary-softer-background);
 	}
 </style>
 
