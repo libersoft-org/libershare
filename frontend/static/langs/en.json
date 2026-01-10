@@ -8,11 +8,6 @@
 	},
 	"storage": {
 		"title": "Storage",
-		"category": {
-			"movies": "Movies",
-			"series": "Series",
-			"music": "Music"
-		},
 		"product": {
 			"files": "Files",
 			"size": "Size",

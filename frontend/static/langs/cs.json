@@ -8,11 +8,6 @@
 	},
 	"storage": {
 		"title": "Úložiště",
-		"category": {
-			"movies": "Filmy",
-			"series": "Seriály",
-			"music": "Hudba"
-		},
 		"product": {
 			"files": "Soubory",
 			"size": "Velikost",

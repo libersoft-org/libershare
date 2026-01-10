@@ -69,6 +69,44 @@
 		color: var(--secondary-foreground);
 	}
 
+	.details {
+		display: none;
+		padding: 0vh 1vh;
+		font-size: 1.6vh;
+	}
+
+	.details .row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.5vh 0;
+		border-bottom: 0.2vh solid var(--secondary-softer-background);
+	}
+
+	.details .label {
+		color: var(--disabled-foreground);
+	}
+
+	.details .value {
+		font-weight: bold;
+	}
+
+	.details .progress-row {
+		align-items: center;
+	}
+
+	.details .progress-value {
+		flex: 1;
+		max-width: 50%;
+	}
+
+	.details .badge {
+		padding: 0.3vh 0.6vh;
+		border: 0.2vh solid var(--secondary-softer-background);
+		border-radius: 0.5vh;
+		background-color: var(--secondary-background);
+	}
+
 	.files-wrapper {
 		background-color: rgba(0, 0, 0, 0.2);
 		padding: 0.5vh 0 0.5vh 4vh;
@@ -92,24 +130,72 @@
 	.right {
 		text-align: right;
 	}
+
+	@media (max-width: 1199px) {
+		.item {
+			grid-template-columns: 1fr;
+		}
+
+		.item .desktop {
+			display: none;
+		}
+
+		.details.show {
+			display: block;
+		}
+	}
 </style>
 
-<div class="item" class:selected={selected && selectedFileIndex === -1} class:last={isLast}>
+<div class="item" class:selected={selected && selectedFileIndex === -1} class:last={isLast && !expanded}>
 	<div class="name">
 		<span class="expand" class:expanded>▶</span>
 		<span>{name}</span>
 	</div>
-	<div class="center">{truncateID(id)}</div>
-	<div class="right">{size}</div>
-	<ProgressBar {progress} />
-	<div class="status {status}">{$t.downloads?.statuses?.[status]}</div>
-	<div class="center">{downloadPeers}</div>
-	<div class="center">{uploadPeers}</div>
-	<div class="center">{downloadSpeed}</div>
-	<div class="center">{uploadSpeed}</div>
+	<div class="center desktop">{truncateID(id)}</div>
+	<div class="right desktop">{size}</div>
+	<div class="desktop"><ProgressBar {progress} /></div>
+	<div class="status desktop {status}">{$t.downloads?.statuses?.[status]}</div>
+	<div class="center desktop">{downloadPeers}</div>
+	<div class="center desktop">{uploadPeers}</div>
+	<div class="center desktop">{downloadSpeed}</div>
+	<div class="center desktop">{uploadSpeed}</div>
 </div>
 
 {#if expanded}
+	<div class="details" class:show={expanded}>
+		<div class="row">
+			<span class="label">{$t.downloads?.id}</span>
+			<span class="value">{truncateID(id)}</span>
+		</div>
+		<div class="row">
+			<span class="label">{$t.downloads?.size}</span>
+			<span class="value">{size}</span>
+		</div>
+		<div class="row progress-row">
+			<span class="label">{$t.downloads?.progress}</span>
+			<span class="value progress-value"><ProgressBar {progress} /></span>
+		</div>
+		<div class="row">
+			<span class="label">{$t.downloads?.status}</span>
+			<span class="value badge {status}">{$t.downloads?.statuses?.[status]}</span>
+		</div>
+		<div class="row">
+			<span class="label">{$t.downloads?.downloadingFrom}</span>
+			<span class="value">{downloadPeers}</span>
+		</div>
+		<div class="row">
+			<span class="label">{$t.downloads?.uploadingTo}</span>
+			<span class="value">{uploadPeers}</span>
+		</div>
+		<div class="row">
+			<span class="label">{$t.downloads?.downloadSpeed}</span>
+			<span class="value">{downloadSpeed}</span>
+		</div>
+		<div class="row">
+			<span class="label">{$t.downloads?.uploadSpeed}</span>
+			<span class="value">{uploadSpeed}</span>
+		</div>
+	</div>
 	<div class="files-wrapper">
 		{#each files as file, index (file.id)}
 			<DownloadFile name={file.name} progress={file.progress} size={file.size} selected={selected && selectedFileIndex === index} />

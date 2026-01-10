@@ -29,9 +29,8 @@ export const menuStructure = derived(t, () => ({
 			id: 'storage',
 			label: tt('storage.title'),
 			submenu: [
-				{ id: 'movies', label: tt('storage.category.movies'), component: Items, props: { category: 'movies' } },
-				{ id: 'series', label: tt('storage.category.series'), component: Items, props: { category: 'series' } },
-				{ id: 'music', label: tt('storage.category.music'), component: Items, props: { category: 'music' } },
+				{ id: 'video', label: 'Video', component: Items, props: { category: 'video' } },
+				{ id: 'software', label: 'Software', component: Items, props: { category: 'software' } },
 				{ id: 'back', label: tt('common.back'), action: 'back' as const },
 			],
 		},

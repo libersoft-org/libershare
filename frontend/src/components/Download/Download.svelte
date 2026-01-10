@@ -194,6 +194,16 @@
 		text-align: right;
 	}
 
+	@media (max-width: 1199px) {
+		.header {
+			grid-template-columns: 1fr;
+		}
+
+		.header .cell.desktop {
+			display: none;
+		}
+	}
+
 	.items {
 		flex: 1;
 		overflow-y: auto;
@@ -204,14 +214,14 @@
 <div class="download">
 	<div class="header">
 		<div class="cell">{$t.downloads?.name}</div>
-		<div class="cell center">{$t.downloads?.id}</div>
-		<div class="cell right">{$t.downloads?.size}</div>
-		<div class="cell center">{$t.downloads?.progress}</div>
-		<div class="cell center">{$t.downloads?.status}</div>
-		<div class="cell center">{$t.downloads?.downloadingFrom}</div>
-		<div class="cell center">{$t.downloads?.uploadingTo}</div>
-		<div class="cell right">{$t.downloads?.downloadSpeed}</div>
-		<div class="cell right">{$t.downloads?.uploadSpeed}</div>
+		<div class="cell center desktop">{$t.downloads?.id}</div>
+		<div class="cell right desktop">{$t.downloads?.size}</div>
+		<div class="cell center desktop">{$t.downloads?.progress}</div>
+		<div class="cell center desktop">{$t.downloads?.status}</div>
+		<div class="cell center desktop">{$t.downloads?.downloadingFrom}</div>
+		<div class="cell center desktop">{$t.downloads?.uploadingTo}</div>
+		<div class="cell right desktop">{$t.downloads?.downloadSpeed}</div>
+		<div class="cell right desktop">{$t.downloads?.uploadSpeed}</div>
 	</div>
 	<div class="items">
 		{#each downloads as download, index (download.id)}
