@@ -1,126 +1,86 @@
 import { get } from 'svelte/store';
 import { inputInitialDelay, inputRepeatDelay, increaseVolume, decreaseVolume } from './settings.ts';
-export type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'confirmUp' | 'back';
-export type KeyboardCallback = () => void;
+type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'confirmUp' | 'back';
+type KeyboardCallback = () => void;
+const ARROW_KEYS: Record<string, KeyboardAction> = {
+	ArrowUp: 'up',
+	ArrowDown: 'down',
+	ArrowLeft: 'left',
+	ArrowRight: 'right',
+};
+const VOLUME_KEYS: Record<string, () => void> = {
+	'+': increaseVolume,
+	'-': decreaseVolume,
+};
+const CONFIRM_KEYS = ['Enter', ' '];
 
 class KeyboardManager {
 	private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 	private keyupHandler: ((e: KeyboardEvent) => void) | null = null;
 	private callbacks: Map<string, KeyboardCallback> = new Map();
-	// Key repeat control
 	private heldKey: string | null = null;
 	private repeatTimer: ReturnType<typeof setTimeout> | null = null;
 	private repeatInterval: ReturnType<typeof setInterval> | null = null;
-	// Confirm key state
 	private confirmKeyHeld = false;
 
 	start(): void {
 		if (this.keydownHandler) return;
-		const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
-		const volumeKeys = ['+', '-'];
-		const confirmKeys = ['Enter', ' '];
-		const getActionForKey = (key: string): KeyboardAction | null => {
-			switch (key) {
-				case 'ArrowUp':
-					return 'up';
-				case 'ArrowDown':
-					return 'down';
-				case 'ArrowLeft':
-					return 'left';
-				case 'ArrowRight':
-					return 'right';
-				default:
-					return null;
-			}
-		};
-		const getVolumeAction = (key: string): (() => void) | null => {
-			switch (key) {
-				case '+':
-					return increaseVolume;
-				case '-':
-					return decreaseVolume;
-				default:
-					return null;
-			}
-		};
 
 		const clearRepeat = () => {
-			if (this.repeatTimer) {
-				clearTimeout(this.repeatTimer);
-				this.repeatTimer = null;
-			}
-			if (this.repeatInterval) {
-				clearInterval(this.repeatInterval);
-				this.repeatInterval = null;
-			}
+			if (this.repeatTimer) clearTimeout(this.repeatTimer);
+			if (this.repeatInterval) clearInterval(this.repeatInterval);
+			this.repeatTimer = null;
+			this.repeatInterval = null;
 			this.heldKey = null;
+		};
+
+		const setupRepeat = (key: string, action: () => void) => {
+			if (this.heldKey === key) return;
+			clearRepeat();
+			action();
+			this.heldKey = key;
+			this.repeatTimer = setTimeout(() => {
+				this.repeatInterval = setInterval(() => {
+					if (this.heldKey === key) action();
+				}, get(inputRepeatDelay));
+			}, get(inputInitialDelay));
 		};
 
 		this.keydownHandler = (e: KeyboardEvent) => {
 			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-			// Handle arrow keys with custom repeat
-			if (arrowKeys.includes(e.key)) {
+			if (e.repeat) return;
+			// Arrow keys (with repeat)
+			const arrowAction = ARROW_KEYS[e.key];
+			if (arrowAction) {
 				e.preventDefault();
-				// If it's a repeat event from the system, ignore it (we handle repeat ourselves)
-				if (e.repeat) return;
-				// If same key is already held, ignore
-				if (this.heldKey === e.key) return;
-				// Clear any existing repeat for different key
-				clearRepeat();
-				const action = getActionForKey(e.key);
-				if (!action) return;
-				// Emit immediately on first press
-				this.emit(action);
-				// Set up custom repeat
-				this.heldKey = e.key;
-				this.repeatTimer = setTimeout(() => {
-					this.repeatInterval = setInterval(() => {
-						if (this.heldKey === e.key) this.emit(action);
-					}, get(inputRepeatDelay));
-				}, get(inputInitialDelay));
+				setupRepeat(e.key, () => this.emit(arrowAction));
 				return;
 			}
-			// Handle volume keys with custom repeat
-			if (volumeKeys.includes(e.key)) {
+			// Volume keys (with repeat)
+			const volumeAction = VOLUME_KEYS[e.key];
+			if (volumeAction) {
 				e.preventDefault();
-				if (e.repeat) return;
-				if (this.heldKey === e.key) return;
-				clearRepeat();
-				const volumeAction = getVolumeAction(e.key);
-				if (!volumeAction) return;
-				volumeAction();
-				this.heldKey = e.key;
-				this.repeatTimer = setTimeout(() => {
-					this.repeatInterval = setInterval(() => {
-						if (this.heldKey === e.key) volumeAction();
-					}, get(inputRepeatDelay));
-				}, get(inputInitialDelay));
+				setupRepeat(e.key, volumeAction);
 				return;
 			}
-			// Handle confirm keys (Enter/Space) with real keyup
-			if (confirmKeys.includes(e.key)) {
+			// Confirm keys (with keyup)
+			if (CONFIRM_KEYS.includes(e.key)) {
 				e.preventDefault();
-				if (e.repeat) return;
 				if (this.confirmKeyHeld) return;
 				this.confirmKeyHeld = true;
 				this.emit('confirmDown');
 				return;
 			}
-			// Handle other keys normally (no repeat)
-			if (e.repeat) return;
-			switch (e.key) {
-				case 'Escape':
-				case 'Backspace':
-					e.preventDefault();
-					this.emit('back');
-					break;
+			// Back keys (single press)
+			if (e.key === 'Escape' || e.key === 'Backspace') {
+				e.preventDefault();
+				this.emit('back');
 			}
 		};
+
 		this.keyupHandler = (e: KeyboardEvent) => {
-			if ((arrowKeys.includes(e.key) || volumeKeys.includes(e.key)) && this.heldKey === e.key) clearRepeat();
-			// Handle confirm key release
-			if (confirmKeys.includes(e.key) && this.confirmKeyHeld) {
+			if (this.heldKey === e.key) clearRepeat();
+			if (CONFIRM_KEYS.includes(e.key) && this.confirmKeyHeld) {
 				this.confirmKeyHeld = false;
 				this.emit('confirmUp');
 			}
@@ -138,15 +98,10 @@ class KeyboardManager {
 			window.removeEventListener('keyup', this.keyupHandler);
 			this.keyupHandler = null;
 		}
-		// Clear any active repeats
-		if (this.repeatTimer) {
-			clearTimeout(this.repeatTimer);
-			this.repeatTimer = null;
-		}
-		if (this.repeatInterval) {
-			clearInterval(this.repeatInterval);
-			this.repeatInterval = null;
-		}
+		if (this.repeatTimer) clearTimeout(this.repeatTimer);
+		if (this.repeatInterval) clearInterval(this.repeatInterval);
+		this.repeatTimer = null;
+		this.repeatInterval = null;
 		this.heldKey = null;
 		this.confirmKeyHeld = false;
 	}
