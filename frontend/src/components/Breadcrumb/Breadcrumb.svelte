@@ -11,16 +11,6 @@
 	let active = $derived($activeArea === areaID);
 	let maxIndex = $derived(items.length - 2); // Last item (current) is not selectable
 
-	// Reset to last selectable item when entering area
-	$effect(() => {
-		if (active && maxIndex >= 0) selectedIndex = maxIndex;
-	});
-
-	// Keep selectedIndex within bounds when items change
-	$effect(() => {
-		if (maxIndex >= 0 && selectedIndex > maxIndex) selectedIndex = maxIndex;
-	});
-
 	const areaHandlers = {
 		left: () => {
 			if (selectedIndex > 0) {
@@ -49,6 +39,9 @@
 		},
 		confirmCancel: () => {},
 		back: () => onBack?.(),
+		onActivate: () => {
+			selectedIndex = Math.max(0, items.length - 2);
+		},
 	};
 
 	onMount(() => {

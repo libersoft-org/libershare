@@ -12,6 +12,7 @@ export type AreaHandlers = {
 	confirmUp?: () => void;
 	confirmCancel?: () => void;
 	back?: () => void;
+	onActivate?: () => void;
 };
 // Stores
 export const areaLayout = writable<Record<string, Position>>({});
@@ -49,7 +50,11 @@ export function useArea(areaID: string, handlers: AreaHandlers): () => void {
 // Activation
 export function activateArea(areaID: string): void {
 	const layout = get(areaLayout);
-	if (areaID in layout) activeArea.set(areaID);
+	if (areaID in layout) {
+		activeArea.set(areaID);
+		const handlers = areaHandlers.get(areaID);
+		handlers?.onActivate?.();
+	}
 }
 
 // Navigation
@@ -60,7 +65,7 @@ export function areaNavigate(direction: Direction): boolean {
 	const currentPos = layout[current];
 	const target = findAreaInDirection(layout, currentPos, direction);
 	if (target) {
-		activeArea.set(target);
+		activateArea(target);
 		return true;
 	}
 	return false;
