@@ -36,7 +36,8 @@
 	},
 	"settings": {
 		"title": "Nastavení",
-		"language": "Jazyk"
+		"language": "Jazyk",
+		"audio": "Zvukové efekty"
 	},
 	"about": {
 		"title": "O aplikaci",

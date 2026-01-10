@@ -36,7 +36,8 @@
 	},
 	"settings": {
 		"title": "Settings",
-		"language": "Language"
+		"language": "Language",
+		"audio": "Sound effects"
 	},
 	"about": {
 		"title": "About",

@@ -1,4 +1,5 @@
 import { writable, get } from 'svelte/store';
+import { play } from './audio.ts';
 // Types
 export type Position = { x: number; y: number };
 export type Direction = 'up' | 'down' | 'left' | 'right';
@@ -130,6 +131,7 @@ export function emit(action: InputAction): void {
 	if (action === 'confirmUp') {
 		if (!confirmActive) return;
 		confirmActive = false;
+		play('confirm');
 		handlers.confirmUp?.();
 		return;
 	}
@@ -143,6 +145,7 @@ export function emit(action: InputAction): void {
 			confirmActive = false;
 			handlers.confirmCancel?.();
 		}
+		play('back');
 		handlers.back?.();
 		return;
 	}
@@ -156,4 +159,5 @@ export function emit(action: InputAction): void {
 		const handled = directionHandler();
 		if (!handled) areaNavigate(action as Direction);
 	} else areaNavigate(action as Direction);
+	play('move');
 }

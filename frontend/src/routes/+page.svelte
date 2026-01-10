@@ -10,11 +10,13 @@
 	import { startInput } from '../scripts/input.ts';
 	import { getAPILocal } from '../scripts/api.ts';
 	import { setAreaPosition, activateArea } from '../scripts/areas.ts';
+	import { initAudio, play } from '../scripts/audio.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	let contentElement: HTMLElement;
 
 	function handleConfirm() {
 		if ($confirmDialog.action && $confirmDialog.action !== 'back') {
+			play('exit');
 			const dialogConfig = $confirmDialogs[$confirmDialog.action as 'restart' | 'shutdown' | 'quit'];
 			if (dialogConfig) getAPILocal(dialogConfig.apiAction);
 		}
@@ -33,6 +35,8 @@
 		setContentElement(contentElement);
 		startInput();
 		activateArea('content');
+		initAudio();
+		play('welcome');
 	});
 </script>
 

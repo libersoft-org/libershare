@@ -1,14 +1,17 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
+	import { audioEnabled } from '../../scripts/settings.ts';
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import SettingsLanguage from './SettingsLanguage.svelte';
+	import SettingsAudio from './SettingsAudio.svelte';
 	interface Props {
 		areaID: string;
 		onBack?: () => void;
 	}
 	let { areaID, onBack }: Props = $props();
 	let showLanguageDialog = $state(false);
+	let showAudioDialog = $state(false);
 
 	function openLanguageDialog() {
 		showLanguageDialog = true;
@@ -16,6 +19,14 @@
 
 	function closeLanguageDialog() {
 		showLanguageDialog = false;
+	}
+
+	function openAudioDialog() {
+		showAudioDialog = true;
+	}
+
+	function closeAudioDialog() {
+		showAudioDialog = false;
 	}
 </script>
 
@@ -32,10 +43,13 @@
 
 {#if showLanguageDialog}
 	<SettingsLanguage {areaID} onBack={closeLanguageDialog} />
+{:else if showAudioDialog}
+	<SettingsAudio {areaID} onBack={closeAudioDialog} />
 {:else}
 	<div class="settings">
 		<ButtonsGroup {areaID} {onBack}>
 			<Button label={$t.settings?.language} onConfirm={openLanguageDialog} />
+			<Button label="{$t.settings?.audio}: {$audioEnabled ? $t.common?.yes : $t.common?.no}" onConfirm={openAudioDialog} />
 			<Button label={$t.common?.back} onConfirm={onBack} />
 		</ButtonsGroup>
 	</div>
