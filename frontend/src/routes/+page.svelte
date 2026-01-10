@@ -28,7 +28,8 @@
 	onMount(() => {
 		// Setup area layout
 		setAreaPosition('header', { x: 0, y: 0 });
-		setAreaPosition('content', { x: 0, y: 1 });
+		setAreaPosition('breadcrumb', { x: 0, y: 1 });
+		setAreaPosition('content', { x: 0, y: 2 });
 		setContentElement(contentElement);
 		startInput();
 		activateArea('content');
@@ -55,7 +56,7 @@
 
 <div class="page">
 	<Header areaID="header" {onBack} />
-	<Breadcrumb items={$breadcrumbItems} />
+	<Breadcrumb areaID="breadcrumb" items={$breadcrumbItems} {onBack} />
 	<div class="content" bind:this={contentElement}>
 		{#if $confirmDialog.visible && $confirmDialog.action && $confirmDialog.action !== 'back'}
 			{@const dialogConfig = $confirmDialogs[$confirmDialog.action as 'restart' | 'shutdown' | 'quit']}

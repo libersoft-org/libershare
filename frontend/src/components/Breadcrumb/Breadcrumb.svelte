@@ -1,8 +1,57 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { useArea, activeArea } from '../../scripts/areas.ts';
 	interface Props {
+		areaID: string;
 		items: string[];
+		onBack?: () => void;
 	}
-	let { items }: Props = $props();
+	let { areaID, items, onBack }: Props = $props();
+	let selectedIndex = $state(0);
+	let active = $derived($activeArea === areaID);
+	let maxIndex = $derived(items.length - 2); // Last item (current) is not selectable
+
+	// Reset to last selectable item when entering area
+	$effect(() => {
+		if (active && maxIndex >= 0) selectedIndex = maxIndex;
+	});
+
+	// Keep selectedIndex within bounds when items change
+	$effect(() => {
+		if (maxIndex >= 0 && selectedIndex > maxIndex) selectedIndex = maxIndex;
+	});
+
+	const areaHandlers = {
+		left: () => {
+			if (selectedIndex > 0) {
+				selectedIndex--;
+				return true;
+			}
+			return false;
+		},
+		right: () => {
+			if (selectedIndex < maxIndex) {
+				selectedIndex++;
+				return true;
+			}
+			return false;
+		},
+		up: () => false,
+		down: () => false,
+		confirmDown: () => {},
+		confirmUp: () => {
+			// Navigate to the selected breadcrumb level
+			const stepsBack = items.length - 1 - selectedIndex;
+			for (let i = 0; i < stepsBack; i++) onBack?.();
+		},
+		confirmCancel: () => {},
+		back: () => onBack?.(),
+	};
+
+	onMount(() => {
+		const unregister = useArea(areaID, areaHandlers);
+		return unregister;
+	});
 </script>
 
 <style>
@@ -15,17 +64,24 @@
 		box-sizing: border-box;
 		display: flex;
 		align-items: center;
-		gap: 2vh;
+		gap: 1vh;
 		border-bottom: 0.2vh solid var(--secondary-softer-background);
 	}
 
 	.item {
 		color: var(--disabled-foreground);
+		padding: 0.2vh 0.8vh;
+		border-radius: 1vh;
 	}
 
 	.item.current {
 		color: var(--primary-foreground);
 		font-weight: bold;
+	}
+
+	.item.selected {
+		background-color: var(--primary-foreground);
+		color: var(--secondary-background);
 	}
 
 	.separator {
@@ -38,6 +94,6 @@
 		{#if index > 0}
 			<span class="separator">&gt;</span>
 		{/if}
-		<span class="item" class:current={index === items.length - 1}>{item}</span>
+		<span class="item" class:current={index === items.length - 1} class:selected={active && selectedIndex === index}>{item}</span>
 	{/each}
 </div>
