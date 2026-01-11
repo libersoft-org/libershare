@@ -40,10 +40,6 @@
 		gap: 1vh;
 		margin-top: 2vh;
 	}
-
-	.buttons {
-		margin-top: 2vh;
-	}
 </style>
 
 <Dialog title={productName}>

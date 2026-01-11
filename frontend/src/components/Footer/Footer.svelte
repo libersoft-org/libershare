@@ -128,7 +128,8 @@
 	<div class="items" class:right={$footerPosition === 'right'}>
 		{#each displayWidgets as widget, i}
 			{#if i > 0}<Separator />{/if}
-			<svelte:component this={widget.component} {...widget.props?.()} />
+			{@const Component = widget.component as unknown as typeof import('svelte').SvelteComponent<any>}
+			<Component {...widget.props?.()} />
 		{/each}
 	</div>
 </div>

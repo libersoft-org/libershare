@@ -22,7 +22,7 @@
 	let isAPressed = $state(false);
 	let buttons: { onConfirm?: () => void }[] = [];
 	let active = $derived($activeArea === areaID);
-	let itemsElement: HTMLElement;
+	let itemsElement = $state<HTMLElement | null>(null);
 	let translateX = $state(0);
 
 	setContext<ButtonsGroupContext>('buttonsGroup', {
