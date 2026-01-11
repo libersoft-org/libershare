@@ -28,14 +28,49 @@ export function decreaseVolume(): void {
 	volume.update(v => Math.max(0, v - 1));
 }
 
+// Footer visibility settings
+const storedFooterVisible = getStorageValue<boolean>('footerVisible', true);
+export const footerVisible = writable(storedFooterVisible);
+
+export function setFooterVisible(visible: boolean): void {
+	footerVisible.set(visible);
+	setStorageValue('footerVisible', visible);
+}
+
 // Footer position settings
-export type FooterPosition = 'left' | 'right';
+export type FooterPosition = 'left' | 'center' | 'right';
 const storedFooterPosition = getStorageValue<FooterPosition>('footerPosition', 'right');
 export const footerPosition = writable(storedFooterPosition);
 
 export function setFooterPosition(position: FooterPosition): void {
 	footerPosition.set(position);
 	setStorageValue('footerPosition', position);
+}
+
+// Footer widget visibility settings
+export type FooterWidget = 'version' | 'download' | 'upload' | 'cpu' | 'ram' | 'storage' | 'volume' | 'clock';
+export const footerWidgets: FooterWidget[] = ['version', 'download', 'upload', 'cpu', 'ram', 'storage', 'volume', 'clock'];
+
+const defaultWidgetVisibility: Record<FooterWidget, boolean> = {
+	version: true,
+	download: true,
+	upload: true,
+	cpu: true,
+	ram: true,
+	storage: true,
+	volume: true,
+	clock: true,
+};
+
+const storedWidgetVisibility = getStorageValue<Record<FooterWidget, boolean>>('footerWidgetVisibility', defaultWidgetVisibility);
+export const footerWidgetVisibility = writable(storedWidgetVisibility);
+
+export function setFooterWidgetVisibility(widget: FooterWidget, visible: boolean): void {
+	footerWidgetVisibility.update(current => {
+		const updated = { ...current, [widget]: visible };
+		setStorageValue('footerWidgetVisibility', updated);
+		return updated;
+	});
 }
 
 export function setAudioEnabled(enabled: boolean): void {

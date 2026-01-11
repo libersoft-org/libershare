@@ -91,23 +91,25 @@
 							return false;
 						},
 					};
-		const unregister = useArea(areaID, {
-			...handlers,
-			confirmDown: () => {
-				isAPressed = true;
-			},
-			confirmUp: () => {
-				isAPressed = false;
-				buttons[selectedIndex]?.onConfirm?.();
-			},
-			confirmCancel: () => {
-				isAPressed = false;
-			},
-			back: () => onBack?.(),
+		// Use requestAnimationFrame to ensure this runs after any parent $effect cleanup
+		requestAnimationFrame(() => {
+			useArea(areaID, {
+				...handlers,
+				confirmDown: () => {
+					isAPressed = true;
+				},
+				confirmUp: () => {
+					isAPressed = false;
+					buttons[selectedIndex]?.onConfirm?.();
+				},
+				confirmCancel: () => {
+					isAPressed = false;
+				},
+				back: () => onBack?.(),
+			});
+			activateArea(areaID);
 		});
-		activateArea(areaID);
 		updateTranslateX();
-		return unregister;
 	});
 </script>
 

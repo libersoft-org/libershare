@@ -1,31 +1,67 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
 	import { productVersion } from '../../scripts/app.ts';
-	import { volume, footerPosition } from '../../scripts/settings.ts';
+	import { volume, footerPosition, footerWidgetVisibility, type FooterWidget } from '../../scripts/settings.ts';
 	import Item from './FooterItem.svelte';
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
 
-	const widgets = [
-		{ component: Item, props: () => ({ topLabel: $t.common?.version, bottomLabel: productVersion, alt: $t.common?.version }) },
+	type Widget = {
+		id?: FooterWidget;
+		component: typeof Item | typeof Separator | typeof Bar | typeof Clock;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		props?: () => Record<string, any>;
+	};
+
+	const allWidgets: Widget[] = [
+		{ id: 'version', component: Item, props: () => ({ topLabel: $t.common?.version, bottomLabel: productVersion, alt: $t.common?.version }) },
 		{ component: Separator },
-		{ component: Item, props: () => ({ icon: 'img/download.svg', topLabel: '12.5 MB/s', alt: $t.common?.download }) },
+		{ id: 'download', component: Item, props: () => ({ icon: 'img/download.svg', topLabel: '12.5 MB/s', alt: $t.common?.download }) },
 		{ component: Separator },
-		{ component: Item, props: () => ({ icon: 'img/upload.svg', topLabel: '3.2 MB/s', alt: $t.common?.upload }) },
+		{ id: 'upload', component: Item, props: () => ({ icon: 'img/upload.svg', topLabel: '3.2 MB/s', alt: $t.common?.upload }) },
 		{ component: Separator },
-		{ component: Bar, props: () => ({ topLabel: 'CPU', progress: 12 }) },
+		{ id: 'cpu', component: Bar, props: () => ({ topLabel: 'CPU', progress: 12 }) },
 		{ component: Separator },
-		{ component: Bar, props: () => ({ topLabel: 'RAM - 12.1 / 32 GB', progress: 32 }) },
+		{ id: 'ram', component: Bar, props: () => ({ topLabel: 'RAM - 12.1 / 32 GB', progress: 32 }) },
 		{ component: Separator },
-		{ component: Bar, props: () => ({ topLabel: 'STORAGE - 0.88 / 2 TB', progress: 44.1 }) },
+		{ id: 'storage', component: Bar, props: () => ({ topLabel: 'STORAGE - 0.88 / 2 TB', progress: 44.1 }) },
 		{ component: Separator },
-		{ component: Item, props: () => ({ icon: 'img/volume.svg', topLabel: `${$volume}%`, alt: $t.common?.volume }) },
+		{ id: 'volume', component: Item, props: () => ({ icon: 'img/volume.svg', topLabel: `${$volume}%`, alt: $t.common?.volume }) },
 		{ component: Separator },
-		{ component: Clock },
+		{ id: 'clock', component: Clock },
 	];
 
-	let displayWidgets = $derived($footerPosition === 'right' ? [...widgets].reverse() : widgets);
+	// Filter out disabled widgets and their adjacent separators
+	let visibleWidgets = $derived.by(() => {
+		const result: Widget[] = [];
+		let lastWasWidget = false;
+
+		for (const widget of allWidgets) {
+			if (widget.id) {
+				// It's a real widget - check visibility
+				if ($footerWidgetVisibility[widget.id]) {
+					result.push(widget);
+					lastWasWidget = true;
+				}
+			} else {
+				// It's a separator - only add if previous was a visible widget
+				if (lastWasWidget) {
+					result.push(widget);
+					lastWasWidget = false;
+				}
+			}
+		}
+
+		// Remove trailing separator if present
+		if (result.length > 0 && !result[result.length - 1].id) {
+			result.pop();
+		}
+
+		return result;
+	});
+
+	let displayWidgets = $derived($footerPosition === 'right' ? [...visibleWidgets].reverse() : visibleWidgets);
 </script>
 
 <style>
@@ -41,6 +77,10 @@
 
 	.footer.left {
 		justify-content: flex-start;
+	}
+
+	.footer.center {
+		justify-content: center;
 	}
 
 	.footer.right {
@@ -63,7 +103,7 @@
 	}
 </style>
 
-<div class="footer" class:left={$footerPosition === 'left'} class:right={$footerPosition === 'right'}>
+<div class="footer" class:left={$footerPosition === 'left'} class:center={$footerPosition === 'center'} class:right={$footerPosition === 'right'}>
 	<div class="items" class:right={$footerPosition === 'right'}>
 		{#each displayWidgets as widget}
 			<svelte:component this={widget.component} {...widget.props?.()} />

@@ -46,10 +46,23 @@
 			"medium": "Střední",
 			"large": "Velký"
 		},
+		"footer": "Patička",
+		"footerVisible": "Zobrazovat patičku",
 		"footerPosition": "Pozice patičky",
 		"footerPositions": {
 			"left": "Vlevo",
+			"center": "Uprostřed",
 			"right": "Vpravo"
+		},
+		"footerWidgets": {
+			"version": "Verze",
+			"download": "Rychlost stahování",
+			"upload": "Rychlost odesílání",
+			"cpu": "Využití CPU",
+			"ram": "Využití RAM",
+			"storage": "Využití úložiště",
+			"volume": "Hlasitost",
+			"clock": "Hodiny"
 		}
 	},
 	"about": {

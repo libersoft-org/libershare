@@ -46,10 +46,23 @@
 			"medium": "Medium",
 			"large": "Large"
 		},
+		"footer": "Footer",
+		"footerVisible": "Show footer",
 		"footerPosition": "Footer position",
 		"footerPositions": {
 			"left": "Left",
+			"center": "Center",
 			"right": "Right"
+		},
+		"footerWidgets": {
+			"version": "Version",
+			"download": "Download speed",
+			"upload": "Upload speed",
+			"cpu": "CPU usage",
+			"ram": "RAM usage",
+			"storage": "Storage usage",
+			"volume": "Volume",
+			"clock": "Clock"
 		}
 	},
 	"about": {

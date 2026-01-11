@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
-	import { audioEnabled, cursorSize, footerPosition } from '../../scripts/settings.ts';
+	import { audioEnabled, cursorSize } from '../../scripts/settings.ts';
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import SettingsLanguage from './SettingsLanguage.svelte';
@@ -75,7 +75,7 @@
 			<Button label={$t.settings?.language} onConfirm={openLanguageDialog} />
 			<Button label="{$t.settings?.audio}: {$audioEnabled ? $t.common?.yes : $t.common?.no}" onConfirm={openAudioDialog} />
 			<Button label="{$t.settings?.cursorSize}: {$t.settings?.cursorSizes?.[$cursorSize]}" onConfirm={openCursorDialog} />
-			<Button label="{$t.settings?.footerPosition}: {$t.settings?.footerPositions?.[$footerPosition]}" onConfirm={openFooterDialog} />
+			<Button label={$t.settings?.footer} onConfirm={openFooterDialog} />
 			<Button label={$t.common?.back} onConfirm={onBack} />
 		</ButtonsGroup>
 	</div>

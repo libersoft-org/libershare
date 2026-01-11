@@ -12,7 +12,7 @@
 	import { setAreaPosition, activateArea } from '../scripts/areas.ts';
 	import { initAudio, play } from '../scripts/audio.ts';
 	import { cursorVisible } from '../scripts/mouse.ts';
-	import { cursorSize, cursorSizes } from '../scripts/settings.ts';
+	import { cursorSize, cursorSizes, footerVisible } from '../scripts/settings.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	let contentElement: HTMLElement;
 	let cursorX = $state(0);
@@ -84,5 +84,7 @@
 			<Menu areaID="content" title={$currentTitle} items={$currentItems.map(i => ({ id: i.id, label: i.label }))} orientation={$currentOrientation} selectedId={$selectedId} onselect={navigate} {onBack} />
 		{/if}
 	</div>
-	<Footer />
+	{#if $footerVisible}
+		<Footer />
+	{/if}
 </div>
