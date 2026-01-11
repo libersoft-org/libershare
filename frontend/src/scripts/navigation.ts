@@ -58,6 +58,15 @@ export function hideConfirmDialog(): void {
 	confirmDialogStore.set({ visible: false, action: null });
 }
 
+// Global navigation store - set by createNavigation, used by components
+let globalNavigate: ((id: string) => void) | null = null;
+
+export function navigateTo(id: string): void {
+	if (globalNavigate) {
+		globalNavigate(id);
+	}
+}
+
 // Helper to find menu item by path of IDs
 function findItemByPath(structure: MenuStructure, pathIds: string[]): MenuItem | null {
 	let items: MenuItem[] = structure.items;
@@ -147,6 +156,9 @@ export function createNavigation() {
 		selectedId.set(undefined);
 		resetBreadcrumb();
 	}
+
+	// Set global navigate function so components can use navigateTo()
+	globalNavigate = navigate;
 
 	return {
 		path: pathIDs,

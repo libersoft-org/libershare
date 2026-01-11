@@ -1,34 +1,28 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { navigateTo } from '../../scripts/navigation.ts';
 	import { footerVisible, setFooterVisible, footerPosition, footerWidgetVisibility, setFooterWidgetVisibility } from '../../scripts/settings.ts';
 	import { footerWidgets } from '../../scripts/footerWidgets.ts';
 	import { useArea, activeArea } from '../../scripts/areas.ts';
+	import MenuTitle from '../Menu/MenuTitle.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Switch from '../Switch/Switch.svelte';
-	import SettingsFooterPosition from './SettingsFooterPosition.svelte';
 	interface Props {
 		areaID: string;
 		onBack?: () => void;
 	}
 	let { areaID, onBack }: Props = $props();
-	let showPositionDialog = $state(false);
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
 	// 0 = visibility switch, 1 = position button, 2+ = widget rows, last = back button
 	const totalItems = 3 + footerWidgets.length;
 
 	function openPositionDialog() {
-		pushBreadcrumb($t.settings?.footerPosition ?? '');
-		showPositionDialog = true;
+		navigateTo('footer-position');
 	}
 
-	function closePositionDialog() {
-		popBreadcrumb();
-		showPositionDialog = false;
-	}
-
-	function registerHandlers() {
+	onMount(() => {
 		return useArea(areaID, {
 			up: () => {
 				if (selectedIndex > 0) {
@@ -94,14 +88,6 @@
 			confirmCancel: () => {},
 			back: () => onBack?.(),
 		});
-	}
-
-	// Register handlers when not showing position dialog
-	$effect(() => {
-		if (!showPositionDialog) {
-			const unregister = registerHandlers();
-			return unregister;
-		}
 	});
 
 	let rowElements: HTMLElement[] = $state([]);
@@ -181,29 +167,27 @@
 	}
 </style>
 
-{#if showPositionDialog}
-	<SettingsFooterPosition {areaID} onBack={closePositionDialog} />
-{:else}
-	<div class="footer">
-		<div class="content">
-			<div class="table">
-				<div class="row odd" class:selected={active && selectedIndex === 0} bind:this={rowElements[0]}>
-					<span class="name">{$t.settings?.footerVisible}</span>
-					<Switch checked={$footerVisible} />
-				</div>
-			</div>
-			<Button label="{$t.settings?.footerPosition}: {$t.settings?.footerPositions?.[$footerPosition]}" selected={active && selectedIndex === 1} onConfirm={openPositionDialog} bind:this={rowElements[1]} />
-			<div class="table">
-				{#each footerWidgets as widget, index}
-					<div class="row" class:odd={index % 2 === 0} class:even={index % 2 === 1} class:selected={active && selectedIndex === index + 2} bind:this={rowElements[index + 2]}>
-						<div class="name">{$t.settings?.footerWidgets?.[widget]}</div>
-						<Switch checked={$footerWidgetVisibility[widget]} />
-					</div>
-				{/each}
-			</div>
-			<div class="back" bind:this={rowElements[totalItems - 1]}>
-				<Button label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
+<div class="footer">
+	<div class="content">
+		<div class="table">
+			<div class="row odd" class:selected={active && selectedIndex === 0} bind:this={rowElements[0]}>
+				<span class="name">{$t.settings?.footerVisible}</span>
+				<Switch checked={$footerVisible} />
 			</div>
 		</div>
+		<div bind:this={rowElements[1]}>
+			<Button label="{$t.settings?.footerPosition}: {$t.settings?.footerPositions?.[$footerPosition]}" selected={active && selectedIndex === 1} onConfirm={openPositionDialog} />
+		</div>
+		<div class="table">
+			{#each footerWidgets as widget, index}
+				<div class="row" class:odd={index % 2 === 0} class:even={index % 2 === 1} class:selected={active && selectedIndex === index + 2} bind:this={rowElements[index + 2]}>
+					<div class="name">{$t.settings?.footerWidgets?.[widget]}</div>
+					<Switch checked={$footerWidgetVisibility[widget]} />
+				</div>
+			{/each}
+		</div>
+		<div class="back" bind:this={rowElements[totalItems - 1]}>
+			<Button label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
+		</div>
 	</div>
-{/if}
+</div>

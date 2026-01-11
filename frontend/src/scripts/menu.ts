@@ -9,6 +9,7 @@ import SettingsLanguage from '../components/Settings/SettingsLanguage.svelte';
 import SettingsAudio from '../components/Settings/SettingsAudio.svelte';
 import SettingsCursor from '../components/Settings/SettingsCursor.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
+import SettingsFooterPosition from '../components/Settings/SettingsFooterPosition.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
 	id: string;
@@ -31,9 +32,27 @@ export const menuStructure = derived(t, () => ({
 			id: 'storage',
 			label: tt('storage.title'),
 			submenu: [
-				{ id: 'video', label: 'Video', component: Items, props: { category: 'video' } },
-				{ id: 'software', label: 'Software', component: Items, props: { category: 'software' } },
-				{ id: 'back', label: tt('common.back'), action: 'back' as const },
+				{
+					id: 'video',
+					label: 'Video',
+					component: Items,
+					props: {
+						category: 'video',
+					},
+				},
+				{
+					id: 'software',
+					label: 'Software',
+					component: Items,
+					props: {
+						category: 'software',
+					},
+				},
+				{
+					id: 'back',
+					label: tt('common.back'),
+					action: 'back' as const,
+				},
 			],
 		},
 		{
@@ -46,11 +65,43 @@ export const menuStructure = derived(t, () => ({
 			label: tt('settings.title'),
 			orientation: 'horizontal' as const,
 			submenu: [
-				{ id: 'language', label: tt('settings.language'), component: SettingsLanguage },
-				{ id: 'audio', label: tt('settings.audio'), component: SettingsAudio },
-				{ id: 'cursor', label: tt('settings.cursorSize'), component: SettingsCursor },
-				{ id: 'footer', label: tt('settings.footer'), component: SettingsFooter },
-				{ id: 'back', label: tt('common.back'), action: 'back' as const },
+				{
+					id: 'language',
+					label: tt('settings.language'),
+					component: SettingsLanguage,
+				},
+				{
+					id: 'audio',
+					label: tt('settings.audio'),
+					component: SettingsAudio,
+				},
+				{
+					id: 'cursor',
+					label: tt('settings.cursorSize'),
+					component: SettingsCursor,
+				},
+				{
+					id: 'footer',
+					label: tt('settings.footer'),
+					component: SettingsFooter,
+					submenu: [
+						{
+							id: 'footer-position',
+							label: tt('settings.footerPosition'),
+							component: SettingsFooterPosition,
+						},
+						{
+							id: 'back',
+							label: tt('common.back'),
+							action: 'back' as const,
+						},
+					],
+				},
+				{
+					id: 'back',
+					label: tt('common.back'),
+					action: 'back' as const,
+				},
 			],
 		},
 		{
@@ -61,12 +112,28 @@ export const menuStructure = derived(t, () => ({
 		{
 			id: 'exit',
 			label: tt('exit.title'),
-			orientation: 'vertical' as const,
+			orientation: 'horizontal' as const,
 			submenu: [
-				{ id: 'restart', label: tt('exit.restart.title'), action: 'restart' as const },
-				{ id: 'shutdown', label: tt('exit.shutdown.title'), action: 'shutdown' as const },
-				{ id: 'quit', label: tt('exit.quitApplication.title'), action: 'quit' as const },
-				{ id: 'back', label: tt('common.back'), action: 'back' as const },
+				{
+					id: 'restart',
+					label: tt('exit.restart.title'),
+					action: 'restart' as const,
+				},
+				{
+					id: 'shutdown',
+					label: tt('exit.shutdown.title'),
+					action: 'shutdown' as const,
+				},
+				{
+					id: 'quit',
+					label: tt('exit.quitApplication.title'),
+					action: 'quit' as const,
+				},
+				{
+					id: 'back',
+					label: tt('common.back'),
+					action: 'back' as const,
+				},
 			],
 		},
 	],
