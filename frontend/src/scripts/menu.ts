@@ -5,7 +5,10 @@ import { t, tt } from './language.ts';
 import Items from '../components/List/List.svelte';
 import About from '../components/About/About.svelte';
 import Download from '../components/Download/Download.svelte';
-import Settings from '../components/Settings/Settings.svelte';
+import SettingsLanguage from '../components/Settings/SettingsLanguage.svelte';
+import SettingsAudio from '../components/Settings/SettingsAudio.svelte';
+import SettingsCursor from '../components/Settings/SettingsCursor.svelte';
+import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
 import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
@@ -42,7 +45,14 @@ export const menuStructure = derived(t, () => ({
 		{
 			id: 'settings',
 			label: tt('settings.title'),
-			component: Settings,
+			orientation: 'horizontal' as const,
+			submenu: [
+				{ id: 'language', label: tt('settings.language'), component: SettingsLanguage },
+				{ id: 'audio', label: tt('settings.audio'), component: SettingsAudio },
+				{ id: 'cursor', label: tt('settings.cursorSize'), component: SettingsCursor },
+				{ id: 'footer', label: tt('settings.footer'), component: SettingsFooter },
+				{ id: 'back', label: tt('common.back'), action: 'back' as const },
+			],
 		},
 		{
 			id: 'about',
