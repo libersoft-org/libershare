@@ -12,7 +12,7 @@
 	.footer {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		justify-content: flex-end;
 		background-color: var(--secondary-background);
 		color: var(--primary-foreground);
 		padding: 1vh 1.5vh;
@@ -20,15 +20,14 @@
 		border-block: 0.2vh solid var(--secondary-softer-background);
 	}
 
-	.right {
+	.items {
 		display: flex;
 		align-items: center;
 	}
 </style>
 
 <div class="footer">
-	<div class="left"></div>
-	<div class="right">
+	<div class="items">
 		<Item topLabel={$t.common?.version} bottomLabel={productVersion} alt={$t.common?.version} />
 		<Separator />
 		<Item icon="img/download.svg" topLabel="12.5 MB/s" alt={$t.common?.download} />
