@@ -57,9 +57,9 @@
 		"footerWidgets": {
 			"download": "Rychlost stahování",
 			"upload": "Rychlost odesílání",
-			"cpu": "Využití CPU",
-			"ram": "Využití RAM",
-			"storage": "Využití úložiště",
+			"cpu": "CPU",
+			"ram": "RAM",
+			"storage": "Úložiště",
 			"volume": "Hlasitost",
 			"clock": "Hodiny"
 		}

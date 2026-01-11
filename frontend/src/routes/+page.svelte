@@ -5,7 +5,8 @@
 	import Menu from '../components/Menu/Menu.svelte';
 	import Footer from '../components/Footer/Footer.svelte';
 	import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
-	import { createNavigation, breadcrumbItems, setContentElement, confirmDialog, confirmDialogs, hideConfirmDialog } from '../scripts/navigation.ts';
+	import { createNavigation, breadcrumbItems, setContentElement, confirmDialog, hideConfirmDialog } from '../scripts/navigation.ts';
+	import { confirmDialogs } from '../scripts/menu.ts';
 	import { productName } from '../scripts/app.ts';
 	import { startInput } from '../scripts/input.ts';
 	import { getAPILocal } from '../scripts/api.ts';

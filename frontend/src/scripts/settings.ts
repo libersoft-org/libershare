@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { getStorageValue, setStorageValue } from './localStorage.ts';
+import { defaultWidgetVisibility, type FooterPosition, type FooterWidget } from './footerWidgets.ts';
 // Audio settings
 const storedAudio = getStorageValue<boolean>('audio', true);
 export const audioEnabled = writable(storedAudio);
@@ -28,6 +29,16 @@ export function decreaseVolume(): void {
 	volume.update(v => Math.max(0, v - 1));
 }
 
+export function setAudioEnabled(enabled: boolean): void {
+	audioEnabled.set(enabled);
+	setStorageValue('audio', enabled);
+}
+
+export function setCursorSize(size: CursorSize): void {
+	cursorSize.set(size);
+	setStorageValue('cursorSize', size);
+}
+
 // Footer visibility settings
 const storedFooterVisible = getStorageValue<boolean>('footerVisible', true);
 export const footerVisible = writable(storedFooterVisible);
@@ -37,8 +48,6 @@ export function setFooterVisible(visible: boolean): void {
 	setStorageValue('footerVisible', visible);
 }
 
-// Footer position settings
-export type FooterPosition = 'left' | 'center' | 'right';
 const storedFooterPosition = getStorageValue<FooterPosition>('footerPosition', 'right');
 export const footerPosition = writable(storedFooterPosition);
 
@@ -46,21 +55,6 @@ export function setFooterPosition(position: FooterPosition): void {
 	footerPosition.set(position);
 	setStorageValue('footerPosition', position);
 }
-
-// Footer widget visibility settings
-export type FooterWidget = 'version' | 'download' | 'upload' | 'cpu' | 'ram' | 'storage' | 'volume' | 'clock';
-export const footerWidgets: FooterWidget[] = ['version', 'download', 'upload', 'cpu', 'ram', 'storage', 'volume', 'clock'];
-
-const defaultWidgetVisibility: Record<FooterWidget, boolean> = {
-	version: false,
-	download: true,
-	upload: true,
-	cpu: false,
-	ram: false,
-	storage: false,
-	volume: true,
-	clock: true,
-};
 
 const storedWidgetVisibility = getStorageValue<Record<FooterWidget, boolean>>('footerWidgetVisibility', defaultWidgetVisibility);
 export const footerWidgetVisibility = writable(storedWidgetVisibility);
@@ -71,14 +65,4 @@ export function setFooterWidgetVisibility(widget: FooterWidget, visible: boolean
 		setStorageValue('footerWidgetVisibility', updated);
 		return updated;
 	});
-}
-
-export function setAudioEnabled(enabled: boolean): void {
-	audioEnabled.set(enabled);
-	setStorageValue('audio', enabled);
-}
-
-export function setCursorSize(size: CursorSize): void {
-	cursorSize.set(size);
-	setStorageValue('cursorSize', size);
 }

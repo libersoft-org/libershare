@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { footerVisible, setFooterVisible, footerPosition, footerWidgets, footerWidgetVisibility, setFooterWidgetVisibility, type FooterWidget } from '../../scripts/settings.ts';
+	import { footerVisible, setFooterVisible, footerPosition, footerWidgetVisibility, setFooterWidgetVisibility } from '../../scripts/settings.ts';
+	import { footerWidgets } from '../../scripts/footerWidgets.ts';
 	import { useArea, activeArea } from '../../scripts/areas.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Switch from '../Switch/Switch.svelte';
@@ -195,7 +196,7 @@
 			<div class="table">
 				{#each footerWidgets as widget, index}
 					<div class="row" class:odd={index % 2 === 0} class:even={index % 2 === 1} class:selected={active && selectedIndex === index + 2} bind:this={rowElements[index + 2]}>
-						<span class="name">{$t.settings?.footerWidgets?.[widget]}</span>
+						<div class="name">{$t.settings?.footerWidgets?.[widget]}</div>
 						<Switch checked={$footerWidgetVisibility[widget]} />
 					</div>
 				{/each}

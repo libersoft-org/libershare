@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
 	import { productVersion } from '../../scripts/app.ts';
-	import { volume, footerPosition, footerWidgetVisibility, type FooterWidget } from '../../scripts/settings.ts';
+	import { volume, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
+	import { type FooterWidget } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
@@ -44,7 +45,7 @@
 			id: 'cpu',
 			component: Bar,
 			props: () => ({
-				topLabel: 'CPU',
+				topLabel: $t.settings?.footerWidgets?.cpu,
 				progress: 12,
 			}),
 		},
@@ -52,7 +53,7 @@
 			id: 'ram',
 			component: Bar,
 			props: () => ({
-				topLabel: 'RAM - 12.1 / 32 GB',
+				topLabel: $t.settings?.footerWidgets?.ram + ' - 12.1 / 32 GB',
 				progress: 32,
 			}),
 		},
@@ -60,7 +61,7 @@
 			id: 'storage',
 			component: Bar,
 			props: () => ({
-				topLabel: 'STORAGE - 0.88 / 2 TB',
+				topLabel: $t.settings?.footerWidgets?.storage + ' - 0.88 / 2 TB',
 				progress: 44.1,
 			}),
 		},

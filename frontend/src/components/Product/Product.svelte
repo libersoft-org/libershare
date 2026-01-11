@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
-	import { pushBackHandler } from '../../scripts/navigation.ts';
+	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { t } from '../../scripts/language.ts';
 	import ProductFile from './ProductFile.svelte';
 	interface Props {

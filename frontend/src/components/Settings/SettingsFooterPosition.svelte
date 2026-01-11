@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
-	import { footerPosition, setFooterPosition, type FooterPosition } from '../../scripts/settings.ts';
+	import { footerPosition, setFooterPosition } from '../../scripts/settings.ts';
+	import { type FooterPosition } from '../../scripts/footerWidgets.ts';
 	import MenuTitle from '../Menu/MenuTitle.svelte';
 	import MenuBar from '../Menu/MenuBar.svelte';
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';

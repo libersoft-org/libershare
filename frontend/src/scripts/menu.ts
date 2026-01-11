@@ -100,5 +100,3 @@ export const confirmDialogs = derived(t, () => ({
 		defaultButton: 'cancel' as const,
 	},
 }));
-
-export { ConfirmDialog };
