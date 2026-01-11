@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
+	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { footerVisible, setFooterVisible, footerPosition, footerWidgets, footerWidgetVisibility, setFooterWidgetVisibility, type FooterWidget } from '../../scripts/settings.ts';
 	import { useArea, activeArea } from '../../scripts/areas.ts';
-	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
-	import Dialog from '../Dialog/Dialog.svelte';
 	import Switch from '../Switch/Switch.svelte';
 	import SettingsFooterPosition from './SettingsFooterPosition.svelte';
 	interface Props {
@@ -15,15 +14,25 @@
 	let showPositionDialog = $state(false);
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
+	// 0 = visibility switch, 1 = position button, 2+ = widget rows, last = back button
+	const totalItems = 3 + footerWidgets.length;
 
-	// 0 = visibility button, 1 = position button, 2+ = widget rows
-	const totalItems = 2 + footerWidgets.length;
+	function openPositionDialog() {
+		pushBreadcrumb($t.settings?.footerPosition ?? '');
+		showPositionDialog = true;
+	}
+
+	function closePositionDialog() {
+		popBreadcrumb();
+		showPositionDialog = false;
+	}
 
 	function registerHandlers() {
 		return useArea(areaID, {
 			up: () => {
 				if (selectedIndex > 0) {
 					selectedIndex--;
+					scrollToSelected();
 					return true;
 				}
 				return false;
@@ -31,6 +40,7 @@
 			down: () => {
 				if (selectedIndex < totalItems - 1) {
 					selectedIndex++;
+					scrollToSelected();
 					return true;
 				}
 				return false;
@@ -42,7 +52,7 @@
 						setFooterVisible(false);
 						return true;
 					}
-				} else if (selectedIndex > 1) {
+				} else if (selectedIndex > 1 && selectedIndex < totalItems - 1) {
 					const widget = footerWidgets[selectedIndex - 2];
 					if ($footerWidgetVisibility[widget]) {
 						setFooterWidgetVisibility(widget, false);
@@ -58,7 +68,7 @@
 						setFooterVisible(true);
 						return true;
 					}
-				} else if (selectedIndex > 1) {
+				} else if (selectedIndex > 1 && selectedIndex < totalItems - 1) {
 					const widget = footerWidgets[selectedIndex - 2];
 					if (!$footerWidgetVisibility[widget]) {
 						setFooterWidgetVisibility(widget, true);
@@ -73,7 +83,10 @@
 					// Toggle footer visibility
 					setFooterVisible(!$footerVisible);
 				} else if (selectedIndex === 1) {
-					showPositionDialog = true;
+					openPositionDialog();
+				} else if (selectedIndex === totalItems - 1) {
+					// Back button
+					onBack?.();
 				} else {
 					// Toggle the widget switch
 					const widget = footerWidgets[selectedIndex - 2];
@@ -95,8 +108,16 @@
 		}
 	});
 
-	function closePositionDialog() {
-		showPositionDialog = false;
+	let rowElements: HTMLElement[] = $state([]);
+
+	function scrollToSelected(): void {
+		const element = rowElements[selectedIndex];
+		if (element) {
+			element.scrollIntoView({
+				behavior: 'smooth',
+				block: 'center',
+			});
+		}
 	}
 </script>
 
@@ -104,18 +125,18 @@
 	.footer-settings {
 		display: flex;
 		flex-direction: column;
-		gap: 2vh;
-		padding: 2vh;
-		min-width: 50vw;
+		height: 100%;
+		overflow: hidden;
 	}
 
-	.position-button {
+	.content {
+		flex: 1;
 		display: flex;
-		justify-content: center;
-	}
-
-	.position-button :global(.button) {
-		min-width: 30vw;
+		flex-direction: column;
+		align-items: center;
+		padding: 2vh;
+		gap: 2vh;
+		overflow-y: auto;
 	}
 
 	.widgets-table {
@@ -124,6 +145,8 @@
 		border: 0.2vh solid var(--secondary-softer-background);
 		border-radius: 1vh;
 		overflow: hidden;
+		width: 100%;
+		max-width: 60vh;
 	}
 
 	.widget-row {
@@ -155,42 +178,35 @@
 		font-size: 2vh;
 		font-weight: 500;
 	}
+
+	.back-button {
+		margin-top: 2vh;
+	}
 </style>
 
 {#if showPositionDialog}
 	<SettingsFooterPosition {areaID} onBack={closePositionDialog} />
 {:else}
-	<Dialog title={$t.settings?.footer}>
-		<div class="footer-settings">
+	<div class="footer-settings">
+		<div class="content">
 			<div class="widgets-table">
-				<div
-					class="widget-row odd"
-					class:selected={active && selectedIndex === 0}
-				>
+				<div class="widget-row odd" class:selected={active && selectedIndex === 0} bind:this={rowElements[0]}>
 					<span class="widget-name">{$t.settings?.footerVisible}</span>
 					<Switch checked={$footerVisible} />
 				</div>
 			</div>
-			<div class="position-button">
-				<Button
-					label="{$t.settings?.footerPosition}: {$t.settings?.footerPositions?.[$footerPosition]}"
-					selected={active && selectedIndex === 1}
-					onConfirm={() => (showPositionDialog = true)}
-				/>
-			</div>
+			<Button label="{$t.settings?.footerPosition}: {$t.settings?.footerPositions?.[$footerPosition]}" selected={active && selectedIndex === 1} onConfirm={openPositionDialog} bind:this={rowElements[1]} />
 			<div class="widgets-table">
 				{#each footerWidgets as widget, index}
-					<div
-						class="widget-row"
-						class:odd={index % 2 === 0}
-						class:even={index % 2 === 1}
-						class:selected={active && selectedIndex === index + 2}
-					>
+					<div class="widget-row" class:odd={index % 2 === 0} class:even={index % 2 === 1} class:selected={active && selectedIndex === index + 2} bind:this={rowElements[index + 2]}>
 						<span class="widget-name">{$t.settings?.footerWidgets?.[widget]}</span>
 						<Switch checked={$footerWidgetVisibility[widget]} />
 					</div>
 				{/each}
 			</div>
+			<div class="back-button" bind:this={rowElements[totalItems - 1]}>
+				<Button label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
+			</div>
 		</div>
-	</Dialog>
+	</div>
 {/if}

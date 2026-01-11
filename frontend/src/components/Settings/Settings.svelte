@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
+	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { audioEnabled, cursorSize } from '../../scripts/settings.ts';
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -18,34 +19,42 @@
 	let showFooterDialog = $state(false);
 
 	function openLanguageDialog() {
+		pushBreadcrumb($t.settings?.language ?? '');
 		showLanguageDialog = true;
 	}
 
 	function closeLanguageDialog() {
+		popBreadcrumb();
 		showLanguageDialog = false;
 	}
 
 	function openAudioDialog() {
+		pushBreadcrumb($t.settings?.audio ?? '');
 		showAudioDialog = true;
 	}
 
 	function closeAudioDialog() {
+		popBreadcrumb();
 		showAudioDialog = false;
 	}
 
 	function openCursorDialog() {
+		pushBreadcrumb($t.settings?.cursorSize ?? '');
 		showCursorDialog = true;
 	}
 
 	function closeCursorDialog() {
+		popBreadcrumb();
 		showCursorDialog = false;
 	}
 
 	function openFooterDialog() {
+		pushBreadcrumb($t.settings?.footer ?? '');
 		showFooterDialog = true;
 	}
 
 	function closeFooterDialog() {
+		popBreadcrumb();
 		showFooterDialog = false;
 	}
 </script>
