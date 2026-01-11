@@ -22,26 +22,33 @@
 
 	.items {
 		display: flex;
+		flex-direction: row-reverse;
 		align-items: center;
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+
+	.items::-webkit-scrollbar {
+		display: none;
 	}
 </style>
 
 <div class="footer">
 	<div class="items">
-		<Item topLabel={$t.common?.version} bottomLabel={productVersion} alt={$t.common?.version} />
-		<Separator />
-		<Item icon="img/download.svg" topLabel="12.5 MB/s" alt={$t.common?.download} />
-		<Separator />
-		<Item icon="img/upload.svg" topLabel="3.2 MB/s" alt={$t.common?.upload} />
-		<Separator />
-		<Bar topLabel="CPU" progress={12} />
-		<Separator />
-		<Bar topLabel="RAM - 12.1 / 32 GB" progress={32} />
-		<Separator />
-		<Bar topLabel="STORAGE - 0.88 / 2 TB" progress={44.1} />
+		<Clock />
 		<Separator />
 		<Item icon="img/volume.svg" topLabel="{$volume}%" alt={$t.common?.volume} />
 		<Separator />
-		<Clock />
+		<Bar topLabel="STORAGE - 0.88 / 2 TB" progress={44.1} />
+		<Separator />
+		<Bar topLabel="RAM - 12.1 / 32 GB" progress={32} />
+		<Separator />
+		<Bar topLabel="CPU" progress={12} />
+		<Separator />
+		<Item icon="img/upload.svg" topLabel="3.2 MB/s" alt={$t.common?.upload} />
+		<Separator />
+		<Item icon="img/download.svg" topLabel="12.5 MB/s" alt={$t.common?.download} />
+		<Separator />
+		<Item topLabel={$t.common?.version} bottomLabel={productVersion} alt={$t.common?.version} />
 	</div>
 </div>

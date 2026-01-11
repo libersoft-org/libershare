@@ -62,7 +62,7 @@ export class GamepadManager {
 		this.handleButtons(buttons);
 		// Direction handling (D-pad + analog stick) with repeat
 		this.handleDirections(buttons, leftStickX, leftStickY, now);
-		// Volume handling (Y = decrease, X/LB = increase) with repeat
+		// Volume handling (Y = decrease, X = increase) with repeat
 		this.handleVolume(buttons, now);
 		this.animationId = requestAnimationFrame(this.poll);
 	};
