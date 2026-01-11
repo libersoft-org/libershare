@@ -62,13 +62,11 @@ export function hideConfirmDialog(): void {
 function findItemByPath(structure: MenuStructure, pathIds: string[]): MenuItem | null {
 	let items: MenuItem[] = structure.items;
 	let item: MenuItem | null = null;
-
 	for (const id of pathIds) {
 		item = items.find((i: MenuItem) => i.id === id) ?? null;
 		if (!item) return null;
 		items = (item.submenu ?? []) as MenuItem[];
 	}
-
 	return item;
 }
 
@@ -81,22 +79,18 @@ function getItemsAtPath(structure: MenuStructure, pathIds: string[]): MenuItem[]
 
 export function createNavigation() {
 	// Store only IDs, not full items
-	const pathIds = writable<string[]>([]);
+	const pathIDs = writable<string[]>([]);
 	const selectedId = writable<string | undefined>(undefined);
 
 	// Derived stores that react to both pathIds and menuStructure changes
-	const currentItems = derived([pathIds, menuStructure], ([$pathIds, $menuStructure]) => getItemsAtPath($menuStructure, $pathIds));
-
-	const currentItem = derived([pathIds, menuStructure], ([$pathIds, $menuStructure]) => ($pathIds.length > 0 ? findItemByPath($menuStructure, $pathIds) : null));
-
+	const currentItems = derived([pathIDs, menuStructure], ([$pathIds, $menuStructure]) => getItemsAtPath($menuStructure, $pathIds));
+	const currentItem = derived([pathIDs, menuStructure], ([$pathIds, $menuStructure]) => ($pathIds.length > 0 ? findItemByPath($menuStructure, $pathIds) : null));
 	const currentComponent = derived(currentItem, $item => ($item && $item.component ? $item : null));
-
 	const currentTitle = derived([currentItem, menuStructure], ([$item, $menuStructure]) => ($item ? $item.label : $menuStructure.title));
-
 	const currentOrientation = derived(currentItem, $item => $item?.orientation ?? 'horizontal');
 
 	// Update breadcrumb when path or language changes
-	derived([pathIds, menuStructure], ([$pathIds, $menuStructure]) => {
+	derived([pathIDs, menuStructure], ([$pathIds, $menuStructure]) => {
 		const labels: string[] = [];
 		let items: MenuItem[] = $menuStructure.items;
 		for (const id of $pathIds) {
@@ -124,19 +118,19 @@ export function createNavigation() {
 			return;
 		}
 		selectedId.set(undefined);
-		pathIds.update(p => [...p, id]);
+		pathIDs.update(p => [...p, id]);
 	}
 
 	function navigateBack(): void {
-		const currentPathIds = get(pathIds);
+		const currentPathIds = get(pathIDs);
 		if (currentPathIds.length > 0) {
 			selectedId.set(currentPathIds[currentPathIds.length - 1]);
-			pathIds.update(p => p.slice(0, -1));
+			pathIDs.update(p => p.slice(0, -1));
 		} else {
 			const $menuStructure = get(menuStructure);
 			const exitItem = $menuStructure.items.find(i => i.id === 'exit');
 			if (exitItem) {
-				pathIds.set(['exit']);
+				pathIDs.set(['exit']);
 			}
 		}
 	}
@@ -149,13 +143,13 @@ export function createNavigation() {
 	}
 
 	function reset(): void {
-		pathIds.set([]);
+		pathIDs.set([]);
 		selectedId.set(undefined);
 		resetBreadcrumb();
 	}
 
 	return {
-		path: pathIds,
+		path: pathIDs,
 		selectedId,
 		currentItems,
 		currentComponent,

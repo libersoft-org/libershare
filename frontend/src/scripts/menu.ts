@@ -9,7 +9,6 @@ import SettingsLanguage from '../components/Settings/SettingsLanguage.svelte';
 import SettingsAudio from '../components/Settings/SettingsAudio.svelte';
 import SettingsCursor from '../components/Settings/SettingsCursor.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
-import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
 	id: string;
