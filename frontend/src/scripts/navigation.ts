@@ -121,8 +121,11 @@ export function createNavigation() {
 			onBack();
 			return;
 		}
-		selectedId.set(undefined);
+		// Navigate into submenu - find selected item if any
 		pathIDs.update(p => [...p, id]);
+		const newItems = get(currentItems);
+		const selectedItem = newItems.find((i: MenuItem) => i.selected?.());
+		selectedId.set(selectedItem?.id);
 	}
 
 	function navigateBack(): void {

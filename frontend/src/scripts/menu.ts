@@ -19,7 +19,7 @@ export interface MenuItem {
 	action?: MenuAction;
 	orientation?: 'horizontal' | 'vertical';
 	onSelect?: () => void;
-	selected?: boolean;
+	selected?: () => boolean;
 }
 export interface MenuStructure {
 	title: string;
@@ -73,7 +73,7 @@ export const menuStructure = derived(t, () => ({
 						...languages.map(lang => ({
 							id: `lang-${lang.id}`,
 							label: lang.nativeLabel,
-							selected: get(currentLanguage) === lang.id,
+							selected: () => get(currentLanguage) === lang.id,
 							onSelect: () => setLanguage(lang.id),
 						})),
 						{
@@ -90,13 +90,13 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'audio-on',
 							label: tt('common.yes'),
-							selected: get(audioEnabled) === true,
+							selected: () => get(audioEnabled) === true,
 							onSelect: () => setAudioEnabled(true),
 						},
 						{
 							id: 'audio-off',
 							label: tt('common.no'),
-							selected: get(audioEnabled) === false,
+							selected: () => get(audioEnabled) === false,
 							onSelect: () => setAudioEnabled(false),
 						},
 						{
@@ -113,19 +113,19 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'cursor-small',
 							label: tt('settings.cursorSizes.small'),
-							selected: get(cursorSize) === 'small',
+							selected: () => get(cursorSize) === 'small',
 							onSelect: () => setCursorSize('small' as CursorSize),
 						},
 						{
 							id: 'cursor-medium',
 							label: tt('settings.cursorSizes.medium'),
-							selected: get(cursorSize) === 'medium',
+							selected: () => get(cursorSize) === 'medium',
 							onSelect: () => setCursorSize('medium' as CursorSize),
 						},
 						{
 							id: 'cursor-large',
 							label: tt('settings.cursorSizes.large'),
-							selected: get(cursorSize) === 'large',
+							selected: () => get(cursorSize) === 'large',
 							onSelect: () => setCursorSize('large' as CursorSize),
 						},
 						{
@@ -147,19 +147,19 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'footer-pos-left',
 									label: tt('settings.footerPositions.left'),
-									selected: get(footerPosition) === 'left',
+									selected: () => get(footerPosition) === 'left',
 									onSelect: () => setFooterPosition('left' as FooterPosition),
 								},
 								{
 									id: 'footer-pos-center',
 									label: tt('settings.footerPositions.center'),
-									selected: get(footerPosition) === 'center',
+									selected: () => get(footerPosition) === 'center',
 									onSelect: () => setFooterPosition('center' as FooterPosition),
 								},
 								{
 									id: 'footer-pos-right',
 									label: tt('settings.footerPositions.right'),
-									selected: get(footerPosition) === 'right',
+									selected: () => get(footerPosition) === 'right',
 									onSelect: () => setFooterPosition('right' as FooterPosition),
 								},
 								{
