@@ -95,7 +95,7 @@
 							return false;
 						},
 					};
-		// Use requestAnimationFrame to ensure this runs after any parent $effect cleanup
+		// Delay registration so ButtonsGroup handlers take priority over parent component handlers
 		requestAnimationFrame(() => {
 			useArea(areaID, {
 				...handlers,
