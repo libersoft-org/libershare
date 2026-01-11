@@ -3,10 +3,24 @@
 	import { t } from '../../scripts/language.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
 	import { footerVisible, setFooterVisible, footerPosition, footerWidgetVisibility, setFooterWidgetVisibility } from '../../scripts/settings.ts';
-	import { footerWidgets } from '../../scripts/footerWidgets.ts';
+	import { footerWidgets, type FooterWidget } from '../../scripts/footerWidgets.ts';
 	import { useArea, activeArea } from '../../scripts/areas.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Switch from '../Switch/Switch.svelte';
+
+	function getWidgetLabel(widget: FooterWidget): string {
+		const labels: Record<FooterWidget, string> = {
+			version: $t.common?.version,
+			download: $t.settings?.footerWidgets?.download,
+			upload: $t.settings?.footerWidgets?.upload,
+			cpu: $t.settings?.footerWidgets?.cpu,
+			ram: $t.settings?.footerWidgets?.ram,
+			storage: $t.settings?.footerWidgets?.storage,
+			volume: $t.settings?.footerWidgets?.volume,
+			clock: $t.settings?.footerWidgets?.clock,
+		};
+		return labels[widget] ?? widget;
+	}
 	interface Props {
 		areaID: string;
 		onBack?: () => void;
@@ -180,7 +194,7 @@
 		<div class="table">
 			{#each footerWidgets as widget, index}
 				<div class="row" class:odd={index % 2 === 0} class:even={index % 2 === 1} class:selected={active && selectedIndex === index + 2} bind:this={rowElements[index + 2]}>
-					<div class="name">{$t.settings?.footerWidgets?.[widget]}</div>
+					<div class="name">{getWidgetLabel(widget)}</div>
 					<Switch checked={$footerWidgetVisibility[widget]} />
 				</div>
 			{/each}
