@@ -5,7 +5,6 @@
 	import { footerVisible, setFooterVisible, footerPosition, footerWidgetVisibility, setFooterWidgetVisibility } from '../../scripts/settings.ts';
 	import { footerWidgets } from '../../scripts/footerWidgets.ts';
 	import { useArea, activeArea } from '../../scripts/areas.ts';
-	import MenuTitle from '../Menu/MenuTitle.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Switch from '../Switch/Switch.svelte';
 	interface Props {

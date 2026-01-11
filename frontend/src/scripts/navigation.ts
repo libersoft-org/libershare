@@ -62,9 +62,7 @@ export function hideConfirmDialog(): void {
 let globalNavigate: ((id: string) => void) | null = null;
 
 export function navigateTo(id: string): void {
-	if (globalNavigate) {
-		globalNavigate(id);
-	}
+	if (globalNavigate) globalNavigate(id);
 }
 
 // Helper to find menu item by path of IDs
