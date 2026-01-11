@@ -6,6 +6,26 @@
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
+
+	const widgets = [
+		{ component: Item, props: () => ({ topLabel: $t.common?.version, bottomLabel: productVersion, alt: $t.common?.version }) },
+		{ component: Separator },
+		{ component: Item, props: () => ({ icon: 'img/download.svg', topLabel: '12.5 MB/s', alt: $t.common?.download }) },
+		{ component: Separator },
+		{ component: Item, props: () => ({ icon: 'img/upload.svg', topLabel: '3.2 MB/s', alt: $t.common?.upload }) },
+		{ component: Separator },
+		{ component: Bar, props: () => ({ topLabel: 'CPU', progress: 12 }) },
+		{ component: Separator },
+		{ component: Bar, props: () => ({ topLabel: 'RAM - 12.1 / 32 GB', progress: 32 }) },
+		{ component: Separator },
+		{ component: Bar, props: () => ({ topLabel: 'STORAGE - 0.88 / 2 TB', progress: 44.1 }) },
+		{ component: Separator },
+		{ component: Item, props: () => ({ icon: 'img/volume.svg', topLabel: `${$volume}%`, alt: $t.common?.volume }) },
+		{ component: Separator },
+		{ component: Clock },
+	];
+
+	let displayWidgets = $derived($footerPosition === 'right' ? [...widgets].reverse() : widgets);
 </script>
 
 <style>
@@ -34,27 +54,19 @@
 		scrollbar-width: none;
 	}
 
+	.items.right {
+		flex-direction: row-reverse;
+	}
+
 	.items::-webkit-scrollbar {
 		display: none;
 	}
 </style>
 
 <div class="footer" class:left={$footerPosition === 'left'} class:right={$footerPosition === 'right'}>
-	<div class="items">
-		<Item topLabel={$t.common?.version} bottomLabel={productVersion} alt={$t.common?.version} />
-		<Separator />
-		<Item icon="img/download.svg" topLabel="12.5 MB/s" alt={$t.common?.download} />
-		<Separator />
-		<Item icon="img/upload.svg" topLabel="3.2 MB/s" alt={$t.common?.upload} />
-		<Separator />
-		<Bar topLabel="CPU" progress={12} />
-		<Separator />
-		<Bar topLabel="RAM - 12.1 / 32 GB" progress={32} />
-		<Separator />
-		<Bar topLabel="STORAGE - 0.88 / 2 TB" progress={44.1} />
-		<Separator />
-		<Item icon="img/volume.svg" topLabel="{$volume}%" alt={$t.common?.volume} />
-		<Separator />
-		<Clock />
+	<div class="items" class:right={$footerPosition === 'right'}>
+		{#each displayWidgets as widget}
+			<svelte:component this={widget.component} {...widget.props?.()} />
+		{/each}
 	</div>
 </div>
