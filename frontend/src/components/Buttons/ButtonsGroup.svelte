@@ -10,7 +10,6 @@
 	import type { Snippet } from 'svelte';
 	import { setContext, onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
-
 	interface Props {
 		children: Snippet;
 		areaID: string;
@@ -18,7 +17,6 @@
 		orientation?: 'horizontal' | 'vertical';
 		onBack?: () => void;
 	}
-
 	let { children, areaID, initialIndex = 0, orientation = 'vertical', onBack }: Props = $props();
 	let selectedIndex = $state(initialIndex);
 	let isAPressed = $state(false);
@@ -46,7 +44,6 @@
 		if (!itemsElement || orientation !== 'horizontal') return;
 		const children = itemsElement.children;
 		if (children.length === 0) return;
-
 		let offset = 0;
 		for (let i = 0; i < selectedIndex; i++) {
 			const child = children[i] as HTMLElement;
@@ -57,9 +54,7 @@
 		offset += selectedIndex * gap;
 		// Add half of selected button width
 		const selectedChild = children[selectedIndex] as HTMLElement;
-		if (selectedChild) {
-			offset += selectedChild.offsetWidth / 2;
-		}
+		if (selectedChild) offset += selectedChild.offsetWidth / 2;
 		translateX = -offset;
 	}
 
@@ -73,21 +68,33 @@
 			orientation === 'horizontal'
 				? {
 						left: () => {
-							if (selectedIndex > 0) { selectedIndex--; return true; }
+							if (selectedIndex > 0) {
+								selectedIndex--;
+								return true;
+							}
 							return false;
 						},
 						right: () => {
-							if (selectedIndex < buttons.length - 1) { selectedIndex++; return true; }
+							if (selectedIndex < buttons.length - 1) {
+								selectedIndex++;
+								return true;
+							}
 							return false;
 						},
 					}
 				: {
 						up: () => {
-							if (selectedIndex > 0) { selectedIndex--; return true; }
+							if (selectedIndex > 0) {
+								selectedIndex--;
+								return true;
+							}
 							return false;
 						},
 						down: () => {
-							if (selectedIndex < buttons.length - 1) { selectedIndex++; return true; }
+							if (selectedIndex < buttons.length - 1) {
+								selectedIndex++;
+								return true;
+							}
 							return false;
 						},
 					};
