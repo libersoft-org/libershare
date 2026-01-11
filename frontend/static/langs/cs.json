@@ -1,8 +1,6 @@
 {
-	"menu": {
-		"home": "Domů"
-	},
 	"common": {
+		"home": "Domů",
 		"back": "Zpět",
 		"ok": "OK",
 		"yes": "Ano",

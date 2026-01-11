@@ -1,8 +1,6 @@
 {
-	"menu": {
-		"home": "Home"
-	},
 	"common": {
+		"home": "Home",
 		"back": "Back",
 		"ok": "OK",
 		"yes": "Yes",

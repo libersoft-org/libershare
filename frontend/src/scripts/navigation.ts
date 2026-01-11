@@ -12,7 +12,7 @@ const breadcrumbPathStore = writable<string[]>([]);
 
 // Derived breadcrumb with translated Home
 export const breadcrumbItems = derived([breadcrumbPathStore, t], ([$path, $t]) => 
-	[$t.menu?.home ?? 'Home', ...$path]
+	[$t.common?.home ?? 'Home', ...$path]
 );
 
 export function setBreadcrumb(items: string[]): void {
