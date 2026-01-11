@@ -18,11 +18,13 @@
 	let contentElement: HTMLElement;
 	let cursorX = $state(0);
 	let cursorY = $state(0);
+	let cursorMoved = $state(false);
 	let cursorSizeValue = $derived(cursorSizes[$cursorSize]);
 
 	function handleMouseMove(e: MouseEvent) {
 		cursorX = e.clientX;
 		cursorY = e.clientY;
+		cursorMoved = true;
 	}
 
 	function handleConfirm() {
@@ -69,7 +71,7 @@
 	<title>{productName}</title>
 </svelte:head>
 <svelte:window onmousemove={handleMouseMove} />
-{#if $cursorVisible}
+{#if $cursorVisible && cursorMoved}
 	<img class="cursor" src="/img/cursor.svg" alt="" style="left: {cursorX}px; top: {cursorY}px; width: {cursorSizeValue}; height: {cursorSizeValue};" />
 {/if}
 <div class="page">
