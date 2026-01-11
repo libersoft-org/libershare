@@ -28,6 +28,16 @@ export function decreaseVolume(): void {
 	volume.update(v => Math.max(0, v - 1));
 }
 
+// Footer position settings
+export type FooterPosition = 'left' | 'right';
+const storedFooterPosition = getStorageValue<FooterPosition>('footerPosition', 'right');
+export const footerPosition = writable(storedFooterPosition);
+
+export function setFooterPosition(position: FooterPosition): void {
+	footerPosition.set(position);
+	setStorageValue('footerPosition', position);
+}
+
 export function setAudioEnabled(enabled: boolean): void {
 	audioEnabled.set(enabled);
 	setStorageValue('audio', enabled);

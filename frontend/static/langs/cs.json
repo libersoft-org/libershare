@@ -45,6 +45,11 @@
 			"small": "Malý",
 			"medium": "Střední",
 			"large": "Velký"
+		},
+		"footerPosition": "Pozice patičky",
+		"footerPositions": {
+			"left": "Vlevo",
+			"right": "Vpravo"
 		}
 	},
 	"about": {

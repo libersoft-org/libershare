@@ -45,6 +45,11 @@
 			"small": "Small",
 			"medium": "Medium",
 			"large": "Large"
+		},
+		"footerPosition": "Footer position",
+		"footerPositions": {
+			"left": "Left",
+			"right": "Right"
 		}
 	},
 	"about": {
