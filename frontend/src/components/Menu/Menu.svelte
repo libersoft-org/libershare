@@ -7,7 +7,7 @@
 	interface Props {
 		areaID: string;
 		title: string;
-		items: Array<{ id: string; label: string }>;
+		items: Array<{ id: string; label: string; selected?: boolean }>;
 		orientation?: 'horizontal' | 'vertical';
 		selectedId?: string;
 		onselect?: (id: string) => void;
@@ -44,7 +44,7 @@
 		{#key `${title}-${selectedId}-${orientation}`}
 			<ButtonsGroup {areaID} {initialIndex} {orientation} {onBack}>
 				{#each items as item (item.id)}
-					<Button label={item.label} onConfirm={() => onselect?.(item.id)} />
+					<Button label={item.selected ? `✓ ${item.label}` : item.label} onConfirm={() => onselect?.(item.id)} />
 				{/each}
 			</ButtonsGroup>
 		{/key}

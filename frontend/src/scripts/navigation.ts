@@ -124,6 +124,12 @@ export function createNavigation() {
 			showConfirmDialog(item.action);
 			return;
 		}
+		// If item has onSelect callback, call it and navigate back
+		if (item.onSelect) {
+			item.onSelect();
+			onBack();
+			return;
+		}
 		selectedId.set(undefined);
 		pathIDs.update(p => [...p, id]);
 	}

@@ -1,15 +1,14 @@
 import type { Component } from 'svelte';
-import { derived } from 'svelte/store';
+import { derived, get } from 'svelte/store';
 import { productName } from './app.ts';
-import { t, tt } from './language.ts';
+import { t, tt, currentLanguage, setLanguage, languages } from './language.ts';
+import { audioEnabled, setAudioEnabled, cursorSize, setCursorSize, type CursorSize } from './settings.ts';
+import { footerPosition, setFooterPosition } from './settings.ts';
+import type { FooterPosition } from './footerWidgets.ts';
 import Items from '../components/List/List.svelte';
 import About from '../components/About/About.svelte';
 import Download from '../components/Download/Download.svelte';
-import SettingsLanguage from '../components/Settings/SettingsLanguage.svelte';
-import SettingsAudio from '../components/Settings/SettingsAudio.svelte';
-import SettingsCursor from '../components/Settings/SettingsCursor.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
-import SettingsFooterPosition from '../components/Settings/SettingsFooterPosition.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
 	id: string;
@@ -19,6 +18,8 @@ export interface MenuItem {
 	props?: Record<string, any>;
 	action?: MenuAction;
 	orientation?: 'horizontal' | 'vertical';
+	onSelect?: () => void;
+	selected?: boolean;
 }
 export interface MenuStructure {
 	title: string;
@@ -68,17 +69,71 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'language',
 					label: tt('settings.language'),
-					component: SettingsLanguage,
+					submenu: [
+						...languages.map(lang => ({
+							id: `lang-${lang.id}`,
+							label: lang.nativeLabel,
+							selected: get(currentLanguage) === lang.id,
+							onSelect: () => setLanguage(lang.id),
+						})),
+						{
+							id: 'back',
+							label: tt('common.back'),
+							action: 'back' as const,
+						},
+					],
 				},
 				{
 					id: 'audio',
 					label: tt('settings.audio'),
-					component: SettingsAudio,
+					submenu: [
+						{
+							id: 'audio-on',
+							label: tt('common.yes'),
+							selected: get(audioEnabled) === true,
+							onSelect: () => setAudioEnabled(true),
+						},
+						{
+							id: 'audio-off',
+							label: tt('common.no'),
+							selected: get(audioEnabled) === false,
+							onSelect: () => setAudioEnabled(false),
+						},
+						{
+							id: 'back',
+							label: tt('common.back'),
+							action: 'back' as const,
+						},
+					],
 				},
 				{
 					id: 'cursor',
 					label: tt('settings.cursorSize'),
-					component: SettingsCursor,
+					submenu: [
+						{
+							id: 'cursor-small',
+							label: tt('settings.cursorSizes.small'),
+							selected: get(cursorSize) === 'small',
+							onSelect: () => setCursorSize('small' as CursorSize),
+						},
+						{
+							id: 'cursor-medium',
+							label: tt('settings.cursorSizes.medium'),
+							selected: get(cursorSize) === 'medium',
+							onSelect: () => setCursorSize('medium' as CursorSize),
+						},
+						{
+							id: 'cursor-large',
+							label: tt('settings.cursorSizes.large'),
+							selected: get(cursorSize) === 'large',
+							onSelect: () => setCursorSize('large' as CursorSize),
+						},
+						{
+							id: 'back',
+							label: tt('common.back'),
+							action: 'back' as const,
+						},
+					],
 				},
 				{
 					id: 'footer',
@@ -88,7 +143,31 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'footer-position',
 							label: tt('settings.footerPosition'),
-							component: SettingsFooterPosition,
+							submenu: [
+								{
+									id: 'footer-pos-left',
+									label: tt('settings.footerPositions.left'),
+									selected: get(footerPosition) === 'left',
+									onSelect: () => setFooterPosition('left' as FooterPosition),
+								},
+								{
+									id: 'footer-pos-center',
+									label: tt('settings.footerPositions.center'),
+									selected: get(footerPosition) === 'center',
+									onSelect: () => setFooterPosition('center' as FooterPosition),
+								},
+								{
+									id: 'footer-pos-right',
+									label: tt('settings.footerPositions.right'),
+									selected: get(footerPosition) === 'right',
+									onSelect: () => setFooterPosition('right' as FooterPosition),
+								},
+								{
+									id: 'back',
+									label: tt('common.back'),
+									action: 'back' as const,
+								},
+							],
 						},
 						{
 							id: 'back',
