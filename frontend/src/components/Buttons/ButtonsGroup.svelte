@@ -58,11 +58,6 @@
 		translateX = -offset;
 	}
 
-	$effect(() => {
-		selectedIndex;
-		updateTranslateX();
-	});
-
 	onMount(() => {
 		const handlers =
 			orientation === 'horizontal'
@@ -70,6 +65,7 @@
 						left: () => {
 							if (selectedIndex > 0) {
 								selectedIndex--;
+								updateTranslateX();
 								return true;
 							}
 							return false;
@@ -77,6 +73,7 @@
 						right: () => {
 							if (selectedIndex < buttons.length - 1) {
 								selectedIndex++;
+								updateTranslateX();
 								return true;
 							}
 							return false;
