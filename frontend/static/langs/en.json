@@ -6,7 +6,6 @@
 		"yes": "Yes",
 		"no": "No",
 		"cancel": "Cancel",
-		"volume": "Volume",
 		"version": "Version"
 	},
 	"storage": {
@@ -56,7 +55,6 @@
 			"right": "Right"
 		},
 		"footerWidgets": {
-			"version": "Version",
 			"download": "Download speed",
 			"upload": "Upload speed",
 			"cpu": "CPU usage",
@@ -68,7 +66,6 @@
 	},
 	"about": {
 		"title": "About",
-		"version": "Version",
 		"buildDate": "Build date",
 		"commit": "Commit",
 		"githubPage": "GitHub page",

@@ -49,7 +49,7 @@
 <Dialog title={productName}>
 	<div class="build">
 		<div class="row">
-			<span class="label">{$t.about?.version}:</span>
+			<span class="label">{$t.common?.version}:</span>
 			<span class="value">{productVersion}</span>
 		</div>
 		<div class="row">

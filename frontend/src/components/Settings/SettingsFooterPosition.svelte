@@ -20,7 +20,7 @@
 </script>
 
 <style>
-	.settings-page {
+	.position {
 		width: 100%;
 		height: 100%;
 		display: flex;
@@ -32,7 +32,7 @@
 	}
 </style>
 
-<div class="settings-page">
+<div class="position">
 	<MenuTitle title={$t.settings?.footerPosition} />
 	<MenuBar>
 		<ButtonsGroup {areaID} {onBack} {initialIndex}>

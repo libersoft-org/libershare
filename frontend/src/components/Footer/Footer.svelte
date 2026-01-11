@@ -70,7 +70,7 @@
 			props: () => ({
 				icon: 'img/volume.svg',
 				topLabel: `${$volume}%`,
-				alt: $t.common?.volume,
+				alt: $t.settings?.footerWidgets?.volume,
 			}),
 		},
 		{
