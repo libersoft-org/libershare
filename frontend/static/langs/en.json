@@ -1,4 +1,7 @@
 {
+	"menu": {
+		"home": "Home"
+	},
 	"common": {
 		"back": "Back",
 		"ok": "OK",

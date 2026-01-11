@@ -13,7 +13,7 @@ import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
 	id: string;
-	label: string;
+	label?: string;
 	submenu?: MenuItem[];
 	component?: Component<any>;
 	props?: Record<string, any>;

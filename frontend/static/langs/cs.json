@@ -1,4 +1,7 @@
 {
+	"menu": {
+		"home": "Domů"
+	},
 	"common": {
 		"back": "Zpět",
 		"ok": "OK",

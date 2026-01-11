@@ -1,32 +1,34 @@
 import { writable, derived, get } from 'svelte/store';
-import { menuStructure, type MenuItem, type MenuAction } from './menu.ts';
+import { menuStructure, type MenuItem, type MenuAction, type MenuStructure } from './menu.ts';
 import { executeBackHandler, pushBackHandler } from './focus.ts';
+import { t } from './language.ts';
 
 // Re-export commonly used items for convenience
 export { pushBackHandler } from './focus.ts';
 export { menuStructure, confirmDialogs, ConfirmDialog, type MenuItem, type MenuStructure, type MenuAction } from './menu.ts';
 
-// Breadcrumb items store
-const breadcrumbItemsStore = writable<string[]>(['Home']);
+// Breadcrumb path store (without Home - that's added reactively)
+const breadcrumbPathStore = writable<string[]>([]);
 
-export const breadcrumbItems = {
-	subscribe: breadcrumbItemsStore.subscribe,
-};
+// Derived breadcrumb with translated Home
+export const breadcrumbItems = derived([breadcrumbPathStore, t], ([$path, $t]) => 
+	[$t.menu?.home ?? 'Home', ...$path]
+);
 
 export function setBreadcrumb(items: string[]): void {
-	breadcrumbItemsStore.set(['Home', ...items]);
+	breadcrumbPathStore.set(items);
 }
 
 export function pushBreadcrumb(item: string): void {
-	breadcrumbItemsStore.update(items => [...items, item]);
+	breadcrumbPathStore.update(items => [...items, item]);
 }
 
 export function popBreadcrumb(): void {
-	breadcrumbItemsStore.update(items => (items.length > 1 ? items.slice(0, -1) : items));
+	breadcrumbPathStore.update(items => (items.length > 0 ? items.slice(0, -1) : items));
 }
 
 export function resetBreadcrumb(): void {
-	breadcrumbItemsStore.set(['Home']);
+	breadcrumbPathStore.set([]);
 }
 
 // Content scroll management
@@ -62,23 +64,71 @@ export function hideConfirmDialog(): void {
 	confirmDialogStore.set({ visible: false, action: null });
 }
 
+// Helper to find menu item by path of IDs
+function findItemByPath(structure: MenuStructure, pathIds: string[]): MenuItem | null {
+	let items: MenuItem[] = structure.items;
+	let item: MenuItem | null = null;
+	
+	for (const id of pathIds) {
+		item = items.find((i: MenuItem) => i.id === id) ?? null;
+		if (!item) return null;
+		items = (item.submenu ?? []) as MenuItem[];
+	}
+	
+	return item;
+}
+
+// Helper to get items at current path
+function getItemsAtPath(structure: MenuStructure, pathIds: string[]): MenuItem[] {
+	if (pathIds.length === 0) return structure.items;
+	const item = findItemByPath(structure, pathIds);
+	return (item?.submenu ?? []) as MenuItem[];
+}
+
 export function createNavigation() {
-	const path = writable<MenuItem[]>([]);
+	// Store only IDs, not full items
+	const pathIds = writable<string[]>([]);
 	const selectedId = writable<string | undefined>(undefined);
 	
-	// Derived stores that react to both path and menuStructure changes
-	const currentItems = derived([path, menuStructure], ([$path, $menuStructure]) => 
-		($path.length === 0 ? $menuStructure.items : ($path[$path.length - 1].submenu ?? []))
+	// Derived stores that react to both pathIds and menuStructure changes
+	const currentItems = derived([pathIds, menuStructure], ([$pathIds, $menuStructure]) => 
+		getItemsAtPath($menuStructure, $pathIds)
 	);
-	const currentComponent = derived(path, $path => ($path.length > 0 && $path[$path.length - 1].component ? $path[$path.length - 1] : null));
-	const currentTitle = derived([path, menuStructure], ([$path, $menuStructure]) => 
-		($path.length === 0 ? $menuStructure.title : $path[$path.length - 1].label)
+	
+	const currentItem = derived([pathIds, menuStructure], ([$pathIds, $menuStructure]) => 
+		$pathIds.length > 0 ? findItemByPath($menuStructure, $pathIds) : null
 	);
-	const currentOrientation = derived(path, $path => ($path.length > 0 ? ($path[$path.length - 1].orientation ?? 'horizontal') : 'horizontal'));
+	
+	const currentComponent = derived(currentItem, $item => 
+		($item && $item.component ? $item : null)
+	);
+	
+	const currentTitle = derived([currentItem, menuStructure], ([$item, $menuStructure]) => 
+		($item ? $item.label : $menuStructure.title)
+	);
+	
+	const currentOrientation = derived(currentItem, $item => 
+		($item?.orientation ?? 'horizontal')
+	);
+
+	// Update breadcrumb when path or language changes
+	derived([pathIds, menuStructure], ([$pathIds, $menuStructure]) => {
+		const labels: string[] = [];
+		let items: MenuItem[] = $menuStructure.items;
+		for (const id of $pathIds) {
+			const item = items.find((i: MenuItem) => i.id === id);
+			if (item) {
+				labels.push(item.label || '');
+				items = (item.submenu ?? []) as MenuItem[];
+			}
+		}
+		setBreadcrumb(labels);
+		return labels;
+	}).subscribe(() => {}); // Subscribe to activate the derived store
 
 	function navigate(id: string): void {
 		const items = get(currentItems);
-		const item = items.find(i => i.id === id);
+		const item = items.find((i: MenuItem) => i.id === id);
 		if (!item) return;
 		if (item.action === 'back') {
 			onBack();
@@ -90,26 +140,19 @@ export function createNavigation() {
 			return;
 		}
 		selectedId.set(undefined);
-		path.update(p => [...p, item]);
-		// Update breadcrumb based on new path
-		const newPath = [...get(path)];
-		setBreadcrumb(newPath.map(p => p.label || ''));
+		pathIds.update(p => [...p, id]);
 	}
 
 	function navigateBack(): void {
-		const currentPath = get(path);
-		if (currentPath.length > 0) {
-			selectedId.set(currentPath[currentPath.length - 1].id);
-			path.update(p => p.slice(0, -1));
-			// Update breadcrumb based on new path
-			const newPath = get(path);
-			setBreadcrumb(newPath.map(p => p.label || ''));
+		const currentPathIds = get(pathIds);
+		if (currentPathIds.length > 0) {
+			selectedId.set(currentPathIds[currentPathIds.length - 1]);
+			pathIds.update(p => p.slice(0, -1));
 		} else {
 			const $menuStructure = get(menuStructure);
 			const exitItem = $menuStructure.items.find(i => i.id === 'exit');
 			if (exitItem) {
-				path.set([exitItem]);
-				setBreadcrumb([exitItem.label || '']);
+				pathIds.set(['exit']);
 			}
 		}
 	}
@@ -122,13 +165,13 @@ export function createNavigation() {
 	}
 
 	function reset(): void {
-		path.set([]);
+		pathIds.set([]);
 		selectedId.set(undefined);
 		resetBreadcrumb();
 	}
 
 	return {
-		path,
+		path: pathIds,
 		selectedId,
 		currentItems,
 		currentComponent,
