@@ -19,12 +19,19 @@
 	let cursorX = $state(0);
 	let cursorY = $state(0);
 	let cursorMoved = $state(false);
+	let isTouchDevice = $state(false);
 	let cursorSizeValue = $derived(cursorSizes[$cursorSize]);
 
 	function handleMouseMove(e: MouseEvent) {
+		if (isTouchDevice) return; // Ignore mouse events triggered by touch
 		cursorX = e.clientX;
 		cursorY = e.clientY;
 		cursorMoved = true;
+	}
+
+	function handleTouchStart() {
+		isTouchDevice = true;
+		cursorMoved = false;
 	}
 
 	function handleConfirm() {
@@ -70,8 +77,8 @@
 <svelte:head>
 	<title>{productName}</title>
 </svelte:head>
-<svelte:window onmousemove={handleMouseMove} />
-{#if $cursorVisible && cursorMoved}
+<svelte:window onmousemove={handleMouseMove} ontouchstart={handleTouchStart} />
+{#if $cursorVisible && cursorMoved && !isTouchDevice}
 	<img class="cursor" src="/img/cursor.svg" alt="" style="left: {cursorX}px; top: {cursorY}px; width: {cursorSizeValue}; height: {cursorSizeValue};" />
 {/if}
 <div class="page">
