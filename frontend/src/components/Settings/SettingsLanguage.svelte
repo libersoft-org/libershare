@@ -18,7 +18,7 @@
 </script>
 
 <style>
-	.settings-page {
+	.language {
 		width: 100%;
 		height: 100%;
 		display: flex;
@@ -30,7 +30,7 @@
 	}
 </style>
 
-<div class="settings-page">
+<div class="language">
 	<MenuTitle title={$t.settings?.language} />
 	<MenuBar>
 		<ButtonsGroup {areaID} {onBack} {initialIndex}>

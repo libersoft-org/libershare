@@ -18,7 +18,7 @@
 </script>
 
 <style>
-	.settings-page {
+	.audio {
 		width: 100%;
 		height: 100%;
 		display: flex;
@@ -30,7 +30,7 @@
 	}
 </style>
 
-<div class="settings-page">
+<div class="audio">
 	<MenuTitle title={$t.settings?.audio} />
 	<MenuBar>
 		<ButtonsGroup {areaID} {onBack} initialIndex={$audioEnabled ? 0 : 1}>

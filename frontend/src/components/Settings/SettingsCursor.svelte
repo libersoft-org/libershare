@@ -20,7 +20,7 @@
 </script>
 
 <style>
-	.settings-page {
+	.cursor {
 		width: 100%;
 		height: 100%;
 		display: flex;
@@ -32,7 +32,7 @@
 	}
 </style>
 
-<div class="settings-page">
+<div class="cursor">
 	<MenuTitle title={$t.settings?.cursorSize} />
 	<MenuBar>
 		<ButtonsGroup {areaID} {onBack} {initialIndex}>
