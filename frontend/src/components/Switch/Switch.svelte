@@ -1,11 +1,12 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	interface Props {
 		checked?: boolean;
 	}
 	let { checked = false }: Props = $props();
 	let mounted = $state(false);
 
-	$effect(() => {
+	onMount(() => {
 		requestAnimationFrame(() => {
 			mounted = true;
 		});
