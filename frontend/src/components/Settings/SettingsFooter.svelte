@@ -79,24 +79,19 @@
 			},
 			confirmDown: () => {},
 			confirmUp: () => {
-				if (selectedIndex === 0) {
-					// Toggle footer visibility
-					setFooterVisible(!$footerVisible);
-				} else if (selectedIndex === 1) {
-					openPositionDialog();
-				} else if (selectedIndex === totalItems - 1) {
-					// Back button
-					onBack?.();
-				} else {
+				if (selectedIndex === 0)
+					setFooterVisible(!$footerVisible); // Toggle footer visibility
+				else if (selectedIndex === 1) openPositionDialog();
+				else if (selectedIndex === totalItems - 1)
+					onBack?.(); // Back button
+				else {
 					// Toggle the widget switch
 					const widget = footerWidgets[selectedIndex - 2];
 					setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget]);
 				}
 			},
 			confirmCancel: () => {},
-			back: () => {
-				onBack?.();
-			},
+			back: () => onBack?.(),
 		});
 	}
 
@@ -122,7 +117,7 @@
 </script>
 
 <style>
-	.footer-settings {
+	.footer {
 		display: flex;
 		flex-direction: column;
 		height: 100%;
@@ -139,7 +134,7 @@
 		overflow-y: auto;
 	}
 
-	.widgets-table {
+	.table {
 		display: flex;
 		flex-direction: column;
 		border: 0.2vh solid var(--secondary-softer-background);
@@ -147,9 +142,10 @@
 		overflow: hidden;
 		width: 100%;
 		max-width: 60vh;
+		color: var(--secondary-foreground);
 	}
 
-	.widget-row {
+	.table .row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -157,29 +153,29 @@
 		border-bottom: 0.2vh solid var(--secondary-softer-background);
 	}
 
-	.widget-row:last-child {
+	.table .row:last-child {
 		border-bottom: none;
 	}
 
-	.widget-row.odd {
+	.table .row.odd {
 		background-color: var(--secondary-soft-background);
 	}
 
-	.widget-row.even {
+	.table .row.even {
 		background-color: var(--secondary-background);
 	}
 
-	.widget-row.selected {
+	.table .row.selected {
 		background-color: var(--primary-foreground);
 		color: var(--primary-background);
 	}
 
-	.widget-name {
+	.table .row .name {
 		font-size: 2vh;
 		font-weight: 500;
 	}
 
-	.back-button {
+	.back {
 		margin-top: 2vh;
 	}
 </style>
@@ -187,24 +183,24 @@
 {#if showPositionDialog}
 	<SettingsFooterPosition {areaID} onBack={closePositionDialog} />
 {:else}
-	<div class="footer-settings">
+	<div class="footer">
 		<div class="content">
-			<div class="widgets-table">
-				<div class="widget-row odd" class:selected={active && selectedIndex === 0} bind:this={rowElements[0]}>
-					<span class="widget-name">{$t.settings?.footerVisible}</span>
+			<div class="table">
+				<div class="row odd" class:selected={active && selectedIndex === 0} bind:this={rowElements[0]}>
+					<span class="name">{$t.settings?.footerVisible}</span>
 					<Switch checked={$footerVisible} />
 				</div>
 			</div>
 			<Button label="{$t.settings?.footerPosition}: {$t.settings?.footerPositions?.[$footerPosition]}" selected={active && selectedIndex === 1} onConfirm={openPositionDialog} bind:this={rowElements[1]} />
-			<div class="widgets-table">
+			<div class="table">
 				{#each footerWidgets as widget, index}
-					<div class="widget-row" class:odd={index % 2 === 0} class:even={index % 2 === 1} class:selected={active && selectedIndex === index + 2} bind:this={rowElements[index + 2]}>
-						<span class="widget-name">{$t.settings?.footerWidgets?.[widget]}</span>
+					<div class="row" class:odd={index % 2 === 0} class:even={index % 2 === 1} class:selected={active && selectedIndex === index + 2} bind:this={rowElements[index + 2]}>
+						<span class="name">{$t.settings?.footerWidgets?.[widget]}</span>
 						<Switch checked={$footerWidgetVisibility[widget]} />
 					</div>
 				{/each}
 			</div>
-			<div class="back-button" bind:this={rowElements[totalItems - 1]}>
+			<div class="back" bind:this={rowElements[totalItems - 1]}>
 				<Button label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
 			</div>
 		</div>
