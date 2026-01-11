@@ -6,15 +6,13 @@
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
-
 	type Widget = {
-		id?: FooterWidget;
-		component: typeof Item | typeof Separator | typeof Bar | typeof Clock;
+		id: FooterWidget;
+		component: typeof Item | typeof Bar | typeof Clock;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		props?: () => Record<string, any>;
 	};
-
-	const allWidgets: Widget[] = [
+	const widgets: Widget[] = [
 		{
 			id: 'version',
 			component: Item,
@@ -23,9 +21,6 @@
 				bottomLabel: productVersion,
 				alt: $t.common?.version,
 			}),
-		},
-		{
-			component: Separator,
 		},
 		{
 			id: 'download',
@@ -37,9 +32,6 @@
 			}),
 		},
 		{
-			component: Separator,
-		},
-		{
 			id: 'upload',
 			component: Item,
 			props: () => ({
@@ -47,9 +39,6 @@
 				topLabel: '3.2 MB/s',
 				alt: $t.common?.upload,
 			}),
-		},
-		{
-			component: Separator,
 		},
 		{
 			id: 'cpu',
@@ -60,9 +49,6 @@
 			}),
 		},
 		{
-			component: Separator,
-		},
-		{
 			id: 'ram',
 			component: Bar,
 			props: () => ({
@@ -71,18 +57,12 @@
 			}),
 		},
 		{
-			component: Separator,
-		},
-		{
 			id: 'storage',
 			component: Bar,
 			props: () => ({
 				topLabel: 'STORAGE - 0.88 / 2 TB',
 				progress: 44.1,
 			}),
-		},
-		{
-			component: Separator,
 		},
 		{
 			id: 'volume',
@@ -94,42 +74,13 @@
 			}),
 		},
 		{
-			component: Separator,
-		},
-		{
 			id: 'clock',
 			component: Clock,
 		},
 	];
 
-	// Filter out disabled widgets and their adjacent separators
-	let visibleWidgets = $derived.by(() => {
-		const result: Widget[] = [];
-		let lastWasWidget = false;
-		for (const widget of allWidgets) {
-			if (widget.id) {
-				// It's a real widget - check visibility
-				if ($footerWidgetVisibility[widget.id]) {
-					result.push(widget);
-					lastWasWidget = true;
-				}
-			} else {
-				// It's a separator - only add if previous was a visible widget
-				if (lastWasWidget) {
-					result.push(widget);
-					lastWasWidget = false;
-				}
-			}
-		}
-
-		// Remove trailing separator if present
-		if (result.length > 0 && !result[result.length - 1].id) {
-			result.pop();
-		}
-
-		return result;
-	});
-
+	// Filter visible widgets
+	let visibleWidgets = $derived(widgets.filter(w => $footerWidgetVisibility[w.id]));
 	let displayWidgets = $derived($footerPosition === 'right' ? [...visibleWidgets].reverse() : visibleWidgets);
 </script>
 
@@ -174,7 +125,8 @@
 
 <div class="footer" class:left={$footerPosition === 'left'} class:center={$footerPosition === 'center'} class:right={$footerPosition === 'right'}>
 	<div class="items" class:right={$footerPosition === 'right'}>
-		{#each displayWidgets as widget}
+		{#each displayWidgets as widget, i}
+			{#if i > 0}<Separator />{/if}
 			<svelte:component this={widget.component} {...widget.props?.()} />
 		{/each}
 	</div>
