@@ -15,28 +15,97 @@
 	};
 
 	const allWidgets: Widget[] = [
-		{ id: 'version', component: Item, props: () => ({ topLabel: $t.common?.version, bottomLabel: productVersion, alt: $t.common?.version }) },
-		{ component: Separator },
-		{ id: 'download', component: Item, props: () => ({ icon: 'img/download.svg', topLabel: '12.5 MB/s', alt: $t.common?.download }) },
-		{ component: Separator },
-		{ id: 'upload', component: Item, props: () => ({ icon: 'img/upload.svg', topLabel: '3.2 MB/s', alt: $t.common?.upload }) },
-		{ component: Separator },
-		{ id: 'cpu', component: Bar, props: () => ({ topLabel: 'CPU', progress: 12 }) },
-		{ component: Separator },
-		{ id: 'ram', component: Bar, props: () => ({ topLabel: 'RAM - 12.1 / 32 GB', progress: 32 }) },
-		{ component: Separator },
-		{ id: 'storage', component: Bar, props: () => ({ topLabel: 'STORAGE - 0.88 / 2 TB', progress: 44.1 }) },
-		{ component: Separator },
-		{ id: 'volume', component: Item, props: () => ({ icon: 'img/volume.svg', topLabel: `${$volume}%`, alt: $t.common?.volume }) },
-		{ component: Separator },
-		{ id: 'clock', component: Clock },
+		{
+			id: 'version',
+			component: Item,
+			props: () => ({
+				topLabel: $t.common?.version,
+				bottomLabel: productVersion,
+				alt: $t.common?.version,
+			}),
+		},
+		{
+			component: Separator,
+		},
+		{
+			id: 'download',
+			component: Item,
+			props: () => ({
+				icon: 'img/download.svg',
+				topLabel: '12.5 MB/s',
+				alt: $t.common?.download,
+			}),
+		},
+		{
+			component: Separator,
+		},
+		{
+			id: 'upload',
+			component: Item,
+			props: () => ({
+				icon: 'img/upload.svg',
+				topLabel: '3.2 MB/s',
+				alt: $t.common?.upload,
+			}),
+		},
+		{
+			component: Separator,
+		},
+		{
+			id: 'cpu',
+			component: Bar,
+			props: () => ({
+				topLabel: 'CPU',
+				progress: 12,
+			}),
+		},
+		{
+			component: Separator,
+		},
+		{
+			id: 'ram',
+			component: Bar,
+			props: () => ({
+				topLabel: 'RAM - 12.1 / 32 GB',
+				progress: 32,
+			}),
+		},
+		{
+			component: Separator,
+		},
+		{
+			id: 'storage',
+			component: Bar,
+			props: () => ({
+				topLabel: 'STORAGE - 0.88 / 2 TB',
+				progress: 44.1,
+			}),
+		},
+		{
+			component: Separator,
+		},
+		{
+			id: 'volume',
+			component: Item,
+			props: () => ({
+				icon: 'img/volume.svg',
+				topLabel: `${$volume}%`,
+				alt: $t.common?.volume,
+			}),
+		},
+		{
+			component: Separator,
+		},
+		{
+			id: 'clock',
+			component: Clock,
+		},
 	];
 
 	// Filter out disabled widgets and their adjacent separators
 	let visibleWidgets = $derived.by(() => {
 		const result: Widget[] = [];
 		let lastWasWidget = false;
-
 		for (const widget of allWidgets) {
 			if (widget.id) {
 				// It's a real widget - check visibility
