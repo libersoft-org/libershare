@@ -59,11 +59,6 @@
 		max-width: 50%;
 	}
 
-	.files-wrapper {
-		background-color: rgba(0, 0, 0, 0.2);
-		padding-left: 1.5vh;
-	}
-
 	.expand {
 		display: inline-block;
 		margin-right: 1vh;
@@ -96,7 +91,7 @@
 	<TableCell align="center" desktopOnly>{truncateID(id)}</TableCell>
 	<TableCell align="right" desktopOnly>{size}</TableCell>
 	<TableCell desktopOnly><ProgressBar {progress} /></TableCell>
-	<TableCell align="center" desktopOnly><Badge class={status}>{$t.downloads?.statuses?.[status]}</Badge></TableCell>
+	<TableCell align="center" desktopOnly><Badge label={$t.downloads?.statuses?.[status]} /></TableCell>
 	<TableCell align="center" desktopOnly>{downloadPeers}</TableCell>
 	<TableCell align="center" desktopOnly>{uploadPeers}</TableCell>
 	<TableCell align="center" desktopOnly>{downloadSpeed}</TableCell>
@@ -107,7 +102,7 @@
 		<ItemDetail label={$t.downloads?.id}>{truncateID(id)}</ItemDetail>
 		<ItemDetail label={$t.downloads?.size}>{size}</ItemDetail>
 		<ItemDetail label={$t.downloads?.progress}><span class="progress-value"><ProgressBar {progress} /></span></ItemDetail>
-		<ItemDetail label={$t.downloads?.status}><Badge class={status}>{$t.downloads?.statuses?.[status]}</Badge></ItemDetail>
+		<ItemDetail label={$t.downloads?.status}><Badge label={$t.downloads?.statuses?.[status]} /></ItemDetail>
 		<ItemDetail label={$t.downloads?.downloadingFrom}>{downloadPeers}</ItemDetail>
 		<ItemDetail label={$t.downloads?.uploadingTo}>{uploadPeers}</ItemDetail>
 		<ItemDetail label={$t.downloads?.downloadSpeed}>{downloadSpeed}</ItemDetail>

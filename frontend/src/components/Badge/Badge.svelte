@@ -1,9 +1,9 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	interface Props {
-		children: Snippet;
+		label?: string;
 	}
-	let { children }: Props = $props();
+	let { label = '' }: Props = $props();
 </script>
 
 <style>
@@ -20,4 +20,4 @@
 	}
 </style>
 
-<span class="badge">{@render children()}</span>
+<div class="badge">{label}</div>
