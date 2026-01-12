@@ -1,16 +1,21 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { timeFormat, showSeconds } from '../../scripts/settings.ts';
 	let time = $state(getTime());
 
 	function getTime(): string {
 		const now = new Date();
-		return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		const options: Intl.DateTimeFormatOptions = {
+			hour: 'numeric',
+			minute: 'numeric',
+			hour12: !$timeFormat,
+		};
+		if ($showSeconds) options.second = 'numeric';
+		return now.toLocaleTimeString([], options);
 	}
 
 	onMount(() => {
-		const interval = setInterval(() => {
-			time = getTime();
-		}, 1000);
+		const interval = setInterval(() => (time = getTime()), 1000);
 		return () => clearInterval(interval);
 	});
 </script>

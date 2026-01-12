@@ -2,7 +2,7 @@ import type { Component } from 'svelte';
 import { derived, get } from 'svelte/store';
 import { productName } from './app.ts';
 import { t, tt, currentLanguage, setLanguage, languages } from './language.ts';
-import { audioEnabled, setAudioEnabled, cursorSize, setCursorSize, type CursorSize } from './settings.ts';
+import { audioEnabled, setAudioEnabled, cursorSize, setCursorSize, type CursorSize, timeFormat, setTimeFormat, showSeconds, setShowSeconds } from './settings.ts';
 import { footerPosition, setFooterPosition } from './settings.ts';
 import type { FooterPosition } from './footerWidgets.ts';
 import Items from '../components/List/List.svelte';
@@ -84,6 +84,63 @@ export const menuStructure = derived(t, () => ({
 					],
 				},
 				{
+					id: 'time',
+					label: tt('settings.time.label'),
+					submenu: [
+						{
+							id: 'time-format',
+							label: tt('settings.time.format'),
+							submenu: [
+								{
+									id: 'time-format-24',
+									label: tt('settings.time.24hour'),
+									selected: () => get(timeFormat) === true,
+									onSelect: () => setTimeFormat(true),
+								},
+								{
+									id: 'time-format-12',
+									label: tt('settings.time.12hour'),
+									selected: () => get(timeFormat) === false,
+									onSelect: () => setTimeFormat(false),
+								},
+								{
+									id: 'back',
+									label: tt('common.back'),
+									action: 'back' as const,
+								},
+							],
+						},
+						{
+							id: 'time-seconds',
+							label: tt('settings.time.showSeconds'),
+							submenu: [
+								{
+									id: 'time-seconds-yes',
+									label: tt('common.yes'),
+									selected: () => get(showSeconds) === true,
+									onSelect: () => setShowSeconds(true),
+								},
+								{
+									id: 'time-seconds-no',
+									label: tt('common.no'),
+									selected: () => get(showSeconds) === false,
+									onSelect: () => setShowSeconds(false),
+								},
+								{
+									id: 'back',
+									label: tt('common.back'),
+									action: 'back' as const,
+								},
+							],
+						},
+						{
+							id: 'back',
+							label: tt('common.back'),
+							action: 'back' as const,
+						},
+					],
+				},
+				{
 					id: 'audio',
 					label: tt('settings.audio'),
 					submenu: [
@@ -108,23 +165,23 @@ export const menuStructure = derived(t, () => ({
 				},
 				{
 					id: 'cursor',
-					label: tt('settings.cursorSize'),
+					label: tt('settings.cursorSize.label'),
 					submenu: [
 						{
 							id: 'cursor-small',
-							label: tt('settings.cursorSizes.small'),
+							label: tt('settings.cursorSize.sizes.small'),
 							selected: () => get(cursorSize) === 'small',
 							onSelect: () => setCursorSize('small' as CursorSize),
 						},
 						{
 							id: 'cursor-medium',
-							label: tt('settings.cursorSizes.medium'),
+							label: tt('settings.cursorSize.sizes.medium'),
 							selected: () => get(cursorSize) === 'medium',
 							onSelect: () => setCursorSize('medium' as CursorSize),
 						},
 						{
 							id: 'cursor-large',
-							label: tt('settings.cursorSizes.large'),
+							label: tt('settings.cursorSize.sizes.large'),
 							selected: () => get(cursorSize) === 'large',
 							onSelect: () => setCursorSize('large' as CursorSize),
 						},

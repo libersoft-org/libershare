@@ -39,12 +39,21 @@
 	"settings": {
 		"title": "Nastavení",
 		"language": "Jazyk",
+		"time": {
+			"label": "Čas",
+			"format": "Formát času",
+			"showSeconds": "Zobrazení vteřin",
+			"12hour": "12 hodinový",
+			"24hour": "24 hodinový"
+		},
 		"audio": "Zvukové efekty",
-		"cursorSize": "Velikost kurzoru",
-		"cursorSizes": {
-			"small": "Malý",
-			"medium": "Střední",
-			"large": "Velký"
+		"cursorSize": {
+			"label": "Velikost kurzoru",
+			"sizes": {
+				"small": "Malý",
+				"medium": "Střední",
+				"large": "Velký"
+			}
 		},
 		"footer": "Patička",
 		"footerVisible": "Zobrazovat patičku",

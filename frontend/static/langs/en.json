@@ -39,12 +39,21 @@
 	"settings": {
 		"title": "Settings",
 		"language": "Language",
+		"time": {
+			"label": "Time",
+			"format": "Time format",
+			"showSeconds": "Show seconds",
+			"12hour": "12 hour",
+			"24hour": "24 hour"
+		},
 		"audio": "Sound effects",
-		"cursorSize": "Cursor size",
-		"cursorSizes": {
-			"small": "Small",
-			"medium": "Medium",
-			"large": "Large"
+		"cursorSize": {
+			"label": "Cursor size",
+			"sizes": {
+				"small": "Small",
+				"medium": "Medium",
+				"large": "Large"
+			}
 		},
 		"footer": "Footer",
 		"footerVisible": "Show footer",

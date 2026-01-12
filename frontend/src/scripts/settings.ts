@@ -66,3 +66,20 @@ export function setFooterWidgetVisibility(widget: FooterWidget, visible: boolean
 		return updated;
 	});
 }
+
+// Time settings
+const storedTimeFormat = getStorageValue<boolean>('timeFormat', true);
+export const timeFormat = writable(storedTimeFormat);
+
+export function setTimeFormat(enabled: boolean): void {
+	timeFormat.set(enabled);
+	setStorageValue('timeFormat', enabled);
+}
+
+const storedShowSeconds = getStorageValue<boolean>('showSeconds', false);
+export const showSeconds = writable(storedShowSeconds);
+
+export function setShowSeconds(enabled: boolean): void {
+	showSeconds.set(enabled);
+	setStorageValue('showSeconds', enabled);
+}
