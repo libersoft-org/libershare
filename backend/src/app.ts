@@ -1,3 +1,4 @@
+import { setupLogger, type LogLevel } from './logger.ts';
 import { Network } from './network.ts';
 import { Downloader } from './downloader.ts';
 import { DataServer } from './data-server.ts';
@@ -9,6 +10,7 @@ import { join } from 'path';
 const args = process.argv.slice(2);
 let dataDir = './data';
 let enablePink = false;
+let logLevel: LogLevel = 'debug';
 
 for (let i = 0; i < args.length; i++) {
 	if (args[i] === '--datadir' && i + 1 < args.length) {
@@ -16,8 +18,13 @@ for (let i = 0; i < args.length; i++) {
 		i++;
 	} else if (args[i] === '--pink') {
 		enablePink = true;
+	} else if (args[i] === '--loglevel' && i + 1 < args.length) {
+		logLevel = args[i + 1] as LogLevel;
+		i++;
 	}
 }
+
+setupLogger(logLevel);
 
 const file = Bun.file(dataDir + '/settings.json');
 if (!(await file.exists())) {
