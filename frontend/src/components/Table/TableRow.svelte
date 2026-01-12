@@ -10,10 +10,12 @@
 
 <style>
 	.row {
-		display: flex;
+		display: grid;
 		align-items: center;
 		padding: 1.5vh 2vh;
 		border-bottom: 0.2vh solid var(--secondary-softer-background);
+		grid-template-columns: var(--table-columns);
+		gap: var(--table-gap);
 	}
 
 	.row:last-child {
@@ -25,12 +27,18 @@
 	}
 
 	.row.even {
-		background-color: var(--secondary-background);
+		background-color: var(--secondary-softer-background);
 	}
 
 	.row.selected {
 		background-color: var(--primary-foreground);
 		color: var(--primary-background);
+	}
+
+	@media (max-width: 1199px) {
+		.row {
+			grid-template-columns: var(--table-columns-mobile);
+		}
 	}
 </style>
 

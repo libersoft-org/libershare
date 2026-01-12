@@ -2,8 +2,12 @@
 	import type { Snippet } from 'svelte';
 	interface Props {
 		children: Snippet;
+		columns?: string;
+		columnsMobile?: string;
+		gap?: string;
+		noBorder?: boolean;
 	}
-	let { children }: Props = $props();
+	let { children, columns = '1fr', columnsMobile = '1fr', gap = '2vh', noBorder = false }: Props = $props();
 </script>
 
 <style>
@@ -14,11 +18,15 @@
 		border-radius: 1vh;
 		overflow: hidden;
 		width: 100%;
-		max-width: 60vh;
 		color: var(--secondary-foreground);
+	}
+
+	.table.no-border {
+		border: none;
+		border-radius: 0;
 	}
 </style>
 
-<div class="table">
+<div class="table" class:no-border={noBorder} style="--table-columns: {columns}; --table-columns-mobile: {columnsMobile}; --table-gap: {gap};">
 	{@render children()}
 </div>

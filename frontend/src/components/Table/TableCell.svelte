@@ -4,9 +4,10 @@
 		children: Snippet;
 		width?: string;
 		align?: 'left' | 'center' | 'right';
+		desktopOnly?: boolean;
 	}
-	let { children, width, align = 'left' }: Props = $props();
-	let justifyContent = $derived(align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center');
+	let { children, width, align = 'left', desktopOnly = false }: Props = $props();
+	let justifyContent = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
 </script>
 
 <style>
@@ -14,10 +15,23 @@
 		display: flex;
 		align-items: center;
 		font-size: 2vh;
-		font-weight: 500;
+		min-width: 0;
+	}
+
+	.content {
+		width: 100%;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		overflow: hidden;
+	}
+
+	@media (max-width: 1199px) {
+		.cell.desktop-only {
+			display: none;
+		}
 	}
 </style>
 
-<div class="cell" style="width: {width ?? 'auto'}; justify-content: {justifyContent};">
-	{@render children()}
+<div class="cell" class:desktop-only={desktopOnly} style="width: {width ?? 'auto'}; justify-content: {justifyContent}; text-align: {align};">
+	<div class="content">{@render children()}</div>
 </div>

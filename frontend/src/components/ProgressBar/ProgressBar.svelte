@@ -20,6 +20,7 @@
 		border-radius: calc(var(--height) / 2);
 		overflow: hidden;
 		background-color: var(--bg-color);
+		box-sizing: border-box;
 	}
 
 	.progressbar .fill {

@@ -1,5 +1,9 @@
 <script lang="ts">
 	import ProgressBar from '../ProgressBar/ProgressBar.svelte';
+	import Badge from '../Badge/Badge.svelte';
+	import Table from '../Table/Table.svelte';
+	import TableRow from '../Table/TableRow.svelte';
+	import TableCell from '../Table/TableCell.svelte';
 	import DownloadFile from './DownloadFile.svelte';
 	import { t } from '../../scripts/language.ts';
 	export type DownloadStatus = 'completed' | 'downloading' | 'waiting' | 'paused' | 'error';
@@ -35,47 +39,12 @@
 </script>
 
 <style>
-	.item {
-		display: grid;
-		grid-template-columns: 1fr 5vw 5vw 10vw 8vw 8vw 8vw 8vw 8vw;
-		align-items: center;
-		gap: 2vh;
-		padding: 1vh 2vh;
-		border-bottom: 0.4vh solid var(--secondary-softer-background);
-	}
-
-	.item.odd {
-		background-color: var(--secondary-soft-background);
-	}
-
-	.item.even {
-		background-color: var(--secondary-background);
-	}
-
-	.item.last {
-		border-bottom: none;
-	}
-
-	.item.selected {
-		color: var(--primary-background);
-		background-color: var(--primary-foreground);
-	}
-
-	.item .name {
+	.name {
 		font-size: 2vh;
 		font-weight: bold;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-
-	.item .status {
-		text-align: center;
-		padding: 0.3vh 0.6vh;
-		border: 0.2vh solid var(--secondary-softer-background);
-		border-radius: 0.5vh;
-		background-color: var(--secondary-background);
-		color: var(--secondary-foreground);
 	}
 
 	.details {
@@ -132,21 +101,9 @@
 		transform: rotate(90deg);
 	}
 
-	.center {
-		text-align: center;
-	}
-
-	.right {
-		text-align: right;
-	}
-
 	@media (max-width: 1199px) {
-		.item {
-			grid-template-columns: 1fr;
-		}
-
-		.item .desktop {
-			display: none;
+		:global(.desktop) {
+			display: none !important;
 		}
 
 		.details.show {
@@ -155,21 +112,22 @@
 	}
 </style>
 
-<div class="item" class:selected={selected && selectedFileIndex === -1} class:last={isLast && !expanded} class:odd class:even={!odd}>
-	<div class="name">
-		<span class="expand" class:expanded>▶</span>
-		<span>{name}</span>
-	</div>
-	<div class="center desktop">{truncateID(id)}</div>
-	<div class="right desktop">{size}</div>
-	<div class="desktop"><ProgressBar {progress} /></div>
-	<div class="status desktop {status}">{$t.downloads?.statuses?.[status]}</div>
-	<div class="center desktop">{downloadPeers}</div>
-	<div class="center desktop">{uploadPeers}</div>
-	<div class="center desktop">{downloadSpeed}</div>
-	<div class="center desktop">{uploadSpeed}</div>
-</div>
-
+<TableRow selected={selected && selectedFileIndex === -1} {odd}>
+	<TableCell>
+		<div class="name">
+			<span class="expand" class:expanded>▶</span>
+			<span>{name}</span>
+		</div>
+	</TableCell>
+	<TableCell align="center" desktopOnly>{truncateID(id)}</TableCell>
+	<TableCell align="right" desktopOnly>{size}</TableCell>
+	<TableCell desktopOnly><ProgressBar {progress} /></TableCell>
+	<TableCell align="center" desktopOnly><Badge class={status}>{$t.downloads?.statuses?.[status]}</Badge></TableCell>
+	<TableCell align="center" desktopOnly>{downloadPeers}</TableCell>
+	<TableCell align="center" desktopOnly>{uploadPeers}</TableCell>
+	<TableCell align="center" desktopOnly>{downloadSpeed}</TableCell>
+	<TableCell align="center" desktopOnly>{uploadSpeed}</TableCell>
+</TableRow>
 {#if expanded}
 	<div class="details" class:show={expanded}>
 		<div class="row">
@@ -186,7 +144,7 @@
 		</div>
 		<div class="row">
 			<span class="label">{$t.downloads?.status}</span>
-			<span class="value badge {status}">{$t.downloads?.statuses?.[status]}</span>
+			<Badge class={status}>{$t.downloads?.statuses?.[status]}</Badge>
 		</div>
 		<div class="row">
 			<span class="label">{$t.downloads?.downloadingFrom}</span>
@@ -205,9 +163,9 @@
 			<span class="value">{uploadSpeed}</span>
 		</div>
 	</div>
-	<div class="files-wrapper">
+	<Table columns="1fr 10vh 20vh" columnsMobile="1fr 5vh 10vh" noBorder>
 		{#each files as file, index (file.id)}
-			<DownloadFile name={file.name} progress={file.progress} size={file.size} selected={selected && selectedFileIndex === index} />
+			<DownloadFile name={file.name} progress={file.progress} size={file.size} selected={selected && selectedFileIndex === index} odd={index % 2 === 0} />
 		{/each}
-	</div>
+	</Table>
 {/if}

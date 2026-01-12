@@ -2,7 +2,11 @@
 	import { onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { t } from '../../scripts/language.ts';
+	import Table from '../Table/Table.svelte';
+	import Header from '../Table/TableHeader.svelte';
+	import Cell from '../Table/TableCell.svelte';
 	import DownloadItem, { type DownloadFileData, type DownloadStatus } from './DownloadItem.svelte';
+	const columns = '1fr 5vw 5vw 10vw 8vw 8vw 8vw 8vw 8vw';
 	interface DownloadData {
 		id: string;
 		name: string;
@@ -159,51 +163,6 @@
 </script>
 
 <style>
-	.download {
-		display: flex;
-		flex-direction: column;
-		margin: 2vh;
-		border: 0.4vh solid var(--secondary-softer-background);
-		border-radius: 2vh;
-		color: var(--secondary-foreground);
-		box-shadow: 0 0 2vh var(--secondary-softer-background);
-		overflow: hidden;
-	}
-
-	.header {
-		display: grid;
-		grid-template-columns: 1fr 5vw 5vw 10vw 8vw 8vw 8vw 8vw 8vw;
-		gap: 2vh;
-		padding: 1vh 2vh;
-		background-color: var(--secondary-background);
-		font-size: 1.6vh;
-		font-weight: bold;
-	}
-
-	.header .cell {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.header .cell.center {
-		text-align: center;
-	}
-
-	.header .cell.right {
-		text-align: right;
-	}
-
-	@media (max-width: 1199px) {
-		.header {
-			grid-template-columns: 1fr;
-		}
-
-		.header .cell.desktop {
-			display: none;
-		}
-	}
-
 	.items {
 		flex: 1;
 		overflow-y: auto;
@@ -211,18 +170,18 @@
 	}
 </style>
 
-<div class="download">
-	<div class="header">
-		<div class="cell">{$t.downloads?.name}</div>
-		<div class="cell center desktop">{$t.downloads?.id}</div>
-		<div class="cell right desktop">{$t.downloads?.size}</div>
-		<div class="cell center desktop">{$t.downloads?.progress}</div>
-		<div class="cell center desktop">{$t.downloads?.status}</div>
-		<div class="cell center desktop">{$t.downloads?.downloadingFrom}</div>
-		<div class="cell center desktop">{$t.downloads?.uploadingTo}</div>
-		<div class="cell right desktop">{$t.downloads?.downloadSpeed}</div>
-		<div class="cell right desktop">{$t.downloads?.uploadSpeed}</div>
-	</div>
+<Table {columns} noBorder>
+	<Header>
+		<Cell>{$t.downloads?.name}</Cell>
+		<Cell align="center" desktopOnly>{$t.downloads?.id}</Cell>
+		<Cell align="right" desktopOnly>{$t.downloads?.size}</Cell>
+		<Cell align="center" desktopOnly>{$t.downloads?.progress}</Cell>
+		<Cell align="center" desktopOnly>{$t.downloads?.status}</Cell>
+		<Cell align="center" desktopOnly>{$t.downloads?.downloadingFrom}</Cell>
+		<Cell align="center" desktopOnly>{$t.downloads?.uploadingTo}</Cell>
+		<Cell align="right" desktopOnly>{$t.downloads?.downloadSpeed}</Cell>
+		<Cell align="right" desktopOnly>{$t.downloads?.uploadSpeed}</Cell>
+	</Header>
 	<div class="items">
 		{#each downloads as download, index (download.id)}
 			<div bind:this={itemElements[index]}>
@@ -230,4 +189,4 @@
 			</div>
 		{/each}
 	</div>
-</div>
+</Table>
