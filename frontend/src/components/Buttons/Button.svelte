@@ -36,6 +36,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		gap: 1vh;
 		background-color: var(--secondary-background);
 		color: var(--secondary-foreground);
 		border: 0.4vh solid var(--secondary-softer-background);
