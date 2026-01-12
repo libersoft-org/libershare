@@ -5,6 +5,7 @@
 	import TableRow from '../Table/TableRow.svelte';
 	import TableCell from '../Table/TableCell.svelte';
 	import DownloadFile from './DownloadFile.svelte';
+	import ItemDetail from './DownloadItemDetail.svelte';
 	import { t } from '../../scripts/language.ts';
 	export type DownloadStatus = 'completed' | 'downloading' | 'waiting' | 'paused' | 'error';
 	export interface DownloadFileData {
@@ -53,36 +54,9 @@
 		font-size: 1.6vh;
 	}
 
-	.details .row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 0.5vh 0;
-		border-bottom: 0.2vh solid var(--secondary-softer-background);
-	}
-
-	.details .label {
-		color: var(--disabled-foreground);
-	}
-
-	.details .value {
-		font-weight: bold;
-	}
-
-	.details .progress-row {
-		align-items: center;
-	}
-
 	.details .progress-value {
 		flex: 1;
 		max-width: 50%;
-	}
-
-	.details .badge {
-		padding: 0.3vh 0.6vh;
-		border: 0.2vh solid var(--secondary-softer-background);
-		border-radius: 0.5vh;
-		background-color: var(--secondary-background);
 	}
 
 	.files-wrapper {
@@ -130,38 +104,14 @@
 </TableRow>
 {#if expanded}
 	<div class="details" class:show={expanded}>
-		<div class="row">
-			<span class="label">{$t.downloads?.id}</span>
-			<span class="value">{truncateID(id)}</span>
-		</div>
-		<div class="row">
-			<span class="label">{$t.downloads?.size}</span>
-			<span class="value">{size}</span>
-		</div>
-		<div class="row progress-row">
-			<span class="label">{$t.downloads?.progress}</span>
-			<span class="value progress-value"><ProgressBar {progress} /></span>
-		</div>
-		<div class="row">
-			<span class="label">{$t.downloads?.status}</span>
-			<Badge class={status}>{$t.downloads?.statuses?.[status]}</Badge>
-		</div>
-		<div class="row">
-			<span class="label">{$t.downloads?.downloadingFrom}</span>
-			<span class="value">{downloadPeers}</span>
-		</div>
-		<div class="row">
-			<span class="label">{$t.downloads?.uploadingTo}</span>
-			<span class="value">{uploadPeers}</span>
-		</div>
-		<div class="row">
-			<span class="label">{$t.downloads?.downloadSpeed}</span>
-			<span class="value">{downloadSpeed}</span>
-		</div>
-		<div class="row">
-			<span class="label">{$t.downloads?.uploadSpeed}</span>
-			<span class="value">{uploadSpeed}</span>
-		</div>
+		<ItemDetail label={$t.downloads?.id}>{truncateID(id)}</ItemDetail>
+		<ItemDetail label={$t.downloads?.size}>{size}</ItemDetail>
+		<ItemDetail label={$t.downloads?.progress}><span class="progress-value"><ProgressBar {progress} /></span></ItemDetail>
+		<ItemDetail label={$t.downloads?.status}><Badge class={status}>{$t.downloads?.statuses?.[status]}</Badge></ItemDetail>
+		<ItemDetail label={$t.downloads?.downloadingFrom}>{downloadPeers}</ItemDetail>
+		<ItemDetail label={$t.downloads?.uploadingTo}>{uploadPeers}</ItemDetail>
+		<ItemDetail label={$t.downloads?.downloadSpeed}>{downloadSpeed}</ItemDetail>
+		<ItemDetail label={$t.downloads?.uploadSpeed}>{uploadSpeed}</ItemDetail>
 	</div>
 	<Table columns="1fr 10vh 20vh" columnsMobile="1fr 5vh 10vh" noBorder>
 		{#each files as file, index (file.id)}
