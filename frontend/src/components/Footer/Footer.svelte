@@ -26,18 +26,18 @@
 			id: 'download',
 			component: Item,
 			props: () => ({
-				topLabel: '12.5 MB/s',
-				bottomIcon: 'img/download.svg',
-				bottomIconAlt: $t.common?.download,
+				topIcon: 'img/download.svg',
+				topIconAlt: $t.common?.download,
+				bottomLabel: '12.5 MB/s',
 			}),
 		},
 		{
 			id: 'upload',
 			component: Item,
 			props: () => ({
-				topLabel: '3.2 MB/s',
-				bottomIcon: 'img/upload.svg',
-				bottomIconAlt: $t.common?.upload,
+				topIcon: 'img/upload.svg',
+				topIconAlt: $t.common?.upload,
+				bottomLabel: '3.2 MB/s',
 			}),
 		},
 		{
@@ -73,9 +73,9 @@
 			id: 'volume',
 			component: Item,
 			props: () => ({
-				topLabel: `${$volume}%`,
-				bottomIcon: 'img/volume.svg',
-				bottomIconAlt: $t.settings?.footerWidgets?.volume,
+				topIcon: 'img/volume.svg',
+				topIconAlt: $t.settings?.footerWidgets?.volume,
+				bottomLabel: `${$volume}%`,
 			}),
 		},
 		{

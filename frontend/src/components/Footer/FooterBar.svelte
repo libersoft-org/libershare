@@ -21,13 +21,15 @@
 		min-width: 10vh;
 	}
 
-	.top {
+	.top,
+	.bottom {
 		display: flex;
 		align-items: center;
 		gap: 0.5vh;
 	}
 
-	.icon {
+	.top .icon,
+	.bottom .icon {
 		width: 2vh;
 		height: 2vh;
 	}
