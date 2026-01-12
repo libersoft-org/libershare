@@ -66,16 +66,11 @@
 		transform: scale(1);
 		background-color: var(--primary-softer-background);
 	}
-
-	.button img {
-		width: 100%;
-		height: 100%;
-	}
 </style>
 
 <div class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:icon-only={icon && !label} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius};{width ? ` width: ${width};` : ''}{height ? ` height: ${height};` : ''}">
 	{#if icon}
-		<img src={icon} {alt} />
+		<img src={icon} {alt} style="width: {fontSize}; height: {fontSize};" />
 	{/if}
 	{#if label}
 		{label}
