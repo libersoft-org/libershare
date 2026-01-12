@@ -20,32 +20,32 @@
 			props: () => ({
 				topLabel: $t.common?.version,
 				bottomLabel: productVersion,
-				alt: $t.common?.version,
 			}),
 		},
 		{
 			id: 'download',
 			component: Item,
 			props: () => ({
-				icon: 'img/download.svg',
 				topLabel: '12.5 MB/s',
-				alt: $t.common?.download,
+				bottomIcon: 'img/download.svg',
+				bottomIconAlt: $t.common?.download,
 			}),
 		},
 		{
 			id: 'upload',
 			component: Item,
 			props: () => ({
-				icon: 'img/upload.svg',
 				topLabel: '3.2 MB/s',
-				alt: $t.common?.upload,
+				bottomIcon: 'img/upload.svg',
+				bottomIconAlt: $t.common?.upload,
 			}),
 		},
 		{
 			id: 'cpu',
 			component: Bar,
 			props: () => ({
-				topLabel: $t.settings?.footerWidgets?.cpu,
+				topIcon: 'img/cpu.svg',
+				topIconAlt: $t.settings?.footerWidgets?.cpu,
 				progress: 12,
 			}),
 		},
@@ -53,7 +53,9 @@
 			id: 'ram',
 			component: Bar,
 			props: () => ({
-				topLabel: $t.settings?.footerWidgets?.ram + ' - 12.1 / 32 GB',
+				topIcon: 'img/ram.svg',
+				topIconAlt: $t.settings?.footerWidgets?.ram,
+				topLabel: '12.1 / 32 GB',
 				progress: 32,
 			}),
 		},
@@ -61,7 +63,9 @@
 			id: 'storage',
 			component: Bar,
 			props: () => ({
-				topLabel: $t.settings?.footerWidgets?.storage + ' - 0.88 / 2 TB',
+				topIcon: 'img/storage.svg',
+				topIconAlt: $t.settings?.footerWidgets?.storage,
+				topLabel: '0.88 / 2 TB',
 				progress: 44.1,
 			}),
 		},
@@ -69,9 +73,9 @@
 			id: 'volume',
 			component: Item,
 			props: () => ({
-				icon: 'img/volume.svg',
 				topLabel: `${$volume}%`,
-				alt: $t.settings?.footerWidgets?.volume,
+				bottomIcon: 'img/volume.svg',
+				bottomIconAlt: $t.settings?.footerWidgets?.volume,
 			}),
 		},
 		{
