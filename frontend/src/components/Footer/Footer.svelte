@@ -72,11 +72,15 @@
 		{
 			id: 'volume',
 			component: Item,
-			props: () => ({
-				topIcon: 'img/volume.svg',
-				topIconAlt: $t.settings?.footerWidgets?.volume,
-				bottomLabel: `${$volume}%`,
-			}),
+			props: () => {
+				const v = $volume;
+				const icon = v === 0 ? 'volume0' : v < 25 ? 'volume1' : v < 75 ? 'volume2' : 'volume3';
+				return {
+					topIcon: `img/${icon}.svg`,
+					topIconAlt: $t.settings?.footerWidgets?.volume,
+					bottomLabel: `${v}%`,
+				};
+			},
 		},
 		{
 			id: 'clock',
