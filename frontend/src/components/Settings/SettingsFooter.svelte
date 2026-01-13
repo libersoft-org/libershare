@@ -144,23 +144,23 @@
 
 <div class="footer">
 	<div class="content">
-		<Table>
+		<Table columns="1fr 10vw">
 			<div bind:this={rowElements[0]}>
 				<TableRow selected={active && selectedIndex === 0} odd>
-					<TableCell width="70%">{$t.settings?.footerVisible}</TableCell>
-					<TableCell width="30%" align="right"><Switch checked={$footerVisible} /></TableCell>
+					<TableCell>{$t.settings?.footerVisible}</TableCell>
+					<TableCell align="right"><Switch checked={$footerVisible} /></TableCell>
 				</TableRow>
 			</div>
 		</Table>
 		<div bind:this={rowElements[1]}>
 			<Button label="{$t.settings?.footerPosition}: {$t.settings?.footerPositions?.[$footerPosition]}" selected={active && selectedIndex === 1} onConfirm={openPositionDialog} />
 		</div>
-		<Table>
+		<Table columns="1fr 10vw">
 			{#each footerWidgets as widget, index}
 				<div bind:this={rowElements[index + 2]}>
 					<TableRow selected={active && selectedIndex === index + 2} odd={index % 2 === 0}>
-						<TableCell width="70%">{getWidgetLabel(widget)}</TableCell>
-						<TableCell width="30%" align="right"><Switch checked={$footerWidgetVisibility[widget]} /></TableCell>
+						<TableCell>{getWidgetLabel(widget)}</TableCell>
+						<TableCell align="right"><Switch checked={$footerWidgetVisibility[widget]} /></TableCell>
 					</TableRow>
 				</div>
 			{/each}
