@@ -6,6 +6,7 @@
 		"yes": "Yes",
 		"no": "No",
 		"cancel": "Cancel",
+		"change": "Change",
 		"version": "Version"
 	},
 	"storage": {
@@ -54,6 +55,9 @@
 				"medium": "Medium",
 				"large": "Large"
 			}
+		},
+		"storage": {
+			"folderDownload": "Download folder"
 		},
 		"footer": "Footer",
 		"footerVisible": "Show footer",

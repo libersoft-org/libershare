@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Row from '../Row/Row.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import { t } from '../../scripts/language.ts';
 	interface Props {
@@ -12,60 +13,42 @@
 </script>
 
 <style>
-	.filerow {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		flex-wrap: wrap;
-		gap: 1vh;
-		padding: 2vh;
-		background-color: var(--secondary-background);
-		border: 0.4vh solid var(--secondary-softer-background);
-		border-radius: 2vh;
-		transition: all 0.2s linear;
-	}
-
-	.filerow.selected {
-		background-color: var(--secondary-hard-background);
-		border-color: var(--primary-foreground);
-	}
-
-	.filerow .info {
+	.info {
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
 		gap: 0.5vh;
 	}
 
-	.filerow .info .name {
+	.info .name {
 		font-size: 3vh;
 		font-weight: bold;
 		color: var(--secondary-foreground);
 	}
 
-	.filerow .info .size {
+	.info .size {
 		font-size: 2vh;
 		color: var(--disabled-foreground);
 	}
 
-	.filerow .actions {
+	.actions {
 		display: flex;
 		gap: 2vh;
 	}
 
 	@media (max-width: 768px) {
-		.filerow .actions {
+		.actions {
 			width: 100%;
 		}
 
-		.filerow .actions :global(.button) {
+		.actions :global(.button) {
 			flex: 1;
 			min-width: unset;
 		}
 	}
 </style>
 
-<div class="filerow" class:selected>
+<Row {selected}>
 	<div class="info">
 		<div class="name">{name}</div>
 		<div class="size">{$t.storage?.product?.size}: {size}</div>
@@ -74,4 +57,4 @@
 		<Button label={$t.storage?.product?.download} selected={selected && selectedButton === 0} {pressed} />
 		<Button label={$t.storage?.product?.play} selected={selected && selectedButton === 1} {pressed} />
 	</div>
-</div>
+</Row>

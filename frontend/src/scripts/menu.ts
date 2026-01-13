@@ -9,6 +9,7 @@ import Items from '../components/List/List.svelte';
 import About from '../components/About/About.svelte';
 import Download from '../components/Download/Download.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
+import SettingsStorage from '../components/Settings/SettingsStorage.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
 	id: string;
@@ -66,6 +67,11 @@ export const menuStructure = derived(t, () => ({
 			label: tt('settings.title'),
 			orientation: 'horizontal' as const,
 			submenu: [
+				{
+					id: 'storage',
+					label: tt('storage.title'),
+					component: SettingsStorage,
+				},
 				{
 					id: 'language',
 					label: tt('settings.language'),
@@ -141,6 +147,47 @@ export const menuStructure = derived(t, () => ({
 					],
 				},
 				{
+					id: 'footer',
+					label: tt('settings.footer'),
+					component: SettingsFooter,
+					submenu: [
+						{
+							id: 'footer-position',
+							label: tt('settings.footerPosition'),
+							submenu: [
+								{
+									id: 'footer-pos-left',
+									label: tt('settings.footerPositions.left'),
+									selected: () => get(footerPosition) === 'left',
+									onSelect: () => setFooterPosition('left' as FooterPosition),
+								},
+								{
+									id: 'footer-pos-center',
+									label: tt('settings.footerPositions.center'),
+									selected: () => get(footerPosition) === 'center',
+									onSelect: () => setFooterPosition('center' as FooterPosition),
+								},
+								{
+									id: 'footer-pos-right',
+									label: tt('settings.footerPositions.right'),
+									selected: () => get(footerPosition) === 'right',
+									onSelect: () => setFooterPosition('right' as FooterPosition),
+								},
+								{
+									id: 'back',
+									label: tt('common.back'),
+									action: 'back' as const,
+								},
+							],
+						},
+						{
+							id: 'back',
+							label: tt('common.back'),
+							action: 'back' as const,
+						},
+					],
+				},
+				{
 					id: 'audio',
 					label: tt('settings.audio'),
 					submenu: [
@@ -184,47 +231,6 @@ export const menuStructure = derived(t, () => ({
 							label: tt('settings.cursorSize.sizes.large'),
 							selected: () => get(cursorSize) === 'large',
 							onSelect: () => setCursorSize('large' as CursorSize),
-						},
-						{
-							id: 'back',
-							label: tt('common.back'),
-							action: 'back' as const,
-						},
-					],
-				},
-				{
-					id: 'footer',
-					label: tt('settings.footer'),
-					component: SettingsFooter,
-					submenu: [
-						{
-							id: 'footer-position',
-							label: tt('settings.footerPosition'),
-							submenu: [
-								{
-									id: 'footer-pos-left',
-									label: tt('settings.footerPositions.left'),
-									selected: () => get(footerPosition) === 'left',
-									onSelect: () => setFooterPosition('left' as FooterPosition),
-								},
-								{
-									id: 'footer-pos-center',
-									label: tt('settings.footerPositions.center'),
-									selected: () => get(footerPosition) === 'center',
-									onSelect: () => setFooterPosition('center' as FooterPosition),
-								},
-								{
-									id: 'footer-pos-right',
-									label: tt('settings.footerPositions.right'),
-									selected: () => get(footerPosition) === 'right',
-									onSelect: () => setFooterPosition('right' as FooterPosition),
-								},
-								{
-									id: 'back',
-									label: tt('common.back'),
-									action: 'back' as const,
-								},
-							],
 						},
 						{
 							id: 'back',

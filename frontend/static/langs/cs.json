@@ -6,6 +6,7 @@
 		"yes": "Ano",
 		"no": "Ne",
 		"cancel": "Zrušit",
+		"change": "Změnit",
 		"version": "Verze"
 	},
 	"storage": {
@@ -54,6 +55,9 @@
 				"medium": "Střední",
 				"large": "Velký"
 			}
+		},
+		"storage": {
+			"folderDownload": "Složka pro stahování"
 		},
 		"footer": "Patička",
 		"footerVisible": "Zobrazovat patičku",
