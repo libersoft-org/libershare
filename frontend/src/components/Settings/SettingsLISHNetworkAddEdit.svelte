@@ -3,6 +3,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import Button from '../Buttons/Button.svelte';
+	import Input from '../Input/Input.svelte';
 	interface Props {
 		areaID: string;
 		network?: { id: string; name: string } | null;
@@ -13,7 +14,7 @@
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
 	let rowElements: HTMLElement[] = $state([]);
-	let nameInput: HTMLInputElement;
+	let nameInput: Input;
 	let name = $state(network?.name ?? '');
 	const totalItems = 3; // 0 = name, 1 = save, 2 = back
 
@@ -73,12 +74,6 @@
 		activateArea(areaID);
 		return unregister;
 	});
-	function handleInputKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter') {
-			event.preventDefault();
-			nameInput?.blur();
-		}
-	}
 </script>
 
 <style>
@@ -100,36 +95,6 @@
 		max-width: 100%;
 	}
 
-	.field {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5vh;
-	}
-
-	.field .label {
-		font-size: 2vh;
-		color: var(--disabled-foreground);
-	}
-
-	.field input {
-		font-size: 2.5vh;
-		padding: 1.5vh 2vh;
-		border: 0.3vh solid var(--secondary-softer-background);
-		border-radius: 1vh;
-		background-color: var(--secondary-background);
-		color: var(--secondary-foreground);
-		outline: none;
-		transition: border-color 0.2s;
-	}
-
-	.field input:focus {
-		border-color: var(--primary-foreground);
-	}
-
-	.field.selected input {
-		border-color: var(--primary-foreground);
-	}
-
 	.buttons {
 		display: flex;
 		justify-content: center;
@@ -140,9 +105,8 @@
 
 <div class="add-edit">
 	<div class="container">
-		<div class="field" class:selected={active && selectedIndex === 0} bind:this={rowElements[0]}>
-			<div class="label">{$t.settings?.lishNetwork?.name ?? 'Name'}</div>
-			<input type="text" bind:value={name} bind:this={nameInput} onkeydown={handleInputKeydown} />
+		<div bind:this={rowElements[0]}>
+			<Input bind:this={nameInput} bind:value={name} label={$t.settings?.lishNetwork?.name ?? 'Name'} selected={active && selectedIndex === 0} />
 		</div>
 	</div>
 	<div class="buttons">
