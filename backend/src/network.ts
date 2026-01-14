@@ -312,13 +312,17 @@ export class Network {
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 
 			// Tag bootstrap peers with KEEP_ALIVE for automatic reconnection
+			// Also refresh multiaddrs from the active connection to ensure reconnection works
 			if (this.bootstrapPeerIds.has(peerId)) {
+				const connectionMultiaddrs = connections.map(c => c.remoteAddr);
 				await this.node!.peerStore.merge(evt.detail, {
+					multiaddrs: connectionMultiaddrs, // Refresh addresses from active connection
 					tags: {
 						[KEEP_ALIVE]: { value: 1 }
 					}
 				});
 				console.log('   Tagged as KEEP_ALIVE (bootstrap peer)');
+				console.log('   Stored multiaddrs:', connectionMultiaddrs.map(ma => ma.toString()).join(', '));
 			}
 		});
 
