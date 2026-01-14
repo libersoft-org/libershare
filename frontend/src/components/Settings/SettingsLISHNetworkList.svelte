@@ -145,19 +145,14 @@
 			},
 			confirmDown: () => {},
 			confirmUp: () => {
-				if (selectedIndex === 0) {
-					openAddNetwork();
-				} else if (selectedIndex === totalItems - 1) {
-					onBack?.();
-				} else {
+				if (selectedIndex === 0) openAddNetwork();
+				else if (selectedIndex === totalItems - 1) onBack?.();
+				else {
 					const networkIndex = selectedIndex - 1;
 					const network = networks[networkIndex];
 					if (network) {
-						if (buttonIndex === 0) {
-							openEditNetwork(network);
-						} else {
-							deleteNetwork(network);
-						}
+						if (buttonIndex === 0) openEditNetwork(network);
+						else deleteNetwork(network);
 					}
 				}
 			},
@@ -168,9 +163,7 @@
 
 	// Re-register handler when showAddEdit changes back to false
 	$effect(() => {
-		if (!showAddEdit) {
-			return registerAreaHandler();
-		}
+		if (!showAddEdit) return registerAreaHandler();
 	});
 </script>
 

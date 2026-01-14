@@ -3,22 +3,18 @@
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import Button from '../Buttons/Button.svelte';
-
 	interface Props {
 		areaID: string;
 		network?: { id: string; name: string } | null;
 		onBack?: () => void;
 		onSave?: (network: { id: string; name: string }) => void;
 	}
-
 	let { areaID, network = null, onBack, onSave }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
 	let rowElements: HTMLElement[] = $state([]);
 	let nameInput: HTMLInputElement;
-
 	let name = $state(network?.name ?? '');
-
 	const totalItems = 3; // 0 = name, 1 = save, 2 = back
 
 	function handleSave() {
@@ -31,9 +27,7 @@
 	}
 
 	function focusInput(index: number) {
-		if (index === 0 && nameInput) {
-			nameInput.focus();
-		}
+		if (index === 0 && nameInput) nameInput.focus();
 	}
 
 	function scrollToSelected(): void {
@@ -68,13 +62,9 @@
 			right: () => false,
 			confirmDown: () => {},
 			confirmUp: () => {
-				if (selectedIndex === 0) {
-					focusInput(0);
-				} else if (selectedIndex === 1) {
-					handleSave();
-				} else if (selectedIndex === 2) {
-					onBack?.();
-				}
+				if (selectedIndex === 0) focusInput(0);
+				else if (selectedIndex === 1) handleSave();
+				else if (selectedIndex === 2) onBack?.();
 			},
 			confirmCancel: () => {},
 			back: () => onBack?.(),
