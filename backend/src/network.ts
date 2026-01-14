@@ -176,13 +176,14 @@ export class Network {
 
 		// Add bootstrap if peers are configured
 		if (settings.network.bootstrapPeers?.length > 0) {
-			//console.log('Configuring bootstrap peers:');
-			//settings.network.bootstrapPeers.forEach(peer => console.log('  -', peer));
+			console.log('Configuring bootstrap peers:');
+			settings.network.bootstrapPeers.forEach((peer: string) => console.log('  -', peer));
 			config.peerDiscovery = [
 				bootstrap({
 					list: settings.network.bootstrapPeers,
-					timeout: 1000, // Wait 1 second before starting discovery
-					//tagTTL: Infinity, // Keep bootstrap peers connected
+					timeout: 1000,
+					tagTTL: Infinity, // Never expire - keeps bootstrap peers high priority
+					tagValue: 100,   // High priority (default 50) - pruned last
 				}),
 			];
 		}
@@ -296,7 +297,7 @@ export class Network {
 
 		// Manually dial bootstrap peers FIRST, because config.peerDiscovery doesnt seem to work as expected
 		// Bootstrap module discovers peers but doesn't auto-connect
-		if (settings.network.bootstrapPeers?.length > 0) {
+		/*if (settings.network.bootstrapPeers?.length > 0) {
 			//console.log('Connecting to bootstrap peers...');
 
 			for (const peerAddr of settings.network.bootstrapPeers) {
@@ -319,7 +320,7 @@ export class Network {
 			} else {
 				console.log('⚠️  No peers connected after wait, continuing anyway');
 			}
-		}
+		}*/
 
 		if (this.enablePink) {
 			// console.log('  Libp2p peers:', this.node.getPeers().length);
