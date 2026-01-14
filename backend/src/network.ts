@@ -284,23 +284,22 @@ export class Network {
 			const peerId = evt.detail.id.toString();
 			const multiaddrs = evt.detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
 			console.log('🔍 Discovered peer:', peerId);
-			console.log('   Multiaddrs:', multiaddrs.join(', '));
+			console.log('   Multiaddrs from event:', multiaddrs.join(', ') || '(empty!)');
 
-			// Check if peer is in peer store
+			// Check what's actually in peer store
 			try {
 				const peerData = await this.node!.peerStore.get(evt.detail.id);
 				const tags = await this.node!.peerStore.getTags(evt.detail.id);
-				console.log('   In peer store: YES');
+				const storedAddrs = peerData.addresses.map((a: any) => a.multiaddr.toString());
+				console.log('   Peer store addrs:', storedAddrs.join(', ') || '(empty!)');
 				console.log('   Tags:', tags.map((t: any) => `${t.name}=${t.value}`).join(', ') || 'none');
-				console.log('   Stored addrs:', peerData.addresses.map((a: any) => a.multiaddr.toString()).join(', '));
 			} catch (e) {
-				console.log('   In peer store: NO');
+				console.log('   Peer NOT in peer store');
 			}
 
 			// Check current connection status
 			const connections = this.node!.getConnections(evt.detail.id);
 			console.log('   Already connected:', connections.length > 0);
-			console.log('   Total peers now:', this.node!.getPeers().length);
 		});
 
 		this.node.addEventListener('peer:connect', async evt => {
