@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, setAreaPosition, removeArea, activateArea } from '../../scripts/areas.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
@@ -73,6 +74,7 @@
 		popBreadcrumb();
 		showAddEdit = false;
 		editingNetwork = null;
+		registerAreaHandler();
 		activateArea(areaID);
 	}
 
@@ -96,6 +98,7 @@
 		popBreadcrumb();
 		showAddEdit = false;
 		editingNetwork = null;
+		registerAreaHandler();
 		activateArea(areaID);
 	}
 
@@ -162,8 +165,8 @@
 	}
 
 	// Re-register handler when showAddEdit changes back to false
-	$effect(() => {
-		if (!showAddEdit) return registerAreaHandler();
+	onMount(() => {
+		return registerAreaHandler();
 	});
 </script>
 
