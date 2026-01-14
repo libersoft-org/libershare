@@ -10,6 +10,8 @@ import { ping } from '@libp2p/ping';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { autoNAT } from '@libp2p/autonat';
+import { enable as enableLibp2pLogs } from '@libp2p/logger';
+import { KEEP_ALIVE } from '@libp2p/interface';
 import { LevelDatastore } from 'datastore-level';
 import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import type { Libp2p } from 'libp2p';
@@ -41,6 +43,7 @@ interface PonkMessage {
 const PINK_TOPIC = 'pink';
 const PONK_TOPIC = 'ponk';
 const PRIVATE_KEY_PATH = '/local/privatekey';
+const AUTODIAL_WORKAROUND = false; // Enable manual dialing when autoDial fails
 
 type Message = PinkMessage | PonkMessage;
 
@@ -52,7 +55,9 @@ export class Network {
 	private readonly dataDir: string;
 	private pingInterval: NodeJS.Timeout | null = null;
 	private addressInterval: NodeJS.Timeout | null = null;
+	private statusInterval: NodeJS.Timeout | null = null;
 	private readonly enablePink: boolean;
+	private bootstrapPeerIds: Set<string> = new Set();
 
 	constructor(dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
 		this.dataDir = dataDir;
@@ -177,21 +182,42 @@ export class Network {
 		// Add bootstrap if peers are configured
 		if (settings.network.bootstrapPeers?.length > 0) {
 			console.log('Configuring bootstrap peers:');
-			settings.network.bootstrapPeers.forEach((peer: string) => console.log('  -', peer));
+			for (const peer of settings.network.bootstrapPeers) {
+				console.log('  -', peer);
+				// Extract peer ID from multiaddr using proper API
+				const ma = Multiaddr(peer);
+				const peerId = ma.getPeerId();
+				if (peerId) {
+					this.bootstrapPeerIds.add(peerId);
+				}
+			}
 			config.peerDiscovery = [
 				bootstrap({
 					list: settings.network.bootstrapPeers,
 					timeout: 1000,
-					tagTTL: Infinity, // Never expire - keeps bootstrap peers high priority
-					tagValue: 100,   // High priority (default 50) - pruned last
+					tagTTL: 2147483647, // ~68 years in ms - effectively never expires
+					tagValue: 100,      // High priority (default 50) - pruned last
 				}),
 			];
+		} else {
+			console.log('⚠️  No bootstrap peers configured in settings.json!');
+			console.log('   Add bootstrap peers to settings.network.bootstrapPeers array');
+			console.log('   Format: /ip4/<IP>/tcp/<PORT>/p2p/<PEER_ID>');
+		}
+
+		console.log('Creating libp2p node with config:');
+		console.log('  peerDiscovery configured:', !!config.peerDiscovery);
+		if (config.peerDiscovery) {
+			console.log('  peerDiscovery modules:', config.peerDiscovery.length);
 		}
 
 		this.node = await createLibp2p(config);
 		console.log('Port:', settings.network.port);
 		console.log('Node ID:', this.node.peerId.toString());
+
 		await this.node.start();
+		console.log('Node started');
+
 		const addresses = this.node.getMultiaddrs();
 		console.log('Listening on addresses:');
 		addresses.forEach(addr => console.log('  -', addr.toString()));
@@ -254,19 +280,46 @@ export class Network {
 		});
 
 		// Listen for peer discovery and connection events
-		this.node.addEventListener('peer:discovery', evt => {
+		this.node.addEventListener('peer:discovery', async evt => {
 			const peerId = evt.detail.id.toString();
+			const multiaddrs = evt.detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
 			console.log('🔍 Discovered peer:', peerId);
+			console.log('   Multiaddrs:', multiaddrs.join(', '));
+
+			// Check if peer is in peer store
+			try {
+				const peerData = await this.node!.peerStore.get(evt.detail.id);
+				const tags = await this.node!.peerStore.getTags(evt.detail.id);
+				console.log('   In peer store: YES');
+				console.log('   Tags:', tags.map((t: any) => `${t.name}=${t.value}`).join(', ') || 'none');
+				console.log('   Stored addrs:', peerData.addresses.map((a: any) => a.multiaddr.toString()).join(', '));
+			} catch (e) {
+				console.log('   In peer store: NO');
+			}
+
+			// Check current connection status
+			const connections = this.node!.getConnections(evt.detail.id);
+			console.log('   Already connected:', connections.length > 0);
+			console.log('   Total peers now:', this.node!.getPeers().length);
 		});
 
-		this.node.addEventListener('peer:connect', evt => {
+		this.node.addEventListener('peer:connect', async evt => {
 			const peerId = evt.detail.toString();
 			const connections = this.node!.getConnections(evt.detail);
 			const remoteAddrs = connections.map(c => c.remoteAddr.toString());
 			console.log('✅ New peer connected:', peerId);
 			console.log('   Remote addresses:', remoteAddrs.join(', '));
 			console.log('   Total connected peers:', this.node!.getPeers().length);
-			//this.subscribeToPink();
+
+			// Tag bootstrap peers with KEEP_ALIVE for automatic reconnection
+			if (this.bootstrapPeerIds.has(peerId)) {
+				await this.node!.peerStore.merge(evt.detail, {
+					tags: {
+						[KEEP_ALIVE]: { value: 1 }
+					}
+				});
+				console.log('   Tagged as KEEP_ALIVE (bootstrap peer)');
+			}
 		});
 
 		this.node.addEventListener('peer:disconnect', evt => {
@@ -339,6 +392,25 @@ export class Network {
 
 		//await this.subscribeToPink();
 		await this.subscribeToLish();
+
+		// Periodic status log and optional autodial workaround
+		this.statusInterval = setInterval(async () => {
+			const connectedPeers = this.node!.getPeers();
+			const allPeers = await this.node!.peerStore.all();
+			console.log(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in peer store`);
+			if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && allPeers.length > 0) {
+				console.log('   ⚠️  Have peers in store but none connected - trying to dial...');
+				for (const peer of allPeers.slice(0, 1)) {
+					try {
+						console.log(`   Dialing ${peer.id.toString().slice(-8)}...`);
+						await this.node!.dial(peer.id);
+						console.log(`   ✓ Connected to ${peer.id.toString().slice(-8)}`);
+					} catch (err: any) {
+						console.log(`   ✗ Failed to dial: ${err.message}`);
+					}
+				}
+			}
+		}, 10000);
 
 		//this.addressInterval = setInterval(() => {this.printMultiaddrs()}, 30000);
 	}
@@ -563,6 +635,10 @@ export class Network {
 		if (this.addressInterval) {
 			clearInterval(this.addressInterval);
 			this.addressInterval = null;
+		}
+		if (this.statusInterval) {
+			clearInterval(this.statusInterval);
+			this.statusInterval = null;
 		}
 		if (this.node) {
 			await this.node.stop();
