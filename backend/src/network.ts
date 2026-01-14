@@ -43,7 +43,7 @@ interface PonkMessage {
 const PINK_TOPIC = 'pink';
 const PONK_TOPIC = 'ponk';
 const PRIVATE_KEY_PATH = '/local/privatekey';
-const AUTODIAL_WORKAROUND = false; // Enable manual dialing when autoDial fails
+const AUTODIAL_WORKAROUND = true; // Enable manual dialing when autoDial fails
 
 type Message = PinkMessage | PonkMessage;
 
@@ -58,6 +58,7 @@ export class Network {
 	private statusInterval: NodeJS.Timeout | null = null;
 	private readonly enablePink: boolean;
 	private bootstrapPeerIds: Set<string> = new Set();
+	private bootstrapMultiaddrs: any[] = []; // Store full multiaddrs for direct dialing
 
 	constructor(dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
 		this.dataDir = dataDir;
@@ -184,11 +185,12 @@ export class Network {
 			console.log('Configuring bootstrap peers:');
 			for (const peer of settings.network.bootstrapPeers) {
 				console.log('  -', peer);
-				// Extract peer ID from multiaddr using proper API
+				// Extract peer ID and store full multiaddr for direct dialing
 				const ma = Multiaddr(peer);
 				const peerId = ma.getPeerId();
 				if (peerId) {
 					this.bootstrapPeerIds.add(peerId);
+					this.bootstrapMultiaddrs.push(ma);
 				}
 			}
 			config.peerDiscovery = [
@@ -396,18 +398,39 @@ export class Network {
 		//await this.subscribeToPink();
 		await this.subscribeToLish();
 
+		// Immediate bootstrap dial (workaround for libp2p bootstrap module not storing multiaddrs)
+		if (AUTODIAL_WORKAROUND && this.bootstrapMultiaddrs.length > 0) {
+			// Wait a bit for bootstrap module to try first, then dial directly
+			setTimeout(async () => {
+				if (this.node!.getPeers().length === 0) {
+					console.log('⚠️  Bootstrap module failed - dialing directly...');
+					for (const ma of this.bootstrapMultiaddrs) {
+						try {
+							await this.node!.dial(ma);
+							console.log('✓ Connected to bootstrap peer via direct dial');
+							break;
+						} catch (err: any) {
+							console.log('✗ Direct dial failed:', err.message);
+						}
+					}
+				}
+			}, 2000); // Wait 2s for bootstrap module to try first
+		}
+
 		// Periodic status log and optional autodial workaround
 		this.statusInterval = setInterval(async () => {
 			const connectedPeers = this.node!.getPeers();
 			const allPeers = await this.node!.peerStore.all();
 			console.log(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in peer store`);
-			if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && allPeers.length > 0) {
-				console.log('   ⚠️  Have peers in store but none connected - trying to dial...');
-				for (const peer of allPeers.slice(0, 1)) {
+			if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && this.bootstrapMultiaddrs.length > 0) {
+				console.log('   ⚠️  No connections - dialing bootstrap peers directly...');
+				for (const ma of this.bootstrapMultiaddrs) {
 					try {
-						console.log(`   Dialing ${peer.id.toString().slice(-8)}...`);
-						await this.node!.dial(peer.id);
-						console.log(`   ✓ Connected to ${peer.id.toString().slice(-8)}`);
+						const peerId = ma.getPeerId();
+						console.log(`   Dialing ${peerId?.slice(-8)}...`);
+						await this.node!.dial(ma); // Dial with full multiaddr, not just peer ID
+						console.log(`   ✓ Connected to ${peerId?.slice(-8)}`);
+						break; // Stop after first successful connection
 					} catch (err: any) {
 						console.log(`   ✗ Failed to dial: ${err.message}`);
 					}
