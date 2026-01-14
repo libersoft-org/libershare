@@ -51,10 +51,10 @@
 <Row {selected}>
 	<div class="info">
 		<div class="name">{name}</div>
-		<div class="size">{$t.storage?.product?.size}: {size}</div>
+		<div class="size">{$t.library?.product?.size}: {size}</div>
 	</div>
 	<div class="actions">
-		<Button label={$t.storage?.product?.download} selected={selected && selectedButton === 0} {pressed} />
-		<Button label={$t.storage?.product?.play} selected={selected && selectedButton === 1} {pressed} />
+		<Button label={$t.library?.product?.download} selected={selected && selectedButton === 0} {pressed} />
+		<Button label={$t.library?.product?.play} selected={selected && selectedButton === 1} {pressed} />
 	</div>
 </Row>

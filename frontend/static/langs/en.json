@@ -9,14 +9,20 @@
 		"change": "Change",
 		"version": "Version"
 	},
-	"storage": {
-		"title": "Storage",
+	"library": {
+		"title": "Online library",
 		"product": {
 			"files": "Files",
 			"size": "Size",
 			"download": "Download",
 			"play": "Play"
 		}
+	},
+	"localStorage": {
+		"title": "Local storage",
+		"name": "Name",
+		"size": "Size",
+		"modified": "Modified"
 	},
 	"downloads": {
 		"title": "Downloads",
@@ -57,7 +63,8 @@
 			}
 		},
 		"storage": {
-			"folderDownload": "Download folder"
+			"folderDownload": "Finished download folder",
+			"folderTemp": "Unfinished downloads folder"
 		},
 		"footer": "Footer",
 		"footerVisible": "Show footer",

@@ -9,14 +9,20 @@
 		"change": "Změnit",
 		"version": "Verze"
 	},
-	"storage": {
-		"title": "Úložiště",
+	"library": {
+		"title": "Online knihovna",
 		"product": {
 			"files": "Soubory",
 			"size": "Velikost",
 			"download": "Stáhnout",
 			"play": "Přehrát"
 		}
+	},
+	"localStorage": {
+		"title": "Místní úložiště",
+		"name": "Název",
+		"size": "Velikost",
+		"modified": "Změněno"
 	},
 	"downloads": {
 		"title": "Stahování",
@@ -57,7 +63,8 @@
 			}
 		},
 		"storage": {
-			"folderDownload": "Složka pro stahování"
+			"folderDownload": "Složka pro dokončená stahování",
+			"folderTemp": "Složka pro nedokončená stahování"
 		},
 		"footer": "Patička",
 		"footerVisible": "Zobrazovat patičku",

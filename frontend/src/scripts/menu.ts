@@ -6,10 +6,11 @@ import { audioEnabled, setAudioEnabled, cursorSize, setCursorSize, type CursorSi
 import { footerPosition, setFooterPosition } from './settings.ts';
 import type { FooterPosition } from './footerWidgets.ts';
 import Items from '../components/List/List.svelte';
-import About from '../components/About/About.svelte';
+import Storage from '../components/Storage/Storage.svelte';
 import Download from '../components/Download/Download.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
 import SettingsStorage from '../components/Settings/SettingsStorage.svelte';
+import About from '../components/About/About.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
 	id: string;
@@ -31,8 +32,8 @@ export const menuStructure = derived(t, () => ({
 	title: productName,
 	items: [
 		{
-			id: 'storage',
-			label: tt('storage.title'),
+			id: 'library',
+			label: tt('library.title'),
 			submenu: [
 				{
 					id: 'video',
@@ -58,6 +59,11 @@ export const menuStructure = derived(t, () => ({
 			],
 		},
 		{
+			id: 'localStorage',
+			label: tt('localStorage.title'),
+			component: Storage,
+		},
+		{
 			id: 'downloads',
 			label: tt('downloads.title'),
 			component: Download,
@@ -68,8 +74,8 @@ export const menuStructure = derived(t, () => ({
 			orientation: 'horizontal' as const,
 			submenu: [
 				{
-					id: 'storage',
-					label: tt('storage.title'),
+					id: 'localStorage',
+					label: tt('localStorage.title'),
 					component: SettingsStorage,
 				},
 				{
