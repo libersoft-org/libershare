@@ -10,6 +10,7 @@ import Storage from '../components/Storage/Storage.svelte';
 import Download from '../components/Download/Download.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
 import SettingsStorage from '../components/Settings/SettingsStorage.svelte';
+import LISHNetworkList from '../components/Settings/SettingsLISHNetworkList.svelte';
 import About from '../components/About/About.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
@@ -77,6 +78,11 @@ export const menuStructure = derived(t, () => ({
 					id: 'localStorage',
 					label: tt('localStorage.title'),
 					component: SettingsStorage,
+				},
+				{
+					id: 'lishNetwork',
+					label: tt('settings.lishNetwork.title'),
+					component: LISHNetworkList,
 				},
 				{
 					id: 'language',

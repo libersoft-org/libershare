@@ -3,11 +3,17 @@
 		"home": "Home",
 		"back": "Back",
 		"ok": "OK",
+		"cancel": "Cancel",
 		"yes": "Yes",
 		"no": "No",
-		"cancel": "Cancel",
 		"change": "Change",
-		"version": "Version"
+		"version": "Version",
+		"add": "Add",
+		"save": "Save",
+		"delete": "Delete",
+		"edit": "Edit",
+		"connected": "Connected",
+		"disconnected": "Disconnected"
 	},
 	"library": {
 		"title": "Online library",
@@ -65,6 +71,10 @@
 		"storage": {
 			"folderDownload": "Finished download folder",
 			"folderTemp": "Unfinished downloads folder"
+		},
+		"lishNetwork": {
+			"title": "LISH Network",
+			"name": "Name"
 		},
 		"footer": "Footer",
 		"footerVisible": "Show footer",

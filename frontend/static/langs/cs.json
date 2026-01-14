@@ -3,11 +3,17 @@
 		"home": "Domů",
 		"back": "Zpět",
 		"ok": "OK",
+		"cancel": "Zrušit",
 		"yes": "Ano",
 		"no": "Ne",
-		"cancel": "Zrušit",
 		"change": "Změnit",
-		"version": "Verze"
+		"version": "Verze",
+		"add": "Přidat",
+		"save": "Uložit",
+		"delete": "Smazat",
+		"edit": "Upravit",
+		"connected": "Připojeno",
+		"disconnected": "Odpojeno"
 	},
 	"library": {
 		"title": "Online knihovna",
@@ -65,6 +71,10 @@
 		"storage": {
 			"folderDownload": "Složka pro dokončená stahování",
 			"folderTemp": "Složka pro nedokončená stahování"
+		},
+		"lishNetwork": {
+			"title": "Síť LISH",
+			"name": "Název"
 		},
 		"footer": "Patička",
 		"footerVisible": "Zobrazovat patičku",
