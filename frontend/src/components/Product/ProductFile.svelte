@@ -1,5 +1,7 @@
 <script lang="ts">
-	import ButtonNormal from '../Buttons/ButtonNormal.svelte';
+	import Row from '../Row/Row.svelte';
+	import Button from '../Buttons/Button.svelte';
+	import { t } from '../../scripts/language.ts';
 	interface Props {
 		name: string;
 		size: string;
@@ -11,52 +13,48 @@
 </script>
 
 <style>
-	.filerow {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 1vw;
-		background-color: rgba(255, 255, 255, 0.05);
-		border: 0.2vw solid rgba(255, 255, 255, 0.05);
-		border-radius: 1vw;
-		transition: all 0.2s linear;
-	}
-
-	.filerow.selected {
-		background-color: rgba(255, 255, 255, 0.1);
-		border-color: #aa0;
-	}
-
-	.filerow .info {
+	.info {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5vw;
+		align-items: flex-start;
+		gap: 0.5vh;
 	}
 
-	.filerow .info .name {
-		font-size: 1.2vw;
+	.info .name {
+		font-size: 3vh;
 		font-weight: bold;
-		color: #fff;
+		color: var(--secondary-foreground);
 	}
 
-	.filerow .info .size {
-		font-size: 1vw;
-		color: #888;
+	.info .size {
+		font-size: 2vh;
+		color: var(--disabled-foreground);
 	}
 
-	.filerow .actions {
+	.actions {
 		display: flex;
-		gap: 1vw;
+		gap: 2vh;
+	}
+
+	@media (max-width: 768px) {
+		.actions {
+			width: 100%;
+		}
+
+		.actions :global(.button) {
+			flex: 1;
+			min-width: unset;
+		}
 	}
 </style>
 
-<div class="filerow" class:selected>
+<Row {selected}>
 	<div class="info">
 		<div class="name">{name}</div>
-		<div class="size">Size: {size}</div>
+		<div class="size">{$t.library?.product?.size}: {size}</div>
 	</div>
 	<div class="actions">
-		<ButtonNormal label="Download" selected={selected && selectedButton === 0} {pressed} />
-		<ButtonNormal label="Play" selected={selected && selectedButton === 1} {pressed} />
+		<Button label={$t.library?.product?.download} selected={selected && selectedButton === 0} {pressed} />
+		<Button label={$t.library?.product?.play} selected={selected && selectedButton === 1} {pressed} />
 	</div>
-</div>
+</Row>

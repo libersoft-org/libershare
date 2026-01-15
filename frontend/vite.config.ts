@@ -1,12 +1,30 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function getCommitHash(): string {
+	try {
+		return execSync('git rev-parse --short HEAD').toString().trim();
+	} catch {
+		return 'unknown';
+	}
+}
+
+function getBuildDate(): string {
+	const now = new Date();
+	return now.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
+}
+
 export default defineConfig({
 	plugins: [sveltekit()],
+	define: {
+		__BUILD_DATE__: JSON.stringify(getBuildDate()),
+		__COMMIT_HASH__: JSON.stringify(getCommitHash()),
+	},
 	server: {
 		https: fs.existsSync(path.resolve(__dirname, 'server.key'))
 			? {
@@ -18,7 +36,7 @@ export default defineConfig({
 						key: fs.readFileSync(path.resolve(__dirname, 'certs/server.key')),
 						cert: fs.readFileSync(path.resolve(__dirname, 'certs/server.crt')),
 					}
-				: null,
+				: undefined,
 		allowedHosts: true,
 		host: true,
 		port: 6003,

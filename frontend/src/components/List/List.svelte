@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { registerScene, activateScene } from '../../scripts/scenes.ts';
-	import { focusArea, focusHeader, pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
+	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
 	import ListItem from './ListItem.svelte';
 	import Product from '../Product/Product.svelte';
-	const SCENE_ID = 'list';
 	interface Props {
+		areaID: string;
 		title?: string;
 		category?: string;
-		onback?: () => void;
+		onBack?: () => void;
 	}
-	let { title = 'Items', category = '', onback }: Props = $props();
-	let active = $derived($focusArea === 'content');
+	let { areaID, title = 'Items', onBack }: Props = $props();
+	let active = $derived($activeArea === areaID);
 	// Some test data
 	const items = Array.from({ length: 200 }, (_, i) => ({
 		id: i + 1,
@@ -21,6 +21,9 @@
 	let isAPressed = $state(false);
 	let itemElements: HTMLElement[] = $state([]);
 	let selectedItem = $state<{ id: number; title: string } | null>(null);
+
+	// Handlers will be set in onMount
+	let unregisterList: (() => void) | null = null;
 
 	// Calculate columns by comparing Y positions of items
 	function getColumnsCount(): number {
@@ -70,6 +73,11 @@
 		pushBreadcrumb(items[selectedIndex].title);
 		scrollContentToTop();
 		isAPressed = false;
+		// Unregister list area when showing product detail
+		if (unregisterList) {
+			unregisterList();
+			unregisterList = null;
+		}
 	}
 
 	async function closeDetail(): Promise<void> {
@@ -77,57 +85,103 @@
 		popBreadcrumb();
 		await tick();
 		scrollToSelectedItem(true);
-		activateScene(SCENE_ID);
+		// Re-register list area when returning from product detail
+		unregisterList = useArea(areaID, areaHandlers);
+		activateArea(areaID);
 	}
 
+	const areaHandlers = {
+		up: () => {
+			const cols = getColumnsCount();
+			if (selectedIndex >= cols) {
+				navigate('up');
+				return true;
+			}
+			return false;
+		},
+		down: () => {
+			const cols = getColumnsCount();
+			if (selectedIndex + cols < items.length) {
+				navigate('down');
+				return true;
+			}
+			return false;
+		},
+		left: () => {
+			const cols = getColumnsCount();
+			if (selectedIndex % cols !== 0) {
+				navigate('left');
+				return true;
+			}
+			return false;
+		},
+		right: () => {
+			const cols = getColumnsCount();
+			if (selectedIndex % cols !== cols - 1 && selectedIndex < items.length - 1) {
+				navigate('right');
+				return true;
+			}
+			return false;
+		},
+		confirmDown: () => {
+			isAPressed = true;
+		},
+		confirmUp: () => {
+			isAPressed = false;
+			openItem();
+		},
+		confirmCancel: () => {
+			isAPressed = false;
+		},
+		back: () => onBack?.(),
+	};
+
 	onMount(() => {
-		const unregister = registerScene(SCENE_ID, {
-			up: () => {
-				const cols = getColumnsCount();
-				if (selectedIndex < cols) focusHeader();
-				else navigate('up');
-			},
-			down: () => navigate('down'),
-			left: () => navigate('left'),
-			right: () => navigate('right'),
-			confirmDown: () => {
-				isAPressed = true;
-			},
-			confirmUp: () => {
-				isAPressed = false;
-				openItem();
-			},
-			confirmCancel: () => {
-				isAPressed = false;
-			},
-			back: () => onback?.(),
-		});
-		activateScene(SCENE_ID);
-		return unregister;
+		unregisterList = useArea(areaID, areaHandlers);
+		activateArea(areaID);
+		return () => {
+			if (unregisterList) unregisterList();
+		};
 	});
 </script>
 
 <style>
 	.items {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-		gap: 1vw;
-		padding: 1vw;
+		gap: 2vh;
+		padding: 2vh;
 		width: 100%;
 		box-sizing: border-box;
-		justify-content: center;
-		place-items: stretch;
+		grid-template-columns: 1fr;
 	}
 
-	.items :global(.item) {
-		max-width: 400px;
-		width: 100%;
-		margin: 0 auto;
+	@media (min-width: 768px) {
+		.items {
+			grid-template-columns: repeat(3, 1fr);
+		}
+	}
+
+	@media (min-width: 1000px) {
+		.items {
+			grid-template-columns: repeat(4, 1fr);
+		}
+	}
+
+	@media (min-width: 1200px) {
+		.items {
+			grid-template-columns: repeat(5, 1fr);
+		}
+	}
+
+	@media (min-width: 1400px) {
+		.items {
+			grid-template-columns: repeat(6, 1fr);
+		}
 	}
 </style>
 
 {#if selectedItem}
-	<Product category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onback={closeDetail} />
+	<Product {areaID} category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onBack={closeDetail} />
 {:else}
 	<div class="items">
 		{#each items as item, index (item.id)}

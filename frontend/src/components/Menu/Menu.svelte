@@ -1,26 +1,38 @@
 <script lang="ts">
 	import MenuTitle from './MenuTitle.svelte';
-	import MenuItems from './MenuItems.svelte';
+	import MenuBar from './MenuBar.svelte';
+	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
+	import Button from '../Buttons/Button.svelte';
 
 	interface Props {
+		areaID: string;
 		title: string;
-		items: Array<{ id: string; label: string }>;
+		items: Array<{ id: string; label: string; selected?: boolean }>;
 		orientation?: 'horizontal' | 'vertical';
 		selectedId?: string;
 		onselect?: (id: string) => void;
-		onback?: () => void;
+		onBack?: () => void;
 	}
-	let { title, items, orientation = 'horizontal', selectedId, onselect, onback }: Props = $props();
+	let { areaID, title, items, orientation = 'horizontal', selectedId, onselect, onBack }: Props = $props();
+	let initialIndex = $derived(
+		selectedId
+			? Math.max(
+					0,
+					items.findIndex(i => i.id === selectedId)
+				)
+			: 0
+	);
 </script>
 
 <style>
 	.menu {
-		flex: 1;
+		width: 100%;
+		height: 100%;
+		/*flex: 1;*/
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		padding: 0;
 		box-sizing: border-box;
 		overflow: hidden;
 	}
@@ -28,7 +40,13 @@
 
 <div class="menu">
 	<MenuTitle {title} />
-	{#key `${title}-${selectedId}-${orientation}`}
-		<MenuItems {items} {orientation} sceneId="menu" {selectedId} {onselect} {onback} />
-	{/key}
+	<MenuBar>
+		{#key `${title}-${selectedId}-${orientation}`}
+			<ButtonsGroup {areaID} {initialIndex} {orientation} {onBack}>
+				{#each items as item (item.id)}
+					<Button label={item.label} icon={item.selected ? '/img/check.svg' : undefined} onConfirm={() => onselect?.(item.id)} />
+				{/each}
+			</ButtonsGroup>
+		{/key}
+	</MenuBar>
 </div>

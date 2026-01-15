@@ -1,28 +1,24 @@
 import { get } from 'svelte/store';
-import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone } from './settings.ts';
-
+import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone, increaseVolume, decreaseVolume } from './settings.ts';
 type GamepadCallback = () => void;
-
-const BUTTON_NAMES: Record<number, string> = {
-	0: 'a',
-	1: 'b',
-	2: 'x',
-	3: 'y',
-};
-
 let globalGamepadManager: GamepadManager | null = null;
 
 export class GamepadManager {
 	private animationId: number | null = null;
 	private deadzone: number;
-	private lastInputTime = 0;
-	private firstInputTime = 0;
 	private callbacks: Map<string, GamepadCallback> = new Map();
+	// Repeat tracking
+	private firstInputTime = 0;
+	private lastInputTime = 0;
+	private volumeFirstTime = 0;
+	private volumeLastTime = 0;
+	private volumeButtonHeld: number | null = null;
+	// Button state tracking (for A/B press/release)
 	private previousButtons: boolean[] = [];
 
 	constructor() {
 		this.deadzone = get(gamepadDeadzone);
-		gamepadDeadzone.subscribe(value => this.deadzone = value);
+		gamepadDeadzone.subscribe(value => (this.deadzone = value));
 	}
 
 	start(): void {
@@ -53,87 +49,91 @@ export class GamepadManager {
 	}
 
 	private poll = (): void => {
-		const gamepads = navigator.getGamepads();
-		const gamepad = gamepads[0];
-		if (gamepad) {
-			const leftStickX = gamepad.axes[0];
-			const leftStickY = gamepad.axes[1];
-			const buttons = gamepad.buttons.map(b => b.pressed);
-
-			// Check for button presses and releases
-			buttons.forEach((pressed, index) => {
-				const wasPressed = this.previousButtons[index];
-				const buttonName = BUTTON_NAMES[index];
-				// Button pressed (down event)
-				if (pressed && !wasPressed) {
-					this.emit(`button${index}`);
-					this.emit(`button${index}Down`);
-					if (buttonName) {
-						this.emit(buttonName);
-						this.emit(`${buttonName}Down`);
-					}
-				}
-				// Button released (up event)
-				if (!pressed && wasPressed) {
-					this.emit(`button${index}Up`);
-					if (buttonName) {
-						this.emit(`${buttonName}Up`);
-					}
-				}
-			});
-			this.previousButtons = buttons;
-			const currentTime = Date.now();
-			const initialDelay = get(inputInitialDelay);
-			let currentDelay = initialDelay;
-			if (this.firstInputTime > 0 && currentTime - this.firstInputTime > initialDelay) {
-				currentDelay = get(inputRepeatDelay);
-			}
-			if (currentTime - this.lastInputTime > currentDelay) {
-				let inputDetected = false;
-
-				// Check D-pad buttons (buttons 12-15 on Xbox controller)
-				const dpadDirections: string[] = [];
-				if (buttons[12]) dpadDirections.push('up'); // D-pad up
-				if (buttons[13]) dpadDirections.push('down'); // D-pad down
-				if (buttons[14]) dpadDirections.push('left'); // D-pad left
-				if (buttons[15]) dpadDirections.push('right'); // D-pad right
-
-				// Check analog stick directions
-				const stickDirections = this.getDirections(leftStickX, leftStickY);
-
-				// Combine both D-pad and analog stick directions
-				const allDirections = [...new Set([...dpadDirections, ...stickDirections])];
-
-				for (const direction of allDirections) {
-					this.emit(direction);
-					inputDetected = true;
-				}
-				// Update timing if input was detected
-				if (inputDetected) {
-					this.lastInputTime = currentTime;
-					if (this.firstInputTime === 0) this.firstInputTime = currentTime;
-				} else this.firstInputTime = 0;
-			}
-			// Reset timing if stick returned to center and no D-pad pressed
-			const isDpadPressed = buttons[12] || buttons[13] || buttons[14] || buttons[15];
-			if (Math.abs(leftStickX) <= this.deadzone && Math.abs(leftStickY) <= this.deadzone && !isDpadPressed) {
-				this.firstInputTime = 0;
-			}
+		const gamepad = navigator.getGamepads()[0];
+		if (!gamepad) {
+			this.animationId = requestAnimationFrame(this.poll);
+			return;
 		}
+		const buttons = gamepad.buttons.map(b => b.pressed);
+		const leftStickX = gamepad.axes[0];
+		const leftStickY = gamepad.axes[1];
+		const now = Date.now();
+		// A/B button press/release events
+		this.handleButtons(buttons);
+		// Direction handling (D-pad + analog stick) with repeat
+		this.handleDirections(buttons, leftStickX, leftStickY, now);
+		// Volume handling (Y = decrease, X = increase) with repeat
+		this.handleVolume(buttons, now);
 		this.animationId = requestAnimationFrame(this.poll);
 	};
 
-	private getDirections(x: number, y: number): string[] {
+	private handleButtons(buttons: boolean[]): void {
+		// A button (0) - confirm
+		if (buttons[0] && !this.previousButtons[0]) this.emit('aDown');
+		if (!buttons[0] && this.previousButtons[0]) this.emit('aUp');
+		// B button (1) - back
+		if (buttons[1] && !this.previousButtons[1]) this.emit('bDown');
+		if (!buttons[1] && this.previousButtons[1]) this.emit('bUp');
+		this.previousButtons = [...buttons];
+	}
+
+	private handleDirections(buttons: boolean[], stickX: number, stickY: number, now: number): void {
 		const directions: string[] = [];
-		if (Math.abs(y) > this.deadzone) {
-			if (y < -this.deadzone) directions.push('up');
-			else if (y > this.deadzone) directions.push('down');
+		// D-pad (buttons 12-15)
+		if (buttons[12]) directions.push('up');
+		if (buttons[13]) directions.push('down');
+		if (buttons[14]) directions.push('left');
+		if (buttons[15]) directions.push('right');
+		// Analog stick
+		if (stickY < -this.deadzone) directions.push('up');
+		else if (stickY > this.deadzone) directions.push('down');
+		if (stickX < -this.deadzone) directions.push('left');
+		else if (stickX > this.deadzone) directions.push('right');
+		// Deduplicate
+		const uniqueDirections = [...new Set(directions)];
+		if (uniqueDirections.length === 0) {
+			this.firstInputTime = 0;
+			return;
 		}
-		if (Math.abs(x) > this.deadzone) {
-			if (x < -this.deadzone) directions.push('left');
-			else if (x > this.deadzone) directions.push('right');
+		// Check repeat timing
+		const delay = this.firstInputTime > 0 && now - this.firstInputTime > get(inputInitialDelay) ? get(inputRepeatDelay) : get(inputInitialDelay);
+		if (now - this.lastInputTime >= delay) {
+			for (const dir of uniqueDirections) {
+				this.emit(dir);
+			}
+			this.lastInputTime = now;
+			if (this.firstInputTime === 0) this.firstInputTime = now;
 		}
-		return directions;
+	}
+
+	private handleVolume(buttons: boolean[], now: number): void {
+		const currentButton = buttons[4] ? 4 : buttons[3] ? 3 : null;
+		if (currentButton === null) {
+			this.volumeButtonHeld = null;
+			this.volumeFirstTime = 0;
+			return;
+		}
+
+		// New button or same held?
+		if (this.volumeButtonHeld !== currentButton) {
+			this.volumeButtonHeld = currentButton;
+			this.volumeFirstTime = now;
+			this.volumeLastTime = now;
+			this.triggerVolume(currentButton);
+			return;
+		}
+
+		// Check repeat timing
+		const delay = now - this.volumeFirstTime > get(inputInitialDelay) ? get(inputRepeatDelay) : get(inputInitialDelay);
+		if (now - this.volumeLastTime >= delay) {
+			this.triggerVolume(currentButton);
+			this.volumeLastTime = now;
+		}
+	}
+
+	private triggerVolume(button: number): void {
+		if (button === 4) increaseVolume();
+		else if (button === 3) decreaseVolume();
 	}
 }
 

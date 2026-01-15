@@ -4,7 +4,7 @@
 
 These are the installation instructions of this software for [Debian Linux](https://www.debian.org/).
 
-Log in as "root" on your server and run the following commands to download the necessary dependencies and the latest version of this software from GitHub:
+Log in as "root" on your device and run the following commands to download the necessary dependencies and the latest version of this software from GitHub:
 
 ```sh
 apt update
@@ -20,7 +20,13 @@ cd ../backend/
 
 ## 2. Use this software
 
-Open your web browser and navigate to: http://127.0.0.1/
+Open your browser with parameter that allows playing sounds without user's interaction, for example in Chrome:
+
+```sh
+chrome --autoplay-policy=no-user-gesture-required
+```
+
+Navigate to: http://127.0.0.1/
 
 If you'd like to **run this software in developer mode**, you need HTTPS certificate keys.
 

@@ -1,17 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { registerScene, activateScene } from '../../scripts/scenes.ts';
-	import { focusArea, focusHeader, pushBackHandler } from '../../scripts/navigation.ts';
+	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { t } from '../../scripts/language.ts';
 	import ProductFile from './ProductFile.svelte';
-	const SCENE_ID = 'product';
 	interface Props {
+		areaID: string;
 		category?: string;
 		itemTitle?: string;
 		itemId?: number;
-		onback?: () => void;
+		onBack?: () => void;
 	}
-	let { category = 'Movies', itemTitle = 'Item', itemId = 1, onback }: Props = $props();
-	let active = $derived($focusArea === 'content');
+	let { areaID, itemTitle = 'Item', itemId = 1, onBack }: Props = $props();
+	let active = $derived($activeArea === areaID);
 	const files = [
 		{ id: 1, name: `${itemTitle} - 240p.mp4`, size: '218.32 MB' },
 		{ id: 2, name: `${itemTitle} - 480p.mp4`, size: '780.12 MB' },
@@ -29,10 +30,10 @@
 	function navigate(direction: string): void {
 		switch (direction) {
 			case 'up':
-				selectedRow = selectedRow <= -1 ? files.length - 1 : selectedRow - 1;
+				if (selectedRow > -1) selectedRow--;
 				break;
 			case 'down':
-				selectedRow = selectedRow >= files.length - 1 ? -1 : selectedRow + 1;
+				if (selectedRow < files.length - 1) selectedRow++;
 				break;
 			case 'left':
 				if (selectedRow >= 0) selectedButton = 0;
@@ -67,17 +68,35 @@
 	}
 
 	onMount(() => {
-		const unregisterScene = registerScene(SCENE_ID, {
+		const unregisterArea = useArea(areaID, {
 			up: () => {
-				if (selectedRow === -1) {
-					focusHeader();
-				} else {
+				if (selectedRow > -1) {
 					navigate('up');
+					return true;
 				}
+				return false;
 			},
-			down: () => navigate('down'),
-			left: () => navigate('left'),
-			right: () => navigate('right'),
+			down: () => {
+				if (selectedRow < files.length - 1) {
+					navigate('down');
+					return true;
+				}
+				return false;
+			},
+			left: () => {
+				if (selectedRow >= 0 && selectedButton > 0) {
+					navigate('left');
+					return true;
+				}
+				return false;
+			},
+			right: () => {
+				if (selectedRow >= 0 && selectedButton < 1) {
+					navigate('right');
+					return true;
+				}
+				return false;
+			},
 			confirmDown: () => {
 				isAPressed = true;
 			},
@@ -88,12 +107,12 @@
 			confirmCancel: () => {
 				isAPressed = false;
 			},
-			back: () => onback?.(),
+			back: () => onBack?.(),
 		});
-		activateScene(SCENE_ID);
-		const unregisterBack = pushBackHandler(() => onback?.());
+		activateArea(areaID);
+		const unregisterBack = pushBackHandler(() => onBack?.());
 		return () => {
-			unregisterScene();
+			unregisterArea();
 			unregisterBack();
 		};
 	});
@@ -104,34 +123,35 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		color: #fff;
 	}
 
 	.detail .content {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 1vw;
-		width: 50vw;
-		padding: 1vw;
-		margin: 1vw;
-		border-radius: 1vw;
-		background-color: rgba(255, 255, 255, 0.05);
-		box-shadow: 0 0px 2vw rgba(0, 0, 0, 0.5);
+		gap: 2vh;
+		width: 1200px;
+		max-width: calc(94vw);
+		padding: 2vh;
+		margin: 2vh;
+		border-radius: 2vh;
+		box-sizing: border-box;
+		background-color: var(--secondary-background);
+		box-shadow: 0 0 2vh var(--secondary-background);
 	}
 
 	.detail .content .image {
 		width: 100%;
 		aspect-ratio: 16 / 9;
-		border-radius: 1vw;
+		border-radius: 2vh;
 		overflow: hidden;
-		border: 0.2vw solid rgba(255, 255, 255, 0.05);
+		border: 0.4vh solid var(--secondary-softer-background);
 		box-sizing: border-box;
 		transition: all 0.2s linear;
 	}
 
 	.detail .content .image.selected {
-		border-color: #aa0;
+		border-color: var(--primary-foreground);
 	}
 
 	.detail .content .image img {
@@ -143,18 +163,29 @@
 	.detail .content .files {
 		display: flex;
 		flex-direction: column;
-		gap: 1vw;
+		gap: 2vh;
 		width: 100%;
 	}
 
 	.detail .content .files .title {
 		display: flex;
 		align-items: center;
-		font-size: 1.5vw;
+		font-size: 3vh;
 		font-weight: bold;
-		padding: 1vw;
-		border-radius: 1vw;
-		background-color: #444;
+		padding: 2vh;
+		border-radius: 2vh;
+		background-color: var(--secondary-soft-background);
+		border: 0.4vh solid var(--secondary-softer-background);
+		color: var(--secondary-foreground);
+	}
+
+	@media (max-width: 1199px) {
+		.detail .content {
+			max-width: calc(100vw);
+			margin: 0;
+			border-radius: 0;
+			box-shadow: none;
+		}
 	}
 </style>
 
@@ -164,7 +195,7 @@
 			<img src="https://picsum.photos/seed/{itemId}/800/450" alt={itemTitle} />
 		</div>
 		<div class="files">
-			<div class="title">Files</div>
+			<div class="title">{$t.library?.product?.files}</div>
 			{#each files as file, rowIndex (file.id)}
 				<div bind:this={fileElements[rowIndex]}>
 					<ProductFile name={file.name} size={file.size} selected={active && rowIndex === selectedRow} {selectedButton} pressed={active && isAPressed} />

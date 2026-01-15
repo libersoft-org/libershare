@@ -1,19 +1,23 @@
 import { getKeyboardManager } from './keyboard.ts';
 import { getGamepadManager } from './gamepad.ts';
-import { emit } from './scenes.ts';
+import { getMouseManager } from './mouse.ts';
+import { emit } from './areas.ts';
 
 class InputManager {
 	private keyboardStarted = false;
 	private gamepadStarted = false;
+	private mouseStarted = false;
 
 	start(): void {
 		this.startKeyboard();
 		this.startGamepad();
+		this.startMouse();
 	}
 
 	stop(): void {
 		this.stopKeyboard();
 		this.stopGamepad();
+		this.stopMouse();
 	}
 
 	private startKeyboard(): void {
@@ -70,6 +74,20 @@ class InputManager {
 		gamepad.off('bDown');
 		gamepad.stop();
 		this.gamepadStarted = false;
+	}
+
+	private startMouse(): void {
+		if (this.mouseStarted) return;
+		const mouse = getMouseManager();
+		mouse.start();
+		this.mouseStarted = true;
+	}
+
+	private stopMouse(): void {
+		if (!this.mouseStarted) return;
+		const mouse = getMouseManager();
+		mouse.stop();
+		this.mouseStarted = false;
 	}
 }
 

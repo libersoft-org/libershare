@@ -1,0 +1,120 @@
+{
+	"common": {
+		"home": "Home",
+		"back": "Back",
+		"ok": "OK",
+		"cancel": "Cancel",
+		"yes": "Yes",
+		"no": "No",
+		"change": "Change",
+		"version": "Version",
+		"add": "Add",
+		"save": "Save",
+		"delete": "Delete",
+		"edit": "Edit",
+		"import": "Import",
+		"connected": "Connected",
+		"disconnected": "Disconnected"
+	},
+	"library": {
+		"title": "Online library",
+		"product": {
+			"files": "Files",
+			"size": "Size",
+			"download": "Download",
+			"play": "Play"
+		}
+	},
+	"localStorage": {
+		"title": "Local storage",
+		"name": "Name",
+		"size": "Size",
+		"modified": "Modified"
+	},
+	"downloads": {
+		"title": "Downloads",
+		"name": "Name",
+		"id": "ID",
+		"size": "Size",
+		"progress": "Progress",
+		"status": "Status",
+		"downloadingFrom": "Downloading from",
+		"uploadingTo": "Uploading to",
+		"downloadSpeed": "Download speed",
+		"uploadSpeed": "Upload speed",
+		"statuses": {
+			"completed": "Completed",
+			"downloading": "Downloading",
+			"waiting": "Waiting",
+			"paused": "Paused",
+			"error": "Error"
+		}
+	},
+	"settings": {
+		"title": "Settings",
+		"language": "Language",
+		"time": {
+			"label": "Time",
+			"format": "Time format",
+			"showSeconds": "Show seconds",
+			"12hour": "12 hour",
+			"24hour": "24 hour"
+		},
+		"audio": "Sound effects",
+		"cursorSize": {
+			"label": "Cursor size",
+			"sizes": {
+				"small": "Small",
+				"medium": "Medium",
+				"large": "Large"
+			}
+		},
+		"storage": {
+			"folderDownload": "Finished download folder",
+			"folderTemp": "Unfinished downloads folder"
+		},
+		"lishNetwork": {
+			"title": "LISH Network",
+			"name": "Name"
+		},
+		"footer": "Footer",
+		"footerVisible": "Show footer",
+		"footerPosition": "Footer position",
+		"footerPositions": {
+			"left": "Left",
+			"center": "Center",
+			"right": "Right"
+		},
+		"footerWidgets": {
+			"download": "Download speed",
+			"upload": "Upload speed",
+			"cpu": "CPU usage",
+			"ram": "RAM usage",
+			"storage": "Storage usage",
+			"volume": "Volume",
+			"clock": "Clock"
+		}
+	},
+	"about": {
+		"title": "About",
+		"buildDate": "Build date",
+		"commit": "Commit",
+		"githubPage": "GitHub page",
+		"officialWebsite": "Official website"
+	},
+	"exit": {
+		"title": "Exit",
+		"restart": {
+			"title": "Restart",
+			"message": "Are you sure you want to restart the device?"
+		},
+		"shutdown": {
+			"title": "Shutdown",
+			"message": "Are you sure you want to shutdown the device?"
+		},
+		"quitApplication": {
+			"title": "Quit application",
+			"message": "Are you sure you want to quit the application?"
+		}
+	}
+}

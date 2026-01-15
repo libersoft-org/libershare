@@ -1,0 +1,120 @@
+{
+	"common": {
+		"home": "Domů",
+		"back": "Zpět",
+		"ok": "OK",
+		"cancel": "Zrušit",
+		"yes": "Ano",
+		"no": "Ne",
+		"change": "Změnit",
+		"version": "Verze",
+		"add": "Přidat",
+		"save": "Uložit",
+		"delete": "Smazat",
+		"edit": "Upravit",
+		"import": "Importovat",
+		"connected": "Připojeno",
+		"disconnected": "Odpojeno"
+	},
+	"library": {
+		"title": "Online knihovna",
+		"product": {
+			"files": "Soubory",
+			"size": "Velikost",
+			"download": "Stáhnout",
+			"play": "Přehrát"
+		}
+	},
+	"localStorage": {
+		"title": "Místní úložiště",
+		"name": "Název",
+		"size": "Velikost",
+		"modified": "Změněno"
+	},
+	"downloads": {
+		"title": "Stahování",
+		"name": "Název",
+		"id": "ID",
+		"size": "Velikost",
+		"progress": "Průběh",
+		"status": "Stav",
+		"downloadingFrom": "Stahování od",
+		"uploadingTo": "Odesílání k",
+		"downloadSpeed": "Rychlost stahování",
+		"uploadSpeed": "Rychlost odesílání",
+		"statuses": {
+			"completed": "Dokončeno",
+			"downloading": "Stahuje se",
+			"waiting": "Čeká",
+			"paused": "Pozastaveno",
+			"error": "Chyba"
+		}
+	},
+	"settings": {
+		"title": "Nastavení",
+		"language": "Jazyk",
+		"time": {
+			"label": "Čas",
+			"format": "Formát času",
+			"showSeconds": "Zobrazení vteřin",
+			"12hour": "12 hodinový",
+			"24hour": "24 hodinový"
+		},
+		"audio": "Zvukové efekty",
+		"cursorSize": {
+			"label": "Velikost kurzoru",
+			"sizes": {
+				"small": "Malý",
+				"medium": "Střední",
+				"large": "Velký"
+			}
+		},
+		"storage": {
+			"folderDownload": "Složka pro dokončená stahování",
+			"folderTemp": "Složka pro nedokončená stahování"
+		},
+		"lishNetwork": {
+			"title": "Síť LISH",
+			"name": "Název"
+		},
+		"footer": "Patička",
+		"footerVisible": "Zobrazovat patičku",
+		"footerPosition": "Pozice patičky",
+		"footerPositions": {
+			"left": "Vlevo",
+			"center": "Uprostřed",
+			"right": "Vpravo"
+		},
+		"footerWidgets": {
+			"download": "Rychlost stahování",
+			"upload": "Rychlost odesílání",
+			"cpu": "Využití CPU",
+			"ram": "Využití RAM",
+			"storage": "Využití úložiště",
+			"volume": "Hlasitost",
+			"clock": "Hodiny"
+		}
+	},
+	"about": {
+		"title": "O aplikaci",
+		"buildDate": "Datum sestavení",
+		"commit": "Commit",
+		"githubPage": "Stránka na GitHubu",
+		"officialWebsite": "Oficiální web"
+	},
+	"exit": {
+		"title": "Ukončit",
+		"restart": {
+			"title": "Restartovat",
+			"message": "Opravdu chcete restartovat zařízení?"
+		},
+		"shutdown": {
+			"title": "Vypnout",
+			"message": "Opravdu chcete vypnout zařízení?"
+		},
+		"quitApplication": {
+			"title": "Ukončit aplikaci",
+			"message": "Opravdu chcete ukončit aplikaci?"
+		}
+	}
+}

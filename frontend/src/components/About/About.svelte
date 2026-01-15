@@ -1,157 +1,67 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { registerScene, activateScene } from '../../scripts/scenes.ts';
-	import { focusArea, focusHeader } from '../../scripts/navigation.ts';
 	import { productName, productVersion, buildDate, commitHash } from '../../scripts/app.ts';
+	import { t } from '../../scripts/language.ts';
 	import Dialog from '../Dialog/Dialog.svelte';
-	import ButtonNormal from '../Buttons/ButtonNormal.svelte';
-	const SCENE_ID = 'about';
-	const ITEMS = [
-		{
-			type: 'link',
-			label: 'GitHub: https://github.com/libersoft-org/libershare',
-			url: 'https://github.com/libersoft-org/libershare',
-		},
-		{
-			type: 'link',
-			label: 'Website: https://libershare.com',
-			url: 'https://libershare.com',
-		},
-		{
-			type: 'button',
-			label: 'OK',
-		},
-	] as const;
-
+	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
+	import Button from '../Buttons/Button.svelte';
 	interface Props {
-		onback?: () => void;
+		areaID: string;
+		onBack?: () => void;
 	}
+	let { areaID, onBack: onBack }: Props = $props();
 
-	let { onback }: Props = $props();
-	let active = $derived($focusArea === 'content');
-	let selectedIndex = $state(ITEMS.length - 1); // Start on OK button
-	let isAPressed = $state(false);
-
-	function handleConfirm() {
-		const item = ITEMS[selectedIndex];
-		if (item.type === 'link') window.open(item.url, '_blank');
-		else onback?.();
+	function openUrl(url: string) {
+		window.open(url, '_blank');
 	}
-
-	onMount(() => {
-		const unregister = registerScene(SCENE_ID, {
-			up: () => {
-				if (selectedIndex > 0) selectedIndex--;
-				else focusHeader();
-			},
-			down: () => {
-				if (selectedIndex < ITEMS.length - 1) selectedIndex++;
-			},
-			confirmDown: () => {
-				isAPressed = true;
-			},
-			confirmUp: () => {
-				isAPressed = false;
-				handleConfirm();
-			},
-			confirmCancel: () => {
-				isAPressed = false;
-			},
-			back: () => onback?.(),
-		});
-		activateScene(SCENE_ID);
-		return unregister;
-	});
 </script>
 
 <style>
-	.title {
-		font-size: 2vw;
-		font-weight: bold;
-		color: #fd1;
-	}
-
 	.build {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.5rem;
-		font-size: 1.1rem;
-		color: #aaa;
+		gap: 1vh;
+		font-size: 2vh;
 	}
 
 	.build .row {
 		display: flex;
-		gap: 0.5rem;
+		gap: 1vh;
 	}
 
 	.build .row .label {
-		color: #888;
-	}
-
-	.build .row .value {
-		color: #fff;
+		color: var(--disabled-foreground);
 	}
 
 	.links {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.5rem;
-		margin-top: 1rem;
-	}
-
-	.links .link {
-		color: #aaa;
-		text-decoration: none;
-		font-size: 1.1rem;
-		padding: 0.5rem 1rem;
-		border-radius: 0.5rem;
-		transition:
-			background-color 0.15s,
-			color 0.15s;
-	}
-
-	.links .link.selected {
-		color: #fd1;
-		background-color: rgba(255, 221, 17, 0.1);
-	}
-
-	.links .link.pressed {
-		background-color: rgba(255, 221, 17, 0.2);
-	}
-
-	.buttons {
-		margin-top: 1rem;
+		gap: 1vh;
+		margin-top: 2vh;
 	}
 </style>
 
-<Dialog>
-	<div class="title">{productName}</div>
+<Dialog title={productName}>
 	<div class="build">
 		<div class="row">
-			<span class="label">Version:</span>
+			<span class="label">{$t.common?.version}:</span>
 			<span class="value">{productVersion}</span>
 		</div>
 		<div class="row">
-			<span class="label">Build Date:</span>
+			<span class="label">{$t.about?.buildDate}:</span>
 			<span class="value">{buildDate}</span>
 		</div>
 		<div class="row">
-			<span class="label">Commit:</span>
+			<span class="label">{$t.about?.commit}:</span>
 			<span class="value">{commitHash}</span>
 		</div>
 	</div>
 	<div class="links">
-		{#each ITEMS as item, i}
-			{#if item.type === 'link'}
-				<span class="link" class:selected={active && selectedIndex === i} class:pressed={active && selectedIndex === i && isAPressed}>
-					{item.label}
-				</span>
-			{/if}
-		{/each}
-	</div>
-	<div class="buttons">
-		<ButtonNormal label="OK" selected={active && selectedIndex === ITEMS.length - 1} pressed={active && selectedIndex === ITEMS.length - 1 && isAPressed} />
+		<ButtonsGroup {areaID} initialIndex={2} {onBack}>
+			<Button label={$t.about?.githubPage} padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
+			<Button label={$t.about?.officialWebsite} padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://libershare.com')} />
+			<Button label={$t.common?.ok} onConfirm={onBack} />
+		</ButtonsGroup>
 	</div>
 </Dialog>

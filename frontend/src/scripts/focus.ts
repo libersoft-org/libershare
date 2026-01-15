@@ -1,11 +1,3 @@
-import { writable } from 'svelte/store';
-import { activateScene, getSceneManager } from './scenes.ts';
-
-export type FocusArea = 'header' | 'content';
-
-const focusAreaStore = writable<FocusArea>('content');
-let lastContentScene: string | null = null;
-
 // Back handler stack
 type BackHandler = () => void;
 const backStack: BackHandler[] = [];
@@ -33,43 +25,4 @@ export function executeBackHandler(): boolean {
 		return true;
 	}
 	return false;
-}
-
-// Subscribe to focusArea changes and activate appropriate scene
-focusAreaStore.subscribe(area => {
-	if (area === 'header') {
-		activateScene('header');
-	} else if (lastContentScene) {
-		activateScene(lastContentScene);
-	}
-});
-
-export const focusArea = {
-	subscribe: focusAreaStore.subscribe,
-	set: focusAreaStore.set,
-};
-
-export function focusHeader(): void {
-	// Remember current content scene before switching to header
-	const currentScene = getSceneManager().getActiveScene();
-	if (currentScene && currentScene !== 'header') {
-		lastContentScene = currentScene;
-	}
-	focusAreaStore.set('header');
-}
-
-export function focusContent(): void {
-	focusAreaStore.set('content');
-	if (lastContentScene) {
-		activateScene(lastContentScene);
-	}
-}
-
-export function setContentScene(sceneId: string): void {
-	lastContentScene = sceneId;
-}
-
-// Internal access for navigation
-export function getFocusAreaStore() {
-	return focusAreaStore;
 }

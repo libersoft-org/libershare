@@ -1,39 +1,57 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-
 	interface Props {
-		children: Snippet;
+		title?: string;
 		minWidth?: string;
+		children: Snippet;
 	}
-
-	let { children, minWidth = '400px' }: Props = $props();
+	let { title, minWidth = '0', children }: Props = $props();
 </script>
 
 <style>
-	.dialog {
+	.dialog-wrapper {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		padding: 2rem;
-		color: #fff;
-		flex: 1;
+		height: 100%;
 	}
 
-	.dialog .content {
+	.dialog {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 1.5rem;
-		padding: 2rem 3rem;
-		background-color: rgba(255, 255, 255, 0.05);
-		border-radius: 1rem;
-		box-shadow: 0 0 2rem rgba(0, 0, 0, 0.5);
+		background-color: var(--secondary-background);
+		border: 0.2vh solid var(--secondary-soft-background);
+		border-radius: 2vh;
+		box-shadow: 0 0 4vh var(--secondary-background);
+		overflow: hidden;
+	}
+
+	.dialog .title {
+		display: flex;
+		justify-content: center;
+		width: 100%;
+		padding: 1vh;
+		font-size: 3vh;
+		font-weight: bold;
+		color: var(--primary-foreground);
+		background-color: var(--secondary-soft-background);
+	}
+
+	.dialog .body {
+		color: var(--secondary-foreground);
+		padding: 2vh;
 	}
 </style>
 
-<div class="dialog">
-	<div class="content" style:min-width={minWidth}>
-		{@render children()}
+<div class="dialog-wrapper">
+	<div class="dialog" style:min-width={minWidth}>
+		{#if title}
+			<div class="title">{title}</div>
+		{/if}
+		<div class="body">
+			{@render children()}
+		</div>
 	</div>
 </div>

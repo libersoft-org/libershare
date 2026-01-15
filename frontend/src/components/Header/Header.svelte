@@ -1,23 +1,19 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { productName } from '../../scripts/app.ts';
-	import { registerScene } from '../../scripts/scenes.ts';
-	import { focusArea, focusContent } from '../../scripts/navigation.ts';
-	import ButtonCircle from '../Buttons/ButtonCircle.svelte';
+	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import Button from '../Buttons/Button.svelte';
 	interface Props {
-		onback?: () => void;
+		areaID: string;
+		onBack?: () => void;
 	}
-	let { onback }: Props = $props();
+	let { areaID, onBack }: Props = $props();
+	let active = $derived($activeArea === areaID);
 
 	onMount(() => {
-		const handleBack = () => {
-			onback?.();
-			focusContent();
-		};
-		return registerScene('header', {
-			down: () => focusContent(),
-			confirmUp: handleBack,
-			back: handleBack,
+		return useArea(areaID, {
+			confirmUp: () => onBack?.(),
+			back: () => onBack?.(),
 		});
 	});
 </script>
@@ -26,16 +22,20 @@
 	.header {
 		display: flex;
 		align-items: center;
-		gap: 1vw;
-		background-color: #000;
-		color: #fd1;
-		padding: 1vw;
-		font-size: 1.5vw;
+		gap: 1vh;
+		padding: 1vh;
+		background-color: var(--secondary-background);
+		border-bottom: 0.2vh solid var(--secondary-softer-background);
+	}
+
+	.title {
+		color: var(--primary-foreground);
+		font-size: 4vh;
 		font-weight: bold;
 	}
 </style>
 
 <div class="header">
-	<ButtonCircle icon="/icons/back.svg" alt="Back" selected={$focusArea === 'header'} />
-	{productName}
+	<Button icon="/img/back.svg" alt="Back" selected={active} padding="1vh" width="5vh" height="5vh" borderRadius="50%" />
+	<div class="title">{productName}</div>
 </div>
