@@ -20,6 +20,7 @@
 		"@libp2p/keychain": "^6.0.6",
 		"@libp2p/peer-id-factory": "^4.2.4",
 		"@libp2p/ping": "^3.0.6",
+		"@libp2p/pnet": "^3.0.10",
 		"@libp2p/tcp": "^11.0.6",
 		"async-mutex": "^0.5.0",
 		"consola": "^3.4.2",

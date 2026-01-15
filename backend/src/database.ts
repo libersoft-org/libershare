@@ -84,7 +84,7 @@ export class Database {
     }
 
     getDatasetByManifest(manifestId: LishId): Dataset | null {
-        const stmt = this.db.query('SELECT * FROM datasets WHERE manifest_id = ?');
+        const stmt = this.db.query('SELECT * FROM datasets WHERE manifest_id = ? ORDER BY complete DESC');
         const row = stmt.get(manifestId) as {id: number; manifest_id: string; directory: string; complete: number} | null;
         if (!row) return null;
         return {

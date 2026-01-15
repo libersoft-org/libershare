@@ -1,4 +1,5 @@
 import { createLibp2p } from 'libp2p';
+import { preSharedKey } from '@libp2p/pnet'
 import { tcp } from '@libp2p/tcp';
 import { noise, pureJsCrypto } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
@@ -59,6 +60,7 @@ export class Network {
 	private readonly enablePink: boolean;
 	private bootstrapPeerIds: Set<string> = new Set();
 	private bootstrapMultiaddrs: any[] = []; // Store full multiaddrs for direct dialing
+	private swarmKey: string = 'abc';
 
 	constructor(dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
 		this.dataDir = dataDir;
@@ -134,6 +136,9 @@ export class Network {
 				autoDial: true,
 				autoDialInterval: 1000,
 			},
+			connectionProtector: preSharedKey({
+			  psk: this.swarmKey
+			}),
 			peerStore: {
 				persistence: true,
 				threshold: 15,

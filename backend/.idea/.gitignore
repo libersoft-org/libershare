@@ -12,4 +12,4 @@ db-forest-config.xml
 dictionaries/
 inspectionProfiles/
 sqldialects.xml
-copilot.data.migration.agent.xml
+copilot.data.migration.*

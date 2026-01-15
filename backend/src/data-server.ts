@@ -94,6 +94,10 @@ export class DataServer {
             return null;
         }
 
+        return getChunkFromDataset(dataset, manifest, chunkId);
+    }
+
+    async function getChunkFromDataset(dataset: {directory: string}, manifest: IManifest, chunkId: ChunkId): Promise<Uint8Array | null> {
         // Find the chunk by its hash across all files
         for (const file of manifest.files) {
             const chunkIndex = file.checksums.findIndex(c => c === chunkId);
