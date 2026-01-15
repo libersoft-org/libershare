@@ -3,6 +3,7 @@ import { Network } from './network.ts';
 import { Downloader } from './downloader.ts';
 import { DataServer } from './data-server.ts';
 import { Database } from './database.ts';
+import { ApiServer } from './api.ts';
 import * as readline from 'readline';
 import { join } from 'path';
 
@@ -49,9 +50,11 @@ const dataServer = new DataServer(dataDir, db);
 await dataServer.init();
 
 const network = new Network(dataDir, dataServer, enablePink);
+const apiServer = new ApiServer(dataDir, db, dataServer, network);
 
 async function shutdown() {
 	console.log('Shutting down...');
+	apiServer.stop();
 	await network.stop();
 	db.close();
 	process.exit(0);
@@ -162,3 +165,4 @@ rl.on('line', async line => {
 process.on('SIGINT', shutdown);
 
 await network.start();
+apiServer.start();
