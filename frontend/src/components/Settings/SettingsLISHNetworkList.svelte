@@ -7,6 +7,7 @@
 	import Button from '../Buttons/Button.svelte';
 	import Row from '../Row/Row.svelte';
 	import LISHNetworkAddEdit from './SettingsLISHNetworkAddEdit.svelte';
+	import LISHNetworkImport from './SettingsLISHNetworkImport.svelte';
 	interface Props {
 		areaID: string;
 		onBack?: () => void;
@@ -17,11 +18,13 @@
 	}
 	let { areaID, onBack }: Props = $props();
 	const editAreaID = areaID + '-edit';
+	const importAreaID = areaID + '-import';
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
-	let buttonIndex = $state(0); // 0 = Edit, 1 = Delete
+	let buttonIndex = $state(0); // 0 = Add, 1 = Import (for top row); 0 = Edit, 1 = Delete (for network rows)
 	let showAddEdit = $state(false);
+	let showImport = $state(false);
 	let editingNetwork = $state<Network | null>(null);
 	let rowElements: HTMLElement[] = $state([]);
 
@@ -31,8 +34,11 @@
 		{ id: '2', name: 'Backup Network' },
 	]);
 
-	// Items: Add button (0), network rows (1 to networks.length), Back button (last)
+	// Items: Top buttons row (0), network rows (1 to networks.length), Back button (last)
 	let totalItems = $derived(networks.length + 2);
+
+	// Check if current row is the top row (has Add/Import buttons)
+	let isTopRow = $derived(selectedIndex === 0);
 
 	// Check if current row is a network row (has Edit/Delete buttons)
 	let isNetworkRow = $derived(selectedIndex > 0 && selectedIndex < totalItems - 1);
@@ -44,6 +50,27 @@
 		setAreaPosition(editAreaID, { x: 0, y: 2 });
 		pushBreadcrumb($t.common?.add ?? 'Add');
 		removeBackHandler = pushBackHandler(handleAddEditBack);
+	}
+
+	function openImport() {
+		showImport = true;
+		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
+		setAreaPosition(importAreaID, { x: 0, y: 2 });
+		pushBreadcrumb($t.common?.import ?? 'Import');
+		removeBackHandler = pushBackHandler(handleImportBack);
+	}
+
+	function handleImportBack() {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
+		removeArea(importAreaID);
+		setAreaPosition(areaID, { x: 0, y: 2 }); // Restore original area position
+		popBreadcrumb();
+		showImport = false;
+		registerAreaHandler();
+		activateArea(areaID);
 	}
 
 	function openEditNetwork(network: Network) {
@@ -133,14 +160,14 @@
 				return false;
 			},
 			left: () => {
-				if (isNetworkRow && buttonIndex > 0) {
+				if ((isTopRow || isNetworkRow) && buttonIndex > 0) {
 					buttonIndex--;
 					return true;
 				}
 				return false;
 			},
 			right: () => {
-				if (isNetworkRow && buttonIndex < 1) {
+				if ((isTopRow || isNetworkRow) && buttonIndex < 1) {
 					buttonIndex++;
 					return true;
 				}
@@ -148,9 +175,12 @@
 			},
 			confirmDown: () => {},
 			confirmUp: () => {
-				if (selectedIndex === 0) openAddNetwork();
-				else if (selectedIndex === totalItems - 1) onBack?.();
-				else {
+				if (selectedIndex === 0) {
+					if (buttonIndex === 0) openAddNetwork();
+					else openImport();
+				} else if (selectedIndex === totalItems - 1) {
+					onBack?.();
+				} else {
 					const networkIndex = selectedIndex - 1;
 					const network = networks[networkIndex];
 					if (network) {
@@ -175,7 +205,8 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		height: 100%;
+		flex: 1;
+		min-height: 0;
 		padding: 2vh;
 		gap: 2vh;
 		overflow-y: auto;
@@ -189,9 +220,10 @@
 		max-width: 100%;
 	}
 
-	.add-button {
+	.top-buttons {
 		display: flex;
 		justify-content: flex-start;
+		gap: 1vh;
 		margin-bottom: 1vh;
 	}
 
@@ -213,11 +245,14 @@
 
 {#if showAddEdit}
 	<LISHNetworkAddEdit areaID={editAreaID} network={editingNetwork} onBack={handleAddEditBack} onSave={handleSave} />
+{:else if showImport}
+	<LISHNetworkImport areaID={importAreaID} onBack={handleImportBack} />
 {:else}
 	<div class="lish-network-list">
 		<div class="container">
-			<div class="add-button" bind:this={rowElements[0]}>
-				<Button label={$t.common?.add ?? 'Add'} selected={active && selectedIndex === 0} onConfirm={openAddNetwork} />
+			<div class="top-buttons" bind:this={rowElements[0]}>
+				<Button label={$t.common?.add ?? 'Add'} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={openAddNetwork} />
+				<Button label={$t.common?.import ?? 'Import'} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openImport} />
 			</div>
 			{#each networks as network, i}
 				<div bind:this={rowElements[i + 1]}>
