@@ -85,9 +85,7 @@
 	function deleteNetwork(network: Network) {
 		networks = networks.filter(n => n.id !== network.id);
 		// Adjust selected index if needed
-		if (selectedIndex >= totalItems) {
-			selectedIndex = totalItems - 1;
-		}
+		if (selectedIndex >= totalItems) selectedIndex = totalItems - 1;
 		buttonIndex = 0;
 	}
 
@@ -109,9 +107,7 @@
 		if (editingNetwork) {
 			// Update existing
 			const index = networks.findIndex(n => n.id === editingNetwork!.id);
-			if (index !== -1) {
-				networks[index] = network;
-			}
+			if (index !== -1) networks[index] = network;
 		} else {
 			// Add new
 			networks = [...networks, { ...network, id: crypto.randomUUID() }];
@@ -178,9 +174,8 @@
 				if (selectedIndex === 0) {
 					if (buttonIndex === 0) openAddNetwork();
 					else openImport();
-				} else if (selectedIndex === totalItems - 1) {
-					onBack?.();
-				} else {
+				} else if (selectedIndex === totalItems - 1) onBack?.();
+				else {
 					const networkIndex = selectedIndex - 1;
 					const network = networks[networkIndex];
 					if (network) {

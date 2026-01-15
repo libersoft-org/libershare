@@ -46,5 +46,5 @@
 
 <div class="import">
 	<div class="label">TODO</div>
-	<Button label={$t.common?.back ?? 'Back'} selected={active} onConfirm={onBack} />
+	<Button label={$t.common?.back} selected={active} onConfirm={onBack} />
 </div>
