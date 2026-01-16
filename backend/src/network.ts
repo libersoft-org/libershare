@@ -24,6 +24,7 @@ import { DataServer } from './data-server.ts';
 import { LISH_PROTOCOL, handleLishProtocol } from './lish-protocol.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 import {HaveMessage, LISH_TOPIC, WantMessage} from './downloader.ts';
+import type { NetworkDefinition } from './networks.ts';
 
 // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 type PubSub = any;
@@ -60,12 +61,13 @@ export class Network {
 	private readonly enablePink: boolean;
 	private bootstrapPeerIds: Set<string> = new Set();
 	private bootstrapMultiaddrs: any[] = []; // Store full multiaddrs for direct dialing
-	private swarmKey: string = 'abc';
+	private readonly networkDef: NetworkDefinition | null;
 
-	constructor(dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
+	constructor(dataDir: string, dataServer: DataServer, enablePink: boolean = false, networkDef: NetworkDefinition | null = null) {
 		this.dataDir = dataDir;
 		this.enablePink = enablePink;
 		this.dataServer = dataServer;
+		this.networkDef = networkDef;
 	}
 
 	private async loadOrCreatePrivateKey(datastore: LevelDatastore): Promise<PrivateKey> {
@@ -88,12 +90,20 @@ export class Network {
 	}
 
 	async start() {
+		if (!this.networkDef) {
+			throw new Error('NetworkDefinition is required to start a network');
+		}
+
 		// Load settings from dataDir
 		const settingsPath = join(this.dataDir, 'settings.json');
 		const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
 
-		// Initialize datastore
-		const datastorePath = join(this.dataDir, 'datastore');
+		// Decode swarm key from base64
+		const swarmKey = Uint8Array.fromBase64(this.networkDef.key);
+		const bootstrapPeers = this.networkDef.bootstrap_peers;
+
+		// Initialize datastore (network-specific path)
+		const datastorePath = join(this.dataDir, `datastore-${this.networkDef.id}`);
 		this.datastore = new LevelDatastore(datastorePath);
 		await this.datastore.open();
 		console.log('✓ Datastore opened at:', datastorePath);
@@ -110,8 +120,9 @@ export class Network {
 			console.log(`✓ Circuit relay client enabled (mode: ${relayClientMode})`);
 		}
 
-		// Build listen addresses
-		const listenAddresses = [`/ip4/0.0.0.0/tcp/${settings.network.port}`];
+		// Build listen addresses (use port 0 to let OS assign if not specified)
+		const port = settings.network?.port || 0;
+		const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
 		if (relayClientEnabled) {
 			// Add /p2p-circuit entries - one per desired relay reservation
 			const maxRelays = settings.relay?.client?.maxRelays || 2;
@@ -137,7 +148,7 @@ export class Network {
 				autoDialInterval: 1000,
 			},
 			connectionProtector: preSharedKey({
-			  psk: this.swarmKey
+			  psk: swarmKey
 			}),
 			peerStore: {
 				persistence: true,
@@ -186,9 +197,9 @@ export class Network {
 		}
 
 		// Add bootstrap if peers are configured
-		if (settings.network.bootstrapPeers?.length > 0) {
+		if (bootstrapPeers.length > 0) {
 			console.log('Configuring bootstrap peers:');
-			for (const peer of settings.network.bootstrapPeers) {
+			for (const peer of bootstrapPeers) {
 				console.log('  -', peer);
 				// Extract peer ID and store full multiaddr for direct dialing
 				const ma = Multiaddr(peer);
@@ -200,7 +211,7 @@ export class Network {
 			}
 			config.peerDiscovery = [
 				bootstrap({
-					list: settings.network.bootstrapPeers,
+					list: bootstrapPeers,
 					timeout: 1000,
 					tagTTL: 2147483647, // ~68 years in ms - effectively never expires
 					tagValue: 100,      // High priority (default 50) - pruned last

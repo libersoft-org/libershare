@@ -17,6 +17,10 @@ export class Database {
         this.dbPath = join(dataDir, 'database.db');
     }
 
+    getDb(): BunDatabase {
+        return this.db;
+    }
+
     async init(): Promise<void> {
         this.db = new BunDatabase(this.dbPath);
 

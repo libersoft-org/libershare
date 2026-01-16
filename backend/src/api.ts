@@ -1,11 +1,11 @@
 import type { ServerWebSocket } from 'bun';
 import type { Database } from './database.ts';
 import type { DataServer } from './data-server.ts';
-import type { Network } from './network.ts';
+import type { Networks } from './networks.ts';
 import { Downloader } from './downloader.ts';
 import { join } from 'path';
 
-const API_PORT = 1158;
+const API_PORT = parseInt(process.env.API_PORT || '1158', 10);
 
 interface ClientData {
 	subscribedEvents: Set<string>;
@@ -27,7 +27,7 @@ export class ApiServer {
 		private readonly dataDir: string,
 		private readonly db: Database,
 		private readonly dataServer: DataServer,
-		private readonly network: Network
+		private readonly networks: Networks
 	) {}
 
 	start(): void {
@@ -104,24 +104,56 @@ export class ApiServer {
 				return true;
 			}
 
+			case 'networks.subscribe': {
+
+			}
+
 			// Database
 			case 'getDatasets':
 				return this.db.getAllDatasets();
 			case 'getDataset':
 				return this.db.getDataset(params.id);
 
-			// Network
-			case 'connect':
-				await (this.network as any).connectToPeer(params.multiaddr);
+			// Networks management
+			case 'networks.list':
+				return this.networks.getAll();
+			case 'networks.get':
+				return this.networks.get(params.networkId);
+			case 'networks.import': {
+				const def = await this.networks.importFromFile(params.path, params.enabled ?? false);
+				return def;
+			}
+			case 'networks.setEnabled':
+				return { success: await this.networks.setEnabled(params.networkId, params.enabled) };
+			case 'networks.delete':
+				return { success: this.networks.delete(params.networkId) };
+
+			// Network operations (require networkId)
+			case 'connect': {
+				const network = this.networks.getLiveNetwork(params.networkId);
+				if (!network) throw new Error('Network not running');
+				await (network as any).connectToPeer(params.multiaddr);
 				return { success: true };
-			case 'findPeer':
-				return (this.network as any).cliFindPeer(params.peerId);
-			case 'getAddresses':
-				return (this.network as any).node?.getMultiaddrs().map((ma: any) => ma.toString()) || [];
-			case 'getPeers':
-				return (this.network as any).node?.getPeers().map((p: any) => p.toString()) || [];
+			}
+			case 'findPeer': {
+				const network = this.networks.getLiveNetwork(params.networkId);
+				if (!network) throw new Error('Network not running');
+				return (network as any).cliFindPeer(params.peerId);
+			}
+			case 'getAddresses': {
+				const network = this.networks.getLiveNetwork(params.networkId);
+				if (!network) throw new Error('Network not running');
+				return (network as any).node?.getMultiaddrs().map((ma: any) => ma.toString()) || [];
+			}
+			case 'getPeers': {
+				const network = this.networks.getLiveNetwork(params.networkId);
+				if (!network) throw new Error('Network not running');
+				return (network as any).node?.getPeers().map((p: any) => p.toString()) || [];
+			}
 			case 'getNodeInfo': {
-				const node = (this.network as any).node;
+				const network = this.networks.getLiveNetwork(params.networkId);
+				if (!network) throw new Error('Network not running');
+				const node = (network as any).node;
 				return {
 					peerId: node?.peerId.toString(),
 					addresses: node?.getMultiaddrs().map((ma: any) => ma.toString()) || [],
@@ -136,8 +168,10 @@ export class ApiServer {
 				return { manifestId: manifest.id };
 			}
 			case 'download': {
+				const network = this.networks.getLiveNetwork(params.networkId);
+				if (!network) throw new Error('Network not running');
 				const downloadDir = join(this.dataDir, 'downloads', Date.now().toString());
-				const downloader = new Downloader(downloadDir, this.network, this.dataServer);
+				const downloader = new Downloader(downloadDir, network, this.dataServer);
 				await downloader.init(params.manifestPath);
 				downloader.download()
 					.then(() => this.emit(client, 'download:complete', { downloadDir }))
@@ -149,9 +183,13 @@ export class ApiServer {
 
 			// Status
 			case 'getStatus': {
-				const node = (this.network as any).node;
+				const network = this.networks.getLiveNetwork(params.networkId);
+				if (!network) throw new Error('Network not running');
+				const node = (network as any).node;
+				const peers = node?.getPeers() || [];
 				return {
-					connected: node?.getPeers().length || 0,
+					connected: peers.length,
+					connectedPeers: peers.map((p: any) => p.toString()),
 					peersInStore: node ? (await node.peerStore.all()).length : 0,
 					datasets: this.db.getAllDatasets().length,
 				};

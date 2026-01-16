@@ -1,5 +1,5 @@
 import { setupLogger, type LogLevel } from './logger.ts';
-import { Network } from './network.ts';
+import { Networks } from './networks.ts';
 import { Downloader } from './downloader.ts';
 import { DataServer } from './data-server.ts';
 import { Database } from './database.ts';
@@ -49,13 +49,15 @@ await db.init();
 const dataServer = new DataServer(dataDir, db);
 await dataServer.init();
 
-const network = new Network(dataDir, dataServer, enablePink);
-const apiServer = new ApiServer(dataDir, db, dataServer, network);
+const networks = new Networks(db.getDb(), dataDir, dataServer, enablePink);
+networks.init();
+
+const apiServer = new ApiServer(dataDir, db, dataServer, networks);
 
 async function shutdown() {
 	console.log('Shutting down...');
 	apiServer.stop();
-	await network.stop();
+	await networks.stopAllNetworks();
 	db.close();
 	process.exit(0);
 }
@@ -68,6 +70,16 @@ const rl = readline.createInterface({
 });
 
 console.log('\nCommands: i<path>=import, l<path>=download, c<multiaddr>=connect, f<peerid>=find, a=addresses, p=pink, q=quit');
+
+// Helper to get first live network for CLI commands
+function getFirstNetwork() {
+	const liveNetworks = networks.getLiveNetworks();
+	if (liveNetworks.size === 0) {
+		console.log('No networks running');
+		return null;
+	}
+	return liveNetworks.values().next().value;
+}
 
 rl.on('line', async line => {
 	const command = line.trim();
@@ -107,6 +119,8 @@ rl.on('line', async line => {
 			console.log('Error: multiaddr required after "c"');
 			return;
 		}
+		const network = getFirstNetwork();
+		if (!network) return;
 		try {
 			await (network as any).connectToPeer(multiaddr);
 		} catch (error: any) {
@@ -122,6 +136,8 @@ rl.on('line', async line => {
 			console.log('Error: peer ID required after "f"');
 			return;
 		}
+		const network = getFirstNetwork();
+		if (!network) return;
 		try {
 			await (network as any).cliFindPeer(peerId);
 		} catch (error: any) {
@@ -136,6 +152,8 @@ rl.on('line', async line => {
 		if (!manifestPath) {
 			manifestPath = '../../lish_files/test.lish';
 		}
+		const network = getFirstNetwork();
+		if (!network) return;
 		try {
 			const downloadDir = join(dataDir, 'downloads', Date.now().toString());
 			const downloader = new Downloader(downloadDir, network, dataServer);
@@ -146,13 +164,16 @@ rl.on('line', async line => {
 		}
 	} else {
 		switch (command) {
-			case 'p':
-				await network.sendPink();
-				//console.log('→ Pink sent');
+			case 'p': {
+				const network = getFirstNetwork();
+				if (network) await network.sendPink();
 				break;
-			case 'a':
-				network.printMultiaddrs();
+			}
+			case 'a': {
+				const network = getFirstNetwork();
+				if (network) network.printMultiaddrs();
 				break;
+			}
 			case 'q':
 				await shutdown();
 				break;
@@ -164,5 +185,5 @@ rl.on('line', async line => {
 
 process.on('SIGINT', shutdown);
 
-await network.start();
+await networks.startEnabledNetworks();
 apiServer.start();

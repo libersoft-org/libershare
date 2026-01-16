@@ -1,7 +1,7 @@
 import { Utils } from './utils.ts';
 import { generateKey } from '@libp2p/pnet'
 
-interface ILISHNetwork {
+export interface ILISHNetwork {
 	version: number;
 	networkID: string;
 	swarmKey: string;
@@ -115,7 +115,7 @@ async function main() {
 	}
 	try {
 
-		let swarmKey = new Uint8Array(96);
+		let swarmKey = new Uint8Array(95);
 		await generateKey(swarmKey)
 
 		const network: ILISHNetwork = {

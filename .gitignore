@@ -12,3 +12,4 @@ package-lock.json
 **/datastore/
 **/*.lish
 vite.config.js.timestamp-*
+.dev_intention
