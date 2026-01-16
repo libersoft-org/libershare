@@ -132,7 +132,11 @@ export class Networks {
 		const file = Bun.file(filePath);
 		const content = await file.text();
 		const data: ILISHNetwork = JSON.parse(content);
-		return this.importFromLishnet(data, enabled);
+		const def = this.importFromLishnet(data, enabled);
+		if (enabled) {
+			await this.startNetwork(def.id);
+		}
+		return def;
 	}
 
 	async setEnabled(id: string, enabled: boolean): Promise<boolean> {

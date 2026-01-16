@@ -146,8 +146,8 @@ export class TestServer {
 			API_PORT: String(this.port),
 		};
 
-		// Go up from src/ to backend/
-		const backendDir = import.meta.dir.replace(/\/src$/, '');
+		// Go up from tests/ to backend/
+		const backendDir = import.meta.dir.replace(/\/tests$/, '');
 		const stdio = this.options.debug ? 'inherit' : 'pipe';
 
 		this.process = Bun.spawn(['bun', ...args], {
