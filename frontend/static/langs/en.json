@@ -14,7 +14,8 @@
 		"edit": "Edit",
 		"import": "Import",
 		"connected": "Connected",
-		"disconnected": "Disconnected"
+		"disconnected": "Disconnected",
+		"notUsed": "Not used"
 	},
 	"library": {
 		"title": "Online library",
@@ -86,6 +87,10 @@
 			"right": "Right"
 		},
 		"footerWidgets": {
+			"lishStatus": {
+				"title": "LISH status",
+				"notUsed": "Not used"
+			},
 			"download": "Download speed",
 			"upload": "Upload speed",
 			"cpu": "CPU usage",

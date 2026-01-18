@@ -14,6 +14,7 @@
 	function getWidgetLabel(widget: FooterWidget): string {
 		const labels: Record<FooterWidget, string> = {
 			version: $t.common?.version,
+			lishStatus: $t.settings?.footerWidgets?.lishStatus?.title,
 			download: $t.settings?.footerWidgets?.download,
 			upload: $t.settings?.footerWidgets?.upload,
 			cpu: $t.settings?.footerWidgets?.cpu,

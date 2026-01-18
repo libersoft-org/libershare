@@ -23,6 +23,14 @@
 			}),
 		},
 		{
+			id: 'lishStatus',
+			component: Item,
+			props: () => ({
+				topLabel: 'VPN: ' + $t.common?.notUsed,
+				bottomLabel: 'LISH: ' + $t.common?.disconnected,
+			}),
+		},
+		{
 			id: 'download',
 			component: Item,
 			props: () => ({
