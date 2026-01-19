@@ -4,12 +4,13 @@
 	import { volume, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
 	import { type FooterWidget } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
+	import LishStatus from './FooterLishStatus.svelte';
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
 	type Widget = {
 		id: FooterWidget;
-		component: typeof Item | typeof Bar | typeof Clock;
+		component: typeof Item | typeof Bar | typeof Clock | typeof LishStatus;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		props?: () => Record<string, any>;
 	};
@@ -24,10 +25,11 @@
 		},
 		{
 			id: 'lishStatus',
-			component: Item,
+			component: LishStatus,
 			props: () => ({
-				topLabel: 'VPN: ' + $t.common?.notUsed,
-				bottomLabel: 'LISH: ' + $t.common?.disconnected,
+				networkName: 'Main Network',
+				lishConnected: false,
+				vpnConnected: null,
 			}),
 		},
 		{
