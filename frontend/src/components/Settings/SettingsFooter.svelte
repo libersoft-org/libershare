@@ -20,6 +20,7 @@
 			ram: $t.settings?.footerWidgets?.ram,
 			storage: $t.settings?.footerWidgets?.storage,
 			lishStatus: $t.settings?.footerWidgets?.lishStatus,
+			connection: $t.settings?.footerWidgets?.connection,
 			volume: $t.settings?.footerWidgets?.volume,
 			clock: $t.settings?.footerWidgets?.clock,
 		};

@@ -5,12 +5,13 @@
 	import { type FooterWidget } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
 	import LishStatus from './FooterLISHStatus.svelte';
+	import Connection from './FooterConnection.svelte';
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
 	type Widget = {
 		id: FooterWidget;
-		component: typeof Item | typeof Bar | typeof Clock | typeof LishStatus;
+		component: typeof Item | typeof Bar | typeof Clock | typeof LishStatus | typeof Connection;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		props?: () => Record<string, any>;
 	};
@@ -77,6 +78,14 @@
 				networkName: 'Main Network',
 				lishConnected: false,
 				vpnConnected: null,
+			}),
+		},
+		{
+			id: 'connection',
+			component: Connection,
+			props: () => ({
+				type: 'ethernet',
+				signal: 50,
 			}),
 		},
 		{
