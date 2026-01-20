@@ -16,6 +16,8 @@ const levelNames: Record<number, string> = {
 	[LogLevels.error]: 'ERROR',
 };
 
+const LOG_PREFIX = process.env.LOG_PREFIX || '';
+
 function formatTimestamp(date: Date): string {
 	const pad = (n: number, len = 2) => n.toString().padStart(len, '0');
 	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
@@ -27,11 +29,12 @@ function createPreciseReporter(): ConsolaReporter {
 		log(logObj: LogObject) {
 			const timestamp = formatTimestamp(logObj.date);
 			const levelName = levelNames[logObj.level] || 'INFO';
+			const prefix = LOG_PREFIX ? `[${LOG_PREFIX}] ` : '';
 			const args = logObj.args.map(arg =>
 				typeof arg === 'object' ? JSON.stringify(arg) : arg
 			).join(' ');
 
-			const output = `[${timestamp}] [${levelName}] ${args}`;
+			const output = `${prefix}[${timestamp}] [${levelName}] ${args}`;
 
 			if (logObj.level <= LogLevels.error) {
 				console.error(output);

@@ -95,17 +95,16 @@ export class ApiServer {
 			// Subscriptions
 			case 'subscribe': {
 				const events = Array.isArray(params.events) ? params.events : [params.event];
-				events.forEach((e: string) => client.data.subscribedEvents.add(e));
+				events.forEach((e: string) => {
+					client.data.subscribedEvents.add(e)
+					this.fireEvent(e, client);
+				});
 				return true;
 			}
 			case 'unsubscribe': {
 				const events = Array.isArray(params.events) ? params.events : [params.event];
 				events.forEach((e: string) => client.data.subscribedEvents.delete(e));
 				return true;
-			}
-
-			case 'networks.subscribe': {
-
 			}
 
 			// Database
@@ -200,18 +199,23 @@ export class ApiServer {
 		}
 	}
 
-	private emit(client: ClientSocket, event: string, data: any): void {
-		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
-			client.send(JSON.stringify({ event, data }));
+	private fireEvent(event: string, client: ClientSocket): void {
+		if (event === 'networks') {
+			const networks = this.networks.getAll();
+			this.emit(client, 'networks', networks);
 		}
 	}
 
-	broadcast(event: string, data: any): void {
+	private broadcast(event: string, data: any): void {
 		const msg = JSON.stringify({ event, data });
 		for (const client of this.clients) {
-			if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
-				client.send(msg);
-			}
+			this.emit(client, event, data);
+		}
+	}
+
+	private emit(client: ClientSocket, event: string, data: any): void {
+		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
+			client.send(JSON.stringify({ event, data }));
 		}
 	}
 }

@@ -5,6 +5,7 @@ const DEFAULT_API_PORT = 1158;
 interface ServerOptions {
 	port?: number;
 	dataDir: string;
+	name?: string;
 	enablePink?: boolean;
 	debug?: boolean;
 }
@@ -140,10 +141,11 @@ export class TestServer {
 			args.push('--pink');
 		}
 
-		// Set API_PORT env variable
+		// Set env variables
 		const env = {
 			...process.env,
 			API_PORT: String(this.port),
+			...(this.options.name && { LOG_PREFIX: this.options.name }),
 		};
 
 		// Go up from tests/ to backend/
@@ -191,6 +193,10 @@ export class TestServer {
 		return this.client.call<T>(method, params);
 	}
 
+	on(event: string, handler: (data: any) => void): void {
+		this.client.on(event, handler);
+	}
+
 	async stop(): Promise<void> {
 		if (this._client) {
 			this._client.close();
@@ -234,6 +240,7 @@ export class TestHarness {
 		const server = new TestServer({
 			port,
 			dataDir,
+			name,
 			enablePink: options?.enablePink,
 			debug: options?.debug ?? this.debug,
 		});
