@@ -27,10 +27,9 @@
 	// Get bar color based on signal strength
 	function getBarColor(barIndex: number, activeBars: number): string {
 		if (barIndex >= activeBars) return 'var(--secondary-softer-background)';
-		if (activeBars === 1) return '#e74c3c'; // Red - poor
-		if (activeBars === 2) return '#f39c12'; // Orange - fair
-		if (activeBars === 3) return '#f1c40f'; // Yellow - good
-		return '#2ecc71'; // Green - excellent
+		if (activeBars === 1) return 'var(--color-error)'; // < 25%
+		if (activeBars === 2 || activeBars === 3) return 'var(--color-warning)'; // 25-74%
+		return 'var(--color-success)'; // 75%+
 	}
 </script>
 
