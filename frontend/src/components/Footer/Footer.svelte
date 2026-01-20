@@ -85,7 +85,8 @@
 			component: Connection,
 			props: () => ({
 				type: 'ethernet',
-				signal: 50,
+				connected: true,
+				signal: 75,
 			}),
 		},
 		{
