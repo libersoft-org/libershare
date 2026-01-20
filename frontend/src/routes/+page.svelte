@@ -92,7 +92,7 @@
 			{@const Component = $currentComponent.component}
 			<Component areaID="content" title={$currentComponent.label ?? ''} {...$currentComponent.props} {onBack} />
 		{:else}
-			<Menu areaID="content" title={$currentTitle ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} onselect={navigate} {onBack} />
+			<Menu areaID="content" title={$currentTitle ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} buttonWidth="20vh" onselect={navigate} {onBack} />
 		{/if}
 	</div>
 	{#if $footerVisible}

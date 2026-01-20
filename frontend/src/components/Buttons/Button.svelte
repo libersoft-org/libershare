@@ -44,7 +44,6 @@
 		backdrop-filter: blur(2vh);
 		opacity: 0.6;
 		box-sizing: border-box;
-		min-width: 16vh;
 	}
 
 	.button.icon-only {
@@ -67,7 +66,7 @@
 	}
 </style>
 
-<div class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:icon-only={icon && !label} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius};{width ? ` width: ${width};` : ''}{height ? ` height: ${height};` : ''}">
+<div class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:icon-only={icon && !label} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}">
 	{#if icon}
 		<img src={icon} {alt} style="width: {fontSize}; height: {fontSize};" />
 	{/if}
