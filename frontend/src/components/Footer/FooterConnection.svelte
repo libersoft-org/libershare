@@ -1,15 +1,19 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
-
 	type ConnectionType = 'ethernet' | 'wifi';
-
 	interface Props {
 		type: ConnectionType;
 		connected: boolean;
 		signal?: number; // 0-100 for wifi, ignored for ethernet
 	}
-
 	const { type = 'ethernet', connected = false, signal = 0 }: Props = $props();
+	let activeBars = $derived(type === 'ethernet' ? (connected ? 4 : 0) : getActiveBars(signal));
+	let label = $derived.by(() => {
+		if (!connected) return $t.common?.disconnected;
+		if (type === 'ethernet') return $t.common?.connected;
+		return `${signal}%`;
+	});
+	let ethernetIcon = $derived(connected ? 'img/ethernet-on.svg' : 'img/ethernet-off.svg'); // Ethernet icon based on connection state
 
 	// Calculate how many bars should be active (1-4), 0 if disconnected
 	function getActiveBars(signalStrength: number): number {
@@ -28,16 +32,6 @@
 		if (activeBars === 3) return '#f1c40f'; // Yellow - good
 		return '#2ecc71'; // Green - excellent
 	}
-
-	let activeBars = $derived(type === 'ethernet' ? (connected ? 4 : 0) : getActiveBars(signal));
-	let label = $derived.by(() => {
-		if (!connected) return $t.common?.disconnected;
-		if (type === 'ethernet') return $t.common?.connected;
-		return `${signal}%`;
-	});
-
-	// Ethernet icon color based on connection state
-	let ethernetColor = $derived(connected ? '#2ecc71' : 'var(--secondary-softer-background)');
 </script>
 
 <style>
@@ -59,30 +53,6 @@
 	.ethernet {
 		width: 2.4vh;
 		height: 2.4vh;
-		border: 0.25vh solid var(--ethernet-color);
-		border-radius: 0.3vh;
-		position: relative;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.ethernet::before {
-		content: '';
-		position: absolute;
-		width: 0.9vh;
-		height: 0.9vh;
-		border: 0.2vh solid var(--ethernet-color);
-		border-radius: 0.15vh;
-	}
-
-	.ethernet::after {
-		content: '';
-		position: absolute;
-		bottom: -0.6vh;
-		width: 0.5vh;
-		height: 0.6vh;
-		background-color: var(--ethernet-color);
 	}
 
 	/* Wifi bars */
@@ -123,7 +93,7 @@
 <div class="connection">
 	<div class="icon">
 		{#if type === 'ethernet'}
-			<div class="ethernet" style="--ethernet-color: {ethernetColor}"></div>
+			<img class="ethernet" src={ethernetIcon} alt={label} />
 		{:else}
 			<div class="wifi-bars">
 				{#each [0, 1, 2, 3] as barIndex}
