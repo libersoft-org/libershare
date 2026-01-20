@@ -15,9 +15,10 @@
 		onConfirm?: () => void;
 	}
 	let { label, icon, alt = '', selected = false, pressed = false, padding = '2vh', fontSize = '2vh', borderRadius = '2vh', width, height, onConfirm }: Props = $props();
-
 	const buttonsGroup = getContext<ButtonsGroupContext | undefined>('buttonsGroup');
 	let index = $state(-1);
+	let isSelected = $derived(buttonsGroup ? buttonsGroup.isSelected(index) : selected);
+	let isPressed = $derived(buttonsGroup ? buttonsGroup.isPressed(index) : pressed);
 
 	onMount(() => {
 		if (buttonsGroup) {
@@ -26,9 +27,6 @@
 			return unregister;
 		}
 	});
-
-	let isSelected = $derived(buttonsGroup ? buttonsGroup.isSelected(index) : selected);
-	let isPressed = $derived(buttonsGroup ? buttonsGroup.isPressed(index) : pressed);
 </script>
 
 <style>
