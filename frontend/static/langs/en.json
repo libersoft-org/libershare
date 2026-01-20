@@ -87,7 +87,7 @@
 			"right": "Right"
 		},
 		"footerWidgets": {
-			"lishStatus": "LISH status",
+			"lishStatus": "LISH network status",
 			"download": "Download speed",
 			"upload": "Upload speed",
 			"cpu": "CPU usage",

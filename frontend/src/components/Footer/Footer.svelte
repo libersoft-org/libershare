@@ -24,15 +24,6 @@
 			}),
 		},
 		{
-			id: 'lishStatus',
-			component: LishStatus,
-			props: () => ({
-				networkName: 'Main Network',
-				lishConnected: false,
-				vpnConnected: null,
-			}),
-		},
-		{
 			id: 'download',
 			component: Item,
 			props: () => ({
@@ -77,6 +68,15 @@
 				topIconAlt: $t.settings?.footerWidgets?.storage,
 				topLabel: '0.88 / 2 TB',
 				progress: 44.1,
+			}),
+		},
+		{
+			id: 'lishStatus',
+			component: LishStatus,
+			props: () => ({
+				networkName: 'Main Network',
+				lishConnected: false,
+				vpnConnected: null,
 			}),
 		},
 		{

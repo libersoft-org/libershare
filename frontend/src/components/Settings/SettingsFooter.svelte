@@ -14,12 +14,12 @@
 	function getWidgetLabel(widget: FooterWidget): string {
 		const labels: Record<FooterWidget, string> = {
 			version: $t.common?.version,
-			lishStatus: $t.settings?.footerWidgets?.lishStatus?.title,
 			download: $t.settings?.footerWidgets?.download,
 			upload: $t.settings?.footerWidgets?.upload,
 			cpu: $t.settings?.footerWidgets?.cpu,
 			ram: $t.settings?.footerWidgets?.ram,
 			storage: $t.settings?.footerWidgets?.storage,
+			lishStatus: $t.settings?.footerWidgets?.lishStatus,
 			volume: $t.settings?.footerWidgets?.volume,
 			clock: $t.settings?.footerWidgets?.clock,
 		};
@@ -34,6 +34,7 @@
 	let selectedIndex = $state(0);
 	// 0 = visibility switch, 1 = position button, 2+ = widget rows, last = back button
 	const totalItems = 3 + footerWidgets.length;
+	let rowElements: HTMLElement[] = $state([]);
 
 	function openPositionDialog() {
 		navigateTo('footer-position');
@@ -106,8 +107,6 @@
 			back: () => onBack?.(),
 		});
 	});
-
-	let rowElements: HTMLElement[] = $state([]);
 
 	function scrollToSelected(): void {
 		const element = rowElements[selectedIndex];

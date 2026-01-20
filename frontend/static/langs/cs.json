@@ -87,7 +87,7 @@
 			"right": "Vpravo"
 		},
 		"footerWidgets": {
-			"lishStatus": "Stav LISH",
+			"lishStatus": "Stav LISH sítě",
 			"download": "Rychlost stahování",
 			"upload": "Rychlost odesílání",
 			"cpu": "Využití CPU",
