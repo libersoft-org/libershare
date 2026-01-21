@@ -21,6 +21,10 @@
 		inputElement?.blur();
 	}
 
+	export function getInputElement() {
+		return inputElement;
+	}
+
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.key === 'Enter') {
 			event.preventDefault();

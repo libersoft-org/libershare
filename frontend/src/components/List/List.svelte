@@ -26,6 +26,7 @@
 	let itemElements: HTMLElement[] = $state([]);
 	let selectedItem = $state<{ id: number; title: string } | null>(null);
 	let unregisterList: (() => void) | null = null; // Handlers will be set in onMount
+	let searchBar: SearchBar;
 
 	// Calculate columns by comparing Y positions of items
 	function getColumnsCount(): number {
@@ -154,6 +155,9 @@
 				activateArea(listAreaID);
 				return true;
 			},
+			confirmUp: () => {
+				searchBar?.toggleFocus();
+			},
 			back: () => onBack?.(),
 		});
 		unregisterList = useArea(listAreaID, areaHandlers);
@@ -205,7 +209,7 @@
 {#if selectedItem}
 	<Product areaID={listAreaID} category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onBack={closeDetail} />
 {:else}
-	<SearchBar selected={searchSelected} />
+	<SearchBar bind:this={searchBar} selected={searchSelected} />
 	<div class="items">
 		{#each items as item, index (item.id)}
 			<div bind:this={itemElements[index]}>

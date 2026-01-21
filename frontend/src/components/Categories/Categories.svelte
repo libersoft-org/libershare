@@ -18,6 +18,7 @@
 	const searchAreaID = `${areaID}-search`;
 	const menuAreaID = `${areaID}-menu`;
 	let searchSelected = $derived($activeArea === searchAreaID);
+	let searchBar: SearchBar;
 
 	onMount(() => {
 		// Position search between breadcrumb (y=1) and content/menu (y=2)
@@ -34,6 +35,9 @@
 			down: () => {
 				activateArea(menuAreaID);
 				return true;
+			},
+			confirmUp: () => {
+				searchBar?.toggleFocus();
 			},
 			back: () => onBack?.(),
 		});
@@ -69,7 +73,7 @@
 </style>
 
 <div class="categories">
-	<SearchBar selected={searchSelected} />
+	<SearchBar bind:this={searchBar} selected={searchSelected} />
 	<div class="content">
 		<Menu areaID={menuAreaID} {title} {items} {orientation} {selectedId} {buttonWidth} {onselect} {onBack} onUp={handleMenuUp} />
 	</div>
