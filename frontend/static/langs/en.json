@@ -13,6 +13,7 @@
 		"delete": "Delete",
 		"edit": "Edit",
 		"import": "Import",
+		"connect": "Connect",
 		"connected": "Connected",
 		"disconnected": "Disconnected",
 		"notUsed": "Not used",
@@ -77,7 +78,10 @@
 		},
 		"lishNetwork": {
 			"title": "LISH Network",
-			"name": "Name"
+			"name": "Name",
+			"description": "Description",
+			"networkID": "Network ID",
+			"bootstrapServers": "Bootstrap Servers"
 		},
 		"footer": "Footer",
 		"footerVisible": "Show footer",

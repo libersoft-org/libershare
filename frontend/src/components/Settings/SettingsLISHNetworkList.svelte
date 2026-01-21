@@ -48,7 +48,7 @@
 		showAddEdit = true;
 		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
 		setAreaPosition(editAreaID, { x: 0, y: 2 });
-		pushBreadcrumb($t.common?.add ?? 'Add');
+		pushBreadcrumb($t.common?.add);
 		removeBackHandler = pushBackHandler(handleAddEditBack);
 	}
 
@@ -56,7 +56,7 @@
 		showImport = true;
 		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
 		setAreaPosition(importAreaID, { x: 0, y: 2 });
-		pushBreadcrumb($t.common?.import ?? 'Import');
+		pushBreadcrumb($t.common?.import);
 		removeBackHandler = pushBackHandler(handleImportBack);
 	}
 
@@ -83,7 +83,7 @@
 		showAddEdit = true;
 		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
 		setAreaPosition(editAreaID, { x: 0, y: 2 });
-		pushBreadcrumb($t.common?.edit ?? 'Edit');
+		pushBreadcrumb($t.common?.edit);
 		removeBackHandler = pushBackHandler(handleAddEditBack);
 	}
 
@@ -253,17 +253,17 @@
 	<div class="lish-network-list">
 		<div class="container">
 			<div class="top-buttons" bind:this={rowElements[0]}>
-				<Button label={$t.common?.add ?? 'Add'} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={openAddNetwork} />
-				<Button label={$t.common?.import ?? 'Import'} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openImport} />
+				<Button label={$t.common?.add} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={openAddNetwork} />
+				<Button label={$t.common?.import} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openImport} />
 			</div>
 			{#each networks as network, i}
 				<div bind:this={rowElements[i + 1]}>
 					<Row selected={active && selectedIndex === i + 1}>
 						<div class="network-name">{network.name}</div>
 						<div class="buttons">
-							<Button label={$t.common?.connect ?? 'Connect'} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
-							<Button label={$t.common?.edit ?? 'Edit'} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openEditNetwork(network)} />
-							<Button label={$t.common?.delete ?? 'Delete'} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => deleteNetwork(network)} />
+							<Button label={$t.common?.connect} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
+							<Button label={$t.common?.edit} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openEditNetwork(network)} />
+							<Button label={$t.common?.delete} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => deleteNetwork(network)} />
 						</div>
 					</Row>
 				</div>

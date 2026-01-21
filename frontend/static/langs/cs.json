@@ -13,6 +13,7 @@
 		"delete": "Smazat",
 		"edit": "Upravit",
 		"import": "Importovat",
+		"connect": "Připojit",
 		"connected": "Připojeno",
 		"disconnected": "Odpojeno",
 		"notUsed": "Nepoužíváno",
@@ -77,7 +78,10 @@
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",
-			"name": "Název"
+			"name": "Název",
+			"description": "Popis",
+			"networkID": "ID sítě",
+			"bootstrapServers": "Bootstrap servery"
 		},
 		"footer": "Patička",
 		"footerVisible": "Zobrazovat patičku",
