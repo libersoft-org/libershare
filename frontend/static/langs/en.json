@@ -81,7 +81,10 @@
 			"name": "Name",
 			"description": "Description",
 			"networkID": "Network ID",
-			"bootstrapServers": "Bootstrap Servers"
+			"bootstrapServers": "Bootstrap Servers",
+			"errorNameRequired": "Network name is required",
+			"errorNetworkIDRequired": "Network ID is required",
+			"errorBootstrapRequired": "At least one bootstrap server is required"
 		},
 		"footer": "Footer",
 		"footerVisible": "Show footer",

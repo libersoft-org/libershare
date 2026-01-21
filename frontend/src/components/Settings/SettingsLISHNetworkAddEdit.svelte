@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
+	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	interface Props {
@@ -23,12 +24,19 @@
 	let description = $state(network?.description ?? '');
 	let networkID = $state(network?.id || crypto.randomUUID());
 	let bootstrapServers = $state<string[]>(network?.bootstrapServers?.length ? [...network.bootstrapServers] : ['']);
+	let submitted = $state(false);
+
+	// Validation
+	let hasValidBootstrap = $derived(bootstrapServers.some(s => s.trim() !== ''));
+	let errorMessage = $derived(!name.trim() ? $t.settings?.lishNetwork?.errorNameRequired : !networkID.trim() ? $t.settings?.lishNetwork?.errorNetworkIDRequired : !hasValidBootstrap ? $t.settings?.lishNetwork?.errorBootstrapRequired : '');
+	let showError = $derived(submitted && errorMessage);
 
 	// Dynamic total items: name + description + networkID + bootstrap servers + save + back
 	let totalItems = $derived(3 + bootstrapServers.length + 2);
 
 	function handleSave() {
-		if (name) {
+		submitted = true;
+		if (!errorMessage) {
 			onSave?.({
 				id: networkID,
 				name,
@@ -217,6 +225,7 @@
 				{/if}
 			</div>
 		{/each}
+		<Alert type="error" message={showError ? errorMessage : ''} />
 	</div>
 	<div class="buttons">
 		<div bind:this={rowElements[3 + bootstrapServers.length]}>

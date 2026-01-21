@@ -81,7 +81,10 @@
 			"name": "Název",
 			"description": "Popis",
 			"networkID": "ID sítě",
-			"bootstrapServers": "Bootstrap servery"
+			"bootstrapServers": "Bootstrap servery",
+			"errorNameRequired": "Název sítě je povinný",
+			"errorNetworkIDRequired": "ID sítě je povinné",
+			"errorBootstrapRequired": "Je vyžadován alespoň jeden bootstrap server"
 		},
 		"footer": "Patička",
 		"footerVisible": "Zobrazovat patičku",
