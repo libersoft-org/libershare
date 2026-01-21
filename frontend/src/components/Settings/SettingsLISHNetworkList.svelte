@@ -7,6 +7,8 @@
 	import Button from '../Buttons/Button.svelte';
 	import Row from '../Row/Row.svelte';
 	import LISHNetworkAddEdit from './SettingsLISHNetworkAddEdit.svelte';
+	import LISHNetworkExport from './SettingsLISHNetworkExport.svelte';
+	import LISHNetworkExportAll from './SettingsLISHNetworkExportAll.svelte';
 	import LISHNetworkImport from './SettingsLISHNetworkImport.svelte';
 	interface Props {
 		areaID: string;
@@ -18,14 +20,19 @@
 	}
 	let { areaID, onBack }: Props = $props();
 	const editAreaID = areaID + '-edit';
+	const exportAreaID = areaID + '-export';
+	const exportAllAreaID = areaID + '-export-all';
 	const importAreaID = areaID + '-import';
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
 	let buttonIndex = $state(0); // 0 = Add, 1 = Import (for top row); 0 = Connect, 1 = Edit, 2 = Delete (for network rows)
 	let showAddEdit = $state(false);
+	let showExport = $state(false);
+	let showExportAll = $state(false);
 	let showImport = $state(false);
 	let editingNetwork = $state<Network | null>(null);
+	let exportingNetwork = $state<Network | null>(null);
 	let rowElements: HTMLElement[] = $state([]);
 
 	// Mock data - replace with actual data source
@@ -73,9 +80,53 @@
 		activateArea(areaID);
 	}
 
+	function openExportAll() {
+		showExportAll = true;
+		setAreaPosition(areaID, { x: -999, y: -999 });
+		setAreaPosition(exportAllAreaID, { x: 0, y: 2 });
+		pushBreadcrumb($t.common?.exportAll);
+		removeBackHandler = pushBackHandler(handleExportAllBack);
+	}
+
+	function handleExportAllBack() {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
+		removeArea(exportAllAreaID);
+		setAreaPosition(areaID, { x: 0, y: 2 });
+		popBreadcrumb();
+		showExportAll = false;
+		registerAreaHandler();
+		activateArea(areaID);
+	}
+
 	function connectNetwork(network: Network) {
 		// TODO: Implement actual connection logic
 		console.log('Connecting to network:', network.name);
+	}
+
+	function openExport(network: Network) {
+		exportingNetwork = network;
+		showExport = true;
+		setAreaPosition(areaID, { x: -999, y: -999 });
+		setAreaPosition(exportAreaID, { x: 0, y: 2 });
+		pushBreadcrumb(`${network.name} - ${$t.common?.export}`);
+		removeBackHandler = pushBackHandler(handleExportBack);
+	}
+
+	function handleExportBack() {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
+		removeArea(exportAreaID);
+		setAreaPosition(areaID, { x: 0, y: 2 });
+		popBreadcrumb();
+		showExport = false;
+		exportingNetwork = null;
+		registerAreaHandler();
+		activateArea(areaID);
 	}
 
 	function openEditNetwork(network: Network) {
@@ -83,7 +134,7 @@
 		showAddEdit = true;
 		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
 		setAreaPosition(editAreaID, { x: 0, y: 2 });
-		pushBreadcrumb($t.common?.edit);
+		pushBreadcrumb(`${network.name} - ${$t.common?.edit}`);
 		removeBackHandler = pushBackHandler(handleAddEditBack);
 	}
 
@@ -114,8 +165,8 @@
 			const index = networks.findIndex(n => n.id === editingNetwork!.id);
 			if (index !== -1) networks[index] = network;
 		} else {
-			// Add new
-			networks = [...networks, { ...network, id: crypto.randomUUID() }];
+			// Add new - use the ID from the form (already generated in AddEdit component)
+			networks = [...networks, network];
 		}
 		if (removeBackHandler) {
 			removeBackHandler();
@@ -168,7 +219,7 @@
 				return false;
 			},
 			right: () => {
-				const maxIndex = isTopRow ? 1 : isNetworkRow ? 2 : 0;
+				const maxIndex = isTopRow ? 2 : isNetworkRow ? 3 : 0;
 				if (buttonIndex < maxIndex) {
 					buttonIndex++;
 					return true;
@@ -179,14 +230,16 @@
 			confirmUp: () => {
 				if (selectedIndex === 0) {
 					if (buttonIndex === 0) openAddNetwork();
-					else openImport();
+					else if (buttonIndex === 1) openImport();
+					else openExportAll();
 				} else if (selectedIndex === totalItems - 1) onBack?.();
 				else {
 					const networkIndex = selectedIndex - 1;
 					const network = networks[networkIndex];
 					if (network) {
 						if (buttonIndex === 0) connectNetwork(network);
-						else if (buttonIndex === 1) openEditNetwork(network);
+						else if (buttonIndex === 1) openExport(network);
+						else if (buttonIndex === 2) openEditNetwork(network);
 						else deleteNetwork(network);
 					}
 				}
@@ -247,6 +300,10 @@
 
 {#if showAddEdit}
 	<LISHNetworkAddEdit areaID={editAreaID} network={editingNetwork} onBack={handleAddEditBack} onSave={handleSave} />
+{:else if showExport}
+	<LISHNetworkExport areaID={exportAreaID} network={exportingNetwork} onBack={handleExportBack} />
+{:else if showExportAll}
+	<LISHNetworkExportAll areaID={exportAllAreaID} onBack={handleExportAllBack} />
 {:else if showImport}
 	<LISHNetworkImport areaID={importAreaID} onBack={handleImportBack} />
 {:else}
@@ -255,6 +312,7 @@
 			<div class="top-buttons" bind:this={rowElements[0]}>
 				<Button label={$t.common?.add} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={openAddNetwork} />
 				<Button label={$t.common?.import} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openImport} />
+				<Button label={$t.common?.exportAll} selected={active && selectedIndex === 0 && buttonIndex === 2} onConfirm={openExportAll} />
 			</div>
 			{#each networks as network, i}
 				<div bind:this={rowElements[i + 1]}>
@@ -262,8 +320,9 @@
 						<div class="network-name">{network.name}</div>
 						<div class="buttons">
 							<Button label={$t.common?.connect} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
-							<Button label={$t.common?.edit} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openEditNetwork(network)} />
-							<Button label={$t.common?.delete} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => deleteNetwork(network)} />
+							<Button label={$t.common?.export} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openExport(network)} />
+							<Button label={$t.common?.edit} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openEditNetwork(network)} />
+							<Button label={$t.common?.delete} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => deleteNetwork(network)} />
 						</div>
 					</Row>
 				</div>

@@ -13,6 +13,8 @@
 		"delete": "Smazat",
 		"edit": "Upravit",
 		"import": "Importovat",
+		"export": "Exportovat",
+		"exportAll": "Exportovat vše",
 		"connect": "Připojit",
 		"connected": "Připojeno",
 		"disconnected": "Odpojeno",

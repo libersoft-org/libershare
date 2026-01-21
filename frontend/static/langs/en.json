@@ -13,6 +13,8 @@
 		"delete": "Delete",
 		"edit": "Edit",
 		"import": "Import",
+		"export": "Export",
+		"exportAll": "Export all",
 		"connect": "Connect",
 		"connected": "Connected",
 		"disconnected": "Disconnected",
