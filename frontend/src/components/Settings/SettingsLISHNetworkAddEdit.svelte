@@ -101,6 +101,14 @@
 	onMount(() => {
 		const unregister = useArea(areaID, {
 			up: () => {
+				const item = getItemType(selectedIndex);
+				if (item.type === 'back') {
+					// From back, go to last bootstrap server (row above)
+					selectedIndex = 3 + bootstrapServers.length - 1;
+					selectedColumn = 0;
+					scrollToSelected();
+					return true;
+				}
 				if (selectedIndex > 0) {
 					selectedIndex--;
 					selectedColumn = 0;
@@ -110,6 +118,11 @@
 				return false;
 			},
 			down: () => {
+				const item = getItemType(selectedIndex);
+				// Don't go down from save or back (they are on the same row)
+				if (item.type === 'save' || item.type === 'back') {
+					return false;
+				}
 				if (selectedIndex < totalItems - 1) {
 					selectedIndex++;
 					selectedColumn = 0;
@@ -120,6 +133,11 @@
 			},
 			left: () => {
 				const item = getItemType(selectedIndex);
+				if (item.type === 'back') {
+					selectedIndex--;
+					scrollToSelected();
+					return true;
+				}
 				if ((item.type === 'networkID' || item.type === 'bootstrap') && selectedColumn > 0) {
 					selectedColumn--;
 					return true;
@@ -128,6 +146,11 @@
 			},
 			right: () => {
 				const item = getItemType(selectedIndex);
+				if (item.type === 'save') {
+					selectedIndex++;
+					scrollToSelected();
+					return true;
+				}
 				if (item.type === 'networkID' && selectedColumn < 1) {
 					selectedColumn++;
 					return true;
