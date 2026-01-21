@@ -9,10 +9,11 @@
 		rows?: number;
 		fontSize?: string;
 		padding?: string;
+		flex?: boolean;
 		onchange?: (value: string) => void;
 	}
 
-	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', multiline = false, rows = 3, fontSize = '2.5vh', padding = '1.5vh 2vh', onchange }: Props = $props();
+	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', multiline = false, rows = 3, fontSize = '2.5vh', padding = '1.5vh 2vh', flex = false, onchange }: Props = $props();
 	let inputElement: HTMLInputElement | HTMLTextAreaElement;
 
 	export function focus() {
@@ -76,9 +77,13 @@
 	.input-field.selected input, .input-field.selected textarea {
 		border-color: var(--primary-foreground);
 	}
+
+	.input-field.flex {
+		flex: 1;
+	}
 </style>
 
-<div class="input-field" class:selected style="--input-font-size: {fontSize}; --input-padding: {padding};">
+<div class="input-field" class:selected class:flex style="--input-font-size: {fontSize}; --input-padding: {padding};">
 	{#if label}
 		<div class="label">{label}:</div>
 	{/if}
