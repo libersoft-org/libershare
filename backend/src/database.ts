@@ -25,6 +25,7 @@ export class Database {
         this.db = new BunDatabase(this.dbPath);
 
         // Create chunks table
+        // todo: add file column.
         this.db.run(`
             CREATE TABLE IF NOT EXISTS chunks (
                 lish_id TEXT NOT NULL,

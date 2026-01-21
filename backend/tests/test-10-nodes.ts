@@ -88,7 +88,7 @@ async function main() {
 		console.log('='.repeat(60));
 
 		const importPromises = servers.map(async (server, i) => {
-			const result = await server.call('networks.import', {
+			const result = await server.call('networks.importFromFile', {
 				path: networkFile,
 				enabled: false,
 			});
@@ -123,7 +123,7 @@ async function main() {
 		await Bun.sleep(2000);
 
 		// Get node 0's addresses
-		const nodeInfo = await servers[0].call('getNodeInfo', {
+		const nodeInfo = await servers[0].call('networks.getNodeInfo', {
 			networkId: network.definition.networkID,
 		});
 		console.log(`  Node 0 peer ID: ${nodeInfo.peerId}`);
@@ -155,7 +155,7 @@ async function main() {
 
 		// Re-import on nodes 1-9
 		for (let i = 1; i < servers.length; i++) {
-			await servers[i].call('networks.import', {
+			await servers[i].call('networks.importFromFile', {
 				path: networkFile,
 				enabled: false,
 			});
@@ -184,7 +184,7 @@ async function main() {
 		const expectedBootstrapConnections = NODE_COUNT - 1;
 
 		const allConnected = await waitForCondition(async () => {
-			const status = await servers[0].call('getStatus', { networkId: network.definition.networkID });
+			const status = await servers[0].call('networks.getStatus', { networkId: network.definition.networkID });
 			process.stdout.write(`\r  Bootstrap node: ${status.connected}/${expectedBootstrapConnections} connections`);
 			return status.connected === expectedBootstrapConnections;
 		}, 30000, 1000);
@@ -200,13 +200,13 @@ async function main() {
 		// Get all node peer IDs
 		const nodePeerIds: string[] = [];
 		for (let i = 0; i < servers.length; i++) {
-			const info = await servers[i].call('getNodeInfo', { networkId: network.definition.networkID });
+			const info = await servers[i].call('networks.getNodeInfo', { networkId: network.definition.networkID });
 			nodePeerIds.push(info.peerId);
 		}
 
 		// Verify each node's connections
 		for (let i = 0; i < servers.length; i++) {
-			const status = await servers[i].call('getStatus', {
+			const status = await servers[i].call('networks.getStatus', {
 				networkId: network.definition.networkID,
 			});
 			console.log(`  Node ${i}: ${status.connected} peers, ${status.peersInStore} in store`);
@@ -255,15 +255,15 @@ async function main() {
 		assert(node5Net?.enabled === false, 'Node 5 network should be disabled');
 		console.log(`  Node 5 network disabled: ✓`);
 
-		// getStatus should fail since network is stopped
+		// networks.getStatus should fail since network is stopped
 		let statusFailed = false;
 		try {
-			await servers[5].call('getStatus', { networkId: network.definition.networkID });
+			await servers[5].call('networks.getStatus', { networkId: network.definition.networkID });
 		} catch {
 			statusFailed = true;
 		}
-		assert(statusFailed, 'getStatus should fail when network is stopped');
-		console.log(`  Node 5 getStatus correctly fails: ✓`);
+		assert(statusFailed, 'networks.getStatus should fail when network is stopped');
+		console.log(`  Node 5 networks.getStatus correctly fails: ✓`);
 
 		// Re-enable
 		await servers[5].call('networks.setEnabled', {
@@ -278,7 +278,7 @@ async function main() {
 
 		// Verify node 5 reconnects to bootstrap
 		const reconnected = await waitForCondition(async () => {
-			const status = await servers[5].call('getStatus', { networkId: network.definition.networkID });
+			const status = await servers[5].call('networks.getStatus', { networkId: network.definition.networkID });
 			return status.connected >= 1;
 		}, 10000, 500);
 		assert(reconnected, 'Node 5 should reconnect after re-enable');
@@ -296,7 +296,7 @@ async function main() {
 		console.log(`  Created network 2: ${network2.definition.networkID.slice(0, 8)}...`);
 
 		// Import and enable network 2 on node 9 only
-		await servers[9].call('networks.import', {
+		await servers[9].call('networks.importFromFile', {
 			path: network2File,
 			enabled: true,
 		});
@@ -305,7 +305,7 @@ async function main() {
 		// Wait for network 2 to be running on node 9
 		const net2Running = await waitForCondition(async () => {
 			try {
-				await servers[9].call('getNodeInfo', { networkId: network2.definition.networkID });
+				await servers[9].call('networks.getNodeInfo', { networkId: network2.definition.networkID });
 				return true;
 			} catch {
 				return false;
@@ -314,7 +314,7 @@ async function main() {
 		assert(net2Running, 'Network 2 should start on node 9');
 
 		// Get node 9's address on network 2
-		const node9Net2Info = await servers[9].call('getNodeInfo', {
+		const node9Net2Info = await servers[9].call('networks.getNodeInfo', {
 			networkId: network2.definition.networkID,
 		});
 		const node9Net2Addr = node9Net2Info.addresses.find((a: string) =>
@@ -324,7 +324,7 @@ async function main() {
 		console.log(`  Node 9 network 2 address: ${node9Net2Addr}`);
 
 		// Get node 1's address on network 1 for comparison
-		const node1Net1Info = await servers[1].call('getNodeInfo', {
+		const node1Net1Info = await servers[1].call('networks.getNodeInfo', {
 			networkId: network.definition.networkID,
 		});
 		const node1Net1Addr = node1Net1Info.addresses.find((a: string) =>
@@ -355,7 +355,7 @@ async function main() {
 			});
 			// If we get here, connection didn't fail - wait a bit and check if it actually connected
 			await Bun.sleep(2000);
-			const status = await servers[0].call('getStatus', { networkId: network.definition.networkID });
+			const status = await servers[0].call('networks.getStatus', { networkId: network.definition.networkID });
 			// Node 9's network 2 peer ID should NOT be in our connected peers
 			if (!status.connectedPeers.includes(node9Net2Info.peerId)) {
 				crossNetworkFailed = true;
@@ -394,7 +394,7 @@ async function main() {
 		// Delete the original network definition
 		await servers[8].call('networks.delete', { networkId: network.definition.networkID });
 		// Import the mangled version
-		await servers[8].call('networks.import', {
+		await servers[8].call('networks.importFromFile', {
 			path: mangledNetworkFile,
 			enabled: true,
 		});
@@ -403,7 +403,7 @@ async function main() {
 		// Wait for mangled network to start
 		const mangledRunning = await waitForCondition(async () => {
 			try {
-				await servers[8].call('getNodeInfo', { networkId: network.definition.networkID });
+				await servers[8].call('networks.getNodeInfo', { networkId: network.definition.networkID });
 				return true;
 			} catch {
 				return false;
@@ -412,7 +412,7 @@ async function main() {
 		assert(mangledRunning, 'Mangled network should start on node 8');
 
 		// Get node 8's address on the mangled network
-		const node8MangledInfo = await servers[8].call('getNodeInfo', {
+		const node8MangledInfo = await servers[8].call('networks.getNodeInfo', {
 			networkId: network.definition.networkID,
 		});
 		console.log(`  Node 8 mangled network peer ID: ${node8MangledInfo.peerId.slice(0, 12)}...`);
@@ -428,7 +428,7 @@ async function main() {
 			});
 			// Wait and check if connection actually established
 			await Bun.sleep(3000);
-			const status = await servers[8].call('getStatus', { networkId: network.definition.networkID });
+			const status = await servers[8].call('networks.getStatus', { networkId: network.definition.networkID });
 			// Should NOT be connected to node 0
 			if (!status.connectedPeers.includes(nodePeerIds[0])) {
 				mangledConnectionFailed = true;
@@ -448,7 +448,7 @@ async function main() {
 
 	} catch (error) {
 		console.error('\n❌ Test failed:', error);
-		process.exit(1);
+		throw error;
 	} finally {
 		console.log('Cleaning up...');
 		await harness.cleanupAll();

@@ -120,10 +120,10 @@ async function main() {
 		console.log(`  Network ID: ${network.definition.networkID}`);
 
 		// Import and enable on node 0 (bootstrap/seeder)
-		await servers[0].call('networks.import', { path: networkFile, enabled: true });
+		await servers[0].call('networks.importFromFile', { path: networkFile, enabled: true });
 		await Bun.sleep(2000);
 
-		const node0Info = await servers[0].call('getNodeInfo', { networkId: network.definition.networkID });
+		const node0Info = await servers[0].call('networks.getNodeInfo', { networkId: network.definition.networkID });
 		const bootstrapAddr = node0Info.addresses.find((a: string) =>
 			a.includes('/tcp/') && !a.includes('127.0.0.1') && !a.includes('/p2p-circuit/')
 		) || node0Info.addresses[0];
@@ -134,12 +134,12 @@ async function main() {
 		await writeNetworkFile(network.definition, networkFile);
 
 		for (let i = 1; i < servers.length; i++) {
-			await servers[i].call('networks.import', { path: networkFile, enabled: true });
+			await servers[i].call('networks.importFromFile', { path: networkFile, enabled: true });
 		}
 
 		// Wait for connections
 		const allConnected = await waitForCondition(async () => {
-			const status = await servers[0].call('getStatus', { networkId: network.definition.networkID });
+			const status = await servers[0].call('networks.getStatus', { networkId: network.definition.networkID });
 			return status.connected === NODE_COUNT - 1;
 		}, 30000, 1000);
 		assert(allConnected, 'All nodes should connect');
@@ -162,7 +162,7 @@ async function main() {
 		console.log('Importing data on node 0 (seeder)...');
 		console.log('='.repeat(60));
 
-		const importResult = await servers[0].call('import', { path: dir });
+		const importResult = await servers[0].call('createLish', { path: dir });
 		const manifestId = importResult.manifestId;
 		console.log(`  Manifest ID: ${manifestId}`);
 		assert(manifestId, 'Import should return manifest ID');
@@ -258,7 +258,7 @@ async function main() {
 
 	} catch (error) {
 		console.error('\n❌ Test failed:', error);
-		process.exit(1);
+		throw error;
 	} finally {
 		console.log('Cleaning up...');
 		await harness.cleanupAll();
