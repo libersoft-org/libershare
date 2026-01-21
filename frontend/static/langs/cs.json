@@ -15,7 +15,8 @@
 		"import": "Importovat",
 		"connected": "Připojeno",
 		"disconnected": "Odpojeno",
-		"notUsed": "Nepoužíváno"
+		"notUsed": "Nepoužíváno",
+		"search": "Hledat"
 	},
 	"library": {
 		"title": "Online knihovna",

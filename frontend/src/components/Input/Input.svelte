@@ -5,10 +5,12 @@
 		placeholder?: string;
 		selected?: boolean;
 		type?: 'text' | 'password' | 'email' | 'number' | 'url';
+		fontSize?: string;
+		padding?: string;
 		onchange?: (value: string) => void;
 	}
 
-	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', onchange }: Props = $props();
+	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', fontSize = '2.5vh', padding = '1.5vh 2vh', onchange }: Props = $props();
 	let inputElement: HTMLInputElement;
 
 	export function focus() {
@@ -46,8 +48,8 @@
 	}
 
 	input {
-		font-size: 2.5vh;
-		padding: 1.5vh 2vh;
+		font-size: var(--input-font-size);
+		padding: var(--input-padding);
 		border: 0.3vh solid var(--secondary-softer-background);
 		border-radius: 1vh;
 		background-color: var(--secondary-background);
@@ -65,7 +67,7 @@
 	}
 </style>
 
-<div class="input-field" class:selected>
+<div class="input-field" class:selected style="--input-font-size: {fontSize}; --input-padding: {padding};">
 	{#if label}
 		<div class="label">{label}</div>
 	{/if}
