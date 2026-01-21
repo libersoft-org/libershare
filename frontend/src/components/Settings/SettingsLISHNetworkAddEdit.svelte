@@ -210,10 +210,10 @@
 			<div class="bootstrap-row" bind:this={rowElements[3 + index]}>
 				<Input bind:this={bootstrapInputs[index]} bind:value={bootstrapServers[index]} placeholder="address:port" selected={isRowSelected && selectedColumn === 0} flex />
 				{#if hasRemove}
-					<Button icon="/img/del.svg" selected={isRowSelected && selectedColumn === 1} onConfirm={() => removeBootstrapServer(index)} padding="1vh" borderRadius="1vh" width="5vh" height="5vh" />
+					<Button icon="/img/del.svg" selected={isRowSelected && selectedColumn === 1} onConfirm={() => removeBootstrapServer(index)} padding="1vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				{/if}
 				{#if isLast}
-					<Button icon="/img/add.svg" selected={isRowSelected && ((hasRemove && selectedColumn === 2) || (!hasRemove && selectedColumn === 1))} onConfirm={() => addBootstrapServer()} padding="1vh" borderRadius="1vh" width="5vh" height="5vh" />
+					<Button icon="/img/add.svg" selected={isRowSelected && ((hasRemove && selectedColumn === 2) || (!hasRemove && selectedColumn === 1))} onConfirm={() => addBootstrapServer()} padding="1vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				{/if}
 			</div>
 		{/each}
