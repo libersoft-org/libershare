@@ -4,12 +4,14 @@
 	import { volume, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
 	import { type FooterWidget } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
+	import LishStatus from './FooterLISHStatus.svelte';
+	import Connection from './FooterConnection.svelte';
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
 	type Widget = {
 		id: FooterWidget;
-		component: typeof Item | typeof Bar | typeof Clock;
+		component: typeof Item | typeof Bar | typeof Clock | typeof LishStatus | typeof Connection;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		props?: () => Record<string, any>;
 	};
@@ -67,6 +69,24 @@
 				topIconAlt: $t.settings?.footerWidgets?.storage,
 				topLabel: '0.88 / 2 TB',
 				progress: 44.1,
+			}),
+		},
+		{
+			id: 'lishStatus',
+			component: LishStatus,
+			props: () => ({
+				networkName: 'Main Network',
+				lishConnected: false,
+				vpnConnected: null,
+			}),
+		},
+		{
+			id: 'connection',
+			component: Connection,
+			props: () => ({
+				type: 'wifi',
+				connected: true,
+				signal: 70,
 			}),
 		},
 		{

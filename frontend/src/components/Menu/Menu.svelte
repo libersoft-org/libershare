@@ -10,10 +10,11 @@
 		items: Array<{ id: string; label: string; selected?: boolean }>;
 		orientation?: 'horizontal' | 'vertical';
 		selectedId?: string;
+		buttonWidth?: string;
 		onselect?: (id: string) => void;
 		onBack?: () => void;
 	}
-	let { areaID, title, items, orientation = 'horizontal', selectedId, onselect, onBack }: Props = $props();
+	let { areaID, title, items, orientation = 'horizontal', selectedId, buttonWidth, onselect, onBack }: Props = $props();
 	let initialIndex = $derived(
 		selectedId
 			? Math.max(
@@ -44,7 +45,7 @@
 		{#key `${title}-${selectedId}-${orientation}`}
 			<ButtonsGroup {areaID} {initialIndex} {orientation} {onBack}>
 				{#each items as item (item.id)}
-					<Button label={item.label} icon={item.selected ? '/img/check.svg' : undefined} onConfirm={() => onselect?.(item.id)} />
+					<Button label={item.label} icon={item.selected ? '/img/check.svg' : undefined} width={buttonWidth} onConfirm={() => onselect?.(item.id)} />
 				{/each}
 			</ButtonsGroup>
 		{/key}

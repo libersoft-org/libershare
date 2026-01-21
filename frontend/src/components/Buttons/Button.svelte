@@ -15,9 +15,10 @@
 		onConfirm?: () => void;
 	}
 	let { label, icon, alt = '', selected = false, pressed = false, padding = '2vh', fontSize = '2vh', borderRadius = '2vh', width, height, onConfirm }: Props = $props();
-
 	const buttonsGroup = getContext<ButtonsGroupContext | undefined>('buttonsGroup');
 	let index = $state(-1);
+	let isSelected = $derived(buttonsGroup ? buttonsGroup.isSelected(index) : selected);
+	let isPressed = $derived(buttonsGroup ? buttonsGroup.isPressed(index) : pressed);
 
 	onMount(() => {
 		if (buttonsGroup) {
@@ -26,9 +27,6 @@
 			return unregister;
 		}
 	});
-
-	let isSelected = $derived(buttonsGroup ? buttonsGroup.isSelected(index) : selected);
-	let isPressed = $derived(buttonsGroup ? buttonsGroup.isPressed(index) : pressed);
 </script>
 
 <style>
@@ -46,7 +44,6 @@
 		backdrop-filter: blur(2vh);
 		opacity: 0.6;
 		box-sizing: border-box;
-		min-width: 16vh;
 	}
 
 	.button.icon-only {
@@ -69,7 +66,7 @@
 	}
 </style>
 
-<div class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:icon-only={icon && !label} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius};{width ? ` width: ${width};` : ''}{height ? ` height: ${height};` : ''}">
+<div class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:icon-only={icon && !label} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}">
 	{#if icon}
 		<img src={icon} {alt} style="width: {fontSize}; height: {fontSize};" />
 	{/if}

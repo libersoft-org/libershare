@@ -3,7 +3,7 @@
 ## Table of contents
 
 - [**About**](#about)
-- [**Screenshot**](#screenshot)
+- [**Screenshots**](#screenshots)
 - [**Documentation**](#documentation)
 - [**Installation**](#installation)
 - [**License**](#license)
@@ -21,9 +21,13 @@ It introduces its own LISH network protocol and LISH data format for efficient a
 
 Unlike traditional peer-to-peer networks, LiberShare features a **decentralized database of shared files within each network**, combined with fine-grained access control. This makes it suitable for both public and private file sharing.
 
-## Screenshot
+## Screenshots
 
 ![LiberShare](./screenshot.webp)
+
+![LiberShare](./screenshot2.webp)
+
+![LiberShare](./screenshot3.webp)
 
 ## Documentation
 

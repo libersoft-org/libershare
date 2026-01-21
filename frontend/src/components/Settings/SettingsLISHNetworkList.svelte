@@ -22,7 +22,7 @@
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
-	let buttonIndex = $state(0); // 0 = Add, 1 = Import (for top row); 0 = Edit, 1 = Delete (for network rows)
+	let buttonIndex = $state(0); // 0 = Add, 1 = Import (for top row); 0 = Connect, 1 = Edit, 2 = Delete (for network rows)
 	let showAddEdit = $state(false);
 	let showImport = $state(false);
 	let editingNetwork = $state<Network | null>(null);
@@ -71,6 +71,11 @@
 		showImport = false;
 		registerAreaHandler();
 		activateArea(areaID);
+	}
+
+	function connectNetwork(network: Network) {
+		// TODO: Implement actual connection logic
+		console.log('Connecting to network:', network.name);
 	}
 
 	function openEditNetwork(network: Network) {
@@ -163,7 +168,8 @@
 				return false;
 			},
 			right: () => {
-				if ((isTopRow || isNetworkRow) && buttonIndex < 1) {
+				const maxIndex = isTopRow ? 1 : isNetworkRow ? 2 : 0;
+				if (buttonIndex < maxIndex) {
 					buttonIndex++;
 					return true;
 				}
@@ -179,7 +185,8 @@
 					const networkIndex = selectedIndex - 1;
 					const network = networks[networkIndex];
 					if (network) {
-						if (buttonIndex === 0) openEditNetwork(network);
+						if (buttonIndex === 0) connectNetwork(network);
+						else if (buttonIndex === 1) openEditNetwork(network);
 						else deleteNetwork(network);
 					}
 				}
@@ -211,7 +218,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1vh;
-		width: 1000px;
+		width: 1200px;
 		max-width: 100%;
 	}
 
@@ -254,8 +261,9 @@
 					<Row selected={active && selectedIndex === i + 1}>
 						<div class="network-name">{network.name}</div>
 						<div class="buttons">
-							<Button label={$t.common?.edit ?? 'Edit'} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => openEditNetwork(network)} />
-							<Button label={$t.common?.delete ?? 'Delete'} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => deleteNetwork(network)} />
+							<Button label={$t.common?.connect ?? 'Connect'} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
+							<Button label={$t.common?.edit ?? 'Edit'} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openEditNetwork(network)} />
+							<Button label={$t.common?.delete ?? 'Delete'} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => deleteNetwork(network)} />
 						</div>
 					</Row>
 				</div>

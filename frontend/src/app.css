@@ -13,6 +13,9 @@
 	--secondary-harder-background: #000;
 	--disabled-foreground: #888;
 	--disabled-background: #222;
+	--color-error: #e00;
+	--color-warning: #da0;
+	--color-success: #080;
 }
 
 html,

@@ -14,7 +14,8 @@
 		"edit": "Upravit",
 		"import": "Importovat",
 		"connected": "Připojeno",
-		"disconnected": "Odpojeno"
+		"disconnected": "Odpojeno",
+		"notUsed": "Nepoužíváno"
 	},
 	"library": {
 		"title": "Online knihovna",
@@ -86,6 +87,10 @@
 			"right": "Vpravo"
 		},
 		"footerWidgets": {
+			"lishStatus": "Stav LISH sítě",
+			"connection": "Připojení",
+			"connectionEthernet": "Ethernet",
+			"connectionWifi": "WiFi",
 			"download": "Rychlost stahování",
 			"upload": "Rychlost odesílání",
 			"cpu": "Využití CPU",
