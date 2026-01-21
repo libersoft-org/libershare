@@ -25,12 +25,10 @@
 	let networkID = $state(network?.id || crypto.randomUUID());
 	let bootstrapServers = $state<string[]>(network?.bootstrapServers?.length ? [...network.bootstrapServers] : ['']);
 	let submitted = $state(false);
-
 	// Validation
 	let hasValidBootstrap = $derived(bootstrapServers.some(s => s.trim() !== ''));
 	let errorMessage = $derived(!name.trim() ? $t.settings?.lishNetwork?.errorNameRequired : !networkID.trim() ? $t.settings?.lishNetwork?.errorNetworkIDRequired : !hasValidBootstrap ? $t.settings?.lishNetwork?.errorBootstrapRequired : '');
 	let showError = $derived(submitted && errorMessage);
-
 	// Dynamic total items: name + description + networkID + bootstrap servers + save + back
 	let totalItems = $derived(3 + bootstrapServers.length + 2);
 
@@ -58,6 +56,10 @@
 		// Adjust selectedIndex if needed
 		if (selectedIndex > 3 + index) selectedIndex--;
 		selectedColumn = 0;
+	}
+
+	function generateNetworkID() {
+		networkID = crypto.randomUUID();
 	}
 
 	function getItemType(index: number): { type: 'name' | 'description' | 'networkID' | 'bootstrap' | 'save' | 'back'; bootstrapIndex?: number } {
@@ -118,7 +120,7 @@
 			},
 			left: () => {
 				const item = getItemType(selectedIndex);
-				if (item.type === 'bootstrap' && selectedColumn > 0) {
+				if ((item.type === 'networkID' || item.type === 'bootstrap') && selectedColumn > 0) {
 					selectedColumn--;
 					return true;
 				}
@@ -126,6 +128,10 @@
 			},
 			right: () => {
 				const item = getItemType(selectedIndex);
+				if (item.type === 'networkID' && selectedColumn < 1) {
+					selectedColumn++;
+					return true;
+				}
 				if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined) {
 					const maxCol = getMaxColumn(item.bootstrapIndex);
 					if (selectedColumn < maxCol) {
@@ -138,7 +144,11 @@
 			confirmDown: () => {},
 			confirmUp: () => {
 				const item = getItemType(selectedIndex);
-				if (item.type === 'name' || item.type === 'description' || item.type === 'networkID') focusInput(selectedIndex);
+				if (item.type === 'name' || item.type === 'description') focusInput(selectedIndex);
+				else if (item.type === 'networkID') {
+					if (selectedColumn === 0) focusInput(selectedIndex);
+					else generateNetworkID();
+				}
 				else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined) {
 					if (selectedColumn === 0) focusInput(selectedIndex);
 					else {
@@ -207,8 +217,9 @@
 		<div bind:this={rowElements[1]}>
 			<Input bind:this={descriptionInput} bind:value={description} label={$t.settings?.lishNetwork?.description} multiline rows={4} selected={active && selectedIndex === 1} />
 		</div>
-		<div bind:this={rowElements[2]}>
-			<Input bind:this={networkIDInput} bind:value={networkID} label={$t.settings?.lishNetwork?.networkID} selected={active && selectedIndex === 2} />
+		<div class="bootstrap-row" bind:this={rowElements[2]}>
+			<Input bind:this={networkIDInput} bind:value={networkID} label={$t.settings?.lishNetwork?.networkID} selected={active && selectedIndex === 2 && selectedColumn === 0} flex />
+			<Button icon="/img/random.svg" selected={active && selectedIndex === 2 && selectedColumn === 1} onConfirm={() => generateNetworkID()} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 		</div>
 		<div class="label">{$t.settings?.lishNetwork?.bootstrapServers}:</div>
 		{#each bootstrapServers as server, index (index)}
