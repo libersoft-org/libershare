@@ -86,7 +86,8 @@
 			"bootstrapServers": "Bootstrap Servers",
 			"errorNameRequired": "Network name is required",
 			"errorNetworkIDRequired": "Network ID is required",
-			"errorBootstrapRequired": "At least one bootstrap server is required"
+			"errorBootstrapRequired": "At least one bootstrap server is required",
+			"emptyList": "No networks added. Add or Import a new network."
 		},
 		"footer": "Footer",
 		"footerVisible": "Show footer",

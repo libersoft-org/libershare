@@ -86,7 +86,8 @@
 			"bootstrapServers": "Bootstrap servery",
 			"errorNameRequired": "Název sítě je povinný",
 			"errorNetworkIDRequired": "ID sítě je povinné",
-			"errorBootstrapRequired": "Je vyžadován alespoň jeden bootstrap server"
+			"errorBootstrapRequired": "Je vyžadován alespoň jeden bootstrap server",
+			"emptyList": "Žádná síť není přidána. Přidejte nebo importujte novou síť."
 		},
 		"footer": "Patička",
 		"footerVisible": "Zobrazovat patičku",
