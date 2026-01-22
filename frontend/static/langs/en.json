@@ -10,6 +10,7 @@
 		"version": "Version",
 		"add": "Add",
 		"save": "Save",
+		"saveAs": "Save as",
 		"delete": "Delete",
 		"edit": "Edit",
 		"import": "Import",
