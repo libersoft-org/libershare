@@ -86,6 +86,7 @@
 	.label {
 		font-size: 1.4vh;
 		color: var(--primary-foreground);
+		text-align: center;
 	}
 </style>
 

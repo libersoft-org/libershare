@@ -24,6 +24,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5vh;
+		text-align: center;
 	}
 
 	.top .icon,
