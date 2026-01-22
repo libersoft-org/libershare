@@ -154,6 +154,7 @@
 		justify-content: space-between;
 		align-items: center;
 		gap: 2vh;
+		width: 100%;
 	}
 
 	.network-info {
