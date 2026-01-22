@@ -13,6 +13,7 @@
 	import LISHNetworkExport from './SettingsLISHNetworkExport.svelte';
 	import LISHNetworkExportAll from './SettingsLISHNetworkExportAll.svelte';
 	import LISHNetworkImport from './SettingsLISHNetworkImport.svelte';
+	import LISHNetworkPublic from './SettingsLISHNetworkPublic.svelte';
 	interface Props {
 		areaID: string;
 		onBack?: () => void;
@@ -22,6 +23,7 @@
 	const exportAreaID = areaID + '-export';
 	const exportAllAreaID = areaID + '-export-all';
 	const importAreaID = areaID + '-import';
+	const publicAreaID = areaID + '-public';
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
@@ -30,9 +32,10 @@
 	let showExport = $state(false);
 	let showExportAll = $state(false);
 	let showImport = $state(false);
+	let showPublic = $state(false);
 	let editingNetwork = $state<LISHNetwork | null>(null);
 	let exportingNetwork = $state<LISHNetwork | null>(null);
-	let deletingNetwork = $state<LISHLISHNetwork | null>(null);
+	let deletingNetwork = $state<LISHNetwork | null>(null);
 	let rowElements: HTMLElement[] = $state([]);
 	// Load networks from localStorage
 	let networks = $state<LISHNetwork[]>(getNetworks());
@@ -49,6 +52,29 @@
 
 	// Check if current row is a network row (has Edit/Delete buttons)
 	let isNetworkRow = $derived(selectedIndex > 0 && selectedIndex < totalItems - 1);
+
+	function openPublic() {
+		showPublic = true;
+		setAreaPosition(areaID, { x: -999, y: -999 });
+		setAreaPosition(publicAreaID, { x: 0, y: 2 });
+		pushBreadcrumb($t.settings?.lishNetwork?.publicList);
+		removeBackHandler = pushBackHandler(handlePublicBack);
+	}
+
+	function handlePublicBack() {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
+		removeArea(publicAreaID);
+		setAreaPosition(areaID, { x: 0, y: 2 });
+		popBreadcrumb();
+		showPublic = false;
+		// Reload networks in case new ones were added
+		networks = getNetworks();
+		registerAreaHandler();
+		activateArea(areaID);
+	}
 
 	function openAddNetwork() {
 		editingNetwork = null;
@@ -101,12 +127,12 @@
 		activateArea(areaID);
 	}
 
-	function connectNetwork(network: Network) {
+	function connectNetwork(network: LISHNetwork) {
 		// TODO: Implement actual connection logic
 		console.log('Connecting to network:', network.name);
 	}
 
-	function openExport(network: Network) {
+	function openExport(network: LISHNetwork) {
 		exportingNetwork = network;
 		showExport = true;
 		setAreaPosition(areaID, { x: -999, y: -999 });
@@ -129,7 +155,7 @@
 		activateArea(areaID);
 	}
 
-	function openEditNetwork(network: Network) {
+	function openEditNetwork(network: LISHNetwork) {
 		editingNetwork = network;
 		showAddEdit = true;
 		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
@@ -138,7 +164,7 @@
 		removeBackHandler = pushBackHandler(handleAddEditBack);
 	}
 
-	function deleteNetwork(network: Network) {
+	function deleteNetwork(network: LISHNetwork) {
 		deletingNetwork = network;
 		setAreaPosition(areaID, { x: -999, y: -999 }); // Move list area out of the way for dialog
 	}
@@ -245,7 +271,7 @@
 				return false;
 			},
 			right: () => {
-				const maxIndex = isTopRow ? 2 : isNetworkRow ? 3 : 0;
+				const maxIndex = isTopRow ? 3 : isNetworkRow ? 3 : 0;
 				if (buttonIndex < maxIndex) {
 					buttonIndex++;
 					return true;
@@ -255,8 +281,9 @@
 			confirmDown: () => {},
 			confirmUp: () => {
 				if (selectedIndex === 0) {
-					if (buttonIndex === 0) openAddNetwork();
-					else if (buttonIndex === 1) openImport();
+					if (buttonIndex === 0) openPublic();
+					else if (buttonIndex === 1) openAddNetwork();
+					else if (buttonIndex === 2) openImport();
 					else openExportAll();
 				} else if (selectedIndex === totalItems - 1) onBack?.();
 				else {
@@ -339,13 +366,16 @@
 	<LISHNetworkExportAll areaID={exportAllAreaID} onBack={handleExportAllBack} />
 {:else if showImport}
 	<LISHNetworkImport areaID={importAreaID} onBack={handleImportBack} />
+{:else if showPublic}
+	<LISHNetworkPublic areaID={publicAreaID} onBack={handlePublicBack} />
 {:else}
 	<div class="lish-network-list">
 		<div class="container">
 			<div class="top-buttons" bind:this={rowElements[0]}>
-				<Button label={$t.common?.add} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={openAddNetwork} />
-				<Button label={$t.common?.import} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openImport} />
-				<Button label={$t.common?.exportAll} selected={active && selectedIndex === 0 && buttonIndex === 2} onConfirm={openExportAll} />
+				<Button label={$t.settings?.lishNetwork?.publicList} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={openPublic} />
+				<Button label={$t.common?.add} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openAddNetwork} />
+				<Button label={$t.common?.import} selected={active && selectedIndex === 0 && buttonIndex === 2} onConfirm={openImport} />
+				<Button label={$t.common?.exportAll} selected={active && selectedIndex === 0 && buttonIndex === 3} onConfirm={openExportAll} />
 			</div>
 			{#if networks.length === 0}
 				<Alert type="warning" message={$t.settings?.lishNetwork?.emptyList} />

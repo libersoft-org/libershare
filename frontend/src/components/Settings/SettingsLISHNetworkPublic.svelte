@@ -1,0 +1,248 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { t } from '../../scripts/language.ts';
+	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
+	import { type LISHNetwork, getNetworks, saveNetworks } from '../../scripts/lishnet.ts';
+	import Button from '../Buttons/Button.svelte';
+	import Input from '../Input/Input.svelte';
+	import Row from '../Row/Row.svelte';
+	import Alert from '../Alert/Alert.svelte';
+	import Spinner from '../Spinner/Spinner.svelte';
+	interface Props {
+		areaID: string;
+		onBack?: () => void;
+	}
+	let { areaID, onBack }: Props = $props();
+	let active = $derived($activeArea === areaID);
+	let selectedIndex = $state(0); // 0 = URL row (input + Load), 1+ = network rows, last = Back
+	let selectedColumn = $state(0); // 0 = URL input, 1 = Load button
+	let urlInput: Input;
+	let url = $state('https://pastebin.com/raw/ez1S9WYk');
+	let publicNetworks = $state<LISHNetwork[]>([]);
+	let loading = $state(false);
+	let error = $state('');
+	let addedNetworkIds = $state<Set<string>>(new Set());
+	// Items: URL row (0), network rows (1 to publicNetworks.length), Back button (last)
+	let totalItems = $derived(1 + publicNetworks.length + 1);
+
+	async function loadPublicList() {
+		if (!url.trim()) {
+			error = $t.settings?.lishNetwork?.errorUrlRequired || 'URL is required';
+			return;
+		}
+		loading = true;
+		selectedColumn = 0; // Move selection to URL input while loading
+		error = '';
+		publicNetworks = [];
+
+		try {
+			// Use CORS proxy to bypass CORS restrictions
+			const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+			const response = await fetch(proxyUrl);
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			const data = await response.json();
+			// Validate the data - should be an array of networks
+			if (!Array.isArray(data)) throw new Error($t.settings?.lishNetwork?.errorInvalidFormat || 'Invalid format - expected array');
+			// Validate each network has required fields
+			const validNetworks: LISHNetwork[] = [];
+			for (const item of data) {
+				if (item.networkID && item.name && Array.isArray(item.bootstrapPeers)) {
+					validNetworks.push({
+						version: item.version || 1,
+						networkID: item.networkID,
+						name: item.name,
+						description: item.description || '',
+						bootstrapPeers: item.bootstrapPeers,
+						created: item.created || new Date().toISOString(),
+					});
+				}
+			}
+			if (validNetworks.length === 0) throw new Error($t.settings?.lishNetwork?.errorNoValidNetworks || 'No valid networks found');
+			publicNetworks = validNetworks;
+			// Check which networks are already added
+			const existingNetworks = getNetworks();
+			addedNetworkIds = new Set(existingNetworks.map(n => n.networkID));
+			// Keep selection on URL row
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			loading = false;
+		}
+	}
+
+	function addNetwork(network: LISHNetwork) {
+		const existingNetworks = getNetworks();
+		// Check if already exists
+		if (existingNetworks.some(n => n.networkID === network.networkID)) return;
+		// Add the network
+		existingNetworks.push({
+			...network,
+			created: new Date().toISOString(),
+		});
+		saveNetworks(existingNetworks);
+		// Mark as added
+		addedNetworkIds = new Set([...addedNetworkIds, network.networkID]);
+	}
+
+	function isNetworkAdded(networkID: string): boolean {
+		return addedNetworkIds.has(networkID);
+	}
+
+	onMount(() => {
+		const unregister = useArea(areaID, {
+			up: () => {
+				if (selectedIndex > 0) {
+					selectedIndex--;
+					return true;
+				}
+				return false;
+			},
+			down: () => {
+				if (selectedIndex < totalItems - 1) {
+					selectedIndex++;
+					return true;
+				}
+				return false;
+			},
+			left: () => {
+				if (selectedIndex === 0 && selectedColumn > 0) {
+					selectedColumn--;
+					return true;
+				}
+				return false;
+			},
+			right: () => {
+				if (selectedIndex === 0 && selectedColumn < 1 && !loading) {
+					selectedColumn++;
+					return true;
+				}
+				return false;
+			},
+			confirmDown: () => {
+				if (selectedIndex === 0 && selectedColumn === 0) urlInput?.focus();
+			},
+			confirmUp: () => {
+				if (selectedIndex === 0 && selectedColumn === 1) loadPublicList();
+				else if (selectedIndex >= 1 && selectedIndex < totalItems - 1) {
+					const networkIndex = selectedIndex - 1;
+					const network = publicNetworks[networkIndex];
+					if (network && !isNetworkAdded(network.networkID)) addNetwork(network);
+				} else if (selectedIndex === totalItems - 1) onBack?.();
+			},
+			confirmCancel: () => {},
+			back: () => onBack?.(),
+		});
+		activateArea(areaID);
+		return unregister;
+	});
+</script>
+
+<style>
+	.public-list {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		flex: 1;
+		min-height: 0;
+		padding: 2vh;
+		gap: 2vh;
+		overflow-y: auto;
+	}
+
+	.container {
+		display: flex;
+		flex-direction: column;
+		gap: 1vh;
+		width: 1200px;
+		max-width: 100%;
+	}
+
+	.url-row {
+		display: flex;
+		gap: 1vh;
+		align-items: flex-end;
+	}
+
+	.url-input {
+		flex: 1;
+	}
+
+	.networks {
+		display: flex;
+		flex-direction: column;
+		gap: 1vh;
+		margin-top: 1vh;
+	}
+
+	.network {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 2vh;
+	}
+
+	.network-info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5vh;
+		flex: 1;
+	}
+
+	.network-name {
+		font-size: 2.5vh;
+		font-weight: bold;
+		color: var(--secondary-foreground);
+	}
+
+	.network-description {
+		font-size: 2vh;
+		color: var(--disabled-foreground);
+	}
+
+	.back {
+		margin-top: 2vh;
+	}
+</style>
+
+<div class="public-list">
+	<div class="container">
+		<div class="url-row">
+			<div class="url-input">
+				<Input bind:this={urlInput} bind:value={url} label="URL" selected={active && selectedIndex === 0 && selectedColumn === 0} />
+			</div>
+			{#if !loading}
+				<Button label={$t.common?.load} selected={active && selectedIndex === 0 && selectedColumn === 1} onConfirm={loadPublicList} />
+			{/if}
+		</div>
+		{#if loading}
+			<Spinner />
+		{/if}
+		{#if error}
+			<Alert type="error" message={error} />
+		{/if}
+		{#if publicNetworks.length > 0}
+			<div class="networks">
+				{#each publicNetworks as network, i}
+					<Row selected={active && selectedIndex === i + 1}>
+						<div class="network">
+							<div class="network-info">
+								<div class="network-name">{network.name}</div>
+								{#if network.description}
+									<div class="network-description">{network.description}</div>
+								{/if}
+							</div>
+							{#if isNetworkAdded(network.networkID)}
+								<Button label={$t.common?.added} selected={false} />
+							{:else}
+								<Button label={$t.common?.add} selected={active && selectedIndex === i + 1} onConfirm={() => addNetwork(network)} />
+							{/if}
+						</div>
+					</Row>
+				{/each}
+			</div>
+		{/if}
+	</div>
+	<div class="back">
+		<Button label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
+	</div>
+</div>
