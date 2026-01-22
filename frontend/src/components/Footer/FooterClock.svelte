@@ -20,4 +20,10 @@
 	});
 </script>
 
+<style>
+	.clock {
+		text-align: center;
+	}
+</style>
+
 <span class="clock">{time}</span>

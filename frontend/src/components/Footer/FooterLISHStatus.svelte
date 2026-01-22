@@ -23,6 +23,7 @@
 		display: flex;
 		align-items: center;
 		gap: 1vh;
+		text-align: center;
 	}
 
 	.name {
@@ -36,6 +37,8 @@
 	}
 
 	.dot {
+		min-width: 1.2vh;
+		min-height: 1.2vh;
 		width: 1.2vh;
 		height: 1.2vh;
 		border-radius: 50%;
