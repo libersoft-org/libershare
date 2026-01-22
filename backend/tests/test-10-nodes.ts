@@ -336,7 +336,7 @@ async function main() {
 		// Test 1: Node 0 CAN connect to Node 1 on network 1 (same PSK)
 		console.log(`\n  Testing same-network connection...`);
 		try {
-			await servers[0].call('connect', {
+			await servers[0].call('networks.connect', {
 				networkId: network.definition.networkID,
 				multiaddr: node1Net1Addr,
 			});
@@ -349,7 +349,7 @@ async function main() {
 		console.log(`  Testing cross-network connection (should fail)...`);
 		let crossNetworkFailed = false;
 		try {
-			await servers[0].call('connect', {
+			await servers[0].call('networks.connect', {
 				networkId: network.definition.networkID,
 				multiaddr: node9Net2Addr,
 			});
@@ -386,11 +386,6 @@ async function main() {
 		await writeNetworkFile(mangledNetworkDef, mangledNetworkFile);
 		console.log(`  Created mangled network (same ID, corrupted PSK)`);
 
-		// Import mangled network on node 8 (disable network 1 first)
-		await servers[8].call('networks.setEnabled', {
-			networkId: network.definition.networkID,
-			enabled: false,
-		});
 		// Delete the original network definition
 		await servers[8].call('networks.delete', { networkId: network.definition.networkID });
 		// Import the mangled version
@@ -422,7 +417,7 @@ async function main() {
 		console.log(`  Testing mangled PSK connection to bootstrap...`);
 		let mangledConnectionFailed = false;
 		try {
-			await servers[8].call('connect', {
+			await servers[8].call('networks.connect', {
 				networkId: network.definition.networkID,
 				multiaddr: bootstrapAddr,
 			});

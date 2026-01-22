@@ -98,7 +98,7 @@ export class Network {
 		const settingsPath = join(this.dataDir, 'settings.json');
 		const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
 
-		// Decode swarm key from base64
+		console.log(`Decode swarm key from base64...`);
 		const swarmKey = Uint8Array.fromBase64(this.networkDef.key);
 		const bootstrapPeers = this.networkDef.bootstrap_peers;
 

@@ -183,7 +183,7 @@ export class ApiServer {
             case 'networks.setEnabled':
                 return {success: await this.networks.setEnabled(params.networkId, params.enabled)};
             case 'networks.delete':
-                return {success: this.networks.delete(params.networkId)};
+                return {success: await this.networks.delete(params.networkId)};
 
             case 'networks.connect': {
                 const network = this.networks.getLiveNetwork(params.networkId);

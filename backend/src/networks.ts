@@ -224,7 +224,8 @@ export class Networks {
 		}));
 	}
 
-	delete(id: string): boolean {
+	async delete(id: string): Promise<boolean> {
+		await this.setEnabled(id, false);
 		const stmt = this.db.query('DELETE FROM networks WHERE id = ?');
 		const result = stmt.run(id);
 		return result.changes > 0;
