@@ -10,10 +10,11 @@
 		fontSize?: string;
 		padding?: string;
 		flex?: boolean;
+		readonly?: boolean;
 		onchange?: (value: string) => void;
 	}
 
-	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', multiline = false, rows = 3, fontSize = '2.5vh', padding = '1.5vh 2vh', flex = false, onchange }: Props = $props();
+	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', multiline = false, rows = 3, fontSize = '2.5vh', padding = '1.5vh 2vh', flex = false, readonly = false, onchange }: Props = $props();
 	let inputElement: HTMLInputElement | HTMLTextAreaElement;
 
 	export function focus() {
@@ -88,8 +89,8 @@
 		<div class="label">{label}:</div>
 	{/if}
 	{#if multiline}
-		<textarea {placeholder} {rows} bind:value bind:this={inputElement} onkeydown={handleKeydown} oninput={handleInput}></textarea>
+		<textarea {placeholder} {rows} {readonly} bind:value bind:this={inputElement} onkeydown={handleKeydown} oninput={handleInput}></textarea>
 	{:else}
-		<input {type} {placeholder} bind:value bind:this={inputElement} onkeydown={handleKeydown} oninput={handleInput} />
+		<input {type} {placeholder} {readonly} bind:value bind:this={inputElement} onkeydown={handleKeydown} oninput={handleInput} />
 	{/if}
 </div>

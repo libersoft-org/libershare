@@ -4,7 +4,7 @@
 	import { useArea, activeArea, setAreaPosition, removeArea, activateArea } from '../../scripts/areas.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { getStorageValue, setStorageValue } from '../../scripts/localStorage.ts';
+	import { type LISHNetwork, getNetworks, saveNetworks as saveNetworksToStorage } from '../../scripts/lishnet.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Alert from '../Alert/Alert.svelte';
 	import ConfirmDialog from '../Dialog/ConfirmDialog.svelte';
@@ -16,14 +16,6 @@
 	interface Props {
 		areaID: string;
 		onBack?: () => void;
-	}
-	interface Network {
-		version: number;
-		networkID: string;
-		name: string;
-		description: string;
-		bootstrapPeers: string[];
-		created: string;
 	}
 	let { areaID, onBack }: Props = $props();
 	const editAreaID = areaID + '-edit';
@@ -38,16 +30,15 @@
 	let showExport = $state(false);
 	let showExportAll = $state(false);
 	let showImport = $state(false);
-	let editingNetwork = $state<Network | null>(null);
-	let exportingNetwork = $state<Network | null>(null);
-	let deletingNetwork = $state<Network | null>(null);
+	let editingNetwork = $state<LISHNetwork | null>(null);
+	let exportingNetwork = $state<LISHNetwork | null>(null);
+	let deletingNetwork = $state<LISHLISHNetwork | null>(null);
 	let rowElements: HTMLElement[] = $state([]);
-	const STORAGE_KEY = 'lishNetworks';
 	// Load networks from localStorage
-	let networks = $state<Network[]>(getStorageValue<Network[]>(STORAGE_KEY, []));
+	let networks = $state<LISHNetwork[]>(getNetworks());
 
 	function saveNetworks() {
-		setStorageValue(STORAGE_KEY, networks);
+		saveNetworksToStorage(networks);
 	}
 
 	// Items: Top buttons row (0), network rows (1 to networks.length), Back button (last)
@@ -186,7 +177,7 @@
 	}
 
 	function handleSave(savedNetwork: { id: string; name: string; description: string; bootstrapServers: string[] }) {
-		const network: Network = {
+		const network: LISHNetwork = {
 			version: 1,
 			networkID: savedNetwork.id,
 			name: savedNetwork.name,
