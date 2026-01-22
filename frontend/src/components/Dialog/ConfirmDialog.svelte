@@ -21,6 +21,8 @@
 		// Modal dialog - add to layout and register handlers
 		setAreaPosition('confirm-dialog', { x: 1, y: 1 });
 		const unregister = useArea('confirm-dialog', {
+			up: () => true, // Block navigation outside dialog
+			down: () => true, // Block navigation outside dialog
 			left: () => {
 				selectedButton = 'cancel';
 				return true;

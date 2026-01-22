@@ -7,6 +7,7 @@
 	import { getStorageValue, setStorageValue } from '../../scripts/localStorage.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Alert from '../Alert/Alert.svelte';
+	import ConfirmDialog from '../Dialog/ConfirmDialog.svelte';
 	import Row from '../Row/Row.svelte';
 	import LISHNetworkAddEdit from './SettingsLISHNetworkAddEdit.svelte';
 	import LISHNetworkExport from './SettingsLISHNetworkExport.svelte';
@@ -39,6 +40,7 @@
 	let showImport = $state(false);
 	let editingNetwork = $state<Network | null>(null);
 	let exportingNetwork = $state<Network | null>(null);
+	let deletingNetwork = $state<Network | null>(null);
 	let rowElements: HTMLElement[] = $state([]);
 	const STORAGE_KEY = 'lishNetworks';
 	// Load networks from localStorage
@@ -146,11 +148,27 @@
 	}
 
 	function deleteNetwork(network: Network) {
-		networks = networks.filter(n => n.networkID !== network.networkID);
-		saveNetworks();
-		// Adjust selected index if needed
-		if (selectedIndex >= totalItems) selectedIndex = totalItems - 1;
-		buttonIndex = 0;
+		deletingNetwork = network;
+		setAreaPosition(areaID, { x: -999, y: -999 }); // Move list area out of the way for dialog
+	}
+
+	function confirmDeleteNetwork() {
+		if (deletingNetwork) {
+			networks = networks.filter(n => n.networkID !== deletingNetwork!.networkID);
+			saveNetworks();
+			// Adjust selected index if needed
+			if (selectedIndex >= totalItems) selectedIndex = totalItems - 1;
+			buttonIndex = 0;
+			deletingNetwork = null;
+			setAreaPosition(areaID, { x: 0, y: 2 }); // Restore list area
+			activateArea(areaID);
+		}
+	}
+
+	function cancelDelete() {
+		deletingNetwork = null;
+		setAreaPosition(areaID, { x: 0, y: 2 }); // Restore list area
+		activateArea(areaID);
 	}
 
 	function handleAddEditBack() {
@@ -362,4 +380,8 @@
 			<Button label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
 		</div>
 	</div>
+{/if}
+
+{#if deletingNetwork}
+	<ConfirmDialog title={$t.common?.delete} message={$t.settings?.lishNetwork?.confirmDelete?.replace('{name}', deletingNetwork.name)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} defaultButton="cancel" onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
 {/if}
