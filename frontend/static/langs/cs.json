@@ -13,9 +13,13 @@
 		"delete": "Smazat",
 		"edit": "Upravit",
 		"import": "Importovat",
+		"export": "Exportovat",
+		"exportAll": "Exportovat vše",
+		"connect": "Připojit",
 		"connected": "Připojeno",
 		"disconnected": "Odpojeno",
-		"notUsed": "Nepoužíváno"
+		"notUsed": "Nepoužíváno",
+		"search": "Hledat"
 	},
 	"library": {
 		"title": "Online knihovna",
@@ -76,7 +80,15 @@
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",
-			"name": "Název"
+			"name": "Název",
+			"description": "Popis",
+			"networkID": "ID sítě",
+			"bootstrapServers": "Bootstrap servery",
+			"errorNameRequired": "Název sítě je povinný",
+			"errorNetworkIDRequired": "ID sítě je povinné",
+			"errorBootstrapRequired": "Je vyžadován alespoň jeden bootstrap server",
+			"emptyList": "Žádná síť není přidána. Přidejte nebo importujte novou síť.",
+			"confirmDelete": "Opravdu chcete smazat síť \"{name}\"?"
 		},
 		"footer": "Patička",
 		"footerVisible": "Zobrazovat patičku",

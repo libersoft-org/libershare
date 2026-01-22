@@ -2,33 +2,90 @@
 	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
+	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	interface Props {
 		areaID: string;
-		network?: { id: string; name: string } | null;
+		network?: { id: string; name: string; description?: string; bootstrapServers?: string[] } | null;
 		onBack?: () => void;
-		onSave?: (network: { id: string; name: string }) => void;
+		onSave?: (network: { id: string; name: string; description: string; bootstrapServers: string[] }) => void;
 	}
 	let { areaID, network = null, onBack, onSave }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
+	let selectedColumn = $state(0); // 0 = input, 1 = remove btn, 2 = add btn
 	let rowElements: HTMLElement[] = $state([]);
 	let nameInput: Input;
+	let descriptionInput: Input;
+	let networkIDInput: Input;
+	let bootstrapInputs: Input[] = $state([]);
 	let name = $state(network?.name ?? '');
-	const totalItems = 3; // 0 = name, 1 = save, 2 = back
+	let description = $state(network?.description ?? '');
+	let networkID = $state(network?.id || crypto.randomUUID());
+	let bootstrapServers = $state<string[]>(network?.bootstrapServers?.length ? [...network.bootstrapServers] : ['']);
+	let submitted = $state(false);
+	// Validation
+	let hasValidBootstrap = $derived(bootstrapServers.some(s => s.trim() !== ''));
+	let errorMessage = $derived(!name.trim() ? $t.settings?.lishNetwork?.errorNameRequired : !networkID.trim() ? $t.settings?.lishNetwork?.errorNetworkIDRequired : !hasValidBootstrap ? $t.settings?.lishNetwork?.errorBootstrapRequired : '');
+	let showError = $derived(submitted && errorMessage);
+	// Dynamic total items: name + description + networkID + bootstrap servers + save + back
+	let totalItems = $derived(3 + bootstrapServers.length + 2);
 
 	function handleSave() {
-		if (name) {
+		submitted = true;
+		if (!errorMessage) {
 			onSave?.({
-				id: network?.id ?? '',
+				id: networkID,
 				name,
+				description,
+				bootstrapServers: bootstrapServers.filter(s => s.trim() !== ''),
 			});
 		}
 	}
 
+	function addBootstrapServer() {
+		bootstrapServers = [...bootstrapServers, ''];
+		// Move to the new input
+		selectedIndex = 3 + bootstrapServers.length - 1;
+		selectedColumn = 0;
+	}
+
+	function removeBootstrapServer(index: number) {
+		bootstrapServers = bootstrapServers.filter((_, i) => i !== index);
+		// Adjust selectedIndex if needed
+		if (selectedIndex > 3 + index) selectedIndex--;
+		selectedColumn = 0;
+	}
+
+	function generateNetworkID() {
+		networkID = crypto.randomUUID();
+	}
+
+	function getItemType(index: number): { type: 'name' | 'description' | 'networkID' | 'bootstrap' | 'save' | 'back'; bootstrapIndex?: number } {
+		if (index === 0) return { type: 'name' };
+		if (index === 1) return { type: 'description' };
+		if (index === 2) return { type: 'networkID' };
+		if (index < 3 + bootstrapServers.length) return { type: 'bootstrap', bootstrapIndex: index - 3 };
+		if (index === 3 + bootstrapServers.length) return { type: 'save' };
+		return { type: 'back' };
+	}
+
+	// Get max column for current bootstrap row
+	function getMaxColumn(bootstrapIndex: number): number {
+		const isLast = bootstrapIndex === bootstrapServers.length - 1;
+		const hasRemove = bootstrapServers.length > 1;
+		if (isLast && hasRemove) return 2; // input, remove, add
+		if (isLast || hasRemove) return 1; // input + one button
+		return 0; // only input
+	}
+
 	function focusInput(index: number) {
-		if (index === 0 && nameInput) nameInput.focus();
+		const item = getItemType(index);
+		if (item.type === 'name' && nameInput) nameInput.focus();
+		else if (item.type === 'description' && descriptionInput) descriptionInput.focus();
+		else if (item.type === 'networkID' && networkIDInput) networkIDInput.focus();
+		else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined && bootstrapInputs[item.bootstrapIndex]) bootstrapInputs[item.bootstrapIndex].focus();
 	}
 
 	function scrollToSelected(): void {
@@ -44,28 +101,88 @@
 	onMount(() => {
 		const unregister = useArea(areaID, {
 			up: () => {
+				const item = getItemType(selectedIndex);
+				if (item.type === 'back') {
+					// From back, go to last bootstrap server (row above)
+					selectedIndex = 3 + bootstrapServers.length - 1;
+					selectedColumn = 0;
+					scrollToSelected();
+					return true;
+				}
 				if (selectedIndex > 0) {
 					selectedIndex--;
+					selectedColumn = 0;
 					scrollToSelected();
 					return true;
 				}
 				return false;
 			},
 			down: () => {
+				const item = getItemType(selectedIndex);
+				// Don't go down from save or back (they are on the same row)
+				if (item.type === 'save' || item.type === 'back') {
+					return false;
+				}
 				if (selectedIndex < totalItems - 1) {
 					selectedIndex++;
+					selectedColumn = 0;
 					scrollToSelected();
 					return true;
 				}
 				return false;
 			},
-			left: () => false,
-			right: () => false,
+			left: () => {
+				const item = getItemType(selectedIndex);
+				if (item.type === 'back') {
+					selectedIndex--;
+					scrollToSelected();
+					return true;
+				}
+				if ((item.type === 'networkID' || item.type === 'bootstrap') && selectedColumn > 0) {
+					selectedColumn--;
+					return true;
+				}
+				return false;
+			},
+			right: () => {
+				const item = getItemType(selectedIndex);
+				if (item.type === 'save') {
+					selectedIndex++;
+					scrollToSelected();
+					return true;
+				}
+				if (item.type === 'networkID' && selectedColumn < 1) {
+					selectedColumn++;
+					return true;
+				}
+				if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined) {
+					const maxCol = getMaxColumn(item.bootstrapIndex);
+					if (selectedColumn < maxCol) {
+						selectedColumn++;
+						return true;
+					}
+				}
+				return false;
+			},
 			confirmDown: () => {},
 			confirmUp: () => {
-				if (selectedIndex === 0) focusInput(0);
-				else if (selectedIndex === 1) handleSave();
-				else if (selectedIndex === 2) onBack?.();
+				const item = getItemType(selectedIndex);
+				if (item.type === 'name' || item.type === 'description') focusInput(selectedIndex);
+				else if (item.type === 'networkID') {
+					if (selectedColumn === 0) focusInput(selectedIndex);
+					else generateNetworkID();
+				}
+				else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined) {
+					if (selectedColumn === 0) focusInput(selectedIndex);
+					else {
+						const isLast = item.bootstrapIndex === bootstrapServers.length - 1;
+						const hasRemove = bootstrapServers.length > 1;
+						// Determine which button is at current column
+						if (hasRemove && selectedColumn === 1) removeBootstrapServer(item.bootstrapIndex);
+						else if (isLast && ((hasRemove && selectedColumn === 2) || (!hasRemove && selectedColumn === 1))) addBootstrapServer();
+					}
+				} else if (item.type === 'save') handleSave();
+				else if (item.type === 'back') onBack?.();
 			},
 			confirmCancel: () => {},
 			back: () => onBack?.(),
@@ -101,20 +218,55 @@
 		gap: 2vh;
 		margin-top: 2vh;
 	}
+
+	.label {
+		font-size: 2vh;
+		color: var(--disabled-foreground);
+		margin-top: 1vh;
+	}
+
+	.bootstrap-row {
+		display: flex;
+		gap: 1vh;
+		align-items: flex-end;
+	}
 </style>
 
 <div class="add-edit">
 	<div class="container">
 		<div bind:this={rowElements[0]}>
-			<Input bind:this={nameInput} bind:value={name} label={$t.settings?.lishNetwork?.name ?? 'Name'} selected={active && selectedIndex === 0} />
+			<Input bind:this={nameInput} bind:value={name} label={$t.settings?.lishNetwork?.name} selected={active && selectedIndex === 0} />
 		</div>
+		<div bind:this={rowElements[1]}>
+			<Input bind:this={descriptionInput} bind:value={description} label={$t.settings?.lishNetwork?.description} multiline rows={4} selected={active && selectedIndex === 1} />
+		</div>
+		<div class="bootstrap-row" bind:this={rowElements[2]}>
+			<Input bind:this={networkIDInput} bind:value={networkID} label={$t.settings?.lishNetwork?.networkID} selected={active && selectedIndex === 2 && selectedColumn === 0} flex />
+			<Button icon="/img/random.svg" selected={active && selectedIndex === 2 && selectedColumn === 1} onConfirm={() => generateNetworkID()} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+		</div>
+		<div class="label">{$t.settings?.lishNetwork?.bootstrapServers}:</div>
+		{#each bootstrapServers as server, index (index)}
+			{@const isLast = index === bootstrapServers.length - 1}
+			{@const hasRemove = bootstrapServers.length > 1}
+			{@const isRowSelected = active && selectedIndex === 3 + index}
+			<div class="bootstrap-row" bind:this={rowElements[3 + index]}>
+				<Input bind:this={bootstrapInputs[index]} bind:value={bootstrapServers[index]} placeholder="address:port" selected={isRowSelected && selectedColumn === 0} flex />
+				{#if hasRemove}
+					<Button icon="/img/del.svg" selected={isRowSelected && selectedColumn === 1} onConfirm={() => removeBootstrapServer(index)} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				{/if}
+				{#if isLast}
+					<Button icon="/img/add.svg" selected={isRowSelected && ((hasRemove && selectedColumn === 2) || (!hasRemove && selectedColumn === 1))} onConfirm={() => addBootstrapServer()} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				{/if}
+			</div>
+		{/each}
+		<Alert type="error" message={showError ? errorMessage : ''} />
 	</div>
 	<div class="buttons">
-		<div bind:this={rowElements[1]}>
-			<Button label={$t.common?.save ?? 'Save'} selected={active && selectedIndex === 1} onConfirm={handleSave} />
+		<div bind:this={rowElements[3 + bootstrapServers.length]}>
+			<Button label={$t.common?.save} selected={active && selectedIndex === 3 + bootstrapServers.length} onConfirm={handleSave} />
 		</div>
-		<div bind:this={rowElements[2]}>
-			<Button label={$t.common?.back ?? 'Back'} selected={active && selectedIndex === 2} onConfirm={onBack} />
+		<div bind:this={rowElements[3 + bootstrapServers.length + 1]}>
+			<Button label={$t.common?.back} selected={active && selectedIndex === 3 + bootstrapServers.length + 1} onConfirm={onBack} />
 		</div>
 	</div>
 </div>

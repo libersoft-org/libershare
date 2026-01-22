@@ -5,7 +5,7 @@ import { t } from './language.ts';
 // Breadcrumb path store (without Home - that's added reactively)
 const breadcrumbPathStore = writable<string[]>([]);
 // Derived breadcrumb with translated Home
-export const breadcrumbItems = derived([breadcrumbPathStore, t], ([$path, $t]) => [$t.common?.home ?? 'Home', ...$path]);
+export const breadcrumbItems = derived([breadcrumbPathStore, t], ([$path, $t]) => [$t.common?.home, ...$path]);
 // Content scroll management
 let contentElement: HTMLElement | null = null;
 const confirmDialogStore = writable<ConfirmDialogState>({ visible: false, action: null });

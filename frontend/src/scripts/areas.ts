@@ -74,11 +74,14 @@ export function areaNavigate(direction: Direction): boolean {
 
 function findAreaInDirection(layout: Record<string, Position>, currentPos: Position, direction: Direction): string | null {
 	const { x, y } = currentPos;
+	// Ignore areas with extreme positions (used to hide areas temporarily)
+	const isValidPosition = (pos: Position) => pos.x > -100 && pos.x < 100 && pos.y > -100 && pos.y < 100;
 	if (direction === 'left' || direction === 'right') {
 		// Horizontal - must stay on same Y, find closest X in direction
 		let closest: string | null = null;
 		let closestX = direction === 'left' ? -Infinity : Infinity;
 		for (const [id, pos] of Object.entries(layout)) {
+			if (!isValidPosition(pos)) continue;
 			if (pos.y !== y) continue;
 			if (direction === 'left') {
 				if (pos.x < x && pos.x > closestX) {
@@ -94,22 +97,21 @@ function findAreaInDirection(layout: Record<string, Position>, currentPos: Posit
 		}
 		return closest;
 	} else {
-		// Vertical - find closest on target Y
-		const targetY = direction === 'up' ? y - 1 : y + 1;
-		// First try exact X match
-		for (const [id, pos] of Object.entries(layout)) {
-			if (pos.x === x && pos.y === targetY) return id;
-		}
-		// If no exact match, find closest X on target Y
+		// Vertical - find closest Y in direction, then closest X
 		let closest: string | null = null;
+		let closestY = direction === 'up' ? -Infinity : Infinity;
 		let closestDistance = Infinity;
 		for (const [id, pos] of Object.entries(layout)) {
-			if (pos.y === targetY) {
-				const distance = Math.abs(pos.x - x);
-				if (distance < closestDistance) {
-					closestDistance = distance;
-					closest = id;
-				}
+			if (!isValidPosition(pos)) continue;
+			const validDirection = direction === 'up' ? pos.y < y : pos.y > y;
+			if (!validDirection) continue;
+			const betterY = direction === 'up' ? pos.y > closestY : pos.y < closestY;
+			const sameY = pos.y === closestY;
+			const distance = Math.abs(pos.x - x);
+			if (betterY || (sameY && distance < closestDistance)) {
+				closestY = pos.y;
+				closestDistance = distance;
+				closest = id;
 			}
 		}
 		return closest;

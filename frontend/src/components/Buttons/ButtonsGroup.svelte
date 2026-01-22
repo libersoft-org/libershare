@@ -16,8 +16,9 @@
 		initialIndex?: number;
 		orientation?: 'horizontal' | 'vertical';
 		onBack?: () => void;
+		onUp?: () => void;
 	}
-	let { children, areaID, initialIndex = 0, orientation = 'vertical', onBack }: Props = $props();
+	let { children, areaID, initialIndex = 0, orientation = 'vertical', onBack, onUp }: Props = $props();
 	let selectedIndex = $state(initialIndex);
 	let isAPressed = $state(false);
 	let buttons: { onConfirm?: () => void }[] = [];
@@ -62,6 +63,14 @@
 		const handlers =
 			orientation === 'horizontal'
 				? {
+						up: () => {
+							if (onUp) {
+								onUp();
+								return true;
+							}
+							return false;
+						},
+						down: () => false, // Allow navigation to area below
 						left: () => {
 							if (selectedIndex > 0) {
 								selectedIndex--;
@@ -83,6 +92,10 @@
 						up: () => {
 							if (selectedIndex > 0) {
 								selectedIndex--;
+								return true;
+							}
+							if (onUp) {
+								onUp();
 								return true;
 							}
 							return false;

@@ -13,9 +13,13 @@
 		"delete": "Delete",
 		"edit": "Edit",
 		"import": "Import",
+		"export": "Export",
+		"exportAll": "Export all",
+		"connect": "Connect",
 		"connected": "Connected",
 		"disconnected": "Disconnected",
-		"notUsed": "Not used"
+		"notUsed": "Not used",
+		"search": "Search"
 	},
 	"library": {
 		"title": "Online library",
@@ -76,7 +80,15 @@
 		},
 		"lishNetwork": {
 			"title": "LISH Network",
-			"name": "Name"
+			"name": "Name",
+			"description": "Description",
+			"networkID": "Network ID",
+			"bootstrapServers": "Bootstrap Servers",
+			"errorNameRequired": "Network name is required",
+			"errorNetworkIDRequired": "Network ID is required",
+			"errorBootstrapRequired": "At least one bootstrap server is required",
+			"emptyList": "No networks added. Add or Import a new network.",
+			"confirmDelete": "Are you sure you want to delete network \"{name}\"?"
 		},
 		"footer": "Footer",
 		"footerVisible": "Show footer",

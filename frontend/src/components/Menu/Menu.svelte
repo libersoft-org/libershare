@@ -13,8 +13,9 @@
 		buttonWidth?: string;
 		onselect?: (id: string) => void;
 		onBack?: () => void;
+		onUp?: () => void;
 	}
-	let { areaID, title, items, orientation = 'horizontal', selectedId, buttonWidth, onselect, onBack }: Props = $props();
+	let { areaID, title, items, orientation = 'horizontal', selectedId, buttonWidth, onselect, onBack, onUp }: Props = $props();
 	let initialIndex = $derived(
 		selectedId
 			? Math.max(
@@ -43,7 +44,7 @@
 	<MenuTitle {title} />
 	<MenuBar>
 		{#key `${title}-${selectedId}-${orientation}`}
-			<ButtonsGroup {areaID} {initialIndex} {orientation} {onBack}>
+			<ButtonsGroup {areaID} {initialIndex} {orientation} {onBack} {onUp}>
 				{#each items as item (item.id)}
 					<Button label={item.label} icon={item.selected ? '/img/check.svg' : undefined} width={buttonWidth} onConfirm={() => onselect?.(item.id)} />
 				{/each}

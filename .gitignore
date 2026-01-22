@@ -11,5 +11,6 @@ package-lock.json
 **/peer-id.json
 **/datastore/
 **/*.lish
+**/*.lishnet
 vite.config.js.timestamp-*
 .dev_intention

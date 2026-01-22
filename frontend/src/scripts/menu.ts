@@ -6,6 +6,7 @@ import { audioEnabled, setAudioEnabled, cursorSize, setCursorSize, type CursorSi
 import { footerPosition, setFooterPosition } from './settings.ts';
 import type { FooterPosition } from './footerWidgets.ts';
 import Items from '../components/List/List.svelte';
+import Categories from '../components/Categories/Categories.svelte';
 import Storage from '../components/Storage/Storage.svelte';
 import Download from '../components/Download/Download.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
@@ -35,6 +36,7 @@ export const menuStructure = derived(t, () => ({
 		{
 			id: 'library',
 			label: tt('library.title'),
+			component: Categories,
 			submenu: [
 				{
 					id: 'video',
