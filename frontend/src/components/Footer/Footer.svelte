@@ -5,13 +5,14 @@
 	import { type FooterWidget } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
 	import LishStatus from './FooterLISHStatus.svelte';
+	import BackendStatus from './FooterBackendStatus.svelte';
 	import Connection from './FooterConnection.svelte';
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
 	type Widget = {
 		id: FooterWidget;
-		component: typeof Item | typeof Bar | typeof Clock | typeof LishStatus | typeof Connection;
+		component: typeof Item | typeof Bar | typeof Clock | typeof LishStatus | typeof BackendStatus | typeof Connection;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		props?: () => Record<string, any>;
 	};
@@ -71,6 +72,13 @@
 				topIconAlt: $t.settings?.footerWidgets?.storage,
 				topLabel: '0.88 / 2 TB',
 				progress: 44.1,
+			}),
+		},
+		{
+			id: 'backendStatus',
+			component: BackendStatus,
+			props: () => ({
+				status: 'offline',
 			}),
 		},
 		{
