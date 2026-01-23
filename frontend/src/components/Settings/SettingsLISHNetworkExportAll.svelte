@@ -5,33 +5,33 @@
 	import { getNetworks } from '../../scripts/lishnet.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
+	import Alert from '../Alert/Alert.svelte';
 	interface Props {
 		areaID: string;
 		onBack?: () => void;
 	}
 	let { areaID, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
-	let selectedIndex = $state(0); // 0 = input, 1 = buttons row
+	let networks = $derived(getNetworks());
+	let hasNetworks = $derived(networks.length > 0);
+	let selectedIndex = $state(0); // 0 = input (if has networks), 1 = buttons row
 	let selectedColumn = $state(0); // 0 = save as, 1 = back
 	let inputRef: Input;
 
 	// Get all networks from localStorage
-	let networksJson = $derived.by(() => {
-		const networks = getNetworks();
-		return JSON.stringify(networks, null, '\t');
-	});
+	let networksJson = $derived(JSON.stringify(networks, null, '\t'));
 
 	onMount(() => {
 		const unregister = useArea(areaID, {
 			up: () => {
-				if (selectedIndex > 0) {
+				if (hasNetworks && selectedIndex > 0) {
 					selectedIndex--;
 					return true;
 				}
 				return false;
 			},
 			down: () => {
-				if (selectedIndex < 1) {
+				if (hasNetworks && selectedIndex < 1) {
 					selectedIndex++;
 					selectedColumn = 0;
 					return true;
@@ -53,10 +53,11 @@
 				return false;
 			},
 			confirmDown: () => {
-				if (selectedIndex === 0) inputRef?.focus();
+				if (hasNetworks && selectedIndex === 0) inputRef?.focus();
 			},
 			confirmUp: () => {
-				if (selectedIndex === 1 && selectedColumn === 1) onBack?.();
+				if (hasNetworks && selectedIndex === 1 && selectedColumn === 1) onBack?.();
+				else if (!hasNetworks) onBack?.();
 			},
 			confirmCancel: () => {},
 			back: () => onBack?.(),
@@ -93,10 +94,16 @@
 
 <div class="export-all">
 	<div class="container">
-		<Input bind:this={inputRef} value={networksJson} multiline rows={15} readonly fontSize="2vh" selected={active && selectedIndex === 0} />
+		{#if hasNetworks}
+			<Input bind:this={inputRef} value={networksJson} multiline rows={15} readonly fontSize="2vh" selected={active && selectedIndex === 0} />
+		{:else}
+			<Alert type="warning" message={$t.settings?.lishNetwork?.emptyList} />
+		{/if}
 	</div>
 	<div class="buttons">
-		<Button label="{$t.common?.saveAs} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
-		<Button label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
+		{#if hasNetworks}
+			<Button label="{$t.common?.saveAs} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
+		{/if}
+		<Button label={$t.common?.back} selected={active && (hasNetworks ? selectedIndex === 1 && selectedColumn === 1 : true)} onConfirm={onBack} />
 	</div>
 </div>
