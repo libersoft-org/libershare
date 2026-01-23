@@ -1,3 +1,6 @@
+import { writable } from 'svelte/store';
+import type { Writable } from 'node:stream';
+
 const API_URL = `ws://${window.location.hostname}:1158`;
 
 type EventCallback = (data: any) => void;
@@ -5,6 +8,10 @@ type EventCallback = (data: any) => void;
 interface PendingRequest {
     resolve: (result: any) => void;
     reject: (error: Error) => void;
+}
+
+interface State {
+		connected: boolean;
 }
 
 export class WsClient {
@@ -16,7 +23,7 @@ export class WsClient {
     private connected = false;
     private connectPromise: Promise<void> | null = null;
 
-    constructor() {
+    constructor(private stateStore: Writable) {
         this.connect();
     }
 
@@ -29,6 +36,7 @@ export class WsClient {
             this.ws.onopen = () => {
                 console.log('[API] Connected');
                 this.connected = true;
+								this.stateStore.update((value) => ({ ...value, connected: true }));
                 this.connectPromise = null;
                 resolve();
             };
@@ -36,13 +44,14 @@ export class WsClient {
             this.ws.onclose = () => {
                 console.log('[API] Disconnected');
                 this.connected = false;
+								this.stateStore.update((value) => ({ ...value, connected: false }));
                 this.connectPromise = null;
                 this.ws = null;
                 this.scheduleReconnect();
             };
 
             this.ws.onerror = (err) => {
-                console.error('[API] WebSocket error', err);
+                console.log('[API] WebSocket error', err);
                 if (!this.connected) {
                     this.connectPromise = null;
                     reject(new Error('WebSocket connection failed'));
@@ -148,4 +157,5 @@ export class WsClient {
     }
 }
 
-export const wsClient = new WsClient();
+export const wsClientState = writable<{ connected: boolean }>({ connected: false });
+export const wsClient = new WsClient(wsClientState);

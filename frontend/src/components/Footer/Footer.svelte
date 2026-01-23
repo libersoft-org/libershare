@@ -9,6 +9,10 @@
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
+
+	import { stats } from '../../scripts/stats.ts';
+	import { wsClientState } from '../../scripts/ws-client.ts';
+
 	type Widget = {
 		id: FooterWidget;
 		component: typeof Item | typeof Bar | typeof Clock | typeof LishStatus | typeof Connection;
@@ -32,7 +36,7 @@
 			props: () => ({
 				topIcon: 'img/download.svg',
 				topIconAlt: $t.common?.download,
-				bottomLabel: '12.5 MB/s',
+				bottomLabel: ''//JSON.stringify($stats)
 			}),
 		},
 		{
@@ -155,6 +159,10 @@
 </style>
 
 <div class="footer" class:left={$footerPosition === 'left'} class:center={$footerPosition === 'center'} class:right={$footerPosition === 'right'}>
+	<pre>
+	{JSON.stringify($stats, null, 2)}
+		{JSON.stringify($wsClientState, null, 2)}
+		</pre>
 	<div class="items" class:right={$footerPosition === 'right'}>
 		{#each displayWidgets as widget, i}
 			{#if i > 0}<Separator />{/if}
@@ -163,3 +171,4 @@
 		{/each}
 	</div>
 </div>
+

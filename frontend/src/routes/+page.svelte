@@ -14,6 +14,7 @@
 	import { initAudio, play } from '../scripts/audio.ts';
 	import { cursorVisible } from '../scripts/mouse.ts';
 	import { cursorSize, cursorSizes, footerVisible } from '../scripts/settings.ts';
+	import { initStats } from '../scripts/stats.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	let contentElement: HTMLElement;
 	let cursorX = $state(0);
@@ -58,6 +59,7 @@
 		initAudio();
 		play('welcome');
 		console.log(await api.listNetworks());
+		await initStats();
 	});
 </script>
 
