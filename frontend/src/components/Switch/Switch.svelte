@@ -2,8 +2,10 @@
 	import { onMount } from 'svelte';
 	interface Props {
 		checked?: boolean;
+		selected?: boolean;
+		onConfirm?: () => void;
 	}
-	let { checked = false }: Props = $props();
+	let { checked = false, selected = false, onConfirm }: Props = $props();
 	let mounted = $state(false);
 
 	onMount(() => {
@@ -17,8 +19,8 @@
 	.switch {
 		display: inline-block;
 		position: relative;
-		width: 60px;
-		height: 34px;
+		width: 10vh;
+		height: 6vh;
 	}
 
 	.slider {
@@ -27,9 +29,13 @@
 		left: 0;
 		right: 0;
 		bottom: 0;
-		background-color: var(--disabled-background);
-		border-radius: 34px;
-		border: 1px solid var(--primary-foreground);
+		background-color: var(--secondary-background); /* background - switched off */
+		border-radius: 3vh;
+		border: 0.5vh solid var(--secondary-softer-background);
+	}
+
+	.slider.selected {
+		border-color: var(--primary-foreground);
 	}
 
 	.transition {
@@ -41,25 +47,28 @@
 	}
 
 	.slider:before {
+		/* ball - switched off */
 		position: absolute;
 		content: '';
-		height: 26px;
-		width: 26px;
-		left: 3px;
-		bottom: 3px;
-		background-color: var(--primary-foreground);
+		height: 4.6vh;
+		width: 4.6vh;
+		left: 0.25vh;
+		bottom: 0.25vh;
+		background-color: var(--disabled-foreground);
 		border-radius: 50%;
 	}
 
 	.slider.checked {
-		background-color: var(--primary-background);
+		background-color: var(--primary-background); /* background - switched on */
 	}
 
 	.slider.checked:before {
-		transform: translateX(26px);
+		/* ball - switched on */
+		transform: translateX(4vh);
+		background-color: var(--primary-foreground);
 	}
 </style>
 
-<div class="switch">
-	<span class="slider {mounted ? 'transition' : ''}" class:checked></span>
+<div class="switch" onclick={onConfirm}>
+	<span class="slider {mounted ? 'transition' : ''}" class:checked class:selected></span>
 </div>
