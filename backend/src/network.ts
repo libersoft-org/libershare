@@ -307,10 +307,10 @@ export class Network {
 			// Check what's actually in peer store
 			try {
 				const peerData = await this.node!.peerStore.get(evt.detail.id);
-				const tags = await this.node!.peerStore.getTags(evt.detail.id);
+				const tags = await (this.node!.peerStore as any).getTags(evt.detail.id);
 				const storedAddrs = peerData.addresses.map((a: any) => a.multiaddr.toString());
 				console.log('   Peer store addrs:', storedAddrs.join(', ') || '(empty!)');
-				console.log('   Tags:', tags.map((t: any) => `${t.name}=${t.value}`).join(', ') || 'none');
+				console.log('   Tags:', tags?.map((t: any) => `${t.name}=${t.value}`).join(', ') || 'none');
 			} catch (e) {
 				console.log('   Peer NOT in peer store');
 			}

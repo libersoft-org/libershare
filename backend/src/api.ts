@@ -58,10 +58,6 @@ export class ApiServer {
 			hostname: this.host,
 			fetch(req, server) {
 				console.log(`[API] Incoming request: ${req.method} ${req.url}`);
-				const url = new URL(req.url);
-				if (url.pathname === '/') {
-					return new Response('ok');
-				}
 				const upgraded = server.upgrade(req, {
 					data: {subscribedEvents: new Set<string>()}
 				});

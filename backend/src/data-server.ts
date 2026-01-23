@@ -75,6 +75,10 @@ export class DataServer {
         return manifest;
     }
 
+    getAllManifests(): IManifest[] {
+        return Array.from(this.manifests.values());
+    }
+
     public async getChunk(lishId: LishId, chunkId: ChunkId): Promise<Uint8Array | null> {
         const manifest = this.manifests.get(lishId);
         if (!manifest) {
