@@ -19,27 +19,48 @@ interface Request {
     params?: Record<string, any>;
 }
 
+export interface ApiServerOptions {
+    host?: string;
+    port?: number;
+    secure?: boolean;
+    keyFile?: string;
+    certFile?: string;
+}
+
 export class ApiServer {
     private clients: Set<ClientSocket> = new Set();
     private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
+    private readonly host: string;
+    private readonly port: number;
+    private readonly secure: boolean;
+    private readonly keyFile?: string;
+    private readonly certFile?: string;
 
     constructor(
         private readonly dataDir: string,
         private readonly db: Database,
         private readonly dataServer: DataServer,
         private readonly networks: Networks,
-        private readonly hostname: string = 'localhost',
-        private readonly port: number = 1158
+        options: ApiServerOptions = {}
     ) {
+        this.host = options.host ?? 'localhost';
+        this.port = options.port ?? 1158;
+        this.secure = options.secure ?? false;
+        this.keyFile = options.keyFile;
+        this.certFile = options.certFile;
     }
 
     start(): void {
         const self = this;
 
-        this.server = Bun.serve<ClientData>({
+        const serverConfig: Parameters<typeof Bun.serve<ClientData>>[0] = {
             port: this.port,
-            hostname: this.hostname,
+            hostname: this.host,
             fetch(req, server) {
+                const url = new URL(req.url);
+                if (url.pathname === '/') {
+                    return new Response('ok');
+                }
                 const upgraded = server.upgrade(req, {
                     data: {subscribedEvents: new Set<string>()}
                 });
@@ -59,9 +80,22 @@ export class ApiServer {
                     await self.handleMessage(ws, message.toString());
                 },
             },
-        });
+        };
 
-        console.log(`[API] WebSocket server listening on ws://${this.hostname}:${this.port}`);
+        if (this.secure) {
+            if (!this.keyFile || !this.certFile) {
+                throw new Error('--secure requires --privkey and --pubkey');
+            }
+            serverConfig.tls = {
+                key: Bun.file(this.keyFile),
+                cert: Bun.file(this.certFile),
+            };
+        }
+
+        this.server = Bun.serve<ClientData>(serverConfig);
+
+        const protocol = this.secure ? 'wss' : 'ws';
+        console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${this.port}`);
     }
 
     stop(): void {
