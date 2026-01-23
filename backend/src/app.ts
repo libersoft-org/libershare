@@ -12,6 +12,7 @@ const args = process.argv.slice(2);
 let dataDir = './data';
 let enablePink = false;
 let logLevel: LogLevel = 'debug';
+let apiHost = 'localhost';
 
 for (let i = 0; i < args.length; i++) {
 	if (args[i] === '--datadir' && i + 1 < args.length) {
@@ -21,6 +22,9 @@ for (let i = 0; i < args.length; i++) {
 		enablePink = true;
 	} else if (args[i] === '--loglevel' && i + 1 < args.length) {
 		logLevel = args[i + 1] as LogLevel;
+		i++;
+	} else if (args[i] === '--host' && i + 1 < args.length) {
+		apiHost = args[i + 1];
 		i++;
 	}
 }
@@ -52,7 +56,7 @@ await dataServer.init();
 const networks = new Networks(db.getDb(), dataDir, dataServer, enablePink);
 networks.init();
 
-const apiServer = new ApiServer(dataDir, db, dataServer, networks);
+const apiServer = new ApiServer(dataDir, db, dataServer, networks, apiHost);
 
 async function shutdown() {
 	console.log('Shutting down...');

@@ -84,4 +84,26 @@ export const api = {
 
     fetchUrl: (url: string) =>
         wsClient.call<{ url: string; status: number; contentType: string | null; content: string }>('fetchUrl', { url }),
+
+    // Filesystem
+    fsInfo: () =>
+        wsClient.call<{
+            platform: 'windows' | 'linux' | 'darwin';
+            separator: string;
+            home: string;
+            roots: string[];
+        }>('fs.info'),
+
+    fsList: (path?: string) =>
+        wsClient.call<{
+            path: string;
+            entries: Array<{
+                name: string;
+                path: string;
+                type: 'file' | 'directory' | 'drive';
+                size?: number;
+                modified?: string;
+                hidden?: boolean;
+            }>;
+        }>('fs.list', { path }),
 };

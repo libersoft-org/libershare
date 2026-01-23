@@ -1,0 +1,107 @@
+import { readdir, stat, access } from 'fs/promises';
+import { join, sep } from 'path';
+import { homedir, platform } from 'os';
+
+export interface FsEntry {
+    name: string;
+    path: string;
+    type: 'file' | 'directory' | 'drive';
+    size?: number;
+    modified?: string;
+    hidden?: boolean;
+}
+
+export interface FsInfo {
+    platform: 'windows' | 'linux' | 'darwin';
+    separator: string;
+    home: string;
+    roots: string[];
+}
+
+export interface FsListResult {
+    path: string;
+    entries: FsEntry[];
+}
+
+const isWindows = platform() === 'win32';
+
+async function getWindowsDrives(): Promise<FsEntry[]> {
+    const drives: FsEntry[] = [];
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+    for (const letter of letters) {
+        const drivePath = `${letter}:\\`;
+        try {
+            await access(drivePath);
+            drives.push({
+                name: `${letter}:`,
+                path: drivePath,
+                type: 'drive',
+            });
+        } catch {
+            // Drive doesn't exist or isn't accessible
+        }
+    }
+
+    return drives;
+}
+
+export async function fsInfo(): Promise<FsInfo> {
+    const plat = platform();
+    const roots = isWindows
+        ? (await getWindowsDrives()).map(d => d.path)
+        : ['/'];
+
+    return {
+        platform: plat === 'win32' ? 'windows' : plat === 'darwin' ? 'darwin' : 'linux',
+        separator: sep,
+        home: homedir(),
+        roots,
+    };
+}
+
+export async function fsList(path?: string): Promise<FsListResult> {
+    // Handle root/empty path
+    if (!path || path === '') {
+        if (isWindows) {
+            return {
+                path: '',
+                entries: await getWindowsDrives(),
+            };
+        } else {
+            path = '/';
+        }
+    }
+
+    const entries: FsEntry[] = [];
+    const dirents = await readdir(path, { withFileTypes: true });
+
+    for (const dirent of dirents) {
+        const entryPath = join(path, dirent.name);
+        const entry: FsEntry = {
+            name: dirent.name,
+            path: entryPath,
+            type: dirent.isDirectory() ? 'directory' : 'file',
+            hidden: dirent.name.startsWith('.'),
+        };
+
+        try {
+            const stats = await stat(entryPath);
+            entry.size = stats.size;
+            entry.modified = stats.mtime.toISOString();
+        } catch {
+            // Can't stat, skip metadata
+        }
+
+        entries.push(entry);
+    }
+
+    // Sort: directories first, then alphabetically
+    entries.sort((a, b) => {
+        if (a.type === 'directory' && b.type !== 'directory') return -1;
+        if (a.type !== 'directory' && b.type === 'directory') return 1;
+        return a.name.localeCompare(b.name);
+    });
+
+    return { path, entries };
+}

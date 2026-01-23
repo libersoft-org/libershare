@@ -2,89 +2,128 @@
 	import { onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { t } from '../../scripts/language.ts';
+	import { api } from '../../scripts/api.ts';
 	import Table from '../Table/Table.svelte';
 	import Header from '../Table/TableHeader.svelte';
 	import Cell from '../Table/TableCell.svelte';
 	import StorageItem from './StorageItem.svelte';
 	import Alert from '../Alert/Alert.svelte';
-	export type StorageItemType = 'folder' | 'file';
-	export interface StorageItemData {
-		id: string;
-		name: string;
-		type: StorageItemType;
-		size?: string;
-		modified: string;
-		children?: StorageItemData[];
-	}
+	import type { StorageItemData } from './types.ts';
+
 	interface Props {
 		areaID: string;
 		title?: string;
 		onBack?: () => void;
 	}
+
 	const columns = '1fr 8vw 12vw';
 	let { areaID, title = 'Storage', onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
-	let expandedIndex = $state<number | null>(null);
-	let selectedChildIndex = $state(-1); // -1 = main row selected, 0+ = child selected
 	let itemElements: HTMLElement[] = $state([]);
 
-	// Mock data - directory structure
-	const items: StorageItemData[] = [
-		{
-			id: '1',
-			name: 'Software',
-			type: 'folder',
-			modified: '2024-01-12',
-			children: [
-				{ id: '1-1', name: 'ubuntu-24.04-desktop-amd64.iso', type: 'file', size: '4.1 GB', modified: '2024-01-12' },
-				{ id: '1-2', name: 'fedora-40-workstation.iso', type: 'file', size: '2.1 GB', modified: '2024-01-11' },
-			],
-		},
-		{
-			id: '2',
-			name: 'readme.txt',
-			type: 'file',
-			size: '2.4 KB',
-			modified: '2024-01-01',
-		},
-	];
+	let currentPath = $state<string>('');
+	let parentPath = $state<string | null>(null);
+	let items = $state<StorageItemData[]>([]);
+	let loading = $state(true);
+	let error = $state<string | null>(null);
+	let separator = $state('/');
+
+	function formatSize(bytes?: number): string {
+		if (bytes === undefined) return '—';
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+		return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+	}
+
+	function formatDate(isoDate?: string): string {
+		if (!isoDate) return '—';
+		return new Date(isoDate).toLocaleDateString();
+	}
+
+	function getParentPath(path: string): string | null {
+		if (!path || path === separator) return null;
+		if (/^[A-Z]:\\?$/i.test(path)) return '';
+		const parts = path.split(separator).filter(Boolean);
+		if (parts.length <= 1) {
+			if (separator === '\\' && /^[A-Z]:/i.test(path)) return parts[0] + '\\';
+			return separator === '/' ? '/' : '';
+		}
+		const parent = parts.slice(0, -1).join(separator);
+		return separator === '/' ? '/' + parent : parent;
+	}
+
+	async function loadDirectory(path?: string): Promise<void> {
+		loading = true;
+		error = null;
+		try {
+			const result = await api.fsList(path);
+			currentPath = result.path;
+			parentPath = getParentPath(result.path);
+
+			const entries: StorageItemData[] = result.entries.map((entry, index) => ({
+				id: String(index + 1),
+				name: entry.name,
+				path: entry.path,
+				type: entry.type === 'directory' ? 'folder' : entry.type,
+				size: formatSize(entry.size),
+				modified: formatDate(entry.modified),
+				hidden: entry.hidden,
+			}));
+
+			// Add ".." entry if we have a parent
+			if (parentPath !== null) {
+				entries.unshift({
+					id: '0',
+					name: '..',
+					path: parentPath || '',
+					type: 'folder',
+				});
+			}
+
+			items = entries;
+			console.log('items:', items.map(i => i.name));
+			selectedIndex = 0;
+		} catch (e: any) {
+			error = e.message || 'Failed to load directory';
+			items = [];
+		} finally {
+			loading = false;
+		}
+	}
 
 	function scrollToSelected(): void {
 		const element = itemElements[selectedIndex];
 		if (element) {
-			element.scrollIntoView({
-				behavior: 'smooth',
-				block: 'center',
-			});
+			element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		}
+	}
+
+	async function navigateInto(item: StorageItemData): Promise<void> {
+		if (item.type === 'folder' || item.type === 'drive') {
+			await loadDirectory(item.path);
+		}
+	}
+
+	async function navigateUp(): Promise<void> {
+		if (parentPath !== null) {
+			await loadDirectory(parentPath || undefined);
 		}
 	}
 
 	const areaHandlers = {
 		up: () => {
-			if (expandedIndex === selectedIndex && selectedChildIndex > -1) {
-				selectedChildIndex--;
-				return true;
-			}
 			if (selectedIndex > 0) {
 				selectedIndex--;
-				selectedChildIndex = -1;
 				scrollToSelected();
 				return true;
 			}
 			return false;
 		},
 		down: () => {
-			if (expandedIndex === selectedIndex) {
-				const childCount = items[selectedIndex].children?.length ?? 0;
-				if (selectedChildIndex < childCount - 1) {
-					selectedChildIndex++;
-					return true;
-				}
-			}
 			if (selectedIndex < items.length - 1) {
 				selectedIndex++;
-				selectedChildIndex = -1;
 				scrollToSelected();
 				return true;
 			}
@@ -95,35 +134,56 @@
 		confirmDown: () => {},
 		confirmUp: () => {
 			const item = items[selectedIndex];
-			if (item.type === 'folder' && item.children?.length) {
-				if (expandedIndex === selectedIndex) {
-					expandedIndex = null;
-					selectedChildIndex = -1;
-				} else {
-					expandedIndex = selectedIndex;
-					selectedChildIndex = -1;
-				}
+			if (item && (item.type === 'folder' || item.type === 'drive')) {
+				navigateInto(item);
 			}
 		},
 		confirmCancel: () => {},
 		back: () => {
-			if (expandedIndex !== null) {
-				expandedIndex = null;
-				selectedChildIndex = -1;
+			if (parentPath !== null) {
+				navigateUp();
 			} else {
 				onBack?.();
 			}
 		},
 	};
 
-	onMount(() => {
+	onMount(async () => {
 		const unregister = useArea(areaID, areaHandlers);
 		activateArea(areaID);
+
+		try {
+			const info = await api.fsInfo();
+			separator = info.separator;
+			await loadDirectory(info.home);
+		} catch (e: any) {
+			error = e.message || 'Failed to initialize';
+			loading = false;
+		}
+
 		return unregister;
 	});
 </script>
 
 <style>
+	.container {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+	}
+
+	.path {
+		padding: 1vh 1.5vh;
+		font-size: 1.6vh;
+		font-family: monospace;
+		background: rgba(255, 255, 255, 0.05);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
 	.items {
 		flex: 1;
 		overflow-y: auto;
@@ -131,6 +191,8 @@
 	}
 </style>
 
+<div class="container">
+<div class="path">{currentPath || '/'}</div>
 <Table {columns} noBorder>
 	<Header>
 		<Cell>{$t.localStorage?.name}</Cell>
@@ -138,14 +200,19 @@
 		<Cell align="right" desktopOnly>{$t.localStorage?.modified}</Cell>
 	</Header>
 	<div class="items">
-		{#if items.length === 0}
-			<Alert type="error" message={$t.localStorage?.loadError ?? 'Nepodařilo se načíst místní disky.'} />
+		{#if loading}
+			<Alert type="info" message="Loading..." />
+		{:else if error}
+			<Alert type="error" message={error} />
+		{:else if items.length === 0}
+			<Alert type="info" message="Empty directory" />
 		{:else}
 			{#each items as item, index (item.id)}
 				<div bind:this={itemElements[index]}>
-					<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} children={item.children} selected={active && selectedIndex === index} expanded={expandedIndex === index} selectedChildIndex={selectedIndex === index ? selectedChildIndex : -1} isLast={index === items.length - 1} odd={index % 2 === 0} />
+					<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
 				</div>
 			{/each}
 		{/if}
 	</div>
 </Table>
+</div>
