@@ -9,7 +9,7 @@
 	}
 	const { networkName = '', lishConnected = false, vpnConnected = null }: Props = $props();
 	let lishStatus: DotStatus = $derived(lishConnected ? 'success' : 'error');
-	let vpnStatus: DotStatus = $derived(vpnConnected === null ? 'warning' : vpnConnected ? 'success' : 'error');
+	let vpnStatus: DotStatus = $derived(vpnConnected === null ? 'disabled' : vpnConnected ? 'success' : 'error');
 </script>
 
 <style>
