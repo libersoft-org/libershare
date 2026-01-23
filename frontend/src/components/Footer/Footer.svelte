@@ -37,7 +37,7 @@
 			props: () => ({
 				topIcon: 'img/download.svg',
 				topIconAlt: $t.common?.download,
-				bottomLabel: ''//JSON.stringify($stats)
+				bottomLabel: '13.2 MB/s',
 			}),
 		},
 		{
@@ -82,7 +82,7 @@
 			id: 'backendStatus',
 			component: BackendStatus,
 			props: () => ({
-				status: 'offline',
+				status: $wsClientState.connected ? 'online' : 'offline',
 			}),
 		},
 		{
@@ -168,8 +168,8 @@
 
 <div class="footer" class:left={$footerPosition === 'left'} class:center={$footerPosition === 'center'} class:right={$footerPosition === 'right'}>
 	<pre>
-	{JSON.stringify($stats, null, 2)}
-		{JSON.stringify($wsClientState, null, 2)}
+	<!--{JSON.stringify($stats, null, 2)}-->
+	<!--	{JSON.stringify($wsClientState, null, 2)}-->
 		</pre>
 	<div class="items" class:right={$footerPosition === 'right'}>
 		{#each displayWidgets as widget, i}

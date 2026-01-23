@@ -11,6 +11,7 @@ async function fetchStatsOnce() {
 	}
 	catch (error) {
 		console.error('Error fetching stats:', error);
+		stats.set({ error: 'Error fetching stats', ts: Date.now() });
 	}
 }
 

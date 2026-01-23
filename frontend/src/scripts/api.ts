@@ -81,4 +81,7 @@ export const api = {
 
     download: (networkId: string, manifestPath: string) =>
         wsClient.call<{ downloadDir: string }>('download', { networkId, manifestPath }),
+
+    fetchUrl: (url: string) =>
+        wsClient.call<{ url: string; status: number; contentType: string | null; content: string }>('fetchUrl', { url }),
 };

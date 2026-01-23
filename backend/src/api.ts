@@ -262,6 +262,22 @@ export class ApiServer {
                 return {manifestId: manifest.id};
             }
 
+            case 'fetchUrl': {
+                if (!params.url) throw new Error('url parameter required');
+                const response = await fetch(params.url);
+                if (!response.ok) {
+                    return {
+											status: response.status
+										}
+                }
+                const content = await response.text();
+                return {
+                    status: response.status,
+                    contentType: response.headers.get('content-type'),
+                    content,
+                };
+            }
+
             case 'download': {
                 /*
                 todo:
