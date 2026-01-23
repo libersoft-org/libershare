@@ -6,7 +6,6 @@ import {Downloader} from './downloader.ts';
 import {join} from 'path';
 import {fsInfo, fsList} from './fs.ts';
 
-const API_PORT = parseInt(process.env.API_PORT || '1158', 10);
 
 interface ClientData {
     subscribedEvents: Set<string>;
@@ -29,7 +28,8 @@ export class ApiServer {
         private readonly db: Database,
         private readonly dataServer: DataServer,
         private readonly networks: Networks,
-        private readonly hostname: string = 'localhost'
+        private readonly hostname: string = 'localhost',
+        private readonly port: number = 1158
     ) {
     }
 
@@ -37,7 +37,7 @@ export class ApiServer {
         const self = this;
 
         this.server = Bun.serve<ClientData>({
-            port: API_PORT,
+            port: this.port,
             hostname: this.hostname,
             fetch(req, server) {
                 const upgraded = server.upgrade(req, {
@@ -61,7 +61,7 @@ export class ApiServer {
             },
         });
 
-        console.log(`[API] WebSocket server listening on ws://${this.hostname}:${API_PORT}`);
+        console.log(`[API] WebSocket server listening on ws://${this.hostname}:${this.port}`);
     }
 
     stop(): void {
