@@ -6,6 +6,7 @@
 	import Header from '../Table/TableHeader.svelte';
 	import Cell from '../Table/TableCell.svelte';
 	import StorageItem from './StorageItem.svelte';
+	import Alert from '../Alert/Alert.svelte';
 	export type StorageItemType = 'folder' | 'file';
 	export interface StorageItemData {
 		id: string;
@@ -137,10 +138,14 @@
 		<Cell align="right" desktopOnly>{$t.localStorage?.modified}</Cell>
 	</Header>
 	<div class="items">
-		{#each items as item, index (item.id)}
-			<div bind:this={itemElements[index]}>
-				<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} children={item.children} selected={active && selectedIndex === index} expanded={expandedIndex === index} selectedChildIndex={selectedIndex === index ? selectedChildIndex : -1} isLast={index === items.length - 1} odd={index % 2 === 0} />
-			</div>
-		{/each}
+		{#if items.length === 0}
+			<Alert type="error" message={$t.localStorage?.loadError ?? 'Nepodařilo se načíst místní disky.'} />
+		{:else}
+			{#each items as item, index (item.id)}
+				<div bind:this={itemElements[index]}>
+					<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} children={item.children} selected={active && selectedIndex === index} expanded={expandedIndex === index} selectedChildIndex={selectedIndex === index ? selectedChildIndex : -1} isLast={index === items.length - 1} odd={index % 2 === 0} />
+				</div>
+			{/each}
+		{/if}
 	</div>
 </Table>
