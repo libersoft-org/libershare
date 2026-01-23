@@ -9,7 +9,7 @@
 	import { confirmDialogs } from '../scripts/menu.ts';
 	import { productName } from '../scripts/app.ts';
 	import { startInput } from '../scripts/input.ts';
-	import { getAPILocal } from '../scripts/api.ts';
+	import { api } from '../scripts/api.ts';
 	import { setAreaPosition, activateArea } from '../scripts/areas.ts';
 	import { initAudio, play } from '../scripts/audio.ts';
 	import { cursorVisible } from '../scripts/mouse.ts';
@@ -38,7 +38,7 @@
 		if ($confirmDialog.action && $confirmDialog.action !== 'back') {
 			play('exit');
 			const dialogConfig = $confirmDialogs[$confirmDialog.action as 'restart' | 'shutdown' | 'quit'];
-			if (dialogConfig) getAPILocal(dialogConfig.apiAction);
+			if (dialogConfig) api.call(dialogConfig.apiAction);
 		}
 		hideConfirmDialog();
 	}
@@ -47,7 +47,7 @@
 		hideConfirmDialog();
 	}
 
-	onMount(() => {
+	onMount(async () => {
 		// Setup area layout
 		setAreaPosition('header', { x: 0, y: 0 });
 		setAreaPosition('breadcrumb', { x: 0, y: 1 });
@@ -57,6 +57,7 @@
 		activateArea('content');
 		initAudio();
 		play('welcome');
+		console.log(await api.listNetworks());
 	});
 </script>
 

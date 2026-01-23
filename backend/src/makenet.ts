@@ -117,10 +117,12 @@ async function main() {
 
 		let swarmKey = new Uint8Array(95);
 		await generateKey(swarmKey)
+		// Convert swarmKey to base 62 using Utils.encodeBase62
+		let swarmKeyString = Utils.encodeBase62(swarmKey);
 
 		const network: ILISHNetwork = {
 			version: 1,
-			swarmKey: swarmKey.toBase64(),
+			swarmKey: swarmKeyString,
 			networkID: networkID,
 			name: name,
 			bootstrapPeers: args.bootstrap,

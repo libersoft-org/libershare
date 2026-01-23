@@ -128,15 +128,19 @@ export class Networks {
 		return network;
 	}
 
-	async importFromFile(filePath: string, enabled: boolean = false): Promise<NetworkDefinition> {
-		const file = Bun.file(filePath);
-		const content = await file.text();
-		const data: ILISHNetwork = JSON.parse(content);
+	async importFromJson(jsonString: string, enabled: boolean = false): Promise<NetworkDefinition> {
+		const data: ILISHNetwork = JSON.parse(jsonString);
 		const def = this.importFromLishnet(data, enabled);
 		if (enabled) {
 			await this.startNetwork(def.id);
 		}
 		return def;
+	}
+
+	async importFromFile(filePath: string, enabled: boolean = false): Promise<NetworkDefinition> {
+		const file = Bun.file(filePath);
+		const content = await file.text();
+		return this.importFromJson(content, enabled);
 	}
 
 	async setEnabled(id: string, enabled: boolean): Promise<boolean> {

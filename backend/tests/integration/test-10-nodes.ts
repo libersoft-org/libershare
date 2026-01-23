@@ -1,6 +1,6 @@
 import { TestHarness } from './test-harness.ts';
 import { generateKey } from '@libp2p/pnet';
-import type { ILISHNetwork } from '../src/makenet.ts';
+import type { ILISHNetwork } from '../../src/makenet.ts';
 
 const NODE_COUNT = 10;
 

@@ -129,7 +129,7 @@ export class ApiServer {
                     networks: {
                         total: this.networks.getAll().length,
                         enabled: this.networks.getEnabled().length,
-                        connected: this.networks.getEnabled().filter(nw => nw.isConnected()).length
+                        //connected: this.networks.getEnabled().filter(nw => nw.isConnected()).length
                     },
                     peers: this.networks.getEnabled().reduce((acc, nw) => {
                         const liveNw = this.networks.getLiveNetwork(nw.id);
@@ -143,12 +143,17 @@ export class ApiServer {
                         complete: this.db.getAllDatasets().filter(ds => ds.complete).length,
                         downloading: this.db.getAllDatasets().filter(ds => !ds.complete).length, // todo get actual Downloader instances here.
                     },
-                    space: getDisks().forEach(disk => ({
-                        mountpoint: disk.mountpoint,
+
+                    space:
+                        [{path: '/', free: 1000000000, usedByDatabase: 500000000, usedByDatasets: 300000000}],
+
+
+                    /*space: getDisks().forEach(disk => ({
+                        path: disk.mountpoint,
                         free: disk.free,
                         usedByDatabase: this.db.getSpaceUsedOnPath(disk.mountpoint),
                         usedByDatasets: this.dataServer.getSpaceUsedOnPath(disk.mountpoint),
-                    })),
+                    })),*/
                     transfers: {
                         download: {
                             now: 123,
@@ -244,6 +249,8 @@ export class ApiServer {
                 return this.db.getAllDatasets();
             case 'getDataset':
                 return this.db.getDataset(params.id);
+
+
 
             // high-level operations
 
