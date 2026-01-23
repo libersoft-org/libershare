@@ -86,6 +86,7 @@
 			"name": "Název",
 			"description": "Popis",
 			"networkID": "ID sítě",
+			"autoGenerate": "Automaticky vygenerovat network ID (nová síť)",
 			"bootstrapServers": "Bootstrap servery",
 			"errorNameRequired": "Název sítě je povinný",
 			"errorNetworkIDRequired": "ID sítě je povinné",

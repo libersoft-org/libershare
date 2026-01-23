@@ -86,6 +86,7 @@
 			"name": "Name",
 			"description": "Description",
 			"networkID": "Network ID",
+			"autoGenerate": "Auto-generate network ID (new network)",
 			"bootstrapServers": "Bootstrap Servers",
 			"errorNameRequired": "Network name is required",
 			"errorNetworkIDRequired": "Network ID is required",

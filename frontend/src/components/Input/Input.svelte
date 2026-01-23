@@ -11,10 +11,11 @@
 		padding?: string;
 		flex?: boolean;
 		readonly?: boolean;
+		disabled?: boolean;
 		onchange?: (value: string) => void;
 	}
 
-	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', multiline = false, rows = 3, fontSize = '2.5vh', padding = '1.5vh 2vh', flex = false, readonly = false, onchange }: Props = $props();
+	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', multiline = false, rows = 3, fontSize = '2.5vh', padding = '1.5vh 2vh', flex = false, readonly = false, disabled = false, onchange }: Props = $props();
 	let inputElement: HTMLInputElement | HTMLTextAreaElement;
 
 	export function focus() {
@@ -55,7 +56,8 @@
 		color: var(--disabled-foreground);
 	}
 
-	input, textarea {
+	input,
+	textarea {
 		font-size: var(--input-font-size);
 		padding: var(--input-padding);
 		border: 0.3vh solid var(--secondary-softer-background);
@@ -71,26 +73,36 @@
 		font-family: inherit;
 	}
 
-	input:focus, textarea:focus {
+	input:focus,
+	textarea:focus {
 		border-color: var(--primary-foreground);
 	}
 
-	.input-field.selected input, .input-field.selected textarea {
+	.input-field.selected input,
+	.input-field.selected textarea {
 		border-color: var(--primary-foreground);
 	}
 
 	.input-field.flex {
 		flex: 1;
 	}
+
+	.input-field.disabled input,
+	.input-field.disabled textarea {
+		background-color: var(--disabled-foreground);
+		color: var(--disabled-background);
+		border-color: var(--disabled-background);
+		cursor: not-allowed;
+	}
 </style>
 
-<div class="input-field" class:selected class:flex style="--input-font-size: {fontSize}; --input-padding: {padding};">
+<div class="input-field" class:selected class:flex class:disabled style="--input-font-size: {fontSize}; --input-padding: {padding};">
 	{#if label}
 		<div class="label">{label}:</div>
 	{/if}
 	{#if multiline}
-		<textarea {placeholder} {rows} {readonly} bind:value bind:this={inputElement} onkeydown={handleKeydown} oninput={handleInput}></textarea>
+		<textarea {placeholder} {rows} {readonly} {disabled} bind:value bind:this={inputElement} onkeydown={handleKeydown} oninput={handleInput}></textarea>
 	{:else}
-		<input {type} {placeholder} {readonly} bind:value bind:this={inputElement} onkeydown={handleKeydown} oninput={handleInput} />
+		<input {type} {placeholder} {readonly} {disabled} bind:value bind:this={inputElement} onkeydown={handleKeydown} oninput={handleInput} />
 	{/if}
 </div>
