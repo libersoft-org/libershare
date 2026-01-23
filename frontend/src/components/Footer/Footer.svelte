@@ -15,6 +15,8 @@
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		props?: () => Record<string, any>;
 	};
+
+
 	const widgets: Widget[] = [
 		{
 			id: 'version',

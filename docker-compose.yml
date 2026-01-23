@@ -1,0 +1,16 @@
+
+services:
+  backend:
+    image: backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+        - "1158:1158"
+        - "9090:9090"
+    volumes:
+      - libershare_data:/data
+
+volumes:
+  libershare_data:
+
