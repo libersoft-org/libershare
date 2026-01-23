@@ -1,5 +1,5 @@
 <script lang="ts">
-	export type DotStatus = 'success' | 'warning' | 'error';
+	export type DotStatus = 'success' | 'warning' | 'error' | 'disabled';
 	interface Props {
 		status?: DotStatus;
 	}
@@ -26,6 +26,10 @@
 
 	.dot.error {
 		background-color: var(--color-error);
+	}
+
+	.dot.disabled {
+		background-color: var(--disabled-foreground);
 	}
 </style>
 
