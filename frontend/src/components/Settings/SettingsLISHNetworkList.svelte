@@ -106,6 +106,12 @@
 		activateArea(areaID);
 	}
 
+	function handleImport() {
+		// Reload networks from localStorage and go back to list
+		networks = getNetworks();
+		handleImportBack();
+	}
+
 	function openExportAll() {
 		showExportAll = true;
 		setAreaPosition(areaID, { x: -999, y: -999 });
@@ -365,7 +371,7 @@
 {:else if showExportAll}
 	<LISHNetworkExportAll areaID={exportAllAreaID} onBack={handleExportAllBack} />
 {:else if showImport}
-	<LISHNetworkImport areaID={importAreaID} onBack={handleImportBack} />
+	<LISHNetworkImport areaID={importAreaID} onBack={handleImportBack} onImport={handleImport} />
 {:else if showPublic}
 	<LISHNetworkPublic areaID={publicAreaID} onBack={handlePublicBack} />
 {:else}
