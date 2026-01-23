@@ -19,6 +19,7 @@
 			cpu: $t.settings?.footerWidgets?.cpu,
 			ram: $t.settings?.footerWidgets?.ram,
 			storage: $t.settings?.footerWidgets?.storage,
+			backendStatus: $t.settings?.footerWidgets?.backendStatus,
 			lishStatus: $t.settings?.footerWidgets?.lishStatus,
 			connection: $t.settings?.footerWidgets?.connection,
 			volume: $t.settings?.footerWidgets?.volume,

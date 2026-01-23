@@ -1,5 +1,4 @@
-import { writable } from 'svelte/store';
-import type { Writable } from 'node:stream';
+import { writable, type Writable } from 'svelte/store';
 
 const DEFAULT_API_URL = 'ws://localhost:1158';
 const API_URL = import.meta.env.VITE_BACKEND_URL || DEFAULT_API_URL;
@@ -25,7 +24,7 @@ export class WsClient {
 	private connected = false;
 	private connectPromise: Promise<void> | null = null;
 
-	constructor(private stateStore: Writable) {
+	constructor(private stateStore: Writable<State>) {
 		this.connect();
 	}
 

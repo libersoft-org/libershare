@@ -54,7 +54,7 @@
 		return separator === '/' ? '/' + parent : parent;
 	}
 
-	async function loadDirectory(path?: string): Promise<void> {
+	async function loadDirectory(path?: string, selectName?: string): Promise<void> {
 		loading = true;
 		error = null;
 		try {
@@ -83,8 +83,14 @@
 			}
 
 			items = entries;
-			console.log('items:', items.map(i => i.name));
-			selectedIndex = 0;
+
+			// Select specific item by name, or default to first
+			if (selectName) {
+				const idx = entries.findIndex(e => e.name === selectName);
+				selectedIndex = idx >= 0 ? idx : 0;
+			} else {
+				selectedIndex = 0;
+			}
 		} catch (e: any) {
 			error = e.message || 'Failed to load directory';
 			items = [];
@@ -102,13 +108,21 @@
 
 	async function navigateInto(item: StorageItemData): Promise<void> {
 		if (item.type === 'folder' || item.type === 'drive') {
-			await loadDirectory(item.path);
+			// If navigating to "..", select the folder we came from
+			if (item.name === '..') {
+				const currentName = currentPath.split(separator).filter(Boolean).pop();
+				await loadDirectory(item.path, currentName);
+			} else {
+				await loadDirectory(item.path);
+			}
 		}
 	}
 
 	async function navigateUp(): Promise<void> {
 		if (parentPath !== null) {
-			await loadDirectory(parentPath || undefined);
+			// Get current directory name to select after going up
+			const currentName = currentPath.split(separator).filter(Boolean).pop();
+			await loadDirectory(parentPath || undefined, currentName);
 		}
 	}
 
@@ -148,18 +162,20 @@
 		},
 	};
 
-	onMount(async () => {
+	onMount(() => {
 		const unregister = useArea(areaID, areaHandlers);
 		activateArea(areaID);
 
-		try {
-			const info = await api.fsInfo();
-			separator = info.separator;
-			await loadDirectory(info.home);
-		} catch (e: any) {
-			error = e.message || 'Failed to initialize';
-			loading = false;
-		}
+		(async () => {
+			try {
+				const info = await api.fsInfo();
+				separator = info.separator;
+				await loadDirectory(info.home);
+			} catch (e: any) {
+				error = e.message || 'Failed to initialize';
+				loading = false;
+			}
+		})();
 
 		return unregister;
 	});

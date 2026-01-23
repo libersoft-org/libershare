@@ -5,9 +5,8 @@ export const stats = writable<{ [key: string]: any }>({});
 
 async function fetchStatsOnce() {
 	try {
-		let response = await api.getStats();
-		response.ts = Date.now();
-		stats.set(response);
+		const response = await api.getStats();
+		stats.set({ ...response, ts: Date.now() });
 	}
 	catch (error) {
 		console.error('Error fetching stats:', error);
