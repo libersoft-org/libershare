@@ -16,7 +16,7 @@
 	}
 
 	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', multiline = false, rows = 3, fontSize = '2.5vh', padding = '1.5vh 2vh', flex = false, readonly = false, disabled = false, onchange }: Props = $props();
-	let inputElement: HTMLInputElement | HTMLTextAreaElement;
+	let inputElement: HTMLInputElement | HTMLTextAreaElement | undefined = $state();
 
 	export function focus() {
 		inputElement?.focus();

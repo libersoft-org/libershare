@@ -26,7 +26,7 @@
 	let itemElements: HTMLElement[] = $state([]);
 	let selectedItem = $state<{ id: number; title: string } | null>(null);
 	let unregisterList: (() => void) | null = null; // Handlers will be set in onMount
-	let searchBar: SearchBar;
+	let searchBar: SearchBar | undefined = $state();
 
 	// Calculate columns by comparing Y positions of items
 	function getColumnsCount(): number {

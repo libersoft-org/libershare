@@ -17,9 +17,9 @@
 	let selectedIndex = $state(0);
 	let selectedColumn = $state(0); // 0 = input, 1 = remove btn, 2 = add btn
 	let rowElements: HTMLElement[] = $state([]);
-	let nameInput: Input;
-	let descriptionInput: Input;
-	let networkIDInput: Input;
+	let nameInput: Input | undefined = $state();
+	let descriptionInput: Input | undefined = $state();
+	let networkIDInput: Input | undefined = $state();
 	let bootstrapInputs: Input[] = $state([]);
 	let name = $state(network?.name ?? '');
 	let description = $state(network?.description ?? '');

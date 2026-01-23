@@ -16,7 +16,7 @@
 	let hasNetworks = $derived(networks.length > 0);
 	let selectedIndex = $state(0); // 0 = input (if has networks), 1 = buttons row
 	let selectedColumn = $state(0); // 0 = save as, 1 = back
-	let inputRef: Input;
+	let inputRef: Input | undefined = $state();
 
 	// Get all networks from localStorage
 	let networksJson = $derived(JSON.stringify(networks, null, '\t'));
