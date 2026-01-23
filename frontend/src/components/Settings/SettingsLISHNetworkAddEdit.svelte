@@ -29,8 +29,7 @@
 	let bootstrapServers = $state<string[]>(network?.bootstrapServers?.length ? [...network.bootstrapServers] : ['']);
 	let submitted = $state(false);
 	// Validation - skip networkID check if auto-generate is enabled
-	let hasValidBootstrap = $derived(bootstrapServers.some(s => s.trim() !== ''));
-	let errorMessage = $derived(!name.trim() ? $t.settings?.lishNetwork?.errorNameRequired : !autoGenerateID && !networkID.trim() ? $t.settings?.lishNetwork?.errorNetworkIDRequired : !hasValidBootstrap ? $t.settings?.lishNetwork?.errorBootstrapRequired : '');
+	let errorMessage = $derived(!name.trim() ? $t.settings?.lishNetwork?.errorNameRequired : !autoGenerateID && !networkID.trim() ? $t.settings?.lishNetwork?.errorNetworkIDRequired : '');
 	let showError = $derived(submitted && errorMessage);
 	// Dynamic total items: name + description + (autoGenerate when adding) + networkID + bootstrap servers + save + back
 	// When editing: no switch row, so offset is 3; when adding: switch row exists, offset is 4
