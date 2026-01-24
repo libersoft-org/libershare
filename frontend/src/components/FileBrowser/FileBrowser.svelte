@@ -20,6 +20,15 @@
 		hidden?: boolean;
 	}
 
+	interface FsEntry {
+		name: string;
+		path: string;
+		type: 'file' | 'directory' | 'drive';
+		size?: number;
+		modified?: string;
+		hidden?: boolean;
+	}
+
 	interface Props {
 		areaID: string;
 		initialPath?: string;
@@ -81,7 +90,7 @@
 			currentPath = result.path;
 			parentPath = getParentPath(result.path);
 
-			let entries: StorageItemData[] = result.entries.map((entry, index) => ({
+			let entries: StorageItemData[] = result.entries.map((entry: FsEntry, index: number) => ({
 				id: String(index + 1),
 				name: entry.name,
 				path: entry.path,
