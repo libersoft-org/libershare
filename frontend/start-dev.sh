@@ -7,7 +7,7 @@ if [ -n "$1" ]; then
  echo "Using custom backend: $VITE_BACKEND_URL"
 fi
 
-echo -ne "\033]0;LIBERSHARE\007"
+echo -ne "\033]0;LISH FRONTEND\007"
 bun i --frozen-lockfile
 #bun --bun run dev
 npm run dev

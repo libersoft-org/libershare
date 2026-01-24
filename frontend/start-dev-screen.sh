@@ -1,3 +1,3 @@
 #!/bin/sh
 
-screen -dmS libershare bash -c ". ./colors.sh; trap bash SIGINT; (./start-dev.sh ; bash);"
+screen -dmS lish-frontend bash -c ". ./colors.sh; trap bash SIGINT; (./start-dev.sh ; bash);"
