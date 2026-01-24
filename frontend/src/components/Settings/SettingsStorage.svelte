@@ -151,12 +151,7 @@
 </style>
 
 {#if browsingFor}
-	<SettingsStorageBrowse
-		areaID={browseAreaID}
-		initialPath={browsingFor === 'storage' ? $storagePath : $storageTempPath}
-		onSelect={handleBrowseSelect}
-		onBack={handleBrowseBack}
-	/>
+	<SettingsStorageBrowse areaID={browseAreaID} initialPath={browsingFor === 'storage' ? $storagePath : $storageTempPath} onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="storage">
 		<div class="rows">

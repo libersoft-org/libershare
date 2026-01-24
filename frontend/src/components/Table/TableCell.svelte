@@ -7,7 +7,7 @@
 		desktopOnly?: boolean;
 	}
 	let { children, width, align = 'left', desktopOnly = false }: Props = $props();
-	let justifyContent = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
+	let justifyContent = $derived(align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center');
 </script>
 
 <style>
