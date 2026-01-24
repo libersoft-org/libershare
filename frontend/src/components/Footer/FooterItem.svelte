@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Icon from '../Icon/Icon.svelte';
 	interface Props {
 		topIcon?: string;
 		topIconAlt?: string;
@@ -26,21 +27,15 @@
 		gap: 0.5vh;
 		text-align: center;
 	}
-
-	.top .icon,
-	.bottom .icon {
-		width: 2vh;
-		height: 2vh;
-	}
 </style>
 
 <div class="item">
 	<div class="top">
-		{#if topIcon}<img class="icon" src={topIcon} alt={topIconAlt} />{/if}
+		{#if topIcon}<Icon img={topIcon} alt={topIconAlt} size="2vh" padding="0" colorVariable="--primary-foreground" />{/if}
 		{#if topLabel}<span class="value">{topLabel}</span>{/if}
 	</div>
 	<div class="bottom">
-		{#if bottomIcon}<img class="icon" src={bottomIcon} alt={bottomIconAlt} />{/if}
+		{#if bottomIcon}<Icon img={bottomIcon} alt={bottomIconAlt} size="2vh" padding="0" colorVariable="--primary-foreground" />{/if}
 		{#if bottomLabel}<div class="value">{bottomLabel}</div>{/if}
 	</div>
 </div>

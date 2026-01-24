@@ -1,6 +1,7 @@
 <script lang="ts">
 	import TableRow from '../Table/TableRow.svelte';
 	import TableCell from '../Table/TableCell.svelte';
+	import Icon from '../Icon/Icon.svelte';
 	import type { StorageItemType } from './types.ts';
 
 	interface Props {
@@ -28,27 +29,16 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-
-	.icon {
-		display: inline-block;
-		margin-right: 1vh;
-		height: 1.6vh;
-		width: 1.6vh;
-		vertical-align: middle;
-	}
-
-	.emoji {
-		display: inline-block;
-		margin-right: 1vh;
-		font-size: 1.6vh;
+		display: flex;
+		align-items: center;
+		gap: 1vh;
 	}
 </style>
 
 <TableRow {selected} {odd}>
 	<TableCell>
 		<div class="name">
-			<img class="icon" src={getIcon(type)} alt="" />
+			<Icon img={getIcon(type)} size="2vh" padding="0" colorVariable={selected ? '--primary-background' : '--secondary-foreground'} />
 			<span>{name}</span>
 		</div>
 	</TableCell>

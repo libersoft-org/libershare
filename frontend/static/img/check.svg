@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8" ?>
 <svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 100 100">
- <polyline fill="none" stroke="#fd1" stroke-width="20" stroke-linecap="round" stroke-linejoin="round" points="10,55 40,85 90,15 "/>
+	<polyline fill="none" stroke="#000" stroke-width="20" stroke-linecap="round" stroke-linejoin="round" points="10,55 40,85 90,15 " />
 </svg>

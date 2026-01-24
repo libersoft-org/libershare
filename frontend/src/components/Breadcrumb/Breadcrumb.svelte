@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { useArea, activeArea, setAreaPosition, removeArea } from '../../scripts/areas.ts';
+	import Icon from '../Icon/Icon.svelte';
 	export interface BreadcrumbItem {
 		id: string;
 		name: string;
@@ -124,11 +125,12 @@
 <div class="breadcrumb">
 	{#each items as item, index (item.id)}
 		{#if index > 0}
-			<img class="separator" src="/img/caret-right.svg" alt=">" />
+			<Icon img="/img/caret-right.svg" size="1.5vh" padding="0" colorVariable="--disabled-foreground" />
 		{/if}
-		<span class="item" class:current={index === items.length - 1} class:selected={active && selectedIndex === index} onclick={() => index < items.length - 1 && onSelect?.(item, index)}>
+		{@const isSelected = active && selectedIndex === index}
+		<span class="item" class:current={index === items.length - 1} class:selected={isSelected} onclick={() => index < items.length - 1 && onSelect?.(item, index)}>
 			{#if item.icon}
-				<img class="item-icon" src={item.icon} alt="" />
+				<Icon img={item.icon} size="1.8vh" padding="0" colorVariable={isSelected ? '--primary-background' : '--disabled-foreground'} />
 			{:else}
 				{item.name}
 			{/if}

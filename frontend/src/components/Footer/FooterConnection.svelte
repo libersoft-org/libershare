@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
+	import Icon from '../Icon/Icon.svelte';
 	type ConnectionType = 'ethernet' | 'wifi';
 	interface Props {
 		type: ConnectionType;
@@ -13,7 +14,6 @@
 		if (type === 'ethernet') return $t.common?.connected;
 		return `${signal}%`;
 	});
-	let ethernetIcon = $derived(connected ? 'img/ethernet-on.svg' : 'img/ethernet-off.svg'); // Ethernet icon based on connection state
 
 	// Calculate how many bars should be active (1-4), 0 if disconnected
 	function getActiveBars(signalStrength: number): number {
@@ -45,12 +45,6 @@
 		display: flex;
 		align-items: flex-end;
 		gap: 0.3vh;
-		height: 2.4vh;
-	}
-
-	/* Ethernet icon */
-	.ethernet {
-		width: 2.4vh;
 		height: 2.4vh;
 	}
 
@@ -93,7 +87,7 @@
 <div class="connection">
 	<div class="icon">
 		{#if type === 'ethernet'}
-			<img class="ethernet" src={ethernetIcon} alt={label} />
+			<Icon img="/img/ethernet.svg" alt={label} size="2.4vh" padding="0" colorVariable={connected ? '--color-success' : '--color-error'} />
 		{:else}
 			<div class="wifi-bars">
 				{#each [0, 1, 2, 3] as barIndex}

@@ -1,4 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
- <path fill="#0f0" fill-rule="evenodd" d="M18 12 h28 a10 10 0 0 1 10 10 v20 a10 10 0 0 1-10 10 h-28 a10 10 0 0 1-10-10 v-20 a10 10 0 0 1 10-10 Z M26 20 h12 a6 6 0 0 1 6 6 v12 a6 6 0 0 1-6 6 h-12 a6 6 0 0 1-6-6 v-12 a6 6 0 0 1 6-6 Z"/>
- <path  stroke="#0f0" stroke-width="3" stroke-linecap="round" d="M26 24v6 M30 24v6 M34 24v6 M38 24v6"/>
-</svg>

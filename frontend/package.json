@@ -14,7 +14,8 @@
 		"lint": "prettier --check ."
 	},
 	"dependencies": {
-		"@libershare/shared": "file:../shared"
+		"@libershare/shared": "file:../shared",
+		"hex-to-css-filter": "^6.0.0"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^3.3.1",

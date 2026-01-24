@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getContext, onMount } from 'svelte';
 	import type { ButtonsGroupContext } from './ButtonsGroup.svelte';
+	import Icon from '../Icon/Icon.svelte';
 	interface Props {
 		label?: string;
 		icon?: string;
@@ -68,7 +69,7 @@
 
 <div class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:icon-only={icon && !label} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}">
 	{#if icon}
-		<img src={icon} {alt} style="width: {fontSize}; height: {fontSize};" />
+		<Icon img={icon} {alt} size={fontSize} padding="0" colorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} />
 	{/if}
 	{#if label}
 		{label}
