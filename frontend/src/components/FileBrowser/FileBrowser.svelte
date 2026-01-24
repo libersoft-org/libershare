@@ -214,15 +214,8 @@
 			if (onDownAtEnd) return onDownAtEnd();
 			return true; // Stay in file browser, don't navigate to other areas
 		},
-		left: () => false,
-		right: () => {
-			// Show actions panel if item has actions
-			if (actions.length > 0) {
-				openActions();
-				return true;
-			}
-			return false;
-		},
+		left: () => true,
+		right: () => true,
 		confirmDown: () => {},
 		confirmUp: () => {
 			const item = items[selectedIndex];
@@ -265,13 +258,8 @@
 			}
 			return true; // Stay in actions, don't navigate to other areas
 		},
-		left: () => {
-			// Go back to file list
-			showActions = false;
-			activateArea(areaID);
-			return true;
-		},
-		right: () => false,
+		left: () => true,
+		right: () => true,
 		confirmDown: () => {},
 		confirmUp: () => {
 			const action = actions[selectedActionIndex];
