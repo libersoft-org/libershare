@@ -8,6 +8,7 @@
 	import Cell from '../Table/TableCell.svelte';
 	import StorageItem from '../Storage/StorageItem.svelte';
 	import Alert from '../Alert/Alert.svelte';
+	import PathBreadcrumb from '../Breadcrumb/PathBreadcrumb.svelte';
 	export type StorageItemType = 'folder' | 'file' | 'drive';
 	export interface StorageItemData {
 		id: string;
@@ -33,10 +34,11 @@
 		showPath?: boolean;
 		onBack?: () => void;
 		onSelect?: (path: string) => void;
+		onUpAtStart?: () => void;
 		onDownAtEnd?: () => boolean;
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, initialPath = '', foldersOnly = false, showPath = true, onBack, onSelect, onDownAtEnd }: Props = $props();
+	let { areaID, initialPath = '', foldersOnly = false, showPath = true, onBack, onSelect, onUpAtStart, onDownAtEnd }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
 	let itemElements: HTMLElement[] = $state([]);
@@ -46,6 +48,7 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let separator = $state('/');
+	let pathBreadcrumb: ReturnType<typeof PathBreadcrumb> | undefined = $state();
 
 	function formatSize(bytes?: number): string {
 		if (bytes === undefined) return '—';
@@ -162,6 +165,11 @@
 				scrollToSelected();
 				return true;
 			}
+			// At top of list, switch to breadcrumb if available
+			if (showPath) {
+				activateArea(`${areaID}-path`);
+				return true;
+			}
 			return false;
 		},
 		down: () => {
@@ -232,18 +240,6 @@
 		overflow: hidden;
 	}
 
-	.path {
-		padding: 1vh 1.5vh;
-		font-size: 2vh;
-		background: var(--secondary-background);
-		border-bottom: 1px solid var(--secondary-softer-background);
-		color: var(--primary-foreground);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		flex-shrink: 0;
-	}
-
 	.items {
 		flex: 1;
 		overflow-y: auto;
@@ -253,7 +249,7 @@
 
 <div class="wrapper">
 	{#if showPath}
-		<div class="path">{currentPath || '/'}</div>
+		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" path={currentPath} {separator} onNavigate={(path) => loadDirectory(path)} onUp={onUpAtStart} onDown={() => activateArea(areaID)} />
 	{/if}
 	{#if error}
 		<Alert type="error" message={error} />
