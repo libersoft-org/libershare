@@ -48,4 +48,10 @@ openssl req -x509 -newkey rsa:2048 -nodes -days $(expr '(' $(date -d 2999/01/01 
 ./start-dev.sh
 ```
 
+If you have your backend somewhere else (for example for development purposes, specify the backend address, for example:
+
+```sh
+./start-dev.sh wss://example.com:1234/
+```
+
 ... and then navigate to: https://YOUR_SERVER_ADDRESS:6003/ in your browser. Browser will show the certificate error, just skip it.
