@@ -8,7 +8,12 @@
 	}
 	let { areaID, items, onBack }: Props = $props();
 	// Convert string items to BreadcrumbItem format
-	let breadcrumbItems = $derived<BreadcrumbItem[]>(items.map((name, index) => ({ id: String(index), name })));
+	// First item (Domů/Home) gets an icon instead of text
+	let breadcrumbItems = $derived<BreadcrumbItem[]>(items.map((name, index) => ({
+		id: String(index),
+		name,
+		icon: index === 0 ? '/img/home.svg' : undefined
+	})));
 
 	async function handleSelect(_item: BreadcrumbItem, index: number) {
 		// Navigate to the selected breadcrumb level by calling onBack multiple times

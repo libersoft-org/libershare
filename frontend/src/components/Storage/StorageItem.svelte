@@ -15,9 +15,9 @@
 	let { name, type, size, modified, selected = false, isLast = false, odd = false }: Props = $props();
 
 	function getIcon(type: StorageItemType): string {
-		if (type === 'drive') return '💾';
-		if (type === 'folder') return '📁';
-		return '📄';
+		if (type === 'drive') return '/img/storage.svg';
+		if (type === 'folder') return '/img/folder.svg';
+		return '/img/file.svg';
 	}
 </script>
 
@@ -33,6 +33,14 @@
 	.icon {
 		display: inline-block;
 		margin-right: 1vh;
+		height: 1.6vh;
+		width: 1.6vh;
+		vertical-align: middle;
+	}
+
+	.emoji {
+		display: inline-block;
+		margin-right: 1vh;
 		font-size: 1.6vh;
 	}
 </style>
@@ -40,7 +48,7 @@
 <TableRow {selected} {odd}>
 	<TableCell>
 		<div class="name">
-			<span class="icon">{getIcon(type)}</span>
+			<img class="icon" src={getIcon(type)} alt="" />
 			<span>{name}</span>
 		</div>
 	</TableCell>

@@ -14,12 +14,22 @@
 	"proseWrap": "preserve",
 	"jsxSingleQuote": false,
 	"svelteSortOrder": "scripts-options-styles-markup",
-	"plugins": ["prettier-plugin-svelte"],
+	"plugins": ["prettier-plugin-svelte", "@prettier/plugin-xml"],
 	"overrides": [
 		{
 			"files": "*.svelte",
 			"options": {
 				"parser": "svelte"
+			}
+		},
+		{
+			"files": "*.svg",
+			"options": {
+				"parser": "xml",
+				"xmlWhitespaceSensitivity": "ignore",
+				"xmlSelfClosingSpace": true,
+				"xmlSortAttributesByKey": false,
+				"xmlQuoteAttributes": "double"
 			}
 		}
 	]

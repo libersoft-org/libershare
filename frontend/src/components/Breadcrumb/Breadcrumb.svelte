@@ -4,6 +4,7 @@
 	export interface BreadcrumbItem {
 		id: string;
 		name: string;
+		icon?: string;
 	}
 	interface Props {
 		areaID: string;
@@ -109,17 +110,28 @@
 	}
 
 	.separator {
-		color: var(--disabled-foreground);
+		height: 1.5vh;
+		width: 1.5vh;
+	}
+
+	.item-icon {
+		height: 1.8vh;
+		width: 1.8vh;
+		vertical-align: middle;
 	}
 </style>
 
 <div class="breadcrumb">
 	{#each items as item, index (item.id)}
 		{#if index > 0}
-			<span class="separator">&gt;</span>
+			<img class="separator" src="/img/caret-right.svg" alt=">" />
 		{/if}
 		<span class="item" class:current={index === items.length - 1} class:selected={active && selectedIndex === index} onclick={() => index < items.length - 1 && onSelect?.(item, index)}>
-			{item.name}
+			{#if item.icon}
+				<img class="item-icon" src={item.icon} alt="" />
+			{:else}
+				{item.name}
+			{/if}
 		</span>
 	{/each}
 </div>

@@ -16,12 +16,12 @@
 
 	// Parse path into breadcrumb items with their full paths
 	let breadcrumbItems = $derived.by<PathBreadcrumbItem[]>(() => {
-		if (!path) return [{ id: '0', name: separator === '/' ? '/' : 'Drives', path: '' }];
+		if (!path) return [{ id: '0', name: separator === '/' ? '/' : 'Drives', path: '', icon: '/img/storage.svg' }];
 		const parts = path.split(separator).filter(Boolean);
 		const items: PathBreadcrumbItem[] = [];
 		if (separator === '/') {
 			// Linux: start with root "/"
-			items.push({ id: '0', name: '/', path: '/' });
+			items.push({ id: '0', name: '/', path: '/', icon: '/img/storage.svg' });
 			let currentPath = '';
 			for (let i = 0; i < parts.length; i++) {
 				currentPath += '/' + parts[i];
@@ -29,7 +29,7 @@
 			}
 		} else {
 			// Windows: start with drive list, then drive, then folders
-			items.push({ id: '0', name: 'Drives', path: '' });
+			items.push({ id: '0', name: 'Drives', path: '', icon: '/img/storage.svg' });
 			let currentPath = '';
 			for (let i = 0; i < parts.length; i++) {
 				if (i === 0) {
