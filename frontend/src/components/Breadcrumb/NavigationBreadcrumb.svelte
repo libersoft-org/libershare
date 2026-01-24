@@ -1,0 +1,23 @@
+<script lang="ts">
+	import { tick } from 'svelte';
+	import Breadcrumb, { type BreadcrumbItem } from './Breadcrumb.svelte';
+	interface Props {
+		areaID: string;
+		items: string[];
+		onBack?: () => void;
+	}
+	let { areaID, items, onBack }: Props = $props();
+	// Convert string items to BreadcrumbItem format
+	let breadcrumbItems = $derived<BreadcrumbItem[]>(items.map((name, index) => ({ id: String(index), name })));
+
+	async function handleSelect(_item: BreadcrumbItem, index: number) {
+		// Navigate to the selected breadcrumb level by calling onBack multiple times
+		const stepsBack = items.length - 1 - index;
+		for (let i = 0; i < stepsBack; i++) {
+			onBack?.();
+			await tick();
+		}
+	}
+</script>
+
+<Breadcrumb {areaID} items={breadcrumbItems} onSelect={handleSelect} {onBack} />

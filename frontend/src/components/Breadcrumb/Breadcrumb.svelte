@@ -1,12 +1,20 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
-	import { useArea, activeArea } from '../../scripts/areas.ts';
+	import { onMount } from 'svelte';
+	import { useArea, activeArea, setAreaPosition, removeArea } from '../../scripts/areas.ts';
+	export interface BreadcrumbItem {
+		id: string;
+		name: string;
+	}
 	interface Props {
 		areaID: string;
-		items: string[];
+		items: BreadcrumbItem[];
+		position?: { x: number; y: number };
+		onSelect?: (item: BreadcrumbItem, index: number) => void;
+		onUp?: () => void;
+		onDown?: () => void;
 		onBack?: () => void;
 	}
-	let { areaID, items, onBack }: Props = $props();
+	let { areaID, items, position, onSelect, onUp, onDown, onBack }: Props = $props();
 	let selectedIndex = $state(0);
 	let active = $derived($activeArea === areaID);
 	let maxIndex = $derived(items.length - 2); // Last item (current) is not selectable
@@ -26,15 +34,25 @@
 			}
 			return false;
 		},
-		up: () => false,
-		down: () => false,
+		up: () => {
+			if (onUp) {
+				onUp();
+				return true;
+			}
+			return false;
+		},
+		down: () => {
+			if (onDown) {
+				onDown();
+				return true;
+			}
+			return false;
+		},
 		confirmDown: () => {},
-		confirmUp: async () => {
-			// Navigate to the selected breadcrumb level
-			const stepsBack = items.length - 1 - selectedIndex;
-			for (let i = 0; i < stepsBack; i++) {
-				onBack?.();
-				await tick();
+		confirmUp: () => {
+			const item = items[selectedIndex];
+			if (item && selectedIndex < items.length - 1) {
+				onSelect?.(item, selectedIndex);
 			}
 		},
 		confirmCancel: () => {},
@@ -45,8 +63,12 @@
 	};
 
 	onMount(() => {
+		if (position) setAreaPosition(areaID, position);
 		const unregister = useArea(areaID, areaHandlers);
-		return unregister;
+		return () => {
+			unregister();
+			if (position) removeArea(areaID);
+		};
 	});
 </script>
 
@@ -54,25 +76,31 @@
 	.breadcrumb {
 		flex-wrap: wrap;
 		width: 100%;
-		padding: 1vh;
+		padding: 1vh 1.5vh;
 		background-color: var(--secondary-soft-background);
-		font-size: 2.5vh;
+		font-size: 2vh;
 		box-sizing: border-box;
 		display: flex;
 		align-items: center;
-		gap: 1vh;
+		gap: 0.5vh;
 		border-bottom: 0.2vh solid var(--secondary-softer-background);
 	}
 
 	.item {
 		color: var(--disabled-foreground);
-		padding: 0.2vh 0.8vh;
-		border-radius: 1vh;
+		padding: 0.2vh 0.6vh;
+		border-radius: 0.5vh;
+		cursor: pointer;
+	}
+
+	.item:hover:not(.current) {
+		background-color: var(--secondary-soft-background);
 	}
 
 	.item.current {
 		color: var(--primary-foreground);
 		font-weight: bold;
+		cursor: default;
 	}
 
 	.item.selected {
@@ -86,10 +114,12 @@
 </style>
 
 <div class="breadcrumb">
-	{#each items as item, index (index)}
+	{#each items as item, index (item.id)}
 		{#if index > 0}
 			<span class="separator">&gt;</span>
 		{/if}
-		<span class="item" class:current={index === items.length - 1} class:selected={active && selectedIndex === index}>{item}</span>
+		<span class="item" class:current={index === items.length - 1} class:selected={active && selectedIndex === index} onclick={() => index < items.length - 1 && onSelect?.(item, index)}>
+			{item.name}
+		</span>
 	{/each}
 </div>

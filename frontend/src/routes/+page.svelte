@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import Header from '../components/Header/Header.svelte';
-	import Breadcrumb from '../components/Breadcrumb/Breadcrumb.svelte';
+	import NavigationBreadcrumb from '../components/Breadcrumb/NavigationBreadcrumb.svelte';
 	import Menu from '../components/Menu/Menu.svelte';
 	import Footer from '../components/Footer/Footer.svelte';
 	import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
@@ -86,7 +86,7 @@
 {/if}
 <div class="page">
 	<Header areaID="header" {onBack} />
-	<Breadcrumb areaID="breadcrumb" items={$breadcrumbItems} {onBack} />
+	<NavigationBreadcrumb areaID="breadcrumb" items={$breadcrumbItems} {onBack} />
 	<div class="content" bind:this={contentElement}>
 		{#if $confirmDialog.visible && $confirmDialog.action && $confirmDialog.action !== 'back'}
 			{@const dialogConfig = $confirmDialogs[$confirmDialog.action as 'restart' | 'shutdown' | 'quit']}

@@ -8,7 +8,7 @@
 	import Cell from '../Table/TableCell.svelte';
 	import StorageItem from '../Storage/StorageItem.svelte';
 	import Alert from '../Alert/Alert.svelte';
-	import PathBreadcrumb from '../Breadcrumb/PathBreadcrumb.svelte';
+	import PathBreadcrumb from './FileBrowserBreadcrumb.svelte';
 	export type StorageItemType = 'folder' | 'file' | 'drive';
 	export interface StorageItemData {
 		id: string;
@@ -249,7 +249,7 @@
 
 <div class="wrapper">
 	{#if showPath}
-		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" path={currentPath} {separator} onNavigate={(path) => loadDirectory(path)} onUp={onUpAtStart} onDown={() => activateArea(areaID)} />
+		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" path={currentPath} {separator} onNavigate={path => loadDirectory(path)} onUp={onUpAtStart} onDown={() => activateArea(areaID)} />
 	{/if}
 	{#if error}
 		<Alert type="error" message={error} />
