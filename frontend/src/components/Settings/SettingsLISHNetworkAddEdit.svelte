@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import Alert from '../Alert/Alert.svelte';
@@ -21,12 +21,12 @@
 	let descriptionInput: Input | undefined = $state();
 	let networkIDInput: Input | undefined = $state();
 	let bootstrapInputs: Input[] = $state([]);
-	let name = $state(network?.name ?? '');
-	let description = $state(network?.description ?? '');
+	let name = $state(untrack(() => network?.name ?? ''));
+	let description = $state(untrack(() => network?.description ?? ''));
 	let isEditing = $derived(network !== null);
-	let autoGenerateID = $state(!network); // Auto-generate when adding new, manual when editing
-	let networkID = $state(network?.id ?? '');
-	let bootstrapServers = $state<string[]>(network?.bootstrapServers?.length ? [...network.bootstrapServers] : ['']);
+	let autoGenerateID = $state(untrack(() => !network)); // Auto-generate when adding new, manual when editing
+	let networkID = $state(untrack(() => network?.id ?? ''));
+	let bootstrapServers = $state<string[]>(untrack(() => network?.bootstrapServers?.length ? [...network.bootstrapServers] : ['']));
 	let submitted = $state(false);
 	// Validation - skip networkID check if auto-generate is enabled
 	let errorMessage = $derived(!name.trim() ? $t.settings?.lishNetwork?.errorNameRequired : !autoGenerateID && !networkID.trim() ? $t.settings?.lishNetwork?.errorNetworkIDRequired : '');

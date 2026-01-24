@@ -13,14 +13,14 @@
 	}
 	let { areaID, itemTitle = 'Item', itemId = 1, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
-	const files = [
-		{ id: 1, name: `${itemTitle} - 240p.mp4`, size: '218.32 MB' },
-		{ id: 2, name: `${itemTitle} - 480p.mp4`, size: '780.12 MB' },
-		{ id: 3, name: `${itemTitle} - 720p.mp4`, size: '2.72 GB' },
-		{ id: 4, name: `${itemTitle} - 1080p.mp4`, size: '10.5 GB' },
-		{ id: 5, name: `${itemTitle} - 2160p.mp4`, size: '26.81 GB' },
-		{ id: 6, name: `${itemTitle} - 4320p.mp4`, size: '68.27 GB' },
-	];
+	let files = $derived([
+		{ id: 1, name: `${itemTitle} - 240p`, size: '218.32 MB' },
+		{ id: 2, name: `${itemTitle} - 480p`, size: '780.12 MB' },
+		{ id: 3, name: `${itemTitle} - 720p`, size: '2.72 GB' },
+		{ id: 4, name: `${itemTitle} - 1080p`, size: '10.5 GB' },
+		{ id: 5, name: `${itemTitle} - 2160p`, size: '26.81 GB' },
+		{ id: 6, name: `${itemTitle} - 4320p`, size: '68.27 GB' },
+	]);
 	let selectedRow = $state(-1); // -1 = image, 0+ = files
 	let selectedButton = $state(0); // 0 = Download, 1 = Play
 	let isAPressed = $state(false);
