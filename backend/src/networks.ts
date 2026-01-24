@@ -2,16 +2,9 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import type { ILISHNetwork } from './makenet.ts';
 import { Network } from './network.ts';
 import type { DataServer } from './data-server.ts';
+import type { NetworkDefinition } from '@libershare/shared';
 
-export interface NetworkDefinition {
-	id: string;           // networkID (UUID)
-	version: number;
-	key: string;          // swarmKey (base64)
-	name: string;
-	description: string | null;
-	bootstrap_peers: string[];
-	enabled: boolean;
-}
+export type { NetworkDefinition };
 
 export class Networks {
 	private db: BunDatabase;

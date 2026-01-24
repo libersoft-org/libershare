@@ -1,43 +1,7 @@
 import * as fsPromises from "node:fs/promises";
-
-export type LishId = string;
-export type ChunkId = string;
-
-export interface IManifest {
-	version: number;
-	id: string;
-	name?: string;
-	description?: string;
-	created: string;
-	chunkSize: number;
-	checksumAlgo: HashAlgorithm;
-	directories?: IDirectoryEntry[];
-	files?: IFileEntry[];
-	links?: ILinkEntry[];
-}
-export interface IDirectoryEntry {
-	path: string;
-	permissions?: string;
-	modified?: string;
-	created?: string;
-}
-export interface IFileEntry {
-	path: string;
-	size: number;
-	permissions?: string;
-	modified?: string;
-	created?: string;
-	checksums: string[];
-}
-export interface ILinkEntry {
-	path: string;
-	target: string;
-	hardlink?: boolean;
-	modified?: string;
-	created?: string;
-}
-export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
-export type HashAlgorithm = (typeof SUPPORTED_ALGOS)[number];
+import type { HashAlgorithm, IManifest, IDirectoryEntry, IFileEntry, ILinkEntry } from '@libershare/shared';
+export type { LishId, ChunkId, HashAlgorithm, IManifest, IDirectoryEntry, IFileEntry, ILinkEntry } from '@libershare/shared';
+export { SUPPORTED_ALGOS } from '@libershare/shared';
 export const MANIFEST_VERSION = 1;
 export const DEFAULT_CHUNK_SIZE = 1024 * 1024;
 export const DEFAULT_ALGO: HashAlgorithm = 'sha256';

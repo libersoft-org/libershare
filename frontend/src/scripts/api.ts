@@ -1,4 +1,17 @@
 import { wsClient } from './ws-client';
+import type {
+    NetworkDefinition,
+    NetworkStatus,
+    NetworkNodeInfo,
+    Stats,
+    Dataset,
+    FsInfo,
+    FsListResult,
+    SuccessResponse,
+    CreateLishResponse,
+    DownloadResponse,
+    FetchUrlResponse,
+} from '@libershare/shared';
 
 export const api = {
     // Raw call access
@@ -7,39 +20,27 @@ export const api = {
     off: wsClient.off.bind(wsClient),
 
     // Stats
-    getStats: () =>
-        wsClient.call<{
-            networks: { total: number; enabled: number; connected: number };
-            peers: number;
-            datasets: { total: number; complete: number; downloading: number };
-            space: any;
-            transfers: {
-                download: { now: number; total: number };
-                upload: { now: number; total: number };
-            };
-        }>('getStats'),
+    getStats: () => wsClient.call<Stats>('getStats'),
 
     // Networks
-    listNetworks: () =>
-        wsClient.call<any[]>('networks.list'),
+    listNetworks: () => wsClient.call<NetworkDefinition[]>('networks.list'),
 
-    getNetwork: (networkId: string) =>
-        wsClient.call<any>('networks.get', { networkId }),
+    getNetwork: (networkId: string) => wsClient.call<NetworkDefinition>('networks.get', { networkId }),
 
     importNetworkFromFile: (path: string, enabled = false) =>
-        wsClient.call<any>('networks.importFromFile', { path, enabled }),
+        wsClient.call<NetworkDefinition>('networks.importFromFile', { path, enabled }),
 
-    importNetworkFromJson: (json: any, enabled = false) =>
-        wsClient.call<any>('networks.importFromJson', { json, enabled }),
+    importNetworkFromJson: (json: string, enabled = false) =>
+        wsClient.call<NetworkDefinition>('networks.importFromJson', { json, enabled }),
 
     setNetworkEnabled: (networkId: string, enabled: boolean) =>
-        wsClient.call<{ success: boolean }>('networks.setEnabled', { networkId, enabled }),
+        wsClient.call<SuccessResponse>('networks.setEnabled', { networkId, enabled }),
 
     deleteNetwork: (networkId: string) =>
-        wsClient.call<{ success: boolean }>('networks.delete', { networkId }),
+        wsClient.call<SuccessResponse>('networks.delete', { networkId }),
 
     connectToPeer: (networkId: string, multiaddr: string) =>
-        wsClient.call<{ success: boolean }>('networks.connect', { networkId, multiaddr }),
+        wsClient.call<SuccessResponse>('networks.connect', { networkId, multiaddr }),
 
     findPeer: (networkId: string, peerId: string) =>
         wsClient.call<any>('networks.findPeer', { networkId, peerId }),
@@ -51,59 +52,31 @@ export const api = {
         wsClient.call<string[]>('networks.getPeers', { networkId }),
 
     getNetworkNodeInfo: (networkId: string) =>
-        wsClient.call<{ peerId: string; addresses: string[] }>('networks.getNodeInfo', { networkId }),
+        wsClient.call<NetworkNodeInfo>('networks.getNodeInfo', { networkId }),
 
     getNetworkStatus: (networkId: string) =>
-        wsClient.call<{
-            connected: number;
-            connectedPeers: string[];
-            peersInStore: number;
-            datasets: number;
-        }>('networks.getStatus', { networkId }),
+        wsClient.call<NetworkStatus>('networks.getStatus', { networkId }),
 
     // Manifests
-    getAllManifests: () =>
-        wsClient.call<any[]>('getAllManifests'),
+    getAllManifests: () => wsClient.call<any[]>('getAllManifests'),
 
-    getManifest: (lishId: string) =>
-        wsClient.call<any>('getManifest', { lishId }),
+    getManifest: (lishId: string) => wsClient.call<any>('getManifest', { lishId }),
 
     // Datasets
-    getDatasets: () =>
-        wsClient.call<any[]>('getDatasets'),
+    getDatasets: () => wsClient.call<Dataset[]>('getDatasets'),
 
-    getDataset: (id: string) =>
-        wsClient.call<any>('getDataset', { id }),
+    getDataset: (id: string) => wsClient.call<Dataset>('getDataset', { id }),
 
     // High-level operations
-    createLish: (path: string) =>
-        wsClient.call<{ manifestId: string }>('createLish', { path }),
+    createLish: (path: string) => wsClient.call<CreateLishResponse>('createLish', { path }),
 
     download: (networkId: string, manifestPath: string) =>
-        wsClient.call<{ downloadDir: string }>('download', { networkId, manifestPath }),
+        wsClient.call<DownloadResponse>('download', { networkId, manifestPath }),
 
-    fetchUrl: (url: string) =>
-        wsClient.call<{ url: string; status: number; contentType: string | null; content: string }>('fetchUrl', { url }),
+    fetchUrl: (url: string) => wsClient.call<FetchUrlResponse>('fetchUrl', { url }),
 
     // Filesystem
-    fsInfo: () =>
-        wsClient.call<{
-            platform: 'windows' | 'linux' | 'darwin';
-            separator: string;
-            home: string;
-            roots: string[];
-        }>('fs.info'),
+    fsInfo: () => wsClient.call<FsInfo>('fs.info'),
 
-    fsList: (path?: string) =>
-        wsClient.call<{
-            path: string;
-            entries: Array<{
-                name: string;
-                path: string;
-                type: 'file' | 'directory' | 'drive';
-                size?: number;
-                modified?: string;
-                hidden?: boolean;
-            }>;
-        }>('fs.list', { path }),
+    fsList: (path?: string) => wsClient.call<FsListResult>('fs.list', { path }),
 };
