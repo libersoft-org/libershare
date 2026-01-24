@@ -64,4 +64,4 @@
 	}
 </script>
 
-<Breadcrumb {areaID} items={breadcrumbItems} position={{ x: 0, y: 1.5 }} onSelect={handleSelect} {onUp} {onDown} onBack={handleBack} />
+<Breadcrumb {areaID} items={breadcrumbItems} position={{ x: 0, y: 2 }} onSelect={handleSelect} {onUp} {onDown} onBack={handleBack} />

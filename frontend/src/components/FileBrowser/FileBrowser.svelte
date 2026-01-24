@@ -55,27 +55,16 @@
 	let separator = $state('/');
 	let pathBreadcrumb: ReturnType<typeof PathBreadcrumb> | undefined = $state();
 
-	// Get actions based on selected item type
 	let selectedItem = $derived(items[selectedIndex]);
-	let actions = $derived.by(() => {
-		if (!selectedItem || selectedItem.name === '..') return [];
-		if (selectedItem.type === 'folder') {
-			return [
-				{ id: 'open', label: $t.fileBrowser?.openFolder },
-				{ id: 'select', label: $t.fileBrowser?.selectFolder },
-				{ id: 'new', label: $t.fileBrowser?.newFolder },
-				{ id: 'delete', label: $t.fileBrowser?.deleteFolder },
-				{ id: 'back', label: $t.common?.back },
-			];
-		} else if (selectedItem.type === 'file') {
-			return [
-				{ id: 'open', label: $t.fileBrowser?.openFile },
-				{ id: 'delete', label: $t.fileBrowser?.deleteFile },
-				{ id: 'back', label: $t.common?.back },
-			];
-		}
-		return [];
-	});
+
+	// Folder toolbar actions
+	let folderActions = $derived([
+		{ id: 'select', label: $t.fileBrowser?.selectFolder, icon: '/img/check.svg' },
+		{ id: 'new', label: $t.fileBrowser?.newFolder, icon: '/img/add.svg' },
+		{ id: 'delete', label: $t.fileBrowser?.deleteFolder, icon: '/img/del.svg' },
+	]);
+	let selectedFolderActionIndex = $state(0);
+	let folderActionsActive = $derived($activeArea === `${areaID}-folder-actions`);
 
 	function formatSize(bytes?: number): string {
 		if (bytes === undefined) return '—';
@@ -198,12 +187,13 @@
 				scrollToSelected();
 				return true;
 			}
-			// At top of list, switch to breadcrumb if available
-			if (showPath) {
-				activateArea(`${areaID}-path`);
-				return true;
+			// At top of list, switch to folder actions toolbar (or path breadcrumb if error)
+			if (error) {
+				if (showPath) activateArea(`${areaID}-path`);
+			} else {
+				activateArea(`${areaID}-folder-actions`);
 			}
-			return false;
+			return true;
 		},
 		down: () => {
 			if (selectedIndex < items.length - 1) {
@@ -219,21 +209,12 @@
 		confirmDown: () => {},
 		confirmUp: () => {
 			const item = items[selectedIndex];
-			if (item?.name === '..') {
-				// ".." always navigates up
+			if (item && (item.type === 'folder' || item.type === 'drive')) {
+				// Folders/drives - navigate into them
 				navigateInto(item);
-			} else if (item && (item.type === 'folder' || item.type === 'drive')) {
-				// For folders/drives, show actions or navigate based on context
-				if (actions.length > 0) {
-					openActions();
-				} else {
-					navigateInto(item);
-				}
 			} else if (item?.type === 'file') {
-				// For files, show actions
-				if (actions.length > 0) {
-					openActions();
-				}
+				// Files - show actions panel
+				openActions();
 			}
 		},
 		confirmCancel: () => {},
@@ -243,26 +224,75 @@
 		},
 	};
 
+	const folderActionsAreaHandlers = {
+		up: () => {
+			// Go to path breadcrumb if available
+			if (showPath) {
+				activateArea(`${areaID}-path`);
+				return true;
+			}
+			return true;
+		},
+		down: () => {
+			// Go to file list
+			activateArea(areaID);
+			return true;
+		},
+		left: () => {
+			if (selectedFolderActionIndex > 0) {
+				selectedFolderActionIndex--;
+				return true;
+			}
+			return true;
+		},
+		right: () => {
+			if (selectedFolderActionIndex < folderActions.length - 1) {
+				selectedFolderActionIndex++;
+				return true;
+			}
+			return true;
+		},
+		confirmDown: () => {},
+		confirmUp: () => {
+			const action = folderActions[selectedFolderActionIndex];
+			if (action) {
+				handleFolderAction(action.id);
+			}
+		},
+		confirmCancel: () => {},
+		back: () => {
+			if (parentPath !== null) navigateUp();
+			else onBack?.();
+		},
+	};
+
+	// File actions: open, delete, back
+	const fileActions = [
+		{ id: 'open', label: $t.fileBrowser?.openFile },
+		{ id: 'delete', label: $t.fileBrowser?.deleteFile },
+		{ id: 'back', label: $t.common?.back },
+	];
+
 	const actionsAreaHandlers = {
 		up: () => {
 			if (selectedActionIndex > 0) {
 				selectedActionIndex--;
 				return true;
 			}
-			return true; // Stay in actions, don't navigate to other areas
+			return true;
 		},
 		down: () => {
-			if (selectedActionIndex < actions.length - 1) {
+			if (selectedActionIndex < fileActions.length - 1) {
 				selectedActionIndex++;
 				return true;
 			}
-			return true; // Stay in actions, don't navigate to other areas
+			return true;
 		},
 		left: () => true,
 		right: () => true,
 		confirmDown: () => {},
 		confirmUp: () => {
-			const action = actions[selectedActionIndex];
+			const action = fileActions[selectedActionIndex];
 			if (action) {
 				handleAction(action.id);
 			}
@@ -276,33 +306,32 @@
 
 	function handleAction(actionId: string) {
 		const item = items[selectedIndex];
-		if (!item) return;
+		if (!item || item.type !== 'file') return;
 
 		switch (actionId) {
-			case 'select':
-				onSelect?.(item.path);
-				break;
 			case 'open':
-				if (item.type === 'folder' || item.type === 'drive') {
-					showActions = false;
-					navigateInto(item);
-					activateArea(areaID);
-					return;
-				}
 				// TODO: implement file open
 				break;
-			case 'new':
-				// TODO: implement new folder
-				break;
 			case 'delete':
-				// TODO: implement delete
-				break;
-			case 'back':
-				// Just close actions, handled below
+				// TODO: implement file delete
 				break;
 		}
 		showActions = false;
 		activateArea(areaID);
+	}
+
+	function handleFolderAction(actionId: string) {
+		switch (actionId) {
+			case 'select':
+				onSelect?.(currentPath);
+				break;
+			case 'new':
+				// TODO: implement new folder in currentPath
+				break;
+			case 'delete':
+				// TODO: implement delete currentPath
+				break;
+		}
 	}
 
 	export function getCurrentPath(): string {
@@ -316,9 +345,11 @@
 	onMount(() => {
 		const unregister = useArea(areaID, areaHandlers);
 		const unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers);
-		// Set area positions for navigation
-		setAreaPosition(areaID, { x: 0, y: 0 });
-		setAreaPosition(`${areaID}-actions`, { x: 1, y: 0 });
+		const unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers);
+		// Set area positions for navigation (below global breadcrumb at y:1)
+		setAreaPosition(`${areaID}-folder-actions`, { x: 0, y: 3 });
+		setAreaPosition(areaID, { x: 0, y: 4 });
+		setAreaPosition(`${areaID}-actions`, { x: 1, y: 4 });
 		activateArea(areaID);
 
 		(async () => {
@@ -337,8 +368,10 @@
 		return () => {
 			unregister();
 			unregisterActions();
+			unregisterFolderActions();
 			removeArea(areaID);
 			removeArea(`${areaID}-actions`);
+			removeArea(`${areaID}-folder-actions`);
 		};
 	});
 </script>
@@ -384,11 +417,25 @@
 		gap: 1vh;
 		min-width: 20vh;
 	}
+
+	.folder-actions {
+		display: flex;
+		flex-direction: row;
+		gap: 1vh;
+		padding: 0 2vh;
+	}
 </style>
 
 <div class="browser">
 	{#if showPath}
-		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" path={currentPath} {separator} onNavigate={path => loadDirectory(path)} onUp={onUpAtStart} onDown={() => activateArea(areaID)} />
+		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" path={currentPath} {separator} onNavigate={path => loadDirectory(path)} onUp={onUpAtStart} onDown={() => activateArea(error ? areaID : `${areaID}-folder-actions`)} />
+	{/if}
+	{#if !error}
+		<div class="folder-actions">
+			{#each folderActions as action, index (action.id)}
+				<Button label={action.label} icon={action.icon} selected={folderActionsActive && selectedFolderActionIndex === index} onConfirm={() => handleFolderAction(action.id)} />
+			{/each}
+		</div>
 	{/if}
 	{#if error}
 		<Alert type="error" message={error} />
@@ -424,9 +471,9 @@
 				</div>
 			</Table>
 		</div>
-		{#if showActions && actions.length > 0}
+		{#if showActions && selectedItem?.type === 'file'}
 			<div class="actions">
-				{#each actions as action, index (action.id)}
+				{#each fileActions as action, index (action.id)}
 					<Button label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => handleAction(action.id)} />
 				{/each}
 			</div>
