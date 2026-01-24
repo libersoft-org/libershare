@@ -127,7 +127,7 @@
 	.container {
 		display: flex;
 		flex-direction: column;
-		gap: 1vh;
+		gap: 2vh;
 		width: 1200px;
 		max-width: 100%;
 	}
@@ -191,7 +191,7 @@
 			{/if}
 		</div>
 		{#if loading}
-			<Spinner />
+			<Spinner size="8vh" />
 		{/if}
 		{#if error}
 			<Alert type="error" message={error} />

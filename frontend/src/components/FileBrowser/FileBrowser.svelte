@@ -8,6 +8,7 @@
 	import Cell from '../Table/TableCell.svelte';
 	import StorageItem from '../Storage/StorageItem.svelte';
 	import Alert from '../Alert/Alert.svelte';
+	import Spinner from '../Spinner/Spinner.svelte';
 	import PathBreadcrumb from './FileBrowserBreadcrumb.svelte';
 	export type StorageItemType = 'folder' | 'file' | 'drive';
 	export interface StorageItemData {
@@ -245,6 +246,10 @@
 		overflow-y: auto;
 		font-size: 1.4vh;
 	}
+
+	.items .loading {
+		margin: 2vh;
+	}
 </style>
 
 <div class="wrapper">
@@ -263,7 +268,9 @@
 			</Header>
 			<div class="items">
 				{#if loading}
-					<Alert type="info" message="Loading..." />
+					<div class="loading">
+						<Spinner size="8vh" />
+					</div>
 				{:else if error}
 					{#each items as item, index (item.id)}
 						<div bind:this={itemElements[index]}>
