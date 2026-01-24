@@ -92,33 +92,16 @@
 		color: var(--disabled-foreground);
 		padding: 0.2vh 0.6vh;
 		border-radius: 0.5vh;
-		cursor: pointer;
-	}
-
-	.item:hover:not(.current) {
-		background-color: var(--secondary-soft-background);
 	}
 
 	.item.current {
 		color: var(--primary-foreground);
 		font-weight: bold;
-		cursor: default;
 	}
 
 	.item.selected {
 		background-color: var(--primary-foreground);
 		color: var(--secondary-background);
-	}
-
-	.separator {
-		height: 1.5vh;
-		width: 1.5vh;
-	}
-
-	.item-icon {
-		height: 1.8vh;
-		width: 1.8vh;
-		vertical-align: middle;
 	}
 </style>
 
@@ -128,7 +111,7 @@
 			<Icon img="/img/caret-right.svg" size="1.5vh" padding="0" colorVariable="--disabled-foreground" />
 		{/if}
 		{@const isSelected = active && selectedIndex === index}
-		<span class="item" class:current={index === items.length - 1} class:selected={isSelected} onclick={() => index < items.length - 1 && onSelect?.(item, index)}>
+		<span class="item" class:current={index === items.length - 1} class:selected={isSelected}>
 			{#if item.icon}
 				<Icon img={item.icon} size="1.8vh" padding="0" colorVariable={isSelected ? '--primary-background' : '--disabled-foreground'} />
 			{:else}
