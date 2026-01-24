@@ -83,3 +83,20 @@ export function setShowSeconds(enabled: boolean): void {
 	showSeconds.set(enabled);
 	setStorageValue('showSeconds', enabled);
 }
+
+// Storage path settings
+const storedStoragePath = getStorageValue<string>('storagePath', '~/lish/');
+export const storagePath = writable(storedStoragePath);
+
+export function setStoragePath(path: string): void {
+	storagePath.set(path);
+	setStorageValue('storagePath', path);
+}
+
+const storedStorageTempPath = getStorageValue<string>('storageTempPath', '~/lish/temp/');
+export const storageTempPath = writable(storedStorageTempPath);
+
+export function setStorageTempPath(path: string): void {
+	storageTempPath.set(path);
+	setStorageValue('storageTempPath', path);
+}
