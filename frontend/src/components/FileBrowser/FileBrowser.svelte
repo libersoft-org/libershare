@@ -8,7 +8,6 @@
 	import Cell from '../Table/TableCell.svelte';
 	import StorageItem from '../Storage/StorageItem.svelte';
 	import Alert from '../Alert/Alert.svelte';
-
 	export type StorageItemType = 'folder' | 'file' | 'drive';
 	export interface StorageItemData {
 		id: string;
@@ -19,7 +18,6 @@
 		modified?: string;
 		hidden?: boolean;
 	}
-
 	interface FsEntry {
 		name: string;
 		path: string;
@@ -28,7 +26,6 @@
 		modified?: string;
 		hidden?: boolean;
 	}
-
 	interface Props {
 		areaID: string;
 		initialPath?: string;
@@ -38,13 +35,11 @@
 		onSelect?: (path: string) => void;
 		onDownAtEnd?: () => boolean;
 	}
-
 	const columns = '1fr 8vw 12vw';
 	let { areaID, initialPath = '', foldersOnly = false, showPath = true, onBack, onSelect, onDownAtEnd }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
 	let itemElements: HTMLElement[] = $state([]);
-
 	let currentPath = $state<string>('');
 	let parentPath = $state<string | null>(null);
 	let items = $state<StorageItemData[]>([]);
@@ -89,7 +84,6 @@
 			const result = await api.fsList(path);
 			currentPath = result.path;
 			parentPath = getParentPath(result.path);
-
 			let entries: StorageItemData[] = result.entries.map((entry: FsEntry, index: number) => ({
 				id: String(index + 1),
 				name: entry.name,
@@ -101,10 +95,7 @@
 			}));
 
 			// Filter to folders only if requested
-			if (foldersOnly) {
-				entries = entries.filter(e => e.type === 'folder' || e.type === 'drive');
-			}
-
+			if (foldersOnly) entries = entries.filter(e => e.type === 'folder' || e.type === 'drive');
 			// Add ".." entry if we have a parent
 			if (parentPath !== null) {
 				entries.unshift({
@@ -114,19 +105,28 @@
 					type: 'folder',
 				});
 			}
-
 			items = entries;
-
 			// Select specific item by name, or default to first
 			if (selectName) {
 				const idx = entries.findIndex(e => e.name === selectName);
 				selectedIndex = idx >= 0 ? idx : 0;
-			} else {
-				selectedIndex = 0;
-			}
+			} else selectedIndex = 0;
 		} catch (e: any) {
 			error = e.message || 'Failed to load directory';
-			items = [];
+			// Even on error, provide ".." entry to navigate up if we have a parent path
+			// Don't show ".." at root level (Linux "/" or empty path, Windows drive list)
+			const isAtRoot = !currentPath || currentPath === separator || (separator === '/' && currentPath === '/');
+			if (!isAtRoot && parentPath !== null) {
+				items = [
+					{
+						id: '0',
+						name: '..',
+						path: parentPath || '',
+						type: 'folder',
+					},
+				];
+				selectedIndex = 0;
+			} else items = [];
 		} finally {
 			loading = false;
 		}
@@ -134,9 +134,7 @@
 
 	function scrollToSelected(): void {
 		const element = itemElements[selectedIndex];
-		if (element) {
-			element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-		}
+		if (element) element.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	}
 
 	async function navigateInto(item: StorageItemData): Promise<void> {
@@ -145,9 +143,7 @@
 			if (item.name === '..') {
 				const currentName = currentPath.split(separator).filter(Boolean).pop();
 				await loadDirectory(item.path, currentName);
-			} else {
-				await loadDirectory(item.path);
-			}
+			} else await loadDirectory(item.path);
 		}
 	}
 
@@ -182,17 +178,12 @@
 		confirmDown: () => {},
 		confirmUp: () => {
 			const item = items[selectedIndex];
-			if (item && (item.type === 'folder' || item.type === 'drive')) {
-				navigateInto(item);
-			}
+			if (item && (item.type === 'folder' || item.type === 'drive')) navigateInto(item);
 		},
 		confirmCancel: () => {},
 		back: () => {
-			if (parentPath !== null) {
-				navigateUp();
-			} else {
-				onBack?.();
-			}
+			if (parentPath !== null) navigateUp();
+			else onBack?.();
 		},
 	};
 
@@ -214,33 +205,39 @@
 				separator = info.separator;
 				// Resolve initial path
 				let startPath = initialPath;
-				if (startPath.startsWith('~')) {
-					startPath = info.home + startPath.slice(1);
-				}
+				if (startPath.startsWith('~')) startPath = info.home + startPath.slice(1);
 				await loadDirectory(startPath || info.home);
 			} catch (e: any) {
 				error = e.message || 'Failed to initialize';
 				loading = false;
 			}
 		})();
-
 		return unregister;
 	});
 </script>
 
 <style>
-	.container {
+	.wrapper {
 		display: flex;
 		flex-direction: column;
+		gap: 1vh;
 		height: 100%;
+		overflow: hidden;
+	}
+
+	.container {
+		margin: 0 2vh;
+		border: 0.4vh solid var(--secondary-softer-background);
+		border-radius: 2vh;
+		overflow: hidden;
 	}
 
 	.path {
 		padding: 1vh 1.5vh;
 		font-size: 2vh;
-		background: var(--secondary-soft-background);
+		background: var(--secondary-background);
 		border-bottom: 1px solid var(--secondary-softer-background);
-		color: var(--secondary-foreground);
+		color: var(--primary-foreground);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -254,30 +251,39 @@
 	}
 </style>
 
-<div class="container">
+<div class="wrapper">
 	{#if showPath}
 		<div class="path">{currentPath || '/'}</div>
 	{/if}
-	<Table {columns} noBorder>
-		<Header>
-			<Cell>{$t.localStorage?.name}</Cell>
-			<Cell align="right" desktopOnly>{$t.localStorage?.size}</Cell>
-			<Cell align="right" desktopOnly>{$t.localStorage?.modified}</Cell>
-		</Header>
-		<div class="items">
-			{#if loading}
-				<Alert type="info" message="Loading..." />
-			{:else if error}
-				<Alert type="error" message={error} />
-			{:else if items.length === 0}
-				<Alert type="info" message="Empty directory" />
-			{:else}
-				{#each items as item, index (item.id)}
-					<div bind:this={itemElements[index]}>
-						<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
-					</div>
-				{/each}
-			{/if}
-		</div>
-	</Table>
+	{#if error}
+		<Alert type="error" message={error} />
+	{/if}
+	<div class="container">
+		<Table {columns} noBorder>
+			<Header>
+				<Cell>{$t.localStorage?.name}</Cell>
+				<Cell align="right" desktopOnly>{$t.localStorage?.size}</Cell>
+				<Cell align="right" desktopOnly>{$t.localStorage?.modified}</Cell>
+			</Header>
+			<div class="items">
+				{#if loading}
+					<Alert type="info" message="Loading..." />
+				{:else if error}
+					{#each items as item, index (item.id)}
+						<div bind:this={itemElements[index]}>
+							<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
+						</div>
+					{/each}
+				{:else if items.length === 0}
+					<Alert type="info" message="Empty directory" />
+				{:else}
+					{#each items as item, index (item.id)}
+						<div bind:this={itemElements[index]}>
+							<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
+						</div>
+					{/each}
+				{/if}
+			</div>
+		</Table>
+	</div>
 </div>
