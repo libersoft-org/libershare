@@ -212,7 +212,7 @@
 				return true;
 			}
 			if (onDownAtEnd) return onDownAtEnd();
-			return false;
+			return true; // Stay in file browser, don't navigate to other areas
 		},
 		left: () => false,
 		right: () => {
@@ -256,14 +256,14 @@
 				selectedActionIndex--;
 				return true;
 			}
-			return false;
+			return true; // Stay in actions, don't navigate to other areas
 		},
 		down: () => {
 			if (selectedActionIndex < actions.length - 1) {
 				selectedActionIndex++;
 				return true;
 			}
-			return false;
+			return true; // Stay in actions, don't navigate to other areas
 		},
 		left: () => {
 			// Go back to file list
