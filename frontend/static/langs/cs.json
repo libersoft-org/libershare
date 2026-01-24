@@ -120,6 +120,14 @@
 			"clock": "Hodiny"
 		}
 	},
+	"fileBrowser": {
+		"openFolder": "Otevřít složku",
+		"selectFolder": "Vybrat složku",
+		"newFolder": "Nová složka",
+		"deleteFolder": "Smazat složku",
+		"openFile": "Otevřít soubor",
+		"deleteFile": "Smazat soubor"
+	},
 	"about": {
 		"title": "O aplikaci",
 		"buildDate": "Datum sestavení",

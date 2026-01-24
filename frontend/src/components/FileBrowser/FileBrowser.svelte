@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { useArea, activateArea, activeArea, setAreaPosition, removeArea } from '../../scripts/areas.ts';
 	import { t } from '../../scripts/language.ts';
 	import { api } from '../../scripts/api.ts';
+	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
 	import Header from '../Table/TableHeader.svelte';
 	import Cell from '../Table/TableCell.svelte';
@@ -41,7 +42,10 @@
 	const columns = '1fr 8vw 12vw';
 	let { areaID, initialPath = '', foldersOnly = false, showPath = true, onBack, onSelect, onUpAtStart, onDownAtEnd }: Props = $props();
 	let active = $derived($activeArea === areaID);
+	let actionsActive = $derived($activeArea === `${areaID}-actions`);
 	let selectedIndex = $state(0);
+	let selectedActionIndex = $state(0);
+	let showActions = $state(false);
 	let itemElements: HTMLElement[] = $state([]);
 	let currentPath = $state<string>('');
 	let parentPath = $state<string | null>(null);
@@ -50,6 +54,28 @@
 	let error = $state<string | null>(null);
 	let separator = $state('/');
 	let pathBreadcrumb: ReturnType<typeof PathBreadcrumb> | undefined = $state();
+
+	// Get actions based on selected item type
+	let selectedItem = $derived(items[selectedIndex]);
+	let actions = $derived.by(() => {
+		if (!selectedItem || selectedItem.name === '..') return [];
+		if (selectedItem.type === 'folder') {
+			return [
+				{ id: 'open', label: $t.fileBrowser?.openFolder },
+				{ id: 'select', label: $t.fileBrowser?.selectFolder },
+				{ id: 'new', label: $t.fileBrowser?.newFolder },
+				{ id: 'delete', label: $t.fileBrowser?.deleteFolder },
+				{ id: 'back', label: $t.common?.back },
+			];
+		} else if (selectedItem.type === 'file') {
+			return [
+				{ id: 'open', label: $t.fileBrowser?.openFile },
+				{ id: 'delete', label: $t.fileBrowser?.deleteFile },
+				{ id: 'back', label: $t.common?.back },
+			];
+		}
+		return [];
+	});
 
 	function formatSize(bytes?: number): string {
 		if (bytes === undefined) return '—';
@@ -159,6 +185,12 @@
 		}
 	}
 
+	function openActions(): void {
+		showActions = true;
+		selectedActionIndex = 0;
+		activateArea(`${areaID}-actions`);
+	}
+
 	const areaHandlers = {
 		up: () => {
 			if (selectedIndex > 0) {
@@ -183,11 +215,33 @@
 			return false;
 		},
 		left: () => false,
-		right: () => false,
+		right: () => {
+			// Show actions panel if item has actions
+			if (actions.length > 0) {
+				openActions();
+				return true;
+			}
+			return false;
+		},
 		confirmDown: () => {},
 		confirmUp: () => {
 			const item = items[selectedIndex];
-			if (item && (item.type === 'folder' || item.type === 'drive')) navigateInto(item);
+			if (item?.name === '..') {
+				// ".." always navigates up
+				navigateInto(item);
+			} else if (item && (item.type === 'folder' || item.type === 'drive')) {
+				// For folders/drives, show actions or navigate based on context
+				if (actions.length > 0) {
+					openActions();
+				} else {
+					navigateInto(item);
+				}
+			} else if (item?.type === 'file') {
+				// For files, show actions
+				if (actions.length > 0) {
+					openActions();
+				}
+			}
 		},
 		confirmCancel: () => {},
 		back: () => {
@@ -195,6 +249,73 @@
 			else onBack?.();
 		},
 	};
+
+	const actionsAreaHandlers = {
+		up: () => {
+			if (selectedActionIndex > 0) {
+				selectedActionIndex--;
+				return true;
+			}
+			return false;
+		},
+		down: () => {
+			if (selectedActionIndex < actions.length - 1) {
+				selectedActionIndex++;
+				return true;
+			}
+			return false;
+		},
+		left: () => {
+			// Go back to file list
+			showActions = false;
+			activateArea(areaID);
+			return true;
+		},
+		right: () => false,
+		confirmDown: () => {},
+		confirmUp: () => {
+			const action = actions[selectedActionIndex];
+			if (action) {
+				handleAction(action.id);
+			}
+		},
+		confirmCancel: () => {},
+		back: () => {
+			showActions = false;
+			activateArea(areaID);
+		},
+	};
+
+	function handleAction(actionId: string) {
+		const item = items[selectedIndex];
+		if (!item) return;
+
+		switch (actionId) {
+			case 'select':
+				onSelect?.(item.path);
+				break;
+			case 'open':
+				if (item.type === 'folder' || item.type === 'drive') {
+					showActions = false;
+					navigateInto(item);
+					activateArea(areaID);
+					return;
+				}
+				// TODO: implement file open
+				break;
+			case 'new':
+				// TODO: implement new folder
+				break;
+			case 'delete':
+				// TODO: implement delete
+				break;
+			case 'back':
+				// Just close actions, handled below
+				break;
+		}
+		showActions = false;
+		activateArea(areaID);
+	}
 
 	export function getCurrentPath(): string {
 		return currentPath;
@@ -206,6 +327,10 @@
 
 	onMount(() => {
 		const unregister = useArea(areaID, areaHandlers);
+		const unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers);
+		// Set area positions for navigation
+		setAreaPosition(areaID, { x: 0, y: 0 });
+		setAreaPosition(`${areaID}-actions`, { x: 1, y: 0 });
 		activateArea(areaID);
 
 		(async () => {
@@ -221,12 +346,17 @@
 				loading = false;
 			}
 		})();
-		return unregister;
+		return () => {
+			unregister();
+			unregisterActions();
+			removeArea(areaID);
+			removeArea(`${areaID}-actions`);
+		};
 	});
 </script>
 
 <style>
-	.wrapper {
+	.browser {
 		display: flex;
 		flex-direction: column;
 		gap: 1vh;
@@ -234,7 +364,15 @@
 		overflow: hidden;
 	}
 
+	.content {
+		display: flex;
+		gap: 2vh;
+		flex: 1;
+		overflow: hidden;
+	}
+
 	.container {
+		flex: 1;
 		margin: 0 2vh;
 		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
@@ -250,43 +388,60 @@
 	.items .loading {
 		margin: 2vh;
 	}
+
+	.actions {
+		display: flex;
+		flex-direction: column;
+		padding: 2vh;
+		gap: 1vh;
+		min-width: 20vh;
+	}
 </style>
 
-<div class="wrapper">
+<div class="browser">
 	{#if showPath}
 		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" path={currentPath} {separator} onNavigate={path => loadDirectory(path)} onUp={onUpAtStart} onDown={() => activateArea(areaID)} />
 	{/if}
 	{#if error}
 		<Alert type="error" message={error} />
 	{/if}
-	<div class="container">
-		<Table {columns} noBorder>
-			<Header>
-				<Cell>{$t.localStorage?.name}</Cell>
-				<Cell align="right" desktopOnly>{$t.localStorage?.size}</Cell>
-				<Cell align="right" desktopOnly>{$t.localStorage?.modified}</Cell>
-			</Header>
-			<div class="items">
-				{#if loading}
-					<div class="loading">
-						<Spinner size="8vh" />
-					</div>
-				{:else if error}
-					{#each items as item, index (item.id)}
-						<div bind:this={itemElements[index]}>
-							<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
+	<div class="content">
+		<div class="container">
+			<Table {columns} noBorder>
+				<Header>
+					<Cell>{$t.localStorage?.name}</Cell>
+					<Cell align="right" desktopOnly>{$t.localStorage?.size}</Cell>
+					<Cell align="right" desktopOnly>{$t.localStorage?.modified}</Cell>
+				</Header>
+				<div class="items">
+					{#if loading}
+						<div class="loading">
+							<Spinner size="8vh" />
 						</div>
-					{/each}
-				{:else if items.length === 0}
-					<Alert type="info" message="Empty directory" />
-				{:else}
-					{#each items as item, index (item.id)}
-						<div bind:this={itemElements[index]}>
-							<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
-						</div>
-					{/each}
-				{/if}
+					{:else if error}
+						{#each items as item, index (item.id)}
+							<div bind:this={itemElements[index]}>
+								<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
+							</div>
+						{/each}
+					{:else if items.length === 0}
+						<Alert type="info" message="Empty directory" />
+					{:else}
+						{#each items as item, index (item.id)}
+							<div bind:this={itemElements[index]}>
+								<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
+							</div>
+						{/each}
+					{/if}
+				</div>
+			</Table>
+		</div>
+		{#if showActions && actions.length > 0}
+			<div class="actions">
+				{#each actions as action, index (action.id)}
+					<Button label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => handleAction(action.id)} />
+				{/each}
 			</div>
-		</Table>
+		{/if}
 	</div>
 </div>

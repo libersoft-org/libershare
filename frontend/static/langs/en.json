@@ -120,6 +120,14 @@
 			"clock": "Clock"
 		}
 	},
+	"fileBrowser": {
+		"openFolder": "Open folder",
+		"selectFolder": "Select folder",
+		"newFolder": "New folder",
+		"deleteFolder": "Delete folder",
+		"openFile": "Open file",
+		"deleteFile": "Delete file"
+	},
 	"about": {
 		"title": "About",
 		"buildDate": "Build date",
