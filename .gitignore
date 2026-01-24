@@ -3,7 +3,6 @@
 **/*.crt
 **/*.key
 frontend/.svelte-kit/
-backend/start-dev.sh
 backend/data
 .secret_git
 bun.lockb
