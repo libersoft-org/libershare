@@ -13,7 +13,7 @@
 	onMount(() => {
 		return useArea(areaID, {
 			up: () => true,
-			down: () => false, // Allow navigating down to content
+			down: () => false, // Allow navigating down to breadcrumb
 			left: () => true,
 			right: () => true,
 			confirmUp: () => onBack?.(),
