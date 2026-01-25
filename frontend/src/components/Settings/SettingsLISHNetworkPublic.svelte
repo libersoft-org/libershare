@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { type LISHNetwork, DEFAULT_PUBLIC_LIST_URL, fetchPublicNetworks, getExistingNetworkIds, addNetworkIfNotExists } from '../../scripts/lishnet.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -10,9 +12,10 @@
 	import Spinner from '../Spinner/Spinner.svelte';
 	interface Props {
 		areaID: string;
+		position?: Position;
 		onBack?: () => void;
 	}
-	let { areaID, onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0); // 0 = URL row (input + Load), 1+ = network rows, last = Back
 	let selectedColumn = $state(0); // 0 = URL input, 1 = Load button
@@ -64,49 +67,53 @@
 	}
 
 	onMount(() => {
-		const unregister = useArea(areaID, {
-			up: () => {
-				if (selectedIndex > 0) {
-					selectedIndex--;
-					return true;
-				}
-				return false;
+		const unregister = useArea(
+			areaID,
+			{
+				up: () => {
+					if (selectedIndex > 0) {
+						selectedIndex--;
+						return true;
+					}
+					return false;
+				},
+				down: () => {
+					if (selectedIndex < totalItems - 1) {
+						selectedIndex++;
+						return true;
+					}
+					return false;
+				},
+				left: () => {
+					if (selectedIndex === 0 && selectedColumn > 0) {
+						selectedColumn--;
+						return true;
+					}
+					return false;
+				},
+				right: () => {
+					if (selectedIndex === 0 && selectedColumn < 1 && !loading) {
+						selectedColumn++;
+						return true;
+					}
+					return false;
+				},
+				confirmDown: () => {
+					if (selectedIndex === 0 && selectedColumn === 0) urlInput?.focus();
+				},
+				confirmUp: () => {
+					if (selectedIndex === 0 && selectedColumn === 1) loadPublicList();
+					else if (selectedIndex >= 1 && selectedIndex < totalItems - 1) {
+						const networkIndex = selectedIndex - 1;
+						const network = publicNetworks[networkIndex];
+						if (network && !isNetworkAdded(network.networkID)) handleAddNetwork(network);
+					} else if (selectedIndex === totalItems - 1) onBack?.();
+				},
+				confirmCancel: () => {},
+				back: () => onBack?.(),
 			},
-			down: () => {
-				if (selectedIndex < totalItems - 1) {
-					selectedIndex++;
-					return true;
-				}
-				return false;
-			},
-			left: () => {
-				if (selectedIndex === 0 && selectedColumn > 0) {
-					selectedColumn--;
-					return true;
-				}
-				return false;
-			},
-			right: () => {
-				if (selectedIndex === 0 && selectedColumn < 1 && !loading) {
-					selectedColumn++;
-					return true;
-				}
-				return false;
-			},
-			confirmDown: () => {
-				if (selectedIndex === 0 && selectedColumn === 0) urlInput?.focus();
-			},
-			confirmUp: () => {
-				if (selectedIndex === 0 && selectedColumn === 1) loadPublicList();
-				else if (selectedIndex >= 1 && selectedIndex < totalItems - 1) {
-					const networkIndex = selectedIndex - 1;
-					const network = publicNetworks[networkIndex];
-					if (network && !isNetworkAdded(network.networkID)) handleAddNetwork(network);
-				} else if (selectedIndex === totalItems - 1) onBack?.();
-			},
-			confirmCancel: () => {},
-			back: () => onBack?.(),
-		});
+			position
+		);
 		activateArea(areaID);
 		return unregister;
 	});

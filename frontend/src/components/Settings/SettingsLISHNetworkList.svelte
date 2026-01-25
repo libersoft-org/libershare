@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, setAreaPosition, removeArea, activateArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { type LISHNetwork, getNetworks, saveNetworks as saveNetworksToStorage } from '../../scripts/lishnet.ts';
@@ -16,9 +18,10 @@
 	import LISHNetworkPublic from './SettingsLISHNetworkPublic.svelte';
 	interface Props {
 		areaID: string;
+		position?: Position;
 		onBack?: () => void;
 	}
-	let { areaID, onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	const editAreaID = areaID + '-edit';
 	const exportAreaID = areaID + '-export';
 	const exportAllAreaID = areaID + '-export-all';
@@ -56,7 +59,7 @@
 	function openPublic() {
 		showPublic = true;
 		setAreaPosition(areaID, { x: -999, y: -999 });
-		setAreaPosition(publicAreaID, { x: 0, y: 2 });
+		setAreaPosition(publicAreaID, position);
 		pushBreadcrumb($t.settings?.lishNetwork?.publicList);
 		removeBackHandler = pushBackHandler(handlePublicBack);
 	}
@@ -67,7 +70,7 @@
 			removeBackHandler = null;
 		}
 		removeArea(publicAreaID);
-		setAreaPosition(areaID, { x: 0, y: 2 });
+		setAreaPosition(areaID, position);
 		popBreadcrumb();
 		showPublic = false;
 		// Reload networks in case new ones were added
@@ -80,7 +83,7 @@
 		editingNetwork = null;
 		showAddEdit = true;
 		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
-		setAreaPosition(editAreaID, { x: 0, y: 2 });
+		setAreaPosition(editAreaID, position);
 		pushBreadcrumb($t.common?.add);
 		removeBackHandler = pushBackHandler(handleAddEditBack);
 	}
@@ -88,7 +91,7 @@
 	function openImport() {
 		showImport = true;
 		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
-		setAreaPosition(importAreaID, { x: 0, y: 2 });
+		setAreaPosition(importAreaID, position);
 		pushBreadcrumb($t.common?.import);
 		removeBackHandler = pushBackHandler(handleImportBack);
 	}
@@ -99,7 +102,7 @@
 			removeBackHandler = null;
 		}
 		removeArea(importAreaID);
-		setAreaPosition(areaID, { x: 0, y: 2 }); // Restore original area position
+		setAreaPosition(areaID, position); // Restore original area position
 		popBreadcrumb();
 		showImport = false;
 		registerAreaHandler();
@@ -115,7 +118,7 @@
 	function openExportAll() {
 		showExportAll = true;
 		setAreaPosition(areaID, { x: -999, y: -999 });
-		setAreaPosition(exportAllAreaID, { x: 0, y: 2 });
+		setAreaPosition(exportAllAreaID, position);
 		pushBreadcrumb($t.common?.exportAll);
 		removeBackHandler = pushBackHandler(handleExportAllBack);
 	}
@@ -126,7 +129,7 @@
 			removeBackHandler = null;
 		}
 		removeArea(exportAllAreaID);
-		setAreaPosition(areaID, { x: 0, y: 2 });
+		setAreaPosition(areaID, position);
 		popBreadcrumb();
 		showExportAll = false;
 		registerAreaHandler();
@@ -142,7 +145,7 @@
 		exportingNetwork = network;
 		showExport = true;
 		setAreaPosition(areaID, { x: -999, y: -999 });
-		setAreaPosition(exportAreaID, { x: 0, y: 2 });
+		setAreaPosition(exportAreaID, position);
 		pushBreadcrumb(`${network.name} - ${$t.common?.export}`);
 		removeBackHandler = pushBackHandler(handleExportBack);
 	}
@@ -153,7 +156,7 @@
 			removeBackHandler = null;
 		}
 		removeArea(exportAreaID);
-		setAreaPosition(areaID, { x: 0, y: 2 });
+		setAreaPosition(areaID, position);
 		popBreadcrumb();
 		showExport = false;
 		exportingNetwork = null;
@@ -165,7 +168,7 @@
 		editingNetwork = network;
 		showAddEdit = true;
 		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
-		setAreaPosition(editAreaID, { x: 0, y: 2 });
+		setAreaPosition(editAreaID, position);
 		pushBreadcrumb(`${network.name} - ${$t.common?.edit}`);
 		removeBackHandler = pushBackHandler(handleAddEditBack);
 	}
@@ -183,14 +186,14 @@
 			if (selectedIndex >= totalItems) selectedIndex = totalItems - 1;
 			buttonIndex = 0;
 			deletingNetwork = null;
-			setAreaPosition(areaID, { x: 0, y: 2 }); // Restore list area
+			setAreaPosition(areaID, position); // Restore list area
 			activateArea(areaID);
 		}
 	}
 
 	function cancelDelete() {
 		deletingNetwork = null;
-		setAreaPosition(areaID, { x: 0, y: 2 }); // Restore list area
+		setAreaPosition(areaID, position); // Restore list area
 		activateArea(areaID);
 	}
 
@@ -200,7 +203,7 @@
 			removeBackHandler = null;
 		}
 		removeArea(editAreaID);
-		setAreaPosition(areaID, { x: 0, y: 2 }); // Restore original area position
+		setAreaPosition(areaID, position); // Restore original area position
 		popBreadcrumb();
 		showAddEdit = false;
 		editingNetwork = null;
@@ -231,7 +234,7 @@
 			removeBackHandler = null;
 		}
 		removeArea(editAreaID);
-		setAreaPosition(areaID, { x: 0, y: 2 }); // Restore original area position
+		setAreaPosition(areaID, position); // Restore original area position
 		popBreadcrumb();
 		showAddEdit = false;
 		editingNetwork = null;
@@ -250,67 +253,73 @@
 	}
 
 	function registerAreaHandler() {
-		return useArea(areaID, {
-			up: () => {
-				if (selectedIndex > 0) {
-					selectedIndex--;
-					buttonIndex = 0;
-					scrollToSelected();
-					return true;
-				}
-				return false;
-			},
-			down: () => {
-				if (selectedIndex < totalItems - 1) {
-					selectedIndex++;
-					buttonIndex = 0;
-					scrollToSelected();
-					return true;
-				}
-				return false;
-			},
-			left: () => {
-				if ((isTopRow || isNetworkRow) && buttonIndex > 0) {
-					buttonIndex--;
-					return true;
-				}
-				return false;
-			},
-			right: () => {
-				const maxIndex = isTopRow ? 3 : isNetworkRow ? 3 : 0;
-				if (buttonIndex < maxIndex) {
-					buttonIndex++;
-					return true;
-				}
-				return false;
-			},
-			confirmDown: () => {},
-			confirmUp: () => {
-				if (selectedIndex === 0) {
-					if (buttonIndex === 0) openPublic();
-					else if (buttonIndex === 1) openAddNetwork();
-					else if (buttonIndex === 2) openImport();
-					else openExportAll();
-				} else if (selectedIndex === totalItems - 1) onBack?.();
-				else {
-					const networkIndex = selectedIndex - 1;
-					const network = networks[networkIndex];
-					if (network) {
-						if (buttonIndex === 0) connectNetwork(network);
-						else if (buttonIndex === 1) openExport(network);
-						else if (buttonIndex === 2) openEditNetwork(network);
-						else deleteNetwork(network);
+		return useArea(
+			areaID,
+			{
+				up: () => {
+					if (selectedIndex > 0) {
+						selectedIndex--;
+						buttonIndex = 0;
+						scrollToSelected();
+						return true;
 					}
-				}
+					return false;
+				},
+				down: () => {
+					if (selectedIndex < totalItems - 1) {
+						selectedIndex++;
+						buttonIndex = 0;
+						scrollToSelected();
+						return true;
+					}
+					return false;
+				},
+				left: () => {
+					if ((isTopRow || isNetworkRow) && buttonIndex > 0) {
+						buttonIndex--;
+						return true;
+					}
+					return false;
+				},
+				right: () => {
+					const maxIndex = isTopRow ? 3 : isNetworkRow ? 3 : 0;
+					if (buttonIndex < maxIndex) {
+						buttonIndex++;
+						return true;
+					}
+					return false;
+				},
+				confirmDown: () => {},
+				confirmUp: () => {
+					if (selectedIndex === 0) {
+						if (buttonIndex === 0) openPublic();
+						else if (buttonIndex === 1) openAddNetwork();
+						else if (buttonIndex === 2) openImport();
+						else openExportAll();
+					} else if (selectedIndex === totalItems - 1) onBack?.();
+					else {
+						const networkIndex = selectedIndex - 1;
+						const network = networks[networkIndex];
+						if (network) {
+							if (buttonIndex === 0) connectNetwork(network);
+							else if (buttonIndex === 1) openExport(network);
+							else if (buttonIndex === 2) openEditNetwork(network);
+							else deleteNetwork(network);
+						}
+					}
+				},
+				confirmCancel: () => {},
+				back: () => onBack?.(),
 			},
-			confirmCancel: () => {},
-			back: () => onBack?.(),
-		});
+			position
+		);
 	}
 
 	// Re-register handler when showAddEdit changes back to false
 	onMount(() => {
-		return registerAreaHandler();
+		const unregister = registerAreaHandler();
+		activateArea(areaID);
+		return unregister;
 	});
 </script>
 

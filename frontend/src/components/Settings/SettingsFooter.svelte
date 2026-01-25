@@ -4,7 +4,9 @@
 	import { navigateTo } from '../../scripts/navigation.ts';
 	import { footerVisible, setFooterVisible, footerPosition, footerWidgetVisibility, setFooterWidgetVisibility } from '../../scripts/settings.ts';
 	import { footerWidgets, type FooterWidget } from '../../scripts/footerWidgets.ts';
-	import { useArea, activeArea } from '../../scripts/areas.ts';
+	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Switch from '../Switch/Switch.svelte';
 	import Table from '../Table/Table.svelte';
@@ -29,9 +31,10 @@
 	}
 	interface Props {
 		areaID: string;
+		position?: Position;
 		onBack?: () => void;
 	}
-	let { areaID, onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
 	// 0 = visibility switch, 1 = position button, 2+ = widget rows, last = back button
@@ -43,71 +46,47 @@
 	}
 
 	onMount(() => {
-		return useArea(areaID, {
-			up: () => {
-				if (selectedIndex > 0) {
-					selectedIndex--;
-					scrollToSelected();
-					return true;
-				}
-				return false;
-			},
-			down: () => {
-				if (selectedIndex < totalItems - 1) {
-					selectedIndex++;
-					scrollToSelected();
-					return true;
-				}
-				return false;
-			},
-			left: () => {
-				// Toggle switch off
-				if (selectedIndex === 0) {
-					if ($footerVisible) {
-						setFooterVisible(false);
+		const unregister = useArea(
+			areaID,
+			{
+				up: () => {
+					if (selectedIndex > 0) {
+						selectedIndex--;
+						scrollToSelected();
 						return true;
 					}
-				} else if (selectedIndex > 1 && selectedIndex < totalItems - 1) {
-					const widget = footerWidgets[selectedIndex - 2];
-					if ($footerWidgetVisibility[widget]) {
-						setFooterWidgetVisibility(widget, false);
+					return false;
+				},
+				down: () => {
+					if (selectedIndex < totalItems - 1) {
+						selectedIndex++;
+						scrollToSelected();
 						return true;
 					}
-				}
-				return false;
-			},
-			right: () => {
-				// Toggle switch on
-				if (selectedIndex === 0) {
-					if (!$footerVisible) {
-						setFooterVisible(true);
-						return true;
+					return false;
+				},
+				left: () => false,
+				right: () => false,
+				confirmDown: () => {},
+				confirmUp: () => {
+					if (selectedIndex === 0)
+						setFooterVisible(!$footerVisible); // Toggle footer visibility
+					else if (selectedIndex === 1) openPositionDialog();
+					else if (selectedIndex === totalItems - 1)
+						onBack?.(); // Back button
+					else {
+						// Toggle the widget switch
+						const widget = footerWidgets[selectedIndex - 2];
+						setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget]);
 					}
-				} else if (selectedIndex > 1 && selectedIndex < totalItems - 1) {
-					const widget = footerWidgets[selectedIndex - 2];
-					if (!$footerWidgetVisibility[widget]) {
-						setFooterWidgetVisibility(widget, true);
-						return true;
-					}
-				}
-				return false;
+				},
+				confirmCancel: () => {},
+				back: () => onBack?.(),
 			},
-			confirmDown: () => {},
-			confirmUp: () => {
-				if (selectedIndex === 0)
-					setFooterVisible(!$footerVisible); // Toggle footer visibility
-				else if (selectedIndex === 1) openPositionDialog();
-				else if (selectedIndex === totalItems - 1)
-					onBack?.(); // Back button
-				else {
-					// Toggle the widget switch
-					const widget = footerWidgets[selectedIndex - 2];
-					setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget]);
-				}
-			},
-			confirmCancel: () => {},
-			back: () => onBack?.(),
-		});
+			position
+		);
+		activateArea(areaID);
+		return unregister;
 	});
 
 	function scrollToSelected(): void {

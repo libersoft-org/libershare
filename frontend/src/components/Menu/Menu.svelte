@@ -3,6 +3,7 @@
 	import MenuBar from './MenuBar.svelte';
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
+	import type { Position } from '../../scripts/navigationLayout.ts';
 
 	interface Props {
 		areaID: string;
@@ -11,11 +12,11 @@
 		orientation?: 'horizontal' | 'vertical';
 		selectedId?: string;
 		buttonWidth?: string;
+		position: Position;
 		onselect?: (id: string) => void;
 		onBack?: () => void;
-		onUp?: () => void;
 	}
-	let { areaID, title, items, orientation = 'horizontal', selectedId, buttonWidth, onselect, onBack, onUp }: Props = $props();
+	let { areaID, title, items, orientation = 'horizontal', selectedId, buttonWidth, position, onselect, onBack }: Props = $props();
 	let initialIndex = $derived(
 		selectedId
 			? Math.max(
@@ -44,7 +45,7 @@
 	<MenuTitle {title} />
 	<MenuBar>
 		{#key `${title}-${selectedId}-${orientation}`}
-			<ButtonsGroup {areaID} {initialIndex} {orientation} {onBack} {onUp}>
+			<ButtonsGroup {areaID} {position} {initialIndex} {orientation} {onBack}>
 				{#each items as item (item.id)}
 					<Button label={item.label} icon={item.selected ? '/img/check.svg' : item.icon} iconPosition="top" iconSize="6vh" width={buttonWidth} onConfirm={() => onselect?.(item.id)} />
 				{/each}

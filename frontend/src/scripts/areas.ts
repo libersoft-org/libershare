@@ -1,7 +1,7 @@
 import { writable, get } from 'svelte/store';
 import { play } from './audio.ts';
+import type { Position } from './navigationLayout.ts';
 // Types
-export type Position = { x: number; y: number };
 export type Direction = 'up' | 'down' | 'left' | 'right';
 export type InputAction = Direction | 'confirmDown' | 'confirmUp' | 'confirmCancel' | 'back';
 export type AreaHandlers = {
@@ -18,43 +18,71 @@ export type AreaHandlers = {
 // Stores
 export const areaLayout = writable<Record<string, Position>>({});
 export const activeArea = writable<string | null>(null);
+export const debugAreas = writable<boolean>(false); // Debug mode - when true, shows area overlay
 // Internal handlers map
 const areaHandlers = new Map<string, AreaHandlers>();
 let confirmActive = false;
 
-// Layout management
-export function setAreaPosition(areaID: string, position: Position): void {
-	areaLayout.update(layout => ({ ...layout, [areaID]: position }));
-}
-
-export function removeArea(areaID: string): void {
-	areaLayout.update(layout => {
-		const { [areaID]: _, ...rest } = layout;
-		return rest;
-	});
-	areaHandlers.delete(areaID);
-	if (get(activeArea) === areaID) activeArea.set(null);
-}
-
+// Clear all areas (used on navigation/page change)
 export function clearLayout(): void {
 	areaLayout.set({});
 	areaHandlers.clear();
 	activeArea.set(null);
 }
 
-// Handler management - called by components
-export function useArea(areaID: string, handlers: AreaHandlers): () => void {
+/**
+ * Register an area with handlers and position.
+ * This is the ONLY way to register areas - ensures consistency.
+ *
+ * @param areaID - Unique identifier for the area
+ * @param handlers - Navigation handlers for this area
+ * @param position - Position in the spatial layout (required)
+ * @returns Cleanup function that removes the area
+ */
+export function useArea(areaID: string, handlers: AreaHandlers, position: Position): () => void {
+	// Register handlers
 	areaHandlers.set(areaID, handlers);
-	return () => areaHandlers.delete(areaID);
+	// Register position
+	areaLayout.update(layout => ({ ...layout, [areaID]: position }));
+	// Return cleanup function
+	return () => {
+		areaHandlers.delete(areaID);
+		areaLayout.update(layout => {
+			const { [areaID]: _, ...rest } = layout;
+			return rest;
+		});
+		if (get(activeArea) === areaID) activeArea.set(null);
+	};
+}
+
+/**
+ * @deprecated Use useArea() with position parameter instead.
+ * This function is kept for backwards compatibility with modal dialogs.
+ * Directly updates an area's position in the layout.
+ */
+export function setAreaPosition(areaID: string, position: Position): void {
+	areaLayout.update(layout => ({ ...layout, [areaID]: position }));
+}
+
+/**
+ * @deprecated The cleanup function from useArea() handles removal.
+ * This function is kept for backwards compatibility.
+ * Removes an area from the layout (but not its handlers).
+ */
+export function removeArea(areaID: string): void {
+	areaLayout.update(layout => {
+		const { [areaID]: _, ...rest } = layout;
+		return rest;
+	});
+	if (get(activeArea) === areaID) activeArea.set(null);
 }
 
 // Activation
 export function activateArea(areaID: string): void {
-	const layout = get(areaLayout);
-	if (areaID in layout) {
+	const handlers = areaHandlers.get(areaID);
+	if (handlers) {
 		activeArea.set(areaID);
-		const handlers = areaHandlers.get(areaID);
-		handlers?.onActivate?.();
+		handlers.onActivate?.();
 	}
 }
 
@@ -62,9 +90,23 @@ export function activateArea(areaID: string): void {
 export function areaNavigate(direction: Direction): boolean {
 	const layout = get(areaLayout);
 	const current = get(activeArea);
-	if (!current || !(current in layout)) return false;
+	console.log(
+		'areaNavigate',
+		direction,
+		'from',
+		current,
+		'layout:',
+		Object.keys(layout)
+			.map(k => `${k}:${JSON.stringify(layout[k])}`)
+			.join(', ')
+	);
+	if (!current || !(current in layout)) {
+		console.log('areaNavigate: current area not in layout');
+		return false;
+	}
 	const currentPos = layout[current];
 	const target = findAreaInDirection(layout, currentPos, direction);
+	console.log('areaNavigate: target', target);
 	if (target) {
 		activateArea(target);
 		return true;
@@ -157,9 +199,14 @@ export function emit(action: InputAction): void {
 		handlers.confirmCancel?.();
 	}
 	const directionHandler = handlers[action as Direction];
-	if (directionHandler) {
-		const handled = directionHandler();
-		if (!handled) areaNavigate(action as Direction);
-	} else areaNavigate(action as Direction);
-	play('move');
+	// Handler returns true only if it actually handled the navigation (moved to next item inside)
+	// If handler returns false or doesn't exist, automatically navigate to next area
+	const handled = directionHandler ? directionHandler() : false;
+	if (!handled) {
+		const navigated = areaNavigate(action as Direction);
+		// Only play move sound if we actually moved somewhere
+		if (navigated) play('move');
+	} else {
+		play('move');
+	}
 }

@@ -1,14 +1,16 @@
 <script lang="ts">
 	import { productName, productVersion, buildDate, commitHash } from '../../scripts/app.ts';
 	import { t } from '../../scripts/language.ts';
+	import { LAYOUT, type Position } from '../../scripts/navigationLayout.ts';
 	import Dialog from '../Dialog/Dialog.svelte';
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
 	interface Props {
 		areaID: string;
+		position?: Position;
 		onBack?: () => void;
 	}
-	let { areaID, onBack: onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 
 	function openUrl(url: string) {
 		window.open(url, '_blank');
@@ -58,7 +60,7 @@
 		</div>
 	</div>
 	<div class="links">
-		<ButtonsGroup {areaID} initialIndex={2} {onBack}>
+		<ButtonsGroup {areaID} {position} initialIndex={2} {onBack}>
 			<Button label={$t.about?.githubPage} padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
 			<Button label={$t.about?.officialWebsite} padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://libershare.com')} />
 			<Button label={$t.common?.ok} onConfirm={onBack} />

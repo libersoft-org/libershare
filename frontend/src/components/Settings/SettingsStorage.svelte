@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, setAreaPosition, removeArea, activateArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath, storageTempPath, setStoragePath, setStorageTempPath } from '../../scripts/settings.ts';
@@ -11,9 +13,10 @@
 
 	interface Props {
 		areaID: string;
+		position?: Position;
 		onBack?: () => void;
 	}
-	let { areaID, onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	const browseAreaID = areaID + '-browse';
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
@@ -25,10 +28,10 @@
 	function openBrowse(type: 'storage' | 'temp') {
 		browsingFor = type;
 		setAreaPosition(areaID, { x: -999, y: -999 });
-		setAreaPosition(browseAreaID, { x: 0, y: 2 });
+		// Don't register browseAreaID in layout - FileBrowser creates its own sub-areas
 		pushBreadcrumb(type === 'storage' ? ($t.settings?.storage?.folderDownload ?? 'Download folder') : ($t.settings?.storage?.folderTemp ?? 'Temp folder'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
-		activateArea(browseAreaID);
+		// FileBrowser will activate its list area on mount
 	}
 
 	function changeStoragePath() {
@@ -54,8 +57,8 @@
 			removeBackHandler();
 			removeBackHandler = null;
 		}
-		removeArea(browseAreaID);
-		setAreaPosition(areaID, { x: 0, y: 2 });
+		// FileBrowser's sub-areas are cleaned up automatically when it unmounts
+		setAreaPosition(areaID, position);
 		popBreadcrumb();
 		browsingFor = null;
 		registerAreaHandler();
@@ -63,38 +66,44 @@
 	}
 
 	function registerAreaHandler() {
-		return useArea(areaID, {
-			up: () => {
-				if (selectedIndex > 0) {
-					selectedIndex--;
-					scrollToSelected();
-					return true;
-				}
-				return false;
+		return useArea(
+			areaID,
+			{
+				up: () => {
+					if (selectedIndex > 0) {
+						selectedIndex--;
+						scrollToSelected();
+						return true;
+					}
+					return false;
+				},
+				down: () => {
+					if (selectedIndex < totalItems - 1) {
+						selectedIndex++;
+						scrollToSelected();
+						return true;
+					}
+					return false;
+				},
+				left: () => false,
+				right: () => false,
+				confirmDown: () => {},
+				confirmUp: () => {
+					if (selectedIndex === 0) changeStoragePath();
+					else if (selectedIndex === 1) changeStorageTempPath();
+					else if (selectedIndex === totalItems - 1) onBack?.();
+				},
+				confirmCancel: () => {},
+				back: () => onBack?.(),
 			},
-			down: () => {
-				if (selectedIndex < totalItems - 1) {
-					selectedIndex++;
-					scrollToSelected();
-					return true;
-				}
-				return false;
-			},
-			left: () => false,
-			right: () => false,
-			confirmDown: () => {},
-			confirmUp: () => {
-				if (selectedIndex === 0) changeStoragePath();
-				else if (selectedIndex === 1) changeStorageTempPath();
-				else if (selectedIndex === totalItems - 1) onBack?.();
-			},
-			confirmCancel: () => {},
-			back: () => onBack?.(),
-		});
+			position
+		);
 	}
 
 	onMount(() => {
-		return registerAreaHandler();
+		const unregister = registerAreaHandler();
+		activateArea(areaID);
+		return unregister;
 	});
 
 	function scrollToSelected(): void {

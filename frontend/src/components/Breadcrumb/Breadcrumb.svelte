@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useArea, activeArea, setAreaPosition, removeArea } from '../../scripts/areas.ts';
+	import { useArea, activeArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
 	import Icon from '../Icon/Icon.svelte';
 	export interface BreadcrumbItem {
 		id: string;
@@ -10,13 +11,11 @@
 	interface Props {
 		areaID: string;
 		items: BreadcrumbItem[];
-		position?: { x: number; y: number };
+		position: Position;
 		onSelect?: (item: BreadcrumbItem, index: number) => void;
-		onUp?: () => void;
-		onDown?: () => void;
 		onBack?: () => void;
 	}
-	let { areaID, items, position, onSelect, onUp, onDown, onBack }: Props = $props();
+	let { areaID, items, position, onSelect, onBack }: Props = $props();
 	let selectedIndex = $state(0);
 	let active = $derived($activeArea === areaID);
 	let maxIndex = $derived(items.length - 2); // Last item (current) is not selectable
@@ -36,20 +35,8 @@
 			}
 			return false;
 		},
-		up: () => {
-			if (onUp) {
-				onUp();
-				return true;
-			}
-			return false;
-		},
-		down: () => {
-			if (onDown) {
-				onDown();
-				return true;
-			}
-			return false;
-		},
+		up: () => false,
+		down: () => false,
 		confirmDown: () => {},
 		confirmUp: () => {
 			const item = items[selectedIndex];
@@ -65,12 +52,7 @@
 	};
 
 	onMount(() => {
-		if (position) setAreaPosition(areaID, position);
-		const unregister = useArea(areaID, areaHandlers);
-		return () => {
-			unregister();
-			if (position) removeArea(areaID);
-		};
+		return useArea(areaID, areaHandlers, position);
 	});
 </script>
 

@@ -1,19 +1,25 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { useArea, setAreaPosition, removeArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
 	import SearchBar from '../Search/SearchBar.svelte';
 	import ListItem from './ListItem.svelte';
 	import Product from '../Product/Product.svelte';
 	interface Props {
 		areaID: string;
+		position: Position;
 		title?: string;
 		category?: string;
 		onBack?: () => void;
 	}
-	let { areaID, title = 'Items', onBack }: Props = $props();
+	let { areaID, position, title = 'Items', onBack }: Props = $props();
 	const searchAreaID = `${areaID}-search`;
 	const listAreaID = `${areaID}-list`;
+	// Calculate sub-area positions based on base position
+	const searchPosition = { x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y };
+	const listPosition = { x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y };
 	let searchSelected = $derived($activeArea === searchAreaID);
 	let active = $derived($activeArea === listAreaID);
 	// Some test data
@@ -25,7 +31,7 @@
 	let isAPressed = $state(false);
 	let itemElements: HTMLElement[] = $state([]);
 	let selectedItem = $state<{ id: number; title: string } | null>(null);
-	let unregisterList: (() => void) | null = null; // Handlers will be set in onMount
+	let unregisterList: (() => void) | null = null;
 	let searchBar: SearchBar | undefined = $state();
 
 	// Calculate columns by comparing Y positions of items
@@ -33,7 +39,6 @@
 		if (itemElements.length < 2) return 1;
 		const firstItemY = itemElements[0].offsetTop;
 		let cols = 1;
-		// Count how many items are on the first row (same Y position)
 		for (let i = 1; i < itemElements.length; i++) {
 			if (itemElements[i].offsetTop === firstItemY) cols++;
 			else break;
@@ -76,7 +81,6 @@
 		pushBreadcrumb(items[selectedIndex].title);
 		scrollContentToTop();
 		isAPressed = false;
-		// Unregister list area when showing product detail
 		if (unregisterList) {
 			unregisterList();
 			unregisterList = null;
@@ -88,8 +92,7 @@
 		popBreadcrumb();
 		await tick();
 		scrollToSelectedItem(true);
-		// Re-register list area when returning from product detail
-		unregisterList = useArea(listAreaID, areaHandlers);
+		unregisterList = useArea(listAreaID, areaHandlers, listPosition);
 		activateArea(listAreaID);
 	}
 
@@ -100,9 +103,7 @@
 				navigate('up');
 				return true;
 			}
-			// Navigate to search bar when at top row
-			activateArea(searchAreaID);
-			return true;
+			return false; // Let system navigate to search area
 		},
 		down: () => {
 			const cols = getColumnsCount();
@@ -142,31 +143,22 @@
 	};
 
 	onMount(() => {
-		// Position search between breadcrumb (y=1) and list (y=2)
-		setAreaPosition(searchAreaID, { x: 0, y: 1.5 });
-		setAreaPosition(listAreaID, { x: 0, y: 2 });
-		// Register search area handlers
-		const unregisterSearch = useArea(searchAreaID, {
-			up: () => {
-				activateArea('breadcrumb');
-				return true;
+		const unregisterSearch = useArea(
+			searchAreaID,
+			{
+				up: () => false,
+				down: () => false,
+				confirmUp: () => searchBar?.toggleFocus(),
+				back: () => onBack?.(),
 			},
-			down: () => {
-				activateArea(listAreaID);
-				return true;
-			},
-			confirmUp: () => {
-				searchBar?.toggleFocus();
-			},
-			back: () => onBack?.(),
-		});
-		unregisterList = useArea(listAreaID, areaHandlers);
+			searchPosition
+		);
+
+		unregisterList = useArea(listAreaID, areaHandlers, listPosition);
 		activateArea(listAreaID);
 		return () => {
 			if (unregisterList) unregisterList();
 			unregisterSearch();
-			removeArea(searchAreaID);
-			removeArea(listAreaID);
 		};
 	});
 </script>

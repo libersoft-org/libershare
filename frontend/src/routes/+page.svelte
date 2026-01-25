@@ -10,10 +10,12 @@
 	import { productName } from '../scripts/app.ts';
 	import { startInput } from '../scripts/input.ts';
 	import { api } from '../scripts/api.ts';
-	import { setAreaPosition, activateArea } from '../scripts/areas.ts';
+	import { activateArea } from '../scripts/areas.ts';
+	import { LAYOUT, CONTENT_POSITIONS } from '../scripts/navigationLayout.ts';
 	import { initAudio, play } from '../scripts/audio.ts';
 	import { cursorVisible } from '../scripts/mouse.ts';
 	import { cursorSize, cursorSizes, footerVisible } from '../scripts/settings.ts';
+	import AreaDebugOverlay from '../components/Debug/AreaDebugOverlay.svelte';
 	import { initStats } from '../scripts/stats.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	let contentElement: HTMLElement;
@@ -49,10 +51,7 @@
 	}
 
 	onMount(async () => {
-		// Setup area layout
-		setAreaPosition('header', { x: 0, y: 0 });
-		setAreaPosition('breadcrumb', { x: 0, y: 1 });
-		setAreaPosition('content', { x: 0, y: 2 });
+		// Content element for scroll management
 		setContentElement(contentElement);
 		startInput();
 		activateArea('content');
@@ -86,20 +85,21 @@
 	<img class="cursor" src="/img/cursor.svg" alt="" style="left: {cursorX}px; top: {cursorY}px; width: {cursorSizeValue}; height: {cursorSizeValue};" />
 {/if}
 <div class="page">
-	<Header areaID="header" {onBack} />
-	<NavigationBreadcrumb areaID="breadcrumb" items={$breadcrumbItems} {onBack} />
+	<Header areaID="header" position={LAYOUT.header} {onBack} />
+	<NavigationBreadcrumb areaID="breadcrumb" position={LAYOUT.breadcrumb} items={$breadcrumbItems} {onBack} />
 	<div class="content" bind:this={contentElement}>
 		{#if $confirmDialog.visible && $confirmDialog.action && $confirmDialog.action !== 'back'}
 			{@const dialogConfig = $confirmDialogs[$confirmDialog.action as 'restart' | 'shutdown' | 'quit']}
-			<ConfirmDialog title={dialogConfig.title ?? ''} message={dialogConfig.message ?? ''} confirmLabel={dialogConfig.confirmLabel} cancelLabel={dialogConfig.cancelLabel} defaultButton={dialogConfig.defaultButton} onConfirm={handleConfirm} onBack={handleCancel} />
+			<ConfirmDialog title={dialogConfig.title ?? ''} message={dialogConfig.message ?? ''} confirmLabel={dialogConfig.confirmLabel} cancelLabel={dialogConfig.cancelLabel} defaultButton={dialogConfig.defaultButton} position={LAYOUT.content} onConfirm={handleConfirm} onBack={handleCancel} />
 		{:else if $currentComponent}
 			{@const Component = $currentComponent.component}
-			<Component areaID="content" title={$currentComponent.label ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', icon: i.icon, selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} onselect={navigate} {...$currentComponent.props} {onBack} />
+			<Component areaID="content" title={$currentComponent.label ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', icon: i.icon, selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} position={LAYOUT.content} onselect={navigate} {...$currentComponent.props} {onBack} />
 		{:else}
-			<Menu areaID="content" title={$currentTitle ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', icon: i.icon, selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} buttonWidth="25vh" onselect={navigate} {onBack} />
+			<Menu areaID="content" title={$currentTitle ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', icon: i.icon, selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} position={LAYOUT.content} buttonWidth="25vh" onselect={navigate} {onBack} />
 		{/if}
 	</div>
 	{#if $footerVisible}
 		<Footer />
 	{/if}
 </div>
+<AreaDebugOverlay />

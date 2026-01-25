@@ -1,18 +1,18 @@
 <script lang="ts">
 	import Breadcrumb, { type BreadcrumbItem } from '../Breadcrumb/Breadcrumb.svelte';
 	import { activateArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
 	interface PathBreadcrumbItem extends BreadcrumbItem {
 		path: string;
 	}
 	interface Props {
 		areaID: string;
+		position: Position;
 		path: string;
 		separator: string;
 		onNavigate?: (path: string) => void;
-		onUp?: () => void;
-		onDown?: () => void;
 	}
-	let { areaID, path, separator, onNavigate, onUp, onDown }: Props = $props();
+	let { areaID, position, path, separator, onNavigate }: Props = $props();
 
 	// Parse path into breadcrumb items with their full paths
 	let breadcrumbItems = $derived.by<PathBreadcrumbItem[]>(() => {
@@ -64,4 +64,4 @@
 	}
 </script>
 
-<Breadcrumb {areaID} items={breadcrumbItems} position={{ x: 0, y: 2 }} onSelect={handleSelect} {onUp} {onDown} onBack={handleBack} />
+<Breadcrumb {areaID} items={breadcrumbItems} {position} onSelect={handleSelect} onBack={handleBack} />

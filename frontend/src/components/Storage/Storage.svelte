@@ -1,12 +1,14 @@
 <script lang="ts">
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import { storagePath } from '../../scripts/settings.ts';
-	import { activateArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	interface Props {
 		areaID: string;
+		position?: Position;
 		onBack?: () => void;
 	}
-	let { areaID, onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 </script>
 
-<FileBrowser {areaID} {onBack} initialPath={$storagePath} onUpAtStart={() => activateArea('breadcrumb')} />
+<FileBrowser {areaID} {position} {onBack} initialPath={$storagePath} />

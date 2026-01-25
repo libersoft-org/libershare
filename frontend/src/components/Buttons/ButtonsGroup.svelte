@@ -10,15 +10,16 @@
 	import type { Snippet } from 'svelte';
 	import { setContext, onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
 	interface Props {
 		children: Snippet;
 		areaID: string;
+		position: Position;
 		initialIndex?: number;
 		orientation?: 'horizontal' | 'vertical';
 		onBack?: () => void;
-		onUp?: () => void;
 	}
-	let { children, areaID, initialIndex = 0, orientation = 'vertical', onBack, onUp }: Props = $props();
+	let { children, areaID, position, initialIndex = 0, orientation = 'vertical', onBack }: Props = $props();
 	let selectedIndex = $state(initialIndex);
 	let isAPressed = $state(false);
 	let buttons: { onConfirm?: () => void }[] = [];
@@ -50,10 +51,8 @@
 			const child = children[i] as HTMLElement;
 			offset += child.offsetWidth;
 		}
-		// Add gaps (converted to pixels)
 		const gap = parseFloat(getComputedStyle(itemsElement).gap) || 0;
 		offset += selectedIndex * gap;
-		// Add half of selected button width
 		const selectedChild = children[selectedIndex] as HTMLElement;
 		if (selectedChild) offset += selectedChild.offsetWidth / 2;
 		translateX = -offset;
@@ -63,14 +62,8 @@
 		const handlers =
 			orientation === 'horizontal'
 				? {
-						up: () => {
-							if (onUp) {
-								onUp();
-								return true;
-							}
-							return false;
-						},
-						down: () => false, // Allow navigation to area below
+						up: () => false,
+						down: () => false,
 						left: () => {
 							if (selectedIndex > 0) {
 								selectedIndex--;
@@ -94,10 +87,6 @@
 								selectedIndex--;
 								return true;
 							}
-							if (onUp) {
-								onUp();
-								return true;
-							}
 							return false;
 						},
 						down: () => {
@@ -107,10 +96,12 @@
 							}
 							return false;
 						},
+						left: () => false,
+						right: () => false,
 					};
-		// Delay registration so ButtonsGroup handlers take priority over parent component handlers
-		requestAnimationFrame(() => {
-			useArea(areaID, {
+		const unregister = useArea(
+			areaID,
+			{
 				...handlers,
 				confirmDown: () => {
 					isAPressed = true;
@@ -123,10 +114,12 @@
 					isAPressed = false;
 				},
 				back: () => onBack?.(),
-			});
-			activateArea(areaID);
-		});
+			},
+			position
+		);
+		activateArea(areaID);
 		updateTranslateX();
+		return unregister;
 	});
 </script>
 

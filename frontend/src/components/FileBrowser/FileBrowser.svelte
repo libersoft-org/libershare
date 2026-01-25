@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useArea, activateArea, activeArea, setAreaPosition, removeArea } from '../../scripts/areas.ts';
+	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { api } from '../../scripts/api.ts';
 	import Button from '../Buttons/Button.svelte';
@@ -31,17 +33,23 @@
 	}
 	interface Props {
 		areaID: string;
+		position: Position;
 		initialPath?: string;
 		foldersOnly?: boolean;
 		showPath?: boolean;
 		onBack?: () => void;
 		onSelect?: (path: string) => void;
-		onUpAtStart?: () => void;
 		onDownAtEnd?: () => boolean;
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, initialPath = '', foldersOnly = false, showPath = true, onBack, onSelect, onUpAtStart, onDownAtEnd }: Props = $props();
-	let active = $derived($activeArea === areaID);
+	let { areaID, position, initialPath = '', foldersOnly = false, showPath = true, onBack, onSelect, onDownAtEnd }: Props = $props();
+	// Calculate sub-area positions based on base position
+	const pathBreadcrumbPosition = { x: position.x + CONTENT_OFFSETS.pathBreadcrumb.x, y: position.y + CONTENT_OFFSETS.pathBreadcrumb.y };
+	const folderActionsPosition = { x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y };
+	const listPosition = { x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y };
+	const actionsPosition = { x: position.x + CONTENT_OFFSETS.side.x, y: position.y + CONTENT_OFFSETS.side.y };
+	const listAreaID = `${areaID}-list`;
+	let active = $derived($activeArea === listAreaID);
 	let actionsActive = $derived($activeArea === `${areaID}-actions`);
 	let selectedIndex = $state(0);
 	let selectedActionIndex = $state(0);
@@ -190,6 +198,7 @@
 			// At top of list, switch to folder actions toolbar (or path breadcrumb if error)
 			if (error) {
 				if (showPath) activateArea(`${areaID}-path`);
+				else return false;
 			} else activateArea(`${areaID}-folder-actions`);
 			return true;
 		},
@@ -200,10 +209,10 @@
 				return true;
 			}
 			if (onDownAtEnd) return onDownAtEnd();
-			return true; // Stay in file browser, don't navigate to other areas
+			return false; // Allow navigation to other areas
 		},
-		left: () => true,
-		right: () => true,
+		left: () => false, // Allow navigation to other areas
+		right: () => false, // Allow navigation to other areas
 		confirmDown: () => {},
 		confirmUp: () => {
 			const item = items[selectedIndex];
@@ -229,11 +238,12 @@
 				activateArea(`${areaID}-path`);
 				return true;
 			}
-			return true;
+			// Otherwise let areaNavigate handle it (go to global breadcrumb)
+			return false;
 		},
 		down: () => {
 			// Go to file list
-			activateArea(areaID);
+			activateArea(listAreaID);
 			return true;
 		},
 		left: () => {
@@ -241,14 +251,14 @@
 				selectedFolderActionIndex--;
 				return true;
 			}
-			return true;
+			return false;
 		},
 		right: () => {
 			if (selectedFolderActionIndex < folderActions.length - 1) {
 				selectedFolderActionIndex++;
 				return true;
 			}
-			return true;
+			return false;
 		},
 		confirmDown: () => {},
 		confirmUp: () => {
@@ -277,17 +287,17 @@
 				selectedActionIndex--;
 				return true;
 			}
-			return true;
+			return false;
 		},
 		down: () => {
 			if (selectedActionIndex < fileActions.length - 1) {
 				selectedActionIndex++;
 				return true;
 			}
-			return true;
+			return false;
 		},
-		left: () => true,
-		right: () => true,
+		left: () => false,
+		right: () => false,
 		confirmDown: () => {},
 		confirmUp: () => {
 			const action = fileActions[selectedActionIndex];
@@ -298,7 +308,7 @@
 		confirmCancel: () => {},
 		back: () => {
 			showActions = false;
-			activateArea(areaID);
+			activateArea(listAreaID);
 		},
 	};
 
@@ -315,7 +325,7 @@
 				break;
 		}
 		showActions = false;
-		activateArea(areaID);
+		activateArea(listAreaID);
 	}
 
 	function handleFolderAction(actionId: string) {
@@ -341,14 +351,11 @@
 	}
 
 	onMount(() => {
-		const unregister = useArea(areaID, areaHandlers);
-		const unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers);
-		const unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers);
-		// Set area positions for navigation (below global breadcrumb at y:1)
-		setAreaPosition(`${areaID}-folder-actions`, { x: 0, y: 3 });
-		setAreaPosition(areaID, { x: 0, y: 4 });
-		setAreaPosition(`${areaID}-actions`, { x: 1, y: 4 });
-		activateArea(areaID);
+		// Register sub-areas with positions relative to content area
+		const unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		const unregister = useArea(`${areaID}-list`, areaHandlers, listPosition);
+		const unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
+		activateArea(`${areaID}-list`);
 
 		(async () => {
 			try {
@@ -367,9 +374,6 @@
 			unregister();
 			unregisterActions();
 			unregisterFolderActions();
-			removeArea(areaID);
-			removeArea(`${areaID}-actions`);
-			removeArea(`${areaID}-folder-actions`);
 		};
 	});
 </script>
@@ -426,7 +430,7 @@
 
 <div class="browser">
 	{#if showPath}
-		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" path={currentPath} {separator} onNavigate={path => loadDirectory(path)} onUp={onUpAtStart} onDown={() => activateArea(error ? areaID : `${areaID}-folder-actions`)} />
+		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" position={pathBreadcrumbPosition} path={currentPath} {separator} onNavigate={path => loadDirectory(path)} />
 	{/if}
 	{#if !error}
 		<div class="folder-actions">

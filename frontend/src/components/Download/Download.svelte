@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import Table from '../Table/Table.svelte';
 	import Header from '../Table/TableHeader.svelte';
@@ -21,10 +23,11 @@
 	}
 	interface Props {
 		areaID: string;
+		position?: Position;
 		title?: string;
 		onBack?: () => void;
 	}
-	let { areaID, title = 'Downloads', onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, title = 'Downloads', onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	// Test data
 	const downloads: DownloadData[] = [
@@ -156,7 +159,7 @@
 	};
 
 	onMount(() => {
-		const unregister = useArea(areaID, areaHandlers);
+		const unregister = useArea(areaID, areaHandlers, position);
 		activateArea(areaID);
 		return unregister;
 	});

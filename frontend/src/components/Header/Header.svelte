@@ -1,24 +1,30 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { productName } from '../../scripts/app.ts';
-	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { useArea, activeArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
 	import Button from '../Buttons/Button.svelte';
 	interface Props {
 		areaID: string;
+		position: Position;
 		onBack?: () => void;
 	}
-	let { areaID, onBack }: Props = $props();
+	let { areaID, position, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
 
 	onMount(() => {
-		return useArea(areaID, {
-			up: () => true,
-			down: () => false, // Allow navigating down to breadcrumb
-			left: () => true,
-			right: () => true,
-			confirmUp: () => onBack?.(),
-			back: () => onBack?.(),
-		});
+		return useArea(
+			areaID,
+			{
+				up: () => false,
+				down: () => false,
+				left: () => false,
+				right: () => false,
+				confirmUp: () => onBack?.(),
+				back: () => onBack?.(),
+			},
+			position
+		);
 	});
 </script>
 
@@ -37,9 +43,21 @@
 		font-size: 4vh;
 		font-weight: bold;
 	}
+
+	.spacer {
+		flex: 1;
+	}
+
+	.debug-hint {
+		color: var(--secondary-foreground);
+		font-size: 2vh;
+		opacity: 0.6;
+	}
 </style>
 
 <div class="header">
 	<Button icon="/img/back.svg" alt="Back" selected={active} padding="1vh" width="5vh" height="5vh" borderRadius="50%" />
 	<div class="title">{productName}</div>
+	<div class="spacer"></div>
+	<div class="debug-hint">Press F2 to open debug window</div>
 </div>

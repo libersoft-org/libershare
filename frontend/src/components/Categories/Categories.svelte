@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { useArea, setAreaPosition, removeArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { useArea, activeArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import SearchBar from '../Search/SearchBar.svelte';
 	import Menu from '../Menu/Menu.svelte';
 	interface Props {
 		areaID: string;
+		position: Position;
 		title: string;
 		items: Array<{ id: string; label: string; selected?: boolean }>;
 		orientation?: 'horizontal' | 'vertical';
@@ -14,43 +17,30 @@
 		onselect?: (id: string) => void;
 		onBack?: () => void;
 	}
-	let { areaID, title, items, orientation = 'horizontal', selectedId, buttonWidth, onselect, onBack }: Props = $props();
+	let { areaID, position, title, items, orientation = 'horizontal', selectedId, buttonWidth, onselect, onBack }: Props = $props();
 	const searchAreaID = `${areaID}-search`;
 	const menuAreaID = `${areaID}-menu`;
+	// Calculate sub-area positions
+	const searchPosition = { x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y };
+	const menuPosition = { x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y };
 	let searchSelected = $derived($activeArea === searchAreaID);
 	let searchBar: SearchBar;
 
 	onMount(() => {
-		// Position search between breadcrumb (y=1) and content/menu (y=2)
-		setAreaPosition(searchAreaID, { x: 0, y: 1.5 });
-		// Position menu at content level
-		setAreaPosition(menuAreaID, { x: 0, y: 2 });
-		// Register search area handlers
-		const unregisterSearch = useArea(searchAreaID, {
-			up: () => {
-				// Navigate to breadcrumb manually (areaNavigate looks for y-1 which won't find y=1 from y=1.5)
-				activateArea('breadcrumb');
-				return true;
+		// Register search area with position - cleanup is automatic
+		const unregisterSearch = useArea(
+			searchAreaID,
+			{
+				up: () => false,
+				down: () => false,
+				confirmUp: () => searchBar?.toggleFocus(),
+				back: () => onBack?.(),
 			},
-			down: () => {
-				activateArea(menuAreaID);
-				return true;
-			},
-			confirmUp: () => {
-				searchBar?.toggleFocus();
-			},
-			back: () => onBack?.(),
-		});
-		return () => {
-			unregisterSearch();
-			removeArea(searchAreaID);
-			removeArea(menuAreaID);
-		};
-	});
+			searchPosition
+		);
 
-	function handleMenuUp() {
-		activateArea(searchAreaID);
-	}
+		return unregisterSearch;
+	});
 </script>
 
 <style>
@@ -75,6 +65,6 @@
 <div class="categories">
 	<SearchBar bind:this={searchBar} selected={searchSelected} />
 	<div class="content">
-		<Menu areaID={menuAreaID} {title} {items} {orientation} {selectedId} {buttonWidth} {onselect} {onBack} onUp={handleMenuUp} />
+		<Menu areaID={menuAreaID} position={menuPosition} {title} {items} {orientation} {selectedId} {buttonWidth} {onselect} {onBack} />
 	</div>
 </div>

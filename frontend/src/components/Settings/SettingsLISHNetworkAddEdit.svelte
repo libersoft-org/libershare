@@ -2,17 +2,20 @@
 	import { onMount, untrack } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import Switch from '../Switch/Switch.svelte';
 	interface Props {
 		areaID: string;
+		position?: Position;
 		network?: { id: string; name: string; description?: string; bootstrapServers?: string[] } | null;
 		onBack?: () => void;
 		onSave?: (network: { id: string; name: string; description: string; bootstrapServers: string[] }) => void;
 	}
-	let { areaID, network = null, onBack, onSave }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, network = null, onBack, onSave }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
 	let selectedColumn = $state(0); // 0 = input, 1 = remove btn, 2 = add btn
@@ -26,7 +29,7 @@
 	let isEditing = $derived(network !== null);
 	let autoGenerateID = $state(untrack(() => !network)); // Auto-generate when adding new, manual when editing
 	let networkID = $state(untrack(() => network?.id ?? ''));
-	let bootstrapServers = $state<string[]>(untrack(() => network?.bootstrapServers?.length ? [...network.bootstrapServers] : ['']));
+	let bootstrapServers = $state<string[]>(untrack(() => (network?.bootstrapServers?.length ? [...network.bootstrapServers] : [''])));
 	let submitted = $state(false);
 	// Validation - skip networkID check if auto-generate is enabled
 	let errorMessage = $derived(!name.trim() ? $t.settings?.lishNetwork?.errorNameRequired : !autoGenerateID && !networkID.trim() ? $t.settings?.lishNetwork?.errorNetworkIDRequired : '');
@@ -116,97 +119,101 @@
 	}
 
 	onMount(() => {
-		const unregister = useArea(areaID, {
-			up: () => {
-				const item = getItemType(selectedIndex);
-				if (item.type === 'back') {
-					// From back, go to last bootstrap server (row above)
-					selectedIndex = bootstrapOffset + bootstrapServers.length - 1;
-					selectedColumn = 0;
-					scrollToSelected();
-					return true;
-				}
-				if (selectedIndex > 0) {
-					selectedIndex--;
-					// Skip networkID if disabled (autoGenerateID is on) - only when adding
-					if (!isEditing && selectedIndex === 3 && autoGenerateID) {
-						selectedIndex--;
-					}
-					selectedColumn = 0;
-					scrollToSelected();
-					return true;
-				}
-				return false;
-			},
-			down: () => {
-				const item = getItemType(selectedIndex);
-				// Don't go down from save or back (they are on the same row)
-				if (item.type === 'save' || item.type === 'back') {
-					return false;
-				}
-				if (selectedIndex < totalItems - 1) {
-					selectedIndex++;
-					// Skip networkID if disabled (autoGenerateID is on) - only when adding
-					if (!isEditing && selectedIndex === 3 && autoGenerateID) {
-						selectedIndex++;
-					}
-					selectedColumn = 0;
-					scrollToSelected();
-					return true;
-				}
-				return false;
-			},
-			left: () => {
-				const item = getItemType(selectedIndex);
-				if (item.type === 'back') {
-					selectedIndex--;
-					scrollToSelected();
-					return true;
-				}
-				if (item.type === 'bootstrap' && selectedColumn > 0) {
-					selectedColumn--;
-					return true;
-				}
-				return false;
-			},
-			right: () => {
-				const item = getItemType(selectedIndex);
-				if (item.type === 'save') {
-					selectedIndex++;
-					scrollToSelected();
-					return true;
-				}
-				if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined) {
-					const maxCol = getMaxColumn(item.bootstrapIndex);
-					if (selectedColumn < maxCol) {
-						selectedColumn++;
+		const unregister = useArea(
+			areaID,
+			{
+				up: () => {
+					const item = getItemType(selectedIndex);
+					if (item.type === 'back') {
+						// From back, go to last bootstrap server (row above)
+						selectedIndex = bootstrapOffset + bootstrapServers.length - 1;
+						selectedColumn = 0;
+						scrollToSelected();
 						return true;
 					}
-				}
-				return false;
-			},
-			confirmDown: () => {},
-			confirmUp: () => {
-				const item = getItemType(selectedIndex);
-				if (item.type === 'name' || item.type === 'description') focusInput(selectedIndex);
-				else if (item.type === 'autoGenerate') toggleAutoGenerateID();
-				else if (item.type === 'networkID') {
-					if (isEditing || !autoGenerateID) focusInput(selectedIndex);
-				} else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined) {
-					if (selectedColumn === 0) focusInput(selectedIndex);
-					else {
-						const isLast = item.bootstrapIndex === bootstrapServers.length - 1;
-						const hasRemove = bootstrapServers.length > 1;
-						// Determine which button is at current column
-						if (hasRemove && selectedColumn === 1) removeBootstrapServer(item.bootstrapIndex);
-						else if (isLast && ((hasRemove && selectedColumn === 2) || (!hasRemove && selectedColumn === 1))) addBootstrapServer();
+					if (selectedIndex > 0) {
+						selectedIndex--;
+						// Skip networkID if disabled (autoGenerateID is on) - only when adding
+						if (!isEditing && selectedIndex === 3 && autoGenerateID) {
+							selectedIndex--;
+						}
+						selectedColumn = 0;
+						scrollToSelected();
+						return true;
 					}
-				} else if (item.type === 'save') handleSave();
-				else if (item.type === 'back') onBack?.();
+					return false;
+				},
+				down: () => {
+					const item = getItemType(selectedIndex);
+					// Don't go down from save or back (they are on the same row)
+					if (item.type === 'save' || item.type === 'back') {
+						return false;
+					}
+					if (selectedIndex < totalItems - 1) {
+						selectedIndex++;
+						// Skip networkID if disabled (autoGenerateID is on) - only when adding
+						if (!isEditing && selectedIndex === 3 && autoGenerateID) {
+							selectedIndex++;
+						}
+						selectedColumn = 0;
+						scrollToSelected();
+						return true;
+					}
+					return false;
+				},
+				left: () => {
+					const item = getItemType(selectedIndex);
+					if (item.type === 'back') {
+						selectedIndex--;
+						scrollToSelected();
+						return true;
+					}
+					if (item.type === 'bootstrap' && selectedColumn > 0) {
+						selectedColumn--;
+						return true;
+					}
+					return false;
+				},
+				right: () => {
+					const item = getItemType(selectedIndex);
+					if (item.type === 'save') {
+						selectedIndex++;
+						scrollToSelected();
+						return true;
+					}
+					if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined) {
+						const maxCol = getMaxColumn(item.bootstrapIndex);
+						if (selectedColumn < maxCol) {
+							selectedColumn++;
+							return true;
+						}
+					}
+					return false;
+				},
+				confirmDown: () => {},
+				confirmUp: () => {
+					const item = getItemType(selectedIndex);
+					if (item.type === 'name' || item.type === 'description') focusInput(selectedIndex);
+					else if (item.type === 'autoGenerate') toggleAutoGenerateID();
+					else if (item.type === 'networkID') {
+						if (isEditing || !autoGenerateID) focusInput(selectedIndex);
+					} else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined) {
+						if (selectedColumn === 0) focusInput(selectedIndex);
+						else {
+							const isLast = item.bootstrapIndex === bootstrapServers.length - 1;
+							const hasRemove = bootstrapServers.length > 1;
+							// Determine which button is at current column
+							if (hasRemove && selectedColumn === 1) removeBootstrapServer(item.bootstrapIndex);
+							else if (isLast && ((hasRemove && selectedColumn === 2) || (!hasRemove && selectedColumn === 1))) addBootstrapServer();
+						}
+					} else if (item.type === 'save') handleSave();
+					else if (item.type === 'back') onBack?.();
+				},
+				confirmCancel: () => {},
+				back: () => onBack?.(),
 			},
-			confirmCancel: () => {},
-			back: () => onBack?.(),
-		});
+			position
+		);
 		// Activate this area
 		activateArea(areaID);
 		return unregister;

@@ -2,15 +2,18 @@
 	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
+	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { getNetworks } from '../../scripts/lishnet.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import Alert from '../Alert/Alert.svelte';
 	interface Props {
 		areaID: string;
+		position?: Position;
 		onBack?: () => void;
 	}
-	let { areaID, onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let networks = $derived(getNetworks());
 	let hasNetworks = $derived(networks.length > 0);
@@ -22,46 +25,50 @@
 	let networksJson = $derived(JSON.stringify(networks, null, '\t'));
 
 	onMount(() => {
-		const unregister = useArea(areaID, {
-			up: () => {
-				if (hasNetworks && selectedIndex > 0) {
-					selectedIndex--;
-					return true;
-				}
-				return false;
+		const unregister = useArea(
+			areaID,
+			{
+				up: () => {
+					if (hasNetworks && selectedIndex > 0) {
+						selectedIndex--;
+						return true;
+					}
+					return false;
+				},
+				down: () => {
+					if (hasNetworks && selectedIndex < 1) {
+						selectedIndex++;
+						selectedColumn = 0;
+						return true;
+					}
+					return false;
+				},
+				left: () => {
+					if (selectedIndex === 1 && selectedColumn > 0) {
+						selectedColumn--;
+						return true;
+					}
+					return false;
+				},
+				right: () => {
+					if (selectedIndex === 1 && selectedColumn < 1) {
+						selectedColumn++;
+						return true;
+					}
+					return false;
+				},
+				confirmDown: () => {
+					if (hasNetworks && selectedIndex === 0) inputRef?.focus();
+				},
+				confirmUp: () => {
+					if (hasNetworks && selectedIndex === 1 && selectedColumn === 1) onBack?.();
+					else if (!hasNetworks) onBack?.();
+				},
+				confirmCancel: () => {},
+				back: () => onBack?.(),
 			},
-			down: () => {
-				if (hasNetworks && selectedIndex < 1) {
-					selectedIndex++;
-					selectedColumn = 0;
-					return true;
-				}
-				return false;
-			},
-			left: () => {
-				if (selectedIndex === 1 && selectedColumn > 0) {
-					selectedColumn--;
-					return true;
-				}
-				return false;
-			},
-			right: () => {
-				if (selectedIndex === 1 && selectedColumn < 1) {
-					selectedColumn++;
-					return true;
-				}
-				return false;
-			},
-			confirmDown: () => {
-				if (hasNetworks && selectedIndex === 0) inputRef?.focus();
-			},
-			confirmUp: () => {
-				if (hasNetworks && selectedIndex === 1 && selectedColumn === 1) onBack?.();
-				else if (!hasNetworks) onBack?.();
-			},
-			confirmCancel: () => {},
-			back: () => onBack?.(),
-		});
+			position
+		);
 		activateArea(areaID);
 		return unregister;
 	});
