@@ -93,9 +93,9 @@
 			<ConfirmDialog title={dialogConfig.title ?? ''} message={dialogConfig.message ?? ''} confirmLabel={dialogConfig.confirmLabel} cancelLabel={dialogConfig.cancelLabel} defaultButton={dialogConfig.defaultButton} onConfirm={handleConfirm} onBack={handleCancel} />
 		{:else if $currentComponent}
 			{@const Component = $currentComponent.component}
-			<Component areaID="content" title={$currentComponent.label ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} onselect={navigate} {...$currentComponent.props} {onBack} />
+			<Component areaID="content" title={$currentComponent.label ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', icon: i.icon, selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} onselect={navigate} {...$currentComponent.props} {onBack} />
 		{:else}
-			<Menu areaID="content" title={$currentTitle ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} buttonWidth="20vh" onselect={navigate} {onBack} />
+			<Menu areaID="content" title={$currentTitle ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', icon: i.icon, selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} buttonWidth="25vh" onselect={navigate} {onBack} />
 		{/if}
 	</div>
 	{#if $footerVisible}

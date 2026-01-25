@@ -17,6 +17,7 @@ export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
 	id: string;
 	label?: string;
+	icon?: string;
 	submenu?: MenuItem[];
 	component?: Component<any>;
 	props?: Record<string, any>;
@@ -36,6 +37,7 @@ export const menuStructure = derived(t, () => ({
 		{
 			id: 'library',
 			label: tt('library.title'),
+			icon: '/img/online.svg',
 			component: Categories,
 			submenu: [
 				{
@@ -64,31 +66,37 @@ export const menuStructure = derived(t, () => ({
 		{
 			id: 'localStorage',
 			label: tt('localStorage.title'),
+			icon: '/img/folder.svg',
 			component: Storage,
 		},
 		{
 			id: 'downloads',
 			label: tt('downloads.title'),
+			icon: '/img/download.svg',
 			component: Download,
 		},
 		{
 			id: 'settings',
 			label: tt('settings.title'),
+			icon: '/img/settings.svg',
 			orientation: 'horizontal' as const,
 			submenu: [
 				{
 					id: 'localStorage',
 					label: tt('localStorage.title'),
+					icon: '/img/storage.svg',
 					component: SettingsStorage,
 				},
 				{
 					id: 'lishNetwork',
 					label: tt('settings.lishNetwork.title'),
+					icon: '/img/network.svg',
 					component: LISHNetworkList,
 				},
 				{
 					id: 'language',
 					label: tt('settings.language'),
+					icon: '/img/language.svg',
 					submenu: [
 						...languages.map(lang => ({
 							id: `lang-${lang.id}`,
@@ -106,6 +114,7 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'time',
 					label: tt('settings.time.label'),
+					icon: '/img/time.svg',
 					submenu: [
 						{
 							id: 'time-format',
@@ -163,6 +172,7 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'footer',
 					label: tt('settings.footer'),
+					icon: '/img/footer.svg',
 					component: SettingsFooter,
 					submenu: [
 						{
@@ -204,6 +214,7 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'audio',
 					label: tt('settings.audio'),
+					icon: '/img/volume3.svg',
 					submenu: [
 						{
 							id: 'audio-on',
@@ -227,6 +238,7 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'cursor',
 					label: tt('settings.cursorSize.label'),
+					icon: '/img/cursor2.svg',
 					submenu: [
 						{
 							id: 'cursor-small',
@@ -256,6 +268,7 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'back',
 					label: tt('common.back'),
+					icon: '/img/back.svg',
 					action: 'back' as const,
 				},
 			],
@@ -263,11 +276,13 @@ export const menuStructure = derived(t, () => ({
 		{
 			id: 'about',
 			label: tt('about.title'),
+			icon: '/img/about.svg',
 			component: About,
 		},
 		{
 			id: 'exit',
 			label: tt('exit.title'),
+			icon: '/img/exit.svg',
 			orientation: 'horizontal' as const,
 			submenu: [
 				{

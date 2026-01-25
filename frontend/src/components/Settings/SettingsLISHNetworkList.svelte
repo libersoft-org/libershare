@@ -380,8 +380,8 @@
 			<div class="top-buttons" bind:this={rowElements[0]}>
 				<Button label={$t.settings?.lishNetwork?.publicList} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={openPublic} />
 				<Button label={$t.common?.add} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openAddNetwork} />
-				<Button label={$t.common?.import} selected={active && selectedIndex === 0 && buttonIndex === 2} onConfirm={openImport} />
-				<Button label={$t.common?.exportAll} selected={active && selectedIndex === 0 && buttonIndex === 3} onConfirm={openExportAll} />
+				<Button icon="/img/import.svg" label={$t.common?.import} selected={active && selectedIndex === 0 && buttonIndex === 2} onConfirm={openImport} />
+				<Button icon="/img/export.svg" label={$t.common?.exportAll} selected={active && selectedIndex === 0 && buttonIndex === 3} onConfirm={openExportAll} />
 			</div>
 			{#if networks.length === 0}
 				<Alert type="warning" message={$t.settings?.lishNetwork?.emptyList} />
@@ -393,7 +393,7 @@
 								<div class="name">{network.name}</div>
 								<div class="buttons">
 									<Button label={$t.common?.connect} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
-									<Button label={$t.common?.export} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openExport(network)} />
+									<Button icon="/img/export.svg" label={$t.common?.export} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openExport(network)} />
 									<Button label={$t.common?.edit} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openEditNetwork(network)} />
 									<Button label={$t.common?.delete} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => deleteNetwork(network)} />
 								</div>

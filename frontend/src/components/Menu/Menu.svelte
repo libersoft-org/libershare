@@ -7,7 +7,7 @@
 	interface Props {
 		areaID: string;
 		title: string;
-		items: Array<{ id: string; label: string; selected?: boolean }>;
+		items: Array<{ id: string; label: string; icon?: string; selected?: boolean }>;
 		orientation?: 'horizontal' | 'vertical';
 		selectedId?: string;
 		buttonWidth?: string;
@@ -46,7 +46,7 @@
 		{#key `${title}-${selectedId}-${orientation}`}
 			<ButtonsGroup {areaID} {initialIndex} {orientation} {onBack} {onUp}>
 				{#each items as item (item.id)}
-					<Button label={item.label} icon={item.selected ? '/img/check.svg' : undefined} width={buttonWidth} onConfirm={() => onselect?.(item.id)} />
+					<Button label={item.label} icon={item.selected ? '/img/check.svg' : item.icon} width={buttonWidth} onConfirm={() => onselect?.(item.id)} />
 				{/each}
 			</ButtonsGroup>
 		{/key}

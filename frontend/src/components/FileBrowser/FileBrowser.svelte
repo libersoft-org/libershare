@@ -190,9 +190,7 @@
 			// At top of list, switch to folder actions toolbar (or path breadcrumb if error)
 			if (error) {
 				if (showPath) activateArea(`${areaID}-path`);
-			} else {
-				activateArea(`${areaID}-folder-actions`);
-			}
+			} else activateArea(`${areaID}-folder-actions`);
 			return true;
 		},
 		down: () => {
