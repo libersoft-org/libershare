@@ -295,17 +295,20 @@ export const menuStructure = derived(t, () => ({
 			submenu: [
 				{
 					id: 'restart',
+					icon: '/img/restart.svg',
 					label: tt('exit.restart.title'),
 					action: 'restart' as const,
 				},
 				{
 					id: 'shutdown',
+					icon: '/img/power.svg',
 					label: tt('exit.shutdown.title'),
 					action: 'shutdown' as const,
 				},
 				{
 					id: 'quit',
 					label: tt('exit.quitApplication.title'),
+					icon: '/img/exit.svg',
 					action: 'quit' as const,
 				},
 				{
