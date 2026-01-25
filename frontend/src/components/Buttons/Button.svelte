@@ -5,6 +5,8 @@
 	interface Props {
 		label?: string;
 		icon?: string;
+		iconPosition?: 'left' | 'top';
+		iconSize?: string;
 		alt?: string;
 		selected?: boolean;
 		pressed?: boolean;
@@ -15,7 +17,7 @@
 		height?: string;
 		onConfirm?: () => void;
 	}
-	let { label, icon, alt = '', selected = false, pressed = false, padding = '2vh', fontSize = '2vh', borderRadius = '2vh', width, height, onConfirm }: Props = $props();
+	let { label, icon, iconPosition = 'left', iconSize, alt = '', selected = false, pressed = false, padding = '2vh', fontSize = '2vh', borderRadius = '2vh', width, height, onConfirm }: Props = $props();
 	const buttonsGroup = getContext<ButtonsGroupContext | undefined>('buttonsGroup');
 	let index = $state(-1);
 	let isSelected = $derived(buttonsGroup ? buttonsGroup.isSelected(index) : selected);
@@ -51,6 +53,10 @@
 		min-width: unset;
 	}
 
+	.button.icon-top {
+		flex-direction: column;
+	}
+
 	.button.selected {
 		background-color: var(--primary-background);
 		color: var(--primary-foreground);
@@ -67,9 +73,9 @@
 	}
 </style>
 
-<div class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:icon-only={icon && !label} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}">
+<div class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:icon-only={icon && !label} class:icon-top={iconPosition === 'top'} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}">
 	{#if icon}
-		<Icon img={icon} {alt} size={fontSize} padding="0" colorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} />
+		<Icon img={icon} {alt} size={iconSize ?? fontSize} padding="0" colorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} />
 	{/if}
 	{#if label}
 		{label}

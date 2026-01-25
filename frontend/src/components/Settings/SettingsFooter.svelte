@@ -168,7 +168,7 @@
 			{/each}
 		</Table>
 		<div class="back" bind:this={rowElements[totalItems - 1]}>
-			<Button label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
+			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
 		</div>
 	</div>
 </div>

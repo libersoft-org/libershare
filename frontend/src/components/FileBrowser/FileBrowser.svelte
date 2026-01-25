@@ -268,7 +268,7 @@
 	const fileActions = [
 		{ id: 'open', label: $t.fileBrowser?.openFile },
 		{ id: 'delete', label: $t.fileBrowser?.deleteFile },
-		{ id: 'back', label: $t.common?.back },
+		{ id: 'back', label: $t.common?.back, icon: '/img/back.svg' },
 	];
 
 	const actionsAreaHandlers = {
@@ -472,7 +472,7 @@
 		{#if showActions && selectedItem?.type === 'file'}
 			<div class="actions">
 				{#each fileActions as action, index (action.id)}
-					<Button label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => handleAction(action.id)} />
+					<Button icon={action.icon} label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => handleAction(action.id)} />
 				{/each}
 			</div>
 		{/if}

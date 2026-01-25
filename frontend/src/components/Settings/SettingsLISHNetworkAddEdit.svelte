@@ -306,7 +306,7 @@
 			<Button label={$t.common?.save} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length} onConfirm={handleSave} />
 		</div>
 		<div bind:this={rowElements[bootstrapOffset + bootstrapServers.length + 1]}>
-			<Button label={$t.common?.back} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length + 1} onConfirm={onBack} />
+			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length + 1} onConfirm={onBack} />
 		</div>
 	</div>
 </div>

@@ -99,6 +99,6 @@
 	</div>
 	<div class="buttons">
 		<Button label="{$t.common?.saveAs} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
-		<Button label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
+		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
 	</div>
 </div>

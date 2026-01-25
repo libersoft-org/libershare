@@ -219,6 +219,6 @@
 		{/if}
 	</div>
 	<div class="back">
-		<Button label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
+		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
 	</div>
 </div>

@@ -46,7 +46,7 @@
 		{#key `${title}-${selectedId}-${orientation}`}
 			<ButtonsGroup {areaID} {initialIndex} {orientation} {onBack} {onUp}>
 				{#each items as item (item.id)}
-					<Button label={item.label} icon={item.selected ? '/img/check.svg' : item.icon} width={buttonWidth} onConfirm={() => onselect?.(item.id)} />
+					<Button label={item.label} icon={item.selected ? '/img/check.svg' : item.icon} iconPosition="top" iconSize="6vh" width={buttonWidth} onConfirm={() => onselect?.(item.id)} />
 				{/each}
 			</ButtonsGroup>
 		{/key}

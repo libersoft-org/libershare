@@ -59,6 +59,7 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'back',
 					label: tt('common.back'),
+					icon: '/img/back.svg',
 					action: 'back' as const,
 				},
 			],
@@ -135,6 +136,7 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'back',
 									label: tt('common.back'),
+									icon: '/img/back.svg',
 									action: 'back' as const,
 								},
 							],
@@ -158,6 +160,7 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'back',
 									label: tt('common.back'),
+									icon: '/img/back.svg',
 									action: 'back' as const,
 								},
 							],
@@ -165,6 +168,7 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'back',
 							label: tt('common.back'),
+							icon: '/img/back.svg',
 							action: 'back' as const,
 						},
 					],
@@ -200,6 +204,7 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'back',
 									label: tt('common.back'),
+									icon: '/img/back.svg',
 									action: 'back' as const,
 								},
 							],
@@ -207,6 +212,7 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'back',
 							label: tt('common.back'),
+							icon: '/img/back.svg',
 							action: 'back' as const,
 						},
 					],
@@ -231,6 +237,7 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'back',
 							label: tt('common.back'),
+							icon: '/img/back.svg',
 							action: 'back' as const,
 						},
 					],
@@ -261,6 +268,7 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'back',
 							label: tt('common.back'),
+							icon: '/img/back.svg',
 							action: 'back' as const,
 						},
 					],
@@ -303,6 +311,7 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'back',
 					label: tt('common.back'),
+					icon: '/img/back.svg',
 					action: 'back' as const,
 				},
 			],
