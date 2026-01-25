@@ -74,6 +74,7 @@
 	.content {
 		flex: 1;
 		overflow-y: auto;
+		background-color: var(--secondary-hard-background);
 	}
 </style>
 
