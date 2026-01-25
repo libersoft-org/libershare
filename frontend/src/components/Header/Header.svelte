@@ -51,8 +51,17 @@
 	.debug-hint {
 		text-align: right;
 		color: var(--secondary-foreground);
-		font-size: 2vh;
+		font-size: 1.4vh;
 		opacity: 0.6;
+		flex-shrink: 1;
+		min-width: 0;
+		overflow: hidden;
+	}
+
+	.debug-hint div {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 </style>
 
