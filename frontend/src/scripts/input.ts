@@ -58,6 +58,7 @@ class InputManager {
 		gamepad.on('aDown', () => emit('confirmDown'));
 		gamepad.on('aUp', () => emit('confirmUp'));
 		gamepad.on('bDown', () => emit('back'));
+		gamepad.on('select', () => window.location.reload());
 		gamepad.start();
 		this.gamepadStarted = true;
 	}
@@ -72,6 +73,7 @@ class InputManager {
 		gamepad.off('aDown');
 		gamepad.off('aUp');
 		gamepad.off('bDown');
+		gamepad.off('select');
 		gamepad.stop();
 		this.gamepadStarted = false;
 	}

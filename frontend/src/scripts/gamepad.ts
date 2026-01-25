@@ -74,6 +74,8 @@ export class GamepadManager {
 		// B button (1) - back
 		if (buttons[1] && !this.previousButtons[1]) this.emit('bDown');
 		if (!buttons[1] && this.previousButtons[1]) this.emit('bUp');
+		// Select button (8) - reload
+		if (buttons[8] && !this.previousButtons[8]) this.emit('select');
 		this.previousButtons = [...buttons];
 	}
 
