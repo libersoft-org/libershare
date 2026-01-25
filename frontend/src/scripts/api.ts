@@ -83,4 +83,6 @@ export const api = {
     fsDelete: (path: string) => wsClient.call<{ success: boolean }>('fs.delete', { path }),
 
     fsMkdir: (path: string) => wsClient.call<{ success: boolean }>('fs.mkdir', { path }),
+
+    fsOpen: (path: string) => wsClient.call<{ success: boolean }>('fs.open', { path }),
 };

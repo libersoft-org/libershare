@@ -22,7 +22,8 @@
 		"connected": "Connected",
 		"disconnected": "Disconnected",
 		"notUsed": "Not used",
-		"search": "Search"
+		"search": "Search",
+		"create": "Create"
 	},
 	"library": {
 		"title": "Online library",
@@ -126,7 +127,11 @@
 		"newFolder": "New folder",
 		"deleteFolder": "Delete folder",
 		"openFile": "Open file",
-		"deleteFile": "Delete file"
+		"deleteFile": "Delete file",
+		"folderName": "Folder name",
+		"enterFolderName": "Enter folder name",
+		"confirmDeleteFolder": "Are you sure you want to delete folder \"{path}\"?",
+		"confirmDeleteFile": "Are you sure you want to delete file \"{name}\"?"
 	},
 	"about": {
 		"title": "About",

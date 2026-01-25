@@ -14,7 +14,9 @@
 	import Alert from '../Alert/Alert.svelte';
 	import Spinner from '../Spinner/Spinner.svelte';
 	import PathBreadcrumb from './FileBrowserBreadcrumb.svelte';
-	import ConfirmDialog from '../Dialog/ConfirmDialog.svelte';import InputDialog from '../Dialog/InputDialog.svelte';	export type StorageItemType = 'folder' | 'file' | 'drive';
+	import ConfirmDialog from '../Dialog/ConfirmDialog.svelte';
+	import InputDialog from '../Dialog/InputDialog.svelte';
+	export type StorageItemType = 'folder' | 'file' | 'drive';
 	export interface StorageItemData {
 		id: string;
 		name: string;
@@ -65,6 +67,8 @@
 	let pathBreadcrumb: ReturnType<typeof PathBreadcrumb> | undefined = $state();
 	let showDeleteConfirm = $state(false);
 	let showNewFolderDialogState = $state(false);
+	let showDeleteFileConfirm = $state(false);
+	let fileToDelete = $state<StorageItemData | null>(null);
 	let unregisterFolderActions: (() => void) | null = null;
 	let unregisterList: (() => void) | null = null;
 	let unregisterActions: (() => void) | null = null;
@@ -282,8 +286,8 @@
 
 	// File actions: open, delete, back
 	const fileActions = [
-		{ id: 'open', label: $t.fileBrowser?.openFile },
-		{ id: 'delete', label: $t.fileBrowser?.deleteFile },
+		{ id: 'open', label: $t.fileBrowser?.openFile, icon: '/img/folder.svg' },
+		{ id: 'delete', label: $t.fileBrowser?.deleteFile, icon: '/img/del.svg' },
 		{ id: 'back', label: $t.common?.back, icon: '/img/back.svg' },
 	];
 
@@ -324,10 +328,12 @@
 
 		switch (actionId) {
 			case 'open':
-				// TODO: implement file open
+				openFile(item);
 				break;
 			case 'delete':
-				// TODO: implement file delete
+				showDeleteFileConfirmDialog(item);
+				return; // Don't close actions panel yet
+			case 'back':
 				break;
 		}
 		showActions = false;
@@ -429,6 +435,60 @@
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(`${areaID}-folder-actions`);
+	}
+
+	async function openFile(item: StorageItemData) {
+		try {
+			await api.fsOpen(item.path);
+		} catch (e: any) {
+			error = e.message || 'Failed to open file';
+		}
+		showActions = false;
+		activateArea(listAreaID);
+	}
+
+	function showDeleteFileConfirmDialog(item: StorageItemData) {
+		fileToDelete = item;
+		showDeleteFileConfirm = true;
+		showActions = false;
+		// Unregister areas so dialog can take over
+		if (unregisterFolderActions) {
+			unregisterFolderActions();
+			unregisterFolderActions = null;
+		}
+		if (unregisterList) {
+			unregisterList();
+			unregisterList = null;
+		}
+		if (unregisterActions) {
+			unregisterActions();
+			unregisterActions = null;
+		}
+		pushBreadcrumb($t.fileBrowser?.deleteFile ?? 'Delete file');
+	}
+
+	async function confirmDeleteFile() {
+		if (!fileToDelete) return;
+		try {
+			await api.fsDelete(fileToDelete.path);
+			// Reload directory
+			await loadDirectory(currentPath);
+		} catch (e: any) {
+			error = e.message || 'Failed to delete file';
+		}
+		cancelDeleteFile();
+	}
+
+	async function cancelDeleteFile() {
+		showDeleteFileConfirm = false;
+		fileToDelete = null;
+		popBreadcrumb();
+		await tick();
+		// Re-register areas
+		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
+		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
+		activateArea(listAreaID);
 	}
 
 	export function getCurrentPath(): string {
@@ -571,11 +631,14 @@
 		{/if}
 	</div>
 </div>
-
 {#if showDeleteConfirm}
-	<ConfirmDialog title={$t.fileBrowser?.deleteFolder ?? 'Delete folder'} message={$t.fileBrowser?.confirmDeleteFolder?.replace('{path}', currentPath) ?? `Are you sure you want to delete "${currentPath}"?`} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmDeleteFolder} onBack={cancelDeleteFolder} />
+	<ConfirmDialog title={$t.fileBrowser?.deleteFolder} message={$t.fileBrowser?.confirmDeleteFolder?.replace('{path}', currentPath)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmDeleteFolder} onBack={cancelDeleteFolder} />
+{/if}
+
+{#if showDeleteFileConfirm && fileToDelete}
+	<ConfirmDialog title={$t.fileBrowser?.deleteFile} message={$t.fileBrowser?.confirmDeleteFile?.replace('{name}', fileToDelete.name)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmDeleteFile} onBack={cancelDeleteFile} />
 {/if}
 
 {#if showNewFolderDialogState}
-	<InputDialog title={$t.fileBrowser?.newFolder ?? 'New folder'} label={$t.fileBrowser?.folderName ?? 'Folder name'} placeholder={$t.fileBrowser?.enterFolderName ?? 'Enter folder name'} confirmLabel={$t.common?.create ?? 'Create'} cancelLabel={$t.common?.cancel ?? 'Cancel'} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
+	<InputDialog title={$t.fileBrowser?.newFolder} label={$t.fileBrowser?.folderName} placeholder={$t.fileBrowser?.enterFolderName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
 {/if}
