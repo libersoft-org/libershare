@@ -118,6 +118,15 @@
 		overflow-y: auto;
 	}
 
+	.inner {
+		width: 1200px;
+		max-width: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2vh;
+	}
+
 	.back {
 		margin-top: 2vh;
 	}
@@ -125,29 +134,31 @@
 
 <div class="footer">
 	<div class="content">
-		<Table columns="1fr 10vw">
-			<div bind:this={rowElements[0]}>
-				<TableRow selected={active && selectedIndex === 0} odd>
-					<TableCell>{$t.settings?.footerVisible}</TableCell>
-					<TableCell align="right"><Switch checked={$footerVisible} /></TableCell>
-				</TableRow>
-			</div>
-		</Table>
-		<div bind:this={rowElements[1]}>
-			<Button label="{$t.settings?.footerPosition}: {$t.settings?.footerPositions?.[$footerPosition]}" selected={active && selectedIndex === 1} onConfirm={openPositionDialog} />
-		</div>
-		<Table columns="1fr 10vw">
-			{#each footerWidgets as widget, index}
-				<div bind:this={rowElements[index + 2]}>
-					<TableRow selected={active && selectedIndex === index + 2} odd={index % 2 === 0}>
-						<TableCell>{getWidgetLabel(widget)}</TableCell>
-						<TableCell align="right"><Switch checked={$footerWidgetVisibility[widget]} /></TableCell>
+		<div class="inner">
+			<Table columns="1fr 10vw">
+				<div bind:this={rowElements[0]}>
+					<TableRow selected={active && selectedIndex === 0} odd>
+						<TableCell>{$t.settings?.footerVisible}</TableCell>
+						<TableCell align="right"><Switch checked={$footerVisible} /></TableCell>
 					</TableRow>
 				</div>
-			{/each}
-		</Table>
-		<div class="back" bind:this={rowElements[totalItems - 1]}>
-			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
+			</Table>
+			<div bind:this={rowElements[1]}>
+				<Button label="{$t.settings?.footerPosition}: {$t.settings?.footerPositions?.[$footerPosition]}" selected={active && selectedIndex === 1} onConfirm={openPositionDialog} />
+			</div>
+			<Table columns="1fr 10vw">
+				{#each footerWidgets as widget, index}
+					<div bind:this={rowElements[index + 2]}>
+						<TableRow selected={active && selectedIndex === index + 2} odd={index % 2 === 0}>
+							<TableCell>{getWidgetLabel(widget)}</TableCell>
+							<TableCell align="right"><Switch checked={$footerWidgetVisibility[widget]} /></TableCell>
+						</TableRow>
+					</div>
+				{/each}
+			</Table>
+			<div class="back" bind:this={rowElements[totalItems - 1]}>
+				<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
+			</div>
 		</div>
 	</div>
 </div>

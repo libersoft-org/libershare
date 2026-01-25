@@ -17,10 +17,12 @@
 
 <style>
 	.switch {
-		display: inline-block;
+		display: inline-flex;
+		align-items: center;
 		position: relative;
 		width: 10vh;
 		height: 6vh;
+		vertical-align: middle;
 	}
 
 	.slider {
