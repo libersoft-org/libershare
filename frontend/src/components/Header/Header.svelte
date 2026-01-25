@@ -49,6 +49,7 @@
 	}
 
 	.debug-hint {
+		text-align: right;
 		color: var(--secondary-foreground);
 		font-size: 2vh;
 		opacity: 0.6;
@@ -59,5 +60,8 @@
 	<Button icon="/img/back.svg" alt="Back" selected={active} padding="1vh" width="5vh" height="5vh" borderRadius="50%" />
 	<div class="title">{productName}</div>
 	<div class="spacer"></div>
-	<div class="debug-hint">Press F2 to open debug window</div>
+	<div class="debug-hint">
+		<div>F2 / START = debug</div>
+		<div>F3 / SELECT = reload</div>
+	</div>
 </div>

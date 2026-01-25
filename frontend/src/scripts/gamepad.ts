@@ -121,6 +121,8 @@ export class GamepadManager {
 		if (!buttons[1] && this.previousButtons[1]) this.emit('bUp');
 		// Select button (8) - reload
 		if (buttons[8] && !this.previousButtons[8]) this.emit('select');
+		// Start button (9) - debug
+		if (buttons[9] && !this.previousButtons[9]) this.emit('start');
 		this.previousButtons = [...buttons];
 	}
 

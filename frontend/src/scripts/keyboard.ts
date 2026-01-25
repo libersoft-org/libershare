@@ -75,6 +75,19 @@ class KeyboardManager {
 			if (e.key === 'Escape' || e.key === 'Backspace') {
 				e.preventDefault();
 				this.emit('back');
+				return;
+			}
+			// F2 - debug toggle
+			if (e.key === 'F2') {
+				e.preventDefault();
+				this.emit('debug');
+				return;
+			}
+			// F3 - reload
+			if (e.key === 'F3') {
+				e.preventDefault();
+				this.emit('reload');
+				return;
 			}
 		};
 

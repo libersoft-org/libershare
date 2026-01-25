@@ -26,11 +26,6 @@
 			top: GRID_PADDING + offsetY * GRID_CELL_HEIGHT,
 		};
 	}
-
-	// Toggle with keyboard shortcut
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'F2') debugAreas.update(v => !v);
-	}
 </script>
 
 <style>
@@ -121,8 +116,6 @@
 		color: #8f8;
 	}
 </style>
-
-<svelte:window onkeydown={handleKeydown} />
 
 {#if $debugAreas}
 	<div class="debug-overlay">

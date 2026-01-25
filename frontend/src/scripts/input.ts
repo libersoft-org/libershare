@@ -1,7 +1,7 @@
 import { getKeyboardManager } from './keyboard.ts';
 import { getGamepadManager } from './gamepad.ts';
 import { getMouseManager } from './mouse.ts';
-import { emit } from './areas.ts';
+import { emit, debugAreas } from './areas.ts';
 
 class InputManager {
 	private keyboardStarted = false;
@@ -30,6 +30,8 @@ class InputManager {
 		keyboard.on('confirmDown', () => emit('confirmDown'));
 		keyboard.on('confirmUp', () => emit('confirmUp'));
 		keyboard.on('back', () => emit('back'));
+		keyboard.on('debug', () => debugAreas.update(v => !v));
+		keyboard.on('reload', () => window.location.reload());
 		keyboard.start();
 		this.keyboardStarted = true;
 	}
@@ -44,6 +46,8 @@ class InputManager {
 		keyboard.off('confirmDown');
 		keyboard.off('confirmUp');
 		keyboard.off('back');
+		keyboard.off('debug');
+		keyboard.off('reload');
 		keyboard.stop();
 		this.keyboardStarted = false;
 	}
@@ -59,6 +63,7 @@ class InputManager {
 		gamepad.on('aUp', () => emit('confirmUp'));
 		gamepad.on('bDown', () => emit('back'));
 		gamepad.on('select', () => window.location.reload());
+		gamepad.on('start', () => debugAreas.update(v => !v));
 		gamepad.start();
 		this.gamepadStarted = true;
 	}
@@ -74,6 +79,7 @@ class InputManager {
 		gamepad.off('aUp');
 		gamepad.off('bDown');
 		gamepad.off('select');
+		gamepad.off('start');
 		gamepad.stop();
 		this.gamepadStarted = false;
 	}
