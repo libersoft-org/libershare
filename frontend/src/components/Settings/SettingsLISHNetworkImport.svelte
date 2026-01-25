@@ -164,8 +164,8 @@
 		<Alert type="error" message={errorMessage} />
 	</div>
 	<div class="buttons">
-		<Button label="{$t.common?.load} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
-		<Button label={$t.common?.import} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={handleImport} />
+		<Button icon="/img/download.svg" label="{$t.common?.load} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
+		<Button icon="/img/import.svg" label={$t.common?.import} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={handleImport} />
 		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 2} onConfirm={onBack} />
 	</div>
 </div>

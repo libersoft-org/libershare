@@ -109,7 +109,7 @@
 	</div>
 	<div class="buttons">
 		{#if hasNetworks}
-			<Button label="{$t.common?.saveAs} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
+			<Button icon="/img/save.svg" label="{$t.common?.saveAs} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
 		{/if}
 		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && (hasNetworks ? selectedIndex === 1 && selectedColumn === 1 : true)} onConfirm={onBack} />
 	</div>

@@ -194,7 +194,7 @@
 				<Input bind:this={urlInput} bind:value={url} label="URL" selected={active && selectedIndex === 0 && selectedColumn === 0} />
 			</div>
 			{#if !loading}
-				<Button label={$t.common?.load} selected={active && selectedIndex === 0 && selectedColumn === 1} onConfirm={loadPublicList} />
+				<Button icon="/img/download.svg" label={$t.common?.load} selected={active && selectedIndex === 0 && selectedColumn === 1} onConfirm={loadPublicList} />
 			{/if}
 		</div>
 		{#if loading}
@@ -215,9 +215,9 @@
 								{/if}
 							</div>
 							{#if isNetworkAdded(network.networkID)}
-								<Button label={$t.common?.added} selected={false} />
+								<Button icon="/img/check.svg" label={$t.common?.added} selected={false} />
 							{:else}
-								<Button label={$t.common?.add} selected={active && selectedIndex === i + 1} onConfirm={() => handleAddNetwork(network)} />
+								<Button icon="/img/plus.svg" label={$t.common?.add} selected={active && selectedIndex === i + 1} onConfirm={() => handleAddNetwork(network)} />
 							{/if}
 						</div>
 					</Row>

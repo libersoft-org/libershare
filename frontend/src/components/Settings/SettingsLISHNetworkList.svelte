@@ -405,23 +405,23 @@
 
 {#if showAddEdit}
 	{@const networkForEdit = editingNetwork ? { id: editingNetwork.networkID, name: editingNetwork.name, description: editingNetwork.description, bootstrapServers: editingNetwork.bootstrapPeers } : null}
-	<LISHNetworkAddEdit areaID={areaID} {position} network={networkForEdit} onBack={handleAddEditBack} onSave={handleSave} />
+	<LISHNetworkAddEdit {areaID} {position} network={networkForEdit} onBack={handleAddEditBack} onSave={handleSave} />
 {:else if showExport}
-	<LISHNetworkExport areaID={areaID} {position} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={handleExportBack} />
+	<LISHNetworkExport {areaID} {position} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={handleExportBack} />
 {:else if showExportAll}
-	<LISHNetworkExportAll areaID={areaID} {position} onBack={handleExportAllBack} />
+	<LISHNetworkExportAll {areaID} {position} onBack={handleExportAllBack} />
 {:else if showImport}
-	<LISHNetworkImport areaID={areaID} {position} onBack={handleImportBack} onImport={handleImport} />
+	<LISHNetworkImport {areaID} {position} onBack={handleImportBack} onImport={handleImport} />
 {:else if showPublic}
-	<LISHNetworkPublic areaID={areaID} {position} onBack={handlePublicBack} />
+	<LISHNetworkPublic {areaID} {position} onBack={handlePublicBack} />
 {:else if showDeleteConfirm && deletingNetwork}
-	<ConfirmDialog title={$t.common?.delete} message={$t.settings?.lishNetwork?.confirmDelete?.replace('{name}', deletingNetwork.name)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} defaultButton="cancel" {position} onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
+	<ConfirmDialog title={$t.common?.delete} message={$t.settings?.lishNetwork?.confirmDelete?.replace('{name}', deletingNetwork.name)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
 {:else}
 	<div class="lish-network-list">
 		<div class="container">
 			<div class="top-buttons" bind:this={rowElements[0]}>
-				<Button label={$t.settings?.lishNetwork?.publicList} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={openPublic} />
-				<Button label={$t.common?.add} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openAddNetwork} />
+				<Button icon="/img/online.svg" label={$t.settings?.lishNetwork?.publicList} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={openPublic} />
+				<Button icon="/img/plus.svg" label={$t.common?.add} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openAddNetwork} />
 				<Button icon="/img/import.svg" label={$t.common?.import} selected={active && selectedIndex === 0 && buttonIndex === 2} onConfirm={openImport} />
 				<Button icon="/img/export.svg" label={$t.common?.exportAll} selected={active && selectedIndex === 0 && buttonIndex === 3} onConfirm={openExportAll} />
 			</div>
@@ -434,10 +434,10 @@
 							<div class="network">
 								<div class="name">{network.name}</div>
 								<div class="buttons">
-									<Button label={$t.common?.connect} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
+									<Button icon="/img/connect.svg" label={$t.common?.connect} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
 									<Button icon="/img/export.svg" label={$t.common?.export} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openExport(network)} />
-									<Button label={$t.common?.edit} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openEditNetwork(network)} />
-									<Button label={$t.common?.delete} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => deleteNetwork(network)} />
+									<Button icon="/img/edit.svg" label={$t.common?.edit} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openEditNetwork(network)} />
+									<Button icon="/img/del.svg" label={$t.common?.delete} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => deleteNetwork(network)} />
 								</div>
 							</div>
 						</Row>

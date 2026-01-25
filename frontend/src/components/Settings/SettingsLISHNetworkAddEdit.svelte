@@ -299,10 +299,10 @@
 			<div class="bootstrap-row" bind:this={rowElements[bootstrapOffset + index]}>
 				<Input bind:this={bootstrapInputs[index]} bind:value={bootstrapServers[index]} placeholder="address:port" selected={isRowSelected && selectedColumn === 0} flex />
 				{#if hasRemove}
-					<Button icon="/img/del.svg" selected={isRowSelected && selectedColumn === 1} onConfirm={() => removeBootstrapServer(index)} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+					<Button icon="/img/minus.svg" selected={isRowSelected && selectedColumn === 1} onConfirm={() => removeBootstrapServer(index)} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				{/if}
 				{#if isLast}
-					<Button icon="/img/add.svg" selected={isRowSelected && ((hasRemove && selectedColumn === 2) || (!hasRemove && selectedColumn === 1))} onConfirm={() => addBootstrapServer()} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+					<Button icon="/img/plus.svg" selected={isRowSelected && ((hasRemove && selectedColumn === 2) || (!hasRemove && selectedColumn === 1))} onConfirm={() => addBootstrapServer()} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				{/if}
 			</div>
 		{/each}
@@ -310,7 +310,7 @@
 	</div>
 	<div class="buttons">
 		<div bind:this={rowElements[bootstrapOffset + bootstrapServers.length]}>
-			<Button label={$t.common?.save} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length} onConfirm={handleSave} />
+			<Button icon="/img/save.svg" label={$t.common?.save} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length} onConfirm={handleSave} />
 		</div>
 		<div bind:this={rowElements[bootstrapOffset + bootstrapServers.length + 1]}>
 			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length + 1} onConfirm={onBack} />

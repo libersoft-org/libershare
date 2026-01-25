@@ -176,7 +176,7 @@
 						<div class="label">{$t.settings?.storage?.folderDownload}</div>
 						<div class="path">{$storagePath}</div>
 					</div>
-					<Button label={$t.common?.change} selected={active && selectedIndex === 0} onConfirm={changeStoragePath} />
+					<Button icon="/img/edit.svg" label={$t.common?.change} selected={active && selectedIndex === 0} onConfirm={changeStoragePath} />
 				</Row>
 			</div>
 			<div bind:this={rowElements[1]}>
@@ -185,7 +185,7 @@
 						<div class="label">{$t.settings?.storage?.folderTemp}</div>
 						<div class="path">{$storageTempPath}</div>
 					</div>
-					<Button label={$t.common?.change} selected={active && selectedIndex === 1} onConfirm={changeStorageTempPath} />
+					<Button icon="/img/edit.svg" label={$t.common?.change} selected={active && selectedIndex === 1} onConfirm={changeStorageTempPath} />
 				</Row>
 			</div>
 		</div>

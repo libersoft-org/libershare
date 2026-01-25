@@ -10,12 +10,14 @@
 		message: string;
 		confirmLabel?: string;
 		cancelLabel?: string;
+		confirmIcon?: string;
+		cancelIcon?: string;
 		defaultButton?: 'confirm' | 'cancel';
 		position: Position;
 		onConfirm: () => void;
 		onBack: () => void;
 	}
-	let { title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', defaultButton = 'confirm', position, onConfirm, onBack }: Props = $props();
+	let { title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', confirmIcon, cancelIcon, defaultButton = 'confirm', position, onConfirm, onBack }: Props = $props();
 	let selectedButton = $state<'confirm' | 'cancel'>(defaultButton);
 	let isPressed = $state(false);
 
@@ -72,8 +74,8 @@
 	<div class="confirm">
 		<div class="message">{message}</div>
 		<ButtonsStatic>
-			<Button label={cancelLabel} selected={selectedButton === 'cancel'} pressed={selectedButton === 'cancel' && isPressed} onConfirm={onBack} />
-			<Button label={confirmLabel} selected={selectedButton === 'confirm'} pressed={selectedButton === 'confirm' && isPressed} {onConfirm} />
+			<Button icon={cancelIcon} label={cancelLabel} selected={selectedButton === 'cancel'} pressed={selectedButton === 'cancel' && isPressed} onConfirm={onBack} />
+			<Button icon={confirmIcon} label={confirmLabel} selected={selectedButton === 'confirm'} pressed={selectedButton === 'confirm' && isPressed} {onConfirm} />
 		</ButtonsStatic>
 	</div>
 </Dialog>

@@ -68,7 +68,7 @@
 	// Folder toolbar actions
 	let folderActions = $derived([
 		{ id: 'select', label: $t.fileBrowser?.selectFolder, icon: '/img/check.svg' },
-		{ id: 'new', label: $t.fileBrowser?.newFolder, icon: '/img/add.svg' },
+		{ id: 'new', label: $t.fileBrowser?.newFolder, icon: '/img/plus.svg' },
 		{ id: 'delete', label: $t.fileBrowser?.deleteFolder, icon: '/img/del.svg' },
 	]);
 	let selectedFolderActionIndex = $state(0);
