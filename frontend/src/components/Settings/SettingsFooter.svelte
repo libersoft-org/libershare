@@ -135,7 +135,7 @@
 <div class="footer">
 	<div class="content">
 		<div class="inner">
-			<Table columns="1fr 10vw">
+			<Table columns="1fr 10vw" columnsMobile="1fr auto">
 				<div bind:this={rowElements[0]}>
 					<TableRow selected={active && selectedIndex === 0} odd>
 						<TableCell>{$t.settings?.footerVisible}</TableCell>
@@ -146,7 +146,7 @@
 			<div bind:this={rowElements[1]}>
 				<Button label="{$t.settings?.footerPosition}: {$t.settings?.footerPositions?.[$footerPosition]}" selected={active && selectedIndex === 1} onConfirm={openPositionDialog} />
 			</div>
-			<Table columns="1fr 10vw">
+			<Table columns="1fr 10vw" columnsMobile="1fr auto">
 				{#each footerWidgets as widget, index}
 					<div bind:this={rowElements[index + 2]}>
 						<TableRow selected={active && selectedIndex === index + 2} odd={index % 2 === 0}>
