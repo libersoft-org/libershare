@@ -15,24 +15,66 @@ export class GamepadManager {
 	private volumeButtonHeld: number | null = null;
 	// Button state tracking (for A/B press/release)
 	private previousButtons: boolean[] = [];
+	// Connection state
+	private isConnected = false;
+	private started = false;
+	private boundHandleConnect: (e: GamepadEvent) => void;
+	private boundHandleDisconnect: (e: GamepadEvent) => void;
 
 	constructor() {
 		this.deadzone = get(gamepadDeadzone);
 		gamepadDeadzone.subscribe(value => (this.deadzone = value));
+		this.boundHandleConnect = this.handleConnect.bind(this);
+		this.boundHandleDisconnect = this.handleDisconnect.bind(this);
 	}
 
 	start(): void {
+		if (this.started) return;
+		this.started = true;
+		// Listen for gamepad connection events
+		window.addEventListener('gamepadconnected', this.boundHandleConnect);
+		window.addEventListener('gamepaddisconnected', this.boundHandleDisconnect);
+		// Check if gamepad is already connected
+		const gamepads = navigator.getGamepads();
+		if (gamepads[0]) {
+			this.isConnected = true;
+			this.startPolling();
+		}
+	}
+
+	stop(): void {
+		if (!this.started) return;
+		this.started = false;
+		window.removeEventListener('gamepadconnected', this.boundHandleConnect);
+		window.removeEventListener('gamepaddisconnected', this.boundHandleDisconnect);
+		this.stopPolling();
+	}
+
+	private handleConnect(e: GamepadEvent): void {
+		console.log('Gamepad connected:', e.gamepad.id);
+		this.isConnected = true;
+		if (this.started) this.startPolling();
+	}
+
+	private handleDisconnect(e: GamepadEvent): void {
+		console.log('Gamepad disconnected:', e.gamepad.id);
+		this.isConnected = false;
+		this.stopPolling();
+	}
+
+	private startPolling(): void {
 		if (this.animationId !== null) return;
 		this.poll();
 	}
 
-	stop(): void {
+	private stopPolling(): void {
 		if (this.animationId !== null) {
 			cancelAnimationFrame(this.animationId);
 			this.animationId = null;
 		}
 		this.firstInputTime = 0;
 		this.lastInputTime = 0;
+		this.previousButtons = [];
 	}
 
 	on(key: string, callback: GamepadCallback): void {
@@ -49,9 +91,12 @@ export class GamepadManager {
 	}
 
 	private poll = (): void => {
+		if (!this.isConnected) return;
 		const gamepad = navigator.getGamepads()[0];
 		if (!gamepad) {
-			this.animationId = requestAnimationFrame(this.poll);
+			// Gamepad disappeared unexpectedly
+			this.isConnected = false;
+			this.animationId = null;
 			return;
 		}
 		const buttons = gamepad.buttons.map(b => b.pressed);

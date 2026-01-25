@@ -2,44 +2,49 @@ import { writable, derived, get } from 'svelte/store';
 import { menuStructure, type MenuItem, type MenuAction, type MenuStructure } from './menu.ts';
 import { executeBackHandler } from './focus.ts';
 import { t } from './language.ts';
-// Base breadcrumb path from menu navigation
-const baseBreadcrumbStore = writable<string[]>([]);
-// Additional breadcrumb items pushed by components (for sub-navigation)
-const extraBreadcrumbStore = writable<string[]>([]);
-// Derived breadcrumb with translated Home + base + extra
-export const breadcrumbItems = derived([baseBreadcrumbStore, extraBreadcrumbStore, t], ([$base, $extra, $t]) => [$t.common?.home, ...$base, ...$extra]);
+// Breadcrumb item with source tracking
+export interface BreadcrumbItem {
+	label: string;
+	source: 'home' | 'menu' | 'component';
+}
+// Unified breadcrumb store
+const breadcrumbStore = writable<BreadcrumbItem[]>([]);
+// Derived breadcrumb labels for display (with translated Home)
+export const breadcrumbItems = derived([breadcrumbStore, t], ([$items, $t]) => [$t.common?.home, ...$items.map(item => item.label)]);
 // Content scroll management
 let contentElement: HTMLElement | null = null;
 const confirmDialogStore = writable<ConfirmDialogState>({ visible: false, action: null });
 // Global navigation store - set by createNavigation, used by components
 let globalNavigate: ((id: string) => void) | null = null;
-
-// Internal function to set base breadcrumb (used by navigation system)
-function setBaseBreadcrumb(items: string[]): void {
-	baseBreadcrumbStore.set(items);
-	// Clear extra items when base changes (navigating to different menu item)
-	extraBreadcrumbStore.set([]);
+// Internal function to set menu breadcrumb (clears component items)
+function setMenuBreadcrumb(items: string[]): void {
+	breadcrumbStore.set(items.map(label => ({ label, source: 'menu' as const })));
 }
 
-// Public function for components to push extra breadcrumb items
+// Public function for components to push breadcrumb items
 export function pushBreadcrumb(item: string): void {
-	extraBreadcrumbStore.update(items => [...items, item]);
+	breadcrumbStore.update(items => [...items, { label: item, source: 'component' as const }]);
 }
 
-// Public function for components to pop extra breadcrumb items
+// Public function for components to pop their breadcrumb items
 export function popBreadcrumb(): void {
-	extraBreadcrumbStore.update(items => (items.length > 0 ? items.slice(0, -1) : items));
+	breadcrumbStore.update(items => {
+		// Only pop component items, preserve menu items
+		if (items.length === 0) return items;
+		const last = items[items.length - 1];
+		if (last.source === 'component') return items.slice(0, -1);
+		return items;
+	});
 }
 
 // Reset all breadcrumbs
 export function resetBreadcrumb(): void {
-	baseBreadcrumbStore.set([]);
-	extraBreadcrumbStore.set([]);
+	breadcrumbStore.set([]);
 }
 
-// @deprecated - use setBaseBreadcrumb internally
+// @deprecated - use setMenuBreadcrumb internally
 export function setBreadcrumb(items: string[]): void {
-	setBaseBreadcrumb(items);
+	setMenuBreadcrumb(items);
 }
 
 export function setContentElement(element: HTMLElement): void {
@@ -112,7 +117,7 @@ export function createNavigation() {
 				items = (item.submenu ?? []) as MenuItem[];
 			}
 		}
-		setBreadcrumb(labels);
+		setMenuBreadcrumb(labels);
 		return labels;
 	}).subscribe(() => {}); // Subscribe to activate the derived store
 
