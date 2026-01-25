@@ -90,8 +90,8 @@
 
 	.item {
 		color: var(--disabled-foreground);
-		padding: 0.2vh 0.6vh;
-		border-radius: 0.5vh;
+		padding: 0.5vh;
+		border-radius: 1vh;
 	}
 
 	.item.current {
@@ -108,15 +108,15 @@
 <div class="breadcrumb">
 	{#each items as item, index (item.id)}
 		{#if index > 0}
-			<Icon img="/img/caret-right.svg" size="1.5vh" padding="0" colorVariable="--disabled-foreground" />
+			<Icon img="/img/caret-right.svg" size="2vh" padding="0" colorVariable="--disabled-foreground" />
 		{/if}
 		{@const isSelected = active && selectedIndex === index}
-		<span class="item" class:current={index === items.length - 1} class:selected={isSelected}>
+		<div class="item" class:current={index === items.length - 1} class:selected={isSelected}>
 			{#if item.icon}
-				<Icon img={item.icon} size="1.8vh" padding="0" colorVariable={isSelected ? '--primary-background' : '--disabled-foreground'} />
+				<Icon img={item.icon} size="2vh" padding="0" colorVariable={isSelected ? '--primary-background' : '--disabled-foreground'} />
 			{:else}
 				{item.name}
 			{/if}
-		</span>
+		</div>
 	{/each}
 </div>
