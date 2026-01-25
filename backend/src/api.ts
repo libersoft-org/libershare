@@ -6,7 +6,6 @@ import { Downloader } from './downloader.ts';
 import { join } from 'path';
 import { fsInfo, fsList } from './fs.ts';
 
-
 interface ClientData {
 	subscribedEvents: Set<string>;
 }
@@ -59,10 +58,10 @@ export class ApiServer {
 			fetch(req, server) {
 				console.log(`[API] Incoming request: ${req.method} ${req.url}`);
 				const upgraded = server.upgrade(req, {
-					data: {subscribedEvents: new Set<string>()}
+					data: { subscribedEvents: new Set<string>() },
 				});
 				if (upgraded) return undefined;
-				return new Response('Expected WebSocket', {status: 400});
+				return new Response('Expected WebSocket', { status: 400 });
 			},
 			websocket: {
 				open(ws) {
@@ -107,20 +106,20 @@ export class ApiServer {
 		try {
 			req = JSON.parse(message);
 		} catch {
-			client.send(JSON.stringify({id: null, error: 'Parse error'}));
+			client.send(JSON.stringify({ id: null, error: 'Parse error' }));
 			return;
 		}
 
 		if (!req.method) {
-			client.send(JSON.stringify({id: req.id, error: 'Method required'}));
+			client.send(JSON.stringify({ id: req.id, error: 'Method required' }));
 			return;
 		}
 
 		try {
 			const result = await this.execute(client, req.method, req.params || {});
-			client.send(JSON.stringify({id: req.id, result}));
+			client.send(JSON.stringify({ id: req.id, result }));
 		} catch (err: any) {
-			client.send(JSON.stringify({id: req.id, error: err.message}));
+			client.send(JSON.stringify({ id: req.id, error: err.message }));
 		}
 	}
 
@@ -130,7 +129,7 @@ export class ApiServer {
 			case 'subscribe': {
 				const events = Array.isArray(params.events) ? params.events : [params.event];
 				events.forEach((e: string) => {
-					client.data.subscribedEvents.add(e)
+					client.data.subscribedEvents.add(e);
 				});
 				return true;
 			}
@@ -177,9 +176,7 @@ export class ApiServer {
 						downloading: this.db.getAllDatasets().filter(ds => !ds.complete).length, // todo get actual Downloader instances here.
 					},
 
-					space:
-						[{path: '/', free: 1000000000, usedByDatabase: 500000000, usedByDatasets: 300000000}],
-
+					space: [{ path: '/', free: 1000000000, usedByDatabase: 500000000, usedByDatasets: 300000000 }],
 
 					/*space: getDisks().forEach(disk => ({
 							path: disk.mountpoint,
@@ -200,8 +197,6 @@ export class ApiServer {
 				};
 			}
 
-
-
 			// Networks management
 			case 'networks.list':
 				return this.networks.getAll();
@@ -219,15 +214,15 @@ export class ApiServer {
 			// Network operations (require networkId)
 
 			case 'networks.setEnabled':
-				return {success: await this.networks.setEnabled(params.networkId, params.enabled)};
+				return { success: await this.networks.setEnabled(params.networkId, params.enabled) };
 			case 'networks.delete':
-				return {success: await this.networks.delete(params.networkId)};
+				return { success: await this.networks.delete(params.networkId) };
 
 			case 'networks.connect': {
 				const network = this.networks.getLiveNetwork(params.networkId);
 				if (!network) throw new Error('Network not running');
 				await (network as any).connectToPeer(params.multiaddr);
-				return {success: true};
+				return { success: true };
 			}
 			case 'networks.findPeer': {
 				const network = this.networks.getLiveNetwork(params.networkId);
@@ -265,9 +260,7 @@ export class ApiServer {
 					peersInStore: node ? (await node.peerStore.all()).length : 0,
 					datasets: this.db.getAllDatasets().length,
 				};
-
 			}
-
 
 			// Manifests
 			case 'getAllManifests':
@@ -275,24 +268,20 @@ export class ApiServer {
 			case 'getManifest':
 				return this.dataServer.getManifest(params.lishId);
 
-
-
 			// Datasets
 			case 'getDatasets':
 				return this.db.getAllDatasets();
 			case 'getDataset':
 				return this.db.getDataset(params.id);
 
-
-
 			// high-level operations
 
 			// given a directory path, create and import a Lish manifest and a corresponding dataset
 			case 'createLish': {
 				const manifest = await this.dataServer.importDataset(params.path, info => {
-					this.emit(client, 'import:progress', {path: params.path, ...info});
+					this.emit(client, 'import:progress', { path: params.path, ...info });
 				});
-				return {manifestId: manifest.id};
+				return { manifestId: manifest.id };
 			}
 
 			case 'fetchUrl': {
@@ -300,8 +289,8 @@ export class ApiServer {
 				const response = await fetch(params.url);
 				if (!response.ok) {
 					return {
-						status: response.status
-					}
+						status: response.status,
+					};
 				}
 				const content = await response.text();
 				return {
@@ -336,10 +325,11 @@ export class ApiServer {
 				const downloadDir = join(this.dataDir, 'downloads', Date.now().toString());
 				const downloader = new Downloader(downloadDir, network, this.dataServer);
 				await downloader.init(params.manifestPath);
-				downloader.download()
-					.then(() => this.emit(client, 'download:complete', {downloadDir}))
-					.catch(err => this.emit(client, 'download:error', {error: err.message}));
-				return {downloadDir};
+				downloader
+					.download()
+					.then(() => this.emit(client, 'download:complete', { downloadDir }))
+					.catch(err => this.emit(client, 'download:error', { error: err.message }));
+				return { downloadDir };
 			}
 
 			default:
@@ -355,7 +345,7 @@ export class ApiServer {
 	}
 
 	private broadcast(event: string, data: any): void {
-		const msg = JSON.stringify({event, data});
+		const msg = JSON.stringify({ event, data });
 		for (const client of this.clients) {
 			this.emit(client, event, data);
 		}
@@ -363,7 +353,7 @@ export class ApiServer {
 
 	private emit(client: ClientSocket, event: string, data: any): void {
 		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
-			client.send(JSON.stringify({event, data}));
+			client.send(JSON.stringify({ event, data }));
 		}
 	}
 }

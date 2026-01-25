@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
+	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
@@ -13,7 +14,7 @@
 	import Alert from '../Alert/Alert.svelte';
 	import Spinner from '../Spinner/Spinner.svelte';
 	import PathBreadcrumb from './FileBrowserBreadcrumb.svelte';
-	export type StorageItemType = 'folder' | 'file' | 'drive';
+	import ConfirmDialog from '../Dialog/ConfirmDialog.svelte';import InputDialog from '../Dialog/InputDialog.svelte';	export type StorageItemType = 'folder' | 'file' | 'drive';
 	export interface StorageItemData {
 		id: string;
 		name: string;
@@ -62,6 +63,11 @@
 	let error = $state<string | null>(null);
 	let separator = $state('/');
 	let pathBreadcrumb: ReturnType<typeof PathBreadcrumb> | undefined = $state();
+	let showDeleteConfirm = $state(false);
+	let showNewFolderDialogState = $state(false);
+	let unregisterFolderActions: (() => void) | null = null;
+	let unregisterList: (() => void) | null = null;
+	let unregisterActions: (() => void) | null = null;
 
 	let selectedItem = $derived(items[selectedIndex]);
 
@@ -334,12 +340,95 @@
 				onSelect?.(currentPath);
 				break;
 			case 'new':
-				// TODO: implement new folder in currentPath
+				showNewFolderDialog();
 				break;
 			case 'delete':
-				// TODO: implement delete currentPath
+				showDeleteConfirmDialog();
 				break;
 		}
+	}
+
+	function showDeleteConfirmDialog() {
+		showDeleteConfirm = true;
+		// Unregister areas so dialog can take over
+		if (unregisterFolderActions) {
+			unregisterFolderActions();
+			unregisterFolderActions = null;
+		}
+		if (unregisterList) {
+			unregisterList();
+			unregisterList = null;
+		}
+		if (unregisterActions) {
+			unregisterActions();
+			unregisterActions = null;
+		}
+		pushBreadcrumb($t.common?.delete ?? 'Delete');
+	}
+
+	async function confirmDeleteFolder() {
+		try {
+			await api.fsDelete(currentPath);
+			// Navigate to parent after deletion
+			if (parentPath !== null) {
+				await loadDirectory(parentPath);
+			}
+		} catch (e: any) {
+			error = e.message || 'Failed to delete folder';
+		}
+		cancelDeleteFolder();
+	}
+
+	async function cancelDeleteFolder() {
+		showDeleteConfirm = false;
+		popBreadcrumb();
+		await tick();
+		// Re-register areas
+		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
+		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
+		activateArea(`${areaID}-folder-actions`);
+	}
+
+	function showNewFolderDialog() {
+		showNewFolderDialogState = true;
+		// Unregister areas so dialog can take over
+		if (unregisterFolderActions) {
+			unregisterFolderActions();
+			unregisterFolderActions = null;
+		}
+		if (unregisterList) {
+			unregisterList();
+			unregisterList = null;
+		}
+		if (unregisterActions) {
+			unregisterActions();
+			unregisterActions = null;
+		}
+		pushBreadcrumb($t.fileBrowser?.newFolder ?? 'New folder');
+	}
+
+	async function confirmNewFolder(folderName: string) {
+		try {
+			const newPath = currentPath + separator + folderName;
+			await api.fsMkdir(newPath);
+			// Reload directory and select the new folder
+			await loadDirectory(currentPath, folderName);
+		} catch (e: any) {
+			error = e.message || 'Failed to create folder';
+		}
+		cancelNewFolder();
+	}
+
+	async function cancelNewFolder() {
+		showNewFolderDialogState = false;
+		popBreadcrumb();
+		await tick();
+		// Re-register areas
+		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
+		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
+		activateArea(`${areaID}-folder-actions`);
 	}
 
 	export function getCurrentPath(): string {
@@ -352,9 +441,9 @@
 
 	onMount(() => {
 		// Register sub-areas with positions relative to content area
-		const unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
-		const unregister = useArea(`${areaID}-list`, areaHandlers, listPosition);
-		const unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
+		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
+		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(`${areaID}-list`);
 
 		(async () => {
@@ -371,9 +460,9 @@
 			}
 		})();
 		return () => {
-			unregister();
-			unregisterActions();
-			unregisterFolderActions();
+			if (unregisterFolderActions) unregisterFolderActions();
+			if (unregisterList) unregisterList();
+			if (unregisterActions) unregisterActions();
 		};
 	});
 </script>
@@ -482,3 +571,11 @@
 		{/if}
 	</div>
 </div>
+
+{#if showDeleteConfirm}
+	<ConfirmDialog title={$t.fileBrowser?.deleteFolder ?? 'Delete folder'} message={$t.fileBrowser?.confirmDeleteFolder?.replace('{path}', currentPath) ?? `Are you sure you want to delete "${currentPath}"?`} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmDeleteFolder} onBack={cancelDeleteFolder} />
+{/if}
+
+{#if showNewFolderDialogState}
+	<InputDialog title={$t.fileBrowser?.newFolder ?? 'New folder'} label={$t.fileBrowser?.folderName ?? 'Folder name'} placeholder={$t.fileBrowser?.enterFolderName ?? 'Enter folder name'} confirmLabel={$t.common?.create ?? 'Create'} cancelLabel={$t.common?.cancel ?? 'Cancel'} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
+{/if}

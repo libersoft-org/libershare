@@ -79,4 +79,8 @@ export const api = {
     fsInfo: () => wsClient.call<FsInfo>('fs.info'),
 
     fsList: (path?: string) => wsClient.call<FsListResult>('fs.list', { path }),
+
+    fsDelete: (path: string) => wsClient.call<{ success: boolean }>('fs.delete', { path }),
+
+    fsMkdir: (path: string) => wsClient.call<{ success: boolean }>('fs.mkdir', { path }),
 };
