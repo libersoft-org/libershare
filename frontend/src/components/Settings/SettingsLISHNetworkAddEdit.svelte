@@ -3,7 +3,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
-	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
+	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -15,7 +15,7 @@
 		onBack?: () => void;
 		onSave?: (network: { id: string; name: string; description: string; bootstrapServers: string[] }) => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, network = null, onBack, onSave }: Props = $props();
+	let { areaID, position = LAYOUT.content, network = null, onBack, onSave }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
 	let selectedColumn = $state(0); // 0 = input, 1 = remove btn, 2 = add btn

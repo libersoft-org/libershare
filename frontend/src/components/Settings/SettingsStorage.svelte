@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { useArea, activeArea, setAreaPosition, removeArea, activateArea } from '../../scripts/areas.ts';
+	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
-	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
+	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath, storageTempPath, setStoragePath, setStorageTempPath } from '../../scripts/settings.ts';
@@ -16,8 +16,8 @@
 		position?: Position;
 		onBack?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
-	const browseAreaID = areaID + '-browse';
+	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
+	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
@@ -27,8 +27,11 @@
 
 	function openBrowse(type: 'storage' | 'temp') {
 		browsingFor = type;
-		setAreaPosition(areaID, { x: -999, y: -999 });
-		// Don't register browseAreaID in layout - FileBrowser creates its own sub-areas
+		// Unregister our area - FileBrowser will create its own sub-areas
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
 		pushBreadcrumb(type === 'storage' ? ($t.settings?.storage?.folderDownload ?? 'Download folder') : ($t.settings?.storage?.folderTemp ?? 'Temp folder'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 		// FileBrowser will activate its list area on mount
@@ -52,16 +55,17 @@
 		handleBrowseBack();
 	}
 
-	function handleBrowseBack() {
+	async function handleBrowseBack() {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
 		}
 		// FileBrowser's sub-areas are cleaned up automatically when it unmounts
-		setAreaPosition(areaID, position);
 		popBreadcrumb();
 		browsingFor = null;
-		registerAreaHandler();
+		// Wait for sub-component to unmount before re-registering
+		await tick();
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
 	}
 
@@ -101,9 +105,11 @@
 	}
 
 	onMount(() => {
-		const unregister = registerAreaHandler();
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
-		return unregister;
+		return () => {
+			if (unregisterArea) unregisterArea();
+		};
 	});
 
 	function scrollToSelected(): void {
@@ -160,7 +166,7 @@
 </style>
 
 {#if browsingFor}
-	<SettingsStorageBrowse areaID={browseAreaID} initialPath={browsingFor === 'storage' ? $storagePath : $storageTempPath} onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
+	<SettingsStorageBrowse areaID={areaID} {position} initialPath={browsingFor === 'storage' ? $storagePath : $storageTempPath} onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="storage">
 		<div class="rows">

@@ -3,7 +3,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
-	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
+	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { addNetworkIfNotExists, type LISHNetwork } from '../../scripts/lishnet.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -14,7 +14,7 @@
 		onBack?: () => void;
 		onImport?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack, onImport }: Props = $props();
+	let { areaID, position = LAYOUT.content, onBack, onImport }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0); // 0 = input, 1 = buttons row
 	let selectedColumn = $state(0); // 0 = load from file, 1 = import, 2 = back

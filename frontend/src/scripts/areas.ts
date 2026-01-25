@@ -55,28 +55,6 @@ export function useArea(areaID: string, handlers: AreaHandlers, position: Positi
 	};
 }
 
-/**
- * @deprecated Use useArea() with position parameter instead.
- * This function is kept for backwards compatibility with modal dialogs.
- * Directly updates an area's position in the layout.
- */
-export function setAreaPosition(areaID: string, position: Position): void {
-	areaLayout.update(layout => ({ ...layout, [areaID]: position }));
-}
-
-/**
- * @deprecated The cleanup function from useArea() handles removal.
- * This function is kept for backwards compatibility.
- * Removes an area from the layout (but not its handlers).
- */
-export function removeArea(areaID: string): void {
-	areaLayout.update(layout => {
-		const { [areaID]: _, ...rest } = layout;
-		return rest;
-	});
-	if (get(activeArea) === areaID) activeArea.set(null);
-}
-
 // Activation
 export function activateArea(areaID: string): void {
 	const handlers = areaHandlers.get(areaID);

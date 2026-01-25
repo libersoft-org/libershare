@@ -3,7 +3,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
-	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
+	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { getNetworks } from '../../scripts/lishnet.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -13,7 +13,7 @@
 		position?: Position;
 		onBack?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let networks = $derived(getNetworks());
 	let hasNetworks = $derived(networks.length > 0);

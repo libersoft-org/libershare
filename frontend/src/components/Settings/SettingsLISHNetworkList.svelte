@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { useArea, activeArea, setAreaPosition, removeArea, activateArea } from '../../scripts/areas.ts';
+	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
-	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
+	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { type LISHNetwork, getNetworks, saveNetworks as saveNetworksToStorage } from '../../scripts/lishnet.ts';
@@ -21,12 +21,8 @@
 		position?: Position;
 		onBack?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
-	const editAreaID = areaID + '-edit';
-	const exportAreaID = areaID + '-export';
-	const exportAllAreaID = areaID + '-export-all';
-	const importAreaID = areaID + '-import';
-	const publicAreaID = areaID + '-public';
+	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
+	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
@@ -36,6 +32,7 @@
 	let showExportAll = $state(false);
 	let showImport = $state(false);
 	let showPublic = $state(false);
+	let showDeleteConfirm = $state(false);
 	let editingNetwork = $state<LISHNetwork | null>(null);
 	let exportingNetwork = $state<LISHNetwork | null>(null);
 	let deletingNetwork = $state<LISHNetwork | null>(null);
@@ -58,54 +55,63 @@
 
 	function openPublic() {
 		showPublic = true;
-		setAreaPosition(areaID, { x: -999, y: -999 });
-		setAreaPosition(publicAreaID, position);
+		// Unregister our area - sub-component will create its own
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
 		pushBreadcrumb($t.settings?.lishNetwork?.publicList);
 		removeBackHandler = pushBackHandler(handlePublicBack);
 	}
 
-	function handlePublicBack() {
+	async function handlePublicBack() {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
 		}
-		removeArea(publicAreaID);
-		setAreaPosition(areaID, position);
 		popBreadcrumb();
 		showPublic = false;
 		// Reload networks in case new ones were added
 		networks = getNetworks();
-		registerAreaHandler();
+		// Wait for sub-component to unmount before re-registering
+		await tick();
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
 	}
 
 	function openAddNetwork() {
 		editingNetwork = null;
 		showAddEdit = true;
-		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
-		setAreaPosition(editAreaID, position);
+		// Unregister our area - sub-component will create its own
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
 		pushBreadcrumb($t.common?.add);
 		removeBackHandler = pushBackHandler(handleAddEditBack);
 	}
 
 	function openImport() {
 		showImport = true;
-		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
-		setAreaPosition(importAreaID, position);
+		// Unregister our area - sub-component will create its own
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
 		pushBreadcrumb($t.common?.import);
 		removeBackHandler = pushBackHandler(handleImportBack);
 	}
 
-	function handleImportBack() {
+	async function handleImportBack() {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
 		}
-		removeArea(importAreaID);
-		setAreaPosition(areaID, position); // Restore original area position
 		popBreadcrumb();
 		showImport = false;
-		registerAreaHandler();
+		// Wait for sub-component to unmount before re-registering
+		await tick();
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
 	}
 
@@ -117,22 +123,25 @@
 
 	function openExportAll() {
 		showExportAll = true;
-		setAreaPosition(areaID, { x: -999, y: -999 });
-		setAreaPosition(exportAllAreaID, position);
+		// Unregister our area - sub-component will create its own
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
 		pushBreadcrumb($t.common?.exportAll);
 		removeBackHandler = pushBackHandler(handleExportAllBack);
 	}
 
-	function handleExportAllBack() {
+	async function handleExportAllBack() {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
 		}
-		removeArea(exportAllAreaID);
-		setAreaPosition(areaID, position);
 		popBreadcrumb();
 		showExportAll = false;
-		registerAreaHandler();
+		// Wait for sub-component to unmount before re-registering
+		await tick();
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
 	}
 
@@ -144,41 +153,53 @@
 	function openExport(network: LISHNetwork) {
 		exportingNetwork = network;
 		showExport = true;
-		setAreaPosition(areaID, { x: -999, y: -999 });
-		setAreaPosition(exportAreaID, position);
+		// Unregister our area - sub-component will create its own
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
 		pushBreadcrumb(`${network.name} - ${$t.common?.export}`);
 		removeBackHandler = pushBackHandler(handleExportBack);
 	}
 
-	function handleExportBack() {
+	async function handleExportBack() {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
 		}
-		removeArea(exportAreaID);
-		setAreaPosition(areaID, position);
 		popBreadcrumb();
 		showExport = false;
 		exportingNetwork = null;
-		registerAreaHandler();
+		// Wait for sub-component to unmount before re-registering
+		await tick();
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
 	}
 
 	function openEditNetwork(network: LISHNetwork) {
 		editingNetwork = network;
 		showAddEdit = true;
-		setAreaPosition(areaID, { x: -999, y: -999 }); // Move original area out of the way
-		setAreaPosition(editAreaID, position);
+		// Unregister our area - sub-component will create its own
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
 		pushBreadcrumb(`${network.name} - ${$t.common?.edit}`);
 		removeBackHandler = pushBackHandler(handleAddEditBack);
 	}
 
 	function deleteNetwork(network: LISHNetwork) {
 		deletingNetwork = network;
-		setAreaPosition(areaID, { x: -999, y: -999 }); // Move list area out of the way for dialog
+		showDeleteConfirm = true;
+		// Unregister our area - ConfirmDialog will create its own
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
+		pushBreadcrumb(`${network.name} - ${$t.common?.delete}`);
 	}
 
-	function confirmDeleteNetwork() {
+	async function confirmDeleteNetwork() {
 		if (deletingNetwork) {
 			networks = networks.filter(n => n.networkID !== deletingNetwork!.networkID);
 			saveNetworks();
@@ -186,32 +207,40 @@
 			if (selectedIndex >= totalItems) selectedIndex = totalItems - 1;
 			buttonIndex = 0;
 			deletingNetwork = null;
-			setAreaPosition(areaID, position); // Restore list area
+			showDeleteConfirm = false;
+			popBreadcrumb();
+			// Wait for sub-component to unmount before re-registering
+			await tick();
+			unregisterArea = registerAreaHandler();
 			activateArea(areaID);
 		}
 	}
 
-	function cancelDelete() {
+	async function cancelDelete() {
 		deletingNetwork = null;
-		setAreaPosition(areaID, position); // Restore list area
+		showDeleteConfirm = false;
+		popBreadcrumb();
+		// Wait for sub-component to unmount before re-registering
+		await tick();
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
 	}
 
-	function handleAddEditBack() {
+	async function handleAddEditBack() {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
 		}
-		removeArea(editAreaID);
-		setAreaPosition(areaID, position); // Restore original area position
 		popBreadcrumb();
 		showAddEdit = false;
 		editingNetwork = null;
-		registerAreaHandler();
+		// Wait for sub-component to unmount before re-registering
+		await tick();
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
 	}
 
-	function handleSave(savedNetwork: { id: string; name: string; description: string; bootstrapServers: string[] }) {
+	async function handleSave(savedNetwork: { id: string; name: string; description: string; bootstrapServers: string[] }) {
 		const network: LISHNetwork = {
 			version: 1,
 			networkID: savedNetwork.id,
@@ -233,12 +262,12 @@
 			removeBackHandler();
 			removeBackHandler = null;
 		}
-		removeArea(editAreaID);
-		setAreaPosition(areaID, position); // Restore original area position
 		popBreadcrumb();
 		showAddEdit = false;
 		editingNetwork = null;
-		registerAreaHandler();
+		// Wait for sub-component to unmount before re-registering
+		await tick();
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
 	}
 
@@ -317,9 +346,11 @@
 
 	// Re-register handler when showAddEdit changes back to false
 	onMount(() => {
-		const unregister = registerAreaHandler();
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
-		return unregister;
+		return () => {
+			if (unregisterArea) unregisterArea();
+		};
 	});
 </script>
 
@@ -374,15 +405,17 @@
 
 {#if showAddEdit}
 	{@const networkForEdit = editingNetwork ? { id: editingNetwork.networkID, name: editingNetwork.name, description: editingNetwork.description, bootstrapServers: editingNetwork.bootstrapPeers } : null}
-	<LISHNetworkAddEdit areaID={editAreaID} network={networkForEdit} onBack={handleAddEditBack} onSave={handleSave} />
+	<LISHNetworkAddEdit areaID={areaID} {position} network={networkForEdit} onBack={handleAddEditBack} onSave={handleSave} />
 {:else if showExport}
-	<LISHNetworkExport areaID={exportAreaID} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={handleExportBack} />
+	<LISHNetworkExport areaID={areaID} {position} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={handleExportBack} />
 {:else if showExportAll}
-	<LISHNetworkExportAll areaID={exportAllAreaID} onBack={handleExportAllBack} />
+	<LISHNetworkExportAll areaID={areaID} {position} onBack={handleExportAllBack} />
 {:else if showImport}
-	<LISHNetworkImport areaID={importAreaID} onBack={handleImportBack} onImport={handleImport} />
+	<LISHNetworkImport areaID={areaID} {position} onBack={handleImportBack} onImport={handleImport} />
 {:else if showPublic}
-	<LISHNetworkPublic areaID={publicAreaID} onBack={handlePublicBack} />
+	<LISHNetworkPublic areaID={areaID} {position} onBack={handlePublicBack} />
+{:else if showDeleteConfirm && deletingNetwork}
+	<ConfirmDialog title={$t.common?.delete} message={$t.settings?.lishNetwork?.confirmDelete?.replace('{name}', deletingNetwork.name)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} defaultButton="cancel" {position} onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
 {:else}
 	<div class="lish-network-list">
 		<div class="container">
@@ -416,8 +449,4 @@
 			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
 		</div>
 	</div>
-{/if}
-
-{#if deletingNetwork}
-	<ConfirmDialog title={$t.common?.delete} message={$t.settings?.lishNetwork?.confirmDelete?.replace('{name}', deletingNetwork.name)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} defaultButton="cancel" onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
 {/if}

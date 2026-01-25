@@ -3,7 +3,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
-	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
+	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { type LISHNetwork, DEFAULT_PUBLIC_LIST_URL, fetchPublicNetworks, getExistingNetworkIds, addNetworkIfNotExists } from '../../scripts/lishnet.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -15,7 +15,7 @@
 		position?: Position;
 		onBack?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0); // 0 = URL row (input + Load), 1+ = network rows, last = Back
 	let selectedColumn = $state(0); // 0 = URL input, 1 = Load button

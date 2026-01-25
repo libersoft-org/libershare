@@ -2,30 +2,44 @@ import { writable, derived, get } from 'svelte/store';
 import { menuStructure, type MenuItem, type MenuAction, type MenuStructure } from './menu.ts';
 import { executeBackHandler } from './focus.ts';
 import { t } from './language.ts';
-// Breadcrumb path store (without Home - that's added reactively)
-const breadcrumbPathStore = writable<string[]>([]);
-// Derived breadcrumb with translated Home
-export const breadcrumbItems = derived([breadcrumbPathStore, t], ([$path, $t]) => [$t.common?.home, ...$path]);
+// Base breadcrumb path from menu navigation
+const baseBreadcrumbStore = writable<string[]>([]);
+// Additional breadcrumb items pushed by components (for sub-navigation)
+const extraBreadcrumbStore = writable<string[]>([]);
+// Derived breadcrumb with translated Home + base + extra
+export const breadcrumbItems = derived([baseBreadcrumbStore, extraBreadcrumbStore, t], ([$base, $extra, $t]) => [$t.common?.home, ...$base, ...$extra]);
 // Content scroll management
 let contentElement: HTMLElement | null = null;
 const confirmDialogStore = writable<ConfirmDialogState>({ visible: false, action: null });
 // Global navigation store - set by createNavigation, used by components
 let globalNavigate: ((id: string) => void) | null = null;
 
-export function setBreadcrumb(items: string[]): void {
-	breadcrumbPathStore.set(items);
+// Internal function to set base breadcrumb (used by navigation system)
+function setBaseBreadcrumb(items: string[]): void {
+	baseBreadcrumbStore.set(items);
+	// Clear extra items when base changes (navigating to different menu item)
+	extraBreadcrumbStore.set([]);
 }
 
+// Public function for components to push extra breadcrumb items
 export function pushBreadcrumb(item: string): void {
-	breadcrumbPathStore.update(items => [...items, item]);
+	extraBreadcrumbStore.update(items => [...items, item]);
 }
 
+// Public function for components to pop extra breadcrumb items
 export function popBreadcrumb(): void {
-	breadcrumbPathStore.update(items => (items.length > 0 ? items.slice(0, -1) : items));
+	extraBreadcrumbStore.update(items => (items.length > 0 ? items.slice(0, -1) : items));
 }
 
+// Reset all breadcrumbs
 export function resetBreadcrumb(): void {
-	breadcrumbPathStore.set([]);
+	baseBreadcrumbStore.set([]);
+	extraBreadcrumbStore.set([]);
+}
+
+// @deprecated - use setBaseBreadcrumb internally
+export function setBreadcrumb(items: string[]): void {
+	setBaseBreadcrumb(items);
 }
 
 export function setContentElement(element: HTMLElement): void {
