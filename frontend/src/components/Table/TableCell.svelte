@@ -14,7 +14,7 @@
 	.cell {
 		display: flex;
 		align-items: center;
-		font-size: 2vh;
+		font-size: inherit;
 		min-width: 0;
 	}
 

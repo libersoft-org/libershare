@@ -70,8 +70,8 @@
 		transform: rotate(90deg);
 	}
 
-	@media (max-width: 1199px) {
-		:global(.desktop) {
+	@media (max-width: 1399px) {
+		:global(.cell.desktop-only) {
 			display: none !important;
 		}
 
@@ -108,7 +108,7 @@
 		<ItemDetail label={$t.downloads?.downloadSpeed}>{downloadSpeed}</ItemDetail>
 		<ItemDetail label={$t.downloads?.uploadSpeed}>{uploadSpeed}</ItemDetail>
 	</div>
-	<Table columns="1fr 10vh 20vh" columnsMobile="1fr 5vh 10vh" noBorder>
+	<Table columns="1fr 10vh 20vh" columnsMobile="1fr 10vh 15vh" noBorder>
 		{#each files as file, index (file.id)}
 			<DownloadFile name={file.name} progress={file.progress} size={file.size} selected={selected && selectedFileIndex === index} odd={index % 2 === 0} />
 		{/each}

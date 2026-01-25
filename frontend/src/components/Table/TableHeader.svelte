@@ -2,8 +2,9 @@
 	import type { Snippet } from 'svelte';
 	interface Props {
 		children: Snippet;
+		fontSize?: string;
 	}
-	let { children }: Props = $props();
+	let { children, fontSize = '1.6vh' }: Props = $props();
 </script>
 
 <style>
@@ -12,7 +13,6 @@
 		align-items: center;
 		padding: 1vh 2vh;
 		background-color: var(--secondary-background);
-		font-size: 1.6vh;
 		font-weight: bold;
 		grid-template-columns: var(--table-columns);
 		gap: var(--table-gap, 2vh);
@@ -25,6 +25,6 @@
 	}
 </style>
 
-<div class="header">
+<div class="header" style:font-size={fontSize}>
 	{@render children()}
 </div>

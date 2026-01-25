@@ -174,7 +174,7 @@
 </style>
 
 <Table {columns} noBorder>
-	<Header>
+	<Header fontSize="1.4vh">
 		<Cell>{$t.downloads?.name}</Cell>
 		<Cell align="center" desktopOnly>{$t.downloads?.id}</Cell>
 		<Cell align="right" desktopOnly>{$t.downloads?.size}</Cell>
