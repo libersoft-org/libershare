@@ -18,6 +18,8 @@ export interface MenuItem {
 	id: string;
 	label?: string;
 	icon?: string;
+	iconPosition?: 'left' | 'top';
+	iconSize?: string;
 	submenu?: MenuItem[];
 	component?: Component<any>;
 	props?: Record<string, any>;
@@ -43,6 +45,8 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'video',
 					label: 'Video',
+					iconPosition: 'left',
+					iconSize: '2vh',
 					component: Items,
 					props: {
 						category: 'video',
@@ -51,6 +55,8 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'software',
 					label: 'Software',
+					iconPosition: 'left',
+					iconSize: '2vh',
 					component: Items,
 					props: {
 						category: 'software',
@@ -60,6 +66,8 @@ export const menuStructure = derived(t, () => ({
 					id: 'back',
 					label: tt('common.back'),
 					icon: '/img/back.svg',
+					iconPosition: 'left',
+					iconSize: '2vh',
 					action: 'back' as const,
 				},
 			],
@@ -102,12 +110,17 @@ export const menuStructure = derived(t, () => ({
 						...languages.map(lang => ({
 							id: `lang-${lang.id}`,
 							label: lang.nativeLabel,
+							iconPosition: 'left',
+							iconSize: '2vh',
 							selected: () => get(currentLanguage) === lang.id,
 							onSelect: () => setLanguage(lang.id),
 						})),
 						{
 							id: 'back',
 							label: tt('common.back'),
+							icon: '/img/back.svg',
+							iconPosition: 'left',
+							iconSize: '2vh',
 							action: 'back' as const,
 						},
 					],
@@ -120,16 +133,21 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'time-format',
 							label: tt('settings.time.format'),
+							icon: '/img/time.svg',
 							submenu: [
 								{
 									id: 'time-format-24',
 									label: tt('settings.time.24hour'),
+									iconPosition: 'left',
+									iconSize: '2vh',
 									selected: () => get(timeFormat) === true,
 									onSelect: () => setTimeFormat(true),
 								},
 								{
 									id: 'time-format-12',
 									label: tt('settings.time.12hour'),
+									iconPosition: 'left',
+									iconSize: '2vh',
 									selected: () => get(timeFormat) === false,
 									onSelect: () => setTimeFormat(false),
 								},
@@ -137,6 +155,8 @@ export const menuStructure = derived(t, () => ({
 									id: 'back',
 									label: tt('common.back'),
 									icon: '/img/back.svg',
+									iconPosition: 'left',
+									iconSize: '2vh',
 									action: 'back' as const,
 								},
 							],
@@ -144,16 +164,21 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'time-seconds',
 							label: tt('settings.time.showSeconds'),
+							icon: '/img/time.svg',
 							submenu: [
 								{
 									id: 'time-seconds-yes',
 									label: tt('common.yes'),
+									iconPosition: 'left',
+									iconSize: '2vh',
 									selected: () => get(showSeconds) === true,
 									onSelect: () => setShowSeconds(true),
 								},
 								{
 									id: 'time-seconds-no',
 									label: tt('common.no'),
+									iconPosition: 'left',
+									iconSize: '2vh',
 									selected: () => get(showSeconds) === false,
 									onSelect: () => setShowSeconds(false),
 								},
@@ -161,6 +186,8 @@ export const menuStructure = derived(t, () => ({
 									id: 'back',
 									label: tt('common.back'),
 									icon: '/img/back.svg',
+									iconPosition: 'left',
+									iconSize: '2vh',
 									action: 'back' as const,
 								},
 							],
@@ -225,18 +252,24 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'audio-on',
 							label: tt('common.yes'),
+							iconPosition: 'left',
+							iconSize: '2vh',
 							selected: () => get(audioEnabled) === true,
 							onSelect: () => setAudioEnabled(true),
 						},
 						{
 							id: 'audio-off',
 							label: tt('common.no'),
+							iconPosition: 'left',
+							iconSize: '2vh',
 							selected: () => get(audioEnabled) === false,
 							onSelect: () => setAudioEnabled(false),
 						},
 						{
 							id: 'back',
 							label: tt('common.back'),
+							iconPosition: 'left',
+							iconSize: '2vh',
 							icon: '/img/back.svg',
 							action: 'back' as const,
 						},
@@ -250,18 +283,24 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'cursor-small',
 							label: tt('settings.cursorSize.sizes.small'),
+							iconPosition: 'left',
+							iconSize: '2vh',
 							selected: () => get(cursorSize) === 'small',
 							onSelect: () => setCursorSize('small' as CursorSize),
 						},
 						{
 							id: 'cursor-medium',
 							label: tt('settings.cursorSize.sizes.medium'),
+							iconPosition: 'left',
+							iconSize: '2vh',
 							selected: () => get(cursorSize) === 'medium',
 							onSelect: () => setCursorSize('medium' as CursorSize),
 						},
 						{
 							id: 'cursor-large',
 							label: tt('settings.cursorSize.sizes.large'),
+							iconPosition: 'left',
+							iconSize: '2vh',
 							selected: () => get(cursorSize) === 'large',
 							onSelect: () => setCursorSize('large' as CursorSize),
 						},
@@ -269,6 +308,8 @@ export const menuStructure = derived(t, () => ({
 							id: 'back',
 							label: tt('common.back'),
 							icon: '/img/back.svg',
+							iconPosition: 'left',
+							iconSize: '2vh',
 							action: 'back' as const,
 						},
 					],

@@ -10,7 +10,7 @@
 		areaID: string;
 		position: Position;
 		title: string;
-		items: Array<{ id: string; label: string; selected?: boolean }>;
+		items: Array<{ id: string; label: string; icon?: string; selected?: boolean; iconPosition?: 'left' | 'top'; iconSize?: string }>;
 		orientation?: 'horizontal' | 'vertical';
 		selectedId?: string;
 		buttonWidth?: string;
