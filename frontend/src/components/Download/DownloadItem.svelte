@@ -4,13 +4,8 @@
 	import TableRow from '../Table/TableRow.svelte';
 	import TableCell from '../Table/TableCell.svelte';
 	import { t } from '../../scripts/language.ts';
-	export type DownloadStatus = 'completed' | 'downloading' | 'waiting' | 'paused' | 'error';
-	export interface DownloadFileData {
-		id: number;
-		name: string;
-		progress: number;
-		size: string;
-	}
+	import type { DownloadStatus } from '../../scripts/downloads.ts';
+
 	interface Props {
 		name: string;
 		id: string;

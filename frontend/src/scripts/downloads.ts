@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { DownloadStatus } from '../components/Download/DownloadItem.svelte';
+export type DownloadStatus = 'completed' | 'downloading' | 'waiting' | 'paused' | 'error';
 
 export interface DownloadFileData {
 	id: number;
