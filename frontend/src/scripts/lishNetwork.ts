@@ -261,3 +261,52 @@ export function getNetworkErrorMessage(errorCode: string, t: { settings?: { lish
 			return errorCode;
 	}
 }
+
+// ============================================================================
+// Form Field Mapping (for SettingsLISHNetworkAddEdit)
+// ============================================================================
+
+export type NetworkFormFieldType = 'name' | 'description' | 'autoGenerate' | 'networkID' | 'bootstrap' | 'save' | 'back';
+
+export interface NetworkFormFieldInfo {
+	type: NetworkFormFieldType;
+	bootstrapIndex?: number;
+}
+
+/**
+ * Get the form field type for a given index in the network add/edit form.
+ * @param index - The current selected index
+ * @param isEditing - Whether we're editing an existing network (no autoGenerate switch)
+ * @param bootstrapServersCount - Number of bootstrap server inputs
+ */
+export function getNetworkFormFieldType(index: number, isEditing: boolean, bootstrapServersCount: number): NetworkFormFieldInfo {
+	if (index === 0) return { type: 'name' };
+	if (index === 1) return { type: 'description' };
+	if (isEditing) {
+		// When editing: no switch row, networkID at 2, bootstrap from 3
+		if (index === 2) return { type: 'networkID' };
+		if (index < 3 + bootstrapServersCount) return { type: 'bootstrap', bootstrapIndex: index - 3 };
+		if (index === 3 + bootstrapServersCount) return { type: 'save' };
+		return { type: 'back' };
+	} else {
+		// When adding: switch at 2, networkID at 3, bootstrap from 4
+		if (index === 2) return { type: 'autoGenerate' };
+		if (index === 3) return { type: 'networkID' };
+		if (index < 4 + bootstrapServersCount) return { type: 'bootstrap', bootstrapIndex: index - 4 };
+		if (index === 4 + bootstrapServersCount) return { type: 'save' };
+		return { type: 'back' };
+	}
+}
+
+/**
+ * Get max column index for a bootstrap server row.
+ * @param bootstrapIndex - Index of the bootstrap server
+ * @param bootstrapServersCount - Total number of bootstrap servers
+ */
+export function getNetworkFormMaxColumn(bootstrapIndex: number, bootstrapServersCount: number): number {
+	const isLast = bootstrapIndex === bootstrapServersCount - 1;
+	const hasRemove = bootstrapServersCount > 1;
+	if (isLast && hasRemove) return 2; // input, remove, add
+	if (isLast || hasRemove) return 1; // input + one button
+	return 0; // only input
+}

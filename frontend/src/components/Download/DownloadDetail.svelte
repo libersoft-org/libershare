@@ -4,7 +4,7 @@
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { selectedDownload, type DownloadData } from '../../scripts/downloads.ts';
+	import { selectedDownload, DOWNLOAD_TOOLBAR_ACTIONS, type DownloadData, type DownloadToolbarActionId } from '../../scripts/downloads.ts';
 	import { scrollToElement, truncateID } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
@@ -39,31 +39,27 @@
 	let infoElement: HTMLElement | null = $state(null);
 	let filesElement: HTMLElement | null = $state(null);
 
-	// Toolbar actions
-	const toolbarActions = $derived([
-		{ id: 'back', label: $t.common?.back, icon: '/img/back.svg' },
-		{ id: 'open-folder', label: $t.downloads?.openFolder, icon: '/img/folder.svg' },
-		{ id: 'toggle', label: download?.status === 'paused' ? $t.downloads?.start : $t.downloads?.pause, icon: download?.status === 'paused' ? '/img/play.svg' : '/img/pause.svg' },
-		{ id: 'export', label: $t.common?.export, icon: '/img/upload.svg' },
-		{ id: 'move', label: $t.downloads?.moveData, icon: '/img/move.svg' },
-		{ id: 'delete', label: $t.common?.delete, icon: '/img/del.svg' },
-	]);
+	// Toolbar actions - use config from downloads.ts
+	let isPaused = $derived(download?.status === 'paused');
+	let toolbarActions = $derived(
+		DOWNLOAD_TOOLBAR_ACTIONS.map(action => ({
+			id: action.id,
+			label: action.getLabel($t, isPaused),
+			icon: action.getIcon?.(isPaused) ?? action.icon,
+		}))
+	);
 
 	const scrollToSelected = () => scrollToElement(itemElements, selectedFileIndex);
 
 	function scrollToInfo(): void {
-		if (infoElement) {
-			infoElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-		}
+		if (infoElement) infoElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
 	function scrollToFiles(): void {
-		if (filesElement) {
-			filesElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-		}
+		if (filesElement) filesElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
-	function handleToolbarAction(actionId: string) {
+	function handleToolbarAction(actionId: DownloadToolbarActionId) {
 		switch (actionId) {
 			case 'back':
 				onBack?.();

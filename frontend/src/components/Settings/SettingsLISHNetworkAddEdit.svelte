@@ -4,7 +4,8 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import type { NetworkFormData } from '../../scripts/lishNetwork.ts';
+	import { type NetworkFormData, getNetworkFormFieldType, getNetworkFormMaxColumn } from '../../scripts/lishNetwork.ts';
+	import { scrollToElement } from '../../scripts/utils.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -39,6 +40,9 @@
 	// When editing: no switch row, so offset is 3; when adding: switch row exists, offset is 4
 	let bootstrapOffset = $derived(isEditing ? 3 : 4);
 	let totalItems = $derived(bootstrapOffset + bootstrapServers.length + 2);
+	// Helper to get field type using extracted function
+	const getItemType = (index: number) => getNetworkFormFieldType(index, isEditing, bootstrapServers.length);
+	const getMaxColumn = (bootstrapIndex: number) => getNetworkFormMaxColumn(bootstrapIndex, bootstrapServers.length);
 
 	function handleSave() {
 		submitted = true;
@@ -68,37 +72,7 @@
 
 	function toggleAutoGenerateID() {
 		autoGenerateID = !autoGenerateID;
-		if (autoGenerateID) {
-			networkID = '';
-		}
-	}
-
-	function getItemType(index: number): { type: 'name' | 'description' | 'autoGenerate' | 'networkID' | 'bootstrap' | 'save' | 'back'; bootstrapIndex?: number } {
-		if (index === 0) return { type: 'name' };
-		if (index === 1) return { type: 'description' };
-		if (isEditing) {
-			// When editing: no switch row, networkID at 2, bootstrap from 3
-			if (index === 2) return { type: 'networkID' };
-			if (index < 3 + bootstrapServers.length) return { type: 'bootstrap', bootstrapIndex: index - 3 };
-			if (index === 3 + bootstrapServers.length) return { type: 'save' };
-			return { type: 'back' };
-		} else {
-			// When adding: switch at 2, networkID at 3, bootstrap from 4
-			if (index === 2) return { type: 'autoGenerate' };
-			if (index === 3) return { type: 'networkID' };
-			if (index < 4 + bootstrapServers.length) return { type: 'bootstrap', bootstrapIndex: index - 4 };
-			if (index === 4 + bootstrapServers.length) return { type: 'save' };
-			return { type: 'back' };
-		}
-	}
-
-	// Get max column for current bootstrap row
-	function getMaxColumn(bootstrapIndex: number): number {
-		const isLast = bootstrapIndex === bootstrapServers.length - 1;
-		const hasRemove = bootstrapServers.length > 1;
-		if (isLast && hasRemove) return 2; // input, remove, add
-		if (isLast || hasRemove) return 1; // input + one button
-		return 0; // only input
+		if (autoGenerateID) networkID = '';
 	}
 
 	function focusInput(index: number) {

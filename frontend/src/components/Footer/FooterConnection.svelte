@@ -1,36 +1,19 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
+	import { type ConnectionType, getActiveBars, getBarColor } from '../../scripts/footerWidgets.ts';
 	import Icon from '../Icon/Icon.svelte';
-	type ConnectionType = 'ethernet' | 'wifi';
 	interface Props {
 		type: ConnectionType;
 		connected: boolean;
 		signal?: number; // 0-100 for wifi, ignored for ethernet
 	}
 	const { type = 'ethernet', connected = false, signal = 0 }: Props = $props();
-	let activeBars = $derived(type === 'ethernet' ? (connected ? 4 : 0) : getActiveBars(signal));
+	let activeBars = $derived(type === 'ethernet' ? (connected ? 4 : 0) : getActiveBars(signal, connected));
 	let label = $derived.by(() => {
 		if (!connected) return $t.common?.disconnected;
 		if (type === 'ethernet') return $t.common?.connected;
 		return `${signal}%`;
 	});
-
-	// Calculate how many bars should be active (1-4), 0 if disconnected
-	function getActiveBars(signalStrength: number): number {
-		if (!connected) return 0;
-		if (signalStrength >= 75) return 4;
-		if (signalStrength >= 50) return 3;
-		if (signalStrength >= 25) return 2;
-		return 1;
-	}
-
-	// Get bar color based on signal strength
-	function getBarColor(barIndex: number, activeBars: number): string {
-		if (barIndex >= activeBars) return 'var(--secondary-softer-background)';
-		if (activeBars === 1) return 'var(--color-error)'; // < 25%
-		if (activeBars === 2 || activeBars === 3) return 'var(--color-warning)'; // 25-74%
-		return 'var(--color-success)'; // 75%+
-	}
 </script>
 
 <style>

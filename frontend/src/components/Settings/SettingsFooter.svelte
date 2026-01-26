@@ -4,7 +4,7 @@
 	import { navigateTo } from '../../scripts/navigation.ts';
 	import { footerVisible, setFooterVisible, footerPosition, footerWidgetVisibility, setFooterWidgetVisibility } from '../../scripts/settings.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
-	import { footerWidgets, type FooterWidget } from '../../scripts/footerWidgets.ts';
+	import { footerWidgets, getWidgetLabel, type FooterWidget } from '../../scripts/footerWidgets.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
@@ -14,22 +14,6 @@
 	import TableRow from '../Table/TableRow.svelte';
 	import TableCell from '../Table/TableCell.svelte';
 
-	function getWidgetLabel(widget: FooterWidget): string {
-		const labels: Record<FooterWidget, string> = {
-			version: $t.common?.version,
-			download: $t.settings?.footerWidgets?.downloads,
-			upload: $t.settings?.footerWidgets?.uploads,
-			cpu: $t.settings?.footerWidgets?.cpu,
-			ram: $t.settings?.footerWidgets?.ram,
-			storage: $t.settings?.footerWidgets?.storage,
-			backendStatus: $t.settings?.footerWidgets?.backendStatus,
-			lishStatus: $t.settings?.footerWidgets?.lishStatus,
-			connection: $t.settings?.footerWidgets?.connection,
-			volume: $t.settings?.footerWidgets?.volume,
-			clock: $t.settings?.footerWidgets?.clock,
-		};
-		return labels[widget] ?? widget;
-	}
 	interface Props {
 		areaID: string;
 		position?: Position;

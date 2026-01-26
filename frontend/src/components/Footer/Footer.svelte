@@ -2,7 +2,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { productVersion } from '../../scripts/app.ts';
 	import { volume, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
-	import { type FooterWidget } from '../../scripts/footerWidgets.ts';
+	import { type FooterWidget, getVolumeIcon } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
 	import LishStatus from './FooterLISHStatus.svelte';
 	import BackendStatus from './FooterBackendStatus.svelte';
@@ -107,15 +107,11 @@
 		{
 			id: 'volume',
 			component: Item,
-			props: () => {
-				const v = $volume;
-				const icon = v === 0 ? 'volume0' : v < 25 ? 'volume1' : v < 75 ? 'volume2' : 'volume3';
-				return {
-					topIcon: `img/${icon}.svg`,
-					topIconAlt: $t.settings?.footerWidgets?.volume,
-					bottomLabel: `${v}%`,
-				};
-			},
+			props: () => ({
+				topIcon: `img/${getVolumeIcon($volume)}.svg`,
+				topIconAlt: $t.settings?.footerWidgets?.volume,
+				bottomLabel: `${$volume}%`,
+			}),
 		},
 		{
 			id: 'clock',

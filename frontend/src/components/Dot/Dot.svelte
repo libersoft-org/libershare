@@ -13,23 +13,24 @@
 		width: 1.2vh;
 		height: 1.2vh;
 		border-radius: 50%;
-		border: 0.2vh solid var(--secondary-foreground);
+		background-color: var(--dot-color);
+		box-shadow: 0 0 0.8vh 0.2vh var(--dot-color);
 	}
 
 	.dot.success {
-		background-color: var(--color-success);
+		--dot-color: var(--color-success);
 	}
 
 	.dot.warning {
-		background-color: var(--color-warning);
+		--dot-color: var(--color-warning);
 	}
 
 	.dot.error {
-		background-color: var(--color-error);
+		--dot-color: var(--color-error);
 	}
 
 	.dot.disabled {
-		background-color: var(--disabled-foreground);
+		--dot-color: var(--disabled-foreground);
 	}
 </style>
 

@@ -2,7 +2,7 @@
 	import TableRow from '../Table/TableRow.svelte';
 	import TableCell from '../Table/TableCell.svelte';
 	import Icon from '../Icon/Icon.svelte';
-	import type { StorageItemType } from '../../scripts/storage.ts';
+	import { type StorageItemType, getStorageIcon } from '../../scripts/storage.ts';
 
 	interface Props {
 		name: string;
@@ -14,12 +14,6 @@
 		odd?: boolean;
 	}
 	let { name, type, size, modified, selected = false, isLast = false, odd = false }: Props = $props();
-
-	function getIcon(type: StorageItemType): string {
-		if (type === 'drive') return '/img/storage.svg';
-		if (type === 'folder') return '/img/folder.svg';
-		return '/img/file.svg';
-	}
 </script>
 
 <style>
@@ -38,7 +32,7 @@
 <TableRow {selected} {odd}>
 	<TableCell>
 		<div class="name">
-			<Icon img={getIcon(type)} size="2vh" padding="0" colorVariable={selected ? '--primary-background' : '--secondary-foreground'} />
+			<Icon img={getStorageIcon(type)} size="2vh" padding="0" colorVariable={selected ? '--primary-background' : '--secondary-foreground'} />
 			<span>{name}</span>
 		</div>
 	</TableCell>

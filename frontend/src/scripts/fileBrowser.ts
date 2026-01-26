@@ -176,3 +176,48 @@ export function buildFilterActions(t: { common?: { back?: string } }, fileFilter
 	actions.push({ id: 'back', label: t.common?.back ?? 'Back', icon: '/img/back.svg' });
 	return actions;
 }
+
+// ============================================================================
+// Path Breadcrumb
+// ============================================================================
+
+export interface PathBreadcrumbItem {
+	id: string;
+	name: string;
+	path: string;
+	icon?: string;
+}
+
+/**
+ * Parse a file path into breadcrumb items
+ */
+export function parsePathToBreadcrumbs(path: string, separator: string): PathBreadcrumbItem[] {
+	if (!path) return [{ id: '0', name: separator === '/' ? '/' : 'Drives', path: '', icon: '/img/storage.svg' }];
+	const parts = path.split(separator).filter(Boolean);
+	const items: PathBreadcrumbItem[] = [];
+	if (separator === '/') {
+		// Linux: start with root "/"
+		items.push({ id: '0', name: '/', path: '/', icon: '/img/storage.svg' });
+		let currentPath = '';
+		for (let i = 0; i < parts.length; i++) {
+			currentPath += '/' + parts[i];
+			items.push({ id: String(i + 1), name: parts[i], path: currentPath });
+		}
+	} else {
+		// Windows: start with drive list, then drive, then folders
+		items.push({ id: '0', name: 'Drives', path: '', icon: '/img/storage.svg' });
+		let currentPath = '';
+		for (let i = 0; i < parts.length; i++) {
+			if (i === 0) {
+				// Drive letter (e.g., "C:")
+				currentPath = parts[i] + separator;
+				items.push({ id: String(i + 1), name: parts[i], path: currentPath });
+			} else {
+				currentPath += parts[i];
+				items.push({ id: String(i + 1), name: parts[i], path: currentPath });
+				if (i < parts.length - 1) currentPath += separator;
+			}
+		}
+	}
+	return items;
+}

@@ -5,6 +5,7 @@
 	import TableCell from '../Table/TableCell.svelte';
 	import { t } from '../../scripts/language.ts';
 	import type { DownloadStatus } from '../../scripts/downloads.ts';
+	import { truncateID } from '../../scripts/utils.ts';
 
 	interface Props {
 		name: string;
@@ -21,11 +22,6 @@
 		odd?: boolean;
 	}
 	let { name, id, progress, size, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, selected = false, isLast = false, odd = false }: Props = $props();
-
-	function truncateID(id: string): string {
-		if (id.length <= 16) return id;
-		return `${id.slice(0, 6)}...${id.slice(-6)}`;
-	}
 </script>
 
 <style>
