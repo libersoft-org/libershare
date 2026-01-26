@@ -76,7 +76,7 @@ export interface LoadDirectoryResult {
  */
 export async function loadDirectoryFromApi(path: string | undefined, separator: string, options: LoadDirectoryOptions = {}): Promise<LoadDirectoryResult> {
 	const { foldersOnly = false, filesOnly = false, fileFilter } = options;
-	const result = await api.fsList(path);
+	const result = await api.fs.list(path);
 	const currentPath = result.path;
 	const parentPath = getParentPath(currentPath, separator);
 	let entries: StorageItemData[] = result.entries.map((entry: FsEntry, index: number) => transformFsEntry(entry, index));

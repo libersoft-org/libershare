@@ -87,15 +87,6 @@ async function shutdown() {
 	process.exit(0);
 }
 
-// Set up readline interface for stdin
-const rl = readline.createInterface({
-	input: process.stdin,
-	output: process.stdout,
-	terminal: false,
-});
-
-console.log('\nCommands: i<path>=import, l<path>=download, c<multiaddr>=connect, f<peerid>=find, a=addresses, p=pink, q=quit');
-
 // Helper to get first live network for CLI commands
 function getFirstNetwork() {
 	const liveNetworks = networks.getLiveNetworks();
@@ -106,107 +97,6 @@ function getFirstNetwork() {
 	return liveNetworks.values().next().value;
 }
 
-rl.on('line', async line => {
-	const command = line.trim();
-
-	if (command.startsWith('i')) {
-		/*
-		import a local file/directory as a dataset
-		*/
-		let inputPath = command.slice(1).trim();
-		if (!inputPath) {
-			/*console.log('Error: path required after "i"');
-			return;*/
-			inputPath = 'src'
-		}
-		try {
-			console.log(`Importing: ${inputPath}`);
-			const manifest = await dataServer.importDataset(inputPath, info => {
-				if (info.type === 'chunk' && info.current && info.total) {
-					console.log(`\r  Processing chunks: ${info.current}/${info.total}`);
-				}
-				else if (info.type === 'file' && info.path) {
-					console.log(`\r  Processing file: ${info.path}                `);
-				}
-			});
-
-			console.log(`✓ Import complete. Manifest ID: ${manifest.id}`);
-		} catch (error: any) {
-			console.log('✗ Import failed:', error.message);
-		}
-
-	} else if (command.startsWith('c')) {
-		/*
-		connect to peer by multiaddr
-		 */
-		const multiaddr = command.slice(1).trim();
-		if (!multiaddr) {
-			console.log('Error: multiaddr required after "c"');
-			return;
-		}
-		const network = getFirstNetwork();
-		if (!network) return;
-		try {
-			await (network as any).connectToPeer(multiaddr);
-		} catch (error: any) {
-			console.log('✗ Connection failed:', error.message);
-		}
-
-	} else if (command.startsWith('f')) {
-		/*
-		find peer address by id
-		 */
-		const peerId = command.slice(1).trim();
-		if (!peerId) {
-			console.log('Error: peer ID required after "f"');
-			return;
-		}
-		const network = getFirstNetwork();
-		if (!network) return;
-		try {
-			await (network as any).cliFindPeer(peerId);
-		} catch (error: any) {
-			console.log('✗ Find peer failed:', error.message);
-		}
-
-	} else if (command.startsWith('l')) {
-		/*
-		given lish file, start download
-		*/
-		let manifestPath = command.slice(1).trim();
-		if (!manifestPath) {
-			manifestPath = '../../lish_files/test.lish';
-		}
-		const network = getFirstNetwork();
-		if (!network) return;
-		try {
-			const downloadDir = join(dataDir, 'downloads', Date.now().toString());
-			const downloader = new Downloader(downloadDir, network, dataServer);
-			await downloader.init(manifestPath);
-			await downloader.download();
-		} catch (error: any) {
-			console.log('✗ Download failed:', error.message);
-		}
-	} else {
-		switch (command) {
-			case 'p': {
-				const network = getFirstNetwork();
-				if (network) await network.sendPink();
-				break;
-			}
-			case 'a': {
-				const network = getFirstNetwork();
-				if (network) network.printMultiaddrs();
-				break;
-			}
-			case 'q':
-				await shutdown();
-				break;
-			default:
-				console.log('Unknown command:', command);
-		}
-	}
-});
 
 process.on('SIGINT', shutdown);
 

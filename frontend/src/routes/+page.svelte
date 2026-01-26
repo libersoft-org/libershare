@@ -58,7 +58,7 @@
 		initAudio();
 		play('welcome');
 		try {
-			console.log(await api.listNetworks());
+			console.log(await api.networks.list());
 			await initStats();
 		} catch (error) {
 			console.error('[App] Initialization error:', error);
