@@ -4,6 +4,7 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
+	import type { NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -11,9 +12,9 @@
 	interface Props {
 		areaID: string;
 		position?: Position;
-		network?: { id: string; name: string; description?: string; bootstrapServers?: string[] } | null;
+		network?: NetworkFormData | null;
 		onBack?: () => void;
-		onSave?: (network: { id: string; name: string; description: string; bootstrapServers: string[] }) => void;
+		onSave?: (network: NetworkFormData) => void;
 	}
 	let { areaID, position = LAYOUT.content, network = null, onBack, onSave }: Props = $props();
 	let active = $derived($activeArea === areaID);

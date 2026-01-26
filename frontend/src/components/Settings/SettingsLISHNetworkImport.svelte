@@ -4,7 +4,7 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { addNetworkIfNotExists, type LISHNetwork } from '../../scripts/lishnet.ts';
+	import { importNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -22,58 +22,14 @@
 	let networkJson = $state('');
 	let errorMessage = $state('');
 
-	function validateNetwork(obj: unknown): LISHNetwork | null {
-		if (!obj || typeof obj !== 'object') return null;
-		const parsed = obj as Record<string, unknown>;
-		// Validate required fields:
-		// - networkID: required, non-empty string
-		// - name: required, non-empty string
-		// - bootstrapPeers: optional, can be empty
-		if (typeof parsed.networkID !== 'string' || !parsed.networkID.trim() || typeof parsed.name !== 'string' || !parsed.name.trim()) return null;
-		const bootstrapPeers = Array.isArray(parsed.bootstrapPeers) ? (parsed.bootstrapPeers as string[]).filter(p => typeof p === 'string' && p.trim()) : [];
-		return {
-			version: (parsed.version as number) ?? 1,
-			networkID: parsed.networkID.trim(),
-			name: parsed.name.trim(),
-			description: typeof parsed.description === 'string' ? parsed.description : '',
-			bootstrapPeers,
-			created: (parsed.created as string) ?? new Date().toISOString(),
-		};
-	}
-
 	function handleImport() {
 		errorMessage = '';
-		if (!networkJson.trim()) {
-			errorMessage = $t.settings?.lishNetwork?.errorInvalidFormat ?? 'Invalid format';
+		const result = importNetworksFromJson(networkJson);
+		if (result.error) {
+			errorMessage = getNetworkErrorMessage(result.error, $t);
 			return;
 		}
-		try {
-			const parsed = JSON.parse(networkJson);
-			const networksToImport: LISHNetwork[] = [];
-			// Check if it's an array of networks or a single network
-			if (Array.isArray(parsed)) {
-				for (const item of parsed) {
-					const network = validateNetwork(item);
-					if (network) networksToImport.push(network);
-				}
-			} else {
-				const network = validateNetwork(parsed);
-				if (network) networksToImport.push(network);
-			}
-
-			if (networksToImport.length === 0) {
-				errorMessage = $t.settings?.lishNetwork?.errorNoValidNetworks ?? 'No valid networks found';
-				return;
-			}
-
-			// Add all valid networks
-			for (const network of networksToImport) {
-				addNetworkIfNotExists(network);
-			}
-			onImport?.();
-		} catch {
-			errorMessage = $t.settings?.lishNetwork?.errorInvalidFormat ?? 'Invalid format';
-		}
+		onImport?.();
 	}
 
 	onMount(() => {

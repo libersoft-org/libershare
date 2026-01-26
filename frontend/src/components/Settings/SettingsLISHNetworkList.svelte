@@ -6,7 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { type LISHNetwork, getNetworks, saveNetworks as saveNetworksToStorage } from '../../scripts/lishnet.ts';
+	import { type LISHNetwork, getNetworks, saveNetworks as saveNetworksToStorage, deleteNetwork as deleteNetworkFromStorage, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Alert from '../Alert/Alert.svelte';
 	import ConfirmDialog from '../Dialog/ConfirmDialog.svelte';
@@ -240,15 +240,8 @@
 		activateArea(areaID);
 	}
 
-	async function handleSave(savedNetwork: { id: string; name: string; description: string; bootstrapServers: string[] }) {
-		const network: LISHNetwork = {
-			version: 1,
-			networkID: savedNetwork.id,
-			name: savedNetwork.name,
-			description: savedNetwork.description,
-			bootstrapPeers: savedNetwork.bootstrapServers,
-			created: editingNetwork?.created || new Date().toISOString(),
-		};
+	async function handleSave(savedNetwork: NetworkFormData) {
+		const network = formDataToNetwork(savedNetwork, editingNetwork ?? undefined);
 		if (editingNetwork) {
 			// Update existing
 			const index = networks.findIndex(n => n.networkID === editingNetwork!.networkID);
@@ -404,7 +397,7 @@
 </style>
 
 {#if showAddEdit}
-	{@const networkForEdit = editingNetwork ? { id: editingNetwork.networkID, name: editingNetwork.name, description: editingNetwork.description, bootstrapServers: editingNetwork.bootstrapPeers } : null}
+	{@const networkForEdit = editingNetwork ? { id: editingNetwork.networkID, name: editingNetwork.name, description: editingNetwork.description, bootstrapServers: editingNetwork.bootstrapPeers.length > 0 ? editingNetwork.bootstrapPeers : [''] } : null}
 	<LISHNetworkAddEdit {areaID} {position} network={networkForEdit} onBack={handleAddEditBack} onSave={handleSave} />
 {:else if showExport}
 	<LISHNetworkExport {areaID} {position} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={handleExportBack} />

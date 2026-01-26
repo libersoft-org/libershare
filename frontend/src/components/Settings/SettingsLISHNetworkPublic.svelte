@@ -4,7 +4,7 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { type LISHNetwork, DEFAULT_PUBLIC_LIST_URL, fetchPublicNetworks, getExistingNetworkIds, addNetworkIfNotExists } from '../../scripts/lishnet.ts';
+	import { type LISHNetwork, DEFAULT_PUBLIC_LIST_URL, fetchPublicNetworks, getExistingNetworkIds, addNetworkIfNotExists, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import Row from '../Row/Row.svelte';
@@ -28,17 +28,6 @@
 	// Items: URL row (0), network rows (1 to publicNetworks.length), Back button (last)
 	let totalItems = $derived(1 + publicNetworks.length + 1);
 
-	function getErrorMessage(errorCode: string): string {
-		switch (errorCode) {
-			case 'INVALID_FORMAT':
-				return $t.settings?.lishNetwork?.errorInvalidFormat || 'Invalid format - expected array';
-			case 'NO_VALID_NETWORKS':
-				return $t.settings?.lishNetwork?.errorNoValidNetworks || 'No valid networks found';
-			default:
-				return errorCode;
-		}
-	}
-
 	async function loadPublicList() {
 		if (!url.trim()) {
 			error = $t.settings?.lishNetwork?.errorUrlRequired || 'URL is required';
@@ -50,7 +39,7 @@
 		publicNetworks = [];
 
 		const result = await fetchPublicNetworks(url);
-		if (result.error) error = getErrorMessage(result.error);
+		if (result.error) error = getNetworkErrorMessage(result.error, $t);
 		else {
 			publicNetworks = result.networks;
 			addedNetworkIds = getExistingNetworkIds();

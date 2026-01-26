@@ -4,7 +4,7 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { getNetworkById } from '../../scripts/lishnet.ts';
+	import { exportNetworkToJson } from '../../scripts/lishNetwork.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	interface Props {
@@ -19,12 +19,8 @@
 	let selectedColumn = $state(0); // 0 = save as, 1 = back
 	let inputRef: Input;
 
-	// Get full network data from localStorage
-	let networkJson = $derived.by(() => {
-		if (!network) return '';
-		const fullNetwork = getNetworkById(network.id);
-		return fullNetwork ? JSON.stringify(fullNetwork, null, '\t') : '';
-	});
+	// Get full network data as JSON
+	let networkJson = $derived(network ? exportNetworkToJson(network.id) : '');
 
 	onMount(() => {
 		const unregister = useArea(
