@@ -8,14 +8,35 @@ const DEFAULT_URL = 'ws://localhost:1158';
 const HELP = `
 Commands:
   networks.list                     List all networks
+  networks.get <id>                 Get network details
   networks.import <path>            Import network from file
+  networks.enable <id>              Enable a network
+  networks.disable <id>             Disable a network
+  networks.delete <id>              Delete a network
   networks.connect <multiaddr>      Connect to a peer
   networks.findPeer <peerId>        Find peer by ID
   networks.info                     Show node info (peer ID, addresses)
+  networks.status                   Show network status
+  networks.peers                    List connected peers
+  networks.addresses                List node addresses
+
+  manifests.list                    List all manifests
+  manifests.get <id>                Get manifest details
+
   datasets.list                     List all datasets
+  datasets.get <id>                 Get dataset details
   datasets.import <path>            Import file/directory as dataset
+
+  fs.info                           Show filesystem info
+  fs.list [path]                    List directory contents
+  fs.read <path>                    Read file contents
+  fs.mkdir <path>                   Create directory
+  fs.delete <path>                  Delete file or directory
+
   download <manifestPath>           Download from .lish file
+  fetch <url>                       Fetch URL content
   stats                             Show stats
+  help                              Show this help
   quit                              Exit
 `;
 
@@ -82,6 +103,7 @@ async function main() {
 
 		try {
 			switch (command) {
+				// ============ Networks ============
 				case 'networks.list': {
 					const networks = await api.networks.list();
 					console.log('Networks:');
@@ -96,6 +118,16 @@ async function main() {
 					break;
 				}
 
+				case 'networks.get': {
+					if (!arg) {
+						console.log('Usage: networks.get <id>');
+						break;
+					}
+					const network = await api.networks.get(arg);
+					console.log(JSON.stringify(network, null, 2));
+					break;
+				}
+
 				case 'networks.import': {
 					if (!arg) {
 						console.log('Usage: networks.import <path>');
@@ -104,6 +136,36 @@ async function main() {
 					console.log(`Importing network from: ${arg}`);
 					const network = await api.networks.importFromFile(arg, true);
 					console.log(`✓ Network imported: ${network.name} (${network.id})`);
+					break;
+				}
+
+				case 'networks.enable': {
+					if (!arg) {
+						console.log('Usage: networks.enable <id>');
+						break;
+					}
+					await api.networks.setEnabled(arg, true);
+					console.log(`✓ Network enabled`);
+					break;
+				}
+
+				case 'networks.disable': {
+					if (!arg) {
+						console.log('Usage: networks.disable <id>');
+						break;
+					}
+					await api.networks.setEnabled(arg, false);
+					console.log(`✓ Network disabled`);
+					break;
+				}
+
+				case 'networks.delete': {
+					if (!arg) {
+						console.log('Usage: networks.delete <id>');
+						break;
+					}
+					await api.networks.delete(arg);
+					console.log(`✓ Network deleted`);
 					break;
 				}
 
@@ -127,7 +189,7 @@ async function main() {
 					const networkId = await getFirstNetworkId();
 					if (!networkId) break;
 					const result = await api.networks.findPeer(networkId, arg);
-					console.log('Peer info:', result);
+					console.log('Peer info:', JSON.stringify(result, null, 2));
 					break;
 				}
 
@@ -141,6 +203,69 @@ async function main() {
 					break;
 				}
 
+				case 'networks.status': {
+					const networkId = await getFirstNetworkId();
+					if (!networkId) break;
+					const status = await api.networks.getStatus(networkId);
+					console.log(`Connected peers: ${status.connected}`);
+					console.log(`Peers in store: ${status.peersInStore}`);
+					console.log(`Datasets: ${status.datasets}`);
+					if (status.connectedPeers.length > 0) {
+						console.log('Connected:');
+						status.connectedPeers.forEach(p => console.log(`  ${p}`));
+					}
+					break;
+				}
+
+				case 'networks.peers': {
+					const networkId = await getFirstNetworkId();
+					if (!networkId) break;
+					const peers = await api.networks.getPeers(networkId);
+					console.log('Peers:');
+					if (peers.length === 0) {
+						console.log('  (none)');
+					} else {
+						peers.forEach(p => console.log(`  ${p}`));
+					}
+					break;
+				}
+
+				case 'networks.addresses': {
+					const networkId = await getFirstNetworkId();
+					if (!networkId) break;
+					const addresses = await api.networks.getAddresses(networkId);
+					console.log('Addresses:');
+					if (addresses.length === 0) {
+						console.log('  (none)');
+					} else {
+						addresses.forEach(a => console.log(`  ${a}`));
+					}
+					break;
+				}
+
+				// ============ Manifests ============
+				case 'manifests.list': {
+					const manifests = await api.manifests.list();
+					console.log('Manifests:');
+					if (manifests.length === 0) {
+						console.log('  (none)');
+					} else {
+						manifests.forEach(m => console.log(`  ${m.id}`));
+					}
+					break;
+				}
+
+				case 'manifests.get': {
+					if (!arg) {
+						console.log('Usage: manifests.get <id>');
+						break;
+					}
+					const manifest = await api.manifests.get(arg);
+					console.log(JSON.stringify(manifest, null, 2));
+					break;
+				}
+
+				// ============ Datasets ============
 				case 'datasets.list': {
 					const datasets = await api.datasets.list();
 					console.log('Datasets:');
@@ -155,6 +280,16 @@ async function main() {
 					break;
 				}
 
+				case 'datasets.get': {
+					if (!arg) {
+						console.log('Usage: datasets.get <id>');
+						break;
+					}
+					const dataset = await api.datasets.get(arg);
+					console.log(JSON.stringify(dataset, null, 2));
+					break;
+				}
+
 				case 'datasets.import': {
 					if (!arg) {
 						console.log('Usage: datasets.import <path>');
@@ -166,6 +301,64 @@ async function main() {
 					break;
 				}
 
+				// ============ Filesystem ============
+				case 'fs.info': {
+					const info = await api.fs.info();
+					console.log(`Platform: ${info.platform}`);
+					console.log(`Separator: ${info.separator}`);
+					console.log(`Home: ${info.home}`);
+					console.log('Roots:');
+					info.roots.forEach(r => console.log(`  ${r}`));
+					break;
+				}
+
+				case 'fs.list': {
+					const result = await api.fs.list(arg || undefined);
+					console.log(`Path: ${result.path}`);
+					console.log('Entries:');
+					if (result.entries.length === 0) {
+						console.log('  (empty)');
+					} else {
+						result.entries.forEach(e => {
+							const icon = e.type === 'directory' ? '📁' : e.type === 'drive' ? '💾' : '📄';
+							const size = e.size !== undefined ? ` (${e.size})` : '';
+							console.log(`  ${icon} ${e.name}${size}`);
+						});
+					}
+					break;
+				}
+
+				case 'fs.read': {
+					if (!arg) {
+						console.log('Usage: fs.read <path>');
+						break;
+					}
+					const content = await api.fs.readText(arg);
+					console.log(content);
+					break;
+				}
+
+				case 'fs.mkdir': {
+					if (!arg) {
+						console.log('Usage: fs.mkdir <path>');
+						break;
+					}
+					await api.fs.mkdir(arg);
+					console.log(`✓ Directory created`);
+					break;
+				}
+
+				case 'fs.delete': {
+					if (!arg) {
+						console.log('Usage: fs.delete <path>');
+						break;
+					}
+					await api.fs.delete(arg);
+					console.log(`✓ Deleted`);
+					break;
+				}
+
+				// ============ Top-level ============
 				case 'download': {
 					if (!arg) {
 						console.log('Usage: download <manifestPath>');
@@ -179,9 +372,22 @@ async function main() {
 					break;
 				}
 
+				case 'fetch': {
+					if (!arg) {
+						console.log('Usage: fetch <url>');
+						break;
+					}
+					const result = await api.fetchUrl(arg);
+					console.log(`Status: ${result.status}`);
+					console.log(`Content-Type: ${result.contentType}`);
+					console.log('---');
+					console.log(result.content);
+					break;
+				}
+
 				case 'stats': {
 					const stats = await api.getStats();
-					console.log('Stats:', JSON.stringify(stats, null, 2));
+					console.log(JSON.stringify(stats, null, 2));
 					break;
 				}
 
