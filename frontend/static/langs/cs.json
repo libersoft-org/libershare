@@ -63,7 +63,12 @@
 		"importPlaceholder": "Vložte LISH JSON zde...",
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"errorNoValidLish": "Nebyl nalezen žádný platný LISH",
-		"emptyList": "Žádný LISH k exportu"
+		"emptyList": "Nebyl nalezen žádný LISH k exportu",
+		"fileName": "Název souboru",
+		"openFolder": "Otevřít složku",
+		"start": "Spustit",
+		"pause": "Pozastavit",
+		"moveData": "Přesunout data"
 	},
 	"settings": {
 		"title": "Nastavení",

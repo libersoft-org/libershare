@@ -13,6 +13,7 @@ import DownloadLISHCreate from '../components/Download/DownloadLISHCreate.svelte
 import DownloadLISHImport from '../components/Download/DownloadLISHImport.svelte';
 import DownloadLISHImportBrowse from '../components/Download/DownloadLISHImportBrowse.svelte';
 import DownloadLISHExportAll from '../components/Download/DownloadLISHExportAll.svelte';
+import DownloadDetail from '../components/Download/DownloadDetail.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
 import SettingsStorage from '../components/Settings/SettingsStorage.svelte';
 import LISHNetworkList from '../components/Settings/SettingsLISHNetworkList.svelte';
@@ -120,6 +121,11 @@ export const menuStructure = derived(t, () => ({
 					iconPosition: 'left',
 					iconSize: '2vh',
 					component: DownloadLISHExportAll,
+				},
+				{
+					id: 'download-detail',
+					component: DownloadDetail,
+					hidden: true,
 				},
 				{
 					id: 'back',

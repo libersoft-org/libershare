@@ -15,7 +15,7 @@ export const breadcrumbItems = derived([breadcrumbStore, t], ([$items, $t]) => [
 let contentElement: HTMLElement | null = null;
 const confirmDialogStore = writable<ConfirmDialogState>({ visible: false, action: null });
 // Global navigation store - set by createNavigation, used by components
-let globalNavigate: ((id: string) => void) | null = null;
+let globalNavigate: ((id: string, label?: string) => void) | null = null;
 // Internal function to set menu breadcrumb (clears component items)
 function setMenuBreadcrumb(items: string[]): void {
 	breadcrumbStore.set(items.map(label => ({ label, source: 'menu' as const })));
@@ -73,8 +73,8 @@ export function hideConfirmDialog(): void {
 	confirmDialogStore.set({ visible: false, action: null });
 }
 
-export function navigateTo(id: string): void {
-	if (globalNavigate) globalNavigate(id);
+export function navigateTo(id: string, label?: string): void {
+	if (globalNavigate) globalNavigate(id, label);
 }
 
 // Helper to find menu item by path of IDs
@@ -121,7 +121,7 @@ export function createNavigation() {
 		return labels;
 	}).subscribe(() => {}); // Subscribe to activate the derived store
 
-	function navigate(id: string): void {
+	function navigate(id: string, customLabel?: string): void {
 		const items = get(currentItems);
 		const item = items.find((i: MenuItem) => i.id === id);
 		if (!item) return;
@@ -142,6 +142,17 @@ export function createNavigation() {
 		}
 		// Navigate into submenu - find selected item if any
 		pathIDs.update(p => [...p, id]);
+		// If custom label provided, update breadcrumb with it
+		if (customLabel) {
+			breadcrumbStore.update(items => {
+				const newItems = [...items];
+				// Replace last item's label with custom label
+				if (newItems.length > 0) {
+					newItems[newItems.length - 1] = { ...newItems[newItems.length - 1], label: customLabel };
+				}
+				return newItems;
+			});
+		}
 		const newItems = get(currentItems);
 		const selectedItem = newItems.find((i: MenuItem) => i.selected?.());
 		selectedId.set(selectedItem?.id);

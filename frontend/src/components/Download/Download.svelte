@@ -5,6 +5,7 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
+	import { selectedDownload } from '../../scripts/downloads.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
 	import Header from '../Table/TableHeader.svelte';
@@ -90,8 +91,6 @@
 		},
 	];
 	let selectedIndex = $state(0);
-	let expandedIndex = $state<number | null>(null);
-	let selectedFileIndex = $state(-1); // -1 = main row selected, 0+ = file selected
 	let itemElements: HTMLElement[] = $state([]);
 
 	// Toolbar state
@@ -107,6 +106,12 @@
 				block: 'center',
 			});
 		}
+	}
+
+	function openDetail() {
+		const download = downloads[selectedIndex];
+		selectedDownload.set(download);
+		navigateTo('download-detail', download.name || download.id);
 	}
 
 	const toolbarHandlers = {
@@ -141,14 +146,8 @@
 
 	const areaHandlers = {
 		up: () => {
-			if (expandedIndex === selectedIndex && selectedFileIndex > -1) {
-				// Inside expanded item, move up in files
-				selectedFileIndex--;
-				return true;
-			}
 			if (selectedIndex > 0) {
 				selectedIndex--;
-				selectedFileIndex = -1;
 				scrollToSelected();
 				return true;
 			}
@@ -157,17 +156,8 @@
 			return true;
 		},
 		down: () => {
-			if (expandedIndex === selectedIndex) {
-				const filesCount = downloads[selectedIndex].files.length;
-				if (selectedFileIndex < filesCount - 1) {
-					// Move down in files
-					selectedFileIndex++;
-					return true;
-				}
-			}
 			if (selectedIndex < downloads.length - 1) {
 				selectedIndex++;
-				selectedFileIndex = -1;
 				scrollToSelected();
 				return true;
 			}
@@ -177,24 +167,10 @@
 		right: () => false,
 		confirmDown: () => {},
 		confirmUp: () => {
-			// Toggle expand/collapse
-			if (expandedIndex === selectedIndex) {
-				expandedIndex = null;
-				selectedFileIndex = -1;
-			} else {
-				expandedIndex = selectedIndex;
-				selectedFileIndex = -1;
-			}
+			openDetail();
 		},
 		confirmCancel: () => {},
-		back: () => {
-			if (expandedIndex !== null) {
-				expandedIndex = null;
-				selectedFileIndex = -1;
-			} else {
-				onBack?.();
-			}
-		},
+		back: () => onBack?.(),
 	};
 
 	onMount(() => {
@@ -218,8 +194,17 @@
 	.toolbar {
 		display: flex;
 		flex-direction: row;
+		flex-wrap: wrap;
 		gap: 1vh;
 		padding: 1vh 2vh;
+	}
+
+	.container {
+		flex: 1;
+		margin: 0 2vh;
+		border: 0.4vh solid var(--secondary-softer-background);
+		border-radius: 2vh;
+		overflow: hidden;
 	}
 
 	.items {
@@ -235,24 +220,26 @@
 		<Button icon="/img/download.svg" label={$t.common?.import} selected={toolbarActive && selectedToolbarIndex === 1} />
 		<Button icon="/img/upload.svg" label={$t.common?.exportAll} selected={toolbarActive && selectedToolbarIndex === 2} />
 	</div>
-	<Table {columns} noBorder>
-	<Header fontSize="1.4vh">
-		<Cell>{$t.downloads?.name}</Cell>
-		<Cell align="center" desktopOnly>{$t.downloads?.id}</Cell>
-		<Cell align="right" desktopOnly>{$t.downloads?.size}</Cell>
-		<Cell align="center" desktopOnly>{$t.downloads?.progress}</Cell>
-		<Cell align="center" desktopOnly>{$t.downloads?.status}</Cell>
-		<Cell align="center" desktopOnly>{$t.downloads?.downloadingFrom}</Cell>
-		<Cell align="center" desktopOnly>{$t.downloads?.uploadingTo}</Cell>
-		<Cell align="right" desktopOnly>{$t.downloads?.downloadSpeed}</Cell>
-		<Cell align="right" desktopOnly>{$t.downloads?.uploadSpeed}</Cell>
-	</Header>
-	<div class="items">
-		{#each downloads as download, index (download.id)}
-			<div bind:this={itemElements[index]}>
-				<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} files={download.files} selected={active && selectedIndex === index} expanded={expandedIndex === index} selectedFileIndex={selectedIndex === index ? selectedFileIndex : -1} isLast={index === downloads.length - 1} odd={index % 2 === 0} />
-			</div>
-		{/each}
+	<div class="container">
+		<Table {columns} noBorder>
+		<Header fontSize="1.4vh">
+			<Cell>{$t.downloads?.name}</Cell>
+			<Cell align="center" desktopOnly>{$t.downloads?.id}</Cell>
+			<Cell align="right" desktopOnly>{$t.downloads?.size}</Cell>
+			<Cell align="center" desktopOnly>{$t.downloads?.progress}</Cell>
+			<Cell align="center" desktopOnly>{$t.downloads?.status}</Cell>
+			<Cell align="center" desktopOnly>{$t.downloads?.downloadingFrom}</Cell>
+			<Cell align="center" desktopOnly>{$t.downloads?.uploadingTo}</Cell>
+			<Cell align="right" desktopOnly>{$t.downloads?.downloadSpeed}</Cell>
+			<Cell align="right" desktopOnly>{$t.downloads?.uploadSpeed}</Cell>
+		</Header>
+		<div class="items">
+			{#each downloads as download, index (download.id)}
+				<div bind:this={itemElements[index]}>
+					<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} selected={active && selectedIndex === index} isLast={index === downloads.length - 1} odd={index % 2 === 0} />
+				</div>
+			{/each}
+		</div>
+		</Table>
 	</div>
-	</Table>
 </div>
