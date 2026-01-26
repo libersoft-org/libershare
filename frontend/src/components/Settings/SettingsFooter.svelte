@@ -128,7 +128,7 @@
 				{#each footerWidgets as widget, index}
 					<div bind:this={rowElements[index + 2]}>
 						<TableRow selected={active && selectedIndex === index + 2} odd={index % 2 === 0}>
-							<TableCell>{getWidgetLabel(widget)}</TableCell>
+							<TableCell>{getWidgetLabel(widget, $t)}</TableCell>
 							<TableCell align="right"><Switch checked={$footerWidgetVisibility[widget]} /></TableCell>
 						</TableRow>
 					</div>
