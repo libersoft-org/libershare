@@ -9,6 +9,73 @@ export interface LISH {
 }
 
 /**
+ * Supported hash algorithms for LISH creation
+ */
+export const HASH_ALGORITHMS = [
+	'sha256',
+	'sha384',
+	'sha512',
+	'sha512-256',
+	'sha3-256',
+	'sha3-384',
+	'sha3-512',
+	'blake2b256',
+	'blake2b512',
+	'blake2s256',
+] as const;
+
+export type HashAlgorithm = (typeof HASH_ALGORITHMS)[number];
+
+/**
+ * Size unit multipliers (base 1024)
+ */
+const SIZE_UNITS: Record<string, number> = {
+	B: 1,
+	K: 1024,
+	M: 1024 * 1024,
+	G: 1024 * 1024 * 1024,
+	T: 1024 * 1024 * 1024 * 1024,
+};
+
+/**
+ * Parse chunk size string (e.g., "1M", "512K", "1G") to bytes.
+ * Returns null if invalid.
+ */
+export function parseChunkSize(value: string): number | null {
+	const trimmed = value.trim().toUpperCase();
+	if (!trimmed) return null;
+
+	// Just a number - treat as bytes
+	const justNumber = parseInt(trimmed);
+	if (!isNaN(justNumber) && trimmed === String(justNumber)) {
+		return justNumber > 0 ? justNumber : null;
+	}
+
+	// Number with unit suffix
+	const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*([BKMGT])$/);
+	if (!match) return null;
+
+	const num = parseFloat(match[1]);
+	const unit = match[2];
+	const multiplier = SIZE_UNITS[unit];
+
+	if (isNaN(num) || num <= 0 || !multiplier) return null;
+
+	return Math.floor(num * multiplier);
+}
+
+/**
+ * Format bytes to human-readable size string
+ */
+export function formatChunkSize(bytes: number): string {
+	if (bytes < 1024) return `${bytes}B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}K`;
+	if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)}M`;
+	if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(0)}G`;
+	return `${(bytes / (1024 * 1024 * 1024 * 1024)).toFixed(0)}T`;
+}
+
+/**
  * Validate and normalize a raw object into a LISH.
  * Returns null if validation fails.
  */
