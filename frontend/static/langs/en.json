@@ -57,7 +57,12 @@
 			"waiting": "Waiting",
 			"paused": "Paused",
 			"error": "Error"
-		}
+		},
+		"createLish": "Create LISH",
+		"importPlaceholder": "Paste LISH JSON here...",
+		"errorInvalidFormat": "Invalid LISH format",
+		"errorNoValidLish": "No valid LISH found",
+		"emptyList": "No LISH to export"
 	},
 	"settings": {
 		"title": "Settings",

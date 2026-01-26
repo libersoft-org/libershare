@@ -11,8 +11,9 @@
 		path: string;
 		separator: string;
 		onNavigate?: (path: string) => void;
+		onDown?: () => string | false;
 	}
-	let { areaID, position, path, separator, onNavigate }: Props = $props();
+	let { areaID, position, path, separator, onNavigate, onDown }: Props = $props();
 
 	// Parse path into breadcrumb items with their full paths
 	let breadcrumbItems = $derived.by<PathBreadcrumbItem[]>(() => {
@@ -64,4 +65,4 @@
 	}
 </script>
 
-<Breadcrumb {areaID} items={breadcrumbItems} {position} onSelect={handleSelect} onBack={handleBack} />
+<Breadcrumb {areaID} items={breadcrumbItems} {position} onSelect={handleSelect} onBack={handleBack} {onDown} />

@@ -9,6 +9,9 @@ import Items from '../components/List/List.svelte';
 import Categories from '../components/Categories/Categories.svelte';
 import Storage from '../components/Storage/Storage.svelte';
 import Download from '../components/Download/Download.svelte';
+import DownloadLISHCreate from '../components/Download/DownloadLISHCreate.svelte';
+import DownloadLISHImport from '../components/Download/DownloadLISHImport.svelte';
+import DownloadLISHExportAll from '../components/Download/DownloadLISHExportAll.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
 import SettingsStorage from '../components/Settings/SettingsStorage.svelte';
 import LISHNetworkList from '../components/Settings/SettingsLISHNetworkList.svelte';
@@ -83,6 +86,40 @@ export const menuStructure = derived(t, () => ({
 			label: tt('downloads.title'),
 			icon: '/img/download.svg',
 			component: Download,
+			submenu: [
+				{
+					id: 'create-lish',
+					label: tt('downloads.createLish'),
+					icon: '/img/plus.svg',
+					iconPosition: 'left',
+					iconSize: '2vh',
+					component: DownloadLISHCreate,
+				},
+				{
+					id: 'import-lish',
+					label: tt('common.import'),
+					icon: '/img/download.svg',
+					iconPosition: 'left',
+					iconSize: '2vh',
+					component: DownloadLISHImport,
+				},
+				{
+					id: 'export-all-lish',
+					label: tt('common.exportAll'),
+					icon: '/img/upload.svg',
+					iconPosition: 'left',
+					iconSize: '2vh',
+					component: DownloadLISHExportAll,
+				},
+				{
+					id: 'back',
+					label: tt('common.back'),
+					icon: '/img/back.svg',
+					iconPosition: 'left',
+					iconSize: '2vh',
+					action: 'back' as const,
+				},
+			],
 		},
 		{
 			id: 'settings',

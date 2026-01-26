@@ -57,7 +57,12 @@
 			"waiting": "Čeká",
 			"paused": "Pozastaveno",
 			"error": "Chyba"
-		}
+		},
+		"createLish": "Vytvořit LISH",
+		"importPlaceholder": "Vložte LISH JSON zde...",
+		"errorInvalidFormat": "Neplatný formát LISH",
+		"errorNoValidLish": "Nebyl nalezen žádný platný LISH",
+		"emptyList": "Žádný LISH k exportu"
 	},
 	"settings": {
 		"title": "Nastavení",

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useArea, activeArea } from '../../scripts/areas.ts';
+	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import Icon from '../Icon/Icon.svelte';
 	export interface BreadcrumbItem {
@@ -14,8 +14,9 @@
 		position: Position;
 		onSelect?: (item: BreadcrumbItem, index: number) => void;
 		onBack?: () => void;
+		onDown?: () => string | false; // Return area ID to navigate to, or false for default behavior
 	}
-	let { areaID, items, position, onSelect, onBack }: Props = $props();
+	let { areaID, items, position, onSelect, onBack, onDown }: Props = $props();
 	let selectedIndex = $state(0);
 	let active = $derived($activeArea === areaID);
 	let maxIndex = $derived(items.length - 2); // Last item (current) is not selectable
@@ -36,7 +37,16 @@
 			return false;
 		},
 		up: () => false,
-		down: () => false,
+		down: () => {
+			if (onDown) {
+				const target = onDown();
+				if (target) {
+					activateArea(target);
+					return true;
+				}
+			}
+			return false;
+		},
 		confirmDown: () => {},
 		confirmUp: () => {
 			const item = items[selectedIndex];

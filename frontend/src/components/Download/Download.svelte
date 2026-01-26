@@ -4,6 +4,8 @@
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
+	import { navigateTo } from '../../scripts/navigation.ts';
+	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
 	import Header from '../Table/TableHeader.svelte';
 	import Cell from '../Table/TableCell.svelte';
@@ -92,6 +94,11 @@
 	let selectedFileIndex = $state(-1); // -1 = main row selected, 0+ = file selected
 	let itemElements: HTMLElement[] = $state([]);
 
+	// Toolbar state
+	let toolbarAreaID = `${areaID}-toolbar`;
+	let toolbarActive = $derived($activeArea === toolbarAreaID);
+	let selectedToolbarIndex = $state(0);
+
 	function scrollToSelected(): void {
 		const element = itemElements[selectedIndex];
 		if (element) {
@@ -101,6 +108,36 @@
 			});
 		}
 	}
+
+	const toolbarHandlers = {
+		up: () => false,
+		down: () => {
+			activateArea(areaID);
+			return true;
+		},
+		left: () => {
+			if (selectedToolbarIndex > 0) {
+				selectedToolbarIndex--;
+				return true;
+			}
+			return false;
+		},
+		right: () => {
+			if (selectedToolbarIndex < 2) {
+				selectedToolbarIndex++;
+				return true;
+			}
+			return false;
+		},
+		confirmDown: () => {},
+		confirmUp: () => {
+			if (selectedToolbarIndex === 0) navigateTo('create-lish');
+			else if (selectedToolbarIndex === 1) navigateTo('import-lish');
+			else if (selectedToolbarIndex === 2) navigateTo('export-all-lish');
+		},
+		confirmCancel: () => {},
+		back: () => onBack?.(),
+	};
 
 	const areaHandlers = {
 		up: () => {
@@ -115,7 +152,9 @@
 				scrollToSelected();
 				return true;
 			}
-			return false;
+			// Move to toolbar
+			activateArea(toolbarAreaID);
+			return true;
 		},
 		down: () => {
 			if (expandedIndex === selectedIndex) {
@@ -159,13 +198,30 @@
 	};
 
 	onMount(() => {
+		const unregisterToolbar = useArea(toolbarAreaID, toolbarHandlers, position);
 		const unregister = useArea(areaID, areaHandlers, position);
-		activateArea(areaID);
-		return unregister;
+		activateArea(toolbarAreaID);
+		return () => {
+			unregisterToolbar();
+			unregister();
+		};
 	});
 </script>
 
 <style>
+	.download {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+	}
+
+	.toolbar {
+		display: flex;
+		flex-direction: row;
+		gap: 1vh;
+		padding: 1vh 2vh;
+	}
+
 	.items {
 		flex: 1;
 		overflow-y: auto;
@@ -173,7 +229,13 @@
 	}
 </style>
 
-<Table {columns} noBorder>
+<div class="download">
+	<div class="toolbar">
+		<Button icon="/img/plus.svg" label={$t.downloads?.createLish} selected={toolbarActive && selectedToolbarIndex === 0} />
+		<Button icon="/img/download.svg" label={$t.common?.import} selected={toolbarActive && selectedToolbarIndex === 1} />
+		<Button icon="/img/upload.svg" label={$t.common?.exportAll} selected={toolbarActive && selectedToolbarIndex === 2} />
+	</div>
+	<Table {columns} noBorder>
 	<Header fontSize="1.4vh">
 		<Cell>{$t.downloads?.name}</Cell>
 		<Cell align="center" desktopOnly>{$t.downloads?.id}</Cell>
@@ -192,4 +254,5 @@
 			</div>
 		{/each}
 	</div>
-</Table>
+	</Table>
+</div>

@@ -390,8 +390,7 @@
 		showDeleteConfirm = false;
 		popBreadcrumb();
 		await tick();
-		// Re-register areas
-		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		// Re-register list and actions areas (folder-actions handled by $effect)
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(`${areaID}-folder-actions`);
@@ -431,7 +430,7 @@
 		showNewFolderDialogState = false;
 		popBreadcrumb();
 		await tick();
-		// Re-register areas
+		// Re-register all areas
 		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
@@ -485,7 +484,7 @@
 		fileToDelete = null;
 		popBreadcrumb();
 		await tick();
-		// Re-register areas
+		// Re-register all areas
 		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
@@ -580,7 +579,7 @@
 
 <div class="browser">
 	{#if showPath}
-		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" position={pathBreadcrumbPosition} path={currentPath} {separator} onNavigate={path => loadDirectory(path)} />
+		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" position={pathBreadcrumbPosition} path={currentPath} {separator} onNavigate={path => loadDirectory(path)} onDown={() => (error ? `${areaID}-list` : `${areaID}-folder-actions`)} />
 	{/if}
 	{#if !error}
 		<div class="folder-actions">
