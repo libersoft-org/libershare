@@ -74,6 +74,7 @@
 	let unregisterActions: (() => void) | null = null;
 
 	let selectedItem = $derived(items[selectedIndex]);
+	let isEmpty = $derived(items.length === 0 || (items.length === 1 && items[0].name === '..'));
 
 	// Folder toolbar actions
 	let folderActions = $derived([
@@ -610,8 +611,6 @@
 								<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
 							</div>
 						{/each}
-					{:else if items.length === 0}
-						<Alert type="info" message="Empty directory" />
 					{:else}
 						{#each items as item, index (item.id)}
 							<div bind:this={itemElements[index]}>

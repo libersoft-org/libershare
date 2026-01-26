@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+	<defs>
+		<mask id="cutout">
+			<rect width="24" height="24" fill="white" />
+			<path stroke="black" stroke-width="3" stroke-linecap="round" d="M8.5 8.5L15.5 15.5M15.5 8.5L8.5 15.5" />
+		</mask>
+	</defs>
+	<circle cx="12" cy="12" r="10" fill="currentColor" mask="url(#cutout)" />
+</svg>

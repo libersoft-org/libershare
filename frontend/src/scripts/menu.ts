@@ -333,7 +333,7 @@ export const menuStructure = derived(t, () => ({
 		{
 			id: 'about',
 			label: tt('about.title'),
-			icon: '/img/about.svg',
+			icon: '/img/info.svg',
 			component: About,
 		},
 		{
