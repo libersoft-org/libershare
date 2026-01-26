@@ -11,21 +11,12 @@
 	import Header from '../Table/TableHeader.svelte';
 	import Cell from '../Table/TableCell.svelte';
 	import StorageItem from '../Storage/StorageItem.svelte';
+	import type { StorageItemType, StorageItemData } from '../../scripts/storage.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Spinner from '../Spinner/Spinner.svelte';
 	import PathBreadcrumb from './FileBrowserBreadcrumb.svelte';
 	import ConfirmDialog from '../Dialog/ConfirmDialog.svelte';
 	import InputDialog from '../Dialog/InputDialog.svelte';
-	export type StorageItemType = 'folder' | 'file' | 'drive';
-	export interface StorageItemData {
-		id: string;
-		name: string;
-		path: string;
-		type: StorageItemType;
-		size?: string;
-		modified?: string;
-		hidden?: boolean;
-	}
 	interface FsEntry {
 		name: string;
 		path: string;

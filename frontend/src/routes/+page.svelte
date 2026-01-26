@@ -57,8 +57,12 @@
 		activateArea('content');
 		initAudio();
 		play('welcome');
-		console.log(await api.listNetworks());
-		await initStats();
+		try {
+			console.log(await api.listNetworks());
+			await initStats();
+		} catch (error) {
+			console.error('[App] Initialization error:', error);
+		}
 	});
 </script>
 

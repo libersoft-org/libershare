@@ -2,7 +2,7 @@
 	import TableRow from '../Table/TableRow.svelte';
 	import TableCell from '../Table/TableCell.svelte';
 	import Icon from '../Icon/Icon.svelte';
-	import type { StorageItemType } from './types.ts';
+	import type { StorageItemType } from '../../scripts/storage.ts';
 
 	interface Props {
 		name: string;
