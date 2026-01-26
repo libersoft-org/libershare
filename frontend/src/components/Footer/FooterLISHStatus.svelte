@@ -46,7 +46,7 @@
 	<div class="bottom">
 		<div class="network">
 			<div class="label">LISH:</div>
-			<Dot status={lishStatus} />
+			<Dot status={lishStatus} animate={!lishConnected} />
 		</div>
 		<div class="network">
 			<div class="label">VPN:</div>
