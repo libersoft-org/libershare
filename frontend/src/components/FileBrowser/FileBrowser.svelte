@@ -388,7 +388,7 @@
 
 	async function confirmDeleteFolder() {
 		try {
-			await api.fsDelete(currentPath);
+			await api.fs.delete(currentPath);
 			// Navigate to parent after deletion
 			if (parentPath !== null) {
 				await loadDirectory(parentPath);
@@ -430,7 +430,7 @@
 	async function confirmNewFolder(folderName: string) {
 		try {
 			const newPath = currentPath + separator + folderName;
-			await api.fsMkdir(newPath);
+			await api.fs.mkdir(newPath);
 			// Reload directory and select the new folder
 			await loadDirectory(currentPath, folderName);
 		} catch (e: any) {
@@ -452,7 +452,7 @@
 
 	async function openFile(item: StorageItemData) {
 		try {
-			await api.fsOpen(item.path);
+			await api.fs.open(item.path);
 		} catch (e: any) {
 			error = e.message || 'Failed to open file';
 		}
@@ -483,7 +483,7 @@
 	async function confirmDeleteFile() {
 		if (!fileToDelete) return;
 		try {
-			await api.fsDelete(fileToDelete.path);
+			await api.fs.delete(fileToDelete.path);
 			// Reload directory
 			await loadDirectory(currentPath);
 		} catch (e: any) {
@@ -521,7 +521,7 @@
 
 		(async () => {
 			try {
-				const info = await api.fsInfo();
+				const info = await api.fs.info();
 				separator = info.separator;
 				// Resolve initial path
 				let startPath = initialPath;

@@ -1,4 +1,5 @@
 import { createLibp2p } from 'libp2p';
+import { Utils } from './utils.ts';
 import { preSharedKey } from '@libp2p/pnet'
 import { tcp } from '@libp2p/tcp';
 import { noise, pureJsCrypto } from '@chainsafe/libp2p-noise';
@@ -98,8 +99,8 @@ export class Network {
 		const settingsPath = join(this.dataDir, 'settings.json');
 		const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
 
-		console.log(`Decode swarm key from base64...`);
-		const swarmKey = Uint8Array.fromBase64(this.networkDef.key);
+		console.log(`Decoding swarm key from base62...`);
+		const swarmKey = Utils.decodeBase62(this.networkDef.key);
 		const bootstrapPeers = this.networkDef.bootstrap_peers;
 
 		// Initialize datastore (network-specific path)
@@ -218,8 +219,8 @@ export class Network {
 				}),
 			];
 		} else {
-			console.log('⚠️  No bootstrap peers configured in settings.json!');
-			console.log('   Add bootstrap peers to settings.network.bootstrapPeers array');
+			console.log('⚠️  No bootstrap peers configured!');
+			console.log('   Add bootstrap peers.');
 			console.log('   Format: /ip4/<IP>/tcp/<PORT>/p2p/<PEER_ID>');
 		}
 

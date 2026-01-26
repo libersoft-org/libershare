@@ -1,6 +1,12 @@
 // Lish manifest types
 export * from './lish.ts';
 
+// API client
+export { Api, type IWsClient } from './api.ts';
+
+// WebSocket client
+export { WsClient } from './client.ts';
+
 // Network types
 export interface NetworkDefinition {
 	id: string;
