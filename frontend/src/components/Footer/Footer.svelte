@@ -21,7 +21,6 @@
 		props?: () => Record<string, any>;
 	};
 
-
 	const widgets: Widget[] = [
 		{
 			id: 'version',
@@ -37,6 +36,7 @@
 			props: () => ({
 				topIcon: 'img/download.svg',
 				topIconAlt: $t.common?.download,
+				topLabel: '- 12',
 				bottomLabel: '13.2 MB/s',
 			}),
 		},
@@ -46,6 +46,7 @@
 			props: () => ({
 				topIcon: 'img/upload.svg',
 				topIconAlt: $t.common?.upload,
+				topLabel: '- 5',
 				bottomLabel: '3.2 MB/s',
 			}),
 		},
@@ -167,10 +168,10 @@
 </style>
 
 <div class="footer" class:left={$footerPosition === 'left'} class:center={$footerPosition === 'center'} class:right={$footerPosition === 'right'}>
-<!--	<pre>-->
-<!--	&lt;!&ndash;{JSON.stringify($stats, null, 2)}&ndash;&gt;-->
-<!--	&lt;!&ndash;	{JSON.stringify($wsClientState, null, 2)}&ndash;&gt;-->
-<!--		</pre>-->
+	<!--	<pre>-->
+	<!--	&lt;!&ndash;{JSON.stringify($stats, null, 2)}&ndash;&gt;-->
+	<!--	&lt;!&ndash;	{JSON.stringify($wsClientState, null, 2)}&ndash;&gt;-->
+	<!--		</pre>-->
 	<div class="items" class:right={$footerPosition === 'right'}>
 		{#each displayWidgets as widget, i}
 			{#if i > 0}<Separator />{/if}
@@ -179,4 +180,3 @@
 		{/each}
 	</div>
 </div>
-

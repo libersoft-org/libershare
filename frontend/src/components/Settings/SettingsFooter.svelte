@@ -16,8 +16,8 @@
 	function getWidgetLabel(widget: FooterWidget): string {
 		const labels: Record<FooterWidget, string> = {
 			version: $t.common?.version,
-			download: $t.settings?.footerWidgets?.download,
-			upload: $t.settings?.footerWidgets?.upload,
+			download: $t.settings?.footerWidgets?.downloads,
+			upload: $t.settings?.footerWidgets?.uploads,
 			cpu: $t.settings?.footerWidgets?.cpu,
 			ram: $t.settings?.footerWidgets?.ram,
 			storage: $t.settings?.footerWidgets?.storage,
@@ -125,6 +125,7 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 2vh;
+		font-size: 2vh;
 	}
 
 	.back {

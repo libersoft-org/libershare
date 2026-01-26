@@ -633,11 +633,9 @@
 {#if showDeleteConfirm}
 	<ConfirmDialog title={$t.fileBrowser?.deleteFolder} message={$t.fileBrowser?.confirmDeleteFolder?.replace('{path}', currentPath)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmDeleteFolder} onBack={cancelDeleteFolder} />
 {/if}
-
 {#if showDeleteFileConfirm && fileToDelete}
 	<ConfirmDialog title={$t.fileBrowser?.deleteFile} message={$t.fileBrowser?.confirmDeleteFile?.replace('{name}', fileToDelete.name)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmDeleteFile} onBack={cancelDeleteFile} />
 {/if}
-
 {#if showNewFolderDialogState}
 	<InputDialog title={$t.fileBrowser?.newFolder} label={$t.fileBrowser?.folderName} placeholder={$t.fileBrowser?.enterFolderName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
 {/if}
