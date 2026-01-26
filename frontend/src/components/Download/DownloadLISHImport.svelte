@@ -5,15 +5,10 @@
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
+	import { parseLISHFromJson, getLISHErrorMessage } from '../../scripts/lish.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
-
-	interface LISH {
-		version: number;
-		name: string;
-		// TODO: Add more fields as needed
-	}
 
 	interface Props {
 		areaID: string;
@@ -29,47 +24,16 @@
 	let lishJson = $state('');
 	let errorMessage = $state('');
 
-	function validateLISH(obj: unknown): LISH | null {
-		if (!obj || typeof obj !== 'object') return null;
-		const parsed = obj as Record<string, unknown>;
-		// Validate required fields
-		if (typeof parsed.name !== 'string' || !parsed.name.trim()) return null;
-		return {
-			version: (parsed.version as number) ?? 1,
-			name: parsed.name.trim(),
-		};
-	}
-
 	function handleImport() {
 		errorMessage = '';
-		if (!lishJson.trim()) {
-			errorMessage = $t.downloads?.errorInvalidFormat;
+		const result = parseLISHFromJson(lishJson);
+		if (result.error) {
+			errorMessage = getLISHErrorMessage(result.error, $t);
 			return;
 		}
-		try {
-			const parsed = JSON.parse(lishJson);
-			const lishToImport: LISH[] = [];
-			// Check if it's an array or a single LISH
-			if (Array.isArray(parsed)) {
-				for (const item of parsed) {
-					const lish = validateLISH(item);
-					if (lish) lishToImport.push(lish);
-				}
-			} else {
-				const lish = validateLISH(parsed);
-				if (lish) lishToImport.push(lish);
-			}
-
-			if (lishToImport.length === 0) {
-				errorMessage = $t.downloads?.errorNoValidLish;
-				return;
-			}
-
-			// TODO: Add LISH to storage/backend
-			onImport?.();
-		} catch {
-			errorMessage = $t.downloads?.errorInvalidFormat;
-		}
+		// TODO: Add LISH items to storage/backend
+		// result.items contains validated LISH objects
+		onImport?.();
 	}
 
 	function openFileBrowser() {
