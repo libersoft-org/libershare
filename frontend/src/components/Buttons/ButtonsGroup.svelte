@@ -124,43 +124,43 @@
 </script>
 
 <style>
-	.items-wrapper {
+	.buttons-wrapper {
 		width: 100%;
 		overflow: hidden;
 		padding: 2vh 0;
 	}
 
-	.items {
+	.buttons {
 		display: flex;
 		align-items: center;
 		gap: 3vh;
 		transition: all 0.2s linear;
 	}
 
-	.items.horizontal {
+	.buttons.horizontal {
 		flex-direction: row;
 		padding: 0 50%;
 	}
 
-	.items.vertical {
+	.buttons.vertical {
 		flex-direction: column;
 		gap: 2vh;
 	}
 
-	.items.vertical :global(.menu-button) {
+	.buttons.vertical :global(.menu-button) {
 		width: 100%;
 	}
 </style>
 
 {#if orientation === 'horizontal'}
-	<div class="items-wrapper">
-		<div class="items horizontal" bind:this={itemsElement} style="transform: translateX({translateX}px)">
+	<div class="buttons-wrapper">
+		<div class="buttons horizontal" bind:this={itemsElement} style="transform: translateX({translateX}px)">
 			{@render children()}
 		</div>
 	</div>
 {:else}
-	<div class="items-wrapper">
-		<div class="items vertical">
+	<div class="buttons-wrapper">
+		<div class="buttons vertical">
 			{@render children()}
 		</div>
 	</div>
