@@ -11,6 +11,7 @@ import Storage from '../components/Storage/Storage.svelte';
 import Download from '../components/Download/Download.svelte';
 import DownloadLISHCreate from '../components/Download/DownloadLISHCreate.svelte';
 import DownloadLISHImport from '../components/Download/DownloadLISHImport.svelte';
+import DownloadLISHImportBrowse from '../components/Download/DownloadLISHImportBrowse.svelte';
 import DownloadLISHExportAll from '../components/Download/DownloadLISHExportAll.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
 import SettingsStorage from '../components/Settings/SettingsStorage.svelte';
@@ -30,6 +31,7 @@ export interface MenuItem {
 	orientation?: 'horizontal' | 'vertical';
 	onSelect?: () => void;
 	selected?: () => boolean;
+	hidden?: boolean; // Hidden from menu but navigable programmatically
 }
 export interface MenuStructure {
 	title: string;
@@ -102,6 +104,14 @@ export const menuStructure = derived(t, () => ({
 					iconPosition: 'left',
 					iconSize: '2vh',
 					component: DownloadLISHImport,
+					submenu: [
+						{
+							id: 'import-lish-browse',
+							label: tt('common.selectFile'),
+							component: DownloadLISHImportBrowse,
+							hidden: true,
+						},
+					],
 				},
 				{
 					id: 'export-all-lish',

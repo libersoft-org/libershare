@@ -80,6 +80,11 @@ export const api = {
 
     fsList: (path?: string) => wsClient.call<FsListResult>('fs.list', { path }),
 
+    fsReadText: async (path: string) => {
+        const result = await wsClient.call<{ content: string }>('fs.readText', { path });
+        return result.content;
+    },
+
     fsDelete: (path: string) => wsClient.call<{ success: boolean }>('fs.delete', { path }),
 
     fsMkdir: (path: string) => wsClient.call<{ success: boolean }>('fs.mkdir', { path }),

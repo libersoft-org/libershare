@@ -4,6 +4,7 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
+	import { navigateTo } from '../../scripts/navigation.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -42,7 +43,7 @@
 	function handleImport() {
 		errorMessage = '';
 		if (!lishJson.trim()) {
-			errorMessage = $t.downloads?.lish?.errorInvalidFormat;
+			errorMessage = $t.downloads?.errorInvalidFormat;
 			return;
 		}
 		try {
@@ -71,58 +72,60 @@
 		}
 	}
 
+	function openFileBrowser() {
+		navigateTo('import-lish-browse');
+	}
+
+	const areaHandlers = {
+		up: () => {
+			if (selectedIndex > 0) {
+				selectedIndex--;
+				return true;
+			}
+			return false;
+		},
+		down: () => {
+			if (selectedIndex < 1) {
+				selectedIndex++;
+				selectedColumn = 0;
+				return true;
+			}
+			return false;
+		},
+		left: () => {
+			if (selectedIndex === 1 && selectedColumn > 0) {
+				selectedColumn--;
+				return true;
+			}
+			return false;
+		},
+		right: () => {
+			if (selectedIndex === 1 && selectedColumn < 2) {
+				selectedColumn++;
+				return true;
+			}
+			return false;
+		},
+		confirmDown: () => {
+			if (selectedIndex === 0) inputRef?.focus();
+		},
+		confirmUp: () => {
+			if (selectedIndex === 1) {
+				if (selectedColumn === 0) {
+					openFileBrowser();
+				} else if (selectedColumn === 1) {
+					handleImport();
+				} else if (selectedColumn === 2) {
+					onBack?.();
+				}
+			}
+		},
+		confirmCancel: () => {},
+		back: () => onBack?.(),
+	};
+
 	onMount(() => {
-		const unregister = useArea(
-			areaID,
-			{
-				up: () => {
-					if (selectedIndex > 0) {
-						selectedIndex--;
-						return true;
-					}
-					return false;
-				},
-				down: () => {
-					if (selectedIndex < 1) {
-						selectedIndex++;
-						selectedColumn = 0;
-						return true;
-					}
-					return false;
-				},
-				left: () => {
-					if (selectedIndex === 1 && selectedColumn > 0) {
-						selectedColumn--;
-						return true;
-					}
-					return false;
-				},
-				right: () => {
-					if (selectedIndex === 1 && selectedColumn < 2) {
-						selectedColumn++;
-						return true;
-					}
-					return false;
-				},
-				confirmDown: () => {
-					if (selectedIndex === 0) inputRef?.focus();
-				},
-				confirmUp: () => {
-					if (selectedIndex === 1) {
-						if (selectedColumn === 0) {
-							// Load from file - TODO: connect to backend
-						} else if (selectedColumn === 1) {
-							handleImport();
-						} else if (selectedColumn === 2) {
-							onBack?.();
-						}
-					}
-				},
-				confirmCancel: () => {},
-				back: () => onBack?.(),
-			},
-			position
-		);
+		const unregister = useArea(areaID, areaHandlers, position);
 		activateArea(areaID);
 		return unregister;
 	});
@@ -161,7 +164,7 @@
 		{/if}
 	</div>
 	<div class="buttons">
-		<Button icon="/img/folder.svg" label="{$t.common?.loadFromFile} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
+		<Button icon="/img/folder.svg" label="{$t.common?.load} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
 		<Button icon="/img/download.svg" label={$t.common?.import} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={handleImport} />
 		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 2} onConfirm={onBack} />
 	</div>

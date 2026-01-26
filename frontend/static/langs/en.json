@@ -23,7 +23,8 @@
 		"disconnected": "Disconnected",
 		"notUsed": "Not used",
 		"search": "Search",
-		"create": "Create"
+		"create": "Create",
+		"selectFile": "Select file"
 	},
 	"library": {
 		"title": "Online library",

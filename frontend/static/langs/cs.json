@@ -23,7 +23,8 @@
 		"disconnected": "Odpojeno",
 		"notUsed": "Nepoužíváno",
 		"search": "Hledat",
-		"create": "Vytvořit"
+		"create": "Vytvořit",
+		"selectFile": "Vybrat soubor"
 	},
 	"library": {
 		"title": "Online knihovna",

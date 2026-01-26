@@ -39,13 +39,19 @@
 		position: Position;
 		initialPath?: string;
 		foldersOnly?: boolean;
+		filesOnly?: boolean;
+		fileFilter?: string[]; // Array of extensions like ['.lish', '.json'] or ['*'] for all
 		showPath?: boolean;
 		onBack?: () => void;
 		onSelect?: (path: string) => void;
 		onDownAtEnd?: () => boolean;
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, position, initialPath = '', foldersOnly = false, showPath = true, onBack, onSelect, onDownAtEnd }: Props = $props();
+	let { areaID, position, initialPath = '', foldersOnly = false, filesOnly = false, fileFilter, showPath = true, onBack, onSelect, onDownAtEnd }: Props = $props();
+	
+	// File filter state
+	let showAllFiles = $state(false);
+	let activeFilter = $derived(showAllFiles ? ['*'] : fileFilter);
 	// Calculate sub-area positions based on base position
 	const pathBreadcrumbPosition = { x: position.x + CONTENT_OFFSETS.pathBreadcrumb.x, y: position.y + CONTENT_OFFSETS.pathBreadcrumb.y };
 	const folderActionsPosition = { x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y };
@@ -54,9 +60,12 @@
 	const listAreaID = `${areaID}-list`;
 	let active = $derived($activeArea === listAreaID);
 	let actionsActive = $derived($activeArea === `${areaID}-actions`);
+	let filterActive = $derived($activeArea === `${areaID}-filter`);
 	let selectedIndex = $state(0);
 	let selectedActionIndex = $state(0);
+	let selectedFilterIndex = $state(0);
 	let showActions = $state(false);
+	let showFilterPanel = $state(false);
 	let itemElements: HTMLElement[] = $state([]);
 	let currentPath = $state<string>('');
 	let parentPath = $state<string | null>(null);
@@ -72,18 +81,52 @@
 	let unregisterFolderActions: (() => void) | null = null;
 	let unregisterList: (() => void) | null = null;
 	let unregisterActions: (() => void) | null = null;
+	let unregisterFilter: (() => void) | null = null;
 
 	let selectedItem = $derived(items[selectedIndex]);
 	let isEmpty = $derived(items.length === 0 || (items.length === 1 && items[0].name === '..'));
+	
+	// Check if file passes filter
+	function filePassesFilter(name: string): boolean {
+		if (!activeFilter || activeFilter.length === 0 || activeFilter.includes('*')) return true;
+		const lowerName = name.toLowerCase();
+		return activeFilter.some(ext => lowerName.endsWith(ext.toLowerCase()));
+	}
+	
+	// Format filter for display
+	let filterLabel = $derived.by(() => {
+		if (!fileFilter || fileFilter.length === 0) return null;
+		if (showAllFiles) return '*.*';
+		return fileFilter.join(', ');
+	});
 
 	// Folder toolbar actions
-	let folderActions = $derived([
-		{ id: 'select', label: $t.fileBrowser?.selectFolder, icon: '/img/check.svg' },
-		{ id: 'new', label: $t.fileBrowser?.newFolder, icon: '/img/plus.svg' },
-		{ id: 'delete', label: $t.fileBrowser?.deleteFolder, icon: '/img/del.svg' },
-	]);
+	let folderActions = $derived.by(() => {
+		const actions = [];
+		if (!filesOnly) {
+			actions.push({ id: 'select', label: $t.fileBrowser?.selectFolder, icon: '/img/check.svg' });
+			actions.push({ id: 'new', label: $t.fileBrowser?.newFolder, icon: '/img/plus.svg' });
+			actions.push({ id: 'delete', label: $t.fileBrowser?.deleteFolder, icon: '/img/del.svg' });
+		}
+		// Filter button always visible, shows current filter state
+		const filterLabel = showAllFiles ? '*.*' : (fileFilter && fileFilter.length > 0 ? fileFilter.join(', ') : '*.*');
+		actions.push({ id: 'filter', label: filterLabel, icon: '/img/filter.svg' });
+		return actions;
+	});
 	let selectedFolderActionIndex = $state(0);
 	let folderActionsActive = $derived($activeArea === `${areaID}-folder-actions`);
+	
+	// Filter panel actions - combined extensions option + all files
+	let filterActions = $derived.by(() => {
+		const actions: { id: string; label: string; icon: string }[] = [];
+		if (fileFilter && fileFilter.length > 0) {
+			// Show all extensions as one combined option
+			actions.push({ id: 'filter', label: fileFilter.join(', '), icon: '/img/file.svg' });
+		}
+		actions.push({ id: '*', label: '*.*', icon: '/img/file.svg' });
+		actions.push({ id: 'back', label: $t.common?.back ?? 'Back', icon: '/img/back.svg' });
+		return actions;
+	});
 
 	function formatSize(bytes?: number): string {
 		if (bytes === undefined) return '—';
@@ -132,8 +175,16 @@
 				hidden: entry.hidden,
 			}));
 
-			// Filter to folders only if requested
-			if (foldersOnly) entries = entries.filter(e => e.type === 'folder' || e.type === 'drive');
+			// Filter entries based on mode
+			if (foldersOnly) {
+				entries = entries.filter(e => e.type === 'folder' || e.type === 'drive');
+			} else if (filesOnly) {
+				// Keep folders for navigation, but filter files by extension
+				entries = entries.filter(e => e.type === 'folder' || e.type === 'drive' || (e.type === 'file' && filePassesFilter(e.name)));
+			} else if (activeFilter && activeFilter.length > 0 && !activeFilter.includes('*')) {
+				// Filter files by extension but keep folders
+				entries = entries.filter(e => e.type === 'folder' || e.type === 'drive' || (e.type === 'file' && filePassesFilter(e.name)));
+			}
 			// Add ".." entry if we have a parent
 			if (parentPath !== null) {
 				entries.unshift({
@@ -231,8 +282,13 @@
 				// Folders/drives - navigate into them
 				navigateInto(item);
 			} else if (item?.type === 'file') {
-				// Files - show actions panel
-				openActions();
+				// Files - in filesOnly mode, select the file directly
+				if (filesOnly) {
+					onSelect?.(item.path);
+				} else {
+					// Otherwise show actions panel
+					openActions();
+				}
 			}
 		},
 		confirmCancel: () => {},
@@ -323,6 +379,36 @@
 		},
 	};
 
+	const filterAreaHandlers = {
+		up: () => {
+			if (selectedFilterIndex > 0) {
+				selectedFilterIndex--;
+				return true;
+			}
+			return false;
+		},
+		down: () => {
+			if (selectedFilterIndex < filterActions.length - 1) {
+				selectedFilterIndex++;
+				return true;
+			}
+			return false;
+		},
+		left: () => false,
+		right: () => false,
+		confirmDown: () => {},
+		confirmUp: () => {
+			const action = filterActions[selectedFilterIndex];
+			if (action) {
+				handleFilterAction(action.id);
+			}
+		},
+		confirmCancel: () => {},
+		back: () => {
+			closeFilterPanel();
+		},
+	};
+
 	function handleAction(actionId: string) {
 		const item = items[selectedIndex];
 		if (!item || item.type !== 'file') return;
@@ -352,7 +438,50 @@
 			case 'delete':
 				showDeleteConfirmDialog();
 				break;
+			case 'filter':
+				openFilterPanel();
+				break;
 		}
+	}
+	
+	function openFilterPanel() {
+		showFilterPanel = true;
+		selectedFilterIndex = 0;
+		// Find current filter in the list to pre-select it
+		if (showAllFiles) {
+			const allIdx = filterActions.findIndex(a => a.id === '*');
+			if (allIdx >= 0) selectedFilterIndex = allIdx;
+		} else if (fileFilter && fileFilter.length > 0) {
+			// Select first filter option
+			selectedFilterIndex = 0;
+		}
+		unregisterFilter = useArea(`${areaID}-filter`, filterAreaHandlers, actionsPosition);
+		activateArea(`${areaID}-filter`);
+	}
+	
+	function closeFilterPanel() {
+		showFilterPanel = false;
+		if (unregisterFilter) {
+			unregisterFilter();
+			unregisterFilter = null;
+		}
+		activateArea(`${areaID}-folder-actions`);
+	}
+	
+	function handleFilterAction(actionId: string) {
+		if (actionId === 'back') {
+			closeFilterPanel();
+			return;
+		}
+		// Set the filter
+		if (actionId === '*') {
+			showAllFiles = true;
+		} else if (actionId === 'filter') {
+			// Combined filter option selected - use the fileFilter
+			showAllFiles = false;
+		}
+		loadDirectory(currentPath);
+		closeFilterPanel();
 	}
 
 	function showDeleteConfirmDialog() {
@@ -523,6 +652,7 @@
 			if (unregisterFolderActions) unregisterFolderActions();
 			if (unregisterList) unregisterList();
 			if (unregisterActions) unregisterActions();
+			if (unregisterFilter) unregisterFilter();
 		};
 	});
 </script>
@@ -624,6 +754,13 @@
 			<div class="actions">
 				{#each fileActions as action, index (action.id)}
 					<Button icon={action.icon} label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => handleAction(action.id)} />
+				{/each}
+			</div>
+		{/if}
+		{#if showFilterPanel}
+			<div class="actions">
+				{#each filterActions as action, index (action.id)}
+					<Button icon={action.icon} label={action.label} selected={filterActive && selectedFilterIndex === index} onConfirm={() => handleFilterAction(action.id)} />
 				{/each}
 			</div>
 		{/if}
