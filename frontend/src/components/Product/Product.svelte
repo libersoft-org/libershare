@@ -4,6 +4,7 @@
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { scrollToElement } from '../../scripts/utils.ts';
 	import { t } from '../../scripts/language.ts';
 	import ProductFile from './ProductFile.svelte';
 	interface Props {
@@ -49,20 +50,8 @@
 	}
 
 	function scrollToSelected(): void {
-		if (selectedRow === -1) {
-			imageElement?.scrollIntoView({
-				behavior: 'smooth',
-				block: 'center',
-			});
-		} else {
-			const selectedElement = fileElements[selectedRow];
-			if (selectedElement) {
-				selectedElement.scrollIntoView({
-					behavior: 'smooth',
-					block: 'center',
-				});
-			}
-		}
+		if (selectedRow === -1) imageElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		else scrollToElement(fileElements, selectedRow);
 	}
 
 	function selectButton(): void {

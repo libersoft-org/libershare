@@ -3,6 +3,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
 	import { footerVisible, setFooterVisible, footerPosition, footerWidgetVisibility, setFooterWidgetVisibility } from '../../scripts/settings.ts';
+	import { scrollToElement } from '../../scripts/utils.ts';
 	import { footerWidgets, type FooterWidget } from '../../scripts/footerWidgets.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
@@ -89,15 +90,7 @@
 		return unregister;
 	});
 
-	function scrollToSelected(): void {
-		const element = rowElements[selectedIndex];
-		if (element) {
-			element.scrollIntoView({
-				behavior: 'smooth',
-				block: 'center',
-			});
-		}
-	}
+	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
 </script>
 
 <style>

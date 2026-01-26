@@ -7,6 +7,7 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath, storageTempPath, setStoragePath, setStorageTempPath } from '../../scripts/settings.ts';
+	import { scrollToElement } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Row from '../Row/Row.svelte';
 	import SettingsStorageBrowse from './SettingsStorageBrowse.svelte';
@@ -112,15 +113,7 @@
 		};
 	});
 
-	function scrollToSelected(): void {
-		const element = rowElements[selectedIndex];
-		if (element) {
-			element.scrollIntoView({
-				behavior: 'smooth',
-				block: 'center',
-			});
-		}
-	}
+	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
 </script>
 
 <style>

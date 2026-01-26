@@ -6,6 +6,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
 	import { selectedDownload } from '../../scripts/downloads.ts';
+	import { scrollToElement } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
 	import Header from '../Table/TableHeader.svelte';
@@ -98,15 +99,7 @@
 	let toolbarActive = $derived($activeArea === toolbarAreaID);
 	let selectedToolbarIndex = $state(0);
 
-	function scrollToSelected(): void {
-		const element = itemElements[selectedIndex];
-		if (element) {
-			element.scrollIntoView({
-				behavior: 'smooth',
-				block: 'center',
-			});
-		}
-	}
+	const scrollToSelected = () => scrollToElement(itemElements, selectedIndex);
 
 	function openDetail() {
 		const download = downloads[selectedIndex];

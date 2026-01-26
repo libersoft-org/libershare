@@ -24,3 +24,19 @@ export function truncateID(id: string, maxLength = 16): string {
 	if (id.length <= maxLength) return id;
 	return `${id.slice(0, 6)}...${id.slice(-6)}`;
 }
+
+/**
+ * Scroll an element into view with smooth animation.
+ * @param elements - Array of elements to scroll within
+ * @param index - Index of the element to scroll to
+ * @param instant - Use instant scroll instead of smooth animation
+ */
+export function scrollToElement(elements: (HTMLElement | undefined)[], index: number, instant = false): void {
+	const element = elements[index];
+	if (element) {
+		element.scrollIntoView({
+			behavior: instant ? 'instant' : 'smooth',
+			block: 'center',
+		});
+	}
+}

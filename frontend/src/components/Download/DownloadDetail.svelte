@@ -5,6 +5,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { selectedDownload, type DownloadData } from '../../scripts/downloads.ts';
+	import { scrollToElement, truncateID } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
 	import Header from '../Table/TableHeader.svelte';
@@ -48,17 +49,7 @@
 		{ id: 'delete', label: $t.common?.delete, icon: '/img/del.svg' },
 	]);
 
-	function truncateID(id: string): string {
-		if (id.length <= 16) return id;
-		return `${id.slice(0, 6)}...${id.slice(-6)}`;
-	}
-
-	function scrollToSelected(): void {
-		const element = itemElements[selectedFileIndex];
-		if (element) {
-			element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-		}
-	}
+	const scrollToSelected = () => scrollToElement(itemElements, selectedFileIndex);
 
 	function scrollToInfo(): void {
 		if (infoElement) {

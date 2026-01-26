@@ -7,6 +7,7 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
 	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
+	import { scrollToElement } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
 	import Header from '../Table/TableHeader.svelte';
@@ -115,10 +116,7 @@
 		}
 	}
 
-	function scrollToSelected(): void {
-		const element = itemElements[selectedIndex];
-		if (element) element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-	}
+	const scrollToSelected = () => scrollToElement(itemElements, selectedIndex);
 
 	async function navigateInto(item: StorageItemData): Promise<void> {
 		if (item.type === 'folder' || item.type === 'drive') {

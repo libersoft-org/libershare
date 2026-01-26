@@ -4,6 +4,7 @@
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
+	import { scrollToElement } from '../../scripts/utils.ts';
 	import SearchBar from '../Search/SearchBar.svelte';
 	import ListItem from './ListItem.svelte';
 	import Product from '../Product/Product.svelte';
@@ -65,16 +66,7 @@
 		scrollToSelectedItem();
 	}
 
-	function scrollToSelectedItem(instant = false): void {
-		const selectedElement = itemElements[selectedIndex];
-		if (selectedElement) {
-			selectedElement.scrollIntoView({
-				behavior: instant ? 'instant' : 'smooth',
-				block: 'center',
-				inline: 'center',
-			});
-		}
-	}
+	const scrollToSelectedItem = (instant = false) => scrollToElement(itemElements, selectedIndex, instant);
 
 	function openItem(): void {
 		selectedItem = items[selectedIndex];

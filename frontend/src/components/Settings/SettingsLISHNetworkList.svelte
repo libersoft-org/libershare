@@ -6,8 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { type LISHNetwork, getNetworks, saveNetworks as saveNetworksToStorage, deleteNetwork as deleteNetworkFromStorage, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
-	import Button from '../Buttons/Button.svelte';
+	import { type LISHNetwork, getNetworks, saveNetworks as saveNetworksToStorage, deleteNetwork as deleteNetworkFromStorage, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';	import { scrollToElement } from '../../scripts/utils.ts';	import Button from '../Buttons/Button.svelte';
 	import Alert from '../Alert/Alert.svelte';
 	import ConfirmDialog from '../Dialog/ConfirmDialog.svelte';
 	import Row from '../Row/Row.svelte';
@@ -264,15 +263,7 @@
 		activateArea(areaID);
 	}
 
-	function scrollToSelected(): void {
-		const element = rowElements[selectedIndex];
-		if (element) {
-			element.scrollIntoView({
-				behavior: 'smooth',
-				block: 'center',
-			});
-		}
-	}
+	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
 
 	function registerAreaHandler() {
 		return useArea(

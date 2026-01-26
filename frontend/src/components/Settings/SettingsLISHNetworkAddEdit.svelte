@@ -109,15 +109,7 @@
 		else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined && bootstrapInputs[item.bootstrapIndex]) bootstrapInputs[item.bootstrapIndex].focus();
 	}
 
-	function scrollToSelected(): void {
-		const element = rowElements[selectedIndex];
-		if (element) {
-			element.scrollIntoView({
-				behavior: 'smooth',
-				block: 'center',
-			});
-		}
-	}
+	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
 
 	onMount(() => {
 		const unregister = useArea(
