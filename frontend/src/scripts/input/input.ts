@@ -1,7 +1,7 @@
 import { getKeyboardManager } from './keyboard.ts';
 import { getGamepadManager } from './gamepad.ts';
 import { getMouseManager } from './mouse.ts';
-import { emit, debugAreas } from './areas.ts';
+import { emit, debugAreas } from '../areas.ts';
 
 class InputManager {
 	private keyboardStarted = false;

@@ -8,12 +8,12 @@
 	import { createNavigation, breadcrumbItems, setContentElement, confirmDialog, hideConfirmDialog } from '../scripts/navigation.ts';
 	import { confirmDialogs } from '../scripts/menu.ts';
 	import { productName } from '../scripts/app.ts';
-	import { startInput } from '../scripts/input.ts';
+	import { startInput } from '../scripts/input/input.ts';
 	import { api } from '../scripts/api.ts';
 	import { activateArea } from '../scripts/areas.ts';
 	import { LAYOUT, CONTENT_POSITIONS } from '../scripts/navigationLayout.ts';
 	import { initAudio, play } from '../scripts/audio.ts';
-	import { cursorVisible } from '../scripts/mouse.ts';
+	import { cursorVisible } from '../scripts/input/mouse.ts';
 	import { cursorSize, cursorSizes, footerVisible } from '../scripts/settings.ts';
 	import Debug from '../components/Debug/Debug.svelte';
 	import { initStats } from '../scripts/stats.ts';

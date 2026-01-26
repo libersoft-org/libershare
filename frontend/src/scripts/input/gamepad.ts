@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone, increaseVolume, decreaseVolume } from './settings.ts';
+import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone, increaseVolume, decreaseVolume } from '../settings.ts';
 type GamepadCallback = () => void;
 let globalGamepadManager: GamepadManager | null = null;
 
