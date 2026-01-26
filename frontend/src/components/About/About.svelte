@@ -61,9 +61,9 @@
 	</div>
 	<div class="links">
 		<ButtonsGroup {areaID} {position} initialIndex={2} {onBack}>
-			<Button label={$t.about?.githubPage} padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
-			<Button label={$t.about?.officialWebsite} padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://libershare.com')} />
-			<Button label={$t.common?.ok} onConfirm={onBack} />
+			<Button icon="/img/github.svg" label={$t.about?.githubPage} padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
+			<Button icon="/img/online.svg" label={$t.about?.officialWebsite} padding="1vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://libershare.com')} />
+			<Button icon="/img/check.svg" label={$t.common?.ok} onConfirm={onBack} />
 		</ButtonsGroup>
 	</div>
 </Dialog>
