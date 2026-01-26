@@ -6,6 +6,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
+	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
 	import Header from '../Table/TableHeader.svelte';
@@ -17,14 +18,6 @@
 	import PathBreadcrumb from './FileBrowserBreadcrumb.svelte';
 	import ConfirmDialog from '../Dialog/ConfirmDialog.svelte';
 	import InputDialog from '../Dialog/InputDialog.svelte';
-	interface FsEntry {
-		name: string;
-		path: string;
-		type: 'file' | 'directory' | 'drive';
-		size?: number;
-		modified?: string;
-		hidden?: boolean;
-	}
 	interface Props {
 		areaID: string;
 		position: Position;
@@ -39,7 +32,7 @@
 	}
 	const columns = '1fr 8vw 12vw';
 	let { areaID, position, initialPath = '', foldersOnly = false, filesOnly = false, fileFilter, showPath = true, onBack, onSelect, onDownAtEnd }: Props = $props();
-	
+
 	// File filter state
 	let showAllFiles = $state(false);
 	let activeFilter = $derived(showAllFiles ? ['*'] : fileFilter);
@@ -73,17 +66,8 @@
 	let unregisterList: (() => void) | null = null;
 	let unregisterActions: (() => void) | null = null;
 	let unregisterFilter: (() => void) | null = null;
-
 	let selectedItem = $derived(items[selectedIndex]);
 	let isEmpty = $derived(items.length === 0 || (items.length === 1 && items[0].name === '..'));
-	
-	// Check if file passes filter
-	function filePassesFilter(name: string): boolean {
-		if (!activeFilter || activeFilter.length === 0 || activeFilter.includes('*')) return true;
-		const lowerName = name.toLowerCase();
-		return activeFilter.some(ext => lowerName.endsWith(ext.toLowerCase()));
-	}
-	
 	// Format filter for display
 	let filterLabel = $derived.by(() => {
 		if (!fileFilter || fileFilter.length === 0) return null;
@@ -92,57 +76,12 @@
 	});
 
 	// Folder toolbar actions
-	let folderActions = $derived.by(() => {
-		const actions = [];
-		if (!filesOnly) {
-			actions.push({ id: 'select', label: $t.fileBrowser?.selectFolder, icon: '/img/check.svg' });
-			actions.push({ id: 'new', label: $t.fileBrowser?.newFolder, icon: '/img/plus.svg' });
-			actions.push({ id: 'delete', label: $t.fileBrowser?.deleteFolder, icon: '/img/del.svg' });
-		}
-		// Filter button always visible, shows current filter state
-		const filterLabel = showAllFiles ? '*.*' : (fileFilter && fileFilter.length > 0 ? fileFilter.join(', ') : '*.*');
-		actions.push({ id: 'filter', label: filterLabel, icon: '/img/filter.svg' });
-		return actions;
-	});
+	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter));
 	let selectedFolderActionIndex = $state(0);
 	let folderActionsActive = $derived($activeArea === `${areaID}-folder-actions`);
-	
-	// Filter panel actions - combined extensions option + all files
-	let filterActions = $derived.by(() => {
-		const actions: { id: string; label: string; icon: string }[] = [];
-		if (fileFilter && fileFilter.length > 0) {
-			// Show all extensions as one combined option
-			actions.push({ id: 'filter', label: fileFilter.join(', '), icon: '/img/file.svg' });
-		}
-		actions.push({ id: '*', label: '*.*', icon: '/img/file.svg' });
-		actions.push({ id: 'back', label: $t.common?.back ?? 'Back', icon: '/img/back.svg' });
-		return actions;
-	});
 
-	function formatSize(bytes?: number): string {
-		if (bytes === undefined) return '—';
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-		return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-	}
-
-	function formatDate(isoDate?: string): string {
-		if (!isoDate) return '—';
-		return new Date(isoDate).toLocaleDateString();
-	}
-
-	function getParentPath(path: string): string | null {
-		if (!path || path === separator) return null;
-		if (/^[A-Z]:\\?$/i.test(path)) return '';
-		const parts = path.split(separator).filter(Boolean);
-		if (parts.length <= 1) {
-			if (separator === '\\' && /^[A-Z]:/i.test(path)) return parts[0] + '\\';
-			return separator === '/' ? '/' : '';
-		}
-		const parent = parts.slice(0, -1).join(separator);
-		return separator === '/' ? '/' + parent : parent;
-	}
+	// Filter panel actions
+	let filterActions = $derived(buildFilterActions($t, fileFilter));
 
 	async function loadDirectory(path?: string, selectName?: string): Promise<void> {
 		loading = true;
@@ -150,61 +89,25 @@
 		// Set the intended path immediately so it's visible during loading
 		if (path) {
 			currentPath = path;
-			parentPath = getParentPath(path);
+			parentPath = getParentPath(path, separator);
 		}
 		try {
-			const result = await api.fsList(path);
+			const options: LoadDirectoryOptions = { foldersOnly, filesOnly, fileFilter: activeFilter };
+			const result = await loadDirectoryFromApi(path, separator, options);
 			currentPath = result.path;
-			parentPath = getParentPath(result.path);
-			let entries: StorageItemData[] = result.entries.map((entry: FsEntry, index: number) => ({
-				id: String(index + 1),
-				name: entry.name,
-				path: entry.path,
-				type: entry.type === 'directory' ? 'folder' : entry.type,
-				size: formatSize(entry.size),
-				modified: formatDate(entry.modified),
-				hidden: entry.hidden,
-			}));
-
-			// Filter entries based on mode
-			if (foldersOnly) {
-				entries = entries.filter(e => e.type === 'folder' || e.type === 'drive');
-			} else if (filesOnly) {
-				// Keep folders for navigation, but filter files by extension
-				entries = entries.filter(e => e.type === 'folder' || e.type === 'drive' || (e.type === 'file' && filePassesFilter(e.name)));
-			} else if (activeFilter && activeFilter.length > 0 && !activeFilter.includes('*')) {
-				// Filter files by extension but keep folders
-				entries = entries.filter(e => e.type === 'folder' || e.type === 'drive' || (e.type === 'file' && filePassesFilter(e.name)));
-			}
-			// Add ".." entry if we have a parent
-			if (parentPath !== null) {
-				entries.unshift({
-					id: '0',
-					name: '..',
-					path: parentPath || '',
-					type: 'folder',
-				});
-			}
-			items = entries;
+			parentPath = result.parentPath;
+			items = result.items;
 			// Select specific item by name, or default to first
 			if (selectName) {
-				const idx = entries.findIndex(e => e.name === selectName);
+				const idx = result.items.findIndex(e => e.name === selectName);
 				selectedIndex = idx >= 0 ? idx : 0;
 			} else selectedIndex = 0;
 		} catch (e: any) {
 			error = e.message || 'Failed to load directory';
 			// Even on error, provide ".." entry to navigate up if we have a parent path
 			// Don't show ".." at root level (Linux "/" or empty path, Windows drive list)
-			const isAtRoot = !currentPath || currentPath === separator || (separator === '/' && currentPath === '/');
-			if (!isAtRoot && parentPath !== null) {
-				items = [
-					{
-						id: '0',
-						name: '..',
-						path: parentPath || '',
-						type: 'folder',
-					},
-				];
+			if (!isAtRoot(currentPath, separator) && parentPath !== null) {
+				items = [createParentEntry(parentPath)];
 				selectedIndex = 0;
 			} else items = [];
 		} finally {
@@ -221,7 +124,7 @@
 		if (item.type === 'folder' || item.type === 'drive') {
 			// If navigating to "..", select the folder we came from
 			if (item.name === '..') {
-				const currentName = currentPath.split(separator).filter(Boolean).pop();
+				const currentName = getCurrentDirName(currentPath, separator);
 				await loadDirectory(item.path, currentName);
 			} else await loadDirectory(item.path);
 		}
@@ -230,7 +133,7 @@
 	async function navigateUp(): Promise<void> {
 		if (parentPath !== null) {
 			// Get current directory name to select after going up
-			const currentName = currentPath.split(separator).filter(Boolean).pop();
+			const currentName = getCurrentDirName(currentPath, separator);
 			await loadDirectory(parentPath || undefined, currentName);
 		}
 	}
@@ -403,7 +306,6 @@
 	function handleAction(actionId: string) {
 		const item = items[selectedIndex];
 		if (!item || item.type !== 'file') return;
-
 		switch (actionId) {
 			case 'open':
 				openFile(item);
@@ -434,7 +336,7 @@
 				break;
 		}
 	}
-	
+
 	function openFilterPanel() {
 		showFilterPanel = true;
 		selectedFilterIndex = 0;
@@ -442,14 +344,11 @@
 		if (showAllFiles) {
 			const allIdx = filterActions.findIndex(a => a.id === '*');
 			if (allIdx >= 0) selectedFilterIndex = allIdx;
-		} else if (fileFilter && fileFilter.length > 0) {
-			// Select first filter option
-			selectedFilterIndex = 0;
-		}
+		} else if (fileFilter && fileFilter.length > 0) selectedFilterIndex = 0; // Select first filter option
 		unregisterFilter = useArea(`${areaID}-filter`, filterAreaHandlers, actionsPosition);
 		activateArea(`${areaID}-filter`);
 	}
-	
+
 	function closeFilterPanel() {
 		showFilterPanel = false;
 		if (unregisterFilter) {
@@ -458,19 +357,15 @@
 		}
 		activateArea(`${areaID}-folder-actions`);
 	}
-	
+
 	function handleFilterAction(actionId: string) {
 		if (actionId === 'back') {
 			closeFilterPanel();
 			return;
 		}
 		// Set the filter
-		if (actionId === '*') {
-			showAllFiles = true;
-		} else if (actionId === 'filter') {
-			// Combined filter option selected - use the fileFilter
-			showAllFiles = false;
-		}
+		if (actionId === '*') showAllFiles = true;
+		else if (actionId === 'filter') showAllFiles = false; // Combined filter option selected - use the fileFilter
 		loadDirectory(currentPath);
 		closeFilterPanel();
 	}
