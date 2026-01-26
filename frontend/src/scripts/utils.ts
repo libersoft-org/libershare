@@ -1,6 +1,4 @@
-/**
- * Format bytes to human-readable size
- */
+// Format bytes to human-readable size
 export function formatSize(bytes?: number): string {
 	if (bytes === undefined) return '—';
 	if (bytes < 1024) return `${bytes} B`;
@@ -9,28 +7,36 @@ export function formatSize(bytes?: number): string {
 	return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-/**
- * Format ISO date to localized date string
- */
+// Format ISO date to localized date string
 export function formatDate(isoDate?: string): string {
 	if (!isoDate) return '—';
 	return new Date(isoDate).toLocaleDateString();
 }
 
-/**
- * Truncate a long ID string with ellipsis in the middle
- */
+// Format current time with localization options
+// @param hour12 - Use 12-hour format (true) or 24-hour format (false)
+// @param showSeconds - Include seconds in the output
+export function formatTime(hour12: boolean, showSeconds: boolean): string {
+	const now = new Date();
+	const options: Intl.DateTimeFormatOptions = {
+		hour: 'numeric',
+		minute: 'numeric',
+		hour12,
+	};
+	if (showSeconds) options.second = 'numeric';
+	return now.toLocaleTimeString([], options);
+}
+
+// Truncate a long ID string with ellipsis in the middle
 export function truncateID(id: string, maxLength = 16): string {
 	if (id.length <= maxLength) return id;
 	return `${id.slice(0, 6)}...${id.slice(-6)}`;
 }
 
-/**
- * Scroll an element into view with smooth animation.
- * @param elements - Array of elements to scroll within
- * @param index - Index of the element to scroll to
- * @param instant - Use instant scroll instead of smooth animation
- */
+// Scroll an element into view with smooth animation.
+// @param elements - Array of elements to scroll within
+// @param index - Index of the element to scroll to
+// @param instant - Use instant scroll instead of smooth animation
 export function scrollToElement(elements: (HTMLElement | undefined)[], index: number, instant = false): void {
 	const element = elements[index];
 	if (element) {

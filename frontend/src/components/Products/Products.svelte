@@ -5,8 +5,9 @@
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
+	import { getGridColumnsCount } from '../../scripts/products.ts';
 	import SearchBar from '../Search/SearchBar.svelte';
-	import ListItem from './ListItem.svelte';
+	import ProductsItem from './ProductsItem.svelte';
 	import Product from '../Product/Product.svelte';
 	interface Props {
 		areaID: string;
@@ -35,17 +36,8 @@
 	let unregisterList: (() => void) | null = null;
 	let searchBar: SearchBar | undefined = $state();
 
-	// Calculate columns by comparing Y positions of items
-	function getColumnsCount(): number {
-		if (itemElements.length < 2) return 1;
-		const firstItemY = itemElements[0].offsetTop;
-		let cols = 1;
-		for (let i = 1; i < itemElements.length; i++) {
-			if (itemElements[i].offsetTop === firstItemY) cols++;
-			else break;
-		}
-		return cols;
-	}
+	// Use extracted grid columns function
+	const getColumnsCount = () => getGridColumnsCount(itemElements);
 
 	function navigate(direction: string): void {
 		const cols = getColumnsCount();
@@ -197,7 +189,7 @@
 	<div class="items">
 		{#each items as item, index (item.id)}
 			<div bind:this={itemElements[index]}>
-				<ListItem title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={active && index === selectedIndex} isAPressed={active && isAPressed && index === selectedIndex} />
+				<ProductsItem title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={active && index === selectedIndex} isAPressed={active && isAPressed && index === selectedIndex} />
 			</div>
 		{/each}
 	</div>

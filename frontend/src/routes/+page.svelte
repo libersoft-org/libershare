@@ -15,7 +15,7 @@
 	import { initAudio, play } from '../scripts/audio.ts';
 	import { cursorVisible } from '../scripts/mouse.ts';
 	import { cursorSize, cursorSizes, footerVisible } from '../scripts/settings.ts';
-	import AreaDebugOverlay from '../components/Debug/AreaDebugOverlay.svelte';
+	import Debug from '../components/Debug/Debug.svelte';
 	import { initStats } from '../scripts/stats.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	let contentElement: HTMLElement;
@@ -106,4 +106,4 @@
 		<Footer />
 	{/if}
 </div>
-<AreaDebugOverlay />
+<Debug />

@@ -1,22 +1,11 @@
 <script lang="ts">
 	import Icon from '../Icon/Icon.svelte';
+	import { type AlertType, alertAppearance } from '../../scripts/alert.ts';
 	interface Props {
-		type?: 'error' | 'warning' | 'info';
+		type?: AlertType;
 		message?: string;
 	}
 	let { type = 'info', message = '' }: Props = $props();
-	
-	const iconMap = {
-		error: '/img/error.svg',
-		warning: '/img/warning.svg',
-		info: '/img/info.svg'
-	};
-	
-	const colorMap = {
-		error: '--color-error',
-		warning: '--color-warning',
-		info: '--color-success'
-	};
 </script>
 
 <style>
@@ -48,7 +37,7 @@
 
 {#if message}
 	<div class="alert {type}">
-		<Icon img={iconMap[type]} size="2.5vh" padding="0" colorVariable={colorMap[type]} />
+		<Icon img={alertAppearance[type].icon} size="2.5vh" padding="0" colorVariable={alertAppearance[type].color} />
 		{message}
 	</div>
 {/if}

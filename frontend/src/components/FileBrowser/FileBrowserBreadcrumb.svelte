@@ -1,5 +1,6 @@
 <script lang="ts">
-	import Breadcrumb, { type BreadcrumbItem } from '../Breadcrumb/Breadcrumb.svelte';
+	import Breadcrumb from '../Breadcrumb/Breadcrumb.svelte';
+	import type { BreadcrumbItem } from '../../scripts/breadcrumb.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type PathBreadcrumbItem, parsePathToBreadcrumbs } from '../../scripts/fileBrowser.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';

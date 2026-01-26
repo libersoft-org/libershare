@@ -1,12 +1,9 @@
 <script lang="ts">
 	import { areaLayout, activeArea, debugAreas } from '../../scripts/areas.ts';
-	// Grid dimensions for visualization
-	const GRID_CELL_WIDTH = 120;
-	const GRID_CELL_HEIGHT = 40;
-	const GRID_PADDING = 20;
+	import { DEBUG_GRID_CELL_WIDTH, DEBUG_GRID_CELL_HEIGHT, DEBUG_GRID_PADDING, getDebugOverlayPosition, type GridBounds } from '../../scripts/debug.ts';
 
 	// Calculate grid bounds
-	let bounds = $derived.by(() => {
+	let bounds = $derived.by<GridBounds>(() => {
 		const positions = Object.values($areaLayout).filter(pos => pos.x > -100 && pos.x < 100 && pos.y > -100 && pos.y < 100);
 		if (positions.length === 0) return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
 		return {
@@ -18,14 +15,7 @@
 	});
 
 	// Calculate position for each area in the overlay
-	function getOverlayPosition(pos: { x: number; y: number }) {
-		const offsetX = pos.x - bounds.minX;
-		const offsetY = pos.y - bounds.minY;
-		return {
-			left: GRID_PADDING + offsetX * GRID_CELL_WIDTH,
-			top: GRID_PADDING + offsetY * GRID_CELL_HEIGHT,
-		};
-	}
+	const getOverlayPosition = (pos: { x: number; y: number }) => getDebugOverlayPosition(pos, bounds);
 </script>
 
 <style>

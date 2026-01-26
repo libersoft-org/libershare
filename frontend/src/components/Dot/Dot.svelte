@@ -1,5 +1,5 @@
 <script lang="ts">
-	export type DotStatus = 'success' | 'warning' | 'error' | 'disabled';
+	import type { DotStatus } from '../../scripts/dot.ts';
 	interface Props {
 		status?: DotStatus;
 	}

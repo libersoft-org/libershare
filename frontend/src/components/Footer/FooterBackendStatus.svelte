@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Dot from '../Dot/Dot.svelte';
-	import type { DotStatus } from '../Dot/Dot.svelte';
+	import type { DotStatus } from '../../scripts/dot.ts';
 	interface Props {
 		status?: 'online' | 'offline' | 'connecting';
 	}
