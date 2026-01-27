@@ -278,7 +278,7 @@
 					</TableRow>
 					<TableRow>
 						<Cell>{$t.downloads?.progress}</Cell>
-						<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} /></span></Cell>
+						<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading'} /></span></Cell>
 					</TableRow>
 					<TableRow odd>
 						<Cell>{$t.downloads?.status}</Cell>
