@@ -6,7 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, storageTempPath, setStoragePath, setStorageTempPath } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLishPath, setStoragePath, setStorageTempPath, setStorageLishPath } from '../../scripts/settings.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Row from '../Row/Row.svelte';
@@ -23,17 +23,22 @@
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
 	let rowElements: HTMLElement[] = $state([]);
-	let browsingFor = $state<'storage' | 'temp' | null>(null);
-	const totalItems = 3; // 0 = download path, 1 = temp path, 2 = back button
+	let browsingFor = $state<'storage' | 'temp' | 'lish' | null>(null);
+	const totalItems = 4; // 0 = download path, 1 = temp path, 2 = lish path, 3 = back button
 
-	function openBrowse(type: 'storage' | 'temp') {
+	function openBrowse(type: 'storage' | 'temp' | 'lish') {
 		browsingFor = type;
 		// Unregister our area - FileBrowser will create its own sub-areas
 		if (unregisterArea) {
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb(type === 'storage' ? $t.settings?.storage?.folderDownload : $t.settings?.storage?.folderTemp);
+		const labels = {
+			storage: $t.settings?.storage?.folderDownload,
+			temp: $t.settings?.storage?.folderTemp,
+			lish: $t.settings?.storage?.folderLish,
+		};
+		pushBreadcrumb(labels[type]);
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 		// FileBrowser will activate its list area on mount
 	}
@@ -46,12 +51,18 @@
 		openBrowse('temp');
 	}
 
+	function changeStorageLishPath() {
+		openBrowse('lish');
+	}
+
 	function handleBrowseSelect(path: string) {
 		const normalizedPath = path.endsWith('/') || path.endsWith('\\') ? path : path + '/';
 		if (browsingFor === 'storage') {
 			setStoragePath(normalizedPath);
 		} else if (browsingFor === 'temp') {
 			setStorageTempPath(normalizedPath);
+		} else if (browsingFor === 'lish') {
+			setStorageLishPath(normalizedPath);
 		}
 		handleBrowseBack();
 	}
@@ -96,6 +107,7 @@
 				confirmUp: () => {
 					if (selectedIndex === 0) changeStoragePath();
 					else if (selectedIndex === 1) changeStorageTempPath();
+					else if (selectedIndex === 2) changeStorageLishPath();
 					else if (selectedIndex === totalItems - 1) onBack?.();
 				},
 				confirmCancel: () => {},
@@ -159,7 +171,7 @@
 </style>
 
 {#if browsingFor}
-	<SettingsStorageBrowse areaID={areaID} {position} initialPath={browsingFor === 'storage' ? $storagePath : $storageTempPath} onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
+	<SettingsStorageBrowse areaID={areaID} {position} initialPath={browsingFor === 'storage' ? $storagePath : browsingFor === 'temp' ? $storageTempPath : $storageLishPath} onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="storage">
 		<div class="rows">
@@ -179,6 +191,15 @@
 						<div class="path">{$storageTempPath}</div>
 					</div>
 					<Button icon="/img/edit.svg" label={$t.common?.change} selected={active && selectedIndex === 1} onConfirm={changeStorageTempPath} />
+				</Row>
+			</div>
+			<div bind:this={rowElements[2]}>
+				<Row selected={active && selectedIndex === 2}>
+					<div class="info">
+						<div class="label">{$t.settings?.storage?.folderLish}</div>
+						<div class="path">{$storageLishPath}</div>
+					</div>
+					<Button icon="/img/edit.svg" label={$t.common?.change} selected={active && selectedIndex === 2} onConfirm={changeStorageLishPath} />
 				</Row>
 			</div>
 		</div>

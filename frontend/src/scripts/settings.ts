@@ -85,7 +85,7 @@ export function setShowSeconds(enabled: boolean): void {
 }
 
 // Storage path settings
-const storedStoragePath = getStorageValue<string>('storagePath', '~/lish/');
+const storedStoragePath = getStorageValue<string>('storagePath', '~/libershare/download/');
 export const storagePath = writable(storedStoragePath);
 
 export function setStoragePath(path: string): void {
@@ -93,10 +93,18 @@ export function setStoragePath(path: string): void {
 	setStorageValue('storagePath', path);
 }
 
-const storedStorageTempPath = getStorageValue<string>('storageTempPath', '~/lish/temp/');
+const storedStorageTempPath = getStorageValue<string>('storageTempPath', '~/libershare/temp/');
 export const storageTempPath = writable(storedStorageTempPath);
 
 export function setStorageTempPath(path: string): void {
 	storageTempPath.set(path);
 	setStorageValue('storageTempPath', path);
+}
+
+const storedStorageLishPath = getStorageValue<string>('storageLishPath', '~/libershare/lish/');
+export const storageLishPath = writable(storedStorageLishPath);
+
+export function setStorageLishPath(path: string): void {
+	storageLishPath.set(path);
+	setStorageValue('storageLishPath', path);
 }

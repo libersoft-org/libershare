@@ -403,7 +403,7 @@
 		showDeleteConfirm = false;
 		popBreadcrumb();
 		await tick();
-		// Re-register list and actions areas (folder-actions handled by $effect)
+		// Re-register list and actions areas
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(`${areaID}-folder-actions`);

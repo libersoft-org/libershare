@@ -6,6 +6,7 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import { HASH_ALGORITHMS, parseChunkSize, type HashAlgorithm } from '../../scripts/lish.ts';
+	import { storageLishPath } from '../../scripts/settings.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -14,12 +15,13 @@
 		position?: Position;
 		onBack?: () => void;
 		onBrowseInput?: () => void;
+		onBrowseOutput?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack, onBrowseInput }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack, onBrowseInput, onBrowseOutput }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	// Form state
 	let inputPath = $state('');
-	let outputPath = $state('');
+	let outputPath = $state($storageLishPath + 'output.lish');
 	let name = $state('');
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
@@ -74,6 +76,7 @@
 
 	function getMaxColumn(fieldIndex: number): number {
 		if (fieldIndex === FIELD_INPUT) return 1; // input + browse
+		if (fieldIndex === FIELD_OUTPUT) return 1; // output + browse
 		if (fieldIndex === FIELD_ALGO) return HASH_ALGORITHMS.length - 1;
 		return 0;
 	}
@@ -84,7 +87,7 @@
 				if (selectedColumn === 0) inputPathInput?.focus();
 				break;
 			case FIELD_OUTPUT:
-				outputPathInput?.focus();
+				if (selectedColumn === 0) outputPathInput?.focus();
 				break;
 			case FIELD_NAME:
 				nameInput?.focus();
@@ -182,7 +185,8 @@
 						if (selectedColumn === 0) focusInput(FIELD_INPUT);
 						else onBrowseInput?.();
 					} else if (selectedIndex === FIELD_OUTPUT) {
-						focusInput(FIELD_OUTPUT);
+						if (selectedColumn === 0) focusInput(FIELD_OUTPUT);
+						else onBrowseOutput?.();
 					} else if (selectedIndex === FIELD_NAME) {
 						focusInput(FIELD_NAME);
 					} else if (selectedIndex === FIELD_DESCRIPTION) {
@@ -266,8 +270,9 @@
 			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={onBrowseInput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 		</div>
 		<!-- Output Path (optional) -->
-		<div bind:this={rowElements[FIELD_OUTPUT]}>
-			<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} placeholder="/path/to/output.lish" selected={active && selectedIndex === FIELD_OUTPUT} />
+		<div class="row" bind:this={rowElements[FIELD_OUTPUT]}>
+			<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} placeholder="/path/to/output.lish" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex />
+			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} onConfirm={onBrowseOutput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 		</div>
 		<!-- Name (optional) -->
 		<div bind:this={rowElements[FIELD_NAME]}>

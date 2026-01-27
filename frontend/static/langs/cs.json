@@ -107,7 +107,8 @@
 		},
 		"storage": {
 			"folderDownload": "Složka pro dokončená stahování",
-			"folderTemp": "Složka pro nedokončená stahování"
+			"folderTemp": "Složka pro nedokončená stahování",
+			"folderLish": "Výchozí složka pro LISH soubory"
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",
