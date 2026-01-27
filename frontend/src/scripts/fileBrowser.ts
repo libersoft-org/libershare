@@ -76,7 +76,7 @@ export interface LoadDirectoryResult {
  */
 export async function loadDirectoryFromApi(path: string | undefined, separator: string, options: LoadDirectoryOptions = {}): Promise<LoadDirectoryResult> {
 	const { foldersOnly = false, filesOnly = false, fileFilter } = options;
-	const result = await api.fs.list(path);
+	const result = await api.fsList(path);
 	const currentPath = result.path;
 	const parentPath = getParentPath(currentPath, separator);
 	let entries: StorageItemData[] = result.entries.map((entry: FsEntry, index: number) => transformFsEntry(entry, index));
@@ -134,7 +134,7 @@ export function getCurrentDirName(path: string, separator: string): string | und
  */
 export interface FileBrowserAction {
 	id: string;
-	label: string;
+	label?: string;
 	icon: string;
 }
 
@@ -143,9 +143,9 @@ export interface FileBrowserAction {
  */
 export function getFileActions(t: { fileBrowser?: { openFile?: string; deleteFile?: string }; common?: { back?: string } }): FileBrowserAction[] {
 	return [
-		{ id: 'open', label: t.fileBrowser?.openFile ?? 'Open', icon: '/img/folder.svg' },
-		{ id: 'delete', label: t.fileBrowser?.deleteFile ?? 'Delete', icon: '/img/del.svg' },
-		{ id: 'back', label: t.common?.back ?? 'Back', icon: '/img/back.svg' },
+		{ id: 'open', label: t.fileBrowser?.openFile, icon: '/img/folder.svg' },
+		{ id: 'delete', label: t.fileBrowser?.deleteFile, icon: '/img/del.svg' },
+		{ id: 'back', label: t.common?.back, icon: '/img/back.svg' },
 	];
 }
 
@@ -155,9 +155,9 @@ export function getFileActions(t: { fileBrowser?: { openFile?: string; deleteFil
 export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; newFolder?: string; deleteFolder?: string } }, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[]): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	if (!filesOnly) {
-		actions.push({ id: 'select', label: t.fileBrowser?.selectFolder ?? 'Select', icon: '/img/check.svg' });
-		actions.push({ id: 'new', label: t.fileBrowser?.newFolder ?? 'New', icon: '/img/plus.svg' });
-		actions.push({ id: 'delete', label: t.fileBrowser?.deleteFolder ?? 'Delete', icon: '/img/del.svg' });
+		actions.push({ id: 'select', label: t.fileBrowser?.selectFolder, icon: '/img/check.svg' });
+		actions.push({ id: 'new', label: t.fileBrowser?.newFolder, icon: '/img/plus.svg' });
+		actions.push({ id: 'delete', label: t.fileBrowser?.deleteFolder, icon: '/img/del.svg' });
 	}
 	// Filter button always visible, shows current filter state
 	const filterLabel = showAllFiles ? '*.*' : fileFilter && fileFilter.length > 0 ? fileFilter.join(', ') : '*.*';
@@ -173,7 +173,7 @@ export function buildFilterActions(t: { common?: { back?: string } }, fileFilter
 	// Show all extensions as one combined option
 	if (fileFilter && fileFilter.length > 0) actions.push({ id: 'filter', label: fileFilter.join(', '), icon: '/img/file.svg' });
 	actions.push({ id: '*', label: '*.*', icon: '/img/file.svg' });
-	actions.push({ id: 'back', label: t.common?.back ?? 'Back', icon: '/img/back.svg' });
+	actions.push({ id: 'back', label: t.common?.back, icon: '/img/back.svg' });
 	return actions;
 }
 

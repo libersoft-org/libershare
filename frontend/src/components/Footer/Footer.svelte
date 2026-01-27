@@ -10,7 +10,6 @@
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
-
 	import { stats } from '../../scripts/stats.ts';
 	import { wsClientState } from '../../scripts/ws-client.ts';
 

@@ -41,18 +41,18 @@
 	let chunkSizeError = $derived.by(() => {
 		if (!chunkSize.trim()) return null;
 		const parsed = parseChunkSize(chunkSize);
-		if (parsed === null) return $t.downloads?.lishCreate?.invalidChunkSize ?? 'Invalid chunk size';
+		if (parsed === null) return $t.downloads?.lishCreate?.invalidChunkSize;
 		return null;
 	});
 	let threadsError = $derived.by(() => {
 		const num = parseInt(threads);
 		if (threads.trim() && (isNaN(num) || num < 0)) {
-			return $t.downloads?.lishCreate?.invalidThreads ?? 'Threads must be 0 or positive';
+			return $t.downloads?.lishCreate?.invalidThreads;
 		}
 		return null;
 	});
 	let errorMessage = $derived.by(() => {
-		if (!inputPath.trim()) return $t.downloads?.lishCreate?.inputRequired ?? 'Input path is required';
+		if (!inputPath.trim()) return $t.downloads?.lishCreate?.inputRequired;
 		if (chunkSizeError) return chunkSizeError;
 		if (threadsError) return threadsError;
 		return '';
@@ -262,28 +262,28 @@
 	<div class="container">
 		<!-- Input Path (required) -->
 		<div class="row" bind:this={rowElements[FIELD_INPUT]}>
-			<Input bind:this={inputPathInput} bind:value={inputPath} label={$t.downloads?.lishCreate?.inputPath ?? 'Input (file or directory)'} placeholder="/path/to/file/or/directory" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
+			<Input bind:this={inputPathInput} bind:value={inputPath} label={$t.downloads?.lishCreate?.inputPath} placeholder="/path/to/file/or/directory" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
 			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={onBrowseInput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 		</div>
 		<!-- Output Path (optional) -->
 		<div bind:this={rowElements[FIELD_OUTPUT]}>
-			<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath ?? 'Output file (optional)'} placeholder="/path/to/output.lish" selected={active && selectedIndex === FIELD_OUTPUT} />
+			<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} placeholder="/path/to/output.lish" selected={active && selectedIndex === FIELD_OUTPUT} />
 		</div>
 		<!-- Name (optional) -->
 		<div bind:this={rowElements[FIELD_NAME]}>
-			<Input bind:this={nameInput} bind:value={name} label={$t.downloads?.lishCreate?.name ?? 'Name (optional)'} selected={active && selectedIndex === FIELD_NAME} />
+			<Input bind:this={nameInput} bind:value={name} label={$t.downloads?.lishCreate?.name} selected={active && selectedIndex === FIELD_NAME} />
 		</div>
 		<!-- Description (optional) -->
 		<div bind:this={rowElements[FIELD_DESCRIPTION]}>
-			<Input bind:this={descriptionInput} bind:value={description} label={$t.downloads?.lishCreate?.description ?? 'Description (optional)'} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
+			<Input bind:this={descriptionInput} bind:value={description} label={$t.downloads?.lishCreate?.description} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
 		</div>
 		<!-- Chunk Size -->
 		<div bind:this={rowElements[FIELD_CHUNK_SIZE]}>
-			<Input bind:this={chunkSizeInput} bind:value={chunkSize} label={$t.downloads?.lishCreate?.chunkSize ?? 'Chunk size (B, K, M, G, T)'} placeholder="1M" selected={active && selectedIndex === FIELD_CHUNK_SIZE} />
+			<Input bind:this={chunkSizeInput} bind:value={chunkSize} label={$t.downloads?.lishCreate?.chunkSize} placeholder="1M" selected={active && selectedIndex === FIELD_CHUNK_SIZE} />
 		</div>
 		<!-- Hash Algorithm -->
 		<div bind:this={rowElements[FIELD_ALGO]}>
-			<div class="label">{$t.downloads?.lishCreate?.algorithm ?? 'Hash algorithm'}:</div>
+			<div class="label">{$t.downloads?.lishCreate?.algorithm}:</div>
 			<div class="algo-selector">
 				{#each HASH_ALGORITHMS as algo, i}
 					<Button label={algo} selected={active && selectedIndex === FIELD_ALGO && selectedColumn === i} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
@@ -292,13 +292,13 @@
 		</div>
 		<!-- Threads -->
 		<div bind:this={rowElements[FIELD_THREADS]}>
-			<Input bind:this={threadsInput} bind:value={threads} label={$t.downloads?.lishCreate?.threads ?? 'Threads (0 = auto)'} placeholder="1" type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
+			<Input bind:this={threadsInput} bind:value={threads} label={$t.downloads?.lishCreate?.threads} placeholder="1" type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
 		</div>
 		<Alert type="error" message={showError ? errorMessage : ''} />
 	</div>
 	<div class="buttons">
 		<div bind:this={rowElements[FIELD_CREATE]}>
-			<Button icon="/img/plus.svg" label={$t.downloads?.lishCreate?.create ?? 'Create LISH'} selected={active && selectedIndex === FIELD_CREATE} onConfirm={handleCreate} />
+			<Button icon="/img/plus.svg" label={$t.downloads?.lishCreate?.create} selected={active && selectedIndex === FIELD_CREATE} onConfirm={handleCreate} />
 		</div>
 		<div bind:this={rowElements[FIELD_BACK]}>
 			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === FIELD_BACK} onConfirm={onBack} />

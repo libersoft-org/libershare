@@ -23,11 +23,9 @@ export const defaultWidgetVisibility: Record<FooterWidget, boolean> = {
 export function getWidgetLabel(
 	widget: FooterWidget,
 	t: {
-		common?: { version?: string };
+		common?: { version?: string; downloads?: string; uploads?: string };
 		settings?: {
 			footerWidgets?: {
-				downloads?: string;
-				uploads?: string;
 				cpu?: string;
 				ram?: string;
 				storage?: string;
@@ -42,8 +40,8 @@ export function getWidgetLabel(
 ): string {
 	const labels: Record<FooterWidget, string | undefined> = {
 		version: t.common?.version,
-		download: t.settings?.footerWidgets?.downloads,
-		upload: t.settings?.footerWidgets?.uploads,
+		download: t.common?.downloads,
+		upload: t.common?.uploads,
 		cpu: t.settings?.footerWidgets?.cpu,
 		ram: t.settings?.footerWidgets?.ram,
 		storage: t.settings?.footerWidgets?.storage,

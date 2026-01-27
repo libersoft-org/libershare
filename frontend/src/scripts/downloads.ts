@@ -29,16 +29,16 @@ export type DownloadToolbarActionId = 'back' | 'open-folder' | 'toggle' | 'expor
 export interface DownloadToolbarAction {
 	id: DownloadToolbarActionId;
 	icon: string;
-	getLabel: (t: { common?: { back?: string; export?: string; delete?: string }; downloads?: { openFolder?: string; start?: string; pause?: string; moveData?: string } }, isPaused: boolean) => string;
+	getLabel: (t: { common?: { back?: string; export?: string; delete?: string }; downloads?: { openFolder?: string; start?: string; pause?: string; moveData?: string } }, isPaused: boolean) => string | undefined;
 	getIcon?: (isPaused: boolean) => string;
 }
 export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
-	{ id: 'back', icon: '/img/back.svg', getLabel: t => t.common?.back ?? 'Back' },
-	{ id: 'open-folder', icon: '/img/folder.svg', getLabel: t => t.downloads?.openFolder ?? 'Open Folder' },
-	{ id: 'toggle', icon: '/img/pause.svg', getLabel: (t, isPaused) => (isPaused ? t.downloads?.start : t.downloads?.pause) ?? 'Toggle', getIcon: isPaused => (isPaused ? '/img/play.svg' : '/img/pause.svg') },
-	{ id: 'export', icon: '/img/upload.svg', getLabel: t => t.common?.export ?? 'Export' },
-	{ id: 'move', icon: '/img/move.svg', getLabel: t => t.downloads?.moveData ?? 'Move' },
-	{ id: 'delete', icon: '/img/del.svg', getLabel: t => t.common?.delete ?? 'Delete' },
+	{ id: 'back', icon: '/img/back.svg', getLabel: t => t.common?.back },
+	{ id: 'open-folder', icon: '/img/folder.svg', getLabel: t => t.downloads?.openFolder },
+	{ id: 'toggle', icon: '/img/pause.svg', getLabel: (t, isPaused) => isPaused ? t.downloads?.start : t.downloads?.pause, getIcon: isPaused => (isPaused ? '/img/play.svg' : '/img/pause.svg') },
+	{ id: 'export', icon: '/img/upload.svg', getLabel: t => t.common?.export },
+	{ id: 'move', icon: '/img/move.svg', getLabel: t => t.downloads?.moveData },
+	{ id: 'delete', icon: '/img/del.svg', getLabel: t => t.common?.delete },
 ];
 // Test data for development
 export const TEST_DOWNLOADS: DownloadData[] = [

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from '../../scripts/language.ts';
 	import Dot from '../Dot/Dot.svelte';
 	import type { DotStatus } from '../../scripts/dot.ts';
 	interface Props {
@@ -31,7 +32,7 @@
 
 <div class="item">
 	<div class="top">
-		<span class="label">Backend</span>
+		<span class="label">{$t.settings?.footerWidgets?.backendStatus}</span>
 	</div>
 	<div class="bottom">
 		<Dot status={dotStatus} />

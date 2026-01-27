@@ -33,7 +33,7 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb(type === 'storage' ? ($t.settings?.storage?.folderDownload ?? 'Download folder') : ($t.settings?.storage?.folderTemp ?? 'Temp folder'));
+		pushBreadcrumb(type === 'storage' ? $t.settings?.storage?.folderDownload : $t.settings?.storage?.folderTemp);
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 		// FileBrowser will activate its list area on mount
 	}

@@ -24,7 +24,11 @@
 		"notUsed": "Not used",
 		"search": "Search",
 		"create": "Create",
-		"selectFile": "Select file"
+		"selectFile": "Select file",
+		"download": "Download",
+		"upload": "Upload",
+		"downloads": "Downloads",
+		"uploads": "Uploads"
 	},
 	"library": {
 		"title": "Online library",
@@ -67,7 +71,20 @@
 		"openFolder": "Open folder",
 		"start": "Start",
 		"pause": "Pause",
-		"moveData": "Move data"
+		"moveData": "Move data",
+		"lishCreate": {
+			"inputPath": "Input (file or directory)",
+			"outputPath": "Output file (optional)",
+			"name": "Name (optional)",
+			"description": "Description (optional)",
+			"chunkSize": "Chunk size (B, K, M, G, T)",
+			"algorithm": "Hash algorithm",
+			"threads": "Number of threads (0 = auto)",
+			"create": "Create LISH",
+			"inputRequired": "Input path is required",
+			"invalidChunkSize": "Invalid chunk size",
+			"invalidThreads": "Number of threads must be 0 or positive"
+		}
 	},
 	"settings": {
 		"title": "Settings",
@@ -119,11 +136,10 @@
 		},
 		"footerWidgets": {
 			"lishStatus": "LISH network status",
+			"backendStatus": "Backend",
 			"connection": "Connection",
 			"connectionEthernet": "Ethernet",
 			"connectionWifi": "WiFi",
-			"downloads": "Downloads",
-			"uploads": "Uploads",
 			"cpu": "CPU usage",
 			"ram": "RAM usage",
 			"storage": "Storage usage",

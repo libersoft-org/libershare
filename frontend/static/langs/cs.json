@@ -24,7 +24,11 @@
 		"notUsed": "Nepoužíváno",
 		"search": "Hledat",
 		"create": "Vytvořit",
-		"selectFile": "Vybrat soubor"
+		"selectFile": "Vybrat soubor",
+		"download": "Stahování",
+		"upload": "Odesílání",
+		"downloads": "Stahování",
+		"uploads": "Odesílání"
 	},
 	"library": {
 		"title": "Online knihovna",
@@ -67,7 +71,20 @@
 		"openFolder": "Otevřít složku",
 		"start": "Spustit",
 		"pause": "Pozastavit",
-		"moveData": "Přesunout data"
+		"moveData": "Přesunout data",
+		"lishCreate": {
+			"inputPath": "Vstup (soubor nebo složka)",
+			"outputPath": "Výstupní soubor (volitelné)",
+			"name": "Název (volitelné)",
+			"description": "Popis (volitelné)",
+			"chunkSize": "Velikost chunku (B, K, M, G, T)",
+			"algorithm": "Hashovací algoritmus",
+			"threads": "Počet vláken (0 = automaticky)",
+			"create": "Vytvořit LISH",
+			"inputRequired": "Vstupní cesta je povinná",
+			"invalidChunkSize": "Neplatná velikost chunku",
+			"invalidThreads": "Počet vláken musí být 0 nebo kladné číslo"
+		}
 	},
 	"settings": {
 		"title": "Nastavení",
@@ -119,11 +136,10 @@
 		},
 		"footerWidgets": {
 			"lishStatus": "Stav LISH sítě",
+			"backendStatus": "Backend",
 			"connection": "Připojení",
 			"connectionEthernet": "Ethernet",
 			"connectionWifi": "WiFi",
-			"downloads": "Stahování",
-			"uploads": "Odesílání",
 			"cpu": "Využití CPU",
 			"ram": "Využití RAM",
 			"storage": "Využití úložiště",

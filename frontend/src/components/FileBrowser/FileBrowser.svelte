@@ -383,12 +383,12 @@
 			unregisterActions();
 			unregisterActions = null;
 		}
-		pushBreadcrumb($t.common?.delete ?? 'Delete');
+		pushBreadcrumb($t.common?.delete);
 	}
 
 	async function confirmDeleteFolder() {
 		try {
-			await api.fs.delete(currentPath);
+			await api.fsDelete(currentPath);
 			// Navigate to parent after deletion
 			if (parentPath !== null) {
 				await loadDirectory(parentPath);
@@ -424,13 +424,13 @@
 			unregisterActions();
 			unregisterActions = null;
 		}
-		pushBreadcrumb($t.fileBrowser?.newFolder ?? 'New folder');
+		pushBreadcrumb($t.fileBrowser?.newFolder);
 	}
 
 	async function confirmNewFolder(folderName: string) {
 		try {
 			const newPath = currentPath + separator + folderName;
-			await api.fs.mkdir(newPath);
+			await api.fsMkdir(newPath);
 			// Reload directory and select the new folder
 			await loadDirectory(currentPath, folderName);
 		} catch (e: any) {
@@ -452,7 +452,7 @@
 
 	async function openFile(item: StorageItemData) {
 		try {
-			await api.fs.open(item.path);
+			await api.fsOpen(item.path);
 		} catch (e: any) {
 			error = e.message || 'Failed to open file';
 		}
@@ -477,13 +477,13 @@
 			unregisterActions();
 			unregisterActions = null;
 		}
-		pushBreadcrumb($t.fileBrowser?.deleteFile ?? 'Delete file');
+		pushBreadcrumb($t.fileBrowser?.deleteFile);
 	}
 
 	async function confirmDeleteFile() {
 		if (!fileToDelete) return;
 		try {
-			await api.fs.delete(fileToDelete.path);
+			await api.fsDelete(fileToDelete.path);
 			// Reload directory
 			await loadDirectory(currentPath);
 		} catch (e: any) {
@@ -521,7 +521,7 @@
 
 		(async () => {
 			try {
-				const info = await api.fs.info();
+				const info = await api.fsInfo();
 				separator = info.separator;
 				// Resolve initial path
 				let startPath = initialPath;
