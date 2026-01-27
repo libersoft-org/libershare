@@ -110,7 +110,7 @@
 {#if $debugAreas}
 	<div class="debug-overlay">
 		<div class="debug-header">
-			<span class="debug-title">Area Debug (F2 to toggle)</span>
+			<span class="debug-title">Debug</span>
 			<span class="debug-info">Areas: {Object.keys($areaLayout).length} | Active: {$activeArea ?? 'none'}</span>
 		</div>
 		<div class="debug-grid" style="width: {DEBUG_GRID_PADDING * 2 + (bounds.maxX - bounds.minX + 1) * DEBUG_GRID_CELL_WIDTH}px; height: {DEBUG_GRID_PADDING * 2 + (bounds.maxY - bounds.minY + 1) * DEBUG_GRID_CELL_HEIGHT}px;">
