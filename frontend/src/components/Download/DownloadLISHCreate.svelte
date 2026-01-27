@@ -6,7 +6,7 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import { HASH_ALGORITHMS, parseChunkSize, type HashAlgorithm } from '../../scripts/lish.ts';
-	import { storageLishPath } from '../../scripts/settings.ts';
+	import { storageLishPath, storagePath } from '../../scripts/settings.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -20,13 +20,13 @@
 	let { areaID, position = CONTENT_POSITIONS.main, onBack, onBrowseInput, onBrowseOutput }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	// Form state
-	let inputPath = $state('');
+	let inputPath = $state($storagePath);
 	let outputPath = $state($storageLishPath + 'output.lish');
 	let name = $state('');
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
 	let algorithm = $state<HashAlgorithm>('sha256');
-	let threads = $state('1');
+	let threads = $state('0');
 	// Navigation state
 	let selectedIndex = $state(0);
 	let selectedColumn = $state(0); // For rows with multiple elements (input + browse, algo selector)
@@ -266,12 +266,12 @@
 	<div class="container">
 		<!-- Input Path (required) -->
 		<div class="row" bind:this={rowElements[FIELD_INPUT]}>
-			<Input bind:this={inputPathInput} bind:value={inputPath} label={$t.downloads?.lishCreate?.inputPath} placeholder="/path/to/file/or/directory" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
+			<Input bind:this={inputPathInput} bind:value={inputPath} label={$t.downloads?.lishCreate?.inputPath} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
 			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={onBrowseInput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 		</div>
 		<!-- Output Path (optional) -->
 		<div class="row" bind:this={rowElements[FIELD_OUTPUT]}>
-			<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} placeholder="/path/to/output.lish" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex />
+			<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex />
 			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} onConfirm={onBrowseOutput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 		</div>
 		<!-- Name (optional) -->
@@ -284,7 +284,7 @@
 		</div>
 		<!-- Chunk Size -->
 		<div bind:this={rowElements[FIELD_CHUNK_SIZE]}>
-			<Input bind:this={chunkSizeInput} bind:value={chunkSize} label={$t.downloads?.lishCreate?.chunkSize} placeholder="1M" selected={active && selectedIndex === FIELD_CHUNK_SIZE} />
+			<Input bind:this={chunkSizeInput} bind:value={chunkSize} label={$t.downloads?.lishCreate?.chunkSize} selected={active && selectedIndex === FIELD_CHUNK_SIZE} />
 		</div>
 		<!-- Hash Algorithm -->
 		<div bind:this={rowElements[FIELD_ALGO]}>
@@ -297,7 +297,7 @@
 		</div>
 		<!-- Threads -->
 		<div bind:this={rowElements[FIELD_THREADS]}>
-			<Input bind:this={threadsInput} bind:value={threads} label={$t.downloads?.lishCreate?.threads} placeholder="1" type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
+			<Input bind:this={threadsInput} bind:value={threads} label={$t.downloads?.lishCreate?.threads} type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
 		</div>
 		<Alert type="error" message={showError ? errorMessage : ''} />
 	</div>
