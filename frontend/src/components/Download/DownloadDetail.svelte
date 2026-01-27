@@ -306,7 +306,7 @@
 			<div class="container" bind:this={filesElement}>
 				<Table columns="1fr 10vh 20vh" columnsMobile="1fr 10vh 15vh" noBorder>
 					<Header fontSize="1.4vh">
-						<Cell>{$t.downloads?.fileName}</Cell>
+						<Cell>{$t.downloads?.name}</Cell>
 						<Cell align="center">{$t.downloads?.size}</Cell>
 						<Cell align="center">{$t.downloads?.progress}</Cell>
 					</Header>

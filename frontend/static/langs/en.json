@@ -64,7 +64,6 @@
 		"errorInvalidFormat": "Invalid LISH format",
 		"errorNoValidLish": "No valid LISH found",
 		"emptyList": "No LISH to export found",
-		"fileName": "File name",
 		"openFolder": "Open folder",
 		"start": "Start",
 		"pause": "Pause",

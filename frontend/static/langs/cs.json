@@ -64,7 +64,6 @@
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"errorNoValidLish": "Nebyl nalezen žádný platný LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",
-		"fileName": "Název souboru",
 		"openFolder": "Otevřít složku",
 		"start": "Spustit",
 		"pause": "Pozastavit",
