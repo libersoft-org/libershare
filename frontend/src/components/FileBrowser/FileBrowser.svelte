@@ -165,7 +165,7 @@
 			return false; // Allow navigation to other areas
 		},
 		left: () => false, // Allow navigation to other areas
-		right: () => false, // Allow navigation to other areas
+		right: () => !showActions, // Allow navigation to actions panel only when it's visible
 		confirmDown: () => {},
 		confirmUp: () => {
 			const item = items[selectedIndex];
