@@ -5,8 +5,7 @@
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { api } from '../../scripts/api.ts';
-	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
+	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, getFileSystemInfo, joinPathWithSeparator, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
@@ -302,7 +301,7 @@
 		if (!item || item.type !== 'file') return;
 		switch (actionId) {
 			case 'open':
-				openFile(item);
+				handleOpenFile(item);
 				break;
 			case 'delete':
 				showDeleteFileConfirmDialog(item);
@@ -383,12 +382,12 @@
 	}
 
 	async function confirmDeleteFolder() {
-		try {
-			await api.fsDelete(currentPath);
+		const result = await deleteFileOrFolder(currentPath);
+		if (result.success) {
 			// Navigate to parent after deletion
 			if (parentPath !== null) await loadDirectory(parentPath);
-		} catch (e: any) {
-			error = e.message || 'Failed to delete folder';
+		} else {
+			error = result.error || 'Failed to delete folder';
 		}
 		cancelDeleteFolder();
 	}
@@ -422,13 +421,13 @@
 	}
 
 	async function confirmNewFolder(folderName: string) {
-		try {
-			const newPath = currentPath + separator + folderName;
-			await api.fsMkdir(newPath);
+		const newPath = joinPathWithSeparator(currentPath, folderName, separator);
+		const result = await createFolder(newPath);
+		if (result.success) {
 			// Reload directory and select the new folder
 			await loadDirectory(currentPath, folderName);
-		} catch (e: any) {
-			error = e.message || 'Failed to create folder';
+		} else {
+			error = result.error || 'Failed to create folder';
 		}
 		cancelNewFolder();
 	}
@@ -444,11 +443,10 @@
 		activateArea(`${areaID}-folder-actions`);
 	}
 
-	async function openFile(item: StorageItemData) {
-		try {
-			await api.fsOpen(item.path);
-		} catch (e: any) {
-			error = e.message || 'Failed to open file';
+	async function handleOpenFile(item: StorageItemData) {
+		const result = await openFile(item.path);
+		if (!result.success) {
+			error = result.error || 'Failed to open file';
 		}
 		showActions = false;
 		activateArea(listAreaID);
@@ -476,12 +474,12 @@
 
 	async function confirmDeleteFile() {
 		if (!fileToDelete) return;
-		try {
-			await api.fsDelete(fileToDelete.path);
+		const result = await deleteFileOrFolder(fileToDelete.path);
+		if (result.success) {
 			// Reload directory
 			await loadDirectory(currentPath);
-		} catch (e: any) {
-			error = e.message || 'Failed to delete file';
+		} else {
+			error = result.error || 'Failed to delete file';
 		}
 		cancelDeleteFile();
 	}
@@ -515,12 +513,12 @@
 
 		(async () => {
 			try {
-				const info = await api.fsInfo();
+				const info = await getFileSystemInfo();
 				separator = info.separator;
 				// Resolve initial path
 				let startPath = initialPath;
-				if (startPath.startsWith('~')) startPath = info.home + startPath.slice(1);
-				await loadDirectory(startPath || info.home);
+				if (startPath.startsWith('~')) startPath = (info.home || '') + startPath.slice(1);
+				await loadDirectory(startPath || info.home || '');
 			} catch (e: any) {
 				error = e.message || 'Failed to initialize';
 				loading = false;

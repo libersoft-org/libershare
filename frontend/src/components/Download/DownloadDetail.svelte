@@ -4,7 +4,7 @@
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { selectedDownload, DOWNLOAD_TOOLBAR_ACTIONS, type DownloadData, type DownloadToolbarActionId } from '../../scripts/downloads.ts';
+	import { selectedDownload, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadData, type DownloadToolbarActionId } from '../../scripts/downloads.ts';
 	import { scrollToElement, truncateID } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
@@ -60,25 +60,9 @@
 	}
 
 	function handleToolbarAction(actionId: DownloadToolbarActionId) {
-		switch (actionId) {
-			case 'back':
-				onBack?.();
-				break;
-			case 'open-folder':
-				// TODO: Open folder in file browser
-				break;
-			case 'toggle':
-				// TODO: Toggle pause/resume
-				break;
-			case 'export':
-				// TODO: Export LISH
-				break;
-			case 'move':
-				// TODO: Move data
-				break;
-			case 'delete':
-				// TODO: Delete download
-				break;
+		const result = handleDownloadToolbarAction(actionId, download);
+		if (result.needsBack) {
+			onBack?.();
 		}
 	}
 

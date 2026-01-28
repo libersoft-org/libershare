@@ -221,3 +221,65 @@ export function parsePathToBreadcrumbs(path: string, separator: string): PathBre
 	}
 	return items;
 }
+
+// ============================================================================
+// File/Folder CRUD Operations
+// ============================================================================
+
+export interface FileOperationResult {
+	success: boolean;
+	error?: string;
+}
+
+/**
+ * Delete a file or folder
+ */
+export async function deleteFileOrFolder(path: string): Promise<FileOperationResult> {
+	try {
+		await api.fsDelete(path);
+		return { success: true };
+	} catch (e: any) {
+		return { success: false, error: e.message || 'Failed to delete' };
+	}
+}
+
+/**
+ * Create a new folder
+ */
+export async function createFolder(path: string): Promise<FileOperationResult> {
+	try {
+		await api.fsMkdir(path);
+		return { success: true };
+	} catch (e: any) {
+		return { success: false, error: e.message || 'Failed to create folder' };
+	}
+}
+
+/**
+ * Open a file with system default application
+ */
+export async function openFile(path: string): Promise<FileOperationResult> {
+	try {
+		await api.fsOpen(path);
+		return { success: true };
+	} catch (e: any) {
+		return { success: false, error: e.message || 'Failed to open file' };
+	}
+}
+
+/**
+ * Get file system info (separator, etc.)
+ */
+export async function getFileSystemInfo(): Promise<{ separator: string; home?: string }> {
+	const info = await api.fsInfo();
+	return info;
+}
+
+/**
+ * Join path segments with separator
+ */
+export function joinPathWithSeparator(basePath: string, name: string, separator: string): string {
+	if (!basePath) return name;
+	if (basePath.endsWith(separator)) return basePath + name;
+	return basePath + separator + name;
+}

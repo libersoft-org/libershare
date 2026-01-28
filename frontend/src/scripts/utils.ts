@@ -67,3 +67,8 @@ export function scrollToElement(elements: (HTMLElement | undefined)[], index: nu
 		});
 	}
 }
+
+// Open an external URL in a new browser tab/window
+export function openExternalUrl(url: string): void {
+	window.open(url, '_blank');
+}

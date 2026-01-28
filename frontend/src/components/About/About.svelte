@@ -2,6 +2,7 @@
 	import { productName, productVersion, buildDate, commitHash } from '../../scripts/app.ts';
 	import { t } from '../../scripts/language.ts';
 	import { LAYOUT, type Position } from '../../scripts/navigationLayout.ts';
+	import { openExternalUrl } from '../../scripts/utils.ts';
 	import Dialog from '../Dialog/Dialog.svelte';
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -11,10 +12,6 @@
 		onBack?: () => void;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-
-	function openUrl(url: string) {
-		window.open(url, '_blank');
-	}
 </script>
 
 <style>
@@ -61,8 +58,8 @@
 	</div>
 	<div class="links">
 		<ButtonsGroup {areaID} {position} initialIndex={2} {onBack}>
-			<Button icon="/img/github.svg" label={$t.about?.githubPage} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://github.com/libersoft-org/libershare')} />
-			<Button icon="/img/online.svg" label={$t.about?.officialWebsite} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openUrl('https://libershare.com')} />
+			<Button icon="/img/github.svg" label={$t.about?.githubPage} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalUrl('https://github.com/libersoft-org/libershare')} />
+			<Button icon="/img/online.svg" label={$t.about?.officialWebsite} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalUrl('https://libershare.com')} />
 			<Button icon="/img/check.svg" label={$t.common?.ok} width="20vh" onConfirm={onBack} />
 		</ButtonsGroup>
 	</div>

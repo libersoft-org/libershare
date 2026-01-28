@@ -40,6 +40,40 @@ export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
 	{ id: 'move', icon: '/img/move.svg', getLabel: t => t.downloads?.moveData },
 	{ id: 'delete', icon: '/img/del.svg', getLabel: t => t.common?.delete },
 ];
+
+/**
+ * Handle toolbar action for download detail
+ * @returns true if action was handled internally, false if needs UI handling (e.g., onBack)
+ */
+export function handleDownloadToolbarAction(actionId: DownloadToolbarActionId, download: DownloadData | null): { handled: boolean; needsBack?: boolean } {
+	switch (actionId) {
+		case 'back':
+			return { handled: false, needsBack: true };
+		case 'open-folder':
+			// TODO: Implement open folder in file browser
+			console.log('Open folder for download:', download?.id);
+			return { handled: true };
+		case 'toggle':
+			// TODO: Implement toggle pause/resume
+			console.log('Toggle pause/resume for download:', download?.id);
+			return { handled: true };
+		case 'export':
+			// TODO: Implement export LISH
+			console.log('Export LISH for download:', download?.id);
+			return { handled: true };
+		case 'move':
+			// TODO: Implement move data
+			console.log('Move data for download:', download?.id);
+			return { handled: true };
+		case 'delete':
+			// TODO: Implement delete download
+			console.log('Delete download:', download?.id);
+			return { handled: true };
+		default:
+			return { handled: false };
+	}
+}
+
 // Test data for development
 export const TEST_DOWNLOADS: DownloadData[] = [
 	{
