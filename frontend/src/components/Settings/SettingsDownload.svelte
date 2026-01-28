@@ -68,9 +68,9 @@
 			unregisterArea = null;
 		}
 		const labels = {
-			storage: $t.settings?.storage?.folderDownload,
-			temp: $t.settings?.storage?.folderTemp,
-			lish: $t.settings?.storage?.folderLish,
+			storage: $t.settings?.download?.folderDownload,
+			temp: $t.settings?.download?.folderTemp,
+			lish: $t.settings?.download?.folderLish,
 		};
 		pushBreadcrumb(labels[type]);
 		removeBackHandler = pushBackHandler(handleBrowseBack);
@@ -279,15 +279,15 @@
 		<div class="container">
 			<!-- Storage paths -->
 			<div class="row" bind:this={rowElements[FIELD_STORAGE_PATH]}>
-				<Input bind:this={storagePathRef} bind:value={storagePathValue} label={$t.settings?.storage?.folderDownload} selected={active && selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 0} onBlur={() => setStoragePath(storagePathValue)} flex />
+				<Input bind:this={storagePathRef} bind:value={storagePathValue} label={$t.settings?.download?.folderDownload} selected={active && selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 0} onBlur={() => setStoragePath(storagePathValue)} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 1} onConfirm={() => openBrowse('storage')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row" bind:this={rowElements[FIELD_TEMP_PATH]}>
-				<Input bind:this={tempPathRef} bind:value={tempPathValue} label={$t.settings?.storage?.folderTemp} selected={active && selectedIndex === FIELD_TEMP_PATH && selectedColumn === 0} onBlur={() => setStorageTempPath(tempPathValue)} flex />
+				<Input bind:this={tempPathRef} bind:value={tempPathValue} label={$t.settings?.download?.folderTemp} selected={active && selectedIndex === FIELD_TEMP_PATH && selectedColumn === 0} onBlur={() => setStorageTempPath(tempPathValue)} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_TEMP_PATH && selectedColumn === 1} onConfirm={() => openBrowse('temp')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row" bind:this={rowElements[FIELD_LISH_PATH]}>
-				<Input bind:this={lishPathRef} bind:value={lishPathValue} label={$t.settings?.storage?.folderLish} selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 0} onBlur={() => setStorageLishPath(lishPathValue)} flex />
+				<Input bind:this={lishPathRef} bind:value={lishPathValue} label={$t.settings?.download?.folderLish} selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 0} onBlur={() => setStorageLishPath(lishPathValue)} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 1} onConfirm={() => openBrowse('lish')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<!-- Network settings -->

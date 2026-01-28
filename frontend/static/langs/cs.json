@@ -120,11 +120,6 @@
 				"large": "Velký"
 			}
 		},
-		"storage": {
-			"folderDownload": "Složka pro dokončená stahování",
-			"folderTemp": "Složka pro nedokončená stahování",
-			"folderLish": "Výchozí složka pro LISH soubory"
-		},
 		"lishNetwork": {
 			"title": "Síť LISH",
 			"name": "Název",
@@ -143,6 +138,9 @@
 			"confirmDelete": "Opravdu chcete smazat síť \"{name}\"?"
 		},
 		"download": {
+			"folderDownload": "Složka pro dokončená stahování",
+			"folderTemp": "Složka pro nedokončená stahování",
+			"folderLish": "Výchozí složka pro LISH soubory",
 			"incomingPort": "Síťový port pro příchozí spojení",
 			"maxDownloadConnections": "Maximální počet spojení pro stahování",
 			"maxUploadConnections": "Maximální počet spojení pro odesílání",
