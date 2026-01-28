@@ -77,6 +77,7 @@
 	});
 	let errorMessage = $derived.by(() => {
 		if (!inputPath.trim()) return $t.downloads?.lishCreate?.inputRequired;
+		if (!saveToFile && !addToSharing) return $t.downloads?.lishCreate?.outputRequired;
 		if (chunkSizeError) return chunkSizeError;
 		if (threadsError) return threadsError;
 		return '';

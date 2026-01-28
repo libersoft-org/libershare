@@ -84,6 +84,7 @@
 			"threads": "Number of threads (0 = auto)",
 			"create": "Create LISH",
 			"inputRequired": "Input path is required",
+			"outputRequired": "You must at least save to file, or at least add to sharing, or both",
 			"invalidChunkSize": "Invalid chunk size",
 			"invalidThreads": "Number of threads must be 0 or positive"
 		}
