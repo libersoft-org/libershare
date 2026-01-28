@@ -74,7 +74,9 @@
 		"moveData": "Move data",
 		"lishCreate": {
 			"inputPath": "Input (file or directory)",
+			"saveToFile": "Save to .lish file",
 			"outputPath": "Output file (optional)",
+			"addToSharing": "Add for sharing",
 			"name": "Name (optional)",
 			"description": "Description (optional)",
 			"chunkSize": "Chunk size (B, K, M, G, T)",

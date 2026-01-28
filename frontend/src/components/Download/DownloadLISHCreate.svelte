@@ -10,6 +10,8 @@
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
+	import Switch from '../Switch/Switch.svelte';
+	import Row from '../Row/Row.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -19,10 +21,30 @@
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack, onBrowseInput, onBrowseOutput }: Props = $props();
 	let active = $derived($activeArea === areaID);
+
+	// Sanitize filename - remove invalid characters and normalize spaces
+	function sanitizeFilename(filename: string): string {
+		// Remove characters not allowed in filenames: < > : " / \ | ? *
+		// Then replace multiple spaces with single space
+		return filename
+			.replace(/[<>:"/\\|?*]/g, '')
+			.replace(/\s+/g, ' ')
+			.trim();
+	}
+
 	// Form state
 	let inputPath = $state($storagePath);
-	let outputPath = $state($storageLishPath + 'output.lish');
+	let saveToFile = $state(true);
+	let addToSharing = $state(true);
 	let name = $state('');
+
+	// Output path derived from name
+	let outputPath = $derived.by(() => {
+		const sanitized = sanitizeFilename(name);
+		const filename = sanitized || 'output';
+		return $storageLishPath + filename + '.lish';
+	});
+
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
 	let algorithm = $state<HashAlgorithm>('sha256');
@@ -60,23 +82,25 @@
 		return '';
 	});
 	let showError = $derived(submitted && errorMessage);
-	// Form fields: input(0), output(1), name(2), description(3), chunkSize(4), algo(5), threads(6), create(7), back(8)
-	const FIELD_INPUT = 0;
-	const FIELD_OUTPUT = 1;
-	const FIELD_NAME = 2;
-	const FIELD_DESCRIPTION = 3;
-	const FIELD_CHUNK_SIZE = 4;
-	const FIELD_ALGO = 5;
-	const FIELD_THREADS = 6;
-	const FIELD_CREATE = 7;
-	const FIELD_BACK = 8;
-	const TOTAL_FIELDS = 9;
+	// Form fields: name(0), description(1), chunkSize(2), algo(3), threads(4), input(5), saveToFile(6), output(7), addToSharing(8), create(9), back(10)
+	const FIELD_NAME = 0;
+	const FIELD_DESCRIPTION = 1;
+	const FIELD_CHUNK_SIZE = 2;
+	const FIELD_ALGO = 3;
+	const FIELD_THREADS = 4;
+	const FIELD_INPUT = 5;
+	const FIELD_SAVE_TO_FILE = 6;
+	const FIELD_OUTPUT = 7;
+	const FIELD_ADD_TO_SHARING = 8;
+	const FIELD_CREATE = 9;
+	const FIELD_BACK = 10;
+	const TOTAL_FIELDS = 11;
 	// Algorithm selection - horizontal navigation within the algo field
 	let algoIndex = $derived(HASH_ALGORITHMS.indexOf(algorithm));
 
 	function getMaxColumn(fieldIndex: number): number {
 		if (fieldIndex === FIELD_INPUT) return 1; // input + browse
-		if (fieldIndex === FIELD_OUTPUT) return 1; // output + browse
+		if (fieldIndex === FIELD_OUTPUT && saveToFile) return 1; // output + browse
 		if (fieldIndex === FIELD_ALGO) return HASH_ALGORITHMS.length - 1;
 		return 0;
 	}
@@ -110,7 +134,9 @@
 			// TODO: Call backend API to create LISH
 			console.log('Creating LISH:', {
 				inputPath,
-				outputPath: outputPath || undefined,
+				saveToFile,
+				outputPath: saveToFile ? outputPath : undefined,
+				addToSharing,
 				name: name || undefined,
 				description: description || undefined,
 				chunkSize: parseChunkSize(chunkSize),
@@ -136,6 +162,10 @@
 					}
 					if (selectedIndex > 0) {
 						selectedIndex--;
+						// Skip disabled output field
+						if (selectedIndex === FIELD_OUTPUT && !saveToFile) {
+							selectedIndex--;
+						}
 						selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
 						scrollToSelected();
 						return true;
@@ -150,6 +180,10 @@
 					}
 					if (selectedIndex < FIELD_CREATE) {
 						selectedIndex++;
+						// Skip disabled output field
+						if (selectedIndex === FIELD_OUTPUT && !saveToFile) {
+							selectedIndex++;
+						}
 						selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
 						scrollToSelected();
 						return true;
@@ -184,9 +218,13 @@
 					if (selectedIndex === FIELD_INPUT) {
 						if (selectedColumn === 0) focusInput(FIELD_INPUT);
 						else onBrowseInput?.();
+					} else if (selectedIndex === FIELD_SAVE_TO_FILE) {
+						saveToFile = !saveToFile;
 					} else if (selectedIndex === FIELD_OUTPUT) {
 						if (selectedColumn === 0) focusInput(FIELD_OUTPUT);
 						else onBrowseOutput?.();
+					} else if (selectedIndex === FIELD_ADD_TO_SHARING) {
+						addToSharing = !addToSharing;
 					} else if (selectedIndex === FIELD_NAME) {
 						focusInput(FIELD_NAME);
 					} else if (selectedIndex === FIELD_DESCRIPTION) {
@@ -260,20 +298,22 @@
 		flex-wrap: wrap;
 		gap: 1vh;
 	}
+
+	.switch-label {
+		font-size: 2vh;
+		color: var(--secondary-foreground);
+	}
+
+	.switch-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 1vh 0;
+	}
 </style>
 
 <div class="create">
 	<div class="container">
-		<!-- Input Path (required) -->
-		<div class="row" bind:this={rowElements[FIELD_INPUT]}>
-			<Input bind:this={inputPathInput} bind:value={inputPath} label={$t.downloads?.lishCreate?.inputPath} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
-			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={onBrowseInput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
-		</div>
-		<!-- Output Path (optional) -->
-		<div class="row" bind:this={rowElements[FIELD_OUTPUT]}>
-			<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex />
-			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} onConfirm={onBrowseOutput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
-		</div>
 		<!-- Name (optional) -->
 		<div bind:this={rowElements[FIELD_NAME]}>
 			<Input bind:this={nameInput} bind:value={name} label={$t.downloads?.lishCreate?.name} selected={active && selectedIndex === FIELD_NAME} />
@@ -298,6 +338,26 @@
 		<!-- Threads -->
 		<div bind:this={rowElements[FIELD_THREADS]}>
 			<Input bind:this={threadsInput} bind:value={threads} label={$t.downloads?.lishCreate?.threads} type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
+		</div>
+		<!-- Input Path (required) -->
+		<div class="row" bind:this={rowElements[FIELD_INPUT]}>
+			<Input bind:this={inputPathInput} bind:value={inputPath} label={$t.downloads?.lishCreate?.inputPath} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
+			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={onBrowseInput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+		</div>
+		<!-- Save to File Switch -->
+		<div class="switch-row" bind:this={rowElements[FIELD_SAVE_TO_FILE]}>
+			<span class="switch-label">{$t.downloads?.lishCreate?.saveToFile}:</span>
+			<Switch checked={saveToFile} selected={active && selectedIndex === FIELD_SAVE_TO_FILE} onConfirm={() => (saveToFile = !saveToFile)} />
+		</div>
+		<!-- Output Path (optional) -->
+		<div class="row" bind:this={rowElements[FIELD_OUTPUT]}>
+			<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex disabled={!saveToFile} />
+			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} onConfirm={onBrowseOutput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
+		</div>
+		<!-- Add to Sharing Switch -->
+		<div class="switch-row" bind:this={rowElements[FIELD_ADD_TO_SHARING]}>
+			<span class="switch-label">{$t.downloads?.lishCreate?.addToSharing}:</span>
+			<Switch checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
 		</div>
 		<Alert type="error" message={showError ? errorMessage : ''} />
 	</div>

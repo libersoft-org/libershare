@@ -74,7 +74,9 @@
 		"moveData": "Přesunout data",
 		"lishCreate": {
 			"inputPath": "Vstup (soubor nebo složka)",
+			"saveToFile": "Uložit do souboru .lish",
 			"outputPath": "Výstupní soubor (volitelné)",
+			"addToSharing": "Přidat ke sdílení",
 			"name": "Název (volitelné)",
 			"description": "Popis (volitelné)",
 			"chunkSize": "Velikost chunku (B, K, M, G, T)",
