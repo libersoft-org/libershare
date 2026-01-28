@@ -133,11 +133,11 @@ class ManifestsApi {
     constructor(private client: IWsClient) {}
 
     list(): Promise<any[]> {
-        return this.client.call<any[]>('getAllManifests');
+        return this.client.call<any[]>('manifests.getAllManifests');
     }
 
     get(lishId: string): Promise<any> {
-        return this.client.call<any>('getManifest', { lishId });
+        return this.client.call<any>('manifests.getManifest', { lishId });
     }
 }
 
@@ -145,11 +145,11 @@ class DatasetsApi {
     constructor(private client: IWsClient) {}
 
     list(): Promise<Dataset[]> {
-        return this.client.call<Dataset[]>('getDatasets');
+        return this.client.call<Dataset[]>('datasets.getDatasets');
     }
 
     get(id: string): Promise<Dataset> {
-        return this.client.call<Dataset>('getDataset', { id });
+        return this.client.call<Dataset>('datasets.getDataset', { id });
     }
 }
 

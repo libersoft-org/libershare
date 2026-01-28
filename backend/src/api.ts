@@ -293,15 +293,15 @@ export class ApiServer {
 			}
 
 			// Manifests
-			case 'getAllManifests':
+			case 'manifests.getAllManifests':
 				return this.dataServer.getAllManifests();
-			case 'getManifest':
+			case 'manifests.getManifest':
 				return this.dataServer.getManifest(params.lishId);
 
 			// Datasets
-			case 'getDatasets':
+			case 'datasets.getDatasets':
 				return this.db.getAllDatasets();
-			case 'getDataset':
+			case 'datasets.getDataset':
 				return this.db.getDataset(params.id);
 
 			// high-level operations
