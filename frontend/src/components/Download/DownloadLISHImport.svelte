@@ -1,14 +1,17 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { navigateTo } from '../../scripts/navigation.ts';
+	import { navigateTo, pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { parseLISHFromJson, getLISHErrorMessage } from '../../scripts/lish.ts';
+	import { storagePath } from '../../scripts/settings.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
+	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 
 	interface Props {
 		areaID: string;
@@ -17,12 +20,24 @@
 		onImport?: () => void;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack, onImport }: Props = $props();
+	let unregisterArea: (() => void) | null = null;
+	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
-	let selectedIndex = $state(0); // 0 = input, 1 = buttons row
-	let selectedColumn = $state(0); // 0 = load from file, 1 = import, 2 = back
+	// 0 = json input, 1 = download path, 2 = buttons row
+	let selectedIndex = $state(0);
+	let selectedColumn = $state(0);
 	let inputRef: Input;
+	let downloadPathRef: Input;
 	let lishJson = $state('');
+	let downloadPath = $state($storagePath);
 	let errorMessage = $state('');
+	let browsingDownloadPath = $state(false);
+
+	function getMaxColumn(index: number): number {
+		if (index === 1) return 1; // download path + browse
+		if (index === 2) return 2; // load, import, back
+		return 0;
+	}
 
 	function handleImport() {
 		errorMessage = '';
@@ -40,16 +55,49 @@
 		navigateTo('import-lish-browse');
 	}
 
+	function openDownloadPathBrowse() {
+		browsingDownloadPath = true;
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
+		pushBreadcrumb($t.downloads?.importDownloadPath);
+		removeBackHandler = pushBackHandler(handleBrowseBack);
+	}
+
+	function handleBrowseSelect(path: string) {
+		const normalizedPath = path.endsWith('/') || path.endsWith('\\') ? path : path + '/';
+		downloadPath = normalizedPath;
+		handleBrowseBack();
+	}
+
+	async function handleBrowseBack() {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
+		popBreadcrumb();
+		browsingDownloadPath = false;
+		await tick();
+		unregisterArea = registerAreaHandler();
+		activateArea(areaID);
+	}
+
+	function registerAreaHandler() {
+		return useArea(areaID, areaHandlers, position);
+	}
+
 	const areaHandlers = {
 		up: () => {
 			if (selectedIndex > 0) {
 				selectedIndex--;
+				selectedColumn = 0;
 				return true;
 			}
 			return false;
 		},
 		down: () => {
-			if (selectedIndex < 1) {
+			if (selectedIndex < 2) {
 				selectedIndex++;
 				selectedColumn = 0;
 				return true;
@@ -57,14 +105,15 @@
 			return false;
 		},
 		left: () => {
-			if (selectedIndex === 1 && selectedColumn > 0) {
+			if (selectedColumn > 0) {
 				selectedColumn--;
 				return true;
 			}
 			return false;
 		},
 		right: () => {
-			if (selectedIndex === 1 && selectedColumn < 2) {
+			const maxCol = getMaxColumn(selectedIndex);
+			if (selectedColumn < maxCol) {
 				selectedColumn++;
 				return true;
 			}
@@ -72,9 +121,12 @@
 		},
 		confirmDown: () => {
 			if (selectedIndex === 0) inputRef?.focus();
+			else if (selectedIndex === 1 && selectedColumn === 0) downloadPathRef?.focus();
 		},
 		confirmUp: () => {
-			if (selectedIndex === 1) {
+			if (selectedIndex === 1 && selectedColumn === 1) {
+				openDownloadPathBrowse();
+			} else if (selectedIndex === 2) {
 				if (selectedColumn === 0) {
 					openFileBrowser();
 				} else if (selectedColumn === 1) {
@@ -89,9 +141,11 @@
 	};
 
 	onMount(() => {
-		const unregister = useArea(areaID, areaHandlers, position);
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
-		return unregister;
+		return () => {
+			if (unregisterArea) unregisterArea();
+		};
 	});
 </script>
 
@@ -118,18 +172,32 @@
 		justify-content: center;
 		gap: 2vh;
 	}
+
+	.row {
+		display: flex;
+		gap: 1vh;
+		align-items: flex-end;
+	}
 </style>
 
-<div class="import">
-	<div class="container">
-		<Input bind:this={inputRef} bind:value={lishJson} multiline rows={10} placeholder={$t.downloads?.importPlaceholder} fontSize="2vh" selected={active && selectedIndex === 0} />
-		{#if errorMessage}
-			<Alert type="error" message={errorMessage} />
-		{/if}
+{#if browsingDownloadPath}
+	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
+{:else}
+	<div class="import">
+		<div class="container">
+			<Input bind:this={inputRef} bind:value={lishJson} multiline rows={10} placeholder={$t.downloads?.importPlaceholder} fontSize="2vh" selected={active && selectedIndex === 0} />
+			<div class="row">
+				<Input bind:this={downloadPathRef} bind:value={downloadPath} label={$t.downloads?.importDownloadPath} selected={active && selectedIndex === 1 && selectedColumn === 0} flex />
+				<Button icon="/img/folder.svg" selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			{#if errorMessage}
+				<Alert type="error" message={errorMessage} />
+			{/if}
+		</div>
+		<div class="buttons">
+			<Button icon="/img/folder.svg" label="{$t.common?.load} ..." selected={active && selectedIndex === 2 && selectedColumn === 0} />
+			<Button icon="/img/download.svg" label={$t.common?.import} selected={active && selectedIndex === 2 && selectedColumn === 1} onConfirm={handleImport} />
+			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 2 && selectedColumn === 2} onConfirm={onBack} />
+		</div>
 	</div>
-	<div class="buttons">
-		<Button icon="/img/folder.svg" label="{$t.common?.load} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
-		<Button icon="/img/download.svg" label={$t.common?.import} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={handleImport} />
-		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 2} onConfirm={onBack} />
-	</div>
-</div>
+{/if}

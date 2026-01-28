@@ -65,6 +65,7 @@
 		},
 		"createLish": "Vytvořit LISH",
 		"importPlaceholder": "Vložte LISH JSON zde...",
+		"importDownloadPath": "Složka pro stažení",
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"errorNoValidLish": "Nebyl nalezen žádný platný LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",

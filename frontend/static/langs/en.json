@@ -65,6 +65,7 @@
 		},
 		"createLish": "Create LISH",
 		"importPlaceholder": "Paste LISH JSON here...",
+		"importDownloadPath": "Download folder",
 		"errorInvalidFormat": "Invalid LISH format",
 		"errorNoValidLish": "No valid LISH found",
 		"emptyList": "No LISH to export found",
