@@ -9,7 +9,7 @@
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
-	import Switch from '../Switch/Switch.svelte';
+	import SwitchRow from '../Switch/SwitchRow.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -224,17 +224,6 @@
 		gap: 1vh;
 		align-items: flex-end;
 	}
-
-	.switch-row {
-		display: flex;
-		gap: 1vh;
-		align-items: center;
-		margin-top: 1vh;
-	}
-
-	.switch-row .label {
-		margin-top: 0;
-	}
 </style>
 
 <div class="add-edit">
@@ -246,9 +235,8 @@
 			<Input bind:this={descriptionInput} bind:value={description} label={$t.settings?.lishNetwork?.description} multiline rows={4} selected={active && selectedIndex === 1} />
 		</div>
 		{#if !isEditing}
-			<div class="switch-row" bind:this={rowElements[2]}>
-				<span class="label">{$t.settings?.lishNetwork?.autoGenerate}:</span>
-				<Switch checked={autoGenerateID} selected={active && selectedIndex === 2} onConfirm={toggleAutoGenerateID} />
+			<div bind:this={rowElements[2]}>
+				<SwitchRow label={$t.settings?.lishNetwork?.autoGenerate + ':'} checked={autoGenerateID} selected={active && selectedIndex === 2} onConfirm={toggleAutoGenerateID} />
 			</div>
 			<div bind:this={rowElements[3]}>
 				<Input bind:this={networkIDInput} bind:value={networkID} label={$t.settings?.lishNetwork?.networkID} selected={active && selectedIndex === 3} disabled={autoGenerateID} />

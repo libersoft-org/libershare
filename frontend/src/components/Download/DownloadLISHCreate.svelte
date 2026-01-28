@@ -10,8 +10,7 @@
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
-	import Switch from '../Switch/Switch.svelte';
-	import Row from '../Row/Row.svelte';
+	import SwitchRow from '../Switch/SwitchRow.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -271,18 +270,6 @@
 		flex-wrap: wrap;
 		gap: 1vh;
 	}
-
-	.switch-label {
-		font-size: 2vh;
-		color: var(--secondary-foreground);
-	}
-
-	.switch-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 1vh 0;
-	}
 </style>
 
 <div class="create">
@@ -318,9 +305,8 @@
 			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={onBrowseInput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 		</div>
 		<!-- Save to File Switch -->
-		<div class="switch-row" bind:this={rowElements[FIELD_SAVE_TO_FILE]}>
-			<span class="switch-label">{$t.downloads?.lishCreate?.saveToFile}:</span>
-			<Switch checked={saveToFile} selected={active && selectedIndex === FIELD_SAVE_TO_FILE} onConfirm={() => (saveToFile = !saveToFile)} />
+		<div bind:this={rowElements[FIELD_SAVE_TO_FILE]}>
+			<SwitchRow label={$t.downloads?.lishCreate?.saveToFile + ':'} checked={saveToFile} selected={active && selectedIndex === FIELD_SAVE_TO_FILE} onConfirm={() => (saveToFile = !saveToFile)} />
 		</div>
 		<!-- Output Path (optional) -->
 		<div class="row" bind:this={rowElements[FIELD_OUTPUT]}>
@@ -328,9 +314,8 @@
 			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} onConfirm={onBrowseOutput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
 		</div>
 		<!-- Add to Sharing Switch -->
-		<div class="switch-row" bind:this={rowElements[FIELD_ADD_TO_SHARING]}>
-			<span class="switch-label">{$t.downloads?.lishCreate?.addToSharing}:</span>
-			<Switch checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
+		<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>
+			<SwitchRow label={$t.downloads?.lishCreate?.addToSharing + ':'} checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
 		</div>
 		<Alert type="error" message={showError ? errorMessage : ''} />
 	</div>

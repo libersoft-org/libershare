@@ -10,7 +10,7 @@
 	import { scrollToElement, normalizePath } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
-	import Switch from '../Switch/Switch.svelte';
+	import SwitchRow from '../Switch/SwitchRow.svelte';
 	import SettingsStorageBrowse from './SettingsStorageBrowse.svelte';
 
 	interface Props {
@@ -104,18 +104,37 @@
 	}
 
 	// Save functions
-	function saveAll() {
+	function savePort() {
 		setIncomingPort(parseInt(port) || 9090);
-		setMaxDownloadConnections(parseInt(downloadConnections) || 0);
-		setMaxUploadConnections(parseInt(uploadConnections) || 0);
-		setMaxDownloadSpeed(parseInt(downloadSpeed) || 0);
-		setMaxUploadSpeed(parseInt(uploadSpeed) || 0);
-		// Sync local state with validated values from store
 		port = $incomingPort.toString();
+	}
+
+	function saveDownloadConnections() {
+		setMaxDownloadConnections(parseInt(downloadConnections) || 0);
 		downloadConnections = $maxDownloadConnections.toString();
+	}
+
+	function saveUploadConnections() {
+		setMaxUploadConnections(parseInt(uploadConnections) || 0);
 		uploadConnections = $maxUploadConnections.toString();
+	}
+
+	function saveDownloadSpeed() {
+		setMaxDownloadSpeed(parseInt(downloadSpeed) || 0);
 		downloadSpeed = $maxDownloadSpeed.toString();
+	}
+
+	function saveUploadSpeed() {
+		setMaxUploadSpeed(parseInt(uploadSpeed) || 0);
 		uploadSpeed = $maxUploadSpeed.toString();
+	}
+
+	function saveAll() {
+		savePort();
+		saveDownloadConnections();
+		saveUploadConnections();
+		saveDownloadSpeed();
+		saveUploadSpeed();
 	}
 
 	function handleSave() {
@@ -228,18 +247,6 @@
 		padding-top: 2vh;
 	}
 
-	.switch-label {
-		font-size: 2vh;
-		color: var(--secondary-foreground);
-	}
-
-	.switch-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 1vh 0;
-	}
-
 	.row {
 		display: flex;
 		gap: 1vh;
@@ -281,9 +288,8 @@
 			<div bind:this={rowElements[FIELD_UPLOAD_SPEED]}>
 				<Input bind:this={uploadSpeedRef} bind:value={uploadSpeed} label={$t.settings?.download?.maxUploadSpeed} type="number" selected={active && selectedIndex === FIELD_UPLOAD_SPEED} onBlur={saveUploadSpeed} flex />
 			</div>
-			<div class="switch-row" bind:this={rowElements[FIELD_AUTO_START]}>
-				<span class="switch-label">{$t.settings?.download?.autoStartSharing}:</span>
-				<Switch checked={autoStart} selected={active && selectedIndex === FIELD_AUTO_START} onToggle={toggleAutoStart} />
+			<div bind:this={rowElements[FIELD_AUTO_START]}>
+				<SwitchRow label={$t.settings?.download?.autoStartSharing + ':'} checked={autoStart} selected={active && selectedIndex === FIELD_AUTO_START} onToggle={toggleAutoStart} />
 			</div>
 		</div>
 		<div class="buttons" bind:this={rowElements[FIELD_BUTTONS]}>

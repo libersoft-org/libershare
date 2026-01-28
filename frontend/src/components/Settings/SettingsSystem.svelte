@@ -7,7 +7,7 @@
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import { autoStartOnBoot, showInTray, minimizeToTray, setAutoStartOnBoot, setShowInTray, setMinimizeToTray } from '../../scripts/settings.ts';
 	import Button from '../Buttons/Button.svelte';
-	import Switch from '../Switch/Switch.svelte';
+	import SwitchRow from '../Switch/SwitchRow.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -152,34 +152,19 @@
 		gap: 2vh;
 		padding-top: 2vh;
 	}
-
-	.switch-label {
-		font-size: 2vh;
-		color: var(--secondary-foreground);
-	}
-
-	.switch-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 1vh 0;
-	}
 </style>
 
 <div class="settings">
 	<div class="container">
-		<div class="switch-row" bind:this={rowElements[0]}>
-			<span class="switch-label">{$t.settings?.system?.autoStartOnBoot}:</span>
-			<Switch checked={autoStart} selected={active && getActualIndex(selectedIndex) === FIELD_AUTO_START} onToggle={toggleAutoStart} />
+		<div bind:this={rowElements[0]}>
+			<SwitchRow label={$t.settings?.system?.autoStartOnBoot + ':'} checked={autoStart} selected={active && getActualIndex(selectedIndex) === FIELD_AUTO_START} onToggle={toggleAutoStart} />
 		</div>
-		<div class="switch-row" bind:this={rowElements[1]}>
-			<span class="switch-label">{$t.settings?.system?.showInTray}:</span>
-			<Switch checked={trayVisible} selected={active && getActualIndex(selectedIndex) === FIELD_SHOW_IN_TRAY} onToggle={toggleShowInTray} />
+		<div bind:this={rowElements[1]}>
+			<SwitchRow label={$t.settings?.system?.showInTray + ':'} checked={trayVisible} selected={active && getActualIndex(selectedIndex) === FIELD_SHOW_IN_TRAY} onToggle={toggleShowInTray} />
 		</div>
 		{#if trayVisible}
-			<div class="switch-row" bind:this={rowElements[2]}>
-				<span class="switch-label">{$t.settings?.system?.minimizeToTray}:</span>
-				<Switch checked={trayMinimize} selected={active && getActualIndex(selectedIndex) === FIELD_MINIMIZE_TO_TRAY} onToggle={toggleMinimizeToTray} />
+			<div bind:this={rowElements[2]}>
+				<SwitchRow label={$t.settings?.system?.minimizeToTray + ':'} checked={trayMinimize} selected={active && getActualIndex(selectedIndex) === FIELD_MINIMIZE_TO_TRAY} onToggle={toggleMinimizeToTray} />
 			</div>
 		{/if}
 	</div>
