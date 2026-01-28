@@ -4,9 +4,8 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { navigateTo, pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { parseLISHFromJson, getLISHErrorMessage } from '../../scripts/lish.ts';
 	import { storagePath } from '../../scripts/settings.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -23,36 +22,35 @@
 	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
-	// 0 = json input, 1 = download path, 2 = buttons row
+	// 0 = url, 1 = download path, 2 = buttons row
 	let selectedIndex = $state(0);
 	let selectedColumn = $state(0);
-	let inputRef: Input;
+	let urlRef: Input;
 	let downloadPathRef: Input;
-	let lishJson = $state('');
+	let url = $state('');
 	let downloadPath = $state($storagePath);
 	let errorMessage = $state('');
 	let browsingDownloadPath = $state(false);
 
 	function getMaxColumn(index: number): number {
 		if (index === 1) return 1; // download path + browse
-		if (index === 2) return 2; // load, import, back
+		if (index === 2) return 1; // import, back
 		return 0;
 	}
 
 	function handleImport() {
 		errorMessage = '';
-		const result = parseLISHFromJson(lishJson);
-		if (result.error) {
-			errorMessage = getLISHErrorMessage(result.error, $t);
+		if (!url.trim()) {
+			errorMessage = $t.downloads?.lishImport?.urlRequired || 'URL is required';
 			return;
 		}
+		if (!downloadPath.trim()) {
+			errorMessage = $t.downloads?.lishImport?.downloadPathRequired || 'Download folder is required';
+			return;
+		}
+		// TODO: Fetch and parse LISH file from URL
 		// TODO: Add LISH items to storage/backend
-		// result.items contains validated LISH objects
 		onImport?.();
-	}
-
-	function openFileBrowser() {
-		navigateTo('import-lish-browse');
 	}
 
 	function openDownloadPathBrowse() {
@@ -61,11 +59,11 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t.downloads?.importDownloadPath);
+		pushBreadcrumb($t.downloads?.lishImport?.downloadPath);
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
-	function handleBrowseSelect(path: string) {
+	function handleDownloadPathSelect(path: string) {
 		const normalizedPath = path.endsWith('/') || path.endsWith('\\') ? path : path + '/';
 		downloadPath = normalizedPath;
 		handleBrowseBack();
@@ -120,20 +118,15 @@
 			return false;
 		},
 		confirmDown: () => {
-			if (selectedIndex === 0) inputRef?.focus();
+			if (selectedIndex === 0) urlRef?.focus();
 			else if (selectedIndex === 1 && selectedColumn === 0) downloadPathRef?.focus();
 		},
 		confirmUp: () => {
 			if (selectedIndex === 1 && selectedColumn === 1) {
 				openDownloadPathBrowse();
 			} else if (selectedIndex === 2) {
-				if (selectedColumn === 0) {
-					openFileBrowser();
-				} else if (selectedColumn === 1) {
-					handleImport();
-				} else if (selectedColumn === 2) {
-					onBack?.();
-				}
+				if (selectedColumn === 0) handleImport();
+				else if (selectedColumn === 1) onBack?.();
 			}
 		},
 		confirmCancel: () => {},
@@ -181,13 +174,13 @@
 </style>
 
 {#if browsingDownloadPath}
-	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath onSelect={handleDownloadPathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">
 		<div class="container">
-			<Input bind:this={inputRef} bind:value={lishJson} multiline rows={10} placeholder={$t.downloads?.importPlaceholder} fontSize="2vh" selected={active && selectedIndex === 0} />
+			<Input bind:this={urlRef} bind:value={url} label={$t.downloads?.lishImport?.url} placeholder="https://..." selected={active && selectedIndex === 0} flex />
 			<div class="row">
-				<Input bind:this={downloadPathRef} bind:value={downloadPath} label={$t.downloads?.importDownloadPath} selected={active && selectedIndex === 1 && selectedColumn === 0} flex />
+				<Input bind:this={downloadPathRef} bind:value={downloadPath} label={$t.downloads?.lishImport?.downloadPath} selected={active && selectedIndex === 1 && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			{#if errorMessage}
@@ -195,9 +188,8 @@
 			{/if}
 		</div>
 		<div class="buttons">
-			<Button icon="/img/folder.svg" label="{$t.common?.load} ..." selected={active && selectedIndex === 2 && selectedColumn === 0} />
-			<Button icon="/img/download.svg" label={$t.common?.import} selected={active && selectedIndex === 2 && selectedColumn === 1} onConfirm={handleImport} />
-			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 2 && selectedColumn === 2} onConfirm={onBack} />
+			<Button icon="/img/download.svg" label={$t.common?.import} selected={active && selectedIndex === 2 && selectedColumn === 0} onConfirm={handleImport} />
+			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 2 && selectedColumn === 1} onConfirm={onBack} />
 		</div>
 	</div>
 {/if}

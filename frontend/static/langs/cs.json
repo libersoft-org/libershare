@@ -64,8 +64,6 @@
 			"error": "Chyba"
 		},
 		"createLish": "Vytvořit LISH",
-		"importPlaceholder": "Vložte LISH JSON zde...",
-		"importDownloadPath": "Složka pro stažení",
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"errorNoValidLish": "Nebyl nalezen žádný platný LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",
@@ -88,6 +86,19 @@
 			"outputRequired": "Musíte buď alespoň uložit do souboru, nebo alespoň přidat ke sdílení, případně obojí",
 			"invalidChunkSize": "Neplatná velikost chunku",
 			"invalidThreads": "Počet vláken musí být 0 nebo kladné číslo"
+		},
+		"lishImport": {
+			"fromFile": "Ze souboru",
+			"fromWeb": "Z webu",
+			"fromJSON": "Z LISH JSON",
+			"filePath": "LISH soubor",
+			"url": "URL adresa LISH souboru",
+			"placeholder": "Vložte LISH JSON zde...",
+			"downloadPath": "Složka pro stažení",
+			"lishJSON": "LISH JSON",
+			"filePathRequired": "Cesta k souboru je povinná",
+			"urlRequired": "URL je povinná",
+			"downloadPathRequired": "Složka pro stažení je povinná"
 		}
 	},
 	"settings": {

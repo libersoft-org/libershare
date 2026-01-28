@@ -10,8 +10,9 @@ import Categories from '../components/Categories/Categories.svelte';
 import Storage from '../components/Storage/Storage.svelte';
 import Download from '../components/Download/Download.svelte';
 import DownloadLISHCreate from '../components/Download/DownloadLISHCreate.svelte';
-import DownloadLISHImport from '../components/Download/DownloadLISHImport.svelte';
-import DownloadLISHImportBrowse from '../components/Download/DownloadLISHImportBrowse.svelte';
+import DownloadLISHImportFile from '../components/Download/DownloadLISHImportFile.svelte';
+import DownloadLISHImportWeb from '../components/Download/DownloadLISHImportWeb.svelte';
+import DownloadLISHImportJSON from '../components/Download/DownloadLISHImportJSON.svelte';
 import DownloadLISHExportAll from '../components/Download/DownloadLISHExportAll.svelte';
 import DownloadDetail from '../components/Download/DownloadDetail.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
@@ -104,13 +105,30 @@ export const menuStructure = derived(t, () => ({
 					icon: '/img/download.svg',
 					iconPosition: 'left',
 					iconSize: '2vh',
-					component: DownloadLISHImport,
 					submenu: [
 						{
-							id: 'import-lish-browse',
-							label: tt('common.selectFile'),
-							component: DownloadLISHImportBrowse,
-							hidden: true,
+							id: 'import-lish-file',
+							label: tt('downloads.lishImport.fromFile'),
+							icon: '/img/folder.svg',
+							component: DownloadLISHImportFile,
+						},
+						{
+							id: 'import-lish-web',
+							label: tt('downloads.lishImport.fromWeb'),
+							icon: '/img/online.svg',
+							component: DownloadLISHImportWeb,
+						},
+						{
+							id: 'import-lish-json',
+							label: tt('downloads.lishImport.fromJSON'),
+							icon: '/img/json.svg',
+							component: DownloadLISHImportJSON,
+						},
+						{
+							id: 'back',
+							label: tt('common.back'),
+							icon: '/img/back.svg',
+							action: 'back' as const,
 						},
 					],
 				},

@@ -64,8 +64,6 @@
 			"error": "Error"
 		},
 		"createLish": "Create LISH",
-		"importPlaceholder": "Paste LISH JSON here...",
-		"importDownloadPath": "Download folder",
 		"errorInvalidFormat": "Invalid LISH format",
 		"errorNoValidLish": "No valid LISH found",
 		"emptyList": "No LISH to export found",
@@ -88,6 +86,19 @@
 			"outputRequired": "You must at least save to file, or at least add to sharing, or both",
 			"invalidChunkSize": "Invalid chunk size",
 			"invalidThreads": "Number of threads must be 0 or positive"
+		},
+		"lishImport": {
+			"fromFile": "From file",
+			"fromWeb": "From web",
+			"fromJSON": "From LISH JSON",
+			"filePath": "LISH file",
+			"url": "URL address of LISH file",
+			"placeholder": "Paste LISH JSON here...",
+			"downloadPath": "Download folder",
+			"lishJSON": "LISH JSON",
+			"filePathRequired": "File path is required",
+			"urlRequired": "URL is required",
+			"downloadPathRequired": "Download folder is required"
 		}
 	},
 	"settings": {
