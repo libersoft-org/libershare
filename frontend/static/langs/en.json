@@ -142,6 +142,13 @@
 			"emptyList": "No networks added. Add or Import a new network.",
 			"confirmDelete": "Are you sure you want to delete network \"{name}\"?"
 		},
+		"download": {
+			"maxDownloadConnections": "Maximum download connections",
+			"maxUploadConnections": "Maximum upload connections",
+			"maxDownloadSpeed": "Maximum download speed (0 = unlimited)",
+			"maxUploadSpeed": "Maximum upload speed (0 = unlimited)",
+			"autoStartSharing": "Start sharing after adding a LISH by default"
+		},
 		"footer": "Footer",
 		"footerVisible": "Show footer",
 		"footerPosition": "Footer position",

@@ -108,3 +108,44 @@ export function setStorageLishPath(path: string): void {
 	storageLishPath.set(path);
 	setStorageValue('storageLishPath', path);
 }
+
+// Sharing settings
+const storedMaxDownloadConnections = getStorageValue<number>('maxDownloadConnections', 200);
+export const maxDownloadConnections = writable(storedMaxDownloadConnections);
+
+export function setMaxDownloadConnections(value: number): void {
+	maxDownloadConnections.set(value);
+	setStorageValue('maxDownloadConnections', value);
+}
+
+const storedMaxUploadConnections = getStorageValue<number>('maxUploadConnections', 200);
+export const maxUploadConnections = writable(storedMaxUploadConnections);
+
+export function setMaxUploadConnections(value: number): void {
+	maxUploadConnections.set(value);
+	setStorageValue('maxUploadConnections', value);
+}
+
+const storedMaxDownloadSpeed = getStorageValue<number>('maxDownloadSpeed', 0);
+export const maxDownloadSpeed = writable(storedMaxDownloadSpeed);
+
+export function setMaxDownloadSpeed(value: number): void {
+	maxDownloadSpeed.set(value);
+	setStorageValue('maxDownloadSpeed', value);
+}
+
+const storedMaxUploadSpeed = getStorageValue<number>('maxUploadSpeed', 0);
+export const maxUploadSpeed = writable(storedMaxUploadSpeed);
+
+export function setMaxUploadSpeed(value: number): void {
+	maxUploadSpeed.set(value);
+	setStorageValue('maxUploadSpeed', value);
+}
+
+const storedAutoStartSharing = getStorageValue<boolean>('autoStartSharing', true);
+export const autoStartSharing = writable(storedAutoStartSharing);
+
+export function setAutoStartSharing(enabled: boolean): void {
+	autoStartSharing.set(enabled);
+	setStorageValue('autoStartSharing', enabled);
+}
