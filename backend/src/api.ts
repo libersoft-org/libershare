@@ -308,9 +308,20 @@ export class ApiServer {
 
 			// given a directory path, create and import a Lish manifest and a corresponding dataset
 			case 'createLish': {
-				const manifest = await this.dataServer.importDataset(params.path, info => {
-					this.emit(client, 'import:progress', { path: params.path, ...info });
-				});
+				const manifest = await this.dataServer.importDataset(
+					params.doExport,
+					params.doImport,
+					params.name,
+					params.description,
+					params.path,
+						// todo: check that path is not already in datasets.
+						// todo: check that path exists
+						//
+
+						info => {
+							this.emit(client, 'import:progress', { path: params.path, ...info });
+						}
+						);
 				return { manifestId: manifest.id };
 			}
 

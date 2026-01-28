@@ -76,7 +76,7 @@ export interface LoadDirectoryResult {
  */
 export async function loadDirectoryFromApi(path: string | undefined, separator: string, options: LoadDirectoryOptions = {}): Promise<LoadDirectoryResult> {
 	const { foldersOnly = false, filesOnly = false, fileFilter } = options;
-	const result = await api.fsList(path);
+	const result = await api.fs.list(path);
 	const currentPath = result.path;
 	const parentPath = getParentPath(currentPath, separator);
 	let entries: StorageItemData[] = result.entries.map((entry: FsEntry, index: number) => transformFsEntry(entry, index));
@@ -271,7 +271,7 @@ export async function openFile(path: string): Promise<FileOperationResult> {
  * Get file system info (separator, etc.)
  */
 export async function getFileSystemInfo(): Promise<{ separator: string; home?: string }> {
-	const info = await api.fsInfo();
+	const info = await api.fs.info();
 	return info;
 }
 
