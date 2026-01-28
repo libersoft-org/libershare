@@ -11,18 +11,7 @@ export interface LISH {
 /**
  * Supported hash algorithms for LISH creation
  */
-export const HASH_ALGORITHMS = [
-	'sha256',
-	'sha384',
-	'sha512',
-	'sha512-256',
-	'sha3-256',
-	'sha3-384',
-	'sha3-512',
-	'blake2b256',
-	'blake2b512',
-	'blake2s256',
-] as const;
+export const HASH_ALGORITHMS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
 
 export type HashAlgorithm = (typeof HASH_ALGORITHMS)[number];
 
@@ -128,16 +117,74 @@ export function parseLISHFromJson(json: string): ParseLISHResult {
 /**
  * Get localized error message for LISH parsing errors.
  */
-export function getLISHErrorMessage(
-	errorCode: ParseLISHResult['error'],
-	t: { downloads?: { errorInvalidFormat?: string; errorNoValidLish?: string } }
-): string {
+export function getLISHErrorMessage(errorCode: ParseLISHResult['error'], t: { downloads?: { errorInvalidFormat?: string; errorNoValidLish?: string } }): string {
 	switch (errorCode) {
 		case 'INVALID_FORMAT':
 		case 'INVALID_JSON':
 			return t.downloads?.errorInvalidFormat || 'Invalid format';
 		case 'NO_VALID_LISH':
 			return t.downloads?.errorNoValidLish || 'No valid LISH found';
+		default:
+			return '';
+	}
+}
+
+/**
+ * Validate chunk size input
+ * Returns error code or null if valid
+ */
+export function validateChunkSize(chunkSize: string): 'INVALID_CHUNK_SIZE' | null {
+	if (!chunkSize.trim()) return null;
+	const parsed = parseChunkSize(chunkSize);
+	return parsed === null ? 'INVALID_CHUNK_SIZE' : null;
+}
+
+/**
+ * Validate threads input
+ * Returns error code or null if valid
+ */
+export function validateThreads(threads: string): 'INVALID_THREADS' | null {
+	if (!threads.trim()) return null;
+	const num = parseInt(threads);
+	return isNaN(num) || num < 0 ? 'INVALID_THREADS' : null;
+}
+
+/**
+ * Validate LISH create form
+ */
+export interface LishCreateFormData {
+	inputPath: string;
+	saveToFile: boolean;
+	addToSharing: boolean;
+	chunkSize: string;
+	threads: string;
+}
+
+export type LishCreateError = 'INPUT_REQUIRED' | 'OUTPUT_REQUIRED' | 'INVALID_CHUNK_SIZE' | 'INVALID_THREADS' | null;
+
+export function validateLishCreateForm(data: LishCreateFormData): LishCreateError {
+	if (!data.inputPath.trim()) return 'INPUT_REQUIRED';
+	if (!data.saveToFile && !data.addToSharing) return 'OUTPUT_REQUIRED';
+	const chunkError = validateChunkSize(data.chunkSize);
+	if (chunkError) return chunkError;
+	const threadsError = validateThreads(data.threads);
+	if (threadsError) return threadsError;
+	return null;
+}
+
+/**
+ * Get localized error message for LISH create validation errors
+ */
+export function getLishCreateErrorMessage(errorCode: LishCreateError, t: { downloads?: { lishCreate?: { inputRequired?: string; outputRequired?: string; invalidChunkSize?: string; invalidThreads?: string } } }): string {
+	switch (errorCode) {
+		case 'INPUT_REQUIRED':
+			return t.downloads?.lishCreate?.inputRequired || 'Input path is required';
+		case 'OUTPUT_REQUIRED':
+			return t.downloads?.lishCreate?.outputRequired || 'You must at least save to file or add to sharing';
+		case 'INVALID_CHUNK_SIZE':
+			return t.downloads?.lishCreate?.invalidChunkSize || 'Invalid chunk size';
+		case 'INVALID_THREADS':
+			return t.downloads?.lishCreate?.invalidThreads || 'Invalid threads value';
 		default:
 			return '';
 	}

@@ -7,6 +7,7 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath } from '../../scripts/settings.ts';
+	import { normalizePath } from '../../scripts/utils.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -81,8 +82,7 @@
 	}
 
 	function handleDownloadPathSelect(path: string) {
-		const normalizedPath = path.endsWith('/') || path.endsWith('\\') ? path : path + '/';
-		downloadPath = normalizedPath;
+		downloadPath = normalizePath(path);
 		handleBrowseBack();
 	}
 

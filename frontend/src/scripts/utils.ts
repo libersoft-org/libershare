@@ -7,6 +7,27 @@ export function formatSize(bytes?: number): string {
 	return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+// Normalize a path by ensuring it ends with a trailing separator
+export function normalizePath(path: string): string {
+	if (!path) return path;
+	return path.endsWith('/') || path.endsWith('\\') ? path : path + '/';
+}
+
+// Sanitize filename - remove invalid characters and normalize spaces
+export function sanitizeFilename(filename: string): string {
+	// Remove characters not allowed in filenames: < > : " / \ | ? *
+	// Then replace multiple spaces with single space
+	return filename
+		.replace(/[<>:"/\\|?*]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+// Join path segments
+export function joinPath(...segments: string[]): string {
+	return segments.filter(Boolean).join('/').replace(/\/+/g, '/');
+}
+
 // Format ISO date to localized date string
 export function formatDate(isoDate?: string): string {
 	if (!isoDate) return '—';

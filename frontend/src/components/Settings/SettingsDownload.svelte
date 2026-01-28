@@ -7,7 +7,7 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath, storageTempPath, storageLishPath, setStoragePath, setStorageTempPath, setStorageLishPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, autoStartSharing, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAutoStartSharing } from '../../scripts/settings.ts';
-	import { scrollToElement } from '../../scripts/utils.ts';
+	import { scrollToElement, normalizePath } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import Switch from '../Switch/Switch.svelte';
@@ -77,7 +77,7 @@
 	}
 
 	function handleBrowseSelect(path: string) {
-		const normalizedPath = path.endsWith('/') || path.endsWith('\\') ? path : path + '/';
+		const normalizedPath = normalizePath(path);
 		if (browsingFor === 'storage') {
 			setStoragePath(normalizedPath);
 			storagePathValue = normalizedPath;
@@ -105,47 +105,22 @@
 
 	// Save functions
 	function saveAll() {
-		savePort();
-		saveDownloadConnections();
-		saveUploadConnections();
-		saveDownloadSpeed();
-		saveUploadSpeed();
+		setIncomingPort(parseInt(port) || 9090);
+		setMaxDownloadConnections(parseInt(downloadConnections) || 0);
+		setMaxUploadConnections(parseInt(uploadConnections) || 0);
+		setMaxDownloadSpeed(parseInt(downloadSpeed) || 0);
+		setMaxUploadSpeed(parseInt(uploadSpeed) || 0);
+		// Sync local state with validated values from store
+		port = $incomingPort.toString();
+		downloadConnections = $maxDownloadConnections.toString();
+		uploadConnections = $maxUploadConnections.toString();
+		downloadSpeed = $maxDownloadSpeed.toString();
+		uploadSpeed = $maxUploadSpeed.toString();
 	}
 
 	function handleSave() {
 		saveAll();
 		onBack?.();
-	}
-
-	function savePort() {
-		const value = parseInt(port) || 9090;
-		const clampedValue = Math.max(1, Math.min(65535, value));
-		setIncomingPort(clampedValue);
-		port = clampedValue.toString();
-	}
-
-	function saveDownloadConnections() {
-		const value = parseInt(downloadConnections) || 0;
-		setMaxDownloadConnections(Math.max(0, value));
-		downloadConnections = Math.max(0, value).toString();
-	}
-
-	function saveUploadConnections() {
-		const value = parseInt(uploadConnections) || 0;
-		setMaxUploadConnections(Math.max(0, value));
-		uploadConnections = Math.max(0, value).toString();
-	}
-
-	function saveDownloadSpeed() {
-		const value = parseInt(downloadSpeed) || 0;
-		setMaxDownloadSpeed(Math.max(0, value));
-		downloadSpeed = Math.max(0, value).toString();
-	}
-
-	function saveUploadSpeed() {
-		const value = parseInt(uploadSpeed) || 0;
-		setMaxUploadSpeed(Math.max(0, value));
-		uploadSpeed = Math.max(0, value).toString();
 	}
 
 	function toggleAutoStart() {

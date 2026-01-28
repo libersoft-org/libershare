@@ -260,9 +260,7 @@
 		confirmDown: () => {},
 		confirmUp: () => {
 			const action = fileActions[selectedActionIndex];
-			if (action) {
-				handleAction(action.id);
-			}
+			if (action) handleAction(action.id);
 		},
 		confirmCancel: () => {},
 		back: () => {
@@ -291,9 +289,7 @@
 		confirmDown: () => {},
 		confirmUp: () => {
 			const action = filterActions[selectedFilterIndex];
-			if (action) {
-				handleFilterAction(action.id);
-			}
+			if (action) handleFilterAction(action.id);
 		},
 		confirmCancel: () => {},
 		back: () => {
@@ -390,9 +386,7 @@
 		try {
 			await api.fsDelete(currentPath);
 			// Navigate to parent after deletion
-			if (parentPath !== null) {
-				await loadDirectory(parentPath);
-			}
+			if (parentPath !== null) await loadDirectory(parentPath);
 		} catch (e: any) {
 			error = e.message || 'Failed to delete folder';
 		}

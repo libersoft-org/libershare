@@ -39,11 +39,8 @@
 	function toggleShowInTray() {
 		trayVisible = !trayVisible;
 		setShowInTray(trayVisible);
-		// If we disable tray, also disable minimize to tray
-		if (!trayVisible && trayMinimize) {
-			trayMinimize = false;
-			setMinimizeToTray(false);
-		}
+		// Business rule is now in settings.ts - it auto-disables minimizeToTray
+		if (!trayVisible) trayMinimize = false;
 	}
 
 	function toggleMinimizeToTray() {

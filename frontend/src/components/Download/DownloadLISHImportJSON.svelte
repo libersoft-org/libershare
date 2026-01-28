@@ -8,6 +8,7 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { parseLISHFromJson, getLISHErrorMessage } from '../../scripts/lish.ts';
 	import { storagePath } from '../../scripts/settings.ts';
+	import { normalizePath } from '../../scripts/utils.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -66,8 +67,7 @@
 	}
 
 	function handleBrowseSelect(path: string) {
-		const normalizedPath = path.endsWith('/') || path.endsWith('\\') ? path : path + '/';
-		downloadPath = normalizedPath;
+		downloadPath = normalizePath(path);
 		handleBrowseBack();
 	}
 

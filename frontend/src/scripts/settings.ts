@@ -114,40 +114,45 @@ const storedIncomingPort = getStorageValue<number>('incomingPort', 9090);
 export const incomingPort = writable(storedIncomingPort);
 
 export function setIncomingPort(value: number): void {
-	incomingPort.set(value);
-	setStorageValue('incomingPort', value);
+	const clampedValue = Math.max(1, Math.min(65535, value || 9090));
+	incomingPort.set(clampedValue);
+	setStorageValue('incomingPort', clampedValue);
 }
 
 const storedMaxDownloadConnections = getStorageValue<number>('maxDownloadConnections', 200);
 export const maxDownloadConnections = writable(storedMaxDownloadConnections);
 
 export function setMaxDownloadConnections(value: number): void {
-	maxDownloadConnections.set(value);
-	setStorageValue('maxDownloadConnections', value);
+	const clampedValue = Math.max(0, value || 0);
+	maxDownloadConnections.set(clampedValue);
+	setStorageValue('maxDownloadConnections', clampedValue);
 }
 
 const storedMaxUploadConnections = getStorageValue<number>('maxUploadConnections', 200);
 export const maxUploadConnections = writable(storedMaxUploadConnections);
 
 export function setMaxUploadConnections(value: number): void {
-	maxUploadConnections.set(value);
-	setStorageValue('maxUploadConnections', value);
+	const clampedValue = Math.max(0, value || 0);
+	maxUploadConnections.set(clampedValue);
+	setStorageValue('maxUploadConnections', clampedValue);
 }
 
 const storedMaxDownloadSpeed = getStorageValue<number>('maxDownloadSpeed', 0);
 export const maxDownloadSpeed = writable(storedMaxDownloadSpeed);
 
 export function setMaxDownloadSpeed(value: number): void {
-	maxDownloadSpeed.set(value);
-	setStorageValue('maxDownloadSpeed', value);
+	const clampedValue = Math.max(0, value || 0);
+	maxDownloadSpeed.set(clampedValue);
+	setStorageValue('maxDownloadSpeed', clampedValue);
 }
 
 const storedMaxUploadSpeed = getStorageValue<number>('maxUploadSpeed', 0);
 export const maxUploadSpeed = writable(storedMaxUploadSpeed);
 
 export function setMaxUploadSpeed(value: number): void {
-	maxUploadSpeed.set(value);
-	setStorageValue('maxUploadSpeed', value);
+	const clampedValue = Math.max(0, value || 0);
+	maxUploadSpeed.set(clampedValue);
+	setStorageValue('maxUploadSpeed', clampedValue);
 }
 
 const storedAutoStartSharing = getStorageValue<boolean>('autoStartSharing', true);
@@ -173,6 +178,11 @@ export const showInTray = writable(storedShowInTray);
 export function setShowInTray(enabled: boolean): void {
 	showInTray.set(enabled);
 	setStorageValue('showInTray', enabled);
+	// If disabling tray, also disable minimize to tray
+	if (!enabled) {
+		minimizeToTray.set(false);
+		setStorageValue('minimizeToTray', false);
+	}
 }
 
 const storedMinimizeToTray = getStorageValue<boolean>('minimizeToTray', true);

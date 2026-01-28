@@ -4,8 +4,8 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { scrollToElement } from '../../scripts/utils.ts';
-	import { HASH_ALGORITHMS, parseChunkSize, type HashAlgorithm } from '../../scripts/lish.ts';
+	import { scrollToElement, sanitizeFilename } from '../../scripts/utils.ts';
+	import { HASH_ALGORITHMS, parseChunkSize, validateLishCreateForm, getLishCreateErrorMessage, type HashAlgorithm } from '../../scripts/lish.ts';
 	import { storageLishPath, storagePath } from '../../scripts/settings.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -21,16 +21,6 @@
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack, onBrowseInput, onBrowseOutput }: Props = $props();
 	let active = $derived($activeArea === areaID);
-
-	// Sanitize filename - remove invalid characters and normalize spaces
-	function sanitizeFilename(filename: string): string {
-		// Remove characters not allowed in filenames: < > : " / \ | ? *
-		// Then replace multiple spaces with single space
-		return filename
-			.replace(/[<>:"/\\|?*]/g, '')
-			.replace(/\s+/g, ' ')
-			.trim();
-	}
 
 	// Form state
 	let inputPath = $state($storagePath);
@@ -61,27 +51,9 @@
 	let descriptionInput: Input | undefined = $state();
 	let chunkSizeInput: Input | undefined = $state();
 	let threadsInput: Input | undefined = $state();
-	// Validation
-	let chunkSizeError = $derived.by(() => {
-		if (!chunkSize.trim()) return null;
-		const parsed = parseChunkSize(chunkSize);
-		if (parsed === null) return $t.downloads?.lishCreate?.invalidChunkSize;
-		return null;
-	});
-	let threadsError = $derived.by(() => {
-		const num = parseInt(threads);
-		if (threads.trim() && (isNaN(num) || num < 0)) {
-			return $t.downloads?.lishCreate?.invalidThreads;
-		}
-		return null;
-	});
-	let errorMessage = $derived.by(() => {
-		if (!inputPath.trim()) return $t.downloads?.lishCreate?.inputRequired;
-		if (!saveToFile && !addToSharing) return $t.downloads?.lishCreate?.outputRequired;
-		if (chunkSizeError) return chunkSizeError;
-		if (threadsError) return threadsError;
-		return '';
-	});
+	// Validation using lish.ts
+	let validationError = $derived(validateLishCreateForm({ inputPath, saveToFile, addToSharing, chunkSize, threads }));
+	let errorMessage = $derived(validationError ? getLishCreateErrorMessage(validationError, $t) : '');
 	let showError = $derived(submitted && errorMessage);
 	// Form fields: name(0), description(1), chunkSize(2), algo(3), threads(4), input(5), saveToFile(6), output(7), addToSharing(8), create(9), back(10)
 	const FIELD_NAME = 0;
