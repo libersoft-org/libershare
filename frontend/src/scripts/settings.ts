@@ -110,6 +110,14 @@ export function setStorageLishPath(path: string): void {
 }
 
 // Sharing settings
+const storedIncomingPort = getStorageValue<number>('incomingPort', 9090);
+export const incomingPort = writable(storedIncomingPort);
+
+export function setIncomingPort(value: number): void {
+	incomingPort.set(value);
+	setStorageValue('incomingPort', value);
+}
+
 const storedMaxDownloadConnections = getStorageValue<number>('maxDownloadConnections', 200);
 export const maxDownloadConnections = writable(storedMaxDownloadConnections);
 

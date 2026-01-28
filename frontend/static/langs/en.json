@@ -143,6 +143,7 @@
 			"confirmDelete": "Are you sure you want to delete network \"{name}\"?"
 		},
 		"download": {
+			"incomingPort": "Network port for incoming connections",
 			"maxDownloadConnections": "Maximum download connections",
 			"maxUploadConnections": "Maximum upload connections",
 			"maxDownloadSpeed": "Maximum download speed (0 = unlimited)",

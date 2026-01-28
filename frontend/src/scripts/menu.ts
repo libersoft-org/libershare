@@ -16,7 +16,6 @@ import DownloadLISHImportJSON from '../components/Download/DownloadLISHImportJSO
 import DownloadLISHExportAll from '../components/Download/DownloadLISHExportAll.svelte';
 import DownloadDetail from '../components/Download/DownloadDetail.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
-import SettingsStorage from '../components/Settings/SettingsStorage.svelte';
 import SettingsDownload from '../components/Settings/SettingsDownload.svelte';
 import LISHNetworkList from '../components/Settings/SettingsLISHNetworkList.svelte';
 import About from '../components/About/About.svelte';
@@ -163,22 +162,16 @@ export const menuStructure = derived(t, () => ({
 			orientation: 'horizontal' as const,
 			submenu: [
 				{
-					id: 'localStorage',
-					label: tt('localStorage.title'),
-					icon: '/img/storage.svg',
-					component: SettingsStorage,
+					id: 'download',
+					label: tt('downloads.title'),
+					icon: '/img/download.svg',
+					component: SettingsDownload,
 				},
 				{
 					id: 'lishNetwork',
 					label: tt('settings.lishNetwork.title'),
 					icon: '/img/network.svg',
 					component: LISHNetworkList,
-				},
-				{
-					id: 'download',
-					label: tt('downloads.title'),
-					icon: '/img/download.svg',
-					component: SettingsDownload,
 				},
 				{
 					id: 'language',

@@ -1,14 +1,17 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, autoStartSharing, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAutoStartSharing } from '../../scripts/settings.ts';
+	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { storagePath, storageTempPath, storageLishPath, setStoragePath, setStorageTempPath, setStorageLishPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, autoStartSharing, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAutoStartSharing } from '../../scripts/settings.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import Switch from '../Switch/Switch.svelte';
+	import SettingsStorageBrowse from './SettingsStorageBrowse.svelte';
 
 	interface Props {
 		areaID: string;
@@ -17,36 +20,108 @@
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 	let unregisterArea: (() => void) | null = null;
+	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
+	let selectedColumn = $state(0);
 	let rowElements: HTMLElement[] = $state([]);
+	let browsingFor = $state<'storage' | 'temp' | 'lish' | null>(null);
 
 	// Local state for inputs
+	let storagePathValue = $state($storagePath);
+	let tempPathValue = $state($storageTempPath);
+	let lishPathValue = $state($storageLishPath);
+	let port = $state($incomingPort.toString());
 	let downloadConnections = $state($maxDownloadConnections.toString());
 	let uploadConnections = $state($maxUploadConnections.toString());
 	let downloadSpeed = $state($maxDownloadSpeed.toString());
 	let uploadSpeed = $state($maxUploadSpeed.toString());
 	let autoStart = $state($autoStartSharing);
-	let selectedColumn = $state(0);
 
+	let storagePathRef: Input;
+	let tempPathRef: Input;
+	let lishPathRef: Input;
+	let portRef: Input;
 	let downloadConnectionsRef: Input;
 	let uploadConnectionsRef: Input;
 	let downloadSpeedRef: Input;
 	let uploadSpeedRef: Input;
 
-	const totalItems = 6; // 5 settings + buttons row (save, back)
+	// Field indices
+	const FIELD_STORAGE_PATH = 0;
+	const FIELD_TEMP_PATH = 1;
+	const FIELD_LISH_PATH = 2;
+	const FIELD_PORT = 3;
+	const FIELD_DOWNLOAD_CONNECTIONS = 4;
+	const FIELD_UPLOAD_CONNECTIONS = 5;
+	const FIELD_DOWNLOAD_SPEED = 6;
+	const FIELD_UPLOAD_SPEED = 7;
+	const FIELD_AUTO_START = 8;
+	const FIELD_BUTTONS = 9;
+	const totalItems = 10;
 
+	// Browse functions
+	function openBrowse(type: 'storage' | 'temp' | 'lish') {
+		browsingFor = type;
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
+		const labels = {
+			storage: $t.settings?.storage?.folderDownload,
+			temp: $t.settings?.storage?.folderTemp,
+			lish: $t.settings?.storage?.folderLish,
+		};
+		pushBreadcrumb(labels[type]);
+		removeBackHandler = pushBackHandler(handleBrowseBack);
+	}
+
+	function handleBrowseSelect(path: string) {
+		const normalizedPath = path.endsWith('/') || path.endsWith('\\') ? path : path + '/';
+		if (browsingFor === 'storage') {
+			setStoragePath(normalizedPath);
+			storagePathValue = normalizedPath;
+		} else if (browsingFor === 'temp') {
+			setStorageTempPath(normalizedPath);
+			tempPathValue = normalizedPath;
+		} else if (browsingFor === 'lish') {
+			setStorageLishPath(normalizedPath);
+			lishPathValue = normalizedPath;
+		}
+		handleBrowseBack();
+	}
+
+	async function handleBrowseBack() {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
+		popBreadcrumb();
+		browsingFor = null;
+		await tick();
+		unregisterArea = registerAreaHandler();
+		activateArea(areaID);
+	}
+
+	// Save functions
 	function saveAll() {
+		savePort();
 		saveDownloadConnections();
 		saveUploadConnections();
 		saveDownloadSpeed();
 		saveUploadSpeed();
-		// autoStartSharing is saved on toggle
 	}
 
 	function handleSave() {
 		saveAll();
 		onBack?.();
+	}
+
+	function savePort() {
+		const value = parseInt(port) || 9090;
+		const clampedValue = Math.max(1, Math.min(65535, value));
+		setIncomingPort(clampedValue);
+		port = clampedValue.toString();
 	}
 
 	function saveDownloadConnections() {
@@ -78,11 +153,7 @@
 		setAutoStartSharing(autoStart);
 	}
 
-	function scrollToSelected() {
-		if (rowElements[selectedIndex]) {
-			scrollToElement(rowElements[selectedIndex]);
-		}
-	}
+	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
 
 	function registerAreaHandler() {
 		return useArea(
@@ -107,34 +178,37 @@
 					return false;
 				},
 				left: () => {
-					if (selectedIndex === 5 && selectedColumn > 0) {
+					if ((selectedIndex === FIELD_STORAGE_PATH || selectedIndex === FIELD_TEMP_PATH || selectedIndex === FIELD_LISH_PATH || selectedIndex === FIELD_BUTTONS) && selectedColumn > 0) {
 						selectedColumn--;
 						return true;
 					}
 					return false;
 				},
 				right: () => {
-					if (selectedIndex === 5 && selectedColumn < 1) {
+					if ((selectedIndex === FIELD_STORAGE_PATH || selectedIndex === FIELD_TEMP_PATH || selectedIndex === FIELD_LISH_PATH || selectedIndex === FIELD_BUTTONS) && selectedColumn < 1) {
 						selectedColumn++;
 						return true;
 					}
 					return false;
 				},
 				confirmDown: () => {
-					if (selectedIndex === 0) downloadConnectionsRef?.focus();
-					else if (selectedIndex === 1) uploadConnectionsRef?.focus();
-					else if (selectedIndex === 2) downloadSpeedRef?.focus();
-					else if (selectedIndex === 3) uploadSpeedRef?.focus();
+					if (selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 0) storagePathRef?.focus();
+					else if (selectedIndex === FIELD_TEMP_PATH && selectedColumn === 0) tempPathRef?.focus();
+					else if (selectedIndex === FIELD_LISH_PATH && selectedColumn === 0) lishPathRef?.focus();
+					else if (selectedIndex === FIELD_PORT) portRef?.focus();
+					else if (selectedIndex === FIELD_DOWNLOAD_CONNECTIONS) downloadConnectionsRef?.focus();
+					else if (selectedIndex === FIELD_UPLOAD_CONNECTIONS) uploadConnectionsRef?.focus();
+					else if (selectedIndex === FIELD_DOWNLOAD_SPEED) downloadSpeedRef?.focus();
+					else if (selectedIndex === FIELD_UPLOAD_SPEED) uploadSpeedRef?.focus();
 				},
 				confirmUp: () => {
-					if (selectedIndex === 4) {
-						toggleAutoStart();
-					} else if (selectedIndex === 5) {
-						if (selectedColumn === 0) {
-							handleSave();
-						} else {
-							onBack?.();
-						}
+					if (selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 1) openBrowse('storage');
+					else if (selectedIndex === FIELD_TEMP_PATH && selectedColumn === 1) openBrowse('temp');
+					else if (selectedIndex === FIELD_LISH_PATH && selectedColumn === 1) openBrowse('lish');
+					else if (selectedIndex === FIELD_AUTO_START) toggleAutoStart();
+					else if (selectedIndex === FIELD_BUTTONS) {
+						if (selectedColumn === 0) handleSave();
+						else onBack?.();
 					}
 				},
 				confirmCancel: () => {},
@@ -190,29 +264,56 @@
 		justify-content: space-between;
 		padding: 1vh 0;
 	}
+
+	.row {
+		display: flex;
+		gap: 1vh;
+		align-items: flex-end;
+	}
 </style>
 
-<div class="settings">
-	<div class="container">
-		<div bind:this={rowElements[0]}>
-			<Input bind:this={downloadConnectionsRef} bind:value={downloadConnections} label={$t.settings?.download?.maxDownloadConnections} type="number" selected={active && selectedIndex === 0} onBlur={saveDownloadConnections} flex />
+{#if browsingFor}
+	<SettingsStorageBrowse {areaID} {position} initialPath={browsingFor === 'storage' ? $storagePath : browsingFor === 'temp' ? $storageTempPath : $storageLishPath} onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
+{:else}
+	<div class="settings">
+		<div class="container">
+			<!-- Storage paths -->
+			<div class="row" bind:this={rowElements[FIELD_STORAGE_PATH]}>
+				<Input bind:this={storagePathRef} bind:value={storagePathValue} label={$t.settings?.storage?.folderDownload} selected={active && selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 0} onBlur={() => setStoragePath(storagePathValue)} flex />
+				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 1} onConfirm={() => openBrowse('storage')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<div class="row" bind:this={rowElements[FIELD_TEMP_PATH]}>
+				<Input bind:this={tempPathRef} bind:value={tempPathValue} label={$t.settings?.storage?.folderTemp} selected={active && selectedIndex === FIELD_TEMP_PATH && selectedColumn === 0} onBlur={() => setStorageTempPath(tempPathValue)} flex />
+				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_TEMP_PATH && selectedColumn === 1} onConfirm={() => openBrowse('temp')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<div class="row" bind:this={rowElements[FIELD_LISH_PATH]}>
+				<Input bind:this={lishPathRef} bind:value={lishPathValue} label={$t.settings?.storage?.folderLish} selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 0} onBlur={() => setStorageLishPath(lishPathValue)} flex />
+				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 1} onConfirm={() => openBrowse('lish')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<!-- Network settings -->
+			<div bind:this={rowElements[FIELD_PORT]}>
+				<Input bind:this={portRef} bind:value={port} label={$t.settings?.download?.incomingPort} type="number" selected={active && selectedIndex === FIELD_PORT} onBlur={savePort} flex />
+			</div>
+			<div bind:this={rowElements[FIELD_DOWNLOAD_CONNECTIONS]}>
+				<Input bind:this={downloadConnectionsRef} bind:value={downloadConnections} label={$t.settings?.download?.maxDownloadConnections} type="number" selected={active && selectedIndex === FIELD_DOWNLOAD_CONNECTIONS} onBlur={saveDownloadConnections} flex />
+			</div>
+			<div bind:this={rowElements[FIELD_UPLOAD_CONNECTIONS]}>
+				<Input bind:this={uploadConnectionsRef} bind:value={uploadConnections} label={$t.settings?.download?.maxUploadConnections} type="number" selected={active && selectedIndex === FIELD_UPLOAD_CONNECTIONS} onBlur={saveUploadConnections} flex />
+			</div>
+			<div bind:this={rowElements[FIELD_DOWNLOAD_SPEED]}>
+				<Input bind:this={downloadSpeedRef} bind:value={downloadSpeed} label={$t.settings?.download?.maxDownloadSpeed} type="number" selected={active && selectedIndex === FIELD_DOWNLOAD_SPEED} onBlur={saveDownloadSpeed} flex />
+			</div>
+			<div bind:this={rowElements[FIELD_UPLOAD_SPEED]}>
+				<Input bind:this={uploadSpeedRef} bind:value={uploadSpeed} label={$t.settings?.download?.maxUploadSpeed} type="number" selected={active && selectedIndex === FIELD_UPLOAD_SPEED} onBlur={saveUploadSpeed} flex />
+			</div>
+			<div class="switch-row" bind:this={rowElements[FIELD_AUTO_START]}>
+				<span class="switch-label">{$t.settings?.download?.autoStartSharing}:</span>
+				<Switch checked={autoStart} selected={active && selectedIndex === FIELD_AUTO_START} onToggle={toggleAutoStart} />
+			</div>
 		</div>
-		<div bind:this={rowElements[1]}>
-			<Input bind:this={uploadConnectionsRef} bind:value={uploadConnections} label={$t.settings?.download?.maxUploadConnections} type="number" selected={active && selectedIndex === 1} onBlur={saveUploadConnections} flex />
-		</div>
-		<div bind:this={rowElements[2]}>
-			<Input bind:this={downloadSpeedRef} bind:value={downloadSpeed} label={$t.settings?.download?.maxDownloadSpeed} type="number" selected={active && selectedIndex === 2} onBlur={saveDownloadSpeed} flex />
-		</div>
-		<div bind:this={rowElements[3]}>
-			<Input bind:this={uploadSpeedRef} bind:value={uploadSpeed} label={$t.settings?.download?.maxUploadSpeed} type="number" selected={active && selectedIndex === 3} onBlur={saveUploadSpeed} flex />
-		</div>
-		<div class="switch-row" bind:this={rowElements[4]}>
-			<span class="switch-label">{$t.settings?.download?.autoStartSharing}:</span>
-			<Switch checked={autoStart} selected={active && selectedIndex === 4} onToggle={toggleAutoStart} />
+		<div class="buttons" bind:this={rowElements[FIELD_BUTTONS]}>
+			<Button icon="/img/save.svg" label={$t.common?.save} selected={active && selectedIndex === FIELD_BUTTONS && selectedColumn === 0} onConfirm={handleSave} />
+			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === FIELD_BUTTONS && selectedColumn === 1} onConfirm={onBack} />
 		</div>
 	</div>
-	<div class="buttons" bind:this={rowElements[5]}>
-		<Button icon="/img/save.svg" label={$t.common?.save} selected={active && selectedIndex === 5 && selectedColumn === 0} onConfirm={handleSave} />
-		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 5 && selectedColumn === 1} onConfirm={onBack} />
-	</div>
-</div>
+{/if}

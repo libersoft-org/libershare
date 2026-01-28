@@ -143,6 +143,7 @@
 			"confirmDelete": "Opravdu chcete smazat síť \"{name}\"?"
 		},
 		"download": {
+			"incomingPort": "Síťový port pro příchozí spojení",
 			"maxDownloadConnections": "Maximální počet spojení pro stahování",
 			"maxUploadConnections": "Maximální počet spojení pro odesílání",
 			"maxDownloadSpeed": "Maximální rychlost stahování (0 = neomezeno)",
