@@ -103,22 +103,22 @@
 	},
 	"settings": {
 		"title": "Settings",
-		"language": "Language",
-		"time": {
-			"label": "Time",
-			"format": "Time format",
-			"showSeconds": "Show seconds",
-			"12hour": "12 hour",
-			"24hour": "24 hour"
+		"system": {
+			"title": "System",
+			"autoStartOnBoot": "Start application on system startup",
+			"showInTray": "Show in system tray",
+			"minimizeToTray": "Minimize to system tray"
 		},
-		"audio": "Sound effects",
-		"cursorSize": {
-			"label": "Cursor size",
-			"sizes": {
-				"small": "Small",
-				"medium": "Medium",
-				"large": "Large"
-			}
+		"download": {
+			"folderDownload": "Finished download folder",
+			"folderTemp": "Unfinished downloads folder",
+			"folderLish": "Default LISH files folder",
+			"incomingPort": "Network port for incoming connections",
+			"maxDownloadConnections": "Maximum download connections",
+			"maxUploadConnections": "Maximum upload connections",
+			"maxDownloadSpeed": "Maximum download speed (0 = unlimited)",
+			"maxUploadSpeed": "Maximum upload speed (0 = unlimited)",
+			"autoStartSharing": "Start sharing after adding a LISH by default"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",
@@ -137,16 +137,13 @@
 			"emptyList": "No networks added. Add or Import a new network.",
 			"confirmDelete": "Are you sure you want to delete network \"{name}\"?"
 		},
-		"download": {
-			"folderDownload": "Finished download folder",
-			"folderTemp": "Unfinished downloads folder",
-			"folderLish": "Default LISH files folder",
-			"incomingPort": "Network port for incoming connections",
-			"maxDownloadConnections": "Maximum download connections",
-			"maxUploadConnections": "Maximum upload connections",
-			"maxDownloadSpeed": "Maximum download speed (0 = unlimited)",
-			"maxUploadSpeed": "Maximum upload speed (0 = unlimited)",
-			"autoStartSharing": "Start sharing after adding a LISH by default"
+		"language": "Language",
+		"time": {
+			"label": "Time",
+			"format": "Time format",
+			"showSeconds": "Show seconds",
+			"12hour": "12 hour",
+			"24hour": "24 hour"
 		},
 		"footer": "Footer",
 		"footerVisible": "Show footer",
@@ -167,6 +164,15 @@
 			"storage": "Storage usage",
 			"volume": "Volume",
 			"clock": "Clock"
+		},
+		"audio": "Sound effects",
+		"cursorSize": {
+			"label": "Cursor size",
+			"sizes": {
+				"small": "Small",
+				"medium": "Medium",
+				"large": "Large"
+			}
 		}
 	},
 	"fileBrowser": {

@@ -103,39 +103,11 @@
 	},
 	"settings": {
 		"title": "Nastavení",
-		"language": "Jazyk",
-		"time": {
-			"label": "Čas",
-			"format": "Formát času",
-			"showSeconds": "Zobrazení vteřin",
-			"12hour": "12 hodinový",
-			"24hour": "24 hodinový"
-		},
-		"audio": "Zvukové efekty",
-		"cursorSize": {
-			"label": "Velikost kurzoru",
-			"sizes": {
-				"small": "Malý",
-				"medium": "Střední",
-				"large": "Velký"
-			}
-		},
-		"lishNetwork": {
-			"title": "Síť LISH",
-			"name": "Název",
-			"description": "Popis",
-			"networkID": "ID sítě",
-			"autoGenerate": "Automaticky vygenerovat network ID (nová síť)",
-			"bootstrapServers": "Bootstrap servery",
-			"errorNameRequired": "Název sítě je povinný",
-			"errorNetworkIDRequired": "ID sítě je povinné",
-			"errorBootstrapRequired": "Je vyžadován alespoň jeden bootstrap server",
-			"errorUrlRequired": "URL je povinná",
-			"errorInvalidFormat": "Neplatný formát seznamu sítí",
-			"errorNoValidNetworks": "Nebyly nalezeny žádné platné sítě",
-			"publicList": "Veřejný seznam",
-			"emptyList": "Žádná síť není přidána. Přidejte nebo importujte novou síť.",
-			"confirmDelete": "Opravdu chcete smazat síť \"{name}\"?"
+		"system": {
+			"title": "Systém",
+			"autoStartOnBoot": "Spustit aplikaci po spuštění systému",
+			"showInTray": "Zobrazit v oznamovací oblasti",
+			"minimizeToTray": "Minimalizovat do oznamovací oblasti"
 		},
 		"download": {
 			"folderDownload": "Složka pro dokončená stahování",
@@ -147,6 +119,31 @@
 			"maxDownloadSpeed": "Maximální rychlost stahování (0 = neomezeno)",
 			"maxUploadSpeed": "Maximální rychlost odesílání (0 = neomezeno)",
 			"autoStartSharing": "Standardně spustit sdílení po přidání LISH"
+		},
+		"lishNetwork": {
+			"title": "Síť LISH",
+			"name": "Název",
+			"description": "Popis",
+			"networkID": "ID sítě",
+			"autoGenerate": "Automaticky vygenerovat ID sítě (nová síť)",
+			"bootstrapServers": "Bootstrap servery",
+			"errorNameRequired": "Název sítě je povinný",
+			"errorNetworkIDRequired": "ID sítě je povinné",
+			"errorBootstrapRequired": "Je vyžadován alespoň jeden bootstrap server",
+			"errorUrlRequired": "URL je povinná",
+			"errorInvalidFormat": "Neplatný formát seznamu sítí",
+			"errorNoValidNetworks": "Nebyly nalezeny žádné platné sítě",
+			"publicList": "Veřejný seznam",
+			"emptyList": "Žádná síť není přidána. Přidejte nebo importujte novou síť.",
+			"confirmDelete": "Opravdu chcete smazat síť \"{name}\"?"
+		},
+		"language": "Jazyk",
+		"time": {
+			"label": "Čas",
+			"format": "Formát času",
+			"showSeconds": "Zobrazení vteřin",
+			"12hour": "12 hodinový",
+			"24hour": "24 hodinový"
 		},
 		"footer": "Patička",
 		"footerVisible": "Zobrazovat patičku",
@@ -167,6 +164,15 @@
 			"storage": "Využití úložiště",
 			"volume": "Hlasitost",
 			"clock": "Hodiny"
+		},
+		"audio": "Zvukové efekty",
+		"cursorSize": {
+			"label": "Velikost kurzoru",
+			"sizes": {
+				"small": "Malý",
+				"medium": "Střední",
+				"large": "Velký"
+			}
 		}
 	},
 	"fileBrowser": {

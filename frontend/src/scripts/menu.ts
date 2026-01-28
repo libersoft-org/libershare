@@ -17,6 +17,7 @@ import DownloadLISHExportAll from '../components/Download/DownloadLISHExportAll.
 import DownloadDetail from '../components/Download/DownloadDetail.svelte';
 import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
 import SettingsDownload from '../components/Settings/SettingsDownload.svelte';
+import SettingsSystem from '../components/Settings/SettingsSystem.svelte';
 import LISHNetworkList from '../components/Settings/SettingsLISHNetworkList.svelte';
 import About from '../components/About/About.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
@@ -161,6 +162,12 @@ export const menuStructure = derived(t, () => ({
 			icon: '/img/settings.svg',
 			orientation: 'horizontal' as const,
 			submenu: [
+				{
+					id: 'system',
+					label: tt('settings.system.title'),
+					icon: '/img/system.svg',
+					component: SettingsSystem,
+				},
 				{
 					id: 'download',
 					label: tt('downloads.title'),

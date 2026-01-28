@@ -157,3 +157,28 @@ export function setAutoStartSharing(enabled: boolean): void {
 	autoStartSharing.set(enabled);
 	setStorageValue('autoStartSharing', enabled);
 }
+
+// System settings
+const storedAutoStartOnBoot = getStorageValue<boolean>('autoStartOnBoot', true);
+export const autoStartOnBoot = writable(storedAutoStartOnBoot);
+
+export function setAutoStartOnBoot(enabled: boolean): void {
+	autoStartOnBoot.set(enabled);
+	setStorageValue('autoStartOnBoot', enabled);
+}
+
+const storedShowInTray = getStorageValue<boolean>('showInTray', true);
+export const showInTray = writable(storedShowInTray);
+
+export function setShowInTray(enabled: boolean): void {
+	showInTray.set(enabled);
+	setStorageValue('showInTray', enabled);
+}
+
+const storedMinimizeToTray = getStorageValue<boolean>('minimizeToTray', true);
+export const minimizeToTray = writable(storedMinimizeToTray);
+
+export function setMinimizeToTray(enabled: boolean): void {
+	minimizeToTray.set(enabled);
+	setStorageValue('minimizeToTray', enabled);
+}
