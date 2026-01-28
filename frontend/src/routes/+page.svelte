@@ -17,6 +17,7 @@
 	import { cursorSize, cursorSizes, footerVisible } from '../scripts/settings.ts';
 	import Debug from '../components/Debug/Debug.svelte';
 	import { initStats } from '../scripts/stats.ts';
+	import { initNetworks, networks } from '../scripts/networks.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	let contentElement: HTMLElement;
 	let cursorX = $state(0);
@@ -60,6 +61,7 @@
 		try {
 			console.log(await api.networks.list());
 			await initStats();
+			await initNetworks();
 		} catch (error) {
 			console.error('[App] Initialization error:', error);
 		}
@@ -89,6 +91,9 @@
 	<img class="cursor" src="/img/cursor.svg" alt="" style="left: {cursorX}px; top: {cursorY}px; width: {cursorSizeValue}; height: {cursorSizeValue};" />
 {/if}
 <div class="page">
+
+{JSON.stringify($networks, null, 2)}
+
 	<Header areaID="header" position={LAYOUT.header} {onBack} />
 	<NavigationBreadcrumb areaID="breadcrumb" position={LAYOUT.breadcrumb} items={$breadcrumbItems} {onBack} />
 	<div class="content" bind:this={contentElement}>
@@ -107,3 +112,4 @@
 	{/if}
 </div>
 <Debug />
+

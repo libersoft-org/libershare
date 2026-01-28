@@ -30,6 +30,23 @@ export interface NetworkNodeInfo {
 	addresses: string[];
 }
 
+// Combined network info (config + runtime)
+export interface NetworkInfo {
+	// Config
+	id: string;
+	version: number;
+	name: string;
+	description: string | null;
+	bootstrap_peers: string[];
+	enabled: boolean;
+	// Runtime (only present if enabled)
+	peerId?: string;
+	addresses?: string[];
+	connected?: number;
+	connectedPeers?: string[];
+	peersInStore?: number;
+}
+
 // Stats types
 export interface Stats {
 	networks: {

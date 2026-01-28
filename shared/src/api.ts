@@ -2,6 +2,7 @@ import type {
     NetworkDefinition,
     NetworkStatus,
     NetworkNodeInfo,
+    NetworkInfo,
     Stats,
     Dataset,
     FsInfo,
@@ -121,6 +122,10 @@ class NetworksApi {
 
     getStatus(networkId: string): Promise<NetworkStatus> {
         return this.client.call<NetworkStatus>('networks.getStatus', { networkId });
+    }
+
+    infoAll(): Promise<NetworkInfo[]> {
+        return this.client.call<NetworkInfo[]>('networks.infoAll');
     }
 }
 

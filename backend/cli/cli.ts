@@ -15,10 +15,11 @@ Commands:
   networks.delete <id>              Delete a network
   networks.connect <multiaddr>      Connect to a peer
   networks.findPeer <peerId>        Find peer by ID
-  networks.info                     Show node info (peer ID, addresses)
+  networks.infoAll                  Show all networks with config and runtime info
   networks.status                   Show network status
   networks.peers                    List connected peers
   networks.addresses                List node addresses
+  networks.nodeInfo                 Show node info (peer ID, addresses)
 
   manifests.list                    List all manifests
   manifests.get <id>                Get manifest details
@@ -193,7 +194,34 @@ async function main() {
 					break;
 				}
 
-				case 'networks.info': {
+				case 'networks.infoAll': {
+					const infos = await api.networks.infoAll();
+					if (infos.length === 0) {
+						console.log('No networks');
+						break;
+					}
+					for (const info of infos) {
+						const status = info.enabled ? '✓' : '✗';
+						console.log(`${status} ${info.name} (${info.id})`);
+						console.log(`    version: ${info.version}`);
+						if (info.description) console.log(`    description: ${info.description}`);
+						console.log(`    bootstrap_peers: ${info.bootstrap_peers.length}`);
+						if (info.enabled && info.peerId) {
+							console.log(`    peerId: ${info.peerId}`);
+							console.log(`    addresses: ${info.addresses?.length || 0}`);
+							info.addresses?.forEach(a => console.log(`      ${a}`));
+							console.log(`    connected: ${info.connected || 0}`);
+							if (info.connectedPeers && info.connectedPeers.length > 0) {
+								info.connectedPeers.forEach(p => console.log(`      ${p}`));
+							}
+							console.log(`    peersInStore: ${info.peersInStore || 0}`);
+						}
+						console.log('');
+					}
+					break;
+				}
+
+				case 'networks.nodeInfo': {
 					const networkId = await getFirstNetworkId();
 					if (!networkId) break;
 					const info = await api.networks.getNodeInfo(networkId);

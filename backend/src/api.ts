@@ -261,6 +261,36 @@ export class ApiServer {
 					datasets: this.db.getAllDatasets().length,
 				};
 			}
+			case 'networks.infoAll': {
+				const definitions = this.networks.getAll();
+				const result = [];
+				for (const def of definitions) {
+					const info: any = {
+						id: def.id,
+						version: def.version,
+						name: def.name,
+						description: def.description,
+						bootstrap_peers: def.bootstrap_peers,
+						enabled: def.enabled,
+					};
+					if (def.enabled) {
+						const network = this.networks.getLiveNetwork(def.id);
+						if (network) {
+							const node = (network as any).node;
+							if (node) {
+								const peers = node.getPeers() || [];
+								info.peerId = node.peerId.toString();
+								info.addresses = node.getMultiaddrs().map((ma: any) => ma.toString());
+								info.connected = peers.length;
+								info.connectedPeers = peers.map((p: any) => p.toString());
+								info.peersInStore = (await node.peerStore.all()).length;
+							}
+						}
+					}
+					result.push(info);
+				}
+				return result;
+			}
 
 			// Manifests
 			case 'getAllManifests':
