@@ -1,7 +1,7 @@
 import type { Component } from 'svelte';
 import { derived, get } from 'svelte/store';
 import { productName } from './app.ts';
-import { t, tt, currentLanguage, setLanguage, languages } from './language.ts';
+import { t, tt, currentLanguage, setLanguage, languages, getFlagUrl } from './language.ts';
 import { audioEnabled, setAudioEnabled, cursorSize, setCursorSize, type CursorSize, timeFormat, setTimeFormat, showSeconds, setShowSeconds } from './settings.ts';
 import { footerPosition, setFooterPosition } from './settings.ts';
 import type { FooterPosition } from './footerWidgets.ts';
@@ -27,6 +27,7 @@ export interface MenuItem {
 	icon?: string;
 	iconPosition?: 'left' | 'top';
 	iconSize?: string;
+	noColorFilter?: boolean; // Don't apply color filter to icon (for colored icons like flags)
 	submenu?: MenuItem[];
 	component?: Component<any>;
 	props?: Record<string, any>;
@@ -188,8 +189,8 @@ export const menuStructure = derived(t, () => ({
 						...languages.map(lang => ({
 							id: `lang-${lang.id}`,
 							label: lang.nativeLabel,
-							iconPosition: 'left',
-							iconSize: '2vh',
+							icon: getFlagUrl(lang.id),
+							noColorFilter: true,
 							selected: () => get(currentLanguage) === lang.id,
 							onSelect: () => setLanguage(lang.id),
 						})),
@@ -197,8 +198,6 @@ export const menuStructure = derived(t, () => ({
 							id: 'back',
 							label: tt('common.back'),
 							icon: '/img/back.svg',
-							iconPosition: 'left',
-							iconSize: '2vh',
 							action: 'back' as const,
 						},
 					],

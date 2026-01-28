@@ -15,6 +15,7 @@
 	},
 	"dependencies": {
 		"@libershare/shared": "file:../shared",
+		"country-flags": "github:hampusborgos/country-flags",
 		"hex-to-css-filter": "^6.0.0"
 	},
 	"devDependencies": {

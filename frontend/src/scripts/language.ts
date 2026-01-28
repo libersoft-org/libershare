@@ -4,10 +4,11 @@ export interface Language {
 	id: string;
 	label: string;
 	nativeLabel: string;
+	flag: string; // ISO 3166-1 alpha-2 country code for flag
 }
 export const languages: Language[] = [
-	{ id: 'en', label: 'English', nativeLabel: 'English' },
-	{ id: 'cs', label: 'Czech', nativeLabel: 'Čeština' },
+	{ id: 'en', label: 'English', nativeLabel: 'English', flag: 'gb' },
+	{ id: 'cs', label: 'Czech', nativeLabel: 'Čeština', flag: 'cz' },
 ];
 export const currentLanguage = writable<string>(getInitialLanguage());
 const langCache: Record<string, any> = {}; // Cache for loaded language files
@@ -50,6 +51,13 @@ export function setLanguage(languageID: string): void {
 
 export function getLanguage(id: string): Language | undefined {
 	return languages.find(lang => lang.id === id);
+}
+
+// Get flag URL for a language
+export function getFlagUrl(langId: string): string {
+	const lang = getLanguage(langId);
+	const flagCode = lang?.flag ?? langId;
+	return `/node_modules/country-flags/svg/${flagCode}.svg`;
 }
 
 // Helper function to get nested value from object by path

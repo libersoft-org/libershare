@@ -8,7 +8,7 @@
 	interface Props {
 		areaID: string;
 		title: string;
-		items: Array<{ id: string; label: string; icon?: string; selected?: boolean; iconPosition?: 'left' | 'top'; iconSize?: string }>;
+		items: Array<{ id: string; label: string; icon?: string; selected?: boolean; iconPosition?: 'left' | 'top'; iconSize?: string; noColorFilter?: boolean }>;
 		orientation?: 'horizontal' | 'vertical';
 		selectedId?: string;
 		buttonWidth?: string;
@@ -47,7 +47,10 @@
 		{#key `${title}-${selectedId}-${orientation}`}
 			<ButtonsGroup {areaID} {position} {initialIndex} {orientation} {onBack}>
 				{#each items as item (item.id)}
-					<Button label={item.label} icon={item.selected ? '/img/check.svg' : item.icon} iconPosition={item.iconPosition ?? 'top'} iconSize={item.iconSize ?? '6vh'} width={buttonWidth} onConfirm={() => onselect?.(item.id)} />
+					{@const showCheckAsIcon = item.selected && !item.icon}
+					{@const iconToShow = showCheckAsIcon ? '/img/check.svg' : item.icon}
+					{@const badgeToShow = item.selected && item.icon ? '/img/check.svg' : undefined}
+					<Button label={item.label} icon={iconToShow} iconPosition={item.iconPosition ?? 'top'} iconSize={item.iconSize ?? '6vh'} noColorFilter={showCheckAsIcon ? false : item.noColorFilter} badgeIcon={badgeToShow} width={buttonWidth} onConfirm={() => onselect?.(item.id)} />
 				{/each}
 			</ButtonsGroup>
 		{/key}
