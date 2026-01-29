@@ -130,6 +130,7 @@ export class WsClient {
 		if (!listeners) {
 			listeners = new Set();
 			this.eventListeners.set(event, listeners);
+
 		}
 		listeners.add(callback);
 

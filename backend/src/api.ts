@@ -316,7 +316,7 @@ export class ApiServer {
 				console.log(JSON.stringify(params, null, 2));
 
 
-				const manifest = await this.dataServer.importDataset(
+				const manifest = await this.dataServer.createLish(
 					params.inputPath,
 					params.saveToFile,
 					params.addToSharing,
@@ -332,7 +332,7 @@ export class ApiServer {
 						//
 
 						info => {
-							this.emit(client, 'import:progress', { path: params.path, ...info });
+							this.emit(client, 'createLish:progress', { path: params.path, ...info });
 						}
 						);
 				return { manifestId: manifest.id };

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Dbg from '../Dbg/Dbg.svelte';
 	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
@@ -35,6 +36,7 @@
 		return $storageLishPath + filename + '.lish';
 	});
 
+	let progress = $state(0);
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
 	let algorithm = $state<HashAlgorithm>('sha256');
@@ -104,6 +106,10 @@
 	async function handleCreate() {
 		submitted = true;
 		if (!errorMessage) {
+			api.on('createLish:progress', (data) => {
+				console.log(`[LISH Create] Progress: ${data}%`);
+				progress = data;
+			});
 			await api.createLish(
 				inputPath,
 				saveToFile,
@@ -274,6 +280,11 @@
 
 <div class="create">
 	<div class="container">
+
+		<Dbg>
+		progress: {progress}%
+		</Dbg>
+
 		<!-- Name (optional) -->
 		<div bind:this={rowElements[FIELD_NAME]}>
 			<Input bind:this={nameInput} bind:value={name} label={$t.downloads?.lishCreate?.name} selected={active && selectedIndex === FIELD_NAME} />

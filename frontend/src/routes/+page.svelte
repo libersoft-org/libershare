@@ -91,7 +91,7 @@
 {/if}
 <div class="page">
 
-	{JSON.stringify($networks)}
+	<!--{JSON.stringify($networks)}-->
 
 	<Header areaID="header" position={LAYOUT.header} {onBack} />
 	<NavigationBreadcrumb areaID="breadcrumb" position={LAYOUT.breadcrumb} items={$breadcrumbItems} {onBack} />
