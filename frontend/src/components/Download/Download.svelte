@@ -145,24 +145,24 @@
 	</div>
 	<div class="container">
 		<Table columns={DOWNLOAD_TABLE_COLUMNS} noBorder>
-		<Header fontSize="1.4vh">
-			<Cell>{$t.downloads?.name}</Cell>
-			<Cell align="center" desktopOnly>{$t.downloads?.id}</Cell>
-			<Cell align="right" desktopOnly>{$t.downloads?.size}</Cell>
-			<Cell align="center" desktopOnly>{$t.downloads?.progress}</Cell>
-			<Cell align="center" desktopOnly>{$t.downloads?.status}</Cell>
-			<Cell align="center" desktopOnly>{$t.downloads?.downloadingFrom}</Cell>
-			<Cell align="center" desktopOnly>{$t.downloads?.uploadingTo}</Cell>
-			<Cell align="right" desktopOnly>{$t.downloads?.downloadSpeed}</Cell>
-			<Cell align="right" desktopOnly>{$t.downloads?.uploadSpeed}</Cell>
-		</Header>
-		<div class="items">
-			{#each downloads as download, index (download.id)}
-				<div bind:this={itemElements[index]}>
-					<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} selected={active && selectedIndex === index} isLast={index === downloads.length - 1} odd={index % 2 === 0} />
-				</div>
-			{/each}
-		</div>
+			<Header fontSize="1.4vh">
+				<Cell>{$t.downloads?.name}</Cell>
+				<Cell align="center" desktopOnly>{$t.downloads?.id}</Cell>
+				<Cell align="center" desktopOnly>{$t.downloads?.size}</Cell>
+				<Cell align="center" desktopOnly>{$t.downloads?.progress}</Cell>
+				<Cell align="center" desktopOnly>{$t.downloads?.status}</Cell>
+				<Cell align="center" desktopOnly>{$t.downloads?.downloadingFrom}</Cell>
+				<Cell align="center" desktopOnly>{$t.downloads?.uploadingTo}</Cell>
+				<Cell align="right" desktopOnly>{$t.downloads?.downloadSpeed}</Cell>
+				<Cell align="right" desktopOnly>{$t.downloads?.uploadSpeed}</Cell>
+			</Header>
+			<div class="items">
+				{#each downloads as download, index (download.id)}
+					<div bind:this={itemElements[index]}>
+						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} selected={active && selectedIndex === index} isLast={index === downloads.length - 1} odd={index % 2 === 0} />
+					</div>
+				{/each}
+			</div>
 		</Table>
 	</div>
 </div>

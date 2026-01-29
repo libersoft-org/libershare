@@ -6,10 +6,14 @@
 		name: string;
 		progress: number;
 		size: string;
+		downloadedSize?: string;
 		selected?: boolean;
 		odd?: boolean;
+		animated?: boolean;
 	}
-	let { name, progress, size, selected = false, odd = false }: Props = $props();
+	let { name, progress, size, downloadedSize, selected = false, odd = false, animated = false }: Props = $props();
+	// Show "downloaded / total" format when downloading (progress < 100 and downloadedSize is provided)
+	let sizeDisplay = $derived(downloadedSize && progress < 100 ? `${downloadedSize} / ${size}` : size);
 </script>
 
 <style>
@@ -23,6 +27,6 @@
 
 <TableRow {selected} {odd}>
 	<TableCell><span class="name">{name}</span></TableCell>
-	<TableCell align="center">{size}</TableCell>
-	<TableCell><ProgressBar {progress} /></TableCell>
+	<TableCell align="center">{sizeDisplay}</TableCell>
+	<TableCell><ProgressBar {progress} {animated} /></TableCell>
 </TableRow>

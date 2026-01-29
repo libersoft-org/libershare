@@ -12,6 +12,7 @@
 		id: string;
 		progress: number;
 		size: string;
+		downloadedSize?: string;
 		status: DownloadStatus;
 		downloadPeers: number;
 		uploadPeers: number;
@@ -21,7 +22,9 @@
 		isLast?: boolean;
 		odd?: boolean;
 	}
-	let { name, id, progress, size, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, selected = false, isLast = false, odd = false }: Props = $props();
+	let { name, id, progress, size, downloadedSize, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, selected = false, isLast = false, odd = false }: Props = $props();
+	// Show "downloaded / total" format when downloading
+	let sizeDisplay = $derived(downloadedSize && progress < 100 ? `${downloadedSize} / ${size}` : size);
 </script>
 
 <style>
@@ -39,7 +42,7 @@
 		<div class="name">{name}</div>
 	</TableCell>
 	<TableCell align="center" desktopOnly>{truncateID(id)}</TableCell>
-	<TableCell align="right" desktopOnly>{size}</TableCell>
+	<TableCell align="center" desktopOnly>{sizeDisplay}</TableCell>
 	<TableCell desktopOnly><ProgressBar {progress} animated={status === 'downloading'} /></TableCell>
 	<TableCell align="center" desktopOnly><Badge label={$t.downloads?.statuses?.[status]} /></TableCell>
 	<TableCell align="center" desktopOnly>{downloadPeers}</TableCell>

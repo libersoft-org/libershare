@@ -258,7 +258,7 @@
 					</TableRow>
 					<TableRow odd>
 						<Cell>{$t.downloads?.size}</Cell>
-						<Cell align="right">{download.size}</Cell>
+						<Cell align="right">{download.downloadedSize && download.progress < 100 ? `${download.downloadedSize} / ${download.size}` : download.size}</Cell>
 					</TableRow>
 					<TableRow>
 						<Cell>{$t.downloads?.progress}</Cell>
@@ -288,7 +288,7 @@
 			</div>
 			<!-- Files table -->
 			<div class="container" bind:this={filesElement}>
-				<Table columns="1fr 10vh 20vh" columnsMobile="1fr 10vh 15vh" noBorder>
+				<Table columns="1fr 15vh 20vh" columnsMobile="1fr 15vh 15vh" noBorder>
 					<Header fontSize="1.4vh">
 						<Cell>{$t.downloads?.name}</Cell>
 						<Cell align="center">{$t.downloads?.size}</Cell>
@@ -297,7 +297,7 @@
 					<div class="items">
 						{#each download.files as file, index (file.id)}
 							<div bind:this={itemElements[index]}>
-								<DownloadFile name={file.name} progress={file.progress} size={file.size} selected={listActive && selectedFileIndex === index} odd={index % 2 === 0} />
+								<DownloadFile name={file.name} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} odd={index % 2 === 0} animated={download.status === 'downloading' && file.progress < 100} />
 							</div>
 						{/each}
 					</div>
