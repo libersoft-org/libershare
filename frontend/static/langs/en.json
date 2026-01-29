@@ -75,7 +75,6 @@
 			"inputPath": "Input (file or directory)",
 			"saveToFile": "Save to .lish file",
 			"outputPath": "Output file (optional)",
-			"addToSharing": "Add for sharing",
 			"name": "Name (optional)",
 			"description": "Description (optional)",
 			"chunkSize": "Chunk size (B, K, M, G, T)",
@@ -98,7 +97,8 @@
 			"lishJSON": "LISH JSON",
 			"filePathRequired": "File path is required",
 			"urlRequired": "URL is required",
-			"downloadPathRequired": "Download folder is required"
+			"downloadPathRequired": "Download folder is required",
+			"autoStartSharing": "Automatically start sharing after adding"
 		}
 	},
 	"settings": {
@@ -118,7 +118,7 @@
 			"maxUploadConnections": "Maximum upload connections",
 			"maxDownloadSpeed": "Maximum download speed (0 = unlimited)",
 			"maxUploadSpeed": "Maximum upload speed (0 = unlimited)",
-			"autoStartSharing": "Start sharing after adding a LISH by default"
+			"autoStartSharingDefault": "Automatically start sharing after adding a LISH (default value)"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",

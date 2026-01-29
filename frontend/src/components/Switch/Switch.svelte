@@ -20,7 +20,9 @@
 		display: inline-flex;
 		align-items: center;
 		position: relative;
+		min-width: 10vh;
 		width: 10vh;
+		min-height: 6vh;
 		height: 6vh;
 		vertical-align: middle;
 	}

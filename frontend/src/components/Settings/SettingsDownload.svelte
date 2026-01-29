@@ -289,7 +289,7 @@
 				<Input bind:this={uploadSpeedRef} bind:value={uploadSpeed} label={$t.settings?.download?.maxUploadSpeed} type="number" selected={active && selectedIndex === FIELD_UPLOAD_SPEED} onBlur={saveUploadSpeed} flex />
 			</div>
 			<div bind:this={rowElements[FIELD_AUTO_START]}>
-				<SwitchRow label={$t.settings?.download?.autoStartSharing + ':'} checked={autoStart} selected={active && selectedIndex === FIELD_AUTO_START} onToggle={toggleAutoStart} />
+				<SwitchRow label={$t.settings?.download?.autoStartSharingDefault + ':'} checked={autoStart} selected={active && selectedIndex === FIELD_AUTO_START} onToggle={toggleAutoStart} />
 			</div>
 		</div>
 		<div class="buttons" bind:this={rowElements[FIELD_BUTTONS]}>

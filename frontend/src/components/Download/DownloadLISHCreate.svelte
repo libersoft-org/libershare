@@ -6,7 +6,7 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { scrollToElement, sanitizeFilename } from '../../scripts/utils.ts';
 	import { HASH_ALGORITHMS, parseChunkSize, validateLishCreateForm, getLishCreateErrorMessage, type HashAlgorithm } from '../../scripts/lish.ts';
-	import { storageLishPath, storagePath } from '../../scripts/settings.ts';
+	import { storageLishPath, storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -24,7 +24,7 @@
 	// Form state
 	let inputPath = $state($storagePath);
 	let saveToFile = $state(true);
-	let addToSharing = $state(true);
+	let addToSharing = $state($autoStartSharing);
 	let name = $state('');
 
 	// Output path derived from name
@@ -315,7 +315,7 @@
 		</div>
 		<!-- Add to Sharing Switch -->
 		<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>
-			<SwitchRow label={$t.downloads?.lishCreate?.addToSharing + ':'} checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
+			<SwitchRow label={$t.downloads?.lishImport?.autoStartSharing + ':'} checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
 		</div>
 		<Alert type="error" message={showError ? errorMessage : ''} />
 	</div>

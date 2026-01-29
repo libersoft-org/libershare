@@ -75,7 +75,6 @@
 			"inputPath": "Vstup (soubor nebo složka)",
 			"saveToFile": "Uložit do souboru .lish",
 			"outputPath": "Výstupní soubor (volitelné)",
-			"addToSharing": "Přidat ke sdílení",
 			"name": "Název (volitelné)",
 			"description": "Popis (volitelné)",
 			"chunkSize": "Velikost chunku (B, K, M, G, T)",
@@ -98,7 +97,8 @@
 			"lishJSON": "LISH JSON",
 			"filePathRequired": "Cesta k souboru je povinná",
 			"urlRequired": "URL je povinná",
-			"downloadPathRequired": "Složka pro stažení je povinná"
+			"downloadPathRequired": "Složka pro stažení je povinná",
+			"autoStartSharing": "Automaticky spustit sdílení po přidání"
 		}
 	},
 	"settings": {
@@ -118,7 +118,7 @@
 			"maxUploadConnections": "Maximální počet spojení pro odesílání",
 			"maxDownloadSpeed": "Maximální rychlost stahování (0 = neomezeno)",
 			"maxUploadSpeed": "Maximální rychlost odesílání (0 = neomezeno)",
-			"autoStartSharing": "Standardně spustit sdílení po přidání LISH"
+			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH (výchozí hodnota)"
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",

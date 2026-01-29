@@ -7,12 +7,13 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { parseLISHFromJson, getLISHErrorMessage } from '../../scripts/lish.ts';
-	import { storagePath } from '../../scripts/settings.ts';
+	import { storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
+	import SwitchRow from '../Switch/SwitchRow.svelte';
 
 	interface Props {
 		areaID: string;
@@ -24,19 +25,21 @@
 	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
-	// 0 = json input, 1 = download path, 2 = buttons row
+	// 0 = json input, 1 = download path, 2 = auto start switch, 3 = buttons row
 	let selectedIndex = $state(0);
 	let selectedColumn = $state(0);
 	let inputRef: Input;
 	let downloadPathRef: Input;
 	let lishJson = $state('');
 	let downloadPath = $state($storagePath);
+	let autoStart = $state($autoStartSharing);
 	let errorMessage = $state('');
 	let browsingDownloadPath = $state(false);
 
 	function getMaxColumn(index: number): number {
 		if (index === 1) return 1; // download path + browse
-		if (index === 2) return 1; // import, back
+		if (index === 2) return 0; // auto start switch
+		if (index === 3) return 1; // import, back
 		return 0;
 	}
 
@@ -97,7 +100,7 @@
 			return false;
 		},
 		down: () => {
-			if (selectedIndex < 2) {
+			if (selectedIndex < 3) {
 				selectedIndex++;
 				selectedColumn = 0;
 				return true;
@@ -127,6 +130,8 @@
 			if (selectedIndex === 1 && selectedColumn === 1) {
 				openDownloadPathBrowse();
 			} else if (selectedIndex === 2) {
+				autoStart = !autoStart;
+			} else if (selectedIndex === 3) {
 				if (selectedColumn === 0) {
 					handleImport();
 				} else if (selectedColumn === 1) {
@@ -188,13 +193,14 @@
 				<Input bind:this={downloadPathRef} bind:value={downloadPath} label={$t.downloads?.lishImport?.downloadPath} selected={active && selectedIndex === 1 && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
+			<SwitchRow label={$t.downloads?.lishImport?.autoStartSharing} checked={autoStart} selected={active && selectedIndex === 2} onToggle={() => autoStart = !autoStart} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
 		<div class="buttons">
-			<Button icon="/img/download.svg" label={$t.common?.import} selected={active && selectedIndex === 2 && selectedColumn === 0} onConfirm={handleImport} />
-			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 2 && selectedColumn === 1} onConfirm={onBack} />
+			<Button icon="/img/download.svg" label={$t.common?.import} selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={handleImport} />
+			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 3 && selectedColumn === 1} onConfirm={onBack} />
 		</div>
 	</div>
 {/if}
