@@ -3,6 +3,7 @@ import {join, dirname, resolve} from 'path';
 import type {IManifest, LishId, ChunkId} from './lish.ts';
 import {createManifest, DEFAULT_CHUNK_SIZE, DEFAULT_ALGO} from './lish.ts';
 import type {Database} from './database.ts';
+import {Utils} from './utils.ts';
 
 export interface MissingChunk {
     fileIndex: number;
@@ -218,8 +219,13 @@ export class DataServer {
 
         onProgress?: (info: {type: string; path?: string; current?: number; total?: number}) => void
     ): Promise<IManifest> {
-        const absolutePath = resolve(inputPath);
 
+			console.log(`Importing dataset from: ${inputPath}, saveToFile=${saveToFile}, addToSharing=${addToSharing}, name=${name}, description=${description}, outputFilePath=${outputFilePath}`);
+
+        const absolutePath = Utils.expandHome(inputPath);
+				outputFilePath = outputFilePath ? Utils.expandHome(outputFilePath) : undefined;
+
+console.log('hmmmmmmmmm');
         // Create manifest
         const manifest = await createManifest(
             absolutePath,

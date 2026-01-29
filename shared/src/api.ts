@@ -60,8 +60,28 @@ export class Api {
         return this.client.call<Stats>('getStats');
     }
 
-    createLish(path: string): Promise<CreateLishResponse> {
-        return this.client.call<CreateLishResponse>('createLish', { path });
+    createLish(
+        inputPath: string,
+        saveToFile: boolean = true,
+        addToSharing: boolean = true,
+        name?: string,
+        description?: string,
+        outputFilePath?: string,
+        algorithm?: string,
+        chunkSize?: number,
+        threads?: number
+    ): Promise<CreateLishResponse> {
+        return this.client.call<CreateLishResponse>('createLish', {
+            inputPath,
+            saveToFile,
+            addToSharing,
+            name,
+            description,
+            outputFilePath,
+            algorithm,
+            chunkSize,
+            threads
+        });
     }
 
     download(networkId: string, manifestPath: string): Promise<DownloadResponse> {

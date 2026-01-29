@@ -11,6 +11,7 @@
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import SwitchRow from '../Switch/SwitchRow.svelte';
+	import {api} from '../../scripts/api.ts';
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -100,21 +101,20 @@
 		}
 	}
 
-	function handleCreate() {
+	async function handleCreate() {
 		submitted = true;
 		if (!errorMessage) {
-			// TODO: Call backend API to create LISH
-			console.log('Creating LISH:', {
+			await api.createLish(
 				inputPath,
 				saveToFile,
-				outputPath: saveToFile ? outputPath : undefined,
 				addToSharing,
-				name: name || undefined,
-				description: description || undefined,
-				chunkSize: parseChunkSize(chunkSize),
+				name || undefined,
+				description || undefined,
+				(saveToFile ? outputPath : undefined),
 				algorithm,
-				threads: parseInt(threads) || 1,
-			});
+				parseChunkSize(chunkSize),
+				parseInt(threads) || 1,
+			);
 		}
 	}
 

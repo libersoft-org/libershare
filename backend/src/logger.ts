@@ -37,7 +37,7 @@ function createPreciseReporter(): ConsolaReporter {
 			const output = `${prefix}[${timestamp}] [${levelName}] ${args}`;
 
 			if (logObj.level <= LogLevels.error) {
-				console.error(output);
+				process.stderr.write(output + '\n');
 			} else {
 				process.stdout.write(output + '\n');
 			}

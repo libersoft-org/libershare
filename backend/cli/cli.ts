@@ -62,6 +62,16 @@ ${HELP}`);
 	}
 }
 
+
+function resolvePath(x:string)
+{
+	x = expandHome(x);
+	if (!x.startswith('/'))
+		x = resolvePath(x);
+	return x;
+}
+
+
 async function main() {
 	console.log(`Connecting to ${serverUrl}...`);
 
@@ -323,6 +333,7 @@ async function main() {
 						console.log('Usage: datasets.import <path>');
 						break;
 					}
+					arg = resolvePath(arg);
 					console.log(`Importing: ${arg}`);
 					const result = await api.createLish(arg);
 					console.log(`✓ Import complete. Manifest ID: ${result.manifestId}`);

@@ -119,11 +119,15 @@ export class ApiServer {
 			const result = await this.execute(client, req.method, req.params || {});
 			client.send(JSON.stringify({ id: req.id, result }));
 		} catch (err: any) {
+			console.error(`[API] Error executing ${req.method}, params=${JSON.stringify(req.params)}: ${err.message}`);
 			client.send(JSON.stringify({ id: req.id, error: err.message }));
 		}
 	}
 
 	private async execute(client: ClientSocket, method: string, params: Record<string, any>): Promise<any> {
+
+		console.log(`[API] Executing method: ${method}, params: ${JSON.stringify(params)}`);
+
 		switch (method) {
 			// event subscriptions
 			case 'subscribe': {
@@ -308,13 +312,17 @@ export class ApiServer {
 
 			// given a directory path, create and import a Lish manifest and a corresponding dataset
 			case 'createLish': {
+
+				console.log(JSON.stringify(params, null, 2));
+
+
 				const manifest = await this.dataServer.importDataset(
 					params.inputPath,
 					params.saveToFile,
 					params.addToSharing,
 					params.name,
 					params.description,
-					params.outputPath,
+					params.outputFilePath,
 					params.algorithm,
 					params.chunkSize,
 					params.threads,

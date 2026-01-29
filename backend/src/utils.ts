@@ -65,4 +65,15 @@ export class Utils {
 
 		return new Uint8Array(bytes);
 	}
+
+	static expandHome(path: string): string {
+		// expand ~ to home directory
+		if (path.startsWith('~')) {
+			const home = process.env.HOME || process.env.USERPROFILE;
+			if (home) {
+				return home + path.slice(1);
+			}
+		}
+	}
+
 }
