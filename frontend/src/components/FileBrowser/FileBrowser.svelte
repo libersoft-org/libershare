@@ -75,7 +75,7 @@
 		return fileFilter.join(', ');
 	});
 	// Folder toolbar actions
-	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter));
+	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, !!onSelect));
 	let selectedFolderActionIndex = $state(0);
 	let folderActionsActive = $derived($activeArea === `${areaID}-folder-actions`);
 	// Filter panel actions

@@ -152,10 +152,10 @@ export function getFileActions(t: { fileBrowser?: { openFile?: string; deleteFil
 /**
  * Build folder toolbar actions based on mode
  */
-export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; newFolder?: string; deleteFolder?: string } }, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[]): FileBrowserAction[] {
+export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; newFolder?: string; deleteFolder?: string } }, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], selectable?: boolean): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	if (!filesOnly) {
-		actions.push({ id: 'select', label: t.fileBrowser?.selectFolder, icon: '/img/check.svg' });
+		if (selectable) actions.push({ id: 'select', label: t.fileBrowser?.selectFolder, icon: '/img/check.svg' });
 		actions.push({ id: 'new', label: t.fileBrowser?.newFolder, icon: '/img/plus.svg' });
 		actions.push({ id: 'delete', label: t.fileBrowser?.deleteFolder, icon: '/img/del.svg' });
 	}
@@ -236,7 +236,7 @@ export interface FileOperationResult {
  */
 export async function deleteFileOrFolder(path: string): Promise<FileOperationResult> {
 	try {
-		await api.fs.delete(path);
+		await api.fsDelete(path);
 		return { success: true };
 	} catch (e: any) {
 		return { success: false, error: e.message || 'Failed to delete' };
@@ -248,7 +248,7 @@ export async function deleteFileOrFolder(path: string): Promise<FileOperationRes
  */
 export async function createFolder(path: string): Promise<FileOperationResult> {
 	try {
-		await api.fs.mkdir(path);
+		await api.fsMkdir(path);
 		return { success: true };
 	} catch (e: any) {
 		return { success: false, error: e.message || 'Failed to create folder' };
@@ -260,7 +260,7 @@ export async function createFolder(path: string): Promise<FileOperationResult> {
  */
 export async function openFile(path: string): Promise<FileOperationResult> {
 	try {
-		await api.fs.open(path);
+		await api.fsOpen(path);
 		return { success: true };
 	} catch (e: any) {
 		return { success: false, error: e.message || 'Failed to open file' };
