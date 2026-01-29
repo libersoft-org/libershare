@@ -205,6 +205,17 @@ export class DataServer {
     // Import a local file/directory as a dataset
     public async importDataset(
         inputPath: string,
+
+				saveToFile: boolean = false,
+				addToSharing: boolean = true,
+				name: string | undefined,
+				description: string | undefined,
+				outputFilePath: string | undefined,
+
+				algo: string = DEFAULT_ALGO,
+				chunkSize: number = DEFAULT_CHUNK_SIZE,
+				threads: number = 0,
+
         onProgress?: (info: {type: string; path?: string; current?: number; total?: number}) => void
     ): Promise<IManifest> {
         const absolutePath = resolve(inputPath);
@@ -212,46 +223,79 @@ export class DataServer {
         // Create manifest
         const manifest = await createManifest(
             absolutePath,
-            undefined, // name
-            DEFAULT_CHUNK_SIZE,
-            DEFAULT_ALGO,
-            0, // auto-detect threads
-            undefined, // description
+            name,
+            chunkSize,
+            algo as any,
+            threads,
+            description,
             onProgress
         );
 
         const lishId = manifest.id as LishId;
 
-        // Ensure lish directory exists
-        await mkdir(this.dataPath, {recursive: true});
+				if (saveToFile) {
+					this.saveManifestToFile(manifest, outputFilePath);
+				}
 
-        // Write manifest to dataDir/lish/[uuid].lish
-        const manifestPath = join(this.dataPath, `${lishId}.lish`);
-        await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
-        console.log(`✓ Manifest written to: ${manifestPath}`);
+				if (addToSharing)
+				{
 
-        // Create dataset row
-        this.db.createDataset(lishId, absolutePath);
+					await this.addManifest(manifest);
 
-        // Mark all chunks as downloaded
-        if (manifest.files) {
-            for (const file of manifest.files) {
-                for (const chunkId of file.checksums as ChunkId[]) {
-                    this.db.markChunkDownloaded(lishId, chunkId);
-                }
-            }
-        }
+					// Create dataset row
+					this.db.createDataset(lishId, absolutePath);
 
-        // Mark dataset as complete
-        const dataset = this.db.getDatasetByManifest(lishId);
-        if (dataset) {
-            this.db.markDatasetComplete(dataset.id);
-        }
+					// Mark all chunks as downloaded
+					if (manifest.files) {
+							for (const file of manifest.files) {
+									for (const chunkId of file.checksums as ChunkId[]) {
+											this.db.markChunkDownloaded(lishId, chunkId);
+									}
+							}
+					}
 
-        // Add to in-memory manifests
-        this.manifests.set(lishId, manifest);
-        console.log(`✓ Dataset imported: ${lishId}`);
+					// Mark dataset as complete
+					const dataset = this.db.getDatasetByManifest(lishId);
+					if (dataset) {
+							this.db.markDatasetComplete(dataset.id);
+					}
+
+					console.log(`✓ Dataset imported: ${lishId}`);
+
+				}
 
         return manifest;
     }
+
+
+		// todo: use database instead.
+		public async addManifest(manifest: IManifest): Promise<void> {
+        // Ensure lish directory exists
+        await mkdir(this.dataPath, {recursive: true});
+
+
+				const lishId = manifest.id as LishId;
+
+				// Write manifest to dataDir/lish/[uuid].lish
+        const manifestPath = join(this.dataPath, `${lishId}.lish`);
+        await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+        console.log(`✓ Manifest written to: ${manifestPath}`);
+        // Add to in-memory manifests
+        this.manifests.set(lishId, manifest);
+		}
+
+		private async saveManifestToFile(manifest: IManifest, outputFilePath: string | undefined): Promise<void> {
+
+					// Ensure output directory exists
+					if (!outputFilePath)
+						throw new Error('Output file path is required when saveToFile is true');
+					const outputDir = dirname(outputFilePath);
+					await mkdir(outputDir, {recursive: true});
+
+					// Write manifest to specified output file
+					await writeFile(outputFilePath, JSON.stringify(manifest, null, 2));
+					console.log(`✓ Manifest written to: ${outputFilePath}`);
+		}
+
+
 }

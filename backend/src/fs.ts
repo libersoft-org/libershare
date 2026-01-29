@@ -1,6 +1,8 @@
-import { readdir, stat, access } from 'fs/promises';
+import { readdir, stat, access, unlink, rmdir, mkdir } from 'fs/promises';
 import { join, sep } from 'path';
 import { homedir, platform } from 'os';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
 export interface FsEntry {
 	name: string;
@@ -102,4 +104,29 @@ export async function fsList(path?: string): Promise<FsListResult> {
 	});
 
 	return { path, entries };
+}
+
+const execAsync = promisify(exec);
+
+export async function fsDelete(path: string): Promise<void> {
+	const stats = await stat(path);
+	if (stats.isDirectory()) {
+		await rmdir(path, { recursive: true });
+	} else {
+		await unlink(path);
+	}
+}
+
+export async function fsMkdir(path: string): Promise<void> {
+	await mkdir(path, { recursive: true });
+}
+
+export async function fsOpen(path: string): Promise<void> {
+	if (isWindows) {
+		await execAsync(`start "" "${path}"`);
+	} else if (platform() === 'darwin') {
+		await execAsync(`open "${path}"`);
+	} else {
+		await execAsync(`xdg-open "${path}"`);
+	}
 }

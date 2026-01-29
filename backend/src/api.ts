@@ -4,7 +4,7 @@ import type { DataServer } from './data-server.ts';
 import type { Networks } from './networks.ts';
 import { Downloader } from './downloader.ts';
 import { join } from 'path';
-import { fsInfo, fsList } from './fs.ts';
+import { fsInfo, fsList, fsDelete, fsMkdir, fsOpen } from './fs.ts';
 
 interface ClientData {
 	subscribedEvents: Set<string>;
@@ -309,12 +309,17 @@ export class ApiServer {
 			// given a directory path, create and import a Lish manifest and a corresponding dataset
 			case 'createLish': {
 				const manifest = await this.dataServer.importDataset(
-					params.doExport,
-					params.doImport,
+					params.inputPath,
+					params.saveToFile,
+					params.addToSharing,
 					params.name,
 					params.description,
-					params.path,
-						// todo: check that path is not already in datasets.
+					params.outputPath,
+					params.algorithm,
+					params.chunkSize,
+					params.threads,
+
+					// todo: check that path is not already in datasets.
 						// todo: check that path exists
 						//
 
@@ -347,6 +352,15 @@ export class ApiServer {
 
 			case 'fs.list':
 				return await fsList(params.path);
+
+			case 'fs.delete':
+				return await fsDelete(params.path);
+
+			case 'fs.mkdir':
+				return await fsMkdir(params.path);
+
+			case 'fs.open':
+				return await fsOpen(params.path);
 
 			case 'download': {
 				/*
