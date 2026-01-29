@@ -95,4 +95,6 @@ Thank you for being a part of our projects' success!
 
 ## Star history
 
+If you support decentralized technology and open protocols, consider starring this repository. Thank you!
+
 [![Star History Chart](https://api.star-history.com/svg?repos=libersoft-org/libershare&type=Date)](https://star-history.com/#libersoft-org/libershare&Date)
