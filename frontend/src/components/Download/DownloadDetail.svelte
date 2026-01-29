@@ -247,7 +247,7 @@
 		<div class="content">
 			<!-- Info with LISH details -->
 			<div class="info" class:selected={infoActive} bind:this={infoElement}>
-				<Table columns="auto 1fr" noBorder>
+				<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
 					<TableRow odd>
 						<Cell>{$t.downloads?.name}</Cell>
 						<Cell align="right">{download.name}</Cell>
@@ -288,7 +288,7 @@
 			</div>
 			<!-- Files table -->
 			<div class="container" bind:this={filesElement}>
-				<Table columns="1fr 15vh 20vh" columnsMobile="1fr 15vh 15vh" noBorder>
+				<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
 					<Header fontSize="1.4vh">
 						<Cell>{$t.downloads?.name}</Cell>
 						<Cell align="center">{$t.downloads?.size}</Cell>
