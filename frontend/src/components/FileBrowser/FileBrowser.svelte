@@ -74,12 +74,10 @@
 		if (showAllFiles) return '*.*';
 		return fileFilter.join(', ');
 	});
-
 	// Folder toolbar actions
 	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter));
 	let selectedFolderActionIndex = $state(0);
 	let folderActionsActive = $derived($activeArea === `${areaID}-folder-actions`);
-
 	// Filter panel actions
 	let filterActions = $derived(buildFilterActions($t, fileFilter));
 
@@ -169,17 +167,12 @@
 		confirmDown: () => {},
 		confirmUp: () => {
 			const item = items[selectedIndex];
-			if (item && (item.type === 'folder' || item.type === 'drive')) {
-				// Folders/drives - navigate into them
-				navigateInto(item);
-			} else if (item?.type === 'file') {
+			if (item && (item.type === 'folder' || item.type === 'drive'))
+				navigateInto(item); // Folders/drives - navigate into them
+			else if (item?.type === 'file') {
 				// Files - in filesOnly mode, select the file directly
-				if (filesOnly) {
-					onSelect?.(item.path);
-				} else {
-					// Otherwise show actions panel
-					openActions();
-				}
+				if (filesOnly) onSelect?.(item.path);
+				else openActions(); // Otherwise show actions panel
 			}
 		},
 		confirmCancel: () => {},
@@ -221,9 +214,7 @@
 		confirmDown: () => {},
 		confirmUp: () => {
 			const action = folderActions[selectedFolderActionIndex];
-			if (action) {
-				handleFolderAction(action.id);
-			}
+			if (action) handleFolderAction(action.id);
 		},
 		confirmCancel: () => {},
 		back: () => {
@@ -291,9 +282,7 @@
 			if (action) handleFilterAction(action.id);
 		},
 		confirmCancel: () => {},
-		back: () => {
-			closeFilterPanel();
-		},
+		back: () => closeFilterPanel(),
 	};
 
 	function handleAction(actionId: string) {
@@ -384,11 +373,8 @@
 	async function confirmDeleteFolder() {
 		const result = await deleteFileOrFolder(currentPath);
 		if (result.success) {
-			// Navigate to parent after deletion
-			if (parentPath !== null) await loadDirectory(parentPath);
-		} else {
-			error = result.error || 'Failed to delete folder';
-		}
+			if (parentPath !== null) await loadDirectory(parentPath); // Navigate to parent after deletion
+		} else error = result.error || 'Failed to delete folder';
 		cancelDeleteFolder();
 	}
 
@@ -427,13 +413,14 @@
 		if (result.success) {
 			// Reload directory and select the new folder
 			await loadDirectory(currentPath, folderName);
+			cancelNewFolder(true); // Pass true to indicate success - focus on list
 		} else {
 			error = result.error || 'Failed to create folder';
+			cancelNewFolder(false);
 		}
-		cancelNewFolder();
 	}
 
-	async function cancelNewFolder() {
+	async function cancelNewFolder(focusList = false) {
 		showNewFolderDialogState = false;
 		popBreadcrumb();
 		await tick();
@@ -441,7 +428,12 @@
 		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
-		activateArea(`${areaID}-folder-actions`);
+		// Focus on list if folder was created successfully, otherwise on toolbar
+		if (focusList) {
+			activateArea(listAreaID);
+		} else {
+			activateArea(`${areaID}-folder-actions`);
+		}
 	}
 
 	async function handleOpenFile(item: StorageItemData) {
