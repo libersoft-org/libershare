@@ -7,7 +7,7 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
 	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
-	import { scrollToElement } from '../../scripts/utils.ts';
+	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
 	import Header from '../Table/TableHeader.svelte';
@@ -67,9 +67,12 @@
 	let showDeleteFileConfirm = $state(false);
 	let showRenameFileDialogState = $state(false);
 	let showEditorState = $state(false);
+	let showLargeFileWarning = $state(false);
 	let fileToDelete = $state<StorageItemData | null>(null);
 	let fileToRename = $state<StorageItemData | null>(null);
 	let fileToEdit = $state<StorageItemData | null>(null);
+	let pendingEditFile = $state<StorageItemData | null>(null);
+	const LARGE_FILE_THRESHOLD = 1024 * 1024; // 1 MB
 	let unregisterFolderActions: (() => void) | null = null;
 	let unregisterList: (() => void) | null = null;
 	let unregisterActions: (() => void) | null = null;
@@ -629,6 +632,31 @@
 	}
 
 	function showEditor(item: StorageItemData) {
+		// Check if file is larger than 1MB
+		if (item.size && item.size > LARGE_FILE_THRESHOLD) {
+			showLargeFileWarning = true;
+			pendingEditFile = item;
+			showActions = false;
+			// Unregister areas so dialog can take over
+			if (unregisterFolderActions) {
+				unregisterFolderActions();
+				unregisterFolderActions = null;
+			}
+			if (unregisterList) {
+				unregisterList();
+				unregisterList = null;
+			}
+			if (unregisterActions) {
+				unregisterActions();
+				unregisterActions = null;
+			}
+			pushBreadcrumb($t.fileBrowser?.largeFileWarning);
+			return;
+		}
+		openEditor(item);
+	}
+
+	function openEditor(item: StorageItemData) {
 		fileToEdit = item;
 		showEditorState = true;
 		showActions = false;
@@ -645,6 +673,27 @@
 			unregisterActions();
 			unregisterActions = null;
 		}
+	}
+
+	function confirmLargeFileEdit() {
+		if (pendingEditFile) {
+			showLargeFileWarning = false;
+			popBreadcrumb();
+			openEditor(pendingEditFile);
+			pendingEditFile = null;
+		}
+	}
+
+	async function cancelLargeFileEdit() {
+		showLargeFileWarning = false;
+		pendingEditFile = null;
+		popBreadcrumb();
+		await tick();
+		// Re-register all areas
+		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
+		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
+		activateArea(listAreaID);
 	}
 
 	async function closeEditor() {
@@ -843,6 +892,9 @@
 {/if}
 {#if showRenameFileDialogState && fileToRename}
 	<InputDialog title={$t.fileBrowser?.renameFile} label={$t.fileBrowser?.fileName} placeholder={$t.fileBrowser?.enterFileName} initialValue={fileToRename.name} confirmLabel={$t.common?.ok} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmRenameFile} onBack={cancelRenameFile} />
+{/if}
+{#if showLargeFileWarning && pendingEditFile}
+	<ConfirmDialog title={$t.fileBrowser?.largeFileWarning} message={$t.fileBrowser?.largeFileWarningMessage?.replace('{name}', pendingEditFile.name).replace('{size}', formatSize(pendingEditFile.size))} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmLargeFileEdit} onBack={cancelLargeFileEdit} />
 {/if}
 {#if showCustomFilterDialog}
 	<InputDialog title={$t.fileBrowser?.customFilter} label={$t.fileBrowser?.filterPattern} placeholder={$t.fileBrowser?.enterFilterPattern} initialValue={customFilter ?? ''} confirmLabel={$t.common?.ok} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmCustomFilter} onBack={closeCustomFilterDialog} />

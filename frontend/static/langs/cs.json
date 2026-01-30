@@ -192,6 +192,8 @@
 		"enterFileName": "Zadejte nový název souboru",
 		"confirmDeleteFolder": "Opravdu chcete smazat složku \"{path}\"?",
 		"confirmDeleteFile": "Opravdu chcete smazat soubor \"{name}\"?",
+		"largeFileWarning": "Velký soubor",
+		"largeFileWarningMessage": "Soubor \"{name}\" má {size}.\nOtevření takto velkého souboru může způsobit zamrznutí či pád aplikace.\nOpravdu ho chcete otevřít v editoru?",
 		"customFilter": "Vlastní filtr",
 		"filterPattern": "Filtr",
 		"enterFilterPattern": "Zadejte filtr (např. *.txt, *.jpg)"

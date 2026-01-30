@@ -192,6 +192,8 @@
 		"enterFileName": "Enter new file name",
 		"confirmDeleteFolder": "Are you sure you want to delete folder \"{path}\"?",
 		"confirmDeleteFile": "Are you sure you want to delete file \"{name}\"?",
+		"largeFileWarning": "Large file",
+		"largeFileWarningMessage": "File \"{name}\" is {size}.\nOpening such a large file may cause the application to freeze or crash.\nDo you really want to open it in the editor?",
 		"customFilter": "Custom filter",
 		"filterPattern": "Filter",
 		"enterFilterPattern": "Enter filter (e.g. *.txt, *.jpg)"

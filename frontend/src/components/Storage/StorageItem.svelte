@@ -3,11 +3,12 @@
 	import TableCell from '../Table/TableCell.svelte';
 	import Icon from '../Icon/Icon.svelte';
 	import { type StorageItemType, getStorageIcon } from '../../scripts/storage.ts';
+	import { formatSize } from '../../scripts/utils.ts';
 
 	interface Props {
 		name: string;
 		type: StorageItemType;
-		size?: string;
+		size?: number;
 		modified?: string;
 		selected?: boolean;
 		isLast?: boolean;
@@ -36,6 +37,6 @@
 			<span>{name}</span>
 		</div>
 	</TableCell>
-	<TableCell align="right" desktopOnly>{size ?? '—'}</TableCell>
+	<TableCell align="right" desktopOnly>{size !== undefined ? formatSize(size) : '—'}</TableCell>
 	<TableCell align="right" desktopOnly>{modified ?? '—'}</TableCell>
 </TableRow>

@@ -1,6 +1,6 @@
 import { api } from './api.ts';
 import type { StorageItemData } from './storage.ts';
-import { formatSize, formatDate } from './utils.ts';
+import { formatDate } from './utils.ts';
 /**
  * File system entry from API
  */
@@ -59,7 +59,7 @@ export function transformFsEntry(entry: FsEntry, index: number): StorageItemData
 		name: entry.name,
 		path: entry.path,
 		type: entry.type === 'directory' ? 'folder' : entry.type,
-		size: formatSize(entry.size),
+		size: entry.size,
 		modified: formatDate(entry.modified),
 		hidden: entry.hidden,
 	};

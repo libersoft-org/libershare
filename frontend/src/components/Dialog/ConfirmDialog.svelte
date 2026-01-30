@@ -67,6 +67,8 @@
 	.message {
 		font-size: 2vh;
 		text-align: center;
+		white-space: pre-line;
+		line-height: 1.6;
 	}
 </style>
 
