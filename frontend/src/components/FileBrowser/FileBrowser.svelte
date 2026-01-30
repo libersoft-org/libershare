@@ -525,9 +525,7 @@
 			// Reload directory and select the new file
 			await loadDirectory(currentPath, fileName);
 			cancelCreateFile(true);
-		} else {
-			dialogError = result.error || 'Failed to create file';
-		}
+		} else dialogError = result.error || 'Failed to create file';
 	}
 
 	async function cancelCreateFile(focusList = false) {
@@ -538,18 +536,13 @@
 		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
-		if (focusList) {
-			activateArea(listAreaID);
-		} else {
-			activateArea(`${areaID}-folder-actions`);
-		}
+		if (focusList) activateArea(listAreaID);
+		else activateArea(`${areaID}-folder-actions`);
 	}
 
 	async function handleOpenFile(item: StorageItemData) {
 		const result = await openFile(item.path);
-		if (!result.success) {
-			error = result.error || 'Failed to open file';
-		}
+		if (!result.success) error = result.error || 'Failed to open file';
 		showActions = false;
 		activateArea(listAreaID);
 	}

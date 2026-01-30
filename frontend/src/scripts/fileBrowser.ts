@@ -174,7 +174,7 @@ export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; n
 		actions.push({ id: 'new', label: t.fileBrowser?.newFolder, icon: '/img/plus.svg' });
 		actions.push({ id: 'delete', label: t.fileBrowser?.deleteFolder, icon: '/img/del.svg' });
 	}
-	actions.push({ id: 'createFile', label: t.fileBrowser?.createFile, icon: '/img/file.svg' });
+	actions.push({ id: 'createFile', label: t.fileBrowser?.createFile, icon: '/img/plus.svg' });
 	// Filter button always visible, shows current filter state
 	let filterLabel: string;
 	if (customFilter) filterLabel = customFilter;
