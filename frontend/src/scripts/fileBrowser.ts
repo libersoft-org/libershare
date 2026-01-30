@@ -236,7 +236,7 @@ export interface FileOperationResult {
  */
 export async function deleteFileOrFolder(path: string): Promise<FileOperationResult> {
 	try {
-		await api.fsDelete(path);
+		await api.fs.delete(path);
 		return { success: true };
 	} catch (e: any) {
 		return { success: false, error: e.message || 'Failed to delete' };
@@ -248,7 +248,7 @@ export async function deleteFileOrFolder(path: string): Promise<FileOperationRes
  */
 export async function createFolder(path: string): Promise<FileOperationResult> {
 	try {
-		await api.fsMkdir(path);
+		await api.fs.mkdir(path);
 		return { success: true };
 	} catch (e: any) {
 		return { success: false, error: e.message || 'Failed to create folder' };
@@ -260,7 +260,7 @@ export async function createFolder(path: string): Promise<FileOperationResult> {
  */
 export async function openFile(path: string): Promise<FileOperationResult> {
 	try {
-		await api.fsOpen(path);
+		await api.fs.open(path);
 		return { success: true };
 	} catch (e: any) {
 		return { success: false, error: e.message || 'Failed to open file' };
