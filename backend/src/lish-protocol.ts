@@ -4,31 +4,22 @@ import type { Stream } from '@libp2p/interface';
 import type { LishId, ChunkId } from './lish.ts';
 import type { DataServer } from './data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
-
 export const LISH_PROTOCOL = '/lish/1.0.0';
-
 export interface LishRequest {
 	lishId: LishId;
 	chunkId: ChunkId;
 }
-
 export interface LishResponse {
 	data: number[] | null;
 }
-
 export type HaveChunks = 'all' | ChunkId[];
-
 
 // Client-side stream wrapper that can send multiple requests
 export class LishClient {
 	private stream: Stream;
 	private decoder: AsyncGenerator<Uint8Array | Uint8ArrayList>;
 	public haveChunks: HaveChunks;
-
-	constructor(
-		stream: Stream,
-		onDisconnect?: () => void,
-	) {
+	constructor(stream: Stream, onDisconnect?: () => void) {
 		this.stream = stream;
 		this.decoder = decode(stream);
 	}
@@ -37,29 +28,22 @@ export class LishClient {
 	async requestChunk(lishId: LishId, chunkId: ChunkId): Promise<Uint8Array | null> {
 		try {
 			console.log(`[Client] Stream status before request: read=${this.stream.status}, write=${this.stream.writeStatus}`);
-
 			// Create the request
 			const request: LishRequest = {
 				lishId,
 				chunkId,
 			};
-
 			// Send the request
 			const requestData = new TextEncoder().encode(JSON.stringify(request));
 			await sendLengthPrefixed(this.stream, requestData);
-
 			console.log(`[Client] Stream status after send: read=${this.stream.status}, write=${this.stream.writeStatus}`);
-
 			// Read the response
 			const responseMsg = await this.decoder.next();
-
 			console.log(`[Client] Stream status after receive: read=${this.stream.status}, write=${this.stream.writeStatus}`);
-
 			if (responseMsg.done) {
 				console.log('Stream closed before receiving response');
 				return null;
 			}
-
 			// Convert to Uint8Array if needed
 			if (!responseMsg.value) {
 				console.log('Response has no data');
@@ -67,12 +51,8 @@ export class LishClient {
 			}
 			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
 			const response: LishResponse = JSON.parse(new TextDecoder().decode(responseData));
-
 			// Convert number array back to Uint8Array
-			if (response.data) {
-				return new Uint8Array(response.data);
-			}
-
+			if (response.data) return new Uint8Array(response.data);
 			return null;
 		} catch (error) {
 			console.error('Error requesting chunk:', error);
@@ -94,31 +74,23 @@ export async function handleLishProtocol(stream: Stream, dataServer: DataServer)
 	try {
 		// Wrap the stream with length-prefixed decoder for multiple messages
 		const decoder = decode(stream);
-
 		// Handle multiple requests on the same stream
 		for await (const msg of decoder) {
 			// Convert to Uint8Array if needed
 			const data = msg instanceof Uint8ArrayList ? msg.subarray() : msg;
 			const request: LishRequest = JSON.parse(new TextDecoder().decode(data));
-
 			console.log(`Received lish request: ${request.lishId.slice(0, 8)}... chunk ${request.chunkId.slice(0, 8)}...`);
-
 			// Get the chunk
 			const chunkData = await dataServer.getChunk(request.lishId, request.chunkId);
-
 			// Write the response
 			const response: LishResponse = {
 				data: chunkData ? Array.from(chunkData) : null,
 			};
-
 			const responseData = new TextEncoder().encode(JSON.stringify(response));
-
 			// Send response with length prefix
 			await sendLengthPrefixed(stream, responseData);
-
 			console.log(`Responded with ${chunkData ? chunkData.length : 0} bytes`);
 		}
-
 		// Stream closed by remote, close our end
 		await stream.close();
 	} catch (error) {
@@ -131,7 +103,6 @@ export async function handleLishProtocol(stream: Stream, dataServer: DataServer)
 async function sendLengthPrefixed(stream: Stream, data: Uint8Array): Promise<void> {
 	// Encode the message with length prefix - returns AsyncGenerator<Uint8Array>
 	const encoded = lpEncode([data]);
-
 	// Send all chunks from the encoder
 	for await (const chunk of encoded) {
 		stream.send(chunk);

@@ -1,5 +1,5 @@
 import { Utils } from './utils.ts';
-import { generateKey } from '@libp2p/pnet'
+import { generateKey } from '@libp2p/pnet';
 
 export interface ILISHNetwork {
 	version: number;
@@ -114,12 +114,10 @@ async function main() {
 		process.exit(1);
 	}
 	try {
-
 		let swarmKey = new Uint8Array(95);
-		await generateKey(swarmKey)
+		await generateKey(swarmKey);
 		// Convert swarmKey to base 62 using Utils.encodeBase62
 		let swarmKeyString = Utils.encodeBase62(swarmKey);
-
 		const network: ILISHNetwork = {
 			version: 1,
 			swarmKey: swarmKeyString,
@@ -128,9 +126,7 @@ async function main() {
 			bootstrapPeers: args.bootstrap,
 			created: new Date().toISOString(),
 		};
-		if (args.description) {
-			network.description = args.description;
-		}
+		if (args.description) network.description = args.description;
 		const startTime = Date.now();
 		console.log('\x1b[33mCreation time:\x1b[0m        ' + new Date().toLocaleString());
 		console.log('');

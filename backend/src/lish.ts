@@ -1,4 +1,4 @@
-import * as fsPromises from "node:fs/promises";
+import * as fsPromises from 'node:fs/promises';
 import type { HashAlgorithm, IManifest, IDirectoryEntry, IFileEntry, ILinkEntry } from '@libershare/shared';
 export type { LishId, ChunkId, HashAlgorithm, IManifest, IDirectoryEntry, IFileEntry, ILinkEntry } from '@libershare/shared';
 export { SUPPORTED_ALGOS } from '@libershare/shared';

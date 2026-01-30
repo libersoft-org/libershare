@@ -7,14 +7,11 @@ async function fetchStatsOnce() {
 	try {
 		const response = await api.getStats();
 		stats.set({ ...response, ts: Date.now() });
-	}
-	catch (error) {
+	} catch (error) {
 		console.error('Error fetching stats:', error);
 		stats.set({ error: 'Error fetching stats', ts: Date.now() });
 	}
 }
-
-
 
 export async function initStats() {
 	await fetchStatsOnce();
@@ -22,4 +19,3 @@ export async function initStats() {
 		await fetchStatsOnce();
 	}, 1000);
 }
-

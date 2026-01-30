@@ -97,7 +97,6 @@ function getFirstNetwork() {
 	return liveNetworks.values().next().value;
 }
 
-
 process.on('SIGINT', shutdown);
 
 await networks.startEnabledNetworks();

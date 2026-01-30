@@ -1,6 +1,6 @@
 import { createLibp2p } from 'libp2p';
 import { Utils } from './utils.ts';
-import { preSharedKey } from '@libp2p/pnet'
+import { preSharedKey } from '@libp2p/pnet';
 import { tcp } from '@libp2p/tcp';
 import { noise, pureJsCrypto } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
@@ -24,30 +24,25 @@ import { join } from 'path';
 import { DataServer } from './data-server.ts';
 import { LISH_PROTOCOL, handleLishProtocol } from './lish-protocol.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
-import {HaveMessage, LISH_TOPIC, WantMessage} from './downloader.ts';
+import { HaveMessage, LISH_TOPIC, WantMessage } from './downloader.ts';
 import type { NetworkDefinition } from './networks.ts';
-
 // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 type PubSub = any;
-
 interface PinkMessage {
 	type: 'pink';
 	peerId: string;
 	timestamp: number;
 }
-
 interface PonkMessage {
 	type: 'ponk';
 	peerId: string;
 	timestamp: number;
 	inReplyTo: string;
 }
-
 const PINK_TOPIC = 'pink';
 const PONK_TOPIC = 'ponk';
 const PRIVATE_KEY_PATH = '/local/privatekey';
 const AUTODIAL_WORKAROUND = true; // Enable manual dialing when autoDial fails
-
 type Message = PinkMessage | PonkMessage;
 
 export class Network {
@@ -91,28 +86,21 @@ export class Network {
 	}
 
 	async start() {
-		if (!this.networkDef) {
-			throw new Error('NetworkDefinition is required to start a network');
-		}
-
+		if (!this.networkDef) throw new Error('NetworkDefinition is required to start a network');
 		// Load settings from dataDir
 		const settingsPath = join(this.dataDir, 'settings.json');
 		const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-
 		console.log(`Decoding swarm key from base62...`);
 		const swarmKey = Utils.decodeBase62(this.networkDef.key);
 		const bootstrapPeers = this.networkDef.bootstrap_peers;
-
 		// Initialize datastore (network-specific path)
 		const datastorePath = join(this.dataDir, `datastore-${this.networkDef.id}`);
 		this.datastore = new LevelDatastore(datastorePath);
 		await this.datastore.open();
 		console.log('✓ Datastore opened at:', datastorePath);
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
-
 		// Build transports array
 		const transports: any[] = [tcp()];
-
 		// Add circuit relay transport if client mode is enabled
 		const relayClientMode = settings.relay?.client?.mode || 'force';
 		const relayClientEnabled = relayClientMode === 'force' || relayClientMode === 'auto';
@@ -149,7 +137,7 @@ export class Network {
 				autoDialInterval: 1000,
 			},
 			connectionProtector: preSharedKey({
-			  psk: swarmKey
+				psk: swarmKey,
 			}),
 			peerStore: {
 				persistence: true,
@@ -215,7 +203,7 @@ export class Network {
 					list: bootstrapPeers,
 					timeout: 1000,
 					tagTTL: 2147483647, // ~68 years in ms - effectively never expires
-					tagValue: 100,      // High priority (default 50) - pruned last
+					tagValue: 100, // High priority (default 50) - pruned last
 				}),
 			];
 		} else {
@@ -223,26 +211,18 @@ export class Network {
 			console.log('   Add bootstrap peers.');
 			console.log('   Format: /ip4/<IP>/tcp/<PORT>/p2p/<PEER_ID>');
 		}
-
 		console.log('Creating libp2p node with config:');
 		console.log('  peerDiscovery configured:', !!config.peerDiscovery);
-		if (config.peerDiscovery) {
-			console.log('  peerDiscovery modules:', config.peerDiscovery.length);
-		}
-
+		if (config.peerDiscovery) console.log('  peerDiscovery modules:', config.peerDiscovery.length);
 		this.node = await createLibp2p(config);
 		console.log('Port:', settings.network.port);
 		console.log('Node ID:', this.node.peerId.toString());
-
 		await this.node.start();
 		console.log('Node started');
-
 		const addresses = this.node.getMultiaddrs();
 		console.log('Listening on addresses:');
 		addresses.forEach(addr => console.log('  -', addr.toString()));
-
 		this.pubsub = this.node.services.pubsub as PubSub;
-
 		// Register lish protocol handler
 		await this.node.handle(
 			LISH_PROTOCOL,
@@ -253,15 +233,12 @@ export class Network {
 			{ runOnLimitedConnection: true }
 		);
 		console.log(`✓ Registered ${LISH_PROTOCOL} protocol handler`);
-
 		// DHT is configured in server mode (clientMode: false) for LAN
 		const dht = this.node.services.dht as any;
 		if (dht) {
 			const mode = dht.clientMode === false ? 'server' : 'client';
 			console.log('✓ DHT running in', mode, 'mode');
 		}
-
-
 		this.pubsub.addEventListener('gossipsub:heartbeat', () => {
 			const meshPeers = this.pubsub!.getMeshPeers(PINK_TOPIC);
 			const subscribers = this.pubsub!.getSubscribers(PINK_TOPIC);
@@ -273,38 +250,29 @@ export class Network {
 			// console.log('💓  Pink subscribers:', subscribers.length, subscribers.map(p => p.toString()).slice(0, 2));
 			//console.log('💓peers:', this.node!.getPeers().length, 'mesh:', meshPeers.length, 'subs:', subscribers.length, 'topics:', topics.length);
 		});
-
 		this.pubsub.addEventListener('gossipsub:graft', evt => {
 			console.log('🌿 GRAFT: ', evt.detail.peerId, ' joined ', evt.detail.topic);
 			console.log('   Total mesh peers for ', evt.detail.topic, ':', this.pubsub!.getMeshPeers(evt.detail.topic).length);
 		});
-
 		this.pubsub.addEventListener('gossipsub:prune', evt => {
 			console.log('✂️  PRUNE: peer left mesh');
 			console.log('   Peer:', evt.detail.peerId);
 			console.log('   Topic:', evt.detail.topic);
 		});
-
 		// Debug: Check peer store
 		console.log('Peers in store:', this.node.getPeers().length);
 		console.log('Services loaded:', Object.keys(this.node.services));
-
 		// Create promise that resolves when first peer connects
 		const firstPeerConnected = new Promise<void>(resolve => {
-			if (this.node!.getPeers().length > 0) {
-				resolve();
-			} else {
-				this.node!.addEventListener('peer:connect', () => resolve(), { once: true });
-			}
+			if (this.node!.getPeers().length > 0) resolve();
+			else this.node!.addEventListener('peer:connect', () => resolve(), { once: true });
 		});
-
 		// Listen for peer discovery and connection events
 		this.node.addEventListener('peer:discovery', async evt => {
 			const peerId = evt.detail.id.toString();
 			const multiaddrs = evt.detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
 			console.log('🔍 Discovered peer:', peerId);
 			console.log('   Multiaddrs from event:', multiaddrs.join(', ') || '(empty!)');
-
 			// Check what's actually in peer store
 			try {
 				const peerData = await this.node!.peerStore.get(evt.detail.id);
@@ -315,7 +283,6 @@ export class Network {
 			} catch (e) {
 				console.log('   Peer NOT in peer store');
 			}
-
 			// Check current connection status
 			const connections = this.node!.getConnections(evt.detail.id);
 			console.log('   Already connected:', connections.length > 0);
@@ -328,7 +295,6 @@ export class Network {
 			console.log('✅ New peer connected:', peerId);
 			console.log('   Remote addresses:', remoteAddrs.join(', '));
 			console.log('   Total connected peers:', this.node!.getPeers().length);
-
 			// Tag bootstrap peers with KEEP_ALIVE for automatic reconnection
 			// Also refresh multiaddrs from the active connection to ensure reconnection works
 			if (this.bootstrapPeerIds.has(peerId)) {
@@ -336,19 +302,17 @@ export class Network {
 				await this.node!.peerStore.merge(evt.detail, {
 					multiaddrs: connectionMultiaddrs, // Refresh addresses from active connection
 					tags: {
-						[KEEP_ALIVE]: { value: 1 }
-					}
+						[KEEP_ALIVE]: { value: 1 },
+					},
 				});
 				console.log('   Tagged as KEEP_ALIVE (bootstrap peer)');
 				console.log('   Stored multiaddrs:', connectionMultiaddrs.map(ma => ma.toString()).join(', '));
 			}
 		});
-
 		this.node.addEventListener('peer:disconnect', evt => {
 			console.log('❌ lost connection with peer:', evt.detail.toString());
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 		});
-
 		// Relay event listeners
 		this.node.addEventListener('relay:created-reservation' as any, (evt: any) => {
 			console.log('🔄 Relay reservation created with:', evt.detail.relay.toString());
@@ -357,24 +321,19 @@ export class Network {
 				this.node!.getMultiaddrs().map(ma => ma.toString())
 			);
 		});
-
 		this.node.addEventListener('relay:removed' as any, (evt: any) => {
 			console.log('⚠️  Relay removed:', evt.detail.relay.toString());
 		});
-
 		this.node.addEventListener('relay:not-enough-relays' as any, (evt: any) => {
 			console.log('⚠️  Not enough relays available');
 		});
-
 		this.node.addEventListener('relay:found-enough-relays' as any, (evt: any) => {
 			console.log('✓ Found enough relays');
 		});
-
 		// Manually dial bootstrap peers FIRST, because config.peerDiscovery doesnt seem to work as expected
 		// Bootstrap module discovers peers but doesn't auto-connect
 		/*if (settings.network.bootstrapPeers?.length > 0) {
 			//console.log('Connecting to bootstrap peers...');
-
 			for (const peerAddr of settings.network.bootstrapPeers) {
 				try {
 					const ma = Multiaddr(peerAddr);
@@ -396,25 +355,20 @@ export class Network {
 				console.log('⚠️  No peers connected after wait, continuing anyway');
 			}
 		}*/
-
 		if (this.enablePink) {
 			// console.log('  Libp2p peers:', this.node.getPeers().length);
 			// console.log('  Pubsub peers:', this.pubsub.getPeers().length);
 			// console.log('  Pubsub peer list:', this.pubsub.getPeers().map((p: any) => p.toString()));
-
 			this.pingInterval = setInterval(async () => {
 				await this.sendPink();
 			}, 10000);
 		}
-
 		// Handle incoming messages
 		this.pubsub.addEventListener('message', evt => {
 			this.handleMessage(evt.detail);
 		});
-
 		//await this.subscribeToPink();
 		await this.subscribeToLish();
-
 		// Immediate bootstrap dial (workaround for libp2p bootstrap module not storing multiaddrs)
 		if (AUTODIAL_WORKAROUND && this.bootstrapMultiaddrs.length > 0) {
 			// Wait a bit for bootstrap module to try first, then dial directly
@@ -433,7 +387,6 @@ export class Network {
 				}
 			}, 2000); // Wait 2s for bootstrap module to try first
 		}
-
 		// Periodic status log and optional autodial workaround
 		this.statusInterval = setInterval(async () => {
 			const connectedPeers = this.node!.getPeers();
@@ -454,7 +407,6 @@ export class Network {
 				}
 			}
 		}, 10000);
-
 		//this.addressInterval = setInterval(() => {this.printMultiaddrs()}, 30000);
 	}
 
@@ -473,9 +425,7 @@ export class Network {
 			const data = new TextDecoder().decode(msgEvent.data);
 			const message: Message = JSON.parse(data);
 			console.log(`pubsub Received ${JSON.stringify(message)}`);
-			if (topic === PINK_TOPIC) {
-				this.sendPonk(message.peerId);
-			}
+			if (topic === PINK_TOPIC) this.sendPonk(message.peerId);
 		} catch (error) {
 			console.error('Error in handleMessage:', error);
 		}
@@ -491,7 +441,6 @@ export class Network {
 		const meshPeers = this.pubsub.getMeshPeers(PINK_TOPIC);
 		const subscribers = this.pubsub.getSubscribers(PINK_TOPIC);
 		console.log(`Sending pink (mesh: ${meshPeers.length} peers, subscribers: ${subscribers.length} peers)`);
-
 		const message: PinkMessage = {
 			type: 'pink',
 			peerId: this.node.peerId.toString(),
@@ -525,7 +474,6 @@ export class Network {
 		}
 	}
 
-
 	private async subscribeToLish() {
 		if (!this.pubsub) {
 			console.error('Network not started');
@@ -541,22 +489,14 @@ export class Network {
 	private async handleWant(data: WantMessage) {
 		console.log('Handling want message for lishId:', data.lishId);
 		let manifest = await this.dataServer.getManifest(data.lishId);
-		if (!manifest) {
-			return;
-		}
-
+		if (!manifest) return;
 		let haveChunks = await this.dataServer.getHaveChunks(manifest);
-
-		console.log('mock have:', this.dataDir, (this.dataDir === '../../data1'));
-		if (this.dataDir === '../../data1') {
-			haveChunks = 'all';
-		}
-
+		console.log('mock have:', this.dataDir, this.dataDir === '../../data1');
+		if (this.dataDir === '../../data1') haveChunks = 'all';
 		if (haveChunks !== 'all' && haveChunks.size === 0) {
 			console.log('No chunks available to send Have message for lishId:', data.lishId);
 			return;
 		}
-
 		console.log('Manifest found, sending Have');
 		const haveMessage: HaveMessage = {
 			type: 'have',
@@ -565,10 +505,8 @@ export class Network {
 			multiaddrs: this.node!.getMultiaddrs(),
 			peerId: this.node!.peerId.toString(),
 		};
-
 		await this.broadcast(LISH_TOPIC, haveMessage);
 	}
-
 
 	async broadcast(topic: string, data: any) {
 		if (!this.pubsub || !this.node) {
@@ -601,9 +539,7 @@ export class Network {
 	}
 
 	async connectToPeer(multiaddr: string) {
-		if (!this.node) {
-			throw new Error('Network not started');
-		}
+		if (!this.node) throw new Error('Network not started');
 		const ma = Multiaddr(multiaddr);
 		await this.node.dial(ma);
 		console.log('→ Connected to:', multiaddr);
@@ -618,7 +554,6 @@ export class Network {
 		console.log('Current multiaddrs:');
 		addrs.forEach(addr => {
 			let emoji = '?';
-
 			// Check if it's a relay address (contains p2p-circuit protocol)
 			const protos = addr.protos();
 			if (protos.some(p => p.name === 'p2p-circuit')) {
@@ -627,46 +562,36 @@ export class Network {
 				// Get the node address to check IP type
 				try {
 					const nodeAddr = addr.nodeAddress();
-					if (nodeAddr.address === '127.0.0.1' || nodeAddr.address === '::1') {
+					if (nodeAddr.address === '127.0.0.1' || nodeAddr.address === '::1')
 						emoji = '🏠'; // Localhost
-					} else if (nodeAddr.family === 4) {
+					else if (nodeAddr.family === 4) {
 						const octets = nodeAddr.address.split('.').map(Number);
 						// Check for private IPv4 ranges
 						if (octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168)) {
 							emoji = '🏢'; // LAN
-						} else {
-							emoji = '🌍'; // WAN
-						}
+						} else emoji = '🌍'; // WAN
 					} else if (nodeAddr.family === 6) {
 						// For IPv6, simple check for link-local (fe80::) or ULA (fc00::/7)
-						if (nodeAddr.address.startsWith('fe80:') || nodeAddr.address.startsWith('fc')) {
+						if (nodeAddr.address.startsWith('fe80:') || nodeAddr.address.startsWith('fc'))
 							emoji = '🏢'; // LAN
-						} else {
-							emoji = '🌍'; // WAN
-						}
+						else emoji = '🌍'; // WAN
 					}
 				} catch (e) {
 					// nodeAddress() might not work for all multiaddr types, keep default emoji
 				}
 			}
-
 			console.log(`${emoji} ${addr.toString()}`);
 		});
 	}
 
 	// Open a stream to a peer with a specific protocol
 	async dialProtocol(peerId: string, multiaddrs: any[], protocol: string) {
-		if (!this.node) {
-			throw new Error('Network not started');
-		}
-
+		if (!this.node) throw new Error('Network not started');
 		// Dial the peer
 		const connection = await this.node.dial(multiaddrs);
-
 		// Open a stream with the protocol
 		// runOnLimitedConnection allows opening streams even on relay/limited connections
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
-
 		return stream;
 	}
 
@@ -700,12 +625,10 @@ export class Network {
 
 	async findPeer(peerId: PeerId) {
 		console.log('Finding peer:');
-
 		console.log('Closest peers:');
 		for await (const peer of this.node.peerRouting.getClosestPeers(peerId.toMultihash().bytes)) {
 			console.log(peer.id, peer.multiaddrs);
 		}
-
 		const peer: PeerInfo = await this.node.peerRouting.findPeer(peerId);
 		console.log('Found it, multiaddrs are:');
 		peer.multiaddrs.forEach(ma => console.log(ma.toString()));
