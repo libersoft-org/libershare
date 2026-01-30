@@ -181,6 +181,7 @@
 		"selectFolder": "Select folder",
 		"newFolder": "New folder",
 		"deleteFolder": "Delete folder",
+		"selectFile": "Select file",
 		"openFile": "Open file",
 		"editFile": "Edit file",
 		"renameFile": "Rename file",

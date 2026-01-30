@@ -154,23 +154,24 @@ export interface FileBrowserAction {
 /**
  * Get file actions for action panel
  */
-export function getFileActions(t: { fileBrowser?: { openFile?: string; editFile?: string; renameFile?: string; deleteFile?: string }; common?: { back?: string } }): FileBrowserAction[] {
-	return [
-		{ id: 'open', label: t.fileBrowser?.openFile, icon: '/img/folder.svg' },
-		{ id: 'edit', label: t.fileBrowser?.editFile, icon: '/img/edit.svg' },
-		{ id: 'rename', label: t.fileBrowser?.renameFile, icon: '/img/edit.svg' },
-		{ id: 'delete', label: t.fileBrowser?.deleteFile, icon: '/img/del.svg' },
-		{ id: 'back', label: t.common?.back, icon: '/img/back.svg' },
-	];
+export function getFileActions(t: { fileBrowser?: { openFile?: string; editFile?: string; renameFile?: string; deleteFile?: string; selectFile?: string }; common?: { back?: string } }, selectFileButton?: boolean): FileBrowserAction[] {
+	const actions: FileBrowserAction[] = [];
+	if (selectFileButton) actions.push({ id: 'select', label: t.fileBrowser?.selectFile, icon: '/img/check.svg' });
+	actions.push({ id: 'open', label: t.fileBrowser?.openFile, icon: '/img/folder.svg' });
+	actions.push({ id: 'edit', label: t.fileBrowser?.editFile, icon: '/img/edit.svg' });
+	actions.push({ id: 'rename', label: t.fileBrowser?.renameFile, icon: '/img/edit.svg' });
+	actions.push({ id: 'delete', label: t.fileBrowser?.deleteFile, icon: '/img/del.svg' });
+	actions.push({ id: 'back', label: t.common?.back, icon: '/img/back.svg' });
+	return actions;
 }
 
 /**
  * Build folder toolbar actions based on mode
  */
-export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; newFolder?: string; deleteFolder?: string; createFile?: string } }, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], selectable?: boolean, customFilter?: string): FileBrowserAction[] {
+export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; newFolder?: string; deleteFolder?: string; createFile?: string } }, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], selectFolderButton?: boolean, customFilter?: string): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	if (!filesOnly) {
-		if (selectable) actions.push({ id: 'select', label: t.fileBrowser?.selectFolder, icon: '/img/check.svg' });
+		if (selectFolderButton) actions.push({ id: 'select', label: t.fileBrowser?.selectFolder, icon: '/img/check.svg' });
 		actions.push({ id: 'new', label: t.fileBrowser?.newFolder, icon: '/img/plus.svg' });
 		actions.push({ id: 'delete', label: t.fileBrowser?.deleteFolder, icon: '/img/del.svg' });
 	}

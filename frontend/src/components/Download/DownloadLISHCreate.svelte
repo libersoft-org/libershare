@@ -26,6 +26,8 @@
 
 	// Browse state
 	let browsingInputPath = $state(false);
+	let browseFolder = $state('');
+	let browseFile = $state<string | undefined>(undefined);
 
 	// Form state
 	let inputPath = $state($storagePath);
@@ -125,6 +127,28 @@
 	}
 
 	function openInputPathBrowse() {
+		// Parse inputPath - split into folder and file
+		const path = inputPath.trim();
+		if (path) {
+			// Find last separator (try both / and \)
+			const lastSlash = path.lastIndexOf('/');
+			const lastBackslash = path.lastIndexOf('\\');
+			const lastSep = Math.max(lastSlash, lastBackslash);
+			if (lastSep >= 0) {
+				// Path contains separator - split into folder and potential filename
+				browseFolder = path.substring(0, lastSep) || '/';
+				browseFile = path.substring(lastSep + 1) || undefined;
+			} else {
+				// No separator - treat whole path as folder
+				browseFolder = path;
+				browseFile = undefined;
+			}
+		} else {
+			// No path specified - use storage path from settings
+			browseFolder = $storagePath;
+			browseFile = undefined;
+		}
+
 		browsingInputPath = true;
 		if (unregisterArea) {
 			unregisterArea();
@@ -315,7 +339,7 @@
 </style>
 
 {#if browsingInputPath}
-	<FileBrowser {areaID} {position} initialPath={inputPath} foldersOnly showPath onSelect={handleInputPathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={browseFolder} initialFile={browseFile} showPath selectFolderButton selectFileButton onSelect={handleInputPathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="create">
 		<div class="container">

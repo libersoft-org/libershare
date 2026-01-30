@@ -24,16 +24,19 @@
 		areaID: string;
 		position: Position;
 		initialPath?: string;
+		initialFile?: string; // File name to select in the initial directory
 		foldersOnly?: boolean;
 		filesOnly?: boolean;
 		fileFilter?: string[]; // Array of extensions like ['.lish', '.json'] or ['*'] for all
 		showPath?: boolean;
+		selectFolderButton?: boolean;
+		selectFileButton?: boolean;
 		onBack?: () => void;
 		onSelect?: (path: string) => void;
 		onDownAtEnd?: () => boolean;
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, position, initialPath = '', foldersOnly = false, filesOnly = false, fileFilter, showPath = true, onBack, onSelect, onDownAtEnd }: Props = $props();
+	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, onBack, onSelect, onDownAtEnd }: Props = $props();
 
 	// File filter state
 	let showAllFiles = $state(false);
@@ -88,7 +91,7 @@
 		return fileFilter.join(', ');
 	});
 	// Folder toolbar actions
-	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, !!onSelect, customFilter ?? undefined));
+	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, selectFolderButton, customFilter ?? undefined));
 	let selectedFolderActionIndex = $state(0);
 	let folderActionsActive = $derived($activeArea === `${areaID}-folder-actions`);
 	// Filter panel actions
@@ -240,7 +243,7 @@
 	};
 
 	// File actions from fileBrowser.ts
-	let fileActions = $derived(getFileActions($t));
+	let fileActions = $derived(getFileActions($t, selectFileButton));
 
 	const actionsAreaHandlers = {
 		up: () => {
@@ -301,6 +304,9 @@
 		const item = items[selectedIndex];
 		if (!item || item.type !== 'file') return;
 		switch (actionId) {
+			case 'select':
+				onSelect?.(item.path);
+				break;
 			case 'open':
 				handleOpenFile(item);
 				break;
@@ -744,7 +750,7 @@
 				// Resolve initial path
 				let startPath = initialPath;
 				if (startPath.startsWith('~')) startPath = (info.home || '') + startPath.slice(1);
-				await loadDirectory(startPath || info.home || '');
+				await loadDirectory(startPath || info.home || '', initialFile);
 			} catch (e: any) {
 				error = e.message || 'Failed to initialize';
 				loading = false;
