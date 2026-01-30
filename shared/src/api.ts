@@ -200,4 +200,8 @@ class FsApi {
     open(path: string): Promise<{ success: boolean }> {
         return this.client.call<{ success: boolean }>('fs.open', { path });
     }
+
+    rename(path: string, newName: string): Promise<{ success: boolean }> {
+        return this.client.call<{ success: boolean }>('fs.rename', { path, newName });
+    }
 }

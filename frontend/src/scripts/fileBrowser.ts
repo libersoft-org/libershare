@@ -149,9 +149,10 @@ export interface FileBrowserAction {
 /**
  * Get file actions for action panel
  */
-export function getFileActions(t: { fileBrowser?: { openFile?: string; deleteFile?: string }; common?: { back?: string } }): FileBrowserAction[] {
+export function getFileActions(t: { fileBrowser?: { openFile?: string; renameFile?: string; deleteFile?: string }; common?: { back?: string } }): FileBrowserAction[] {
 	return [
 		{ id: 'open', label: t.fileBrowser?.openFile, icon: '/img/folder.svg' },
+		{ id: 'rename', label: t.fileBrowser?.renameFile, icon: '/img/edit.svg' },
 		{ id: 'delete', label: t.fileBrowser?.deleteFile, icon: '/img/del.svg' },
 		{ id: 'back', label: t.common?.back, icon: '/img/back.svg' },
 	];
@@ -279,6 +280,18 @@ export async function openFile(path: string): Promise<FileOperationResult> {
 		return { success: true };
 	} catch (e: any) {
 		return { success: false, error: e.message || 'Failed to open file' };
+	}
+}
+
+/**
+ * Rename a file
+ */
+export async function renameFile(path: string, newName: string): Promise<FileOperationResult> {
+	try {
+		await api.fs.rename(path, newName);
+		return { success: true };
+	} catch (e: any) {
+		return { success: false, error: e.message || 'Failed to rename file' };
 	}
 }
 

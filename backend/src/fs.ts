@@ -1,5 +1,5 @@
-import { readdir, stat, access, unlink, rmdir, mkdir } from 'fs/promises';
-import { join, sep } from 'path';
+import { readdir, stat, access, unlink, rmdir, mkdir, rename } from 'fs/promises';
+import { join, sep, dirname } from 'path';
 import { homedir, platform } from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -129,4 +129,10 @@ export async function fsOpen(path: string): Promise<void> {
 	} else {
 		await execAsync(`xdg-open "${path}"`);
 	}
+}
+
+export async function fsRename(oldPath: string, newName: string): Promise<void> {
+	const dir = dirname(oldPath);
+	const newPath = join(dir, newName);
+	await rename(oldPath, newPath);
 }

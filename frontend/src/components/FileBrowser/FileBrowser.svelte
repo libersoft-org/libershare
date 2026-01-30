@@ -5,7 +5,7 @@
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
+	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
@@ -36,7 +36,7 @@
 	// File filter state
 	let showAllFiles = $state(false);
 	let customFilter = $state<string | null>(null);
-	let activeFilter = $derived(customFilter ? [customFilter] : (showAllFiles ? ['*'] : fileFilter));
+	let activeFilter = $derived(customFilter ? [customFilter] : showAllFiles ? ['*'] : fileFilter);
 	// Calculate sub-area positions based on base position
 	const pathBreadcrumbPosition = { x: position.x + CONTENT_OFFSETS.pathBreadcrumb.x, y: position.y + CONTENT_OFFSETS.pathBreadcrumb.y };
 	const folderActionsPosition = { x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y };
@@ -62,7 +62,9 @@
 	let showDeleteConfirm = $state(false);
 	let showNewFolderDialogState = $state(false);
 	let showDeleteFileConfirm = $state(false);
+	let showRenameFileDialogState = $state(false);
 	let fileToDelete = $state<StorageItemData | null>(null);
+	let fileToRename = $state<StorageItemData | null>(null);
 	let unregisterFolderActions: (() => void) | null = null;
 	let unregisterList: (() => void) | null = null;
 	let unregisterActions: (() => void) | null = null;
@@ -293,6 +295,9 @@
 			case 'open':
 				handleOpenFile(item);
 				break;
+			case 'rename':
+				showRenameFileDialog(item);
+				return; // Don't close actions panel yet
 			case 'delete':
 				showDeleteFileConfirmDialog(item);
 				return; // Don't close actions panel yet
@@ -524,6 +529,48 @@
 		activateArea(listAreaID);
 	}
 
+	function showRenameFileDialog(item: StorageItemData) {
+		fileToRename = item;
+		showRenameFileDialogState = true;
+		showActions = false;
+		// Unregister areas so dialog can take over
+		if (unregisterFolderActions) {
+			unregisterFolderActions();
+			unregisterFolderActions = null;
+		}
+		if (unregisterList) {
+			unregisterList();
+			unregisterList = null;
+		}
+		if (unregisterActions) {
+			unregisterActions();
+			unregisterActions = null;
+		}
+		pushBreadcrumb($t.fileBrowser?.renameFile);
+	}
+
+	async function confirmRenameFile(newName: string) {
+		if (!fileToRename) return;
+		const result = await renameFile(fileToRename.path, newName);
+		if (result.success) {
+			// Reload directory and select the renamed file
+			await loadDirectory(currentPath, newName);
+		} else error = result.error || 'Failed to rename file';
+		cancelRenameFile();
+	}
+
+	async function cancelRenameFile() {
+		showRenameFileDialogState = false;
+		fileToRename = null;
+		popBreadcrumb();
+		await tick();
+		// Re-register all areas
+		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
+		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
+		activateArea(listAreaID);
+	}
+
 	export function getCurrentPath(): string {
 		return currentPath;
 	}
@@ -538,7 +585,6 @@
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(`${areaID}-list`);
-
 		(async () => {
 			try {
 				const info = await getFileSystemInfo();
@@ -678,6 +724,9 @@
 {/if}
 {#if showNewFolderDialogState}
 	<InputDialog title={$t.fileBrowser?.newFolder} label={$t.fileBrowser?.folderName} placeholder={$t.fileBrowser?.enterFolderName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
+{/if}
+{#if showRenameFileDialogState && fileToRename}
+	<InputDialog title={$t.fileBrowser?.renameFile} label={$t.fileBrowser?.fileName} placeholder={$t.fileBrowser?.enterFileName} initialValue={fileToRename.name} confirmLabel={$t.common?.ok} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmRenameFile} onBack={cancelRenameFile} />
 {/if}
 {#if showCustomFilterDialog}
 	<InputDialog title={$t.fileBrowser?.customFilter} label={$t.fileBrowser?.filterPattern} placeholder={$t.fileBrowser?.enterFilterPattern} initialValue={customFilter ?? ''} confirmLabel={$t.common?.ok} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmCustomFilter} onBack={closeCustomFilterDialog} />

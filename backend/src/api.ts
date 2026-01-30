@@ -4,7 +4,7 @@ import type { DataServer } from './data-server.ts';
 import type { Networks } from './networks.ts';
 import { Downloader } from './downloader.ts';
 import { join } from 'path';
-import { fsInfo, fsList, fsDelete, fsMkdir, fsOpen } from './fs.ts';
+import { fsInfo, fsList, fsDelete, fsMkdir, fsOpen, fsRename } from './fs.ts';
 
 interface ClientData {
 	subscribedEvents: Set<string>;
@@ -125,7 +125,6 @@ export class ApiServer {
 	}
 
 	private async execute(client: ClientSocket, method: string, params: Record<string, any>): Promise<any> {
-
 		console.log(`[API] Executing method: ${method}, params: ${JSON.stringify(params)}`);
 
 		switch (method) {
@@ -312,9 +311,7 @@ export class ApiServer {
 
 			// given a directory path, create and import a Lish manifest and a corresponding dataset
 			case 'createLish': {
-
 				console.log(JSON.stringify(params, null, 2));
-
 
 				const manifest = await this.dataServer.createLish(
 					params.inputPath,
@@ -328,13 +325,13 @@ export class ApiServer {
 					params.threads,
 
 					// todo: check that path is not already in datasets.
-						// todo: check that path exists
-						//
+					// todo: check that path exists
+					//
 
-						info => {
-							this.emit(client, 'createLish:progress', { path: params.path, ...info });
-						}
-						);
+					info => {
+						this.emit(client, 'createLish:progress', { path: params.path, ...info });
+					}
+				);
 				return { manifestId: manifest.id };
 			}
 
@@ -369,6 +366,9 @@ export class ApiServer {
 
 			case 'fs.open':
 				return await fsOpen(params.path);
+
+			case 'fs.rename':
+				return await fsRename(params.path, params.newName);
 
 			case 'download': {
 				/*
