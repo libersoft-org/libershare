@@ -12,4 +12,4 @@
 	let { areaID, position = LAYOUT.content, initialPath = '', onSelect, onBack }: Props = $props();
 </script>
 
-<FileBrowser {areaID} {position} {initialPath} foldersOnly showPath {onSelect} {onBack} />
+<FileBrowser {areaID} {position} {initialPath} foldersOnly showPath selectFolderButton {onSelect} {onBack} />

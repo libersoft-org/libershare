@@ -40,6 +40,18 @@
 
 	// Output path - editable state, initialized from settings
 	let outputPath = $state($storageLishPath + 'output.lish');
+	let outputPathManuallyEdited = $state(false); // Track if user manually edited the path
+
+	function handleNameChange(newName: string) {
+		name = newName;
+		if (!outputPathManuallyEdited && newName) {
+			const sanitized = sanitizeFilename(newName);
+			if (sanitized) {
+				const { folder } = splitPath(outputPath, $storageLishPath);
+				outputPath = joinPath(folder, sanitized + '.lish');
+			}
+		}
+	}
 
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
@@ -159,6 +171,7 @@
 	function handleOutputPathSelect(folderPath: string) {
 		const fileName = outputFileName.trim() || 'output.lish';
 		outputPath = joinPath(folderPath, fileName);
+		outputPathManuallyEdited = true;
 		handleOutputBrowseBack();
 	}
 
@@ -363,7 +376,7 @@
 		<div class="container">
 			<!-- Name (optional) -->
 			<div bind:this={rowElements[FIELD_NAME]}>
-				<Input bind:this={nameInput} bind:value={name} label={$t.downloads?.lishCreate?.name} selected={active && selectedIndex === FIELD_NAME} />
+				<Input bind:this={nameInput} value={name} onchange={handleNameChange} label={$t.downloads?.lishCreate?.name} selected={active && selectedIndex === FIELD_NAME} />
 			</div>
 			<!-- Description (optional) -->
 			<div bind:this={rowElements[FIELD_DESCRIPTION]}>
@@ -397,7 +410,7 @@
 			</div>
 			<!-- Output Path (optional) -->
 			<div class="row" bind:this={rowElements[FIELD_OUTPUT]}>
-				<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex disabled={!saveToFile} />
+				<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex disabled={!saveToFile} onchange={() => outputPathManuallyEdited = true} />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
 			</div>
 			<!-- Add to Sharing Switch -->
