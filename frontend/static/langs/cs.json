@@ -2,6 +2,7 @@
 	"common": {
 		"home": "Domů",
 		"back": "Zpět",
+		"fileName": "Název souboru",
 		"ok": "OK",
 		"cancel": "Zrušit",
 		"close": "Zavřít",
@@ -76,6 +77,7 @@
 			"inputPath": "Vstup (soubor nebo složka)",
 			"saveToFile": "Uložit do souboru .lish",
 			"outputPath": "Výstupní soubor (volitelné)",
+
 			"name": "Název (volitelné)",
 			"description": "Popis (volitelné)",
 			"chunkSize": "Velikost chunku (B, K, M, G, T)",
@@ -190,7 +192,6 @@
 		"folderName": "Název složky",
 		"enterFolderName": "Zadejte název složky",
 		"folderNameRequired": "Název složky musí být vyplněn",
-		"fileName": "Název souboru",
 		"enterFileName": "Zadejte nový název souboru",
 		"fileNameRequired": "Název souboru musí být vyplněn",
 		"confirmDeleteFolder": "Opravdu chcete smazat složku \"{path}\"?",

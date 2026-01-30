@@ -9,6 +9,7 @@
 	import { scrollToElement, sanitizeFilename } from '../../scripts/utils.ts';
 	import { HASH_ALGORITHMS, parseChunkSize, validateLishCreateForm, getLishCreateErrorMessage, type HashAlgorithm } from '../../scripts/lish.ts';
 	import { storageLishPath, storagePath, autoStartSharing } from '../../scripts/settings.ts';
+	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -26,8 +27,10 @@
 
 	// Browse state
 	let browsingInputPath = $state(false);
+	let browsingOutputPath = $state(false);
 	let browseFolder = $state('');
 	let browseFile = $state<string | undefined>(undefined);
+	let outputFileName = $state(''); // File name input in output browse dialog
 
 	// Form state
 	let inputPath = $state($storagePath);
@@ -35,12 +38,8 @@
 	let addToSharing = $state($autoStartSharing);
 	let name = $state('');
 
-	// Output path derived from name
-	let outputPath = $derived.by(() => {
-		const sanitized = sanitizeFilename(name);
-		const filename = sanitized || 'output';
-		return $storageLishPath + filename + '.lish';
-	});
+	// Output path - editable state, initialized from settings
+	let outputPath = $state($storageLishPath + 'output.lish');
 
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
@@ -127,28 +126,9 @@
 	}
 
 	function openInputPathBrowse() {
-		// Parse inputPath - split into folder and file
-		const path = inputPath.trim();
-		if (path) {
-			// Find last separator (try both / and \)
-			const lastSlash = path.lastIndexOf('/');
-			const lastBackslash = path.lastIndexOf('\\');
-			const lastSep = Math.max(lastSlash, lastBackslash);
-			if (lastSep >= 0) {
-				// Path contains separator - split into folder and potential filename
-				browseFolder = path.substring(0, lastSep) || '/';
-				browseFile = path.substring(lastSep + 1) || undefined;
-			} else {
-				// No separator - treat whole path as folder
-				browseFolder = path;
-				browseFile = undefined;
-			}
-		} else {
-			// No path specified - use storage path from settings
-			browseFolder = $storagePath;
-			browseFile = undefined;
-		}
-
+		const { folder, fileName } = splitPath(inputPath.trim(), $storagePath);
+		browseFolder = folder;
+		browseFile = fileName;
 		browsingInputPath = true;
 		if (unregisterArea) {
 			unregisterArea();
@@ -161,6 +141,42 @@
 	function handleInputPathSelect(path: string) {
 		inputPath = path;
 		handleBrowseBack();
+	}
+
+	function openOutputPathBrowse() {
+		const { folder, fileName } = splitPath(outputPath.trim(), $storageLishPath);
+		browseFolder = folder;
+		outputFileName = fileName || '';
+		browsingOutputPath = true;
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
+		pushBreadcrumb($t.downloads?.lishCreate?.outputPath);
+		removeBackHandler = pushBackHandler(handleOutputBrowseBack);
+	}
+
+	function handleOutputPathSelect(folderPath: string) {
+		const fileName = outputFileName.trim() || 'output.lish';
+		outputPath = joinPath(folderPath, fileName);
+		handleOutputBrowseBack();
+	}
+
+	async function handleOutputBrowseBack() {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
+		popBreadcrumb();
+		browsingOutputPath = false;
+		await tick();
+		unregisterArea = registerAreaHandler();
+		// Restore focus to the browse button
+		selectedIndex = FIELD_OUTPUT;
+		selectedColumn = 1;
+		activateArea(areaID);
+		await tick();
+		scrollToSelected();
 	}
 
 	async function handleBrowseBack() {
@@ -257,7 +273,7 @@
 				saveToFile = !saveToFile;
 			} else if (selectedIndex === FIELD_OUTPUT) {
 				if (selectedColumn === 0) focusInput(FIELD_OUTPUT);
-				// TODO: Browse for output path
+				else openOutputPathBrowse();
 			} else if (selectedIndex === FIELD_ADD_TO_SHARING) {
 				addToSharing = !addToSharing;
 			} else if (selectedIndex === FIELD_NAME) {
@@ -340,6 +356,8 @@
 
 {#if browsingInputPath}
 	<FileBrowser {areaID} {position} initialPath={browseFolder} initialFile={browseFile} showPath selectFolderButton selectFileButton onSelect={handleInputPathSelect} onBack={handleBrowseBack} />
+{:else if browsingOutputPath}
+	<FileBrowser {areaID} {position} initialPath={browseFolder} showPath foldersOnly selectFolderButton saveFileName={outputFileName} onSaveFileNameChange={v => (outputFileName = v)} onSelect={handleOutputPathSelect} onBack={handleOutputBrowseBack} />
 {:else}
 	<div class="create">
 		<div class="container">
@@ -380,7 +398,7 @@
 			<!-- Output Path (optional) -->
 			<div class="row" bind:this={rowElements[FIELD_OUTPUT]}>
 				<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex disabled={!saveToFile} />
-				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
+				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
 			</div>
 			<!-- Add to Sharing Switch -->
 			<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>

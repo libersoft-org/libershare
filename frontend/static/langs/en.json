@@ -2,6 +2,7 @@
 	"common": {
 		"home": "Home",
 		"back": "Back",
+		"fileName": "File name",
 		"ok": "OK",
 		"cancel": "Cancel",
 		"close": "Close",
@@ -190,7 +191,6 @@
 		"folderName": "Folder name",
 		"enterFolderName": "Enter folder name",
 		"folderNameRequired": "Folder name is required",
-		"fileName": "File name",
 		"enterFileName": "Enter new file name",
 		"fileNameRequired": "File name is required",
 		"confirmDeleteFolder": "Are you sure you want to delete folder \"{path}\"?",

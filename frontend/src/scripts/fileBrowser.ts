@@ -14,6 +14,38 @@ export interface FsEntry {
 }
 
 /**
+ * Split a path into folder and file name components
+ * Handles both forward slashes and backslashes
+ */
+export function splitPath(path: string, defaultFolder: string = ''): { folder: string; fileName: string | undefined } {
+	const trimmed = path.trim();
+	if (!trimmed) return { folder: defaultFolder, fileName: undefined };
+	// Find last separator (try both / and \)
+	const lastSlash = trimmed.lastIndexOf('/');
+	const lastBackslash = trimmed.lastIndexOf('\\');
+	const lastSep = Math.max(lastSlash, lastBackslash);
+	const sep = lastBackslash > lastSlash ? '\\' : '/';
+	if (lastSep >= 0) {
+		return {
+			folder: trimmed.substring(0, lastSep) || sep,
+			fileName: trimmed.substring(lastSep + 1) || undefined,
+		};
+	}
+	// No separator - treat whole path as file name if it looks like a file, otherwise folder
+	return { folder: defaultFolder, fileName: trimmed };
+}
+
+/**
+ * Join folder path with file name
+ */
+export function joinPath(folder: string, fileName: string): string {
+	const sep = folder.includes('\\') ? '\\' : '/';
+	// Remove trailing separator from folder if present
+	const cleanFolder = folder.endsWith(sep) ? folder.slice(0, -1) : folder;
+	return cleanFolder + sep + fileName;
+}
+
+/**
  * Get parent path from a given path
  */
 export function getParentPath(path: string, separator: string): string | null {

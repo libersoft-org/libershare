@@ -9,6 +9,7 @@
 	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
+	import Input from '../Input/Input.svelte';
 	import Table from '../Table/Table.svelte';
 	import Header from '../Table/TableHeader.svelte';
 	import Cell from '../Table/TableCell.svelte';
@@ -31,12 +32,14 @@
 		showPath?: boolean;
 		selectFolderButton?: boolean;
 		selectFileButton?: boolean;
+		saveFileName?: string; // If provided, shows a filename input for "save as" mode
 		onBack?: () => void;
 		onSelect?: (path: string) => void;
+		onSaveFileNameChange?: (fileName: string) => void;
 		onDownAtEnd?: () => boolean;
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, onBack, onSelect, onDownAtEnd }: Props = $props();
+	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, onBack, onSelect, onSaveFileNameChange, onDownAtEnd }: Props = $props();
 
 	// File filter state
 	let showAllFiles = $state(false);
@@ -81,6 +84,12 @@
 	let unregisterList: (() => void) | null = null;
 	let unregisterActions: (() => void) | null = null;
 	let unregisterFilter: (() => void) | null = null;
+	let unregisterSaveFileName: (() => void) | null = null;
+	// Save file name mode
+	let internalSaveFileName = $state(saveFileName ?? '');
+	let saveFileNameInput: ReturnType<typeof Input> | undefined = $state();
+	let saveFileNameActive = $derived($activeArea === `${areaID}-save-filename`);
+	let saveFileNameColumn = $state(0); // 0 = input, 1 = button
 	let selectedItem = $derived(items[selectedIndex]);
 	let isEmpty = $derived(items.length === 0 || (items.length === 1 && items[0].name === '..'));
 	// Format filter for display
@@ -164,11 +173,12 @@
 				scrollToSelected();
 				return true;
 			}
-			// At top of list, switch to folder actions toolbar (or path breadcrumb if error)
+			// At top of list - go to save filename input if in save mode, or folder actions
 			if (error) {
 				if (showPath) activateArea(`${areaID}-path`);
 				else return false;
-			} else activateArea(`${areaID}-folder-actions`);
+			} else if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
+			else activateArea(`${areaID}-folder-actions`);
 			return true;
 		},
 		down: () => {
@@ -212,8 +222,9 @@
 			return false;
 		},
 		down: () => {
-			// Go to file list
-			activateArea(listAreaID);
+			// Go to save filename input if in save mode, otherwise to file list
+			if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
+			else activateArea(listAreaID);
 			return true;
 		},
 		left: () => {
@@ -299,6 +310,56 @@
 		confirmCancel: () => {},
 		back: () => closeFilterPanel(),
 	};
+
+	const saveFileNameAreaHandlers = {
+		up: () => {
+			// Go back to folder actions
+			saveFileNameInput?.blur();
+			activateArea(`${areaID}-folder-actions`);
+			return true;
+		},
+		down: () => {
+			// Go to file list
+			saveFileNameInput?.blur();
+			activateArea(listAreaID);
+			return true;
+		},
+		left: () => {
+			if (saveFileNameColumn > 0) {
+				saveFileNameColumn--;
+				return true;
+			}
+			return true; // Stay in input, let it handle cursor
+		},
+		right: () => {
+			if (saveFileNameColumn < 1) {
+				saveFileNameColumn++;
+				saveFileNameInput?.blur();
+				return true;
+			}
+			return true;
+		},
+		confirmDown: () => {},
+		confirmUp: () => {
+			if (saveFileNameColumn === 0) {
+				// Input is selected - focus it for editing
+				saveFileNameInput?.focus();
+			} else {
+				// Button is selected - confirm
+				onSelect?.(currentPath);
+			}
+		},
+		confirmCancel: () => {},
+		back: () => {
+			saveFileNameInput?.blur();
+			onBack?.();
+		},
+	};
+
+	function handleSaveFileNameChange(value: string) {
+		internalSaveFileName = value;
+		onSaveFileNameChange?.(value);
+	}
 
 	function handleAction(actionId: string) {
 		const item = items[selectedIndex];
@@ -740,6 +801,7 @@
 	onMount(() => {
 		// Register sub-areas with positions relative to content area
 		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		if (saveFileName !== undefined) unregisterSaveFileName = useArea(`${areaID}-save-filename`, saveFileNameAreaHandlers, folderActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(`${areaID}-list`);
@@ -758,6 +820,7 @@
 		})();
 		return () => {
 			if (unregisterFolderActions) unregisterFolderActions();
+			if (unregisterSaveFileName) unregisterSaveFileName();
 			if (unregisterList) unregisterList();
 			if (unregisterActions) unregisterActions();
 			if (unregisterFilter) unregisterFilter();
@@ -821,6 +884,17 @@
 		flex-wrap: wrap;
 		gap: 1vh;
 	}
+
+	.save-filename-row {
+		display: flex;
+		flex-direction: row;
+		gap: 1vh;
+		align-items: flex-end;
+	}
+
+	.save-filename-row :global(.input-container) {
+		flex: 1;
+	}
 </style>
 
 <div class="browser">
@@ -838,6 +912,12 @@
 					{#each folderActions as action, index (action.id)}
 						<Button label={action.label} icon={action.icon} selected={folderActionsActive && selectedFolderActionIndex === index} onConfirm={() => handleFolderAction(action.id)} />
 					{/each}
+				</div>
+			{/if}
+			{#if saveFileName !== undefined}
+				<div class="save-filename-row">
+					<Input bind:this={saveFileNameInput} label={$t.common?.fileName} value={internalSaveFileName} selected={saveFileNameActive && saveFileNameColumn === 0} onchange={handleSaveFileNameChange} />
+					<Button label={$t.common?.save} icon="/img/check.svg" selected={saveFileNameActive && saveFileNameColumn === 1} onConfirm={() => onSelect?.(currentPath)} />
 				</div>
 			{/if}
 			<div class="table-row">
@@ -897,10 +977,10 @@
 	<InputDialog title={$t.fileBrowser?.newFolder} label={$t.fileBrowser?.folderName} placeholder={$t.fileBrowser?.enterFolderName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
 {/if}
 {#if showCreateFileDialogState}
-	<InputDialog title={$t.fileBrowser?.createFile} label={$t.fileBrowser?.fileName} placeholder={$t.fileBrowser?.enterFileName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmCreateFile} onBack={cancelCreateFile} />
+	<InputDialog title={$t.fileBrowser?.createFile} label={$t.common?.fileName} placeholder={$t.fileBrowser?.enterFileName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmCreateFile} onBack={cancelCreateFile} />
 {/if}
 {#if showRenameFileDialogState && fileToRename}
-	<InputDialog title={$t.fileBrowser?.renameFile} label={$t.fileBrowser?.fileName} placeholder={$t.fileBrowser?.enterFileName} initialValue={fileToRename.name} confirmLabel={$t.common?.ok} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmRenameFile} onBack={cancelRenameFile} />
+	<InputDialog title={$t.fileBrowser?.renameFile} label={$t.common?.fileName} placeholder={$t.fileBrowser?.enterFileName} initialValue={fileToRename.name} confirmLabel={$t.common?.ok} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmRenameFile} onBack={cancelRenameFile} />
 {/if}
 {#if showLargeFileWarning && pendingEditFile}
 	<ConfirmDialog title={$t.fileBrowser?.largeFileWarning} message={$t.fileBrowser?.largeFileWarningMessage?.replace('{name}', pendingEditFile.name).replace('{size}', formatSize(pendingEditFile.size))} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmLargeFileEdit} onBack={cancelLargeFileEdit} />
