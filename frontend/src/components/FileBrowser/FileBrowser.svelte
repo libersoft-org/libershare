@@ -810,6 +810,7 @@
 
 	.folder-actions {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 1vh;
 	}
 </style>
