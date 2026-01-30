@@ -85,10 +85,7 @@
 			return true;
 		},
 		down: () => {
-			if (!loading && !error) {
-				activateArea(editorAreaID);
-				tick().then(() => inputRef?.focus());
-			}
+			if (!loading && !error) activateArea(editorAreaID);
 			return true;
 		},
 		left: () => {
@@ -137,11 +134,13 @@
 </script>
 
 <style>
-	.editor-page {
+	.editor {
 		display: flex;
 		flex-direction: column;
-		height: 100%;
+		flex: 1;
+		min-height: 0;
 		gap: 1vh;
+		margin: 2vh;
 	}
 
 	.toolbar {
@@ -149,7 +148,7 @@
 		gap: 1vh;
 	}
 
-	.editor-content {
+	.content {
 		flex: 1;
 		display: flex;
 		flex-direction: column;
@@ -169,20 +168,26 @@
 		flex: 1;
 		display: flex;
 		flex-direction: column;
+		min-height: 0;
+		overflow: hidden;
 	}
 
 	.editor-wrapper :global(.input-field) {
-		height: 100%;
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
 	}
 
 	.editor-wrapper :global(textarea) {
 		flex: 1;
 		resize: none;
 		font-family: monospace;
+		overflow-y: auto;
 	}
 </style>
 
-<div class="editor-page">
+<div class="editor">
 	<div class="toolbar">
 		{#each toolbarActions as action, index (action.id)}
 			<Button label={action.label} icon={action.icon} selected={toolbarActive && selectedToolbarIndex === index} disabled={action.disabled} onConfirm={() => handleToolbarAction(action.id)} />
@@ -191,7 +196,7 @@
 	{#if error}
 		<Alert type="error" message={error} />
 	{/if}
-	<div class="editor-content">
+	<div class="content">
 		{#if loading}
 			<div class="loading-container">
 				<Spinner size="8vh" />
