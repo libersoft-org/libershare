@@ -1,10 +1,11 @@
 <script lang="ts">
-	import Dbg from '../Dbg/Dbg.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
+	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { scrollToElement, sanitizeFilename } from '../../scripts/utils.ts';
 	import { HASH_ALGORITHMS, parseChunkSize, validateLishCreateForm, getLishCreateErrorMessage, type HashAlgorithm } from '../../scripts/lish.ts';
 	import { storageLishPath, storagePath, autoStartSharing } from '../../scripts/settings.ts';
@@ -12,16 +13,19 @@
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import SwitchRow from '../Switch/SwitchRow.svelte';
-	import {api} from '../../scripts/api.ts';
+	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;
 		onBack?: () => void;
-		onBrowseInput?: () => void;
-		onBrowseOutput?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack, onBrowseInput, onBrowseOutput }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
+	let unregisterArea: (() => void) | null = null;
+	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
+
+	// Browse state
+	let browsingInputPath = $state(false);
 
 	// Form state
 	let inputPath = $state($storagePath);
@@ -36,7 +40,6 @@
 		return $storageLishPath + filename + '.lish';
 	});
 
-	let progress = $state(0);
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
 	let algorithm = $state<HashAlgorithm>('sha256');
@@ -103,133 +106,166 @@
 		}
 	}
 
-	async function handleCreate() {
+	function handleCreate() {
 		submitted = true;
 		if (!errorMessage) {
-			api.on('createLish:progress', (data) => {
-				console.log(`[LISH Create] Progress: ${data}%`);
-				progress = data;
-			});
-			await api.createLish(
+			// TODO: Call backend API to create LISH
+			console.log('Creating LISH:', {
 				inputPath,
 				saveToFile,
+				outputPath: saveToFile ? outputPath : undefined,
 				addToSharing,
-				name || undefined,
-				description || undefined,
-				(saveToFile ? outputPath : undefined),
+				name: name || undefined,
+				description: description || undefined,
+				chunkSize: parseChunkSize(chunkSize),
 				algorithm,
-				parseChunkSize(chunkSize),
-				parseInt(threads) || 1,
-			);
+				threads: parseInt(threads) || 1,
+			});
 		}
+	}
+
+	function openInputPathBrowse() {
+		browsingInputPath = true;
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
+		pushBreadcrumb($t.downloads?.lishCreate?.inputPath);
+		removeBackHandler = pushBackHandler(handleBrowseBack);
+	}
+
+	function handleInputPathSelect(path: string) {
+		inputPath = path;
+		handleBrowseBack();
+	}
+
+	async function handleBrowseBack() {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
+		popBreadcrumb();
+		browsingInputPath = false;
+		await tick();
+		unregisterArea = registerAreaHandler();
+		// Restore focus to the browse button
+		selectedIndex = FIELD_INPUT;
+		selectedColumn = 1;
+		activateArea(areaID);
+		await tick();
+		scrollToSelected();
+	}
+
+	function registerAreaHandler() {
+		return useArea(areaID, areaHandlers, position);
 	}
 
 	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
 
+	const areaHandlers = {
+		up: () => {
+			if (selectedIndex === FIELD_BACK) {
+				// Back is on same row as Create, go to previous row (threads)
+				selectedIndex = FIELD_THREADS;
+				selectedColumn = 0;
+				scrollToSelected();
+				return true;
+			}
+			if (selectedIndex > 0) {
+				selectedIndex--;
+				// Skip disabled output field
+				if (selectedIndex === FIELD_OUTPUT && !saveToFile) {
+					selectedIndex--;
+				}
+				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
+				scrollToSelected();
+				return true;
+			}
+			return false;
+		},
+		down: () => {
+			// Don't go past FIELD_THREADS with down arrow
+			// Create and Back are on the same row, reachable only via left/right
+			if (selectedIndex >= FIELD_CREATE) {
+				return false;
+			}
+			if (selectedIndex < FIELD_CREATE) {
+				selectedIndex++;
+				// Skip disabled output field
+				if (selectedIndex === FIELD_OUTPUT && !saveToFile) {
+					selectedIndex++;
+				}
+				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
+				scrollToSelected();
+				return true;
+			}
+			return false;
+		},
+		left: () => {
+			if (selectedIndex === FIELD_BACK) {
+				selectedIndex = FIELD_CREATE;
+				return true;
+			}
+			if (selectedColumn > 0) {
+				selectedColumn--;
+				return true;
+			}
+			return false;
+		},
+		right: () => {
+			if (selectedIndex === FIELD_CREATE) {
+				selectedIndex = FIELD_BACK;
+				return true;
+			}
+			const maxCol = getMaxColumn(selectedIndex);
+			if (selectedColumn < maxCol) {
+				selectedColumn++;
+				return true;
+			}
+			return false;
+		},
+		confirmDown: () => {},
+		confirmUp: () => {
+			if (selectedIndex === FIELD_INPUT) {
+				if (selectedColumn === 0) focusInput(FIELD_INPUT);
+				else openInputPathBrowse();
+			} else if (selectedIndex === FIELD_SAVE_TO_FILE) {
+				saveToFile = !saveToFile;
+			} else if (selectedIndex === FIELD_OUTPUT) {
+				if (selectedColumn === 0) focusInput(FIELD_OUTPUT);
+				// TODO: Browse for output path
+			} else if (selectedIndex === FIELD_ADD_TO_SHARING) {
+				addToSharing = !addToSharing;
+			} else if (selectedIndex === FIELD_NAME) {
+				focusInput(FIELD_NAME);
+			} else if (selectedIndex === FIELD_DESCRIPTION) {
+				focusInput(FIELD_DESCRIPTION);
+			} else if (selectedIndex === FIELD_CHUNK_SIZE) {
+				focusInput(FIELD_CHUNK_SIZE);
+			} else if (selectedIndex === FIELD_ALGO) {
+				algorithm = HASH_ALGORITHMS[selectedColumn];
+			} else if (selectedIndex === FIELD_THREADS) {
+				focusInput(FIELD_THREADS);
+			} else if (selectedIndex === FIELD_CREATE) {
+				handleCreate();
+			} else if (selectedIndex === FIELD_BACK) {
+				onBack?.();
+			}
+		},
+		confirmCancel: () => {},
+		back: () => onBack?.(),
+		onActivate: () => {
+			// When algo row is active, sync selectedColumn with current algorithm
+			if (selectedIndex === FIELD_ALGO) selectedColumn = algoIndex;
+		},
+	};
+
 	onMount(() => {
-		const unregister = useArea(
-			areaID,
-			{
-				up: () => {
-					if (selectedIndex === FIELD_BACK) {
-						// Back is on same row as Create, go to previous row (threads)
-						selectedIndex = FIELD_THREADS;
-						selectedColumn = 0;
-						scrollToSelected();
-						return true;
-					}
-					if (selectedIndex > 0) {
-						selectedIndex--;
-						// Skip disabled output field
-						if (selectedIndex === FIELD_OUTPUT && !saveToFile) {
-							selectedIndex--;
-						}
-						selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
-						scrollToSelected();
-						return true;
-					}
-					return false;
-				},
-				down: () => {
-					// Don't go past FIELD_THREADS with down arrow
-					// Create and Back are on the same row, reachable only via left/right
-					if (selectedIndex >= FIELD_CREATE) {
-						return false;
-					}
-					if (selectedIndex < FIELD_CREATE) {
-						selectedIndex++;
-						// Skip disabled output field
-						if (selectedIndex === FIELD_OUTPUT && !saveToFile) {
-							selectedIndex++;
-						}
-						selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
-						scrollToSelected();
-						return true;
-					}
-					return false;
-				},
-				left: () => {
-					if (selectedIndex === FIELD_BACK) {
-						selectedIndex = FIELD_CREATE;
-						return true;
-					}
-					if (selectedColumn > 0) {
-						selectedColumn--;
-						return true;
-					}
-					return false;
-				},
-				right: () => {
-					if (selectedIndex === FIELD_CREATE) {
-						selectedIndex = FIELD_BACK;
-						return true;
-					}
-					const maxCol = getMaxColumn(selectedIndex);
-					if (selectedColumn < maxCol) {
-						selectedColumn++;
-						return true;
-					}
-					return false;
-				},
-				confirmDown: () => {},
-				confirmUp: () => {
-					if (selectedIndex === FIELD_INPUT) {
-						if (selectedColumn === 0) focusInput(FIELD_INPUT);
-						else onBrowseInput?.();
-					} else if (selectedIndex === FIELD_SAVE_TO_FILE) {
-						saveToFile = !saveToFile;
-					} else if (selectedIndex === FIELD_OUTPUT) {
-						if (selectedColumn === 0) focusInput(FIELD_OUTPUT);
-						else onBrowseOutput?.();
-					} else if (selectedIndex === FIELD_ADD_TO_SHARING) {
-						addToSharing = !addToSharing;
-					} else if (selectedIndex === FIELD_NAME) {
-						focusInput(FIELD_NAME);
-					} else if (selectedIndex === FIELD_DESCRIPTION) {
-						focusInput(FIELD_DESCRIPTION);
-					} else if (selectedIndex === FIELD_CHUNK_SIZE) {
-						focusInput(FIELD_CHUNK_SIZE);
-					} else if (selectedIndex === FIELD_ALGO) {
-						algorithm = HASH_ALGORITHMS[selectedColumn];
-					} else if (selectedIndex === FIELD_THREADS) {
-						focusInput(FIELD_THREADS);
-					} else if (selectedIndex === FIELD_CREATE) {
-						handleCreate();
-					} else if (selectedIndex === FIELD_BACK) {
-						onBack?.();
-					}
-				},
-				confirmCancel: () => {},
-				back: () => onBack?.(),
-				onActivate: () => {
-					// When algo row is active, sync selectedColumn with current algorithm
-					if (selectedIndex === FIELD_ALGO) selectedColumn = algoIndex;
-				},
-			},
-			position
-		);
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
-		return unregister;
+		return () => {
+			if (unregisterArea) unregisterArea();
+		};
 	});
 </script>
 
@@ -278,64 +314,63 @@
 	}
 </style>
 
-<div class="create">
-	<div class="container">
-
-		<Dbg>
-		progress: {progress}%
-		</Dbg>
-
-		<!-- Name (optional) -->
-		<div bind:this={rowElements[FIELD_NAME]}>
-			<Input bind:this={nameInput} bind:value={name} label={$t.downloads?.lishCreate?.name} selected={active && selectedIndex === FIELD_NAME} />
+{#if browsingInputPath}
+	<FileBrowser {areaID} {position} initialPath={inputPath} foldersOnly showPath onSelect={handleInputPathSelect} onBack={handleBrowseBack} />
+{:else}
+	<div class="create">
+		<div class="container">
+			<!-- Name (optional) -->
+			<div bind:this={rowElements[FIELD_NAME]}>
+				<Input bind:this={nameInput} bind:value={name} label={$t.downloads?.lishCreate?.name} selected={active && selectedIndex === FIELD_NAME} />
+			</div>
+			<!-- Description (optional) -->
+			<div bind:this={rowElements[FIELD_DESCRIPTION]}>
+				<Input bind:this={descriptionInput} bind:value={description} label={$t.downloads?.lishCreate?.description} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
+			</div>
+			<!-- Chunk Size -->
+			<div bind:this={rowElements[FIELD_CHUNK_SIZE]}>
+				<Input bind:this={chunkSizeInput} bind:value={chunkSize} label={$t.downloads?.lishCreate?.chunkSize} selected={active && selectedIndex === FIELD_CHUNK_SIZE} />
+			</div>
+			<!-- Hash Algorithm -->
+			<div bind:this={rowElements[FIELD_ALGO]}>
+				<div class="label">{$t.downloads?.lishCreate?.algorithm}:</div>
+				<div class="algo-selector">
+					{#each HASH_ALGORITHMS as algo, i}
+						<Button label={algo} selected={active && selectedIndex === FIELD_ALGO && selectedColumn === i} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+					{/each}
+				</div>
+			</div>
+			<!-- Threads -->
+			<div bind:this={rowElements[FIELD_THREADS]}>
+				<Input bind:this={threadsInput} bind:value={threads} label={$t.downloads?.lishCreate?.threads} type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
+			</div>
+			<!-- Input Path (required) -->
+			<div class="row" bind:this={rowElements[FIELD_INPUT]}>
+				<Input bind:this={inputPathInput} bind:value={inputPath} label={$t.downloads?.lishCreate?.inputPath} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
+				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={openInputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<!-- Save to File Switch -->
+			<div bind:this={rowElements[FIELD_SAVE_TO_FILE]}>
+				<SwitchRow label={$t.downloads?.lishCreate?.saveToFile + ':'} checked={saveToFile} selected={active && selectedIndex === FIELD_SAVE_TO_FILE} onConfirm={() => (saveToFile = !saveToFile)} />
+			</div>
+			<!-- Output Path (optional) -->
+			<div class="row" bind:this={rowElements[FIELD_OUTPUT]}>
+				<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex disabled={!saveToFile} />
+				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
+			</div>
+			<!-- Add to Sharing Switch -->
+			<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>
+				<SwitchRow label={$t.downloads?.lishImport?.autoStartSharing + ':'} checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
+			</div>
+			<Alert type="error" message={showError ? errorMessage : ''} />
 		</div>
-		<!-- Description (optional) -->
-		<div bind:this={rowElements[FIELD_DESCRIPTION]}>
-			<Input bind:this={descriptionInput} bind:value={description} label={$t.downloads?.lishCreate?.description} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
-		</div>
-		<!-- Chunk Size -->
-		<div bind:this={rowElements[FIELD_CHUNK_SIZE]}>
-			<Input bind:this={chunkSizeInput} bind:value={chunkSize} label={$t.downloads?.lishCreate?.chunkSize} selected={active && selectedIndex === FIELD_CHUNK_SIZE} />
-		</div>
-		<!-- Hash Algorithm -->
-		<div bind:this={rowElements[FIELD_ALGO]}>
-			<div class="label">{$t.downloads?.lishCreate?.algorithm}:</div>
-			<div class="algo-selector">
-				{#each HASH_ALGORITHMS as algo, i}
-					<Button label={algo} selected={active && selectedIndex === FIELD_ALGO && selectedColumn === i} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
-				{/each}
+		<div class="buttons">
+			<div bind:this={rowElements[FIELD_CREATE]}>
+				<Button icon="/img/plus.svg" label={$t.downloads?.lishCreate?.create} selected={active && selectedIndex === FIELD_CREATE} onConfirm={handleCreate} />
+			</div>
+			<div bind:this={rowElements[FIELD_BACK]}>
+				<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === FIELD_BACK} onConfirm={onBack} />
 			</div>
 		</div>
-		<!-- Threads -->
-		<div bind:this={rowElements[FIELD_THREADS]}>
-			<Input bind:this={threadsInput} bind:value={threads} label={$t.downloads?.lishCreate?.threads} type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
-		</div>
-		<!-- Input Path (required) -->
-		<div class="row" bind:this={rowElements[FIELD_INPUT]}>
-			<Input bind:this={inputPathInput} bind:value={inputPath} label={$t.downloads?.lishCreate?.inputPath} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
-			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={onBrowseInput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
-		</div>
-		<!-- Save to File Switch -->
-		<div bind:this={rowElements[FIELD_SAVE_TO_FILE]}>
-			<SwitchRow label={$t.downloads?.lishCreate?.saveToFile + ':'} checked={saveToFile} selected={active && selectedIndex === FIELD_SAVE_TO_FILE} onConfirm={() => (saveToFile = !saveToFile)} />
-		</div>
-		<!-- Output Path (optional) -->
-		<div class="row" bind:this={rowElements[FIELD_OUTPUT]}>
-			<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex disabled={!saveToFile} />
-			<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} onConfirm={onBrowseOutput} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
-		</div>
-		<!-- Add to Sharing Switch -->
-		<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>
-			<SwitchRow label={$t.downloads?.lishImport?.autoStartSharing + ':'} checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
-		</div>
-		<Alert type="error" message={showError ? errorMessage : ''} />
 	</div>
-	<div class="buttons">
-		<div bind:this={rowElements[FIELD_CREATE]}>
-			<Button icon="/img/plus.svg" label={$t.downloads?.lishCreate?.create} selected={active && selectedIndex === FIELD_CREATE} onConfirm={handleCreate} />
-		</div>
-		<div bind:this={rowElements[FIELD_BACK]}>
-			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === FIELD_BACK} onConfirm={onBack} />
-		</div>
-	</div>
-</div>
+{/if}
