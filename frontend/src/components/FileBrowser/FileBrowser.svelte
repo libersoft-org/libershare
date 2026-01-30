@@ -5,6 +5,7 @@
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { api } from '../../scripts/api.ts';
 	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
@@ -61,6 +62,7 @@
 	let pathBreadcrumb: ReturnType<typeof PathBreadcrumb> | undefined = $state();
 	let showDeleteConfirm = $state(false);
 	let showNewFolderDialogState = $state(false);
+	let showCreateFileDialogState = $state(false);
 	let showDeleteFileConfirm = $state(false);
 	let showRenameFileDialogState = $state(false);
 	let fileToDelete = $state<StorageItemData | null>(null);
@@ -319,6 +321,9 @@
 			case 'delete':
 				showDeleteConfirmDialog();
 				break;
+			case 'createFile':
+				showCreateFileDialog();
+				break;
 			case 'filter':
 				openFilterPanel();
 				break;
@@ -469,6 +474,52 @@
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		// Focus on list if folder was created successfully, otherwise on toolbar
+		if (focusList) {
+			activateArea(listAreaID);
+		} else {
+			activateArea(`${areaID}-folder-actions`);
+		}
+	}
+
+	function showCreateFileDialog() {
+		showCreateFileDialogState = true;
+		// Unregister areas so dialog can take over
+		if (unregisterFolderActions) {
+			unregisterFolderActions();
+			unregisterFolderActions = null;
+		}
+		if (unregisterList) {
+			unregisterList();
+			unregisterList = null;
+		}
+		if (unregisterActions) {
+			unregisterActions();
+			unregisterActions = null;
+		}
+		pushBreadcrumb($t.fileBrowser?.createFile);
+	}
+
+	async function confirmCreateFile(fileName: string) {
+		const filePath = joinPathWithSeparator(currentPath, fileName, separator);
+		const result = await api.fs.writeText(filePath, '');
+		if (result.success) {
+			// Reload directory and select the new file
+			await loadDirectory(currentPath, fileName);
+			cancelCreateFile(true);
+		} else {
+			error = result.error || 'Failed to create file';
+			cancelCreateFile(false);
+		}
+	}
+
+	async function cancelCreateFile(focusList = false) {
+		showCreateFileDialogState = false;
+		popBreadcrumb();
+		await tick();
+		// Re-register all areas
+		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
+		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		if (focusList) {
 			activateArea(listAreaID);
 		} else {
@@ -724,6 +775,9 @@
 {/if}
 {#if showNewFolderDialogState}
 	<InputDialog title={$t.fileBrowser?.newFolder} label={$t.fileBrowser?.folderName} placeholder={$t.fileBrowser?.enterFolderName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
+{/if}
+{#if showCreateFileDialogState}
+	<InputDialog title={$t.fileBrowser?.createFile} label={$t.fileBrowser?.fileName} placeholder={$t.fileBrowser?.enterFileName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmCreateFile} onBack={cancelCreateFile} />
 {/if}
 {#if showRenameFileDialogState && fileToRename}
 	<InputDialog title={$t.fileBrowser?.renameFile} label={$t.fileBrowser?.fileName} placeholder={$t.fileBrowser?.enterFileName} initialValue={fileToRename.name} confirmLabel={$t.common?.ok} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmRenameFile} onBack={cancelRenameFile} />

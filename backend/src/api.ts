@@ -4,7 +4,7 @@ import type { DataServer } from './data-server.ts';
 import type { Networks } from './networks.ts';
 import { Downloader } from './downloader.ts';
 import { join } from 'path';
-import { fsInfo, fsList, fsDelete, fsMkdir, fsOpen, fsRename } from './fs.ts';
+import { fsInfo, fsList, fsDelete, fsMkdir, fsOpen, fsRename, fsWriteText } from './fs.ts';
 
 interface ClientData {
 	subscribedEvents: Set<string>;
@@ -369,6 +369,10 @@ export class ApiServer {
 
 			case 'fs.rename':
 				return await fsRename(params.path, params.newName);
+
+			case 'fs.writeText':
+				await fsWriteText(params.path, params.content);
+				return { success: true };
 
 			case 'download': {
 				/*

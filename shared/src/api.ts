@@ -181,4 +181,8 @@ class FsApi {
 	rename(path: string, newName: string): Promise<{ success: boolean }> {
 		return this.client.call<{ success: boolean }>('fs.rename', { path, newName });
 	}
+
+	writeText(path: string, content: string): Promise<{ success: boolean }> {
+		return this.client.call<{ success: boolean }>('fs.writeText', { path, content });
+	}
 }
