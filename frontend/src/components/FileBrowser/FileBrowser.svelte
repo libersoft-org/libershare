@@ -143,6 +143,7 @@
 		up: () => {
 			if (selectedIndex > 0) {
 				selectedIndex--;
+				showActions = false; // Hide actions when selection changes
 				scrollToSelected();
 				return true;
 			}
@@ -156,6 +157,7 @@
 		down: () => {
 			if (selectedIndex < items.length - 1) {
 				selectedIndex++;
+				showActions = false; // Hide actions when selection changes
 				scrollToSelected();
 				return true;
 			}
