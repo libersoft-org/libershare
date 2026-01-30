@@ -25,7 +25,7 @@
 	let itemElements: HTMLElement[] = $state([]);
 
 	// Toolbar state
-	let toolbarAreaID = `${areaID}-toolbar`;
+	let toolbarAreaID = $derived(`${areaID}-toolbar`);
 	let toolbarActive = $derived($activeArea === toolbarAreaID);
 	let selectedToolbarIndex = $state(0);
 

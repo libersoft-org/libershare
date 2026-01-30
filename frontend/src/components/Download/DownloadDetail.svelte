@@ -27,9 +27,9 @@
 	const unsubscribe = selectedDownload.subscribe(d => (download = d));
 
 	// Toolbar state
-	let toolbarAreaID = `${areaID}-toolbar`;
-	let infoAreaID = `${areaID}-info`;
-	let listAreaID = `${areaID}-list`;
+	let toolbarAreaID = $derived(`${areaID}-toolbar`);
+	let infoAreaID = $derived(`${areaID}-info`);
+	let listAreaID = $derived(`${areaID}-list`);
 	let toolbarActive = $derived($activeArea === toolbarAreaID);
 	let infoActive = $derived($activeArea === infoAreaID);
 	let listActive = $derived($activeArea === listAreaID);

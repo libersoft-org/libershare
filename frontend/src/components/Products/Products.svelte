@@ -17,11 +17,11 @@
 		onBack?: () => void;
 	}
 	let { areaID, position, title = 'Items', onBack }: Props = $props();
-	const searchAreaID = `${areaID}-search`;
-	const listAreaID = `${areaID}-list`;
+	let searchAreaID = $derived(`${areaID}-search`);
+	let listAreaID = $derived(`${areaID}-list`);
 	// Calculate sub-area positions based on base position
-	const searchPosition = { x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y };
-	const listPosition = { x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y };
+	let searchPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
+	let listPosition = $derived({ x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y });
 	let searchSelected = $derived($activeArea === searchAreaID);
 	let active = $derived($activeArea === listAreaID);
 	// Some test data

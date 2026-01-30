@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
+	import { untrack } from 'svelte';
 	import Dialog from './Dialog.svelte';
 	import ButtonsStatic from '../Buttons/ButtonsStatic.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -22,8 +23,7 @@
 	}
 
 	let { title, label, placeholder, initialValue = '', confirmLabel = 'OK', cancelLabel = 'Cancel', confirmIcon, cancelIcon, position, onConfirm, onBack }: Props = $props();
-
-	let value = $state(initialValue);
+	let value = $state(untrack(() => initialValue));
 	let selectedElement = $state<'input' | 'cancel' | 'confirm'>('input');
 	let isPressed = $state(false);
 	let inputRef: ReturnType<typeof Input> | undefined = $state();

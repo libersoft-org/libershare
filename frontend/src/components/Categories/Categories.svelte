@@ -18,11 +18,11 @@
 		onBack?: () => void;
 	}
 	let { areaID, position, title, items, orientation = 'horizontal', selectedId, buttonWidth, onselect, onBack }: Props = $props();
-	const searchAreaID = `${areaID}-search`;
-	const menuAreaID = `${areaID}-menu`;
+	let searchAreaID = $derived(`${areaID}-search`);
+	let menuAreaID = $derived(`${areaID}-menu`);
 	// Calculate sub-area positions
-	const searchPosition = { x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y };
-	const menuPosition = { x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y };
+	let searchPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
+	let menuPosition = $derived({ x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y });
 	let searchSelected = $derived($activeArea === searchAreaID);
 	let searchBar: SearchBar;
 

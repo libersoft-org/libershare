@@ -27,8 +27,8 @@
 	// 0 = url, 1 = download path, 2 = auto start switch, 3 = buttons row
 	let selectedIndex = $state(0);
 	let selectedColumn = $state(0);
-	let urlRef: Input;
-	let downloadPathRef: Input;
+	let urlRef: Input | undefined = $state();
+	let downloadPathRef: Input | undefined = $state();
 	let url = $state('');
 	let downloadPath = $state($storagePath);
 	let autoStart = $state($autoStartSharing);

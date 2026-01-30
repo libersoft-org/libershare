@@ -8,7 +8,7 @@
 
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { setContext, onMount } from 'svelte';
+	import { setContext, onMount, untrack } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	interface Props {
@@ -20,7 +20,7 @@
 		onBack?: () => void;
 	}
 	let { children, areaID, position, initialIndex = 0, orientation = 'vertical', onBack }: Props = $props();
-	let selectedIndex = $state(initialIndex);
+	let selectedIndex = $state(untrack(() => initialIndex));
 	let isAPressed = $state(false);
 	let buttons: { onConfirm?: () => void }[] = [];
 	let active = $derived($activeArea === areaID);

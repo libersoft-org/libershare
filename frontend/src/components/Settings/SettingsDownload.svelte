@@ -38,14 +38,14 @@
 	let uploadSpeed = $state($maxUploadSpeed.toString());
 	let autoStart = $state($autoStartSharing);
 
-	let storagePathRef: Input;
-	let tempPathRef: Input;
-	let lishPathRef: Input;
-	let portRef: Input;
-	let downloadConnectionsRef: Input;
-	let uploadConnectionsRef: Input;
-	let downloadSpeedRef: Input;
-	let uploadSpeedRef: Input;
+	let storagePathRef: Input | undefined = $state();
+	let tempPathRef: Input | undefined = $state();
+	let lishPathRef: Input | undefined = $state();
+	let portRef: Input | undefined = $state();
+	let downloadConnectionsRef: Input | undefined = $state();
+	let uploadConnectionsRef: Input | undefined = $state();
+	let downloadSpeedRef: Input | undefined = $state();
+	let uploadSpeedRef: Input | undefined = $state();
 
 	// Field indices
 	const FIELD_STORAGE_PATH = 0;

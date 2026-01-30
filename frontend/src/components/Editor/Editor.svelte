@@ -19,10 +19,10 @@
 	}
 	let { areaID, filePath, fileName, position, onBack, onUp }: Props = $props();
 	// Calculate sub-area positions
-	const toolbarPosition = { x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y };
-	const editorPosition = { x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y };
-	const toolbarAreaID = `${areaID}-toolbar`;
-	const editorAreaID = `${areaID}-editor`;
+	let toolbarPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
+	let editorPosition = $derived({ x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y });
+	let toolbarAreaID = $derived(`${areaID}-toolbar`);
+	let editorAreaID = $derived(`${areaID}-editor`);
 	let content = $state('');
 	let originalContent = $state('');
 	let loading = $state(true);
@@ -100,7 +100,7 @@
 			const action = toolbarActions[selectedToolbarIndex];
 			if (!action.disabled) handleToolbarAction(action.id);
 		},
-		back: onBack,
+		back: () => onBack(),
 	};
 
 	const editorAreaHandlers = {

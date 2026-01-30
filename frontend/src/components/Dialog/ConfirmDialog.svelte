@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { untrack } from 'svelte';
 	import Dialog from './Dialog.svelte';
 	import ButtonsStatic from '../Buttons/ButtonsStatic.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -18,7 +19,7 @@
 		onBack: () => void;
 	}
 	let { title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', confirmIcon, cancelIcon, defaultButton = 'confirm', position, onConfirm, onBack }: Props = $props();
-	let selectedButton = $state<'confirm' | 'cancel'>(defaultButton);
+	let selectedButton = $state<'confirm' | 'cancel'>(untrack(() => defaultButton));
 	let isPressed = $state(false);
 
 	onMount(() => {
