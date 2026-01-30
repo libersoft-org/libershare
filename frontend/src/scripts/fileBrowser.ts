@@ -29,42 +29,25 @@ export function getParentPath(path: string, separator: string): string | null {
 }
 
 /**
+ * Convert wildcard pattern to RegExp
+ * * = any characters, ? = single character
+ */
+function wildcardToRegex(pattern: string): RegExp {
+	const escaped = pattern
+		.replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape special regex chars (except * and ?)
+		.replace(/\*/g, '.*') // * = any characters
+		.replace(/\?/g, '.'); // ? = single character
+	return new RegExp(`^${escaped}$`, 'i');
+}
+
+/**
  * Check if a file name passes the filter
- * Supports formats:
- * - *.ext = ends with .ext
- * - *.ext* = contains .ext
- * - ext* = starts with ext
- * - ext = ends with .ext (assumes extension)
+ * Supports wildcard patterns: * (any chars), ? (single char)
+ * Examples: *.mkv, *.mkv*, video*.mp4, file?.txt
  */
 export function filePassesFilter(name: string, filter?: string[]): boolean {
 	if (!filter || filter.length === 0 || filter.includes('*') || filter.includes('*.*')) return true;
-	const lowerName = name.toLowerCase();
-	return filter.some(pattern => {
-		let p = pattern.toLowerCase().trim();
-		const startsWithStar = p.startsWith('*');
-		const endsWithStar = p.endsWith('*');
-		
-		// Remove leading and trailing stars for the core pattern
-		if (startsWithStar) p = p.substring(1);
-		if (endsWithStar) p = p.slice(0, -1);
-		
-		// Ensure extension has a dot if it doesn't start with one
-		if (p && !p.startsWith('.') && !startsWithStar) p = '.' + p;
-		
-		if (startsWithStar && endsWithStar) {
-			// *.ext* = contains
-			return lowerName.includes(p);
-		} else if (startsWithStar) {
-			// *.ext = ends with
-			return lowerName.endsWith(p);
-		} else if (endsWithStar) {
-			// ext* = starts with
-			return lowerName.startsWith(p);
-		} else {
-			// ext = ends with (treat as extension)
-			return lowerName.endsWith(p);
-		}
-	});
+	return filter.some(pattern => wildcardToRegex(pattern).test(name));
 }
 
 /**
