@@ -722,12 +722,21 @@
 		gap: 2vh;
 		margin: 2vh;
 		flex: 1;
-		overflow: hidden;
-		/*background-color: red;*/
+		min-height: 0;
+	}
+
+	.table-row {
+		display: flex;
+		flex-direction: row;
+		gap: 2vh;
+		flex: 1;
+		min-height: 0;
 	}
 
 	.container {
 		flex: 1;
+		display: flex;
+		flex-direction: column;
 		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
 		overflow: hidden;
@@ -746,7 +755,6 @@
 	.actions {
 		display: flex;
 		flex-direction: column;
-		padding: 2vh;
 		gap: 1vh;
 		min-width: 20vh;
 	}
@@ -774,48 +782,50 @@
 					{/each}
 				</div>
 			{/if}
-			<div class="container">
-				<Table {columns} noBorder>
-					<Header>
-						<Cell>{$t.localStorage?.name}</Cell>
-						<Cell align="right" desktopOnly>{$t.localStorage?.size}</Cell>
-						<Cell align="right" desktopOnly>{$t.localStorage?.modified}</Cell>
-					</Header>
-					<div class="items">
-						{#if loading}
-							<div class="loading">
-								<Spinner size="8vh" />
-							</div>
-						{:else if error}
-							{#each items as item, index (item.id)}
-								<div bind:this={itemElements[index]}>
-									<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
+			<div class="table-row">
+				<div class="container">
+					<Table {columns} noBorder>
+						<Header>
+							<Cell>{$t.localStorage?.name}</Cell>
+							<Cell align="right" desktopOnly>{$t.localStorage?.size}</Cell>
+							<Cell align="right" desktopOnly>{$t.localStorage?.modified}</Cell>
+						</Header>
+						<div class="items">
+							{#if loading}
+								<div class="loading">
+									<Spinner size="8vh" />
 								</div>
-							{/each}
-						{:else}
-							{#each items as item, index (item.id)}
-								<div bind:this={itemElements[index]}>
-									<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
-								</div>
-							{/each}
-						{/if}
+							{:else if error}
+								{#each items as item, index (item.id)}
+									<div bind:this={itemElements[index]}>
+										<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
+									</div>
+								{/each}
+							{:else}
+								{#each items as item, index (item.id)}
+									<div bind:this={itemElements[index]}>
+										<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
+									</div>
+								{/each}
+							{/if}
+						</div>
+					</Table>
+				</div>
+				{#if showActions && selectedItem?.type === 'file'}
+					<div class="actions">
+						{#each fileActions as action, index (action.id)}
+							<Button icon={action.icon} label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => handleAction(action.id)} />
+						{/each}
 					</div>
-				</Table>
+				{/if}
+				{#if showFilterPanel}
+					<div class="actions">
+						{#each filterActions as action, index (action.id)}
+							<Button icon={action.icon} label={action.label} selected={filterActive && selectedFilterIndex === index} onConfirm={() => handleFilterAction(action.id)} />
+						{/each}
+					</div>
+				{/if}
 			</div>
-			{#if showActions && selectedItem?.type === 'file'}
-				<div class="actions">
-					{#each fileActions as action, index (action.id)}
-						<Button icon={action.icon} label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => handleAction(action.id)} />
-					{/each}
-				</div>
-			{/if}
-			{#if showFilterPanel}
-				<div class="actions">
-					{#each filterActions as action, index (action.id)}
-						<Button icon={action.icon} label={action.label} selected={filterActive && selectedFilterIndex === index} onConfirm={() => handleFilterAction(action.id)} />
-					{/each}
-				</div>
-			{/if}
 		</div>
 	{/if}
 </div>
