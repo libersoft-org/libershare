@@ -117,3 +117,8 @@ export async function fsRename(oldPath: string, newName: string): Promise<void> 
 export async function fsWriteText(path: string, content: string): Promise<void> {
 	await Bun.write(path, content);
 }
+
+export async function fsReadText(path: string): Promise<string> {
+	const file = Bun.file(path);
+	return await file.text();
+}

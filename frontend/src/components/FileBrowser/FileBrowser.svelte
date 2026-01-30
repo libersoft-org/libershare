@@ -19,6 +19,7 @@
 	import PathBreadcrumb from './FileBrowserBreadcrumb.svelte';
 	import ConfirmDialog from '../Dialog/ConfirmDialog.svelte';
 	import InputDialog from '../Dialog/InputDialog.svelte';
+	import Editor from '../Editor/Editor.svelte';
 	interface Props {
 		areaID: string;
 		position: Position;
@@ -65,8 +66,10 @@
 	let showCreateFileDialogState = $state(false);
 	let showDeleteFileConfirm = $state(false);
 	let showRenameFileDialogState = $state(false);
+	let showEditorState = $state(false);
 	let fileToDelete = $state<StorageItemData | null>(null);
 	let fileToRename = $state<StorageItemData | null>(null);
+	let fileToEdit = $state<StorageItemData | null>(null);
 	let unregisterFolderActions: (() => void) | null = null;
 	let unregisterList: (() => void) | null = null;
 	let unregisterActions: (() => void) | null = null;
@@ -297,6 +300,9 @@
 			case 'open':
 				handleOpenFile(item);
 				break;
+			case 'edit':
+				showEditor(item);
+				return;
 			case 'rename':
 				showRenameFileDialog(item);
 				return; // Don't close actions panel yet
@@ -622,6 +628,50 @@
 		activateArea(listAreaID);
 	}
 
+	function showEditor(item: StorageItemData) {
+		fileToEdit = item;
+		showEditorState = true;
+		showActions = false;
+		// Unregister areas so editor can take over
+		if (unregisterFolderActions) {
+			unregisterFolderActions();
+			unregisterFolderActions = null;
+		}
+		if (unregisterList) {
+			unregisterList();
+			unregisterList = null;
+		}
+		if (unregisterActions) {
+			unregisterActions();
+			unregisterActions = null;
+		}
+	}
+
+	async function closeEditor() {
+		showEditorState = false;
+		fileToEdit = null;
+		await tick();
+		// Re-register all areas
+		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
+		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
+		activateArea(listAreaID);
+	}
+
+	async function handleBreadcrumbNavigate(path: string) {
+		// If editor is open, close it first
+		if (showEditorState) {
+			showEditorState = false;
+			fileToEdit = null;
+			await tick();
+			// Re-register all areas
+			unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+			unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
+			unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
+		}
+		loadDirectory(path);
+	}
+
 	export function getCurrentPath(): string {
 		return currentPath;
 	}
@@ -662,21 +712,22 @@
 	.browser {
 		display: flex;
 		flex-direction: column;
-		gap: 1vh;
 		height: 100%;
 		overflow: hidden;
 	}
 
 	.content {
 		display: flex;
+		flex-direction: column;
 		gap: 2vh;
+		margin: 2vh;
 		flex: 1;
 		overflow: hidden;
+		/*background-color: red;*/
 	}
 
 	.container {
 		flex: 1;
-		margin: 0 2vh;
 		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
 		overflow: hidden;
@@ -702,70 +753,71 @@
 
 	.folder-actions {
 		display: flex;
-		flex-direction: row;
 		gap: 1vh;
-		padding: 0 2vh;
 	}
 </style>
 
 <div class="browser">
 	{#if showPath}
-		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" position={pathBreadcrumbPosition} path={currentPath} {separator} onNavigate={path => loadDirectory(path)} onDown={() => (error ? `${areaID}-list` : `${areaID}-folder-actions`)} />
+		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" position={pathBreadcrumbPosition} path={showEditorState && fileToEdit ? fileToEdit.path : currentPath} {separator} onNavigate={handleBreadcrumbNavigate} onDown={() => (showEditorState ? `${areaID}-editor-toolbar` : error ? `${areaID}-list` : `${areaID}-folder-actions`)} />
 	{/if}
-	{#if !error}
-		<div class="folder-actions">
-			{#each folderActions as action, index (action.id)}
-				<Button label={action.label} icon={action.icon} selected={folderActionsActive && selectedFolderActionIndex === index} onConfirm={() => handleFolderAction(action.id)} />
-			{/each}
-		</div>
-	{/if}
-	{#if error}
-		<Alert type="error" message={error} />
-	{/if}
-	<div class="content">
-		<div class="container">
-			<Table {columns} noBorder>
-				<Header>
-					<Cell>{$t.localStorage?.name}</Cell>
-					<Cell align="right" desktopOnly>{$t.localStorage?.size}</Cell>
-					<Cell align="right" desktopOnly>{$t.localStorage?.modified}</Cell>
-				</Header>
-				<div class="items">
-					{#if loading}
-						<div class="loading">
-							<Spinner size="8vh" />
-						</div>
-					{:else if error}
-						{#each items as item, index (item.id)}
-							<div bind:this={itemElements[index]}>
-								<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
-							</div>
-						{/each}
-					{:else}
-						{#each items as item, index (item.id)}
-							<div bind:this={itemElements[index]}>
-								<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
-							</div>
-						{/each}
-					{/if}
+	{#if showEditorState && fileToEdit}
+		<Editor areaID="{areaID}-editor" filePath={fileToEdit.path} fileName={fileToEdit.name} {position} onBack={closeEditor} onUp={() => activateArea(`${areaID}-path`)} />
+	{:else}
+		<div class="content">
+			{#if error}
+				<Alert type="error" message={error} />
+			{:else}
+				<div class="folder-actions">
+					{#each folderActions as action, index (action.id)}
+						<Button label={action.label} icon={action.icon} selected={folderActionsActive && selectedFolderActionIndex === index} onConfirm={() => handleFolderAction(action.id)} />
+					{/each}
 				</div>
-			</Table>
+			{/if}
+			<div class="container">
+				<Table {columns} noBorder>
+					<Header>
+						<Cell>{$t.localStorage?.name}</Cell>
+						<Cell align="right" desktopOnly>{$t.localStorage?.size}</Cell>
+						<Cell align="right" desktopOnly>{$t.localStorage?.modified}</Cell>
+					</Header>
+					<div class="items">
+						{#if loading}
+							<div class="loading">
+								<Spinner size="8vh" />
+							</div>
+						{:else if error}
+							{#each items as item, index (item.id)}
+								<div bind:this={itemElements[index]}>
+									<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
+								</div>
+							{/each}
+						{:else}
+							{#each items as item, index (item.id)}
+								<div bind:this={itemElements[index]}>
+									<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={active && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
+								</div>
+							{/each}
+						{/if}
+					</div>
+				</Table>
+			</div>
+			{#if showActions && selectedItem?.type === 'file'}
+				<div class="actions">
+					{#each fileActions as action, index (action.id)}
+						<Button icon={action.icon} label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => handleAction(action.id)} />
+					{/each}
+				</div>
+			{/if}
+			{#if showFilterPanel}
+				<div class="actions">
+					{#each filterActions as action, index (action.id)}
+						<Button icon={action.icon} label={action.label} selected={filterActive && selectedFilterIndex === index} onConfirm={() => handleFilterAction(action.id)} />
+					{/each}
+				</div>
+			{/if}
 		</div>
-		{#if showActions && selectedItem?.type === 'file'}
-			<div class="actions">
-				{#each fileActions as action, index (action.id)}
-					<Button icon={action.icon} label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => handleAction(action.id)} />
-				{/each}
-			</div>
-		{/if}
-		{#if showFilterPanel}
-			<div class="actions">
-				{#each filterActions as action, index (action.id)}
-					<Button icon={action.icon} label={action.label} selected={filterActive && selectedFilterIndex === index} onConfirm={() => handleFilterAction(action.id)} />
-				{/each}
-			</div>
-		{/if}
-	</div>
+	{/if}
 </div>
 {#if showDeleteConfirm}
 	<ConfirmDialog title={$t.fileBrowser?.deleteFolder} message={$t.fileBrowser?.confirmDeleteFolder?.replace('{path}', currentPath)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmDeleteFolder} onBack={cancelDeleteFolder} />
