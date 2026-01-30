@@ -5,7 +5,7 @@
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, getFileSystemInfo, joinPathWithSeparator, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
+	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Table from '../Table/Table.svelte';
@@ -228,12 +228,8 @@
 		},
 	};
 
-	// File actions: open, delete, back
-	const fileActions = [
-		{ id: 'open', label: $t.fileBrowser?.openFile, icon: '/img/folder.svg' },
-		{ id: 'delete', label: $t.fileBrowser?.deleteFile, icon: '/img/del.svg' },
-		{ id: 'back', label: $t.common?.back, icon: '/img/back.svg' },
-	];
+	// File actions from fileBrowser.ts
+	let fileActions = $derived(getFileActions($t));
 
 	const actionsAreaHandlers = {
 		up: () => {
@@ -241,17 +237,17 @@
 				selectedActionIndex--;
 				return true;
 			}
-			return false;
+			return true; // Block navigation outside actions panel
 		},
 		down: () => {
 			if (selectedActionIndex < fileActions.length - 1) {
 				selectedActionIndex++;
 				return true;
 			}
-			return false;
+			return true; // Block navigation outside actions panel
 		},
-		left: () => false,
-		right: () => false,
+		left: () => true, // Block navigation outside actions panel
+		right: () => true, // Block navigation outside actions panel
 		confirmDown: () => {},
 		confirmUp: () => {
 			const action = fileActions[selectedActionIndex];
@@ -270,17 +266,17 @@
 				selectedFilterIndex--;
 				return true;
 			}
-			return false;
+			return true; // Block navigation outside filter panel
 		},
 		down: () => {
 			if (selectedFilterIndex < filterActions.length - 1) {
 				selectedFilterIndex++;
 				return true;
 			}
-			return false;
+			return true; // Block navigation outside filter panel
 		},
-		left: () => false,
-		right: () => false,
+		left: () => true, // Block navigation outside filter panel
+		right: () => true, // Block navigation outside filter panel
 		confirmDown: () => {},
 		confirmUp: () => {
 			const action = filterActions[selectedFilterIndex];
