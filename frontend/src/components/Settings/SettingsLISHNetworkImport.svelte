@@ -116,7 +116,7 @@
 
 <div class="import">
 	<div class="container">
-		<Input bind:this={inputRef} bind:value={networkJson} multiline rows={15} fontSize="2vh" selected={active && selectedIndex === 0} placeholder={'{"networkID": "...", "name": "...", ...}'} />
+		<Input bind:this={inputRef} bind:value={networkJson} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} placeholder={'{"networkID": "...", "name": "...", ...}'} />
 		<Alert type="error" message={errorMessage} />
 	</div>
 	<div class="buttons">

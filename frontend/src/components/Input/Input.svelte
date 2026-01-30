@@ -10,6 +10,7 @@
 		multiline?: boolean;
 		rows?: number;
 		fontSize?: string;
+		fontFamily?: string;
 		padding?: string;
 		flex?: boolean;
 		readonly?: boolean;
@@ -17,7 +18,7 @@
 		onchange?: (value: string) => void;
 	}
 
-	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', min, max, multiline = false, rows = 3, fontSize = '2.5vh', padding = '1.5vh 2vh', flex = false, readonly = false, disabled = false, onchange }: Props = $props();
+	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', min, max, multiline = false, rows = 3, fontSize = '2.5vh', fontFamily, padding = '1.5vh 2vh', flex = false, readonly = false, disabled = false, onchange }: Props = $props();
 	let inputElement: HTMLInputElement | HTMLTextAreaElement | undefined = $state();
 
 	export function focus() {
@@ -72,7 +73,7 @@
 
 	textarea {
 		resize: vertical;
-		font-family: inherit;
+		font-family: var(--input-font-family, inherit);
 	}
 
 	input:focus,
@@ -98,7 +99,7 @@
 	}
 </style>
 
-<div class="input-field" class:selected class:flex class:disabled style="--input-font-size: {fontSize}; --input-padding: {padding};">
+<div class="input-field" class:selected class:flex class:disabled style="--input-font-size: {fontSize}; --input-padding: {padding};{fontFamily ? ` --input-font-family: ${fontFamily};` : ''}">
 	{#if label}
 		<div class="label">{label}:</div>
 	{/if}

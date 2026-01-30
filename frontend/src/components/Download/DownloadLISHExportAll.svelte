@@ -14,7 +14,7 @@
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
-	
+
 	// TODO: Get all LISH from storage/backend
 	let lishList: unknown[] = $state([]);
 	let hasLish = $derived(lishList.length > 0);
@@ -102,7 +102,7 @@
 <div class="export-all">
 	<div class="container">
 		{#if hasLish}
-			<Input bind:this={inputRef} value={lishJson} multiline rows={15} readonly fontSize="2vh" selected={active && selectedIndex === 0} />
+			<Input bind:this={inputRef} value={lishJson} multiline rows={15} readonly fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
 		{:else}
 			<Alert type="warning" message={$t.downloads?.emptyList} />
 		{/if}

@@ -98,7 +98,7 @@
 
 <div class="export">
 	<div class="container">
-		<Input bind:this={inputRef} value={networkJson} multiline rows={15} readonly fontSize="2vh" selected={active && selectedIndex === 0} />
+		<Input bind:this={inputRef} value={networkJson} multiline rows={15} readonly fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
 	</div>
 	<div class="buttons">
 		<Button icon="/img/save.svg" label="{$t.common?.saveAs} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />

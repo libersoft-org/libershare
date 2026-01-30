@@ -102,7 +102,7 @@
 <div class="export-all">
 	<div class="container">
 		{#if hasNetworks}
-			<Input bind:this={inputRef} value={networksJson} multiline rows={15} readonly fontSize="2vh" selected={active && selectedIndex === 0} />
+			<Input bind:this={inputRef} value={networksJson} multiline rows={15} readonly fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
 		{:else}
 			<Alert type="warning" message={$t.settings?.lishNetwork?.emptyList} />
 		{/if}

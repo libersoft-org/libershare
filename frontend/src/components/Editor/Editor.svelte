@@ -182,7 +182,7 @@
 	.editor-wrapper :global(textarea) {
 		flex: 1;
 		resize: none;
-		font-family: monospace;
+		font-family: 'Ubuntu Mono';
 		overflow-y: auto;
 	}
 </style>

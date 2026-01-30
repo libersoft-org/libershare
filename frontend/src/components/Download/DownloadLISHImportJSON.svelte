@@ -188,7 +188,7 @@
 {:else}
 	<div class="import">
 		<div class="container">
-			<Input bind:this={inputRef} bind:value={lishJson} label={$t.downloads?.lishImport?.lishJSON} multiline rows={10} placeholder={$t.downloads?.lishImport?.placeholder} fontSize="2vh" selected={active && selectedIndex === 0} />
+			<Input bind:this={inputRef} bind:value={lishJson} label={$t.downloads?.lishImport?.lishJSON} multiline rows={10} placeholder={$t.downloads?.lishImport?.placeholder} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
 			<div class="row">
 				<Input bind:this={downloadPathRef} bind:value={downloadPath} label={$t.downloads?.lishImport?.downloadPath} selected={active && selectedIndex === 1 && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
