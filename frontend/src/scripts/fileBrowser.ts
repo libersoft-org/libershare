@@ -30,18 +30,40 @@ export function getParentPath(path: string, separator: string): string | null {
 
 /**
  * Check if a file name passes the filter
- * Supports formats: .ext, *.ext, ext
+ * Supports formats:
+ * - *.ext = ends with .ext
+ * - *.ext* = contains .ext
+ * - ext* = starts with ext
+ * - ext = ends with .ext (assumes extension)
  */
 export function filePassesFilter(name: string, filter?: string[]): boolean {
 	if (!filter || filter.length === 0 || filter.includes('*') || filter.includes('*.*')) return true;
 	const lowerName = name.toLowerCase();
-	return filter.some(ext => {
-		let normalizedExt = ext.toLowerCase().trim();
-		// Handle *.ext format - remove the *
-		if (normalizedExt.startsWith('*')) normalizedExt = normalizedExt.substring(1);
-		// Handle ext format without dot - add the dot
-		if (!normalizedExt.startsWith('.')) normalizedExt = '.' + normalizedExt;
-		return lowerName.endsWith(normalizedExt);
+	return filter.some(pattern => {
+		let p = pattern.toLowerCase().trim();
+		const startsWithStar = p.startsWith('*');
+		const endsWithStar = p.endsWith('*');
+		
+		// Remove leading and trailing stars for the core pattern
+		if (startsWithStar) p = p.substring(1);
+		if (endsWithStar) p = p.slice(0, -1);
+		
+		// Ensure extension has a dot if it doesn't start with one
+		if (p && !p.startsWith('.') && !startsWithStar) p = '.' + p;
+		
+		if (startsWithStar && endsWithStar) {
+			// *.ext* = contains
+			return lowerName.includes(p);
+		} else if (startsWithStar) {
+			// *.ext = ends with
+			return lowerName.endsWith(p);
+		} else if (endsWithStar) {
+			// ext* = starts with
+			return lowerName.startsWith(p);
+		} else {
+			// ext = ends with (treat as extension)
+			return lowerName.endsWith(p);
+		}
 	});
 }
 
