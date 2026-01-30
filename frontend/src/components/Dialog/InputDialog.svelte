@@ -5,9 +5,9 @@
 	import ButtonsStatic from '../Buttons/ButtonsStatic.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
+	import Alert from '../Alert/Alert.svelte';
 	import { useArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
-
 	interface Props {
 		title: string;
 		label?: string;
@@ -17,21 +17,19 @@
 		cancelLabel?: string;
 		confirmIcon?: string;
 		cancelIcon?: string;
+		error?: string;
 		position: Position;
 		onConfirm: (value: string) => void;
 		onBack: () => void;
 	}
-
-	let { title, label, placeholder, initialValue = '', confirmLabel = 'OK', cancelLabel = 'Cancel', confirmIcon, cancelIcon, position, onConfirm, onBack }: Props = $props();
+	let { title, label, placeholder, initialValue = '', confirmLabel = 'OK', cancelLabel = 'Cancel', confirmIcon, cancelIcon, error, position, onConfirm, onBack }: Props = $props();
 	let value = $state(untrack(() => initialValue));
 	let selectedElement = $state<'input' | 'cancel' | 'confirm'>('input');
 	let isPressed = $state(false);
 	let inputRef: ReturnType<typeof Input> | undefined = $state();
 
 	function handleConfirm() {
-		if (value.trim()) {
-			onConfirm(value.trim());
-		}
+		onConfirm(value.trim());
 	}
 
 	onMount(() => {
@@ -113,6 +111,9 @@
 <Dialog {title}>
 	<div class="input-dialog">
 		<Input bind:this={inputRef} bind:value {label} {placeholder} selected={selectedElement === 'input'} />
+		{#if error}
+			<Alert type="error" message={error} />
+		{/if}
 		<ButtonsStatic>
 			<Button icon={cancelIcon} label={cancelLabel} selected={selectedElement === 'cancel'} pressed={selectedElement === 'cancel' && isPressed} onConfirm={onBack} />
 			<Button icon={confirmIcon} label={confirmLabel} selected={selectedElement === 'confirm'} pressed={selectedElement === 'confirm' && isPressed} onConfirm={handleConfirm} />

@@ -68,6 +68,7 @@
 	let showRenameFileDialogState = $state(false);
 	let showEditorState = $state(false);
 	let showLargeFileWarning = $state(false);
+	let dialogError = $state<string | null>(null);
 	let fileToDelete = $state<StorageItemData | null>(null);
 	let fileToRename = $state<StorageItemData | null>(null);
 	let fileToEdit = $state<StorageItemData | null>(null);
@@ -445,6 +446,7 @@
 
 	function showNewFolderDialog() {
 		showNewFolderDialogState = true;
+		dialogError = null;
 		// Unregister areas so dialog can take over
 		if (unregisterFolderActions) {
 			unregisterFolderActions();
@@ -462,6 +464,10 @@
 	}
 
 	async function confirmNewFolder(folderName: string) {
+		if (!folderName) {
+			dialogError = $t.fileBrowser?.folderNameRequired;
+			return;
+		}
 		const newPath = joinPathWithSeparator(currentPath, folderName, separator);
 		const result = await createFolder(newPath);
 		if (result.success) {
@@ -469,8 +475,7 @@
 			await loadDirectory(currentPath, folderName);
 			cancelNewFolder(true); // Pass true to indicate success - focus on list
 		} else {
-			error = result.error || 'Failed to create folder';
-			cancelNewFolder(false);
+			dialogError = result.error || 'Failed to create folder';
 		}
 	}
 
@@ -492,6 +497,7 @@
 
 	function showCreateFileDialog() {
 		showCreateFileDialogState = true;
+		dialogError = null;
 		// Unregister areas so dialog can take over
 		if (unregisterFolderActions) {
 			unregisterFolderActions();
@@ -509,6 +515,10 @@
 	}
 
 	async function confirmCreateFile(fileName: string) {
+		if (!fileName) {
+			dialogError = $t.fileBrowser?.fileNameRequired;
+			return;
+		}
 		const filePath = joinPathWithSeparator(currentPath, fileName, separator);
 		const result = await api.fs.writeText(filePath, '');
 		if (result.success) {
@@ -516,8 +526,7 @@
 			await loadDirectory(currentPath, fileName);
 			cancelCreateFile(true);
 		} else {
-			error = result.error || 'Failed to create file';
-			cancelCreateFile(false);
+			dialogError = result.error || 'Failed to create file';
 		}
 	}
 
@@ -886,10 +895,10 @@
 	<ConfirmDialog title={$t.fileBrowser?.deleteFile} message={$t.fileBrowser?.confirmDeleteFile?.replace('{name}', fileToDelete.name)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmDeleteFile} onBack={cancelDeleteFile} />
 {/if}
 {#if showNewFolderDialogState}
-	<InputDialog title={$t.fileBrowser?.newFolder} label={$t.fileBrowser?.folderName} placeholder={$t.fileBrowser?.enterFolderName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
+	<InputDialog title={$t.fileBrowser?.newFolder} label={$t.fileBrowser?.folderName} placeholder={$t.fileBrowser?.enterFolderName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
 {/if}
 {#if showCreateFileDialogState}
-	<InputDialog title={$t.fileBrowser?.createFile} label={$t.fileBrowser?.fileName} placeholder={$t.fileBrowser?.enterFileName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmCreateFile} onBack={cancelCreateFile} />
+	<InputDialog title={$t.fileBrowser?.createFile} label={$t.fileBrowser?.fileName} placeholder={$t.fileBrowser?.enterFileName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmCreateFile} onBack={cancelCreateFile} />
 {/if}
 {#if showRenameFileDialogState && fileToRename}
 	<InputDialog title={$t.fileBrowser?.renameFile} label={$t.fileBrowser?.fileName} placeholder={$t.fileBrowser?.enterFileName} initialValue={fileToRename.name} confirmLabel={$t.common?.ok} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmRenameFile} onBack={cancelRenameFile} />
