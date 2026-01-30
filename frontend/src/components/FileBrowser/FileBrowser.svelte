@@ -35,7 +35,8 @@
 
 	// File filter state
 	let showAllFiles = $state(false);
-	let activeFilter = $derived(showAllFiles ? ['*'] : fileFilter);
+	let customFilter = $state<string | null>(null);
+	let activeFilter = $derived(customFilter ? [customFilter] : (showAllFiles ? ['*'] : fileFilter));
 	// Calculate sub-area positions based on base position
 	const pathBreadcrumbPosition = { x: position.x + CONTENT_OFFSETS.pathBreadcrumb.x, y: position.y + CONTENT_OFFSETS.pathBreadcrumb.y };
 	const folderActionsPosition = { x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y };
@@ -70,16 +71,18 @@
 	let isEmpty = $derived(items.length === 0 || (items.length === 1 && items[0].name === '..'));
 	// Format filter for display
 	let filterLabel = $derived.by(() => {
+		if (customFilter) return customFilter;
 		if (!fileFilter || fileFilter.length === 0) return null;
 		if (showAllFiles) return '*.*';
 		return fileFilter.join(', ');
 	});
 	// Folder toolbar actions
-	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, !!onSelect));
+	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, !!onSelect, customFilter ?? undefined));
 	let selectedFolderActionIndex = $state(0);
 	let folderActionsActive = $derived($activeArea === `${areaID}-folder-actions`);
 	// Filter panel actions
-	let filterActions = $derived(buildFilterActions($t, fileFilter));
+	let filterActions = $derived(buildFilterActions($t, fileFilter, customFilter ?? undefined));
+	let showCustomFilterDialog = $state(false);
 
 	async function loadDirectory(path?: string, selectName?: string): Promise<void> {
 		loading = true;
@@ -347,9 +350,43 @@
 			closeFilterPanel();
 			return;
 		}
+		if (actionId === 'custom') {
+			openCustomFilterDialog();
+			return;
+		}
 		// Set the filter
-		if (actionId === '*') showAllFiles = true;
-		else if (actionId === 'filter') showAllFiles = false; // Combined filter option selected - use the fileFilter
+		if (actionId === '*') {
+			showAllFiles = true;
+			customFilter = null;
+		} else if (actionId === 'filter') {
+			showAllFiles = false;
+			customFilter = null;
+		}
+		loadDirectory(currentPath);
+		closeFilterPanel();
+	}
+
+	function openCustomFilterDialog() {
+		showCustomFilterDialog = true;
+		if (unregisterFilter) {
+			unregisterFilter();
+			unregisterFilter = null;
+		}
+		pushBreadcrumb($t.fileBrowser?.customFilter);
+	}
+
+	function closeCustomFilterDialog() {
+		showCustomFilterDialog = false;
+		popBreadcrumb();
+		unregisterFilter = useArea(`${areaID}-filter`, filterAreaHandlers, actionsPosition);
+		tick().then(() => activateArea(`${areaID}-filter`));
+	}
+
+	function confirmCustomFilter(value: string) {
+		customFilter = value.trim();
+		showAllFiles = false;
+		showCustomFilterDialog = false;
+		popBreadcrumb();
 		loadDirectory(currentPath);
 		closeFilterPanel();
 	}
@@ -645,4 +682,7 @@
 {/if}
 {#if showNewFolderDialogState}
 	<InputDialog title={$t.fileBrowser?.newFolder} label={$t.fileBrowser?.folderName} placeholder={$t.fileBrowser?.enterFolderName} confirmLabel={$t.common?.create} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
+{/if}
+{#if showCustomFilterDialog}
+	<InputDialog title={$t.fileBrowser?.customFilter} label={$t.fileBrowser?.filterPattern} placeholder={$t.fileBrowser?.enterFilterPattern} initialValue={customFilter ?? ''} confirmLabel={$t.common?.ok} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmCustomFilter} onBack={closeCustomFilterDialog} />
 {/if}

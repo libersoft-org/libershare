@@ -185,7 +185,10 @@
 		"folderName": "Název složky",
 		"enterFolderName": "Zadejte název složky",
 		"confirmDeleteFolder": "Opravdu chcete smazat složku \"{path}\"?",
-		"confirmDeleteFile": "Opravdu chcete smazat soubor \"{name}\"?"
+		"confirmDeleteFile": "Opravdu chcete smazat soubor \"{name}\"?",
+		"customFilter": "Vlastní filtr",
+		"filterPattern": "Filtr",
+		"enterFilterPattern": "Zadejte filtr (např. *.txt, *.jpg)"
 	},
 	"about": {
 		"title": "O aplikaci",

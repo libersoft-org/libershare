@@ -185,7 +185,10 @@
 		"folderName": "Folder name",
 		"enterFolderName": "Enter folder name",
 		"confirmDeleteFolder": "Are you sure you want to delete folder \"{path}\"?",
-		"confirmDeleteFile": "Are you sure you want to delete file \"{name}\"?"
+		"confirmDeleteFile": "Are you sure you want to delete file \"{name}\"?",
+		"customFilter": "Custom filter",
+		"filterPattern": "Filter",
+		"enterFilterPattern": "Enter filter (e.g. *.txt, *.jpg)"
 	},
 	"about": {
 		"title": "About",

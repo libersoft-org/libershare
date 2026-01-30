@@ -30,11 +30,19 @@ export function getParentPath(path: string, separator: string): string | null {
 
 /**
  * Check if a file name passes the filter
+ * Supports formats: .ext, *.ext, ext
  */
 export function filePassesFilter(name: string, filter?: string[]): boolean {
-	if (!filter || filter.length === 0 || filter.includes('*')) return true;
+	if (!filter || filter.length === 0 || filter.includes('*') || filter.includes('*.*')) return true;
 	const lowerName = name.toLowerCase();
-	return filter.some(ext => lowerName.endsWith(ext.toLowerCase()));
+	return filter.some(ext => {
+		let normalizedExt = ext.toLowerCase().trim();
+		// Handle *.ext format - remove the *
+		if (normalizedExt.startsWith('*')) normalizedExt = normalizedExt.substring(1);
+		// Handle ext format without dot - add the dot
+		if (!normalizedExt.startsWith('.')) normalizedExt = '.' + normalizedExt;
+		return lowerName.endsWith(normalizedExt);
+	});
 }
 
 /**
@@ -152,7 +160,7 @@ export function getFileActions(t: { fileBrowser?: { openFile?: string; deleteFil
 /**
  * Build folder toolbar actions based on mode
  */
-export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; newFolder?: string; deleteFolder?: string } }, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], selectable?: boolean): FileBrowserAction[] {
+export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; newFolder?: string; deleteFolder?: string } }, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], selectable?: boolean, customFilter?: string): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	if (!filesOnly) {
 		if (selectable) actions.push({ id: 'select', label: t.fileBrowser?.selectFolder, icon: '/img/check.svg' });
@@ -160,7 +168,11 @@ export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; n
 		actions.push({ id: 'delete', label: t.fileBrowser?.deleteFolder, icon: '/img/del.svg' });
 	}
 	// Filter button always visible, shows current filter state
-	const filterLabel = showAllFiles ? '*.*' : fileFilter && fileFilter.length > 0 ? fileFilter.join(', ') : '*.*';
+	let filterLabel: string;
+	if (customFilter) filterLabel = customFilter;
+	else if (showAllFiles) filterLabel = '*.*';
+	else if (fileFilter && fileFilter.length > 0) filterLabel = fileFilter.join(', ');
+	else filterLabel = '*.*';
 	actions.push({ id: 'filter', label: filterLabel, icon: '/img/filter.svg' });
 	return actions;
 }
@@ -168,11 +180,14 @@ export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; n
 /**
  * Build filter panel actions
  */
-export function buildFilterActions(t: { common?: { back?: string } }, fileFilter?: string[]): FileBrowserAction[] {
+export function buildFilterActions(t: { common?: { back?: string }; fileBrowser?: { customFilter?: string } }, fileFilter?: string[], customFilter?: string): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	// Show all extensions as one combined option
 	if (fileFilter && fileFilter.length > 0) actions.push({ id: 'filter', label: fileFilter.join(', '), icon: '/img/file.svg' });
 	actions.push({ id: '*', label: '*.*', icon: '/img/file.svg' });
+	// Custom filter - show current value in parentheses if set
+	const customLabel = customFilter ? `${t.fileBrowser?.customFilter} (${customFilter})` : t.fileBrowser?.customFilter;
+	actions.push({ id: 'custom', label: customLabel, icon: '/img/filter.svg' });
 	actions.push({ id: 'back', label: t.common?.back, icon: '/img/back.svg' });
 	return actions;
 }
