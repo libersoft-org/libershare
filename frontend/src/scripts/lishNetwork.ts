@@ -1,4 +1,5 @@
 import { getStorageValue, setStorageValue } from './localStorage.ts';
+import { api } from './api.ts';
 export interface LISHNetwork {
 	version: number;
 	networkID: string;
@@ -227,11 +228,10 @@ export interface FetchPublicNetworksResult {
 
 export async function fetchPublicNetworks(url: string): Promise<FetchPublicNetworksResult> {
 	try {
-		// Use CORS proxy to bypass CORS restrictions
-		const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-		const response = await fetch(proxyUrl);
-		if (!response.ok) throw new Error(`HTTP ${response.status}`);
-		const data = await response.json();
+		// Use backend API to bypass CORS restrictions
+		const response = await api.fetchUrl(url);
+		if (response.status !== 200) return { networks: [], error: `HTTP ${response.status}` };
+		const data = JSON.parse(response.content);
 		// Validate the data - should be an array of networks
 		if (!Array.isArray(data)) return { networks: [], error: 'INVALID_FORMAT' };
 		// Validate each network has required fields

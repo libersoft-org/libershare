@@ -340,11 +340,21 @@ export class ApiServer {
 				const response = await fetch(params.url);
 				if (!response.ok) {
 					return {
+						url: params.url,
 						status: response.status,
+						contentType: response.headers.get('content-type'),
+						content: '',
 					};
 				}
 				const content = await response.text();
+				// Validate that content is valid JSON
+				try {
+					JSON.parse(content);
+				} catch {
+					throw new Error('Response is not valid JSON');
+				}
 				return {
+					url: params.url,
 					status: response.status,
 					contentType: response.headers.get('content-type'),
 					content,

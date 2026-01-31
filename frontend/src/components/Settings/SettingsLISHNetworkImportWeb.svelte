@@ -5,6 +5,7 @@
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { importNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { api } from '../../scripts/api.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -38,15 +39,13 @@
 		}
 		loading = true;
 		try {
-			// Use CORS proxy to bypass CORS restrictions
-			const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-			const response = await fetch(proxyUrl);
-			if (!response.ok) {
+			// Use backend API to bypass CORS restrictions
+			const response = await api.fetchUrl(url);
+			if (response.status !== 200) {
 				errorMessage = `HTTP ${response.status}`;
 				return;
 			}
-			const content = await response.text();
-			const result = importNetworksFromJson(content);
+			const result = importNetworksFromJson(response.content);
 			if (result.error) {
 				errorMessage = getNetworkErrorMessage(result.error, $t);
 				return;

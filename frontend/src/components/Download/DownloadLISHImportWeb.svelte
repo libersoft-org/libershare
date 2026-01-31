@@ -8,6 +8,8 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
+	import { parseLISHFromJson, getLISHErrorMessage } from '../../scripts/lish.ts';
+	import { api } from '../../scripts/api.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -33,6 +35,7 @@
 	let downloadPath = $state($storagePath);
 	let autoStart = $state($autoStartSharing);
 	let errorMessage = $state('');
+	let loading = $state(false);
 	let browsingDownloadPath = $state(false);
 
 	function getMaxColumn(index: number): number {
@@ -42,7 +45,7 @@
 		return 0;
 	}
 
-	function handleImport() {
+	async function handleImport() {
 		errorMessage = '';
 		if (!url.trim()) {
 			errorMessage = $t('downloads.lishImport.urlRequired');
@@ -52,9 +55,27 @@
 			errorMessage = $t('downloads.lishImport.downloadPathRequired');
 			return;
 		}
-		// TODO: Fetch and parse LISH file from URL
-		// TODO: Add LISH items to storage/backend
-		onImport?.();
+		loading = true;
+		try {
+			// Use backend API to bypass CORS restrictions
+			const response = await api.fetchUrl(url);
+			if (response.status !== 200) {
+				errorMessage = `HTTP ${response.status}`;
+				return;
+			}
+			const result = parseLISHFromJson(response.content);
+			if (result.error) {
+				errorMessage = getLISHErrorMessage(result.error, $t);
+				return;
+			}
+			// TODO: Add LISH items to storage/backend
+			// result.items contains validated LISH objects
+			onImport?.();
+		} catch (e) {
+			errorMessage = e instanceof Error ? e.message : String(e);
+		} finally {
+			loading = false;
+		}
 	}
 
 	function openDownloadPathBrowse() {
@@ -194,7 +215,7 @@
 			{/if}
 		</div>
 		<div class="buttons">
-			<Button icon="/img/download.svg" label={$t('common.import')} selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={handleImport} />
+			<Button icon="/img/download.svg" label={$t('common.import')} selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={handleImport} disabled={loading} />
 			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 3 && selectedColumn === 1} onConfirm={onBack} />
 		</div>
 	</div>
