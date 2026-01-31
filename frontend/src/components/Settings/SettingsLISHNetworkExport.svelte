@@ -13,6 +13,7 @@
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
+	import Alert from '../Alert/Alert.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -29,9 +30,35 @@
 	let browsingSaveAs = $state(false);
 	let saveFolder = $state($storageLishnetPath);
 	let saveFileName = $state(network ? `${network.name}.lishnet` : 'network.lishnet');
-	let networkJson = $derived(network ? exportNetworkToJson(network.id) : ''); // Get full network data as JSON
+	let networkJson = $state(network ? exportNetworkToJson(network.id) : ''); // Get full network data as JSON (editable)
+	let errorMessage = $state('');
+
+	function getFileNameFromJson(): string {
+		try {
+			const parsed = JSON.parse(networkJson);
+			if (parsed.name && typeof parsed.name === 'string' && parsed.name.trim()) return `${parsed.name.trim()}.lishnet`;
+			if (parsed.networkID && typeof parsed.networkID === 'string' && parsed.networkID.trim()) return `${parsed.networkID.trim()}.lishnet`;
+		} catch {}
+		return 'network.lishnet'; // Fallback to generic name
+	}
 
 	function openSaveAs() {
+		errorMessage = '';
+		try {
+			const parsed = JSON.parse(networkJson);
+			if (!parsed.name || typeof parsed.name !== 'string' || !parsed.name.trim()) {
+				errorMessage = $t.settings?.lishNetwork?.errorNameRequired || 'Network name is required';
+				return;
+			}
+			if (!parsed.networkID || typeof parsed.networkID !== 'string' || !parsed.networkID.trim()) {
+				errorMessage = $t.settings?.lishNetwork?.errorNetworkIDRequired || 'Network ID is required';
+				return;
+			}
+		} catch {
+			errorMessage = $t.settings?.lishNetwork?.errorInvalidFormat || 'Invalid JSON';
+			return;
+		}
+		saveFileName = getFileNameFromJson();
 		browsingSaveAs = true;
 		if (unregisterArea) {
 			unregisterArea();
@@ -152,7 +179,10 @@
 {:else}
 	<div class="export">
 		<div class="container">
-			<Input bind:this={inputRef} value={networkJson} multiline rows={15} readonly fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
+			<Input bind:this={inputRef} bind:value={networkJson} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
+			{#if errorMessage}
+				<Alert type="error" message={errorMessage} />
+			{/if}
 		</div>
 		<div class="buttons">
 			<Button icon="/img/save.svg" label="{$t.common?.saveAs} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={openSaveAs} />
