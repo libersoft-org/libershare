@@ -184,7 +184,7 @@
 </style>
 
 {#if browsingDownloadPath}
-	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath selectFolderButton onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">
 		<div class="container">
