@@ -346,7 +346,23 @@ export class ApiServer {
 						content: '',
 					};
 				}
-				const content = await response.text();
+
+				// Check if response is gzip compressed (by URL extension or content-encoding)
+				const isGzipUrl = params.url.toLowerCase().endsWith('.gz');
+				const contentEncoding = response.headers.get('content-encoding');
+				const isGzipEncoded = contentEncoding?.toLowerCase().includes('gzip');
+
+				let content: string;
+				if (isGzipUrl && !isGzipEncoded) {
+					// URL ends with .gz but server didn't decompress - decompress manually
+					const compressed = await response.arrayBuffer();
+					const decompressed = Bun.gunzipSync(new Uint8Array(compressed));
+					content = new TextDecoder().decode(decompressed);
+				} else {
+					// Either not gzip, or server already decompressed
+					content = await response.text();
+				}
+
 				// Validate that content is valid JSON
 				try {
 					JSON.parse(content);
@@ -370,6 +386,12 @@ export class ApiServer {
 
 			case 'fs.readText':
 				return { content: await fsReadText(params.path) };
+
+			case 'fs.readGzip': {
+				const compressed = await Bun.file(params.path).arrayBuffer();
+				const decompressed = Bun.gunzipSync(new Uint8Array(compressed));
+				return { content: new TextDecoder().decode(decompressed) };
+			}
 
 			case 'fs.delete':
 				return await fsDelete(params.path);

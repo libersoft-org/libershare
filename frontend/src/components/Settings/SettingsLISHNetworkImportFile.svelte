@@ -46,7 +46,11 @@
 		}
 		try {
 			// Read file from backend using WebSocket API
-			const content = await api.fs.readText(filePath);
+			// Use readGzip for .gz files, readText otherwise
+			const isGzip = filePath.toLowerCase().endsWith('.gz');
+			const content = isGzip
+				? await api.fs.readGzip(filePath)
+				: await api.fs.readText(filePath);
 			const result = importNetworksFromJson(content);
 			if (result.error) {
 				errorMessage = getNetworkErrorMessage(result.error, $t);
@@ -182,7 +186,7 @@
 </style>
 
 {#if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storageLishnetPath} showPath fileFilter={['*.lishnet', '*.lishnets', '*.json']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={filePath || $storageLishnetPath} showPath fileFilter={['*.lishnet', '*.lishnets', '*.json', '*.lishnet.gz', '*.lishnets.gz', '*.json.gz']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">
 		<div class="container">

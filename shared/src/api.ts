@@ -166,6 +166,11 @@ class FsApi {
 		return result.content;
 	}
 
+	async readGzip(path: string): Promise<string> {
+		const result = await this.client.call<{ content: string }>('fs.readGzip', { path });
+		return result.content;
+	}
+
 	delete(path: string): Promise<{ success: boolean }> {
 		return this.client.call<{ success: boolean }>('fs.delete', { path });
 	}
