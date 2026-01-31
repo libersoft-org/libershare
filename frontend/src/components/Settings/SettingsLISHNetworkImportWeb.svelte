@@ -33,7 +33,7 @@
 	async function handleImport() {
 		errorMessage = '';
 		if (!url.trim()) {
-			errorMessage = $t.settings?.lishNetworkImport?.urlRequired || 'URL is required';
+			errorMessage = $t.settings?.lishNetworkImport?.urlRequired;
 			return;
 		}
 		loading = true;

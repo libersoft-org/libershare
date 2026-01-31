@@ -46,7 +46,7 @@
 	function handleImport() {
 		errorMessage = '';
 		if (!downloadPath.trim()) {
-			errorMessage = $t.downloads?.lishImport?.downloadPathRequired || 'Download folder is required';
+			errorMessage = $t.downloads?.lishImport?.downloadPathRequired;
 			return;
 		}
 		const result = parseLISHFromJson(lishJson);

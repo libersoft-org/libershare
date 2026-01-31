@@ -40,14 +40,14 @@
 	async function handleImport() {
 		errorMessage = '';
 		if (!filePath.trim()) {
-			errorMessage = $t.settings?.lishNetworkImport?.filePathRequired || 'File path is required';
+			errorMessage = $t.settings?.lishNetworkImport?.filePathRequired;
 			return;
 		}
 		try {
 			// Read file from backend
 			const response = await fetch(`/api/fs/read?path=${encodeURIComponent(filePath)}`);
 			if (!response.ok) {
-				errorMessage = $t.settings?.lishNetworkImport?.fileReadError || 'Failed to read file';
+				errorMessage = $t.settings?.lishNetworkImport?.fileReadError;
 				return;
 			}
 			const content = await response.text();
@@ -68,7 +68,7 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t.settings?.lishNetworkImport?.filePath || 'LISHNET File');
+		pushBreadcrumb($t.settings?.lishNetworkImport?.filePath);
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 

@@ -30,7 +30,7 @@
 
 	async function loadPublicList() {
 		if (!url.trim()) {
-			error = $t.settings?.lishNetwork?.errorUrlRequired || 'URL is required';
+			error = $t.settings?.lishNetwork?.errorUrlRequired;
 			return;
 		}
 		loading = true;

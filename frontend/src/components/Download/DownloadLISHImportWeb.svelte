@@ -45,11 +45,11 @@
 	function handleImport() {
 		errorMessage = '';
 		if (!url.trim()) {
-			errorMessage = $t.downloads?.lishImport?.urlRequired || 'URL is required';
+			errorMessage = $t.downloads?.lishImport?.urlRequired;
 			return;
 		}
 		if (!downloadPath.trim()) {
-			errorMessage = $t.downloads?.lishImport?.downloadPathRequired || 'Download folder is required';
+			errorMessage = $t.downloads?.lishImport?.downloadPathRequired;
 			return;
 		}
 		// TODO: Fetch and parse LISH file from URL

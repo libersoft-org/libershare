@@ -1050,5 +1050,5 @@
 	<InputDialog title={$t.fileBrowser?.customFilter} label={$t.fileBrowser?.filterPattern} placeholder={$t.fileBrowser?.enterFilterPattern} initialValue={customFilter ?? ''} confirmLabel={$t.common?.ok} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmCustomFilter} onBack={closeCustomFilterDialog} />
 {/if}
 {#if showOverwriteConfirmState}
-	<ConfirmDialog title={$t.common?.overwriteFile || 'Overwrite file'} message={($t.common?.fileExistsOverwrite || 'File "{name}" already exists. Do you want to overwrite it?').replace('{name}', internalSaveFileName)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
+	<ConfirmDialog title={$t.common?.overwriteFile} message={$t.common?.fileExistsOverwrite?.replace('{name}', internalSaveFileName)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
 {/if}

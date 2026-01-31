@@ -47,11 +47,11 @@
 	function handleImport() {
 		errorMessage = '';
 		if (!filePath.trim()) {
-			errorMessage = $t.downloads?.lishImport?.filePathRequired || 'File path is required';
+			errorMessage = $t.downloads?.lishImport?.filePathRequired;
 			return;
 		}
 		if (!downloadPath.trim()) {
-			errorMessage = $t.downloads?.lishImport?.downloadPathRequired || 'Download folder is required';
+			errorMessage = $t.downloads?.lishImport?.downloadPathRequired;
 			return;
 		}
 		// TODO: Load and parse LISH file from filePath
@@ -65,7 +65,7 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t.downloads?.lishImport?.filePath || 'LISH File');
+		pushBreadcrumb($t.downloads?.lishImport?.filePath);
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 

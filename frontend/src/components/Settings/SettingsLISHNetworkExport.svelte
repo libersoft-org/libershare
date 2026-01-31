@@ -45,15 +45,15 @@
 		try {
 			const parsed = JSON.parse(networkJson);
 			if (!parsed.name || typeof parsed.name !== 'string' || !parsed.name.trim()) {
-				errorMessage = $t.settings?.lishNetwork?.errorNameRequired || 'Network name is required';
+				errorMessage = $t.settings?.lishNetwork?.errorNameRequired;
 				return;
 			}
 			if (!parsed.networkID || typeof parsed.networkID !== 'string' || !parsed.networkID.trim()) {
-				errorMessage = $t.settings?.lishNetwork?.errorNetworkIDRequired || 'Network ID is required';
+				errorMessage = $t.settings?.lishNetwork?.errorNetworkIDRequired;
 				return;
 			}
 		} catch {
-			errorMessage = $t.settings?.lishNetwork?.errorInvalidFormat || 'Invalid JSON';
+			errorMessage = $t.settings?.lishNetwork?.errorInvalidFormat;
 			return;
 		}
 		saveFileName = getFileNameFromJson();
