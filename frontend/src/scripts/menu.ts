@@ -492,7 +492,6 @@ export const confirmDialogs = derived(t, () => ({
 		apiAction: 'restart',
 		confirmLabel: tt('common.yes'),
 		cancelLabel: tt('common.no'),
-		defaultButton: 'cancel' as const,
 	},
 	shutdown: {
 		title: tt('exit.shutdown.title'),
@@ -500,7 +499,6 @@ export const confirmDialogs = derived(t, () => ({
 		apiAction: 'shutdown',
 		confirmLabel: tt('common.yes'),
 		cancelLabel: tt('common.no'),
-		defaultButton: 'cancel' as const,
 	},
 	quit: {
 		title: tt('exit.quitApplication.title'),
@@ -508,6 +506,5 @@ export const confirmDialogs = derived(t, () => ({
 		apiAction: 'quit',
 		confirmLabel: tt('common.yes'),
 		cancelLabel: tt('common.no'),
-		defaultButton: 'cancel' as const,
 	},
 }));

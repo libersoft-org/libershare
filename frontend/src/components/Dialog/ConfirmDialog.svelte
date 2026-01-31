@@ -18,7 +18,7 @@
 		onConfirm: () => void;
 		onBack: () => void;
 	}
-	let { title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', confirmIcon, cancelIcon, defaultButton = 'confirm', position, onConfirm, onBack }: Props = $props();
+	let { title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', confirmIcon, cancelIcon, defaultButton = 'cancel', position, onConfirm, onBack }: Props = $props();
 	let selectedButton = $state<'confirm' | 'cancel'>(untrack(() => defaultButton));
 	let isPressed = $state(false);
 
@@ -30,11 +30,11 @@
 				up: () => true, // Block navigation outside dialog
 				down: () => true, // Block navigation outside dialog
 				left: () => {
-					selectedButton = 'cancel';
+					selectedButton = 'confirm';
 					return true;
 				},
 				right: () => {
-					selectedButton = 'confirm';
+					selectedButton = 'cancel';
 					return true;
 				},
 				confirmDown: () => {
@@ -77,8 +77,8 @@
 	<div class="confirm">
 		<div class="message">{message}</div>
 		<ButtonsStatic>
-			<Button icon={cancelIcon} label={cancelLabel} selected={selectedButton === 'cancel'} pressed={selectedButton === 'cancel' && isPressed} onConfirm={onBack} />
 			<Button icon={confirmIcon} label={confirmLabel} selected={selectedButton === 'confirm'} pressed={selectedButton === 'confirm' && isPressed} {onConfirm} />
+			<Button icon={cancelIcon} label={cancelLabel} selected={selectedButton === 'cancel'} pressed={selectedButton === 'cancel' && isPressed} onConfirm={onBack} />
 		</ButtonsStatic>
 	</div>
 </Dialog>

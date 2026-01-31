@@ -47,21 +47,21 @@
 				down: () => {
 					if (selectedElement === 'input') {
 						inputRef?.blur();
-						selectedElement = 'confirm';
+						selectedElement = 'cancel';
 						return true;
 					}
 					return true; // Block navigation outside dialog
 				},
 				left: () => {
-					if (selectedElement === 'confirm') {
-						selectedElement = 'cancel';
+					if (selectedElement === 'cancel') {
+						selectedElement = 'confirm';
 						return true;
 					}
 					return true;
 				},
 				right: () => {
-					if (selectedElement === 'cancel') {
-						selectedElement = 'confirm';
+					if (selectedElement === 'confirm') {
+						selectedElement = 'cancel';
 						return true;
 					}
 					return true;
@@ -115,8 +115,8 @@
 			<Alert type="error" message={error} />
 		{/if}
 		<ButtonsStatic>
-			<Button icon={cancelIcon} label={cancelLabel} selected={selectedElement === 'cancel'} pressed={selectedElement === 'cancel' && isPressed} onConfirm={onBack} />
 			<Button icon={confirmIcon} label={confirmLabel} selected={selectedElement === 'confirm'} pressed={selectedElement === 'confirm' && isPressed} onConfirm={handleConfirm} />
+			<Button icon={cancelIcon} label={cancelLabel} selected={selectedElement === 'cancel'} pressed={selectedElement === 'cancel' && isPressed} onConfirm={onBack} />
 		</ButtonsStatic>
 	</div>
 </Dialog>

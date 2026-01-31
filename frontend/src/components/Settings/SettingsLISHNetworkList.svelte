@@ -369,7 +369,7 @@
 {:else if showPublic}
 	<LISHNetworkPublic {areaID} {position} onBack={handlePublicBack} />
 {:else if showDeleteConfirm && deletingNetwork}
-	<ConfirmDialog title={$t('common.delete')} message={$t('settings.lishNetwork.confirmDelete').replace('{name}', deletingNetwork.name)} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
+	<ConfirmDialog title={$t('common.delete')} message={$t('settings.lishNetwork.confirmDelete').replace('{name}', deletingNetwork.name)} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
 {:else}
 	<div class="lish-network-list">
 		<div class="container">
