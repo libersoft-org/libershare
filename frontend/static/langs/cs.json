@@ -56,6 +56,7 @@
 		"size": "Velikost",
 		"progress": "Průběh",
 		"status": "Stav",
+		"targetFolder": "Cílová složka",
 		"downloadingFrom": "Stahování od",
 		"uploadingTo": "Odesílání k",
 		"downloadSpeed": "Rychlost stahování",
