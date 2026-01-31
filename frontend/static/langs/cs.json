@@ -140,6 +140,16 @@
 			"emptyList": "Žádná síť není přidána. Přidejte nebo importujte novou síť.",
 			"confirmDelete": "Opravdu chcete smazat síť \"{name}\"?"
 		},
+		"lishNetworkImport": {
+			"fromFile": "Ze souboru",
+			"fromWeb": "Z webu",
+			"fromJSON": "Z LISHNET JSON",
+			"filePath": "LISHNET soubor",
+			"url": "URL adresa LISHNET souboru",
+			"filePathRequired": "Cesta k souboru je povinná",
+			"urlRequired": "URL je povinná",
+			"fileReadError": "Nepodařilo se přečíst soubor"
+		},
 		"language": "Jazyk",
 		"time": {
 			"label": "Čas",

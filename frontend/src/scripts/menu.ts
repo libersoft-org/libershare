@@ -19,6 +19,9 @@ import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
 import SettingsDownload from '../components/Settings/SettingsDownload.svelte';
 import SettingsSystem from '../components/Settings/SettingsSystem.svelte';
 import LISHNetworkList from '../components/Settings/SettingsLISHNetworkList.svelte';
+import LISHNetworkImportFile from '../components/Settings/SettingsLISHNetworkImportFile.svelte';
+import LISHNetworkImportWeb from '../components/Settings/SettingsLISHNetworkImportWeb.svelte';
+import LISHNetworkImportJSON from '../components/Settings/SettingsLISHNetworkImportJSON.svelte';
 import About from '../components/About/About.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
@@ -54,7 +57,7 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'video',
 					label: 'Video',
-					iconPosition: 'left' as const,
+					iconPosition: 'left',
 					iconSize: '2vh',
 					component: Items,
 					props: {
@@ -64,7 +67,7 @@ export const menuStructure = derived(t, () => ({
 				{
 					id: 'software',
 					label: 'Software',
-					iconPosition: 'left' as const,
+					iconPosition: 'left',
 					iconSize: '2vh',
 					component: Items,
 					props: {
@@ -75,7 +78,7 @@ export const menuStructure = derived(t, () => ({
 					id: 'back',
 					label: tt('common.back'),
 					icon: '/img/back.svg',
-					iconPosition: 'left' as const,
+					iconPosition: 'left',
 					iconSize: '2vh',
 					action: 'back' as const,
 				},
@@ -97,7 +100,7 @@ export const menuStructure = derived(t, () => ({
 					id: 'create-lish',
 					label: tt('downloads.createLish'),
 					icon: '/img/plus.svg',
-					iconPosition: 'left' as const,
+					iconPosition: 'left',
 					iconSize: '2vh',
 					component: DownloadLISHCreate,
 				},
@@ -105,7 +108,7 @@ export const menuStructure = derived(t, () => ({
 					id: 'import-lish',
 					label: tt('common.import'),
 					icon: '/img/download.svg',
-					iconPosition: 'left' as const,
+					iconPosition: 'left',
 					iconSize: '2vh',
 					submenu: [
 						{
@@ -138,7 +141,7 @@ export const menuStructure = derived(t, () => ({
 					id: 'export-all-lish',
 					label: tt('common.exportAll'),
 					icon: '/img/upload.svg',
-					iconPosition: 'left' as const,
+					iconPosition: 'left',
 					iconSize: '2vh',
 					component: DownloadLISHExportAll,
 				},
@@ -151,7 +154,7 @@ export const menuStructure = derived(t, () => ({
 					id: 'back',
 					label: tt('common.back'),
 					icon: '/img/back.svg',
-					iconPosition: 'left' as const,
+					iconPosition: 'left',
 					iconSize: '2vh',
 					action: 'back' as const,
 				},
@@ -180,6 +183,39 @@ export const menuStructure = derived(t, () => ({
 					label: tt('settings.lishNetwork.title'),
 					icon: '/img/network.svg',
 					component: LISHNetworkList,
+					submenu: [
+						{
+							id: 'import-lishnet',
+							label: tt('common.import'),
+							icon: '/img/download.svg',
+							submenu: [
+								{
+									id: 'import-lishnet-file',
+									label: tt('settings.lishNetworkImport.fromFile'),
+									icon: '/img/folder.svg',
+									component: LISHNetworkImportFile,
+								},
+								{
+									id: 'import-lishnet-web',
+									label: tt('settings.lishNetworkImport.fromWeb'),
+									icon: '/img/online.svg',
+									component: LISHNetworkImportWeb,
+								},
+								{
+									id: 'import-lishnet-json',
+									label: tt('settings.lishNetworkImport.fromJSON'),
+									icon: '/img/json.svg',
+									component: LISHNetworkImportJSON,
+								},
+								{
+									id: 'back',
+									label: tt('common.back'),
+									icon: '/img/back.svg',
+									action: 'back' as const,
+								},
+							],
+						},
+					],
 				},
 				{
 					id: 'language',
@@ -215,7 +251,7 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'time-format-24',
 									label: tt('settings.time.24hour'),
-									iconPosition: 'left' as const,
+									iconPosition: 'left',
 									iconSize: '2vh',
 									selected: () => get(timeFormat) === true,
 									onSelect: () => setTimeFormat(true),
@@ -223,7 +259,7 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'time-format-12',
 									label: tt('settings.time.12hour'),
-									iconPosition: 'left' as const,
+									iconPosition: 'left',
 									iconSize: '2vh',
 									selected: () => get(timeFormat) === false,
 									onSelect: () => setTimeFormat(false),
@@ -232,7 +268,7 @@ export const menuStructure = derived(t, () => ({
 									id: 'back',
 									label: tt('common.back'),
 									icon: '/img/back.svg',
-									iconPosition: 'left' as const,
+									iconPosition: 'left',
 									iconSize: '2vh',
 									action: 'back' as const,
 								},
@@ -246,7 +282,7 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'time-seconds-yes',
 									label: tt('common.yes'),
-									iconPosition: 'left' as const,
+									iconPosition: 'left',
 									iconSize: '2vh',
 									selected: () => get(showSeconds) === true,
 									onSelect: () => setShowSeconds(true),
@@ -254,7 +290,7 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'time-seconds-no',
 									label: tt('common.no'),
-									iconPosition: 'left' as const,
+									iconPosition: 'left',
 									iconSize: '2vh',
 									selected: () => get(showSeconds) === false,
 									onSelect: () => setShowSeconds(false),
@@ -263,7 +299,7 @@ export const menuStructure = derived(t, () => ({
 									id: 'back',
 									label: tt('common.back'),
 									icon: '/img/back.svg',
-									iconPosition: 'left' as const,
+									iconPosition: 'left',
 									iconSize: '2vh',
 									action: 'back' as const,
 								},
@@ -290,7 +326,7 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'footer-pos-left',
 									label: tt('settings.footerPositions.left'),
-									iconPosition: 'left' as const,
+									iconPosition: 'left',
 									iconSize: '2vh',
 									selected: () => get(footerPosition) === 'left',
 									onSelect: () => setFooterPosition('left' as FooterPosition),
@@ -298,7 +334,7 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'footer-pos-center',
 									label: tt('settings.footerPositions.center'),
-									iconPosition: 'left' as const,
+									iconPosition: 'left',
 									iconSize: '2vh',
 									selected: () => get(footerPosition) === 'center',
 									onSelect: () => setFooterPosition('center' as FooterPosition),
@@ -306,7 +342,7 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'footer-pos-right',
 									label: tt('settings.footerPositions.right'),
-									iconPosition: 'left' as const,
+									iconPosition: 'left',
 									iconSize: '2vh',
 									selected: () => get(footerPosition) === 'right',
 									onSelect: () => setFooterPosition('right' as FooterPosition),
@@ -314,7 +350,7 @@ export const menuStructure = derived(t, () => ({
 								{
 									id: 'back',
 									label: tt('common.back'),
-									iconPosition: 'left' as const,
+									iconPosition: 'left',
 									iconSize: '2vh',
 									icon: '/img/back.svg',
 									action: 'back' as const,
@@ -337,7 +373,7 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'audio-on',
 							label: tt('common.yes'),
-							iconPosition: 'left' as const,
+							iconPosition: 'left',
 							iconSize: '2vh',
 							selected: () => get(audioEnabled) === true,
 							onSelect: () => setAudioEnabled(true),
@@ -345,7 +381,7 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'audio-off',
 							label: tt('common.no'),
-							iconPosition: 'left' as const,
+							iconPosition: 'left',
 							iconSize: '2vh',
 							selected: () => get(audioEnabled) === false,
 							onSelect: () => setAudioEnabled(false),
@@ -353,7 +389,7 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'back',
 							label: tt('common.back'),
-							iconPosition: 'left' as const,
+							iconPosition: 'left',
 							iconSize: '2vh',
 							icon: '/img/back.svg',
 							action: 'back' as const,
@@ -368,7 +404,7 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'cursor-small',
 							label: tt('settings.cursorSize.sizes.small'),
-							iconPosition: 'left' as const,
+							iconPosition: 'left',
 							iconSize: '2vh',
 							selected: () => get(cursorSize) === 'small',
 							onSelect: () => setCursorSize('small' as CursorSize),
@@ -376,7 +412,7 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'cursor-medium',
 							label: tt('settings.cursorSize.sizes.medium'),
-							iconPosition: 'left' as const,
+							iconPosition: 'left',
 							iconSize: '2vh',
 							selected: () => get(cursorSize) === 'medium',
 							onSelect: () => setCursorSize('medium' as CursorSize),
@@ -384,7 +420,7 @@ export const menuStructure = derived(t, () => ({
 						{
 							id: 'cursor-large',
 							label: tt('settings.cursorSize.sizes.large'),
-							iconPosition: 'left' as const,
+							iconPosition: 'left',
 							iconSize: '2vh',
 							selected: () => get(cursorSize) === 'large',
 							onSelect: () => setCursorSize('large' as CursorSize),
@@ -393,7 +429,7 @@ export const menuStructure = derived(t, () => ({
 							id: 'back',
 							label: tt('common.back'),
 							icon: '/img/back.svg',
-							iconPosition: 'left' as const,
+							iconPosition: 'left',
 							iconSize: '2vh',
 							action: 'back' as const,
 						},

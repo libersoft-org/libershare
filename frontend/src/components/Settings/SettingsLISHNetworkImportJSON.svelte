@@ -8,6 +8,7 @@
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
+
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -17,8 +18,8 @@
 	let { areaID, position = LAYOUT.content, onBack, onImport }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0); // 0 = input, 1 = buttons row
-	let selectedColumn = $state(0); // 0 = load from file, 1 = import, 2 = back
-	let inputRef: Input;
+	let selectedColumn = $state(0); // 0 = import, 1 = back
+	let inputRef: Input | undefined = $state();
 	let networkJson = $state('');
 	let errorMessage = $state('');
 
@@ -59,7 +60,7 @@
 					return false;
 				},
 				right: () => {
-					if (selectedIndex === 1 && selectedColumn < 2) {
+					if (selectedIndex === 1 && selectedColumn < 1) {
 						selectedColumn++;
 						return true;
 					}
@@ -71,10 +72,8 @@
 				confirmUp: () => {
 					if (selectedIndex === 1) {
 						if (selectedColumn === 0) {
-							// Load from file - TODO: connect to backend
-						} else if (selectedColumn === 1) {
 							handleImport();
-						} else if (selectedColumn === 2) {
+						} else if (selectedColumn === 1) {
 							onBack?.();
 						}
 					}
@@ -117,11 +116,12 @@
 <div class="import">
 	<div class="container">
 		<Input bind:this={inputRef} bind:value={networkJson} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} placeholder={'{"networkID": "...", "name": "...", ...}'} />
-		<Alert type="error" message={errorMessage} />
+		{#if errorMessage}
+			<Alert type="error" message={errorMessage} />
+		{/if}
 	</div>
 	<div class="buttons">
-		<Button icon="/img/download.svg" label="{$t.common?.load} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
-		<Button icon="/img/import.svg" label={$t.common?.import} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={handleImport} />
-		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 2} onConfirm={onBack} />
+		<Button icon="/img/import.svg" label={$t.common?.import} selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={handleImport} />
+		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
 	</div>
 </div>

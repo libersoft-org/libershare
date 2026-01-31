@@ -139,6 +139,16 @@
 			"emptyList": "No networks added. Add or Import a new network.",
 			"confirmDelete": "Are you sure you want to delete network \"{name}\"?"
 		},
+		"lishNetworkImport": {
+			"fromFile": "From file",
+			"fromWeb": "From web",
+			"fromJSON": "From LISHNET JSON",
+			"filePath": "LISHNET file",
+			"url": "URL address of LISHNET file",
+			"filePathRequired": "File path is required",
+			"urlRequired": "URL is required",
+			"fileReadError": "Failed to read file"
+		},
 		"language": "Language",
 		"time": {
 			"label": "Time",

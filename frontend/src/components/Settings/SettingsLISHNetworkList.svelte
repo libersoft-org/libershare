@@ -4,7 +4,7 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBreadcrumb, popBreadcrumb, navigateTo } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { type LISHNetwork, getNetworks, saveNetworks as saveNetworksToStorage, deleteNetwork as deleteNetworkFromStorage, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';	import { scrollToElement } from '../../scripts/utils.ts';	import Button from '../Buttons/Button.svelte';
 	import Alert from '../Alert/Alert.svelte';
@@ -13,7 +13,6 @@
 	import LISHNetworkAddEdit from './SettingsLISHNetworkAddEdit.svelte';
 	import LISHNetworkExport from './SettingsLISHNetworkExport.svelte';
 	import LISHNetworkExportAll from './SettingsLISHNetworkExportAll.svelte';
-	import LISHNetworkImport from './SettingsLISHNetworkImport.svelte';
 	import LISHNetworkPublic from './SettingsLISHNetworkPublic.svelte';
 	interface Props {
 		areaID: string;
@@ -29,7 +28,6 @@
 	let showAddEdit = $state(false);
 	let showExport = $state(false);
 	let showExportAll = $state(false);
-	let showImport = $state(false);
 	let showPublic = $state(false);
 	let showDeleteConfirm = $state(false);
 	let editingNetwork = $state<LISHNetwork | null>(null);
@@ -91,33 +89,7 @@
 	}
 
 	function openImport() {
-		showImport = true;
-		// Unregister our area - sub-component will create its own
-		if (unregisterArea) {
-			unregisterArea();
-			unregisterArea = null;
-		}
-		pushBreadcrumb($t.common?.import);
-		removeBackHandler = pushBackHandler(handleImportBack);
-	}
-
-	async function handleImportBack() {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showImport = false;
-		// Wait for sub-component to unmount before re-registering
-		await tick();
-		unregisterArea = registerAreaHandler();
-		activateArea(areaID);
-	}
-
-	function handleImport() {
-		// Reload networks from localStorage and go back to list
-		networks = getNetworks();
-		handleImportBack();
+		navigateTo('import-lishnet');
 	}
 
 	function openExportAll() {
@@ -394,8 +366,6 @@
 	<LISHNetworkExport {areaID} {position} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={handleExportBack} />
 {:else if showExportAll}
 	<LISHNetworkExportAll {areaID} {position} onBack={handleExportAllBack} />
-{:else if showImport}
-	<LISHNetworkImport {areaID} {position} onBack={handleImportBack} onImport={handleImport} />
 {:else if showPublic}
 	<LISHNetworkPublic {areaID} {position} onBack={handlePublicBack} />
 {:else if showDeleteConfirm && deletingNetwork}
