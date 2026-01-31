@@ -213,7 +213,16 @@
 		"largeFileWarningMessage": "Soubor \"{name}\" má {size}.\nOtevření takto velkého souboru může způsobit zamrznutí či pád aplikace.\nOpravdu ho chcete otevřít v editoru?",
 		"customFilter": "Vlastní filtr",
 		"filterPattern": "Filtr",
-		"enterFilterPattern": "Zadejte filtr (např. *.txt, *.jpg)"
+		"enterFilterPattern": "Zadejte filtr (např. *.txt, *.jpg)",
+		"loadDirectoryFailed": "Nepodařilo se načíst složku",
+		"deleteFailed": "Nepodařilo se smazat",
+		"deleteFolderFailed": "Nepodařilo se smazat složku",
+		"createFolderFailed": "Nepodařilo se vytvořit složku",
+		"createFileFailed": "Nepodařilo se vytvořit soubor",
+		"openFileFailed": "Nepodařilo se otevřít soubor",
+		"deleteFileFailed": "Nepodařilo se smazat soubor",
+		"renameFileFailed": "Nepodařilo se přejmenovat soubor",
+		"initializeFailed": "Nepodařilo se inicializovat prohlížeč souborů"
 	},
 	"about": {
 		"title": "O aplikaci",

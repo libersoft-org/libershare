@@ -20,38 +20,21 @@ export const defaultWidgetVisibility: Record<FooterWidget, boolean> = {
 /**
  * Get localized label for a footer widget
  */
-export function getWidgetLabel(
-	widget: FooterWidget,
-	t: {
-		common?: { version?: string; downloads?: string; uploads?: string };
-		settings?: {
-			footerWidgets?: {
-				cpu?: string;
-				ram?: string;
-				storage?: string;
-				backendStatus?: string;
-				lishStatus?: string;
-				connection?: string;
-				volume?: string;
-				clock?: string;
-			};
-		};
-	}
-): string {
-	const labels: Record<FooterWidget, string | undefined> = {
-		version: t.common?.version,
-		download: t.common?.downloads,
-		upload: t.common?.uploads,
-		cpu: t.settings?.footerWidgets?.cpu,
-		ram: t.settings?.footerWidgets?.ram,
-		storage: t.settings?.footerWidgets?.storage,
-		backendStatus: t.settings?.footerWidgets?.backendStatus,
-		lishStatus: t.settings?.footerWidgets?.lishStatus,
-		connection: t.settings?.footerWidgets?.connection,
-		volume: t.settings?.footerWidgets?.volume,
-		clock: t.settings?.footerWidgets?.clock,
+export function getWidgetLabel(widget: FooterWidget, t: (key: string) => string): string {
+	const labels: Record<FooterWidget, string> = {
+		version: t('common.version'),
+		download: t('common.downloads'),
+		upload: t('common.uploads'),
+		cpu: t('settings.footerWidgets.cpu'),
+		ram: t('settings.footerWidgets.ram'),
+		storage: t('settings.footerWidgets.storage'),
+		backendStatus: t('settings.footerWidgets.backendStatus'),
+		lishStatus: t('settings.footerWidgets.lishStatus'),
+		connection: t('settings.footerWidgets.connection'),
+		volume: t('settings.footerWidgets.volume'),
+		clock: t('settings.footerWidgets.clock'),
 	};
-	return labels[widget] ?? widget;
+	return labels[widget];
 }
 
 // ============================================================================

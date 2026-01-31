@@ -212,7 +212,16 @@
 		"largeFileWarningMessage": "File \"{name}\" is {size}.\nOpening such a large file may cause the application to freeze or crash.\nDo you really want to open it in the editor?",
 		"customFilter": "Custom filter",
 		"filterPattern": "Filter",
-		"enterFilterPattern": "Enter filter (e.g. *.txt, *.jpg)"
+		"enterFilterPattern": "Enter filter (e.g. *.txt, *.jpg)",
+		"loadDirectoryFailed": "Failed to load directory",
+		"deleteFailed": "Failed to delete",
+		"deleteFolderFailed": "Failed to delete folder",
+		"createFolderFailed": "Failed to create folder",
+		"createFileFailed": "Failed to create file",
+		"openFileFailed": "Failed to open file",
+		"deleteFileFailed": "Failed to delete file",
+		"renameFileFailed": "Failed to rename file",
+		"initializeFailed": "Failed to initialize file browser"
 	},
 	"about": {
 		"title": "About",

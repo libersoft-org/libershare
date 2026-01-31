@@ -78,3 +78,8 @@ export function tt(key: string): string {
 	const current = get(translations);
 	return getNestedValue(current, key) ?? `{${key}}`;
 }
+
+// Helper to append optional detail to a message: withDetail("Failed", error) → "Failed: error"
+export function withDetail(message: string, detail?: string | null): string {
+	return detail ? `${message}: ${detail}` : message;
+}

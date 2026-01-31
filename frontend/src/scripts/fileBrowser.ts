@@ -1,6 +1,7 @@
 import { api } from './api.ts';
 import type { StorageItemData } from './storage.ts';
 import { formatDate } from './utils.ts';
+import { tt, withDetail } from './language.ts';
 /**
  * File system entry from API
  */
@@ -186,28 +187,28 @@ export interface FileBrowserAction {
 /**
  * Get file actions for action panel
  */
-export function getFileActions(t: { fileBrowser?: { openFile?: string; editFile?: string; renameFile?: string; deleteFile?: string; selectFile?: string }; common?: { back?: string } }, selectFileButton?: boolean): FileBrowserAction[] {
+export function getFileActions(t: (key: string) => string, selectFileButton?: boolean): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
-	if (selectFileButton) actions.push({ id: 'select', label: t.fileBrowser?.selectFile, icon: '/img/check.svg' });
-	actions.push({ id: 'open', label: t.fileBrowser?.openFile, icon: '/img/folder.svg' });
-	actions.push({ id: 'edit', label: t.fileBrowser?.editFile, icon: '/img/edit.svg' });
-	actions.push({ id: 'rename', label: t.fileBrowser?.renameFile, icon: '/img/edit.svg' });
-	actions.push({ id: 'delete', label: t.fileBrowser?.deleteFile, icon: '/img/del.svg' });
-	actions.push({ id: 'back', label: t.common?.back, icon: '/img/back.svg' });
+	if (selectFileButton) actions.push({ id: 'select', label: t('fileBrowser.selectFile'), icon: '/img/check.svg' });
+	actions.push({ id: 'open', label: t('fileBrowser.openFile'), icon: '/img/folder.svg' });
+	actions.push({ id: 'edit', label: t('fileBrowser.editFile'), icon: '/img/edit.svg' });
+	actions.push({ id: 'rename', label: t('fileBrowser.renameFile'), icon: '/img/edit.svg' });
+	actions.push({ id: 'delete', label: t('fileBrowser.deleteFile'), icon: '/img/del.svg' });
+	actions.push({ id: 'back', label: t('common.back'), icon: '/img/back.svg' });
 	return actions;
 }
 
 /**
  * Build folder toolbar actions based on mode
  */
-export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; newFolder?: string; deleteFolder?: string; createFile?: string } }, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], selectFolderButton?: boolean, customFilter?: string): FileBrowserAction[] {
+export function buildFolderActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], selectFolderButton?: boolean, customFilter?: string): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	if (!filesOnly) {
-		if (selectFolderButton) actions.push({ id: 'select', label: t.fileBrowser?.selectFolder, icon: '/img/check.svg' });
-		actions.push({ id: 'new', label: t.fileBrowser?.newFolder, icon: '/img/plus.svg' });
-		actions.push({ id: 'delete', label: t.fileBrowser?.deleteFolder, icon: '/img/del.svg' });
+		if (selectFolderButton) actions.push({ id: 'select', label: t('fileBrowser.selectFolder'), icon: '/img/check.svg' });
+		actions.push({ id: 'new', label: t('fileBrowser.newFolder'), icon: '/img/plus.svg' });
+		actions.push({ id: 'delete', label: t('fileBrowser.deleteFolder'), icon: '/img/del.svg' });
 	}
-	actions.push({ id: 'createFile', label: t.fileBrowser?.createFile, icon: '/img/plus.svg' });
+	actions.push({ id: 'createFile', label: t('fileBrowser.createFile'), icon: '/img/plus.svg' });
 	// Filter button always visible, shows current filter state
 	let filterLabel: string;
 	if (customFilter) filterLabel = customFilter;
@@ -221,15 +222,15 @@ export function buildFolderActions(t: { fileBrowser?: { selectFolder?: string; n
 /**
  * Build filter panel actions
  */
-export function buildFilterActions(t: { common?: { back?: string }; fileBrowser?: { customFilter?: string } }, fileFilter?: string[], customFilter?: string): FileBrowserAction[] {
+export function buildFilterActions(t: (key: string) => string, fileFilter?: string[], customFilter?: string): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	// Show all extensions as one combined option
 	if (fileFilter && fileFilter.length > 0) actions.push({ id: 'filter', label: fileFilter.join(', '), icon: '/img/file.svg' });
 	actions.push({ id: '*', label: '*.*', icon: '/img/file.svg' });
 	// Custom filter - show current value in parentheses if set
-	const customLabel = customFilter ? `${t.fileBrowser?.customFilter} (${customFilter})` : t.fileBrowser?.customFilter;
+	const customLabel = customFilter ? `${t('fileBrowser.customFilter')} (${customFilter})` : t('fileBrowser.customFilter');
 	actions.push({ id: 'custom', label: customLabel, icon: '/img/filter.svg' });
-	actions.push({ id: 'back', label: t.common?.back, icon: '/img/back.svg' });
+	actions.push({ id: 'back', label: t('common.back'), icon: '/img/back.svg' });
 	return actions;
 }
 
@@ -295,7 +296,7 @@ export async function deleteFileOrFolder(path: string): Promise<FileOperationRes
 		await api.fs.delete(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: e.message || 'Failed to delete' };
+		return { success: false, error: withDetail(tt('fileBrowser.deleteFailed'), e.message) };
 	}
 }
 
@@ -307,7 +308,7 @@ export async function createFolder(path: string): Promise<FileOperationResult> {
 		await api.fs.mkdir(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: e.message || 'Failed to create folder' };
+		return { success: false, error: withDetail(tt('fileBrowser.createFolderFailed'), e.message) };
 	}
 }
 
@@ -319,7 +320,7 @@ export async function openFile(path: string): Promise<FileOperationResult> {
 		await api.fs.open(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: e.message || 'Failed to open file' };
+		return { success: false, error: withDetail(tt('fileBrowser.openFileFailed'), e.message) };
 	}
 }
 
@@ -331,7 +332,7 @@ export async function renameFile(path: string, newName: string): Promise<FileOpe
 		await api.fs.rename(path, newName);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: e.message || 'Failed to rename file' };
+		return { success: false, error: withDetail(tt('fileBrowser.renameFileFailed'), e.message) };
 	}
 }
 

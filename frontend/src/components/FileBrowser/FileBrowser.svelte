@@ -3,7 +3,7 @@
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
-	import { t } from '../../scripts/language.ts';
+	import { t, withDetail } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
 	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
@@ -133,7 +133,7 @@
 				selectedIndex = idx >= 0 ? idx : 0;
 			} else selectedIndex = 0;
 		} catch (e: any) {
-			error = e.message || 'Failed to load directory';
+			error = withDetail($t('fileBrowser.loadDirectoryFailed'), e.message);
 			// Even on error, provide ".." entry to navigate up if we have a parent path
 			// Don't show ".." at root level (Linux "/" or empty path, Windows drive list)
 			if (!isAtRoot(currentPath, separator) && parentPath !== null) {
@@ -502,7 +502,7 @@
 		const result = await deleteFileOrFolder(currentPath);
 		if (result.success) {
 			if (parentPath !== null) await loadDirectory(parentPath); // Navigate to parent after deletion
-		} else error = result.error || 'Failed to delete folder';
+		} else error = withDetail($t('fileBrowser.deleteFolderFailed'), result.error);
 		cancelDeleteFolder();
 	}
 
@@ -548,7 +548,7 @@
 			await loadDirectory(currentPath, folderName);
 			cancelNewFolder(true); // Pass true to indicate success - focus on list
 		} else {
-			dialogError = result.error || 'Failed to create folder';
+			dialogError = withDetail($t('fileBrowser.createFolderFailed'), result.error);
 		}
 	}
 
@@ -598,7 +598,7 @@
 			// Reload directory and select the new file
 			await loadDirectory(currentPath, fileName);
 			cancelCreateFile(true);
-		} else dialogError = result.error || 'Failed to create file';
+		} else dialogError = withDetail($t('fileBrowser.createFileFailed'), result.error);
 	}
 
 	async function cancelCreateFile(focusList = false) {
@@ -615,7 +615,7 @@
 
 	async function handleOpenFile(item: StorageItemData) {
 		const result = await openFile(item.path);
-		if (!result.success) error = result.error || 'Failed to open file';
+		if (!result.success) error = withDetail($t('fileBrowser.openFileFailed'), result.error);
 		showActions = false;
 		activateArea(listAreaID);
 	}
@@ -647,7 +647,7 @@
 			// Reload directory
 			await loadDirectory(currentPath);
 		} else {
-			error = result.error || 'Failed to delete file';
+			error = withDetail($t('fileBrowser.deleteFileFailed'), result.error);
 		}
 		cancelDeleteFile();
 	}
@@ -690,7 +690,7 @@
 		if (result.success) {
 			// Reload directory and select the renamed file
 			await loadDirectory(currentPath, newName);
-		} else error = result.error || 'Failed to rename file';
+		} else error = withDetail($t('fileBrowser.renameFileFailed'), result.error);
 		cancelRenameFile();
 	}
 
@@ -872,7 +872,7 @@
 				if (startPath.startsWith('~')) startPath = (info.home || '') + startPath.slice(1);
 				await loadDirectory(startPath || info.home || '', initialFile);
 			} catch (e: any) {
-				error = e.message || 'Failed to initialize';
+				error = withDetail($t('fileBrowser.initializeFailed'), e.message);
 				loading = false;
 			}
 		})();
