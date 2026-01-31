@@ -8,6 +8,7 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { importNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
 	import { storageLishnetPath } from '../../scripts/settings.ts';
+	import { api } from '../../scripts/api.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -44,19 +45,16 @@
 			return;
 		}
 		try {
-			// Read file from backend
-			const response = await fetch(`/api/fs/read?path=${encodeURIComponent(filePath)}`);
-			if (!response.ok) {
-				errorMessage = $t('settings.lishNetworkImport.fileReadError');
-				return;
-			}
-			const content = await response.text();
+			// Read file from backend using WebSocket API
+			const content = await api.fs.readText(filePath);
 			const result = importNetworksFromJson(content);
 			if (result.error) {
 				errorMessage = getNetworkErrorMessage(result.error, $t);
 				return;
 			}
 			onImport?.();
+			onBack?.();
+			onBack?.();
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);
 		}
@@ -184,7 +182,7 @@
 </style>
 
 {#if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storageLishnetPath} showPath fileFilter={['.lishnet', '.lishnets', '.json']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={filePath || $storageLishnetPath} showPath fileFilter={['*.lishnet', '*.lishnets', '*.json']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">
 		<div class="container">

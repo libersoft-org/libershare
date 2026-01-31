@@ -33,6 +33,8 @@
 			return;
 		}
 		onImport?.();
+		onBack?.();
+		onBack?.();
 	}
 
 	async function loadInitialFile() {

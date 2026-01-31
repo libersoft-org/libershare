@@ -51,6 +51,8 @@
 				return;
 			}
 			onImport?.();
+			onBack?.();
+			onBack?.();
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);
 		} finally {
