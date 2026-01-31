@@ -10,7 +10,7 @@ export interface BreadcrumbItem {
 // Unified breadcrumb store
 const breadcrumbStore = writable<BreadcrumbItem[]>([]);
 // Derived breadcrumb labels for display (with translated Home)
-export const breadcrumbItems = derived([breadcrumbStore, t], ([$items, $t]) => [$t.common?.home, ...$items.map(item => item.label)]);
+export const breadcrumbItems = derived([breadcrumbStore, t], ([$items, $t]) => [$t('common.home'), ...$items.map(item => item.label)]);
 // Content scroll management
 let contentElement: HTMLElement | null = null;
 const confirmDialogStore = writable<ConfirmDialogState>({ visible: false, action: null });

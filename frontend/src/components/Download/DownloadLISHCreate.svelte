@@ -146,7 +146,7 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t.downloads?.lishCreate?.inputPath);
+		pushBreadcrumb($t('downloads.lishCreate.inputPath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
@@ -164,7 +164,7 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t.downloads?.lishCreate?.outputPath);
+		pushBreadcrumb($t('downloads.lishCreate.outputPath'));
 		removeBackHandler = pushBackHandler(handleOutputBrowseBack);
 	}
 
@@ -376,19 +376,19 @@
 		<div class="container">
 			<!-- Name (optional) -->
 			<div bind:this={rowElements[FIELD_NAME]}>
-				<Input bind:this={nameInput} value={name} onchange={handleNameChange} label={$t.downloads?.lishCreate?.name} selected={active && selectedIndex === FIELD_NAME} />
+				<Input bind:this={nameInput} value={name} onchange={handleNameChange} label={$t('downloads.lishCreate.name')} selected={active && selectedIndex === FIELD_NAME} />
 			</div>
 			<!-- Description (optional) -->
 			<div bind:this={rowElements[FIELD_DESCRIPTION]}>
-				<Input bind:this={descriptionInput} bind:value={description} label={$t.downloads?.lishCreate?.description} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
+				<Input bind:this={descriptionInput} bind:value={description} label={$t('downloads.lishCreate.description')} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
 			</div>
 			<!-- Chunk Size -->
 			<div bind:this={rowElements[FIELD_CHUNK_SIZE]}>
-				<Input bind:this={chunkSizeInput} bind:value={chunkSize} label={$t.downloads?.lishCreate?.chunkSize} selected={active && selectedIndex === FIELD_CHUNK_SIZE} />
+				<Input bind:this={chunkSizeInput} bind:value={chunkSize} label={$t('downloads.lishCreate.chunkSize')} selected={active && selectedIndex === FIELD_CHUNK_SIZE} />
 			</div>
 			<!-- Hash Algorithm -->
 			<div bind:this={rowElements[FIELD_ALGO]}>
-				<div class="label">{$t.downloads?.lishCreate?.algorithm}:</div>
+				<div class="label">{$t('downloads.lishCreate.algorithm')}:</div>
 				<div class="algo-selector">
 					{#each HASH_ALGORITHMS as algo, i}
 						<Button label={algo} selected={active && selectedIndex === FIELD_ALGO && selectedColumn === i} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
@@ -397,34 +397,34 @@
 			</div>
 			<!-- Threads -->
 			<div bind:this={rowElements[FIELD_THREADS]}>
-				<Input bind:this={threadsInput} bind:value={threads} label={$t.downloads?.lishCreate?.threads} type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
+				<Input bind:this={threadsInput} bind:value={threads} label={$t('downloads.lishCreate.threads')} type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
 			</div>
 			<!-- Input Path (required) -->
 			<div class="row" bind:this={rowElements[FIELD_INPUT]}>
-				<Input bind:this={inputPathInput} bind:value={inputPath} label={$t.downloads?.lishCreate?.inputPath} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
+				<Input bind:this={inputPathInput} bind:value={inputPath} label={$t('downloads.lishCreate.inputPath')} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={openInputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<!-- Save to File Switch -->
 			<div bind:this={rowElements[FIELD_SAVE_TO_FILE]}>
-				<SwitchRow label={$t.downloads?.lishCreate?.saveToFile + ':'} checked={saveToFile} selected={active && selectedIndex === FIELD_SAVE_TO_FILE} onConfirm={() => (saveToFile = !saveToFile)} />
+				<SwitchRow label={$t('downloads.lishCreate.saveToFile') + ':'} checked={saveToFile} selected={active && selectedIndex === FIELD_SAVE_TO_FILE} onConfirm={() => (saveToFile = !saveToFile)} />
 			</div>
 			<!-- Output Path (optional) -->
 			<div class="row" bind:this={rowElements[FIELD_OUTPUT]}>
-				<Input bind:this={outputPathInput} bind:value={outputPath} label={$t.downloads?.lishCreate?.outputPath} selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex disabled={!saveToFile} onchange={() => outputPathManuallyEdited = true} />
+				<Input bind:this={outputPathInput} bind:value={outputPath} label={$t('downloads.lishCreate.outputPath')} selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex disabled={!saveToFile} onchange={() => outputPathManuallyEdited = true} />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
 			</div>
 			<!-- Add to Sharing Switch -->
 			<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>
-				<SwitchRow label={$t.downloads?.lishImport?.autoStartSharing + ':'} checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
+				<SwitchRow label={$t('downloads.lishImport.autoStartSharing') + ':'} checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
 			</div>
 			<Alert type="error" message={showError ? errorMessage : ''} />
 		</div>
 		<div class="buttons">
 			<div bind:this={rowElements[FIELD_CREATE]}>
-				<Button icon="/img/plus.svg" label={$t.downloads?.lishCreate?.create} selected={active && selectedIndex === FIELD_CREATE} onConfirm={handleCreate} />
+				<Button icon="/img/plus.svg" label={$t('downloads.lishCreate.create')} selected={active && selectedIndex === FIELD_CREATE} onConfirm={handleCreate} />
 			</div>
 			<div bind:this={rowElements[FIELD_BACK]}>
-				<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === FIELD_BACK} onConfirm={onBack} />
+				<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === FIELD_BACK} onConfirm={onBack} />
 			</div>
 		</div>
 	</div>

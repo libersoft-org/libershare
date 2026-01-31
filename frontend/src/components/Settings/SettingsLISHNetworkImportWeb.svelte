@@ -33,7 +33,7 @@
 	async function handleImport() {
 		errorMessage = '';
 		if (!url.trim()) {
-			errorMessage = $t.settings?.lishNetworkImport?.urlRequired;
+			errorMessage = $t('settings.lishNetworkImport.urlRequired');
 			return;
 		}
 		loading = true;
@@ -138,13 +138,13 @@
 
 <div class="import">
 	<div class="container">
-		<Input bind:this={urlRef} bind:value={url} label={$t.settings?.lishNetworkImport?.url} placeholder="https://..." selected={active && selectedIndex === 0} flex />
+		<Input bind:this={urlRef} bind:value={url} label={$t('settings.lishNetworkImport.url')} placeholder="https://..." selected={active && selectedIndex === 0} flex />
 		{#if errorMessage}
 			<Alert type="error" message={errorMessage} />
 		{/if}
 	</div>
 	<div class="buttons">
-		<Button icon="/img/download.svg" label={$t.common?.import} selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={handleImport} disabled={loading} />
-		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
+		<Button icon="/img/download.svg" label={$t('common.import')} selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={handleImport} disabled={loading} />
+		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
 	</div>
 </div>

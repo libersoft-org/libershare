@@ -40,7 +40,7 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t.common?.saveAs);
+		pushBreadcrumb($t('common.saveAs'));
 		removeBackHandler = pushBackHandler(handleSaveAsBack);
 	}
 
@@ -150,14 +150,14 @@
 			{#if hasNetworks}
 				<Input bind:this={inputRef} value={networksJson} multiline rows={15} readonly fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
 			{:else}
-				<Alert type="warning" message={$t.settings?.lishNetwork?.emptyList} />
+				<Alert type="warning" message={$t('settings.lishNetwork.emptyList')} />
 			{/if}
 		</div>
 		<div class="buttons">
 			{#if hasNetworks}
-				<Button icon="/img/save.svg" label="{$t.common?.saveAs} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={openSaveAs} />
+				<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={openSaveAs} />
 			{/if}
-			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && (hasNetworks ? selectedIndex === 1 && selectedColumn === 1 : true)} onConfirm={onBack} />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && (hasNetworks ? selectedIndex === 1 && selectedColumn === 1 : true)} onConfirm={onBack} />
 		</div>
 	</div>
 {/if}

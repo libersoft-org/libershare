@@ -121,7 +121,7 @@
 		{/if}
 	</div>
 	<div class="buttons">
-		<Button icon="/img/import.svg" label={$t.common?.import} selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={handleImport} />
-		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
+		<Button icon="/img/import.svg" label={$t('common.import')} selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={handleImport} />
+		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
 	</div>
 </div>

@@ -25,7 +25,7 @@
 			id: 'version',
 			component: Item,
 			props: () => ({
-				topLabel: $t.common?.version,
+				topLabel: $t('common.version'),
 				bottomLabel: productVersion,
 			}),
 		},
@@ -34,7 +34,7 @@
 			component: Item,
 			props: () => ({
 				topIcon: 'img/download.svg',
-				topIconAlt: $t.common?.download,
+				topIconAlt: $t('common.download'),
 				topLabel: '- 12',
 				bottomLabel: '13.2 MB/s',
 			}),
@@ -44,7 +44,7 @@
 			component: Item,
 			props: () => ({
 				topIcon: 'img/upload.svg',
-				topIconAlt: $t.common?.upload,
+				topIconAlt: $t('common.upload'),
 				topLabel: '- 5',
 				bottomLabel: '3.2 MB/s',
 			}),
@@ -54,7 +54,7 @@
 			component: Bar,
 			props: () => ({
 				topIcon: 'img/cpu.svg',
-				topIconAlt: $t.settings?.footerWidgets?.cpu,
+				topIconAlt: $t('settings.footerWidgets.cpu'),
 				progress: 12,
 			}),
 		},
@@ -63,7 +63,7 @@
 			component: Bar,
 			props: () => ({
 				topIcon: 'img/ram.svg',
-				topIconAlt: $t.settings?.footerWidgets?.ram,
+				topIconAlt: $t('settings.footerWidgets.ram'),
 				topLabel: '12.1 / 32 GB',
 				progress: 32,
 			}),
@@ -73,7 +73,7 @@
 			component: Bar,
 			props: () => ({
 				topIcon: 'img/storage.svg',
-				topIconAlt: $t.settings?.footerWidgets?.storage,
+				topIconAlt: $t('settings.footerWidgets.storage'),
 				topLabel: '0.88 / 2 TB',
 				progress: 44.1,
 			}),
@@ -108,7 +108,7 @@
 			component: Item,
 			props: () => ({
 				topIcon: `img/${getVolumeIcon($volume)}.svg`,
-				topIconAlt: $t.settings?.footerWidgets?.volume,
+				topIconAlt: $t('settings.footerWidgets.volume'),
 				bottomLabel: `${$volume}%`,
 			}),
 		},

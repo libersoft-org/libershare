@@ -47,11 +47,11 @@
 	function handleImport() {
 		errorMessage = '';
 		if (!filePath.trim()) {
-			errorMessage = $t.downloads?.lishImport?.filePathRequired;
+			errorMessage = $t('downloads.lishImport.filePathRequired');
 			return;
 		}
 		if (!downloadPath.trim()) {
-			errorMessage = $t.downloads?.lishImport?.downloadPathRequired;
+			errorMessage = $t('downloads.lishImport.downloadPathRequired');
 			return;
 		}
 		// TODO: Load and parse LISH file from filePath
@@ -65,7 +65,7 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t.downloads?.lishImport?.filePath);
+		pushBreadcrumb($t('downloads.lishImport.filePath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
@@ -75,7 +75,7 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t.downloads?.lishImport?.downloadPath);
+		pushBreadcrumb($t('downloads.lishImport.downloadPath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
@@ -209,21 +209,21 @@
 	<div class="import">
 		<div class="container">
 			<div class="row">
-				<Input bind:this={filePathRef} bind:value={filePath} label={$t.downloads?.lishImport?.filePath} selected={active && selectedIndex === 0 && selectedColumn === 0} flex />
+				<Input bind:this={filePathRef} bind:value={filePath} label={$t('downloads.lishImport.filePath')} selected={active && selectedIndex === 0 && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === 0 && selectedColumn === 1} onConfirm={openFilePathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row">
-				<Input bind:this={downloadPathRef} bind:value={downloadPath} label={$t.downloads?.lishImport?.downloadPath} selected={active && selectedIndex === 1 && selectedColumn === 0} flex />
+				<Input bind:this={downloadPathRef} bind:value={downloadPath} label={$t('downloads.lishImport.downloadPath')} selected={active && selectedIndex === 1 && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t.downloads?.lishImport?.autoStartSharing} checked={autoStart} selected={active && selectedIndex === 2} onToggle={() => autoStart = !autoStart} />
+			<SwitchRow label={$t('downloads.lishImport.autoStartSharing')} checked={autoStart} selected={active && selectedIndex === 2} onToggle={() => autoStart = !autoStart} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
 		<div class="buttons">
-			<Button icon="/img/download.svg" label={$t.common?.import} selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={handleImport} />
-			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 3 && selectedColumn === 1} onConfirm={onBack} />
+			<Button icon="/img/download.svg" label={$t('common.import')} selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={handleImport} />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 3 && selectedColumn === 1} onConfirm={onBack} />
 		</div>
 	</div>
 {/if}

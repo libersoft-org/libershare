@@ -10,8 +10,8 @@
 	const { type = 'ethernet', connected = false, signal = 0 }: Props = $props();
 	let activeBars = $derived(type === 'ethernet' ? (connected ? 4 : 0) : getActiveBars(signal, connected));
 	let label = $derived.by(() => {
-		if (!connected) return $t.common?.disconnected;
-		if (type === 'ethernet') return $t.common?.connected;
+		if (!connected) return $t('common.disconnected');
+		if (type === 'ethernet') return $t('common.connected');
 		return `${signal}%`;
 	});
 </script>

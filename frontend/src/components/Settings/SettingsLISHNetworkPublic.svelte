@@ -30,7 +30,7 @@
 
 	async function loadPublicList() {
 		if (!url.trim()) {
-			error = $t.settings?.lishNetwork?.errorUrlRequired;
+			error = $t('settings.lishNetwork.errorUrlRequired');
 			return;
 		}
 		loading = true;
@@ -183,7 +183,7 @@
 				<Input bind:this={urlInput} bind:value={url} label="URL" selected={active && selectedIndex === 0 && selectedColumn === 0} />
 			</div>
 			{#if !loading}
-				<Button icon="/img/download.svg" label={$t.common?.load} selected={active && selectedIndex === 0 && selectedColumn === 1} onConfirm={loadPublicList} />
+				<Button icon="/img/download.svg" label={$t('common.load')} selected={active && selectedIndex === 0 && selectedColumn === 1} onConfirm={loadPublicList} />
 			{/if}
 		</div>
 		{#if loading}
@@ -204,9 +204,9 @@
 								{/if}
 							</div>
 							{#if isNetworkAdded(network.networkID)}
-								<Button icon="/img/check.svg" label={$t.common?.added} selected={false} />
+								<Button icon="/img/check.svg" label={$t('common.added')} selected={false} />
 							{:else}
-								<Button icon="/img/plus.svg" label={$t.common?.add} selected={active && selectedIndex === i + 1} onConfirm={() => handleAddNetwork(network)} />
+								<Button icon="/img/plus.svg" label={$t('common.add')} selected={active && selectedIndex === i + 1} onConfirm={() => handleAddNetwork(network)} />
 							{/if}
 						</div>
 					</Row>
@@ -215,6 +215,6 @@
 		{/if}
 	</div>
 	<div class="back">
-		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
+		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
 	</div>
 </div>

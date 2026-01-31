@@ -139,22 +139,22 @@
 
 <div class="download">
 	<div class="toolbar">
-		<Button icon="/img/plus.svg" label={$t.downloads?.createLish} selected={toolbarActive && selectedToolbarIndex === 0} />
-		<Button icon="/img/download.svg" label={$t.common?.import} selected={toolbarActive && selectedToolbarIndex === 1} />
-		<Button icon="/img/upload.svg" label={$t.common?.exportAll} selected={toolbarActive && selectedToolbarIndex === 2} />
+		<Button icon="/img/plus.svg" label={$t('downloads.createLish')} selected={toolbarActive && selectedToolbarIndex === 0} />
+		<Button icon="/img/download.svg" label={$t('common.import')} selected={toolbarActive && selectedToolbarIndex === 1} />
+		<Button icon="/img/upload.svg" label={$t('common.exportAll')} selected={toolbarActive && selectedToolbarIndex === 2} />
 	</div>
 	<div class="container">
 		<Table columns={DOWNLOAD_TABLE_COLUMNS} noBorder>
 			<Header fontSize="1.4vh">
-				<Cell>{$t.downloads?.name}</Cell>
-				<Cell align="center" desktopOnly>{$t.downloads?.id}</Cell>
-				<Cell align="center" desktopOnly>{$t.downloads?.size}</Cell>
-				<Cell align="center" desktopOnly>{$t.downloads?.progress}</Cell>
-				<Cell align="center" desktopOnly>{$t.downloads?.status}</Cell>
-				<Cell align="center" desktopOnly>{$t.downloads?.downloadingFrom}</Cell>
-				<Cell align="center" desktopOnly>{$t.downloads?.uploadingTo}</Cell>
-				<Cell align="right" desktopOnly>{$t.downloads?.downloadSpeed}</Cell>
-				<Cell align="right" desktopOnly>{$t.downloads?.uploadSpeed}</Cell>
+				<Cell>{$t('downloads.name')}</Cell>
+				<Cell align="center" desktopOnly>{$t('downloads.id')}</Cell>
+				<Cell align="center" desktopOnly>{$t('downloads.size')}</Cell>
+				<Cell align="center" desktopOnly>{$t('downloads.progress')}</Cell>
+				<Cell align="center" desktopOnly>{$t('downloads.status')}</Cell>
+				<Cell align="center" desktopOnly>{$t('downloads.downloadingFrom')}</Cell>
+				<Cell align="center" desktopOnly>{$t('downloads.uploadingTo')}</Cell>
+				<Cell align="right" desktopOnly>{$t('downloads.downloadSpeed')}</Cell>
+				<Cell align="right" desktopOnly>{$t('downloads.uploadSpeed')}</Cell>
 			</Header>
 			<div class="items">
 				{#each downloads as download, index (download.id)}

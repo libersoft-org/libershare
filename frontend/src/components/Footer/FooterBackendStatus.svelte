@@ -32,7 +32,7 @@
 
 <div class="item">
 	<div class="top">
-		<span class="label">{$t.settings?.footerWidgets?.backendStatus}</span>
+		<span class="label">{$t('settings.footerWidgets.backendStatus')}</span>
 	</div>
 	<div class="bottom">
 		<Dot status={dotStatus} />

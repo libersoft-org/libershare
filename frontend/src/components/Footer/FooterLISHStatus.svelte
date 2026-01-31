@@ -41,7 +41,7 @@
 
 <div class="item">
 	<div class="top">
-		<span class="name">{networkName || $t.common?.disconnected}</span>
+		<span class="name">{networkName || $t('common.disconnected')}</span>
 	</div>
 	<div class="bottom">
 		<div class="network">

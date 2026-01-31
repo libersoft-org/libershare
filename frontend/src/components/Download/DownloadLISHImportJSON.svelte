@@ -46,7 +46,7 @@
 	function handleImport() {
 		errorMessage = '';
 		if (!downloadPath.trim()) {
-			errorMessage = $t.downloads?.lishImport?.downloadPathRequired;
+			errorMessage = $t('downloads.lishImport.downloadPathRequired');
 			return;
 		}
 		const result = parseLISHFromJson(lishJson);
@@ -65,7 +65,7 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t.downloads?.lishImport?.downloadPath);
+		pushBreadcrumb($t('downloads.lishImport.downloadPath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
@@ -188,19 +188,19 @@
 {:else}
 	<div class="import">
 		<div class="container">
-			<Input bind:this={inputRef} bind:value={lishJson} label={$t.downloads?.lishImport?.lishJSON} multiline rows={10} placeholder={$t.downloads?.lishImport?.placeholder} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
+			<Input bind:this={inputRef} bind:value={lishJson} label={$t('downloads.lishImport.lishJSON')} multiline rows={10} placeholder={$t('downloads.lishImport.placeholder')} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
 			<div class="row">
-				<Input bind:this={downloadPathRef} bind:value={downloadPath} label={$t.downloads?.lishImport?.downloadPath} selected={active && selectedIndex === 1 && selectedColumn === 0} flex />
+				<Input bind:this={downloadPathRef} bind:value={downloadPath} label={$t('downloads.lishImport.downloadPath')} selected={active && selectedIndex === 1 && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t.downloads?.lishImport?.autoStartSharing} checked={autoStart} selected={active && selectedIndex === 2} onToggle={() => autoStart = !autoStart} />
+			<SwitchRow label={$t('downloads.lishImport.autoStartSharing')} checked={autoStart} selected={active && selectedIndex === 2} onToggle={() => autoStart = !autoStart} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
 		<div class="buttons">
-			<Button icon="/img/download.svg" label={$t.common?.import} selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={handleImport} />
-			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 3 && selectedColumn === 1} onConfirm={onBack} />
+			<Button icon="/img/download.svg" label={$t('common.import')} selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={handleImport} />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 3 && selectedColumn === 1} onConfirm={onBack} />
 		</div>
 	</div>
 {/if}

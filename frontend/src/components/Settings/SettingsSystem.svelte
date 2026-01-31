@@ -157,19 +157,19 @@
 <div class="settings">
 	<div class="container">
 		<div bind:this={rowElements[0]}>
-			<SwitchRow label={$t.settings?.system?.autoStartOnBoot + ':'} checked={autoStart} selected={active && getActualIndex(selectedIndex) === FIELD_AUTO_START} onToggle={toggleAutoStart} />
+			<SwitchRow label={$t('settings.system.autoStartOnBoot') + ':'} checked={autoStart} selected={active && getActualIndex(selectedIndex) === FIELD_AUTO_START} onToggle={toggleAutoStart} />
 		</div>
 		<div bind:this={rowElements[1]}>
-			<SwitchRow label={$t.settings?.system?.showInTray + ':'} checked={trayVisible} selected={active && getActualIndex(selectedIndex) === FIELD_SHOW_IN_TRAY} onToggle={toggleShowInTray} />
+			<SwitchRow label={$t('settings.system.showInTray') + ':'} checked={trayVisible} selected={active && getActualIndex(selectedIndex) === FIELD_SHOW_IN_TRAY} onToggle={toggleShowInTray} />
 		</div>
 		{#if trayVisible}
 			<div bind:this={rowElements[2]}>
-				<SwitchRow label={$t.settings?.system?.minimizeToTray + ':'} checked={trayMinimize} selected={active && getActualIndex(selectedIndex) === FIELD_MINIMIZE_TO_TRAY} onToggle={toggleMinimizeToTray} />
+				<SwitchRow label={$t('settings.system.minimizeToTray') + ':'} checked={trayMinimize} selected={active && getActualIndex(selectedIndex) === FIELD_MINIMIZE_TO_TRAY} onToggle={toggleMinimizeToTray} />
 			</div>
 		{/if}
 	</div>
 	<div class="buttons" bind:this={rowElements[trayVisible ? 3 : 2]}>
-		<Button icon="/img/save.svg" label={$t.common?.save} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 0} onConfirm={onBack} />
-		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 1} onConfirm={onBack} />
+		<Button icon="/img/save.svg" label={$t('common.save')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 0} onConfirm={onBack} />
+		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 1} onConfirm={onBack} />
 	</div>
 </div>

@@ -40,14 +40,14 @@
 	async function handleImport() {
 		errorMessage = '';
 		if (!filePath.trim()) {
-			errorMessage = $t.settings?.lishNetworkImport?.filePathRequired;
+			errorMessage = $t('settings.lishNetworkImport.filePathRequired');
 			return;
 		}
 		try {
 			// Read file from backend
 			const response = await fetch(`/api/fs/read?path=${encodeURIComponent(filePath)}`);
 			if (!response.ok) {
-				errorMessage = $t.settings?.lishNetworkImport?.fileReadError;
+				errorMessage = $t('settings.lishNetworkImport.fileReadError');
 				return;
 			}
 			const content = await response.text();
@@ -68,7 +68,7 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t.settings?.lishNetworkImport?.filePath);
+		pushBreadcrumb($t('settings.lishNetworkImport.filePath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
@@ -189,7 +189,7 @@
 	<div class="import">
 		<div class="container">
 			<div class="row">
-				<Input bind:this={filePathRef} bind:value={filePath} label={$t.settings?.lishNetworkImport?.filePath} selected={active && selectedIndex === 0 && selectedColumn === 0} flex />
+				<Input bind:this={filePathRef} bind:value={filePath} label={$t('settings.lishNetworkImport.filePath')} selected={active && selectedIndex === 0 && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === 0 && selectedColumn === 1} onConfirm={openFilePathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			{#if errorMessage}
@@ -197,8 +197,8 @@
 			{/if}
 		</div>
 		<div class="buttons">
-			<Button icon="/img/download.svg" label={$t.common?.import} selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={handleImport} />
-			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
+			<Button icon="/img/download.svg" label={$t('common.import')} selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={handleImport} />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
 		</div>
 	</div>
 {/if}

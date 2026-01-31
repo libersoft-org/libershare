@@ -13,7 +13,20 @@ export const languages: Language[] = [
 export const currentLanguage = writable<string>(getInitialLanguage());
 const langCache: Record<string, any> = {}; // Cache for loaded language files
 export const translations = writable<any>({}); // Store for current translations
-export const t = derived(translations, $translations => $translations); // Derived store for translations - use as $t.common.back in components
+
+// Helper function to get nested value from object by path
+function getNestedValue(obj: any, path: string): string | undefined {
+	const result = path.split('.').reduce((current, key) => current?.[key], obj);
+	return typeof result === 'string' ? result : undefined;
+}
+
+// Reactive translation function - use as $t('common.back') in components
+// Returns the translation value or '{key}' fallback if missing
+export const t = derived(translations, $translations => {
+	return (key: string): string => {
+		return getNestedValue($translations, key) ?? `{${key}}`;
+	};
+});
 
 // Initialize and update translations when language changes
 currentLanguage.subscribe(async langId => {
@@ -60,14 +73,8 @@ export function getFlagUrl(langId: string): string {
 	return `/node_modules/country-flags/svg/${flagCode}.svg`;
 }
 
-// Helper function to get nested value from object by path
-function getNestedValue(obj: any, path: string): string | undefined {
-	const result = path.split('.').reduce((current, key) => current?.[key], obj);
-	return typeof result === 'string' ? result : undefined;
-}
-
-// Function for translations outside components - use as tt('common.back'), reactive when used inside derived stores
-export function tt(key: string): string | undefined {
+// Function for translations outside components - use as tt('common.back')
+export function tt(key: string): string {
 	const current = get(translations);
-	return getNestedValue(current, key);
+	return getNestedValue(current, key) ?? `{${key}}`;
 }

@@ -250,13 +250,13 @@ export async function fetchPublicNetworks(url: string): Promise<FetchPublicNetwo
 /**
  * Get localized error message for network errors.
  */
-export function getNetworkErrorMessage(errorCode: string, t: { settings?: { lishNetwork?: { errorInvalidFormat?: string; errorNoValidNetworks?: string; errorUrlRequired?: string } } }): string {
+export function getNetworkErrorMessage(errorCode: string, t: (key: string) => string): string {
 	switch (errorCode) {
 		case 'INVALID_FORMAT':
 		case 'INVALID_JSON':
-			return t.settings?.lishNetwork?.errorInvalidFormat || 'Invalid format';
+			return t('settings.lishNetwork.errorInvalidFormat');
 		case 'NO_VALID_NETWORKS':
-			return t.settings?.lishNetwork?.errorNoValidNetworks || 'No valid networks found';
+			return t('settings.lishNetwork.errorNoValidNetworks');
 		default:
 			return errorCode;
 	}

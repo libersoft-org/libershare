@@ -34,8 +34,8 @@
 	let editorActive = $derived($activeArea === editorAreaID);
 	let hasChanges = $derived(content !== originalContent);
 	let toolbarActions = $derived([
-		{ id: 'save', label: $t.common?.save, icon: '/img/check.svg', disabled: !hasChanges || saving },
-		{ id: 'close', label: $t.common?.back, icon: '/img/back.svg', disabled: false },
+		{ id: 'save', label: $t('common.save'), icon: '/img/check.svg', disabled: !hasChanges || saving },
+		{ id: 'close', label: $t('common.back'), icon: '/img/back.svg', disabled: false },
 	]);
 	let unregisterToolbar: (() => void) | null = null;
 	let unregisterEditor: (() => void) | null = null;

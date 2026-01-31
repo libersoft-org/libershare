@@ -249,39 +249,39 @@
 			<div class="info" class:selected={infoActive} bind:this={infoElement}>
 				<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
 					<TableRow odd>
-						<Cell>{$t.downloads?.name}</Cell>
+						<Cell>{$t('downloads.name')}</Cell>
 						<Cell align="right">{download.name}</Cell>
 					</TableRow>
 					<TableRow>
-						<Cell>{$t.downloads?.id}</Cell>
+						<Cell>{$t('downloads.id')}</Cell>
 						<Cell align="right">{truncateID(download.id)}</Cell>
 					</TableRow>
 					<TableRow odd>
-						<Cell>{$t.downloads?.size}</Cell>
+						<Cell>{$t('downloads.size')}</Cell>
 						<Cell align="right">{download.downloadedSize && download.progress < 100 ? `${download.downloadedSize} / ${download.size}` : download.size}</Cell>
 					</TableRow>
 					<TableRow>
-						<Cell>{$t.downloads?.progress}</Cell>
+						<Cell>{$t('downloads.progress')}</Cell>
 						<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading'} /></span></Cell>
 					</TableRow>
 					<TableRow odd>
-						<Cell>{$t.downloads?.status}</Cell>
-						<Cell align="right"><Badge label={$t.downloads?.statuses?.[download.status]} /></Cell>
+						<Cell>{$t('downloads.status')}</Cell>
+						<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} /></Cell>
 					</TableRow>
 					<TableRow>
-						<Cell>{$t.downloads?.downloadingFrom}</Cell>
+						<Cell>{$t('downloads.downloadingFrom')}</Cell>
 						<Cell align="right">{download.downloadPeers}</Cell>
 					</TableRow>
 					<TableRow odd>
-						<Cell>{$t.downloads?.uploadingTo}</Cell>
+						<Cell>{$t('downloads.uploadingTo')}</Cell>
 						<Cell align="right">{download.uploadPeers}</Cell>
 					</TableRow>
 					<TableRow>
-						<Cell>{$t.downloads?.downloadSpeed}</Cell>
+						<Cell>{$t('downloads.downloadSpeed')}</Cell>
 						<Cell align="right">{download.downloadSpeed}</Cell>
 					</TableRow>
 					<TableRow odd>
-						<Cell>{$t.downloads?.uploadSpeed}</Cell>
+						<Cell>{$t('downloads.uploadSpeed')}</Cell>
 						<Cell align="right">{download.uploadSpeed}</Cell>
 					</TableRow>
 				</Table>
@@ -290,9 +290,9 @@
 			<div class="container" bind:this={filesElement}>
 				<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
 					<Header fontSize="1.4vh">
-						<Cell>{$t.downloads?.name}</Cell>
-						<Cell align="center">{$t.downloads?.size}</Cell>
-						<Cell align="center">{$t.downloads?.progress}</Cell>
+						<Cell>{$t('downloads.name')}</Cell>
+						<Cell align="center">{$t('downloads.size')}</Cell>
+						<Cell align="center">{$t('downloads.progress')}</Cell>
 					</Header>
 					<div class="items">
 						{#each download.files as file, index (file.id)}

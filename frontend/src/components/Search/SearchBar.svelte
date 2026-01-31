@@ -9,7 +9,7 @@
 		onConfirm?: () => void;
 	}
 	let { value = $bindable(''), placeholder, selected = false, onchange, onConfirm }: Props = $props();
-	let searchPlaceholder = $derived(placeholder ?? $t.common?.search + ' ...');
+	let searchPlaceholder = $derived(placeholder ?? $t('common.search') + ' ...');
 	let inputComponent: Input;
 	export function toggleFocus() {
 		const inputElement = inputComponent?.getInputElement();

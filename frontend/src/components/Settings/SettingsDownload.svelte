@@ -71,10 +71,10 @@
 			unregisterArea = null;
 		}
 		const labels = {
-			storage: $t.settings?.download?.folderDownload,
-			temp: $t.settings?.download?.folderTemp,
-			lish: $t.settings?.download?.folderLish,
-			lishnet: $t.settings?.download?.folderLishnet,
+			storage: $t('settings.download.folderDownload'),
+			temp: $t('settings.download.folderTemp'),
+			lish: $t('settings.download.folderLish'),
+			lishnet: $t('settings.download.folderLishnet'),
 		};
 		pushBreadcrumb(labels[type]);
 		removeBackHandler = pushBackHandler(handleBrowseBack);
@@ -312,53 +312,53 @@
 		<div class="container">
 			<!-- Storage paths -->
 			<div class="row" bind:this={rowElements[FIELD_STORAGE_PATH]}>
-				<Input bind:this={storagePathRef} bind:value={storagePathValue} label={$t.settings?.download?.folderDownload} selected={active && selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 0} flex />
+				<Input bind:this={storagePathRef} bind:value={storagePathValue} label={$t('settings.download.folderDownload')} selected={active && selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 1} onConfirm={() => openBrowse('storage')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 2} onConfirm={resetStoragePath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row" bind:this={rowElements[FIELD_TEMP_PATH]}>
-				<Input bind:this={tempPathRef} bind:value={tempPathValue} label={$t.settings?.download?.folderTemp} selected={active && selectedIndex === FIELD_TEMP_PATH && selectedColumn === 0} flex />
+				<Input bind:this={tempPathRef} bind:value={tempPathValue} label={$t('settings.download.folderTemp')} selected={active && selectedIndex === FIELD_TEMP_PATH && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_TEMP_PATH && selectedColumn === 1} onConfirm={() => openBrowse('temp')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_TEMP_PATH && selectedColumn === 2} onConfirm={resetTempPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row" bind:this={rowElements[FIELD_LISH_PATH]}>
-				<Input bind:this={lishPathRef} bind:value={lishPathValue} label={$t.settings?.download?.folderLish} selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 0} flex />
+				<Input bind:this={lishPathRef} bind:value={lishPathValue} label={$t('settings.download.folderLish')} selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 1} onConfirm={() => openBrowse('lish')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 2} onConfirm={resetLishPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row" bind:this={rowElements[FIELD_LISHNET_PATH]}>
-				<Input bind:this={lishnetPathRef} bind:value={lishnetPathValue} label={$t.settings?.download?.folderLishnet} selected={active && selectedIndex === FIELD_LISHNET_PATH && selectedColumn === 0} flex />
+				<Input bind:this={lishnetPathRef} bind:value={lishnetPathValue} label={$t('settings.download.folderLishnet')} selected={active && selectedIndex === FIELD_LISHNET_PATH && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISHNET_PATH && selectedColumn === 1} onConfirm={() => openBrowse('lishnet')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_LISHNET_PATH && selectedColumn === 2} onConfirm={resetLishnetPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<!-- Network settings -->
 			<div class="row" bind:this={rowElements[FIELD_PORT]}>
-				<Input bind:this={portRef} bind:value={port} label={$t.settings?.download?.incomingPort} type="number" selected={active && selectedIndex === FIELD_PORT && selectedColumn === 0} flex />
+				<Input bind:this={portRef} bind:value={port} label={$t('settings.download.incomingPort')} type="number" selected={active && selectedIndex === FIELD_PORT && selectedColumn === 0} flex />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_PORT && selectedColumn === 1} onConfirm={resetPort} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row" bind:this={rowElements[FIELD_DOWNLOAD_CONNECTIONS]}>
-				<Input bind:this={downloadConnectionsRef} bind:value={downloadConnections} label={$t.settings?.download?.maxDownloadConnections} type="number" selected={active && selectedIndex === FIELD_DOWNLOAD_CONNECTIONS && selectedColumn === 0} flex />
+				<Input bind:this={downloadConnectionsRef} bind:value={downloadConnections} label={$t('settings.download.maxDownloadConnections')} type="number" selected={active && selectedIndex === FIELD_DOWNLOAD_CONNECTIONS && selectedColumn === 0} flex />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_DOWNLOAD_CONNECTIONS && selectedColumn === 1} onConfirm={resetDownloadConnections} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row" bind:this={rowElements[FIELD_UPLOAD_CONNECTIONS]}>
-				<Input bind:this={uploadConnectionsRef} bind:value={uploadConnections} label={$t.settings?.download?.maxUploadConnections} type="number" selected={active && selectedIndex === FIELD_UPLOAD_CONNECTIONS && selectedColumn === 0} flex />
+				<Input bind:this={uploadConnectionsRef} bind:value={uploadConnections} label={$t('settings.download.maxUploadConnections')} type="number" selected={active && selectedIndex === FIELD_UPLOAD_CONNECTIONS && selectedColumn === 0} flex />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_UPLOAD_CONNECTIONS && selectedColumn === 1} onConfirm={resetUploadConnections} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row" bind:this={rowElements[FIELD_DOWNLOAD_SPEED]}>
-				<Input bind:this={downloadSpeedRef} bind:value={downloadSpeed} label={$t.settings?.download?.maxDownloadSpeed} type="number" selected={active && selectedIndex === FIELD_DOWNLOAD_SPEED && selectedColumn === 0} flex />
+				<Input bind:this={downloadSpeedRef} bind:value={downloadSpeed} label={$t('settings.download.maxDownloadSpeed')} type="number" selected={active && selectedIndex === FIELD_DOWNLOAD_SPEED && selectedColumn === 0} flex />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_DOWNLOAD_SPEED && selectedColumn === 1} onConfirm={resetDownloadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row" bind:this={rowElements[FIELD_UPLOAD_SPEED]}>
-				<Input bind:this={uploadSpeedRef} bind:value={uploadSpeed} label={$t.settings?.download?.maxUploadSpeed} type="number" selected={active && selectedIndex === FIELD_UPLOAD_SPEED && selectedColumn === 0} flex />
+				<Input bind:this={uploadSpeedRef} bind:value={uploadSpeed} label={$t('settings.download.maxUploadSpeed')} type="number" selected={active && selectedIndex === FIELD_UPLOAD_SPEED && selectedColumn === 0} flex />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_UPLOAD_SPEED && selectedColumn === 1} onConfirm={resetUploadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div bind:this={rowElements[FIELD_AUTO_START]}>
-				<SwitchRow label={$t.settings?.download?.autoStartSharingDefault + ':'} checked={autoStart} selected={active && selectedIndex === FIELD_AUTO_START} onToggle={toggleAutoStart} />
+				<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} selected={active && selectedIndex === FIELD_AUTO_START} onToggle={toggleAutoStart} />
 			</div>
 		</div>
 		<div class="buttons" bind:this={rowElements[FIELD_BUTTONS]}>
-			<Button icon="/img/save.svg" label={$t.common?.save} selected={active && selectedIndex === FIELD_BUTTONS && selectedColumn === 0} onConfirm={handleSave} />
-			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === FIELD_BUTTONS && selectedColumn === 1} onConfirm={onBack} />
+			<Button icon="/img/save.svg" label={$t('common.save')} selected={active && selectedIndex === FIELD_BUTTONS && selectedColumn === 0} onConfirm={handleSave} />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === FIELD_BUTTONS && selectedColumn === 1} onConfirm={onBack} />
 		</div>
 	</div>
 {/if}

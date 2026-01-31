@@ -104,13 +104,13 @@
 		{#if hasLish}
 			<Input bind:this={inputRef} value={lishJson} multiline rows={15} readonly fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
 		{:else}
-			<Alert type="warning" message={$t.downloads?.emptyList} />
+			<Alert type="warning" message={$t('downloads.emptyList')} />
 		{/if}
 	</div>
 	<div class="buttons">
 		{#if hasLish}
-			<Button icon="/img/save.svg" label="{$t.common?.saveAs} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
+			<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
 		{/if}
-		<Button icon="/img/back.svg" label={$t.common?.back} selected={active && (hasLish ? selectedIndex === 1 && selectedColumn === 1 : true)} onConfirm={onBack} />
+		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && (hasLish ? selectedIndex === 1 && selectedColumn === 1 : true)} onConfirm={onBack} />
 	</div>
 </div>

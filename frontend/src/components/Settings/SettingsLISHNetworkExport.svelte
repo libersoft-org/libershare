@@ -45,15 +45,15 @@
 		try {
 			const parsed = JSON.parse(networkJson);
 			if (!parsed.name || typeof parsed.name !== 'string' || !parsed.name.trim()) {
-				errorMessage = $t.settings?.lishNetwork?.errorNameRequired;
+				errorMessage = $t('settings.lishNetwork.errorNameRequired');
 				return;
 			}
 			if (!parsed.networkID || typeof parsed.networkID !== 'string' || !parsed.networkID.trim()) {
-				errorMessage = $t.settings?.lishNetwork?.errorNetworkIDRequired;
+				errorMessage = $t('settings.lishNetwork.errorNetworkIDRequired');
 				return;
 			}
 		} catch {
-			errorMessage = $t.settings?.lishNetwork?.errorInvalidFormat;
+			errorMessage = $t('settings.lishNetwork.errorInvalidFormat');
 			return;
 		}
 		saveFileName = getFileNameFromJson();
@@ -62,7 +62,7 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t.common?.saveAs);
+		pushBreadcrumb($t('common.saveAs'));
 		removeBackHandler = pushBackHandler(handleSaveAsBack);
 	}
 
@@ -174,8 +174,8 @@
 			{/if}
 		</div>
 		<div class="buttons">
-			<Button icon="/img/save.svg" label="{$t.common?.saveAs} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={openSaveAs} />
-			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
+			<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={openSaveAs} />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
 		</div>
 	</div>
 {/if}

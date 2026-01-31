@@ -117,13 +117,13 @@ export function parseLISHFromJson(json: string): ParseLISHResult {
 /**
  * Get localized error message for LISH parsing errors.
  */
-export function getLISHErrorMessage(errorCode: ParseLISHResult['error'], t: { downloads?: { errorInvalidFormat?: string; errorNoValidLish?: string } }): string {
+export function getLISHErrorMessage(errorCode: ParseLISHResult['error'], t: (key: string) => string): string {
 	switch (errorCode) {
 		case 'INVALID_FORMAT':
 		case 'INVALID_JSON':
-			return t.downloads?.errorInvalidFormat || 'Invalid format';
+			return t('downloads.errorInvalidFormat');
 		case 'NO_VALID_LISH':
-			return t.downloads?.errorNoValidLish || 'No valid LISH found';
+			return t('downloads.errorNoValidLish');
 		default:
 			return '';
 	}
@@ -175,16 +175,16 @@ export function validateLishCreateForm(data: LishCreateFormData): LishCreateErro
 /**
  * Get localized error message for LISH create validation errors
  */
-export function getLishCreateErrorMessage(errorCode: LishCreateError, t: { downloads?: { lishCreate?: { inputRequired?: string; outputRequired?: string; invalidChunkSize?: string; invalidThreads?: string } } }): string {
+export function getLishCreateErrorMessage(errorCode: LishCreateError, t: (key: string) => string): string {
 	switch (errorCode) {
 		case 'INPUT_REQUIRED':
-			return t.downloads?.lishCreate?.inputRequired || 'Input path is required';
+			return t('downloads.lishCreate.inputRequired');
 		case 'OUTPUT_REQUIRED':
-			return t.downloads?.lishCreate?.outputRequired || 'You must at least save to file or add to sharing';
+			return t('downloads.lishCreate.outputRequired');
 		case 'INVALID_CHUNK_SIZE':
-			return t.downloads?.lishCreate?.invalidChunkSize || 'Invalid chunk size';
+			return t('downloads.lishCreate.invalidChunkSize');
 		case 'INVALID_THREADS':
-			return t.downloads?.lishCreate?.invalidThreads || 'Invalid threads value';
+			return t('downloads.lishCreate.invalidThreads');
 		default:
 			return '';
 	}

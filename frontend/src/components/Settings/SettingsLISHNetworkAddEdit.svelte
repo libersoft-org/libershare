@@ -34,7 +34,7 @@
 	let bootstrapServers = $state<string[]>(untrack(() => (network?.bootstrapServers?.length ? [...network.bootstrapServers] : [''])));
 	let submitted = $state(false);
 	// Validation - skip networkID check if auto-generate is enabled
-	let errorMessage = $derived(!name.trim() ? $t.settings?.lishNetwork?.errorNameRequired : !autoGenerateID && !networkID.trim() ? $t.settings?.lishNetwork?.errorNetworkIDRequired : '');
+	let errorMessage = $derived(!name.trim() ? $t('settings.lishNetwork.errorNameRequired') : !autoGenerateID && !networkID.trim() ? $t('settings.lishNetwork.errorNetworkIDRequired') : '');
 	let showError = $derived(submitted && errorMessage);
 	// Dynamic total items: name + description + (autoGenerate when adding) + networkID + bootstrap servers + save + back
 	// When editing: no switch row, so offset is 3; when adding: switch row exists, offset is 4
@@ -229,24 +229,24 @@
 <div class="add-edit">
 	<div class="container">
 		<div bind:this={rowElements[0]}>
-			<Input bind:this={nameInput} bind:value={name} label={$t.settings?.lishNetwork?.name} selected={active && selectedIndex === 0} />
+			<Input bind:this={nameInput} bind:value={name} label={$t('settings.lishNetwork.name')} selected={active && selectedIndex === 0} />
 		</div>
 		<div bind:this={rowElements[1]}>
-			<Input bind:this={descriptionInput} bind:value={description} label={$t.settings?.lishNetwork?.description} multiline rows={4} selected={active && selectedIndex === 1} />
+			<Input bind:this={descriptionInput} bind:value={description} label={$t('settings.lishNetwork.description')} multiline rows={4} selected={active && selectedIndex === 1} />
 		</div>
 		{#if !isEditing}
 			<div bind:this={rowElements[2]}>
-				<SwitchRow label={$t.settings?.lishNetwork?.autoGenerate + ':'} checked={autoGenerateID} selected={active && selectedIndex === 2} onConfirm={toggleAutoGenerateID} />
+				<SwitchRow label={$t('settings.lishNetwork.autoGenerate') + ':'} checked={autoGenerateID} selected={active && selectedIndex === 2} onConfirm={toggleAutoGenerateID} />
 			</div>
 			<div bind:this={rowElements[3]}>
-				<Input bind:this={networkIDInput} bind:value={networkID} label={$t.settings?.lishNetwork?.networkID} selected={active && selectedIndex === 3} disabled={autoGenerateID} />
+				<Input bind:this={networkIDInput} bind:value={networkID} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 3} disabled={autoGenerateID} />
 			</div>
 		{:else}
 			<div bind:this={rowElements[2]}>
-				<Input bind:this={networkIDInput} bind:value={networkID} label={$t.settings?.lishNetwork?.networkID} selected={active && selectedIndex === 2} />
+				<Input bind:this={networkIDInput} bind:value={networkID} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 2} />
 			</div>
 		{/if}
-		<div class="label">{$t.settings?.lishNetwork?.bootstrapServers}:</div>
+		<div class="label">{$t('settings.lishNetwork.bootstrapServers')}:</div>
 		{#each bootstrapServers as server, index (index)}
 			{@const isLast = index === bootstrapServers.length - 1}
 			{@const hasRemove = bootstrapServers.length > 1}
@@ -265,10 +265,10 @@
 	</div>
 	<div class="buttons">
 		<div bind:this={rowElements[bootstrapOffset + bootstrapServers.length]}>
-			<Button icon="/img/save.svg" label={$t.common?.save} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length} onConfirm={handleSave} />
+			<Button icon="/img/save.svg" label={$t('common.save')} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length} onConfirm={handleSave} />
 		</div>
 		<div bind:this={rowElements[bootstrapOffset + bootstrapServers.length + 1]}>
-			<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length + 1} onConfirm={onBack} />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length + 1} onConfirm={onBack} />
 		</div>
 	</div>
 </div>

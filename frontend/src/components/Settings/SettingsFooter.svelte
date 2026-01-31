@@ -116,13 +116,13 @@
 			<Table columns="1fr 10vw" columnsMobile="1fr auto">
 				<div bind:this={rowElements[0]}>
 					<TableRow selected={active && selectedIndex === 0} odd>
-						<TableCell>{$t.settings?.footerVisible}</TableCell>
+						<TableCell>{$t('settings.footerVisible')}</TableCell>
 						<TableCell align="right"><Switch checked={$footerVisible} /></TableCell>
 					</TableRow>
 				</div>
 			</Table>
 			<div bind:this={rowElements[1]}>
-				<Button label="{$t.settings?.footerPosition}: {$t.settings?.footerPositions?.[$footerPosition]}" selected={active && selectedIndex === 1} onConfirm={openPositionDialog} />
+				<Button label="{$t('settings.footerPosition')}: {$t('settings.footerPositions.' + $footerPosition)}" selected={active && selectedIndex === 1} onConfirm={openPositionDialog} />
 			</div>
 			<Table columns="1fr 10vw" columnsMobile="1fr auto">
 				{#each footerWidgets as widget, index}
@@ -135,7 +135,7 @@
 				{/each}
 			</Table>
 			<div class="back" bind:this={rowElements[totalItems - 1]}>
-				<Button icon="/img/back.svg" label={$t.common?.back} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
+				<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
 			</div>
 		</div>
 	</div>

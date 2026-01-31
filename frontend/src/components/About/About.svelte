@@ -44,23 +44,23 @@
 <Dialog title={productName}>
 	<div class="build">
 		<div class="row">
-			<span class="label">{$t.common?.version}:</span>
+			<span class="label">{$t('common.version')}:</span>
 			<span class="value">{productVersion}</span>
 		</div>
 		<div class="row">
-			<span class="label">{$t.about?.buildDate}:</span>
+			<span class="label">{$t('about.buildDate')}:</span>
 			<span class="value">{buildDate}</span>
 		</div>
 		<div class="row">
-			<span class="label">{$t.about?.commit}:</span>
+			<span class="label">{$t('about.commit')}:</span>
 			<span class="value">{commitHash}</span>
 		</div>
 	</div>
 	<div class="links">
 		<ButtonsGroup {areaID} {position} initialIndex={2} {onBack}>
-			<Button icon="/img/github.svg" label={$t.about?.githubPage} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalUrl('https://github.com/libersoft-org/libershare')} />
-			<Button icon="/img/online.svg" label={$t.about?.officialWebsite} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalUrl('https://libershare.com')} />
-			<Button icon="/img/check.svg" label={$t.common?.ok} width="20vh" onConfirm={onBack} />
+			<Button icon="/img/github.svg" label={$t('about.githubPage')} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalUrl('https://github.com/libersoft-org/libershare')} />
+			<Button icon="/img/online.svg" label={$t('about.officialWebsite')} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalUrl('https://libershare.com')} />
+			<Button icon="/img/check.svg" label={$t('common.ok')} width="20vh" onConfirm={onBack} />
 		</ButtonsGroup>
 	</div>
 </Dialog>
