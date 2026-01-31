@@ -112,7 +112,9 @@
 			"title": "Systém",
 			"autoStartOnBoot": "Spustit aplikaci po spuštění systému",
 			"showInTray": "Zobrazit v oznamovací oblasti",
-			"minimizeToTray": "Minimalizovat do oznamovací oblasti"
+			"minimizeToTray": "Minimalizovat do oznamovací oblasti",
+			"defaultMinifyJson": "Minifikovat JSON (výchozí hodnota)",
+			"defaultCompressGzip": "Komprimovat do gzipu (výchozí hodnota)"
 		},
 		"download": {
 			"folderDownload": "Složka pro dokončená stahování",

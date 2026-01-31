@@ -210,3 +210,22 @@ export function setMinimizeToTray(enabled: boolean): void {
 	minimizeToTray.set(enabled);
 	setStorageValue('minimizeToTray', enabled);
 }
+
+// Export default settings
+export const DEFAULT_MINIFY_JSON = false;
+const storedDefaultMinifyJson = getStorageValue<boolean>('defaultMinifyJson', DEFAULT_MINIFY_JSON);
+export const defaultMinifyJson = writable(storedDefaultMinifyJson);
+
+export function setDefaultMinifyJson(enabled: boolean): void {
+	defaultMinifyJson.set(enabled);
+	setStorageValue('defaultMinifyJson', enabled);
+}
+
+export const DEFAULT_COMPRESS_GZIP = false;
+const storedDefaultCompressGzip = getStorageValue<boolean>('defaultCompressGzip', DEFAULT_COMPRESS_GZIP);
+export const defaultCompressGzip = writable(storedDefaultCompressGzip);
+
+export function setDefaultCompressGzip(enabled: boolean): void {
+	defaultCompressGzip.set(enabled);
+	setStorageValue('defaultCompressGzip', enabled);
+}

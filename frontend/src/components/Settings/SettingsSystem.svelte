@@ -5,7 +5,7 @@
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
-	import { autoStartOnBoot, showInTray, minimizeToTray, setAutoStartOnBoot, setShowInTray, setMinimizeToTray } from '../../scripts/settings.ts';
+	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJson, defaultCompressGzip, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJson, setDefaultCompressGzip } from '../../scripts/settings.ts';
 	import Button from '../Buttons/Button.svelte';
 	import SwitchRow from '../Switch/SwitchRow.svelte';
 	interface Props {
@@ -23,29 +23,47 @@
 	let autoStart = $state($autoStartOnBoot);
 	let trayVisible = $state($showInTray);
 	let trayMinimize = $state($minimizeToTray);
+	let minifyJson = $state($defaultMinifyJson);
+	let compressGzip = $state($defaultCompressGzip);
 	// Field indices
 	const FIELD_AUTO_START = 0;
 	const FIELD_SHOW_IN_TRAY = 1;
 	const FIELD_MINIMIZE_TO_TRAY = 2;
-	const FIELD_BUTTONS = 3;
-	// Calculate total visible items
-	let totalItems = $derived(trayVisible ? 4 : 3);
+	const FIELD_MINIFY_JSON = 3;
+	const FIELD_COMPRESS_GZIP = 4;
+	const FIELD_BUTTONS = 5;
+	// Calculate total visible items (skip MINIMIZE_TO_TRAY if tray not visible)
+	let totalItems = $derived(trayVisible ? 6 : 5);
 
 	function toggleAutoStart() {
 		autoStart = !autoStart;
-		setAutoStartOnBoot(autoStart);
 	}
 
 	function toggleShowInTray() {
 		trayVisible = !trayVisible;
-		setShowInTray(trayVisible);
-		// Business rule is now in settings.ts - it auto-disables minimizeToTray
+		// Business rule: if disabling tray, also disable minimize to tray
 		if (!trayVisible) trayMinimize = false;
 	}
 
 	function toggleMinimizeToTray() {
 		trayMinimize = !trayMinimize;
+	}
+
+	function toggleMinifyJson() {
+		minifyJson = !minifyJson;
+	}
+
+	function toggleCompressGzip() {
+		compressGzip = !compressGzip;
+	}
+
+	function saveSettings() {
+		setAutoStartOnBoot(autoStart);
+		setShowInTray(trayVisible);
 		setMinimizeToTray(trayMinimize);
+		setDefaultMinifyJson(minifyJson);
+		setDefaultCompressGzip(compressGzip);
+		onBack?.();
 	}
 
 	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
@@ -106,8 +124,10 @@
 					if (actualIndex === FIELD_AUTO_START) toggleAutoStart();
 					else if (actualIndex === FIELD_SHOW_IN_TRAY) toggleShowInTray();
 					else if (actualIndex === FIELD_MINIMIZE_TO_TRAY) toggleMinimizeToTray();
+					else if (actualIndex === FIELD_MINIFY_JSON) toggleMinifyJson();
+					else if (actualIndex === FIELD_COMPRESS_GZIP) toggleCompressGzip();
 					else if (actualIndex === FIELD_BUTTONS) {
-						if (selectedColumn === 0) onBack?.();
+						if (selectedColumn === 0) saveSettings();
 						else onBack?.();
 					}
 				},
@@ -167,9 +187,15 @@
 				<SwitchRow label={$t('settings.system.minimizeToTray') + ':'} checked={trayMinimize} selected={active && getActualIndex(selectedIndex) === FIELD_MINIMIZE_TO_TRAY} onToggle={toggleMinimizeToTray} />
 			</div>
 		{/if}
+		<div bind:this={rowElements[trayVisible ? 3 : 2]}>
+			<SwitchRow label={$t('settings.system.defaultMinifyJson') + ':'} checked={minifyJson} selected={active && getActualIndex(selectedIndex) === FIELD_MINIFY_JSON} onToggle={toggleMinifyJson} />
+		</div>
+		<div bind:this={rowElements[trayVisible ? 4 : 3]}>
+			<SwitchRow label={$t('settings.system.defaultCompressGzip') + ':'} checked={compressGzip} selected={active && getActualIndex(selectedIndex) === FIELD_COMPRESS_GZIP} onToggle={toggleCompressGzip} />
+		</div>
 	</div>
-	<div class="buttons" bind:this={rowElements[trayVisible ? 3 : 2]}>
-		<Button icon="/img/save.svg" label={$t('common.save')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 0} onConfirm={onBack} />
+	<div class="buttons" bind:this={rowElements[trayVisible ? 5 : 4]}>
+		<Button icon="/img/save.svg" label={$t('common.save')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 0} onConfirm={saveSettings} />
 		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 1} onConfirm={onBack} />
 	</div>
 </div>

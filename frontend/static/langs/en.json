@@ -111,7 +111,9 @@
 			"title": "System",
 			"autoStartOnBoot": "Start application on system startup",
 			"showInTray": "Show in system tray",
-			"minimizeToTray": "Minimize to system tray"
+			"minimizeToTray": "Minimize to system tray",
+			"defaultMinifyJson": "Minify JSON (default)",
+			"defaultCompressGzip": "Compress to gzip (default)"
 		},
 		"download": {
 			"folderDownload": "Finished download folder",

@@ -7,7 +7,7 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { getNetworks, exportAllNetworksToJson } from '../../scripts/lishNetwork.ts';
-	import { storageLishnetPath } from '../../scripts/settings.ts';
+	import { storageLishnetPath, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
 	import { minifyJson } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -32,8 +32,8 @@
 	let browsingSaveAs = $state(false);
 	let saveFolder = $state($storageLishnetPath);
 	let baseFileName = $state('networks.lishnets');
-	let minifyJsonState = $state(false);
-	let compressGzip = $state(false);
+	let minifyJsonState = $state($defaultMinifyJson);
+	let compressGzip = $state($defaultCompressGzip);
 
 	// Compute final filename with .gz extension if gzip is enabled
 	let saveFileName = $derived(compressGzip ? `${baseFileName}.gz` : baseFileName);
