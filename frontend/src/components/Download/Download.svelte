@@ -153,8 +153,8 @@
 				<Cell align="center" desktopOnly>{$t('downloads.status')}</Cell>
 				<Cell align="center" desktopOnly>{$t('downloads.downloadingFrom')}</Cell>
 				<Cell align="center" desktopOnly>{$t('downloads.uploadingTo')}</Cell>
-				<Cell align="right" desktopOnly>{$t('downloads.downloadSpeed')}</Cell>
-				<Cell align="right" desktopOnly>{$t('downloads.uploadSpeed')}</Cell>
+				<Cell align="center" desktopOnly>{$t('downloads.downloadSpeed')}</Cell>
+				<Cell align="center" desktopOnly>{$t('downloads.uploadSpeed')}</Cell>
 			</Header>
 			<div class="items">
 				{#each downloads as download, index (download.id)}
