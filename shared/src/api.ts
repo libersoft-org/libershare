@@ -189,4 +189,8 @@ class FsApi {
 	writeText(path: string, content: string): Promise<{ success: boolean }> {
 		return this.client.call<{ success: boolean }>('fs.writeText', { path, content });
 	}
+
+	writeGzip(path: string, content: string): Promise<{ success: boolean }> {
+		return this.client.call<{ success: boolean }>('fs.writeGzip', { path, content });
+	}
 }

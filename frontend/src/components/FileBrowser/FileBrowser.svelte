@@ -34,6 +34,7 @@
 		selectFileButton?: boolean;
 		saveFileName?: string; // If provided, shows a filename input for "save as" mode
 		saveContent?: string; // Content to save - if provided, FileBrowser handles the save operation
+		useGzip?: boolean; // If true, compress content with gzip before saving
 		onBack?: () => void;
 		onSelect?: (path: string) => void;
 		onSaveFileNameChange?: (fileName: string) => void;
@@ -43,7 +44,7 @@
 		onOpenSpecialFile?: (path: string, type: 'lish' | 'lishnet') => void; // Called for .lish/.lishs/.lishnet/.lishnets files
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, saveContent, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, onOpenSpecialFile }: Props = $props();
+	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, onOpenSpecialFile }: Props = $props();
 
 	// File filter state
 	let showAllFiles = $state(false);
@@ -818,7 +819,8 @@
 				return;
 			}
 			// File doesn't exist, write directly
-			await api.fs.writeText(fullPath, saveContent);
+			if (useGzip) await api.fs.writeGzip(fullPath, saveContent);
+			else await api.fs.writeText(fullPath, saveContent);
 			onSaveComplete?.(fullPath);
 		} catch (e) {
 			console.error('Failed to save file:', e);
@@ -832,7 +834,8 @@
 		saveErrorMessage = '';
 		if (saveContent === undefined) return;
 		try {
-			await api.fs.writeText(pendingSavePath, saveContent);
+			if (useGzip) await api.fs.writeGzip(pendingSavePath, saveContent);
+			else await api.fs.writeText(pendingSavePath, saveContent);
 			onSaveComplete?.(pendingSavePath);
 		} catch (e) {
 			console.error('Failed to save file:', e);

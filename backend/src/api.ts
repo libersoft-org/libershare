@@ -390,6 +390,12 @@ export class ApiServer {
 				await fsWriteText(params.path, params.content);
 				return { success: true };
 
+			case 'fs.writeGzip': {
+				const compressed = Bun.gzipSync(Buffer.from(params.content, 'utf-8'));
+				await Bun.write(params.path, compressed);
+				return { success: true };
+			}
+
 			case 'download': {
 				/*
 				todo:

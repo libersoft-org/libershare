@@ -24,26 +24,30 @@
 	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
-	let selectedIndex = $state(0); // 0 = input, 1 = minify switch, 2 = buttons row
+	let selectedIndex = $state(0); // 0 = input, 1 = minify switch, 2 = gzip switch, 3 = buttons row
 	let selectedColumn = $state(0); // 0 = save as, 1 = back
 	let inputRef: Input | undefined = $state();
 	let browsingSaveAs = $state(false);
 	let saveFolder = $state($storageLishnetPath);
-	let saveFileName = $state(network ? `${network.name}.lishnet` : 'network.lishnet');
+	let baseFileName = $state(network ? `${network.name}.lishnet` : 'network.lishnet');
 	let networkJson = $state(network ? exportNetworkToJson(network.id) : ''); // Get full network data as JSON (editable)
 	let minifyJsonState = $state(false);
+	let compressGzip = $state(false);
 	let errorMessage = $state('');
+
+	// Compute final filename with .gz extension if gzip is enabled
+	let saveFileName = $derived(compressGzip ? `${baseFileName}.gz` : baseFileName);
 
 	// Compute save content based on minify setting
 	let saveContent = $derived(minifyJsonState ? minifyJson(networkJson) : networkJson);
 
-	function getFileNameFromJson(): string {
+	function getBaseFileNameFromJson(): string {
 		try {
 			const parsed = JSON.parse(networkJson);
 			if (parsed.name && typeof parsed.name === 'string' && parsed.name.trim()) return `${parsed.name.trim()}.lishnet`;
 			if (parsed.networkID && typeof parsed.networkID === 'string' && parsed.networkID.trim()) return `${parsed.networkID.trim()}.lishnet`;
 		} catch {}
-		return 'network.lishnet'; // Fallback to generic name
+		return 'network.lishnet';
 	}
 
 	function openSaveAs() {
@@ -62,7 +66,7 @@
 			errorMessage = $t('settings.lishNetwork.errorInvalidFormat');
 			return;
 		}
-		saveFileName = getFileNameFromJson();
+		baseFileName = getBaseFileNameFromJson();
 		browsingSaveAs = true;
 		if (unregisterArea) {
 			unregisterArea();
@@ -100,7 +104,7 @@
 					return false;
 				},
 				down: () => {
-					if (selectedIndex < 2) {
+					if (selectedIndex < 3) {
 						selectedIndex++;
 						selectedColumn = 0;
 						return true;
@@ -108,14 +112,14 @@
 					return false;
 				},
 				left: () => {
-					if (selectedIndex === 2 && selectedColumn > 0) {
+					if (selectedIndex === 3 && selectedColumn > 0) {
 						selectedColumn--;
 						return true;
 					}
 					return false;
 				},
 				right: () => {
-					if (selectedIndex === 2 && selectedColumn < 1) {
+					if (selectedIndex === 3 && selectedColumn < 1) {
 						selectedColumn++;
 						return true;
 					}
@@ -126,8 +130,9 @@
 				},
 				confirmUp: () => {
 					if (selectedIndex === 1) minifyJsonState = !minifyJsonState;
-					else if (selectedIndex === 2 && selectedColumn === 0) openSaveAs();
-					else if (selectedIndex === 2 && selectedColumn === 1) onBack?.();
+					else if (selectedIndex === 2) compressGzip = !compressGzip;
+					else if (selectedIndex === 3 && selectedColumn === 0) openSaveAs();
+					else if (selectedIndex === 3 && selectedColumn === 1) onBack?.();
 				},
 				confirmCancel: () => {},
 				back: () => onBack?.(),
@@ -171,19 +176,20 @@
 </style>
 
 {#if browsingSaveAs}
-	<FileBrowser {areaID} {position} initialPath={saveFolder} showPath foldersOnly selectFolderButton {saveFileName} {saveContent} onSaveFileNameChange={v => (saveFileName = v)} onSaveComplete={handleSaveComplete} onBack={handleSaveAsBack} />
+	<FileBrowser {areaID} {position} initialPath={saveFolder} showPath foldersOnly selectFolderButton {saveFileName} {saveContent} useGzip={compressGzip} onSaveFileNameChange={v => (saveFileName = v)} onSaveComplete={handleSaveComplete} onBack={handleSaveAsBack} />
 {:else}
 	<div class="export">
 		<div class="container">
 			<Input bind:this={inputRef} bind:value={networkJson} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
 			<SwitchRow label={$t('settings.lishNetwork.minifyJson')} checked={minifyJsonState} selected={active && selectedIndex === 1} onToggle={() => minifyJsonState = !minifyJsonState} />
+			<SwitchRow label={$t('settings.lishNetwork.compressGzip')} checked={compressGzip} selected={active && selectedIndex === 2} onToggle={() => compressGzip = !compressGzip} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
 		<div class="buttons">
-			<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 2 && selectedColumn === 0} onConfirm={openSaveAs} />
-			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 2 && selectedColumn === 1} onConfirm={onBack} />
+			<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={openSaveAs} />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 3 && selectedColumn === 1} onConfirm={onBack} />
 		</div>
 	</div>
 {/if}

@@ -141,7 +141,8 @@
 			"publicList": "Public list",
 			"emptyList": "No networks added. Add or Import a new network.",
 			"confirmDelete": "Are you sure you want to delete network \"{name}\"?",
-			"minifyJson": "Minify JSON on save"
+			"minifyJson": "Minify JSON on save",
+			"compressGzip": "Compress to gzip"
 		},
 		"lishNetworkImport": {
 			"fromFile": "From file",
