@@ -202,9 +202,9 @@
 </style>
 
 {#if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storagePath} showPath onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={filePath || $storagePath} showPath fileFilter={['.lish', '.json']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else if browsingDownloadPath}
-	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath onSelect={handleDownloadPathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath selectFolderButton onSelect={handleDownloadPathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">
 		<div class="container">
