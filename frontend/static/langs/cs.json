@@ -116,6 +116,7 @@
 			"folderDownload": "Složka pro dokončená stahování",
 			"folderTemp": "Složka pro nedokončená stahování",
 			"folderLish": "Výchozí složka pro LISH soubory",
+			"folderLishnet": "Výchozí složka pro LISHNET soubory",
 			"incomingPort": "Síťový port pro příchozí spojení",
 			"maxDownloadConnections": "Maximální počet spojení pro stahování",
 			"maxUploadConnections": "Maximální počet spojení pro odesílání",

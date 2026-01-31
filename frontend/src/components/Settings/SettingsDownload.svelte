@@ -6,7 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, storageTempPath, storageLishPath, setStoragePath, setStorageTempPath, setStorageLishPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, autoStartSharing, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAutoStartSharing, DEFAULT_STORAGE_PATH, DEFAULT_STORAGE_TEMP_PATH, DEFAULT_STORAGE_LISH_PATH, DEFAULT_INCOMING_PORT, DEFAULT_MAX_DOWNLOAD_CONNECTIONS, DEFAULT_MAX_UPLOAD_CONNECTIONS, DEFAULT_MAX_DOWNLOAD_SPEED, DEFAULT_MAX_UPLOAD_SPEED, DEFAULT_AUTO_START_SHARING } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLishPath, storageLishnetPath, setStoragePath, setStorageTempPath, setStorageLishPath, setStorageLishnetPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, autoStartSharing, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAutoStartSharing, DEFAULT_STORAGE_PATH, DEFAULT_STORAGE_TEMP_PATH, DEFAULT_STORAGE_LISH_PATH, DEFAULT_STORAGE_LISHNET_PATH, DEFAULT_INCOMING_PORT, DEFAULT_MAX_DOWNLOAD_CONNECTIONS, DEFAULT_MAX_UPLOAD_CONNECTIONS, DEFAULT_MAX_DOWNLOAD_SPEED, DEFAULT_MAX_UPLOAD_SPEED, DEFAULT_AUTO_START_SHARING } from '../../scripts/settings.ts';
 	import { scrollToElement, normalizePath } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -25,12 +25,13 @@
 	let selectedIndex = $state(0);
 	let selectedColumn = $state(0);
 	let rowElements: HTMLElement[] = $state([]);
-	let browsingFor = $state<'storage' | 'temp' | 'lish' | null>(null);
+	let browsingFor = $state<'storage' | 'temp' | 'lish' | 'lishnet' | null>(null);
 
 	// Local state for inputs
 	let storagePathValue = $state($storagePath);
 	let tempPathValue = $state($storageTempPath);
 	let lishPathValue = $state($storageLishPath);
+	let lishnetPathValue = $state($storageLishnetPath);
 	let port = $state($incomingPort.toString());
 	let downloadConnections = $state($maxDownloadConnections.toString());
 	let uploadConnections = $state($maxUploadConnections.toString());
@@ -41,6 +42,7 @@
 	let storagePathRef: Input | undefined = $state();
 	let tempPathRef: Input | undefined = $state();
 	let lishPathRef: Input | undefined = $state();
+	let lishnetPathRef: Input | undefined = $state();
 	let portRef: Input | undefined = $state();
 	let downloadConnectionsRef: Input | undefined = $state();
 	let uploadConnectionsRef: Input | undefined = $state();
@@ -51,17 +53,18 @@
 	const FIELD_STORAGE_PATH = 0;
 	const FIELD_TEMP_PATH = 1;
 	const FIELD_LISH_PATH = 2;
-	const FIELD_PORT = 3;
-	const FIELD_DOWNLOAD_CONNECTIONS = 4;
-	const FIELD_UPLOAD_CONNECTIONS = 5;
-	const FIELD_DOWNLOAD_SPEED = 6;
-	const FIELD_UPLOAD_SPEED = 7;
-	const FIELD_AUTO_START = 8;
-	const FIELD_BUTTONS = 9;
-	const totalItems = 10;
+	const FIELD_LISHNET_PATH = 3;
+	const FIELD_PORT = 4;
+	const FIELD_DOWNLOAD_CONNECTIONS = 5;
+	const FIELD_UPLOAD_CONNECTIONS = 6;
+	const FIELD_DOWNLOAD_SPEED = 7;
+	const FIELD_UPLOAD_SPEED = 8;
+	const FIELD_AUTO_START = 9;
+	const FIELD_BUTTONS = 10;
+	const totalItems = 11;
 
 	// Browse functions
-	function openBrowse(type: 'storage' | 'temp' | 'lish') {
+	function openBrowse(type: 'storage' | 'temp' | 'lish' | 'lishnet') {
 		browsingFor = type;
 		if (unregisterArea) {
 			unregisterArea();
@@ -71,6 +74,7 @@
 			storage: $t.settings?.download?.folderDownload,
 			temp: $t.settings?.download?.folderTemp,
 			lish: $t.settings?.download?.folderLish,
+			lishnet: $t.settings?.download?.folderLishnet,
 		};
 		pushBreadcrumb(labels[type]);
 		removeBackHandler = pushBackHandler(handleBrowseBack);
@@ -84,6 +88,8 @@
 			tempPathValue = normalizedPath;
 		} else if (browsingFor === 'lish') {
 			lishPathValue = normalizedPath;
+		} else if (browsingFor === 'lishnet') {
+			lishnetPathValue = normalizedPath;
 		}
 		handleBrowseBack();
 	}
@@ -130,6 +136,7 @@
 		setStoragePath(storagePathValue);
 		setStorageTempPath(tempPathValue);
 		setStorageLishPath(lishPathValue);
+		setStorageLishnetPath(lishnetPathValue);
 		savePort();
 		saveDownloadConnections();
 		saveUploadConnections();
@@ -156,6 +163,9 @@
 	}
 	function resetLishPath() {
 		lishPathValue = DEFAULT_STORAGE_LISH_PATH;
+	}
+	function resetLishnetPath() {
+		lishnetPathValue = DEFAULT_STORAGE_LISHNET_PATH;
 	}
 	function resetPort() {
 		port = DEFAULT_INCOMING_PORT.toString();
@@ -208,7 +218,7 @@
 					return false;
 				},
 				right: () => {
-					const maxCol = selectedIndex === FIELD_STORAGE_PATH || selectedIndex === FIELD_TEMP_PATH || selectedIndex === FIELD_LISH_PATH ? 2 : selectedIndex === FIELD_PORT || selectedIndex === FIELD_DOWNLOAD_CONNECTIONS || selectedIndex === FIELD_UPLOAD_CONNECTIONS || selectedIndex === FIELD_DOWNLOAD_SPEED || selectedIndex === FIELD_UPLOAD_SPEED ? 1 : selectedIndex === FIELD_BUTTONS ? 1 : 0;
+					const maxCol = selectedIndex === FIELD_STORAGE_PATH || selectedIndex === FIELD_TEMP_PATH || selectedIndex === FIELD_LISH_PATH || selectedIndex === FIELD_LISHNET_PATH ? 2 : selectedIndex === FIELD_PORT || selectedIndex === FIELD_DOWNLOAD_CONNECTIONS || selectedIndex === FIELD_UPLOAD_CONNECTIONS || selectedIndex === FIELD_DOWNLOAD_SPEED || selectedIndex === FIELD_UPLOAD_SPEED ? 1 : selectedIndex === FIELD_BUTTONS ? 1 : 0;
 					if (selectedColumn < maxCol) {
 						selectedColumn++;
 						return true;
@@ -219,6 +229,7 @@
 					if (selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 0) storagePathRef?.focus();
 					else if (selectedIndex === FIELD_TEMP_PATH && selectedColumn === 0) tempPathRef?.focus();
 					else if (selectedIndex === FIELD_LISH_PATH && selectedColumn === 0) lishPathRef?.focus();
+					else if (selectedIndex === FIELD_LISHNET_PATH && selectedColumn === 0) lishnetPathRef?.focus();
 					else if (selectedIndex === FIELD_PORT && selectedColumn === 0) portRef?.focus();
 					else if (selectedIndex === FIELD_DOWNLOAD_CONNECTIONS && selectedColumn === 0) downloadConnectionsRef?.focus();
 					else if (selectedIndex === FIELD_UPLOAD_CONNECTIONS && selectedColumn === 0) uploadConnectionsRef?.focus();
@@ -232,6 +243,8 @@
 					else if (selectedIndex === FIELD_TEMP_PATH && selectedColumn === 2) resetTempPath();
 					else if (selectedIndex === FIELD_LISH_PATH && selectedColumn === 1) openBrowse('lish');
 					else if (selectedIndex === FIELD_LISH_PATH && selectedColumn === 2) resetLishPath();
+					else if (selectedIndex === FIELD_LISHNET_PATH && selectedColumn === 1) openBrowse('lishnet');
+					else if (selectedIndex === FIELD_LISHNET_PATH && selectedColumn === 2) resetLishnetPath();
 					else if (selectedIndex === FIELD_PORT && selectedColumn === 1) resetPort();
 					else if (selectedIndex === FIELD_DOWNLOAD_CONNECTIONS && selectedColumn === 1) resetDownloadConnections();
 					else if (selectedIndex === FIELD_UPLOAD_CONNECTIONS && selectedColumn === 1) resetUploadConnections();
@@ -293,7 +306,7 @@
 </style>
 
 {#if browsingFor}
-	<SettingsStorageBrowse {areaID} {position} initialPath={browsingFor === 'storage' ? $storagePath : browsingFor === 'temp' ? $storageTempPath : $storageLishPath} onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
+	<SettingsStorageBrowse {areaID} {position} initialPath={browsingFor === 'storage' ? $storagePath : browsingFor === 'temp' ? $storageTempPath : browsingFor === 'lish' ? $storageLishPath : $storageLishnetPath} onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="settings">
 		<div class="container">
@@ -312,6 +325,11 @@
 				<Input bind:this={lishPathRef} bind:value={lishPathValue} label={$t.settings?.download?.folderLish} selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 1} onConfirm={() => openBrowse('lish')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_LISH_PATH && selectedColumn === 2} onConfirm={resetLishPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<div class="row" bind:this={rowElements[FIELD_LISHNET_PATH]}>
+				<Input bind:this={lishnetPathRef} bind:value={lishnetPathValue} label={$t.settings?.download?.folderLishnet} selected={active && selectedIndex === FIELD_LISHNET_PATH && selectedColumn === 0} flex />
+				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISHNET_PATH && selectedColumn === 1} onConfirm={() => openBrowse('lishnet')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_LISHNET_PATH && selectedColumn === 2} onConfirm={resetLishnetPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<!-- Network settings -->
 			<div class="row" bind:this={rowElements[FIELD_PORT]}>

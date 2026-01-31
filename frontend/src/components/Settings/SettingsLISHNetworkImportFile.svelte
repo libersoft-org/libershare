@@ -7,6 +7,7 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { importNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { storageLishnetPath } from '../../scripts/settings.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -183,7 +184,7 @@
 </style>
 
 {#if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || '/'} showPath fileFilter={['.lishnet', '.json']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={filePath || $storageLishnetPath} showPath fileFilter={['.lishnet', '.json']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">
 		<div class="container">

@@ -112,6 +112,15 @@ export function setStorageLishPath(path: string): void {
 	setStorageValue('storageLishPath', path);
 }
 
+export const DEFAULT_STORAGE_LISHNET_PATH = '~/libershare/lishnet/';
+const storedStorageLishnetPath = getStorageValue<string>('storageLishnetPath', DEFAULT_STORAGE_LISHNET_PATH);
+export const storageLishnetPath = writable(storedStorageLishnetPath);
+
+export function setStorageLishnetPath(path: string): void {
+	storageLishnetPath.set(path);
+	setStorageValue('storageLishnetPath', path);
+}
+
 // Sharing settings
 export const DEFAULT_INCOMING_PORT = 9090;
 const storedIncomingPort = getStorageValue<number>('incomingPort', DEFAULT_INCOMING_PORT);

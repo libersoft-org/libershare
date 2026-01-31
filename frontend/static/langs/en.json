@@ -115,6 +115,7 @@
 			"folderDownload": "Finished download folder",
 			"folderTemp": "Unfinished downloads folder",
 			"folderLish": "Default LISH files folder",
+			"folderLishnet": "Default LISHNET files folder",
 			"incomingPort": "Network port for incoming connections",
 			"maxDownloadConnections": "Maximum download connections",
 			"maxUploadConnections": "Maximum upload connections",
