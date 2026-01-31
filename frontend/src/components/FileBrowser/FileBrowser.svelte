@@ -40,9 +40,10 @@
 		onSaveComplete?: (path: string) => void; // Called after successful save
 		onSaveError?: (error: string) => void; // Called on save error
 		onDownAtEnd?: () => boolean;
+		onOpenSpecialFile?: (path: string, type: 'lish' | 'lishnet') => void; // Called for .lish/.lishs/.lishnet/.lishnets files
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, saveContent, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd }: Props = $props();
+	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, saveContent, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, onOpenSpecialFile }: Props = $props();
 
 	// File filter state
 	let showAllFiles = $state(false);
@@ -614,6 +615,23 @@
 	}
 
 	async function handleOpenFile(item: StorageItemData) {
+		// Check for special file types (.lish, .lishs, .lishnet, .lishnets)
+		const lowerName = item.name.toLowerCase();
+		if (onOpenSpecialFile) {
+			if (lowerName.endsWith('.lish') || lowerName.endsWith('.lishs')) {
+				onOpenSpecialFile(item.path, 'lish');
+				showActions = false;
+				activateArea(listAreaID);
+				return;
+			}
+			if (lowerName.endsWith('.lishnet') || lowerName.endsWith('.lishnets')) {
+				onOpenSpecialFile(item.path, 'lishnet');
+				showActions = false;
+				activateArea(listAreaID);
+				return;
+			}
+		}
+		// Standard file open
 		const result = await openFile(item.path);
 		if (!result.success) error = withDetail($t('fileBrowser.openFileFailed'), result.error);
 		showActions = false;

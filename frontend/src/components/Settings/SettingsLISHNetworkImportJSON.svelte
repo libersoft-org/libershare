@@ -5,6 +5,7 @@
 	import type { Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { importNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { api } from '../../scripts/api.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -12,10 +13,11 @@
 	interface Props {
 		areaID: string;
 		position?: Position;
+		initialFilePath?: string;
 		onBack?: () => void;
 		onImport?: () => void;
 	}
-	let { areaID, position = LAYOUT.content, onBack, onImport }: Props = $props();
+	let { areaID, position = LAYOUT.content, initialFilePath = '', onBack, onImport }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0); // 0 = input, 1 = buttons row
 	let selectedColumn = $state(0); // 0 = import, 1 = back
@@ -33,7 +35,19 @@
 		onImport?.();
 	}
 
+	async function loadInitialFile() {
+		if (initialFilePath) {
+			try {
+				const content = await api.fs.readText(initialFilePath);
+				if (content) networkJson = content;
+			} catch (e) {
+				// Ignore error, user can still paste JSON manually
+			}
+		}
+	}
+
 	onMount(() => {
+		loadInitialFile();
 		const unregister = useArea(
 			areaID,
 			{

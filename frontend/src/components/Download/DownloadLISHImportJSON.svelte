@@ -9,6 +9,7 @@
 	import { parseLISHFromJson, getLISHErrorMessage } from '../../scripts/lish.ts';
 	import { storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
+	import { api } from '../../scripts/api.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
@@ -18,10 +19,11 @@
 	interface Props {
 		areaID: string;
 		position?: Position;
+		initialFilePath?: string;
 		onBack?: () => void;
 		onImport?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack, onImport }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, initialFilePath = '', onBack, onImport }: Props = $props();
 	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
@@ -90,6 +92,17 @@
 		return useArea(areaID, areaHandlers, position);
 	}
 
+	async function loadInitialFile() {
+		if (initialFilePath) {
+			try {
+				const content = await api.fs.readText(initialFilePath);
+				if (content) lishJson = content;
+			} catch (e) {
+				// Ignore error, user can still paste JSON manually
+			}
+		}
+	}
+
 	const areaHandlers = {
 		up: () => {
 			if (selectedIndex > 0) {
@@ -146,6 +159,7 @@
 	onMount(() => {
 		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
+		loadInitialFile();
 		return () => {
 			if (unregisterArea) unregisterArea();
 		};
@@ -193,7 +207,7 @@
 				<Input bind:this={downloadPathRef} bind:value={downloadPath} label={$t('downloads.lishImport.downloadPath')} selected={active && selectedIndex === 1 && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('downloads.lishImport.autoStartSharing')} checked={autoStart} selected={active && selectedIndex === 2} onToggle={() => autoStart = !autoStart} />
+			<SwitchRow label={$t('downloads.lishImport.autoStartSharing')} checked={autoStart} selected={active && selectedIndex === 2} onToggle={() => (autoStart = !autoStart)} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
