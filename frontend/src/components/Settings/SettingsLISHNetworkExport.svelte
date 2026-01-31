@@ -8,10 +8,12 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { exportNetworkToJson } from '../../scripts/lishNetwork.ts';
 	import { storageLishnetPath } from '../../scripts/settings.ts';
+	import { minifyJson } from '../../scripts/utils.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import Alert from '../Alert/Alert.svelte';
+	import SwitchRow from '../Switch/SwitchRow.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -22,14 +24,18 @@
 	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
-	let selectedIndex = $state(0); // 0 = input, 1 = buttons row
+	let selectedIndex = $state(0); // 0 = input, 1 = minify switch, 2 = buttons row
 	let selectedColumn = $state(0); // 0 = save as, 1 = back
 	let inputRef: Input | undefined = $state();
 	let browsingSaveAs = $state(false);
 	let saveFolder = $state($storageLishnetPath);
 	let saveFileName = $state(network ? `${network.name}.lishnet` : 'network.lishnet');
 	let networkJson = $state(network ? exportNetworkToJson(network.id) : ''); // Get full network data as JSON (editable)
+	let minifyJsonState = $state(false);
 	let errorMessage = $state('');
+
+	// Compute save content based on minify setting
+	let saveContent = $derived(minifyJsonState ? minifyJson(networkJson) : networkJson);
 
 	function getFileNameFromJson(): string {
 		try {
@@ -94,7 +100,7 @@
 					return false;
 				},
 				down: () => {
-					if (selectedIndex < 1) {
+					if (selectedIndex < 2) {
 						selectedIndex++;
 						selectedColumn = 0;
 						return true;
@@ -102,14 +108,14 @@
 					return false;
 				},
 				left: () => {
-					if (selectedIndex === 1 && selectedColumn > 0) {
+					if (selectedIndex === 2 && selectedColumn > 0) {
 						selectedColumn--;
 						return true;
 					}
 					return false;
 				},
 				right: () => {
-					if (selectedIndex === 1 && selectedColumn < 1) {
+					if (selectedIndex === 2 && selectedColumn < 1) {
 						selectedColumn++;
 						return true;
 					}
@@ -119,8 +125,9 @@
 					if (selectedIndex === 0) inputRef?.focus();
 				},
 				confirmUp: () => {
-					if (selectedIndex === 1 && selectedColumn === 0) openSaveAs();
-					else if (selectedIndex === 1 && selectedColumn === 1) onBack?.();
+					if (selectedIndex === 1) minifyJsonState = !minifyJsonState;
+					else if (selectedIndex === 2 && selectedColumn === 0) openSaveAs();
+					else if (selectedIndex === 2 && selectedColumn === 1) onBack?.();
 				},
 				confirmCancel: () => {},
 				back: () => onBack?.(),
@@ -164,18 +171,19 @@
 </style>
 
 {#if browsingSaveAs}
-	<FileBrowser {areaID} {position} initialPath={saveFolder} showPath foldersOnly selectFolderButton {saveFileName} saveContent={networkJson} onSaveFileNameChange={v => (saveFileName = v)} onSaveComplete={handleSaveComplete} onBack={handleSaveAsBack} />
+	<FileBrowser {areaID} {position} initialPath={saveFolder} showPath foldersOnly selectFolderButton {saveFileName} {saveContent} onSaveFileNameChange={v => (saveFileName = v)} onSaveComplete={handleSaveComplete} onBack={handleSaveAsBack} />
 {:else}
 	<div class="export">
 		<div class="container">
 			<Input bind:this={inputRef} bind:value={networkJson} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
+			<SwitchRow label={$t('settings.lishNetwork.minifyJson')} checked={minifyJsonState} selected={active && selectedIndex === 1} onToggle={() => minifyJsonState = !minifyJsonState} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
 		<div class="buttons">
-			<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={openSaveAs} />
-			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
+			<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 2 && selectedColumn === 0} onConfirm={openSaveAs} />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 2 && selectedColumn === 1} onConfirm={onBack} />
 		</div>
 	</div>
 {/if}

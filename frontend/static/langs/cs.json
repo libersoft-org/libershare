@@ -141,7 +141,8 @@
 			"errorNoValidNetworks": "Nebyly nalezeny žádné platné sítě",
 			"publicList": "Veřejný seznam",
 			"emptyList": "Žádná síť není přidána. Přidejte nebo importujte novou síť.",
-			"confirmDelete": "Opravdu chcete smazat síť \"{name}\"?"
+			"confirmDelete": "Opravdu chcete smazat síť \"{name}\"?",
+			"minifyJson": "Minifikovat JSON při uložení"
 		},
 		"lishNetworkImport": {
 			"fromFile": "Ze souboru",
