@@ -85,7 +85,8 @@ export function setShowSeconds(enabled: boolean): void {
 }
 
 // Storage path settings
-const storedStoragePath = getStorageValue<string>('storagePath', '~/libershare/download/');
+export const DEFAULT_STORAGE_PATH = '~/libershare/download/';
+const storedStoragePath = getStorageValue<string>('storagePath', DEFAULT_STORAGE_PATH);
 export const storagePath = writable(storedStoragePath);
 
 export function setStoragePath(path: string): void {
@@ -93,7 +94,8 @@ export function setStoragePath(path: string): void {
 	setStorageValue('storagePath', path);
 }
 
-const storedStorageTempPath = getStorageValue<string>('storageTempPath', '~/libershare/temp/');
+export const DEFAULT_STORAGE_TEMP_PATH = '~/libershare/temp/';
+const storedStorageTempPath = getStorageValue<string>('storageTempPath', DEFAULT_STORAGE_TEMP_PATH);
 export const storageTempPath = writable(storedStorageTempPath);
 
 export function setStorageTempPath(path: string): void {
@@ -101,7 +103,8 @@ export function setStorageTempPath(path: string): void {
 	setStorageValue('storageTempPath', path);
 }
 
-const storedStorageLishPath = getStorageValue<string>('storageLishPath', '~/libershare/lish/');
+export const DEFAULT_STORAGE_LISH_PATH = '~/libershare/lish/';
+const storedStorageLishPath = getStorageValue<string>('storageLishPath', DEFAULT_STORAGE_LISH_PATH);
 export const storageLishPath = writable(storedStorageLishPath);
 
 export function setStorageLishPath(path: string): void {
@@ -110,16 +113,18 @@ export function setStorageLishPath(path: string): void {
 }
 
 // Sharing settings
-const storedIncomingPort = getStorageValue<number>('incomingPort', 9090);
+export const DEFAULT_INCOMING_PORT = 9090;
+const storedIncomingPort = getStorageValue<number>('incomingPort', DEFAULT_INCOMING_PORT);
 export const incomingPort = writable(storedIncomingPort);
 
 export function setIncomingPort(value: number): void {
-	const clampedValue = Math.max(1, Math.min(65535, value || 9090));
+	const clampedValue = Math.max(1, Math.min(65535, value || DEFAULT_INCOMING_PORT));
 	incomingPort.set(clampedValue);
 	setStorageValue('incomingPort', clampedValue);
 }
 
-const storedMaxDownloadConnections = getStorageValue<number>('maxDownloadConnections', 200);
+export const DEFAULT_MAX_DOWNLOAD_CONNECTIONS = 200;
+const storedMaxDownloadConnections = getStorageValue<number>('maxDownloadConnections', DEFAULT_MAX_DOWNLOAD_CONNECTIONS);
 export const maxDownloadConnections = writable(storedMaxDownloadConnections);
 
 export function setMaxDownloadConnections(value: number): void {
@@ -128,7 +133,8 @@ export function setMaxDownloadConnections(value: number): void {
 	setStorageValue('maxDownloadConnections', clampedValue);
 }
 
-const storedMaxUploadConnections = getStorageValue<number>('maxUploadConnections', 200);
+export const DEFAULT_MAX_UPLOAD_CONNECTIONS = 200;
+const storedMaxUploadConnections = getStorageValue<number>('maxUploadConnections', DEFAULT_MAX_UPLOAD_CONNECTIONS);
 export const maxUploadConnections = writable(storedMaxUploadConnections);
 
 export function setMaxUploadConnections(value: number): void {
@@ -137,7 +143,8 @@ export function setMaxUploadConnections(value: number): void {
 	setStorageValue('maxUploadConnections', clampedValue);
 }
 
-const storedMaxDownloadSpeed = getStorageValue<number>('maxDownloadSpeed', 0);
+export const DEFAULT_MAX_DOWNLOAD_SPEED = 0;
+const storedMaxDownloadSpeed = getStorageValue<number>('maxDownloadSpeed', DEFAULT_MAX_DOWNLOAD_SPEED);
 export const maxDownloadSpeed = writable(storedMaxDownloadSpeed);
 
 export function setMaxDownloadSpeed(value: number): void {
@@ -146,7 +153,8 @@ export function setMaxDownloadSpeed(value: number): void {
 	setStorageValue('maxDownloadSpeed', clampedValue);
 }
 
-const storedMaxUploadSpeed = getStorageValue<number>('maxUploadSpeed', 0);
+export const DEFAULT_MAX_UPLOAD_SPEED = 0;
+const storedMaxUploadSpeed = getStorageValue<number>('maxUploadSpeed', DEFAULT_MAX_UPLOAD_SPEED);
 export const maxUploadSpeed = writable(storedMaxUploadSpeed);
 
 export function setMaxUploadSpeed(value: number): void {
@@ -155,7 +163,8 @@ export function setMaxUploadSpeed(value: number): void {
 	setStorageValue('maxUploadSpeed', clampedValue);
 }
 
-const storedAutoStartSharing = getStorageValue<boolean>('autoStartSharing', true);
+export const DEFAULT_AUTO_START_SHARING = true;
+const storedAutoStartSharing = getStorageValue<boolean>('autoStartSharing', DEFAULT_AUTO_START_SHARING);
 export const autoStartSharing = writable(storedAutoStartSharing);
 
 export function setAutoStartSharing(enabled: boolean): void {
