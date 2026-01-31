@@ -6,7 +6,9 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb, navigateTo } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { type LISHNetwork, getNetworks, saveNetworks as saveNetworksToStorage, deleteNetwork as deleteNetworkFromStorage, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';	import { scrollToElement } from '../../scripts/utils.ts';	import Button from '../Buttons/Button.svelte';
+	import { type LISHNetwork, getNetworks, saveNetworks as saveNetworksToStorage, deleteNetwork as deleteNetworkFromStorage, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
+	import { scrollToElement } from '../../scripts/utils.ts';
+	import Button from '../Buttons/Button.svelte';
 	import Alert from '../Alert/Alert.svelte';
 	import ConfirmDialog from '../Dialog/ConfirmDialog.svelte';
 	import Row from '../Row/Row.svelte';
@@ -119,6 +121,24 @@
 	function connectNetwork(network: LISHNetwork) {
 		// TODO: Implement actual connection logic
 		console.log('Connecting to network:', network.name);
+	}
+
+	function moveNetwork(index: number, up: boolean) {
+		const newIndex = up ? index - 1 : index + 1;
+		if (newIndex < 0 || newIndex >= networks.length) return;
+		const temp = networks[index];
+		networks[index] = networks[newIndex];
+		networks[newIndex] = temp;
+		networks = [...networks]; // Trigger reactivity
+		saveNetworks();
+		// Move selection with the item
+		selectedIndex += up ? -1 : 1;
+		// Adjust buttonIndex if moved to first/last position where some buttons don't exist
+		const isNowFirst = newIndex === 0;
+		const isNowLast = newIndex === networks.length - 1;
+		// First item has max 5 buttons (0-4), last item has max 5 buttons (0-4), middle has 6 (0-5)
+		const maxButtonIndex = isNowFirst || isNowLast ? 4 : 5;
+		if (buttonIndex > maxButtonIndex) buttonIndex = maxButtonIndex;
 	}
 
 	function openExport(network: LISHNetwork) {
@@ -267,7 +287,15 @@
 					return false;
 				},
 				right: () => {
-					const maxIndex = isTopRow ? 3 : isNetworkRow ? 3 : 0;
+					if (!isNetworkRow && !isTopRow) return false;
+					let maxIndex = 3; // top row: 4 buttons (0-3)
+					if (isNetworkRow) {
+						const networkIndex = selectedIndex - 1;
+						const isFirst = networkIndex === 0;
+						const isLast = networkIndex === networks.length - 1;
+						// 4 base buttons + up (if not first) + down (if not last)
+						maxIndex = 3 + (isFirst ? 0 : 1) + (isLast ? 0 : 1);
+					}
 					if (buttonIndex < maxIndex) {
 						buttonIndex++;
 						return true;
@@ -286,10 +314,15 @@
 						const networkIndex = selectedIndex - 1;
 						const network = networks[networkIndex];
 						if (network) {
+							const isFirst = networkIndex === 0;
+							const isLast = networkIndex === networks.length - 1;
 							if (buttonIndex === 0) connectNetwork(network);
 							else if (buttonIndex === 1) openExport(network);
 							else if (buttonIndex === 2) openEditNetwork(network);
-							else deleteNetwork(network);
+							else if (buttonIndex === 3) deleteNetwork(network);
+							else if (buttonIndex === 4 && !isFirst) moveNetwork(networkIndex, true);
+							else if (buttonIndex === 4 && isFirst && !isLast) moveNetwork(networkIndex, false);
+							else if (buttonIndex === 5) moveNetwork(networkIndex, false);
 						}
 					}
 				},
@@ -383,6 +416,10 @@
 				<Alert type="warning" message={$t('settings.lishNetwork.emptyList')} />
 			{:else}
 				{#each networks as network, i}
+					{@const isFirst = i === 0}
+					{@const isLast = i === networks.length - 1}
+					{@const upButtonIndex = 4}
+					{@const downButtonIndex = isFirst ? 4 : 5}
 					<div bind:this={rowElements[i + 1]}>
 						<Row selected={active && selectedIndex === i + 1}>
 							<div class="network">
@@ -392,6 +429,12 @@
 									<Button icon="/img/export.svg" label={$t('common.export')} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openExport(network)} />
 									<Button icon="/img/edit.svg" label={$t('common.edit')} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openEditNetwork(network)} />
 									<Button icon="/img/del.svg" label={$t('common.delete')} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => deleteNetwork(network)} />
+									{#if !isFirst}
+										<Button icon="/img/up.svg" selected={active && selectedIndex === i + 1 && buttonIndex === upButtonIndex} onConfirm={() => moveNetwork(i, true)} />
+									{/if}
+									{#if !isLast}
+										<Button icon="/img/down.svg" selected={active && selectedIndex === i + 1 && buttonIndex === downButtonIndex} onConfirm={() => moveNetwork(i, false)} />
+									{/if}
 								</div>
 							</div>
 						</Row>
