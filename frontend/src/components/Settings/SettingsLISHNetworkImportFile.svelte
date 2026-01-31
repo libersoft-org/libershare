@@ -184,7 +184,7 @@
 </style>
 
 {#if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storageLishnetPath} showPath fileFilter={['.lishnet', '.json']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={filePath || $storageLishnetPath} showPath fileFilter={['.lishnet', '.lishnets', '.json']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">
 		<div class="container">
