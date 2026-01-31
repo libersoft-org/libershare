@@ -114,6 +114,15 @@ export async function fsRename(oldPath: string, newName: string): Promise<void> 
 	await rename(oldPath, newPath);
 }
 
+export async function fsExists(path: string): Promise<boolean> {
+	try {
+		await access(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export async function fsWriteText(path: string, content: string): Promise<void> {
 	await Bun.write(path, content);
 }

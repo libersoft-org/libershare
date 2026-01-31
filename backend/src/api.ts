@@ -4,7 +4,7 @@ import type { DataServer } from './data-server.ts';
 import type { Networks } from './networks.ts';
 import { Downloader } from './downloader.ts';
 import { join } from 'path';
-import { fsInfo, fsList, fsDelete, fsMkdir, fsOpen, fsRename, fsWriteText, fsReadText } from './fs.ts';
+import { fsInfo, fsList, fsDelete, fsMkdir, fsOpen, fsRename, fsWriteText, fsReadText, fsExists } from './fs.ts';
 
 interface ClientData {
 	subscribedEvents: Set<string>;
@@ -372,6 +372,9 @@ export class ApiServer {
 
 			case 'fs.rename':
 				return await fsRename(params.path, params.newName);
+
+			case 'fs.exists':
+				return { exists: await fsExists(params.path) };
 
 			case 'fs.writeText':
 				await fsWriteText(params.path, params.content);

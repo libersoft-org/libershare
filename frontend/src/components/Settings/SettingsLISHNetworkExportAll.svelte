@@ -8,8 +8,6 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { getNetworks, exportAllNetworksToJson } from '../../scripts/lishNetwork.ts';
 	import { storageLishnetPath } from '../../scripts/settings.ts';
-	import { joinPath } from '../../scripts/fileBrowser.ts';
-	import { api } from '../../scripts/api.ts';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import Alert from '../Alert/Alert.svelte';
@@ -58,18 +56,7 @@
 		activateArea(areaID);
 	}
 
-	async function handleSaveAsSelect(folderPath: string) {
-		saveFolder = folderPath;
-		const fullPath = joinPath(folderPath, saveFileName);
-		// Write file via WebSocket API
-		try {
-			const result = await api.fs.writeText(fullPath, networksJson);
-			if (!result.success) {
-				console.error('Failed to save file');
-			}
-		} catch (e) {
-			console.error('Failed to save file:', e);
-		}
+	function handleSaveComplete(path: string) {
 		handleSaveAsBack();
 	}
 
@@ -156,7 +143,7 @@
 </style>
 
 {#if browsingSaveAs}
-	<FileBrowser {areaID} {position} initialPath={saveFolder} showPath foldersOnly selectFolderButton saveFileName={saveFileName} onSaveFileNameChange={v => (saveFileName = v)} onSelect={handleSaveAsSelect} onBack={handleSaveAsBack} />
+	<FileBrowser {areaID} {position} initialPath={saveFolder} showPath foldersOnly selectFolderButton saveFileName={saveFileName} saveContent={networksJson} onSaveFileNameChange={v => (saveFileName = v)} onSaveComplete={handleSaveComplete} onBack={handleSaveAsBack} />
 {:else}
 	<div class="export-all">
 		<div class="container">

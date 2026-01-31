@@ -182,6 +182,10 @@ class FsApi {
 		return this.client.call<{ success: boolean }>('fs.rename', { path, newName });
 	}
 
+	exists(path: string): Promise<{ exists: boolean }> {
+		return this.client.call<{ exists: boolean }>('fs.exists', { path });
+	}
+
 	writeText(path: string, content: string): Promise<{ success: boolean }> {
 		return this.client.call<{ success: boolean }>('fs.writeText', { path, content });
 	}

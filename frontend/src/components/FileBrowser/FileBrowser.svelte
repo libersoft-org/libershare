@@ -33,13 +33,16 @@
 		selectFolderButton?: boolean;
 		selectFileButton?: boolean;
 		saveFileName?: string; // If provided, shows a filename input for "save as" mode
+		saveContent?: string; // Content to save - if provided, FileBrowser handles the save operation
 		onBack?: () => void;
 		onSelect?: (path: string) => void;
 		onSaveFileNameChange?: (fileName: string) => void;
+		onSaveComplete?: (path: string) => void; // Called after successful save
+		onSaveError?: (error: string) => void; // Called on save error
 		onDownAtEnd?: () => boolean;
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, onBack, onSelect, onSaveFileNameChange, onDownAtEnd }: Props = $props();
+	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, saveContent, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd }: Props = $props();
 
 	// File filter state
 	let showAllFiles = $state(false);
@@ -79,6 +82,9 @@
 	let fileToRename = $state<StorageItemData | null>(null);
 	let fileToEdit = $state<StorageItemData | null>(null);
 	let pendingEditFile = $state<StorageItemData | null>(null);
+	let showOverwriteConfirmState = $state(false);
+	let pendingSavePath = $state('');
+	let saveErrorMessage = $state('');
 	const LARGE_FILE_THRESHOLD = 1024 * 1024; // 1 MB
 	let unregisterFolderActions: (() => void) | null = null;
 	let unregisterList: (() => void) | null = null;
@@ -345,8 +351,8 @@
 				// Input is selected - focus it for editing
 				saveFileNameInput?.focus();
 			} else {
-				// Button is selected - confirm
-				onSelect?.(currentPath);
+				// Button is selected - confirm save
+				handleSave();
 			}
 		},
 		confirmCancel: () => {},
@@ -776,6 +782,58 @@
 		activateArea(listAreaID);
 	}
 
+	// Save file with content - handles exists check and overwrite dialog
+	async function handleSave() {
+		if (saveContent === undefined) {
+			// No content to save, just call onSelect
+			onSelect?.(currentPath);
+			return;
+		}
+		saveErrorMessage = '';
+		const fullPath = joinPathWithSeparator(currentPath, internalSaveFileName, separator);
+		try {
+			const { exists } = await api.fs.exists(fullPath);
+			if (exists) {
+				// File exists, show confirmation dialog
+				pendingSavePath = fullPath;
+				showOverwriteConfirmState = true;
+				return;
+			}
+			// File doesn't exist, write directly
+			await api.fs.writeText(fullPath, saveContent);
+			onSaveComplete?.(fullPath);
+		} catch (e) {
+			console.error('Failed to save file:', e);
+			saveErrorMessage = e instanceof Error ? e.message : String(e);
+			onSaveError?.(saveErrorMessage);
+		}
+	}
+
+	async function confirmOverwrite() {
+		showOverwriteConfirmState = false;
+		saveErrorMessage = '';
+		if (saveContent === undefined) return;
+		try {
+			await api.fs.writeText(pendingSavePath, saveContent);
+			onSaveComplete?.(pendingSavePath);
+		} catch (e) {
+			console.error('Failed to save file:', e);
+			saveErrorMessage = e instanceof Error ? e.message : String(e);
+			onSaveError?.(saveErrorMessage);
+		}
+	}
+
+	async function cancelOverwrite() {
+		showOverwriteConfirmState = false;
+		await tick();
+		// Reactivate the save filename area after dialog closes
+		if (saveFileName !== undefined) {
+			activateArea(`${areaID}-save-filename`);
+		} else {
+			activateArea(listAreaID);
+		}
+	}
+
 	async function handleBreadcrumbNavigate(path: string) {
 		// If editor is open, close it first
 		if (showEditorState) {
@@ -917,8 +975,11 @@
 			{#if saveFileName !== undefined}
 				<div class="save-filename-row">
 					<Input bind:this={saveFileNameInput} label={$t.common?.fileName} value={internalSaveFileName} selected={saveFileNameActive && saveFileNameColumn === 0} onchange={handleSaveFileNameChange} />
-					<Button label={$t.common?.save} icon="/img/check.svg" selected={saveFileNameActive && saveFileNameColumn === 1} onConfirm={() => onSelect?.(currentPath)} />
+					<Button label={$t.common?.save} icon="/img/check.svg" selected={saveFileNameActive && saveFileNameColumn === 1} onConfirm={handleSave} />
 				</div>
+				{#if saveErrorMessage}
+					<Alert type="error" message={saveErrorMessage} />
+				{/if}
 			{/if}
 			<div class="table-row">
 				<div class="container">
@@ -987,4 +1048,7 @@
 {/if}
 {#if showCustomFilterDialog}
 	<InputDialog title={$t.fileBrowser?.customFilter} label={$t.fileBrowser?.filterPattern} placeholder={$t.fileBrowser?.enterFilterPattern} initialValue={customFilter ?? ''} confirmLabel={$t.common?.ok} cancelLabel={$t.common?.cancel} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmCustomFilter} onBack={closeCustomFilterDialog} />
+{/if}
+{#if showOverwriteConfirmState}
+	<ConfirmDialog title={$t.common?.overwriteFile || 'Overwrite file'} message={($t.common?.fileExistsOverwrite || 'File "{name}" already exists. Do you want to overwrite it?').replace('{name}', internalSaveFileName)} confirmLabel={$t.common?.yes} cancelLabel={$t.common?.no} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
 {/if}

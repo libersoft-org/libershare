@@ -15,6 +15,8 @@
 		"load": "Načíst",
 		"save": "Uložit",
 		"saveAs": "Uložit jako",
+		"fileExistsOverwrite": "Soubor \"{name}\" již existuje. Chcete ho přepsat?",
+		"overwriteFile": "Přepsat soubor",
 		"delete": "Smazat",
 		"edit": "Upravit",
 		"import": "Importovat",
