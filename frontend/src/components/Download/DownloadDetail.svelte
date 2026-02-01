@@ -249,43 +249,43 @@
 			<div class="info" class:selected={infoActive} bind:this={infoElement}>
 				<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
 					<TableRow odd>
-						<Cell>{$t('downloads.name')}</Cell>
+						<Cell>{$t('downloads.name')}:</Cell>
 						<Cell align="right">{download.name}</Cell>
 					</TableRow>
 					<TableRow>
-						<Cell>{$t('downloads.id')}</Cell>
+						<Cell>{$t('downloads.id')}:</Cell>
 						<Cell align="right">{truncateID(download.id)}</Cell>
 					</TableRow>
 					<TableRow odd>
-						<Cell>{$t('downloads.targetFolder')}</Cell>
+						<Cell>{$t('downloads.targetFolder')}:</Cell>
 						<Cell align="right">/share/download/debian/</Cell>
 					</TableRow>
 					<TableRow>
-						<Cell>{$t('downloads.size')}</Cell>
+						<Cell>{$t('downloads.size')}:</Cell>
 						<Cell align="right">{download.downloadedSize && download.progress < 100 ? `${download.downloadedSize} / ${download.size}` : download.size}</Cell>
 					</TableRow>
 					<TableRow odd>
-						<Cell>{$t('downloads.progress')}</Cell>
+						<Cell>{$t('downloads.progress')}:</Cell>
 						<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading'} /></span></Cell>
 					</TableRow>
 					<TableRow>
-						<Cell>{$t('downloads.status')}</Cell>
+						<Cell>{$t('downloads.status')}:</Cell>
 						<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} /></Cell>
 					</TableRow>
 					<TableRow odd>
-						<Cell>{$t('downloads.downloadingFrom')}</Cell>
+						<Cell>{$t('downloads.downloadingFrom')}:</Cell>
 						<Cell align="right">{download.downloadPeers}</Cell>
 					</TableRow>
 					<TableRow>
-						<Cell>{$t('downloads.uploadingTo')}</Cell>
+						<Cell>{$t('downloads.uploadingTo')}:</Cell>
 						<Cell align="right">{download.uploadPeers}</Cell>
 					</TableRow>
 					<TableRow odd>
-						<Cell>{$t('downloads.downloadSpeed')}</Cell>
+						<Cell>{$t('downloads.downloadSpeed')}:</Cell>
 						<Cell align="right">{download.downloadSpeed}</Cell>
 					</TableRow>
 					<TableRow>
-						<Cell>{$t('downloads.uploadSpeed')}</Cell>
+						<Cell>{$t('downloads.uploadSpeed')}:</Cell>
 						<Cell align="right">{download.uploadSpeed}</Cell>
 					</TableRow>
 				</Table>
