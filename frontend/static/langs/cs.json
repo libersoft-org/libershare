@@ -37,7 +37,7 @@
 	"library": {
 		"title": "Online knihovna",
 		"product": {
-			"files": "Soubory",
+			"downloads": "Ke stažení",
 			"size": "Velikost",
 			"download": "Stáhnout",
 			"play": "Přehrát"

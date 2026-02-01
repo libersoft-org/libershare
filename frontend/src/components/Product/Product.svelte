@@ -191,7 +191,7 @@
 			<img src="https://picsum.photos/seed/{itemId}/800/450" alt={itemTitle} />
 		</div>
 		<div class="files">
-			<div class="title">{$t('library.product.files')}</div>
+			<div class="title">{$t('library.product.downloads')}</div>
 			{#each files as file, rowIndex (file.id)}
 				<div bind:this={fileElements[rowIndex]}>
 					<ProductFile name={file.name} size={file.size} selected={active && rowIndex === selectedRow} {selectedButton} pressed={active && isAPressed} />

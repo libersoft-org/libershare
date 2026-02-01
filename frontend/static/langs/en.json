@@ -37,7 +37,7 @@
 	"library": {
 		"title": "Online library",
 		"product": {
-			"files": "Files",
+			"downloads": "Downloads",
 			"size": "Size",
 			"download": "Download",
 			"play": "Play"
