@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { DotStatus } from '../../scripts/dot.ts';
+	import { type DotStatus } from '../../scripts/dot.ts';
 	interface Props {
 		status?: DotStatus;
 		animate?: boolean;

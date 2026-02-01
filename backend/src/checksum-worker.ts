@@ -1,5 +1,5 @@
 // Worker for parallel checksum calculation
-import type { HashAlgorithm } from './lish.ts';
+import { type HashAlgorithm } from './lish.ts';
 
 declare const self: Worker;
 

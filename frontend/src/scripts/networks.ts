@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 import { api } from './api.ts';
-import type { NetworkInfo } from '@libershare/shared';
+import { type NetworkInfo } from '@libershare/shared';
 
 export const networks = writable<NetworkInfo[]>([]);
 

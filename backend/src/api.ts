@@ -1,7 +1,7 @@
-import type { ServerWebSocket } from 'bun';
-import type { Database } from './database.ts';
-import type { DataServer } from './data-server.ts';
-import type { Networks } from './networks.ts';
+import { type ServerWebSocket } from 'bun';
+import { type Database } from './database.ts';
+import { type DataServer } from './data-server.ts';
+import { type Networks } from './networks.ts';
 import { Downloader } from './downloader.ts';
 import { join } from 'path';
 import { fsInfo, fsList, fsDelete, fsMkdir, fsOpen, fsRename, fsWriteText, fsReadText, fsExists } from './fs.ts';

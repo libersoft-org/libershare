@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 import { play } from './audio.ts';
-import type { Position } from './navigationLayout.ts';
+import { type Position } from './navigationLayout.ts';
 // Types
 export type Direction = 'up' | 'down' | 'left' | 'right';
 export type InputAction = Direction | 'confirmDown' | 'confirmUp' | 'confirmCancel' | 'back';

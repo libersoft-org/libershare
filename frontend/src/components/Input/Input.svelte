@@ -17,7 +17,6 @@
 		disabled?: boolean;
 		onchange?: (value: string) => void;
 	}
-
 	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', min, max, multiline = false, rows = 3, fontSize = '2.5vh', fontFamily, padding = '1.5vh 2vh', flex = false, readonly = false, disabled = false, onchange }: Props = $props();
 	let inputElement: HTMLInputElement | HTMLTextAreaElement | undefined = $state();
 

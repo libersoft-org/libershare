@@ -1,6 +1,6 @@
 <script lang="ts">
-	import Icon from '../Icon/Icon.svelte';
 	import { type AlertType, alertAppearance } from '../../scripts/alert.ts';
+	import Icon from '../Icon/Icon.svelte';
 	interface Props {
 		type?: AlertType;
 		message?: string;

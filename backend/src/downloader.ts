@@ -1,8 +1,8 @@
 import { mkdir, readFile, open } from 'fs/promises';
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
-import type { IManifest, LishId, ChunkId } from './lish.ts';
-import type { Network } from './network.ts';
+import { type IManifest, type LishId, type ChunkId } from './lish.ts';
+import { type Network } from './network.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
 import { HaveChunks, LISH_PROTOCOL, LishClient } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';

@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import Header from '../components/Header/Header.svelte';
+	import Header from '../pages/Header/Header.svelte';
 	import NavigationBreadcrumb from '../components/Breadcrumb/NavigationBreadcrumb.svelte';
 	import Menu from '../components/Menu/Menu.svelte';
-	import Footer from '../components/Footer/Footer.svelte';
+	import Footer from '../pages/Footer/Footer.svelte';
 	import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
 	import { createNavigation, breadcrumbItems, setContentElement, confirmDialog, hideConfirmDialog } from '../scripts/navigation.ts';
 	import { confirmDialogs } from '../scripts/menu.ts';
@@ -58,7 +58,7 @@
 		initAudio();
 		play('welcome');
 		try {
-			console.log(await api.listNetworks());
+			console.log(await api.networks.list());
 			await initStats();
 		} catch (error) {
 			console.error('[App] Initialization error:', error);

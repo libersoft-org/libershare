@@ -1,4 +1,4 @@
-import type { NetworkDefinition, NetworkStatus, NetworkNodeInfo, NetworkInfo, Stats, Dataset, FsInfo, FsListResult, SuccessResponse, CreateLishResponse, DownloadResponse, FetchUrlResponse } from './index.ts';
+import { type NetworkDefinition, type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type Stats, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -191,11 +191,11 @@ class FsApi {
 		return this.client.call<{ exists: boolean }>('fs.exists', { path });
 	}
 
-	writeText(path: string, content: string): Promise<{ success: boolean }> {
-		return this.client.call<{ success: boolean }>('fs.writeText', { path, content });
+	writeText(path: string, content: string): Promise<{ success: boolean; error?: string }> {
+		return this.client.call<{ success: boolean; error?: string }>('fs.writeText', { path, content });
 	}
 
-	writeGzip(path: string, content: string): Promise<{ success: boolean }> {
-		return this.client.call<{ success: boolean }>('fs.writeGzip', { path, content });
+	writeGzip(path: string, content: string): Promise<{ success: boolean; error?: string }> {
+		return this.client.call<{ success: boolean; error?: string }>('fs.writeGzip', { path, content });
 	}
 }

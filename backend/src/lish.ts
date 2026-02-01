@@ -1,6 +1,6 @@
 import * as fsPromises from 'node:fs/promises';
-import type { HashAlgorithm, IManifest, IDirectoryEntry, IFileEntry, ILinkEntry } from '@libershare/shared';
-export type { LishId, ChunkId, HashAlgorithm, IManifest, IDirectoryEntry, IFileEntry, ILinkEntry } from '@libershare/shared';
+import { type HashAlgorithm, type IManifest, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@libershare/shared';
+export { type LishId, type ChunkId, type HashAlgorithm, type IManifest, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@libershare/shared';
 export { SUPPORTED_ALGOS } from '@libershare/shared';
 export const MANIFEST_VERSION = 1;
 export const DEFAULT_CHUNK_SIZE = 1024 * 1024;

@@ -1,10 +1,9 @@
 <script lang="ts">
+	import { type Position } from '../../scripts/navigationLayout.ts';
 	import MenuTitle from './MenuTitle.svelte';
 	import MenuBar from './MenuBar.svelte';
 	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
 	import Button from '../Buttons/Button.svelte';
-	import type { Position } from '../../scripts/navigationLayout.ts';
-
 	interface Props {
 		areaID: string;
 		title: string;

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import Row from '../Row/Row.svelte';
 	import Switch from './Switch.svelte';
-
 	interface Props {
 		label: string;
 		checked: boolean;

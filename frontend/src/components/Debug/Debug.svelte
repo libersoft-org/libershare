@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { areaLayout, activeArea, debugAreas } from '../../scripts/areas.ts';
 	import { DEBUG_GRID_CELL_WIDTH, DEBUG_GRID_CELL_HEIGHT, DEBUG_GRID_PADDING, getDebugOverlayPosition, type GridBounds } from '../../scripts/debug.ts';
-
 	// Calculate grid bounds
 	let bounds = $derived.by<GridBounds>(() => {
 		const positions = Object.values($areaLayout).filter(pos => pos.x > -100 && pos.x < 100 && pos.y > -100 && pos.y < 100);

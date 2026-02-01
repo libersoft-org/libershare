@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getContext, onMount } from 'svelte';
-	import type { ButtonsGroupContext } from './ButtonsGroup.svelte';
+	import { type ButtonsGroupContext } from './ButtonsGroup.svelte';
 	import Icon from '../Icon/Icon.svelte';
 	interface Props {
 		label?: string;

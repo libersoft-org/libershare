@@ -1,10 +1,10 @@
 import { Database as BunDatabase } from 'bun:sqlite';
-import type { ILISHNetwork } from './makenet.ts';
+import { type ILISHNetwork } from './makenet.ts';
 import { Network } from './network.ts';
-import type { DataServer } from './data-server.ts';
-import type { NetworkDefinition } from '@libershare/shared';
+import { type DataServer } from './data-server.ts';
+import { type NetworkDefinition } from '@libershare/shared';
 
-export type { NetworkDefinition };
+export { type NetworkDefinition };
 
 export class Networks {
 	private db: BunDatabase;
@@ -108,15 +108,7 @@ export class Networks {
 				bootstrap_peers = excluded.bootstrap_peers,
 				enabled = excluded.enabled
 		`);
-		stmt.run(
-			network.id,
-			network.version,
-			network.key,
-			network.name,
-			network.description,
-			JSON.stringify(network.bootstrap_peers),
-			network.enabled ? 1 : 0
-		);
+		stmt.run(network.id, network.version, network.key, network.name, network.description, JSON.stringify(network.bootstrap_peers), network.enabled ? 1 : 0);
 
 		return network;
 	}

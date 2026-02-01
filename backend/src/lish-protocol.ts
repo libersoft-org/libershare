@@ -1,8 +1,8 @@
 import { decode } from 'it-length-prefixed';
 import { encode as lpEncode } from 'it-length-prefixed';
-import type { Stream } from '@libp2p/interface';
-import type { LishId, ChunkId } from './lish.ts';
-import type { DataServer } from './data-server.ts';
+import { type Stream } from '@libp2p/interface';
+import { type LishId, type ChunkId } from './lish.ts';
+import { type DataServer } from './data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
 export const LISH_PROTOCOL = '/lish/1.0.0';
 export interface LishRequest {

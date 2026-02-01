@@ -1,28 +1,28 @@
-import type { Component } from 'svelte';
+import { type Component } from 'svelte';
 import { derived, get } from 'svelte/store';
 import { productName } from './app.ts';
 import { t, tt, currentLanguage, setLanguage, languages, getFlagUrl } from './language.ts';
 import { audioEnabled, setAudioEnabled, cursorSize, setCursorSize, type CursorSize, timeFormat, setTimeFormat, showSeconds, setShowSeconds } from './settings.ts';
 import { footerPosition, setFooterPosition } from './settings.ts';
-import type { FooterPosition } from './footerWidgets.ts';
-import Items from '../components/Products/Products.svelte';
-import Categories from '../components/Categories/Categories.svelte';
-import Storage from '../components/Storage/Storage.svelte';
-import Download from '../components/Download/Download.svelte';
-import DownloadLISHCreate from '../components/Download/DownloadLISHCreate.svelte';
-import DownloadLISHImportFile from '../components/Download/DownloadLISHImportFile.svelte';
-import DownloadLISHImportWeb from '../components/Download/DownloadLISHImportWeb.svelte';
-import DownloadLISHImportJSON from '../components/Download/DownloadLISHImportJSON.svelte';
-import DownloadLISHExportAll from '../components/Download/DownloadLISHExportAll.svelte';
-import DownloadDetail from '../components/Download/DownloadDetail.svelte';
-import SettingsFooter from '../components/Settings/SettingsFooter.svelte';
-import SettingsDownload from '../components/Settings/SettingsDownload.svelte';
-import SettingsSystem from '../components/Settings/SettingsSystem.svelte';
-import LISHNetworkList from '../components/Settings/SettingsLISHNetworkList.svelte';
-import LISHNetworkImportFile from '../components/Settings/SettingsLISHNetworkImportFile.svelte';
-import LISHNetworkImportWeb from '../components/Settings/SettingsLISHNetworkImportWeb.svelte';
-import LISHNetworkImportJSON from '../components/Settings/SettingsLISHNetworkImportJSON.svelte';
-import About from '../components/About/About.svelte';
+import { type FooterPosition } from './footerWidgets.ts';
+import Items from '../pages/Products/Products.svelte';
+import Categories from '../pages/Categories/Categories.svelte';
+import Storage from '../pages/Storage/Storage.svelte';
+import Download from '../pages/Download/Download.svelte';
+import DownloadLISHCreate from '../pages/Download/DownloadLISHCreate.svelte';
+import DownloadLISHImportFile from '../pages/Download/DownloadLISHImportFile.svelte';
+import DownloadLISHImportWeb from '../pages/Download/DownloadLISHImportWeb.svelte';
+import DownloadLISHImportJSON from '../pages/Download/DownloadLISHImportJSON.svelte';
+import DownloadLISHExportAll from '../pages/Download/DownloadLISHExportAll.svelte';
+import DownloadDetail from '../pages/Download/DownloadDetail.svelte';
+import SettingsFooter from '../pages/Settings/SettingsFooter.svelte';
+import SettingsDownload from '../pages/Settings/SettingsDownload.svelte';
+import SettingsSystem from '../pages/Settings/SettingsSystem.svelte';
+import LISHNetworkList from '../pages/Settings/SettingsLISHNetworkList.svelte';
+import LISHNetworkImportFile from '../pages/Settings/SettingsLISHNetworkImportFile.svelte';
+import LISHNetworkImportWeb from '../pages/Settings/SettingsLISHNetworkImportWeb.svelte';
+import LISHNetworkImportJSON from '../pages/Settings/SettingsLISHNetworkImportJSON.svelte';
+import About from '../pages/About/About.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
 	id: string;
@@ -45,7 +45,7 @@ export interface MenuStructure {
 	items: MenuItem[];
 }
 // Reactive menu structure - updates when language changes
-export const menuStructure = derived(t, () => ({
+export const menuStructure = derived(t, (): MenuStructure => ({
 	title: productName,
 	items: [
 		{

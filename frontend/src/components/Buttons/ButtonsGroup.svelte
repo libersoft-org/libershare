@@ -7,10 +7,10 @@
 </script>
 
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { type Snippet } from 'svelte';
 	import { setContext, onMount, untrack } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
-	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { type Position } from '../../scripts/navigationLayout.ts';
 	interface Props {
 		children: Snippet;
 		areaID: string;

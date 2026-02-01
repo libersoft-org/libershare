@@ -1,8 +1,8 @@
 import { mkdir, open, readdir, access, readFile, writeFile } from 'fs/promises';
 import { join, dirname, resolve } from 'path';
-import type { IManifest, LishId, ChunkId } from './lish.ts';
+import { type IManifest, type LishId, type ChunkId } from './lish.ts';
 import { createManifest, DEFAULT_CHUNK_SIZE, DEFAULT_ALGO } from './lish.ts';
-import type { Database } from './database.ts';
+import { type Database } from './database.ts';
 import { Utils } from './utils.ts';
 
 export interface MissingChunk {

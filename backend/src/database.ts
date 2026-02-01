@@ -1,6 +1,6 @@
 import { Database as BunDatabase } from 'bun:sqlite';
 import { join } from 'path';
-import type { LishId, ChunkId } from './lish.ts';
+import { type LishId, type ChunkId } from './lish.ts';
 
 export interface Dataset {
 	id: number;

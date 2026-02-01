@@ -7,7 +7,7 @@
 	import Input from '../Input/Input.svelte';
 	import Alert from '../Alert/Alert.svelte';
 	import { useArea, activateArea } from '../../scripts/areas.ts';
-	import type { Position } from '../../scripts/navigationLayout.ts';
+	import { type Position } from '../../scripts/navigationLayout.ts';
 	interface Props {
 		title: string;
 		label?: string;
@@ -67,20 +67,15 @@
 					return true;
 				},
 				confirmDown: () => {
-					if (selectedElement !== 'input') {
-						isPressed = true;
-					}
+					if (selectedElement !== 'input') isPressed = true;
 				},
 				confirmUp: () => {
 					isPressed = false;
 					if (selectedElement === 'input') {
 						// Focus input for editing
 						inputRef?.focus();
-					} else if (selectedElement === 'confirm') {
-						handleConfirm();
-					} else {
-						onBack();
-					}
+					} else if (selectedElement === 'confirm') handleConfirm();
+					else onBack();
 				},
 				confirmCancel: () => {
 					isPressed = false;
@@ -90,10 +85,8 @@
 			position
 		);
 		activateArea('input-dialog');
-
 		// Focus input on mount
 		tick().then(() => inputRef?.focus());
-
 		return unregister;
 	});
 </script>

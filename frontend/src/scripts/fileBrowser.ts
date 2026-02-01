@@ -1,5 +1,5 @@
 import { api } from './api.ts';
-import type { StorageItemData } from './storage.ts';
+import { type StorageItemData } from './storage.ts';
 import { formatDate } from './utils.ts';
 import { tt, withDetail } from './language.ts';
 /**

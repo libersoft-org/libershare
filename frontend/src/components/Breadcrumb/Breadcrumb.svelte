@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
-	import type { Position } from '../../scripts/navigationLayout.ts';
-	import type { BreadcrumbItem } from '../../scripts/breadcrumb.ts';
+	import { type Position } from '../../scripts/navigationLayout.ts';
+	import { type BreadcrumbItem } from '../../scripts/breadcrumb.ts';
 	import Icon from '../Icon/Icon.svelte';
 	interface Props {
 		areaID: string;

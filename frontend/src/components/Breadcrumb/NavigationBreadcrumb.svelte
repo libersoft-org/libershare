@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { type BreadcrumbItem } from '../../scripts/breadcrumb.ts';
+	import { type Position } from '../../scripts/navigationLayout.ts';
 	import Breadcrumb from './Breadcrumb.svelte';
-	import type { BreadcrumbItem } from '../../scripts/breadcrumb.ts';
-	import type { Position } from '../../scripts/navigationLayout.ts';
 	interface Props {
 		areaID: string;
 		position: Position;

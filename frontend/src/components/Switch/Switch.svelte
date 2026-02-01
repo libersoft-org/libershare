@@ -3,9 +3,10 @@
 	interface Props {
 		checked?: boolean;
 		selected?: boolean;
+		onToggle?: () => void;
 		onConfirm?: () => void;
 	}
-	let { checked = false, selected = false, onConfirm }: Props = $props();
+	let { checked = false, selected = false, onToggle, onConfirm }: Props = $props();
 	let mounted = $state(false);
 
 	onMount(() => {

@@ -1,6 +1,6 @@
 import { TestHarness } from './test-harness.ts';
 import { generateKey } from '@libp2p/pnet';
-import type { ILISHNetwork } from '../../src/makenet.ts';
+import { type ILISHNetwork } from '../../src/makenet.ts';
 import { join } from 'path';
 
 const NODE_COUNT = 3;
@@ -38,11 +38,7 @@ function assert(condition: boolean, message: string): asserts condition {
 	}
 }
 
-async function waitForCondition(
-	check: () => Promise<boolean>,
-	timeoutMs: number,
-	intervalMs: number = 500
-): Promise<boolean> {
+async function waitForCondition(check: () => Promise<boolean>, timeoutMs: number, intervalMs: number = 500): Promise<boolean> {
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
 		if (await check()) return true;
@@ -100,9 +96,7 @@ async function main() {
 		console.log(`Creating ${NODE_COUNT} test nodes...`);
 		console.log('='.repeat(60));
 
-		const serverPromises = Array.from({ length: NODE_COUNT }, (_, i) =>
-			harness.createServer(`node${i}`)
-		);
+		const serverPromises = Array.from({ length: NODE_COUNT }, (_, i) => harness.createServer(`node${i}`));
 		const servers = await Promise.all(serverPromises);
 
 		console.log('\nNodes created:');
@@ -124,9 +118,7 @@ async function main() {
 		await Bun.sleep(2000);
 
 		const node0Info = await servers[0].call('networks.getNodeInfo', { networkId: network.definition.networkID });
-		const bootstrapAddr = node0Info.addresses.find((a: string) =>
-			a.includes('/tcp/') && !a.includes('127.0.0.1') && !a.includes('/p2p-circuit/')
-		) || node0Info.addresses[0];
+		const bootstrapAddr = node0Info.addresses.find((a: string) => a.includes('/tcp/') && !a.includes('127.0.0.1') && !a.includes('/p2p-circuit/')) || node0Info.addresses[0];
 		console.log(`  Bootstrap: ${bootstrapAddr}`);
 
 		// Update network and import on other nodes
@@ -138,10 +130,14 @@ async function main() {
 		}
 
 		// Wait for connections
-		const allConnected = await waitForCondition(async () => {
-			const status = await servers[0].call('networks.getStatus', { networkId: network.definition.networkID });
-			return status.connected === NODE_COUNT - 1;
-		}, 30000, 1000);
+		const allConnected = await waitForCondition(
+			async () => {
+				const status = await servers[0].call('networks.getStatus', { networkId: network.definition.networkID });
+				return status.connected === NODE_COUNT - 1;
+			},
+			30000,
+			1000
+		);
 		assert(allConnected, 'All nodes should connect');
 		console.log(`  ✓ All ${NODE_COUNT} nodes connected`);
 
@@ -212,9 +208,13 @@ async function main() {
 		console.log(`  Download started, dir: ${downloadResult.downloadDir}`);
 
 		// Wait for download to complete
-		const completed = await waitForCondition(async () => {
-			return downloadComplete || downloadError !== null;
-		}, 60000, 500);
+		const completed = await waitForCondition(
+			async () => {
+				return downloadComplete || downloadError !== null;
+			},
+			60000,
+			500
+		);
 
 		assert(completed, 'Download should complete within timeout');
 		assert(!downloadError, `Download should not error: ${downloadError}`);
@@ -232,10 +232,7 @@ async function main() {
 			assert(await downloadedFile.exists(), `Downloaded file should exist: ${name}`);
 
 			const downloadedContent = new Uint8Array(await downloadedFile.arrayBuffer());
-			assert(
-				downloadedContent.length === originalContent.length,
-				`File size mismatch for ${name}: expected ${originalContent.length}, got ${downloadedContent.length}`
-			);
+			assert(downloadedContent.length === originalContent.length, `File size mismatch for ${name}: expected ${originalContent.length}, got ${downloadedContent.length}`);
 
 			// Compare bytes
 			let match = true;
@@ -255,7 +252,6 @@ async function main() {
 		console.log(`\n${'='.repeat(60)}`);
 		console.log('✓ All tests passed!');
 		console.log(`${'='.repeat(60)}\n`);
-
 	} catch (error) {
 		console.error('\n❌ Test failed:', error);
 		throw error;

@@ -16,8 +16,8 @@ import { enable as enableLibp2pLogs } from '@libp2p/logger';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { LevelDatastore } from 'datastore-level';
 import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
-import type { Libp2p } from 'libp2p';
-import type { Peer, PeerId, PrivateKey, PeerInfo } from '@libp2p/interface';
+import { type Libp2p } from 'libp2p';
+import { type Peer, PeerId, PrivateKey, PeerInfo } from '@libp2p/interface';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -25,7 +25,7 @@ import { DataServer } from './data-server.ts';
 import { LISH_PROTOCOL, handleLishProtocol } from './lish-protocol.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 import { HaveMessage, LISH_TOPIC, WantMessage } from './downloader.ts';
-import type { NetworkDefinition } from './networks.ts';
+import { type NetworkDefinition } from './networks.ts';
 // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 type PubSub = any;
 interface PinkMessage {
