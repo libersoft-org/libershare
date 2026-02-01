@@ -128,3 +128,13 @@ export interface FetchUrlResponse {
 	contentType: string | null;
 	content: string;
 }
+
+// LISH Network config (user-added networks)
+export interface LISHNetworkConfig {
+	version: number;
+	networkID: string;
+	name: string;
+	description: string;
+	bootstrapPeers: string[];
+	created: string;
+}

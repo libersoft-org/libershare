@@ -1,4 +1,4 @@
-import { type NetworkDefinition, type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type Stats, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse } from './index.ts';
+import { type NetworkDefinition, type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type Stats, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -22,6 +22,7 @@ export class Api {
 	readonly datasets: DatasetsApi;
 	readonly fs: FsApi;
 	readonly settings: SettingsApi;
+	readonly lishNetworks: LISHNetworksApi;
 
 	constructor(private client: IWsClient) {
 		this.networks = new NetworksApi(client);
@@ -29,6 +30,7 @@ export class Api {
 		this.datasets = new DatasetsApi(client);
 		this.fs = new FsApi(client);
 		this.settings = new SettingsApi(client);
+		this.lishNetworks = new LISHNetworksApi(client);
 	}
 
 	// Raw call access
@@ -219,5 +221,41 @@ class SettingsApi {
 
 	reset<T = any>(): Promise<T> {
 		return this.client.call<T>('settings.reset');
+	}
+}
+
+class LISHNetworksApi {
+	constructor(private client: IWsClient) {}
+
+	getAll(): Promise<LISHNetworkConfig[]> {
+		return this.client.call<LISHNetworkConfig[]>('lishNetworks.getAll');
+	}
+
+	get(networkID: string): Promise<LISHNetworkConfig | undefined> {
+		return this.client.call<LISHNetworkConfig | undefined>('lishNetworks.get', { networkID });
+	}
+
+	exists(networkID: string): Promise<boolean> {
+		return this.client.call<boolean>('lishNetworks.exists', { networkID });
+	}
+
+	add(network: LISHNetworkConfig): Promise<boolean> {
+		return this.client.call<boolean>('lishNetworks.add', { network });
+	}
+
+	update(network: LISHNetworkConfig): Promise<boolean> {
+		return this.client.call<boolean>('lishNetworks.update', { network });
+	}
+
+	delete(networkID: string): Promise<boolean> {
+		return this.client.call<boolean>('lishNetworks.delete', { networkID });
+	}
+
+	addIfNotExists(network: Omit<LISHNetworkConfig, 'created'> & { created?: string }): Promise<boolean> {
+		return this.client.call<boolean>('lishNetworks.addIfNotExists', { network });
+	}
+
+	import(networks: LISHNetworkConfig[]): Promise<number> {
+		return this.client.call<number>('lishNetworks.import', { networks });
 	}
 }

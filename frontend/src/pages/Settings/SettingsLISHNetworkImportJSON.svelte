@@ -25,9 +25,9 @@
 	let networkJson = $state('');
 	let errorMessage = $state('');
 
-	function handleImport() {
+	async function handleImport() {
 		errorMessage = '';
-		const result = importNetworksFromJson(networkJson);
+		const result = await importNetworksFromJson(networkJson);
 		if (result.error) {
 			errorMessage = getNetworkErrorMessage(result.error, $t);
 			return;

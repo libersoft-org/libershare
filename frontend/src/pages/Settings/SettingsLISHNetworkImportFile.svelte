@@ -49,7 +49,7 @@
 			// Use readGzip for .gz files, readText otherwise
 			const isGzip = filePath.toLowerCase().endsWith('.gz');
 			const content = isGzip ? await api.fs.readGzip(filePath) : await api.fs.readText(filePath);
-			const result = importNetworksFromJson(content);
+			const result = await importNetworksFromJson(content);
 			if (result.error) {
 				errorMessage = getNetworkErrorMessage(result.error, $t);
 				return;

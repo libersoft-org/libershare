@@ -6,7 +6,8 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb, navigateTo } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { type LISHNetwork, getNetworks, saveNetworks as saveNetworksToStorage, deleteNetwork as deleteNetworkFromStorage, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
+	import { type LISHNetworkConfig } from '@libershare/shared';
+	import { getNetworks, deleteNetwork as deleteNetworkFromApi, updateNetwork as updateNetworkFromApi, addNetwork as addNetworkFromApi, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -32,15 +33,15 @@
 	let showExportAll = $state(false);
 	let showPublic = $state(false);
 	let showDeleteConfirm = $state(false);
-	let editingNetwork = $state<LISHNetwork | null>(null);
-	let exportingNetwork = $state<LISHNetwork | null>(null);
-	let deletingNetwork = $state<LISHNetwork | null>(null);
+	let editingNetwork = $state<LISHNetworkConfig | null>(null);
+	let exportingNetwork = $state<LISHNetworkConfig | null>(null);
+	let deletingNetwork = $state<LISHNetworkConfig | null>(null);
 	let rowElements: HTMLElement[] = $state([]);
-	// Load networks from localStorage
-	let networks = $state<LISHNetwork[]>(getNetworks());
+	// Networks loaded from backend
+	let networks = $state<LISHNetworkConfig[]>([]);
 
-	function saveNetworks() {
-		saveNetworksToStorage(networks);
+	async function loadNetworks() {
+		networks = await getNetworks();
 	}
 
 	// Items: Top buttons row (0), network rows (1 to networks.length), Back button (last)
@@ -71,7 +72,7 @@
 		popBreadcrumb();
 		showPublic = false;
 		// Reload networks in case new ones were added
-		networks = getNetworks();
+		await loadNetworks();
 		// Wait for sub-component to unmount before re-registering
 		await tick();
 		unregisterArea = registerAreaHandler();
@@ -118,19 +119,21 @@
 		activateArea(areaID);
 	}
 
-	function connectNetwork(network: LISHNetwork) {
+	function connectNetwork(network: LISHNetworkConfig) {
 		// TODO: Implement actual connection logic
 		console.log('Connecting to network:', network.name);
 	}
 
-	function moveNetwork(index: number, up: boolean) {
+	async function moveNetwork(index: number, up: boolean) {
 		const newIndex = up ? index - 1 : index + 1;
 		if (newIndex < 0 || newIndex >= networks.length) return;
 		const temp = networks[index];
 		networks[index] = networks[newIndex];
 		networks[newIndex] = temp;
 		networks = [...networks]; // Trigger reactivity
-		saveNetworks();
+		// Update both networks in backend
+		await updateNetworkFromApi(networks[index]);
+		await updateNetworkFromApi(networks[newIndex]);
 		// Move selection with the item
 		selectedIndex += up ? -1 : 1;
 		// Adjust buttonIndex if moved to first/last position where some buttons don't exist
@@ -141,7 +144,7 @@
 		if (buttonIndex > maxButtonIndex) buttonIndex = maxButtonIndex;
 	}
 
-	function openExport(network: LISHNetwork) {
+	function openExport(network: LISHNetworkConfig) {
 		exportingNetwork = network;
 		showExport = true;
 		// Unregister our area - sub-component will create its own
@@ -167,7 +170,7 @@
 		activateArea(areaID);
 	}
 
-	function openEditNetwork(network: LISHNetwork) {
+	function openEditNetwork(network: LISHNetworkConfig) {
 		editingNetwork = network;
 		showAddEdit = true;
 		// Unregister our area - sub-component will create its own
@@ -179,7 +182,7 @@
 		removeBackHandler = pushBackHandler(handleAddEditBack);
 	}
 
-	function deleteNetwork(network: LISHNetwork) {
+	function deleteNetwork(network: LISHNetworkConfig) {
 		deletingNetwork = network;
 		showDeleteConfirm = true;
 		// Unregister our area - ConfirmDialog will create its own
@@ -192,8 +195,8 @@
 
 	async function confirmDeleteNetwork() {
 		if (deletingNetwork) {
+			await deleteNetworkFromApi(deletingNetwork.networkID);
 			networks = networks.filter(n => n.networkID !== deletingNetwork!.networkID);
-			saveNetworks();
 			// Adjust selected index if needed
 			if (selectedIndex >= totalItems) selectedIndex = totalItems - 1;
 			buttonIndex = 0;
@@ -235,13 +238,14 @@
 		const network = formDataToNetwork(savedNetwork, editingNetwork ?? undefined);
 		if (editingNetwork) {
 			// Update existing
+			await updateNetworkFromApi(network);
 			const index = networks.findIndex(n => n.networkID === editingNetwork!.networkID);
 			if (index !== -1) networks[index] = network;
 		} else {
 			// Add new
+			await addNetworkFromApi(network);
 			networks = [...networks, network];
 		}
-		saveNetworks();
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -335,8 +339,10 @@
 
 	// Re-register handler when showAddEdit changes back to false
 	onMount(() => {
-		unregisterArea = registerAreaHandler();
-		activateArea(areaID);
+		loadNetworks().then(() => {
+			unregisterArea = registerAreaHandler();
+			activateArea(areaID);
+		});
 		return () => {
 			if (unregisterArea) unregisterArea();
 		};

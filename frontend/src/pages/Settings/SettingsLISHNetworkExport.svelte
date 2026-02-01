@@ -29,13 +29,25 @@
 	let inputRef: Input | undefined = $state();
 	let browsingSaveAs = $state(false);
 	let saveFolder = $state($storageLishnetPath);
-	const getInitialBaseFileName = () => network ? `${network.name}.lishnet` : 'network.lishnet';
-	const getInitialNetworkJson = () => network ? exportNetworkToJson(network.id) : '';
+	const getInitialBaseFileName = () => (network ? `${network.name}.lishnet` : 'network.lishnet');
 	let baseFileName = $state(getInitialBaseFileName());
-	let networkJson = $state(getInitialNetworkJson()); // Get full network data as JSON (editable)
+	let networkJson = $state(''); // Get full network data as JSON (editable)
 	let minifyJsonState = $state($defaultMinifyJson);
 	let compressGzip = $state($defaultCompressGzip);
 	let errorMessage = $state('');
+
+	// Load network JSON on mount
+	onMount(() => {
+		const init = async () => {
+			if (network) networkJson = await exportNetworkToJson(network.id);
+			unregisterArea = registerAreaHandler();
+			activateArea(areaID);
+		};
+		init();
+		return () => {
+			if (unregisterArea) unregisterArea();
+		};
+	});
 
 	// Compute final filename with .gz extension if gzip is enabled
 	let saveFileName = $derived(compressGzip ? `${baseFileName}.gz` : baseFileName);
@@ -142,14 +154,6 @@
 			position
 		);
 	}
-
-	onMount(() => {
-		unregisterArea = registerAreaHandler();
-		activateArea(areaID);
-		return () => {
-			if (unregisterArea) unregisterArea();
-		};
-	});
 </script>
 
 <style>

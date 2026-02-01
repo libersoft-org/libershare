@@ -4,7 +4,8 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { type LISHNetwork, DEFAULT_PUBLIC_LIST_URL, fetchPublicNetworks, getExistingNetworkIds, addNetworkIfNotExists, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { type LISHNetworkConfig } from '@libershare/shared';
+	import { DEFAULT_PUBLIC_LIST_URL, fetchPublicNetworks, getExistingNetworkIds, addNetworkIfNotExists, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Row from '../../components/Row/Row.svelte';
@@ -21,7 +22,7 @@
 	let selectedColumn = $state(0); // 0 = URL input, 1 = Load button
 	let urlInput: Input;
 	let url = $state(DEFAULT_PUBLIC_LIST_URL);
-	let publicNetworks = $state<LISHNetwork[]>([]);
+	let publicNetworks = $state<LISHNetworkConfig[]>([]);
 	let loading = $state(false);
 	let error = $state('');
 	let addedNetworkIds = $state<Set<string>>(new Set());
@@ -42,13 +43,13 @@
 		if (result.error) error = getNetworkErrorMessage(result.error, $t);
 		else {
 			publicNetworks = result.networks;
-			addedNetworkIds = getExistingNetworkIds();
+			addedNetworkIds = await getExistingNetworkIds();
 		}
 		loading = false;
 	}
 
-	function handleAddNetwork(network: LISHNetwork) {
-		if (addNetworkIfNotExists(network)) addedNetworkIds = new Set([...addedNetworkIds, network.networkID]);
+	async function handleAddNetwork(network: LISHNetworkConfig) {
+		if (await addNetworkIfNotExists(network)) addedNetworkIds = new Set([...addedNetworkIds, network.networkID]);
 	}
 
 	function isNetworkAdded(networkID: string): boolean {

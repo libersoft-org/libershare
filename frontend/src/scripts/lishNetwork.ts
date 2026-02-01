@@ -1,70 +1,42 @@
-import { getStorageValue, setStorageValue } from './localStorage.ts';
 import { api } from './api.ts';
-export interface LISHNetwork {
-	version: number;
-	networkID: string;
-	name: string;
-	description: string;
-	bootstrapPeers: string[];
-	created: string;
-}
+import { type LISHNetworkConfig } from '@libershare/shared';
+
 export const DEFAULT_PUBLIC_LIST_URL = 'https://pastebin.com/raw/ez1S9WYk';
-const STORAGE_KEY = 'lishNetworks';
 
 // ============================================================================
-// Storage Operations
+// Storage Operations (async, using backend API)
 // ============================================================================
 
-export function getNetworks(): LISHNetwork[] {
-	return getStorageValue<LISHNetwork[]>(STORAGE_KEY, []);
+export async function getNetworks(): Promise<LISHNetworkConfig[]> {
+	return api.lishNetworks.getAll();
 }
 
-export function saveNetworks(networks: LISHNetwork[]): void {
-	setStorageValue(STORAGE_KEY, networks);
+export async function getNetworkById(networkID: string): Promise<LISHNetworkConfig | undefined> {
+	return api.lishNetworks.get(networkID);
 }
 
-export function getNetworkById(networkID: string): LISHNetwork | undefined {
-	const networks = getNetworks();
-	return networks.find(n => n.networkID === networkID);
+export async function addNetwork(network: LISHNetworkConfig): Promise<boolean> {
+	return api.lishNetworks.add(network);
 }
 
-export function addNetwork(network: LISHNetwork): void {
-	const networks = getNetworks();
-	networks.push(network);
-	saveNetworks(networks);
+export async function updateNetwork(network: LISHNetworkConfig): Promise<boolean> {
+	return api.lishNetworks.update(network);
 }
 
-export function updateNetwork(network: LISHNetwork): void {
-	const networks = getNetworks();
-	const index = networks.findIndex(n => n.networkID === network.networkID);
-	if (index !== -1) {
-		networks[index] = network;
-		saveNetworks(networks);
-	}
+export async function deleteNetwork(networkID: string): Promise<boolean> {
+	return api.lishNetworks.delete(networkID);
 }
 
-export function deleteNetwork(networkID: string): void {
-	const networks = getNetworks();
-	const filtered = networks.filter(n => n.networkID !== networkID);
-	saveNetworks(filtered);
+export async function networkExists(networkID: string): Promise<boolean> {
+	return api.lishNetworks.exists(networkID);
 }
 
-export function networkExists(networkID: string): boolean {
-	const networks = getNetworks();
-	return networks.some(n => n.networkID === networkID);
+export async function addNetworkIfNotExists(network: Omit<LISHNetworkConfig, 'created'> & { created?: string }): Promise<boolean> {
+	return api.lishNetworks.addIfNotExists(network);
 }
 
-export function addNetworkIfNotExists(network: LISHNetwork): boolean {
-	if (networkExists(network.networkID)) return false;
-	addNetwork({
-		...network,
-		created: new Date().toISOString(),
-	});
-	return true;
-}
-
-export function getExistingNetworkIds(): Set<string> {
-	const networks = getNetworks();
+export async function getExistingNetworkIds(): Promise<Set<string>> {
+	const networks = await getNetworks();
 	return new Set(networks.map(n => n.networkID));
 }
 
@@ -73,10 +45,10 @@ export function getExistingNetworkIds(): Set<string> {
 // ============================================================================
 
 /**
- * Validate and normalize a raw object into a LISHNetwork.
+ * Validate and normalize a raw object into a LISHNetworkConfig.
  * Returns null if validation fails.
  */
-export function validateNetwork(obj: unknown): LISHNetwork | null {
+export function validateNetwork(obj: unknown): LISHNetworkConfig | null {
 	if (!obj || typeof obj !== 'object') return null;
 	const parsed = obj as Record<string, unknown>;
 	// Validate required fields:
@@ -100,7 +72,7 @@ export function validateNetwork(obj: unknown): LISHNetwork | null {
  * Handles both single network and array of networks.
  */
 export interface ParseNetworksResult {
-	networks: LISHNetwork[];
+	networks: LISHNetworkConfig[];
 	error: 'INVALID_JSON' | 'INVALID_FORMAT' | 'NO_VALID_NETWORKS' | null;
 }
 
@@ -110,7 +82,7 @@ export function parseNetworksFromJson(json: string): ParseNetworksResult {
 	}
 	try {
 		const parsed = JSON.parse(json);
-		const networksToImport: LISHNetwork[] = [];
+		const networksToImport: LISHNetworkConfig[] = [];
 		// Check if it's an array of networks or a single network
 		if (Array.isArray(parsed)) {
 			for (const item of parsed) {
@@ -134,31 +106,28 @@ export function parseNetworksFromJson(json: string): ParseNetworksResult {
  * Import networks from JSON string, adding only those that don't exist.
  * Returns count of successfully imported networks.
  */
-export function importNetworksFromJson(json: string): { imported: number; error: ParseNetworksResult['error'] } {
+export async function importNetworksFromJson(json: string): Promise<{ imported: number; error: ParseNetworksResult['error'] }> {
 	const result = parseNetworksFromJson(json);
 	if (result.error) {
 		return { imported: 0, error: result.error };
 	}
-	let imported = 0;
-	for (const network of result.networks) {
-		if (addNetworkIfNotExists(network)) imported++;
-	}
+	const imported = await api.lishNetworks.import(result.networks);
 	return { imported, error: null };
 }
 
 /**
  * Export a single network to JSON string.
  */
-export function exportNetworkToJson(networkID: string): string {
-	const network = getNetworkById(networkID);
+export async function exportNetworkToJson(networkID: string): Promise<string> {
+	const network = await getNetworkById(networkID);
 	return network ? JSON.stringify(network, null, '\t') : '';
 }
 
 /**
  * Export all networks to JSON string.
  */
-export function exportAllNetworksToJson(): string {
-	const networks = getNetworks();
+export async function exportAllNetworksToJson(): Promise<string> {
+	const networks = await getNetworks();
 	return JSON.stringify(networks, null, '\t');
 }
 
@@ -174,9 +143,9 @@ export interface NetworkFormData {
 }
 
 /**
- * Convert LISHNetwork to form data format.
+ * Convert LISHNetworkConfig to form data format.
  */
-export function networkToFormData(network: LISHNetwork): NetworkFormData {
+export function networkToFormData(network: LISHNetworkConfig): NetworkFormData {
 	return {
 		id: network.networkID,
 		name: network.name,
@@ -186,9 +155,9 @@ export function networkToFormData(network: LISHNetwork): NetworkFormData {
 }
 
 /**
- * Convert form data to LISHNetwork.
+ * Convert form data to LISHNetworkConfig.
  */
-export function formDataToNetwork(formData: NetworkFormData, existingNetwork?: LISHNetwork): LISHNetwork {
+export function formDataToNetwork(formData: NetworkFormData, existingNetwork?: LISHNetworkConfig): LISHNetworkConfig {
 	return {
 		version: 1,
 		networkID: formData.id,
@@ -202,18 +171,11 @@ export function formDataToNetwork(formData: NetworkFormData, existingNetwork?: L
 /**
  * Save or update a network from form data.
  */
-export function saveNetworkFromForm(formData: NetworkFormData, existingNetworkId?: string): void {
+export async function saveNetworkFromForm(formData: NetworkFormData, existingNetworkId?: string): Promise<void> {
 	const network = formDataToNetwork(formData);
-	if (existingNetworkId) {
-		// Update existing - use original networkID for finding
-		const networks = getNetworks();
-		const index = networks.findIndex(n => n.networkID === existingNetworkId);
-		if (index !== -1) {
-			networks[index] = network;
-			saveNetworks(networks);
-		}
-	} else {
-		addNetwork(network);
+	if (existingNetworkId) await updateNetwork(network);
+	else {
+		await addNetwork(network);
 	}
 }
 
@@ -222,7 +184,7 @@ export function saveNetworkFromForm(formData: NetworkFormData, existingNetworkId
 // ============================================================================
 
 export interface FetchPublicNetworksResult {
-	networks: LISHNetwork[];
+	networks: LISHNetworkConfig[];
 	error: string | null;
 }
 
@@ -235,7 +197,7 @@ export async function fetchPublicNetworks(url: string): Promise<FetchPublicNetwo
 		// Validate the data - should be an array of networks
 		if (!Array.isArray(data)) return { networks: [], error: 'INVALID_FORMAT' };
 		// Validate each network has required fields
-		const validNetworks: LISHNetwork[] = [];
+		const validNetworks: LISHNetworkConfig[] = [];
 		for (const item of data) {
 			const network = validateNetwork(item);
 			if (network) validNetworks.push(network);

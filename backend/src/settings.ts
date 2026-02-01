@@ -1,5 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { JsonStorage } from './storage.ts';
 
 export interface FrontendSettings {
 	language: string;
@@ -100,96 +99,30 @@ const DEFAULT_SETTINGS: FrontendSettings = {
 	},
 };
 
+/**
+ * Frontend settings storage.
+ * Wraps JsonStorage with FrontendSettings type.
+ */
 export class Settings {
-	private settings: FrontendSettings;
-	private readonly filePath: string;
+	private storage: JsonStorage<FrontendSettings>;
 
 	constructor(dataDir: string) {
-		this.filePath = join(dataDir, 'frontend-settings.json');
-		console.log('[Settings] File path:', this.filePath);
-		this.settings = this.load();
+		this.storage = new JsonStorage(dataDir, 'frontend-settings.json', DEFAULT_SETTINGS);
 	}
 
-	private load(): FrontendSettings {
-		if (!existsSync(this.filePath)) {
-			this.save(DEFAULT_SETTINGS);
-			return { ...DEFAULT_SETTINGS };
-		}
-		try {
-			const data = readFileSync(this.filePath, 'utf-8');
-			const loaded = JSON.parse(data);
-			// Deep merge with defaults to ensure all keys exist
-			return this.deepMerge(DEFAULT_SETTINGS, loaded);
-		} catch (error) {
-			console.error('[Settings] Error loading settings:', error);
-			return { ...DEFAULT_SETTINGS };
-		}
-	}
-
-	private save(settings: FrontendSettings): void {
-		try {
-			writeFileSync(this.filePath, JSON.stringify(settings, null, '\t'));
-		} catch (error) {
-			console.error('[Settings] Error saving settings:', error);
-		}
-	}
-
-	private deepMerge<T extends Record<string, any>>(defaults: T, override: Partial<T>): T {
-		const result = { ...defaults };
-		for (const key in override) {
-			if (override[key] !== undefined) {
-				if (typeof defaults[key] === 'object' && defaults[key] !== null && !Array.isArray(defaults[key])) {
-					result[key] = this.deepMerge(defaults[key], override[key] as any);
-				} else {
-					result[key] = override[key] as any;
-				}
-			}
-		}
-		return result;
-	}
-
-	/**
-	 * Get value at path (e.g., "ui.cursorSize" or "audio.volume")
-	 */
 	get(path?: string): any {
-		if (!path) return this.settings;
-		const keys = path.split('.');
-		let value: any = this.settings;
-		for (const key of keys) {
-			if (value === undefined || value === null) return undefined;
-			value = value[key];
-		}
-		return value;
+		return this.storage.get(path);
 	}
 
-	/**
-	 * Set value at path (e.g., "ui.cursorSize", "medium")
-	 */
 	set(path: string, value: any): void {
-		const keys = path.split('.');
-		let obj: any = this.settings;
-		for (let i = 0; i < keys.length - 1; i++) {
-			const key = keys[i];
-			if (obj[key] === undefined) obj[key] = {};
-			obj = obj[key];
-		}
-		obj[keys[keys.length - 1]] = value;
-		this.save(this.settings);
+		this.storage.set(path, value);
 	}
 
-	/**
-	 * Get all settings
-	 */
 	getAll(): FrontendSettings {
-		return this.settings;
+		return this.storage.getAll();
 	}
 
-	/**
-	 * Reset to defaults
-	 */
 	reset(): FrontendSettings {
-		this.settings = { ...DEFAULT_SETTINGS };
-		this.save(this.settings);
-		return this.settings;
+		return this.storage.reset();
 	}
 }

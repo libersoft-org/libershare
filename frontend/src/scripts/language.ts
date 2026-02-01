@@ -61,7 +61,7 @@ async function loadLanguage(langId: string): Promise<any> {
 
 export function setLanguage(languageID: string): void {
 	currentLanguage.set(languageID);
-	api.settings.set('language', languageID).catch(err => console.error('[Language] Error saving:', err));
+	api.settings.set('language', languageID).catch((err: unknown) => console.error('[Language] Error saving:', err));
 }
 
 export function getLanguage(id: string): Language | undefined {

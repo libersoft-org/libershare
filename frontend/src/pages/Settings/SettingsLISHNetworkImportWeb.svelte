@@ -45,7 +45,7 @@
 				errorMessage = `HTTP ${response.status}`;
 				return;
 			}
-			const result = importNetworksFromJson(response.content);
+			const result = await importNetworksFromJson(response.content);
 			if (result.error) {
 				errorMessage = getNetworkErrorMessage(result.error, $t);
 				return;

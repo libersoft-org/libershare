@@ -3,6 +3,7 @@ import { type Database } from './database.ts';
 import { type DataServer } from './data-server.ts';
 import { type Networks } from './networks.ts';
 import { Settings } from './settings.ts';
+import { LISHNetworkStorage } from './lishNetworkStorage.ts';
 import { Downloader } from './downloader.ts';
 import { join } from 'path';
 import { fsInfo, fsList, fsDelete, fsMkdir, fsOpen, fsRename, fsWriteText, fsReadText, fsExists } from './fs.ts';
@@ -32,6 +33,7 @@ export class ApiServer {
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
 	private statsInterval: ReturnType<typeof setInterval> | null = null;
 	private readonly settings: Settings;
+	private readonly lishNetworks: LISHNetworkStorage;
 	private readonly host: string;
 	private readonly port: number;
 	private readonly secure: boolean;
@@ -46,6 +48,7 @@ export class ApiServer {
 		options: ApiServerOptions = {}
 	) {
 		this.settings = new Settings(dataDir);
+		this.lishNetworks = new LISHNetworkStorage(dataDir);
 		this.host = options.host ?? 'localhost';
 		this.port = options.port ?? 1158;
 		this.secure = options.secure ?? false;
@@ -189,6 +192,24 @@ export class ApiServer {
 				return this.settings.getAll();
 			case 'settings.reset':
 				return this.settings.reset();
+
+			// LISH Network configs (user-added networks list)
+			case 'lishNetworks.getAll':
+				return this.lishNetworks.getAll();
+			case 'lishNetworks.get':
+				return this.lishNetworks.get(params.networkID);
+			case 'lishNetworks.exists':
+				return this.lishNetworks.exists(params.networkID);
+			case 'lishNetworks.add':
+				return this.lishNetworks.add(params.network);
+			case 'lishNetworks.update':
+				return this.lishNetworks.update(params.network);
+			case 'lishNetworks.delete':
+				return this.lishNetworks.delete(params.networkID);
+			case 'lishNetworks.addIfNotExists':
+				return this.lishNetworks.addIfNotExists(params.network);
+			case 'lishNetworks.import':
+				return this.lishNetworks.importNetworks(params.networks);
 
 			// Networks management
 			case 'networks.list':

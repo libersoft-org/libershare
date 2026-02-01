@@ -6,6 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { type LISHNetworkConfig } from '@libershare/shared';
 	import { getNetworks, exportAllNetworksToJson } from '../../scripts/lishNetwork.ts';
 	import { storageLishnetPath, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
 	import { minifyJson } from '../../scripts/utils.ts';
@@ -23,7 +24,7 @@
 	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
-	let networks = $derived(getNetworks());
+	let networks = $state<LISHNetworkConfig[]>([]);
 	let hasNetworks = $derived(networks.length > 0);
 	let selectedIndex = $state(0); // 0 = input (if has networks), 1 = minify switch, 2 = gzip switch, 3 = buttons row
 	let selectedColumn = $state(0); // 0 = save as, 1 = back
@@ -33,15 +34,18 @@
 	let baseFileName = $state('networks.lishnets');
 	let minifyJsonState = $state($defaultMinifyJson);
 	let compressGzip = $state($defaultCompressGzip);
+	let networksJson = $state('');
 
 	// Compute final filename with .gz extension if gzip is enabled
 	let saveFileName = $derived(compressGzip ? `${baseFileName}.gz` : baseFileName);
 
-	// Get all networks as JSON
-	let networksJson = $derived(exportAllNetworksToJson());
-
 	// Compute save content based on minify setting
 	let saveContent = $derived(minifyJsonState ? minifyJson(networksJson) : networksJson);
+
+	async function loadData() {
+		networks = await getNetworks();
+		networksJson = await exportAllNetworksToJson();
+	}
 
 	function openSaveAs() {
 		browsingSaveAs = true;
@@ -120,8 +124,10 @@
 	}
 
 	onMount(() => {
-		unregisterArea = registerAreaHandler();
-		activateArea(areaID);
+		loadData().then(() => {
+			unregisterArea = registerAreaHandler();
+			activateArea(areaID);
+		});
 		return () => {
 			if (unregisterArea) unregisterArea();
 		};
