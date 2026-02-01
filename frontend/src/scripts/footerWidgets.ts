@@ -1,8 +1,8 @@
 // Footer position type
 export type FooterPosition = 'left' | 'center' | 'right';
 // Footer widget definitions
-export type FooterWidget = 'version' | 'download' | 'upload' | 'cpu' | 'ram' | 'storage' | 'backendStatus' | 'lishStatus' | 'connection' | 'volume' | 'clock';
-export const footerWidgets: FooterWidget[] = ['version', 'download', 'upload', 'cpu', 'ram', 'storage', 'backendStatus', 'lishStatus', 'connection', 'volume', 'clock'];
+export type FooterWidget = 'version' | 'download' | 'upload' | 'cpu' | 'ram' | 'storage' | 'lishStatus' | 'connection' | 'volume' | 'clock';
+export const footerWidgets: FooterWidget[] = ['version', 'download', 'upload', 'cpu', 'ram', 'storage', 'lishStatus', 'connection', 'volume', 'clock'];
 export const defaultWidgetVisibility: Record<FooterWidget, boolean> = {
 	version: false,
 	download: true,
@@ -10,7 +10,6 @@ export const defaultWidgetVisibility: Record<FooterWidget, boolean> = {
 	cpu: false,
 	ram: false,
 	storage: false,
-	backendStatus: true,
 	lishStatus: true,
 	connection: true,
 	volume: true,
@@ -28,7 +27,6 @@ export function getWidgetLabel(widget: FooterWidget, t: (key: string) => string)
 		cpu: t('settings.footerWidgets.cpu'),
 		ram: t('settings.footerWidgets.ram'),
 		storage: t('settings.footerWidgets.storage'),
-		backendStatus: t('settings.footerWidgets.backendStatus'),
 		lishStatus: t('settings.footerWidgets.lishStatus'),
 		connection: t('settings.footerWidgets.connection'),
 		volume: t('settings.footerWidgets.volume'),
@@ -74,7 +72,7 @@ export function getBarColor(barIndex: number, activeBars: number): string {
  */
 export interface FooterWidgetConfig {
 	id: FooterWidget;
-	componentType: 'item' | 'bar' | 'clock' | 'lishStatus' | 'backendStatus' | 'connection';
+	componentType: 'item' | 'bar' | 'clock' | 'lishStatus' | 'connection';
 }
 
 export const FOOTER_WIDGET_CONFIGS: FooterWidgetConfig[] = [
@@ -84,7 +82,6 @@ export const FOOTER_WIDGET_CONFIGS: FooterWidgetConfig[] = [
 	{ id: 'cpu', componentType: 'bar' },
 	{ id: 'ram', componentType: 'bar' },
 	{ id: 'storage', componentType: 'bar' },
-	{ id: 'backendStatus', componentType: 'backendStatus' },
 	{ id: 'lishStatus', componentType: 'lishStatus' },
 	{ id: 'connection', componentType: 'connection' },
 	{ id: 'volume', componentType: 'item' },

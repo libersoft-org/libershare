@@ -175,7 +175,6 @@
 		},
 		"footerWidgets": {
 			"lishStatus": "LISH network status",
-			"backendStatus": "Backend",
 			"connection": "Connection",
 			"connectionEthernet": "Ethernet",
 			"connectionWifi": "WiFi",
@@ -249,5 +248,8 @@
 			"title": "Quit application",
 			"message": "Are you sure you want to quit the application?"
 		}
+	},
+	"splash": {
+		"connecting": "Connecting to backend in progress"
 	}
 }

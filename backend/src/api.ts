@@ -29,6 +29,7 @@ export interface ApiServerOptions {
 export class ApiServer {
 	private clients: Set<ClientSocket> = new Set();
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
+	private statsInterval: ReturnType<typeof setInterval> | null = null;
 	private readonly host: string;
 	private readonly port: number;
 	private readonly secure: boolean;
@@ -90,11 +91,22 @@ export class ApiServer {
 
 		this.server = Bun.serve<ClientData>(serverConfig);
 
+		// Start broadcasting stats every second
+		this.statsInterval = setInterval(() => {
+			if (this.clients.size > 0) {
+				this.broadcastStats();
+			}
+		}, 1000);
+
 		const protocol = this.secure ? 'wss' : 'ws';
 		console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${this.port}`);
 	}
 
 	stop(): void {
+		if (this.statsInterval) {
+			clearInterval(this.statsInterval);
+			this.statsInterval = null;
+		}
 		if (this.server) {
 			this.server.stop();
 			this.server = null;
@@ -160,44 +172,7 @@ export class ApiServer {
 			*/
 
 			case 'getStats': {
-				return {
-					networks: {
-						total: this.networks.getAll().length,
-						enabled: this.networks.getEnabled().length,
-						//connected: this.networks.getEnabled().filter(nw => nw.isConnected()).length
-					},
-					peers: this.networks.getEnabled().reduce((acc, nw) => {
-						const liveNw = this.networks.getLiveNetwork(nw.id);
-						if (liveNw && (liveNw as any).node) {
-							return acc + (liveNw as any).node.getPeers().length;
-						}
-						return acc;
-					}, 0),
-					datasets: {
-						total: this.db.getAllDatasets().length,
-						complete: this.db.getAllDatasets().filter(ds => ds.complete).length,
-						downloading: this.db.getAllDatasets().filter(ds => !ds.complete).length, // todo get actual Downloader instances here.
-					},
-
-					space: [{ path: '/', free: 1000000000, usedByDatabase: 500000000, usedByDatasets: 300000000 }],
-
-					/*space: getDisks().forEach(disk => ({
-							path: disk.mountpoint,
-							free: disk.free,
-							usedByDatabase: this.db.getSpaceUsedOnPath(disk.mountpoint),
-							usedByDatasets: this.dataServer.getSpaceUsedOnPath(disk.mountpoint),
-					})),*/
-					transfers: {
-						download: {
-							now: 123,
-							total: 456,
-						},
-						upload: {
-							now: 123,
-							total: 456,
-						},
-					},
-				};
+				return this.getStats();
 			}
 
 			// Networks management
@@ -445,6 +420,40 @@ export class ApiServer {
 
 			default:
 				throw new Error(`Unknown method: ${method}`);
+		}
+	}
+
+	private getStats() {
+		return {
+			networks: {
+				total: this.networks.getAll().length,
+				enabled: this.networks.getEnabled().length,
+			},
+			peers: this.networks.getEnabled().reduce((acc, nw) => {
+				const liveNw = this.networks.getLiveNetwork(nw.id);
+				if (liveNw && (liveNw as any).node) {
+					return acc + (liveNw as any).node.getPeers().length;
+				}
+				return acc;
+			}, 0),
+			datasets: {
+				total: this.db.getAllDatasets().length,
+				complete: this.db.getAllDatasets().filter(ds => ds.complete).length,
+				downloading: this.db.getAllDatasets().filter(ds => !ds.complete).length,
+			},
+			space: [{ path: '/', free: 1000000000, usedByDatabase: 500000000, usedByDatasets: 300000000 }],
+			transfers: {
+				download: { now: 123, total: 456 },
+				upload: { now: 123, total: 456 },
+			},
+		};
+	}
+
+	private broadcastStats(): void {
+		const stats = this.getStats();
+		const msg = JSON.stringify({ event: 'stats', data: stats });
+		for (const client of this.clients) {
+			client.send(msg);
 		}
 	}
 

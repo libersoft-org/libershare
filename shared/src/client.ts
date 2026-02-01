@@ -18,33 +18,32 @@ export class WsClient {
 	private connected = false;
 	private connectPromise: Promise<void> | null = null;
 
-	constructor(private API_URL: string, private onStateChange: (state: State) => void) {
+	constructor(
+		private apiURL: string,
+		private onStateChange: (state: State) => void
+	) {
 		this.connect();
 	}
 
 	private connect(): Promise<void> {
 		if (this.connectPromise) return this.connectPromise;
-
 		this.connectPromise = new Promise((resolve, reject) => {
-			this.ws = new WebSocket(this.API_URL);
-
+			this.ws = new WebSocket(this.apiURL);
 			this.ws.onopen = () => {
 				console.log('[API] Connected');
 				this.connected = true;
-				this.onStateChange({connected: true });
+				this.onStateChange({ connected: true });
 				this.connectPromise = null;
 				resolve();
 			};
-
 			this.ws.onclose = () => {
 				console.log('[API] Disconnected');
 				this.connected = false;
-				this.onStateChange({connected: false });
+				this.onStateChange({ connected: false });
 				this.connectPromise = null;
 				this.ws = null;
 				this.scheduleReconnect();
 			};
-
 			this.ws.onerror = err => {
 				console.log('[API] WebSocket error', err);
 				if (!this.connected) {
@@ -52,12 +51,8 @@ export class WsClient {
 					reject(new Error('WebSocket connection failed'));
 				}
 			};
-
-			this.ws.onmessage = event => {
-				this.handleMessage(event.data);
-			};
+			this.ws.onmessage = event => this.handleMessage(event.data);
 		});
-
 		return this.connectPromise;
 	}
 
@@ -81,14 +76,10 @@ export class WsClient {
 		// Event message
 		if (msg.event) {
 			const listeners = this.eventListeners.get(msg.event);
-			if (listeners) {
-				listeners.forEach(cb => cb(msg.data));
-			}
+			if (listeners) listeners.forEach(cb => cb(msg.data));
 			// Also notify wildcard listeners
 			const wildcardListeners = this.eventListeners.get('*');
-			if (wildcardListeners) {
-				wildcardListeners.forEach(cb => cb({ event: msg.event, data: msg.data }));
-			}
+			if (wildcardListeners) wildcardListeners.forEach(cb => cb({ event: msg.event, data: msg.data }));
 			return;
 		}
 
@@ -97,28 +88,21 @@ export class WsClient {
 			const pending = this.pendingRequests.get(msg.id);
 			if (pending) {
 				this.pendingRequests.delete(msg.id);
-				if (msg.error) {
-					pending.reject(new Error(msg.error));
-				} else {
-					pending.resolve(msg.result);
-				}
+				if (msg.error) pending.reject(new Error(msg.error));
+				else pending.resolve(msg.result);
 			}
 		}
 	}
 
 	private async ensureConnected(): Promise<void> {
-		if (this.connected && this.ws?.readyState === WebSocket.OPEN) {
-			return;
-		}
+		if (this.connected && this.ws?.readyState === WebSocket.OPEN) return;
 		await this.connect();
 	}
 
 	async call<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
 		await this.ensureConnected();
-
 		const id = ++this.requestId;
 		const request = { id, method, params };
-
 		return new Promise<T>((resolve, reject) => {
 			this.pendingRequests.set(id, { resolve, reject });
 			this.ws!.send(JSON.stringify(request));
@@ -130,7 +114,6 @@ export class WsClient {
 		if (!listeners) {
 			listeners = new Set();
 			this.eventListeners.set(event, listeners);
-
 		}
 		listeners.add(callback);
 
@@ -146,9 +129,7 @@ export class WsClient {
 		const listeners = this.eventListeners.get(event);
 		if (listeners) {
 			listeners.delete(callback);
-			if (listeners.size === 0) {
-				this.eventListeners.delete(event);
-			}
+			if (listeners.size === 0) this.eventListeners.delete(event);
 		}
 	}
 }

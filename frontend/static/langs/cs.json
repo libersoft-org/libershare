@@ -176,7 +176,6 @@
 		},
 		"footerWidgets": {
 			"lishStatus": "Stav LISH sítě",
-			"backendStatus": "Backend",
 			"connection": "Připojení",
 			"connectionEthernet": "Ethernet",
 			"connectionWifi": "WiFi",
@@ -250,5 +249,8 @@
 			"title": "Ukončit aplikaci",
 			"message": "Opravdu chcete ukončit aplikaci?"
 		}
+	},
+	"splash": {
+		"connecting": "Probíhá připojování k backendu"
 	}
 }
