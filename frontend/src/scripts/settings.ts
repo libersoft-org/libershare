@@ -1,231 +1,237 @@
-import { writable } from 'svelte/store';
-import { getStorageValue, setStorageValue } from './localStorage.ts';
+import { writable, type Writable } from 'svelte/store';
+import { api } from './api.ts';
 import { defaultWidgetVisibility, type FooterPosition, type FooterWidget } from './footerWidgets.ts';
-// Audio settings
-const storedAudio = getStorageValue<boolean>('audio', true);
-export const audioEnabled = writable(storedAudio);
-// Cursor size settings
+import { currentLanguage, languages } from './language.ts';
+// Types
 export type CursorSize = 'small' | 'medium' | 'large';
 export const cursorSizes: Record<CursorSize, string> = {
 	small: '2.5vh',
 	medium: '5vh',
 	large: '7.5vh',
 };
-const storedCursorSize = getStorageValue<CursorSize>('cursorSize', 'medium');
-export const cursorSize = writable(storedCursorSize);
-// Input timing settings
-export const inputInitialDelay = writable(400); // ms before repeat starts
-export const inputRepeatDelay = writable(150); // ms between repeats (4 items per second)
-// Gamepad settings
+// Settings stores with defaults (will be overwritten when loaded from backend)
+export const audioEnabled = writable(true);
+export const cursorSize = writable<CursorSize>('medium');
+export const inputInitialDelay = writable(400);
+export const inputRepeatDelay = writable(150);
 export const gamepadDeadzone = writable(0.5);
-// Volume settings (will be replaced with system volume later)
 export const volume = writable(50);
+export const footerVisible = writable(true);
+export const footerPosition = writable<FooterPosition>('right');
+export const footerWidgetVisibility = writable<Record<FooterWidget, boolean>>(defaultWidgetVisibility);
+export const timeFormat = writable(true);
+export const showSeconds = writable(false);
+export const storagePath = writable('~/libershare/download/');
+export const storageTempPath = writable('~/libershare/temp/');
+export const storageLishPath = writable('~/libershare/lish/');
+export const storageLishnetPath = writable('~/libershare/lishnet/');
+export const incomingPort = writable(9090);
+export const maxDownloadConnections = writable(200);
+export const maxUploadConnections = writable(200);
+export const maxDownloadSpeed = writable(0);
+export const maxUploadSpeed = writable(0);
+export const autoStartSharing = writable(true);
+export const autoStartOnBoot = writable(true);
+export const showInTray = writable(true);
+export const minimizeToTray = writable(true);
+export const defaultMinifyJson = writable(false);
+export const defaultCompressGzip = writable(false);
 
-export function increaseVolume(): void {
-	volume.update(v => Math.min(100, v + 1));
+// Defaults for reference
+export const DEFAULT_STORAGE_PATH = '~/libershare/download/';
+export const DEFAULT_STORAGE_TEMP_PATH = '~/libershare/temp/';
+export const DEFAULT_STORAGE_LISH_PATH = '~/libershare/lish/';
+export const DEFAULT_STORAGE_LISHNET_PATH = '~/libershare/lishnet/';
+export const DEFAULT_INCOMING_PORT = 9090;
+export const DEFAULT_MAX_DOWNLOAD_CONNECTIONS = 200;
+export const DEFAULT_MAX_UPLOAD_CONNECTIONS = 200;
+export const DEFAULT_MAX_DOWNLOAD_SPEED = 0;
+export const DEFAULT_MAX_UPLOAD_SPEED = 0;
+export const DEFAULT_AUTO_START_SHARING = true;
+export const DEFAULT_MINIFY_JSON = false;
+export const DEFAULT_COMPRESS_GZIP = false;
+
+// Helper to update store and save to backend
+async function updateSetting<T>(store: Writable<T>, path: string, value: T): Promise<void> {
+	store.set(value);
+	try {
+		await api.settings.set(path, value);
+	} catch (error) {
+		console.error(`[Settings] Error saving ${path}:`, error);
+	}
 }
 
-export function decreaseVolume(): void {
-	volume.update(v => Math.max(0, v - 1));
+// Load all settings from backend
+export async function loadSettings(): Promise<void> {
+	try {
+		const settings = await api.settings.getAll();
+
+		// Language
+		if (settings.language && languages.some(l => l.id === settings.language)) {
+			currentLanguage.set(settings.language);
+		}
+
+		// UI
+		cursorSize.set(settings.ui?.cursorSize ?? 'medium');
+		footerVisible.set(settings.ui?.footerVisible ?? true);
+		footerPosition.set(settings.ui?.footerPosition ?? 'right');
+		footerWidgetVisibility.set(settings.ui?.footerWidgets ?? defaultWidgetVisibility);
+		timeFormat.set(settings.ui?.timeFormat24h ?? true);
+		showSeconds.set(settings.ui?.showSeconds ?? false);
+
+		// Audio
+		audioEnabled.set(settings.audio?.enabled ?? true);
+		volume.set(settings.audio?.volume ?? 50);
+
+		// Storage
+		storagePath.set(settings.storage?.downloadPath ?? DEFAULT_STORAGE_PATH);
+		storageTempPath.set(settings.storage?.tempPath ?? DEFAULT_STORAGE_TEMP_PATH);
+		storageLishPath.set(settings.storage?.lishPath ?? DEFAULT_STORAGE_LISH_PATH);
+		storageLishnetPath.set(settings.storage?.lishnetPath ?? DEFAULT_STORAGE_LISHNET_PATH);
+
+		// Network
+		incomingPort.set(settings.network?.incomingPort ?? DEFAULT_INCOMING_PORT);
+		maxDownloadConnections.set(settings.network?.maxDownloadConnections ?? DEFAULT_MAX_DOWNLOAD_CONNECTIONS);
+		maxUploadConnections.set(settings.network?.maxUploadConnections ?? DEFAULT_MAX_UPLOAD_CONNECTIONS);
+		maxDownloadSpeed.set(settings.network?.maxDownloadSpeed ?? DEFAULT_MAX_DOWNLOAD_SPEED);
+		maxUploadSpeed.set(settings.network?.maxUploadSpeed ?? DEFAULT_MAX_UPLOAD_SPEED);
+		autoStartSharing.set(settings.network?.autoStartSharing ?? DEFAULT_AUTO_START_SHARING);
+
+		// System
+		autoStartOnBoot.set(settings.system?.autoStartOnBoot ?? true);
+		showInTray.set(settings.system?.showInTray ?? true);
+		minimizeToTray.set(settings.system?.minimizeToTray ?? true);
+
+		// Export
+		defaultMinifyJson.set(settings.export?.minifyJson ?? DEFAULT_MINIFY_JSON);
+		defaultCompressGzip.set(settings.export?.compressGzip ?? DEFAULT_COMPRESS_GZIP);
+
+		// Input
+		inputInitialDelay.set(settings.input?.initialDelay ?? 400);
+		inputRepeatDelay.set(settings.input?.repeatDelay ?? 150);
+		gamepadDeadzone.set(settings.input?.gamepadDeadzone ?? 0.5);
+
+		console.log('[Settings] Loaded from backend');
+	} catch (error) {
+		console.error('[Settings] Error loading settings:', error);
+	}
 }
 
+// Setters
 export function setAudioEnabled(enabled: boolean): void {
-	audioEnabled.set(enabled);
-	setStorageValue('audio', enabled);
+	updateSetting(audioEnabled, 'audio.enabled', enabled);
 }
 
 export function setCursorSize(size: CursorSize): void {
-	cursorSize.set(size);
-	setStorageValue('cursorSize', size);
+	updateSetting(cursorSize, 'ui.cursorSize', size);
 }
-
-// Footer visibility settings
-const storedFooterVisible = getStorageValue<boolean>('footerVisible', true);
-export const footerVisible = writable(storedFooterVisible);
 
 export function setFooterVisible(visible: boolean): void {
-	footerVisible.set(visible);
-	setStorageValue('footerVisible', visible);
+	updateSetting(footerVisible, 'ui.footerVisible', visible);
 }
-
-const storedFooterPosition = getStorageValue<FooterPosition>('footerPosition', 'right');
-export const footerPosition = writable(storedFooterPosition);
 
 export function setFooterPosition(position: FooterPosition): void {
-	footerPosition.set(position);
-	setStorageValue('footerPosition', position);
+	updateSetting(footerPosition, 'ui.footerPosition', position);
 }
-
-const storedWidgetVisibility = getStorageValue<Record<FooterWidget, boolean>>('footerWidgetVisibility', defaultWidgetVisibility);
-export const footerWidgetVisibility = writable(storedWidgetVisibility);
 
 export function setFooterWidgetVisibility(widget: FooterWidget, visible: boolean): void {
 	footerWidgetVisibility.update(current => {
 		const updated = { ...current, [widget]: visible };
-		setStorageValue('footerWidgetVisibility', updated);
+		api.settings.set('ui.footerWidgets', updated).catch((err: unknown) => console.error('[Settings] Error saving footerWidgets:', err));
 		return updated;
 	});
 }
 
-// Time settings
-const storedTimeFormat = getStorageValue<boolean>('timeFormat', true);
-export const timeFormat = writable(storedTimeFormat);
-
 export function setTimeFormat(enabled: boolean): void {
-	timeFormat.set(enabled);
-	setStorageValue('timeFormat', enabled);
+	updateSetting(timeFormat, 'ui.timeFormat24h', enabled);
 }
-
-const storedShowSeconds = getStorageValue<boolean>('showSeconds', false);
-export const showSeconds = writable(storedShowSeconds);
 
 export function setShowSeconds(enabled: boolean): void {
-	showSeconds.set(enabled);
-	setStorageValue('showSeconds', enabled);
+	updateSetting(showSeconds, 'ui.showSeconds', enabled);
 }
-
-// Storage path settings
-export const DEFAULT_STORAGE_PATH = '~/libershare/download/';
-const storedStoragePath = getStorageValue<string>('storagePath', DEFAULT_STORAGE_PATH);
-export const storagePath = writable(storedStoragePath);
 
 export function setStoragePath(path: string): void {
-	storagePath.set(path);
-	setStorageValue('storagePath', path);
+	updateSetting(storagePath, 'storage.downloadPath', path);
 }
-
-export const DEFAULT_STORAGE_TEMP_PATH = '~/libershare/temp/';
-const storedStorageTempPath = getStorageValue<string>('storageTempPath', DEFAULT_STORAGE_TEMP_PATH);
-export const storageTempPath = writable(storedStorageTempPath);
 
 export function setStorageTempPath(path: string): void {
-	storageTempPath.set(path);
-	setStorageValue('storageTempPath', path);
+	updateSetting(storageTempPath, 'storage.tempPath', path);
 }
-
-export const DEFAULT_STORAGE_LISH_PATH = '~/libershare/lish/';
-const storedStorageLishPath = getStorageValue<string>('storageLishPath', DEFAULT_STORAGE_LISH_PATH);
-export const storageLishPath = writable(storedStorageLishPath);
 
 export function setStorageLishPath(path: string): void {
-	storageLishPath.set(path);
-	setStorageValue('storageLishPath', path);
+	updateSetting(storageLishPath, 'storage.lishPath', path);
 }
-
-export const DEFAULT_STORAGE_LISHNET_PATH = '~/libershare/lishnet/';
-const storedStorageLishnetPath = getStorageValue<string>('storageLishnetPath', DEFAULT_STORAGE_LISHNET_PATH);
-export const storageLishnetPath = writable(storedStorageLishnetPath);
 
 export function setStorageLishnetPath(path: string): void {
-	storageLishnetPath.set(path);
-	setStorageValue('storageLishnetPath', path);
+	updateSetting(storageLishnetPath, 'storage.lishnetPath', path);
 }
-
-// Sharing settings
-export const DEFAULT_INCOMING_PORT = 9090;
-const storedIncomingPort = getStorageValue<number>('incomingPort', DEFAULT_INCOMING_PORT);
-export const incomingPort = writable(storedIncomingPort);
 
 export function setIncomingPort(value: number): void {
 	const clampedValue = Math.max(1, Math.min(65535, value || DEFAULT_INCOMING_PORT));
-	incomingPort.set(clampedValue);
-	setStorageValue('incomingPort', clampedValue);
+	updateSetting(incomingPort, 'network.incomingPort', clampedValue);
 }
-
-export const DEFAULT_MAX_DOWNLOAD_CONNECTIONS = 200;
-const storedMaxDownloadConnections = getStorageValue<number>('maxDownloadConnections', DEFAULT_MAX_DOWNLOAD_CONNECTIONS);
-export const maxDownloadConnections = writable(storedMaxDownloadConnections);
 
 export function setMaxDownloadConnections(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
-	maxDownloadConnections.set(clampedValue);
-	setStorageValue('maxDownloadConnections', clampedValue);
+	updateSetting(maxDownloadConnections, 'network.maxDownloadConnections', clampedValue);
 }
-
-export const DEFAULT_MAX_UPLOAD_CONNECTIONS = 200;
-const storedMaxUploadConnections = getStorageValue<number>('maxUploadConnections', DEFAULT_MAX_UPLOAD_CONNECTIONS);
-export const maxUploadConnections = writable(storedMaxUploadConnections);
 
 export function setMaxUploadConnections(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
-	maxUploadConnections.set(clampedValue);
-	setStorageValue('maxUploadConnections', clampedValue);
+	updateSetting(maxUploadConnections, 'network.maxUploadConnections', clampedValue);
 }
-
-export const DEFAULT_MAX_DOWNLOAD_SPEED = 0;
-const storedMaxDownloadSpeed = getStorageValue<number>('maxDownloadSpeed', DEFAULT_MAX_DOWNLOAD_SPEED);
-export const maxDownloadSpeed = writable(storedMaxDownloadSpeed);
 
 export function setMaxDownloadSpeed(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
-	maxDownloadSpeed.set(clampedValue);
-	setStorageValue('maxDownloadSpeed', clampedValue);
+	updateSetting(maxDownloadSpeed, 'network.maxDownloadSpeed', clampedValue);
 }
-
-export const DEFAULT_MAX_UPLOAD_SPEED = 0;
-const storedMaxUploadSpeed = getStorageValue<number>('maxUploadSpeed', DEFAULT_MAX_UPLOAD_SPEED);
-export const maxUploadSpeed = writable(storedMaxUploadSpeed);
 
 export function setMaxUploadSpeed(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
-	maxUploadSpeed.set(clampedValue);
-	setStorageValue('maxUploadSpeed', clampedValue);
+	updateSetting(maxUploadSpeed, 'network.maxUploadSpeed', clampedValue);
 }
-
-export const DEFAULT_AUTO_START_SHARING = true;
-const storedAutoStartSharing = getStorageValue<boolean>('autoStartSharing', DEFAULT_AUTO_START_SHARING);
-export const autoStartSharing = writable(storedAutoStartSharing);
 
 export function setAutoStartSharing(enabled: boolean): void {
-	autoStartSharing.set(enabled);
-	setStorageValue('autoStartSharing', enabled);
+	updateSetting(autoStartSharing, 'network.autoStartSharing', enabled);
 }
-
-// System settings
-const storedAutoStartOnBoot = getStorageValue<boolean>('autoStartOnBoot', true);
-export const autoStartOnBoot = writable(storedAutoStartOnBoot);
 
 export function setAutoStartOnBoot(enabled: boolean): void {
-	autoStartOnBoot.set(enabled);
-	setStorageValue('autoStartOnBoot', enabled);
+	updateSetting(autoStartOnBoot, 'system.autoStartOnBoot', enabled);
 }
 
-const storedShowInTray = getStorageValue<boolean>('showInTray', true);
-export const showInTray = writable(storedShowInTray);
-
 export function setShowInTray(enabled: boolean): void {
-	showInTray.set(enabled);
-	setStorageValue('showInTray', enabled);
+	updateSetting(showInTray, 'system.showInTray', enabled);
 	// If disabling tray, also disable minimize to tray
 	if (!enabled) {
-		minimizeToTray.set(false);
-		setStorageValue('minimizeToTray', false);
+		updateSetting(minimizeToTray, 'system.minimizeToTray', false);
 	}
 }
 
-const storedMinimizeToTray = getStorageValue<boolean>('minimizeToTray', true);
-export const minimizeToTray = writable(storedMinimizeToTray);
-
 export function setMinimizeToTray(enabled: boolean): void {
-	minimizeToTray.set(enabled);
-	setStorageValue('minimizeToTray', enabled);
+	updateSetting(minimizeToTray, 'system.minimizeToTray', enabled);
 }
-
-// Export default settings
-export const DEFAULT_MINIFY_JSON = false;
-const storedDefaultMinifyJson = getStorageValue<boolean>('defaultMinifyJson', DEFAULT_MINIFY_JSON);
-export const defaultMinifyJson = writable(storedDefaultMinifyJson);
 
 export function setDefaultMinifyJson(enabled: boolean): void {
-	defaultMinifyJson.set(enabled);
-	setStorageValue('defaultMinifyJson', enabled);
+	updateSetting(defaultMinifyJson, 'export.minifyJson', enabled);
 }
 
-export const DEFAULT_COMPRESS_GZIP = false;
-const storedDefaultCompressGzip = getStorageValue<boolean>('defaultCompressGzip', DEFAULT_COMPRESS_GZIP);
-export const defaultCompressGzip = writable(storedDefaultCompressGzip);
-
 export function setDefaultCompressGzip(enabled: boolean): void {
-	defaultCompressGzip.set(enabled);
-	setStorageValue('defaultCompressGzip', enabled);
+	updateSetting(defaultCompressGzip, 'export.compressGzip', enabled);
+}
+
+// Volume helpers
+export function increaseVolume(): void {
+	volume.update(v => {
+		const newVal = Math.min(100, v + 1);
+		api.settings.set('audio.volume', newVal).catch((err: unknown) => console.error('[Settings] Error saving volume:', err));
+		return newVal;
+	});
+}
+
+export function decreaseVolume(): void {
+	volume.update(v => {
+		const newVal = Math.max(0, v - 1);
+		api.settings.set('audio.volume', newVal).catch((err: unknown) => console.error('[Settings] Error saving volume:', err));
+		return newVal;
+	});
 }

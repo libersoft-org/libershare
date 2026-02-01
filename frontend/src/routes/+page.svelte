@@ -15,7 +15,7 @@
 	import { LAYOUT } from '../scripts/navigationLayout.ts';
 	import { initAudio, play } from '../scripts/audio.ts';
 	import { cursorVisible } from '../scripts/input/mouse.ts';
-	import { cursorSize, cursorSizes, footerVisible } from '../scripts/settings.ts';
+	import { cursorSize, cursorSizes, footerVisible, loadSettings } from '../scripts/settings.ts';
 	import { connected, apiURL } from '../scripts/ws-client.ts';
 	import Debug from '../components/Debug/Debug.svelte';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
@@ -53,6 +53,7 @@
 
 	async function onConnected() {
 		try {
+			await loadSettings();
 			console.log(await api.networks.list());
 		} catch (error) {
 			console.error('[App] Backend initialization error:', error);

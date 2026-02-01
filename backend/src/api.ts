@@ -2,6 +2,7 @@ import { type ServerWebSocket } from 'bun';
 import { type Database } from './database.ts';
 import { type DataServer } from './data-server.ts';
 import { type Networks } from './networks.ts';
+import { Settings } from './settings.ts';
 import { Downloader } from './downloader.ts';
 import { join } from 'path';
 import { fsInfo, fsList, fsDelete, fsMkdir, fsOpen, fsRename, fsWriteText, fsReadText, fsExists } from './fs.ts';
@@ -30,6 +31,7 @@ export class ApiServer {
 	private clients: Set<ClientSocket> = new Set();
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
 	private statsInterval: ReturnType<typeof setInterval> | null = null;
+	private readonly settings: Settings;
 	private readonly host: string;
 	private readonly port: number;
 	private readonly secure: boolean;
@@ -43,6 +45,7 @@ export class ApiServer {
 		private readonly networks: Networks,
 		options: ApiServerOptions = {}
 	) {
+		this.settings = new Settings(dataDir);
 		this.host = options.host ?? 'localhost';
 		this.port = options.port ?? 1158;
 		this.secure = options.secure ?? false;
@@ -174,6 +177,18 @@ export class ApiServer {
 			case 'getStats': {
 				return this.getStats();
 			}
+
+			// Settings management
+			case 'settings.get':
+				return this.settings.get(params.path);
+			case 'settings.set': {
+				this.settings.set(params.path, params.value);
+				return true;
+			}
+			case 'settings.getAll':
+				return this.settings.getAll();
+			case 'settings.reset':
+				return this.settings.reset();
 
 			// Networks management
 			case 'networks.list':

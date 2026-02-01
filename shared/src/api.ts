@@ -21,12 +21,14 @@ export class Api {
 	readonly manifests: ManifestsApi;
 	readonly datasets: DatasetsApi;
 	readonly fs: FsApi;
+	readonly settings: SettingsApi;
 
 	constructor(private client: IWsClient) {
 		this.networks = new NetworksApi(client);
 		this.manifests = new ManifestsApi(client);
 		this.datasets = new DatasetsApi(client);
 		this.fs = new FsApi(client);
+		this.settings = new SettingsApi(client);
 	}
 
 	// Raw call access
@@ -197,5 +199,25 @@ class FsApi {
 
 	writeGzip(path: string, content: string): Promise<{ success: boolean; error?: string }> {
 		return this.client.call<{ success: boolean; error?: string }>('fs.writeGzip', { path, content });
+	}
+}
+
+class SettingsApi {
+	constructor(private client: IWsClient) {}
+
+	get<T = any>(path?: string): Promise<T> {
+		return this.client.call<T>('settings.get', { path });
+	}
+
+	set(path: string, value: any): Promise<boolean> {
+		return this.client.call<boolean>('settings.set', { path, value });
+	}
+
+	getAll<T = any>(): Promise<T> {
+		return this.client.call<T>('settings.getAll');
+	}
+
+	reset<T = any>(): Promise<T> {
+		return this.client.call<T>('settings.reset');
 	}
 }

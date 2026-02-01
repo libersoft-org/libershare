@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import { getStorageValue, setStorageValue } from './localStorage.ts';
+import { api } from './api.ts';
 export interface Language {
 	id: string;
 	label: string;
@@ -10,7 +10,7 @@ export const languages: Language[] = [
 	{ id: 'en', label: 'English', nativeLabel: 'English', flag: 'gb' },
 	{ id: 'cs', label: 'Czech', nativeLabel: 'Čeština', flag: 'cz' },
 ];
-export const currentLanguage = writable<string>(getInitialLanguage());
+export const currentLanguage = writable<string>('en');
 const langCache: Record<string, any> = {}; // Cache for loaded language files
 export const translations = writable<any>({}); // Store for current translations
 
@@ -33,14 +33,16 @@ currentLanguage.subscribe(async langId => {
 	const data = await loadLanguage(langId);
 	translations.set(data);
 });
-loadLanguage(getInitialLanguage()).then(data => translations.set(data)); // Load initial language
 
-function getInitialLanguage(): string {
-	const saved = getStorageValue<string | null>('language', null); // First check localStorage
-	if (saved && languages.some(l => l.id === saved)) return saved;
-	const browserLang = navigator.language?.split('-')[0]; // Auto-detect from browser + 'en-US' -> 'en'
-	if (browserLang && languages.some(l => l.id === browserLang)) return browserLang;
-	return 'en'; // Default fallback
+// Initialize with browser language or default
+initLanguage();
+
+async function initLanguage(): Promise<void> {
+	const browserLang = navigator.language?.split('-')[0];
+	const initialLang = (browserLang && languages.some(l => l.id === browserLang)) ? browserLang : 'en';
+	const data = await loadLanguage(initialLang);
+	translations.set(data);
+	currentLanguage.set(initialLang);
 }
 
 // Load language file
@@ -58,8 +60,8 @@ async function loadLanguage(langId: string): Promise<any> {
 }
 
 export function setLanguage(languageID: string): void {
-	setStorageValue('language', languageID);
 	currentLanguage.set(languageID);
+	api.settings.set('language', languageID).catch(err => console.error('[Language] Error saving:', err));
 }
 
 export function getLanguage(id: string): Language | undefined {
