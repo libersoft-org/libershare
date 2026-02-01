@@ -210,6 +210,9 @@ export class ApiServer {
 				return this.lishNetworks.addIfNotExists(params.network);
 			case 'lishNetworks.import':
 				return this.lishNetworks.importNetworks(params.networks);
+			case 'lishNetworks.setAll':
+				this.lishNetworks.setAll(params.networks);
+				return true;
 
 			// Networks management
 			case 'networks.list':

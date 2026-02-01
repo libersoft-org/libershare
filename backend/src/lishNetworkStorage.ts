@@ -73,4 +73,11 @@ export class LISHNetworkStorage {
 	getNetworkIds(): string[] {
 		return this.getAll().map(n => n.networkID);
 	}
+
+	/**
+	 * Replace all networks (for reordering)
+	 */
+	setAll(networks: LISHNetworkConfig[]): void {
+		this.storage.setAll(networks);
+	}
 }

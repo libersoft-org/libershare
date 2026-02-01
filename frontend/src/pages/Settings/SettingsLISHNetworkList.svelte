@@ -7,6 +7,7 @@
 	import { pushBreadcrumb, popBreadcrumb, navigateTo } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { type LISHNetworkConfig } from '@libershare/shared';
+	import { api } from '../../scripts/api.ts';
 	import { getNetworks, deleteNetwork as deleteNetworkFromApi, updateNetwork as updateNetworkFromApi, addNetwork as addNetworkFromApi, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -131,10 +132,7 @@
 		networks[index] = networks[newIndex];
 		networks[newIndex] = temp;
 		networks = [...networks]; // Trigger reactivity
-		// Update both networks in backend
-		await updateNetworkFromApi(networks[index]);
-		await updateNetworkFromApi(networks[newIndex]);
-		// Move selection with the item
+		// Move selection with the item (immediately, before async call)
 		selectedIndex += up ? -1 : 1;
 		// Adjust buttonIndex if moved to first/last position where some buttons don't exist
 		const isNowFirst = newIndex === 0;
@@ -142,6 +140,8 @@
 		// First item has max 5 buttons (0-4), last item has max 5 buttons (0-4), middle has 6 (0-5)
 		const maxButtonIndex = isNowFirst || isNowLast ? 4 : 5;
 		if (buttonIndex > maxButtonIndex) buttonIndex = maxButtonIndex;
+		// Save new order to backend
+		await api.lishNetworks.setAll(networks);
 	}
 
 	function openExport(network: LISHNetworkConfig) {

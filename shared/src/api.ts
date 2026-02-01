@@ -258,4 +258,8 @@ class LISHNetworksApi {
 	import(networks: LISHNetworkConfig[]): Promise<number> {
 		return this.client.call<number>('lishNetworks.import', { networks });
 	}
+
+	setAll(networks: LISHNetworkConfig[]): Promise<boolean> {
+		return this.client.call<boolean>('lishNetworks.setAll', { networks });
+	}
 }
