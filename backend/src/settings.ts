@@ -106,6 +106,7 @@ export class Settings {
 
 	constructor(dataDir: string) {
 		this.filePath = join(dataDir, 'frontend-settings.json');
+		console.log('[Settings] File path:', this.filePath);
 		this.settings = this.load();
 	}
 
