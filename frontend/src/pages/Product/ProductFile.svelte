@@ -1,7 +1,7 @@
 <script lang="ts">
+	import { t } from '../../scripts/language.ts';
 	import Row from '../../components/Row/Row.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
-	import { t } from '../../scripts/language.ts';
 	interface Props {
 		name: string;
 		size: string;

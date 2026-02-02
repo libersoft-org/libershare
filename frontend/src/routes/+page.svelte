@@ -1,11 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import Header from '../pages/Header/Header.svelte';
-	import NavigationBreadcrumb from '../components/Breadcrumb/NavigationBreadcrumb.svelte';
-	import Menu from '../components/Menu/Menu.svelte';
-	import Footer from '../pages/Footer/Footer.svelte';
-	import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
-	import Splash from '../pages/Splash/Splash.svelte';
 	import { createNavigation, breadcrumbItems, setContentElement, confirmDialog, hideConfirmDialog } from '../scripts/navigation.ts';
 	import { confirmDialogs } from '../scripts/menu.ts';
 	import { productName } from '../scripts/app.ts';
@@ -17,8 +11,14 @@
 	import { cursorVisible } from '../scripts/input/mouse.ts';
 	import { cursorSize, cursorSizes, footerVisible, loadSettings } from '../scripts/settings.ts';
 	import { connected, apiURL } from '../scripts/ws-client.ts';
-	import Debug from '../components/Debug/Debug.svelte';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
+	import Debug from '../components/Debug/Debug.svelte';
+	import Header from '../pages/Header/Header.svelte';
+	import NavigationBreadcrumb from '../components/Breadcrumb/NavigationBreadcrumb.svelte';
+	import Menu from '../components/Menu/Menu.svelte';
+	import Footer from '../pages/Footer/Footer.svelte';
+	import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
+	import Splash from '../pages/Splash/Splash.svelte';
 	let contentElement: HTMLElement = $state(null!);
 	let cursorX = $state(0);
 	let cursorY = $state(0);

@@ -13,7 +13,6 @@
 	import Input from '../../components/Input/Input.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
-
 	interface Props {
 		areaID: string;
 		position?: Position;

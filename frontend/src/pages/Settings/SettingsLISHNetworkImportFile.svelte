@@ -13,7 +13,6 @@
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
-
 	interface Props {
 		areaID: string;
 		position?: Position;

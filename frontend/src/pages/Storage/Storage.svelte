@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
-	import DownloadLISHImportJSON from '../Download/DownloadLISHImportJSON.svelte';
-	import SettingsLISHNetworkImportJSON from '../Settings/SettingsLISHNetworkImportJSON.svelte';
 	import { storagePath } from '../../scripts/settings.ts';
 	import { t } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
+	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
+	import DownloadLISHImportJSON from '../Download/DownloadLISHImportJSON.svelte';
+	import SettingsLISHNetworkImportJSON from '../Settings/SettingsLISHNetworkImportJSON.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;

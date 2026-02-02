@@ -14,7 +14,6 @@
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
-
 	// TODO: Get all LISH from storage/backend
 	let lishList: unknown[] = $state([]);
 	let hasLish = $derived(lishList.length > 0);

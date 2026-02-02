@@ -1,12 +1,11 @@
 <script lang="ts">
+	import { t } from '../../scripts/language.ts';
+	import { type DownloadStatus } from '../../scripts/downloads.ts';
+	import { truncateID } from '../../scripts/utils.ts';
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Badge from '../../components/Badge/Badge.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import TableCell from '../../components/Table/TableCell.svelte';
-	import { t } from '../../scripts/language.ts';
-	import { type DownloadStatus } from '../../scripts/downloads.ts';
-	import { truncateID } from '../../scripts/utils.ts';
-
 	interface Props {
 		name: string;
 		id: string;

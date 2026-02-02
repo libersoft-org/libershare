@@ -8,13 +8,13 @@
 	import { api } from '../../scripts/api.ts';
 	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
+	import { type StorageItemData } from '../../scripts/storage.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import Header from '../../components/Table/TableHeader.svelte';
 	import Cell from '../../components/Table/TableCell.svelte';
 	import StorageItem from '../Storage/StorageItem.svelte';
-	import { type StorageItemType, type StorageItemData } from '../../scripts/storage.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import PathBreadcrumb from './FileBrowserBreadcrumb.svelte';

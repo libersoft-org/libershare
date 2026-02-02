@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
-	import Dot from '../../components/Dot/Dot.svelte';
 	import { type DotStatus } from '../../scripts/dot.ts';
+	import Dot from '../../components/Dot/Dot.svelte';
 	interface Props {
 		networkName?: string;
 		lishConnected?: boolean;

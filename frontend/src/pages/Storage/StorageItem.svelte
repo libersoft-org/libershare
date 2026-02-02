@@ -1,10 +1,9 @@
 <script lang="ts">
+	import { type StorageItemType, getStorageIcon } from '../../scripts/storage.ts';
+	import { formatSize } from '../../scripts/utils.ts';
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import TableCell from '../../components/Table/TableCell.svelte';
 	import Icon from '../../components/Icon/Icon.svelte';
-	import { type StorageItemType, getStorageIcon } from '../../scripts/storage.ts';
-	import { formatSize } from '../../scripts/utils.ts';
-
 	interface Props {
 		name: string;
 		type: StorageItemType;

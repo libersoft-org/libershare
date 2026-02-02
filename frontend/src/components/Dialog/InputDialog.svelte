@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { untrack } from 'svelte';
+	import { useArea, activateArea } from '../../scripts/areas.ts';
+	import { type Position } from '../../scripts/navigationLayout.ts';
 	import Dialog from './Dialog.svelte';
 	import ButtonsStatic from '../Buttons/ButtonsStatic.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import Alert from '../Alert/Alert.svelte';
-	import { useArea, activateArea } from '../../scripts/areas.ts';
-	import { type Position } from '../../scripts/navigationLayout.ts';
 	interface Props {
 		title: string;
 		label?: string;

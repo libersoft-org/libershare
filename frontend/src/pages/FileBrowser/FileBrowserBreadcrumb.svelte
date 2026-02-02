@@ -1,9 +1,9 @@
 <script lang="ts">
-	import Breadcrumb from '../../components/Breadcrumb/Breadcrumb.svelte';
 	import { type BreadcrumbItem } from '../../scripts/breadcrumb.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type PathBreadcrumbItem, parsePathToBreadcrumbs } from '../../scripts/fileBrowser.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
+	import Breadcrumb from '../../components/Breadcrumb/Breadcrumb.svelte';
 	interface Props {
 		areaID: string;
 		position: Position;
@@ -13,7 +13,6 @@
 		onDown?: () => string | false;
 	}
 	let { areaID, position, path, separator, onNavigate, onDown }: Props = $props();
-
 	let breadcrumbItems = $derived(parsePathToBreadcrumbs(path, separator));
 
 	function handleSelect(item: BreadcrumbItem) {

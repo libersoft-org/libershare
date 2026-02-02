@@ -14,18 +14,15 @@
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Badge from '../../components/Badge/Badge.svelte';
 	import DownloadFile from './DownloadFile.svelte';
-
 	interface Props {
 		areaID: string;
 		position?: Position;
 		onBack?: () => void;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-
 	// Get download from store
 	let download = $state<DownloadData | null>(null);
 	const unsubscribe = selectedDownload.subscribe(d => (download = d));
-
 	// Toolbar state
 	let toolbarAreaID = $derived(`${areaID}-toolbar`);
 	let infoAreaID = $derived(`${areaID}-info`);
@@ -38,7 +35,6 @@
 	let itemElements: HTMLElement[] = $state([]);
 	let infoElement: HTMLElement | null = $state(null);
 	let filesElement: HTMLElement | null = $state(null);
-
 	// Toolbar actions - use config from downloads.ts
 	let isPaused = $derived(download?.status === 'paused');
 	let toolbarActions = $derived(
@@ -48,7 +44,6 @@
 			icon: action.getIcon?.(isPaused) ?? action.icon,
 		}))
 	);
-
 	const scrollToSelected = () => scrollToElement(itemElements, selectedFileIndex);
 
 	function scrollToInfo(): void {
@@ -61,9 +56,7 @@
 
 	function handleToolbarAction(actionId: DownloadToolbarActionId) {
 		const result = handleDownloadToolbarAction(actionId, download);
-		if (result.needsBack) {
-			onBack?.();
-		}
+		if (result.needsBack) onBack?.();
 	}
 
 	const toolbarHandlers = {

@@ -24,20 +24,17 @@
 	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
-
 	// Browse state
 	let browsingInputPath = $state(false);
 	let browsingOutputPath = $state(false);
 	let browseFolder = $state('');
 	let browseFile = $state<string | undefined>(undefined);
 	let outputFileName = $state(''); // File name input in output browse dialog
-
 	// Form state
 	let inputPath = $state($storagePath);
 	let saveToFile = $state(true);
 	let addToSharing = $state($autoStartSharing);
 	let name = $state('');
-
 	// Output path - editable state, initialized from settings
 	let outputPath = $state($storageLishPath + 'output.lish');
 	let outputPathManuallyEdited = $state(false); // Track if user manually edited the path
