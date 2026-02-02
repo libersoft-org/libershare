@@ -16,7 +16,7 @@ export class LISHNetworkStorage {
 	private storage: ArrayStorage<LISHNetworkConfig>;
 
 	constructor(dataDir: string) {
-		this.storage = new ArrayStorage(dataDir, 'lish-networks.json', 'networkID');
+		this.storage = new ArrayStorage(dataDir, 'lishnets.json', 'networkID');
 	}
 
 	getAll(): LISHNetworkConfig[] {
