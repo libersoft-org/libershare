@@ -40,7 +40,8 @@
 	async function loadInitialFile() {
 		if (initialFilePath) {
 			try {
-				const content = await api.fs.readText(initialFilePath);
+				const isGzip = initialFilePath.toLowerCase().endsWith('.gz');
+				const content = isGzip ? await api.fs.readGzip(initialFilePath) : await api.fs.readText(initialFilePath);
 				if (content) networkJson = content;
 			} catch (e) {
 				// Ignore error, user can still paste JSON manually

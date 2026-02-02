@@ -617,16 +617,16 @@
 	}
 
 	async function handleOpenFile(item: StorageItemData) {
-		// Check for special file types (.lish, .lishs, .lishnet, .lishnets)
+		// Check for special file types (.lish, .lishs, .lishnet, .lishnets) including .gz variants
 		const lowerName = item.name.toLowerCase();
 		if (onOpenSpecialFile) {
-			if (lowerName.endsWith('.lish') || lowerName.endsWith('.lishs')) {
+			if (lowerName.endsWith('.lish') || lowerName.endsWith('.lishs') || lowerName.endsWith('.lish.gz') || lowerName.endsWith('.lishs.gz')) {
 				onOpenSpecialFile(item.path, 'lish');
 				showActions = false;
 				activateArea(listAreaID);
 				return;
 			}
-			if (lowerName.endsWith('.lishnet') || lowerName.endsWith('.lishnets')) {
+			if (lowerName.endsWith('.lishnet') || lowerName.endsWith('.lishnets') || lowerName.endsWith('.lishnet.gz') || lowerName.endsWith('.lishnets.gz')) {
 				onOpenSpecialFile(item.path, 'lishnet');
 				showActions = false;
 				activateArea(listAreaID);
