@@ -371,6 +371,7 @@
 
 	.top-buttons {
 		display: flex;
+		flex-wrap: wrap;
 		justify-content: flex-start;
 		gap: 1vh;
 		margin-bottom: 1vh;
