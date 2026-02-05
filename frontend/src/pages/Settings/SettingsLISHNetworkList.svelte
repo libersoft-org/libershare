@@ -394,6 +394,7 @@
 
 	.network .buttons {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 1vh;
 	}
 </style>
