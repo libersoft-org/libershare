@@ -436,10 +436,10 @@
 									<Button icon="/img/edit.svg" label={$t('common.edit')} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openEditNetwork(network)} />
 									<Button icon="/img/del.svg" label={$t('common.delete')} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => deleteNetwork(network)} />
 									{#if !isFirst}
-										<Button icon="/img/up.svg" selected={active && selectedIndex === i + 1 && buttonIndex === upButtonIndex} onConfirm={() => moveNetwork(i, true)} />
+										<Button icon="/img/up.svg" selected={active && selectedIndex === i + 1 && buttonIndex === upButtonIndex} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
 									{/if}
 									{#if !isLast}
-										<Button icon="/img/down.svg" selected={active && selectedIndex === i + 1 && buttonIndex === downButtonIndex} onConfirm={() => moveNetwork(i, false)} />
+										<Button icon="/img/down.svg" selected={active && selectedIndex === i + 1 && buttonIndex === downButtonIndex} onConfirm={() => moveNetwork(i, false)} padding="1vh" fontSize="4vh" width="auto" />
 									{/if}
 								</div>
 							</div>
