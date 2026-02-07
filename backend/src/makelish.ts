@@ -120,11 +120,13 @@ async function makeLish(args)
 		const startTime = Date.now();
 		console.log('\x1b[33mStart time:\x1b[0m           ' + new Date().toLocaleString());
 		console.log('');
-		if (sizeInfo) console.log('\x1b[33mSize:\x1b[0m ' + sizeInfo);
+		if (sizeInfo) console.log('\x1b[33mSize:\x1b[0m                 ' + sizeInfo);
 		if (name) console.log('\x1b[33mName:\x1b[0m                 ' + name);
 		if (description) console.log('\x1b[33mDescription:\x1b[0m          ' + description);
 		console.log('\x1b[33mOutput file:\x1b[0m          ' + outputFile);
-		console.log('\x1b[33mProcessing ' + inputType + ':\x1b[0m ' + inputPath);
+		const processingLabel = 'Processing ' + inputType + ':';
+		const processingPad = Math.max(1, 22 - processingLabel.length);
+		console.log('\x1b[33m' + processingLabel + '\x1b[0m' + ' '.repeat(processingPad) + inputPath);
 		console.log('\x1b[33mChunk size:\x1b[0m           ' + Utils.formatBytes(chunkSize));
 		console.log('\x1b[33mChecksum algorithm:\x1b[0m   ' + algo);
 		console.log('\x1b[33mThreads:\x1b[0m              ' + actualThreads + (threads === 0 ? ' (auto detect)' : ''));
