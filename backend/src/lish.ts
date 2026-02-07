@@ -148,13 +148,13 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	for (const entry of scannedPaths) {
 		const fullPath = `${dirPath}/${entry}`;
 		const stat = await getStats(fullPath);
-		// Check if it's a symlink by comparing realpath
+		// Check if it's a symlink using lstat (lstat does NOT follow symlinks, stat does)
 		let isSymlink = false;
 		try {
-			const realPath = await fsPromises.realpath(fullPath);
-			isSymlink = normalizePath(realPath) !== normalizePath(fullPath);
+			const lstat = await fsPromises.lstat(fullPath);
+			isSymlink = lstat.isSymbolicLink();
 		} catch (e) {
-			// Not a symlink or can't determine
+			// Can't determine, treat as not a symlink
 		}
 		if (isSymlink) {
 			// Handle symbolic link - read the link target
