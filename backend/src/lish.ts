@@ -52,6 +52,19 @@ async function calculateChecksum(file: ReturnType<typeof Bun.file>, offset: numb
 	return hasher.digest('hex');
 }
 
+// Calculate checksums sequentially (single-threaded, no worker overhead)
+async function calculateChecksumsSequential(filePath: string, fileSize: number, chunkSize: number, algo: HashAlgorithm, _maxWorkers: number, onProgress?: (completed: number, total: number) => void): Promise<string[]> {
+	const totalChunks = Math.ceil(fileSize / chunkSize);
+	const file = Bun.file(filePath);
+	const results: string[] = [];
+	for (let i = 0; i < totalChunks; i++) {
+		const checksum = await calculateChecksum(file, i * chunkSize, chunkSize, algo);
+		results.push(checksum);
+		if (onProgress) onProgress(i + 1, totalChunks);
+	}
+	return results;
+}
+
 // Calculate checksums in parallel using workers
 async function calculateChecksumsParallel(filePath: string, fileSize: number, chunkSize: number, algo: HashAlgorithm, maxWorkers: number, onProgress?: (completed: number, total: number) => void): Promise<string[]> {
 	const totalChunks = Math.ceil(fileSize / chunkSize);
@@ -63,39 +76,49 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 		workers.push(new Worker(new URL('./checksum-worker.ts', import.meta.url).href));
 	}
 	let completedChunks = 0;
-	const results: { index: number; checksum: string }[] = [];
-	// Create promises for all chunks
-	const chunkPromises: Promise<void>[] = [];
-	for (let i = 0; i < totalChunks; i++) {
-		const offset = i * chunkSize;
-		const workerIndex = i % workerCount;
-		const worker = workers[workerIndex];
-		const promise = new Promise<void>((resolve, reject) => {
+	const results: string[] = new Array(totalChunks);
+	let nextChunk = 0;
+
+	// Process chunks by feeding workers one at a time
+	await new Promise<void>((resolveAll, rejectAll) => {
+		let finished = false;
+		function feedWorker(workerIndex: number) {
+			if (finished) return;
+			if (nextChunk >= totalChunks) return;
+			const chunkIndex = nextChunk++;
+			const offset = chunkIndex * chunkSize;
+			const worker = workers[workerIndex];
 			const handler = (event: MessageEvent) => {
-				if (event.data.index === i) {
+				if (event.data.index === chunkIndex) {
 					worker.removeEventListener('message', handler);
-					if (event.data.error) reject(new Error(event.data.error));
-					else {
-						results.push({ index: i, checksum: event.data.checksum });
-						completedChunks++;
-						if (onProgress) onProgress(completedChunks, totalChunks);
-						resolve();
+					if (event.data.error) {
+						finished = true;
+						rejectAll(new Error(event.data.error));
+						return;
+					}
+					results[chunkIndex] = event.data.checksum;
+					completedChunks++;
+					if (onProgress) onProgress(completedChunks, totalChunks);
+					if (completedChunks === totalChunks) {
+						resolveAll();
+					} else {
+						feedWorker(workerIndex);
 					}
 				}
 			};
 			worker.addEventListener('message', handler);
-			worker.postMessage({ filePath, offset, chunkSize, algo, index: i });
-		});
-		chunkPromises.push(promise);
-	}
-	// Wait for all chunks
-	await Promise.all(chunkPromises);
+			worker.postMessage({ filePath, offset, chunkSize, algo, index: chunkIndex });
+		}
+		// Start one chunk per worker
+		for (let i = 0; i < workerCount; i++) {
+			feedWorker(i);
+		}
+	});
 	// Terminate workers
 	workers.forEach(w => w.terminate());
-	// Sort results by index and return checksums
-	results.sort((a, b) => a.index - b.index);
-	return results.map(r => r.checksum);
+	return results;
 }
+
 // Track inodes to detect hard links
 interface InodeMap {
 	[inode: string]: string; // inode -> first file path encountered
@@ -171,8 +194,9 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				const totalChunks = Math.ceil(stat.size / chunkSize);
 				// Progress feedback - file start
 				if (onProgress) onProgress({ type: 'file-start', path: relativePath, size: stat.size, chunks: totalChunks });
-				// Use parallel worker-based checksum calculation
-				const checksums = await calculateChecksumsParallel(fullPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
+				// Calculate checksums (sequential for 1 thread, parallel for multiple)
+				const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
+				const checksums = await calcFn(fullPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
 					if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: completed, total });
 				});
 				files.push({
@@ -213,8 +237,9 @@ export async function createManifest(inputPath: string, name: string | undefined
 		const filename = inputPath.split(/[\\/]/).pop() || inputPath;
 		// Progress feedback - file start
 		if (onProgress) onProgress({ type: 'file-start', path: filename, size: stat.size, chunks: totalChunks });
-		// Use parallel worker-based checksum calculation
-		const checksums = await calculateChecksumsParallel(inputPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
+		// Calculate checksums (sequential for 1 thread, parallel for multiple)
+		const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
+		const checksums = await calcFn(inputPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
 			if (onProgress) onProgress({ type: 'chunk', path: filename, current: completed, total });
 		});
 		manifest.files = [

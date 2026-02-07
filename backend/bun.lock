@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@libershare/backend",
@@ -8,7 +7,6 @@
         "@chainsafe/libp2p-gossipsub": "github:ChainSafe/js-libp2p-gossipsub#feat/upgrade-to-libp2p-v3-api",
         "@chainsafe/libp2p-noise": "^17.0.0",
         "@chainsafe/libp2p-yamux": "^8.0.1",
-        "@libershare/shared": "file:../shared",
         "@libp2p/autonat": "^3.0.6",
         "@libp2p/bootstrap": "^12.0.7",
         "@libp2p/circuit-relay-v2": "^4.0.6",
@@ -67,8 +65,6 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@leichtgewicht/ip-codec": ["@leichtgewicht/ip-codec@2.0.5", "", {}, "sha512-Vo+PSpZG2/fmgmiNzYK9qWRh8h/CHrwD0mo1h1DzL4yzHNSfWYujGTYsWGreD000gcgmZ7K4Ys6Tx9TxtsKdDw=="],
-
-    "@libershare/shared": ["@libershare/shared@file:../shared", {}],
 
     "@libp2p/autonat": ["@libp2p/autonat@3.0.10", "", { "dependencies": { "@libp2p/interface": "^3.1.0", "@libp2p/interface-internal": "^3.0.10", "@libp2p/peer-collections": "^7.0.10", "@libp2p/peer-id": "^6.0.4", "@libp2p/utils": "^7.0.10", "@multiformats/multiaddr": "^13.0.1", "any-signal": "^4.1.1", "main-event": "^1.0.1", "multiformats": "^13.4.0", "protons-runtime": "^5.6.0", "uint8arraylist": "^2.4.8" } }, "sha512-JGU2+sKU/6J4lxjNePjfcpus7fw1zf9STFr1MFHp0K8suyb3y3wvMPULNOPEVL4HlQqTkEH7J0PD3LWRnedtOQ=="],
 
