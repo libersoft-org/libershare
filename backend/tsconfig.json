@@ -11,9 +11,13 @@
 		"strict": false,
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
-		"resolveJsonModule": true
+		"resolveJsonModule": true,
+		"paths": {
+			"@libershare/shared": ["../shared/src/index.ts"],
+			"@libershare/shared/*": ["../shared/src/*"]
+		}
 	},
-	"include": ["src/**/*.ts"],
+	"include": ["src/**/*.ts", "cli/**/*.ts", "../shared/src/**/*.ts"],
 	"exclude": [
 		"node_modules"
 	]
