@@ -19,9 +19,9 @@ import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@
 import { type Libp2p } from 'libp2p';
 import { type Peer, PeerId, PrivateKey, PeerInfo } from '@libp2p/interface';
 import { peerIdFromString } from '@libp2p/peer-id';
-import { readFileSync } from 'fs';
 import { join } from 'path';
 import { DataServer } from './data-server.ts';
+import { Settings } from './settings.ts';
 import { LISH_PROTOCOL, handleLishProtocol } from './lish-protocol.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 import { HaveMessage, LISH_TOPIC, WantMessage } from './downloader.ts';
@@ -87,9 +87,9 @@ export class Network {
 
 	async start() {
 		if (!this.networkDef) throw new Error('NetworkDefinition is required to start a network');
-		// Load settings from dataDir
-		const settingsPath = join(this.dataDir, 'settings.json');
-		const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+		// Load settings from frontend-settings.json
+		const frontendSettings = new Settings(this.dataDir);
+		const allSettings = frontendSettings.getAll();
 		console.log(`Decoding swarm key from base62...`);
 		const swarmKey = Utils.decodeBase62(this.networkDef.key);
 		const bootstrapPeers = this.networkDef.bootstrap_peers;
@@ -101,20 +101,17 @@ export class Network {
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
 		// Build transports array
 		const transports: any[] = [tcp()];
-		// Add circuit relay transport if client mode is enabled
-		const relayClientMode = settings.relay?.client?.mode || 'force';
-		const relayClientEnabled = relayClientMode === 'force' || relayClientMode === 'auto';
-		if (relayClientEnabled) {
-			transports.push(circuitRelayTransport());
-			console.log(`✓ Circuit relay client enabled (mode: ${relayClientMode})`);
-		}
+		// Add circuit relay transport (client mode is always enabled)
+		const relayClientEnabled = true;
+		transports.push(circuitRelayTransport());
+		console.log(`✓ Circuit relay client enabled`);
 
 		// Build listen addresses (use port 0 to let OS assign if not specified)
-		const port = settings.network?.port || 0;
+		const port = allSettings.network?.incomingPort || 0;
 		const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
 		if (relayClientEnabled) {
-			// Add /p2p-circuit entries - one per desired relay reservation
-			const maxRelays = settings.relay?.client?.maxRelays || 2;
+			// Add /p2p-circuit entries - enough redundancy without excessive overhead
+			const maxRelays = 10;
 			for (let i = 0; i < maxRelays; i++) {
 				listenAddresses.push('/p2p-circuit');
 			}
@@ -169,8 +166,8 @@ export class Network {
 		};
 
 		// Add relay server service if enabled
-		if (settings.relay?.server?.enabled) {
-			const maxReservationsRaw = settings.relay.server.maxReservations ?? 0;
+		if (allSettings.network?.allowRelay) {
+			const maxReservationsRaw = allSettings.network?.maxRelayReservations ?? 0;
 			const maxReservations = maxReservationsRaw === 0 ? Infinity : maxReservationsRaw;
 			config.services.relay = circuitRelayServer({
 				reservations: {
@@ -180,11 +177,9 @@ export class Network {
 			console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservationsRaw === 0 ? 'unlimited' : maxReservationsRaw})`);
 		}
 
-		// Add autonat service if client mode is 'auto'
-		if (relayClientMode === 'auto') {
-			config.services.autonat = autoNAT();
-			console.log('✓ AutoNAT enabled');
-		}
+		// Add autonat service
+		config.services.autonat = autoNAT();
+		console.log('✓ AutoNAT enabled');
 
 		// Add bootstrap if peers are configured
 		if (bootstrapPeers.length > 0) {
@@ -216,7 +211,7 @@ export class Network {
 		console.log('  peerDiscovery configured:', !!config.peerDiscovery);
 		if (config.peerDiscovery) console.log('  peerDiscovery modules:', config.peerDiscovery.length);
 		this.node = await createLibp2p(config);
-		console.log('Port:', settings.network.port);
+		console.log('Port:', allSettings.network?.incomingPort || 0);
 		console.log('Node ID:', this.node.peerId.toString());
 		await this.node.start();
 		console.log('Node started');

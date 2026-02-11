@@ -121,8 +121,11 @@
 	}
 
 	function connectNetwork(network: LISHNetworkConfig) {
-		// TODO: Implement actual connection logic
-		console.log('Connecting to network:', network.name);
+		// Toggle enabled state
+		const newEnabled = !network.enabled;
+		network.enabled = newEnabled;
+		networks = [...networks]; // Trigger reactivity
+		api.networks.setEnabled(network.networkID, newEnabled);
 	}
 
 	async function moveNetwork(index: number, up: boolean) {
@@ -401,7 +404,7 @@
 </style>
 
 {#if showAddEdit}
-	{@const networkForEdit = editingNetwork ? { id: editingNetwork.networkID, name: editingNetwork.name, description: editingNetwork.description, bootstrapServers: editingNetwork.bootstrapPeers.length > 0 ? editingNetwork.bootstrapPeers : [''] } : null}
+	{@const networkForEdit = editingNetwork ? { id: editingNetwork.networkID, key: editingNetwork.key, name: editingNetwork.name, description: editingNetwork.description, bootstrapServers: editingNetwork.bootstrapPeers.length > 0 ? editingNetwork.bootstrapPeers : [''] } : null}
 	<LISHNetworkAddEdit {areaID} {position} network={networkForEdit} onBack={handleAddEditBack} onSave={handleSave} />
 {:else if showExport}
 	<LISHNetworkExport {areaID} {position} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={handleExportBack} />
@@ -433,7 +436,7 @@
 							<div class="network">
 								<div class="name">{network.name}</div>
 								<div class="buttons">
-									<Button icon="/img/connect.svg" label={$t('common.connect')} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
+									<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
 									<Button icon="/img/export.svg" label={$t('common.export')} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openExport(network)} />
 									<Button icon="/img/edit.svg" label={$t('common.edit')} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openEditNetwork(network)} />
 									<Button icon="/img/del.svg" label={$t('common.delete')} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => deleteNetwork(network)} />

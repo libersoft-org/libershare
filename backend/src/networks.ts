@@ -1,38 +1,42 @@
-import { Database as BunDatabase } from 'bun:sqlite';
 import { type ILISHNetwork } from './makenet.ts';
 import { Network } from './network.ts';
 import { type DataServer } from './data-server.ts';
-import { type NetworkDefinition } from '@libershare/shared';
+import { type NetworkDefinition, type LISHNetworkConfig } from '@libershare/shared';
+import { LISHNetworkStorage } from './lishNetworkStorage.ts';
 
 export { type NetworkDefinition };
 
+/**
+ * Convert LISHNetworkConfig to NetworkDefinition (used by Network/libp2p).
+ */
+function toNetworkDef(config: LISHNetworkConfig): NetworkDefinition {
+	return {
+		id: config.networkID,
+		version: config.version,
+		key: config.key,
+		name: config.name,
+		description: config.description || null,
+		bootstrap_peers: config.bootstrapPeers,
+		enabled: config.enabled,
+	};
+}
+
 export class Networks {
-	private db: BunDatabase;
+	private storage: LISHNetworkStorage;
 	private dataDir: string;
 	private dataServer: DataServer;
 	private enablePink: boolean;
 	private liveNetworks: Map<string, Network> = new Map();
 
-	constructor(db: BunDatabase, dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
-		this.db = db;
+	constructor(storage: LISHNetworkStorage, dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
+		this.storage = storage;
 		this.dataDir = dataDir;
 		this.dataServer = dataServer;
 		this.enablePink = enablePink;
 	}
 
 	init(): void {
-		this.db.run(`
-			CREATE TABLE IF NOT EXISTS networks (
-				id TEXT PRIMARY KEY,
-				version INTEGER NOT NULL,
-				key TEXT NOT NULL,
-				name TEXT NOT NULL,
-				description TEXT,
-				bootstrap_peers TEXT NOT NULL,
-				enabled INTEGER NOT NULL DEFAULT 0
-			)
-		`);
-		console.log('✓ Networks table initialized');
+		console.log('✓ Networks initialized (using lishnets.json)');
 	}
 
 	async startEnabledNetworks(): Promise<void> {
@@ -87,30 +91,25 @@ export class Networks {
 	}
 
 	importFromLishnet(data: ILISHNetwork, enabled: boolean = false): NetworkDefinition {
-		const network: NetworkDefinition = {
-			id: data.networkID,
+		const config: LISHNetworkConfig = {
 			version: data.version,
+			networkID: data.networkID,
 			key: data.swarmKey,
 			name: data.name,
-			description: data.description || null,
-			bootstrap_peers: data.bootstrapPeers,
+			description: data.description || '',
+			bootstrapPeers: data.bootstrapPeers,
 			enabled,
+			created: data.created || new Date().toISOString(),
 		};
 
-		const stmt = this.db.query(`
-			INSERT INTO networks (id, version, key, name, description, bootstrap_peers, enabled)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET
-				version = excluded.version,
-				key = excluded.key,
-				name = excluded.name,
-				description = excluded.description,
-				bootstrap_peers = excluded.bootstrap_peers,
-				enabled = excluded.enabled
-		`);
-		stmt.run(network.id, network.version, network.key, network.name, network.description, JSON.stringify(network.bootstrap_peers), network.enabled ? 1 : 0);
+		// Upsert: update if exists, add if not
+		if (this.storage.exists(config.networkID)) {
+			this.storage.update(config);
+		} else {
+			this.storage.add(config);
+		}
 
-		return network;
+		return toNetworkDef(config);
 	}
 
 	async importFromJson(jsonString: string, enabled: boolean = false): Promise<NetworkDefinition> {
@@ -129,99 +128,35 @@ export class Networks {
 	}
 
 	async setEnabled(id: string, enabled: boolean): Promise<boolean> {
-		const stmt = this.db.query('UPDATE networks SET enabled = ? WHERE id = ?');
-		const result = stmt.run(enabled ? 1 : 0, id);
-		if (result.changes > 0) {
-			if (enabled) {
-				await this.startNetwork(id);
-			} else {
-				await this.stopNetwork(id);
-			}
-			return true;
-		}
-		return false;
+		const config = this.storage.get(id);
+		if (!config) return false;
+		config.enabled = enabled;
+		this.storage.update(config);
+		if (enabled) await this.startNetwork(id);
+		else await this.stopNetwork(id);
+		return true;
 	}
 
 	get(id: string): NetworkDefinition | null {
-		const stmt = this.db.query('SELECT * FROM networks WHERE id = ?');
-		const row = stmt.get(id) as {
-			id: string;
-			version: number;
-			key: string;
-			name: string;
-			description: string | null;
-			bootstrap_peers: string;
-			enabled: number;
-		} | null;
-
-		if (!row) return null;
-
-		return {
-			id: row.id,
-			version: row.version,
-			key: row.key,
-			name: row.name,
-			description: row.description,
-			bootstrap_peers: JSON.parse(row.bootstrap_peers),
-			enabled: row.enabled === 1,
-		};
+		const config = this.storage.get(id);
+		if (!config) return null;
+		return toNetworkDef(config);
 	}
 
 	getAll(): NetworkDefinition[] {
-		const stmt = this.db.query('SELECT * FROM networks');
-		const rows = stmt.all() as {
-			id: string;
-			version: number;
-			key: string;
-			name: string;
-			description: string | null;
-			bootstrap_peers: string;
-			enabled: number;
-		}[];
-
-		return rows.map(row => ({
-			id: row.id,
-			version: row.version,
-			key: row.key,
-			name: row.name,
-			description: row.description,
-			bootstrap_peers: JSON.parse(row.bootstrap_peers),
-			enabled: row.enabled === 1,
-		}));
+		return this.storage.getAll().map(toNetworkDef);
 	}
 
 	getEnabled(): NetworkDefinition[] {
-		const stmt = this.db.query('SELECT * FROM networks WHERE enabled = 1');
-		const rows = stmt.all() as {
-			id: string;
-			version: number;
-			key: string;
-			name: string;
-			description: string | null;
-			bootstrap_peers: string;
-			enabled: number;
-		}[];
-
-		return rows.map(row => ({
-			id: row.id,
-			version: row.version,
-			key: row.key,
-			name: row.name,
-			description: row.description,
-			bootstrap_peers: JSON.parse(row.bootstrap_peers),
-			enabled: true,
-		}));
+		return this.storage.getAll().filter(c => c.enabled).map(toNetworkDef);
 	}
 
 	async delete(id: string): Promise<boolean> {
 		await this.setEnabled(id, false);
-		const stmt = this.db.query('DELETE FROM networks WHERE id = ?');
-		const result = stmt.run(id);
-		return result.changes > 0;
+		return this.storage.delete(id);
 	}
 
 	exists(id: string): boolean {
-		const stmt = this.db.query('SELECT 1 FROM networks WHERE id = ?');
-		return stmt.get(id) !== null;
+		return this.storage.exists(id);
 	}
 }

@@ -3,7 +3,7 @@ import { type Database } from './database.ts';
 import { type DataServer } from './data-server.ts';
 import { type Networks } from './networks.ts';
 import { Settings } from './settings.ts';
-import { LISHNetworkStorage } from './lishNetworkStorage.ts';
+import { type LISHNetworkStorage } from './lishNetworkStorage.ts';
 import { Downloader } from './downloader.ts';
 import { join } from 'path';
 import { fsInfo, fsList, fsDelete, fsMkdir, fsOpen, fsRename, fsWriteText, fsReadText, fsExists } from './fs.ts';
@@ -45,10 +45,11 @@ export class ApiServer {
 		private readonly db: Database,
 		private readonly dataServer: DataServer,
 		private readonly networks: Networks,
+		lishNetworks: LISHNetworkStorage,
 		options: ApiServerOptions = {}
 	) {
 		this.settings = new Settings(dataDir);
-		this.lishNetworks = new LISHNetworkStorage(dataDir);
+		this.lishNetworks = lishNetworks;
 		this.host = options.host ?? 'localhost';
 		this.port = options.port ?? 1158;
 		this.secure = options.secure ?? false;
@@ -58,7 +59,6 @@ export class ApiServer {
 
 	start(): void {
 		const self = this;
-
 		const serverConfig: Parameters<typeof Bun.serve<ClientData>>[0] = {
 			port: this.port,
 			hostname: this.host,
@@ -84,24 +84,18 @@ export class ApiServer {
 				},
 			},
 		};
-
 		if (this.secure) {
-			if (!this.keyFile || !this.certFile) {
-				throw new Error('--secure requires --privkey and --pubkey');
-			}
+			if (!this.keyFile || !this.certFile) throw new Error('--secure requires --privkey and --pubkey');
 			serverConfig.tls = {
 				key: Bun.file(this.keyFile),
 				cert: Bun.file(this.certFile),
 			};
 		}
-
 		this.server = Bun.serve<ClientData>(serverConfig);
-
 		// Start broadcasting stats every second
 		this.statsInterval = setInterval(() => {
 			if (this.clients.size > 0) this.broadcastStats();
 		}, 1000);
-
 		const protocol = this.secure ? 'wss' : 'ws';
 		console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${this.port}`);
 	}

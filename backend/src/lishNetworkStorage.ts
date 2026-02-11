@@ -2,9 +2,11 @@ import { ArrayStorage } from './storage.ts';
 export interface LISHNetworkConfig {
 	version: number;
 	networkID: string;
+	key: string;
 	name: string;
 	description: string;
 	bootstrapPeers: string[];
+	enabled: boolean;
 	created: string;
 }
 

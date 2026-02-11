@@ -60,9 +60,11 @@ export function validateNetwork(obj: unknown): LISHNetworkConfig | null {
 	return {
 		version: (parsed.version as number) ?? 1,
 		networkID: parsed.networkID.trim(),
+		key: typeof parsed.key === 'string' ? parsed.key : '',
 		name: parsed.name.trim(),
 		description: typeof parsed.description === 'string' ? parsed.description : '',
 		bootstrapPeers,
+		enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : false,
 		created: (parsed.created as string) ?? new Date().toISOString(),
 	};
 }
@@ -137,6 +139,7 @@ export async function exportAllNetworksToJson(): Promise<string> {
 
 export interface NetworkFormData {
 	id: string;
+	key: string;
 	name: string;
 	description: string;
 	bootstrapServers: string[];
@@ -148,6 +151,7 @@ export interface NetworkFormData {
 export function networkToFormData(network: LISHNetworkConfig): NetworkFormData {
 	return {
 		id: network.networkID,
+		key: network.key,
 		name: network.name,
 		description: network.description,
 		bootstrapServers: network.bootstrapPeers.length > 0 ? [...network.bootstrapPeers] : [''],
@@ -161,9 +165,11 @@ export function formDataToNetwork(formData: NetworkFormData, existingNetwork?: L
 	return {
 		version: 1,
 		networkID: formData.id,
+		key: formData.key || existingNetwork?.key || '',
 		name: formData.name,
 		description: formData.description,
 		bootstrapPeers: formData.bootstrapServers.filter(s => s.trim() !== ''),
+		enabled: existingNetwork?.enabled || false,
 		created: existingNetwork?.created || new Date().toISOString(),
 	};
 }
@@ -228,7 +234,7 @@ export function getNetworkErrorMessage(errorCode: string, t: (key: string) => st
 // Form Field Mapping (for SettingsLISHNetworkAddEdit)
 // ============================================================================
 
-export type NetworkFormFieldType = 'name' | 'description' | 'autoGenerate' | 'networkID' | 'bootstrap' | 'save' | 'back';
+export type NetworkFormFieldType = 'name' | 'description' | 'autoGenerate' | 'networkID' | 'key' | 'bootstrap' | 'save' | 'back';
 
 export interface NetworkFormFieldInfo {
 	type: NetworkFormFieldType;
@@ -245,17 +251,19 @@ export function getNetworkFormFieldType(index: number, isEditing: boolean, boots
 	if (index === 0) return { type: 'name' };
 	if (index === 1) return { type: 'description' };
 	if (isEditing) {
-		// When editing: no switch row, networkID at 2, bootstrap from 3
+		// When editing: no switch row, networkID at 2, key at 3, bootstrap from 4
 		if (index === 2) return { type: 'networkID' };
-		if (index < 3 + bootstrapServersCount) return { type: 'bootstrap', bootstrapIndex: index - 3 };
-		if (index === 3 + bootstrapServersCount) return { type: 'save' };
-		return { type: 'back' };
-	} else {
-		// When adding: switch at 2, networkID at 3, bootstrap from 4
-		if (index === 2) return { type: 'autoGenerate' };
-		if (index === 3) return { type: 'networkID' };
+		if (index === 3) return { type: 'key' };
 		if (index < 4 + bootstrapServersCount) return { type: 'bootstrap', bootstrapIndex: index - 4 };
 		if (index === 4 + bootstrapServersCount) return { type: 'save' };
+		return { type: 'back' };
+	} else {
+		// When adding: switch at 2, networkID at 3, key at 4, bootstrap from 5
+		if (index === 2) return { type: 'autoGenerate' };
+		if (index === 3) return { type: 'networkID' };
+		if (index === 4) return { type: 'key' };
+		if (index < 5 + bootstrapServersCount) return { type: 'bootstrap', bootstrapIndex: index - 5 };
+		if (index === 5 + bootstrapServersCount) return { type: 'save' };
 		return { type: 'back' };
 	}
 }

@@ -4,6 +4,7 @@ import { Downloader } from './downloader.ts';
 import { DataServer } from './data-server.ts';
 import { Database } from './database.ts';
 import { ApiServer } from './api.ts';
+import { LISHNetworkStorage } from './lishNetworkStorage.ts';
 import * as readline from 'readline';
 import { join } from 'path';
 
@@ -46,32 +47,17 @@ for (let i = 0; i < args.length; i++) {
 
 setupLogger(logLevel);
 
-const file = Bun.file(dataDir + '/settings.json');
-if (!(await file.exists())) {
-	let settings = {
-		network: {
-			port: 9090,
-			bootstrapPeers: [],
-		},
-		relay: {
-			server: {
-				enabled: true,
-			},
-		},
-	};
-	await file.write(JSON.stringify(settings, null, 1));
-}
-
 const db = new Database(dataDir);
 await db.init();
 
 const dataServer = new DataServer(dataDir, db);
 await dataServer.init();
 
-const networks = new Networks(db.getDb(), dataDir, dataServer, enablePink);
+const lishNetworkStorage = new LISHNetworkStorage(dataDir);
+const networks = new Networks(lishNetworkStorage, dataDir, dataServer, enablePink);
 networks.init();
 
-const apiServer = new ApiServer(dataDir, db, dataServer, networks, {
+const apiServer = new ApiServer(dataDir, db, dataServer, networks, lishNetworkStorage, {
 	host: apiHost,
 	port: apiPort,
 	secure: apiSecure,

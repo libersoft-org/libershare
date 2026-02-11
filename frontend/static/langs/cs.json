@@ -23,6 +23,7 @@
 		"export": "Exportovat",
 		"exportAll": "Exportovat vše",
 		"connect": "Připojit",
+		"disconnect": "Odpojit",
 		"connected": "Připojeno",
 		"disconnected": "Odpojeno",
 		"notUsed": "Nepoužíváno",
@@ -80,7 +81,6 @@
 			"inputPath": "Vstup (soubor nebo složka)",
 			"saveToFile": "Uložit do souboru .lish",
 			"outputPath": "Výstupní soubor (volitelné)",
-
 			"name": "Název (volitelné)",
 			"description": "Popis (volitelné)",
 			"chunkSize": "Velikost chunku (B, K, M, G, T)",
@@ -136,6 +136,7 @@
 			"name": "Název",
 			"description": "Popis",
 			"networkID": "ID sítě",
+			"key": "Klíč sítě",
 			"autoGenerate": "Automaticky vygenerovat ID sítě (nová síť)",
 			"bootstrapServers": "Bootstrap servery",
 			"errorNameRequired": "Název sítě je povinný",
