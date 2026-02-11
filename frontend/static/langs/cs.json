@@ -127,6 +127,7 @@
 			"maxUploadConnections": "Maximální počet spojení pro odesílání",
 			"maxDownloadSpeed": "Maximální rychlost stahování (0 = neomezeno)",
 			"maxUploadSpeed": "Maximální rychlost odesílání (0 = neomezeno)",
+			"allowRelay": "Povolit předávání (přeposílat data pro ostatní účastníky)",
 			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH (výchozí hodnota)"
 		},
 		"lishNetwork": {

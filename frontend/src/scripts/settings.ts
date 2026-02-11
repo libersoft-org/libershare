@@ -30,6 +30,7 @@ export const maxDownloadConnections = writable(200);
 export const maxUploadConnections = writable(200);
 export const maxDownloadSpeed = writable(0);
 export const maxUploadSpeed = writable(0);
+export const allowRelay = writable(true);
 export const autoStartSharing = writable(true);
 export const autoStartOnBoot = writable(true);
 export const showInTray = writable(true);
@@ -47,6 +48,7 @@ export const DEFAULT_MAX_DOWNLOAD_CONNECTIONS = 200;
 export const DEFAULT_MAX_UPLOAD_CONNECTIONS = 200;
 export const DEFAULT_MAX_DOWNLOAD_SPEED = 0;
 export const DEFAULT_MAX_UPLOAD_SPEED = 0;
+export const DEFAULT_ALLOW_RELAY = true;
 export const DEFAULT_AUTO_START_SHARING = true;
 export const DEFAULT_MINIFY_JSON = false;
 export const DEFAULT_COMPRESS_GZIP = false;
@@ -95,6 +97,7 @@ export async function loadSettings(): Promise<void> {
 		maxUploadConnections.set(settings.network?.maxUploadConnections ?? DEFAULT_MAX_UPLOAD_CONNECTIONS);
 		maxDownloadSpeed.set(settings.network?.maxDownloadSpeed ?? DEFAULT_MAX_DOWNLOAD_SPEED);
 		maxUploadSpeed.set(settings.network?.maxUploadSpeed ?? DEFAULT_MAX_UPLOAD_SPEED);
+		allowRelay.set(settings.network?.allowRelay ?? DEFAULT_ALLOW_RELAY);
 		autoStartSharing.set(settings.network?.autoStartSharing ?? DEFAULT_AUTO_START_SHARING);
 
 		// System
@@ -189,6 +192,10 @@ export function setMaxDownloadSpeed(value: number): void {
 export function setMaxUploadSpeed(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
 	updateSetting(maxUploadSpeed, 'network.maxUploadSpeed', clampedValue);
+}
+
+export function setAllowRelay(enabled: boolean): void {
+	updateSetting(allowRelay, 'network.allowRelay', enabled);
 }
 
 export function setAutoStartSharing(enabled: boolean): void {

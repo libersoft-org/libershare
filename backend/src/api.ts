@@ -99,9 +99,7 @@ export class ApiServer {
 
 		// Start broadcasting stats every second
 		this.statsInterval = setInterval(() => {
-			if (this.clients.size > 0) {
-				this.broadcastStats();
-			}
+			if (this.clients.size > 0) this.broadcastStats();
 		}, 1000);
 
 		const protocol = this.secure ? 'wss' : 'ws';
@@ -470,9 +468,7 @@ export class ApiServer {
 			},
 			peers: this.networks.getEnabled().reduce((acc, nw) => {
 				const liveNw = this.networks.getLiveNetwork(nw.id);
-				if (liveNw && (liveNw as any).node) {
-					return acc + (liveNw as any).node.getPeers().length;
-				}
+				if (liveNw && (liveNw as any).node) return acc + (liveNw as any).node.getPeers().length;
 				return acc;
 			}, 0),
 			datasets: {
@@ -511,8 +507,6 @@ export class ApiServer {
 	}
 
 	private emit(client: ClientSocket, event: string, data: any): void {
-		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
-			client.send(JSON.stringify({ event, data }));
-		}
+		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) client.send(JSON.stringify({ event, data }));
 	}
 }
