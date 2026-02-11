@@ -27,6 +27,7 @@ export interface FrontendSettings {
 		maxDownloadSpeed: number;
 		maxUploadSpeed: number;
 		allowRelay: boolean;
+		maxRelayReservations: number;
 		autoStartSharing: boolean;
 	};
 	system: {
@@ -83,6 +84,7 @@ const DEFAULT_SETTINGS: FrontendSettings = {
 		maxDownloadSpeed: 0,
 		maxUploadSpeed: 0,
 		allowRelay: true,
+		maxRelayReservations: 0,
 		autoStartSharing: true,
 	},
 	system: {

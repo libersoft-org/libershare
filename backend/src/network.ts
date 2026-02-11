@@ -170,13 +170,14 @@ export class Network {
 
 		// Add relay server service if enabled
 		if (settings.relay?.server?.enabled) {
-			const maxReservations = settings.relay.server.maxReservations || 15;
+			const maxReservationsRaw = settings.relay.server.maxReservations ?? 0;
+			const maxReservations = maxReservationsRaw === 0 ? Infinity : maxReservationsRaw;
 			config.services.relay = circuitRelayServer({
 				reservations: {
 					maxReservations,
 				},
 			});
-			console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservations})`);
+			console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservationsRaw === 0 ? 'unlimited' : maxReservationsRaw})`);
 		}
 
 		// Add autonat service if client mode is 'auto'

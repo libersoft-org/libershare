@@ -6,7 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, storageTempPath, storageLishPath, storageLishnetPath, setStoragePath, setStorageTempPath, setStorageLishPath, setStorageLishnetPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, allowRelay, autoStartSharing, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAllowRelay, setAutoStartSharing, DEFAULT_STORAGE_PATH, DEFAULT_STORAGE_TEMP_PATH, DEFAULT_STORAGE_LISH_PATH, DEFAULT_STORAGE_LISHNET_PATH, DEFAULT_INCOMING_PORT, DEFAULT_MAX_DOWNLOAD_CONNECTIONS, DEFAULT_MAX_UPLOAD_CONNECTIONS, DEFAULT_MAX_DOWNLOAD_SPEED, DEFAULT_MAX_UPLOAD_SPEED, DEFAULT_ALLOW_RELAY, DEFAULT_AUTO_START_SHARING } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLishPath, storageLishnetPath, setStoragePath, setStorageTempPath, setStorageLishPath, setStorageLishnetPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, allowRelay, maxRelayReservations, autoStartSharing, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, DEFAULT_STORAGE_PATH, DEFAULT_STORAGE_TEMP_PATH, DEFAULT_STORAGE_LISH_PATH, DEFAULT_STORAGE_LISHNET_PATH, DEFAULT_INCOMING_PORT, DEFAULT_MAX_DOWNLOAD_CONNECTIONS, DEFAULT_MAX_UPLOAD_CONNECTIONS, DEFAULT_MAX_DOWNLOAD_SPEED, DEFAULT_MAX_UPLOAD_SPEED, DEFAULT_ALLOW_RELAY, DEFAULT_MAX_RELAY_RESERVATIONS, DEFAULT_AUTO_START_SHARING } from '../../scripts/settings.ts';
 	import { scrollToElement, normalizePath } from '../../scripts/utils.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -38,6 +38,7 @@
 	let downloadSpeed = $state($maxDownloadSpeed.toString());
 	let uploadSpeed = $state($maxUploadSpeed.toString());
 	let relay = $state($allowRelay);
+	let relayReservations = $state($maxRelayReservations.toString());
 	let autoStart = $state($autoStartSharing);
 
 	let storagePathRef: Input | undefined = $state();
@@ -49,6 +50,7 @@
 	let uploadConnectionsRef: Input | undefined = $state();
 	let downloadSpeedRef: Input | undefined = $state();
 	let uploadSpeedRef: Input | undefined = $state();
+	let relayReservationsRef: Input | undefined = $state();
 
 	// Field indices
 	const FIELD_STORAGE_PATH = 0;
@@ -61,9 +63,10 @@
 	const FIELD_DOWNLOAD_SPEED = 7;
 	const FIELD_UPLOAD_SPEED = 8;
 	const FIELD_ALLOW_RELAY = 9;
-	const FIELD_AUTO_START = 10;
-	const FIELD_BUTTONS = 11;
-	const totalItems = 12;
+	const FIELD_RELAY_RESERVATIONS = 10;
+	const FIELD_AUTO_START = 11;
+	const FIELD_BUTTONS = 12;
+	const totalItems = 13;
 
 	// Browse functions
 	function openBrowse(type: 'storage' | 'temp' | 'lish' | 'lishnet') {
@@ -134,6 +137,11 @@
 		uploadSpeed = $maxUploadSpeed.toString();
 	}
 
+	function saveRelayReservations() {
+		setMaxRelayReservations(parseInt(relayReservations) || 100);
+		relayReservations = $maxRelayReservations.toString();
+	}
+
 	function saveAll() {
 		setStoragePath(storagePathValue);
 		setStorageTempPath(tempPathValue);
@@ -144,6 +152,7 @@
 		saveUploadConnections();
 		saveDownloadSpeed();
 		saveUploadSpeed();
+		saveRelayReservations();
 	}
 
 	function handleSave() {
@@ -192,6 +201,9 @@
 	function resetAllowRelay() {
 		relay = DEFAULT_ALLOW_RELAY;
 	}
+	function resetRelayReservations() {
+		relayReservations = DEFAULT_MAX_RELAY_RESERVATIONS.toString();
+	}
 	function resetAutoStart() {
 		autoStart = DEFAULT_AUTO_START_SHARING;
 	}
@@ -228,7 +240,7 @@
 					return false;
 				},
 				right: () => {
-					const maxCol = selectedIndex === FIELD_STORAGE_PATH || selectedIndex === FIELD_TEMP_PATH || selectedIndex === FIELD_LISH_PATH || selectedIndex === FIELD_LISHNET_PATH ? 2 : selectedIndex === FIELD_PORT || selectedIndex === FIELD_DOWNLOAD_CONNECTIONS || selectedIndex === FIELD_UPLOAD_CONNECTIONS || selectedIndex === FIELD_DOWNLOAD_SPEED || selectedIndex === FIELD_UPLOAD_SPEED ? 1 : selectedIndex === FIELD_BUTTONS ? 1 : 0;
+					const maxCol = selectedIndex === FIELD_STORAGE_PATH || selectedIndex === FIELD_TEMP_PATH || selectedIndex === FIELD_LISH_PATH || selectedIndex === FIELD_LISHNET_PATH ? 2 : selectedIndex === FIELD_PORT || selectedIndex === FIELD_DOWNLOAD_CONNECTIONS || selectedIndex === FIELD_UPLOAD_CONNECTIONS || selectedIndex === FIELD_DOWNLOAD_SPEED || selectedIndex === FIELD_UPLOAD_SPEED || selectedIndex === FIELD_RELAY_RESERVATIONS ? 1 : selectedIndex === FIELD_BUTTONS ? 1 : 0;
 					if (selectedColumn < maxCol) {
 						selectedColumn++;
 						return true;
@@ -245,6 +257,7 @@
 					else if (selectedIndex === FIELD_UPLOAD_CONNECTIONS && selectedColumn === 0) uploadConnectionsRef?.focus();
 					else if (selectedIndex === FIELD_DOWNLOAD_SPEED && selectedColumn === 0) downloadSpeedRef?.focus();
 					else if (selectedIndex === FIELD_UPLOAD_SPEED && selectedColumn === 0) uploadSpeedRef?.focus();
+					else if (selectedIndex === FIELD_RELAY_RESERVATIONS && selectedColumn === 0) relayReservationsRef?.focus();
 				},
 				confirmUp: () => {
 					if (selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 1) openBrowse('storage');
@@ -260,6 +273,7 @@
 					else if (selectedIndex === FIELD_UPLOAD_CONNECTIONS && selectedColumn === 1) resetUploadConnections();
 					else if (selectedIndex === FIELD_DOWNLOAD_SPEED && selectedColumn === 1) resetDownloadSpeed();
 					else if (selectedIndex === FIELD_UPLOAD_SPEED && selectedColumn === 1) resetUploadSpeed();
+					else if (selectedIndex === FIELD_RELAY_RESERVATIONS && selectedColumn === 1) resetRelayReservations();
 					else if (selectedIndex === FIELD_ALLOW_RELAY) toggleAllowRelay();
 					else if (selectedIndex === FIELD_AUTO_START) toggleAutoStart();
 					else if (selectedIndex === FIELD_BUTTONS) {
@@ -365,6 +379,10 @@
 			</div>
 			<div bind:this={rowElements[FIELD_ALLOW_RELAY]}>
 				<SwitchRow label={$t('settings.download.allowRelay') + ':'} checked={relay} selected={active && selectedIndex === FIELD_ALLOW_RELAY} onToggle={toggleAllowRelay} />
+			</div>
+			<div class="row" bind:this={rowElements[FIELD_RELAY_RESERVATIONS]}>
+				<Input bind:this={relayReservationsRef} bind:value={relayReservations} label={$t('settings.download.maxRelayReservations')} type="number" selected={active && selectedIndex === FIELD_RELAY_RESERVATIONS && selectedColumn === 0} flex />
+				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_RELAY_RESERVATIONS && selectedColumn === 1} onConfirm={resetRelayReservations} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div bind:this={rowElements[FIELD_AUTO_START]}>
 				<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} selected={active && selectedIndex === FIELD_AUTO_START} onToggle={toggleAutoStart} />

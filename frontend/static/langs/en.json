@@ -126,7 +126,8 @@
 			"maxUploadConnections": "Maximum upload connections",
 			"maxDownloadSpeed": "Maximum download speed (0 = unlimited)",
 			"maxUploadSpeed": "Maximum upload speed (0 = unlimited)",
-			"allowRelay": "Allow relay (relay data for other peers)",
+			"allowRelay": "Enable relay server (relay data for other peers)",
+			"maxRelayReservations": "Maximum number of connections to relay server (0 = unlimited)",
 			"autoStartSharingDefault": "Automatically start sharing after adding a LISH (default value)"
 		},
 		"lishNetwork": {
