@@ -1,6 +1,6 @@
 import { JsonStorage } from './storage.ts';
 
-export interface FrontendSettings {
+export interface SettingsData {
 	language: string;
 	ui: {
 		cursorSize: 'small' | 'medium' | 'large';
@@ -46,7 +46,7 @@ export interface FrontendSettings {
 	};
 }
 
-const DEFAULT_SETTINGS: FrontendSettings = {
+const DEFAULT_SETTINGS: SettingsData = {
 	language: 'en',
 	ui: {
 		cursorSize: 'medium',
@@ -104,14 +104,14 @@ const DEFAULT_SETTINGS: FrontendSettings = {
 };
 
 /**
- * Frontend settings storage.
- * Wraps JsonStorage with FrontendSettings type.
+ * Settings storage.
+ * Wraps JsonStorage with SettingsData type.
  */
 export class Settings {
-	private storage: JsonStorage<FrontendSettings>;
+	private storage: JsonStorage<SettingsData>;
 
 	constructor(dataDir: string) {
-		this.storage = new JsonStorage(dataDir, 'frontend-settings.json', DEFAULT_SETTINGS);
+		this.storage = new JsonStorage(dataDir, 'settings.json', DEFAULT_SETTINGS);
 	}
 
 	get(path?: string): any {
@@ -122,11 +122,11 @@ export class Settings {
 		this.storage.set(path, value);
 	}
 
-	getAll(): FrontendSettings {
+	getAll(): SettingsData {
 		return this.storage.getAll();
 	}
 
-	reset(): FrontendSettings {
+	reset(): SettingsData {
 		return this.storage.reset();
 	}
 }

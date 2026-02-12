@@ -88,8 +88,8 @@ export class Network {
 	async start() {
 		if (!this.networkDef) throw new Error('NetworkDefinition is required to start a network');
 		// Load settings from frontend-settings.json
-		const frontendSettings = new Settings(this.dataDir);
-		const allSettings = frontendSettings.getAll();
+		const settings = new Settings(this.dataDir);
+		const allSettings = settings.getAll();
 		console.log(`Decoding swarm key from base62...`);
 		const swarmKey = Utils.decodeBase62(this.networkDef.key);
 		const bootstrapPeers = this.networkDef.bootstrap_peers;
