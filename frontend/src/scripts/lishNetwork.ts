@@ -122,7 +122,9 @@ export async function importNetworksFromJson(json: string): Promise<{ imported: 
  */
 export async function exportNetworkToJson(networkID: string): Promise<string> {
 	const network = await getNetworkById(networkID);
-	return network ? JSON.stringify(network, null, '\t') : '';
+	if (!network) return '';
+	const { enabled, ...exportData } = network;
+	return JSON.stringify(exportData, null, '\t');
 }
 
 /**
@@ -130,7 +132,8 @@ export async function exportNetworkToJson(networkID: string): Promise<string> {
  */
 export async function exportAllNetworksToJson(): Promise<string> {
 	const networks = await getNetworks();
-	return JSON.stringify(networks, null, '\t');
+	const exportData = networks.map(({ enabled, ...rest }) => rest);
+	return JSON.stringify(exportData, null, '\t');
 }
 
 // ============================================================================
