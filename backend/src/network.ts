@@ -184,24 +184,34 @@ export class Network {
 		// Add bootstrap if peers are configured
 		if (bootstrapPeers.length > 0) {
 			console.log('Configuring bootstrap peers:');
+			const validBootstrapPeers: string[] = [];
 			for (const peer of bootstrapPeers) {
 				console.log('  -', peer);
 				// Extract peer ID and store full multiaddr for direct dialing
-				const ma = Multiaddr(peer);
-				const peerId = ma.getPeerId();
-				if (peerId) {
-					this.bootstrapPeerIds.add(peerId);
-					this.bootstrapMultiaddrs.push(ma);
+				try {
+					const ma = Multiaddr(peer);
+					const peerId = ma.getPeerId();
+					if (peerId) {
+						this.bootstrapPeerIds.add(peerId);
+						this.bootstrapMultiaddrs.push(ma);
+					}
+					validBootstrapPeers.push(peer);
+				} catch (error: any) {
+					console.log('  ⚠️  Skipping invalid multiaddr:', peer, '-', error.message);
 				}
 			}
-			config.peerDiscovery = [
-				bootstrap({
-					list: bootstrapPeers,
-					timeout: 1000,
-					tagTTL: 2147483647, // ~68 years in ms - effectively never expires
-					tagValue: 100, // High priority (default 50) - pruned last
-				}),
-			];
+			if (validBootstrapPeers.length === 0) {
+				console.log('⚠️  No valid bootstrap peers found!');
+			} else {
+				config.peerDiscovery = [
+					bootstrap({
+						list: validBootstrapPeers,
+						timeout: 1000,
+						tagTTL: 2147483647, // ~68 years in ms - effectively never expires
+						tagValue: 100, // High priority (default 50) - pruned last
+					}),
+				];
+			}
 		} else {
 			console.log('⚠️  No bootstrap peers configured!');
 			console.log('   Add bootstrap peers.');

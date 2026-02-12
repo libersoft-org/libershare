@@ -51,15 +51,18 @@ export class Networks {
 			console.log(`Network ${id} is already running`);
 			return this.liveNetworks.get(id)!;
 		}
-
 		const def = this.get(id);
 		if (!def) {
 			console.log(`Network ${id} not found`);
 			return null;
 		}
-
 		const network = new Network(this.dataDir, this.dataServer, this.enablePink, def);
-		await network.start();
+		try {
+			await network.start();
+		} catch (error: any) {
+			console.log(`⚠️  Failed to start network "${def.name}" (${id}): ${error.message}`);
+			return null;
+		}
 		this.liveNetworks.set(id, network);
 		console.log(`✓ Started network: ${def.name} (${id})`);
 		return network;
@@ -101,23 +104,16 @@ export class Networks {
 			enabled,
 			created: data.created || new Date().toISOString(),
 		};
-
 		// Upsert: update if exists, add if not
-		if (this.storage.exists(config.networkID)) {
-			this.storage.update(config);
-		} else {
-			this.storage.add(config);
-		}
-
+		if (this.storage.exists(config.networkID)) this.storage.update(config);
+		else this.storage.add(config);
 		return toNetworkDef(config);
 	}
 
 	async importFromJson(jsonString: string, enabled: boolean = false): Promise<NetworkDefinition> {
 		const data: ILISHNetwork = JSON.parse(jsonString);
 		const def = this.importFromLishnet(data, enabled);
-		if (enabled) {
-			await this.startNetwork(def.id);
-		}
+		if (enabled) await this.startNetwork(def.id);
 		return def;
 	}
 
@@ -148,7 +144,10 @@ export class Networks {
 	}
 
 	getEnabled(): NetworkDefinition[] {
-		return this.storage.getAll().filter(c => c.enabled).map(toNetworkDef);
+		return this.storage
+			.getAll()
+			.filter(c => c.enabled)
+			.map(toNetworkDef);
 	}
 
 	async delete(id: string): Promise<boolean> {
