@@ -47,7 +47,7 @@ export interface SettingsData {
 }
 
 const DEFAULT_SETTINGS: SettingsData = {
-	language: 'en',
+	language: '',
 	ui: {
 		cursorSize: 'medium',
 		footerVisible: true,

@@ -37,11 +37,9 @@ currentLanguage.subscribe(async langId => {
 // Initialize with browser language or default
 initLanguage();
 
-async function initLanguage(): Promise<void> {
+function initLanguage(): void {
 	const browserLang = navigator.language?.split('-')[0];
 	const initialLang = (browserLang && languages.some(l => l.id === browserLang)) ? browserLang : 'en';
-	const data = await loadLanguage(initialLang);
-	translations.set(data);
 	currentLanguage.set(initialLang);
 }
 
