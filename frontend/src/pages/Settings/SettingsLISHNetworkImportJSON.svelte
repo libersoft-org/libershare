@@ -4,11 +4,13 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { importNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { parseNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { type LISHNetworkDefinition } from '@libershare/shared';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
+	import ImportOverwrite from './SettingsLISHNetworkImportOverwrite.svelte';
 
 	interface Props {
 		areaID: string;
@@ -18,20 +20,31 @@
 		onImport?: () => void;
 	}
 	let { areaID, position = LAYOUT.content, initialFilePath = '', onBack, onImport }: Props = $props();
+	let unregisterArea: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0); // 0 = input, 1 = buttons row
 	let selectedColumn = $state(0); // 0 = import, 1 = back
 	let inputRef: Input | undefined = $state();
 	let networkJson = $state('');
 	let errorMessage = $state('');
+	let parsedNetworks = $state<LISHNetworkDefinition[] | null>(null);
 
 	async function handleImport() {
 		errorMessage = '';
-		const result = await importNetworksFromJson(networkJson);
+		const result = parseNetworksFromJson(networkJson);
 		if (result.error) {
 			errorMessage = getNetworkErrorMessage(result.error, $t);
 			return;
 		}
+		parsedNetworks = result.networks;
+		// Unregister our area - ImportOverwrite/ConfirmDialog will create its own
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
+	}
+
+	function handleImportDone() {
 		onImport?.();
 		onBack?.();
 		onBack?.();
@@ -57,9 +70,8 @@
 		}
 	}
 
-	onMount(() => {
-		loadInitialFile();
-		const unregister = useArea(
+	function registerAreaHandler() {
+		return useArea(
 			areaID,
 			{
 				up: () => {
@@ -108,8 +120,15 @@
 			},
 			position
 		);
+	}
+
+	onMount(() => {
+		loadInitialFile();
+		unregisterArea = registerAreaHandler();
 		activateArea(areaID);
-		return unregister;
+		return () => {
+			if (unregisterArea) unregisterArea();
+		};
 	});
 </script>
 
@@ -138,6 +157,9 @@
 	}
 </style>
 
+{#if parsedNetworks}
+	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleImportDone} />
+{:else}
 <div class="import">
 	<div class="container">
 		<Input bind:this={inputRef} bind:value={networkJson} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} placeholder={'{"networkID": "...", "name": "...", ...}'} />
@@ -150,3 +172,4 @@
 		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
 	</div>
 </div>
+{/if}

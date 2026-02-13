@@ -20,11 +20,13 @@ function getNestedValue(obj: any, path: string): string | undefined {
 	return typeof result === 'string' ? result : undefined;
 }
 
-// Reactive translation function - use as $t('common.back') in components
+// Reactive translation function - use as $t('common.back') or $t('key', { name: 'foo' }) in components
 // Returns the translation value or '{key}' fallback if missing
+// When vars are provided, replaces {placeholder} tokens with values
 export const t = derived(translations, $translations => {
-	return (key: string): string => {
-		return getNestedValue($translations, key) ?? `{${key}}`;
+	return (key: string, vars?: Record<string, string>): string => {
+		const text = getNestedValue($translations, key) ?? `{${key}}`;
+		return vars ? text.replace(/\{(\w+)\}/g, (match, k) => vars[k] ?? match) : text;
 	};
 });
 
@@ -73,10 +75,11 @@ export function getFlagUrl(langId: string): string {
 	return `/node_modules/country-flags/svg/${flagCode}.svg`;
 }
 
-// Function for translations outside components - use as tt('common.back')
-export function tt(key: string): string {
+// Function for translations outside components - use as tt('common.back') or tt('key', { name: 'foo' })
+export function tt(key: string, vars?: Record<string, string>): string {
 	const current = get(translations);
-	return getNestedValue(current, key) ?? `{${key}}`;
+	const text = getNestedValue(current, key) ?? `{${key}}`;
+	return vars ? text.replace(/\{(\w+)\}/g, (match, k) => vars[k] ?? match) : text;
 }
 
 // Helper to append optional detail to a message: withDetail("Failed", error) → "Failed: error"

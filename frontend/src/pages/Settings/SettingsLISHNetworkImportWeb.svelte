@@ -4,11 +4,13 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { importNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { parseNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { type LISHNetworkDefinition } from '@libershare/shared';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
+	import ImportOverwrite from './SettingsLISHNetworkImportOverwrite.svelte';
 
 	interface Props {
 		areaID: string;
@@ -17,6 +19,7 @@
 		onImport?: () => void;
 	}
 	let { areaID, position = LAYOUT.content, onBack, onImport }: Props = $props();
+	let unregisterArea: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
 	// 0 = url, 1 = buttons row
 	let selectedIndex = $state(0);
@@ -25,6 +28,7 @@
 	let url = $state('');
 	let errorMessage = $state('');
 	let loading = $state(false);
+	let parsedNetworks = $state<LISHNetworkDefinition[] | null>(null);
 
 	function getMaxColumn(index: number): number {
 		if (index === 1) return 1; // import, back
@@ -45,19 +49,28 @@
 				errorMessage = `HTTP ${response.status}`;
 				return;
 			}
-			const result = await importNetworksFromJson(response.content);
+			const result = parseNetworksFromJson(response.content);
 			if (result.error) {
 				errorMessage = getNetworkErrorMessage(result.error, $t);
 				return;
 			}
-			onImport?.();
-			onBack?.();
-			onBack?.();
+			parsedNetworks = result.networks;
+			// Unregister our area - ImportOverwrite/ConfirmDialog will create its own
+			if (unregisterArea) {
+				unregisterArea();
+				unregisterArea = null;
+			}
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);
 		} finally {
 			loading = false;
 		}
+	}
+
+	function handleImportDone() {
+		onImport?.();
+		onBack?.();
+		onBack?.();
 	}
 
 	const areaHandlers = {
@@ -106,9 +119,11 @@
 	};
 
 	onMount(() => {
-		const unregister = useArea(areaID, areaHandlers, position);
+		unregisterArea = useArea(areaID, areaHandlers, position);
 		activateArea(areaID);
-		return unregister;
+		return () => {
+			if (unregisterArea) unregisterArea();
+		};
 	});
 </script>
 
@@ -137,6 +152,9 @@
 	}
 </style>
 
+{#if parsedNetworks}
+	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleImportDone} />
+{:else}
 <div class="import">
 	<div class="container">
 		<Input bind:this={urlRef} bind:value={url} label={$t('settings.lishNetworkImport.url')} placeholder="https://..." selected={active && selectedIndex === 0} flex />
@@ -149,3 +167,4 @@
 		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
 	</div>
 </div>
+{/if}

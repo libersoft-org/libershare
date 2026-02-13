@@ -6,12 +6,14 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { importNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { parseNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { type LISHNetworkDefinition } from '@libershare/shared';
 	import { storageLishnetPath } from '../../scripts/settings.ts';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
+	import ImportOverwrite from './SettingsLISHNetworkImportOverwrite.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	interface Props {
 		areaID: string;
@@ -30,6 +32,7 @@
 	let filePath = $state('');
 	let errorMessage = $state('');
 	let browsingFilePath = $state(false);
+	let parsedNetworks = $state<LISHNetworkDefinition[] | null>(null);
 
 	function getMaxColumn(index: number): number {
 		if (index === 0) return 1; // file path + browse
@@ -48,17 +51,26 @@
 			// Use readGzip for .gz files, readText otherwise
 			const isGzip = filePath.toLowerCase().endsWith('.gz');
 			const content = isGzip ? await api.fs.readGzip(filePath) : await api.fs.readText(filePath);
-			const result = await importNetworksFromJson(content);
+			const result = parseNetworksFromJson(content);
 			if (result.error) {
 				errorMessage = getNetworkErrorMessage(result.error, $t);
 				return;
 			}
-			onImport?.();
-			onBack?.();
-			onBack?.();
+			parsedNetworks = result.networks;
+			// Unregister our area - ImportOverwrite/ConfirmDialog will create its own
+			if (unregisterArea) {
+				unregisterArea();
+				unregisterArea = null;
+			}
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);
 		}
+	}
+
+	function handleImportDone() {
+		onImport?.();
+		onBack?.();
+		onBack?.();
 	}
 
 	function openFilePathBrowse() {
@@ -182,7 +194,9 @@
 	}
 </style>
 
-{#if browsingFilePath}
+{#if parsedNetworks}
+	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleImportDone} />
+{:else if browsingFilePath}
 	<FileBrowser {areaID} {position} initialPath={filePath || $storageLishnetPath} showPath fileFilter={['*.lishnet', '*.lishnets', '*.json', '*.lishnet.gz', '*.lishnets.gz', '*.json.gz']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">

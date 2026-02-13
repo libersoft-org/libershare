@@ -1055,10 +1055,10 @@
 	{/if}
 </div>
 {#if showDeleteConfirm}
-	<ConfirmDialog title={$t('fileBrowser.deleteFolder')} message={$t('fileBrowser.confirmDeleteFolder').replace('{path}', currentPath)} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteFolder} onBack={cancelDeleteFolder} />
+	<ConfirmDialog title={$t('fileBrowser.deleteFolder')} message={$t('fileBrowser.confirmDeleteFolder', { path: currentPath })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteFolder} onBack={cancelDeleteFolder} />
 {/if}
 {#if showDeleteFileConfirm && fileToDelete}
-	<ConfirmDialog title={$t('fileBrowser.deleteFile')} message={$t('fileBrowser.confirmDeleteFile').replace('{name}', fileToDelete.name)} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteFile} onBack={cancelDeleteFile} />
+	<ConfirmDialog title={$t('fileBrowser.deleteFile')} message={$t('fileBrowser.confirmDeleteFile', { name: fileToDelete.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteFile} onBack={cancelDeleteFile} />
 {/if}
 {#if showNewFolderDialogState}
 	<InputDialog title={$t('fileBrowser.newFolder')} label={$t('fileBrowser.folderName')} placeholder={$t('fileBrowser.enterFolderName')} confirmLabel={$t('common.create')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
@@ -1070,11 +1070,11 @@
 	<InputDialog title={$t('fileBrowser.renameFile')} label={$t('common.fileName')} placeholder={$t('fileBrowser.enterFileName')} initialValue={fileToRename.name} confirmLabel={$t('common.ok')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmRenameFile} onBack={cancelRenameFile} />
 {/if}
 {#if showLargeFileWarning && pendingEditFile}
-	<ConfirmDialog title={$t('fileBrowser.largeFileWarning')} message={$t('fileBrowser.largeFileWarningMessage').replace('{name}', pendingEditFile.name).replace('{size}', formatSize(pendingEditFile.size))} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmLargeFileEdit} onBack={cancelLargeFileEdit} />
+	<ConfirmDialog title={$t('fileBrowser.largeFileWarning')} message={$t('fileBrowser.largeFileWarningMessage', { name: pendingEditFile.name, size: formatSize(pendingEditFile.size) })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmLargeFileEdit} onBack={cancelLargeFileEdit} />
 {/if}
 {#if showCustomFilterDialog}
 	<InputDialog title={$t('fileBrowser.customFilter')} label={$t('fileBrowser.filterPattern')} placeholder={$t('fileBrowser.enterFilterPattern')} initialValue={customFilter ?? ''} confirmLabel={$t('common.ok')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmCustomFilter} onBack={closeCustomFilterDialog} />
 {/if}
 {#if showOverwriteConfirmState}
-	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.fileExistsOverwrite').replace('{name}', internalSaveFileName)} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
+	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.fileExistsOverwrite', { name: internalSaveFileName })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
 {/if}
