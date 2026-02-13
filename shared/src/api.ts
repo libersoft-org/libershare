@@ -1,4 +1,4 @@
-import { type NetworkDefinition, type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type Stats, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig } from './index.ts';
+import { type NetworkDefinition, type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type Stats, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -251,11 +251,11 @@ class LISHNetworksApi {
 		return this.client.call<boolean>('lishNetworks.delete', { networkID });
 	}
 
-	addIfNotExists(network: Omit<LISHNetworkConfig, 'created'> & { created?: string }): Promise<boolean> {
+	addIfNotExists(network: LISHNetworkDefinition): Promise<boolean> {
 		return this.client.call<boolean>('lishNetworks.addIfNotExists', { network });
 	}
 
-	import(networks: LISHNetworkConfig[]): Promise<number> {
+	import(networks: LISHNetworkDefinition[]): Promise<number> {
 		return this.client.call<number>('lishNetworks.import', { networks });
 	}
 

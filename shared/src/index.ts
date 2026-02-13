@@ -129,14 +129,18 @@ export interface FetchUrlResponse {
 	content: string;
 }
 
-// LISH Network config (user-added networks)
-export interface LISHNetworkConfig {
+// LISH Network definition (pure network parameters)
+export interface LISHNetworkDefinition {
 	version: number;
 	networkID: string;
 	key: string;
 	name: string;
 	description: string;
 	bootstrapPeers: string[];
-	enabled: boolean;
 	created: string;
+}
+
+// LISH Network config (stored network with enabled state)
+export interface LISHNetworkConfig extends LISHNetworkDefinition {
+	enabled: boolean;
 }

@@ -42,7 +42,15 @@
 			try {
 				const isGzip = initialFilePath.toLowerCase().endsWith('.gz');
 				const content = isGzip ? await api.fs.readGzip(initialFilePath) : await api.fs.readText(initialFilePath);
-				if (content) networkJson = content;
+				if (content) {
+					// Pretty-print minified JSON for readability
+					try {
+						const parsed = JSON.parse(content);
+						networkJson = JSON.stringify(parsed, null, '\t');
+					} catch {
+						networkJson = content;
+					}
+				}
 			} catch (e) {
 				// Ignore error, user can still paste JSON manually
 			}

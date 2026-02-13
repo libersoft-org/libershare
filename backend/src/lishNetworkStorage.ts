@@ -1,14 +1,5 @@
 import { ArrayStorage } from './storage.ts';
-export interface LISHNetworkConfig {
-	version: number;
-	networkID: string;
-	key: string;
-	name: string;
-	description: string;
-	bootstrapPeers: string[];
-	enabled: boolean;
-	created: string;
-}
+import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@libershare/shared';
 
 /**
  * Storage for user-configured LISH networks.
@@ -48,20 +39,17 @@ export class LISHNetworkStorage {
 	}
 
 	/**
-	 * Add network if it doesn't exist
+	 * Add network definition if it doesn't exist (enabled defaults to false)
 	 */
-	addIfNotExists(network: Omit<LISHNetworkConfig, 'created'> & { created?: string }): boolean {
+	addIfNotExists(network: LISHNetworkDefinition): boolean {
 		if (this.exists(network.networkID)) return false;
-		return this.add({
-			...network,
-			created: network.created ?? new Date().toISOString(),
-		});
+		return this.add({ ...network, enabled: false });
 	}
 
 	/**
-	 * Import multiple networks, adding only those that don't exist
+	 * Import multiple network definitions, adding only those that don't exist (enabled defaults to false)
 	 */
-	importNetworks(networks: LISHNetworkConfig[]): number {
+	importNetworks(networks: LISHNetworkDefinition[]): number {
 		let imported = 0;
 		for (const network of networks) {
 			if (this.addIfNotExists(network)) imported++;

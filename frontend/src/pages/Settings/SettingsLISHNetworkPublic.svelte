@@ -4,7 +4,7 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { type LISHNetworkConfig } from '@libershare/shared';
+	import { type LISHNetworkDefinition } from '@libershare/shared';
 	import { DEFAULT_PUBLIC_LIST_URL, fetchPublicNetworks, getExistingNetworkIds, addNetworkIfNotExists, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -22,7 +22,7 @@
 	let selectedColumn = $state(0); // 0 = URL input, 1 = Load button
 	let urlInput: Input;
 	let url = $state(DEFAULT_PUBLIC_LIST_URL);
-	let publicNetworks = $state<LISHNetworkConfig[]>([]);
+	let publicNetworks = $state<LISHNetworkDefinition[]>([]);
 	let loading = $state(false);
 	let error = $state('');
 	let addedNetworkIds = $state<Set<string>>(new Set());
@@ -48,7 +48,7 @@
 		loading = false;
 	}
 
-	async function handleAddNetwork(network: LISHNetworkConfig) {
+	async function handleAddNetwork(network: LISHNetworkDefinition) {
 		if (await addNetworkIfNotExists(network)) addedNetworkIds = new Set([...addedNetworkIds, network.networkID]);
 	}
 
