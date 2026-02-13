@@ -44,17 +44,22 @@
 	// Networks loaded from backend
 	let networks = $state<LISHNetworkConfig[]>([]);
 	let nodeInfoMap = $state<Record<string, NetworkNodeInfo>>({});
+	let networkErrors = $state<Record<string, string>>({});
 
 	async function loadNodeInfo() {
 		const infoMap: Record<string, NetworkNodeInfo> = {};
+		const errors: Record<string, string> = {};
 		for (const network of networks) {
 			if (network.enabled) {
 				try {
 					infoMap[network.networkID] = await api.networks.getNodeInfo(network.networkID);
-				} catch {}
+				} catch (e: any) {
+					errors[network.networkID] = e?.message || 'Failed to get node info';
+				}
 			}
 		}
 		nodeInfoMap = infoMap;
+		networkErrors = errors;
 	}
 
 	async function loadNetworks() {
@@ -142,15 +147,23 @@
 		const newEnabled = !network.enabled;
 		network.enabled = newEnabled;
 		networks = [...networks]; // Trigger reactivity
-		await api.networks.setEnabled(network.networkID, newEnabled);
-		if (newEnabled) {
-			try {
+		// Clear previous error for this network
+		const { [network.networkID]: _err, ...restErrors } = networkErrors;
+		networkErrors = restErrors;
+		try {
+			await api.networks.setEnabled(network.networkID, newEnabled);
+			if (newEnabled) {
 				const info = await api.networks.getNodeInfo(network.networkID);
 				nodeInfoMap = { ...nodeInfoMap, [network.networkID]: info };
-			} catch {}
-		} else {
-			const { [network.networkID]: _, ...rest } = nodeInfoMap;
-			nodeInfoMap = rest;
+			} else {
+				const { [network.networkID]: _, ...rest } = nodeInfoMap;
+				nodeInfoMap = rest;
+			}
+		} catch (e: any) {
+			// Revert enabled state on error
+			network.enabled = !newEnabled;
+			networks = [...networks];
+			networkErrors = { ...networkErrors, [network.networkID]: e?.message || 'Connection failed' };
 		}
 	}
 
@@ -497,6 +510,9 @@
 						<Row selected={active && selectedIndex === i + 1}>
 							<div class="network">
 								<div class="name">{network.name}</div>
+								{#if networkErrors[network.networkID]}
+									<Alert type="error" message={networkErrors[network.networkID]} />
+								{/if}
 								{#if network.enabled && nodeInfoMap[network.networkID]}
 									<div class="node-info">{JSON.stringify(nodeInfoMap[network.networkID], null, 2)}</div>
 								{/if}
