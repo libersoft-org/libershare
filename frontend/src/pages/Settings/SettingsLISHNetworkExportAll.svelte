@@ -160,7 +160,7 @@
 </style>
 
 {#if browsingSaveAs}
-	<FileBrowser {areaID} {position} initialPath={saveFolder} showPath foldersOnly selectFolderButton {saveFileName} {saveContent} useGzip={compressGzip} onSaveFileNameChange={v => (saveFileName = v)} onSaveComplete={handleSaveComplete} onBack={handleSaveAsBack} />
+	<FileBrowser {areaID} {position} initialPath={saveFolder} showPath foldersOnly {saveFileName} {saveContent} useGzip={compressGzip} onSaveFileNameChange={v => (saveFileName = v)} onSaveComplete={handleSaveComplete} onBack={handleSaveAsBack} />
 {:else}
 	<div class="export-all">
 		<div class="container">
