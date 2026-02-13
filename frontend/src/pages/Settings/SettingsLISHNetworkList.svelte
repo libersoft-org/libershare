@@ -6,7 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb, navigateTo } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { type LISHNetworkConfig } from '@libershare/shared';
+	import { type LISHNetworkConfig, type NetworkNodeInfo } from '@libershare/shared';
 	import { api } from '../../scripts/api.ts';
 	import { getNetworks, deleteNetwork as deleteNetworkFromApi, updateNetwork as updateNetworkFromApi, addNetwork as addNetworkFromApi, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
@@ -43,9 +43,23 @@
 	let rowElements: HTMLElement[] = $state([]);
 	// Networks loaded from backend
 	let networks = $state<LISHNetworkConfig[]>([]);
+	let nodeInfoMap = $state<Record<string, NetworkNodeInfo>>({});
+
+	async function loadNodeInfo() {
+		const infoMap: Record<string, NetworkNodeInfo> = {};
+		for (const network of networks) {
+			if (network.enabled) {
+				try {
+					infoMap[network.networkID] = await api.networks.getNodeInfo(network.networkID);
+				} catch {}
+			}
+		}
+		nodeInfoMap = infoMap;
+	}
 
 	async function loadNetworks() {
 		networks = await getNetworks();
+		await loadNodeInfo();
 	}
 
 	// Items: Top buttons row (0), network rows (1 to networks.length), Back button (last)
@@ -123,12 +137,21 @@
 		activateArea(areaID);
 	}
 
-	function connectNetwork(network: LISHNetworkConfig) {
+	async function connectNetwork(network: LISHNetworkConfig) {
 		// Toggle enabled state
 		const newEnabled = !network.enabled;
 		network.enabled = newEnabled;
 		networks = [...networks]; // Trigger reactivity
-		api.networks.setEnabled(network.networkID, newEnabled);
+		await api.networks.setEnabled(network.networkID, newEnabled);
+		if (newEnabled) {
+			try {
+				const info = await api.networks.getNodeInfo(network.networkID);
+				nodeInfoMap = { ...nodeInfoMap, [network.networkID]: info };
+			} catch {}
+		} else {
+			const { [network.networkID]: _, ...rest } = nodeInfoMap;
+			nodeInfoMap = rest;
+		}
 	}
 
 	async function moveNetwork(index: number, up: boolean) {
@@ -425,6 +448,14 @@
 		color: var(--secondary-foreground);
 	}
 
+	.network .node-info {
+		font-size: 1.6vh;
+		color: var(--disabled-foreground);
+		font-family: monospace;
+		word-break: break-all;
+		white-space: pre-wrap;
+	}
+
 	.network .buttons {
 		display: flex;
 		flex-wrap: wrap;
@@ -466,6 +497,9 @@
 						<Row selected={active && selectedIndex === i + 1}>
 							<div class="network">
 								<div class="name">{network.name}</div>
+								{#if network.enabled && nodeInfoMap[network.networkID]}
+									<div class="node-info">{JSON.stringify(nodeInfoMap[network.networkID], null, 2)}</div>
+								{/if}
 								<div class="buttons">
 									<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
 								<Button icon="/img/online.svg" label={$t('settings.lishNetwork.peerList')} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openPeers(network)} />
