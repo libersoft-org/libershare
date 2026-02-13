@@ -18,6 +18,7 @@
 	import LISHNetworkExport from './SettingsLISHNetworkExport.svelte';
 	import LISHNetworkExportAll from './SettingsLISHNetworkExportAll.svelte';
 	import LISHNetworkPublic from './SettingsLISHNetworkPublic.svelte';
+	import LISHNetworkPeers from './SettingsLISHNetworkPeers.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -34,9 +35,11 @@
 	let showExportAll = $state(false);
 	let showPublic = $state(false);
 	let showDeleteConfirm = $state(false);
+	let showPeers = $state(false);
 	let editingNetwork = $state<LISHNetworkConfig | null>(null);
 	let exportingNetwork = $state<LISHNetworkConfig | null>(null);
 	let deletingNetwork = $state<LISHNetworkConfig | null>(null);
+	let peersNetwork = $state<LISHNetworkConfig | null>(null);
 	let rowElements: HTMLElement[] = $state([]);
 	// Networks loaded from backend
 	let networks = $state<LISHNetworkConfig[]>([]);
@@ -140,11 +143,35 @@
 		// Adjust buttonIndex if moved to first/last position where some buttons don't exist
 		const isNowFirst = newIndex === 0;
 		const isNowLast = newIndex === networks.length - 1;
-		// First item has max 5 buttons (0-4), last item has max 5 buttons (0-4), middle has 6 (0-5)
-		const maxButtonIndex = isNowFirst || isNowLast ? 4 : 5;
+		// First item has max 6 buttons (0-5), last item has max 6 buttons (0-5), middle has 7 (0-6)
+		const maxButtonIndex = isNowFirst || isNowLast ? 5 : 6;
 		if (buttonIndex > maxButtonIndex) buttonIndex = maxButtonIndex;
 		// Save new order to backend
 		await api.lishNetworks.setAll(networks);
+	}
+
+	function openPeers(network: LISHNetworkConfig) {
+		peersNetwork = network;
+		showPeers = true;
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
+		pushBreadcrumb(`${network.name} - ${$t('settings.lishNetwork.peerList')}`);
+		removeBackHandler = pushBackHandler(handlePeersBack);
+	}
+
+	async function handlePeersBack() {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
+		popBreadcrumb();
+		showPeers = false;
+		peersNetwork = null;
+		await tick();
+		unregisterArea = registerAreaHandler();
+		activateArea(areaID);
 	}
 
 	function openExport(network: LISHNetworkConfig) {
@@ -300,8 +327,8 @@
 						const networkIndex = selectedIndex - 1;
 						const isFirst = networkIndex === 0;
 						const isLast = networkIndex === networks.length - 1;
-						// 4 base buttons + up (if not first) + down (if not last)
-						maxIndex = 3 + (isFirst ? 0 : 1) + (isLast ? 0 : 1);
+							// 5 base buttons + up (if not first) + down (if not last)
+							maxIndex = 4 + (isFirst ? 0 : 1) + (isLast ? 0 : 1);
 					}
 					if (buttonIndex < maxIndex) {
 						buttonIndex++;
@@ -324,12 +351,13 @@
 							const isFirst = networkIndex === 0;
 							const isLast = networkIndex === networks.length - 1;
 							if (buttonIndex === 0) connectNetwork(network);
-							else if (buttonIndex === 1) openExport(network);
-							else if (buttonIndex === 2) openEditNetwork(network);
-							else if (buttonIndex === 3) deleteNetwork(network);
-							else if (buttonIndex === 4 && !isFirst) moveNetwork(networkIndex, true);
-							else if (buttonIndex === 4 && isFirst && !isLast) moveNetwork(networkIndex, false);
-							else if (buttonIndex === 5) moveNetwork(networkIndex, false);
+								else if (buttonIndex === 1) openPeers(network);
+								else if (buttonIndex === 2) openExport(network);
+								else if (buttonIndex === 3) openEditNetwork(network);
+								else if (buttonIndex === 4) deleteNetwork(network);
+								else if (buttonIndex === 5 && !isFirst) moveNetwork(networkIndex, true);
+								else if (buttonIndex === 5 && isFirst && !isLast) moveNetwork(networkIndex, false);
+								else if (buttonIndex === 6) moveNetwork(networkIndex, false);
 						}
 					}
 				},
@@ -412,6 +440,8 @@
 	<LISHNetworkExportAll {areaID} {position} onBack={handleExportAllBack} />
 {:else if showPublic}
 	<LISHNetworkPublic {areaID} {position} onBack={handlePublicBack} />
+{:else if showPeers && peersNetwork}
+	<LISHNetworkPeers {areaID} {position} network={peersNetwork} onBack={handlePeersBack} />
 {:else if showDeleteConfirm && deletingNetwork}
 	<ConfirmDialog title={$t('common.delete')} message={$t('settings.lishNetwork.confirmDelete', { name: deletingNetwork.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
 {:else}
@@ -429,17 +459,18 @@
 				{#each networks as network, i}
 					{@const isFirst = i === 0}
 					{@const isLast = i === networks.length - 1}
-					{@const upButtonIndex = 4}
-					{@const downButtonIndex = isFirst ? 4 : 5}
+					{@const upButtonIndex = 5}
+					{@const downButtonIndex = isFirst ? 5 : 6}
 					<div bind:this={rowElements[i + 1]}>
 						<Row selected={active && selectedIndex === i + 1}>
 							<div class="network">
 								<div class="name">{network.name}</div>
 								<div class="buttons">
 									<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
-									<Button icon="/img/export.svg" label={$t('common.export')} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openExport(network)} />
-									<Button icon="/img/edit.svg" label={$t('common.edit')} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openEditNetwork(network)} />
-									<Button icon="/img/del.svg" label={$t('common.delete')} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => deleteNetwork(network)} />
+								<Button icon="/img/online.svg" label={$t('settings.lishNetwork.peerList')} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openPeers(network)} />
+								<Button icon="/img/export.svg" label={$t('common.export')} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openExport(network)} />
+								<Button icon="/img/edit.svg" label={$t('common.edit')} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => openEditNetwork(network)} />
+								<Button icon="/img/del.svg" label={$t('common.delete')} selected={active && selectedIndex === i + 1 && buttonIndex === 4} onConfirm={() => deleteNetwork(network)} />
 									{#if !isFirst}
 										<Button icon="/img/up.svg" selected={active && selectedIndex === i + 1 && buttonIndex === upButtonIndex} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
 									{/if}
