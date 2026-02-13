@@ -208,8 +208,12 @@
 			if (item && (item.type === 'folder' || item.type === 'drive'))
 				navigateInto(item); // Folders/drives - navigate into them
 			else if (item?.type === 'file') {
-				// Files - in filesOnly mode, select the file directly
-				if (filesOnly) onSelect?.(item.path);
+				if (saveFileName !== undefined) {
+					// In save mode, selecting a file sets the filename and triggers save (with overwrite check)
+					internalSaveFileName = item.name;
+					onSaveFileNameChange?.(item.name);
+					handleSave();
+				} else if (filesOnly) onSelect?.(item.path);
 				else openActions(); // Otherwise show actions panel
 			}
 		},
