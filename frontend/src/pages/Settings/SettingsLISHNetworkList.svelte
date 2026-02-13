@@ -69,10 +69,8 @@
 
 	// Items: Top buttons row (0), network rows (1 to networks.length), Back button (last)
 	let totalItems = $derived(networks.length + 2);
-
 	// Check if current row is the top row (has Add/Import buttons)
 	let isTopRow = $derived(selectedIndex === 0);
-
 	// Check if current row is a network row (has Edit/Delete buttons)
 	let isNetworkRow = $derived(selectedIndex > 0 && selectedIndex < totalItems - 1);
 
@@ -153,16 +151,17 @@
 		try {
 			await api.networks.setEnabled(network.networkID, newEnabled);
 			if (newEnabled) {
-				const info = await api.networks.getNodeInfo(network.networkID);
-				nodeInfoMap = { ...nodeInfoMap, [network.networkID]: info };
+				try {
+					const info = await api.networks.getNodeInfo(network.networkID);
+					nodeInfoMap = { ...nodeInfoMap, [network.networkID]: info };
+				} catch (e: any) {
+					networkErrors = { ...networkErrors, [network.networkID]: e?.message || 'Failed to get node info' };
+				}
 			} else {
 				const { [network.networkID]: _, ...rest } = nodeInfoMap;
 				nodeInfoMap = rest;
 			}
 		} catch (e: any) {
-			// Revert enabled state on error
-			network.enabled = !newEnabled;
-			networks = [...networks];
 			networkErrors = { ...networkErrors, [network.networkID]: e?.message || 'Connection failed' };
 		}
 	}
@@ -364,8 +363,8 @@
 						const networkIndex = selectedIndex - 1;
 						const isFirst = networkIndex === 0;
 						const isLast = networkIndex === networks.length - 1;
-							// 5 base buttons + up (if not first) + down (if not last)
-							maxIndex = 4 + (isFirst ? 0 : 1) + (isLast ? 0 : 1);
+						// 5 base buttons + up (if not first) + down (if not last)
+						maxIndex = 4 + (isFirst ? 0 : 1) + (isLast ? 0 : 1);
 					}
 					if (buttonIndex < maxIndex) {
 						buttonIndex++;
@@ -388,13 +387,13 @@
 							const isFirst = networkIndex === 0;
 							const isLast = networkIndex === networks.length - 1;
 							if (buttonIndex === 0) connectNetwork(network);
-								else if (buttonIndex === 1) openPeers(network);
-								else if (buttonIndex === 2) openExport(network);
-								else if (buttonIndex === 3) openEditNetwork(network);
-								else if (buttonIndex === 4) deleteNetwork(network);
-								else if (buttonIndex === 5 && !isFirst) moveNetwork(networkIndex, true);
-								else if (buttonIndex === 5 && isFirst && !isLast) moveNetwork(networkIndex, false);
-								else if (buttonIndex === 6) moveNetwork(networkIndex, false);
+							else if (buttonIndex === 1) openPeers(network);
+							else if (buttonIndex === 2) openExport(network);
+							else if (buttonIndex === 3) openEditNetwork(network);
+							else if (buttonIndex === 4) deleteNetwork(network);
+							else if (buttonIndex === 5 && !isFirst) moveNetwork(networkIndex, true);
+							else if (buttonIndex === 5 && isFirst && !isLast) moveNetwork(networkIndex, false);
+							else if (buttonIndex === 6) moveNetwork(networkIndex, false);
 						}
 					}
 				},
@@ -518,10 +517,10 @@
 								{/if}
 								<div class="buttons">
 									<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
-								<Button icon="/img/online.svg" label={$t('settings.lishNetwork.peerList')} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openPeers(network)} />
-								<Button icon="/img/export.svg" label={$t('common.export')} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openExport(network)} />
-								<Button icon="/img/edit.svg" label={$t('common.edit')} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => openEditNetwork(network)} />
-								<Button icon="/img/del.svg" label={$t('common.delete')} selected={active && selectedIndex === i + 1 && buttonIndex === 4} onConfirm={() => deleteNetwork(network)} />
+									<Button icon="/img/online.svg" label={$t('settings.lishNetwork.peerList')} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openPeers(network)} />
+									<Button icon="/img/export.svg" label={$t('common.export')} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openExport(network)} />
+									<Button icon="/img/edit.svg" label={$t('common.edit')} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => openEditNetwork(network)} />
+									<Button icon="/img/del.svg" label={$t('common.delete')} selected={active && selectedIndex === i + 1 && buttonIndex === 4} onConfirm={() => deleteNetwork(network)} />
 									{#if !isFirst}
 										<Button icon="/img/up.svg" selected={active && selectedIndex === i + 1 && buttonIndex === upButtonIndex} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
 									{/if}
