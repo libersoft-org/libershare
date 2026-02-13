@@ -272,9 +272,10 @@
 			const index = networks.findIndex(n => n.networkID === editingNetwork!.networkID);
 			if (index !== -1) networks[index] = network;
 		} else {
-			// Add new
+			// Add new - backend generates networkID and key if empty
 			await addNetworkFromApi(network);
-			networks = [...networks, network];
+			// Reload from backend to get the generated values
+			await loadNetworks();
 		}
 		if (removeBackHandler) {
 			removeBackHandler();

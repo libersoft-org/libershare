@@ -51,6 +51,7 @@
 		if (!errorMessage) {
 			onSave?.({
 				id: autoGenerateID ? '' : networkID,
+				key: autoGenerateID ? '' : key,
 				name,
 				description,
 				bootstrapServers: bootstrapServers.filter(s => s.trim() !== ''),

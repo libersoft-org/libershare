@@ -1,5 +1,7 @@
 import { ArrayStorage } from './storage.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@libershare/shared';
+import { generateKey } from '@libp2p/pnet';
+import { Utils } from './utils.ts';
 
 /**
  * Storage for user-configured LISH networks.
@@ -27,6 +29,12 @@ export class LISHNetworkStorage {
 	add(network: LISHNetworkConfig): boolean {
 		// Generate networkID if empty (auto-generate mode)
 		if (!network.networkID) network = { ...network, networkID: crypto.randomUUID() };
+		// Generate swarm key if empty (auto-generate mode)
+		if (!network.key) {
+			const swarmKey = new Uint8Array(95);
+			generateKey(swarmKey);
+			network = { ...network, key: Utils.encodeBase62(swarmKey) };
+		}
 		return this.storage.add(network);
 	}
 
