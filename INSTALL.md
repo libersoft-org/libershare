@@ -11,6 +11,7 @@ apt update
 apt -y upgrade
 apt -y install git curl
 curl -fsSL https://bun.sh/install | bash
+source /root/.bashrc
 git clone https://github.com/libersoft-org/libershare.git
 cd libershare/frontend/
 ./build.sh

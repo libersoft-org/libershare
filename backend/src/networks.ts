@@ -95,14 +95,19 @@ export class Networks {
 			return;
 		}
 
-		// Add bootstrap peers from this lishnet to the running node
+		// Subscribe to the topic first (register interest), then dial bootstrap peers.
+		// Note: the StreamStateError crash from gossipsub is caused by an internal
+		// race condition when peers connect and disconnect rapidly (flapping).
+		// Gossipsub reacts to peer:connect events and tries to send subscriptions
+		// on a stream that may already be closing. This cannot be fixed by call
+		// ordering — the process-level error handlers in app.ts are the safety net.
+		this.network.subscribeTopic(id);
+		this.joinedNetworks.add(id);
+
 		const def = this.get(id);
 		if (def && def.bootstrap_peers.length > 0) {
 			await this.network.addBootstrapPeers(def.bootstrap_peers);
 		}
-
-		this.network.subscribeTopic(id);
-		this.joinedNetworks.add(id);
 
 		console.log(`✓ Joined lishnet: ${def?.name ?? id}`);
 	}

@@ -43,13 +43,10 @@ for (let i = 0; i < args.length; i++) {
 }
 
 setupLogger(logLevel);
-
 const db = new Database(dataDir);
 await db.init();
-
 const dataServer = new DataServer(dataDir, db);
 await dataServer.init();
-
 const lishNetworkStorage = new LISHNetworkStorage(dataDir);
 const networks = new Networks(lishNetworkStorage, dataDir, dataServer, enablePink);
 networks.init();
@@ -81,6 +78,28 @@ function getNetwork() {
 }
 
 process.on('SIGINT', shutdown);
+
+// Prevent crash on transient libp2p stream errors (e.g. gossipsub race condition
+// where a peer disconnects before subscriptions are sent on the outbound stream).
+process.on('uncaughtException', err => {
+	const name = (err as any)?.constructor?.name || err.name || '';
+	if (name === 'StreamStateError' || name === 'ConnectionClosedError' || name === 'StreamResetError') {
+		console.warn(`[WARN] Suppressed transient libp2p error (${name}): ${err.message}`);
+		return;
+	}
+	console.error('[FATAL] Uncaught exception:', err);
+	process.exit(1);
+});
+
+process.on('unhandledRejection', (reason: any) => {
+	const name = reason?.constructor?.name || reason?.name || '';
+	if (name === 'StreamStateError' || name === 'ConnectionClosedError' || name === 'StreamResetError') {
+		console.warn(`[WARN] Suppressed transient libp2p rejection (${name}): ${reason.message}`);
+		return;
+	}
+	console.error('[FATAL] Unhandled rejection:', reason);
+	process.exit(1);
+});
 
 await networks.startEnabledNetworks();
 apiServer.start();
