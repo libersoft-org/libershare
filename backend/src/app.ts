@@ -1,3 +1,4 @@
+import { dirname, join } from 'path';
 import { setupLogger, type LogLevel } from './logger.ts';
 import { Networks } from './networks.ts';
 import { DataServer } from './data-server.ts';
@@ -7,7 +8,9 @@ import { LISHNetworkStorage } from './lishNetworkStorage.ts';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-let dataDir = './data';
+// Default dataDir: next to binary if compiled, otherwise ./data (relative to CWD)
+const isCompiledBinary = process.execPath !== Bun.which('bun');
+let dataDir = isCompiledBinary ? join(dirname(process.execPath), 'data') : './data';
 let enablePink = false;
 let logLevel: LogLevel = 'debug';
 let apiHost = 'localhost';

@@ -1,5 +1,6 @@
 import { Database as BunDatabase } from 'bun:sqlite';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { mkdirSync } from 'fs';
 import { type LishId, type ChunkId } from './lish.ts';
 
 export interface Dataset {
@@ -22,6 +23,7 @@ export class Database {
 	}
 
 	async init(): Promise<void> {
+		mkdirSync(dirname(this.dbPath), { recursive: true });
 		this.db = new BunDatabase(this.dbPath);
 		// Create chunks table
 		// todo: add file column.
