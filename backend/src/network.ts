@@ -209,8 +209,9 @@ export class Network {
 		config.services.autonat = autoNAT();
 		console.log('✓ AutoNAT enabled');
 
-		// Deduplicate bootstrap peers from all lishnets
-		const uniqueBootstrapPeers = [...new Set(bootstrapPeers)];
+		// Deduplicate bootstrap peers and filter out our own peer ID
+		const myPeerId = privateKey.publicKey.toString();
+		const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => !p.includes(myPeerId));
 
 		if (uniqueBootstrapPeers.length > 0) {
 			console.log('Configuring bootstrap peers:');
@@ -231,9 +232,7 @@ export class Network {
 				}
 			}
 
-			if (validBootstrapPeers.length === 0) {
-				console.log('⚠️  No valid bootstrap peers found!');
-			} else {
+			if (validBootstrapPeers.length > 0) {
 				config.peerDiscovery = [
 					bootstrap({
 						list: validBootstrapPeers,
@@ -395,8 +394,10 @@ export class Network {
 			console.error('Network not started - cannot add bootstrap peers');
 			return;
 		}
+		const myPeerId = this.node.peerId.toString();
 		for (const peer of peers) {
-			// Skip already-known bootstrap peers
+			// Skip our own address or already-known bootstrap peers
+			if (peer.includes(myPeerId)) continue;
 			try {
 				const ma = Multiaddr(peer);
 				const peerId = ma.getPeerId();
