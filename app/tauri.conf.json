@@ -1,0 +1,23 @@
+{
+	"$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
+	"productName": "LiberShare",
+	"version": "0.0.1",
+	"identifier": "com.libershare.app",
+	"build": {
+		"frontendDist": "../frontend/build"
+	},
+	"app": {
+		"windows": [],
+		"security": {
+			"csp": null
+		}
+	},
+	"bundle": {
+		"active": true,
+		"targets": "all",
+		"icon": [],
+		"externalBin": [
+			"binaries/lish-backend"
+		]
+	}
+}

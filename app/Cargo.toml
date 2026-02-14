@@ -1,0 +1,16 @@
+[package]
+name = "libershare-app"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+name = "libershare_app_lib"
+crate-type = ["staticlib", "cdylib", "lib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-window-state = "2"

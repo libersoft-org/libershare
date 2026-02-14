@@ -56,3 +56,76 @@ If you have your backend somewhere else (for example for development purposes, s
 ```
 
 ... and then navigate to: https://YOUR_SERVER_ADDRESS:6003/ in your browser. Browser will show the certificate error, just skip it.
+
+## 3. Native application
+
+The desktop app bundles the frontend and backend into a single installable application for Windows, macOS and Linux.
+
+### Prerequisites
+
+**All platforms:**
+
+- [Bun](https://bun.sh/)
+- [Rust toolchain](https://rustup.rs/)
+
+#### Install Rust:
+
+**On Linux / macOS:**
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+**On Windows:**
+
+Download and run the installer from [https://rustup.rs/](https://rustup.rs/)
+
+#### Install Tauri CLI (all platforms):
+
+```sh
+cargo install tauri-cli --version "^2"
+```
+
+**Linux (Debian/Ubuntu) additional dependencies:**
+
+```sh
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
+**Windows additional dependencies:**
+
+- [Microsoft Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+- [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (included in Windows 10/11 by default)
+
+### Build
+
+**Linux / macOS:**
+
+```sh
+cd app
+./build.sh
+```
+
+**Windows:**
+
+```bat
+cd app
+build.bat
+```
+
+The build script will:
+1. Build the frontend (static HTML/JS/CSS)
+2. Compile the backend into a standalone binary
+3. Build the Tauri app with the backend as a sidecar
+
+The resulting installer will be in `app/build/release/bundle/`.
+
+### Running
+
+- **Normal mode:** Just launch the application. The backend runs silently in the background.
+- **Debug mode:** Launch from terminal with `--debug` flag to see backend logs in the terminal:
+
+```sh
+./LiberShare --debug
+```
