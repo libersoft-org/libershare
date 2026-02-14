@@ -29,6 +29,7 @@ export interface SettingsData {
 		allowRelay: boolean;
 		maxRelayReservations: number;
 		autoStartSharing: boolean;
+		announceAddresses: string[];
 	};
 	system: {
 		autoStartOnBoot: boolean;
@@ -86,6 +87,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		allowRelay: true,
 		maxRelayReservations: 0,
 		autoStartSharing: true,
+		announceAddresses: [],
 	},
 	system: {
 		autoStartOnBoot: true,

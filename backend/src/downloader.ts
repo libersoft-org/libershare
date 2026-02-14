@@ -2,12 +2,12 @@ import { mkdir, readFile, open } from 'fs/promises';
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
 import { type IManifest, type LishId, type ChunkId } from './lish.ts';
-import { type Network } from './network.ts';
+import { type Network, lishTopic } from './network.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
 import { HaveChunks, LISH_PROTOCOL, LishClient } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { DataServer, MissingChunk } from './data-server.ts';
-export const LISH_TOPIC = 'lish';
+
 type NodeId = string;
 interface PubsubMessage {
 	type: 'want' | 'have';
@@ -30,6 +30,7 @@ export class Downloader {
 	private readonly dataServer: DataServer;
 	private network: Network;
 	private readonly downloadDir: string;
+	private readonly networkID: string;
 	private lishId!: LishId;
 	private state: State = 'added';
 	private workMutex = new Mutex();
@@ -38,10 +39,11 @@ export class Downloader {
 	private peers: Map<NodeId, LishClient> = new Map();
 	private callForPeersInterval: NodeJS.Timeout | undefined;
 
-	constructor(downloadDir: string, network: Network, dataServer: DataServer) {
+	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkID: string) {
 		this.downloadDir = downloadDir;
 		this.network = network;
 		this.dataServer = dataServer;
+		this.networkID = networkID;
 	}
 
 	async init(manifestPath: string): Promise<void> {
@@ -53,8 +55,9 @@ export class Downloader {
 		console.log(`Loading manifest: ${this.manifest.name} (id: ${this.lishId})`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.manifest);
 		console.log(`Found ${this.missingChunks.length} chunks to download`);
-		await this.network.subscribe(LISH_TOPIC, async data => {
-			await this.handlePubsubMessage(LISH_TOPIC, data);
+		const topic = lishTopic(this.networkID);
+		await this.network.subscribe(topic, async data => {
+			await this.handlePubsubMessage(topic, data);
 		});
 		this.state = 'initialized';
 	}
@@ -124,7 +127,7 @@ export class Downloader {
 
 	private async callForPeers() {
 		const msg: PubsubMessage = { type: 'want', lishId: this.lishId };
-		await this.network.broadcast(LISH_TOPIC, msg);
+		await this.network.broadcast(lishTopic(this.networkID), msg);
 		this.setupCallForPeersInterval();
 	}
 
@@ -145,9 +148,10 @@ export class Downloader {
 	}
 
 	private async handlePubsubMessage(topic: string, data: any) {
-		console.log(`Received pubsub message on topic ${LISH_TOPIC}`);
+		const expectedTopic = lishTopic(this.networkID);
+		console.log(`Received pubsub message on topic ${topic}`);
 
-		if (topic != LISH_TOPIC) return;
+		if (topic != expectedTopic) return;
 
 		console.debug(data); // with peerId etc.
 		if (data.type == 'have' && data.lishId == this.lishId) {

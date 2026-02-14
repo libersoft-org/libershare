@@ -11,7 +11,6 @@ export { WsClient } from './client.ts';
 export interface NetworkDefinition {
 	id: string;
 	version: number;
-	key: string;
 	name: string;
 	description: string | null;
 	bootstrap_peers: string[];
@@ -133,7 +132,6 @@ export interface FetchUrlResponse {
 export interface LISHNetworkDefinition {
 	version: number;
 	networkID: string;
-	key: string;
 	name: string;
 	description: string;
 	bootstrapPeers: string[];

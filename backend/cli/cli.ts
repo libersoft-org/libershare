@@ -232,9 +232,7 @@ async function main() {
 				}
 
 				case 'networks.nodeInfo': {
-					const networkId = await getFirstNetworkId();
-					if (!networkId) break;
-					const info = await api.networks.getNodeInfo(networkId);
+					const info = await api.networks.getNodeInfo();
 					console.log(`Peer ID: ${info.peerId}`);
 					console.log('Addresses:');
 					info.addresses.forEach(addr => console.log(`  ${addr}`));

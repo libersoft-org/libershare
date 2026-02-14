@@ -117,8 +117,8 @@ class NetworksApi {
 		return this.client.call<string[]>('networks.getPeers', { networkId });
 	}
 
-	getNodeInfo(networkId: string): Promise<NetworkNodeInfo> {
-		return this.client.call<NetworkNodeInfo>('networks.getNodeInfo', { networkId });
+	getNodeInfo(): Promise<NetworkNodeInfo> {
+		return this.client.call<NetworkNodeInfo>('networks.getNodeInfo');
 	}
 
 	getStatus(networkId: string): Promise<NetworkStatus> {

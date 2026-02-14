@@ -152,23 +152,6 @@ export class ApiServer {
 				return true;
 			}
 
-			/*
-			// store/query subscriptions
-			case 'store.subscribe': {
-					const events = Array.isArray(params.events) ? params.events : [params.event];
-					events.forEach((e: string) => {
-							client.data.subscribedEvents.add(e)
-							this.fireEvent(e, client);
-					});
-					return true;
-			}
-			case 'store.unsubscribe': {
-					const events = Array.isArray(params.events) ? params.events : [params.event];
-					events.forEach((e: string) => client.data.subscribedEvents.delete(e));
-					return true;
-			}
-			*/
-
 			case 'getStats': {
 				return this.getStats();
 			}
@@ -228,50 +211,47 @@ export class ApiServer {
 				return { success: await this.networks.delete(params.networkId) };
 
 			case 'networks.connect': {
-				const network = this.networks.getLiveNetwork(params.networkId);
-				if (!network) throw new Error('Network not running');
-				await (network as any).connectToPeer(params.multiaddr);
+				const network = this.networks.getNetwork();
+				if (!network.isRunning()) throw new Error('Network not running');
+				await network.connectToPeer(params.multiaddr);
 				return { success: true };
 			}
 			case 'networks.findPeer': {
-				const network = this.networks.getLiveNetwork(params.networkId);
-				if (!network) throw new Error('Network not running');
-				return (network as any).cliFindPeer(params.peerId);
+				const network = this.networks.getNetwork();
+				if (!network.isRunning()) throw new Error('Network not running');
+				return network.cliFindPeer(params.peerId);
 			}
 			case 'networks.getAddresses': {
-				const network = this.networks.getLiveNetwork(params.networkId);
-				if (!network) throw new Error('Network not running');
-				return (network as any).node?.getMultiaddrs().map((ma: any) => ma.toString()) || [];
+				const network = this.networks.getNetwork();
+				if (!network.isRunning()) throw new Error('Network not running');
+				const info = network.getNodeInfo();
+				return info?.addresses || [];
 			}
 			case 'networks.getPeers': {
-				const network = this.networks.getLiveNetwork(params.networkId);
-				if (!network) throw new Error('Network not running');
-				return (network as any).node?.getPeers().map((p: any) => p.toString()) || [];
+				// Return topic-level peers for this lishnet
+				if (!this.networks.isJoined(params.networkId)) throw new Error('Network not joined');
+				return this.networks.getTopicPeers(params.networkId);
 			}
 			case 'networks.getNodeInfo': {
-				const network = this.networks.getLiveNetwork(params.networkId);
-				if (!network) throw new Error('Network not running');
-				const node = (network as any).node;
-				return {
-					peerId: node?.peerId.toString(),
-					addresses: node?.getMultiaddrs().map((ma: any) => ma.toString()) || [],
-				};
+				// Global node info (node always runs)
+				return this.networks.getNetwork().getNodeInfo();
 			}
 			case 'networks.getStatus': {
-				const network = this.networks.getLiveNetwork(params.networkId);
-				if (!network) throw new Error('Network not running');
-
-				const node = (network as any).node;
-				const peers = node?.getPeers() || [];
+				const network = this.networks.getNetwork();
+				if (!network.isRunning()) throw new Error('Network not running');
+				const allPeers = network.getPeers();
+				const topicPeers = this.networks.getTopicPeers(params.networkId);
 				return {
-					connected: peers.length,
-					connectedPeers: peers.map((p: any) => p.toString()),
-					peersInStore: node ? (await node.peerStore.all()).length : 0,
+					connected: topicPeers.length,
+					connectedPeers: topicPeers,
+					peersInStore: allPeers.length,
 					datasets: this.db.getAllDatasets().length,
 				};
 			}
 			case 'networks.infoAll': {
 				const definitions = this.networks.getAll();
+				const network = this.networks.getNetwork();
+				const nodeInfo = network.isRunning() ? network.getNodeInfo() : null;
 				const result = [];
 				for (const def of definitions) {
 					const info: any = {
@@ -282,19 +262,12 @@ export class ApiServer {
 						bootstrap_peers: def.bootstrap_peers,
 						enabled: def.enabled,
 					};
-					if (def.enabled) {
-						const network = this.networks.getLiveNetwork(def.id);
-						if (network) {
-							const node = (network as any).node;
-							if (node) {
-								const peers = node.getPeers() || [];
-								info.peerId = node.peerId.toString();
-								info.addresses = node.getMultiaddrs().map((ma: any) => ma.toString());
-								info.connected = peers.length;
-								info.connectedPeers = peers.map((p: any) => p.toString());
-								info.peersInStore = (await node.peerStore.all()).length;
-							}
-						}
+					if (def.enabled && nodeInfo) {
+						info.peerId = nodeInfo.peerId;
+						info.addresses = nodeInfo.addresses;
+						const topicPeers = this.networks.getTopicPeers(def.id);
+						info.connected = topicPeers.length;
+						info.connectedPeers = topicPeers;
 					}
 					result.push(info);
 				}
@@ -437,10 +410,10 @@ export class ApiServer {
 				awaiting and returning download completion here only for testing purposes.
 				*/
 
-				const network = this.networks.getLiveNetwork(params.networkId);
-				if (!network) throw new Error('Network not running');
+				const network = this.networks.getNetwork();
+				if (!network.isRunning()) throw new Error('Network not running');
 				const downloadDir = join(this.dataDir, 'downloads', Date.now().toString());
-				const downloader = new Downloader(downloadDir, network, this.dataServer);
+				const downloader = new Downloader(downloadDir, network, this.dataServer, params.networkId);
 				await downloader.init(params.manifestPath);
 				downloader
 					.download()
@@ -455,16 +428,13 @@ export class ApiServer {
 	}
 
 	private getStats() {
+		const network = this.networks.getNetwork();
 		return {
 			networks: {
 				total: this.networks.getAll().length,
 				enabled: this.networks.getEnabled().length,
 			},
-			peers: this.networks.getEnabled().reduce((acc, nw) => {
-				const liveNw = this.networks.getLiveNetwork(nw.id);
-				if (liveNw && (liveNw as any).node) return acc + (liveNw as any).node.getPeers().length;
-				return acc;
-			}, 0),
+			peers: network.isRunning() ? network.getPeers().length : 0,
 			datasets: {
 				total: this.db.getAllDatasets().length,
 				complete: this.db.getAllDatasets().filter(ds => ds.complete).length,
@@ -483,20 +453,6 @@ export class ApiServer {
 		const msg = JSON.stringify({ event: 'stats', data: stats });
 		for (const client of this.clients) {
 			client.send(msg);
-		}
-	}
-
-	private fireEvent(event: string, client: ClientSocket): void {
-		if (event === 'networks') {
-			const networks = this.networks.getAll();
-			this.emit(client, 'networks', networks);
-		}
-	}
-
-	private broadcast(event: string, data: any): void {
-		const msg = JSON.stringify({ event, data });
-		for (const client of this.clients) {
-			this.emit(client, event, data);
 		}
 	}
 

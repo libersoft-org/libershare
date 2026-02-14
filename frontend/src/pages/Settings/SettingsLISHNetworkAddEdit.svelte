@@ -25,22 +25,20 @@
 	let nameInput: Input | undefined = $state();
 	let descriptionInput: Input | undefined = $state();
 	let networkIDInput: Input | undefined = $state();
-	let keyInput: Input | undefined = $state();
 	let bootstrapInputs: Input[] = $state([]);
 	let name = $state(untrack(() => network?.name ?? ''));
 	let description = $state(untrack(() => network?.description ?? ''));
 	let isEditing = $derived(network !== null);
 	let autoGenerateID = $state(untrack(() => !network)); // Auto-generate when adding new, manual when editing
 	let networkID = $state(untrack(() => network?.id ?? ''));
-	let key = $state(untrack(() => network?.key ?? ''));
 	let bootstrapServers = $state<string[]>(untrack(() => (network?.bootstrapServers?.length ? [...network.bootstrapServers] : [''])));
 	let submitted = $state(false);
 	// Validation - skip networkID check if auto-generate is enabled
 	let errorMessage = $derived(!name.trim() ? $t('settings.lishNetwork.errorNameRequired') : !autoGenerateID && !networkID.trim() ? $t('settings.lishNetwork.errorNetworkIDRequired') : '');
 	let showError = $derived(submitted && errorMessage);
-	// Dynamic total items: name + description + (autoGenerate when adding) + networkID + key + bootstrap servers + save + back
-	// When editing: no switch row, so offset is 4; when adding: switch row exists, offset is 5
-	let bootstrapOffset = $derived(isEditing ? 4 : 5);
+	// Dynamic total items: name + description + (autoGenerate when adding) + networkID + bootstrap servers + save + back
+	// When editing: no switch row, so offset is 3; when adding: switch row exists, offset is 4
+	let bootstrapOffset = $derived(isEditing ? 3 : 4);
 	let totalItems = $derived(bootstrapOffset + bootstrapServers.length + 2);
 	// Helper to get field type using extracted function
 	const getItemType = (index: number) => getNetworkFormFieldType(index, isEditing, bootstrapServers.length);
@@ -51,7 +49,6 @@
 		if (!errorMessage) {
 			onSave?.({
 				id: autoGenerateID ? '' : networkID,
-				key: autoGenerateID ? '' : key,
 				name,
 				description,
 				bootstrapServers: bootstrapServers.filter(s => s.trim() !== ''),
@@ -77,7 +74,6 @@
 		autoGenerateID = !autoGenerateID;
 		if (autoGenerateID) {
 			networkID = '';
-			key = '';
 		}
 	}
 
@@ -86,7 +82,6 @@
 		if (item.type === 'name' && nameInput) nameInput.focus();
 		else if (item.type === 'description' && descriptionInput) descriptionInput.focus();
 		else if (item.type === 'networkID' && networkIDInput && (isEditing || !autoGenerateID)) networkIDInput.focus();
-		else if (item.type === 'key' && keyInput && (isEditing || !autoGenerateID)) keyInput.focus();
 		else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined && bootstrapInputs[item.bootstrapIndex]) bootstrapInputs[item.bootstrapIndex].focus();
 	}
 
@@ -107,7 +102,6 @@
 					}
 					if (selectedIndex > 0) {
 						selectedIndex--;
-						if (!isEditing && selectedIndex === 4 && autoGenerateID) selectedIndex--; // Skip key if disabled (autoGenerateID is on) - only when adding
 						if (!isEditing && selectedIndex === 3 && autoGenerateID) selectedIndex--; // Skip networkID if disabled (autoGenerateID is on) - only when adding
 						selectedColumn = 0;
 						scrollToSelected();
@@ -122,7 +116,6 @@
 					if (selectedIndex < totalItems - 1) {
 						selectedIndex++;
 						if (!isEditing && selectedIndex === 3 && autoGenerateID) selectedIndex++; // Skip networkID if disabled (autoGenerateID is on) - only when adding
-						if (!isEditing && selectedIndex === 4 && autoGenerateID) selectedIndex++; // Skip key if disabled (autoGenerateID is on) - only when adding
 						selectedColumn = 0;
 						scrollToSelected();
 						return true;
@@ -164,8 +157,6 @@
 					if (item.type === 'name' || item.type === 'description') focusInput(selectedIndex);
 					else if (item.type === 'autoGenerate') toggleAutoGenerateID();
 					else if (item.type === 'networkID') {
-						if (isEditing || !autoGenerateID) focusInput(selectedIndex);
-					} else if (item.type === 'key') {
 						if (isEditing || !autoGenerateID) focusInput(selectedIndex);
 					} else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined) {
 						if (selectedColumn === 0) focusInput(selectedIndex);
@@ -244,15 +235,9 @@
 			<div bind:this={rowElements[3]}>
 				<Input bind:this={networkIDInput} bind:value={networkID} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 3} disabled={autoGenerateID} />
 			</div>
-			<div bind:this={rowElements[4]}>
-				<Input bind:this={keyInput} bind:value={key} label={$t('settings.lishNetwork.key')} selected={active && selectedIndex === 4} disabled={autoGenerateID} />
-			</div>
 		{:else}
 			<div bind:this={rowElements[2]}>
 				<Input bind:this={networkIDInput} bind:value={networkID} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 2} />
-			</div>
-			<div bind:this={rowElements[3]}>
-				<Input bind:this={keyInput} bind:value={key} label={$t('settings.lishNetwork.key')} selected={active && selectedIndex === 3} />
 			</div>
 		{/if}
 		<div class="label">{$t('settings.lishNetwork.bootstrapServers')}:</div>

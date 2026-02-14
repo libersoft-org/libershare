@@ -147,34 +147,24 @@ export class DataServer {
 
 	// Get all chunks that need to be downloaded
 	public getMissingChunks(manifest: IManifest): Array<MissingChunk> {
-		if (!manifest.files) {
-			return [];
-		}
-
+		if (!manifest.files) return [];
 		const missing: Array<MissingChunk> = [];
 		for (let fileIndex = 0; fileIndex < manifest.files.length; fileIndex++) {
 			const file = manifest.files[fileIndex];
 			for (let chunkIndex = 0; chunkIndex < file.checksums.length; chunkIndex++) {
 				const chunkId = file.checksums[chunkIndex] as ChunkId;
-				if (!this.db.isChunkDownloaded(manifest.id, chunkId)) {
-					missing.push({ fileIndex, chunkIndex, chunkId });
-				}
+				if (!this.db.isChunkDownloaded(manifest.id, chunkId)) missing.push({ fileIndex, chunkIndex, chunkId });
 			}
 		}
-
 		return missing;
 	}
 
 	// Write a chunk to the appropriate file at the correct offset
 	public async writeChunk(downloadDir: string, manifest: IManifest, fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
-		if (!manifest.files || fileIndex >= manifest.files.length) {
-			throw new Error(`Invalid file index: ${fileIndex}`);
-		}
-
+		if (!manifest.files || fileIndex >= manifest.files.length) throw new Error(`Invalid file index: ${fileIndex}`);
 		const file = manifest.files[fileIndex];
 		const filePath = join(downloadDir, file.path);
 		const offset = chunkIndex * manifest.chunkSize;
-
 		// Open file and write at offset
 		const fd = await open(filePath, 'r+');
 		await fd.write(data, 0, data.length, offset);
@@ -186,7 +176,6 @@ export class DataServer {
 		console.log(`Importing dataset from: ${inputPath}, saveToFile=${saveToFile}, addToSharing=${addToSharing}, name=${name}, description=${description}, outputFilePath=${outputFilePath}`);
 		const absolutePath = Utils.expandHome(inputPath);
 		outputFilePath = outputFilePath ? Utils.expandHome(outputFilePath) : undefined;
-		console.log('hmmmmmmmmm');
 		// Create manifest
 		const manifest = await createManifest(absolutePath, name, chunkSize, algo as any, threads, description, onProgress);
 		const lishId = manifest.id as LishId;

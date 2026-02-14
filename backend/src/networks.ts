@@ -7,13 +7,12 @@ import { LISHNetworkStorage } from './lishNetworkStorage.ts';
 export { type NetworkDefinition };
 
 /**
- * Convert LISHNetworkConfig to NetworkDefinition (used by Network/libp2p).
+ * Convert LISHNetworkConfig to NetworkDefinition (used by API layer).
  */
 function toNetworkDef(config: LISHNetworkConfig): NetworkDefinition {
 	return {
 		id: config.networkID,
 		version: config.version,
-		key: config.key,
 		name: config.name,
 		description: config.description || null,
 		bootstrap_peers: config.bootstrapPeers,
@@ -21,83 +20,151 @@ function toNetworkDef(config: LISHNetworkConfig): NetworkDefinition {
 	};
 }
 
+/**
+ * Manages lishnets (logical network groups) on top of a single shared Network (libp2p) node.
+ * Each lishnet is represented as a pubsub topic on the shared node.
+ */
 export class Networks {
 	private storage: LISHNetworkStorage;
 	private dataDir: string;
 	private dataServer: DataServer;
 	private enablePink: boolean;
-	private liveNetworks: Map<string, Network> = new Map();
+	private network: Network;
+
+	// Track which lishnets are currently joined (subscribed)
+	private joinedNetworks: Set<string> = new Set();
 
 	constructor(storage: LISHNetworkStorage, dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
 		this.storage = storage;
 		this.dataDir = dataDir;
 		this.dataServer = dataServer;
 		this.enablePink = enablePink;
+		this.network = new Network(dataDir, dataServer, enablePink);
 	}
 
 	init(): void {
 		console.log('✓ Networks initialized (using lishnets.json)');
 	}
 
+	/**
+	 * Start the shared libp2p node and join all enabled lishnets.
+	 * The node always starts, even if no lishnets are enabled.
+	 */
 	async startEnabledNetworks(): Promise<void> {
 		const enabled = this.getEnabled();
+
+		// Collect bootstrap peers from all enabled lishnets (may be empty)
+		const bootstrapPeers = this.collectBootstrapPeers(enabled);
+
+		// Always start the node
+		await this.network.start(bootstrapPeers);
+
+		// Subscribe to topics for all enabled lishnets
 		for (const def of enabled) {
-			await this.startNetwork(def.id);
+			this.network.subscribeTopic(def.id);
+			this.joinedNetworks.add(def.id);
+			console.log(`✓ Joined lishnet: ${def.name} (${def.id})`);
 		}
 	}
 
-	async startNetwork(id: string): Promise<Network | null> {
-		if (this.liveNetworks.has(id)) {
-			console.log(`Network ${id} is already running`);
-			return this.liveNetworks.get(id)!;
+	/**
+	 * Enable/disable a lishnet. Starts the node if needed, subscribes/unsubscribes topics.
+	 */
+	async setEnabled(id: string, enabled: boolean): Promise<boolean> {
+		const config = this.storage.get(id);
+		if (!config) return false;
+
+		config.enabled = enabled;
+		this.storage.update(config);
+
+		if (enabled) {
+			await this.joinNetwork(id);
+		} else {
+			await this.leaveNetwork(id);
 		}
+
+		return true;
+	}
+
+	/**
+	 * Join a lishnet (subscribe to its topic, add bootstrap peers).
+	 */
+	private async joinNetwork(id: string): Promise<void> {
+		if (this.joinedNetworks.has(id)) {
+			console.log(`Lishnet ${id} is already joined`);
+			return;
+		}
+
+		// Add bootstrap peers from this lishnet to the running node
 		const def = this.get(id);
-		if (!def) {
-			console.log(`Network ${id} not found`);
-			return null;
+		if (def && def.bootstrap_peers.length > 0) {
+			await this.network.addBootstrapPeers(def.bootstrap_peers);
 		}
-		const network = new Network(this.dataDir, this.dataServer, this.enablePink, def);
-		try {
-			await network.start();
-		} catch (error: any) {
-			console.log(`⚠️  Failed to start network "${def.name}" (${id}): ${error.message}`);
-			return null;
-		}
-		this.liveNetworks.set(id, network);
-		console.log(`✓ Started network: ${def.name} (${id})`);
-		return network;
+
+		this.network.subscribeTopic(id);
+		this.joinedNetworks.add(id);
+
+		console.log(`✓ Joined lishnet: ${def?.name ?? id}`);
 	}
 
-	async stopNetwork(id: string): Promise<void> {
-		const network = this.liveNetworks.get(id);
-		if (network) {
-			await network.stop();
-			this.liveNetworks.delete(id);
-			console.log(`✓ Stopped network: ${id}`);
-		}
+	/**
+	 * Leave a lishnet (unsubscribe from its topic).
+	 */
+	private async leaveNetwork(id: string): Promise<void> {
+		if (!this.joinedNetworks.has(id)) return;
+
+		this.network.unsubscribeTopic(id);
+		this.joinedNetworks.delete(id);
+
+		const def = this.get(id);
+		console.log(`✓ Left lishnet: ${def?.name ?? id}`);
 	}
 
+	/**
+	 * Stop all networks and the shared node.
+	 */
 	async stopAllNetworks(): Promise<void> {
-		for (const [id, network] of this.liveNetworks) {
-			await network.stop();
-			console.log(`✓ Stopped network: ${id}`);
+		this.joinedNetworks.clear();
+		await this.network.stop();
+		console.log('✓ All lishnets left and node stopped');
+	}
+
+	/**
+	 * Get the shared Network instance (for API, downloads, etc.)
+	 */
+	getNetwork(): Network {
+		return this.network;
+	}
+
+	/**
+	 * Check if a lishnet is currently joined.
+	 */
+	isJoined(id: string): boolean {
+		return this.joinedNetworks.has(id);
+	}
+
+	/**
+	 * Get peers for a specific lishnet (topic subscribers).
+	 */
+	getTopicPeers(id: string): string[] {
+		return this.network.getTopicPeers(id);
+	}
+
+	/**
+	 * Collect and deduplicate bootstrap peers from a set of network definitions.
+	 */
+	private collectBootstrapPeers(defs: NetworkDefinition[]): string[] {
+		const allPeers: string[] = [];
+		for (const def of defs) {
+			allPeers.push(...def.bootstrap_peers);
 		}
-		this.liveNetworks.clear();
-	}
-
-	getLiveNetwork(id: string): Network | undefined {
-		return this.liveNetworks.get(id);
-	}
-
-	getLiveNetworks(): Map<string, Network> {
-		return this.liveNetworks;
+		return [...new Set(allPeers)];
 	}
 
 	importFromLishnet(data: ILISHNetwork, enabled: boolean = false): NetworkDefinition {
 		const config: LISHNetworkConfig = {
 			version: data.version,
 			networkID: data.networkID,
-			key: data.swarmKey,
 			name: data.name,
 			description: data.description || '',
 			bootstrapPeers: data.bootstrapPeers,
@@ -113,7 +180,7 @@ export class Networks {
 	async importFromJson(jsonString: string, enabled: boolean = false): Promise<NetworkDefinition> {
 		const data: ILISHNetwork = JSON.parse(jsonString);
 		const def = this.importFromLishnet(data, enabled);
-		if (enabled) await this.startNetwork(def.id);
+		if (enabled) await this.joinNetwork(def.id);
 		return def;
 	}
 
@@ -121,16 +188,6 @@ export class Networks {
 		const file = Bun.file(filePath);
 		const content = await file.text();
 		return this.importFromJson(content, enabled);
-	}
-
-	async setEnabled(id: string, enabled: boolean): Promise<boolean> {
-		const config = this.storage.get(id);
-		if (!config) return false;
-		config.enabled = enabled;
-		this.storage.update(config);
-		if (enabled) await this.startNetwork(id);
-		else await this.stopNetwork(id);
-		return true;
 	}
 
 	get(id: string): NetworkDefinition | null {

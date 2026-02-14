@@ -43,23 +43,15 @@
 	let rowElements: HTMLElement[] = $state([]);
 	// Networks loaded from backend
 	let networks = $state<LISHNetworkConfig[]>([]);
-	let nodeInfoMap = $state<Record<string, NetworkNodeInfo>>({});
+	let globalNodeInfo = $state<NetworkNodeInfo | null>(null);
 	let networkErrors = $state<Record<string, string>>({});
 
 	async function loadNodeInfo() {
-		const infoMap: Record<string, NetworkNodeInfo> = {};
-		const errors: Record<string, string> = {};
-		for (const network of networks) {
-			if (network.enabled) {
-				try {
-					infoMap[network.networkID] = await api.networks.getNodeInfo(network.networkID);
-				} catch (e: any) {
-					errors[network.networkID] = e?.message || 'Failed to get node info';
-				}
-			}
+		try {
+			globalNodeInfo = await api.networks.getNodeInfo();
+		} catch (e: any) {
+			globalNodeInfo = null;
 		}
-		nodeInfoMap = infoMap;
-		networkErrors = errors;
 	}
 
 	async function loadNetworks() {
@@ -150,17 +142,6 @@
 		networkErrors = restErrors;
 		try {
 			await api.networks.setEnabled(network.networkID, newEnabled);
-			if (newEnabled) {
-				try {
-					const info = await api.networks.getNodeInfo(network.networkID);
-					nodeInfoMap = { ...nodeInfoMap, [network.networkID]: info };
-				} catch (e: any) {
-					networkErrors = { ...networkErrors, [network.networkID]: e?.message || 'Failed to get node info' };
-				}
-			} else {
-				const { [network.networkID]: _, ...rest } = nodeInfoMap;
-				nodeInfoMap = rest;
-			}
 		} catch (e: any) {
 			networkErrors = { ...networkErrors, [network.networkID]: e?.message || 'Connection failed' };
 		}
@@ -448,6 +429,16 @@
 		margin-top: 2vh;
 	}
 
+	.global-node-info {
+		font-size: 1.6vh;
+		color: var(--disabled-foreground);
+		font-family: monospace;
+		word-break: break-all;
+		white-space: pre-wrap;
+		padding: 1vh;
+		margin-bottom: 1vh;
+	}
+
 	.network {
 		display: flex;
 		flex-direction: column;
@@ -460,14 +451,6 @@
 		color: var(--secondary-foreground);
 	}
 
-	.network .node-info {
-		font-size: 1.6vh;
-		color: var(--disabled-foreground);
-		font-family: monospace;
-		word-break: break-all;
-		white-space: pre-wrap;
-	}
-
 	.network .buttons {
 		display: flex;
 		flex-wrap: wrap;
@@ -476,7 +459,7 @@
 </style>
 
 {#if showAddEdit}
-	{@const networkForEdit = editingNetwork ? { id: editingNetwork.networkID, key: editingNetwork.key, name: editingNetwork.name, description: editingNetwork.description, bootstrapServers: editingNetwork.bootstrapPeers.length > 0 ? editingNetwork.bootstrapPeers : [''] } : null}
+	{@const networkForEdit = editingNetwork ? { id: editingNetwork.networkID, name: editingNetwork.name, description: editingNetwork.description, bootstrapServers: editingNetwork.bootstrapPeers.length > 0 ? editingNetwork.bootstrapPeers : [''] } : null}
 	<LISHNetworkAddEdit {areaID} {position} network={networkForEdit} onBack={handleAddEditBack} onSave={handleSave} />
 {:else if showExport}
 	<LISHNetworkExport {areaID} {position} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={handleExportBack} />
@@ -497,6 +480,9 @@
 				<Button icon="/img/import.svg" label={$t('common.import')} selected={active && selectedIndex === 0 && buttonIndex === 2} onConfirm={openImport} />
 				<Button icon="/img/export.svg" label={$t('common.exportAll')} selected={active && selectedIndex === 0 && buttonIndex === 3} onConfirm={openExportAll} />
 			</div>
+			{#if globalNodeInfo}
+				<div class="global-node-info">{JSON.stringify(globalNodeInfo, null, 2)}</div>
+			{/if}
 			{#if networks.length === 0}
 				<Alert type="warning" message={$t('settings.lishNetwork.emptyList')} />
 			{:else}
@@ -511,9 +497,6 @@
 								<div class="name">{network.name}</div>
 								{#if networkErrors[network.networkID]}
 									<Alert type="error" message={networkErrors[network.networkID]} />
-								{/if}
-								{#if network.enabled && nodeInfoMap[network.networkID]}
-									<div class="node-info">{JSON.stringify(nodeInfoMap[network.networkID], null, 2)}</div>
 								{/if}
 								<div class="buttons">
 									<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />

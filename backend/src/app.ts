@@ -1,12 +1,9 @@
 import { setupLogger, type LogLevel } from './logger.ts';
 import { Networks } from './networks.ts';
-import { Downloader } from './downloader.ts';
 import { DataServer } from './data-server.ts';
 import { Database } from './database.ts';
 import { ApiServer } from './api.ts';
 import { LISHNetworkStorage } from './lishNetworkStorage.ts';
-import * as readline from 'readline';
-import { join } from 'path';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -73,14 +70,14 @@ async function shutdown() {
 	process.exit(0);
 }
 
-// Helper to get first live network for CLI commands
-function getFirstNetwork() {
-	const liveNetworks = networks.getLiveNetworks();
-	if (liveNetworks.size === 0) {
-		console.log('No networks running');
+// Helper to get the shared network instance for CLI commands
+function getNetwork() {
+	const network = networks.getNetwork();
+	if (!network.isRunning()) {
+		console.log('Network not running');
 		return null;
 	}
-	return liveNetworks.values().next().value;
+	return network;
 }
 
 process.on('SIGINT', shutdown);
