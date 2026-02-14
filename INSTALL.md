@@ -11,7 +11,7 @@ apt update
 apt -y upgrade
 apt -y install git curl
 curl -fsSL https://bun.sh/install | bash
-source /root/.bashrc
+source ~/.bashrc
 git clone https://github.com/libersoft-org/libershare.git
 cd libershare/frontend/
 ./build.sh
@@ -59,73 +59,61 @@ If you have your backend somewhere else (for example for development purposes, s
 
 ## 3. Native application
 
-The desktop app bundles the frontend and backend into a single installable application for Windows, macOS and Linux.
+The native app bundles the frontend and backend into a single installable application for various platforms.
 
-### Prerequisites
-
-**All platforms:**
-
-- [Bun](https://bun.sh/)
-- [Rust toolchain](https://rustup.rs/)
-
-#### Install Rust:
-
-**On Linux / macOS:**
+**On Linux (Debian / Ubuntu):**
 
 ```sh
+curl -fsSL https://bun.sh/install | bash
+source ~/.bashrc
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
-```
-
-**On Windows:**
-
-Download and run the installer from [https://rustup.rs/](https://rustup.rs/)
-
-#### Install Tauri CLI (all platforms):
-
-```sh
 cargo install tauri-cli --version "^2"
-```
-
-**Linux (Debian/Ubuntu) additional dependencies:**
-
-```sh
 sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-```
-
-**Windows additional dependencies:**
-
-- [Microsoft Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-- [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (included in Windows 10/11 by default)
-
-### Build
-
-**Linux / macOS:**
-
-```sh
 cd app
 ./build.sh
 ```
 
-**Windows:**
+**On macOS:**
+
+```sh
+curl -fsSL https://bun.sh/install | bash
+source ~/.zshrc
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+cargo install tauri-cli --version "^2"
+cd app
+./build.sh
+```
+
+**On Windows:**
+
+Download and install:
+
+- [**Bun**](https://bun.sh/)
+- [**Rust**](https://rustup.rs/)
+- [**Microsoft Visual Studio C++ Build Tools**](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+- [**WebView2**](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (included in Windows 10/11 by default)
+
+Then in a command line:
 
 ```bat
+cargo install tauri-cli --version "^2"
 cd app
 build.bat
 ```
 
+**Additional information**
+
 The build script will:
+
 1. Install dependencies and build the frontend (static HTML/JS/CSS)
 2. Install dependencies and compile the backend into a standalone binary
 3. Build the Tauri app with the backend as a sidecar
 
 The resulting installer will be in `app/build/release/bundle/`.
 
-### Running
+### Running the native app
 
 - **Normal mode:** Just launch the application. The backend runs silently in the background.
-- **Debug mode:** Launch from terminal with `--debug` flag to see backend logs in the terminal:
-
-```sh
-./LiberShare --debug
-```
+- **Debug mode:** Launch from terminal / command line with `--debug` flag to see backend logs in the terminal.
