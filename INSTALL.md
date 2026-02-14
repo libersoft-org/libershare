@@ -115,8 +115,8 @@ build.bat
 ```
 
 The build script will:
-1. Build the frontend (static HTML/JS/CSS)
-2. Compile the backend into a standalone binary
+1. Install dependencies and build the frontend (static HTML/JS/CSS)
+2. Install dependencies and compile the backend into a standalone binary
 3. Build the Tauri app with the backend as a sidecar
 
 The resulting installer will be in `app/build/release/bundle/`.
