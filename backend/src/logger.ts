@@ -21,8 +21,8 @@ function formatTimestamp(date: Date): string {
 
 const levelColors: Record<string, string> = {
 	DEBUG: '\x1b[36m', // cyan
-	INFO: '\x1b[32m',  // green
-	WARN: '\x1b[33m',  // yellow
+	INFO: '\x1b[32m', // green
+	WARN: '\x1b[33m', // yellow
 	ERROR: '\x1b[31m', // red
 };
 const RESET = '\x1b[0m';
