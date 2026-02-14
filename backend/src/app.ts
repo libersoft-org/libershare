@@ -14,7 +14,7 @@ let dataDir = isCompiledBinary ? join(dirname(process.execPath), 'data') : './da
 let enablePink = false;
 let logLevel: LogLevel = 'debug';
 let apiHost = 'localhost';
-let apiPort = 1158;
+let apiPort = 0;
 let apiSecure = false;
 let apiKeyFile: string | undefined;
 let apiCertFile: string | undefined;

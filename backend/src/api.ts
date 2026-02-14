@@ -21,11 +21,11 @@ interface Request {
 }
 
 export interface ApiServerOptions {
-	host?: string;
-	port?: number;
-	secure?: boolean;
-	keyFile?: string;
-	certFile?: string;
+	host: string;
+	port: number;
+	secure: boolean;
+	keyFile: string | undefined;
+	certFile: string | undefined;
 }
 
 export class ApiServer {
@@ -46,13 +46,13 @@ export class ApiServer {
 		private readonly dataServer: DataServer,
 		private readonly networks: Networks,
 		lishNetworks: LISHNetworkStorage,
-		options: ApiServerOptions = {}
+		options: ApiServerOptions
 	) {
 		this.settings = new Settings(dataDir);
 		this.lishNetworks = lishNetworks;
-		this.host = options.host ?? 'localhost';
-		this.port = options.port ?? 1158;
-		this.secure = options.secure ?? false;
+		this.host = options.host;
+		this.port = options.port;
+		this.secure = options.secure;
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
 	}
@@ -92,12 +92,14 @@ export class ApiServer {
 			};
 		}
 		this.server = Bun.serve<ClientData>(serverConfig);
+
+		const actualPort = this.server.port;
 		// Start broadcasting stats every second
 		this.statsInterval = setInterval(() => {
 			if (this.clients.size > 0) this.broadcastStats();
 		}, 1000);
 		const protocol = this.secure ? 'wss' : 'ws';
-		console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${this.port}`);
+		console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${actualPort}`);
 	}
 
 	stop(): void {
