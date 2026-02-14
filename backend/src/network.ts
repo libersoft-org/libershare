@@ -247,11 +247,28 @@ export class Network {
 		}
 
 		console.log('Creating libp2p node...');
-		this.node = await createLibp2p(config);
+		try {
+			this.node = await createLibp2p(config);
+		} catch (err: any) {
+			if (err?.name === 'UnsupportedListenAddressesError' || err?.code === 'ERR_NO_VALID_ADDRESSES') {
+				console.error(`✗ Failed to start network: port ${port} is likely already in use or the listen address is invalid.`);
+				console.error(`  Try changing the port in settings or stop the other process using port ${port}.`);
+				throw err;
+			}
+			throw err;
+		}
 		console.log('Port:', port);
 		console.log('Node ID:', this.node.peerId.toString());
 
-		await this.node.start();
+		try {
+			await this.node.start();
+		} catch (err: any) {
+			if (err?.name === 'UnsupportedListenAddressesError' || err?.code === 'ERR_NO_VALID_ADDRESSES') {
+				console.error(`✗ Failed to start network: port ${port} is likely already in use or the listen address is invalid.`);
+				console.error(`  Try changing the port in settings or stop the other process using port ${port}.`);
+			}
+			throw err;
+		}
 		console.log('Node started');
 
 		const addresses = this.node.getMultiaddrs();

@@ -19,6 +19,14 @@ function formatTimestamp(date: Date): string {
 	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
+const levelColors: Record<string, string> = {
+	DEBUG: '\x1b[36m', // cyan
+	INFO: '\x1b[32m',  // green
+	WARN: '\x1b[33m',  // yellow
+	ERROR: '\x1b[31m', // red
+};
+const RESET = '\x1b[0m';
+
 function createPreciseReporter(): ConsolaReporter {
 	return {
 		log(logObj: LogObject) {
@@ -26,7 +34,9 @@ function createPreciseReporter(): ConsolaReporter {
 			const levelName = levelNames[logObj.level] || 'INFO';
 			const prefix = LOG_PREFIX ? `[${LOG_PREFIX}] ` : '';
 			const args = logObj.args.map(arg => (typeof arg === 'object' ? JSON.stringify(arg) : arg)).join(' ');
-			const output = `${prefix}[${timestamp}] [${levelName}] ${args}`;
+			const color = levelColors[levelName] || '';
+			const levelTag = color ? `${color}[${levelName}]${RESET}` : `[${levelName}]`;
+			const output = `${prefix}[${timestamp}] ${levelTag} ${args}`;
 			if (logObj.level <= LogLevels.error) process.stderr.write(output + '\n');
 			else process.stdout.write(output + '\n');
 		},
