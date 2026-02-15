@@ -1,3 +1,7 @@
 {
-	"mainBinaryName": "libershare"
+	"productName": "libershare",
+	"mainBinaryName": "libershare",
+	"bundle": {
+		"targets": ["deb", "rpm"]
+	}
 }
