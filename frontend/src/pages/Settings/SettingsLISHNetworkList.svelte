@@ -448,7 +448,12 @@
 	.network .name {
 		font-size: 2.5vh;
 		font-weight: bold;
-		color: var(--secondary-foreground);
+		color: var(--primary-foreground);
+	}
+
+	.network .description {
+		font-size: 1.6vh;
+		color: var(--disabled-foreground);
 	}
 
 	.network .buttons {
@@ -495,6 +500,9 @@
 						<Row selected={active && selectedIndex === i + 1}>
 							<div class="network">
 								<div class="name">{network.name}</div>
+								{#if network.description}
+									<div class="description">{@html network.description.replaceAll('\n', '<br />')}</div>
+								{/if}
 								{#if networkErrors[network.networkID]}
 									<Alert type="error" message={networkErrors[network.networkID]} />
 								{/if}
