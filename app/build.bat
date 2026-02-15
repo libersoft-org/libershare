@@ -4,6 +4,16 @@ setlocal
 set SCRIPT_DIR=%~dp0
 set ROOT_DIR=%SCRIPT_DIR%..
 
+rem Generate icons from SVG
+echo === Generating icons ===
+if not exist "%SCRIPT_DIR%icons" mkdir "%SCRIPT_DIR%icons"
+magick -background none -size 32x32 "%ROOT_DIR%\frontend\static\favicon.svg" "%SCRIPT_DIR%icons\32x32.png"
+magick -background none -size 128x128 "%ROOT_DIR%\frontend\static\favicon.svg" "%SCRIPT_DIR%icons\128x128.png"
+magick -background none -size 256x256 "%ROOT_DIR%\frontend\static\favicon.svg" "%SCRIPT_DIR%icons\128x128@2x.png"
+magick -background none -size 256x256 "%ROOT_DIR%\frontend\static\favicon.svg" "%SCRIPT_DIR%icons\icon.png"
+magick -background none -size 256x256 "%ROOT_DIR%\frontend\static\favicon.svg" "%SCRIPT_DIR%icons\icon.ico"
+if errorlevel 1 goto :error
+
 rem Build frontend
 echo === Building frontend ===
 cd /d "%ROOT_DIR%\frontend"

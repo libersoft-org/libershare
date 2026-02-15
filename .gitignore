@@ -1,6 +1,7 @@
 **/node_modules/
 **/build/
 app/binaries/
+app/icons/
 **/*.crt
 **/*.key
 frontend/.svelte-kit/

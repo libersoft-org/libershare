@@ -69,7 +69,7 @@ source ~/.bashrc
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 cargo install tauri-cli --version "^2"
-sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev librsvg2-bin imagemagick
 cd app
 ./build.sh
 ```
@@ -92,6 +92,7 @@ Download and install:
 
 - [**Bun**](https://bun.sh/)
 - [**Rust**](https://rustup.rs/)
+- [**ImageMagick**](https://imagemagick.org/script/download.php#windows)
 - [**Microsoft Visual Studio C++ Build Tools**](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 - [**WebView2**](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (included in Windows 10/11 by default)
 
