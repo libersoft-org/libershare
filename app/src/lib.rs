@@ -27,9 +27,9 @@ pub fn run() {
 			let port_str = port.to_string();
 
 			// Create main window with backend port in query parameter
-			let url = format!("index.html?backendPort={}", port);
-			let window = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App(url.into()))
+			let window = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
 				.title("LiberShare")
+				.initialization_script(&format!("window.__BACKEND_PORT__ = {};", port))
 				.visible(false)
 				.build()?;
 

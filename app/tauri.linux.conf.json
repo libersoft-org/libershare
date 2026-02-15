@@ -2,6 +2,13 @@
 	"productName": "libershare",
 	"mainBinaryName": "libershare",
 	"bundle": {
-		"targets": ["deb", "rpm"]
+		"linux": {
+			"deb": {
+				"desktopTemplate": "desktop-entry.desktop"
+			},
+			"rpm": {
+				"desktopTemplate": "desktop-entry.desktop"
+			}
+		}
 	}
 }

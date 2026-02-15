@@ -4,6 +4,23 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Parse arguments
+BUNDLE_ARGS=""
+for arg in "$@"; do
+	case "$arg" in
+		--deb) BUNDLE_ARGS="$BUNDLE_ARGS --bundles deb" ;;
+		--rpm) BUNDLE_ARGS="$BUNDLE_ARGS --bundles rpm" ;;
+		--dmg) BUNDLE_ARGS="$BUNDLE_ARGS --bundles dmg" ;;
+		*) echo "Unknown argument: $arg"; echo "Usage: ./build.sh [--deb] [--rpm] [--dmg]"; exit 1 ;;
+	esac
+done
+
+# Clean old build artifacts
+echo "=== Cleaning old build ==="
+[ -d "$SCRIPT_DIR/build/release/bundle" ] && rm -rf "$SCRIPT_DIR/build/release/bundle"
+[ -d "$SCRIPT_DIR/binaries" ] && rm -rf "$SCRIPT_DIR/binaries"
+[ -d "$SCRIPT_DIR/icons" ] && rm -rf "$SCRIPT_DIR/icons"
+
 # Generate icons from SVG
 echo "=== Generating icons ==="
 ICONS_DIR="$SCRIPT_DIR/icons"
@@ -37,7 +54,12 @@ echo "Copied lish-backend as lish-backend-$TARGET"
 # Build Tauri app
 echo "=== Building Tauri app ==="
 cd "$SCRIPT_DIR"
-cargo tauri build
+cargo tauri build $BUNDLE_ARGS
 
 echo "=== Build complete ==="
-echo "Output: $SCRIPT_DIR/build/release/bundle/"
+if [ -n "$BUNDLE_ARGS" ]; then
+	echo "Output: $SCRIPT_DIR/build/release/bundle/"
+else
+	echo "Output: $SCRIPT_DIR/build/release/libershare"
+	echo "To create packages, run: ./build.sh --deb and/or ./build.sh --rpm"
+fi

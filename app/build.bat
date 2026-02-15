@@ -4,6 +4,23 @@ setlocal
 set SCRIPT_DIR=%~dp0
 set ROOT_DIR=%SCRIPT_DIR%..
 
+rem Parse arguments
+set BUNDLE_ARGS=
+:parse_args
+if "%~1"=="" goto :args_done
+if /i "%~1"=="/deb" set "BUNDLE_ARGS=%BUNDLE_ARGS% --bundles deb" & shift & goto :parse_args
+if /i "%~1"=="/msi" set "BUNDLE_ARGS=%BUNDLE_ARGS% --bundles msi" & shift & goto :parse_args
+echo Unknown argument: %~1
+echo Usage: build.bat [/deb] [/msi]
+exit /b 1
+:args_done
+
+rem Clean old build artifacts
+echo === Cleaning old build ===
+if exist "%SCRIPT_DIR%build\release\bundle" rmdir /s /q "%SCRIPT_DIR%build\release\bundle"
+if exist "%SCRIPT_DIR%binaries" rmdir /s /q "%SCRIPT_DIR%binaries"
+if exist "%SCRIPT_DIR%icons" rmdir /s /q "%SCRIPT_DIR%icons"
+
 rem Generate icons from SVG
 echo === Generating icons ===
 if not exist "%SCRIPT_DIR%icons" mkdir "%SCRIPT_DIR%icons"
@@ -36,11 +53,16 @@ echo Copied lish-backend as lish-backend-%TARGET%.exe
 rem Build Tauri app
 echo === Building Tauri app ===
 cd /d "%SCRIPT_DIR%"
-cargo tauri build
+cargo tauri build %BUNDLE_ARGS%
 if errorlevel 1 goto :error
 
 echo === Build complete ===
-echo Output: %SCRIPT_DIR%build\release\bundle\
+if defined BUNDLE_ARGS (
+	echo Output: %SCRIPT_DIR%build\release\bundle\
+) else (
+	echo Output: %SCRIPT_DIR%build\release\LiberShare.exe
+	echo To create packages, run: build.bat /msi
+)
 goto :end
 
 :error

@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 name = "libershare_app_lib"
-crate-type = ["staticlib", "cdylib", "lib"]
+crate-type = ["lib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -14,3 +14,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-window-state = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 16
+strip = true

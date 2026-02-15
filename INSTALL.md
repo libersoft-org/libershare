@@ -74,6 +74,10 @@ cd app
 ./build.sh
 ```
 
+To create a .deb package: `./build.sh --deb`
+To create an .rpm package: `./build.sh --rpm`
+Both: `./build.sh --deb --rpm`
+
 **On macOS:**
 
 ```sh
@@ -85,6 +89,8 @@ cargo install tauri-cli --version "^2"
 cd app
 ./build.sh
 ```
+
+To create a .dmg installer: `./build.sh --dmg`
 
 **On Windows:**
 
@@ -104,6 +110,8 @@ cd app
 build.bat
 ```
 
+To create an MSI installer: `build.bat /msi`
+
 **Additional information**
 
 The build script will:
@@ -112,7 +120,7 @@ The build script will:
 2. Install dependencies and compile the backend into a standalone binary
 3. Build the Tauri app with the backend as a sidecar
 
-The resulting installer will be in `app/build/release/bundle/`.
+The resulting binary will be in `app/build/release/`. Packages (if created) will be in `app/build/release/bundle/`.
 
 ### Running the native app
 
