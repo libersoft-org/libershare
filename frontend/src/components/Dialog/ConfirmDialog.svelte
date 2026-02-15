@@ -4,7 +4,7 @@
 	import { useArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import Dialog from './Dialog.svelte';
-	import ButtonsStatic from '../Buttons/ButtonsStatic.svelte';
+	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
 	interface Props {
 		title: string;
@@ -76,9 +76,9 @@
 <Dialog {title}>
 	<div class="confirm">
 		<div class="message">{message}</div>
-		<ButtonsStatic>
+		<ButtonBar justify="center">
 			<Button icon={confirmIcon} label={confirmLabel} selected={selectedButton === 'confirm'} pressed={selectedButton === 'confirm' && isPressed} {onConfirm} />
 			<Button icon={cancelIcon} label={cancelLabel} selected={selectedButton === 'cancel'} pressed={selectedButton === 'cancel' && isPressed} onConfirm={onBack} />
-		</ButtonsStatic>
+		</ButtonBar>
 	</div>
 </Dialog>

@@ -4,7 +4,7 @@
 	import { useArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import Dialog from './Dialog.svelte';
-	import ButtonsStatic from '../Buttons/ButtonsStatic.svelte';
+	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
 	import Input from '../Input/Input.svelte';
 	import Alert from '../Alert/Alert.svelte';
@@ -107,9 +107,9 @@
 		{#if error}
 			<Alert type="error" message={error} />
 		{/if}
-		<ButtonsStatic>
+		<ButtonBar justify="center">
 			<Button icon={confirmIcon} label={confirmLabel} selected={selectedElement === 'confirm'} pressed={selectedElement === 'confirm' && isPressed} onConfirm={handleConfirm} />
 			<Button icon={cancelIcon} label={cancelLabel} selected={selectedElement === 'cancel'} pressed={selectedElement === 'cancel' && isPressed} onConfirm={onBack} />
-		</ButtonsStatic>
+		</ButtonBar>
 	</div>
 </Dialog>
