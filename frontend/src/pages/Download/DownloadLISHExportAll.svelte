@@ -4,6 +4,7 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -90,12 +91,6 @@
 		width: 800px;
 		max-width: 100%;
 	}
-
-	.buttons {
-		display: flex;
-		justify-content: center;
-		gap: 2vh;
-	}
 </style>
 
 <div class="export-all">
@@ -106,10 +101,10 @@
 			<Alert type="warning" message={$t('downloads.emptyList')} />
 		{/if}
 	</div>
-	<div class="buttons">
+	<ButtonBar justify="center">
 		{#if hasLish}
 			<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
 		{/if}
 		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && (hasLish ? selectedIndex === 1 && selectedColumn === 1 : true)} onConfirm={onBack} />
-	</div>
+	</ButtonBar>
 </div>

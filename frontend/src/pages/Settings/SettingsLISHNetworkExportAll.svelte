@@ -10,6 +10,7 @@
 	import { getNetworks, exportAllNetworksToJson } from '../../scripts/lishNetwork.ts';
 	import { storageLishnetPath, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
 	import { minifyJson } from '../../scripts/utils.ts';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -151,12 +152,6 @@
 		width: 800px;
 		max-width: 100%;
 	}
-
-	.buttons {
-		display: flex;
-		justify-content: center;
-		gap: 2vh;
-	}
 </style>
 
 {#if browsingSaveAs}
@@ -172,11 +167,11 @@
 				<Alert type="warning" message={$t('settings.lishNetwork.emptyList')} />
 			{/if}
 		</div>
-		<div class="buttons">
+		<ButtonBar justify="center">
 			{#if hasNetworks}
 				<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={openSaveAs} />
 			{/if}
 			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && (hasNetworks ? selectedIndex === 3 && selectedColumn === 1 : true)} onConfirm={onBack} />
-		</div>
+		</ButtonBar>
 	</div>
 {/if}

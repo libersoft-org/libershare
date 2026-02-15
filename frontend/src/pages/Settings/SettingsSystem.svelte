@@ -6,6 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJson, defaultCompressGzip, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJson, setDefaultCompressGzip } from '../../scripts/settings.ts';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	interface Props {
@@ -165,13 +166,6 @@
 		width: 1000px;
 		max-width: 100%;
 	}
-
-	.buttons {
-		display: flex;
-		justify-content: center;
-		gap: 2vh;
-		padding-top: 2vh;
-	}
 </style>
 
 <div class="settings">
@@ -194,8 +188,10 @@
 			<SwitchRow label={$t('settings.system.defaultCompressGzip') + ':'} checked={compressGzip} selected={active && getActualIndex(selectedIndex) === FIELD_COMPRESS_GZIP} onToggle={toggleCompressGzip} />
 		</div>
 	</div>
-	<div class="buttons" bind:this={rowElements[trayVisible ? 5 : 4]}>
-		<Button icon="/img/save.svg" label={$t('common.save')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 0} onConfirm={saveSettings} />
-		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 1} onConfirm={onBack} />
+	<div bind:this={rowElements[trayVisible ? 5 : 4]}>
+		<ButtonBar justify="center">
+			<Button icon="/img/save.svg" label={$t('common.save')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 0} onConfirm={saveSettings} />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 1} onConfirm={onBack} />
+		</ButtonBar>
 	</div>
 </div>

@@ -7,6 +7,7 @@
 	import { type NetworkFormData, getNetworkFormFieldType, getNetworkFormMaxColumn } from '../../scripts/lishNetwork.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
@@ -200,13 +201,6 @@
 		max-width: 100%;
 	}
 
-	.buttons {
-		display: flex;
-		justify-content: center;
-		gap: 2vh;
-		margin-top: 2vh;
-	}
-
 	.label {
 		font-size: 2vh;
 		color: var(--disabled-foreground);
@@ -257,12 +251,13 @@
 		{/each}
 		<Alert type="error" message={showError ? errorMessage : ''} />
 	</div>
-	<div class="buttons">
+
+	<ButtonBar justify="center">
 		<div bind:this={rowElements[bootstrapOffset + bootstrapServers.length]}>
 			<Button icon="/img/save.svg" label={$t('common.save')} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length} onConfirm={handleSave} />
 		</div>
 		<div bind:this={rowElements[bootstrapOffset + bootstrapServers.length + 1]}>
 			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length + 1} onConfirm={onBack} />
 		</div>
-	</div>
+	</ButtonBar>
 </div>

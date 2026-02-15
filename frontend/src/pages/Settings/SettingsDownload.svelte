@@ -8,11 +8,11 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath, storageTempPath, storageLishPath, storageLishnetPath, setStoragePath, setStorageTempPath, setStorageLishPath, setStorageLishnetPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, allowRelay, maxRelayReservations, autoStartSharing, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, DEFAULT_STORAGE_PATH, DEFAULT_STORAGE_TEMP_PATH, DEFAULT_STORAGE_LISH_PATH, DEFAULT_STORAGE_LISHNET_PATH, DEFAULT_INCOMING_PORT, DEFAULT_MAX_DOWNLOAD_CONNECTIONS, DEFAULT_MAX_UPLOAD_CONNECTIONS, DEFAULT_MAX_DOWNLOAD_SPEED, DEFAULT_MAX_UPLOAD_SPEED, DEFAULT_ALLOW_RELAY, DEFAULT_MAX_RELAY_RESERVATIONS, DEFAULT_AUTO_START_SHARING } from '../../scripts/settings.ts';
 	import { scrollToElement, normalizePath } from '../../scripts/utils.ts';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	import SettingsStorageBrowse from './SettingsStorageBrowse.svelte';
-
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -316,13 +316,6 @@
 		max-width: 100%;
 	}
 
-	.buttons {
-		display: flex;
-		justify-content: center;
-		gap: 2vh;
-		padding-top: 2vh;
-	}
-
 	.row {
 		display: flex;
 		gap: 1vh;
@@ -388,9 +381,9 @@
 				<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} selected={active && selectedIndex === FIELD_AUTO_START} onToggle={toggleAutoStart} />
 			</div>
 		</div>
-		<div class="buttons" bind:this={rowElements[FIELD_BUTTONS]}>
+		<ButtonBar justify="center">
 			<Button icon="/img/save.svg" label={$t('common.save')} selected={active && selectedIndex === FIELD_BUTTONS && selectedColumn === 0} onConfirm={handleSave} />
 			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === FIELD_BUTTONS && selectedColumn === 1} onConfirm={onBack} />
-		</div>
+		</ButtonBar>
 	</div>
 {/if}

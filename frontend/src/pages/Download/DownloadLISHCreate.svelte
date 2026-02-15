@@ -11,6 +11,7 @@
 	import { storageLishPath, storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
@@ -338,13 +339,6 @@
 		max-width: 100%;
 	}
 
-	.buttons {
-		display: flex;
-		justify-content: center;
-		gap: 2vh;
-		margin-top: 2vh;
-	}
-
 	.row {
 		display: flex;
 		gap: 1vh;
@@ -416,13 +410,13 @@
 			</div>
 			<Alert type="error" message={showError ? errorMessage : ''} />
 		</div>
-		<div class="buttons">
+		<ButtonBar justify="center">
 			<div bind:this={rowElements[FIELD_CREATE]}>
 				<Button icon="/img/plus.svg" label={$t('downloads.lishCreate.create')} selected={active && selectedIndex === FIELD_CREATE} onConfirm={handleCreate} />
 			</div>
 			<div bind:this={rowElements[FIELD_BACK]}>
 				<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === FIELD_BACK} onConfirm={onBack} />
 			</div>
-		</div>
+		</ButtonBar>
 	</div>
 {/if}

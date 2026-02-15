@@ -7,6 +7,7 @@
 	import { navigateTo } from '../../scripts/navigation.ts';
 	import { selectedDownload, DOWNLOAD_TABLE_COLUMNS, TEST_DOWNLOADS } from '../../scripts/downloads.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import Header from '../../components/Table/TableHeader.svelte';
@@ -109,20 +110,13 @@
 	.download {
 		display: flex;
 		flex-direction: column;
+		gap: 2vh;
 		height: 100%;
-	}
-
-	.toolbar {
-		display: flex;
-		flex-direction: row;
-		flex-wrap: wrap;
-		gap: 1vh;
-		padding: 1vh 2vh;
+		padding: 2vh;
 	}
 
 	.container {
 		flex: 1;
-		margin: 0 2vh;
 		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
 		overflow: hidden;
@@ -136,11 +130,11 @@
 </style>
 
 <div class="download">
-	<div class="toolbar">
+	<ButtonBar>
 		<Button icon="/img/plus.svg" label={$t('downloads.createLish')} selected={toolbarActive && selectedToolbarIndex === 0} />
 		<Button icon="/img/download.svg" label={$t('common.import')} selected={toolbarActive && selectedToolbarIndex === 1} />
 		<Button icon="/img/upload.svg" label={$t('common.exportAll')} selected={toolbarActive && selectedToolbarIndex === 2} />
-	</div>
+	</ButtonBar>
 	<div class="container">
 		<Table columns={DOWNLOAD_TABLE_COLUMNS} noBorder>
 			<Header fontSize="1.4vh">

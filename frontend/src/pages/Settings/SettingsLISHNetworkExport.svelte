@@ -9,6 +9,7 @@
 	import { exportNetworkToJson } from '../../scripts/lishNetwork.ts';
 	import { storageLishnetPath, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
 	import { minifyJson } from '../../scripts/utils.ts';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
@@ -173,12 +174,6 @@
 		width: 800px;
 		max-width: 100%;
 	}
-
-	.buttons {
-		display: flex;
-		justify-content: center;
-		gap: 2vh;
-	}
 </style>
 
 {#if browsingSaveAs}
@@ -193,9 +188,9 @@
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
-		<div class="buttons">
+		<ButtonBar justify="center">
 			<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={openSaveAs} />
 			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 3 && selectedColumn === 1} onConfirm={onBack} />
-		</div>
+		</ButtonBar>
 	</div>
 {/if}

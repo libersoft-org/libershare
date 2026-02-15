@@ -11,6 +11,7 @@
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
@@ -192,12 +193,6 @@
 		max-width: 100%;
 	}
 
-	.buttons {
-		display: flex;
-		justify-content: center;
-		gap: 2vh;
-	}
-
 	.row {
 		display: flex;
 		gap: 1vh;
@@ -220,9 +215,9 @@
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
-		<div class="buttons">
+		<ButtonBar justify="center">
 			<Button icon="/img/download.svg" label={$t('common.import')} selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={handleImport} />
 			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 3 && selectedColumn === 1} onConfirm={onBack} />
-		</div>
+		</ButtonBar>
 	</div>
 {/if}

@@ -8,10 +8,10 @@
 	import { type LISHNetworkDefinition } from '@libershare/shared';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import ImportOverwrite from './SettingsLISHNetworkImportOverwrite.svelte';
-
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -149,27 +149,21 @@
 		width: 800px;
 		max-width: 100%;
 	}
-
-	.buttons {
-		display: flex;
-		justify-content: center;
-		gap: 2vh;
-	}
 </style>
 
 {#if parsedNetworks}
 	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleImportDone} />
 {:else}
-<div class="import">
-	<div class="container">
-		<Input bind:this={inputRef} bind:value={networkJson} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} placeholder={'{"networkID": "...", "name": "...", ...}'} />
-		{#if errorMessage}
-			<Alert type="error" message={errorMessage} />
-		{/if}
+	<div class="import">
+		<div class="container">
+			<Input bind:this={inputRef} bind:value={networkJson} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} placeholder={'{"networkID": "...", "name": "...", ...}'} />
+			{#if errorMessage}
+				<Alert type="error" message={errorMessage} />
+			{/if}
+		</div>
+		<ButtonBar justify="center">
+			<Button icon="/img/import.svg" label={$t('common.import')} selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={handleImport} />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
+		</ButtonBar>
 	</div>
-	<div class="buttons">
-		<Button icon="/img/import.svg" label={$t('common.import')} selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={handleImport} />
-		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
-	</div>
-</div>
 {/if}

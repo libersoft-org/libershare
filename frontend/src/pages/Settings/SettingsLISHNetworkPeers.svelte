@@ -7,6 +7,7 @@
 	import { type LISHNetworkConfig } from '@libershare/shared';
 	import { api } from '../../scripts/api.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
@@ -111,10 +112,6 @@
 		max-width: 100%;
 	}
 
-	.back {
-		align-self: flex-start;
-	}
-
 	.peer-id {
 		font-family: monospace;
 		font-size: 1.8vh;
@@ -125,9 +122,9 @@
 
 <div class="peer-list">
 	<div class="container">
-		<div class="back" bind:this={rowElements[0]}>
+		<ButtonBar>
 			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 0} onConfirm={onBack} width="auto" />
-		</div>
+		</ButtonBar>
 		{#if loading}
 			<Spinner size="8vh" />
 		{:else if error}

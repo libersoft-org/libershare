@@ -10,6 +10,7 @@
 	import { api } from '../../scripts/api.ts';
 	import { getNetworks, deleteNetwork as deleteNetworkFromApi, updateNetwork as updateNetworkFromApi, addNetwork as addNetworkFromApi, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
@@ -417,18 +418,6 @@
 		max-width: 100%;
 	}
 
-	.top-buttons {
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: flex-start;
-		gap: 1vh;
-		margin-bottom: 1vh;
-	}
-
-	.back {
-		margin-top: 2vh;
-	}
-
 	.global-node-info {
 		font-size: 1.6vh;
 		color: var(--disabled-foreground);
@@ -479,13 +468,13 @@
 {:else}
 	<div class="lish-network-list">
 		<div class="container">
-			<div class="top-buttons" bind:this={rowElements[0]}>
+			<ButtonBar>
 				<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={onBack} />
 				<Button icon="/img/online.svg" label={$t('settings.lishNetwork.publicList')} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openPublic} />
 				<Button icon="/img/plus.svg" label={$t('common.add')} selected={active && selectedIndex === 0 && buttonIndex === 2} onConfirm={openAddNetwork} />
 				<Button icon="/img/import.svg" label={$t('common.import')} selected={active && selectedIndex === 0 && buttonIndex === 3} onConfirm={openImport} />
 				<Button icon="/img/export.svg" label={$t('common.exportAll')} selected={active && selectedIndex === 0 && buttonIndex === 4} onConfirm={openExportAll} />
-			</div>
+			</ButtonBar>
 			{#if globalNodeInfo}
 				<div class="global-node-info">{JSON.stringify(globalNodeInfo, null, 2)}</div>
 			{/if}
