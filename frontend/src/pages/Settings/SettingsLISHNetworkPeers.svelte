@@ -28,7 +28,7 @@
 	let error = $state('');
 	let rowElements: HTMLElement[] = $state([]);
 
-	// Items: peer rows (0 to peers.length - 1), Back button (last)
+	// Items: Back button (0), peer rows (1 to peers.length)
 	let totalItems = $derived(peers.length + 1);
 
 	async function loadPeers() {
@@ -71,11 +71,11 @@
 					right: () => false,
 					confirmDown: () => {},
 					confirmUp: () => {
-						if (selectedIndex < peers.length) {
-							const peer = peers[selectedIndex];
-							console.log('Peer selected:', peer);
-						} else if (selectedIndex === totalItems - 1) {
+						if (selectedIndex === 0) {
 							onBack?.();
+						} else {
+							const peer = peers[selectedIndex - 1];
+							console.log('Peer selected:', peer);
 						}
 					},
 					confirmCancel: () => {},
@@ -111,14 +111,8 @@
 		max-width: 100%;
 	}
 
-	.title {
-		font-size: 2.5vh;
-		font-weight: bold;
-		color: var(--secondary-foreground);
-	}
-
 	.back {
-		margin-top: 2vh;
+		align-self: flex-start;
 	}
 
 	.peer-id {
@@ -131,7 +125,9 @@
 
 <div class="peer-list">
 	<div class="container">
-		<div class="title">{network.name} - {$t('settings.lishNetwork.peerList')}</div>
+		<div class="back" bind:this={rowElements[0]}>
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 0} onConfirm={onBack} width="auto" />
+		</div>
 		{#if loading}
 			<Spinner size="8vh" />
 		{:else if error}
@@ -145,8 +141,8 @@
 					<TableCell>Peer ID</TableCell>
 				</TableHeader>
 				{#each peers as peer, i}
-					<div bind:this={rowElements[i]}>
-						<TableRow selected={active && selectedIndex === i} odd={i % 2 !== 0}>
+					<div bind:this={rowElements[i + 1]}>
+						<TableRow selected={active && selectedIndex === i + 1} odd={i % 2 !== 0}>
 							<TableCell>{i + 1}</TableCell>
 							<TableCell><span class="peer-id">{peer}</span></TableCell>
 						</TableRow>
@@ -154,8 +150,5 @@
 				{/each}
 			</Table>
 		{/if}
-	</div>
-	<div class="back" bind:this={rowElements[peers.length]}>
-		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
 	</div>
 </div>

@@ -59,12 +59,12 @@
 		await loadNodeInfo();
 	}
 
-	// Items: Top buttons row (0), network rows (1 to networks.length), Back button (last)
-	let totalItems = $derived(networks.length + 2);
-	// Check if current row is the top row (has Add/Import buttons)
+	// Items: Top buttons row (0), network rows (1 to networks.length)
+	let totalItems = $derived(networks.length + 1);
+	// Check if current row is the top row (has Back/Add/Import buttons)
 	let isTopRow = $derived(selectedIndex === 0);
 	// Check if current row is a network row (has Edit/Delete buttons)
-	let isNetworkRow = $derived(selectedIndex > 0 && selectedIndex < totalItems - 1);
+	let isNetworkRow = $derived(selectedIndex > 0 && selectedIndex < totalItems);
 
 	function openPublic() {
 		showPublic = true;
@@ -339,7 +339,7 @@
 				},
 				right: () => {
 					if (!isNetworkRow && !isTopRow) return false;
-					let maxIndex = 3; // top row: 4 buttons (0-3)
+					let maxIndex = 4; // top row: 5 buttons (0-4)
 					if (isNetworkRow) {
 						const networkIndex = selectedIndex - 1;
 						const isFirst = networkIndex === 0;
@@ -356,12 +356,12 @@
 				confirmDown: () => {},
 				confirmUp: () => {
 					if (selectedIndex === 0) {
-						if (buttonIndex === 0) openPublic();
-						else if (buttonIndex === 1) openAddNetwork();
-						else if (buttonIndex === 2) openImport();
+						if (buttonIndex === 0) onBack?.();
+						else if (buttonIndex === 1) openPublic();
+						else if (buttonIndex === 2) openAddNetwork();
+						else if (buttonIndex === 3) openImport();
 						else openExportAll();
-					} else if (selectedIndex === totalItems - 1) onBack?.();
-					else {
+					} else {
 						const networkIndex = selectedIndex - 1;
 						const network = networks[networkIndex];
 						if (network) {
@@ -480,10 +480,11 @@
 	<div class="lish-network-list">
 		<div class="container">
 			<div class="top-buttons" bind:this={rowElements[0]}>
-				<Button icon="/img/online.svg" label={$t('settings.lishNetwork.publicList')} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={openPublic} />
-				<Button icon="/img/plus.svg" label={$t('common.add')} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openAddNetwork} />
-				<Button icon="/img/import.svg" label={$t('common.import')} selected={active && selectedIndex === 0 && buttonIndex === 2} onConfirm={openImport} />
-				<Button icon="/img/export.svg" label={$t('common.exportAll')} selected={active && selectedIndex === 0 && buttonIndex === 3} onConfirm={openExportAll} />
+				<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={onBack} />
+				<Button icon="/img/online.svg" label={$t('settings.lishNetwork.publicList')} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={openPublic} />
+				<Button icon="/img/plus.svg" label={$t('common.add')} selected={active && selectedIndex === 0 && buttonIndex === 2} onConfirm={openAddNetwork} />
+				<Button icon="/img/import.svg" label={$t('common.import')} selected={active && selectedIndex === 0 && buttonIndex === 3} onConfirm={openImport} />
+				<Button icon="/img/export.svg" label={$t('common.exportAll')} selected={active && selectedIndex === 0 && buttonIndex === 4} onConfirm={openExportAll} />
 			</div>
 			{#if globalNodeInfo}
 				<div class="global-node-info">{JSON.stringify(globalNodeInfo, null, 2)}</div>
@@ -524,9 +525,6 @@
 					</div>
 				{/each}
 			{/if}
-		</div>
-		<div class="back" bind:this={rowElements[totalItems - 1]}>
-			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
 		</div>
 	</div>
 {/if}
