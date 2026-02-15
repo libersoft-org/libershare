@@ -11,7 +11,7 @@ import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { autoNAT } from '@libp2p/autonat';
 import { KEEP_ALIVE } from '@libp2p/interface';
-import { LevelDatastore } from 'datastore-level';
+import { SqliteDatastore } from './datastore.ts';
 import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { type Libp2p } from 'libp2p';
 import { type PeerId, type PrivateKey, type PeerInfo } from '@libp2p/interface';
@@ -56,7 +56,7 @@ export function lishTopic(networkID: string): string {
 export class Network {
 	private node: Libp2p | null = null;
 	private pubsub: PubSub | null = null;
-	private datastore: LevelDatastore | null = null;
+	private datastore: SqliteDatastore | null = null;
 	private readonly dataServer: DataServer;
 	private readonly dataDir: string;
 	private pingInterval: NodeJS.Timeout | null = null;
@@ -74,7 +74,7 @@ export class Network {
 		this.dataServer = dataServer;
 	}
 
-	private async loadOrCreatePrivateKey(datastore: LevelDatastore): Promise<PrivateKey> {
+	private async loadOrCreatePrivateKey(datastore: SqliteDatastore): Promise<PrivateKey> {
 		try {
 			if (await datastore.has(PRIVATE_KEY_PATH as any)) {
 				const bytes = await datastore.get(PRIVATE_KEY_PATH as any);
@@ -108,8 +108,8 @@ export class Network {
 		const allSettings = settings.getAll();
 		// Initialize datastore (single shared datastore)
 		const datastorePath = join(this.dataDir, 'datastore');
-		this.datastore = new LevelDatastore(datastorePath);
-		await this.datastore.open();
+		this.datastore = new SqliteDatastore(datastorePath);
+		this.datastore.open();
 		console.log('✓ Datastore opened at:', datastorePath);
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
 		// Build transports array
