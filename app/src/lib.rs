@@ -27,18 +27,19 @@ pub fn run() {
 			let port_str = port.to_string();
 
 			// Create main window with backend port in query parameter
-			let window = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
-				.title("LiberShare")
-				.initialization_script(&format!("window.__BACKEND_PORT__ = {};", port))
-				.visible(false)
-				.build()?;
+			let window =
+				tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+					.title("LiberShare")
+					.initialization_script(&format!("window.__BACKEND_PORT__ = {};", port))
+					.visible(false)
+					.build()?;
 
-			// Set initial size to 50% of primary monitor
+			// Set initial size to 75% of primary monitor
 			if let Ok(Some(monitor)) = window.current_monitor() {
 				let size = monitor.size();
 				let scale = monitor.scale_factor();
-				let width = (size.width as f64 / scale) / 2.0;
-				let height = (size.height as f64 / scale) / 2.0;
+				let width: f64 = (size.width as f64 / scale) * 0.75;
+				let height: f64 = (size.height as f64 / scale) * 0.75;
 				let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
 				let _ = window.center();
 			}
