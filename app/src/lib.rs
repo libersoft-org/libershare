@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use tauri::{Manager, RunEvent};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 struct BackendChild(Mutex<Option<CommandChild>>);
 
@@ -34,14 +35,17 @@ pub fn run() {
 					.visible(false)
 					.build()?;
 
-			// Set initial size to 75% of primary monitor
-			if let Ok(Some(monitor)) = window.current_monitor() {
-				let size = monitor.size();
-				let scale = monitor.scale_factor();
-				let width: f64 = (size.width as f64 / scale) * 0.75;
-				let height: f64 = (size.height as f64 / scale) * 0.75;
-				let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
-				let _ = window.center();
+			// Set initial size to 75% of primary monitor (only on first run)
+			let state_file = data_dir.join(".window-state.json");
+			if !state_file.exists() {
+				if let Ok(Some(monitor)) = window.current_monitor() {
+					let size = monitor.size();
+					let scale = monitor.scale_factor();
+					let width: f64 = (size.width as f64 / scale) * 0.75;
+					let height: f64 = (size.height as f64 / scale) * 0.75;
+					let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
+					let _ = window.center();
+				}
 			}
 			let _ = window.show();
 
@@ -86,6 +90,7 @@ pub fn run() {
 
 	app.run(|handle, event| {
 		if let RunEvent::Exit = event {
+			let _ = handle.save_window_state(StateFlags::all());
 			if let Some(state) = handle.try_state::<BackendChild>() {
 				if let Ok(mut guard) = state.0.lock() {
 					if let Some(child) = guard.take() {
