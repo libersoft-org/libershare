@@ -1,0 +1,1 @@
+!define MUI_LANGDLL_ALWAYSSHOW

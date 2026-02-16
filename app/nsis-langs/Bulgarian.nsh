@@ -1,0 +1,5 @@
+LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_BULGARIAN} "Изберете потребители"
+LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_BULGARIAN} "Изберете за кои потребители желаете да инсталирате $(^NameDA)."
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_BULGARIAN} "Изберете дали да инсталирате $(^NameDA) само за вас или за всички потребители на този компютър. $(^ClickNext)"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_BULGARIAN} "Инсталиране за всички потребители"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_BULGARIAN} "Инсталиране само за мен"

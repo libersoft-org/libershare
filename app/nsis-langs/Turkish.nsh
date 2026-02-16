@@ -1,0 +1,5 @@
+LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_TURKISH} "Kullanicilari Secin"
+LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_TURKISH} "$(^NameDA) uygulamasini hangi kullanicilar icin yuklemek istediginizi secin."
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_TURKISH} "$(^NameDA) uygulamasini yalnizca kendiniz icin mi yoksa bu bilgisayarin tum kullanicilari icin mi yuklemek istediginizi secin. $(^ClickNext)"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_TURKISH} "Bu bilgisayardaki tum kullanicilar icin yukle"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_TURKISH} "Yalnizca benim icin yukle"

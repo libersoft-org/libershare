@@ -6,12 +6,15 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Parse arguments
 BUNDLE_ARGS=""
+MAKE_ZIP=0
 for arg in "$@"; do
 	case "$arg" in
 		--deb) BUNDLE_ARGS="$BUNDLE_ARGS --bundles deb" ;;
 		--rpm) BUNDLE_ARGS="$BUNDLE_ARGS --bundles rpm" ;;
+		--appimage) BUNDLE_ARGS="$BUNDLE_ARGS --bundles appimage" ;;
 		--dmg) BUNDLE_ARGS="$BUNDLE_ARGS --bundles dmg" ;;
-		*) echo "Unknown argument: $arg"; echo "Usage: ./build.sh [--deb] [--rpm] [--dmg]"; exit 1 ;;
+		--zip) MAKE_ZIP=1 ;;
+		*) echo "Unknown argument: $arg"; echo "Usage: ./build.sh [--deb] [--rpm] [--appimage] [--dmg] [--zip]"; exit 1 ;;
 	esac
 done
 
@@ -56,10 +59,24 @@ echo "=== Building Tauri app ==="
 cd "$SCRIPT_DIR"
 cargo tauri build $BUNDLE_ARGS
 
-echo "=== Build complete ==="
-if [ -n "$BUNDLE_ARGS" ]; then
-	echo "Output: $SCRIPT_DIR/build/release/bundle/"
-else
-	echo "Output: $SCRIPT_DIR/build/release/libershare"
-	echo "To create packages, run: ./build.sh --deb and/or ./build.sh --rpm"
+# Move bundles to bundle root
+for dir in deb rpm appimage dmg; do
+	if [ -d "$SCRIPT_DIR/build/release/bundle/$dir" ]; then
+		mv "$SCRIPT_DIR/build/release/bundle/$dir"/* "$SCRIPT_DIR/build/release/bundle/" 2>/dev/null || true
+		rmdir "$SCRIPT_DIR/build/release/bundle/$dir" 2>/dev/null || true
+	fi
+done
+
+# Create ZIP bundle if requested
+if [ "$MAKE_ZIP" = "1" ]; then
+	echo "=== Creating ZIP bundle ==="
+	VERSION=$(grep '"version"' "$SCRIPT_DIR/tauri.conf.json" | head -1 | sed 's/.*: *"//;s/".*//')
+	ARCH=$(uname -m)
+	cd "$SCRIPT_DIR/build/release"
+	zip -j "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${ARCH}.zip" \
+		"$SCRIPT_DIR/build/release/libershare" \
+		"$BINARIES_DIR/lish-backend-$TARGET"
 fi
+
+echo "=== Build complete ==="
+echo "Output: $SCRIPT_DIR/build/release/bundle/"

@@ -76,7 +76,9 @@ cd app
 
 To create a .deb package: `./build.sh --deb`
 To create an .rpm package: `./build.sh --rpm`
-Both: `./build.sh --deb --rpm`
+To create an AppImage: `./build.sh --appimage`
+To create a portable .zip: `./build.sh --zip`
+All at once: `./build.sh --deb --rpm --appimage --zip`
 
 **On macOS:**
 
@@ -91,6 +93,8 @@ cd app
 ```
 
 To create a .dmg installer: `./build.sh --dmg`
+To create a portable .zip: `./build.sh --zip`
+Both: `./build.sh --dmg --zip`
 
 **On Windows:**
 
@@ -117,6 +121,9 @@ build.bat
 ```
 
 To create an MSI installer: `build.bat /msi`
+To create an EXE installer (NSIS): `build.bat /nsis`
+To create a portable .zip: `build.bat /zip`
+All at once: `build.bat /msi /nsis /zip`
 
 **Additional information**
 
@@ -127,6 +134,16 @@ The build script will:
 3. Build the Tauri app with the backend as a sidecar
 
 The resulting binary will be in `app/build/release/`. Packages (if created) will be in `app/build/release/bundle/`.
+
+Available bundle formats per platform:
+
+| Platform | Formats |
+|----------|---------|
+| **Linux** | `.deb`, `.rpm`, `.AppImage`, `.zip` |
+| **macOS** | `.dmg`, `.zip` |
+| **Windows** | `.msi`, `.exe` (NSIS), `.zip` |
+
+The NSIS installer (.exe) includes a language selector dialog, license agreement, and installation directory selection. The MSI installer provides standard Windows Installer experience. The .zip contains the portable binaries (no installation needed).
 
 ### Running the native app
 

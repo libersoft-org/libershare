@@ -1,0 +1,5 @@
+LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_KOREAN} "사용자 선택"
+LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_KOREAN} "$(^NameDA)을(를) 설치할 사용자를 선택하십시오."
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_KOREAN} "$(^NameDA)을(를) 본인만을 위해 설치할지 또는 이 컴퓨터의 모든 사용자를 위해 설치할지 선택하십시오. $(^ClickNext)"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_KOREAN} "이 컴퓨터의 모든 사용자를 위해 설치"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_KOREAN} "나만을 위해 설치"

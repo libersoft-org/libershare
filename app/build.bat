@@ -6,12 +6,15 @@ set ROOT_DIR=%SCRIPT_DIR%..
 
 rem Parse arguments
 set BUNDLE_ARGS=
+set MAKE_ZIP=0
 :parse_args
 if "%~1"=="" goto :args_done
 if /i "%~1"=="/deb" set "BUNDLE_ARGS=%BUNDLE_ARGS% --bundles deb" & shift & goto :parse_args
 if /i "%~1"=="/msi" set "BUNDLE_ARGS=%BUNDLE_ARGS% --bundles msi" & shift & goto :parse_args
+if /i "%~1"=="/nsis" set "BUNDLE_ARGS=%BUNDLE_ARGS% --bundles nsis" & shift & goto :parse_args
+if /i "%~1"=="/zip" set "MAKE_ZIP=1" & shift & goto :parse_args
 echo Unknown argument: %~1
-echo Usage: build.bat [/deb] [/msi]
+echo Usage: build.bat [/deb] [/msi] [/nsis] [/zip]
 exit /b 1
 :args_done
 
@@ -56,13 +59,25 @@ cd /d "%SCRIPT_DIR%"
 cargo tauri build %BUNDLE_ARGS%
 if errorlevel 1 goto :error
 
-echo === Build complete ===
-if defined BUNDLE_ARGS (
-	echo Output: %SCRIPT_DIR%build\release\bundle\
-) else (
-	echo Output: %SCRIPT_DIR%build\release\LiberShare.exe
-	echo To create packages, run: build.bat /msi
+rem Move MSI and NSIS bundles to bundle root
+if exist "%SCRIPT_DIR%build\release\bundle\msi\*.msi" (
+	move /y "%SCRIPT_DIR%build\release\bundle\msi\*.msi" "%SCRIPT_DIR%build\release\bundle\" >nul
+	rmdir /q "%SCRIPT_DIR%build\release\bundle\msi" 2>nul
 )
+if exist "%SCRIPT_DIR%build\release\bundle\nsis\*.exe" (
+	move /y "%SCRIPT_DIR%build\release\bundle\nsis\*.exe" "%SCRIPT_DIR%build\release\bundle\" >nul
+	rmdir /q "%SCRIPT_DIR%build\release\bundle\nsis" 2>nul
+)
+
+rem Create ZIP bundle if requested
+if "%MAKE_ZIP%"=="1" (
+	echo === Creating ZIP bundle ===
+	powershell -Command "Compress-Archive -Force -Path '%SCRIPT_DIR%build\release\LiberShare.exe','%SCRIPT_DIR%binaries\lish-backend-%TARGET%.exe' -DestinationPath '%SCRIPT_DIR%build\release\bundle\LiberShare_0.0.1_x64.zip'"
+	if errorlevel 1 goto :error
+)
+
+echo === Build complete ===
+echo Output: %SCRIPT_DIR%build\release\bundle\
 goto :end
 
 :error
