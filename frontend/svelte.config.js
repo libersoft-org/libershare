@@ -19,7 +19,7 @@ const config = {
 		},
 		alias: {
 			'@libershare/shared': path.resolve(__dirname, '../shared/src/index.ts'),
-			'@libershare/shared/*': path.resolve(__dirname, '../shared/src/*'),
+			'@libershare/shared/*': path.resolve(__dirname, '../shared/src'),
 		},
 	},
 };
