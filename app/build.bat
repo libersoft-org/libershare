@@ -72,7 +72,13 @@ if exist "%SCRIPT_DIR%build\release\bundle\nsis\*.exe" (
 rem Create ZIP bundle if requested
 if "%MAKE_ZIP%"=="1" (
 	echo === Creating ZIP bundle ===
-	powershell -Command "Compress-Archive -Force -Path '%SCRIPT_DIR%build\release\LiberShare.exe','%SCRIPT_DIR%binaries\lish-backend-%TARGET%.exe' -DestinationPath '%SCRIPT_DIR%build\release\bundle\LiberShare_0.0.1_x64.zip'"
+	set "ZIP_DIR=%SCRIPT_DIR%build\release\bundle\zip"
+	if exist "%ZIP_DIR%" rmdir /s /q "%ZIP_DIR%"
+	mkdir "%ZIP_DIR%"
+	copy /y "%SCRIPT_DIR%build\release\LiberShare.exe" "%ZIP_DIR%\LiberShare.exe"
+	copy /y "%SCRIPT_DIR%binaries\lish-backend-%TARGET%.exe" "%ZIP_DIR%\lish-backend.exe"
+	powershell -Command "Add-Type -Assembly 'System.IO.Compression.FileSystem'; [System.IO.Compression.ZipFile]::CreateFromDirectory('%ZIP_DIR%', '%SCRIPT_DIR%build\release\bundle\LiberShare_0.0.1_x64.zip', [System.IO.Compression.CompressionLevel]::SmallestSize, $false)"
+	rmdir /s /q "%ZIP_DIR%"
 	if errorlevel 1 goto :error
 )
 
