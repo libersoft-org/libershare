@@ -150,6 +150,11 @@
 			"confirmDelete": "Are you sure you want to delete network \"{name}\"?",
 			"confirmOverwrite": "The following network already exists:\n\nName: {name}\nNetwork ID: {networkID}\n\nDo you want to overwrite it?",
 			"peerList": "Peer list",
+			"peerID": "Peer ID",
+			"connections": "Connections",
+			"direct": "{count} direct",
+			"relayed": "{count} relayed",
+			"noPeers": "No peers connected",
 			"minifyJson": "Minify JSON on save",
 			"compressGzip": "Compress to gzip"
 		},

@@ -150,6 +150,11 @@
 			"confirmDelete": "Opravdu chcete smazat síť \"{name}\"?",
 			"confirmOverwrite": "Následující síť již existuje:\n\nJméno: {name}\nID sítě: {networkID}\n\nChcete ji přepsat?",
 			"peerList": "Seznam účastníků",
+			"peerID": "ID účastníka",
+			"connections": "Připojení",
+			"direct": "{count} přímých",
+			"relayed": "{count} předaných",
+			"noPeers": "Žádní účastníci nejsou připojeni",
 			"minifyJson": "Minifikovat JSON při uložení",
 			"compressGzip": "Komprimovat do gzip"
 		},

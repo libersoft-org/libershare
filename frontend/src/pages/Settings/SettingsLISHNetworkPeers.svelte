@@ -137,13 +137,13 @@
 		{:else if error}
 			<Alert type="error" message={error} />
 		{:else if peers.length === 0}
-			<Alert type="warning" message="No peers connected" />
+			<Alert type="warning" message={$t('settings.lishNetwork.noPeers')} />
 		{:else}
 			<Table columns="auto 1fr auto" columnsMobile="1fr auto">
 				<TableHeader>
 					<TableCell>#</TableCell>
-					<TableCell>Peer ID</TableCell>
-					<TableCell>Connections</TableCell>
+					<TableCell>{$t('settings.lishNetwork.peerID')}</TableCell>
+					<TableCell>{$t('settings.lishNetwork.connections')}</TableCell>
 				</TableHeader>
 				{#each peers as peer, i}
 					<div bind:this={rowElements[i + 1]}>
@@ -152,8 +152,8 @@
 							<TableCell><span class="peer-id">{peer.peerId}</span></TableCell>
 							<TableCell>
 								<div class="connections">
-									{#if peer.direct > 0}<div>{peer.direct} direct</div>{/if}
-									{#if peer.relay > 0}<div>{peer.relay} relay</div>{/if}
+									{#if peer.direct > 0}<div>{$t('settings.lishNetwork.direct', { count: peer.direct })}</div>{/if}
+									{#if peer.relay > 0}<div>{$t('settings.lishNetwork.relayed', { count: peer.relay })}</div>{/if}
 								</div>
 							</TableCell>
 						</TableRow>
