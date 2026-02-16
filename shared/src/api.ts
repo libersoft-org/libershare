@@ -1,4 +1,4 @@
-import { type NetworkDefinition, type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type Stats, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition } from './index.ts';
+import { type NetworkDefinition, type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Stats, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -113,8 +113,8 @@ class NetworksApi {
 		return this.client.call<string[]>('networks.getAddresses', { networkId });
 	}
 
-	getPeers(networkId: string): Promise<string[]> {
-		return this.client.call<string[]>('networks.getPeers', { networkId });
+	getPeers(networkId: string): Promise<PeerConnectionInfo[]> {
+		return this.client.call<PeerConnectionInfo[]>('networks.getPeers', { networkId });
 	}
 
 	getNodeInfo(): Promise<NetworkNodeInfo> {

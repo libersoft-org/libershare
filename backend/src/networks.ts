@@ -156,6 +156,13 @@ export class Networks {
 	}
 
 	/**
+	 * Get peers with connection type info for a specific lishnet.
+	 */
+	getTopicPeersInfo(id: string): { peerId: string; direct: number; relay: number }[] {
+		return this.network.getTopicPeersInfo(id);
+	}
+
+	/**
 	 * Collect and deduplicate bootstrap peers from a set of network definitions.
 	 */
 	private collectBootstrapPeers(defs: NetworkDefinition[]): string[] {

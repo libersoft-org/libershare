@@ -673,6 +673,29 @@ export class Network {
 		return this.node.getPeers().map((p: any) => p.toString());
 	}
 
+	/**
+	 * Get topic peers with connection type info (direct vs relay).
+	 */
+	getTopicPeersInfo(networkID: string): { peerId: string; direct: number; relay: number }[] {
+		if (!this.pubsub || !this.node) return [];
+		const topic = lishTopic(networkID);
+		try {
+			const subscribers = this.pubsub.getSubscribers(topic);
+			return subscribers.map((p: any) => {
+				const connections = this.node!.getConnections(p);
+				let direct = 0;
+				let relay = 0;
+				for (const conn of connections) {
+					if (conn.remoteAddr.toString().includes('/p2p-circuit/')) relay++;
+					else direct++;
+				}
+				return { peerId: p.toString(), direct, relay };
+			});
+		} catch {
+			return [];
+		}
+	}
+
 	async stop() {
 		if (this.pingInterval) {
 			clearInterval(this.pingInterval);

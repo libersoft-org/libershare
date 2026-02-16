@@ -4,7 +4,7 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { type LISHNetworkConfig } from '@libershare/shared';
+	import { type LISHNetworkConfig, type PeerConnectionInfo } from '@libershare/shared';
 	import { api } from '../../scripts/api.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -24,7 +24,7 @@
 	let { areaID, position = LAYOUT.content, network, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
-	let peers = $state<string[]>([]);
+	let peers = $state<PeerConnectionInfo[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 	let rowElements: HTMLElement[] = $state([]);
@@ -76,7 +76,7 @@
 							onBack?.();
 						} else {
 							const peer = peers[selectedIndex - 1];
-							console.log('Peer selected:', peer);
+							console.log('Peer selected:', peer.peerId);
 						}
 					},
 					confirmCancel: () => {},
@@ -118,6 +118,13 @@
 		word-break: break-all;
 		white-space: normal;
 	}
+
+	.connections {
+		display: flex;
+		flex-direction: column;
+		line-height: 1.4;
+		white-space: nowrap;
+	}
 </style>
 
 <div class="peer-list">
@@ -132,16 +139,23 @@
 		{:else if peers.length === 0}
 			<Alert type="warning" message="No peers connected" />
 		{:else}
-			<Table columns="auto 1fr" columnsMobile="1fr">
+			<Table columns="auto 1fr auto" columnsMobile="1fr auto">
 				<TableHeader>
 					<TableCell>#</TableCell>
 					<TableCell>Peer ID</TableCell>
+					<TableCell>Connections</TableCell>
 				</TableHeader>
 				{#each peers as peer, i}
 					<div bind:this={rowElements[i + 1]}>
 						<TableRow selected={active && selectedIndex === i + 1} odd={i % 2 !== 0}>
 							<TableCell>{i + 1}</TableCell>
-							<TableCell><span class="peer-id">{peer}</span></TableCell>
+							<TableCell><span class="peer-id">{peer.peerId}</span></TableCell>
+							<TableCell>
+								<div class="connections">
+									{#if peer.direct > 0}<div>{peer.direct} direct</div>{/if}
+									{#if peer.relay > 0}<div>{peer.relay} relay</div>{/if}
+								</div>
+							</TableCell>
 						</TableRow>
 					</div>
 				{/each}

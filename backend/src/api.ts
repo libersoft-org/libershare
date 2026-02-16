@@ -230,9 +230,9 @@ export class ApiServer {
 				return info?.addresses || [];
 			}
 			case 'networks.getPeers': {
-				// Return topic-level peers for this lishnet
+				// Return topic-level peers with connection info for this lishnet
 				if (!this.networks.isJoined(params.networkId)) throw new Error('Network not joined');
-				return this.networks.getTopicPeers(params.networkId);
+				return this.networks.getTopicPeersInfo(params.networkId);
 			}
 			case 'networks.getNodeInfo': {
 				// Global node info (node always runs)

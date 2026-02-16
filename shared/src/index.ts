@@ -29,6 +29,12 @@ export interface NetworkNodeInfo {
 	addresses: string[];
 }
 
+export interface PeerConnectionInfo {
+	peerId: string;
+	direct: number;
+	relay: number;
+}
+
 // Combined network info (config + runtime)
 export interface NetworkInfo {
 	// Config
