@@ -13,6 +13,99 @@ fn find_free_port() -> u16 {
 	listener.local_addr().unwrap().port()
 }
 
+#[tauri::command]
+fn app_quit(app: tauri::AppHandle) {
+	app.exit(0);
+}
+
+#[tauri::command]
+fn app_restart(app: tauri::AppHandle) {
+	let pid = std::process::id();
+	#[cfg(target_os = "windows")]
+	{
+		let _ = std::process::Command::new("powershell")
+			.args([
+				"-WindowStyle",
+				"Hidden",
+				"-Command",
+				&format!(
+					"Wait-Process -Id {} -ErrorAction SilentlyContinue; shutdown /r /t 0",
+					pid
+				),
+			])
+			.spawn();
+	}
+	#[cfg(target_os = "linux")]
+	{
+		let _ = std::process::Command::new("sh")
+			.args([
+				"-c",
+				&format!(
+					"tail --pid={} -f /dev/null 2>/dev/null; systemctl reboot",
+					pid
+				),
+			])
+			.spawn();
+	}
+	#[cfg(target_os = "macos")]
+	{
+		let _ = std::process::Command::new("sh")
+			.args([
+				"-c",
+				&format!(
+					"while kill -0 {} 2>/dev/null; do sleep 0.1; done; shutdown -r now",
+					pid
+				),
+			])
+			.spawn();
+	}
+	app.exit(0);
+}
+
+#[tauri::command]
+fn app_shutdown(app: tauri::AppHandle) {
+	let pid = std::process::id();
+	#[cfg(target_os = "windows")]
+	{
+		let _ = std::process::Command::new("powershell")
+			.args([
+				"-WindowStyle",
+				"Hidden",
+				"-Command",
+				&format!(
+					"Wait-Process -Id {} -ErrorAction SilentlyContinue; shutdown /s /t 0",
+					pid
+				),
+			])
+			.spawn();
+	}
+	#[cfg(target_os = "linux")]
+	{
+		let _ = std::process::Command::new("sh")
+			.args([
+				"-c",
+				&format!(
+					"tail --pid={} -f /dev/null 2>/dev/null; systemctl poweroff",
+					pid
+				),
+			])
+			.spawn();
+	}
+	#[cfg(target_os = "macos")]
+	{
+		let _ = std::process::Command::new("sh")
+			.args([
+				"-c",
+				&format!(
+					"while kill -0 {} 2>/dev/null; do sleep 0.1; done; shutdown -h now",
+					pid
+				),
+			])
+			.spawn();
+	}
+	app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	let debug_mode = std::env::args().any(|a| a == "--debug");
@@ -21,6 +114,11 @@ pub fn run() {
 	let app = tauri::Builder::default()
 		.plugin(tauri_plugin_shell::init())
 		.plugin(tauri_plugin_window_state::Builder::default().build())
+		.invoke_handler(tauri::generate_handler![
+			app_quit,
+			app_restart,
+			app_shutdown
+		])
 		.setup(move |app| {
 			let data_dir = app.path().app_data_dir()?;
 			std::fs::create_dir_all(&data_dir)?;

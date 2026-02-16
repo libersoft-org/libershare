@@ -41,8 +41,15 @@
 	function handleConfirm() {
 		if ($confirmDialog.action && $confirmDialog.action !== 'back') {
 			play('exit');
-			const dialogConfig = $confirmDialogs[$confirmDialog.action as 'restart' | 'shutdown' | 'quit'];
-			if (dialogConfig) api.call(dialogConfig.apiAction);
+			const action = $confirmDialog.action as 'restart' | 'shutdown' | 'quit';
+			if ((window as any).__TAURI_INTERNALS__) {
+				const { invoke } = (window as any).__TAURI_INTERNALS__;
+				const tauriCommands: Record<string, string> = { quit: 'app_quit', restart: 'app_restart', shutdown: 'app_shutdown' };
+				if (tauriCommands[action]) invoke(tauriCommands[action]);
+			} else {
+				const dialogConfig = $confirmDialogs[action];
+				if (dialogConfig) api.call(dialogConfig.apiAction);
+			}
 		}
 		hideConfirmDialog();
 	}
@@ -54,6 +61,7 @@
 	async function onConnected() {
 		try {
 			await loadSettings();
+			play('welcome');
 			console.log(await api.networks.list());
 		} catch (error) {
 			console.error('[App] Backend initialization error:', error);
@@ -66,13 +74,9 @@
 		startInput();
 		activateArea('content');
 		initAudio();
-		play('welcome');
-
 		// Call onConnected when backend connects
 		const unsubscribe = connected.subscribe(isConnected => {
-			if (isConnected) {
-				onConnected();
-			}
+			if (isConnected) onConnected();
 		});
 		return unsubscribe;
 	});
