@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 set SCRIPT_DIR=%~dp0
 set ROOT_DIR=%SCRIPT_DIR%..
@@ -73,12 +73,12 @@ rem Create ZIP bundle if requested
 if "%MAKE_ZIP%"=="1" (
 	echo === Creating ZIP bundle ===
 	set "ZIP_DIR=%SCRIPT_DIR%build\release\bundle\zip"
-	if exist "%ZIP_DIR%" rmdir /s /q "%ZIP_DIR%"
-	mkdir "%ZIP_DIR%"
-	copy /y "%SCRIPT_DIR%build\release\LiberShare.exe" "%ZIP_DIR%\LiberShare.exe"
-	copy /y "%SCRIPT_DIR%binaries\lish-backend-%TARGET%.exe" "%ZIP_DIR%\lish-backend.exe"
-	powershell -Command "Add-Type -Assembly 'System.IO.Compression.FileSystem'; [System.IO.Compression.ZipFile]::CreateFromDirectory('%ZIP_DIR%', '%SCRIPT_DIR%build\release\bundle\LiberShare_0.0.1_x64.zip', [System.IO.Compression.CompressionLevel]::SmallestSize, $false)"
-	rmdir /s /q "%ZIP_DIR%"
+	if exist "!ZIP_DIR!" rmdir /s /q "!ZIP_DIR!"
+	mkdir "!ZIP_DIR!"
+	copy /y "%SCRIPT_DIR%build\release\LiberShare.exe" "!ZIP_DIR!\LiberShare.exe"
+	copy /y "%SCRIPT_DIR%binaries\lish-backend-%TARGET%.exe" "!ZIP_DIR!\lish-backend.exe"
+	powershell -Command "Compress-Archive -Path '!ZIP_DIR!\*' -DestinationPath '%SCRIPT_DIR%build\release\bundle\LiberShare_0.0.1_x64.zip' -CompressionLevel Optimal -Force"
+	rmdir /s /q "!ZIP_DIR!"
 	if errorlevel 1 goto :error
 )
 
