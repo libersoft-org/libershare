@@ -244,15 +244,18 @@
 		"title": "Exit",
 		"restart": {
 			"title": "Restart",
-			"message": "Are you sure you want to restart the device?"
+			"message": "Are you sure you want to restart the device?",
+			"exiting": "Restarting device ..."
 		},
 		"shutdown": {
 			"title": "Shutdown",
-			"message": "Are you sure you want to shutdown the device?"
+			"message": "Are you sure you want to shutdown the device?",
+			"exiting": "Shutting down device ..."
 		},
 		"quitApplication": {
 			"title": "Quit application",
-			"message": "Are you sure you want to quit the application?"
+			"message": "Are you sure you want to quit the application?",
+			"exiting": "Closing application ..."
 		}
 	},
 	"splash": {

@@ -8,10 +8,10 @@ export function initAudio(): void {
 	if (audioContext.state === 'suspended') audioContext.resume();
 }
 
-export function play(name: SoundName): void {
-	if (!get(audioEnabled)) return;
+export function play(name: SoundName): Promise<void> {
+	if (!get(audioEnabled)) return Promise.resolve();
 	if (!audioContext) initAudio();
-	if (!audioContext) return;
+	if (!audioContext) return Promise.resolve();
 	switch (name) {
 		case 'move':
 			playMove();
@@ -26,9 +26,9 @@ export function play(name: SoundName): void {
 			playWelcome();
 			break;
 		case 'exit':
-			playExit();
-			break;
+			return playExit();
 	}
+	return Promise.resolve();
 }
 
 function playMove(): void {
@@ -97,23 +97,26 @@ function playWelcome(): void {
 	});
 }
 
-function playExit(): void {
-	if (!audioContext) return;
+function playExit(): Promise<void> {
+	if (!audioContext) return Promise.resolve();
 	const notes = [1046.5, 783.99, 659.25, 523.25];
 	const noteLength = 0.15;
 	const gap = 0.05;
-	notes.forEach((freq, i) => {
-		const osc = audioContext!.createOscillator();
-		const gain = audioContext!.createGain();
-		const startTime = audioContext!.currentTime + i * (noteLength + gap);
-		osc.type = 'sine';
-		osc.frequency.setValueAtTime(freq, startTime);
-		gain.gain.setValueAtTime(0, startTime);
-		gain.gain.linearRampToValueAtTime(0.15, startTime + 0.02);
-		gain.gain.exponentialRampToValueAtTime(0.001, startTime + noteLength);
-		osc.connect(gain);
-		gain.connect(audioContext!.destination);
-		osc.start(startTime);
-		osc.stop(startTime + noteLength);
+	return new Promise(resolve => {
+		notes.forEach((freq, i) => {
+			const osc = audioContext!.createOscillator();
+			const gain = audioContext!.createGain();
+			const startTime = audioContext!.currentTime + i * (noteLength + gap);
+			osc.type = 'sine';
+			osc.frequency.setValueAtTime(freq, startTime);
+			gain.gain.setValueAtTime(0, startTime);
+			gain.gain.linearRampToValueAtTime(0.15, startTime + 0.02);
+			gain.gain.exponentialRampToValueAtTime(0.001, startTime + noteLength);
+			osc.connect(gain);
+			gain.connect(audioContext!.destination);
+			osc.start(startTime);
+			osc.stop(startTime + noteLength);
+			if (i === notes.length - 1) osc.onended = () => resolve();
+		});
 	});
 }

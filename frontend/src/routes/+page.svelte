@@ -18,12 +18,14 @@
 	import Menu from '../components/Menu/Menu.svelte';
 	import Footer from '../pages/Footer/Footer.svelte';
 	import ConfirmDialog from '../components/Dialog/ConfirmDialog.svelte';
-	import Splash from '../pages/Splash/Splash.svelte';
+	import SplashWelcome from '../pages/Splash/SplashWelcome.svelte';
+	import SplashExit from '../pages/Splash/SplashExit.svelte';
 	let contentElement: HTMLElement = $state(null!);
 	let cursorX = $state(0);
 	let cursorY = $state(0);
 	let cursorMoved = $state(false);
 	let isTouchDevice = $state(false);
+	let exitAction = $state<'restart' | 'shutdown' | 'quit' | null>(null);
 	let cursorSizeValue = $derived(cursorSizes[$cursorSize]);
 
 	function handleMouseMove(e: MouseEvent) {
@@ -38,18 +40,21 @@
 		cursorMoved = false;
 	}
 
-	function handleConfirm() {
+	async function handleConfirm() {
 		if ($confirmDialog.action && $confirmDialog.action !== 'back') {
-			play('exit');
 			const action = $confirmDialog.action as 'restart' | 'shutdown' | 'quit';
+			hideConfirmDialog();
+			exitAction = action;
+			await play('exit');
 			if ((window as any).__TAURI_INTERNALS__) {
 				const { invoke } = (window as any).__TAURI_INTERNALS__;
 				const tauriCommands: Record<string, string> = { quit: 'app_quit', restart: 'app_restart', shutdown: 'app_shutdown' };
 				if (tauriCommands[action]) invoke(tauriCommands[action]);
 			} else {
 				const dialogConfig = $confirmDialogs[action];
-				if (dialogConfig) api.call(dialogConfig.apiAction);
+				if (dialogConfig) api.call(dialogConfig.apiAction).catch(() => console.error(`[App] Action '${action}' is supported in native application only`));
 			}
+			return;
 		}
 		hideConfirmDialog();
 	}
@@ -102,8 +107,10 @@
 </svelte:head>
 <svelte:window onmousemove={handleMouseMove} ontouchstart={handleTouchStart} />
 
-{#if !$connected}
-	<Splash url={apiURL} />
+{#if exitAction}
+	<SplashExit action={exitAction} />
+{:else if !$connected}
+	<SplashWelcome url={apiURL} />
 {:else}
 	{#if $cursorVisible && cursorMoved && !isTouchDevice}
 		<img class="cursor" src="/img/cursor.svg" alt="" style="left: {cursorX}px; top: {cursorY}px; width: {cursorSizeValue}; height: {cursorSizeValue};" />

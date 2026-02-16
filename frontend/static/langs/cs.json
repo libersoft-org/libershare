@@ -244,15 +244,18 @@
 		"title": "Ukončit",
 		"restart": {
 			"title": "Restartovat",
-			"message": "Opravdu chcete restartovat zařízení?"
+			"message": "Opravdu chcete restartovat zařízení?",
+			"exiting": "Restartuji zařízení ..."
 		},
 		"shutdown": {
 			"title": "Vypnout",
-			"message": "Opravdu chcete vypnout zařízení?"
+			"message": "Opravdu chcete vypnout zařízení?",
+			"exiting": "Vypínám zařízení ..."
 		},
 		"quitApplication": {
 			"title": "Ukončit aplikaci",
-			"message": "Opravdu chcete ukončit aplikaci?"
+			"message": "Opravdu chcete ukončit aplikaci?",
+			"exiting": "Ukončuji aplikaci ..."
 		}
 	},
 	"splash": {
