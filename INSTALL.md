@@ -102,6 +102,12 @@ Download and install:
 - [**Microsoft Visual Studio C++ Build Tools**](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 - [**WebView2**](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (included in Windows 10/11 by default)
 
+Add ImageMagick to PATH. For example:
+
+```bat
+[Environment]::SetEnvironmentVariable("PATH", "C:\Program Files\ImageMagick;" + [Environment]::GetEnvironmentVariable("PATH", "User"), "User")
+```
+
 Then in a command line:
 
 ```bat
