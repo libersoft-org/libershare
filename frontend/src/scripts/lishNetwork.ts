@@ -1,7 +1,7 @@
 import { api } from './api.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@libershare/shared';
 
-export const DEFAULT_PUBLIC_LIST_URL = 'https://pastebin.com/raw/ez1S9WYk';
+export const DEFAULT_PUBLIC_LIST_URL = 'https://libershare.com/networks';
 
 // ============================================================================
 // Storage Operations (async, using backend API)
