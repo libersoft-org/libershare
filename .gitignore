@@ -18,6 +18,6 @@ package-lock.json
 **/*.lishnet
 vite.config.js.timestamp-*
 .dev_intention
-**/.idea/copilot*
+**/.idea/
 **/cert.pem
 **/key.pem

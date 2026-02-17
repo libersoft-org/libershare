@@ -1,3 +1,6 @@
+// Product info
+export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList } from './product.ts';
+
 // Lish manifest types
 export * from './lish.ts';
 

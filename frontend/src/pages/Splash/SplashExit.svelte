@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
-	import { productName } from '../../scripts/app.ts';
+	import { productName } from '@shared';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
 	interface Props {
 		action: 'restart' | 'shutdown' | 'quit';

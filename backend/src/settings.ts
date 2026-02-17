@@ -73,10 +73,10 @@ const DEFAULT_SETTINGS: SettingsData = {
 		volume: 50,
 	},
 	storage: {
-		downloadPath: '~/libershare/download/',
-		tempPath: '~/libershare/temp/',
-		lishPath: '~/libershare/lish/',
-		lishnetPath: '~/libershare/lishnet/',
+		downloadPath: '~/download/finished/',
+		tempPath: '~/download/temp/',
+		lishPath: '~/download/lish/',
+		lishnetPath: '~/download/lishnet/',
 	},
 	network: {
 		incomingPort: 9090,
@@ -126,6 +126,10 @@ export class Settings {
 
 	getAll(): SettingsData {
 		return this.storage.getAll();
+	}
+
+	getDefaults(): SettingsData {
+		return structuredClone(DEFAULT_SETTINGS);
 	}
 
 	reset(): SettingsData {

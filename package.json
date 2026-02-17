@@ -1,5 +1,4 @@
 {
-	"name": "libershare",
 	"private": true,
 	"dependencies": {
 		"@prettier/plugin-xml": "^3.4.2"

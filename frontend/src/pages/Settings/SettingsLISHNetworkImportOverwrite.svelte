@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
-	import { type LISHNetworkDefinition } from '@libershare/shared';
+	import { type LISHNetworkDefinition } from '@shared';
 	import { networkExists, addNetworkIfNotExists, getNetworkById, updateNetwork } from '../../scripts/lishNetwork.ts';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 

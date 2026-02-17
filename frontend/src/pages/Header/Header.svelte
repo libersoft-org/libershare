@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { productName } from '../../scripts/app.ts';
+	import { productName } from '@shared';
 	import { useArea, activeArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import Button from '../../components/Buttons/Button.svelte';

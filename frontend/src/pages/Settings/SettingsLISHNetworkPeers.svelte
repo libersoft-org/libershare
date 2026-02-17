@@ -4,7 +4,7 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { type LISHNetworkConfig, type PeerConnectionInfo } from '@libershare/shared';
+	import { type LISHNetworkConfig, type PeerConnectionInfo } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -152,8 +152,8 @@
 							<TableCell><span class="peer-id">{peer.peerId}</span></TableCell>
 							<TableCell>
 								<div class="connections">
-									{#if peer.direct > 0}<div>{$t('settings.lishNetwork.direct', { count: peer.direct })}</div>{/if}
-									{#if peer.relay > 0}<div>{$t('settings.lishNetwork.relayed', { count: peer.relay })}</div>{/if}
+								{#if peer.direct > 0}<div>{$t('settings.lishNetwork.direct', { count: String(peer.direct) })}</div>{/if}
+								{#if peer.relay > 0}<div>{$t('settings.lishNetwork.relayed', { count: String(peer.relay) })}</div>{/if}
 								</div>
 							</TableCell>
 						</TableRow>

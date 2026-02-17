@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { WsClient } from '@libershare/shared';
+import { WsClient } from '@shared';
 
 function getApiURL(): string {
 	// When running inside Tauri, the backend port is passed via initialization script

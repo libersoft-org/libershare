@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
-	import { productName, productVersion } from '../../scripts/app.ts';
+	import { productName, productVersion } from '@shared';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
 	interface Props {
 		url: string;

@@ -1,6 +1,6 @@
 {
-	"productName": "libershare",
-	"mainBinaryName": "libershare",
+	"productName": "",
+	"mainBinaryName": "",
 	"bundle": {
 		"resources": ["../backend/build/lish-backend"],
 		"linux": {

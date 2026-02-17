@@ -1,5 +1,5 @@
 {
-	"name": "@libershare/backend",
+	"name": "@app/backend",
 	"type": "module",
 	"devDependencies": {
 		"@types/bun": "^1.3.1",

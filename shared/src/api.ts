@@ -219,6 +219,10 @@ class SettingsApi {
 		return this.client.call<T>('settings.getAll');
 	}
 
+	getDefaults<T = any>(): Promise<T> {
+		return this.client.call<T>('settings.getDefaults');
+	}
+
 	reset<T = any>(): Promise<T> {
 		return this.client.call<T>('settings.reset');
 	}

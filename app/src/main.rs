@@ -17,5 +17,5 @@ fn main() {
 		}
 	}
 
-	libershare_app_lib::run();
+	app_lib::run();
 }

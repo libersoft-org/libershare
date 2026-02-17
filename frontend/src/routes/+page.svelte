@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { createNavigation, breadcrumbItems, setContentElement, confirmDialog, hideConfirmDialog } from '../scripts/navigation.ts';
 	import { confirmDialogs } from '../scripts/menu.ts';
-	import { productName } from '../scripts/app.ts';
+	import { productName } from '@shared';
 	import { startInput } from '../scripts/input/input.ts';
 	import { api } from '../scripts/api.ts';
 	import { activateArea } from '../scripts/areas.ts';

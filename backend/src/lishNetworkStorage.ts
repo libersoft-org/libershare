@@ -1,5 +1,5 @@
 import { ArrayStorage } from './storage.ts';
-import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@libershare/shared';
+import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
 
 /**
  * Storage for user-configured LISH networks.

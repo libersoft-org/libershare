@@ -6,7 +6,7 @@ Comment={{comment}}
 Exec={{exec}}
 StartupWMClass={{exec}}
 Icon={{icon}}
-Name=LiberShare
+Name={{product_name}}
 Terminal=false
 Type=Application
 {{#if mime_type}}

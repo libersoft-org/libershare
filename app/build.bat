@@ -47,6 +47,13 @@ if errorlevel 1 goto :error
 
 for /f "tokens=*" %%i in ('rustc --print host-tuple') do set TARGET=%%i
 
+rem Sync version and product name from shared\src\product.ts to tauri.conf.json
+for /f "tokens=*" %%v in ('powershell -Command "(Get-Content '%ROOT_DIR%\shared\src\product.ts' | Select-String 'productVersion') -replace \".*'([^']+)'.*\",'$1'"') do set "PRODUCT_VERSION=%%v"
+for /f "tokens=*" %%n in ('powershell -Command "(Get-Content '%ROOT_DIR%\shared\src\product.ts' | Select-String 'productName') -replace \".*'([^']+)'.*\",'$1'"') do set "PRODUCT_NAME=%%n"
+for /f "tokens=*" %%d in ('powershell -Command "(Get-Content '%ROOT_DIR%\shared\src\product.ts' | Select-String 'productIdentifier') -replace \".*'([^']+)'.*\",'$1'"') do set "PRODUCT_IDENTIFIER=%%d"
+echo Product: !PRODUCT_NAME! v!PRODUCT_VERSION! (!PRODUCT_IDENTIFIER!)
+powershell -Command "(Get-Content '%SCRIPT_DIR%tauri.conf.json') -replace '\"version\": \"[^\"]*\"','\"version\": \"!PRODUCT_VERSION!\"' -replace '\"productName\": \"[^\"]*\"','\"productName\": \"!PRODUCT_NAME!\"' -replace '\"identifier\": \"[^\"]*\"','\"identifier\": \"!PRODUCT_IDENTIFIER!\"' -replace '\"startMenuFolder\": \"[^\"]*\"','\"startMenuFolder\": \"!PRODUCT_NAME!\"' | Set-Content '%SCRIPT_DIR%tauri.conf.json'"
+
 rem Build Tauri app
 echo === Building Tauri app ===
 cd /d "%SCRIPT_DIR%"
@@ -54,19 +61,18 @@ cargo tauri build %BUNDLE_ARGS%
 if errorlevel 1 goto :error
 
 rem Move and rename MSI and NSIS bundles to bundle root (add platform to name)
-	for /f "tokens=2 delims=: \t" %%v in ('findstr /c:"\"version\"" "%SCRIPT_DIR%tauri.conf.json"') do set "BVERSION=%%~v"
-	set "BVERSION=!BVERSION:,=!"
+	set "BVERSION=!PRODUCT_VERSION!"
 	set "BARCH="
 	for /f "tokens=1 delims=-" %%a in ("%TARGET%") do set "BARCH=%%a"
 if exist "%SCRIPT_DIR%build\release\bundle\msi\*.msi" (
 	for %%f in ("%SCRIPT_DIR%build\release\bundle\msi\*.msi") do (
-		move /y "%%f" "%SCRIPT_DIR%build\release\bundle\LiberShare_!BVERSION!_win_!BARCH!.msi" >nul
+		move /y "%%f" "%SCRIPT_DIR%build\release\bundle\!PRODUCT_NAME!_!BVERSION!_win_!BARCH!.msi" >nul
 	)
 	rmdir /q "%SCRIPT_DIR%build\release\bundle\msi" 2>nul
 )
 if exist "%SCRIPT_DIR%build\release\bundle\nsis\*.exe" (
 	for %%f in ("%SCRIPT_DIR%build\release\bundle\nsis\*.exe") do (
-		move /y "%%f" "%SCRIPT_DIR%build\release\bundle\LiberShare_!BVERSION!_win_!BARCH!_setup.exe" >nul
+		move /y "%%f" "%SCRIPT_DIR%build\release\bundle\!PRODUCT_NAME!_!BVERSION!_win_!BARCH!_setup.exe" >nul
 	)
 	rmdir /q "%SCRIPT_DIR%build\release\bundle\nsis" 2>nul
 )
@@ -77,9 +83,9 @@ if "%MAKE_ZIP%"=="1" (
 	set "ZIP_DIR=%SCRIPT_DIR%build\release\bundle\zip"
 	if exist "!ZIP_DIR!" rmdir /s /q "!ZIP_DIR!"
 	mkdir "!ZIP_DIR!"
-	copy /y "%SCRIPT_DIR%build\release\LiberShare.exe" "!ZIP_DIR!\LiberShare.exe"
+	copy /y "%SCRIPT_DIR%build\release\!PRODUCT_NAME!.exe" "!ZIP_DIR!\!PRODUCT_NAME!.exe"
 	copy /y "%ROOT_DIR%\backend\build\lish-backend.exe" "!ZIP_DIR!\lish-backend.exe"
-	powershell -Command "Compress-Archive -Path '!ZIP_DIR!\*' -DestinationPath '%SCRIPT_DIR%build\release\bundle\LiberShare_!BVERSION!_win_!BARCH!.zip' -CompressionLevel Optimal -Force"
+	powershell -Command "Compress-Archive -Path '!ZIP_DIR!\*' -DestinationPath '%SCRIPT_DIR%build\release\bundle\!PRODUCT_NAME!_!BVERSION!_win_!BARCH!.zip' -CompressionLevel Optimal -Force"
 	rmdir /s /q "!ZIP_DIR!"
 	if errorlevel 1 goto :error
 )

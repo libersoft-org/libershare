@@ -6,7 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb, navigateTo } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { type LISHNetworkConfig, type NetworkNodeInfo } from '@libershare/shared';
+	import { type LISHNetworkConfig, type NetworkNodeInfo } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { getNetworks, deleteNetwork as deleteNetworkFromApi, updateNetwork as updateNetworkFromApi, addNetwork as addNetworkFromApi, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';

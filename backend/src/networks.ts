@@ -1,7 +1,7 @@
 import { type ILISHNetwork } from './makenet.ts';
 import { Network } from './network.ts';
 import { type DataServer } from './data-server.ts';
-import { type NetworkDefinition, type LISHNetworkConfig } from '@libershare/shared';
+import { type NetworkDefinition, type LISHNetworkConfig } from '@shared';
 import { LISHNetworkStorage } from './lishNetworkStorage.ts';
 
 export { type NetworkDefinition };

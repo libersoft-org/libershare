@@ -70,6 +70,23 @@ cd "$ROOT_DIR/backend"
 
 TARGET=$(rustc --print host-tuple)
 
+# Sync version and product name from shared/src/product.ts to tauri.conf.json
+PRODUCT_VERSION=$(grep "productVersion" "$ROOT_DIR/shared/src/product.ts" | sed "s/.*'//;s/'.*//")
+PRODUCT_NAME=$(grep "productName" "$ROOT_DIR/shared/src/product.ts" | sed "s/.*'//;s/'.*//")
+PRODUCT_IDENTIFIER=$(grep "productIdentifier" "$ROOT_DIR/shared/src/product.ts" | sed "s/.*'//;s/'.*//")
+echo "Product: $PRODUCT_NAME v$PRODUCT_VERSION ($PRODUCT_IDENTIFIER)"
+sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/tauri.conf.json"
+sed -i.bak "s/\"productName\": \"[^\"]*\"/\"productName\": \"$PRODUCT_NAME\"/" "$SCRIPT_DIR/tauri.conf.json"
+sed -i.bak "s/\"identifier\": \"[^\"]*\"/\"identifier\": \"$PRODUCT_IDENTIFIER\"/" "$SCRIPT_DIR/tauri.conf.json"
+sed -i.bak "s/\"startMenuFolder\": \"[^\"]*\"/\"startMenuFolder\": \"$PRODUCT_NAME\"/" "$SCRIPT_DIR/tauri.conf.json"
+rm -f "$SCRIPT_DIR/tauri.conf.json.bak"
+
+# Sync lowercase product name to Linux config
+PRODUCT_NAME_LOWER=$(echo "$PRODUCT_NAME" | tr '[:upper:]' '[:lower:]')
+sed -i.bak "s/\"productName\": \"[^\"]*\"/\"productName\": \"$PRODUCT_NAME_LOWER\"/" "$SCRIPT_DIR/tauri.linux.conf.json"
+sed -i.bak "s/\"mainBinaryName\": \"[^\"]*\"/\"mainBinaryName\": \"$PRODUCT_NAME_LOWER\"/" "$SCRIPT_DIR/tauri.linux.conf.json"
+rm -f "$SCRIPT_DIR/tauri.linux.conf.json.bak"
+
 # Build Tauri app
 echo "=== Building Tauri app ==="
 cd "$SCRIPT_DIR"
@@ -100,7 +117,7 @@ fi
 cargo tauri build $BUNDLE_ARGS
 
 # Move and rename bundles to bundle root (add platform to name)
-VERSION=$(grep '"version"' "$SCRIPT_DIR/tauri.conf.json" | head -1 | sed 's/.*: *"//;s/".*//')
+VERSION="$PRODUCT_VERSION"
 ARCH=$(echo "$TARGET" | cut -d'-' -f1)
 case "$(uname -s)" in
 	Darwin) OS="macos" ;;
@@ -114,10 +131,10 @@ for dir in deb rpm appimage dmg; do
 			BASENAME=$(basename "$f")
 			# Rename to include platform
 			case "$EXT" in
-				deb)     NEWNAME="LiberShare_${VERSION}_${OS}_${ARCH}.deb" ;;
-				rpm)     NEWNAME="LiberShare_${VERSION}_${OS}_${ARCH}.rpm" ;;
-				AppImage) NEWNAME="LiberShare_${VERSION}_${OS}_${ARCH}.AppImage" ;;
-				dmg)     NEWNAME="LiberShare_${VERSION}_${OS}_${ARCH}.dmg" ;;
+				deb)     NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.deb" ;;
+				rpm)     NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.rpm" ;;
+				AppImage) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.AppImage" ;;
+				dmg)     NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.dmg" ;;
 				*)       NEWNAME="$BASENAME" ;;
 			esac
 			mv "$f" "$SCRIPT_DIR/build/release/bundle/$NEWNAME"
@@ -132,23 +149,23 @@ if [ "$MAKE_ZIP" = "1" ]; then
 	mkdir -p "$SCRIPT_DIR/build/release/bundle"
 	case "$(uname -s)" in
 		Darwin)
-			APP_PATH=$(find "$SCRIPT_DIR/build" -maxdepth 5 -name "LiberShare.app" -type d | head -1)
+			APP_PATH=$(find "$SCRIPT_DIR/build" -maxdepth 5 -name "${PRODUCT_NAME}.app" -type d | head -1)
 			if [ -z "$APP_PATH" ]; then
-				echo "Error: LiberShare.app not found in build directory"
+				echo "Error: ${PRODUCT_NAME}.app not found in build directory"
 				exit 1
 			fi
 			APP_DIR=$(dirname "$APP_PATH")
 			cd "$APP_DIR"
-			zip -ry "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${OS}_${ARCH}.zip" \
-				"LiberShare.app"
+			zip -ry "$SCRIPT_DIR/build/release/bundle/${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.zip" \
+				"${PRODUCT_NAME}.app"
 			;;
 		*)
 			ZIP_STAGING=$(mktemp -d)
-			cp "$SCRIPT_DIR/build/release/libershare" "$ZIP_STAGING/"
+			cp "$SCRIPT_DIR/build/release/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/"
 			cp "$ROOT_DIR/backend/build/lish-backend" "$ZIP_STAGING/lish-backend"
-			chmod +x "$ZIP_STAGING/libershare" "$ZIP_STAGING/lish-backend"
+			chmod +x "$ZIP_STAGING/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/lish-backend"
 			cd "$ZIP_STAGING"
-			zip -ry "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${OS}_${ARCH}.zip" .
+			zip -ry "$SCRIPT_DIR/build/release/bundle/${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.zip" .
 			rm -rf "$ZIP_STAGING"
 			;;
 	esac

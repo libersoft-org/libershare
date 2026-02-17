@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
-	import { productVersion } from '../../scripts/app.ts';
+	import { productVersion } from '@shared';
 	import { volume, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
 	import { type FooterWidget, getVolumeIcon } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';

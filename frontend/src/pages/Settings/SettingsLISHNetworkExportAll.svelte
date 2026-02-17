@@ -6,7 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { type LISHNetworkConfig } from '@libershare/shared';
+	import { type LISHNetworkConfig } from '@shared';
 	import { getNetworks, exportAllNetworksToJson } from '../../scripts/lishNetwork.ts';
 	import { storageLishnetPath, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
 	import { minifyJson } from '../../scripts/utils.ts';

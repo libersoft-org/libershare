@@ -1,4 +1,5 @@
 import { dirname, join } from 'path';
+import { productName, productVersion } from '@shared';
 import { setupLogger, type LogLevel } from './logger.ts';
 import { Networks } from './networks.ts';
 import { DataServer } from './data-server.ts';
@@ -46,6 +47,11 @@ for (let i = 0; i < args.length; i++) {
 }
 
 setupLogger(logLevel);
+const header = `${productName} v${productVersion}`;
+console.log('='.repeat(header.length));
+console.log(header);
+console.log('='.repeat(header.length));
+console.log(`Data directory: ${dataDir}`);
 const db = new Database(dataDir);
 await db.init();
 const dataServer = new DataServer(dataDir, db);

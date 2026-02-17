@@ -7,7 +7,7 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { parseNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
-	import { type LISHNetworkDefinition } from '@libershare/shared';
+	import { type LISHNetworkDefinition } from '@shared';
 	import { storageLishnetPath } from '../../scripts/settings.ts';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';

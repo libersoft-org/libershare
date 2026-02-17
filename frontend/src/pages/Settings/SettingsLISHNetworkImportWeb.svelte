@@ -5,7 +5,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { parseNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
-	import { type LISHNetworkDefinition } from '@libershare/shared';
+	import { type LISHNetworkDefinition } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';

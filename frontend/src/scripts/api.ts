@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 import { wsClient } from './ws-client.ts';
-import { Api } from '@libershare/shared';
+import { Api } from '@shared';
 export const api = new Api(wsClient);
 // Stores (updated via events from backend)
 export const stats = writable<{ [key: string]: any }>({});

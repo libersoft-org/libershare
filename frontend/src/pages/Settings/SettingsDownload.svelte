@@ -6,7 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, storageTempPath, storageLishPath, storageLishnetPath, setStoragePath, setStorageTempPath, setStorageLishPath, setStorageLishnetPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, allowRelay, maxRelayReservations, autoStartSharing, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, DEFAULT_STORAGE_PATH, DEFAULT_STORAGE_TEMP_PATH, DEFAULT_STORAGE_LISH_PATH, DEFAULT_STORAGE_LISHNET_PATH, DEFAULT_INCOMING_PORT, DEFAULT_MAX_DOWNLOAD_CONNECTIONS, DEFAULT_MAX_UPLOAD_CONNECTIONS, DEFAULT_MAX_DOWNLOAD_SPEED, DEFAULT_MAX_UPLOAD_SPEED, DEFAULT_ALLOW_RELAY, DEFAULT_MAX_RELAY_RESERVATIONS, DEFAULT_AUTO_START_SHARING } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLishPath, storageLishnetPath, setStoragePath, setStorageTempPath, setStorageLishPath, setStorageLishnetPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, allowRelay, maxRelayReservations, autoStartSharing, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, settingsDefaults } from '../../scripts/settings.ts';
 	import { scrollToElement, normalizePath } from '../../scripts/utils.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -172,40 +172,51 @@
 
 	// Reset functions
 	function resetStoragePath() {
-		storagePathValue = DEFAULT_STORAGE_PATH;
+		storagePathValue = settingsDefaults?.storage?.downloadPath ?? '';
 	}
+
 	function resetTempPath() {
-		tempPathValue = DEFAULT_STORAGE_TEMP_PATH;
+		tempPathValue = settingsDefaults?.storage?.tempPath ?? '';
 	}
+
 	function resetLishPath() {
-		lishPathValue = DEFAULT_STORAGE_LISH_PATH;
+		lishPathValue = settingsDefaults?.storage?.lishPath ?? '';
 	}
+
 	function resetLishnetPath() {
-		lishnetPathValue = DEFAULT_STORAGE_LISHNET_PATH;
+		lishnetPathValue = settingsDefaults?.storage?.lishnetPath ?? '';
 	}
+
 	function resetPort() {
-		port = DEFAULT_INCOMING_PORT.toString();
+		port = String(settingsDefaults?.network?.incomingPort ?? 0);
 	}
+
 	function resetDownloadConnections() {
-		downloadConnections = DEFAULT_MAX_DOWNLOAD_CONNECTIONS.toString();
+		downloadConnections = String(settingsDefaults?.network?.maxDownloadConnections ?? 0);
 	}
+
 	function resetUploadConnections() {
-		uploadConnections = DEFAULT_MAX_UPLOAD_CONNECTIONS.toString();
+		uploadConnections = String(settingsDefaults?.network?.maxUploadConnections ?? 0);
 	}
+
 	function resetDownloadSpeed() {
-		downloadSpeed = DEFAULT_MAX_DOWNLOAD_SPEED.toString();
+		downloadSpeed = String(settingsDefaults?.network?.maxDownloadSpeed ?? 0);
 	}
+
 	function resetUploadSpeed() {
-		uploadSpeed = DEFAULT_MAX_UPLOAD_SPEED.toString();
+		uploadSpeed = String(settingsDefaults?.network?.maxUploadSpeed ?? 0);
 	}
+
 	function resetAllowRelay() {
-		relay = DEFAULT_ALLOW_RELAY;
+		relay = settingsDefaults?.network?.allowRelay ?? true;
 	}
+
 	function resetRelayReservations() {
-		relayReservations = DEFAULT_MAX_RELAY_RESERVATIONS.toString();
+		relayReservations = String(settingsDefaults?.network?.maxRelayReservations ?? 0);
 	}
+
 	function resetAutoStart() {
-		autoStart = DEFAULT_AUTO_START_SHARING;
+		autoStart = settingsDefaults?.network?.autoStartSharing ?? true;
 	}
 
 	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);

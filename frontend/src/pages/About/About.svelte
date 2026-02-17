@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { productName, productVersion, buildDate, commitHash } from '../../scripts/app.ts';
+	import { productName, productVersion, productGithub, productWebsite } from '@shared';
+	import { buildDate, commitHash } from '../../scripts/app.ts';
 	import { t } from '../../scripts/language.ts';
 	import { LAYOUT, type Position } from '../../scripts/navigationLayout.ts';
 	import { openExternalUrl } from '../../scripts/utils.ts';
@@ -58,8 +59,8 @@
 	</div>
 	<div class="links">
 		<ButtonsGroup {areaID} {position} initialIndex={2} {onBack}>
-			<Button icon="/img/github.svg" label={$t('about.githubPage')} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalUrl('https://github.com/libersoft-org/libershare')} />
-			<Button icon="/img/online.svg" label={$t('about.officialWebsite')} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalUrl('https://libershare.com')} />
+			<Button icon="/img/github.svg" label={$t('about.githubPage')} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalUrl(productGithub)} />
+			<Button icon="/img/online.svg" label={$t('about.officialWebsite')} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalUrl(productWebsite)} />
 			<Button icon="/img/check.svg" label={$t('common.ok')} width="20vh" onConfirm={onBack} />
 		</ButtonsGroup>
 	</div>

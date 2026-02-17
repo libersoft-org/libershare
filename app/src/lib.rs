@@ -120,11 +120,12 @@ pub fn run() {
 			std::fs::create_dir_all(&data_dir)?;
 			let data_dir_str = data_dir.to_string_lossy().to_string();
 			let port_str = port.to_string();
+			let product_name = app.config().product_name.clone().unwrap_or_default();
 
 			// Create main window with backend port in query parameter
 			let window =
 				tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
-					.title("LiberShare")
+					.title(&product_name)
 					.initialization_script(&format!("window.__BACKEND_PORT__ = {};", port))
 					.visible(false)
 					.build()?;
@@ -152,7 +153,11 @@ pub fn run() {
 				.expect("Failed to get exe parent dir")
 				.to_path_buf();
 
-			let backend_name = if cfg!(windows) { "lish-backend.exe" } else { "lish-backend" };
+			let backend_name = if cfg!(windows) {
+				"lish-backend.exe"
+			} else {
+				"lish-backend"
+			};
 			let mut backend_path = exe_dir.join(backend_name);
 			if !backend_path.exists() {
 				// Installed mode (deb/rpm/AppImage/macOS): check resource directory
@@ -179,7 +184,7 @@ pub fn run() {
 			Ok(())
 		})
 		.build(tauri::generate_context!())
-		.expect("Error while building LiberShare");
+		.expect("Error while building application");
 
 	app.run(|handle, event| {
 		if let RunEvent::Exit = event {

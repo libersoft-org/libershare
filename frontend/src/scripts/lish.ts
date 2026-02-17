@@ -1,16 +1,11 @@
-/**
- * LISH (LiberShare Hash) data format handling
- */
-
+// LISH (Hash) data format handling
 export interface LISH {
 	version: number;
 	name: string;
 	// TODO: Add more fields as needed (size, hash, files, etc.)
 }
 
-/**
- * Supported hash algorithms for LISH creation
- */
+// Supported hash algorithms for LISH creation
 export const HASH_ALGORITHMS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
 
 export type HashAlgorithm = (typeof HASH_ALGORITHMS)[number];

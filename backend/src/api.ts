@@ -167,6 +167,8 @@ export class ApiServer {
 			}
 			case 'settings.getAll':
 				return this.settings.getAll();
+			case 'settings.getDefaults':
+				return this.settings.getDefaults();
 			case 'settings.reset':
 				return this.settings.reset();
 

@@ -18,8 +18,8 @@ const config = {
 			handleHttpError: 'warn',
 		},
 		alias: {
-			'@libershare/shared': path.resolve(__dirname, '../shared/src/index.ts'),
-			'@libershare/shared/*': path.resolve(__dirname, '../shared/src'),
+			'@shared': path.resolve(__dirname, '../shared/src/index.ts'),
+			'@shared/*': path.resolve(__dirname, '../shared/src'),
 		},
 	},
 };

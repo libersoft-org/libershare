@@ -1,10 +1,10 @@
 [package]
-name = "libershare-app"
-version = "0.0.1"
+name = "app"
+version = "1"
 edition = "2021"
 
 [lib]
-name = "libershare_app_lib"
+name = "app_lib"
 crate-type = ["lib"]
 
 [build-dependencies]

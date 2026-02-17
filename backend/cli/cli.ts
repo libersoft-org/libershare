@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import * as readline from 'readline';
 import { ApiClient } from './api-client';
-import { Api } from '@libershare/shared';
+import { Api } from '@shared';
 
 const DEFAULT_URL = 'ws://localhost:1158';
 
@@ -50,7 +50,7 @@ for (let i = 0; i < args.length; i++) {
 		i++;
 	} else if (args[i] === '--help' || args[i] === '-h') {
 		console.log(`
-libershare CLI - Connect to a running libershare server
+CLI - Connect to a running server
 
 Usage: bun cli.ts [options]
 
@@ -62,15 +62,11 @@ ${HELP}`);
 	}
 }
 
-
-function resolvePath(x:string)
-{
+function resolvePath(x: string) {
 	x = expandHome(x);
-	if (!x.startswith('/'))
-		x = resolvePath(x);
+	if (!x.startswith('/')) x = resolvePath(x);
 	return x;
 }
-
 
 async function main() {
 	console.log(`Connecting to ${serverUrl}...`);

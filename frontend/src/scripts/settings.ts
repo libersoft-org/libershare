@@ -9,7 +9,7 @@ export const cursorSizes: Record<CursorSize, string> = {
 	medium: '5vh',
 	large: '7.5vh',
 };
-// Settings stores with defaults (will be overwritten when loaded from backend)
+// Settings stores (will be loaded from backend)
 export const audioEnabled = writable(true);
 export const cursorSize = writable<CursorSize>('medium');
 export const inputInitialDelay = writable(400);
@@ -21,13 +21,13 @@ export const footerPosition = writable<FooterPosition>('right');
 export const footerWidgetVisibility = writable<Record<FooterWidget, boolean>>(defaultWidgetVisibility);
 export const timeFormat = writable(true);
 export const showSeconds = writable(false);
-export const storagePath = writable('~/libershare/download/');
-export const storageTempPath = writable('~/libershare/temp/');
-export const storageLishPath = writable('~/libershare/lish/');
-export const storageLishnetPath = writable('~/libershare/lishnet/');
-export const incomingPort = writable(9090);
-export const maxDownloadConnections = writable(200);
-export const maxUploadConnections = writable(200);
+export const storagePath = writable('');
+export const storageTempPath = writable('');
+export const storageLishPath = writable('');
+export const storageLishnetPath = writable('');
+export const incomingPort = writable(0);
+export const maxDownloadConnections = writable(0);
+export const maxUploadConnections = writable(0);
 export const maxDownloadSpeed = writable(0);
 export const maxUploadSpeed = writable(0);
 export const allowRelay = writable(true);
@@ -39,21 +39,8 @@ export const minimizeToTray = writable(true);
 export const defaultMinifyJson = writable(false);
 export const defaultCompressGzip = writable(false);
 
-// Defaults for reference
-export const DEFAULT_STORAGE_PATH = '~/libershare/download/';
-export const DEFAULT_STORAGE_TEMP_PATH = '~/libershare/temp/';
-export const DEFAULT_STORAGE_LISH_PATH = '~/libershare/lish/';
-export const DEFAULT_STORAGE_LISHNET_PATH = '~/libershare/lishnet/';
-export const DEFAULT_INCOMING_PORT = 9090;
-export const DEFAULT_MAX_DOWNLOAD_CONNECTIONS = 200;
-export const DEFAULT_MAX_UPLOAD_CONNECTIONS = 200;
-export const DEFAULT_MAX_DOWNLOAD_SPEED = 0;
-export const DEFAULT_MAX_UPLOAD_SPEED = 0;
-export const DEFAULT_ALLOW_RELAY = true;
-export const DEFAULT_MAX_RELAY_RESERVATIONS = 0;
-export const DEFAULT_AUTO_START_SHARING = true;
-export const DEFAULT_MINIFY_JSON = false;
-export const DEFAULT_COMPRESS_GZIP = false;
+// Cached defaults from backend (loaded once)
+export let settingsDefaults: any = null;
 
 // Helper to update store and save to backend
 async function updateSetting<T>(store: Writable<T>, path: string, value: T): Promise<void> {
@@ -68,7 +55,11 @@ async function updateSetting<T>(store: Writable<T>, path: string, value: T): Pro
 // Load all settings from backend
 export async function loadSettings(): Promise<void> {
 	try {
-		const settings = await api.settings.getAll();
+		const [settings, defaults] = await Promise.all([
+			api.settings.getAll(),
+			api.settings.getDefaults(),
+		]);
+		settingsDefaults = defaults;
 
 		// Language
 		if (settings.language && languages.some(l => l.id === settings.language)) {
@@ -76,46 +67,46 @@ export async function loadSettings(): Promise<void> {
 		}
 
 		// UI
-		cursorSize.set(settings.ui?.cursorSize ?? 'medium');
-		footerVisible.set(settings.ui?.footerVisible ?? true);
-		footerPosition.set(settings.ui?.footerPosition ?? 'right');
-		footerWidgetVisibility.set(settings.ui?.footerWidgets ?? defaultWidgetVisibility);
-		timeFormat.set(settings.ui?.timeFormat24h ?? true);
-		showSeconds.set(settings.ui?.showSeconds ?? false);
+		cursorSize.set(settings.ui.cursorSize);
+		footerVisible.set(settings.ui.footerVisible);
+		footerPosition.set(settings.ui.footerPosition);
+		footerWidgetVisibility.set(settings.ui.footerWidgets);
+		timeFormat.set(settings.ui.timeFormat24h);
+		showSeconds.set(settings.ui.showSeconds);
 
 		// Audio
-		audioEnabled.set(settings.audio?.enabled ?? true);
-		volume.set(settings.audio?.volume ?? 50);
+		audioEnabled.set(settings.audio.enabled);
+		volume.set(settings.audio.volume);
 
 		// Storage
-		storagePath.set(settings.storage?.downloadPath ?? DEFAULT_STORAGE_PATH);
-		storageTempPath.set(settings.storage?.tempPath ?? DEFAULT_STORAGE_TEMP_PATH);
-		storageLishPath.set(settings.storage?.lishPath ?? DEFAULT_STORAGE_LISH_PATH);
-		storageLishnetPath.set(settings.storage?.lishnetPath ?? DEFAULT_STORAGE_LISHNET_PATH);
+		storagePath.set(settings.storage.downloadPath);
+		storageTempPath.set(settings.storage.tempPath);
+		storageLishPath.set(settings.storage.lishPath);
+		storageLishnetPath.set(settings.storage.lishnetPath);
 
 		// Network
-		incomingPort.set(settings.network?.incomingPort ?? DEFAULT_INCOMING_PORT);
-		maxDownloadConnections.set(settings.network?.maxDownloadConnections ?? DEFAULT_MAX_DOWNLOAD_CONNECTIONS);
-		maxUploadConnections.set(settings.network?.maxUploadConnections ?? DEFAULT_MAX_UPLOAD_CONNECTIONS);
-		maxDownloadSpeed.set(settings.network?.maxDownloadSpeed ?? DEFAULT_MAX_DOWNLOAD_SPEED);
-		maxUploadSpeed.set(settings.network?.maxUploadSpeed ?? DEFAULT_MAX_UPLOAD_SPEED);
-		allowRelay.set(settings.network?.allowRelay ?? DEFAULT_ALLOW_RELAY);
-		maxRelayReservations.set(settings.network?.maxRelayReservations ?? DEFAULT_MAX_RELAY_RESERVATIONS);
-		autoStartSharing.set(settings.network?.autoStartSharing ?? DEFAULT_AUTO_START_SHARING);
+		incomingPort.set(settings.network.incomingPort);
+		maxDownloadConnections.set(settings.network.maxDownloadConnections);
+		maxUploadConnections.set(settings.network.maxUploadConnections);
+		maxDownloadSpeed.set(settings.network.maxDownloadSpeed);
+		maxUploadSpeed.set(settings.network.maxUploadSpeed);
+		allowRelay.set(settings.network.allowRelay);
+		maxRelayReservations.set(settings.network.maxRelayReservations);
+		autoStartSharing.set(settings.network.autoStartSharing);
 
 		// System
-		autoStartOnBoot.set(settings.system?.autoStartOnBoot ?? true);
-		showInTray.set(settings.system?.showInTray ?? true);
-		minimizeToTray.set(settings.system?.minimizeToTray ?? true);
+		autoStartOnBoot.set(settings.system.autoStartOnBoot);
+		showInTray.set(settings.system.showInTray);
+		minimizeToTray.set(settings.system.minimizeToTray);
 
 		// Export
-		defaultMinifyJson.set(settings.export?.minifyJson ?? DEFAULT_MINIFY_JSON);
-		defaultCompressGzip.set(settings.export?.compressGzip ?? DEFAULT_COMPRESS_GZIP);
+		defaultMinifyJson.set(settings.export.minifyJson);
+		defaultCompressGzip.set(settings.export.compressGzip);
 
 		// Input
-		inputInitialDelay.set(settings.input?.initialDelay ?? 400);
-		inputRepeatDelay.set(settings.input?.repeatDelay ?? 150);
-		gamepadDeadzone.set(settings.input?.gamepadDeadzone ?? 0.5);
+		inputInitialDelay.set(settings.input.initialDelay);
+		inputRepeatDelay.set(settings.input.repeatDelay);
+		gamepadDeadzone.set(settings.input.gamepadDeadzone);
 
 		console.log('[Settings] Loaded from backend');
 	} catch (error) {
