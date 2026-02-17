@@ -74,7 +74,31 @@ echo "Copied lish-backend as lish-backend-$TARGET"
 # Build Tauri app
 echo "=== Building Tauri app ==="
 cd "$SCRIPT_DIR"
+export APPIMAGE_EXTRACT_AND_RUN=1
+
+# Wrap ldd to handle Bun standalone binaries that fail ldd analysis.
+# linuxdeploy runs ldd on all ELF files including sidecars; if ldd fails
+# (exit code 1), linuxdeploy crashes. This wrapper returns "statically linked"
+# on failure, telling linuxdeploy to skip dependency deployment for that binary.
+LDD_WRAPPER_DIR=$(mktemp -d)
+cat > "$LDD_WRAPPER_DIR/ldd" << 'LDDWRAPPER'
+#!/bin/sh
+output=$(/usr/bin/ldd "$@" 2>&1)
+rc=$?
+if [ $rc -ne 0 ]; then
+	echo "	statically linked"
+	exit 0
+fi
+echo "$output"
+exit $rc
+LDDWRAPPER
+chmod +x "$LDD_WRAPPER_DIR/ldd"
+export PATH="$LDD_WRAPPER_DIR:$PATH"
+
 cargo tauri build $BUNDLE_ARGS
+
+# Clean up ldd wrapper
+rm -rf "$LDD_WRAPPER_DIR"
 
 # Move bundles to bundle root
 for dir in deb rpm appimage dmg; do
