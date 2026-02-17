@@ -72,12 +72,16 @@ if exist "%SCRIPT_DIR%build\release\bundle\nsis\*.exe" (
 rem Create ZIP bundle if requested
 if "%MAKE_ZIP%"=="1" (
 	echo === Creating ZIP bundle ===
+	for /f "tokens=2 delims=:	 " %%v in ('findstr /c:"\"version\"" "%SCRIPT_DIR%tauri.conf.json"') do set "VERSION=%%~v"
+	set "ARCH="
+	for /f "tokens=1 delims=-" %%a in ("%TARGET%") do set "ARCH=%%a"
 	set "ZIP_DIR=%SCRIPT_DIR%build\release\bundle\zip"
 	if exist "!ZIP_DIR!" rmdir /s /q "!ZIP_DIR!"
 	mkdir "!ZIP_DIR!"
+	mkdir "!ZIP_DIR!\binaries"
 	copy /y "%SCRIPT_DIR%build\release\LiberShare.exe" "!ZIP_DIR!\LiberShare.exe"
-	copy /y "%SCRIPT_DIR%binaries\lish-backend-%TARGET%.exe" "!ZIP_DIR!\lish-backend-%TARGET%.exe"
-	powershell -Command "Compress-Archive -Path '!ZIP_DIR!\*' -DestinationPath '%SCRIPT_DIR%build\release\bundle\LiberShare_0.0.1_x64.zip' -CompressionLevel Optimal -Force"
+	copy /y "%SCRIPT_DIR%binaries\lish-backend-%TARGET%.exe" "!ZIP_DIR!\binaries\lish-backend-%TARGET%.exe"
+	powershell -Command "Compress-Archive -Path '!ZIP_DIR!\*' -DestinationPath '%SCRIPT_DIR%build\release\bundle\LiberShare_!VERSION!_windows_!ARCH!.zip' -CompressionLevel Optimal -Force"
 	rmdir /s /q "!ZIP_DIR!"
 	if errorlevel 1 goto :error
 )

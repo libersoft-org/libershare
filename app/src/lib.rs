@@ -142,7 +142,9 @@ pub fn run() {
 					let width: f64 = (size.width as f64 / scale) * 0.75;
 					let height: f64 = (size.height as f64 / scale) * 0.75;
 					let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
-					let _ = window.center();
+					let x = (size.width as f64 / scale - width) / 2.0;
+					let y = (size.height as f64 / scale - height) / 2.0;
+					let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
 				}
 			}
 			let _ = window.show();

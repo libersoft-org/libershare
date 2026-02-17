@@ -119,9 +119,10 @@ if [ "$MAKE_ZIP" = "1" ]; then
 	echo "=== Creating ZIP bundle ==="
 	mkdir -p "$SCRIPT_DIR/build/release/bundle"
 	VERSION=$(grep '"version"' "$SCRIPT_DIR/tauri.conf.json" | head -1 | sed 's/.*: *"//;s/".*//')
-	ARCH=$(uname -m)
+	ARCH=$(echo "$TARGET" | cut -d'-' -f1)
 	case "$(uname -s)" in
 		Darwin)
+			OS="macos"
 			APP_PATH=$(find "$SCRIPT_DIR/build" -maxdepth 5 -name "LiberShare.app" -type d | head -1)
 			if [ -z "$APP_PATH" ]; then
 				echo "Error: LiberShare.app not found in build directory"
@@ -129,14 +130,18 @@ if [ "$MAKE_ZIP" = "1" ]; then
 			fi
 			APP_DIR=$(dirname "$APP_PATH")
 			cd "$APP_DIR"
-			zip -ry "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${ARCH}.zip" \
+			zip -ry "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${OS}_${ARCH}.zip" \
 				"LiberShare.app"
 			;;
 		*)
-			cd "$SCRIPT_DIR/build/release"
-			zip -j "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${ARCH}.zip" \
-				"$SCRIPT_DIR/build/release/libershare" \
-				"$BINARIES_DIR/lish-backend-$TARGET"
+			OS="linux"
+			ZIP_STAGING=$(mktemp -d)
+			cp "$SCRIPT_DIR/build/release/libershare" "$ZIP_STAGING/"
+			mkdir -p "$ZIP_STAGING/binaries"
+			cp "$BINARIES_DIR/lish-backend-$TARGET" "$ZIP_STAGING/binaries/"
+			cd "$ZIP_STAGING"
+			zip -ry "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${OS}_${ARCH}.zip" .
+			rm -rf "$ZIP_STAGING"
 			;;
 	esac
 fi
