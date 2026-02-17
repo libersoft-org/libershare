@@ -36,12 +36,22 @@ SVG="$ROOT_DIR/frontend/static/favicon.svg"
 mkdir -p "$ICONS_DIR"
 CONVERT="convert"
 command -v magick >/dev/null 2>&1 && CONVERT="magick"
+HAS_RSVG=0
+command -v rsvg-convert >/dev/null 2>&1 && HAS_RSVG=1
 for SIZE_NAME in "32 32x32" "128 128x128" "256 128x128@2x" "256 icon"; do
 	SIZE=$(echo "$SIZE_NAME" | cut -d' ' -f1)
 	NAME=$(echo "$SIZE_NAME" | cut -d' ' -f2)
-	rsvg-convert -w "$SIZE" -h "$SIZE" "$SVG" | $CONVERT png:- -define png:color-type=6 "$ICONS_DIR/$NAME.png"
+	if [ "$HAS_RSVG" = "1" ]; then
+		rsvg-convert -w "$SIZE" -h "$SIZE" "$SVG" | $CONVERT png:- -define png:color-type=6 "$ICONS_DIR/$NAME.png"
+	else
+		$CONVERT -background none -resize "${SIZE}x${SIZE}" "$SVG" -define png:color-type=6 "$ICONS_DIR/$NAME.png"
+	fi
 done
-rsvg-convert -w 256 -h 256 "$SVG" | $CONVERT png:- "$ICONS_DIR/icon.ico"
+if [ "$HAS_RSVG" = "1" ]; then
+	rsvg-convert -w 256 -h 256 "$SVG" | $CONVERT png:- "$ICONS_DIR/icon.ico"
+else
+	$CONVERT -background none -resize "256x256" "$SVG" "$ICONS_DIR/icon.ico"
+fi
 
 # Build frontend
 echo "=== Building frontend ==="
