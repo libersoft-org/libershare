@@ -22,9 +22,6 @@
 			"icons/icon.png",
 			"icons/icon.ico"
 		],
-		"externalBin": [
-			"binaries/lish-backend"
-		],
 		"licenseFile": "../LICENSE",
 		"windows": {
 			"nsis": {

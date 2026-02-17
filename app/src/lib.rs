@@ -1,12 +1,9 @@
-use std::io::Write;
 use std::net::TcpListener;
 use std::sync::Mutex;
 use tauri::{Manager, RunEvent};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
-struct BackendChild(Mutex<Option<CommandChild>>);
+struct BackendChild(Mutex<Option<std::process::Child>>);
 
 fn find_free_port() -> u16 {
 	let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to find free port");
@@ -112,7 +109,6 @@ pub fn run() {
 	let port = find_free_port();
 
 	let app = tauri::Builder::default()
-		.plugin(tauri_plugin_shell::init())
 		.plugin(tauri_plugin_window_state::Builder::default().build())
 		.invoke_handler(tauri::generate_handler![
 			app_quit,
@@ -149,39 +145,36 @@ pub fn run() {
 			}
 			let _ = window.show();
 
-			// Spawn backend sidecar
-			let sidecar = app
-				.shell()
-				.sidecar("lish-backend")
-				.expect("Failed to create sidecar command")
-				.args(["--datadir", &data_dir_str, "--port", &port_str]);
+			// Spawn backend
+			let exe_dir = std::env::current_exe()
+				.expect("Failed to get current exe path")
+				.parent()
+				.expect("Failed to get exe parent dir")
+				.to_path_buf();
 
-			let (mut rx, child) = sidecar.spawn().expect("Failed to spawn backend sidecar");
-			app.manage(BackendChild(Mutex::new(Some(child))));
-
-			// Forward sidecar output to terminal in debug mode
-			tauri::async_runtime::spawn(async move {
-				while let Some(event) = rx.recv().await {
-					if debug_mode {
-						match event {
-							CommandEvent::Stdout(bytes) => {
-								let _ = std::io::stdout().write_all(&bytes);
-								let _ = std::io::stdout().write_all(b"\n");
-								let _ = std::io::stdout().flush();
-							}
-							CommandEvent::Stderr(bytes) => {
-								let _ = std::io::stderr().write_all(&bytes);
-								let _ = std::io::stderr().write_all(b"\n");
-								let _ = std::io::stderr().flush();
-							}
-							CommandEvent::Terminated(status) => {
-								eprintln!("[LiberShare] Backend terminated: {:?}", status);
-							}
-							_ => {}
-						}
+			let backend_name = if cfg!(windows) { "lish-backend.exe" } else { "lish-backend" };
+			let mut backend_path = exe_dir.join(backend_name);
+			if !backend_path.exists() {
+				// Installed mode (deb/rpm/AppImage/macOS): check resource directory
+				if let Ok(res_dir) = app.path().resource_dir() {
+					let res_path = res_dir.join(backend_name);
+					if res_path.exists() {
+						backend_path = res_path;
 					}
 				}
-			});
+			}
+
+			let mut cmd = std::process::Command::new(&backend_path);
+			cmd.args(["--datadir", &data_dir_str, "--port", &port_str]);
+			if debug_mode {
+				cmd.stdout(std::process::Stdio::inherit());
+				cmd.stderr(std::process::Stdio::inherit());
+			} else {
+				cmd.stdout(std::process::Stdio::null());
+				cmd.stderr(std::process::Stdio::null());
+			}
+			let process = cmd.spawn().expect("Failed to spawn backend");
+			app.manage(BackendChild(Mutex::new(Some(process))));
 
 			Ok(())
 		})
@@ -193,7 +186,7 @@ pub fn run() {
 			let _ = handle.save_window_state(StateFlags::all());
 			if let Some(state) = handle.try_state::<BackendChild>() {
 				if let Ok(mut guard) = state.0.lock() {
-					if let Some(child) = guard.take() {
+					if let Some(mut child) = guard.take() {
 						let _ = child.kill();
 					}
 				}

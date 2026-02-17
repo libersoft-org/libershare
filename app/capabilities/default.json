@@ -4,17 +4,6 @@
 	"description": "Capability for the main window",
 	"windows": ["main"],
 	"permissions": [
-		"core:default",
-		{
-			"identifier": "shell:allow-spawn",
-			"allow": [
-				{
-					"name": "binaries/lish-backend",
-					"sidecar": true,
-					"args": true
-				}
-			]
-		},
-		"shell:allow-kill"
+		"core:default"
 	]
 }

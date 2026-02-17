@@ -2,6 +2,7 @@
 	"productName": "libershare",
 	"mainBinaryName": "libershare",
 	"bundle": {
+		"resources": ["../backend/build/lish-backend"],
 		"linux": {
 			"deb": {
 				"desktopTemplate": "desktop-entry.desktop"

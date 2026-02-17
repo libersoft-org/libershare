@@ -1,3 +1,6 @@
 {
-	"mainBinaryName": "LiberShare"
+	"mainBinaryName": "LiberShare",
+	"bundle": {
+		"resources": ["../backend/build/lish-backend"]
+	}
 }

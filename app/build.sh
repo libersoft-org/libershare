@@ -32,7 +32,6 @@ fi
 # Clean old build artifacts
 echo "=== Cleaning old build ==="
 [ -d "$SCRIPT_DIR/build/release/bundle" ] && rm -rf "$SCRIPT_DIR/build/release/bundle"
-[ -d "$SCRIPT_DIR/binaries" ] && rm -rf "$SCRIPT_DIR/binaries"
 [ -d "$SCRIPT_DIR/icons" ] && rm -rf "$SCRIPT_DIR/icons"
 
 # Generate icons from SVG
@@ -69,13 +68,7 @@ echo "=== Building backend ==="
 cd "$ROOT_DIR/backend"
 ./build.sh
 
-# Copy backend binary with target triple
-echo "=== Preparing sidecar ==="
 TARGET=$(rustc --print host-tuple)
-BINARIES_DIR="$SCRIPT_DIR/binaries"
-mkdir -p "$BINARIES_DIR"
-cp "$ROOT_DIR/backend/build/lish-backend" "$BINARIES_DIR/lish-backend-$TARGET"
-echo "Copied lish-backend as lish-backend-$TARGET"
 
 # Build Tauri app
 echo "=== Building Tauri app ==="
@@ -113,7 +106,7 @@ case "$(uname -s)" in
 	Darwin) OS="macos" ;;
 	*) OS="linux" ;;
 esac
-for dir in deb rpm appimage dmg macos; do
+for dir in deb rpm appimage dmg; do
 	if [ -d "$SCRIPT_DIR/build/release/bundle/$dir" ]; then
 		for f in "$SCRIPT_DIR/build/release/bundle/$dir"/*; do
 			[ -f "$f" ] || continue
@@ -150,10 +143,13 @@ if [ "$MAKE_ZIP" = "1" ]; then
 				"LiberShare.app"
 			;;
 		*)
-			cd "$SCRIPT_DIR/build/release"
-			zip -j "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${OS}_${ARCH}.zip" \
-				"$SCRIPT_DIR/build/release/libershare" \
-				"$BINARIES_DIR/lish-backend-$TARGET"
+			ZIP_STAGING=$(mktemp -d)
+			cp "$SCRIPT_DIR/build/release/libershare" "$ZIP_STAGING/"
+			cp "$ROOT_DIR/backend/build/lish-backend" "$ZIP_STAGING/lish-backend"
+			chmod +x "$ZIP_STAGING/libershare" "$ZIP_STAGING/lish-backend"
+			cd "$ZIP_STAGING"
+			zip -ry "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${OS}_${ARCH}.zip" .
+			rm -rf "$ZIP_STAGING"
 			;;
 	esac
 fi

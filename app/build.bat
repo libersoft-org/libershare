@@ -21,7 +21,6 @@ exit /b 1
 rem Clean old build artifacts
 echo === Cleaning old build ===
 if exist "%SCRIPT_DIR%build\release\bundle" rmdir /s /q "%SCRIPT_DIR%build\release\bundle"
-if exist "%SCRIPT_DIR%binaries" rmdir /s /q "%SCRIPT_DIR%binaries"
 if exist "%SCRIPT_DIR%icons" rmdir /s /q "%SCRIPT_DIR%icons"
 
 rem Generate icons from SVG
@@ -46,12 +45,7 @@ cd /d "%ROOT_DIR%\backend"
 call build.bat
 if errorlevel 1 goto :error
 
-rem Copy backend binary with target triple
-echo === Preparing sidecar ===
 for /f "tokens=*" %%i in ('rustc --print host-tuple') do set TARGET=%%i
-if not exist "%SCRIPT_DIR%binaries" mkdir "%SCRIPT_DIR%binaries"
-copy /y "%ROOT_DIR%\backend\build\lish-backend.exe" "%SCRIPT_DIR%binaries\lish-backend-%TARGET%.exe"
-echo Copied lish-backend as lish-backend-%TARGET%.exe
 
 rem Build Tauri app
 echo === Building Tauri app ===
@@ -84,7 +78,7 @@ if "%MAKE_ZIP%"=="1" (
 	if exist "!ZIP_DIR!" rmdir /s /q "!ZIP_DIR!"
 	mkdir "!ZIP_DIR!"
 	copy /y "%SCRIPT_DIR%build\release\LiberShare.exe" "!ZIP_DIR!\LiberShare.exe"
-	copy /y "%SCRIPT_DIR%binaries\lish-backend-%TARGET%.exe" "!ZIP_DIR!\lish-backend-%TARGET%.exe"
+	copy /y "%ROOT_DIR%\backend\build\lish-backend.exe" "!ZIP_DIR!\lish-backend.exe"
 	powershell -Command "Compress-Archive -Path '!ZIP_DIR!\*' -DestinationPath '%SCRIPT_DIR%build\release\bundle\LiberShare_!BVERSION!_win_!BARCH!.zip' -CompressionLevel Optimal -Force"
 	rmdir /s /q "!ZIP_DIR!"
 	if errorlevel 1 goto :error
