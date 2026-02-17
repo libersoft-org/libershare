@@ -18,6 +18,11 @@ for arg in "$@"; do
 	esac
 done
 
+# On macOS, if ZIP is requested, also build the .app bundle so it's preserved
+if [ "$MAKE_ZIP" = "1" ] && [ "$(uname -s)" = "Darwin" ]; then
+	BUNDLE_ARGS="$BUNDLE_ARGS --bundles app"
+fi
+
 # Clean old build artifacts
 echo "=== Cleaning old build ==="
 [ -d "$SCRIPT_DIR/build/release/bundle" ] && rm -rf "$SCRIPT_DIR/build/release/bundle"
