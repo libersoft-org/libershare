@@ -106,10 +106,29 @@ fi
 
 cargo tauri build $BUNDLE_ARGS
 
-# Move bundles to bundle root
+# Move and rename bundles to bundle root (add platform to name)
+VERSION=$(grep '"version"' "$SCRIPT_DIR/tauri.conf.json" | head -1 | sed 's/.*: *"//;s/".*//')
+ARCH=$(echo "$TARGET" | cut -d'-' -f1)
+case "$(uname -s)" in
+	Darwin) OS="macos" ;;
+	*) OS="linux" ;;
+esac
 for dir in deb rpm appimage dmg macos; do
 	if [ -d "$SCRIPT_DIR/build/release/bundle/$dir" ]; then
-		mv "$SCRIPT_DIR/build/release/bundle/$dir"/* "$SCRIPT_DIR/build/release/bundle/" 2>/dev/null || true
+		for f in "$SCRIPT_DIR/build/release/bundle/$dir"/*; do
+			[ -f "$f" ] || continue
+			EXT="${f##*.}"
+			BASENAME=$(basename "$f")
+			# Rename to include platform
+			case "$EXT" in
+				deb)     NEWNAME="LiberShare_${VERSION}_${OS}_${ARCH}.deb" ;;
+				rpm)     NEWNAME="LiberShare_${VERSION}_${OS}_${ARCH}.rpm" ;;
+				AppImage) NEWNAME="LiberShare_${VERSION}_${OS}_${ARCH}.AppImage" ;;
+				dmg)     NEWNAME="LiberShare_${VERSION}_${OS}_${ARCH}.dmg" ;;
+				*)       NEWNAME="$BASENAME" ;;
+			esac
+			mv "$f" "$SCRIPT_DIR/build/release/bundle/$NEWNAME"
+		done
 		rmdir "$SCRIPT_DIR/build/release/bundle/$dir" 2>/dev/null || true
 	fi
 done
@@ -118,11 +137,8 @@ done
 if [ "$MAKE_ZIP" = "1" ]; then
 	echo "=== Creating ZIP bundle ==="
 	mkdir -p "$SCRIPT_DIR/build/release/bundle"
-	VERSION=$(grep '"version"' "$SCRIPT_DIR/tauri.conf.json" | head -1 | sed 's/.*: *"//;s/".*//')
-	ARCH=$(echo "$TARGET" | cut -d'-' -f1)
 	case "$(uname -s)" in
 		Darwin)
-			OS="macos"
 			APP_PATH=$(find "$SCRIPT_DIR/build" -maxdepth 5 -name "LiberShare.app" -type d | head -1)
 			if [ -z "$APP_PATH" ]; then
 				echo "Error: LiberShare.app not found in build directory"
@@ -134,14 +150,14 @@ if [ "$MAKE_ZIP" = "1" ]; then
 				"LiberShare.app"
 			;;
 		*)
-			OS="linux"
-			ZIP_STAGING=$(mktemp -d)
+			ZIP_STAGING=$(mktemp -d)/LiberShare
+			mkdir -p "$ZIP_STAGING"
 			cp "$SCRIPT_DIR/build/release/libershare" "$ZIP_STAGING/"
-			mkdir -p "$ZIP_STAGING/binaries"
-			cp "$BINARIES_DIR/lish-backend-$TARGET" "$ZIP_STAGING/binaries/"
-			cd "$ZIP_STAGING"
-			zip -ry "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${OS}_${ARCH}.zip" .
-			rm -rf "$ZIP_STAGING"
+			cp "$BINARIES_DIR/lish-backend-$TARGET" "$ZIP_STAGING/"
+			chmod +x "$ZIP_STAGING/libershare" "$ZIP_STAGING/lish-backend-$TARGET"
+			cd "$(dirname "$ZIP_STAGING")"
+			zip -ry "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${OS}_${ARCH}.zip" LiberShare
+			rm -rf "$(dirname "$ZIP_STAGING")"
 			;;
 	esac
 fi

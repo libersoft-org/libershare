@@ -59,30 +59,35 @@ cd /d "%SCRIPT_DIR%"
 cargo tauri build %BUNDLE_ARGS%
 if errorlevel 1 goto :error
 
-rem Move MSI and NSIS bundles to bundle root
+rem Move and rename MSI and NSIS bundles to bundle root (add platform to name)
+	for /f "tokens=2 delims=: \t" %%v in ('findstr /c:"\"version\"" "%SCRIPT_DIR%tauri.conf.json"') do set "BVERSION=%%~v"
+	set "BVERSION=!BVERSION:,=!"
+	set "BARCH="
+	for /f "tokens=1 delims=-" %%a in ("%TARGET%") do set "BARCH=%%a"
 if exist "%SCRIPT_DIR%build\release\bundle\msi\*.msi" (
-	move /y "%SCRIPT_DIR%build\release\bundle\msi\*.msi" "%SCRIPT_DIR%build\release\bundle\" >nul
+	for %%f in ("%SCRIPT_DIR%build\release\bundle\msi\*.msi") do (
+		move /y "%%f" "%SCRIPT_DIR%build\release\bundle\LiberShare_!BVERSION!_win_!BARCH!.msi" >nul
+	)
 	rmdir /q "%SCRIPT_DIR%build\release\bundle\msi" 2>nul
 )
 if exist "%SCRIPT_DIR%build\release\bundle\nsis\*.exe" (
-	move /y "%SCRIPT_DIR%build\release\bundle\nsis\*.exe" "%SCRIPT_DIR%build\release\bundle\" >nul
+	for %%f in ("%SCRIPT_DIR%build\release\bundle\nsis\*.exe") do (
+		move /y "%%f" "%SCRIPT_DIR%build\release\bundle\LiberShare_!BVERSION!_win_!BARCH!_setup.exe" >nul
+	)
 	rmdir /q "%SCRIPT_DIR%build\release\bundle\nsis" 2>nul
 )
 
 rem Create ZIP bundle if requested
 if "%MAKE_ZIP%"=="1" (
 	echo === Creating ZIP bundle ===
-	for /f "tokens=2 delims=:	 " %%v in ('findstr /c:"\"version\"" "%SCRIPT_DIR%tauri.conf.json"') do set "VERSION=%%~v"
-	set "ARCH="
-	for /f "tokens=1 delims=-" %%a in ("%TARGET%") do set "ARCH=%%a"
-	set "ZIP_DIR=%SCRIPT_DIR%build\release\bundle\zip"
-	if exist "!ZIP_DIR!" rmdir /s /q "!ZIP_DIR!"
+	set "ZIP_DIR=%SCRIPT_DIR%build\release\bundle\zip\LiberShare"
+	if exist "%SCRIPT_DIR%build\release\bundle\zip" rmdir /s /q "%SCRIPT_DIR%build\release\bundle\zip"
 	mkdir "!ZIP_DIR!"
 	mkdir "!ZIP_DIR!\binaries"
 	copy /y "%SCRIPT_DIR%build\release\LiberShare.exe" "!ZIP_DIR!\LiberShare.exe"
 	copy /y "%SCRIPT_DIR%binaries\lish-backend-%TARGET%.exe" "!ZIP_DIR!\binaries\lish-backend-%TARGET%.exe"
-	powershell -Command "Compress-Archive -Path '!ZIP_DIR!\*' -DestinationPath '%SCRIPT_DIR%build\release\bundle\LiberShare_!VERSION!_windows_!ARCH!.zip' -CompressionLevel Optimal -Force"
-	rmdir /s /q "!ZIP_DIR!"
+	powershell -Command "Compress-Archive -Path '!ZIP_DIR!' -DestinationPath '%SCRIPT_DIR%build\release\bundle\LiberShare_!BVERSION!_win_!BARCH!.zip' -CompressionLevel Optimal -Force"
+	rmdir /s /q "%SCRIPT_DIR%build\release\bundle\zip"
 	if errorlevel 1 goto :error
 )
 
