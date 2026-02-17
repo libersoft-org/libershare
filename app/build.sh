@@ -74,10 +74,19 @@ if [ "$MAKE_ZIP" = "1" ]; then
 	echo "=== Creating ZIP bundle ==="
 	VERSION=$(grep '"version"' "$SCRIPT_DIR/tauri.conf.json" | head -1 | sed 's/.*: *"//;s/".*//')
 	ARCH=$(uname -m)
-	cd "$SCRIPT_DIR/build/release"
-	zip -j "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${ARCH}.zip" \
-		"$SCRIPT_DIR/build/release/libershare" \
-		"$BINARIES_DIR/lish-backend-$TARGET"
+	case "$(uname -s)" in
+		Darwin)
+			cd "$SCRIPT_DIR/build/release/bundle/macos"
+			zip -ry "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${ARCH}.zip" \
+				"LiberShare.app"
+			;;
+		*)
+			cd "$SCRIPT_DIR/build/release"
+			zip -j "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${ARCH}.zip" \
+				"$SCRIPT_DIR/build/release/libershare" \
+				"$BINARIES_DIR/lish-backend-$TARGET"
+			;;
+	esac
 fi
 
 echo "=== Build complete ==="
