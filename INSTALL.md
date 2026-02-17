@@ -50,11 +50,11 @@ apt -y install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev l
 cd app
 ```
 
-To create a .deb package: `./build.sh --deb`
-To create an .rpm package: `./build.sh --rpm`
-To create an AppImage: `./build.sh --appimage`
-To create a portable .zip: `./build.sh --zip`
-All at once: `./build.sh --deb --rpm --appimage --zip`
+- To create a .deb package: `./build.sh --deb`
+- To create an .rpm package: `./build.sh --rpm`
+- To create an AppImage: `./build.sh --appimage`
+- To create a portable .zip: `./build.sh --zip`
+- All at once: `./build.sh --deb --rpm --appimage --zip`
 
 **On macOS:**
 
@@ -66,9 +66,9 @@ brew install librsvg imagemagick
 cd app
 ```
 
-To create a .dmg installer: `./build.sh --dmg`
-To create a portable .zip: `./build.sh --zip`
-Both: `./build.sh --dmg --zip`
+- To create a .dmg installer: `./build.sh --dmg`
+- To create a portable .zip: `./build.sh --zip`
+- Both: `./build.sh --dmg --zip`
 
 **On Windows:**
 
@@ -92,10 +92,10 @@ cargo install tauri-cli --version "^2"
 cd app
 ```
 
-To create an MSI installer: `build.bat /msi`
-To create an EXE installer (NSIS): `build.bat /nsis`
-To create a portable .zip: `build.bat /zip`
-All at once: `build.bat /msi /nsis /zip`
+- To create an MSI installer: `build.bat /msi`
+- To create an EXE installer (NSIS): `build.bat /nsis`
+- To create a portable .zip: `build.bat /zip`
+- All at once: `build.bat /msi /nsis /zip`
 
 **Additional information**
 
