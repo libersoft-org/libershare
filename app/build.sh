@@ -150,14 +150,10 @@ if [ "$MAKE_ZIP" = "1" ]; then
 				"LiberShare.app"
 			;;
 		*)
-			ZIP_STAGING=$(mktemp -d)/LiberShare
-			mkdir -p "$ZIP_STAGING"
-			cp "$SCRIPT_DIR/build/release/libershare" "$ZIP_STAGING/"
-			cp "$BINARIES_DIR/lish-backend-$TARGET" "$ZIP_STAGING/"
-			chmod +x "$ZIP_STAGING/libershare" "$ZIP_STAGING/lish-backend-$TARGET"
-			cd "$(dirname "$ZIP_STAGING")"
-			zip -ry "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${OS}_${ARCH}.zip" LiberShare
-			rm -rf "$(dirname "$ZIP_STAGING")"
+			cd "$SCRIPT_DIR/build/release"
+			zip -j "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${OS}_${ARCH}.zip" \
+				"$SCRIPT_DIR/build/release/libershare" \
+				"$BINARIES_DIR/lish-backend-$TARGET"
 			;;
 	esac
 fi
