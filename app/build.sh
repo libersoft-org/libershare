@@ -4,6 +4,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Cleanup handler for temporary files
+cleanup() {
+	[ -n "$LDD_WRAPPER_DIR" ] && rm -rf "$LDD_WRAPPER_DIR"
+}
+trap cleanup EXIT
+
 # Parse arguments
 BUNDLE_ARGS=""
 MAKE_ZIP=0
@@ -74,14 +80,16 @@ echo "Copied lish-backend as lish-backend-$TARGET"
 # Build Tauri app
 echo "=== Building Tauri app ==="
 cd "$SCRIPT_DIR"
-export APPIMAGE_EXTRACT_AND_RUN=1
 
-# Wrap ldd to handle Bun standalone binaries that fail ldd analysis.
-# linuxdeploy runs ldd on all ELF files including sidecars; if ldd fails
-# (exit code 1), linuxdeploy crashes. This wrapper returns "statically linked"
-# on failure, telling linuxdeploy to skip dependency deployment for that binary.
-LDD_WRAPPER_DIR=$(mktemp -d)
-cat > "$LDD_WRAPPER_DIR/ldd" << 'LDDWRAPPER'
+if [ "$(uname -s)" = "Linux" ]; then
+	export APPIMAGE_EXTRACT_AND_RUN=1
+
+	# Wrap ldd to handle Bun standalone binaries that fail ldd analysis.
+	# linuxdeploy runs ldd on all ELF files including sidecars; if ldd fails
+	# (exit code 1), linuxdeploy crashes. This wrapper returns "statically linked"
+	# on failure, telling linuxdeploy to skip dependency deployment for that binary.
+	LDD_WRAPPER_DIR=$(mktemp -d)
+	cat > "$LDD_WRAPPER_DIR/ldd" << 'LDDWRAPPER'
 #!/bin/sh
 output=$(/usr/bin/ldd "$@" 2>&1)
 rc=$?
@@ -92,16 +100,14 @@ fi
 echo "$output"
 exit $rc
 LDDWRAPPER
-chmod +x "$LDD_WRAPPER_DIR/ldd"
-export PATH="$LDD_WRAPPER_DIR:$PATH"
+	chmod +x "$LDD_WRAPPER_DIR/ldd"
+	export PATH="$LDD_WRAPPER_DIR:$PATH"
+fi
 
 cargo tauri build $BUNDLE_ARGS
 
-# Clean up ldd wrapper
-rm -rf "$LDD_WRAPPER_DIR"
-
 # Move bundles to bundle root
-for dir in deb rpm appimage dmg; do
+for dir in deb rpm appimage dmg macos; do
 	if [ -d "$SCRIPT_DIR/build/release/bundle/$dir" ]; then
 		mv "$SCRIPT_DIR/build/release/bundle/$dir"/* "$SCRIPT_DIR/build/release/bundle/" 2>/dev/null || true
 		rmdir "$SCRIPT_DIR/build/release/bundle/$dir" 2>/dev/null || true
@@ -111,11 +117,12 @@ done
 # Create ZIP bundle if requested
 if [ "$MAKE_ZIP" = "1" ]; then
 	echo "=== Creating ZIP bundle ==="
+	mkdir -p "$SCRIPT_DIR/build/release/bundle"
 	VERSION=$(grep '"version"' "$SCRIPT_DIR/tauri.conf.json" | head -1 | sed 's/.*: *"//;s/".*//')
 	ARCH=$(uname -m)
 	case "$(uname -s)" in
 		Darwin)
-			APP_PATH=$(find "$SCRIPT_DIR/build" -name "LiberShare.app" -type d -maxdepth 5 | head -1)
+			APP_PATH=$(find "$SCRIPT_DIR/build" -maxdepth 5 -name "LiberShare.app" -type d | head -1)
 			if [ -z "$APP_PATH" ]; then
 				echo "Error: LiberShare.app not found in build directory"
 				exit 1
