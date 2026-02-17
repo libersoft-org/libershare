@@ -29,12 +29,14 @@ echo "=== Generating icons ==="
 ICONS_DIR="$SCRIPT_DIR/icons"
 SVG="$ROOT_DIR/frontend/static/favicon.svg"
 mkdir -p "$ICONS_DIR"
+CONVERT="convert"
+command -v magick >/dev/null 2>&1 && CONVERT="magick"
 for SIZE_NAME in "32 32x32" "128 128x128" "256 128x128@2x" "256 icon"; do
 	SIZE=$(echo "$SIZE_NAME" | cut -d' ' -f1)
 	NAME=$(echo "$SIZE_NAME" | cut -d' ' -f2)
-	rsvg-convert -w "$SIZE" -h "$SIZE" "$SVG" | convert png:- -define png:color-type=6 "$ICONS_DIR/$NAME.png"
+	rsvg-convert -w "$SIZE" -h "$SIZE" "$SVG" | $CONVERT png:- -define png:color-type=6 "$ICONS_DIR/$NAME.png"
 done
-rsvg-convert -w 256 -h 256 "$SVG" | convert png:- "$ICONS_DIR/icon.ico"
+rsvg-convert -w 256 -h 256 "$SVG" | $CONVERT png:- "$ICONS_DIR/icon.ico"
 
 # Build frontend
 echo "=== Building frontend ==="

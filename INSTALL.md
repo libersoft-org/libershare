@@ -71,7 +71,6 @@ source "$HOME/.cargo/env"
 cargo install tauri-cli --version "^2"
 apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev librsvg2-bin imagemagick
 cd app
-./build.sh
 ```
 
 To create a .deb package: `./build.sh --deb`
@@ -84,12 +83,11 @@ All at once: `./build.sh --deb --rpm --appimage --zip`
 
 ```sh
 curl -fsSL https://bun.sh/install | bash
-source ~/.zshrc
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 cargo install tauri-cli --version "^2"
+brew install librsvg imagemagick
 cd app
-./build.sh
 ```
 
 To create a .dmg installer: `./build.sh --dmg`
@@ -117,7 +115,6 @@ Then in a command line:
 ```bat
 cargo install tauri-cli --version "^2"
 cd app
-build.bat
 ```
 
 To create an MSI installer: `build.bat /msi`
