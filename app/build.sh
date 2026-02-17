@@ -76,7 +76,13 @@ if [ "$MAKE_ZIP" = "1" ]; then
 	ARCH=$(uname -m)
 	case "$(uname -s)" in
 		Darwin)
-			cd "$SCRIPT_DIR/build/release/bundle/macos"
+			APP_PATH=$(find "$SCRIPT_DIR/build" -name "LiberShare.app" -type d -maxdepth 5 | head -1)
+			if [ -z "$APP_PATH" ]; then
+				echo "Error: LiberShare.app not found in build directory"
+				exit 1
+			fi
+			APP_DIR=$(dirname "$APP_PATH")
+			cd "$APP_DIR"
 			zip -ry "$SCRIPT_DIR/build/release/bundle/LiberShare_${VERSION}_${ARCH}.zip" \
 				"LiberShare.app"
 			;;
