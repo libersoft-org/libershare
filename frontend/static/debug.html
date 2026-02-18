@@ -2,7 +2,7 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
-		<title>Backend Debug Console</title>
+		<title>Backend debug console</title>
 		<style>
 			* {
 				margin: 0;
@@ -14,7 +14,7 @@
 				height: 100%;
 				background: #0c0c0c;
 				color: #cccccc;
-				font-family: 'Cascadia Mono', 'Consolas', 'Courier New', monospace;
+				font-family: monospace;
 				font-size: 14px;
 			}
 			#toolbar {
@@ -51,72 +51,12 @@
 				word-break: break-all;
 				line-height: 1.4;
 			}
-			.stderr {
+			.line-stderr {
+				/* default stderr color when no ANSI override */
 				color: #f48771;
 			}
-			.stdout {
+			.line-stdout {
 				color: #cccccc;
-			}
-			/* ANSI color classes */
-			.ansi-black {
-				color: #555555;
-			}
-			.ansi-red {
-				color: #f48771;
-			}
-			.ansi-green {
-				color: #89d185;
-			}
-			.ansi-yellow {
-				color: #e5e550;
-			}
-			.ansi-blue {
-				color: #6fb3d2;
-			}
-			.ansi-magenta {
-				color: #d670d6;
-			}
-			.ansi-cyan {
-				color: #66c2cd;
-			}
-			.ansi-white {
-				color: #cccccc;
-			}
-			.ansi-bright-black {
-				color: #888888;
-			}
-			.ansi-bright-red {
-				color: #f14c4c;
-			}
-			.ansi-bright-green {
-				color: #73c991;
-			}
-			.ansi-bright-yellow {
-				color: #fffb00;
-			}
-			.ansi-bright-blue {
-				color: #7fc8f8;
-			}
-			.ansi-bright-magenta {
-				color: #e48aff;
-			}
-			.ansi-bright-cyan {
-				color: #92e9f7;
-			}
-			.ansi-bright-white {
-				color: #ffffff;
-			}
-			.ansi-bold {
-				font-weight: bold;
-			}
-			.ansi-dim {
-				opacity: 0.7;
-			}
-			.ansi-italic {
-				font-style: italic;
-			}
-			.ansi-underline {
-				text-decoration: underline;
 			}
 		</style>
 	</head>
@@ -147,87 +87,97 @@
 					scrollBtn.textContent = 'Auto-scroll: ' + (autoScroll ? 'ON' : 'OFF');
 				});
 
-				function appendLine(text, isErr) {
+				// ── ANSI-to-HTML converter ──────────────────────────────
+				// Standard + bright foreground color palette (Windows Terminal)
+				const SGR_FG = {
+					30: '#0c0c0c',
+					31: '#c50f1f',
+					32: '#13a10e',
+					33: '#c19c00',
+					34: '#0037da',
+					35: '#881798',
+					36: '#3a96dd',
+					37: '#cccccc',
+					90: '#767676',
+					91: '#e74856',
+					92: '#16c60c',
+					93: '#f9f1a5',
+					94: '#3b78ff',
+					95: '#b4009e',
+					96: '#61d6d6',
+					97: '#f2f2f2',
+				};
+
+				function escapeHtml(text) {
+					return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+				}
+
+				/**
+				 * Convert a raw string containing ANSI SGR escape codes into HTML.
+				 * Handles ESC[<codes>m sequences (colors, bold, reset).
+				 * Inspired by the ansi_up library (https://github.com/drudru/ansi_up).
+				 */
+				function ansiToHtml(str) {
+					// Match ESC [ <params> m   (ESC = \x1b = char code 27)
+					const re = /\x1b\[([0-9;]*)m/g;
+					let html = '';
+					let lastIndex = 0;
+					let fgColor = null;
+					let bold = false;
+					let match;
+
+					while ((match = re.exec(str)) !== null) {
+						// Append escaped text before this sequence
+						const preceding = str.slice(lastIndex, match.index);
+						if (preceding) {
+							html += wrapSpan(preceding, fgColor, bold);
+						}
+
+						// Parse SGR codes (e.g. "32" or "1;31" or "0")
+						const codes = match[1] === '' ? [0] : match[1].split(';').map(Number);
+						for (const code of codes) {
+							if (code === 0) {
+								fgColor = null;
+								bold = false;
+							} else if (code === 1) {
+								bold = true;
+							} else if (code === 22) {
+								bold = false;
+							} else if (SGR_FG[code]) {
+								fgColor = SGR_FG[code];
+							}
+						}
+
+						lastIndex = re.lastIndex;
+					}
+
+					// Remaining text after last escape (or entire string if no escapes)
+					const tail = str.slice(lastIndex);
+					if (tail) {
+						html += wrapSpan(tail, fgColor, bold);
+					}
+
+					return html;
+				}
+
+				function wrapSpan(text, color, bold) {
+					const escaped = escapeHtml(text);
+					const parts = [];
+					if (color) parts.push('color:' + color);
+					if (bold) parts.push('font-weight:bold');
+					if (parts.length === 0) return escaped;
+					return '<span style="' + parts.join(';') + '">' + escaped + '</span>';
+				}
+				// ────────────────────────────────────────────────────────
+
+				function appendLine(rawText, isErr) {
 					const line = document.createElement('div');
-					line.className = isErr ? 'stderr' : 'stdout';
-					line.appendChild(ansiToHtml(text));
+					line.className = isErr ? 'line-stderr' : 'line-stdout';
+					line.innerHTML = ansiToHtml(rawText);
 					output.appendChild(line);
 					lineCount++;
 					if (autoScroll) output.scrollTop = output.scrollHeight;
 					status.textContent = lineCount + ' lines';
-				}
-
-				// ANSI standard color codes → CSS classes
-				const ANSI_FG = {
-					30: 'ansi-black',
-					31: 'ansi-red',
-					32: 'ansi-green',
-					33: 'ansi-yellow',
-					34: 'ansi-blue',
-					35: 'ansi-magenta',
-					36: 'ansi-cyan',
-					37: 'ansi-white',
-					90: 'ansi-bright-black',
-					91: 'ansi-bright-red',
-					92: 'ansi-bright-green',
-					93: 'ansi-bright-yellow',
-					94: 'ansi-bright-blue',
-					95: 'ansi-bright-magenta',
-					96: 'ansi-bright-cyan',
-					97: 'ansi-bright-white',
-				};
-
-				function ansiToHtml(rawText) {
-					const frag = document.createDocumentFragment();
-					// Strip all control characters (0x00-0x1F, 0x7F) except tab/CR/LF
-					// This removes ESC bytes that come through IPC in various forms
-					const text = rawText.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
-					// Match bare ANSI SGR codes: [digits;...m (ESC already stripped)
-					const re = /\[([0-9;]+)m/g;
-					let lastIndex = 0;
-					let match;
-					let classes = [];
-
-					while ((match = re.exec(text)) !== null) {
-						// Append text before this escape
-						if (match.index > lastIndex) {
-							const span = document.createElement('span');
-							if (classes.length) span.className = classes.join(' ');
-							span.textContent = text.slice(lastIndex, match.index);
-							frag.appendChild(span);
-						}
-						lastIndex = re.lastIndex;
-
-						// Parse SGR parameters
-						const codes = match[1] ? match[1].split(';').map(Number) : [0];
-						for (const code of codes) {
-							if (code === 0) {
-								classes = [];
-							} else if (code === 1) {
-								classes.push('ansi-bold');
-							} else if (code === 2) {
-								classes.push('ansi-dim');
-							} else if (code === 3) {
-								classes.push('ansi-italic');
-							} else if (code === 4) {
-								classes.push('ansi-underline');
-							} else if (ANSI_FG[code]) {
-								// Remove any previous fg color class
-								classes = classes.filter(c => !c.startsWith('ansi-') || c.startsWith('ansi-bold') || c.startsWith('ansi-dim') || c.startsWith('ansi-italic') || c.startsWith('ansi-underline'));
-								classes.push(ANSI_FG[code]);
-							}
-						}
-					}
-
-					// Remaining text after last escape
-					if (lastIndex < text.length) {
-						const span = document.createElement('span');
-						if (classes.length) span.className = classes.join(' ');
-						span.textContent = text.slice(lastIndex);
-						frag.appendChild(span);
-					}
-
-					return frag;
 				}
 
 				// Wait for Tauri global API to be injected
