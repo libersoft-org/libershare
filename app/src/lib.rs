@@ -177,6 +177,11 @@ pub fn run() {
 			} else {
 				cmd.stdout(std::process::Stdio::null());
 				cmd.stderr(std::process::Stdio::null());
+				#[cfg(target_os = "windows")]
+				{
+					use std::os::windows::process::CommandExt;
+					cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+				}
 			}
 			let process = cmd.spawn().expect("Failed to spawn backend");
 			app.manage(BackendChild(Mutex::new(Some(process))));

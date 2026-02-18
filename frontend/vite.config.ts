@@ -19,7 +19,7 @@ function getBuildDate(): string {
 	return now.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
 }
 
-// Serve country flag SVGs from node_modules in dev, copy to build output in production
+// Serve country flag SVGs from node_modules in dev, build scripts handle production copy
 function countryFlags(): Plugin {
 	const flagsDir = path.resolve(__dirname, 'node_modules/country-flags/svg');
 	return {
@@ -32,15 +32,6 @@ function countryFlags(): Plugin {
 					fs.createReadStream(file).pipe(res);
 				} else next();
 			});
-		},
-		closeBundle() {
-			if (!fs.existsSync(flagsDir)) return;
-			const destDir = path.resolve(__dirname, 'build/flags');
-			if (!fs.existsSync(path.resolve(__dirname, 'build'))) return;
-			fs.mkdirSync(destDir, { recursive: true });
-			for (const file of fs.readdirSync(flagsDir)) {
-				if (file.endsWith('.svg')) fs.copyFileSync(path.join(flagsDir, file), path.join(destDir, file));
-			}
 		},
 	};
 }
