@@ -174,14 +174,16 @@ pub fn run() {
 
 			let mut cmd = std::process::Command::new(&backend_path);
 			cmd.args(["--datadir", &data_dir_str, "--port", &port_str]);
-			cmd.stdin(std::process::Stdio::null());
 			#[cfg(target_os = "windows")]
 			{
 				use std::os::windows::process::CommandExt;
 				if debug_mode {
-					// Give backend its own visible console window
+					// Give backend its own visible console window.
+					// Do NOT set any stdio handles here — leaving them unset lets
+					// CREATE_NEW_CONSOLE wire the child to the new console's I/O buffers.
 					cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE
 				} else {
+					cmd.stdin(std::process::Stdio::null());
 					cmd.stdout(std::process::Stdio::null());
 					cmd.stderr(std::process::Stdio::null());
 					cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
@@ -189,6 +191,7 @@ pub fn run() {
 			}
 			#[cfg(not(target_os = "windows"))]
 			if !debug_mode {
+				cmd.stdin(std::process::Stdio::null());
 				cmd.stdout(std::process::Stdio::null());
 				cmd.stderr(std::process::Stdio::null());
 			}
