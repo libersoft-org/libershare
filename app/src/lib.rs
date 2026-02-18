@@ -1,6 +1,6 @@
 use std::net::TcpListener;
 use std::sync::Mutex;
-use tauri::{Manager, RunEvent};
+use tauri::{Emitter, Manager, RunEvent};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 struct BackendChild(Mutex<Option<std::process::Child>>);
@@ -149,6 +149,18 @@ pub fn run() {
 			}
 			let _ = window.show();
 
+			// Create debug console window if in debug mode
+			if debug_mode {
+				let _debug_window = tauri::WebviewWindowBuilder::new(
+					app,
+					"debug",
+					tauri::WebviewUrl::App("debug.html".into()),
+				)
+				.title(&format!("{} - Backend Debug Console", product_name))
+				.inner_size(900.0, 600.0)
+				.build()?;
+			}
+
 			// Spawn backend
 			let exe_dir = std::env::current_exe()
 				.expect("Failed to get current exe path")
@@ -174,28 +186,53 @@ pub fn run() {
 
 			let mut cmd = std::process::Command::new(&backend_path);
 			cmd.args(["--datadir", &data_dir_str, "--port", &port_str]);
-			#[cfg(target_os = "windows")]
-			{
-				use std::os::windows::process::CommandExt;
-				if debug_mode {
-					// Give backend its own visible console window.
-					// Do NOT set any stdio handles here — leaving them unset lets
-					// CREATE_NEW_CONSOLE wire the child to the new console's I/O buffers.
-					cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE
-				} else {
-					cmd.stdin(std::process::Stdio::null());
-					cmd.stdout(std::process::Stdio::null());
-					cmd.stderr(std::process::Stdio::null());
-					cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-				}
-			}
-			#[cfg(not(target_os = "windows"))]
-			if !debug_mode {
+
+			if debug_mode {
+				// Pipe stdout/stderr so we can stream them to the debug window
+				cmd.stdin(std::process::Stdio::null());
+				cmd.stdout(std::process::Stdio::piped());
+				cmd.stderr(std::process::Stdio::piped());
+			} else {
 				cmd.stdin(std::process::Stdio::null());
 				cmd.stdout(std::process::Stdio::null());
 				cmd.stderr(std::process::Stdio::null());
 			}
-			let process = cmd.spawn().expect("Failed to spawn backend");
+
+			#[cfg(target_os = "windows")]
+			if !debug_mode {
+				use std::os::windows::process::CommandExt;
+				cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+			}
+
+			let mut process = cmd.spawn().expect("Failed to spawn backend");
+
+			// Stream backend output to the debug window via Tauri events
+			if debug_mode {
+				let handle = app.handle().clone();
+
+				if let Some(stdout) = process.stdout.take() {
+					let h = handle.clone();
+					std::thread::spawn(move || {
+						use std::io::BufRead;
+						let reader = std::io::BufReader::new(stdout);
+						for line in reader.lines().map_while(Result::ok) {
+							let _ = h.emit("backend-stdout", &line);
+						}
+					});
+				}
+
+				if let Some(stderr) = process.stderr.take() {
+					let h = handle.clone();
+					std::thread::spawn(move || {
+						use std::io::BufRead;
+						let reader = std::io::BufReader::new(stderr);
+						for line in reader.lines().map_while(Result::ok) {
+							let _ = h.emit("backend-stderr", &line);
+						}
+					});
+				}
+			}
+
 			app.manage(BackendChild(Mutex::new(Some(process))));
 
 			Ok(())
