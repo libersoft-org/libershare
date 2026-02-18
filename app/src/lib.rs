@@ -220,7 +220,17 @@ pub fn run() {
 				cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 			}
 
-			let mut process = cmd.spawn().expect("Failed to spawn backend");
+			let mut process = match cmd.spawn() {
+				Ok(p) => {
+					eprintln!("[app] Backend spawned successfully (pid: {:?})", p.id());
+					p
+				}
+				Err(e) => {
+					eprintln!("[app] Failed to spawn backend: {}", e);
+					eprintln!("[app] Backend path was: {:?}", backend_path);
+					panic!("Failed to spawn backend: {}", e);
+				}
+			};
 
 			// Stream backend output to the debug window via Tauri events
 			if debug_mode {
