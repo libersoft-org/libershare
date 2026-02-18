@@ -181,6 +181,8 @@ pub fn run() {
 				}
 			}
 
+			eprintln!("[app] Backend path: {:?} (exists: {})", backend_path, backend_path.exists());
+
 			let mut cmd = std::process::Command::new(&backend_path);
 			// Ensure backend binary is executable (AppImage resources may lose exec permission)
 			#[cfg(unix)]
@@ -188,9 +190,14 @@ pub fn run() {
 				use std::os::unix::fs::PermissionsExt;
 				if let Ok(metadata) = std::fs::metadata(&backend_path) {
 					let mut perms = metadata.permissions();
-					if perms.mode() & 0o111 == 0 {
-						perms.set_mode(perms.mode() | 0o755);
-						let _ = std::fs::set_permissions(&backend_path, perms);
+					let mode = perms.mode();
+					eprintln!("[app] Backend permissions: {:o}", mode);
+					if mode & 0o111 == 0 {
+						perms.set_mode(mode | 0o755);
+						match std::fs::set_permissions(&backend_path, perms) {
+							Ok(_) => eprintln!("[app] Set backend executable permission"),
+							Err(e) => eprintln!("[app] Failed to set backend permission: {}", e),
+						}
 					}
 				}
 			}
