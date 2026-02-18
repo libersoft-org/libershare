@@ -177,12 +177,13 @@
 					97: 'ansi-bright-white',
 				};
 
-				function ansiToHtml(text) {
+				function ansiToHtml(rawText) {
 					const frag = document.createDocumentFragment();
-					// Match ANSI escape: optional ESC char + [ ... m
-					// ESC byte (0x1B) may be stripped by Tauri IPC serialization,
-					// so we match with or without it
-					const re = /\x1b?\[([0-9;]*)m/g;
+					// Strip all control characters (0x00-0x1F, 0x7F) except tab/CR/LF
+					// This removes ESC bytes that come through IPC in various forms
+					const text = rawText.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+					// Match bare ANSI SGR codes: [digits;...m (ESC already stripped)
+					const re = /\[([0-9;]+)m/g;
 					let lastIndex = 0;
 					let match;
 					let classes = [];
