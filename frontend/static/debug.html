@@ -179,8 +179,10 @@
 
 				function ansiToHtml(text) {
 					const frag = document.createDocumentFragment();
-					// Match ANSI escape: ESC[ ... m
-					const re = /\x1b\[([0-9;]*)m/g;
+					// Match ANSI escape: optional ESC char + [ ... m
+					// ESC byte (0x1B) may be stripped by Tauri IPC serialization,
+					// so we match with or without it
+					const re = /\x1b?\[([0-9;]*)m/g;
 					let lastIndex = 0;
 					let match;
 					let classes = [];
