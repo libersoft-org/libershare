@@ -101,7 +101,8 @@ jq --tab --arg name "$PRODUCT_NAME_LOWER" \
 	"$SCRIPT_DIR/tauri.linux.conf.json" > "$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
 
 # Sync product name into debug desktop entry
-sed -i "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" "$SCRIPT_DIR/desktop-entry-debug.desktop"
+sed -i.bak "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" "$SCRIPT_DIR/desktop-entry-debug.desktop"
+rm -f "$SCRIPT_DIR/desktop-entry-debug.desktop.bak"
 
 # Build Tauri app
 echo "=== Building Tauri app ==="
