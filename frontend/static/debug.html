@@ -1,75 +1,253 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Backend Debug Console</title>
-<style>
-	* { margin: 0; padding: 0; box-sizing: border-box; }
-	html, body { height: 100%; background: #0c0c0c; color: #cccccc; font-family: 'Cascadia Mono', 'Consolas', 'Courier New', monospace; font-size: 14px; }
-	#toolbar { background: #1e1e1e; border-bottom: 1px solid #333; padding: 4px 8px; display: flex; align-items: center; gap: 8px; user-select: none; }
-	#toolbar button { background: #333; color: #ccc; border: 1px solid #555; border-radius: 3px; padding: 2px 10px; cursor: pointer; font-size: 12px; }
-	#toolbar button:hover { background: #444; }
-	#toolbar .status { margin-left: auto; font-size: 12px; color: #888; }
-	#output { height: calc(100% - 30px); overflow-y: auto; padding: 8px; white-space: pre-wrap; word-break: break-all; line-height: 1.4; }
-	.stderr { color: #f48771; }
-	.stdout { color: #cccccc; }
-</style>
-</head>
-<body>
-<div id="toolbar">
-	<button id="clearBtn">Clear</button>
-	<button id="scrollBtn">Auto-scroll: ON</button>
-	<span class="status" id="status">Waiting for backend...</span>
-</div>
-<div id="output"></div>
-<script>
-(async () => {
-	const output = document.getElementById('output');
-	const status = document.getElementById('status');
-	const clearBtn = document.getElementById('clearBtn');
-	const scrollBtn = document.getElementById('scrollBtn');
-	let autoScroll = true;
-	let lineCount = 0;
+	<head>
+		<meta charset="UTF-8" />
+		<title>Backend Debug Console</title>
+		<style>
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
+			}
+			html,
+			body {
+				height: 100%;
+				background: #0c0c0c;
+				color: #cccccc;
+				font-family: 'Cascadia Mono', 'Consolas', 'Courier New', monospace;
+				font-size: 14px;
+			}
+			#toolbar {
+				background: #1e1e1e;
+				border-bottom: 1px solid #333;
+				padding: 4px 8px;
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				user-select: none;
+			}
+			#toolbar button {
+				background: #333;
+				color: #ccc;
+				border: 1px solid #555;
+				border-radius: 3px;
+				padding: 2px 10px;
+				cursor: pointer;
+				font-size: 12px;
+			}
+			#toolbar button:hover {
+				background: #444;
+			}
+			#toolbar .status {
+				margin-left: auto;
+				font-size: 12px;
+				color: #888;
+			}
+			#output {
+				height: calc(100% - 30px);
+				overflow-y: auto;
+				padding: 8px;
+				white-space: pre-wrap;
+				word-break: break-all;
+				line-height: 1.4;
+			}
+			.stderr {
+				color: #f48771;
+			}
+			.stdout {
+				color: #cccccc;
+			}
+			/* ANSI color classes */
+			.ansi-black {
+				color: #555555;
+			}
+			.ansi-red {
+				color: #f48771;
+			}
+			.ansi-green {
+				color: #89d185;
+			}
+			.ansi-yellow {
+				color: #e5e550;
+			}
+			.ansi-blue {
+				color: #6fb3d2;
+			}
+			.ansi-magenta {
+				color: #d670d6;
+			}
+			.ansi-cyan {
+				color: #66c2cd;
+			}
+			.ansi-white {
+				color: #cccccc;
+			}
+			.ansi-bright-black {
+				color: #888888;
+			}
+			.ansi-bright-red {
+				color: #f14c4c;
+			}
+			.ansi-bright-green {
+				color: #73c991;
+			}
+			.ansi-bright-yellow {
+				color: #fffb00;
+			}
+			.ansi-bright-blue {
+				color: #7fc8f8;
+			}
+			.ansi-bright-magenta {
+				color: #e48aff;
+			}
+			.ansi-bright-cyan {
+				color: #92e9f7;
+			}
+			.ansi-bright-white {
+				color: #ffffff;
+			}
+			.ansi-bold {
+				font-weight: bold;
+			}
+			.ansi-dim {
+				opacity: 0.7;
+			}
+			.ansi-italic {
+				font-style: italic;
+			}
+			.ansi-underline {
+				text-decoration: underline;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="toolbar">
+			<button id="clearBtn">Clear</button>
+			<button id="scrollBtn">Auto-scroll: ON</button>
+			<span class="status" id="status">Waiting for backend...</span>
+		</div>
+		<div id="output"></div>
+		<script>
+			(async () => {
+				const output = document.getElementById('output');
+				const status = document.getElementById('status');
+				const clearBtn = document.getElementById('clearBtn');
+				const scrollBtn = document.getElementById('scrollBtn');
+				let autoScroll = true;
+				let lineCount = 0;
 
-	clearBtn.addEventListener('click', () => {
-		output.innerHTML = '';
-		lineCount = 0;
-		status.textContent = 'Cleared';
-	});
+				clearBtn.addEventListener('click', () => {
+					output.innerHTML = '';
+					lineCount = 0;
+					status.textContent = 'Cleared';
+				});
 
-	scrollBtn.addEventListener('click', () => {
-		autoScroll = !autoScroll;
-		scrollBtn.textContent = 'Auto-scroll: ' + (autoScroll ? 'ON' : 'OFF');
-	});
+				scrollBtn.addEventListener('click', () => {
+					autoScroll = !autoScroll;
+					scrollBtn.textContent = 'Auto-scroll: ' + (autoScroll ? 'ON' : 'OFF');
+				});
 
-	function appendLine(text, isErr) {
-		const span = document.createElement('span');
-		span.className = isErr ? 'stderr' : 'stdout';
-		span.textContent = text + '\n';
-		output.appendChild(span);
-		lineCount++;
-		if (autoScroll) output.scrollTop = output.scrollHeight;
-		status.textContent = lineCount + ' lines';
-	}
+				function appendLine(text, isErr) {
+					const line = document.createElement('div');
+					line.className = isErr ? 'stderr' : 'stdout';
+					line.appendChild(ansiToHtml(text));
+					output.appendChild(line);
+					lineCount++;
+					if (autoScroll) output.scrollTop = output.scrollHeight;
+					status.textContent = lineCount + ' lines';
+				}
 
-	// Wait for Tauri global API to be injected
-	function waitForTauri() {
-		return new Promise((resolve) => {
-			if (window.__TAURI__) return resolve(window.__TAURI__);
-			const check = setInterval(() => {
-				if (window.__TAURI__) { clearInterval(check); resolve(window.__TAURI__); }
-			}, 10);
-		});
-	}
+				// ANSI standard color codes → CSS classes
+				const ANSI_FG = {
+					30: 'ansi-black',
+					31: 'ansi-red',
+					32: 'ansi-green',
+					33: 'ansi-yellow',
+					34: 'ansi-blue',
+					35: 'ansi-magenta',
+					36: 'ansi-cyan',
+					37: 'ansi-white',
+					90: 'ansi-bright-black',
+					91: 'ansi-bright-red',
+					92: 'ansi-bright-green',
+					93: 'ansi-bright-yellow',
+					94: 'ansi-bright-blue',
+					95: 'ansi-bright-magenta',
+					96: 'ansi-bright-cyan',
+					97: 'ansi-bright-white',
+				};
 
-	const TAURI = await waitForTauri();
-	const { listen } = TAURI.event;
+				function ansiToHtml(text) {
+					const frag = document.createDocumentFragment();
+					// Match ANSI escape: ESC[ ... m
+					const re = /\x1b\[([0-9;]*)m/g;
+					let lastIndex = 0;
+					let match;
+					let classes = [];
 
-	await listen('backend-stdout', (e) => appendLine(e.payload, false));
-	await listen('backend-stderr', (e) => appendLine(e.payload, true));
+					while ((match = re.exec(text)) !== null) {
+						// Append text before this escape
+						if (match.index > lastIndex) {
+							const span = document.createElement('span');
+							if (classes.length) span.className = classes.join(' ');
+							span.textContent = text.slice(lastIndex, match.index);
+							frag.appendChild(span);
+						}
+						lastIndex = re.lastIndex;
 
-	status.textContent = 'Connected, waiting for output...';
-})();
-</script>
-</body>
+						// Parse SGR parameters
+						const codes = match[1] ? match[1].split(';').map(Number) : [0];
+						for (const code of codes) {
+							if (code === 0) {
+								classes = [];
+							} else if (code === 1) {
+								classes.push('ansi-bold');
+							} else if (code === 2) {
+								classes.push('ansi-dim');
+							} else if (code === 3) {
+								classes.push('ansi-italic');
+							} else if (code === 4) {
+								classes.push('ansi-underline');
+							} else if (ANSI_FG[code]) {
+								// Remove any previous fg color class
+								classes = classes.filter(c => !c.startsWith('ansi-') || c.startsWith('ansi-bold') || c.startsWith('ansi-dim') || c.startsWith('ansi-italic') || c.startsWith('ansi-underline'));
+								classes.push(ANSI_FG[code]);
+							}
+						}
+					}
+
+					// Remaining text after last escape
+					if (lastIndex < text.length) {
+						const span = document.createElement('span');
+						if (classes.length) span.className = classes.join(' ');
+						span.textContent = text.slice(lastIndex);
+						frag.appendChild(span);
+					}
+
+					return frag;
+				}
+
+				// Wait for Tauri global API to be injected
+				function waitForTauri() {
+					return new Promise(resolve => {
+						if (window.__TAURI__) return resolve(window.__TAURI__);
+						const check = setInterval(() => {
+							if (window.__TAURI__) {
+								clearInterval(check);
+								resolve(window.__TAURI__);
+							}
+						}, 10);
+					});
+				}
+
+				const TAURI = await waitForTauri();
+				const { listen } = TAURI.event;
+
+				await listen('backend-stdout', e => appendLine(e.payload, false));
+				await listen('backend-stderr', e => appendLine(e.payload, true));
+
+				status.textContent = 'Connected, waiting for output...';
+			})();
+		</script>
+	</body>
 </html>

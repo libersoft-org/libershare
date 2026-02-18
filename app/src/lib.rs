@@ -151,14 +151,11 @@ pub fn run() {
 
 			// Create debug console window if in debug mode
 			if debug_mode {
-				let _debug_window = tauri::WebviewWindowBuilder::new(
-					app,
-					"debug",
-					tauri::WebviewUrl::App("debug.html".into()),
-				)
-				.title(&format!("{} - Backend Debug Console", product_name))
-				.inner_size(900.0, 600.0)
-				.build()?;
+				let _debug_window =
+					tauri::WebviewWindowBuilder::new(app, "debug", tauri::WebviewUrl::App("debug.html".into()))
+						.title(&format!("{} - Backend Debug Console", product_name))
+						.inner_size(900.0, 600.0)
+						.build()?;
 			}
 
 			// Spawn backend
