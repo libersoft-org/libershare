@@ -54,6 +54,7 @@ for /f "tokens=*" %%n in ('bun -e "process.stdout.write(require(process.argv[1])
 for /f "tokens=*" %%d in ('bun -e "process.stdout.write(require(process.argv[1]).identifier)" "%PRODUCT_JSON%"') do set "PRODUCT_IDENTIFIER=%%d"
 echo Product: !PRODUCT_NAME! v!PRODUCT_VERSION! (!PRODUCT_IDENTIFIER!)
 bun -e "var f=require('fs'),p=require(process.argv[1]),t=process.argv[2],c=JSON.parse(f.readFileSync(t,'utf8'));c.productName=p.name;c.version=p.version;c.identifier=p.identifier;c.bundle.windows.nsis.startMenuFolder=p.name;f.writeFileSync(t,JSON.stringify(c,null,'\t')+'\n')" "%PRODUCT_JSON%" "%SCRIPT_DIR%tauri.conf.json"
+bun -e "var f=require('fs'),v=process.argv[1],t=process.argv[2],s=f.readFileSync(t,'utf8').replace(/^version = \"[^\"]*\"/m,'version = \"'+v+'\"');f.writeFileSync(t,s)" "!PRODUCT_VERSION!" "%SCRIPT_DIR%Cargo.toml"
 
 rem Build Tauri app
 echo === Building Tauri app ===

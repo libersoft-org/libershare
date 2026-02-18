@@ -86,6 +86,10 @@ jq --tab --arg name "$PRODUCT_NAME" --arg ver "$PRODUCT_VERSION" --arg id "$PROD
 	'.productName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
 	"$SCRIPT_DIR/tauri.conf.json" > "$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
 
+# Sync version to Cargo.toml
+sed -i.bak "s/^version = \"[^\"]*\"/version = \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/Cargo.toml"
+rm -f "$SCRIPT_DIR/Cargo.toml.bak"
+
 # Sync lowercase product name to Linux config
 PRODUCT_NAME_LOWER=$(echo "$PRODUCT_NAME" | tr '[:upper:]' '[:lower:]')
 jq --tab --arg name "$PRODUCT_NAME_LOWER" \
