@@ -146,6 +146,11 @@ pub fn run() {
 			}
 			let _ = window.show();
 
+			// Open devtools in debug mode
+			if debug_mode {
+				window.open_devtools();
+			}
+
 			// Spawn backend
 			let exe_dir = std::env::current_exe()
 				.expect("Failed to get current exe path")
