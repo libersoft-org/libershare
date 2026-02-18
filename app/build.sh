@@ -100,9 +100,11 @@ jq --tab --arg name "$PRODUCT_NAME_LOWER" \
 	| .bundle.linux.appimage.files = {("usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}' \
 	"$SCRIPT_DIR/tauri.linux.conf.json" > "$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
 
-# Sync product name into debug desktop entry
+# Sync product name into desktop entries
 sed -i.bak "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" "$SCRIPT_DIR/desktop-entry-debug.desktop"
 rm -f "$SCRIPT_DIR/desktop-entry-debug.desktop.bak"
+sed -i.bak "s/%%product_name%%/$PRODUCT_NAME/g" "$SCRIPT_DIR/desktop-entry.desktop"
+rm -f "$SCRIPT_DIR/desktop-entry.desktop.bak"
 
 # Build Tauri app
 echo "=== Building Tauri app ==="
