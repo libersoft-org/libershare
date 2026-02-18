@@ -226,6 +226,17 @@ pub fn run() {
 			}
 			cmd.args(["--datadir", &data_dir_str, "--port", &port_str]);
 
+			// AppImage sets LD_LIBRARY_PATH to bundled GTK/WebKit libs which conflict
+			// with Bun standalone binaries, causing SIGSEGV. Clear it for the backend.
+			#[cfg(target_os = "linux")]
+			if std::env::var("APPIMAGE").is_ok() {
+				cmd.env_remove("LD_LIBRARY_PATH");
+				cmd.env_remove("GDK_PIXBUF_MODULEDIR");
+				cmd.env_remove("GDK_PIXBUF_MODULE_FILE");
+				cmd.env_remove("GSETTINGS_SCHEMA_DIR");
+				eprintln!("[app] Cleared AppImage environment variables for backend");
+			}
+
 			if debug_mode {
 				// Pipe stdout/stderr so we can stream them to the debug window
 				cmd.stdin(std::process::Stdio::null());
