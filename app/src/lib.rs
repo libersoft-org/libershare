@@ -123,10 +123,13 @@ pub fn run() {
 			let product_name = app.config().product_name.clone().unwrap_or_default();
 
 			// Create main window with backend port in query parameter
+			// .devtools(debug_mode) enables F12/inspector in debug mode, disables in normal mode
+			// Requires "devtools" feature in Cargo.toml for release builds
 			let window =
 				tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
 					.title(&product_name)
 					.initialization_script(&format!("window.__BACKEND_PORT__ = {};", port))
+					.devtools(debug_mode)
 					.visible(false)
 					.build()?;
 
@@ -145,11 +148,6 @@ pub fn run() {
 				}
 			}
 			let _ = window.show();
-
-			// Open devtools in debug mode
-			if debug_mode {
-				window.open_devtools();
-			}
 
 			// Spawn backend
 			let exe_dir = std::env::current_exe()
@@ -177,17 +175,22 @@ pub fn run() {
 			let mut cmd = std::process::Command::new(&backend_path);
 			cmd.args(["--datadir", &data_dir_str, "--port", &port_str]);
 			cmd.stdin(std::process::Stdio::null());
-			if debug_mode {
-				cmd.stdout(std::process::Stdio::inherit());
-				cmd.stderr(std::process::Stdio::inherit());
-			} else {
-				cmd.stdout(std::process::Stdio::null());
-				cmd.stderr(std::process::Stdio::null());
-				#[cfg(target_os = "windows")]
-				{
-					use std::os::windows::process::CommandExt;
+			#[cfg(target_os = "windows")]
+			{
+				use std::os::windows::process::CommandExt;
+				if debug_mode {
+					// Give backend its own visible console window
+					cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE
+				} else {
+					cmd.stdout(std::process::Stdio::null());
+					cmd.stderr(std::process::Stdio::null());
 					cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 				}
+			}
+			#[cfg(not(target_os = "windows"))]
+			if !debug_mode {
+				cmd.stdout(std::process::Stdio::null());
+				cmd.stderr(std::process::Stdio::null());
 			}
 			let process = cmd.spawn().expect("Failed to spawn backend");
 			app.manage(BackendChild(Mutex::new(Some(process))));
@@ -204,6 +207,7 @@ pub fn run() {
 				if let Ok(mut guard) = state.0.lock() {
 					if let Some(mut child) = guard.take() {
 						let _ = child.kill();
+						let _ = child.wait();
 					}
 				}
 			}
