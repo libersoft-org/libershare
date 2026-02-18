@@ -244,6 +244,7 @@ pub fn run() {
 						for line in reader.lines().map_while(Result::ok) {
 							let _ = h.emit("backend-stdout", &line);
 						}
+						eprintln!("[app] Backend stdout stream ended");
 					});
 				}
 
@@ -255,8 +256,37 @@ pub fn run() {
 						for line in reader.lines().map_while(Result::ok) {
 							let _ = h.emit("backend-stderr", &line);
 						}
+						eprintln!("[app] Backend stderr stream ended");
 					});
 				}
+
+				// Monitor backend process for early exit
+				let backend_path_clone = backend_path.clone();
+				let h = app.handle().clone();
+				std::thread::spawn(move || {
+					std::thread::sleep(std::time::Duration::from_secs(2));
+					if let Some(state) = h.try_state::<BackendChild>() {
+						if let Ok(mut guard) = state.0.lock() {
+							if let Some(ref mut child) = *guard {
+								match child.try_wait() {
+									Ok(Some(status)) => {
+										let msg = format!("[app] Backend exited early with status: {}", status);
+										eprintln!("{}", msg);
+										let _ = h.emit("backend-stderr", &msg);
+									}
+									Ok(None) => {
+										eprintln!("[app] Backend is still running (OK)");
+									}
+									Err(e) => {
+										let msg = format!("[app] Error checking backend status: {}", e);
+										eprintln!("{}", msg);
+										let _ = h.emit("backend-stderr", &msg);
+									}
+								}
+							}
+						}
+					}
+				});
 			}
 
 			app.manage(BackendChild(Mutex::new(Some(process))));
