@@ -1,5 +1,7 @@
 {
 	"bundle": {
-		"resources": ["../backend/build/lish-backend"]
+		"resources": {
+			"../backend/build/lish-backend": "./"
+		}
 	}
 }

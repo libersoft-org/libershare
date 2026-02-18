@@ -1,5 +1,13 @@
 {
 	"bundle": {
-		"resources": ["../backend/build/lish-backend.exe"]
+		"resources": {
+			"../backend/build/lish-backend.exe": "./"
+		},
+		"windows": {
+			"wix": {
+				"fragmentPaths": ["wix-fragment-debug.wxs"],
+				"componentGroupRefs": ["DebugShortcutGroup"]
+			}
+		}
 	}
 }

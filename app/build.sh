@@ -84,7 +84,7 @@ echo "Product: $PRODUCT_NAME v$PRODUCT_VERSION ($PRODUCT_IDENTIFIER)"
 
 # Sync product info to tauri.conf.json
 jq --tab --arg name "$PRODUCT_NAME" --arg ver "$PRODUCT_VERSION" --arg id "$PRODUCT_IDENTIFIER" \
-	'.productName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
+	'.productName = $name | .mainBinaryName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
 	"$SCRIPT_DIR/tauri.conf.json" > "$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
 
 # Sync version to Cargo.toml
@@ -171,9 +171,14 @@ if [ "$MAKE_ZIP" = "1" ]; then
 				exit 1
 			fi
 			APP_DIR=$(dirname "$APP_PATH")
+			# Add debug launch script next to the .app
+			sed "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" \
+				"$SCRIPT_DIR/bundle-scripts/debug.sh" > "$APP_DIR/debug.sh"
+			chmod +x "$APP_DIR/debug.sh"
 			cd "$APP_DIR"
 			zip -ry "$SCRIPT_DIR/build/release/bundle/${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.zip" \
-				"${PRODUCT_NAME}.app"
+				"${PRODUCT_NAME}.app" "debug.sh"
+			rm -f "$APP_DIR/debug.sh"
 			;;
 		*)
 			ZIP_STAGING=$(mktemp -d)
