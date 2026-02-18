@@ -182,6 +182,18 @@ pub fn run() {
 			}
 
 			let mut cmd = std::process::Command::new(&backend_path);
+			// Ensure backend binary is executable (AppImage resources may lose exec permission)
+			#[cfg(unix)]
+			{
+				use std::os::unix::fs::PermissionsExt;
+				if let Ok(metadata) = std::fs::metadata(&backend_path) {
+					let mut perms = metadata.permissions();
+					if perms.mode() & 0o111 == 0 {
+						perms.set_mode(perms.mode() | 0o755);
+						let _ = std::fs::set_permissions(&backend_path, perms);
+					}
+				}
+			}
 			cmd.args(["--datadir", &data_dir_str, "--port", &port_str]);
 
 			if debug_mode {

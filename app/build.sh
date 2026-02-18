@@ -157,6 +157,8 @@ for dir in deb rpm appimage dmg; do
 				*)       NEWNAME="$BASENAME" ;;
 			esac
 			mv "$f" "$SCRIPT_DIR/build/release/bundle/$NEWNAME"
+			# Ensure AppImage is executable
+			[ "$EXT" = "AppImage" ] && chmod +x "$SCRIPT_DIR/build/release/bundle/$NEWNAME"
 		done
 		rmdir "$SCRIPT_DIR/build/release/bundle/$dir" 2>/dev/null || true
 	fi
