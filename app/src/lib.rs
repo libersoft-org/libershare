@@ -261,7 +261,7 @@ pub fn run() {
 				}
 
 				// Monitor backend process for early exit
-				let backend_path_clone = backend_path.clone();
+				let _backend_path_clone = backend_path.clone();
 				let h = app.handle().clone();
 				std::thread::spawn(move || {
 					std::thread::sleep(std::time::Duration::from_secs(2));
