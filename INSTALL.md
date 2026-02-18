@@ -120,7 +120,7 @@ The NSIS installer (.exe) includes a language selector dialog, license agreement
 #### Running the native app
 
 - **Normal mode:** Just launch the application. The backend runs silently in the background.
-- **Debug mode:** Opens a built-in debug console window that shows backend stdout/stderr output with color-coded log messages. Also enables the developer console in the webview (F12). Useful for troubleshooting issues.
+- **Debug mode:** Opens a built-in debug console window that shows backend log messages. Also enables the developer console in the webview (F12). Useful for troubleshooting issues.
 
 **How to launch debug mode:**
 
