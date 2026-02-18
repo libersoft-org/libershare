@@ -201,14 +201,15 @@ export function getFileActions(t: (key: string) => string, selectFileButton?: bo
 /**
  * Build folder toolbar actions based on mode
  */
-export function buildFolderActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], selectFolderButton?: boolean, customFilter?: string): FileBrowserAction[] {
+export function buildFolderActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], selectFolderButton?: boolean, customFilter?: string, currentPath?: string): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
-	if (!filesOnly) {
+	const isDriveList = currentPath === '' || currentPath === undefined;
+	if (!filesOnly && !isDriveList) {
 		if (selectFolderButton) actions.push({ id: 'select', label: t('fileBrowser.selectFolder'), icon: '/img/check.svg' });
 		actions.push({ id: 'new', label: t('fileBrowser.newFolder'), icon: '/img/plus.svg' });
 		actions.push({ id: 'delete', label: t('fileBrowser.deleteFolder'), icon: '/img/del.svg' });
 	}
-	actions.push({ id: 'createFile', label: t('fileBrowser.createFile'), icon: '/img/plus.svg' });
+	if (!isDriveList) actions.push({ id: 'createFile', label: t('fileBrowser.createFile'), icon: '/img/plus.svg' });
 	// Filter button always visible, shows current filter state
 	let filterLabel: string;
 	if (customFilter) filterLabel = customFilter;

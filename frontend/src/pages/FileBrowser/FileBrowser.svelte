@@ -109,7 +109,7 @@
 		return fileFilter.join(', ');
 	});
 	// Folder toolbar actions
-	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, selectFolderButton, customFilter ?? undefined));
+	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, selectFolderButton, customFilter ?? undefined, currentPath));
 	let selectedFolderActionIndex = $state(0);
 	let folderActionsActive = $derived($activeArea === `${areaID}-folder-actions`);
 	// Filter panel actions

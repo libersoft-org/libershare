@@ -72,7 +72,7 @@ export function getLanguage(id: string): Language | undefined {
 export function getFlagUrl(langId: string): string {
 	const lang = getLanguage(langId);
 	const flagCode = lang?.flag ?? langId;
-	return `/node_modules/country-flags/svg/${flagCode}.svg`;
+	return `/flags/${flagCode}.svg`;
 }
 
 // Function for translations outside components - use as tt('common.back') or tt('key', { name: 'foo' })
