@@ -11,15 +11,15 @@
 		badgeColorVariable?: string;
 	}
 	let { img, alt = '', size = '24px', padding = '10px', colorVariable, noColorFilter = false, badgeIcon, badgeColorVariable = '--color-success' }: Props = $props();
-	let filter = $derived.by(() => {
-		if (noColorFilter) return '';
-		if (colorVariable) return 'filter: ' + getColorFromCSSToFilter(colorVariable);
-		return '';
+	let filterValue = $derived.by(() => {
+		if (noColorFilter) return 'none';
+		if (colorVariable) return getColorFromCSSToFilter(colorVariable);
+		return 'none';
 	});
-	let badgeFilter = $derived.by(() => {
+	let badgeFilterValue = $derived.by(() => {
 		const shadow = 'drop-shadow(0 0 0.4vh rgba(0, 0, 0, 1)) drop-shadow(0 0 0.4vh rgba(0, 0, 0, 1)) drop-shadow(0 0 0.4vh rgba(0, 0, 0, 1))';
-		if (badgeColorVariable) return 'filter: ' + getColorFromCSSToFilter(badgeColorVariable) + ' ' + shadow;
-		return 'filter: ' + shadow;
+		if (badgeColorVariable) return getColorFromCSSToFilter(badgeColorVariable) + ' ' + shadow;
+		return shadow;
 	});
 </script>
 
@@ -54,10 +54,10 @@
 
 {#if img}
 	<div class="icon" style:padding>
-		<img style:min-width={size} style:min-height={size} style:max-width={size} style:max-height={size} style={filter} src={img} draggable={false} {alt} />
+		<img style:min-width={size} style:min-height={size} style:max-width={size} style:max-height={size} style:filter={filterValue} src={img} draggable={false} {alt} />
 		{#if badgeIcon}
 			<div class="badge">
-				<img style:width="calc({size} * 0.5)" style:height="calc({size} * 0.5)" style={badgeFilter} src={badgeIcon} draggable={false} alt="" />
+				<img style:width="calc({size} * 0.5)" style:height="calc({size} * 0.5)" style:filter={badgeFilterValue} src={badgeIcon} draggable={false} alt="" />
 			</div>
 		{/if}
 	</div>

@@ -16,10 +16,13 @@ function getCommitHash(): string {
 
 function getBuildDate(): string {
 	const now = new Date();
-	return now.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
+	return now
+		.toISOString()
+		.replace('T', ' ')
+		.replace(/\.\d{3}Z$/, ' UTC');
 }
 
-// Serve country flag SVGs from node_modules in dev, build scripts handle production copy
+// Serve country flag SVGs from node_modules in dev, copy to build output in production
 function countryFlags(): Plugin {
 	const flagsDir = path.resolve(__dirname, 'node_modules/country-flags/svg');
 	return {
@@ -32,6 +35,18 @@ function countryFlags(): Plugin {
 					fs.createReadStream(file).pipe(res);
 				} else next();
 			});
+		},
+		closeBundle() {
+			// Copy flags to build output during production build
+			const outDir = path.resolve(__dirname, 'build', 'flags');
+			if (fs.existsSync(flagsDir)) {
+				if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+				for (const file of fs.readdirSync(flagsDir)) {
+					if (file.endsWith('.svg')) {
+						fs.copyFileSync(path.join(flagsDir, file), path.join(outDir, file));
+					}
+				}
+			}
 		},
 	};
 }

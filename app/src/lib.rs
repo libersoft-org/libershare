@@ -105,7 +105,7 @@ fn app_shutdown(app: tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-	let debug_mode = std::env::args().any(|a| a == "--debug");
+	let debug_mode = std::env::args().any(|a| a == "--debug" || a == "/debug");
 	let port = find_free_port();
 
 	let app = tauri::Builder::default()
@@ -171,6 +171,7 @@ pub fn run() {
 
 			let mut cmd = std::process::Command::new(&backend_path);
 			cmd.args(["--datadir", &data_dir_str, "--port", &port_str]);
+			cmd.stdin(std::process::Stdio::null());
 			if debug_mode {
 				cmd.stdout(std::process::Stdio::inherit());
 				cmd.stderr(std::process::Stdio::inherit());

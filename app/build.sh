@@ -33,6 +33,7 @@ fi
 echo "=== Cleaning old build ==="
 [ -d "$SCRIPT_DIR/build/release/bundle" ] && rm -rf "$SCRIPT_DIR/build/release/bundle"
 [ -d "$SCRIPT_DIR/icons" ] && rm -rf "$SCRIPT_DIR/icons"
+cd "$SCRIPT_DIR" && cargo clean 2>/dev/null || true
 
 # Generate icons from SVG
 echo "=== Generating icons ==="

@@ -22,6 +22,8 @@ rem Clean old build artifacts
 echo === Cleaning old build ===
 if exist "%SCRIPT_DIR%build\release\bundle" rmdir /s /q "%SCRIPT_DIR%build\release\bundle"
 if exist "%SCRIPT_DIR%icons" rmdir /s /q "%SCRIPT_DIR%icons"
+cd /d "%SCRIPT_DIR%"
+cargo clean 2>nul
 
 rem Generate icons from SVG
 echo === Generating icons ===
@@ -61,6 +63,13 @@ echo === Building Tauri app ===
 cd /d "%SCRIPT_DIR%"
 cargo tauri build %BUNDLE_ARGS%
 if errorlevel 1 goto :error
+
+rem Rename built binary to match product name if needed (cargo uses Cargo.toml [package].name)
+if not exist "%SCRIPT_DIR%build\release\!PRODUCT_NAME!.exe" (
+	for %%f in ("%SCRIPT_DIR%build\release\*.exe") do (
+		ren "%%f" "!PRODUCT_NAME!.exe"
+	)
+)
 
 rem Move and rename MSI and NSIS bundles to bundle root (add platform to name)
 	set "BVERSION=!PRODUCT_VERSION!"
