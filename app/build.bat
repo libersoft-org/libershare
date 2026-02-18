@@ -47,13 +47,13 @@ if errorlevel 1 goto :error
 
 for /f "tokens=*" %%i in ('rustc --print host-tuple') do set TARGET=%%i
 
-rem Read product info from JSON
+rem Read product info from JSON and sync to tauri.conf.json
 set "PRODUCT_JSON=%ROOT_DIR%\shared\src\product.json"
-for /f "tokens=*" %%v in ('powershell -Command "(Get-Content '%PRODUCT_JSON%' -Raw | ConvertFrom-Json).version"') do set "PRODUCT_VERSION=%%v"
-for /f "tokens=*" %%n in ('powershell -Command "(Get-Content '%PRODUCT_JSON%' -Raw | ConvertFrom-Json).name"') do set "PRODUCT_NAME=%%n"
-for /f "tokens=*" %%d in ('powershell -Command "(Get-Content '%PRODUCT_JSON%' -Raw | ConvertFrom-Json).identifier"') do set "PRODUCT_IDENTIFIER=%%d"
+for /f "tokens=*" %%v in ('bun -e "process.stdout.write(require(process.argv[1]).version)" "%PRODUCT_JSON%"') do set "PRODUCT_VERSION=%%v"
+for /f "tokens=*" %%n in ('bun -e "process.stdout.write(require(process.argv[1]).name)" "%PRODUCT_JSON%"') do set "PRODUCT_NAME=%%n"
+for /f "tokens=*" %%d in ('bun -e "process.stdout.write(require(process.argv[1]).identifier)" "%PRODUCT_JSON%"') do set "PRODUCT_IDENTIFIER=%%d"
 echo Product: !PRODUCT_NAME! v!PRODUCT_VERSION! (!PRODUCT_IDENTIFIER!)
-powershell -Command "(Get-Content '%SCRIPT_DIR%tauri.conf.json') -replace '\"version\": \"[^\"]*\"','\"version\": \"!PRODUCT_VERSION!\"' -replace '\"productName\": \"[^\"]*\"','\"productName\": \"!PRODUCT_NAME!\"' -replace '\"identifier\": \"[^\"]*\"','\"identifier\": \"!PRODUCT_IDENTIFIER!\"' -replace '\"startMenuFolder\": \"[^\"]*\"','\"startMenuFolder\": \"!PRODUCT_NAME!\"' | Set-Content '%SCRIPT_DIR%tauri.conf.json'"
+bun -e "var f=require('fs'),p=require(process.argv[1]),t=process.argv[2],c=JSON.parse(f.readFileSync(t,'utf8'));c.productName=p.name;c.version=p.version;c.identifier=p.identifier;c.bundle.windows.nsis.startMenuFolder=p.name;f.writeFileSync(t,JSON.stringify(c,null,'\t')+'\n')" "%PRODUCT_JSON%" "%SCRIPT_DIR%tauri.conf.json"
 
 rem Build Tauri app
 echo === Building Tauri app ===

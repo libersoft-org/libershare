@@ -80,17 +80,17 @@ PRODUCT_NAME=$(jq -r '.name' "$PRODUCT_JSON")
 PRODUCT_VERSION=$(jq -r '.version' "$PRODUCT_JSON")
 PRODUCT_IDENTIFIER=$(jq -r '.identifier' "$PRODUCT_JSON")
 echo "Product: $PRODUCT_NAME v$PRODUCT_VERSION ($PRODUCT_IDENTIFIER)"
-sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/tauri.conf.json"
-sed -i.bak "s/\"productName\": \"[^\"]*\"/\"productName\": \"$PRODUCT_NAME\"/" "$SCRIPT_DIR/tauri.conf.json"
-sed -i.bak "s/\"identifier\": \"[^\"]*\"/\"identifier\": \"$PRODUCT_IDENTIFIER\"/" "$SCRIPT_DIR/tauri.conf.json"
-sed -i.bak "s/\"startMenuFolder\": \"[^\"]*\"/\"startMenuFolder\": \"$PRODUCT_NAME\"/" "$SCRIPT_DIR/tauri.conf.json"
-rm -f "$SCRIPT_DIR/tauri.conf.json.bak"
+
+# Sync product info to tauri.conf.json
+jq --tab --arg name "$PRODUCT_NAME" --arg ver "$PRODUCT_VERSION" --arg id "$PRODUCT_IDENTIFIER" \
+	'.productName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
+	"$SCRIPT_DIR/tauri.conf.json" > "$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
 
 # Sync lowercase product name to Linux config
 PRODUCT_NAME_LOWER=$(echo "$PRODUCT_NAME" | tr '[:upper:]' '[:lower:]')
-sed -i.bak "s/\"productName\": \"[^\"]*\"/\"productName\": \"$PRODUCT_NAME_LOWER\"/" "$SCRIPT_DIR/tauri.linux.conf.json"
-sed -i.bak "s/\"mainBinaryName\": \"[^\"]*\"/\"mainBinaryName\": \"$PRODUCT_NAME_LOWER\"/" "$SCRIPT_DIR/tauri.linux.conf.json"
-rm -f "$SCRIPT_DIR/tauri.linux.conf.json.bak"
+jq --tab --arg name "$PRODUCT_NAME_LOWER" \
+	'.productName = $name | .mainBinaryName = $name' \
+	"$SCRIPT_DIR/tauri.linux.conf.json" > "$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
 
 # Build Tauri app
 echo "=== Building Tauri app ==="

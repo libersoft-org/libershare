@@ -46,7 +46,7 @@ The native application bundles the frontend and backend into a single installabl
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 cargo install tauri-cli --version "^2"
-apt -y install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev librsvg2-bin imagemagick libfuse2 patchelf zip
+apt -y install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev librsvg2-bin imagemagick libfuse2 patchelf zip jq
 cd app
 ```
 
@@ -62,7 +62,7 @@ cd app
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 cargo install tauri-cli --version "^2"
-brew install librsvg imagemagick
+brew install librsvg imagemagick jq
 cd app
 ```
 
