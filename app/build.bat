@@ -47,10 +47,11 @@ if errorlevel 1 goto :error
 
 for /f "tokens=*" %%i in ('rustc --print host-tuple') do set TARGET=%%i
 
-rem Sync version and product name from shared\src\product.ts to tauri.conf.json
-for /f "tokens=*" %%v in ('powershell -Command "(Get-Content '%ROOT_DIR%\shared\src\product.ts' | Select-String 'productVersion') -replace \".*'([^']+)'.*\",'$1'"') do set "PRODUCT_VERSION=%%v"
-for /f "tokens=*" %%n in ('powershell -Command "(Get-Content '%ROOT_DIR%\shared\src\product.ts' | Select-String 'productName') -replace \".*'([^']+)'.*\",'$1'"') do set "PRODUCT_NAME=%%n"
-for /f "tokens=*" %%d in ('powershell -Command "(Get-Content '%ROOT_DIR%\shared\src\product.ts' | Select-String 'productIdentifier') -replace \".*'([^']+)'.*\",'$1'"') do set "PRODUCT_IDENTIFIER=%%d"
+rem Read product info from JSON
+set "PRODUCT_JSON=%ROOT_DIR%\shared\src\product.json"
+for /f "tokens=*" %%v in ('powershell -Command "(Get-Content '%PRODUCT_JSON%' -Raw | ConvertFrom-Json).version"') do set "PRODUCT_VERSION=%%v"
+for /f "tokens=*" %%n in ('powershell -Command "(Get-Content '%PRODUCT_JSON%' -Raw | ConvertFrom-Json).name"') do set "PRODUCT_NAME=%%n"
+for /f "tokens=*" %%d in ('powershell -Command "(Get-Content '%PRODUCT_JSON%' -Raw | ConvertFrom-Json).identifier"') do set "PRODUCT_IDENTIFIER=%%d"
 echo Product: !PRODUCT_NAME! v!PRODUCT_VERSION! (!PRODUCT_IDENTIFIER!)
 powershell -Command "(Get-Content '%SCRIPT_DIR%tauri.conf.json') -replace '\"version\": \"[^\"]*\"','\"version\": \"!PRODUCT_VERSION!\"' -replace '\"productName\": \"[^\"]*\"','\"productName\": \"!PRODUCT_NAME!\"' -replace '\"identifier\": \"[^\"]*\"','\"identifier\": \"!PRODUCT_IDENTIFIER!\"' -replace '\"startMenuFolder\": \"[^\"]*\"','\"startMenuFolder\": \"!PRODUCT_NAME!\"' | Set-Content '%SCRIPT_DIR%tauri.conf.json'"
 

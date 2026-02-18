@@ -70,10 +70,15 @@ cd "$ROOT_DIR/backend"
 
 TARGET=$(rustc --print host-tuple)
 
-# Sync version and product name from shared/src/product.ts to tauri.conf.json
-PRODUCT_VERSION=$(grep "productVersion" "$ROOT_DIR/shared/src/product.ts" | sed "s/.*'//;s/'.*//")
-PRODUCT_NAME=$(grep "productName" "$ROOT_DIR/shared/src/product.ts" | sed "s/.*'//;s/'.*//")
-PRODUCT_IDENTIFIER=$(grep "productIdentifier" "$ROOT_DIR/shared/src/product.ts" | sed "s/.*'//;s/'.*//")
+# Read product info from JSON
+PRODUCT_JSON="$ROOT_DIR/shared/src/product.json"
+if ! command -v jq >/dev/null 2>&1; then
+	echo "Error: jq is required. Install it with: apt install jq / brew install jq"
+	exit 1
+fi
+PRODUCT_NAME=$(jq -r '.name' "$PRODUCT_JSON")
+PRODUCT_VERSION=$(jq -r '.version' "$PRODUCT_JSON")
+PRODUCT_IDENTIFIER=$(jq -r '.identifier' "$PRODUCT_JSON")
 echo "Product: $PRODUCT_NAME v$PRODUCT_VERSION ($PRODUCT_IDENTIFIER)"
 sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/tauri.conf.json"
 sed -i.bak "s/\"productName\": \"[^\"]*\"/\"productName\": \"$PRODUCT_NAME\"/" "$SCRIPT_DIR/tauri.conf.json"

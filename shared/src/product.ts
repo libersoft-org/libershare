@@ -1,6 +1,8 @@
-export const productName = 'LiberShare';
-export const productVersion = '0.0.1';
-export const productIdentifier = 'org.libersoft.libershare';
-export const productWebsite = 'https://libershare.com';
-export const productGithub = 'https://github.com/libersoft-org/libershare';
-export const productNetworkList = 'https://libershare.com/networks';
+import product from './product.json';
+
+export const productName: string = product.name;
+export const productVersion: string = product.version;
+export const productIdentifier: string = product.identifier;
+export const productWebsite: string = product.website;
+export const productGithub: string = product.github;
+export const productNetworkList: string = product.networkList;

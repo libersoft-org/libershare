@@ -1,6 +1,6 @@
 {
-	"productName": "",
-	"mainBinaryName": "",
+	"productName": ";",
+	"mainBinaryName": ";",
 	"bundle": {
 		"resources": ["../backend/build/lish-backend"],
 		"linux": {
