@@ -17,8 +17,25 @@
                        KeyPath="yes" />
       </Component>
     </DirectoryRef>
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DebugDesktopShortcutComponent" Guid="*" Win64="yes">
+        <Shortcut Id="DebugDesktopShortcut"
+                  Name="{{product_name}} - debug"
+                  Description="Launch {{product_name}} in debug mode"
+                  Target="[INSTALLDIR]{{product_name}}.exe"
+                  Arguments="/debug"
+                  WorkingDirectory="INSTALLDIR" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\{{product_name}}"
+                       Name="DebugDesktopShortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
     <ComponentGroup Id="DebugShortcutGroup">
       <ComponentRef Id="DebugShortcutComponent" />
+      <ComponentRef Id="DebugDesktopShortcutComponent" />
     </ComponentGroup>
   </Fragment>
 </Wix>

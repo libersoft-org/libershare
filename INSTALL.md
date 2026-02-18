@@ -120,7 +120,21 @@ The NSIS installer (.exe) includes a language selector dialog, license agreement
 #### Running the native app
 
 - **Normal mode:** Just launch the application. The backend runs silently in the background.
-- **Debug mode:** Launch from terminal / command line with `--debug` flag to see backend logs in the terminal.
+- **Debug mode:** Opens a built-in debug console window that shows backend stdout/stderr output with color-coded log messages. Also enables the developer console in the webview (F12). Useful for troubleshooting issues.
+
+**How to launch debug mode:**
+
+| Platform | Bundle | How to launch |
+|----------|--------|---------------|
+| **Windows** | NSIS installer | Start Menu → "LiberShare - debug" shortcut (also on desktop) |
+| **Windows** | MSI installer | Start Menu → "LiberShare - debug" shortcut (also on desktop) |
+| **Windows** | ZIP | Run `Debug.bat` |
+| **Windows** | Command line | `LiberShare.exe /debug` |
+| **Linux** | DEB / RPM / AppImage | App menu → "LiberShare - debug" |
+| **Linux** | ZIP | Run `./debug.sh` |
+| **Linux** | Terminal | `./libershare --debug` |
+| **macOS** | ZIP | Run `./debug.sh` |
+| **macOS** | Terminal.app | `open LiberShare.app --args --debug` |
 
 ### b) Build and run backend and frontend only (not bundled together in a native app):
 
