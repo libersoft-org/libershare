@@ -181,6 +181,29 @@ pub fn run() {
 				}
 			}
 
+			// AppImage: Bun standalone binaries crash (SIGSEGV) on read-only FUSE mounts.
+			// Copy backend to a writable temp location if running from AppImage.
+			#[cfg(target_os = "linux")]
+			if std::env::var("APPIMAGE").is_ok() {
+				let cache_dir = app.path().app_cache_dir()?;
+				std::fs::create_dir_all(&cache_dir)?;
+				let cached_backend = cache_dir.join(backend_name);
+				eprintln!("[app] AppImage detected, copying backend to {:?}", cached_backend);
+				if let Err(e) = std::fs::copy(&backend_path, &cached_backend) {
+					eprintln!("[app] Failed to copy backend: {}", e);
+				} else {
+					#[cfg(unix)]
+					{
+						use std::os::unix::fs::PermissionsExt;
+						let _ = std::fs::set_permissions(
+							&cached_backend,
+							std::fs::Permissions::from_mode(0o755),
+						);
+					}
+					backend_path = cached_backend;
+				}
+			}
+
 			eprintln!("[app] Backend path: {:?} (exists: {})", backend_path, backend_path.exists());
 
 			let mut cmd = std::process::Command::new(&backend_path);
