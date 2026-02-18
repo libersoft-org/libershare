@@ -96,6 +96,7 @@ if "%MAKE_ZIP%"=="1" (
 	mkdir "!ZIP_DIR!"
 	copy /y "%SCRIPT_DIR%build\release\!PRODUCT_NAME!.exe" "!ZIP_DIR!\!PRODUCT_NAME!.exe"
 	copy /y "%ROOT_DIR%\backend\build\lish-backend.exe" "!ZIP_DIR!\lish-backend.exe"
+	bun -e "var f=require('fs'),n=process.argv[1],s=f.readFileSync(process.argv[2],'utf8').replace(/\{\{product_name\}\}/g,n);f.writeFileSync(process.argv[3],s)" "!PRODUCT_NAME!" "%SCRIPT_DIR%bundle-scripts\Debug.bat" "!ZIP_DIR!\Debug.bat"
 	powershell -Command "Compress-Archive -Path '!ZIP_DIR!\*' -DestinationPath '%SCRIPT_DIR%build\release\bundle\!PRODUCT_NAME!_!BVERSION!_win_!BARCH!.zip' -CompressionLevel Optimal -Force"
 	rmdir /s /q "!ZIP_DIR!"
 	if errorlevel 1 goto :error

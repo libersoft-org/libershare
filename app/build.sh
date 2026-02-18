@@ -94,8 +94,14 @@ rm -f "$SCRIPT_DIR/Cargo.toml.bak"
 # Sync lowercase product name to Linux config
 PRODUCT_NAME_LOWER=$(echo "$PRODUCT_NAME" | tr '[:upper:]' '[:lower:]')
 jq --tab --arg name "$PRODUCT_NAME_LOWER" \
-	'.productName = $name | .mainBinaryName = $name' \
+	'.productName = $name | .mainBinaryName = $name
+	| .bundle.linux.deb.files = {"desktop-entry-debug.desktop": ("/usr/share/applications/" + $name + "-debug.desktop")}
+	| .bundle.linux.rpm.files = {"desktop-entry-debug.desktop": ("/usr/share/applications/" + $name + "-debug.desktop")}
+	| .bundle.linux.appImage.files = {"desktop-entry-debug.desktop": ("usr/share/applications/" + $name + "-debug.desktop")}' \
 	"$SCRIPT_DIR/tauri.linux.conf.json" > "$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
+
+# Sync product name into debug desktop entry
+sed -i "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" "$SCRIPT_DIR/desktop-entry-debug.desktop"
 
 # Build Tauri app
 echo "=== Building Tauri app ==="
@@ -173,7 +179,9 @@ if [ "$MAKE_ZIP" = "1" ]; then
 			ZIP_STAGING=$(mktemp -d)
 			cp "$SCRIPT_DIR/build/release/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/"
 			cp "$ROOT_DIR/backend/build/lish-backend" "$ZIP_STAGING/lish-backend"
-			chmod +x "$ZIP_STAGING/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/lish-backend"
+			sed "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" \
+				"$SCRIPT_DIR/bundle-scripts/debug.sh" > "$ZIP_STAGING/debug.sh"
+			chmod +x "$ZIP_STAGING/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/lish-backend" "$ZIP_STAGING/debug.sh"
 			cd "$ZIP_STAGING"
 			zip -ry "$SCRIPT_DIR/build/release/bundle/${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.zip" .
 			rm -rf "$ZIP_STAGING"

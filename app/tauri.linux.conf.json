@@ -7,10 +7,21 @@
 		],
 		"linux": {
 			"deb": {
-				"desktopTemplate": "desktop-entry.desktop"
+				"desktopTemplate": "desktop-entry.desktop",
+				"files": {
+					"desktop-entry-debug.desktop": "/usr/share/applications/libershare-debug.desktop"
+				}
 			},
 			"rpm": {
-				"desktopTemplate": "desktop-entry.desktop"
+				"desktopTemplate": "desktop-entry.desktop",
+				"files": {
+					"desktop-entry-debug.desktop": "/usr/share/applications/libershare-debug.desktop"
+				}
+			},
+			"appImage": {
+				"files": {
+					"desktop-entry-debug.desktop": "usr/share/applications/libershare-debug.desktop"
+				}
 			}
 		}
 	}

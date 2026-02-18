@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories=Network;FileTransfer;
+Exec={{exec_name}} --debug
+StartupWMClass={{exec_name}}
+Icon={{exec_name}}
+Name={{product_name}} - debug
+Comment=Launch {{product_name}} in debug mode (opens a backend debug console window)
+Terminal=false
+Type=Application
