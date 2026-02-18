@@ -95,9 +95,9 @@ rm -f "$SCRIPT_DIR/Cargo.toml.bak"
 PRODUCT_NAME_LOWER=$(echo "$PRODUCT_NAME" | tr '[:upper:]' '[:lower:]')
 jq --tab --arg name "$PRODUCT_NAME_LOWER" \
 	'.productName = $name | .mainBinaryName = $name
-	| .bundle.linux.deb.files = {"desktop-entry-debug.desktop": ("/usr/share/applications/" + $name + "-debug.desktop")}
-	| .bundle.linux.rpm.files = {"desktop-entry-debug.desktop": ("/usr/share/applications/" + $name + "-debug.desktop")}
-	| .bundle.linux.appimage.files = {"desktop-entry-debug.desktop": ("usr/share/applications/" + $name + "-debug.desktop")}' \
+	| .bundle.linux.deb.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
+	| .bundle.linux.rpm.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
+	| .bundle.linux.appimage.files = {("usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}' \
 	"$SCRIPT_DIR/tauri.linux.conf.json" > "$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
 
 # Sync product name into debug desktop entry

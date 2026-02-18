@@ -9,18 +9,18 @@
 			"deb": {
 				"desktopTemplate": "desktop-entry.desktop",
 				"files": {
-					"desktop-entry-debug.desktop": "/usr/share/applications/libershare-debug.desktop"
+					"/usr/share/applications/libershare-debug.desktop": "desktop-entry-debug.desktop"
 				}
 			},
 			"rpm": {
 				"desktopTemplate": "desktop-entry.desktop",
 				"files": {
-					"desktop-entry-debug.desktop": "/usr/share/applications/libershare-debug.desktop"
+					"/usr/share/applications/libershare-debug.desktop": "desktop-entry-debug.desktop"
 				}
 			},
 			"appimage": {
 				"files": {
-					"desktop-entry-debug.desktop": "usr/share/applications/libershare-debug.desktop"
+					"usr/share/applications/libershare-debug.desktop": "desktop-entry-debug.desktop"
 				}
 			}
 		}
