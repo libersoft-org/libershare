@@ -181,31 +181,6 @@ pub fn run() {
 				}
 			}
 
-			// AppImage: Bun standalone binaries crash (SIGSEGV) on read-only FUSE mounts.
-			// Copy backend to a writable temp location if running from AppImage.
-			#[cfg(target_os = "linux")]
-			if std::env::var("APPIMAGE").is_ok() {
-				let cache_dir = app.path().app_cache_dir()?;
-				std::fs::create_dir_all(&cache_dir)?;
-				let cached_backend = cache_dir.join(backend_name);
-				eprintln!("[app] AppImage detected, copying backend to {:?}", cached_backend);
-				if let Err(e) = std::fs::copy(&backend_path, &cached_backend) {
-					eprintln!("[app] Failed to copy backend: {}", e);
-				} else {
-					#[cfg(unix)]
-					{
-						use std::os::unix::fs::PermissionsExt;
-						let _ = std::fs::set_permissions(
-							&cached_backend,
-							std::fs::Permissions::from_mode(0o755),
-						);
-					}
-					backend_path = cached_backend;
-				}
-			}
-
-			eprintln!("[app] Backend path: {:?} (exists: {})", backend_path, backend_path.exists());
-
 			let mut cmd = std::process::Command::new(&backend_path);
 			// Ensure backend binary is executable (AppImage resources may lose exec permission)
 			#[cfg(unix)]
@@ -214,13 +189,9 @@ pub fn run() {
 				if let Ok(metadata) = std::fs::metadata(&backend_path) {
 					let mut perms = metadata.permissions();
 					let mode = perms.mode();
-					eprintln!("[app] Backend permissions: {:o}", mode);
 					if mode & 0o111 == 0 {
 						perms.set_mode(mode | 0o755);
-						match std::fs::set_permissions(&backend_path, perms) {
-							Ok(_) => eprintln!("[app] Set backend executable permission"),
-							Err(e) => eprintln!("[app] Failed to set backend permission: {}", e),
-						}
+						let _ = std::fs::set_permissions(&backend_path, perms);
 					}
 				}
 			}
@@ -253,7 +224,6 @@ pub fn run() {
 				if let Ok(orig_path) = std::env::var("APPIMAGE_ORIGINAL_PATH") {
 					cmd.env("PATH", orig_path);
 				}
-				eprintln!("[app] Cleared AppImage environment variables for backend");
 			}
 
 			if debug_mode {
@@ -273,17 +243,7 @@ pub fn run() {
 				cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 			}
 
-			let mut process = match cmd.spawn() {
-				Ok(p) => {
-					eprintln!("[app] Backend spawned successfully (pid: {:?})", p.id());
-					p
-				}
-				Err(e) => {
-					eprintln!("[app] Failed to spawn backend: {}", e);
-					eprintln!("[app] Backend path was: {:?}", backend_path);
-					panic!("Failed to spawn backend: {}", e);
-				}
-			};
+			let mut process = cmd.spawn().expect("Failed to spawn backend");
 
 			// Stream backend output to the debug window via Tauri events
 			if debug_mode {
@@ -297,7 +257,6 @@ pub fn run() {
 						for line in reader.lines().map_while(Result::ok) {
 							let _ = h.emit("backend-stdout", &line);
 						}
-						eprintln!("[app] Backend stdout stream ended");
 					});
 				}
 
@@ -309,37 +268,8 @@ pub fn run() {
 						for line in reader.lines().map_while(Result::ok) {
 							let _ = h.emit("backend-stderr", &line);
 						}
-						eprintln!("[app] Backend stderr stream ended");
 					});
 				}
-
-				// Monitor backend process for early exit
-				let _backend_path_clone = backend_path.clone();
-				let h = app.handle().clone();
-				std::thread::spawn(move || {
-					std::thread::sleep(std::time::Duration::from_secs(2));
-					if let Some(state) = h.try_state::<BackendChild>() {
-						if let Ok(mut guard) = state.0.lock() {
-							if let Some(ref mut child) = *guard {
-								match child.try_wait() {
-									Ok(Some(status)) => {
-										let msg = format!("[app] Backend exited early with status: {}", status);
-										eprintln!("{}", msg);
-										let _ = h.emit("backend-stderr", &msg);
-									}
-									Ok(None) => {
-										eprintln!("[app] Backend is still running (OK)");
-									}
-									Err(e) => {
-										let msg = format!("[app] Error checking backend status: {}", e);
-										eprintln!("{}", msg);
-										let _ = h.emit("backend-stderr", &msg);
-									}
-								}
-							}
-						}
-					}
-				});
 			}
 
 			app.manage(BackendChild(Mutex::new(Some(process))));

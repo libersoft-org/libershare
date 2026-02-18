@@ -130,6 +130,24 @@ echo "$output"
 exit $rc
 LDDWRAPPER
 	chmod +x "$LDD_WRAPPER_DIR/ldd"
+
+	# Also wrap patchelf to prevent it from modifying Bun standalone binaries.
+	# patchelf rewrites ELF headers/sections, which corrupts Bun binaries that
+	# embed JS code at specific ELF offsets (causes SIGSEGV at runtime).
+	REAL_PATCHELF=$(command -v patchelf 2>/dev/null || true)
+	if [ -n "$REAL_PATCHELF" ]; then
+		cat > "$LDD_WRAPPER_DIR/patchelf" << PATCHELFWRAPPER
+#!/bin/sh
+for arg in "\$@"; do
+	case "\$arg" in
+		*/lish-backend) exit 0 ;;
+	esac
+done
+exec $REAL_PATCHELF "\$@"
+PATCHELFWRAPPER
+		chmod +x "$LDD_WRAPPER_DIR/patchelf"
+	fi
+
 	export PATH="$LDD_WRAPPER_DIR:$PATH"
 fi
 
