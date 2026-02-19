@@ -54,7 +54,7 @@ No central servers, no single point of failure.
 
 ### Cross-platform availability
 
-- **LiberShare** is available for Windows, Linux, macOS, Android, Android TV and iOS.
+- **LiberShare** is available for Windows, Linux and macOS.
 
 ## Screenshots
 
