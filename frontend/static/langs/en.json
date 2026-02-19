@@ -33,7 +33,9 @@
 		"download": "Download",
 		"upload": "Upload",
 		"downloads": "Downloads",
-		"uploads": "Uploads"
+		"uploads": "Uploads",
+		"show": "Show",
+		"hide": "Hide"
 	},
 	"library": {
 		"title": "Online library",
@@ -151,6 +153,8 @@
 			"confirmOverwrite": "The following network already exists:\n\nName: {name}\nNetwork ID: {networkID}\n\nDo you want to overwrite it?",
 			"peerList": "Peer list",
 			"peerID": "Peer ID",
+			"yourPeerID": "Your Peer ID",
+			"addresses": "addresses",
 			"connections": "Connections",
 			"direct": "{count} direct",
 			"relayed": "{count} relayed",

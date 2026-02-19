@@ -5,8 +5,9 @@
 		width?: string;
 		align?: 'left' | 'center' | 'right';
 		desktopOnly?: boolean;
+		wrap?: boolean;
 	}
-	let { children, width, align = 'left', desktopOnly = false }: Props = $props();
+	let { children, width, align = 'left', desktopOnly = false, wrap = false }: Props = $props();
 	let justifyContent = $derived(align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center');
 </script>
 
@@ -25,6 +26,12 @@
 		overflow: hidden;
 	}
 
+	.content.wrap {
+		white-space: normal;
+		word-break: break-all;
+		text-overflow: unset;
+	}
+
 	@media (max-width: 1199px) {
 		.cell.desktop-only {
 			display: none;
@@ -33,5 +40,5 @@
 </style>
 
 <div class="cell" class:desktop-only={desktopOnly} style="width: {width ?? 'auto'}; justify-content: {justifyContent}; text-align: {align};">
-	<div class="content">{@render children()}</div>
+	<div class="content" class:wrap>{@render children()}</div>
 </div>

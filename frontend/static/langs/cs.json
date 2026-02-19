@@ -33,7 +33,9 @@
 		"download": "Stahování",
 		"upload": "Odesílání",
 		"downloads": "Stahování",
-		"uploads": "Odesílání"
+		"uploads": "Odesílání",
+		"show": "Zobrazit",
+		"hide": "Skrýt"
 	},
 	"library": {
 		"title": "Online knihovna",
@@ -151,6 +153,8 @@
 			"confirmOverwrite": "Následující síť již existuje:\n\nJméno: {name}\nID sítě: {networkID}\n\nChcete ji přepsat?",
 			"peerList": "Seznam účastníků",
 			"peerID": "ID účastníka",
+			"yourPeerID": "Vaše ID účastníka",
+			"addresses": "adresy",
 			"connections": "Připojení",
 			"direct": "{count} přímých",
 			"relayed": "{count} předaných",

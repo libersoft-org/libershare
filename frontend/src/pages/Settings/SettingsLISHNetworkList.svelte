@@ -15,6 +15,9 @@
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	import Row from '../../components/Row/Row.svelte';
+	import Table from '../../components/Table/Table.svelte';
+	import TableRow from '../../components/Table/TableRow.svelte';
+	import TableCell from '../../components/Table/TableCell.svelte';
 	import LISHNetworkAddEdit from './SettingsLISHNetworkAddEdit.svelte';
 	import LISHNetworkExport from './SettingsLISHNetworkExport.svelte';
 	import LISHNetworkExportAll from './SettingsLISHNetworkExportAll.svelte';
@@ -37,6 +40,7 @@
 	let showPublic = $state(false);
 	let showDeleteConfirm = $state(false);
 	let showPeers = $state(false);
+	let showAddresses = $state(false);
 	let editingNetwork = $state<LISHNetworkConfig | null>(null);
 	let exportingNetwork = $state<LISHNetworkConfig | null>(null);
 	let deletingNetwork = $state<LISHNetworkConfig | null>(null);
@@ -56,16 +60,23 @@
 	}
 
 	async function loadNetworks() {
-		networks = await getNetworks();
-		await loadNodeInfo();
+		const [nets, nodeInfo] = await Promise.all([
+			getNetworks(),
+			api.networks.getNodeInfo().catch((): null => null)
+		]);
+		globalNodeInfo = nodeInfo;
+		networks = nets;
 	}
 
-	// Items: Top buttons row (0), network rows (1 to networks.length)
-	let totalItems = $derived(networks.length + 1);
+	// Items: Top buttons row (0), node info row (1, if globalNodeInfo), network rows
+	let nodeInfoOffset = $derived(globalNodeInfo ? 1 : 0);
+	let totalItems = $derived(networks.length + 1 + nodeInfoOffset);
 	// Check if current row is the top row (has Back/Add/Import buttons)
 	let isTopRow = $derived(selectedIndex === 0);
+	// Check if current row is the node info row
+	let isNodeInfoRow = $derived(globalNodeInfo !== null && selectedIndex === 1);
 	// Check if current row is a network row (has Edit/Delete buttons)
-	let isNetworkRow = $derived(selectedIndex > 0 && selectedIndex < totalItems);
+	let isNetworkRow = $derived(selectedIndex >= 1 + nodeInfoOffset && selectedIndex < totalItems);
 
 	function openPublic() {
 		showPublic = true;
@@ -362,8 +373,10 @@
 						else if (buttonIndex === 2) openAddNetwork();
 						else if (buttonIndex === 3) openImport();
 						else openExportAll();
+					} else if (isNodeInfoRow) {
+						showAddresses = !showAddresses;
 					} else {
-						const networkIndex = selectedIndex - 1;
+						const networkIndex = selectedIndex - 1 - nodeInfoOffset;
 						const network = networks[networkIndex];
 						if (network) {
 							const isFirst = networkIndex === 0;
@@ -418,14 +431,43 @@
 		max-width: 100%;
 	}
 
-	.global-node-info {
-		font-size: 1.6vh;
-		color: var(--disabled-foreground);
-		font-family: monospace;
+	.node-info {
+		display: flex;
+		flex-direction: column;
+		gap: 1.5vh;
+	}
+
+	.node-info .peer-id {
+		font-size: 1.8vh;
 		word-break: break-all;
-		white-space: pre-wrap;
-		padding: 1vh;
-		margin-bottom: 1vh;
+	}
+
+	.node-info .peer-id .label {
+		color: var(--disabled-foreground);
+	}
+
+	.node-info .peer-id .value {
+		font-family: monospace;
+		color: var(--primary-foreground);
+	}
+
+	.node-info .buttons {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1vh;
+	}
+
+	.node-info .address-index {
+		font-size: 1.5vh;
+		font-family: monospace;
+		color: var(--disabled-foreground);
+	}
+
+	.node-info .address-value {
+		font-size: 1.5vh;
+		font-family: monospace;
+		color: var(--disabled-foreground);
+		word-break: break-all;
 	}
 
 	.network {
@@ -478,7 +520,33 @@
 				</ButtonBar>
 			</div>
 			{#if globalNodeInfo}
-				<div class="global-node-info">{JSON.stringify(globalNodeInfo, null, 2)}</div>
+				<div bind:this={rowElements[1]}>
+					<Row selected={active && selectedIndex === 1}>
+						<div class="node-info">
+							<div class="peer-id"><span class="label">{$t('settings.lishNetwork.yourPeerID')}:</span> <span class="value">{globalNodeInfo.peerId}</span></div>
+							<div class="buttons">
+								<Button
+									icon={showAddresses ? '/img/up.svg' : '/img/down.svg'}
+									label={showAddresses ? $t('common.hide') + ' ' + $t('settings.lishNetwork.addresses') : $t('common.show') + ' ' + $t('settings.lishNetwork.addresses')}
+									selected={active && selectedIndex === 1 && buttonIndex === 0}
+									onConfirm={() => {
+										showAddresses = !showAddresses;
+									}}
+								/>
+							</div>
+							{#if showAddresses && globalNodeInfo.addresses.length > 0}
+								<Table columns="auto 1fr" noBorder>
+									{#each globalNodeInfo.addresses as address, i}
+										<TableRow odd={i % 2 === 0}>
+											<TableCell><span class="address-index">{i + 1}.</span></TableCell>
+											<TableCell wrap><span class="address-value">{address}</span></TableCell>
+										</TableRow>
+									{/each}
+								</Table>
+							{/if}
+						</div>
+					</Row>
+				</div>
 			{/if}
 			{#if networks.length === 0}
 				<Alert type="warning" message={$t('settings.lishNetwork.emptyList')} />
@@ -488,8 +556,8 @@
 					{@const isLast = i === networks.length - 1}
 					{@const upButtonIndex = 5}
 					{@const downButtonIndex = isFirst ? 5 : 6}
-					<div bind:this={rowElements[i + 1]}>
-						<Row selected={active && selectedIndex === i + 1}>
+					<div bind:this={rowElements[i + 1 + nodeInfoOffset]}>
+						<Row selected={active && selectedIndex === i + 1 + nodeInfoOffset}>
 							<div class="network">
 								<div class="name">{network.name}</div>
 								{#if network.description}
@@ -499,16 +567,16 @@
 									<Alert type="error" message={networkErrors[network.networkID]} />
 								{/if}
 								<div class="buttons">
-									<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} selected={active && selectedIndex === i + 1 && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
-									<Button icon="/img/online.svg" label={$t('settings.lishNetwork.peerList')} selected={active && selectedIndex === i + 1 && buttonIndex === 1} onConfirm={() => openPeers(network)} />
-									<Button icon="/img/export.svg" label={$t('common.export')} selected={active && selectedIndex === i + 1 && buttonIndex === 2} onConfirm={() => openExport(network)} />
-									<Button icon="/img/edit.svg" label={$t('common.edit')} selected={active && selectedIndex === i + 1 && buttonIndex === 3} onConfirm={() => openEditNetwork(network)} />
-									<Button icon="/img/del.svg" label={$t('common.delete')} selected={active && selectedIndex === i + 1 && buttonIndex === 4} onConfirm={() => deleteNetwork(network)} />
+									<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} selected={active && selectedIndex === i + 1 + nodeInfoOffset && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />
+									<Button icon="/img/online.svg" label={$t('settings.lishNetwork.peerList')} selected={active && selectedIndex === i + 1 + nodeInfoOffset && buttonIndex === 1} onConfirm={() => openPeers(network)} />
+									<Button icon="/img/export.svg" label={$t('common.export')} selected={active && selectedIndex === i + 1 + nodeInfoOffset && buttonIndex === 2} onConfirm={() => openExport(network)} />
+									<Button icon="/img/edit.svg" label={$t('common.edit')} selected={active && selectedIndex === i + 1 + nodeInfoOffset && buttonIndex === 3} onConfirm={() => openEditNetwork(network)} />
+									<Button icon="/img/del.svg" label={$t('common.delete')} selected={active && selectedIndex === i + 1 + nodeInfoOffset && buttonIndex === 4} onConfirm={() => deleteNetwork(network)} />
 									{#if !isFirst}
-										<Button icon="/img/up.svg" selected={active && selectedIndex === i + 1 && buttonIndex === upButtonIndex} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
+										<Button icon="/img/up.svg" selected={active && selectedIndex === i + 1 + nodeInfoOffset && buttonIndex === upButtonIndex} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
 									{/if}
 									{#if !isLast}
-										<Button icon="/img/down.svg" selected={active && selectedIndex === i + 1 && buttonIndex === downButtonIndex} onConfirm={() => moveNetwork(i, false)} padding="1vh" fontSize="4vh" width="auto" />
+										<Button icon="/img/down.svg" selected={active && selectedIndex === i + 1 + nodeInfoOffset && buttonIndex === downButtonIndex} onConfirm={() => moveNetwork(i, false)} padding="1vh" fontSize="4vh" width="auto" />
 									{/if}
 								</div>
 							</div>
