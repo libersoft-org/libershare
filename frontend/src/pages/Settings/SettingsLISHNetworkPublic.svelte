@@ -158,14 +158,14 @@
 	.network-info {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5vh;
+		gap: 2vh;
 		flex: 1;
 	}
 
 	.network-name {
 		font-size: 2.5vh;
 		font-weight: bold;
-		color: var(--secondary-foreground);
+		color: var(--primary-foreground);
 	}
 
 	.network-description {
@@ -202,7 +202,7 @@
 							<div class="network-info">
 								<div class="network-name">{network.name}</div>
 								{#if network.description}
-									<div class="network-description">{network.description}</div>
+									<div class="network-description">{@html network.description.replaceAll('\n', '<br />')}</div>
 								{/if}
 							</div>
 							{#if isNetworkAdded(network.networkID)}
