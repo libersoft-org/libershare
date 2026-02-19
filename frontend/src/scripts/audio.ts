@@ -9,24 +9,28 @@ export function initAudio(): void {
 }
 
 export function play(name: SoundName): Promise<void> {
-	if (!get(audioEnabled)) return Promise.resolve();
-	if (!audioContext) initAudio();
-	if (!audioContext) return Promise.resolve();
-	switch (name) {
-		case 'move':
-			playMove();
-			break;
-		case 'confirm':
-			playConfirm();
-			break;
-		case 'back':
-			playBack();
-			break;
-		case 'welcome':
-			playWelcome();
-			break;
-		case 'exit':
-			return playExit();
+	try {
+		if (!get(audioEnabled)) return Promise.resolve();
+		if (!audioContext) initAudio();
+		if (!audioContext) return Promise.resolve();
+		switch (name) {
+			case 'move':
+				playMove();
+				break;
+			case 'confirm':
+				playConfirm();
+				break;
+			case 'back':
+				playBack();
+				break;
+			case 'welcome':
+				playWelcome();
+				break;
+			case 'exit':
+				return playExit();
+		}
+	} catch {
+		// Audio failure should never block the app
 	}
 	return Promise.resolve();
 }
@@ -98,11 +102,12 @@ function playWelcome(): void {
 }
 
 function playExit(): Promise<void> {
-	if (!audioContext) return Promise.resolve();
-	const notes = [1046.5, 783.99, 659.25, 523.25];
-	const noteLength = 0.15;
-	const gap = 0.05;
-	return new Promise(resolve => {
+	try {
+		if (!audioContext) return Promise.resolve();
+		const notes = [1046.5, 783.99, 659.25, 523.25];
+		const noteLength = 0.15;
+		const gap = 0.05;
+		const totalDuration = notes.length * (noteLength + gap);
 		notes.forEach((freq, i) => {
 			const osc = audioContext!.createOscillator();
 			const gain = audioContext!.createGain();
@@ -116,7 +121,9 @@ function playExit(): Promise<void> {
 			gain.connect(audioContext!.destination);
 			osc.start(startTime);
 			osc.stop(startTime + noteLength);
-			if (i === notes.length - 1) osc.onended = () => resolve();
 		});
-	});
+		return new Promise(resolve => setTimeout(resolve, totalDuration * 1000));
+	} catch {
+		return Promise.resolve();
+	}
 }
