@@ -17,6 +17,7 @@ fn app_quit(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn app_restart(app: tauri::AppHandle) {
+	#[cfg(any(target_os = "windows", target_os = "linux"))]
 	let pid = std::process::id();
 	#[cfg(target_os = "windows")]
 	{
@@ -38,7 +39,7 @@ fn app_restart(app: tauri::AppHandle) {
 			.args([
 				"-c",
 				&format!(
-					"tail --pid={} -f /dev/null 2>/dev/null; systemctl reboot",
+					"tail --pid={} -f /dev/null 2>/dev/null; systemctl reboot 2>/dev/null || shutdown -r now 2>/dev/null || sudo shutdown -r now",
 					pid
 				),
 			])
@@ -46,21 +47,16 @@ fn app_restart(app: tauri::AppHandle) {
 	}
 	#[cfg(target_os = "macos")]
 	{
-		let _ = std::process::Command::new("sh")
-			.args([
-				"-c",
-				&format!(
-					"while kill -0 {} 2>/dev/null; do sleep 0.1; done; osascript -e 'tell app \"System Events\" to restart'",
-					pid
-				),
-			])
-			.spawn();
+		let _ = std::process::Command::new("osascript")
+			.args(["-e", "tell application \"System Events\" to restart"])
+			.output();
 	}
 	app.exit(0);
 }
 
 #[tauri::command]
 fn app_shutdown(app: tauri::AppHandle) {
+	#[cfg(any(target_os = "windows", target_os = "linux"))]
 	let pid = std::process::id();
 	#[cfg(target_os = "windows")]
 	{
@@ -82,7 +78,7 @@ fn app_shutdown(app: tauri::AppHandle) {
 			.args([
 				"-c",
 				&format!(
-					"tail --pid={} -f /dev/null 2>/dev/null; systemctl poweroff",
+					"tail --pid={} -f /dev/null 2>/dev/null; systemctl poweroff 2>/dev/null || shutdown -h now 2>/dev/null || sudo shutdown -h now",
 					pid
 				),
 			])
@@ -90,15 +86,9 @@ fn app_shutdown(app: tauri::AppHandle) {
 	}
 	#[cfg(target_os = "macos")]
 	{
-		let _ = std::process::Command::new("sh")
-			.args([
-				"-c",
-				&format!(
-					"while kill -0 {} 2>/dev/null; do sleep 0.1; done; osascript -e 'tell app \"System Events\" to shut down'",
-					pid
-				),
-			])
-			.spawn();
+		let _ = std::process::Command::new("osascript")
+			.args(["-e", "tell application \"System Events\" to shut down"])
+			.output();
 	}
 	app.exit(0);
 }
