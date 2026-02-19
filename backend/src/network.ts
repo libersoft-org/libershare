@@ -68,10 +68,65 @@ export class Network {
 	// Topic handlers: topic -> Set of handler functions
 	private topicHandlers: Map<string, Set<(data: any) => void>> = new Map();
 
+	// Peer count change callback and debounce
+	private _onPeerCountChange: ((counts: { networkId: string; count: number }[]) => void) | null = null;
+	private _peerCountDebounceTimer: NodeJS.Timeout | null = null;
+	private _lastPeerCounts: Map<string, number> = new Map();
+
 	constructor(dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
 		this.dataDir = dataDir;
 		this.enablePink = enablePink;
 		this.dataServer = dataServer;
+	}
+
+	/**
+	 * Set a callback to be called when peer counts change for any subscribed topic.
+	 */
+	set onPeerCountChange(cb: ((counts: { networkId: string; count: number }[]) => void) | null) {
+		this._onPeerCountChange = cb;
+	}
+
+	/**
+	 * Schedule a debounced check of peer counts for all subscribed topics.
+	 */
+	private schedulePeerCountCheck(): void {
+		if (this._peerCountDebounceTimer) clearTimeout(this._peerCountDebounceTimer);
+		this._peerCountDebounceTimer = setTimeout(() => {
+			this._peerCountDebounceTimer = null;
+			this.checkPeerCounts();
+		}, 500);
+	}
+
+	/**
+	 * Check peer counts for all subscribed topics and fire callback if any changed.
+	 */
+	private checkPeerCounts(): void {
+		if (!this._onPeerCountChange || !this.pubsub) return;
+		const topics = this.pubsub.getTopics();
+		const prefix = 'lish/';
+		let changed = false;
+		const counts: { networkId: string; count: number }[] = [];
+		for (const topic of topics) {
+			if (!topic.startsWith(prefix)) continue;
+			const networkId = topic.slice(prefix.length);
+			let count = 0;
+			try {
+				count = this.pubsub.getSubscribers(topic).length;
+			} catch {}
+			const prev = this._lastPeerCounts.get(networkId) ?? -1;
+			if (count !== prev) changed = true;
+			this._lastPeerCounts.set(networkId, count);
+			counts.push({ networkId, count });
+		}
+		// Also detect removed topics
+		const currentNetworkIds = new Set(counts.map(c => c.networkId));
+		for (const [id] of this._lastPeerCounts) {
+			if (!currentNetworkIds.has(id)) {
+				this._lastPeerCounts.delete(id);
+				changed = true;
+			}
+		}
+		if (changed) this._onPeerCountChange(counts);
 	}
 
 	private async loadOrCreatePrivateKey(datastore: SqliteDatastore): Promise<PrivateKey> {
@@ -295,10 +350,12 @@ export class Network {
 
 		this.pubsub.addEventListener('gossipsub:graft', evt => {
 			console.log('🌿 GRAFT:', evt.detail.peerId, 'joined', evt.detail.topic);
+			this.schedulePeerCountCheck();
 		});
 
 		this.pubsub.addEventListener('gossipsub:prune', evt => {
 			console.log('✂️  PRUNE:', evt.detail.peerId, 'left', evt.detail.topic);
+			this.schedulePeerCountCheck();
 		});
 
 		console.log('Peers in store:', this.node.getPeers().length);
@@ -328,11 +385,13 @@ export class Network {
 				});
 				console.log('   Tagged as KEEP_ALIVE (bootstrap peer)');
 			}
+			this.schedulePeerCountCheck();
 		});
 
 		this.node.addEventListener('peer:disconnect', evt => {
 			console.log('❌ Lost connection with peer:', evt.detail.toString());
 			console.log('   Total connected peers:', this.node!.getPeers().length);
+			this.schedulePeerCountCheck();
 		});
 
 		// Relay events

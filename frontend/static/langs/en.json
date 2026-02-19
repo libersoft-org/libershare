@@ -159,6 +159,7 @@
 			"direct": "{count} direct",
 			"relayed": "{count} relayed",
 			"noPeers": "No peers connected",
+			"connectedPeers": "Peers: {count}",
 			"minifyJson": "Minify JSON on save",
 			"compressGzip": "Compress to gzip"
 		},

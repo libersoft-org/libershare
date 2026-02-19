@@ -46,6 +46,14 @@ export class Api {
 		this.client.off(event, callback);
 	}
 
+	subscribe(...events: string[]): Promise<boolean> {
+		return this.client.call<boolean>('subscribe', { events });
+	}
+
+	unsubscribe(...events: string[]): Promise<boolean> {
+		return this.client.call<boolean>('unsubscribe', { events });
+	}
+
 	// Top-level operations
 	getStats(): Promise<Stats> {
 		return this.client.call<Stats>('getStats');

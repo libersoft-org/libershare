@@ -34,12 +34,26 @@ export class Networks {
 	// Track which lishnets are currently joined (subscribed)
 	private joinedNetworks: Set<string> = new Set();
 
+	// Callback for peer count changes
+	private _onPeerCountChange: ((counts: { networkId: string; count: number }[]) => void) | null = null;
+
 	constructor(storage: LISHNetworkStorage, dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
 		this.storage = storage;
 		this.dataDir = dataDir;
 		this.dataServer = dataServer;
 		this.enablePink = enablePink;
 		this.network = new Network(dataDir, dataServer, enablePink);
+		// Forward peer count changes from the network node
+		this.network.onPeerCountChange = (counts) => {
+			if (this._onPeerCountChange) this._onPeerCountChange(counts);
+		};
+	}
+
+	/**
+	 * Set a callback to be called when peer counts change for any joined lishnet.
+	 */
+	set onPeerCountChange(cb: ((counts: { networkId: string; count: number }[]) => void) | null) {
+		this._onPeerCountChange = cb;
 	}
 
 	init(): void {

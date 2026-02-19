@@ -1,22 +1,38 @@
 import { writable } from 'svelte/store';
 import { api } from './api.ts';
-import { type NetworkInfo } from '@shared';
 
-export const networks = writable<NetworkInfo[]>([]);
+/**
+ * Reactive store of peer counts per network, updated via push events from backend.
+ * Key: networkId, Value: number of connected peers
+ */
+export const peerCounts = writable<Record<string, number>>({});
 
-async function fetchNetworksOnce() {
-	try {
-		const response = await api.networks.infoAll();
-		networks.set(response);
-	} catch (error) {
-		console.error('Error fetching networks:', error);
-		networks.set([]);
-	}
+let unsubListener: (() => void) | null = null;
+
+/**
+ * Subscribe to peer count updates from backend.
+ * Call when entering the LISH Network settings page.
+ */
+export async function subscribePeerCounts(): Promise<void> {
+	if (unsubListener) return; // already subscribed
+	unsubListener = api.on('peers:count', (data: { networkId: string; count: number }[]) => {
+		const counts: Record<string, number> = {};
+		for (const { networkId, count } of data) {
+			counts[networkId] = count;
+		}
+		peerCounts.set(counts);
+	}) as (() => void);
+	await api.subscribe('peers:count');
 }
 
-export async function initNetworks() {
-	await fetchNetworksOnce();
-	setInterval(async () => {
-		await fetchNetworksOnce();
-	}, 1000);
+/**
+ * Unsubscribe from peer count updates.
+ * Call when leaving the LISH Network settings page.
+ */
+export async function unsubscribePeerCounts(): Promise<void> {
+	if (!unsubListener) return;
+	await api.unsubscribe('peers:count');
+	unsubListener();
+	unsubListener = null;
+	peerCounts.set({});
 }

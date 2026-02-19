@@ -31,7 +31,6 @@ export interface ApiServerOptions {
 export class ApiServer {
 	private clients: Set<ClientSocket> = new Set();
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
-	private statsInterval: ReturnType<typeof setInterval> | null = null;
 	private readonly settings: Settings;
 	private readonly lishNetworks: LISHNetworkStorage;
 	private readonly host: string;
@@ -94,19 +93,20 @@ export class ApiServer {
 		this.server = Bun.serve<ClientData>(serverConfig);
 
 		const actualPort = this.server.port;
-		// Start broadcasting stats every second
-		this.statsInterval = setInterval(() => {
-			if (this.clients.size > 0) this.broadcastStats();
-		}, 1000);
+
+		// Listen for peer count changes and send to subscribed clients
+		this.networks.onPeerCountChange = (counts) => {
+			if (this.clients.size === 0) return;
+			for (const client of this.clients) {
+				this.emit(client, 'peers:count', counts);
+			}
+		};
+
 		const protocol = this.secure ? 'wss' : 'ws';
 		console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${actualPort}`);
 	}
 
 	stop(): void {
-		if (this.statsInterval) {
-			clearInterval(this.statsInterval);
-			this.statsInterval = null;
-		}
 		if (this.server) {
 			this.server.stop();
 			this.server = null;
@@ -146,6 +146,11 @@ export class ApiServer {
 				events.forEach((e: string) => {
 					client.data.subscribedEvents.add(e);
 				});
+				// Send initial data immediately after subscribing
+				if (client.data.subscribedEvents.has('peers:count')) {
+					const counts = this.getCurrentPeerCounts();
+					if (counts.length > 0) this.emit(client, 'peers:count', counts);
+				}
 				return true;
 			}
 			case 'unsubscribe': {
@@ -452,12 +457,12 @@ export class ApiServer {
 		};
 	}
 
-	private broadcastStats(): void {
-		const stats = this.getStats();
-		const msg = JSON.stringify({ event: 'stats', data: stats });
-		for (const client of this.clients) {
-			client.send(msg);
-		}
+	private getCurrentPeerCounts(): { networkId: string; count: number }[] {
+		const enabled = this.networks.getEnabled();
+		return enabled.map(def => ({
+			networkId: def.id,
+			count: this.networks.getTopicPeers(def.id).length,
+		}));
 	}
 
 	private emit(client: ClientSocket, event: string, data: any): void {

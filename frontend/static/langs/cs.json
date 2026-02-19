@@ -159,6 +159,7 @@
 			"direct": "{count} přímých",
 			"relayed": "{count} předaných",
 			"noPeers": "Žádní účastníci nejsou připojeni",
+			"connectedPeers": "Účastníků: {count}",
 			"minifyJson": "Minifikovat JSON při uložení",
 			"compressGzip": "Komprimovat do gzip"
 		},

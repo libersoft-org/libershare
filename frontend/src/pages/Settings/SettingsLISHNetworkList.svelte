@@ -10,6 +10,7 @@
 	import { api } from '../../scripts/api.ts';
 	import { getNetworks, deleteNetwork as deleteNetworkFromApi, updateNetwork as updateNetworkFromApi, addNetwork as addNetworkFromApi, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
+	import { peerCounts, subscribePeerCounts, unsubscribePeerCounts } from '../../scripts/networks.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -60,10 +61,7 @@
 	}
 
 	async function loadNetworks() {
-		const [nets, nodeInfo] = await Promise.all([
-			getNetworks(),
-			api.networks.getNodeInfo().catch((): null => null)
-		]);
+		const [nets, nodeInfo] = await Promise.all([getNetworks(), api.networks.getNodeInfo().catch((): null => null)]);
 		globalNodeInfo = nodeInfo;
 		networks = nets;
 	}
@@ -405,8 +403,10 @@
 			unregisterArea = registerAreaHandler();
 			activateArea(areaID);
 		});
+		subscribePeerCounts();
 		return () => {
 			if (unregisterArea) unregisterArea();
+			unsubscribePeerCounts();
 		};
 	});
 </script>
@@ -476,10 +476,27 @@
 		gap: 2vh;
 	}
 
+	.network .header {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: 2vh;
+	}
+
 	.network .name {
 		font-size: 2.5vh;
 		font-weight: bold;
 		color: var(--primary-foreground);
+	}
+
+	.network .peer-count {
+		padding: 1vh;
+		border-radius: 1vh;
+		font-size: 2vh;
+		font-weight: bold;
+		background-color: var(--primary-foreground);
+		color: var(--primary-background);
+		white-space: nowrap;
 	}
 
 	.network .description {
@@ -535,7 +552,7 @@
 								/>
 							</div>
 							{#if showAddresses && globalNodeInfo.addresses.length > 0}
-								<Table columns="auto 1fr" noBorder>
+								<Table columns="auto 1fr">
 									{#each globalNodeInfo.addresses as address, i}
 										<TableRow odd={i % 2 === 0}>
 											<TableCell><span class="address-index">{i + 1}.</span></TableCell>
@@ -559,7 +576,12 @@
 					<div bind:this={rowElements[i + 1 + nodeInfoOffset]}>
 						<Row selected={active && selectedIndex === i + 1 + nodeInfoOffset}>
 							<div class="network">
-								<div class="name">{network.name}</div>
+								<div class="header">
+									<div class="name">{network.name}</div>
+									{#if network.enabled && $peerCounts[network.networkID] !== undefined}
+										<div class="peer-count">{$t('settings.lishNetwork.connectedPeers', { count: String($peerCounts[network.networkID]) })}</div>
+									{/if}
+								</div>
 								{#if network.description}
 									<div class="description">{@html network.description.replaceAll('\n', '<br />')}</div>
 								{/if}
