@@ -70,6 +70,18 @@ cd app
 - To create a portable .zip: `./build.sh --zip`
 - Both: `./build.sh --dmg --zip`
 
+> **IMPORTANT NOTE:** macOS Gatekeeper blocks unsigned/non-notarized apps downloaded from the internet with a **"is damaged and can't be opened"** error. After downloading the DMS or ZIP, run this command in Terminal before opening the app:
+>
+> ```sh
+> xattr -cr /path/to/LiberShare.app
+> ```
+>
+> For example, after installing from DMG: `xattr -cr /Applications/LiberShare.app`
+>
+> Or after extracting the ZIP: `xattr -cr ~/Downloads/LiberShare.app`
+>
+> This removes the quarantine attribute and you can run the app.
+
 **On Windows:**
 
 Download and install:
