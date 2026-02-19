@@ -70,7 +70,7 @@ cd app
 - To create a portable .zip: `./build.sh --zip`
 - Both: `./build.sh --dmg --zip`
 
-> **IMPORTANT NOTE:** macOS Gatekeeper blocks unsigned/non-notarized apps downloaded from the internet with a **"is damaged and can't be opened"** error. After downloading the DMS or ZIP, run this command in Terminal before opening the app:
+> **IMPORTANT NOTE:** macOS Gatekeeper blocks unsigned/non-notarized apps downloaded from the internet with a **"is damaged and can't be opened"** error. After downloading the DMG or ZIP, run this command in Terminal before opening the app:
 >
 > ```sh
 > xattr -cr /path/to/LiberShare.app
@@ -178,7 +178,7 @@ By default backend starts on a random network port (ws://localhost:XXXXX) and ac
 
 If you'd like to **run this software in developer mode**, you need HTTPS certificate keys.
 
-**Generate self-signed certificate keys:**
+You can either use your own certificate (e.g. from Let's Encrypt) with `--privkey` and `--pubkey` parameters, or generate a self-signed certificate:
 
 **On Linux:**
 
@@ -202,16 +202,34 @@ openssl req -x509 -newkey rsa:2048 -nodes -days $days -subj "/" -keyout server.k
 
 **On Linux / macOS:**
 
+With self-signed certificates in the frontend directory:
+
 ```sh
 cd ../frontend
 ./start-dev.sh wss://localhost:1158/
 ```
 
+With custom certificate paths:
+
+```sh
+cd ../frontend
+./start-dev.sh wss://localhost:1158/ --privkey /etc/letsencrypt/live/example.com/privkey.pem --pubkey /etc/letsencrypt/live/example.com/fullchain.pem
+```
+
 **On Windows:**
+
+With self-signed certificates in the frontend directory:
 
 ```bat
 cd ..\frontend
 start-dev.bat wss://localhost:1158/
+```
+
+With custom certificate paths:
+
+```bat
+cd ..\frontend
+start-dev.bat wss://localhost:1158/ --privkey C:\certs\privkey.pem --pubkey C:\certs\fullchain.pem
 ```
 
 Open your browser with parameter that allows playing sounds without user's interaction, for example in Chrome:
