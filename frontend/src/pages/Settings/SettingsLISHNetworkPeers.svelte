@@ -141,15 +141,15 @@
 		{:else}
 			<Table columns="auto 1fr auto" columnsMobile="1fr auto">
 				<TableHeader>
-					<TableCell>#</TableCell>
+					<TableCell desktopOnly>#</TableCell>
 					<TableCell>{$t('settings.lishNetwork.peerID')}</TableCell>
 					<TableCell>{$t('settings.lishNetwork.connections')}</TableCell>
 				</TableHeader>
 				{#each peers as peer, i}
 					<div bind:this={rowElements[i + 1]}>
 						<TableRow selected={active && selectedIndex === i + 1} odd={i % 2 !== 0}>
-							<TableCell>{i + 1}</TableCell>
-							<TableCell><span class="peer-id">{peer.peerId}</span></TableCell>
+							<TableCell desktopOnly>{i + 1}</TableCell>
+							<TableCell wrap><span class="peer-id">{peer.peerId}</span></TableCell>
 							<TableCell>
 								<div class="connections">
 								{#if peer.direct > 0}<div>{$t('settings.lishNetwork.direct', { count: String(peer.direct) })}</div>{/if}
