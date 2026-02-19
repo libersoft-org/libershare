@@ -130,28 +130,59 @@ echo "$output"
 exit $rc
 LDDWRAPPER
 	chmod +x "$LDD_WRAPPER_DIR/ldd"
-
-	# Also wrap patchelf to prevent it from modifying Bun standalone binaries.
-	# patchelf rewrites ELF headers/sections, which corrupts Bun binaries that
-	# embed JS code at specific ELF offsets (causes SIGSEGV at runtime).
-	REAL_PATCHELF=$(command -v patchelf 2>/dev/null || true)
-	if [ -n "$REAL_PATCHELF" ]; then
-		cat > "$LDD_WRAPPER_DIR/patchelf" << PATCHELFWRAPPER
-#!/bin/sh
-for arg in "\$@"; do
-	case "\$arg" in
-		*/lish-backend) exit 0 ;;
-	esac
-done
-exec $REAL_PATCHELF "\$@"
-PATCHELFWRAPPER
-		chmod +x "$LDD_WRAPPER_DIR/patchelf"
-	fi
-
 	export PATH="$LDD_WRAPPER_DIR:$PATH"
 fi
 
 cargo tauri build $BUNDLE_ARGS
+
+# Fix AppImage: linuxdeploy uses its own internal patchelf which corrupts Bun
+# standalone binaries by rewriting ELF sections (shifts embedded JS offsets → SIGSEGV).
+# We extract the AppImage, replace the corrupted backend with the original, and repack.
+if [ -d "$SCRIPT_DIR/build/release/bundle/appimage" ]; then
+	ORIGINAL_BACKEND="$ROOT_DIR/backend/build/lish-backend"
+	if [ -f "$ORIGINAL_BACKEND" ]; then
+		for appimage_file in "$SCRIPT_DIR/build/release/bundle/appimage"/*.AppImage; do
+			[ -f "$appimage_file" ] || continue
+			echo "=== Fixing AppImage backend binary ==="
+			APPIMAGE_WORK_DIR=$(mktemp -d)
+			cd "$APPIMAGE_WORK_DIR"
+
+			# Extract AppImage
+			chmod +x "$appimage_file"
+			"$appimage_file" --appimage-extract >/dev/null 2>&1
+
+			# Replace corrupted backend with original
+			BACKEND_IN_APPIMAGE=$(find squashfs-root -name "lish-backend" -type f | head -1)
+			if [ -n "$BACKEND_IN_APPIMAGE" ]; then
+				HASH_BEFORE=$(md5sum "$BACKEND_IN_APPIMAGE" | cut -d' ' -f1)
+				cp "$ORIGINAL_BACKEND" "$BACKEND_IN_APPIMAGE"
+				chmod +x "$BACKEND_IN_APPIMAGE"
+				HASH_AFTER=$(md5sum "$BACKEND_IN_APPIMAGE" | cut -d' ' -f1)
+				HASH_ORIGINAL=$(md5sum "$ORIGINAL_BACKEND" | cut -d' ' -f1)
+				echo "Backend hash before: $HASH_BEFORE"
+				echo "Backend hash after:  $HASH_AFTER"
+				echo "Original hash:       $HASH_ORIGINAL"
+			fi
+
+			# Repack AppImage using appimagetool
+			APPIMAGETOOL=""
+			if command -v appimagetool >/dev/null 2>&1; then
+				APPIMAGETOOL="appimagetool"
+			else
+				APPIMAGETOOL="$APPIMAGE_WORK_DIR/appimagetool"
+				echo "Downloading appimagetool..."
+				curl -fsSL -o "$APPIMAGETOOL" "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+				chmod +x "$APPIMAGETOOL"
+			fi
+			ARCH=x86_64 "$APPIMAGETOOL" squashfs-root "$appimage_file" >/dev/null 2>&1
+			chmod +x "$appimage_file"
+
+			cd "$SCRIPT_DIR"
+			rm -rf "$APPIMAGE_WORK_DIR"
+			echo "AppImage backend fix complete"
+		done
+	fi
+fi
 
 # Move and rename bundles to bundle root (add platform to name)
 VERSION="$PRODUCT_VERSION"
