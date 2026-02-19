@@ -50,7 +50,7 @@ fn app_restart(app: tauri::AppHandle) {
 			.args([
 				"-c",
 				&format!(
-					"while kill -0 {} 2>/dev/null; do sleep 0.1; done; shutdown -r now",
+					"while kill -0 {} 2>/dev/null; do sleep 0.1; done; osascript -e 'tell app \"System Events\" to restart'",
 					pid
 				),
 			])
@@ -94,7 +94,7 @@ fn app_shutdown(app: tauri::AppHandle) {
 			.args([
 				"-c",
 				&format!(
-					"while kill -0 {} 2>/dev/null; do sleep 0.1; done; shutdown -h now",
+					"while kill -0 {} 2>/dev/null; do sleep 0.1; done; osascript -e 'tell app \"System Events\" to shut down'",
 					pid
 				),
 			])
