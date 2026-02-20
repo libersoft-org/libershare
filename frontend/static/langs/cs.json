@@ -35,7 +35,8 @@
 		"downloads": "Stahování",
 		"uploads": "Odesílání",
 		"show": "Zobrazit",
-		"hide": "Skrýt"
+		"hide": "Skrýt",
+		"refresh": "Obnovit"
 	},
 	"library": {
 		"title": "Online knihovna",

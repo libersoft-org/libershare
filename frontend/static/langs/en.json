@@ -35,7 +35,8 @@
 		"downloads": "Downloads",
 		"uploads": "Uploads",
 		"show": "Show",
-		"hide": "Hide"
+		"hide": "Hide",
+		"refresh": "Refresh"
 	},
 	"library": {
 		"title": "Online library",

@@ -24,6 +24,7 @@
 	let { areaID, position = LAYOUT.content, network, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
+	let buttonIndex = $state(0);
 	let peers = $state<PeerConnectionInfo[]>([]);
 	let loading = $state(true);
 	let error = $state('');
@@ -55,6 +56,7 @@
 					up: () => {
 						if (selectedIndex > 0) {
 							selectedIndex--;
+							buttonIndex = 0;
 							scrollToSelected();
 							return true;
 						}
@@ -63,17 +65,32 @@
 					down: () => {
 						if (selectedIndex < totalItems - 1) {
 							selectedIndex++;
+							buttonIndex = 0;
 							scrollToSelected();
 							return true;
 						}
 						return false;
 					},
-					left: () => false,
-					right: () => false,
+					left: () => {
+						if (selectedIndex === 0 && buttonIndex > 0) {
+							buttonIndex--;
+							return true;
+						}
+						return false;
+					},
+					right: () => {
+						if (selectedIndex === 0 && buttonIndex < 1) {
+							buttonIndex++;
+							return true;
+						}
+						return false;
+					},
 					confirmDown: () => {},
 					confirmUp: () => {
 						if (selectedIndex === 0) {
-							onBack?.();
+							if (buttonIndex === 0) onBack?.();
+							else if (buttonIndex === 1) loadPeers();
+							return;
 						} else {
 							const peer = peers[selectedIndex - 1];
 							console.log('Peer selected:', peer.peerId);
@@ -130,7 +147,8 @@
 <div class="peer-list">
 	<div class="container">
 		<ButtonBar>
-			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 0} onConfirm={onBack} width="auto" />
+			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={onBack} width="auto" />
+			<Button icon="/img/restart.svg" label={$t('common.refresh')} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={loadPeers} width="auto" />
 		</ButtonBar>
 		{#if loading}
 			<Spinner size="8vh" />
