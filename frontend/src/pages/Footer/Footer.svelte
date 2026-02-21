@@ -3,12 +3,32 @@
 	import { productVersion } from '@shared';
 	import { volume, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
 	import { type FooterWidget, getVolumeIcon } from '../../scripts/footerWidgets.ts';
+	import { peerCounts, subscribePeerCounts } from '../../scripts/networks.ts';
+	import { getNetworks } from '../../scripts/lishNetwork.ts';
+	import { onMount } from 'svelte';
 	import Item from './FooterItem.svelte';
 	import LishStatus from './FooterLISHStatus.svelte';
 	import Connection from './FooterConnection.svelte';
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
+
+	let activeNetworkName = $state('');
+	let activeNetworkId = $state('');
+
+	onMount(async () => {
+		await subscribePeerCounts();
+		const networks = await getNetworks();
+		const enabled = networks.find(n => n.enabled);
+		if (enabled) {
+			activeNetworkName = enabled.name;
+			activeNetworkId = enabled.networkID;
+		}
+	});
+
+	let lishConnected = $derived(
+		activeNetworkId ? ($peerCounts[activeNetworkId] ?? 0) > 0 : false
+	);
 
 	type Widget = {
 		id: FooterWidget;
@@ -79,8 +99,8 @@
 			id: 'lishStatus',
 			component: LishStatus,
 			props: () => ({
-				networkName: 'Main Network',
-				lishConnected: false,
+				networkName: activeNetworkName || $t('common.disconnected'),
+				lishConnected,
 				vpnConnected: null,
 			}),
 		},
