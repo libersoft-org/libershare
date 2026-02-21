@@ -88,11 +88,70 @@ function getNetwork() {
 
 process.on('SIGINT', shutdown);
 
-// Prevent crash on transient libp2p stream errors (e.g. gossipsub race condition
-// where a peer disconnects before subscriptions are sent on the outbound stream).
+// Transient libp2p errors that can occur during normal peer churn, stream
+// timeouts, connection drops, etc. These must not crash the process.
+const TRANSIENT_ERRORS = new Set([
+	// Stream errors (@libp2p/interface)
+	'StreamStateError',
+	'StreamResetError',
+	'StreamAbortedError',
+	'StreamBufferError',
+	'StreamClosedError',
+	// Connection errors (@libp2p/interface, libp2p core)
+	'ConnectionClosedError',
+	'ConnectionClosingError',
+	'ConnectionFailedError',
+	'ConnectionDeniedError',
+	'ConnectionInterceptedError',
+	// Muxer errors (@libp2p/interface, @chainsafe/libp2p-yamux)
+	'MuxerClosedError',
+	'MuxerUnavailableError',
+	'InvalidFrameError',
+	'ReceiveWindowExceededError',
+	'InvalidStateError',
+	'StreamAlreadyExistsError',
+	'BothClientsError',
+	// Dial errors (libp2p core)
+	'DialError',
+	'DialDeniedError',
+	'NoValidAddressesError',
+	'TransportUnavailableError',
+	// Timeout & abort
+	'AbortError',
+	'TimeoutError',
+	// Crypto / handshake (noise, relay)
+	'EncryptionFailedError',
+	'InvalidCryptoExchangeError',
+	// Protocol / message errors from misbehaving peers
+	'ProtocolError',
+	'InvalidMessageError',
+	'UnsupportedProtocolError',
+	'UnexpectedPeerError',
+	'UnexpectedEOFError',
+	'InvalidMessageLengthError',
+	'InvalidDataLengthError',
+	// Resource limits
+	'TooManyInboundProtocolStreamsError',
+	'TooManyOutboundProtocolStreamsError',
+	'QueueFullError',
+	'RateLimitError',
+	'LimitedConnectionError',
+	// Relay limits (@libp2p/circuit-relay-v2)
+	'TransferLimitError',
+	'DurationLimitError',
+	'RelayQueueFullError',
+	'HadEnoughRelaysError',
+	'DoubleRelayError',
+]);
+
+function isTransientError(err: any): boolean {
+	const name = err?.constructor?.name || err?.name || '';
+	return TRANSIENT_ERRORS.has(name);
+}
+
 process.on('uncaughtException', err => {
-	const name = (err as any)?.constructor?.name || err.name || '';
-	if (name === 'StreamStateError' || name === 'ConnectionClosedError' || name === 'StreamResetError') {
+	if (isTransientError(err)) {
+		const name = (err as any)?.constructor?.name || err.name || '';
 		console.warn(`[WARN] Suppressed transient libp2p error (${name}): ${err.message}`);
 		return;
 	}
@@ -101,9 +160,9 @@ process.on('uncaughtException', err => {
 });
 
 process.on('unhandledRejection', (reason: any) => {
-	const name = reason?.constructor?.name || reason?.name || '';
-	if (name === 'StreamStateError' || name === 'ConnectionClosedError' || name === 'StreamResetError') {
-		console.warn(`[WARN] Suppressed transient libp2p rejection (${name}): ${reason.message}`);
+	if (isTransientError(reason)) {
+		const name = reason?.constructor?.name || reason?.name || '';
+		console.warn(`[WARN] Suppressed transient libp2p rejection (${name}): ${reason?.message}`);
 		return;
 	}
 	console.error('[FATAL] Unhandled rejection:', reason);
