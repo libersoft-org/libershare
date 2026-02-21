@@ -1,6 +1,26 @@
-import { mkdir } from 'fs/promises';
 import { JsonStorage } from './storage.ts';
-import { Utils } from './utils.ts';
+import { homedir, platform } from 'os';
+import { join, sep } from 'path';
+import { mkdirSync } from 'fs';
+
+function getDefaultStoragePaths(): SettingsData['storage'] {
+	const home = homedir();
+	const isWindows = platform() === 'win32';
+	const isMac = platform() === 'darwin';
+
+	const baseDir = isWindows || isMac
+		? join(home, 'Downloads', 'LiberShare')
+		: join(home, 'download');
+
+	const trailingSep = (p: string) => p.endsWith(sep) ? p : p + sep;
+
+	return {
+		downloadPath: trailingSep(join(baseDir, 'finished')),
+		tempPath: trailingSep(join(baseDir, 'temp')),
+		lishPath: trailingSep(join(baseDir, 'lish')),
+		lishnetPath: trailingSep(join(baseDir, 'lishnet')),
+	};
+}
 
 export interface SettingsData {
 	language: string;
@@ -74,12 +94,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		enabled: true,
 		volume: 50,
 	},
-	storage: {
-		downloadPath: '~/LiberShare/finished/',
-		tempPath: '~/LiberShare/temp/',
-		lishPath: '~/LiberShare/lish/',
-		lishnetPath: '~/LiberShare/lishnet/',
-	},
+	storage: getDefaultStoragePaths(),
 	network: {
 		incomingPort: 9090,
 		maxDownloadConnections: 200,
@@ -116,6 +131,14 @@ export class Settings {
 
 	constructor(dataDir: string) {
 		this.storage = new JsonStorage(dataDir, 'settings.json', DEFAULT_SETTINGS);
+		this.ensureStorageDirs();
+	}
+
+	private ensureStorageDirs(): void {
+		const paths = this.storage.get('storage') as SettingsData['storage'];
+		for (const dir of [paths.downloadPath, paths.tempPath, paths.lishPath, paths.lishnetPath]) {
+			try { mkdirSync(dir, { recursive: true }); } catch {}
+		}
 	}
 
 	get(path?: string): any {
@@ -138,13 +161,4 @@ export class Settings {
 		return this.storage.reset();
 	}
 
-	/** Create all storage directories from current settings (expanding ~ to home). */
-	async ensureStorageDirs(): Promise<void> {
-		const storage = this.get('storage') as SettingsData['storage'];
-		const paths = [storage.downloadPath, storage.tempPath, storage.lishPath, storage.lishnetPath];
-		for (const p of paths) {
-			const resolved = Utils.expandHome(p);
-			await mkdir(resolved, { recursive: true });
-		}
-	}
 }
