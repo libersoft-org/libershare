@@ -10,7 +10,9 @@ export function formatSize(bytes?: number): string {
 // Normalize a path by ensuring it ends with a trailing separator
 export function normalizePath(path: string): string {
 	if (!path) return path;
-	return path.endsWith('/') || path.endsWith('\\') ? path : path + '/';
+	if (path.endsWith('/') || path.endsWith('\\')) return path;
+	const sep = path.includes('\\') ? '\\' : '/';
+	return path + sep;
 }
 
 // Sanitize filename - remove invalid characters and normalize spaces
