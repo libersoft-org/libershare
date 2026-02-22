@@ -3,6 +3,7 @@
 app/binaries/
 app/icons/
 app/gen/
+app/core
 **/*.crt
 **/*.key
 frontend/.svelte-kit/
