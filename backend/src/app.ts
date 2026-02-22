@@ -6,6 +6,7 @@ import { DataServer } from './data-server.ts';
 import { Database } from './database.ts';
 import { ApiServer } from './api.ts';
 import { LISHNetworkStorage } from './lishNetworkStorage.ts';
+import { Settings } from './settings.ts';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -52,6 +53,8 @@ console.log('='.repeat(header.length));
 console.log(header);
 console.log('='.repeat(header.length));
 console.log(`Data directory: ${dataDir}`);
+const settings = new Settings(dataDir);
+await settings.ensureStorageDirs();
 const db = new Database(dataDir);
 await db.init();
 const dataServer = new DataServer(dataDir, db);

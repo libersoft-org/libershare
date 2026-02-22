@@ -1,4 +1,6 @@
+import { mkdir } from 'fs/promises';
 import { JsonStorage } from './storage.ts';
+import { Utils } from './utils.ts';
 
 export interface SettingsData {
 	language: string;
@@ -73,10 +75,10 @@ const DEFAULT_SETTINGS: SettingsData = {
 		volume: 50,
 	},
 	storage: {
-		downloadPath: '~/download/finished/',
-		tempPath: '~/download/temp/',
-		lishPath: '~/download/lish/',
-		lishnetPath: '~/download/lishnet/',
+		downloadPath: '~/LiberShare/finished/',
+		tempPath: '~/LiberShare/temp/',
+		lishPath: '~/LiberShare/lish/',
+		lishnetPath: '~/LiberShare/lishnet/',
 	},
 	network: {
 		incomingPort: 9090,
@@ -134,5 +136,15 @@ export class Settings {
 
 	reset(): SettingsData {
 		return this.storage.reset();
+	}
+
+	/** Create all storage directories from current settings (expanding ~ to home). */
+	async ensureStorageDirs(): Promise<void> {
+		const storage = this.get('storage') as SettingsData['storage'];
+		const paths = [storage.downloadPath, storage.tempPath, storage.lishPath, storage.lishnetPath];
+		for (const p of paths) {
+			const resolved = Utils.expandHome(p);
+			await mkdir(resolved, { recursive: true });
+		}
 	}
 }
