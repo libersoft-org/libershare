@@ -428,7 +428,7 @@ CTRL_EOF
 	tar -cf - -C "$WORK/control" . | xz $XZ_FLAGS > "$WORK/control.tar.xz"
 	tar -cf - -C "$PKG_STAGING" . | xz $XZ_FLAGS > "$WORK/data.tar.xz"
 	echo "2.0" > "$WORK/debian-binary"
-	ar rcs "$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${PKG_DEB_ARCH}.deb" \
+	ar rcs "$FINAL_DIR/${PRODUCT_NAME_LOWER}_${PRODUCT_VERSION}_${PKG_DEB_ARCH}.deb" \
 		"$WORK/debian-binary" \
 		"$WORK/control.tar.xz" \
 		"$WORK/data.tar.xz"
@@ -464,7 +464,7 @@ SPEC_EOF
 		--target "$PKG_RPM_ARCH" \
 		"$WORK/SPECS/${PRODUCT_NAME_LOWER}.spec"
 	RPM_BUILT=$(find "$WORK/RPMS" -name "*.rpm" | head -1)
-	mv "$RPM_BUILT" "$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${PKG_RPM_ARCH}.rpm"
+	mv "$RPM_BUILT" "$FINAL_DIR/${PRODUCT_NAME_LOWER}-${PRODUCT_VERSION}-1.${PKG_RPM_ARCH}.rpm"
 }
 
 _build_pacman() {

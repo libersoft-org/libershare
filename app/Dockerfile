@@ -28,7 +28,6 @@ RUN --mount=type=cache,target=/var/cache/apt \
 		# Build essentials & tools
 		build-essential \
 		curl \
-		wget \
 		ca-certificates \
 		pkg-config \
 		file \
@@ -38,11 +37,9 @@ RUN --mount=type=cache,target=/var/cache/apt \
 		nsis \
 		zip \
 		unzip \
-		libfuse2 \
 		squashfs-tools \
 		rpm \
 		libarchive-tools \
-		zstd \
 		git \
 		python3 \
 		# Cross-compiler for the other architecture
@@ -66,15 +63,11 @@ RUN --mount=type=cache,target=/var/cache/apt \
 		libpango1.0-dev:${CROSS_ARCH} \
 		libjavascriptcoregtk-4.1-dev:${CROSS_ARCH} \
 		# Cross-arch runtime lib (doesn't conflict)
-		libwebkit2gtk-4.1-0:${CROSS_ARCH}
-
-# Extract conflicting cross-arch packages manually.
-# These packages (or their transitive deps) have Conflicts: on cross-arch,
-# so apt can't co-install both architectures. We download and extract them
-# (headers, .pc files, .so symlinks) without dpkg registration.
-RUN --mount=type=cache,target=/var/cache/apt \
-	--mount=type=cache,target=/var/lib/apt/lists \
-	CROSS_ARCH=$(cat /etc/cross-arch) && \
+		libwebkit2gtk-4.1-0:${CROSS_ARCH} && \
+	# Extract conflicting cross-arch packages manually.
+	# These packages (or their transitive deps) have Conflicts: on cross-arch,
+	# so apt can't co-install both architectures. We download and extract them
+	# (headers, .pc files, .so symlinks) without dpkg registration.
 	cd /tmp && \
 	apt-get download \
 		libwebkit2gtk-4.1-dev:${CROSS_ARCH} \
@@ -82,7 +75,15 @@ RUN --mount=type=cache,target=/var/cache/apt \
 		libayatana-appindicator3-1:${CROSS_ARCH} \
 		libsoup-3.0-dev:${CROSS_ARCH} && \
 	for deb in *.deb; do dpkg-deb -x "$deb" /; done && \
-	rm -f /tmp/*.deb
+	rm -f /tmp/*.deb && \
+	# Strip Requires.private from cross-arch .pc files.
+	# pkgconf validates private deps even for dynamic linking; those transitive
+	# -dev packages (sqlite3, libpsl, krb5, nghttp2, …) are not installed for
+	# the cross arch. Private deps are only needed for static linking (--static).
+	if [ "$CROSS_ARCH" = "arm64" ]; then CROSS_MULTIARCH="aarch64-linux-gnu"; \
+	else CROSS_MULTIARCH="x86_64-linux-gnu"; fi && \
+	sed -i 's/^Requires\.private:.*$/Requires.private:/' \
+		/usr/lib/${CROSS_MULTIARCH}/pkgconfig/*.pc 2>/dev/null || true
 
 # Install Rust with both Linux targets
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
