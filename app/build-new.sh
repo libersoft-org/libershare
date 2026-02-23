@@ -749,10 +749,6 @@ docker_inner_build() {
 	BUILD_OS="$INNER_OS"
 	BUILD_ARCH="$INNER_ARCH"
 
-	echo "========================================"
-	echo "Building: OS=$BUILD_OS ARCH=$BUILD_ARCH"
-	echo "========================================"
-
 	# Determine Rust target triple
 	RUST_TARGET=""
 	BUN_TARGET=""
@@ -978,6 +974,11 @@ mkdir -p "$SCRIPT_DIR/build/release/bundle"
 
 # ── Iterate over OS × target combinations ──
 
+_build_ok=""
+_build_fail=""
+_build_count=0
+_fail_count=0
+
 for os in $OS_LIST; do
 	# Expand target 'all' per-OS
 	_eff_targets="$TARGET_LIST"
@@ -1006,7 +1007,7 @@ for os in $OS_LIST; do
 			done
 		fi
 
-		print_box "Building: OS: $os  ARCH: $target"
+		print_box "Building: OS=$os  ARCH=$target"
 		echo ""
 
 		# Compose --format args for inner script
@@ -1015,11 +1016,19 @@ for os in $OS_LIST; do
 			INNER_FORMAT_ARGS="--format $FORMAT_LIST"
 		fi
 
+		_build_count=$((_build_count + 1))
+		_build_start=$(date +%s)
+
+		set +e
 		if [ "$os" = "macos" ]; then
 			# macOS: native build (no Docker)
-			INNER_OS="$os"
-			INNER_ARCH="$target"
-			docker_inner_build
+			(
+				set -e
+				INNER_OS="$os"
+				INNER_ARCH="$target"
+				docker_inner_build
+			)
+			_rc=$?
 		else
 			# Linux/Windows: build inside Docker (cross-compilation via linkers)
 			# --init: tini as PID 1 forwards signals to the entire process group
@@ -1034,18 +1043,51 @@ for os in $OS_LIST; do
 				-e APPIMAGE_EXTRACT_AND_RUN=1 \
 				"$DOCKER_IMAGE" \
 				sh -c "cd /workspace/app && exec ./build-new.sh --docker-inner --inner-os $os --inner-arch $target --compress $COMPRESS_LEVEL $INNER_FORMAT_ARGS"
+			_rc=$?
 		fi
+		set -e
 
+		_build_elapsed=$(elapsed_since $_build_start)
 		echo ""
-		print_box "Done: OS: $os  ARCH: $target"
+		if [ "$_rc" = "0" ]; then
+			print_box "Done: OS=$os  ARCH=$target  (${_build_elapsed})"
+			_build_ok="${_build_ok} ${os}/${target}"
+		else
+			print_box "FAILED: OS=$os  ARCH=$target  (${_build_elapsed})"
+			_build_fail="${_build_fail} ${os}/${target}"
+			_fail_count=$((_fail_count + 1))
+		fi
 	done
 done
 
 echo ""
-print_box "All builds complete!"
+_ok_count=$((_build_count - _fail_count))
+
+# ── Build Summary ──
+print_box "Build Summary: ${_ok_count} passed, ${_fail_count} failed (${_build_count} total)"
+echo ""
+
+if [ -n "$_build_ok" ]; then
+	echo "  Succeeded:"
+	for _s in $_build_ok; do
+		echo "    + $_s"
+	done
+fi
+
+if [ -n "$_build_fail" ]; then
+	echo "  FAILED:"
+	for _f in $_build_fail; do
+		echo "    - $_f"
+	done
+fi
+
+echo ""
 echo "Output: $SCRIPT_DIR/build/release/bundle/"
 if [ "$(uname -s)" = "Linux" ]; then
 	ls -lah --color "$SCRIPT_DIR/build/release/bundle/"
 else
 	ls -lah "$SCRIPT_DIR/build/release/bundle/"
 fi
+
+[ "$_fail_count" -gt 0 ] && exit 1
+exit 0
