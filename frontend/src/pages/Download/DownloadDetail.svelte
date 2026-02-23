@@ -48,6 +48,12 @@
 		scrollToElement(itemElements, selectedFileIndex);
 	}
 
+	function handleFileClick(index: number) {
+		activateArea(listAreaID);
+		selectedFileIndex = index;
+		scrollToSelected();
+	}
+
 	function scrollToInfo(): void {
 		if (infoElement) infoElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
@@ -295,7 +301,7 @@
 					</Header>
 					<div class="items">
 						{#each download.files as file, index (file.id)}
-							<div bind:this={itemElements[index]}>
+							<div bind:this={itemElements[index]} onclick={() => handleFileClick(index)} onkeydown={e => e.key === 'Enter' && handleFileClick(index)} role="row" tabindex="-1">
 								<DownloadFile name={file.name} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} odd={index % 2 === 0} animated={download.status === 'downloading' && file.progress < 100} />
 							</div>
 						{/each}

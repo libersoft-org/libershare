@@ -27,6 +27,14 @@
 	let isSelected = $derived(buttonsGroup ? buttonsGroup.isSelected(index) : selected);
 	let isPressed = $derived(buttonsGroup ? buttonsGroup.isPressed(index) : pressed);
 
+	function handleClick() {
+		if (buttonsGroup && index >= 0) {
+			buttonsGroup.handleClick(index);
+		} else if (onConfirm) {
+			onConfirm();
+		}
+	}
+
 	onMount(() => {
 		if (buttonsGroup) {
 			const { index: idx, unregister } = buttonsGroup.register({ onConfirm });
@@ -82,9 +90,18 @@
 		box-shadow: 0 0 1.5vh var(--color-success);
 		opacity: 1;
 	}
+
+	.button:hover:not(.selected) {
+		opacity: 0.85;
+		border-color: var(--secondary-foreground);
+	}
+
+	.button:active:not(.selected) {
+		transform: scale(0.97);
+	}
 </style>
 
-<div class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:active class:disabled class:icon-only={icon && !label} class:icon-top={iconPosition === 'top'} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}">
+<div class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:active class:disabled class:icon-only={icon && !label} class:icon-top={iconPosition === 'top'} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}" onclick={handleClick} onkeydown={e => e.key === 'Enter' && handleClick()} role="button" tabindex="-1">
 	{#if icon}
 		<Icon img={icon} {alt} size={iconSize ?? fontSize} padding="0" colorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} {noColorFilter} {badgeIcon} badgeColorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} />
 	{/if}

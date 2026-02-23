@@ -5,11 +5,14 @@ export const cursorVisible = writable(true);
 class MouseManager {
 	private hideTimeout: ReturnType<typeof setTimeout> | null = null;
 	private mouseMoveHandler: (() => void) | null = null;
+	private clickHandler: (() => void) | null = null;
 
 	start(): void {
 		if (this.mouseMoveHandler) return;
 		this.mouseMoveHandler = () => this.handleMouseMove();
+		this.clickHandler = () => this.handleClick();
 		document.addEventListener('mousemove', this.mouseMoveHandler);
+		document.addEventListener('mousedown', this.clickHandler);
 		this.scheduleHide();
 	}
 
@@ -18,11 +21,20 @@ class MouseManager {
 			document.removeEventListener('mousemove', this.mouseMoveHandler);
 			this.mouseMoveHandler = null;
 		}
+		if (this.clickHandler) {
+			document.removeEventListener('mousedown', this.clickHandler);
+			this.clickHandler = null;
+		}
 		this.clearHideTimeout();
 		cursorVisible.set(true);
 	}
 
 	private handleMouseMove(): void {
+		cursorVisible.set(true);
+		this.scheduleHide();
+	}
+
+	private handleClick(): void {
 		cursorVisible.set(true);
 		this.scheduleHide();
 	}

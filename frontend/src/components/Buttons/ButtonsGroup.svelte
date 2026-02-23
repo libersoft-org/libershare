@@ -3,6 +3,7 @@
 		register: (button: { onConfirm?: (() => void) | undefined }) => { index: number; unregister: () => void };
 		isSelected: (index: number) => boolean;
 		isPressed: (index: number) => boolean;
+		handleClick: (index: number) => void;
 	};
 </script>
 
@@ -40,6 +41,12 @@
 		},
 		isSelected(index) { return active && selectedIndex === index; },
 		isPressed(index) { return active && selectedIndex === index && isAPressed; },
+		handleClick(index: number) {
+			activateArea(areaID);
+			selectedIndex = index;
+			updateTranslateX();
+			buttons[index]?.onConfirm?.();
+		},
 	});
 
 	function updateTranslateX(): void {

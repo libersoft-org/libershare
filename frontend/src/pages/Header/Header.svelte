@@ -97,7 +97,7 @@
 </style>
 
 <div class="header">
-	<Button icon="/img/back.svg" alt="Back" selected={active && selectedIndex === 0} padding="1vh" width="5vh" height="5vh" borderRadius="50%" />
+	<Button icon="/img/back.svg" alt="Back" selected={active && selectedIndex === 0} padding="1vh" width="5vh" height="5vh" borderRadius="50%" onConfirm={() => onBack?.()} />
 	<div class="title">{productName}</div>
 	<div class="spacer"></div>
 	<div class="debug-hint">

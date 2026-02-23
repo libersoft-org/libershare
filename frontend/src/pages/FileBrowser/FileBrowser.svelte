@@ -145,6 +145,30 @@
 		scrollToElement(itemElements, selectedIndex);
 	}
 
+	function handleItemClick(index: number) {
+		activateArea(listAreaID);
+		selectedIndex = index;
+		showActions = false;
+		scrollToSelected();
+		const item = items[index];
+		if (item && (item.type === 'folder' || item.type === 'drive')) navigateInto(item);
+		else if (item?.type === 'file') {
+			if (saveFileName !== undefined) {
+				internalSaveFileName = item.name;
+				onSaveFileNameChange?.(item.name);
+				handleSave();
+			} else if (filesOnly) onSelect?.(item.path);
+			else openActions();
+		}
+	}
+
+	function handleFolderActionClick(index: number) {
+		activateArea(`${areaID}-folder-actions`);
+		selectedFolderActionIndex = index;
+		const action = folderActions[index];
+		if (action) handleFolderAction(action.id);
+	}
+
 	async function navigateInto(item: StorageItemData): Promise<void> {
 		if (item.type === 'folder' || item.type === 'drive') {
 			// If navigating to "..", select the folder we came from
@@ -1003,7 +1027,7 @@
 			{:else}
 				<div class="folder-actions">
 					{#each folderActions as action, index (action.id)}
-						<Button label={action.label} icon={action.icon} selected={folderActionsActive && selectedFolderActionIndex === index} onConfirm={() => handleFolderAction(action.id)} />
+						<Button label={action.label} icon={action.icon} selected={folderActionsActive && selectedFolderActionIndex === index} onConfirm={() => handleFolderActionClick(index)} />
 					{/each}
 				</div>
 			{/if}
@@ -1031,13 +1055,13 @@
 								</div>
 							{:else if error}
 								{#each items as item, index (item.id)}
-									<div bind:this={itemElements[index]}>
+									<div bind:this={itemElements[index]} onclick={() => handleItemClick(index)} onkeydown={e => e.key === 'Enter' && handleItemClick(index)} role="row" tabindex="-1">
 										<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
 									</div>
 								{/each}
 							{:else}
 								{#each items as item, index (item.id)}
-									<div bind:this={itemElements[index]}>
+									<div bind:this={itemElements[index]} onclick={() => handleItemClick(index)} onkeydown={e => e.key === 'Enter' && handleItemClick(index)} role="row" tabindex="-1">
 										<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
 									</div>
 								{/each}
@@ -1048,14 +1072,14 @@
 				{#if showActions && selectedItem?.type === 'file'}
 					<div class="actions">
 						{#each fileActions as action, index (action.id)}
-							<Button icon={action.icon} label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => handleAction(action.id)} />
+							<Button icon={action.icon} label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => { activateArea(`${areaID}-actions`); selectedActionIndex = index; handleAction(action.id); }} />
 						{/each}
 					</div>
 				{/if}
 				{#if showFilterPanel}
 					<div class="actions">
 						{#each filterActions as action, index (action.id)}
-							<Button icon={action.icon} label={action.label} selected={filterActive && selectedFilterIndex === index} onConfirm={() => handleFilterAction(action.id)} />
+							<Button icon={action.icon} label={action.label} selected={filterActive && selectedFilterIndex === index} onConfirm={() => { activateArea(`${areaID}-filter`); selectedFilterIndex = index; handleFilterAction(action.id); }} />
 						{/each}
 					</div>
 				{/if}
