@@ -955,6 +955,22 @@ if [ "$NEEDS_DOCKER" = "1" ]; then
 		echo "Error: Docker is required for Linux/Windows builds. Install Docker first."
 		exit 1
 	fi
+	# On macOS, Docker Desktop must be running (docker daemon isn't a system service)
+	if [ "$HOST_OS" = "macos" ] && ! docker info >/dev/null 2>&1; then
+		echo "Docker daemon is not running. Starting Docker Desktop..."
+		open -a Docker
+		# Wait up to 60 seconds for Docker to become responsive
+		_docker_wait=0
+		while ! docker info >/dev/null 2>&1; do
+			_docker_wait=$((_docker_wait + 1))
+			if [ "$_docker_wait" -ge 60 ]; then
+				echo "Error: Docker Desktop did not start within 60 seconds."
+				exit 1
+			fi
+			sleep 1
+		done
+		echo "Docker Desktop is ready."
+	fi
 fi
 
 # ── Build Docker image (single image, runs natively on host arch) ──
