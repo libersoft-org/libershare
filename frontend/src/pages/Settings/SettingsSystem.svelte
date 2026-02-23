@@ -166,21 +166,21 @@
 
 <div class="settings">
 	<div class="container">
-		<div bind:this={rowElements[0]}>
+		<div bind:this={rowElements[0]} onmouseenter={() => { activateArea(areaID); selectedIndex = 0; }}>
 			<SwitchRow label={$t('settings.system.autoStartOnBoot') + ':'} checked={autoStart} selected={active && getActualIndex(selectedIndex) === FIELD_AUTO_START} onToggle={toggleAutoStart} />
 		</div>
-		<div bind:this={rowElements[1]}>
+		<div bind:this={rowElements[1]} onmouseenter={() => { activateArea(areaID); selectedIndex = 1; }}>
 			<SwitchRow label={$t('settings.system.showInTray') + ':'} checked={trayVisible} selected={active && getActualIndex(selectedIndex) === FIELD_SHOW_IN_TRAY} onToggle={toggleShowInTray} />
 		</div>
 		{#if trayVisible}
-			<div bind:this={rowElements[2]}>
+			<div bind:this={rowElements[2]} onmouseenter={() => { activateArea(areaID); selectedIndex = 2; }}>
 				<SwitchRow label={$t('settings.system.minimizeToTray') + ':'} checked={trayMinimize} selected={active && getActualIndex(selectedIndex) === FIELD_MINIMIZE_TO_TRAY} onToggle={toggleMinimizeToTray} />
 			</div>
 		{/if}
-		<div bind:this={rowElements[trayVisible ? 3 : 2]}>
+		<div bind:this={rowElements[trayVisible ? 3 : 2]} onmouseenter={() => { activateArea(areaID); selectedIndex = trayVisible ? 3 : 2; }}>
 			<SwitchRow label={$t('settings.system.defaultMinifyJson') + ':'} checked={minifyJson} selected={active && getActualIndex(selectedIndex) === FIELD_MINIFY_JSON} onToggle={toggleMinifyJson} />
 		</div>
-		<div bind:this={rowElements[trayVisible ? 4 : 3]}>
+		<div bind:this={rowElements[trayVisible ? 4 : 3]} onmouseenter={() => { activateArea(areaID); selectedIndex = trayVisible ? 4 : 3; }}>
 			<SwitchRow label={$t('settings.system.defaultCompressGzip') + ':'} checked={compressGzip} selected={active && getActualIndex(selectedIndex) === FIELD_COMPRESS_GZIP} onToggle={toggleCompressGzip} />
 		</div>
 	</div>

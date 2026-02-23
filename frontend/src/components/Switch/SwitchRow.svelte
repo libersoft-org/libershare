@@ -26,7 +26,7 @@
 </style>
 
 <Row {selected} {disabled}>
-	<div class="switch-row">
+	<div class="switch-row" onclick={() => { onToggle?.(); onConfirm?.(); }} onkeydown={e => e.key === 'Enter' && (onToggle?.(), onConfirm?.())} role="switch" aria-checked={checked} tabindex="-1">
 		<span class="label">{label}</span>
 		<Switch {checked} {selected} {disabled} />
 	</div>

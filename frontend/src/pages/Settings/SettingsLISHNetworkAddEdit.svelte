@@ -222,21 +222,21 @@
 
 <div class="add-edit">
 	<div class="container">
-		<div bind:this={rowElements[0]}>
+		<div bind:this={rowElements[0]} onmouseenter={() => { activateArea(areaID); selectedIndex = 0; }}>
 			<Input bind:this={nameInput} bind:value={name} label={$t('common.name')} selected={active && selectedIndex === 0} />
 		</div>
-		<div bind:this={rowElements[1]}>
+		<div bind:this={rowElements[1]} onmouseenter={() => { activateArea(areaID); selectedIndex = 1; }}>
 			<Input bind:this={descriptionInput} bind:value={description} label={$t('common.description')} multiline rows={4} selected={active && selectedIndex === 1} />
 		</div>
 		{#if !isEditing}
-			<div bind:this={rowElements[2]}>
+			<div bind:this={rowElements[2]} onmouseenter={() => { activateArea(areaID); selectedIndex = 2; }}>
 				<SwitchRow label={$t('settings.lishNetwork.autoGenerate') + ':'} checked={autoGenerateID} selected={active && selectedIndex === 2} onConfirm={toggleAutoGenerateID} />
 			</div>
-			<div bind:this={rowElements[3]}>
+			<div bind:this={rowElements[3]} onmouseenter={() => { activateArea(areaID); selectedIndex = 3; }}>
 				<Input bind:this={networkIDInput} bind:value={networkID} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 3} disabled={autoGenerateID} />
 			</div>
 		{:else}
-			<div bind:this={rowElements[2]}>
+			<div bind:this={rowElements[2]} onmouseenter={() => { activateArea(areaID); selectedIndex = 2; }}>
 				<Input bind:this={networkIDInput} bind:value={networkID} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 2} />
 			</div>
 		{/if}
@@ -245,7 +245,7 @@
 			{@const isLast = index === bootstrapServers.length - 1}
 			{@const hasRemove = bootstrapServers.length > 1}
 			{@const isRowSelected = active && selectedIndex === bootstrapOffset + index}
-			<div class="bootstrap-row" bind:this={rowElements[bootstrapOffset + index]}>
+			<div class="bootstrap-row" bind:this={rowElements[bootstrapOffset + index]} onmouseenter={() => { activateArea(areaID); selectedIndex = bootstrapOffset + index; }}>
 				<Input bind:this={bootstrapInputs[index]} bind:value={bootstrapServers[index]} placeholder="address:port" selected={isRowSelected && selectedColumn === 0} flex />
 				{#if hasRemove}
 					<Button icon="/img/minus.svg" selected={isRowSelected && selectedColumn === 1} onConfirm={() => removeBootstrapServer(index)} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />

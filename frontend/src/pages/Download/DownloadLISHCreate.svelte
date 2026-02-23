@@ -446,39 +446,39 @@
 	<div class="create">
 		<div class="container">
 			<!-- Name (optional) -->
-			<div bind:this={rowElements[FIELD_NAME]}>
+			<div bind:this={rowElements[FIELD_NAME]} onmouseenter={() => { activateArea(areaID); selectedIndex = FIELD_NAME; }}>
 				<Input bind:this={nameInput} value={name} onchange={handleNameChange} label={`${$t('common.name')} (${$t('common.optional')})`} selected={active && selectedIndex === FIELD_NAME} />
 			</div>
 			<!-- Description (optional) -->
-			<div bind:this={rowElements[FIELD_DESCRIPTION]}>
+			<div bind:this={rowElements[FIELD_DESCRIPTION]} onmouseenter={() => { activateArea(areaID); selectedIndex = FIELD_DESCRIPTION; }}>
 				<Input bind:this={descriptionInput} bind:value={description} label={`${$t('common.description')} (${$t('common.optional')})`} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
 			</div>
 			<!-- Data Path (required) -->
-			<div class="row" bind:this={rowElements[FIELD_INPUT]}>
+			<div class="row" bind:this={rowElements[FIELD_INPUT]} onmouseenter={() => { activateArea(areaID); selectedIndex = FIELD_INPUT; }}>
 				<Input bind:this={inputPathInput} bind:value={dataPath} label={$t('downloads.lishCreate.dataPath')} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={openInputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<!-- Save to File Switch -->
-			<div bind:this={rowElements[FIELD_SAVE_TO_FILE]}>
+			<div bind:this={rowElements[FIELD_SAVE_TO_FILE]} onmouseenter={() => { activateArea(areaID); selectedIndex = FIELD_SAVE_TO_FILE; }}>
 				<SwitchRow label={$t('downloads.lishCreate.saveToFile') + ':'} checked={saveToFile} selected={active && selectedIndex === FIELD_SAVE_TO_FILE} onConfirm={() => (saveToFile = !saveToFile)} />
 			</div>
 			{#if saveToFile}
 				<!-- LISH File Path (optional) -->
-				<div class="row" bind:this={rowElements[FIELD_LISH_FILE]}>
+				<div class="row" bind:this={rowElements[FIELD_LISH_FILE]} onmouseenter={() => { activateArea(areaID); selectedIndex = FIELD_LISH_FILE; }}>
 					<Input bind:this={lishFileInput} bind:value={lishFile} label={`${$t('downloads.lishCreate.lishFile')} (${$t('common.optional')})`} selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 0} flex onchange={() => (lishFileManuallyEdited = true)} />
 					<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 1} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
 				<!-- Minify JSON Switch -->
-				<div bind:this={rowElements[FIELD_MINIFY_JSON]}>
+				<div bind:this={rowElements[FIELD_MINIFY_JSON]} onmouseenter={() => { activateArea(areaID); selectedIndex = FIELD_MINIFY_JSON; }}>
 					<SwitchRow label={$t('settings.lishNetwork.minifyJson') + ':'} checked={minifyJson} selected={active && selectedIndex === FIELD_MINIFY_JSON} onConfirm={() => (minifyJson = !minifyJson)} />
 				</div>
 				<!-- Compress Gzip Switch -->
-				<div bind:this={rowElements[FIELD_COMPRESS_GZIP]}>
+				<div bind:this={rowElements[FIELD_COMPRESS_GZIP]} onmouseenter={() => { activateArea(areaID); selectedIndex = FIELD_COMPRESS_GZIP; }}>
 					<SwitchRow label={$t('settings.lishNetwork.compressGzip') + ':'} checked={compressGzip} selected={active && selectedIndex === FIELD_COMPRESS_GZIP} onConfirm={handleCompressGzipToggle} />
 				</div>
 			{/if}
 			<!-- Add to Sharing Switch -->
-			<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>
+			<div bind:this={rowElements[FIELD_ADD_TO_SHARING]} onmouseenter={() => { activateArea(areaID); selectedIndex = FIELD_ADD_TO_SHARING; }}>
 				<SwitchRow label={$t('downloads.lishImport.autoStartSharing') + ':'} checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
 			</div>
 			<!-- Advanced Settings Toggle -->
