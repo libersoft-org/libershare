@@ -8,15 +8,21 @@
 
 while [ $# -gt 0 ]; do
 	case "$1" in
-		--privkey) export VITE_SSL_KEY="$2"; shift 2 ;;
-		--pubkey)  export VITE_SSL_CERT="$2"; shift 2 ;;
-		*)
-			if [ -z "$VITE_BACKEND_URL" ]; then
-				export VITE_BACKEND_URL="$1"
-				echo "Using custom backend: $VITE_BACKEND_URL"
-			fi
-			shift
-			;;
+	--privkey)
+		export VITE_SSL_KEY="$2"
+		shift 2
+		;;
+	--pubkey)
+		export VITE_SSL_CERT="$2"
+		shift 2
+		;;
+	*)
+		if [ -z "$VITE_BACKEND_URL" ]; then
+			export VITE_BACKEND_URL="$1"
+			echo "Using custom backend: $VITE_BACKEND_URL"
+		fi
+		shift
+		;;
 	esac
 done
 
