@@ -167,7 +167,7 @@
 			</Header>
 			<div class="items">
 				{#each downloads as download, index (download.id)}
-					<div bind:this={itemElements[index]} onclick={() => handleDownloadClick(index)} onkeydown={e => e.key === 'Enter' && handleDownloadClick(index)} role="row" tabindex="-1">
+					<div bind:this={itemElements[index]} onclick={() => handleDownloadClick(index)} onmouseenter={() => { activateArea(areaID); selectedIndex = index; }} onkeydown={e => e.key === 'Enter' && handleDownloadClick(index)} role="row" tabindex="-1">
 						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} selected={active && selectedIndex === index} isLast={index === downloads.length - 1} odd={index % 2 === 0} />
 					</div>
 				{/each}

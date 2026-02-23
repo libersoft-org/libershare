@@ -1055,13 +1055,13 @@
 								</div>
 							{:else if error}
 								{#each items as item, index (item.id)}
-									<div bind:this={itemElements[index]} onclick={() => handleItemClick(index)} onkeydown={e => e.key === 'Enter' && handleItemClick(index)} role="row" tabindex="-1">
+									<div bind:this={itemElements[index]} onclick={() => handleItemClick(index)} onmouseenter={() => { activateArea(listAreaID); selectedIndex = index; }} onkeydown={e => e.key === 'Enter' && handleItemClick(index)} role="row" tabindex="-1">
 										<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
 									</div>
 								{/each}
 							{:else}
 								{#each items as item, index (item.id)}
-									<div bind:this={itemElements[index]} onclick={() => handleItemClick(index)} onkeydown={e => e.key === 'Enter' && handleItemClick(index)} role="row" tabindex="-1">
+									<div bind:this={itemElements[index]} onclick={() => handleItemClick(index)} onmouseenter={() => { activateArea(listAreaID); selectedIndex = index; }} onkeydown={e => e.key === 'Enter' && handleItemClick(index)} role="row" tabindex="-1">
 										<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
 									</div>
 								{/each}
