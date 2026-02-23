@@ -38,37 +38,57 @@ cd libershare
 
 ### a) Native application
 
-The native application bundles the frontend and backend into a single installable application for various platforms.
+The native application bundles the frontend and backend into a single installable application. The build system uses Docker for Linux/Windows cross-compilation and can target multiple OS/architecture combinations from a single host. macOS builds require a macOS host (Docker cannot be used due to Apple SDK licensing).
+
+#### Prerequisites
 
 **On Linux (Debian / Ubuntu):**
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-cargo install tauri-cli --version "^2"
-apt -y install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev librsvg2-bin imagemagick libfuse2 patchelf zip jq
+apt -y install docker.io
+systemctl enable --now docker
 cd app
 ```
-
-- To create a .deb package: `./build.sh --deb`
-- To create an .rpm package: `./build.sh --rpm`
-- To create an AppImage: `./build.sh --appimage`
-- To create a portable .zip: `./build.sh --zip`
-- All at once: `./build.sh --deb --rpm --appimage --zip`
 
 **On macOS:**
 
 ```sh
+brew install --cask docker
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
-cargo install tauri-cli --version "^2"
+cargo binstall tauri-cli --no-confirm
+curl -fsSL https://bun.sh/install | bash
 brew install librsvg imagemagick jq
 cd app
 ```
 
-- To create a .dmg installer: `./build.sh --dmg`
-- To create a portable .zip: `./build.sh --zip`
-- Both: `./build.sh --dmg --zip`
+**On Windows:**
+
+Download and install:
+
+- [**Docker Desktop**](https://www.docker.com/products/docker-desktop/) (needed only if you want to build Linux packages from Windows)
+- [**Rust**](https://rustup.rs/) (includes cargo and MSVC build tools)
+- [**ImageMagick**](https://imagemagick.org/script/download.php#windows) (add to PATH)
+- [**Microsoft Visual Studio C++ Build Tools**](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+
+Then install Tauri CLI:
+
+```bat
+cargo binstall tauri-cli --no-confirm
+cd app
+```
+
+#### Building
+
+The build script handles everything: generating icons, building the frontend, compiling the backend, building the Tauri app, and packaging.
+
+Run `./build.sh --help` or `build.bat --help` for full usage details.
+
+**On Linux / macOS:**
+
+```sh
+./build.sh [--os OS...] [--target ARCH...] [--format FMT...] [--compress LEVEL]
+```
 
 > **IMPORTANT NOTE:** macOS Gatekeeper blocks unsigned/non-notarized apps downloaded from the internet with a **"is damaged and can't be opened"** error. After downloading the DMG or ZIP, run this command in Terminal before opening the app:
 >
@@ -84,50 +104,34 @@ cd app
 
 **On Windows:**
 
-Download and install:
-
-- [**Rust**](https://rustup.rs/)
-- [**ImageMagick**](https://imagemagick.org/script/download.php#windows)
-- [**Microsoft Visual Studio C++ Build Tools**](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-- [**WebView2**](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (included in Windows 10/11 by default)
-
-Add **ImageMagick** to PATH. For example:
-
-```powershell
-[Environment]::SetEnvironmentVariable("PATH", "C:\Program Files\ImageMagick;" + [Environment]::GetEnvironmentVariable("PATH", "User"), "User")
-```
-
-Then in a command line:
-
 ```bat
-cargo install tauri-cli --version "^2"
-cd app
+build.bat [--os OS...] [--target ARCH...] [--format FMT...] [--compress LEVEL]
 ```
 
-- To create an MSI installer: `build.bat /msi`
-- To create an EXE installer (NSIS): `build.bat /nsis`
-- To create a portable .zip: `build.bat /zip`
-- All at once: `build.bat /msi /nsis /zip`
+The NSIS installer (.exe) includes a language selector dialog, license agreement, and installation directory selection. The MSI installer provides standard Windows Installer experience. The .zip contains portable binaries (no installation needed).
 
-**Additional information**
+#### Build compatibility matrix
 
-The build script will:
+| Target                     | Host: Linux | Host: Windows | Host: macOS |
+| -------------------------- | :---------: | :-----------: | :---------: |
+| **Linux x86_64**           | ✅ Docker   | ✅ Docker     | ✅ Docker   |
+| **Linux aarch64**          | ✅ Docker   | ✅ Docker     | ✅ Docker   |
+| **Windows x86_64**         | ✅ Docker¹  | ✅ Native     | ✅ Docker¹  |
+| **Windows aarch64**        | ✅ Docker¹  | ✅ Native     | ✅ Docker¹  |
+| **macOS x86_64**           | ❌          | ❌            | ✅ Native   |
+| **macOS aarch64**          | ❌          | ❌            | ✅ Native   |
+| **macOS universal**        | ❌          | ❌            | ✅ Native   |
+| **Format: deb**            | ✅          | ✅            | ✅          |
+| **Format: rpm**            | ✅          | ✅            | ✅          |
+| **Format: pacman**         | ✅          | ✅            | ✅          |
+| **Format: appimage**       | ✅          | ✅            | ✅          |
+| **Format: nsis** (Win)     | ✅          | ✅            | ✅          |
+| **Format: msi** (Win)      | ❌²         | ✅            | ❌²         |
+| **Format: dmg** (macOS)    | ❌          | ❌            | ✅          |
+| **Format: zip**            | ✅          | ✅            | ✅          |
 
-1. Install dependencies and build the frontend (static HTML/JS/CSS)
-2. Install dependencies and compile the backend into a standalone binary
-3. Build the Tauri app with the backend as a sidecar
-
-The resulting binary will be in `app/build/release/`. Packages (if created) will be in `app/build/release/bundle/`.
-
-Available bundle formats per platform:
-
-| Platform | Formats |
-|----------|---------|
-| **Linux** | `.deb`, `.rpm`, `.AppImage`, `.zip` |
-| **macOS** | `.dmg`, `.zip` |
-| **Windows** | `.msi`, `.exe` (NSIS), `.zip` |
-
-The NSIS installer (.exe) includes a language selector dialog, license agreement, and installation directory selection. The MSI installer provides standard Windows Installer experience. The .zip contains the portable binaries (no installation needed).
+¹ Windows cross-compilation via `cargo-xwin` inside Docker
+² MSI requires WiX toolset (Windows-only)
 
 #### Running the native app
 
@@ -136,19 +140,18 @@ The NSIS installer (.exe) includes a language selector dialog, license agreement
 
 **How to launch debug mode:**
 
-| Platform | Bundle | How to launch |
-|----------|--------|---------------|
-| **Windows** | NSIS installer | Start Menu → "LiberShare - debug" shortcut (also on desktop) |
-| **Windows** | MSI installer | Start Menu → "LiberShare - debug" shortcut (also on desktop) |
-| **Windows** | ZIP | Run `Debug.bat` |
-| **Windows** | Command line | `LiberShare.exe /debug` |
-| **Linux** | DEB / RPM / AppImage | App menu → "LiberShare - debug" |
-| **Linux** | ZIP | Run `./debug.sh` |
-| **Linux** | Terminal | `./libershare --debug` |
-| **macOS** | ZIP | Run `./debug.sh` |
-| **macOS** | Terminal.app | `open LiberShare.app --args --debug` |
+| Platform    | Bundle               | How to launch                                                |
+| ----------- | -------------------- | ------------------------------------------------------------ |
+| **Windows** | NSIS / MSI installer | Start Menu → "LiberShare - debug" shortcut (also on desktop) |
+| **Windows** | ZIP                  | Run `Debug.bat`                                              |
+| **Windows** | Command line         | `LiberShare.exe /debug`                                      |
+| **Linux**   | DEB / RPM / AppImage | App menu → "LiberShare - debug"                              |
+| **Linux**   | ZIP                  | Run `./debug.sh`                                             |
+| **Linux**   | Terminal             | `./libershare --debug`                                       |
+| **macOS**   | ZIP                  | Run `./debug.sh`                                             |
+| **macOS**   | Terminal             | `open LiberShare.app --args --debug`                         |
 
-### b) Build and run backend and frontend only (not bundled together in a native app):
+### b) Run backend and frontend only (not bundled together in a native app):
 
 #### Backend:
 
@@ -198,6 +201,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -days $(( ( $(date -j -f "%Y/%m/%d" "2
 $days = [math]::Floor(([datetime]"2999-01-01" - (Get-Date)).TotalDays)
 openssl req -x509 -newkey rsa:2048 -nodes -days $days -subj "/" -keyout server.key -out server.crt
 ```
+
 ... then run frontend in developer mode that connects to a specified port on backend:
 
 **On Linux / macOS:**

@@ -65,7 +65,7 @@ Options:
 
   --format    Output package formats (combinable):
                 Linux:   deb, rpm, pacman, appimage, zip
-                Windows: nsis, zip
+                Windows: nsis, msi, zip
                 macOS:   dmg, zip
                 all (= all valid formats for chosen OS)
               Default: all (= all valid formats for chosen OS)
@@ -243,9 +243,9 @@ validate_target_values() {
 validate_format_values() {
 	for f in $FORMAT_LIST; do
 		case "$f" in
-		deb | rpm | pacman | appimage | nsis | dmg | zip | all) ;;
+		deb | rpm | pacman | appimage | nsis | msi | dmg | zip | all) ;;
 		*)
-			echo "Error: Unknown format '$f'. Valid: deb, rpm, pacman, appimage, nsis, dmg, zip, all"
+			echo "Error: Unknown format '$f'. Valid: deb, rpm, pacman, appimage, nsis, msi, dmg, zip, all"
 			exit 1
 			;;
 		esac
@@ -272,8 +272,9 @@ validate_format_for_os() {
 	windows)
 		case "$_vffo_fmt" in
 		nsis) return 0 ;;
+		msi) return 0 ;;
 		*)
-			echo "Error: Format '$_vffo_fmt' is not valid for OS 'windows'. Valid: nsis, zip"
+			echo "Error: Format '$_vffo_fmt' is not valid for OS 'windows'. Valid: nsis, msi, zip"
 			exit 1
 			;;
 		esac
@@ -295,7 +296,14 @@ expand_formats_for_os() {
 	_effo_os="$1"
 	case "$_effo_os" in
 	linux) echo "deb rpm pacman appimage zip" ;;
-	windows) echo "nsis zip" ;;
+	windows)
+		# MSI requires WiX (Windows-only); skip in Docker
+		if [ "$DOCKER_INNER" = "1" ]; then
+			echo "nsis zip"
+		else
+			echo "nsis msi zip"
+		fi
+		;;
 	macos) echo "dmg zip" ;;
 	esac
 }
@@ -712,14 +720,15 @@ build_linux_packages() {
 }
 
 move_bundles() {
-	# Move and rename Tauri-produced bundles (nsis, dmg)
-	for dir in nsis dmg; do
+	# Move and rename Tauri-produced bundles (nsis, msi, dmg)
+	for dir in nsis msi dmg; do
 		if [ -d "$BUILD_OUTPUT_DIR/$dir" ]; then
 			for f in "$BUILD_OUTPUT_DIR/$dir"/*; do
 				[ -f "$f" ] || continue
 				EXT="${f##*.}"
 				case "$EXT" in
 				exe) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}_setup.exe" ;;
+				msi) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.msi" ;;
 				dmg) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.dmg" ;;
 				*) NEWNAME="$(basename "$f")" ;;
 				esac
@@ -843,7 +852,16 @@ docker_inner_build() {
 				pacman) MAKE_PACMAN=1 ;;
 				appimage) MAKE_APPIMAGE=1 ;;
 				esac ;;
-			windows) case "$fmt" in nsis) TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $fmt" ;; esac ;;
+			windows) case "$fmt" in
+				nsis) TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $fmt" ;;
+				msi)
+					if [ "$DOCKER_INNER" = "1" ]; then
+						echo "Warning: MSI format requires WiX (Windows-only) - skipping in Docker"
+					else
+						TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $fmt"
+					fi
+					;;
+				esac ;;
 			macos) case "$fmt" in dmg) TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $fmt" ;; esac ;;
 			esac
 			;;

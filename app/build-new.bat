@@ -26,23 +26,28 @@ echo               Default: all
 echo               'all' on Windows = x86_64 + aarch64
 echo.
 echo   --format    Output package formats (combinable):
-echo                 Windows: nsis, zip
-echo               Default: all (= nsis + zip)
+echo                 Linux:   deb, rpm, pacman, appimage, zip
+echo                 Windows: nsis, msi, zip
+echo               Default: all (= all valid formats for chosen OS)
 echo.
-echo   --compress  Compression level for ZIP (default: mid):
-echo                 min  = Fastest
-echo                 mid  = Optimal  (PowerShell default)
-echo                 max  = SmallestSize
+echo   --compress  Compression level (default: mid):
+echo                 min  = fast   (xz -1e / ZIP Fastest)
+echo                 mid  = balanced (xz -6e / ZIP Optimal)
+echo                 max  = smallest (xz -9e / ZIP SmallestSize)
+echo.
+echo   --docker-rebuild  Force rebuild of the Docker image
 echo.
 echo   --help      Show this help
 echo.
 echo Examples:
 echo   %~nx0
 echo   %~nx0 --os windows --target x86_64 --format nsis zip
-echo   %~nx0 --os windows --target all --format all
+echo   %~nx0 --os linux windows --target all --format all
+echo   %~nx0 --os linux --target x86_64 --format deb rpm
 echo.
 echo Notes:
-echo   - Only Windows builds run natively. Linux/macOS are skipped on Windows.
+echo   - Linux builds run inside Docker (requires Docker Desktop).
+echo   - macOS builds require a macOS host (skipped on Windows).
 echo   - 'all' cannot be combined with other values in the same flag.
 echo   - aarch64 builds require Bun ARM64 support (Bun 1.4.0+).
 exit /b 0
@@ -55,6 +60,7 @@ set "OS_LIST="
 set "TARGET_LIST="
 set "FORMAT_LIST="
 set "COMPRESS_LEVEL=mid"
+set "DOCKER_REBUILD=0"
 set "MODE="
 
 :parse_args
@@ -63,6 +69,7 @@ if "%~1"=="--os" ( set "MODE=os" & shift & goto :parse_args )
 if "%~1"=="--target" ( set "MODE=target" & shift & goto :parse_args )
 if "%~1"=="--format" ( set "MODE=format" & shift & goto :parse_args )
 if "%~1"=="--compress" ( set "MODE=compress" & shift & goto :parse_args )
+if "%~1"=="--docker-rebuild" ( set "DOCKER_REBUILD=1" & shift & goto :parse_args )
 if "%~1"=="--help" goto :show_help
 if "%~1"=="-h" goto :show_help
 
@@ -125,8 +132,8 @@ for %%t in (!TARGET_LIST!) do (
 
 rem Validate format values
 for %%f in (!FORMAT_LIST!) do (
-    if not "%%f"=="nsis" if not "%%f"=="zip" if not "%%f"=="all" (
-        echo Error: Unknown format '%%f'. Valid: nsis, zip, all
+    if not "%%f"=="deb" if not "%%f"=="rpm" if not "%%f"=="pacman" if not "%%f"=="appimage" if not "%%f"=="nsis" if not "%%f"=="msi" if not "%%f"=="zip" if not "%%f"=="all" (
+        echo Error: Unknown format '%%f'. Valid: deb, rpm, pacman, appimage, nsis, msi, zip, all
         exit /b 1
     )
 )
@@ -141,8 +148,32 @@ rem ─── Expand 'all' ─────────────────�
 set "_TMP=!OS_LIST!"
 echo !_TMP! | findstr /i "all" >nul && set "OS_LIST=linux windows macos"
 
-set "_TMP=!FORMAT_LIST!"
-echo !_TMP! | findstr /i "all" >nul && set "FORMAT_LIST=nsis zip"
+rem FORMAT_LIST 'all' is expanded per-OS in the build loop
+
+rem ─── Validate formats for each requested OS ──────────────────────────────
+
+if not "!FORMAT_LIST!"=="all" (
+    for %%o in (!OS_LIST!) do (
+        for %%f in (!FORMAT_LIST!) do (
+            set "_fmt_ok=0"
+            if "%%f"=="zip" set "_fmt_ok=1"
+            if "%%o"=="linux" (
+                if "%%f"=="deb" set "_fmt_ok=1"
+                if "%%f"=="rpm" set "_fmt_ok=1"
+                if "%%f"=="pacman" set "_fmt_ok=1"
+                if "%%f"=="appimage" set "_fmt_ok=1"
+            )
+            if "%%o"=="windows" (
+                if "%%f"=="nsis" set "_fmt_ok=1"
+                if "%%f"=="msi" set "_fmt_ok=1"
+            )
+            if "!_fmt_ok!"=="0" (
+                echo Error: Format '%%f' is not valid for OS '%%o'
+                exit /b 1
+            )
+        )
+    )
+)
 
 rem ─── Detect host ──────────────────────────────────────────────────────────
 
@@ -155,10 +186,41 @@ if "%PROCESSOR_ARCHITECTURE%"=="AMD64" ( set "HOST_ARCH=x86_64" ) else (
 
 rem ─── Check prerequisites ─────────────────────────────────────────────────
 
-where cargo >nul 2>&1 || ( echo Error: cargo/Rust is required. Install from https://rustup.rs & exit /b 1 )
-where bun >nul 2>&1 || ( echo Error: bun is required. Install from https://bun.sh & exit /b 1 )
-where magick >nul 2>&1 || ( echo Error: ImageMagick is required. Install from https://imagemagick.org & exit /b 1 )
-cargo tauri --version >nul 2>&1 || ( echo Error: cargo-tauri is required. Run: cargo install tauri-cli & exit /b 1 )
+rem Check if Windows builds are requested
+set "_NEEDS_WINDOWS=0"
+for %%o in (!OS_LIST!) do if "%%o"=="windows" set "_NEEDS_WINDOWS=1"
+if "!_NEEDS_WINDOWS!"=="1" (
+    where cargo >nul 2>&1 || ( echo Error: cargo/Rust is required. Install from https://rustup.rs & exit /b 1 )
+    where bun >nul 2>&1 || ( echo Error: bun is required. Install from https://bun.sh & exit /b 1 )
+    where magick >nul 2>&1 || ( echo Error: ImageMagick is required. Install from https://imagemagick.org & exit /b 1 )
+    cargo tauri --version >nul 2>&1 || ( echo Error: cargo-tauri is required. Run: cargo install tauri-cli & exit /b 1 )
+)
+
+rem Check if Docker is needed (for Linux builds)
+set "_NEEDS_DOCKER=0"
+for %%o in (!OS_LIST!) do if "%%o"=="linux" set "_NEEDS_DOCKER=1"
+if "!_NEEDS_DOCKER!"=="1" (
+    where docker >nul 2>&1 || ( echo Error: Docker Desktop is required for Linux builds. & exit /b 1 )
+)
+
+rem ─── Build Docker image ──────────────────────────────────────────────────
+
+set "DOCKER_IMAGE=libershare-builder"
+if "!_NEEDS_DOCKER!"=="1" (
+    if "!DOCKER_REBUILD!"=="1" (
+        echo === Rebuilding Docker image ^(--docker-rebuild^) ===
+        docker rmi "!DOCKER_IMAGE!" 2>nul
+        docker build --network=host --no-cache -t "!DOCKER_IMAGE!" "%SCRIPT_DIR%"
+    ) else (
+        docker image inspect "!DOCKER_IMAGE!" >nul 2>&1 && (
+            echo === Docker image !DOCKER_IMAGE! already exists ^(cached^) ===
+        ) || (
+            echo === Building Docker image ===
+            echo     ^(first build may take a long time^)
+            docker build --network=host -t "!DOCKER_IMAGE!" "%SCRIPT_DIR%"
+        )
+    )
+)
 
 rem ─── Clean old output ────────────────────────────────────────────────────
 
@@ -173,6 +235,8 @@ set "_build_ok="
 set "_build_fail="
 set "_build_count=0"
 set "_fail_count=0"
+set "_total_start=0"
+call :get_timestamp _total_start
 
 rem ─── Iterate over OS × target combinations ───────────────────────────────
 
@@ -183,13 +247,13 @@ for %%o in (!OS_LIST!) do (
     set "_eff_targets=!TARGET_LIST!"
     echo !_eff_targets! | findstr /i "all" >nul && set "_eff_targets=x86_64 aarch64"
 
-    rem Skip non-Windows OS
-    if not "!_os!"=="windows" (
+    rem Skip macOS on Windows host
+    if "!_os!"=="macos" (
         for %%t in (!_eff_targets!) do (
             set /a _build_count+=1
             set /a _fail_count+=1
             set "_build_fail=!_build_fail! !_os!/%%t"
-            call :print_box "SKIPPED: OS=!_os!  ARCH=%%t  (requires !_os! host)"
+            call :print_box "SKIPPED: OS=!_os!  ARCH=%%t  (requires macOS host)"
         )
     ) else (
         for %%t in (!_eff_targets!) do (
@@ -203,7 +267,11 @@ for %%o in (!OS_LIST!) do (
             set "_build_start=0"
             call :get_timestamp _build_start
 
-            call :do_build "!_os!" "!_target!"
+            if "!_os!"=="linux" (
+                call :do_docker_build "!_os!" "!_target!"
+            ) else (
+                call :do_build "!_os!" "!_target!"
+            )
             set "_rc=!errorlevel!"
 
             set "_elapsed=0"
@@ -211,10 +279,10 @@ for %%o in (!OS_LIST!) do (
 
             echo.
             if "!_rc!"=="0" (
-                call :print_box "Done: OS=!_os!  ARCH=!_target!  (!_elapsed!)"
+                call :print_box "Done: OS=!_os!  ARCH=!_target!  ^(!_elapsed!^)"
                 set "_build_ok=!_build_ok! !_os!/!_target!"
             ) else (
-                call :print_box "FAILED: OS=!_os!  ARCH=!_target!  (!_elapsed!)"
+                call :print_box "FAILED: OS=!_os!  ARCH=!_target!  ^(!_elapsed!^)"
                 set "_build_fail=!_build_fail! !_os!/!_target!"
                 set /a _fail_count+=1
             )
@@ -241,7 +309,18 @@ if not "!_build_fail!"=="" (
 
 echo.
 echo Output: %SCRIPT_DIR%build\release\bundle\
-dir /b "%SCRIPT_DIR%build\release\bundle\" 2>nul
+for /f "usebackq" %%f in (`dir /b "%SCRIPT_DIR%build\release\bundle\" 2^>nul`) do (
+    for %%F in ("%SCRIPT_DIR%build\release\bundle\%%f") do (
+        set "_fsize=%%~zF"
+        set /a "_fmb=!_fsize! / 1048576"
+        echo   %%f  ^(!_fmb! MB^)
+    )
+)
+
+set "_total_elapsed=0"
+call :elapsed_since !_total_start! _total_elapsed
+echo.
+echo Total time: !_total_elapsed!
 
 if !_fail_count! gtr 0 exit /b 1
 exit /b 0
@@ -249,6 +328,32 @@ exit /b 0
 rem ═══════════════════════════════════════════════════════════════════════════
 rem  Functions
 rem ═══════════════════════════════════════════════════════════════════════════
+
+rem ─── do_docker_build <os> <arch> ───────────────────────────────────────────
+rem Runs the build inside Docker (for Linux targets)
+
+:do_docker_build
+setlocal EnableDelayedExpansion
+set "_os=%~1"
+set "_arch=%~2"
+
+rem Compose --format args for inner script
+set "INNER_FORMAT_ARGS="
+if not "!FORMAT_LIST!"=="" set "INNER_FORMAT_ARGS=--format !FORMAT_LIST!"
+
+rem --init: tini as PID 1 forwards signals to the entire process group
+rem exec: build script replaces sh, becoming tini's direct child
+docker run --rm --init ^
+    -v "%ROOT_DIR%:/workspace" ^
+    -v "%USERPROFILE%\.cargo\registry:/root/.cargo/registry" ^
+    -v "%USERPROFILE%\.cargo\git:/root/.cargo/git" ^
+    -v "%USERPROFILE%\.cache\cargo-xwin:/root/.cache/cargo-xwin" ^
+    -v "%USERPROFILE%\.bun\install\cache:/root/.bun/install/cache" ^
+    -e APPIMAGE_EXTRACT_AND_RUN=1 ^
+    "!DOCKER_IMAGE!" ^
+    sh -c "cd /workspace/app && exec ./build.sh --docker-inner --inner-os !_os! --inner-arch !_arch! --compress !COMPRESS_LEVEL! !INNER_FORMAT_ARGS!"
+set "_rc=!errorlevel!"
+endlocal & exit /b %_rc%
 
 rem ─── do_build <os> <arch> ─────────────────────────────────────────────────
 
@@ -284,22 +389,39 @@ call :build_backend "!BUN_TARGET!" || exit /b 1
 rem ── Sync product info ──
 call :sync_product_info || exit /b 1
 
+rem ── Expand format 'all' for Windows ──
+set "_FMT=!FORMAT_LIST!"
+echo !_FMT! | findstr /i "all" >nul && set "_FMT=nsis msi zip"
+
 rem ── Build Tauri ──
 set "MAKE_NSIS=0"
+set "MAKE_MSI=0"
 set "MAKE_ZIP=0"
-for %%f in (!FORMAT_LIST!) do (
+for %%f in (!_FMT!) do (
     if "%%f"=="nsis" set "MAKE_NSIS=1"
+    if "%%f"=="msi" set "MAKE_MSI=1"
     if "%%f"=="zip" set "MAKE_ZIP=1"
 )
 
 set "BUNDLE_ARGS="
-if "!MAKE_NSIS!"=="1" set "BUNDLE_ARGS=--bundles nsis"
+if "!MAKE_NSIS!"=="1" if "!MAKE_MSI!"=="1" (
+    set "BUNDLE_ARGS=--bundles nsis msi"
+) else if "!MAKE_NSIS!"=="1" (
+    set "BUNDLE_ARGS=--bundles nsis"
+) else if "!MAKE_MSI!"=="1" (
+    set "BUNDLE_ARGS=--bundles msi"
+)
 
-echo === Building Tauri app (target: !RUST_TARGET!) ===
+set "_tauri_start=0"
+call :get_timestamp _tauri_start
+echo === Building Tauri app ^(target: !RUST_TARGET!^) ===
 cd /d "%SCRIPT_DIR%"
+set "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=%NUMBER_OF_PROCESSORS%"
 cargo tauri build --target !RUST_TARGET! --config tauri.windows.conf.json !BUNDLE_ARGS!
 if errorlevel 1 ( endlocal & exit /b 1 )
-echo === Tauri done ===
+set "_tauri_elapsed=0"
+call :elapsed_since !_tauri_start! _tauri_elapsed
+echo === Tauri done ^(!_tauri_elapsed!^) ===
 
 rem ── Output directory ──
 set "BUILD_RELEASE_DIR=%SCRIPT_DIR%build\!RUST_TARGET!\release"
@@ -316,20 +438,18 @@ if "!MAKE_NSIS!"=="1" (
     )
 )
 
-rem ── Create ZIP ──
-if "!MAKE_ZIP!"=="1" (
-    echo === Creating ZIP bundle ===
-    set "ZIP_STAGING=!FINAL_DIR!\zip_staging"
-    if exist "!ZIP_STAGING!" rmdir /s /q "!ZIP_STAGING!"
-    mkdir "!ZIP_STAGING!"
-    copy /y "!BUILD_RELEASE_DIR!\!PRODUCT_NAME!.exe" "!ZIP_STAGING!\!PRODUCT_NAME!.exe" >nul
-    copy /y "%ROOT_DIR%\backend\build\lish-backend.exe" "!ZIP_STAGING!\lish-backend.exe" >nul
-    rem Create Debug.bat from template
-    powershell -Command "(Get-Content '%SCRIPT_DIR%bundle-scripts\Debug.bat' -Raw) -replace '\{\{product_name\}\}','!PRODUCT_NAME!' | Set-Content '!ZIP_STAGING!\Debug.bat' -NoNewline"
-    powershell -Command "Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip' -CompressionLevel !ZIP_PS_LEVEL! -Force"
-    rmdir /s /q "!ZIP_STAGING!"
-    echo === ZIP done ===
+rem ── Move MSI installer ──
+if "!MAKE_MSI!"=="1" (
+    if exist "!BUILD_OUTPUT_DIR!\msi\*.msi" (
+        for %%f in ("!BUILD_OUTPUT_DIR!\msi\*.msi") do (
+            move /y "%%f" "!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.msi" >nul
+        )
+        rmdir /q "!BUILD_OUTPUT_DIR!\msi" 2>nul
+    )
 )
+
+rem ── Create ZIP ──
+if "!MAKE_ZIP!"=="1" call :build_zip
 
 echo === Build complete: OS=!_os! ARCH=!_arch! ===
 endlocal
@@ -339,9 +459,11 @@ rem ─── build_icons ──────────────────
 
 :build_icons
 if exist "%SCRIPT_DIR%icons\icon.png" (
-    echo === Icons already built (cached) ===
+    echo === Icons already built ^(cached^) ===
     exit /b 0
 )
+set "_icons_start=0"
+call :get_timestamp _icons_start
 echo === Generating icons ===
 set "SVG=%ROOT_DIR%\frontend\static\favicon.svg"
 if not exist "%SCRIPT_DIR%icons" mkdir "%SCRIPT_DIR%icons"
@@ -351,21 +473,27 @@ magick -background none -size 256x256 "%SVG%" "%SCRIPT_DIR%icons\128x128@2x.png"
 magick -background none -size 256x256 "%SVG%" "%SCRIPT_DIR%icons\icon.png"
 magick -background none -size 256x256 "%SVG%" "%SCRIPT_DIR%icons\icon.ico"
 if errorlevel 1 exit /b 1
-echo === Icons done ===
+set "_icons_elapsed=0"
+call :elapsed_since !_icons_start! _icons_elapsed
+echo === Icons done ^(!_icons_elapsed!^) ===
 exit /b 0
 
 rem ─── build_frontend ──────────────────────────────────────────────────────
 
 :build_frontend
 if exist "%ROOT_DIR%\frontend\build\index.html" (
-    echo === Frontend already built (cached) ===
+    echo === Frontend already built ^(cached^) ===
     exit /b 0
 )
+set "_fe_start=0"
+call :get_timestamp _fe_start
 echo === Building frontend ===
 cd /d "%ROOT_DIR%\frontend"
 call build.bat
 if errorlevel 1 exit /b 1
-echo === Frontend done ===
+set "_fe_elapsed=0"
+call :elapsed_since !_fe_start! _fe_elapsed
+echo === Frontend done ^(!_fe_elapsed!^) ===
 exit /b 0
 
 rem ─── build_backend <bun_target> ──────────────────────────────────────────
@@ -373,11 +501,19 @@ rem ─── build_backend <bun_target> ─────────────
 :build_backend
 setlocal EnableDelayedExpansion
 set "BUN_TGT=%~1"
-echo === Building backend (target: !BUN_TGT!) ===
+set "_be_start=0"
+call :get_timestamp _be_start
+echo === Building backend ^(target: !BUN_TGT!^) ===
 cd /d "%ROOT_DIR%\backend"
-call build.bat
+if exist build rmdir /s /q build
+bun i --frozen-lockfile
 if errorlevel 1 ( endlocal & exit /b 1 )
-echo === Backend done ===
+mkdir build
+bun build --compile --target !BUN_TGT! src/app.ts --outfile build\lish-backend.exe
+if errorlevel 1 ( endlocal & exit /b 1 )
+set "_be_elapsed=0"
+call :elapsed_since !_be_start! _be_elapsed
+echo === Backend done ^(!_be_elapsed!^) ===
 endlocal
 exit /b 0
 
@@ -395,6 +531,22 @@ rem Sync Cargo.toml version
 bun -e "var f=require('fs'),v=process.argv[1],t=process.argv[2],s=f.readFileSync(t,'utf8').replace(/^version = \"[^\"]*\"/m,'version = \"'+v+'\"');f.writeFileSync(t,s)" "!PRODUCT_VERSION!" "%SCRIPT_DIR%Cargo.toml"
 rem Sync wix-fragment-debug.wxs
 bun -e "var f=require('fs'),n=process.argv[1],s=f.readFileSync(process.argv[2],'utf8').replace(/\{\{product_name\}\}/g,n);f.writeFileSync(process.argv[2],s)" "!PRODUCT_NAME!" "%SCRIPT_DIR%wix-fragment-debug.wxs"
+exit /b 0
+
+rem ─── build_zip ────────────────────────────────────────────────────────────
+
+:build_zip
+echo === Creating ZIP bundle ===
+set "ZIP_STAGING=!FINAL_DIR!\zip_staging"
+if exist "!ZIP_STAGING!" rmdir /s /q "!ZIP_STAGING!"
+mkdir "!ZIP_STAGING!"
+copy /y "!BUILD_RELEASE_DIR!\!PRODUCT_NAME!.exe" "!ZIP_STAGING!\!PRODUCT_NAME!.exe" >nul
+copy /y "%ROOT_DIR%\backend\build\lish-backend.exe" "!ZIP_STAGING!\lish-backend.exe" >nul
+rem Create Debug.bat from template
+powershell -Command "(Get-Content '%SCRIPT_DIR%bundle-scripts\Debug.bat' -Raw) -replace '\{\{product_name\}\}','!PRODUCT_NAME!' | Set-Content '!ZIP_STAGING!\Debug.bat' -NoNewline"
+powershell -Command "Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip' -CompressionLevel !ZIP_PS_LEVEL! -Force"
+rmdir /s /q "!ZIP_STAGING!"
+echo === ZIP done ===
 exit /b 0
 
 rem ─── check_all_combined <flag_name> <values...> ────────────────────────
