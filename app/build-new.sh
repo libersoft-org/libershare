@@ -5,7 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Clean up on exit/crash/interrupt
+_INTERRUPTED=0
 cleanup() {
+	trap '' INT TERM EXIT  # Prevent re-entry
+	if [ "$_INTERRUPTED" = "1" ]; then
+		kill 0 2>/dev/null || true  # Signal the entire process group
+		wait 2>/dev/null || true
+	fi
 	[ -n "$LDD_WRAPPER_DIR" ] && rm -rf "$LDD_WRAPPER_DIR" 2>/dev/null
 	# Restore modified files if originals exist
 	[ -f "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" ] && mv "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" "$SCRIPT_DIR/desktop-entry-debug.desktop" 2>/dev/null
@@ -14,8 +20,22 @@ cleanup() {
 	true
 }
 trap cleanup EXIT
+trap '_INTERRUPTED=1; echo ""; echo "Interrupted."; exit 130' INT TERM
 
-# Format elapsed seconds as human-readable string
+# Print a box around a message
+print_box() {
+	_pb_msg="$1"
+	_pb_len=${#_pb_msg}
+	_pb_border=""
+	_pb_i=0
+	while [ "$_pb_i" -lt "$_pb_len" ]; do
+		_pb_border="${_pb_border}═"
+		_pb_i=$((_pb_i + 1))
+	done
+	echo "╔═${_pb_border}═╗"
+	echo "║ ${_pb_msg} ║"
+	echo "╚═${_pb_border}═╝"
+}
 elapsed_since() {
 	_el=$(($(date +%s) - $1))
 	if [ "$_el" -ge 60 ]; then
@@ -28,8 +48,9 @@ elapsed_since() {
 # ─── Help ───────────────────────────────────────────────────────────────────
 
 show_help() {
-	cat <<'EOF'
-Usage: ./build.sh [--os OS...] [--target ARCH...] [--format FMT...] [--compress LEVEL] [--help]
+	_help_name="$(basename "$0")"
+	cat <<EOF
+Usage: ./$_help_name [--os OS...] [--target ARCH...] [--format FMT...] [--compress LEVEL] [--help]
 
 Options:
   --os        Operating systems to build for (combinable):
@@ -61,12 +82,12 @@ Options:
   --help      Show this help
 
 Examples:
-  ./build.sh
-  ./build.sh --os linux --target x86_64 --format deb rpm
-  ./build.sh --os linux --target all --format all
-  ./build.sh --os linux windows --target x86_64 --format all
-  ./build.sh --os windows --target x86_64 --format nsis zip
-  ./build.sh --os macos --target universal --format dmg zip
+  ./$_help_name
+  ./$_help_name --os linux --target x86_64 --format deb rpm
+  ./$_help_name --os linux --target all --format all
+  ./$_help_name --os linux windows --target x86_64 --format all
+  ./$_help_name --os windows --target x86_64 --format nsis zip
+  ./$_help_name --os macos --target universal --format dmg zip
 
 Notes:
   - Linux and Windows builds run inside Docker (requires Docker).
@@ -117,9 +138,9 @@ done
 # ─── Resolve compression level ──────────────────────────────────────────────
 
 case "$COMPRESS_LEVEL" in
-	min) XZ_FLAGS="-1e -T0"; RPM_PAYLOAD="w1.xzdio" ;;
-	mid) XZ_FLAGS="-6e -T0"; RPM_PAYLOAD="w6.xzdio" ;;
-	max) XZ_FLAGS="-9e -T0"; RPM_PAYLOAD="w9.xzdio" ;;
+	min) XZ_FLAGS="-1e -T0"; RPM_PAYLOAD="w1.xzdio"; ZIP_LEVEL="-1" ;;
+	mid) XZ_FLAGS="-6e -T0"; RPM_PAYLOAD="w6.xzdio"; ZIP_LEVEL="-6" ;;
+	max) XZ_FLAGS="-9e -T0"; RPM_PAYLOAD="w9.xzdio"; ZIP_LEVEL="-9" ;;
 	*)   echo "Error: Invalid --compress value '$COMPRESS_LEVEL' (use: min, mid, max)"; exit 1 ;;
 esac
 
@@ -228,9 +249,13 @@ expand_formats_for_os() {
 # Each function operates on globals set by docker_inner_build()
 
 build_icons() {
+	ICONS_DIR="$SCRIPT_DIR/icons"
+	if [ -f "$ICONS_DIR/icon.png" ]; then
+		echo "=== Icons already built (cached) ==="
+		return 0
+	fi
 	_t=$(date +%s)
 	echo "=== Generating icons ==="
-	ICONS_DIR="$SCRIPT_DIR/icons"
 	SVG="$ROOT_DIR/frontend/static/favicon.svg"
 	mkdir -p "$ICONS_DIR"
 	CONVERT="convert"
@@ -255,6 +280,10 @@ build_icons() {
 }
 
 build_frontend() {
+	if [ -f "$ROOT_DIR/frontend/build/index.html" ]; then
+		echo "=== Frontend already built (cached) ==="
+		return 0
+	fi
 	_t=$(date +%s)
 	echo "=== Building frontend ==="
 	cd "$ROOT_DIR/frontend"
@@ -295,13 +324,18 @@ sync_product_info() {
 	PRODUCT_NAME_LOWER=$(echo "$PRODUCT_NAME" | tr '[:upper:]' '[:lower:]')
 	echo "Product: $PRODUCT_NAME v$PRODUCT_VERSION ($PRODUCT_IDENTIFIER)"
 
-	jq --tab --arg name "$PRODUCT_NAME" --arg ver "$PRODUCT_VERSION" --arg id "$PRODUCT_IDENTIFIER" \
-		'.productName = $name | .mainBinaryName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
-		"$SCRIPT_DIR/tauri.conf.json" > "$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
+	# Config files only need patching once per container invocation
+	if [ "$_PRODUCT_INFO_SYNCED" != "1" ]; then
+		jq --tab --arg name "$PRODUCT_NAME" --arg ver "$PRODUCT_VERSION" --arg id "$PRODUCT_IDENTIFIER" \
+			'.productName = $name | .mainBinaryName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
+			"$SCRIPT_DIR/tauri.conf.json" > "$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
 
-	sed "s/^version = \"[^\"]*\"/version = \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/Cargo.toml" > "$SCRIPT_DIR/Cargo.toml.tmp" && mv "$SCRIPT_DIR/Cargo.toml.tmp" "$SCRIPT_DIR/Cargo.toml"
+		sed "s/^version = \"[^\"]*\"/version = \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/Cargo.toml" > "$SCRIPT_DIR/Cargo.toml.tmp" && mv "$SCRIPT_DIR/Cargo.toml.tmp" "$SCRIPT_DIR/Cargo.toml"
+		_PRODUCT_INFO_SYNCED=1
+	fi
 
-	if [ "$BUILD_OS" = "linux" ]; then
+	# OS-specific config patching (once per OS)
+	if [ "$BUILD_OS" = "linux" ] && [ "$_SYNCED_LINUX" != "1" ]; then
 		jq --tab --arg name "$PRODUCT_NAME_LOWER" \
 			'.productName = $name | .mainBinaryName = $name
 			| .bundle.linux.deb.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
@@ -314,11 +348,13 @@ sync_product_info() {
 
 		cp "$SCRIPT_DIR/desktop-entry.desktop" "$SCRIPT_DIR/desktop-entry.desktop.orig" 2>/dev/null || true
 		sed -i "s/%%product_name%%/$PRODUCT_NAME/g" "$SCRIPT_DIR/desktop-entry.desktop"
+		_SYNCED_LINUX=1
 	fi
 
-	if [ "$BUILD_OS" = "windows" ]; then
+	if [ "$BUILD_OS" = "windows" ] && [ "$_SYNCED_WINDOWS" != "1" ]; then
 		cp "$SCRIPT_DIR/wix-fragment-debug.wxs" "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" 2>/dev/null || true
 		sed -i "s/{{product_name}}/$PRODUCT_NAME/g" "$SCRIPT_DIR/wix-fragment-debug.wxs"
+		_SYNCED_WINDOWS=1
 	fi
 }
 
@@ -406,7 +442,7 @@ stage_zip() {
 	ZIP_STAGING=$(mktemp -d)
 	"$_sz_fn"
 	cd "$ZIP_STAGING"
-	zip -ry "$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.zip" .
+	zip $ZIP_LEVEL -ry "$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.zip" .
 	cd "$SCRIPT_DIR"
 	rm -rf "$ZIP_STAGING"
 }
@@ -469,6 +505,7 @@ SPEC_EOF
 	XZ_DEFAULTS="-T0" rpmbuild -bb --quiet \
 		--define "_topdir $WORK" \
 		--define "_binary_payload $RPM_PAYLOAD" \
+		--define "_buildhost build.local" \
 		--buildroot "$WORK/BUILDROOT" \
 		--target "$PKG_RPM_ARCH" \
 		"$WORK/SPECS/${PRODUCT_NAME_LOWER}.spec"
@@ -559,7 +596,7 @@ _stage_zip_macos() {
 	APP_BUNDLE="$BUILD_RELEASE_DIR/bundle/macos/${PRODUCT_NAME}.app"
 	if [ ! -d "$APP_BUNDLE" ]; then
 		echo "Building .app bundle for macOS ZIP..."
-		cargo tauri build --target "$RUST_TARGET" --bundles app
+		cargo tauri build --target "$RUST_TARGET" $PLATFORM_CONFIG --config '{"bundle":{"targets":["app"]}}'
 	fi
 	cp -r "$APP_BUNDLE" "$ZIP_STAGING/"
 	_copy_debug_script
@@ -631,12 +668,14 @@ move_bundles() {
 }
 
 build_zip() {
+	_t=$(date +%s)
 	echo "=== Creating ZIP bundle ==="
 	case "$BUILD_OS" in
 		linux)   stage_zip _stage_zip_linux ;;
 		windows) stage_zip _stage_zip_windows ;;
 		macos)   stage_zip _stage_zip_macos ;;
 	esac
+	echo "=== ZIP done ($(elapsed_since $_t)) ==="
 }
 
 # ─── Docker inner build ────────────────────────────────────────────────────
@@ -904,9 +943,7 @@ for os in $OS_LIST; do
 			done
 		fi
 
-		echo "╔══════════════════════════════════════════════════╗"
-		echo "║  Building: OS=$os  ARCH=$target"
-		echo "╚══════════════════════════════════════════════════╝"
+		print_box "Building: OS: $os  ARCH: $target"
 		echo ""
 
 		# Compose --format args for inner script
@@ -922,7 +959,9 @@ for os in $OS_LIST; do
 			docker_inner_build
 		else
 			# Linux/Windows: build inside Docker (cross-compilation via linkers)
-			docker run --rm \
+			# --init: tini as PID 1 forwards signals to the entire process group
+			# exec: build script replaces sh, becoming tini's direct child
+			docker run --rm --init \
 				--network=host \
 				-v "$ROOT_DIR:/workspace" \
 				-v "${HOME}/.cargo/registry:/root/.cargo/registry" \
@@ -931,18 +970,16 @@ for os in $OS_LIST; do
 				-v "${HOME}/.bun/install/cache:/root/.bun/install/cache" \
 				-e APPIMAGE_EXTRACT_AND_RUN=1 \
 				"$DOCKER_IMAGE" \
-				sh -c "cd /workspace/app && ./build-new.sh --docker-inner --inner-os $os --inner-arch $target --compress $COMPRESS_LEVEL $INNER_FORMAT_ARGS"
+				sh -c "cd /workspace/app && exec ./build-new.sh --docker-inner --inner-os $os --inner-arch $target --compress $COMPRESS_LEVEL $INNER_FORMAT_ARGS"
 		fi
 
 		echo ""
-		echo "=== Done: OS=$os ARCH=$target ==="
+		print_box "Done: OS: $os  ARCH: $target"
 	done
 done
 
 echo ""
-echo "╔══════════════════════════════════════════════════╗"
-echo "║  All builds complete!                           ║"
-echo "╚══════════════════════════════════════════════════╝"
+print_box "All builds complete!"
 echo "Output: $SCRIPT_DIR/build/release/bundle/"
 if [ "$(uname -s)" = "Linux" ]; then
 	ls -lah --color "$SCRIPT_DIR/build/release/bundle/"
