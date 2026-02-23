@@ -15,12 +15,16 @@ BUNDLE_ARGS=""
 MAKE_ZIP=0
 for arg in "$@"; do
 	case "$arg" in
-		--deb) BUNDLE_ARGS="$BUNDLE_ARGS --bundles deb" ;;
-		--rpm) BUNDLE_ARGS="$BUNDLE_ARGS --bundles rpm" ;;
-		--appimage) BUNDLE_ARGS="$BUNDLE_ARGS --bundles appimage" ;;
-		--dmg) BUNDLE_ARGS="$BUNDLE_ARGS --bundles dmg" ;;
-		--zip) MAKE_ZIP=1 ;;
-		*) echo "Unknown argument: $arg"; echo "Usage: ./build.sh [--deb] [--rpm] [--appimage] [--dmg] [--zip]"; exit 1 ;;
+	--deb) BUNDLE_ARGS="$BUNDLE_ARGS --bundles deb" ;;
+	--rpm) BUNDLE_ARGS="$BUNDLE_ARGS --bundles rpm" ;;
+	--appimage) BUNDLE_ARGS="$BUNDLE_ARGS --bundles appimage" ;;
+	--dmg) BUNDLE_ARGS="$BUNDLE_ARGS --bundles dmg" ;;
+	--zip) MAKE_ZIP=1 ;;
+	*)
+		echo "Unknown argument: $arg"
+		echo "Usage: ./build.sh [--deb] [--rpm] [--appimage] [--dmg] [--zip]"
+		exit 1
+		;;
 	esac
 done
 
@@ -85,7 +89,7 @@ echo "Product: $PRODUCT_NAME v$PRODUCT_VERSION ($PRODUCT_IDENTIFIER)"
 # Sync product info to tauri.conf.json
 jq --tab --arg name "$PRODUCT_NAME" --arg ver "$PRODUCT_VERSION" --arg id "$PRODUCT_IDENTIFIER" \
 	'.productName = $name | .mainBinaryName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
-	"$SCRIPT_DIR/tauri.conf.json" > "$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
+	"$SCRIPT_DIR/tauri.conf.json" >"$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
 
 # Sync version to Cargo.toml
 sed -i.bak "s/^version = \"[^\"]*\"/version = \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/Cargo.toml"
@@ -98,7 +102,7 @@ jq --tab --arg name "$PRODUCT_NAME_LOWER" \
 	| .bundle.linux.deb.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
 	| .bundle.linux.rpm.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
 	| .bundle.linux.appimage.files = {("usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}' \
-	"$SCRIPT_DIR/tauri.linux.conf.json" > "$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
+	"$SCRIPT_DIR/tauri.linux.conf.json" >"$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
 
 # Sync product name into desktop entries
 sed -i.bak "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" "$SCRIPT_DIR/desktop-entry-debug.desktop"
@@ -118,7 +122,7 @@ if [ "$(uname -s)" = "Linux" ]; then
 	# (exit code 1), linuxdeploy crashes. This wrapper returns "statically linked"
 	# on failure, telling linuxdeploy to skip dependency deployment for that binary.
 	LDD_WRAPPER_DIR=$(mktemp -d)
-	cat > "$LDD_WRAPPER_DIR/ldd" << 'LDDWRAPPER'
+	cat >"$LDD_WRAPPER_DIR/ldd" <<'LDDWRAPPER'
 #!/bin/sh
 output=$(/usr/bin/ldd "$@" 2>&1)
 rc=$?
@@ -188,8 +192,8 @@ fi
 VERSION="$PRODUCT_VERSION"
 ARCH=$(echo "$TARGET" | cut -d'-' -f1)
 case "$(uname -s)" in
-	Darwin) OS="macos" ;;
-	*) OS="linux" ;;
+Darwin) OS="macos" ;;
+*) OS="linux" ;;
 esac
 for dir in deb rpm appimage dmg; do
 	if [ -d "$SCRIPT_DIR/build/release/bundle/$dir" ]; then
@@ -199,11 +203,11 @@ for dir in deb rpm appimage dmg; do
 			BASENAME=$(basename "$f")
 			# Rename to include platform
 			case "$EXT" in
-				deb)     NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.deb" ;;
-				rpm)     NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.rpm" ;;
-				AppImage) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.AppImage" ;;
-				dmg)     NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.dmg" ;;
-				*)       NEWNAME="$BASENAME" ;;
+			deb) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.deb" ;;
+			rpm) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.rpm" ;;
+			AppImage) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.AppImage" ;;
+			dmg) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.dmg" ;;
+			*) NEWNAME="$BASENAME" ;;
 			esac
 			mv "$f" "$SCRIPT_DIR/build/release/bundle/$NEWNAME"
 			# Ensure AppImage is executable
@@ -218,33 +222,33 @@ if [ "$MAKE_ZIP" = "1" ]; then
 	echo "=== Creating ZIP bundle ==="
 	mkdir -p "$SCRIPT_DIR/build/release/bundle"
 	case "$(uname -s)" in
-		Darwin)
-			APP_PATH=$(find "$SCRIPT_DIR/build" -maxdepth 5 -name "${PRODUCT_NAME}.app" -type d | head -1)
-			if [ -z "$APP_PATH" ]; then
-				echo "Error: ${PRODUCT_NAME}.app not found in build directory"
-				exit 1
-			fi
-			APP_DIR=$(dirname "$APP_PATH")
-			# Add debug launch script next to the .app
-			sed "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" \
-				"$SCRIPT_DIR/bundle-scripts/debug.sh" > "$APP_DIR/debug.sh"
-			chmod +x "$APP_DIR/debug.sh"
-			cd "$APP_DIR"
-			zip -ry "$SCRIPT_DIR/build/release/bundle/${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.zip" \
-				"${PRODUCT_NAME}.app" "debug.sh"
-			rm -f "$APP_DIR/debug.sh"
-			;;
-		*)
-			ZIP_STAGING=$(mktemp -d)
-			cp "$SCRIPT_DIR/build/release/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/"
-			cp "$ROOT_DIR/backend/build/lish-backend" "$ZIP_STAGING/lish-backend"
-			sed "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" \
-				"$SCRIPT_DIR/bundle-scripts/debug.sh" > "$ZIP_STAGING/debug.sh"
-			chmod +x "$ZIP_STAGING/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/lish-backend" "$ZIP_STAGING/debug.sh"
-			cd "$ZIP_STAGING"
-			zip -ry "$SCRIPT_DIR/build/release/bundle/${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.zip" .
-			rm -rf "$ZIP_STAGING"
-			;;
+	Darwin)
+		APP_PATH=$(find "$SCRIPT_DIR/build" -maxdepth 5 -name "${PRODUCT_NAME}.app" -type d | head -1)
+		if [ -z "$APP_PATH" ]; then
+			echo "Error: ${PRODUCT_NAME}.app not found in build directory"
+			exit 1
+		fi
+		APP_DIR=$(dirname "$APP_PATH")
+		# Add debug launch script next to the .app
+		sed "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" \
+			"$SCRIPT_DIR/bundle-scripts/debug.sh" >"$APP_DIR/debug.sh"
+		chmod +x "$APP_DIR/debug.sh"
+		cd "$APP_DIR"
+		zip -ry "$SCRIPT_DIR/build/release/bundle/${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.zip" \
+			"${PRODUCT_NAME}.app" "debug.sh"
+		rm -f "$APP_DIR/debug.sh"
+		;;
+	*)
+		ZIP_STAGING=$(mktemp -d)
+		cp "$SCRIPT_DIR/build/release/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/"
+		cp "$ROOT_DIR/backend/build/lish-backend" "$ZIP_STAGING/lish-backend"
+		sed "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" \
+			"$SCRIPT_DIR/bundle-scripts/debug.sh" >"$ZIP_STAGING/debug.sh"
+		chmod +x "$ZIP_STAGING/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/lish-backend" "$ZIP_STAGING/debug.sh"
+		cd "$ZIP_STAGING"
+		zip -ry "$SCRIPT_DIR/build/release/bundle/${PRODUCT_NAME}_${VERSION}_${OS}_${ARCH}.zip" .
+		rm -rf "$ZIP_STAGING"
+		;;
 	esac
 fi
 

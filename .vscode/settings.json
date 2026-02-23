@@ -23,6 +23,11 @@
 		"editor.tabSize": 1,
 		"editor.insertSpaces": false
 	},
+	"[shellscript]": {
+		"editor.defaultFormatter": "mkhl.shfmt",
+		"editor.tabSize": 1,
+		"editor.insertSpaces": false
+	},
 	"files.associations": {
 		"*.svg": "xml"
 	}

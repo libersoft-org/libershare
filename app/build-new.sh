@@ -7,9 +7,9 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Clean up on exit/crash/interrupt
 _INTERRUPTED=0
 cleanup() {
-	trap '' INT TERM EXIT  # Prevent re-entry
+	trap '' INT TERM EXIT # Prevent re-entry
 	if [ "$_INTERRUPTED" = "1" ]; then
-		kill 0 2>/dev/null || true  # Signal the entire process group
+		kill 0 2>/dev/null || true # Signal the entire process group
 		wait 2>/dev/null || true
 	fi
 	[ -n "$LDD_WRAPPER_DIR" ] && rm -rf "$LDD_WRAPPER_DIR" 2>/dev/null
@@ -112,53 +112,90 @@ INNER_ARCH=""
 MODE=""
 for arg in "$@"; do
 	case "$arg" in
-		--os)       MODE="os" ;;
-		--target)   MODE="target" ;;
-		--format)   MODE="format" ;;
-		--help|-h)  show_help; exit 0 ;;
-		--compress) MODE="compress" ;;
-		--docker-inner) DOCKER_INNER=1; MODE="" ;;
-		--docker-rebuild) DOCKER_REBUILD=1; MODE="" ;;
-		--inner-os)  MODE="inner-os" ;;
-		--inner-arch) MODE="inner-arch" ;;
-		*)
-			case "$MODE" in
-				os)         OS_LIST="$OS_LIST $arg" ;;
-				target)     TARGET_LIST="$TARGET_LIST $arg" ;;
-				format)     FORMAT_LIST="$FORMAT_LIST $arg" ;;
-				compress)   COMPRESS_LEVEL="$arg"; MODE="" ;;
-				inner-os)   INNER_OS="$arg"; MODE="" ;;
-				inner-arch) INNER_ARCH="$arg"; MODE="" ;;
-				*)          echo "Error: Unknown argument '$arg'"; echo "Use --help for usage."; exit 1 ;;
-			esac
+	--os) MODE="os" ;;
+	--target) MODE="target" ;;
+	--format) MODE="format" ;;
+	--help | -h)
+		show_help
+		exit 0
+		;;
+	--compress) MODE="compress" ;;
+	--docker-inner)
+		DOCKER_INNER=1
+		MODE=""
+		;;
+	--docker-rebuild)
+		DOCKER_REBUILD=1
+		MODE=""
+		;;
+	--inner-os) MODE="inner-os" ;;
+	--inner-arch) MODE="inner-arch" ;;
+	*)
+		case "$MODE" in
+		os) OS_LIST="$OS_LIST $arg" ;;
+		target) TARGET_LIST="$TARGET_LIST $arg" ;;
+		format) FORMAT_LIST="$FORMAT_LIST $arg" ;;
+		compress)
+			COMPRESS_LEVEL="$arg"
+			MODE=""
 			;;
+		inner-os)
+			INNER_OS="$arg"
+			MODE=""
+			;;
+		inner-arch)
+			INNER_ARCH="$arg"
+			MODE=""
+			;;
+		*)
+			echo "Error: Unknown argument '$arg'"
+			echo "Use --help for usage."
+			exit 1
+			;;
+		esac
+		;;
 	esac
 done
 
 # ─── Resolve compression level ──────────────────────────────────────────────
 
 case "$COMPRESS_LEVEL" in
-	min) XZ_FLAGS="-1e -T0"; RPM_PAYLOAD="w1.xzdio"; ZIP_LEVEL="-1" ;;
-	mid) XZ_FLAGS="-6e -T0"; RPM_PAYLOAD="w6.xzdio"; ZIP_LEVEL="-6" ;;
-	max) XZ_FLAGS="-9e -T0"; RPM_PAYLOAD="w9.xzdio"; ZIP_LEVEL="-9" ;;
-	*)   echo "Error: Invalid --compress value '$COMPRESS_LEVEL' (use: min, mid, max)"; exit 1 ;;
+min)
+	XZ_FLAGS="-1e -T0"
+	RPM_PAYLOAD="w1.xzdio"
+	ZIP_LEVEL="-1"
+	;;
+mid)
+	XZ_FLAGS="-6e -T0"
+	RPM_PAYLOAD="w6.xzdio"
+	ZIP_LEVEL="-6"
+	;;
+max)
+	XZ_FLAGS="-9e -T0"
+	RPM_PAYLOAD="w9.xzdio"
+	ZIP_LEVEL="-9"
+	;;
+*)
+	echo "Error: Invalid --compress value '$COMPRESS_LEVEL' (use: min, mid, max)"
+	exit 1
+	;;
 esac
 
 # ─── Detect host platform ──────────────────────────────────────────────────
 
 detect_host_os() {
 	case "$(uname -s)" in
-		Linux)  echo "linux" ;;
-		Darwin) echo "macos" ;;
-		*)      echo "unknown" ;;
+	Linux) echo "linux" ;;
+	Darwin) echo "macos" ;;
+	*) echo "unknown" ;;
 	esac
 }
 
 detect_host_arch() {
 	case "$(uname -m)" in
-		x86_64|amd64)   echo "x86_64" ;;
-		aarch64|arm64)  echo "aarch64" ;;
-		*)              echo "unknown" ;;
+	x86_64 | amd64) echo "x86_64" ;;
+	aarch64 | arm64) echo "aarch64" ;;
+	*) echo "unknown" ;;
 	esac
 }
 
@@ -182,8 +219,11 @@ validate_no_all_combined() {
 validate_os_values() {
 	for os in $OS_LIST; do
 		case "$os" in
-			linux|windows|macos|all) ;;
-			*) echo "Error: Unknown OS '$os'. Valid: linux, windows, macos, all"; exit 1 ;;
+		linux | windows | macos | all) ;;
+		*)
+			echo "Error: Unknown OS '$os'. Valid: linux, windows, macos, all"
+			exit 1
+			;;
 		esac
 	done
 }
@@ -191,8 +231,11 @@ validate_os_values() {
 validate_target_values() {
 	for t in $TARGET_LIST; do
 		case "$t" in
-			x86_64|aarch64|universal|all) ;;
-			*) echo "Error: Unknown target '$t'. Valid: x86_64, aarch64, universal, all"; exit 1 ;;
+		x86_64 | aarch64 | universal | all) ;;
+		*)
+			echo "Error: Unknown target '$t'. Valid: x86_64, aarch64, universal, all"
+			exit 1
+			;;
 		esac
 	done
 }
@@ -200,8 +243,11 @@ validate_target_values() {
 validate_format_values() {
 	for f in $FORMAT_LIST; do
 		case "$f" in
-			deb|rpm|pacman|appimage|nsis|dmg|zip|all) ;;
-			*) echo "Error: Unknown format '$f'. Valid: deb, rpm, pacman, appimage, nsis, dmg, zip, all"; exit 1 ;;
+		deb | rpm | pacman | appimage | nsis | dmg | zip | all) ;;
+		*)
+			echo "Error: Unknown format '$f'. Valid: deb, rpm, pacman, appimage, nsis, dmg, zip, all"
+			exit 1
+			;;
 		esac
 	done
 }
@@ -211,27 +257,36 @@ validate_format_for_os() {
 	_vffo_os="$1"
 	_vffo_fmt="$2"
 	case "$_vffo_fmt" in
-		all|zip) return 0 ;;
+	all | zip) return 0 ;;
 	esac
 	case "$_vffo_os" in
-		linux)
-			case "$_vffo_fmt" in
-				deb|rpm|pacman|appimage) return 0 ;;
-				*) echo "Error: Format '$_vffo_fmt' is not valid for OS 'linux'. Valid: deb, rpm, pacman, appimage, zip"; exit 1 ;;
-			esac
+	linux)
+		case "$_vffo_fmt" in
+		deb | rpm | pacman | appimage) return 0 ;;
+		*)
+			echo "Error: Format '$_vffo_fmt' is not valid for OS 'linux'. Valid: deb, rpm, pacman, appimage, zip"
+			exit 1
 			;;
-		windows)
-			case "$_vffo_fmt" in
-				nsis) return 0 ;;
-				*) echo "Error: Format '$_vffo_fmt' is not valid for OS 'windows'. Valid: nsis, zip"; exit 1 ;;
-			esac
+		esac
+		;;
+	windows)
+		case "$_vffo_fmt" in
+		nsis) return 0 ;;
+		*)
+			echo "Error: Format '$_vffo_fmt' is not valid for OS 'windows'. Valid: nsis, zip"
+			exit 1
 			;;
-		macos)
-			case "$_vffo_fmt" in
-				dmg) return 0 ;;
-				*) echo "Error: Format '$_vffo_fmt' is not valid for OS 'macos'. Valid: dmg, zip"; exit 1 ;;
-			esac
+		esac
+		;;
+	macos)
+		case "$_vffo_fmt" in
+		dmg) return 0 ;;
+		*)
+			echo "Error: Format '$_vffo_fmt' is not valid for OS 'macos'. Valid: dmg, zip"
+			exit 1
 			;;
+		esac
+		;;
 	esac
 }
 
@@ -239,9 +294,9 @@ validate_format_for_os() {
 expand_formats_for_os() {
 	_effo_os="$1"
 	case "$_effo_os" in
-		linux)   echo "deb rpm pacman appimage zip" ;;
-		windows) echo "nsis zip" ;;
-		macos)   echo "dmg zip" ;;
+	linux) echo "deb rpm pacman appimage zip" ;;
+	windows) echo "nsis zip" ;;
+	macos) echo "dmg zip" ;;
 	esac
 }
 
@@ -328,9 +383,9 @@ sync_product_info() {
 	if [ "$_PRODUCT_INFO_SYNCED" != "1" ]; then
 		jq --tab --arg name "$PRODUCT_NAME" --arg ver "$PRODUCT_VERSION" --arg id "$PRODUCT_IDENTIFIER" \
 			'.productName = $name | .mainBinaryName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
-			"$SCRIPT_DIR/tauri.conf.json" > "$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
+			"$SCRIPT_DIR/tauri.conf.json" >"$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
 
-		sed "s/^version = \"[^\"]*\"/version = \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/Cargo.toml" > "$SCRIPT_DIR/Cargo.toml.tmp" && mv "$SCRIPT_DIR/Cargo.toml.tmp" "$SCRIPT_DIR/Cargo.toml"
+		sed "s/^version = \"[^\"]*\"/version = \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/Cargo.toml" >"$SCRIPT_DIR/Cargo.toml.tmp" && mv "$SCRIPT_DIR/Cargo.toml.tmp" "$SCRIPT_DIR/Cargo.toml"
 		_PRODUCT_INFO_SYNCED=1
 	fi
 
@@ -341,7 +396,7 @@ sync_product_info() {
 			| .bundle.linux.deb.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
 			| .bundle.linux.rpm.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
 			| .bundle.linux.appimage.files = {("usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}' \
-			"$SCRIPT_DIR/tauri.linux.conf.json" > "$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
+			"$SCRIPT_DIR/tauri.linux.conf.json" >"$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
 
 		cp "$SCRIPT_DIR/desktop-entry-debug.desktop" "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" 2>/dev/null || true
 		sed -i "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" "$SCRIPT_DIR/desktop-entry-debug.desktop"
@@ -366,7 +421,7 @@ build_tauri() {
 	# LDD wrapper for Linux AppImage builds (Bun binaries fail ldd)
 	if [ "$BUILD_OS" = "linux" ]; then
 		LDD_WRAPPER_DIR=$(mktemp -d)
-		cat > "$LDD_WRAPPER_DIR/ldd" << 'LDDWRAPPER'
+		cat >"$LDD_WRAPPER_DIR/ldd" <<'LDDWRAPPER'
 #!/bin/sh
 output=$(/usr/bin/ldd "$@" 2>&1)
 rc=$?
@@ -386,9 +441,9 @@ LDDWRAPPER
 	# Platform-specific Tauri config overlay
 	PLATFORM_CONFIG=""
 	case "$BUILD_OS" in
-		linux)   PLATFORM_CONFIG="--config tauri.linux.conf.json" ;;
-		windows) PLATFORM_CONFIG="--config tauri.windows.conf.json" ;;
-		macos)   PLATFORM_CONFIG="--config tauri.macos.conf.json" ;;
+	linux) PLATFORM_CONFIG="--config tauri.linux.conf.json" ;;
+	windows) PLATFORM_CONFIG="--config tauri.windows.conf.json" ;;
+	macos) PLATFORM_CONFIG="--config tauri.macos.conf.json" ;;
 	esac
 
 	if [ "$BUILD_OS" = "windows" ]; then
@@ -414,7 +469,7 @@ generate_desktop_entry() {
 		[ "$_gde_debug" = "--debug" ] && echo "Comment=Launch ${PRODUCT_NAME} in debug mode"
 		echo "Terminal=false"
 		echo "Type=Application"
-	} > "$_gde_output"
+	} >"$_gde_output"
 }
 
 # ── Utility: run a package build as a background job ──
@@ -450,7 +505,7 @@ stage_zip() {
 # ── Utility: copy debug launch script into $ZIP_STAGING ──
 _copy_debug_script() {
 	sed "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" \
-		"$SCRIPT_DIR/bundle-scripts/debug.sh" > "$ZIP_STAGING/debug.sh"
+		"$SCRIPT_DIR/bundle-scripts/debug.sh" >"$ZIP_STAGING/debug.sh"
 	chmod +x "$ZIP_STAGING/debug.sh"
 }
 
@@ -458,7 +513,7 @@ _copy_debug_script() {
 
 _build_deb() {
 	mkdir -p "$WORK/control"
-	cat > "$WORK/control/control" << CTRL_EOF
+	cat >"$WORK/control/control" <<CTRL_EOF
 Package: ${PRODUCT_NAME_LOWER}
 Version: ${PRODUCT_VERSION}
 Architecture: ${PKG_DEB_ARCH}
@@ -470,9 +525,9 @@ Priority: optional
 Homepage: ${PRODUCT_WEBSITE}
 Description: ${PRODUCT_NAME} - peer-to-peer file sharing
 CTRL_EOF
-	tar -cf - -C "$WORK/control" . | xz $XZ_FLAGS > "$WORK/control.tar.xz"
-	tar -cf - -C "$PKG_STAGING" . | xz $XZ_FLAGS > "$WORK/data.tar.xz"
-	echo "2.0" > "$WORK/debian-binary"
+	tar -cf - -C "$WORK/control" . | xz $XZ_FLAGS >"$WORK/control.tar.xz"
+	tar -cf - -C "$PKG_STAGING" . | xz $XZ_FLAGS >"$WORK/data.tar.xz"
+	echo "2.0" >"$WORK/debian-binary"
 	ar rcs "$FINAL_DIR/${PRODUCT_NAME_LOWER}_${PRODUCT_VERSION}_${PKG_DEB_ARCH}.deb" \
 		"$WORK/debian-binary" \
 		"$WORK/control.tar.xz" \
@@ -482,7 +537,7 @@ CTRL_EOF
 _build_rpm() {
 	mkdir -p "$WORK/BUILD" "$WORK/RPMS" "$WORK/SOURCES" "$WORK/SPECS" "$WORK/BUILDROOT"
 	cp -a "$PKG_STAGING"/* "$WORK/BUILDROOT/"
-	cat > "$WORK/SPECS/${PRODUCT_NAME_LOWER}.spec" << SPEC_EOF
+	cat >"$WORK/SPECS/${PRODUCT_NAME_LOWER}.spec" <<SPEC_EOF
 Name: ${PRODUCT_NAME_LOWER}
 Version: ${PRODUCT_VERSION}
 Release: 1
@@ -516,7 +571,7 @@ SPEC_EOF
 _build_pacman() {
 	PAC_BUILDDATE=$(date +%s)
 	PAC_SIZE=$(du -sb "$PKG_STAGING" | cut -f1)
-	cat > "$WORK/.PKGINFO" << PKGINFO_EOF
+	cat >"$WORK/.PKGINFO" <<PKGINFO_EOF
 pkgname = ${PRODUCT_NAME_LOWER}
 pkgver = ${PRODUCT_VERSION}-1
 pkgdesc = ${PRODUCT_NAME} - peer-to-peer file sharing
@@ -534,8 +589,8 @@ PKGINFO_EOF
 		--format=mtree \
 		--options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
 		.
-	bsdtar -cf - -C "$WORK" .PKGINFO .MTREE -C "$PKG_STAGING" . \
-		| xz $XZ_FLAGS > "$FINAL_DIR/${PRODUCT_NAME_LOWER}-${PRODUCT_VERSION}-1-${PKG_PACMAN_ARCH}.pkg.tar.xz"
+	bsdtar -cf - -C "$WORK" .PKGINFO .MTREE -C "$PKG_STAGING" . |
+		xz $XZ_FLAGS >"$FINAL_DIR/${PRODUCT_NAME_LOWER}-${PRODUCT_VERSION}-1-${PKG_PACMAN_ARCH}.pkg.tar.xz"
 }
 
 _build_appimage() {
@@ -543,7 +598,7 @@ _build_appimage() {
 	mkdir -p "$AI_APPDIR"
 	cp -a "$PKG_STAGING"/* "$AI_APPDIR/"
 
-	cat > "$AI_APPDIR/AppRun" << APPRUN_EOF
+	cat >"$AI_APPDIR/AppRun" <<APPRUN_EOF
 #!/bin/sh
 SELF=\$(readlink -f "\$0")
 HERE=\${SELF%/*}
@@ -557,7 +612,7 @@ APPRUN_EOF
 
 	SQUASHFS_BCJ=""
 	case "$BUILD_ARCH" in
-		x86_64) SQUASHFS_BCJ="-Xbcj x86" ;;
+	x86_64) SQUASHFS_BCJ="-Xbcj x86" ;;
 	esac
 	mksquashfs "$AI_APPDIR" "$WORK/app.squashfs" \
 		-root-owned -noappend \
@@ -572,7 +627,7 @@ APPRUN_EOF
 	fi
 
 	AI_OUTPUT="$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.AppImage"
-	cat "$AI_RUNTIME_CACHE" "$WORK/app.squashfs" > "$AI_OUTPUT"
+	cat "$AI_RUNTIME_CACHE" "$WORK/app.squashfs" >"$AI_OUTPUT"
 	chmod +x "$AI_OUTPUT"
 }
 
@@ -589,7 +644,7 @@ _stage_zip_windows() {
 	cp "$BUILD_RELEASE_DIR/${PRODUCT_NAME}.exe" "$ZIP_STAGING/"
 	cp "$ROOT_DIR/backend/build/lish-backend.exe" "$ZIP_STAGING/lish-backend.exe"
 	sed "s/{{product_name}}/$PRODUCT_NAME/g" \
-		"$SCRIPT_DIR/bundle-scripts/Debug.bat" > "$ZIP_STAGING/Debug.bat"
+		"$SCRIPT_DIR/bundle-scripts/Debug.bat" >"$ZIP_STAGING/Debug.bat"
 }
 
 _stage_zip_macos() {
@@ -607,8 +662,16 @@ _stage_zip_macos() {
 build_linux_packages() {
 	# Architecture mapping
 	case "$BUILD_ARCH" in
-		x86_64)  PKG_DEB_ARCH="amd64"; PKG_RPM_ARCH="x86_64"; PKG_PACMAN_ARCH="x86_64" ;;
-		aarch64) PKG_DEB_ARCH="arm64"; PKG_RPM_ARCH="aarch64"; PKG_PACMAN_ARCH="aarch64" ;;
+	x86_64)
+		PKG_DEB_ARCH="amd64"
+		PKG_RPM_ARCH="x86_64"
+		PKG_PACMAN_ARCH="x86_64"
+		;;
+	aarch64)
+		PKG_DEB_ARCH="arm64"
+		PKG_RPM_ARCH="aarch64"
+		PKG_PACMAN_ARCH="aarch64"
+		;;
 	esac
 
 	# Create common staging tree
@@ -630,9 +693,9 @@ build_linux_packages() {
 	PKG_INSTALLED_SIZE=$(du -sk "$PKG_STAGING" | cut -f1)
 
 	PKG_PIDS=""
-	[ "$MAKE_DEB" = "1" ]      && run_pkg_job "DEB package (xz $XZ_FLAGS)" _build_deb
-	[ "$MAKE_RPM" = "1" ]      && run_pkg_job "RPM package (xz, $RPM_PAYLOAD)" _build_rpm
-	[ "$MAKE_PACMAN" = "1" ]   && run_pkg_job "Pacman package (xz $XZ_FLAGS)" _build_pacman
+	[ "$MAKE_DEB" = "1" ] && run_pkg_job "DEB package (xz $XZ_FLAGS)" _build_deb
+	[ "$MAKE_RPM" = "1" ] && run_pkg_job "RPM package (xz, $RPM_PAYLOAD)" _build_rpm
+	[ "$MAKE_PACMAN" = "1" ] && run_pkg_job "Pacman package (xz $XZ_FLAGS)" _build_pacman
 	[ "$MAKE_APPIMAGE" = "1" ] && run_pkg_job "AppImage (xz, $(nproc) cores)" _build_appimage
 
 	# Wait for all package builds and check for failures
@@ -656,9 +719,9 @@ move_bundles() {
 				[ -f "$f" ] || continue
 				EXT="${f##*.}"
 				case "$EXT" in
-					exe) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}_setup.exe" ;;
-					dmg) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.dmg" ;;
-					*)   NEWNAME="$(basename "$f")" ;;
+				exe) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}_setup.exe" ;;
+				dmg) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.dmg" ;;
+				*) NEWNAME="$(basename "$f")" ;;
 				esac
 				mv "$f" "$FINAL_DIR/$NEWNAME"
 			done
@@ -671,9 +734,9 @@ build_zip() {
 	_t=$(date +%s)
 	echo "=== Creating ZIP bundle ==="
 	case "$BUILD_OS" in
-		linux)   stage_zip _stage_zip_linux ;;
-		windows) stage_zip _stage_zip_windows ;;
-		macos)   stage_zip _stage_zip_macos ;;
+	linux) stage_zip _stage_zip_linux ;;
+	windows) stage_zip _stage_zip_windows ;;
+	macos) stage_zip _stage_zip_macos ;;
 	esac
 	echo "=== ZIP done ($(elapsed_since $_t)) ==="
 }
@@ -694,38 +757,38 @@ docker_inner_build() {
 	RUST_TARGET=""
 	BUN_TARGET=""
 	case "${BUILD_OS}_${BUILD_ARCH}" in
-		linux_x86_64)
-			RUST_TARGET="x86_64-unknown-linux-gnu"
-			BUN_TARGET="bun-linux-x64"
-			;;
-		linux_aarch64)
-			RUST_TARGET="aarch64-unknown-linux-gnu"
-			BUN_TARGET="bun-linux-arm64"
-			;;
-		windows_x86_64)
-			RUST_TARGET="x86_64-pc-windows-msvc"
-			BUN_TARGET="bun-windows-x64"
-			;;
-		windows_aarch64)
-			RUST_TARGET="aarch64-pc-windows-msvc"
-			BUN_TARGET="bun-windows-arm64"
-			;;
-		macos_x86_64)
-			RUST_TARGET="x86_64-apple-darwin"
-			BUN_TARGET="bun-darwin-x64"
-			;;
-		macos_aarch64)
-			RUST_TARGET="aarch64-apple-darwin"
-			BUN_TARGET="bun-darwin-arm64"
-			;;
-		macos_universal)
-			RUST_TARGET="universal-apple-darwin"
-			BUN_TARGET=""
-			;;
-		*)
-			echo "Error: Unsupported OS/arch combination: $BUILD_OS/$BUILD_ARCH"
-			exit 1
-			;;
+	linux_x86_64)
+		RUST_TARGET="x86_64-unknown-linux-gnu"
+		BUN_TARGET="bun-linux-x64"
+		;;
+	linux_aarch64)
+		RUST_TARGET="aarch64-unknown-linux-gnu"
+		BUN_TARGET="bun-linux-arm64"
+		;;
+	windows_x86_64)
+		RUST_TARGET="x86_64-pc-windows-msvc"
+		BUN_TARGET="bun-windows-x64"
+		;;
+	windows_aarch64)
+		RUST_TARGET="aarch64-pc-windows-msvc"
+		BUN_TARGET="bun-windows-arm64"
+		;;
+	macos_x86_64)
+		RUST_TARGET="x86_64-apple-darwin"
+		BUN_TARGET="bun-darwin-x64"
+		;;
+	macos_aarch64)
+		RUST_TARGET="aarch64-apple-darwin"
+		BUN_TARGET="bun-darwin-arm64"
+		;;
+	macos_universal)
+		RUST_TARGET="universal-apple-darwin"
+		BUN_TARGET=""
+		;;
+	*)
+		echo "Error: Unsupported OS/arch combination: $BUILD_OS/$BUILD_ARCH"
+		exit 1
+		;;
 	esac
 
 	# Ensure Rust target is installed
@@ -740,8 +803,8 @@ docker_inner_build() {
 	CONTAINER_ARCH=$(uname -m)
 	if [ "$BUILD_OS" = "linux" ] && [ "$CONTAINER_ARCH" != "$BUILD_ARCH" ]; then
 		case "$BUILD_ARCH" in
-			x86_64)  CROSS_GNU_TRIPLE="x86_64-linux-gnu" ;;
-			aarch64) CROSS_GNU_TRIPLE="aarch64-linux-gnu" ;;
+		x86_64) CROSS_GNU_TRIPLE="x86_64-linux-gnu" ;;
+		aarch64) CROSS_GNU_TRIPLE="aarch64-linux-gnu" ;;
 		esac
 		echo "=== Cross-compiling: $CONTAINER_ARCH -> $BUILD_ARCH (via $CROSS_GNU_TRIPLE) ==="
 		export PKG_CONFIG_LIBDIR="/usr/lib/${CROSS_GNU_TRIPLE}/pkgconfig:/usr/share/pkgconfig"
@@ -761,33 +824,33 @@ docker_inner_build() {
 	MAKE_APPIMAGE=0
 	for fmt in $FORMAT_LIST; do
 		case "$fmt" in
-			all)
-				for efmt in $(expand_formats_for_os "$BUILD_OS"); do
-					case "$efmt" in
-						zip)       MAKE_ZIP=1 ;;
-						deb)       MAKE_DEB=1 ;;
-						rpm)       MAKE_RPM=1 ;;
-						pacman)    MAKE_PACMAN=1 ;;
-						appimage)  MAKE_APPIMAGE=1 ;;
-						*)         TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $efmt" ;;
-					esac
-				done
-				;;
-			zip)
-				MAKE_ZIP=1
-				;;
-			*)
-				case "$BUILD_OS" in
-					linux)   case "$fmt" in
-								deb)      MAKE_DEB=1 ;;
-								rpm)      MAKE_RPM=1 ;;
-								pacman)   MAKE_PACMAN=1 ;;
-								appimage) MAKE_APPIMAGE=1 ;;
-							 esac ;;
-					windows) case "$fmt" in nsis) TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $fmt" ;; esac ;;
-					macos)   case "$fmt" in dmg)  TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $fmt" ;; esac ;;
+		all)
+			for efmt in $(expand_formats_for_os "$BUILD_OS"); do
+				case "$efmt" in
+				zip) MAKE_ZIP=1 ;;
+				deb) MAKE_DEB=1 ;;
+				rpm) MAKE_RPM=1 ;;
+				pacman) MAKE_PACMAN=1 ;;
+				appimage) MAKE_APPIMAGE=1 ;;
+				*) TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $efmt" ;;
 				esac
-				;;
+			done
+			;;
+		zip)
+			MAKE_ZIP=1
+			;;
+		*)
+			case "$BUILD_OS" in
+			linux) case "$fmt" in
+				deb) MAKE_DEB=1 ;;
+				rpm) MAKE_RPM=1 ;;
+				pacman) MAKE_PACMAN=1 ;;
+				appimage) MAKE_APPIMAGE=1 ;;
+				esac ;;
+			windows) case "$fmt" in nsis) TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $fmt" ;; esac ;;
+			macos) case "$fmt" in dmg) TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $fmt" ;; esac ;;
+			esac
+			;;
 		esac
 	done
 
@@ -919,13 +982,13 @@ for os in $OS_LIST; do
 	# Expand target 'all' per-OS
 	_eff_targets="$TARGET_LIST"
 	case "$_eff_targets" in
-		*all*)
-			if [ "$os" = "macos" ]; then
-				_eff_targets="x86_64 aarch64 universal"
-			else
-				_eff_targets="x86_64 aarch64"
-			fi
-			;;
+	*all*)
+		if [ "$os" = "macos" ]; then
+			_eff_targets="x86_64 aarch64 universal"
+		else
+			_eff_targets="x86_64 aarch64"
+		fi
+		;;
 	esac
 
 	for target in $_eff_targets; do
