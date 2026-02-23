@@ -55,11 +55,11 @@ Usage: ./$_help_name [--os OS...] [--target ARCH...] [--format FMT...] [--compre
 Options:
   --os        Operating systems to build for (combinable):
                 linux, windows, macos, all
-              Default: current platform
+              Default: all
 
   --target    CPU architectures to build for (combinable):
                 x86_64, aarch64, universal (macOS only), all
-              Default: current architecture
+              Default: all
               'all' on macOS = x86_64 + aarch64 + universal
               'all' on Linux/Windows = x86_64 + aarch64
 
@@ -68,7 +68,7 @@ Options:
                 Windows: nsis, zip
                 macOS:   dmg, zip
                 all (= all valid formats for chosen OS)
-              Default: (none – only raw binary)
+              Default: all (= all valid formats for chosen OS)
 
   --compress  Compression level for packages (default: mid):
                 min  = xz -1e -T0  (fastest)
@@ -908,8 +908,9 @@ fi
 HOST_OS=$(detect_host_os)
 HOST_ARCH=$(detect_host_arch)
 
-[ -z "$OS_LIST" ] && OS_LIST="$HOST_OS"
-[ -z "$TARGET_LIST" ] && TARGET_LIST="$HOST_ARCH"
+[ -z "$OS_LIST" ] && OS_LIST="all"
+[ -z "$TARGET_LIST" ] && TARGET_LIST="all"
+[ -z "$FORMAT_LIST" ] && FORMAT_LIST="all"
 
 # Validate
 validate_os_values
@@ -919,24 +920,12 @@ validate_no_all_combined "os" $OS_LIST
 validate_no_all_combined "target" $TARGET_LIST
 validate_no_all_combined "format" $FORMAT_LIST
 
-# Expand 'all' for OS
-if [ "$HOST_OS" = "macos" ]; then
-	case "$OS_LIST" in *all*) OS_LIST="linux windows macos" ;; esac
-else
-	case "$OS_LIST" in *all*) OS_LIST="linux windows" ;; esac
-fi
+# Expand 'all' for OS (always includes all 3; macOS will be skipped on non-macOS hosts)
+case "$OS_LIST" in *all*) OS_LIST="linux windows macos" ;; esac
 # Note: target 'all' is expanded per-OS in the build loop
 
 # Validate formats against each OS (skip - formats are filtered per-OS in inner build)
 # Only check that format values are recognized (already done by validate_format_values)
-
-# Check macOS constraint
-for os in $OS_LIST; do
-	if [ "$os" = "macos" ] && [ "$HOST_OS" != "macos" ]; then
-		echo "Error: macOS builds require a macOS host."
-		exit 1
-	fi
-done
 
 # Check Docker availability (needed for non-macOS builds)
 NEEDS_DOCKER=0
@@ -992,6 +981,17 @@ for os in $OS_LIST; do
 		;;
 	esac
 
+	# Skip macOS on non-macOS hosts
+	if [ "$os" = "macos" ] && [ "$HOST_OS" != "macos" ]; then
+		for target in $_eff_targets; do
+			_build_count=$((_build_count + 1))
+			_fail_count=$((_fail_count + 1))
+			_build_fail="${_build_fail} ${os}/${target}"
+			print_box "SKIPPED: OS=$os  ARCH=$target  (requires macOS host)"
+		done
+		continue
+	fi
+
 	for target in $_eff_targets; do
 		# Skip 'universal' for non-macOS
 		if [ "$target" = "universal" ] && [ "$os" != "macos" ]; then
@@ -1042,7 +1042,7 @@ for os in $OS_LIST; do
 				-v "${HOME}/.bun/install/cache:/root/.bun/install/cache" \
 				-e APPIMAGE_EXTRACT_AND_RUN=1 \
 				"$DOCKER_IMAGE" \
-				sh -c "cd /workspace/app && exec ./build-new.sh --docker-inner --inner-os $os --inner-arch $target --compress $COMPRESS_LEVEL $INNER_FORMAT_ARGS"
+				sh -c "cd /workspace/app && exec ./build.sh --docker-inner --inner-os $os --inner-arch $target --compress $COMPRESS_LEVEL $INNER_FORMAT_ARGS"
 			_rc=$?
 		fi
 		set -e
