@@ -31,9 +31,3 @@ LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_BRETON} "Dibabit evit pe i
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_BRETON} "Dibabit ha stallian $(^NameDA) evidoc'h hepken pe evit holl implijerien an urzhiataer-man. $(^ClickNext)"
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_BRETON} "Stallian evit an holl"
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_BRETON} "Stallian evidon-me hepken"
-
-LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_BRETON} "Dibab an implijerien"
-LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_BRETON} "Dibabit evit pe implijerien e fell deoc'h stallian $(^NameDA)."
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_BRETON} "Dibabit ha stallian $(^NameDA) evidoc'h hepken pe evit holl implijerien an urzhiataer-man. $(^ClickNext)"
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_BRETON} "Stallian evit an holl"
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_BRETON} "Stallian evidon-me hepken"

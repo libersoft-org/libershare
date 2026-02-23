@@ -28,12 +28,6 @@ LangString deleteAppData ${LANG_CATALAN} "Eliminar les dades de l'aplicació"
 
 LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_CATALAN} "Trieu els usuaris"
 LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_CATALAN} "Trieu per a quins usuaris voleu instal-lar $(^NameDA)."
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_CATALAN} "Seleccioneu si voleu instal-lar $(^NameDA) nomes per a vos o per a tots els usuaris. $(^ClickNext)"
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_CATALAN} "Instal-la per a tothom"
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_CATALAN} "Instal-la nomes per a mi"
-
-LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_CATALAN} "Trieu els usuaris"
-LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_CATALAN} "Trieu per a quins usuaris voleu instal-lar $(^NameDA)."
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_CATALAN} "Seleccioneu si voleu instal-lar $(^NameDA) nomes per a vos o per a tots els usuaris d'aquest ordinador. $(^ClickNext)"
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_CATALAN} "Instal-la per a tothom"
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_CATALAN} "Instal-la nomes per a mi"

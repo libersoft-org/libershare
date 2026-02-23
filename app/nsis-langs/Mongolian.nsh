@@ -25,3 +25,9 @@ LangString webview2Downloading ${LANG_MONGOLIAN} "WebView2 татаж байна
 LangString webview2InstallError ${LANG_MONGOLIAN} "Алдаа: WebView2 суулгалт $1 кодтой алдаа гарлаа"
 LangString webview2InstallSuccess ${LANG_MONGOLIAN} "WebView2 амжилттай суулгагдлаа"
 LangString deleteAppData ${LANG_MONGOLIAN} "Програмын өгөгдлийг устгах"
+
+LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_MONGOLIAN} "Хэрэглэгчдийг сонгоно уу"
+LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_MONGOLIAN} "$(^NameDA)-г аль хэрэглэгчдэд суулгахыг сонгоно уу."
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_MONGOLIAN} "$(^NameDA)-г зөвхөн өөртөө эсвэл энэ компьютерийн бүх хэрэглэгчдэд суулгахыг сонгоно уу. $(^ClickNext)"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_MONGOLIAN} "Бүх хэрэглэгчдэд суулгах"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_MONGOLIAN} "Зөвхөн надад суулгах"

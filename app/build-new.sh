@@ -612,23 +612,6 @@ build_linux_packages() {
 }
 
 move_bundles() {
-	# Windows: patch PE subsystem from CONSOLE to WINDOWS_GUI
-	if [ "$BUILD_OS" = "windows" ]; then
-		WIN_EXE="$BUILD_RELEASE_DIR/${PRODUCT_NAME}.exe"
-		if [ -f "$WIN_EXE" ]; then
-			echo "=== Patching PE subsystem to GUI ==="
-			python3 -c "
-import struct, sys
-f = open(sys.argv[1], 'r+b')
-f.seek(0x3C)
-pe_offset = struct.unpack('<I', f.read(4))[0]
-f.seek(pe_offset + 0x5C)
-f.write(struct.pack('<H', 2))
-f.close()
-" "$WIN_EXE"
-		fi
-	fi
-
 	# Move and rename Tauri-produced bundles (nsis, dmg)
 	for dir in nsis dmg; do
 		if [ -d "$BUILD_OUTPUT_DIR/$dir" ]; then

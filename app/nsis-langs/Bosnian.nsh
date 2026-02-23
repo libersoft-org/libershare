@@ -31,9 +31,3 @@ LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_BOSNIAN} "Odaberite za koj
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_BOSNIAN} "Odaberite da li zelite instalirati $(^NameDA) samo za sebe ili za sve korisnike ovog racunara. $(^ClickNext)"
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_BOSNIAN} "Instaliraj za sve korisnike ovog racunara"
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_BOSNIAN} "Instaliraj samo za mene"
-
-LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_BOSNIAN} "Odaberite korisnike"
-LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_BOSNIAN} "Odaberite za koje korisnike zelite instalirati $(^NameDA)."
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_BOSNIAN} "Odaberite da li zelite instalirati $(^NameDA) samo za sebe ili za sve korisnike ovog racunara. $(^ClickNext)"
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_BOSNIAN} "Instaliraj za sve korisnike ovog racunara"
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_BOSNIAN} "Instaliraj samo za mene"

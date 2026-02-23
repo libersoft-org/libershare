@@ -25,3 +25,9 @@ LangString webview2Downloading ${LANG_SCOTSGAELIC} "A' luchdadh a-nuas WebView2.
 LangString webview2InstallError ${LANG_SCOTSGAELIC} "Mearachd: Dh'fhàillig stàladh WebView2 le còd $1"
 LangString webview2InstallSuccess ${LANG_SCOTSGAELIC} "Chaidh WebView2 a stàladh gu soirbheachail"
 LangString deleteAppData ${LANG_SCOTSGAELIC} "Sguab às dàta na h-aplacaid"
+
+LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_SCOTSGAELIC} "Tagh luchd-cleachdaidh"
+LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_SCOTSGAELIC} "Tagh dè na luchd-cleachdaidh a tha thu airson $(^NameDA) a stàladh dhaibh."
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_SCOTSGAELIC} "Tagh a bheil thu airson $(^NameDA) a stàladh dhut fhèin a-mhàin no do gach neach-cleachdaidh air a' choimpiutair seo. $(^ClickNext)"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_SCOTSGAELIC} "Stàlaich airson a h-uile neach-cleachdaidh"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_SCOTSGAELIC} "Stàlaich dhomh fhìn a-mhàin"

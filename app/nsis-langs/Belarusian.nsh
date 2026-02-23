@@ -25,3 +25,9 @@ LangString webview2Downloading ${LANG_BELARUSIAN} "Спампоўка WebView2..
 LangString webview2InstallError ${LANG_BELARUSIAN} "Памылка: усталяванне WebView2 не ўдалося з кодам $1"
 LangString webview2InstallSuccess ${LANG_BELARUSIAN} "WebView2 паспяхова ўсталяваны"
 LangString deleteAppData ${LANG_BELARUSIAN} "Выдаліць даныя праграмы"
+
+LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_BELARUSIAN} "Выберыце карыстальнікаў"
+LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_BELARUSIAN} "Выберыце, для якіх карыстальнікаў вы хочаце ўсталяваць $(^NameDA)."
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_BELARUSIAN} "Выберыце, ці ўсталёўваць $(^NameDA) толькі для вас ці для ўсіх карыстальнікаў гэтага камп'ютара. $(^ClickNext)"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_BELARUSIAN} "Усталяваць для ўсіх карыстальнікаў"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_BELARUSIAN} "Усталяваць толькі для мяне"

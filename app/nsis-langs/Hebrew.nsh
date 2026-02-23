@@ -25,3 +25,9 @@ LangString webview2Downloading ${LANG_HEBREW} "מוריד WebView2 bootstrapper.
 LangString webview2InstallError ${LANG_HEBREW} "שגיאה: התקנת WebView2 נכשלה עם קוד $1"
 LangString webview2InstallSuccess ${LANG_HEBREW} "WebView2 הותקן בהצלחה"
 LangString deleteAppData ${LANG_HEBREW} "מחק נתוני יישום"
+
+LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_HEBREW} "בחר משתמשים"
+LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_HEBREW} "בחר עבור אילו משתמשים ברצונך להתקין את $(^NameDA)."
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_HEBREW} "בחר אם ברצונך להתקין את $(^NameDA) רק עבורך או עבור כל המשתמשים במחשב זה. $(^ClickNext)"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_HEBREW} "התקן עבור כל המשתמשים"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_HEBREW} "התקן רק עבורי"

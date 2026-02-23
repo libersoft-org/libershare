@@ -25,3 +25,9 @@ LangString webview2Downloading ${LANG_CZECH} "Stahování WebView2 bootstrapperu
 LangString webview2InstallError ${LANG_CZECH} "Chyba: Instalace WebView2 selhala s kódem $1"
 LangString webview2InstallSuccess ${LANG_CZECH} "WebView2 úspěšně nainstalován"
 LangString deleteAppData ${LANG_CZECH} "Smazat data aplikace"
+
+LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_CZECH} "Vyberte uživatele"
+LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_CZECH} "Vyberte, pro které uživatele chcete nainstalovat $(^NameDA)."
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_CZECH} "Vyberte, zda chcete nainstalovat $(^NameDA) pouze pro sebe nebo pro všechny uživatele tohoto počítače. $(^ClickNext)"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_CZECH} "Nainstalovat pro všechny uživatele"
+LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_CZECH} "Nainstalovat pouze pro mě"

@@ -31,9 +31,3 @@ LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_AFRIKAANS} "Kies vir watte
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_AFRIKAANS} "Kies of jy $(^NameDA) net vir jouself of vir alle gebruikers van hierdie rekenaar wil installeer. $(^ClickNext)"
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_AFRIKAANS} "Installeer vir almal wat hierdie rekenaar gebruik"
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_AFRIKAANS} "Installeer net vir my"
-
-LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_AFRIKAANS} "Kies Gebruikers"
-LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_AFRIKAANS} "Kies vir watter gebruikers jy $(^NameDA) wil installeer."
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_AFRIKAANS} "Kies of jy $(^NameDA) net vir jouself of vir alle gebruikers van hierdie rekenaar wil installeer. $(^ClickNext)"
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_AFRIKAANS} "Installeer vir almal wat hierdie rekenaar gebruik"
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_AFRIKAANS} "Installeer net vir my"

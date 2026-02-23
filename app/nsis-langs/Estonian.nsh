@@ -31,9 +31,3 @@ LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_ESTONIAN} "Valige, millist
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_ESTONIAN} "Valige, kas soovite $(^NameDA) installida ainult endale voi koigile selle arvuti kasutajatele. $(^ClickNext)"
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_ESTONIAN} "Installi koigile kasutajatele"
 LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_ESTONIAN} "Installi ainult mulle"
-
-LangString MULTIUSER_TEXT_INSTALLMODE_TITLE ${LANG_ESTONIAN} "Valige kasutajad"
-LangString MULTIUSER_TEXT_INSTALLMODE_SUBTITLE ${LANG_ESTONIAN} "Valige, milliste kasutajate jaoks soovite $(^NameDA) installida."
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_TOP ${LANG_ESTONIAN} "Valige, kas soovite $(^NameDA) installida ainult endale voi koigile selle arvuti kasutajatele. $(^ClickNext)"
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_ALLUSERS ${LANG_ESTONIAN} "Installi koigile kasutajatele"
-LangString MULTIUSER_INNERTEXT_INSTALLMODE_CURRENTUSER ${LANG_ESTONIAN} "Installi ainult mulle"
