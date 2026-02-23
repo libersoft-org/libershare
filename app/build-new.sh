@@ -4,11 +4,31 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Clean up on exit/crash/interrupt
+cleanup() {
+	[ -n "$LDD_WRAPPER_DIR" ] && rm -rf "$LDD_WRAPPER_DIR" 2>/dev/null
+	# Restore desktop entries if originals exist
+	[ -f "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" ] && mv "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" "$SCRIPT_DIR/desktop-entry-debug.desktop" 2>/dev/null
+	[ -f "$SCRIPT_DIR/desktop-entry.desktop.orig" ] && mv "$SCRIPT_DIR/desktop-entry.desktop.orig" "$SCRIPT_DIR/desktop-entry.desktop" 2>/dev/null
+	[ -f "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" ] && mv "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" "$SCRIPT_DIR/wix-fragment-debug.wxs" 2>/dev/null
+}
+trap cleanup EXIT
+
+# Format elapsed seconds as human-readable string
+elapsed_since() {
+	_el=$(($(date +%s) - $1))
+	if [ "$_el" -ge 60 ]; then
+		printf '%dm %ds' $((_el / 60)) $((_el % 60))
+	else
+		printf '%ds' "$_el"
+	fi
+}
+
 # ─── Help ───────────────────────────────────────────────────────────────────
 
 show_help() {
 	cat <<'EOF'
-Usage: ./build.sh [--os OS...] [--target ARCH...] [--format FMT...] [--help]
+Usage: ./build.sh [--os OS...] [--target ARCH...] [--format FMT...] [--compress LEVEL] [--help]
 
 Options:
   --os        Operating systems to build for (combinable):
@@ -16,15 +36,26 @@ Options:
               Default: current platform
 
   --target    CPU architectures to build for (combinable):
-                x86_64, aarch64, all
+                x86_64, aarch64, universal (macOS only), all
               Default: current architecture
+              'all' on macOS = x86_64 + aarch64 + universal
+              'all' on Linux/Windows = x86_64 + aarch64
 
   --format    Output package formats (combinable):
-                Linux:   deb, rpm, appimage, zip
+                Linux:   deb, rpm, pacman, appimage, zip
                 Windows: nsis, zip
                 macOS:   dmg, zip
                 all (= all valid formats for chosen OS)
               Default: (none – only raw binary)
+
+  --compress  Compression level for packages (default: mid):
+                min  = xz -1e -T0  (fastest)
+                mid  = xz -6e -T0  (balanced)
+                max  = xz -9e -T0  (smallest - high RAM usage!)
+              AppImage always uses squashfs xz with BCJ filter (not affected).
+              RPM uses rpmbuild native xz (without -e).
+
+  --docker-rebuild  Force rebuild of the Docker image (e.g. after Dockerfile changes)
 
   --help      Show this help
 
@@ -34,14 +65,14 @@ Examples:
   ./build.sh --os linux --target all --format all
   ./build.sh --os linux windows --target x86_64 --format all
   ./build.sh --os windows --target x86_64 --format nsis zip
+  ./build.sh --os macos --target universal --format dmg zip
 
 Notes:
   - Linux and Windows builds run inside Docker (requires Docker).
   - macOS builds require a macOS host (no Docker).
   - 'all' cannot be combined with other values in the same flag.
-
-Prerequisites for cross-architecture builds:
-  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+  - Cross-arch Linux builds use cross-linkers (no QEMU needed).
+  - 'universal' target creates a fat binary (macOS only, via lipo).
 EOF
 }
 
@@ -50,7 +81,9 @@ EOF
 OS_LIST=""
 TARGET_LIST=""
 FORMAT_LIST=""
+COMPRESS_LEVEL="mid"
 DOCKER_INNER=""
+DOCKER_REBUILD=""
 INNER_OS=""
 INNER_ARCH=""
 
@@ -61,7 +94,9 @@ for arg in "$@"; do
 		--target)   MODE="target" ;;
 		--format)   MODE="format" ;;
 		--help|-h)  show_help; exit 0 ;;
+		--compress) MODE="compress" ;;
 		--docker-inner) DOCKER_INNER=1; MODE="" ;;
+		--docker-rebuild) DOCKER_REBUILD=1; MODE="" ;;
 		--inner-os)  MODE="inner-os" ;;
 		--inner-arch) MODE="inner-arch" ;;
 		*)
@@ -69,6 +104,7 @@ for arg in "$@"; do
 				os)         OS_LIST="$OS_LIST $arg" ;;
 				target)     TARGET_LIST="$TARGET_LIST $arg" ;;
 				format)     FORMAT_LIST="$FORMAT_LIST $arg" ;;
+				compress)   COMPRESS_LEVEL="$arg"; MODE="" ;;
 				inner-os)   INNER_OS="$arg"; MODE="" ;;
 				inner-arch) INNER_ARCH="$arg"; MODE="" ;;
 				*)          echo "Error: Unknown argument '$arg'"; echo "Use --help for usage."; exit 1 ;;
@@ -76,6 +112,15 @@ for arg in "$@"; do
 			;;
 	esac
 done
+
+# ─── Resolve compression level ──────────────────────────────────────────────
+
+case "$COMPRESS_LEVEL" in
+	min) XZ_FLAGS="-1e -T0"; RPM_PAYLOAD="w1.xzdio" ;;
+	mid) XZ_FLAGS="-6e -T0"; RPM_PAYLOAD="w6.xzdio" ;;
+	max) XZ_FLAGS="-9e -T0"; RPM_PAYLOAD="w9.xzdio" ;;
+	*)   echo "Error: Invalid --compress value '$COMPRESS_LEVEL' (use: min, mid, max)"; exit 1 ;;
+esac
 
 # ─── Detect host platform ──────────────────────────────────────────────────
 
@@ -98,16 +143,16 @@ detect_host_arch() {
 # ─── Validate inputs ───────────────────────────────────────────────────────
 
 validate_no_all_combined() {
-	local flag_name="$1"
+	_vanc_flag_name="$1"
 	shift
-	local has_all=0
-	local count=0
+	_vanc_has_all=0
+	_vanc_count=0
 	for val in "$@"; do
-		count=$((count + 1))
-		[ "$val" = "all" ] && has_all=1
+		_vanc_count=$((_vanc_count + 1))
+		[ "$val" = "all" ] && _vanc_has_all=1
 	done
-	if [ "$has_all" = "1" ] && [ "$count" -gt 1 ]; then
-		echo "Error: --$flag_name 'all' cannot be combined with other values"
+	if [ "$_vanc_has_all" = "1" ] && [ "$_vanc_count" -gt 1 ]; then
+		echo "Error: --$_vanc_flag_name 'all' cannot be combined with other values"
 		exit 1
 	fi
 }
@@ -124,8 +169,8 @@ validate_os_values() {
 validate_target_values() {
 	for t in $TARGET_LIST; do
 		case "$t" in
-			x86_64|aarch64|all) ;;
-			*) echo "Error: Unknown target '$t'. Valid: x86_64, aarch64, all"; exit 1 ;;
+			x86_64|aarch64|universal|all) ;;
+			*) echo "Error: Unknown target '$t'. Valid: x86_64, aarch64, universal, all"; exit 1 ;;
 		esac
 	done
 }
@@ -133,36 +178,36 @@ validate_target_values() {
 validate_format_values() {
 	for f in $FORMAT_LIST; do
 		case "$f" in
-			deb|rpm|appimage|nsis|dmg|zip|all) ;;
-			*) echo "Error: Unknown format '$f'. Valid: deb, rpm, appimage, nsis, dmg, zip, all"; exit 1 ;;
+			deb|rpm|pacman|appimage|nsis|dmg|zip|all) ;;
+			*) echo "Error: Unknown format '$f'. Valid: deb, rpm, pacman, appimage, nsis, dmg, zip, all"; exit 1 ;;
 		esac
 	done
 }
 
 # Validate that formats are valid for given OS
 validate_format_for_os() {
-	local os="$1"
-	local fmt="$2"
-	case "$fmt" in
+	_vffo_os="$1"
+	_vffo_fmt="$2"
+	case "$_vffo_fmt" in
 		all|zip) return 0 ;;
 	esac
-	case "$os" in
+	case "$_vffo_os" in
 		linux)
-			case "$fmt" in
-				deb|rpm|appimage) return 0 ;;
-				*) echo "Error: Format '$fmt' is not valid for OS 'linux'. Valid: deb, rpm, appimage, zip"; exit 1 ;;
+			case "$_vffo_fmt" in
+				deb|rpm|pacman|appimage) return 0 ;;
+				*) echo "Error: Format '$_vffo_fmt' is not valid for OS 'linux'. Valid: deb, rpm, pacman, appimage, zip"; exit 1 ;;
 			esac
 			;;
 		windows)
-			case "$fmt" in
+			case "$_vffo_fmt" in
 				nsis) return 0 ;;
-				*) echo "Error: Format '$fmt' is not valid for OS 'windows'. Valid: nsis, zip"; exit 1 ;;
+				*) echo "Error: Format '$_vffo_fmt' is not valid for OS 'windows'. Valid: nsis, zip"; exit 1 ;;
 			esac
 			;;
 		macos)
-			case "$fmt" in
+			case "$_vffo_fmt" in
 				dmg) return 0 ;;
-				*) echo "Error: Format '$fmt' is not valid for OS 'macos'. Valid: dmg, zip"; exit 1 ;;
+				*) echo "Error: Format '$_vffo_fmt' is not valid for OS 'macos'. Valid: dmg, zip"; exit 1 ;;
 			esac
 			;;
 	esac
@@ -170,11 +215,434 @@ validate_format_for_os() {
 
 # Expand 'all' into concrete format list for an OS
 expand_formats_for_os() {
-	local os="$1"
-	case "$os" in
-		linux)   echo "deb rpm appimage zip" ;;
+	_effo_os="$1"
+	case "$_effo_os" in
+		linux)   echo "deb rpm pacman appimage zip" ;;
 		windows) echo "nsis zip" ;;
 		macos)   echo "dmg zip" ;;
+	esac
+}
+
+# ─── Build step functions ───────────────────────────────────────────────────
+# Each function operates on globals set by docker_inner_build()
+
+build_icons() {
+	_t=$(date +%s)
+	echo "=== Generating icons ==="
+	ICONS_DIR="$SCRIPT_DIR/icons"
+	SVG="$ROOT_DIR/frontend/static/favicon.svg"
+	mkdir -p "$ICONS_DIR"
+	CONVERT="convert"
+	command -v magick >/dev/null 2>&1 && CONVERT="magick"
+	HAS_RSVG=0
+	command -v rsvg-convert >/dev/null 2>&1 && HAS_RSVG=1
+	for SIZE_NAME in "32 32x32" "128 128x128" "256 128x128@2x" "256 icon"; do
+		SIZE=$(echo "$SIZE_NAME" | cut -d' ' -f1)
+		NAME=$(echo "$SIZE_NAME" | cut -d' ' -f2)
+		if [ "$HAS_RSVG" = "1" ]; then
+			rsvg-convert -w "$SIZE" -h "$SIZE" "$SVG" | $CONVERT png:- -define png:color-type=6 "$ICONS_DIR/$NAME.png"
+		else
+			$CONVERT -background none -resize "${SIZE}x${SIZE}" "$SVG" -define png:color-type=6 "$ICONS_DIR/$NAME.png"
+		fi
+	done
+	if [ "$HAS_RSVG" = "1" ]; then
+		rsvg-convert -w 256 -h 256 "$SVG" | $CONVERT png:- "$ICONS_DIR/icon.ico"
+	else
+		$CONVERT -background none -resize "256x256" "$SVG" "$ICONS_DIR/icon.ico"
+	fi
+	echo "=== Icons done ($(elapsed_since $_t)) ==="
+}
+
+build_frontend() {
+	_t=$(date +%s)
+	echo "=== Building frontend ==="
+	cd "$ROOT_DIR/frontend"
+	./build.sh
+	echo "=== Frontend done ($(elapsed_since $_t)) ==="
+}
+
+build_backend() {
+	if [ "$BUILD_OS" = "macos" ] && [ "$BUILD_ARCH" = "universal" ]; then
+		_t=$(date +%s)
+		echo "=== Building universal backend (lipo) ==="
+		cd "$ROOT_DIR/backend"
+		LIPO_TMP=$(mktemp -d)
+		./build.sh --target bun-darwin-x64
+		cp build/lish-backend "$LIPO_TMP/lish-backend-x64"
+		./build.sh --target bun-darwin-arm64
+		cp build/lish-backend "$LIPO_TMP/lish-backend-arm64"
+		lipo -create "$LIPO_TMP/lish-backend-x64" "$LIPO_TMP/lish-backend-arm64" -output build/lish-backend
+		rm -rf "$LIPO_TMP"
+		echo "=== Universal backend done ($(elapsed_since $_t)) ==="
+	else
+		_t=$(date +%s)
+		echo "=== Building backend (target: $BUN_TARGET) ==="
+		cd "$ROOT_DIR/backend"
+		./build.sh --target "$BUN_TARGET"
+		echo "=== Backend done ($(elapsed_since $_t)) ==="
+	fi
+}
+
+sync_product_info() {
+	PRODUCT_JSON="$ROOT_DIR/shared/src/product.json"
+	_PRODUCT_DATA=$(jq -r '[.name, .version, .identifier, (.website // "https://github.com/libersoft-org/libershare")] | join("\n")' "$PRODUCT_JSON")
+	PRODUCT_NAME=$(echo "$_PRODUCT_DATA" | sed -n '1p')
+	PRODUCT_VERSION=$(echo "$_PRODUCT_DATA" | sed -n '2p')
+	PRODUCT_IDENTIFIER=$(echo "$_PRODUCT_DATA" | sed -n '3p')
+	PRODUCT_WEBSITE=$(echo "$_PRODUCT_DATA" | sed -n '4p')
+	unset _PRODUCT_DATA
+	PRODUCT_NAME_LOWER=$(echo "$PRODUCT_NAME" | tr '[:upper:]' '[:lower:]')
+	echo "Product: $PRODUCT_NAME v$PRODUCT_VERSION ($PRODUCT_IDENTIFIER)"
+
+	jq --tab --arg name "$PRODUCT_NAME" --arg ver "$PRODUCT_VERSION" --arg id "$PRODUCT_IDENTIFIER" \
+		'.productName = $name | .mainBinaryName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
+		"$SCRIPT_DIR/tauri.conf.json" > "$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
+
+	sed "s/^version = \"[^\"]*\"/version = \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/Cargo.toml" > "$SCRIPT_DIR/Cargo.toml.tmp" && mv "$SCRIPT_DIR/Cargo.toml.tmp" "$SCRIPT_DIR/Cargo.toml"
+
+	if [ "$BUILD_OS" = "linux" ]; then
+		jq --tab --arg name "$PRODUCT_NAME_LOWER" \
+			'.productName = $name | .mainBinaryName = $name
+			| .bundle.linux.deb.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
+			| .bundle.linux.rpm.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
+			| .bundle.linux.appimage.files = {("usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}' \
+			"$SCRIPT_DIR/tauri.linux.conf.json" > "$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
+
+		cp "$SCRIPT_DIR/desktop-entry-debug.desktop" "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" 2>/dev/null || true
+		sed -i "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" "$SCRIPT_DIR/desktop-entry-debug.desktop"
+
+		cp "$SCRIPT_DIR/desktop-entry.desktop" "$SCRIPT_DIR/desktop-entry.desktop.orig" 2>/dev/null || true
+		sed -i "s/%%product_name%%/$PRODUCT_NAME/g" "$SCRIPT_DIR/desktop-entry.desktop"
+	fi
+
+	if [ "$BUILD_OS" = "windows" ]; then
+		cp "$SCRIPT_DIR/wix-fragment-debug.wxs" "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" 2>/dev/null || true
+		sed -i "s/{{product_name}}/$PRODUCT_NAME/g" "$SCRIPT_DIR/wix-fragment-debug.wxs"
+	fi
+}
+
+build_tauri() {
+	_t=$(date +%s)
+	echo "=== Building Tauri app (target: $RUST_TARGET) ==="
+	cd "$SCRIPT_DIR"
+
+	# LDD wrapper for Linux AppImage builds (Bun binaries fail ldd)
+	if [ "$BUILD_OS" = "linux" ]; then
+		LDD_WRAPPER_DIR=$(mktemp -d)
+		cat > "$LDD_WRAPPER_DIR/ldd" << 'LDDWRAPPER'
+#!/bin/sh
+output=$(/usr/bin/ldd "$@" 2>&1)
+rc=$?
+if [ $rc -ne 0 ]; then
+	echo "	statically linked"
+	exit 0
+fi
+echo "$output"
+exit $rc
+LDDWRAPPER
+		chmod +x "$LDD_WRAPPER_DIR/ldd"
+		export PATH="$LDD_WRAPPER_DIR:$PATH"
+	fi
+
+	export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(nproc)
+	if [ "$BUILD_OS" = "windows" ]; then
+		cargo xwin tauri build --target "$RUST_TARGET" $BUNDLE_ARGS
+	else
+		cargo tauri build --target "$RUST_TARGET" $BUNDLE_ARGS
+	fi
+	echo "=== Tauri done ($(elapsed_since $_t)) ==="
+}
+
+# ── Utility: generate .desktop entry ──
+# Usage: generate_desktop_entry <output_path> [--debug]
+generate_desktop_entry() {
+	_gde_output="$1"
+	_gde_debug="${2:-}"
+	{
+		echo "[Desktop Entry]"
+		echo "Categories=Network;FileTransfer;"
+		echo "Exec=${PRODUCT_NAME_LOWER}${_gde_debug:+ --debug}"
+		echo "StartupWMClass=${PRODUCT_NAME_LOWER}"
+		echo "Icon=${PRODUCT_NAME_LOWER}"
+		echo "Name=${PRODUCT_NAME}${_gde_debug:+ - debug}"
+		[ "$_gde_debug" = "--debug" ] && echo "Comment=Launch ${PRODUCT_NAME} in debug mode"
+		echo "Terminal=false"
+		echo "Type=Application"
+	} > "$_gde_output"
+}
+
+# ── Utility: run a package build as a background job ──
+# Usage: run_pkg_job <label> <function_name>
+# Sets up temp dir ($WORK), trap, timing; appends PID to $PKG_PIDS
+run_pkg_job() {
+	_rpj_label="$1"
+	_rpj_fn="$2"
+	(
+		WORK=$(mktemp -d)
+		trap 'rm -rf "$WORK"' EXIT
+		_t=$(date +%s)
+		echo "=== Building $_rpj_label ==="
+		"$_rpj_fn"
+		echo "=== $_rpj_label complete ($(elapsed_since $_t)) ==="
+	) &
+	PKG_PIDS="$PKG_PIDS $!"
+}
+
+# ── Utility: create ZIP via staging callback ──
+# Usage: stage_zip <callback_fn>
+# Callback receives $ZIP_STAGING as the staging directory
+stage_zip() {
+	_sz_fn="$1"
+	ZIP_STAGING=$(mktemp -d)
+	"$_sz_fn"
+	cd "$ZIP_STAGING"
+	zip -ry "$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.zip" .
+	cd "$SCRIPT_DIR"
+	rm -rf "$ZIP_STAGING"
+}
+
+# ── Utility: copy debug launch script into $ZIP_STAGING ──
+_copy_debug_script() {
+	sed "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" \
+		"$SCRIPT_DIR/bundle-scripts/debug.sh" > "$ZIP_STAGING/debug.sh"
+	chmod +x "$ZIP_STAGING/debug.sh"
+}
+
+# ── Package builders (each uses $WORK from run_pkg_job) ──
+
+_build_deb() {
+	mkdir -p "$WORK/control"
+	cat > "$WORK/control/control" << CTRL_EOF
+Package: ${PRODUCT_NAME_LOWER}
+Version: ${PRODUCT_VERSION}
+Architecture: ${PKG_DEB_ARCH}
+Maintainer: LiberSoft <info@libersoft.org>
+Installed-Size: ${PKG_INSTALLED_SIZE}
+Depends: libwebkit2gtk-4.1-0, libgtk-3-0
+Section: net
+Priority: optional
+Homepage: ${PRODUCT_WEBSITE}
+Description: ${PRODUCT_NAME} - peer-to-peer file sharing
+CTRL_EOF
+	tar -cf - -C "$WORK/control" . | xz $XZ_FLAGS > "$WORK/control.tar.xz"
+	tar -cf - -C "$PKG_STAGING" . | xz $XZ_FLAGS > "$WORK/data.tar.xz"
+	echo "2.0" > "$WORK/debian-binary"
+	ar rcs "$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${PKG_DEB_ARCH}.deb" \
+		"$WORK/debian-binary" \
+		"$WORK/control.tar.xz" \
+		"$WORK/data.tar.xz"
+}
+
+_build_rpm() {
+	mkdir -p "$WORK/BUILD" "$WORK/RPMS" "$WORK/SOURCES" "$WORK/SPECS" "$WORK/BUILDROOT"
+	cp -a "$PKG_STAGING"/* "$WORK/BUILDROOT/"
+	cat > "$WORK/SPECS/${PRODUCT_NAME_LOWER}.spec" << SPEC_EOF
+Name: ${PRODUCT_NAME_LOWER}
+Version: ${PRODUCT_VERSION}
+Release: 1
+Summary: ${PRODUCT_NAME} - peer-to-peer file sharing
+License: MIT
+URL: ${PRODUCT_WEBSITE}
+AutoReqProv: no
+Requires: webkit2gtk4.1, gtk3
+
+%description
+${PRODUCT_NAME} - peer-to-peer file sharing application
+
+%files
+/usr/bin/${PRODUCT_NAME_LOWER}
+/usr/bin/lish-backend
+/usr/share/applications/${PRODUCT_NAME_LOWER}.desktop
+/usr/share/applications/${PRODUCT_NAME_LOWER}-debug.desktop
+/usr/share/icons/hicolor/256x256/apps/${PRODUCT_NAME_LOWER}.png
+SPEC_EOF
+	XZ_DEFAULTS="-T0" rpmbuild -bb --quiet \
+		--define "_topdir $WORK" \
+		--define "_binary_payload $RPM_PAYLOAD" \
+		--buildroot "$WORK/BUILDROOT" \
+		--target "$PKG_RPM_ARCH" \
+		"$WORK/SPECS/${PRODUCT_NAME_LOWER}.spec"
+	RPM_BUILT=$(find "$WORK/RPMS" -name "*.rpm" | head -1)
+	mv "$RPM_BUILT" "$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${PKG_RPM_ARCH}.rpm"
+}
+
+_build_pacman() {
+	PAC_BUILDDATE=$(date +%s)
+	PAC_SIZE=$(du -sb "$PKG_STAGING" | cut -f1)
+	cat > "$WORK/.PKGINFO" << PKGINFO_EOF
+pkgname = ${PRODUCT_NAME_LOWER}
+pkgver = ${PRODUCT_VERSION}-1
+pkgdesc = ${PRODUCT_NAME} - peer-to-peer file sharing
+url = ${PRODUCT_WEBSITE}
+builddate = ${PAC_BUILDDATE}
+packager = LiberSoft <info@libersoft.org>
+size = ${PAC_SIZE}
+arch = ${PKG_PACMAN_ARCH}
+license = MIT
+depend = webkit2gtk-4.1
+depend = gtk3
+PKGINFO_EOF
+	cd "$PKG_STAGING"
+	bsdtar -czf "$WORK/.MTREE" \
+		--format=mtree \
+		--options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
+		.
+	bsdtar -cf - -C "$WORK" .PKGINFO .MTREE -C "$PKG_STAGING" . \
+		| xz $XZ_FLAGS > "$FINAL_DIR/${PRODUCT_NAME_LOWER}-${PRODUCT_VERSION}-1-${PKG_PACMAN_ARCH}.pkg.tar.xz"
+}
+
+_build_appimage() {
+	AI_APPDIR="$WORK/AppDir"
+	mkdir -p "$AI_APPDIR"
+	cp -a "$PKG_STAGING"/* "$AI_APPDIR/"
+
+	cat > "$AI_APPDIR/AppRun" << APPRUN_EOF
+#!/bin/sh
+SELF=\$(readlink -f "\$0")
+HERE=\${SELF%/*}
+exec "\$HERE/usr/bin/${PRODUCT_NAME_LOWER}" "\$@"
+APPRUN_EOF
+	chmod +x "$AI_APPDIR/AppRun"
+
+	cp "$AI_APPDIR/usr/share/applications/${PRODUCT_NAME_LOWER}.desktop" "$AI_APPDIR/${PRODUCT_NAME_LOWER}.desktop"
+	cp "$AI_APPDIR/usr/share/icons/hicolor/256x256/apps/${PRODUCT_NAME_LOWER}.png" "$AI_APPDIR/${PRODUCT_NAME_LOWER}.png"
+	ln -sf "${PRODUCT_NAME_LOWER}.png" "$AI_APPDIR/.DirIcon"
+
+	SQUASHFS_BCJ=""
+	case "$BUILD_ARCH" in
+		x86_64) SQUASHFS_BCJ="-Xbcj x86" ;;
+	esac
+	mksquashfs "$AI_APPDIR" "$WORK/app.squashfs" \
+		-root-owned -noappend \
+		-comp xz $SQUASHFS_BCJ -Xdict-size 100% \
+		-processors $(nproc)
+
+	AI_RUNTIME_CACHE="/tmp/appimage-runtime-${BUILD_ARCH}"
+	if [ ! -f "$AI_RUNTIME_CACHE" ]; then
+		echo "Downloading AppImage runtime for $BUILD_ARCH..."
+		curl -fsSL -o "$AI_RUNTIME_CACHE" \
+			"https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-${BUILD_ARCH}"
+	fi
+
+	AI_OUTPUT="$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.AppImage"
+	cat "$AI_RUNTIME_CACHE" "$WORK/app.squashfs" > "$AI_OUTPUT"
+	chmod +x "$AI_OUTPUT"
+}
+
+# ── ZIP staging callbacks ──
+
+_stage_zip_linux() {
+	cp "$BUILD_RELEASE_DIR/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/"
+	cp "$ROOT_DIR/backend/build/lish-backend" "$ZIP_STAGING/lish-backend"
+	_copy_debug_script
+	chmod +x "$ZIP_STAGING/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/lish-backend"
+}
+
+_stage_zip_windows() {
+	cp "$BUILD_RELEASE_DIR/${PRODUCT_NAME}.exe" "$ZIP_STAGING/"
+	cp "$ROOT_DIR/backend/build/lish-backend.exe" "$ZIP_STAGING/lish-backend.exe"
+	sed "s/{{product_name}}/$PRODUCT_NAME/g" \
+		"$SCRIPT_DIR/bundle-scripts/Debug.bat" > "$ZIP_STAGING/Debug.bat"
+}
+
+_stage_zip_macos() {
+	APP_BUNDLE="$BUILD_RELEASE_DIR/bundle/macos/${PRODUCT_NAME}.app"
+	if [ ! -d "$APP_BUNDLE" ]; then
+		echo "Building .app bundle for macOS ZIP..."
+		cargo tauri build --target "$RUST_TARGET" --bundles app
+	fi
+	cp -r "$APP_BUNDLE" "$ZIP_STAGING/"
+	_copy_debug_script
+}
+
+# ─── Main build phase functions ─────────────────────────────────────────────
+
+build_linux_packages() {
+	# Architecture mapping
+	case "$BUILD_ARCH" in
+		x86_64)  PKG_DEB_ARCH="amd64"; PKG_RPM_ARCH="x86_64"; PKG_PACMAN_ARCH="x86_64" ;;
+		aarch64) PKG_DEB_ARCH="arm64"; PKG_RPM_ARCH="aarch64"; PKG_PACMAN_ARCH="aarch64" ;;
+	esac
+
+	# Create common staging tree
+	PKG_STAGING=$(mktemp -d)
+	mkdir -p "$PKG_STAGING/usr/bin"
+	mkdir -p "$PKG_STAGING/usr/share/applications"
+	mkdir -p "$PKG_STAGING/usr/share/icons/hicolor/256x256/apps"
+
+	cp "$BUILD_RELEASE_DIR/$PRODUCT_NAME_LOWER" "$PKG_STAGING/usr/bin/"
+	chmod +x "$PKG_STAGING/usr/bin/$PRODUCT_NAME_LOWER"
+	cp "$ROOT_DIR/backend/build/lish-backend" "$PKG_STAGING/usr/bin/"
+	chmod +x "$PKG_STAGING/usr/bin/lish-backend"
+
+	generate_desktop_entry "$PKG_STAGING/usr/share/applications/${PRODUCT_NAME_LOWER}.desktop"
+	generate_desktop_entry "$PKG_STAGING/usr/share/applications/${PRODUCT_NAME_LOWER}-debug.desktop" --debug
+
+	cp "$SCRIPT_DIR/icons/icon.png" "$PKG_STAGING/usr/share/icons/hicolor/256x256/apps/${PRODUCT_NAME_LOWER}.png"
+
+	PKG_INSTALLED_SIZE=$(du -sk "$PKG_STAGING" | cut -f1)
+
+	PKG_PIDS=""
+	[ "$MAKE_DEB" = "1" ]      && run_pkg_job "DEB package (xz $XZ_FLAGS)" _build_deb
+	[ "$MAKE_RPM" = "1" ]      && run_pkg_job "RPM package (xz, $RPM_PAYLOAD)" _build_rpm
+	[ "$MAKE_PACMAN" = "1" ]   && run_pkg_job "Pacman package (xz $XZ_FLAGS)" _build_pacman
+	[ "$MAKE_APPIMAGE" = "1" ] && run_pkg_job "AppImage (xz, $(nproc) cores)" _build_appimage
+
+	# Wait for all package builds and check for failures
+	_pkg_fail=0
+	for _pid in $PKG_PIDS; do
+		wait "$_pid" || _pkg_fail=1
+	done
+	rm -rf "$PKG_STAGING"
+	if [ "$_pkg_fail" = "1" ]; then
+		echo "Error: One or more package builds failed"
+		exit 1
+	fi
+	echo "=== All Linux packages complete ==="
+}
+
+move_bundles() {
+	# Windows: patch PE subsystem from CONSOLE to WINDOWS_GUI
+	if [ "$BUILD_OS" = "windows" ]; then
+		WIN_EXE="$BUILD_RELEASE_DIR/${PRODUCT_NAME}.exe"
+		if [ -f "$WIN_EXE" ]; then
+			echo "=== Patching PE subsystem to GUI ==="
+			python3 -c "
+import struct, sys
+f = open(sys.argv[1], 'r+b')
+f.seek(0x3C)
+pe_offset = struct.unpack('<I', f.read(4))[0]
+f.seek(pe_offset + 0x5C)
+f.write(struct.pack('<H', 2))
+f.close()
+" "$WIN_EXE"
+		fi
+	fi
+
+	# Move and rename Tauri-produced bundles (nsis, dmg)
+	for dir in nsis dmg; do
+		if [ -d "$BUILD_OUTPUT_DIR/$dir" ]; then
+			for f in "$BUILD_OUTPUT_DIR/$dir"/*; do
+				[ -f "$f" ] || continue
+				EXT="${f##*.}"
+				case "$EXT" in
+					exe) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}_setup.exe" ;;
+					dmg) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.dmg" ;;
+					*)   NEWNAME="$(basename "$f")" ;;
+				esac
+				mv "$f" "$FINAL_DIR/$NEWNAME"
+			done
+			rmdir "$BUILD_OUTPUT_DIR/$dir" 2>/dev/null || true
+		fi
+	done
+}
+
+build_zip() {
+	echo "=== Creating ZIP bundle ==="
+	case "$BUILD_OS" in
+		linux)   stage_zip _stage_zip_linux ;;
+		windows) stage_zip _stage_zip_windows ;;
+		macos)   stage_zip _stage_zip_macos ;;
 	esac
 }
 
@@ -182,6 +650,7 @@ expand_formats_for_os() {
 # This runs INSIDE the Docker container
 
 docker_inner_build() {
+	BUILD_TOTAL_START=$(date +%s)
 	BUILD_OS="$INNER_OS"
 	BUILD_ARCH="$INNER_ARCH"
 
@@ -209,6 +678,18 @@ docker_inner_build() {
 			RUST_TARGET="aarch64-pc-windows-msvc"
 			BUN_TARGET="bun-windows-arm64"
 			;;
+		macos_x86_64)
+			RUST_TARGET="x86_64-apple-darwin"
+			BUN_TARGET="bun-darwin-x64"
+			;;
+		macos_aarch64)
+			RUST_TARGET="aarch64-apple-darwin"
+			BUN_TARGET="bun-darwin-arm64"
+			;;
+		macos_universal)
+			RUST_TARGET="universal-apple-darwin"
+			BUN_TARGET=""
+			;;
 		*)
 			echo "Error: Unsupported OS/arch combination: $BUILD_OS/$BUILD_ARCH"
 			exit 1
@@ -216,274 +697,101 @@ docker_inner_build() {
 	esac
 
 	# Ensure Rust target is installed
-	rustup target add "$RUST_TARGET" 2>/dev/null || true
+	if [ "$BUILD_ARCH" = "universal" ]; then
+		rustup target add x86_64-apple-darwin 2>/dev/null || true
+		rustup target add aarch64-apple-darwin 2>/dev/null || true
+	else
+		rustup target add "$RUST_TARGET" 2>/dev/null || true
+	fi
+
+	# ── Cross-compilation setup for different Linux arch ──
+	CONTAINER_ARCH=$(uname -m)
+	if [ "$BUILD_OS" = "linux" ] && [ "$CONTAINER_ARCH" != "$BUILD_ARCH" ]; then
+		case "$BUILD_ARCH" in
+			x86_64)  CROSS_GNU_TRIPLE="x86_64-linux-gnu" ;;
+			aarch64) CROSS_GNU_TRIPLE="aarch64-linux-gnu" ;;
+		esac
+		echo "=== Cross-compiling: $CONTAINER_ARCH -> $BUILD_ARCH (via $CROSS_GNU_TRIPLE) ==="
+		export PKG_CONFIG_LIBDIR="/usr/lib/${CROSS_GNU_TRIPLE}/pkgconfig:/usr/share/pkgconfig"
+		export PKG_CONFIG_ALLOW_CROSS=1
+	fi
 
 	# Build formats argument for cargo tauri build
+	# Linux packages (deb, rpm, appimage) are built manually for speed (xz, parallel).
+	# Windows/macOS packages are still built by Tauri bundler.
 	BUNDLE_ARGS=""
 	MAKE_ZIP=0
-	HAS_FORMATS=0
+	MAKE_DEB=0
+	MAKE_RPM=0
+	MAKE_PACMAN=0
+	MAKE_APPIMAGE=0
 	for fmt in $FORMAT_LIST; do
 		case "$fmt" in
 			all)
-				HAS_FORMATS=1
 				for efmt in $(expand_formats_for_os "$BUILD_OS"); do
 					case "$efmt" in
 						zip)       MAKE_ZIP=1 ;;
+						deb)       MAKE_DEB=1 ;;
+						rpm)       MAKE_RPM=1 ;;
+						pacman)    MAKE_PACMAN=1 ;;
+						appimage)  MAKE_APPIMAGE=1 ;;
 						*)         BUNDLE_ARGS="$BUNDLE_ARGS --bundles $efmt" ;;
 					esac
 				done
 				;;
 			zip)
-				# zip is valid for all OSes
-				HAS_FORMATS=1
 				MAKE_ZIP=1
 				;;
 			*)
-				# Only include formats valid for this OS, skip others silently
 				case "$BUILD_OS" in
-					linux)   case "$fmt" in deb|rpm|appimage) HAS_FORMATS=1; BUNDLE_ARGS="$BUNDLE_ARGS --bundles $fmt" ;; esac ;;
-					windows) case "$fmt" in nsis)             HAS_FORMATS=1; BUNDLE_ARGS="$BUNDLE_ARGS --bundles $fmt" ;; esac ;;
-					macos)   case "$fmt" in dmg)              HAS_FORMATS=1; BUNDLE_ARGS="$BUNDLE_ARGS --bundles $fmt" ;; esac ;;
+					linux)   case "$fmt" in
+								deb)      MAKE_DEB=1 ;;
+								rpm)      MAKE_RPM=1 ;;
+								pacman)   MAKE_PACMAN=1 ;;
+								appimage) MAKE_APPIMAGE=1 ;;
+							 esac ;;
+					windows) case "$fmt" in nsis) BUNDLE_ARGS="$BUNDLE_ARGS --bundles $fmt" ;; esac ;;
+					macos)   case "$fmt" in dmg)  BUNDLE_ARGS="$BUNDLE_ARGS --bundles $fmt" ;; esac ;;
 				esac
 				;;
 		esac
 	done
-	# If no --format specified, build only the binary (no bundles)
-	if [ "$HAS_FORMATS" = "0" ]; then
-		BUNDLE_ARGS="--bundles none"
-	fi
+	# If no Tauri-native bundles requested, build only the binary (no --bundles flag)
+	# Tauri config has "targets": [] so it won't bundle anything by default
 
-	# ── Icons (only if not already generated) ──
-	if [ ! -d "$SCRIPT_DIR/icons" ]; then
-		echo "=== Generating icons ==="
-		ICONS_DIR="$SCRIPT_DIR/icons"
-		SVG="$ROOT_DIR/frontend/static/favicon.svg"
-		mkdir -p "$ICONS_DIR"
-		CONVERT="convert"
-		command -v magick >/dev/null 2>&1 && CONVERT="magick"
-		HAS_RSVG=0
-		command -v rsvg-convert >/dev/null 2>&1 && HAS_RSVG=1
-		for SIZE_NAME in "32 32x32" "128 128x128" "256 128x128@2x" "256 icon"; do
-			SIZE=$(echo "$SIZE_NAME" | cut -d' ' -f1)
-			NAME=$(echo "$SIZE_NAME" | cut -d' ' -f2)
-			if [ "$HAS_RSVG" = "1" ]; then
-				rsvg-convert -w "$SIZE" -h "$SIZE" "$SVG" | $CONVERT png:- -define png:color-type=6 "$ICONS_DIR/$NAME.png"
-			else
-				$CONVERT -background none -resize "${SIZE}x${SIZE}" "$SVG" -define png:color-type=6 "$ICONS_DIR/$NAME.png"
-			fi
-		done
-		if [ "$HAS_RSVG" = "1" ]; then
-			rsvg-convert -w 256 -h 256 "$SVG" | $CONVERT png:- "$ICONS_DIR/icon.ico"
-		else
-			$CONVERT -background none -resize "256x256" "$SVG" "$ICONS_DIR/icon.ico"
-		fi
-	fi
+	build_icons
+	build_frontend
+	build_backend
+	sync_product_info
 
-	# ── Frontend (only if not already built) ──
-	if [ ! -d "$ROOT_DIR/frontend/build" ]; then
-		echo "=== Building frontend ==="
-		cd "$ROOT_DIR/frontend"
-		./build.sh
-	fi
+	build_tauri
 
-	# ── Backend ──
-	echo "=== Building backend (target: $BUN_TARGET) ==="
-	cd "$ROOT_DIR/backend"
-	./build.sh --target "$BUN_TARGET"
-
-	# ── Product info ──
-	PRODUCT_JSON="$ROOT_DIR/shared/src/product.json"
-	PRODUCT_NAME=$(jq -r '.name' "$PRODUCT_JSON")
-	PRODUCT_VERSION=$(jq -r '.version' "$PRODUCT_JSON")
-	PRODUCT_IDENTIFIER=$(jq -r '.identifier' "$PRODUCT_JSON")
-	PRODUCT_NAME_LOWER=$(echo "$PRODUCT_NAME" | tr '[:upper:]' '[:lower:]')
-	echo "Product: $PRODUCT_NAME v$PRODUCT_VERSION ($PRODUCT_IDENTIFIER)"
-
-	# ── Sync product info to configs ──
-	jq --tab --arg name "$PRODUCT_NAME" --arg ver "$PRODUCT_VERSION" --arg id "$PRODUCT_IDENTIFIER" \
-		'.productName = $name | .mainBinaryName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
-		"$SCRIPT_DIR/tauri.conf.json" > "$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
-
-	sed -i "s/^version = \"[^\"]*\"/version = \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/Cargo.toml"
-
-	if [ "$BUILD_OS" = "linux" ]; then
-		jq --tab --arg name "$PRODUCT_NAME_LOWER" \
-			'.productName = $name | .mainBinaryName = $name
-			| .bundle.linux.deb.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
-			| .bundle.linux.rpm.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
-			| .bundle.linux.appimage.files = {("usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}' \
-			"$SCRIPT_DIR/tauri.linux.conf.json" > "$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
-
-		# Make copies of desktop entries to avoid in-place modification conflicts across targets
-		cp "$SCRIPT_DIR/desktop-entry-debug.desktop" "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" 2>/dev/null || true
-		sed -i "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" "$SCRIPT_DIR/desktop-entry-debug.desktop"
-
-		cp "$SCRIPT_DIR/desktop-entry.desktop" "$SCRIPT_DIR/desktop-entry.desktop.orig" 2>/dev/null || true
-		sed -i "s/%%product_name%%/$PRODUCT_NAME/g" "$SCRIPT_DIR/desktop-entry.desktop"
-	fi
-
-	if [ "$BUILD_OS" = "windows" ]; then
-		sed -i "s/{{product_name}}/$PRODUCT_NAME/g" "$SCRIPT_DIR/wix-fragment-debug.wxs"
-	fi
-
-	# ── Build Tauri app ──
-	echo "=== Building Tauri app (target: $RUST_TARGET) ==="
-	cd "$SCRIPT_DIR"
-
-	# LDD wrapper for Linux AppImage builds (Bun binaries fail ldd)
-	if [ "$BUILD_OS" = "linux" ]; then
-		LDD_WRAPPER_DIR=$(mktemp -d)
-		cat > "$LDD_WRAPPER_DIR/ldd" << 'LDDWRAPPER'
-#!/bin/sh
-output=$(/usr/bin/ldd "$@" 2>&1)
-rc=$?
-if [ $rc -ne 0 ]; then
-	echo "	statically linked"
-	exit 0
-fi
-echo "$output"
-exit $rc
-LDDWRAPPER
-		chmod +x "$LDD_WRAPPER_DIR/ldd"
-		export PATH="$LDD_WRAPPER_DIR:$PATH"
-	fi
-
-	# Windows cross-build setup
-	if [ "$BUILD_OS" = "windows" ]; then
-		# cargo-xwin handles Windows SDK automatically
-		if ! command -v cargo-xwin >/dev/null 2>&1; then
-			echo "Installing cargo-xwin..."
-			cargo install cargo-xwin
-		fi
-		cargo xwin tauri build --target "$RUST_TARGET" $BUNDLE_ARGS
-	else
-		cargo tauri build --target "$RUST_TARGET" $BUNDLE_ARGS
-	fi
-
-	# ── Fix AppImage backend ──
-	APPIMAGE_DIR="$SCRIPT_DIR/build/${RUST_TARGET}/release/bundle/appimage"
-	if [ -d "$APPIMAGE_DIR" ]; then
-		ORIGINAL_BACKEND="$ROOT_DIR/backend/build/lish-backend"
-		if [ -f "$ORIGINAL_BACKEND" ]; then
-			for appimage_file in "$APPIMAGE_DIR"/*.AppImage; do
-				[ -f "$appimage_file" ] || continue
-				echo "=== Fixing AppImage backend binary ==="
-				APPIMAGE_WORK_DIR=$(mktemp -d)
-				cd "$APPIMAGE_WORK_DIR"
-
-				chmod +x "$appimage_file"
-				"$appimage_file" --appimage-extract >/dev/null 2>&1
-
-				BACKEND_IN_APPIMAGE=$(find squashfs-root -name "lish-backend" -type f | head -1)
-				if [ -n "$BACKEND_IN_APPIMAGE" ]; then
-					HASH_BEFORE=$(md5sum "$BACKEND_IN_APPIMAGE" | cut -d' ' -f1)
-					cp "$ORIGINAL_BACKEND" "$BACKEND_IN_APPIMAGE"
-					chmod +x "$BACKEND_IN_APPIMAGE"
-					HASH_AFTER=$(md5sum "$BACKEND_IN_APPIMAGE" | cut -d' ' -f1)
-					echo "Backend hash before: $HASH_BEFORE"
-					echo "Backend hash after:  $HASH_AFTER"
-				fi
-
-				APPIMAGETOOL=""
-				if command -v appimagetool >/dev/null 2>&1; then
-					APPIMAGETOOL="appimagetool"
-				else
-					APPIMAGETOOL="$APPIMAGE_WORK_DIR/appimagetool"
-					echo "Downloading appimagetool..."
-					# Download arch-appropriate appimagetool
-					APPIMG_ARCH="$BUILD_ARCH"
-					[ "$APPIMG_ARCH" = "aarch64" ] && APPIMG_ARCH="aarch64"
-					[ "$APPIMG_ARCH" = "x86_64" ] && APPIMG_ARCH="x86_64"
-					curl -fsSL -o "$APPIMAGETOOL" "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${APPIMG_ARCH}.AppImage"
-					chmod +x "$APPIMAGETOOL"
-				fi
-				ARCH="$BUILD_ARCH" "$APPIMAGETOOL" squashfs-root "$appimage_file" >/dev/null 2>&1
-				chmod +x "$appimage_file"
-
-				cd "$SCRIPT_DIR"
-				rm -rf "$APPIMAGE_WORK_DIR"
-				echo "AppImage backend fix complete"
-			done
-		fi
-	fi
-
-	# ── Restore desktop entries from originals ──
-	[ -f "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" ] && mv "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" "$SCRIPT_DIR/desktop-entry-debug.desktop"
-	[ -f "$SCRIPT_DIR/desktop-entry.desktop.orig" ] && mv "$SCRIPT_DIR/desktop-entry.desktop.orig" "$SCRIPT_DIR/desktop-entry.desktop"
-
-	# Clean up LDD wrapper
-	[ -n "$LDD_WRAPPER_DIR" ] && rm -rf "$LDD_WRAPPER_DIR"
-
-	# ── Move and rename output bundles ──
-	BUILD_OUTPUT_DIR="$SCRIPT_DIR/build/${RUST_TARGET}/release/bundle"
+	# ── Output directory and naming ──
+	BUILD_RELEASE_DIR="$SCRIPT_DIR/build/${RUST_TARGET}/release"
+	BUILD_OUTPUT_DIR="$BUILD_RELEASE_DIR/bundle"
 	FINAL_DIR="$SCRIPT_DIR/build/release/bundle"
 	mkdir -p "$FINAL_DIR"
-
 	VERSION="$PRODUCT_VERSION"
 	ARCH="$BUILD_ARCH"
 	OS_LABEL="$BUILD_OS"
 
-	# Windows: patch PE subsystem from CONSOLE to WINDOWS_GUI
-	if [ "$BUILD_OS" = "windows" ]; then
-		WIN_EXE="$SCRIPT_DIR/build/${RUST_TARGET}/release/${PRODUCT_NAME}.exe"
-		if [ -f "$WIN_EXE" ]; then
-			echo "=== Patching PE subsystem to GUI ==="
-			python3 -c "
-import struct, sys
-f = open(sys.argv[1], 'r+b')
-f.seek(0x3C)
-pe_offset = struct.unpack('<I', f.read(4))[0]
-f.seek(pe_offset + 0x5C)
-f.write(struct.pack('<H', 2))
-f.close()
-" "$WIN_EXE"
-		fi
+	# ── Custom Linux packages (DEB, RPM, Pacman, AppImage) ──
+	PKG_LINUX_ANY=0
+	[ "$MAKE_DEB" = "1" ] && PKG_LINUX_ANY=1
+	[ "$MAKE_RPM" = "1" ] && PKG_LINUX_ANY=1
+	[ "$MAKE_PACMAN" = "1" ] && PKG_LINUX_ANY=1
+	[ "$MAKE_APPIMAGE" = "1" ] && PKG_LINUX_ANY=1
+	if [ "$BUILD_OS" = "linux" ] && [ "$PKG_LINUX_ANY" = "1" ]; then
+		build_linux_packages
 	fi
 
-	for dir in deb rpm appimage nsis dmg; do
-		if [ -d "$BUILD_OUTPUT_DIR/$dir" ]; then
-			for f in "$BUILD_OUTPUT_DIR/$dir"/*; do
-				[ -f "$f" ] || continue
-				EXT="${f##*.}"
-				case "$EXT" in
-					deb)      NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.deb" ;;
-					rpm)      NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.rpm" ;;
-					AppImage) NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.AppImage" ;;
-					exe)      NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}_setup.exe" ;;
-					dmg)      NEWNAME="${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.dmg" ;;
-					*)        NEWNAME="$(basename "$f")" ;;
-				esac
-				mv "$f" "$FINAL_DIR/$NEWNAME"
-				[ "$EXT" = "AppImage" ] && chmod +x "$FINAL_DIR/$NEWNAME"
-			done
-			rmdir "$BUILD_OUTPUT_DIR/$dir" 2>/dev/null || true
-		fi
-	done
+	move_bundles
 
-	# ── ZIP bundle ──
 	if [ "$MAKE_ZIP" = "1" ]; then
-		echo "=== Creating ZIP bundle ==="
-		if [ "$BUILD_OS" = "linux" ]; then
-			ZIP_STAGING=$(mktemp -d)
-			cp "$SCRIPT_DIR/build/${RUST_TARGET}/release/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/"
-			cp "$ROOT_DIR/backend/build/lish-backend" "$ZIP_STAGING/lish-backend"
-			sed "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" \
-				"$SCRIPT_DIR/bundle-scripts/debug.sh" > "$ZIP_STAGING/debug.sh"
-			chmod +x "$ZIP_STAGING/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/lish-backend" "$ZIP_STAGING/debug.sh"
-			cd "$ZIP_STAGING"
-			zip -ry "$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.zip" .
-			rm -rf "$ZIP_STAGING"
-		elif [ "$BUILD_OS" = "windows" ]; then
-			ZIP_STAGING=$(mktemp -d)
-			cp "$SCRIPT_DIR/build/${RUST_TARGET}/release/${PRODUCT_NAME}.exe" "$ZIP_STAGING/"
-			cp "$ROOT_DIR/backend/build/lish-backend.exe" "$ZIP_STAGING/lish-backend.exe"
-			cd "$ZIP_STAGING"
-			zip -ry "$FINAL_DIR/${PRODUCT_NAME}_${VERSION}_${OS_LABEL}_${ARCH}.zip" .
-			rm -rf "$ZIP_STAGING"
-		fi
+		build_zip
 	fi
 
-	echo "=== Build complete: OS=$BUILD_OS ARCH=$BUILD_ARCH ==="
+	echo "=== Build complete: OS=$BUILD_OS ARCH=$BUILD_ARCH (total $(elapsed_since $BUILD_TOTAL_START)) ==="
 	echo "Output: $FINAL_DIR/"
 }
 
@@ -511,9 +819,13 @@ validate_no_all_combined "os" $OS_LIST
 validate_no_all_combined "target" $TARGET_LIST
 validate_no_all_combined "format" $FORMAT_LIST
 
-# Expand 'all'
-case "$OS_LIST" in *all*) OS_LIST="linux windows" ;; esac
-case "$TARGET_LIST" in *all*) TARGET_LIST="x86_64 aarch64" ;; esac
+# Expand 'all' for OS
+if [ "$HOST_OS" = "macos" ]; then
+	case "$OS_LIST" in *all*) OS_LIST="linux windows macos" ;; esac
+else
+	case "$OS_LIST" in *all*) OS_LIST="linux windows" ;; esac
+fi
+# Note: target 'all' is expanded per-OS in the build loop
 
 # Validate formats against each OS (skip - formats are filtered per-OS in inner build)
 # Only check that format values are recognized (already done by validate_format_values)
@@ -538,64 +850,20 @@ if [ "$NEEDS_DOCKER" = "1" ]; then
 	fi
 fi
 
-# ── Ensure QEMU is registered for cross-arch builds ──
-NEEDS_CROSS_ARCH=0
-for os in $OS_LIST; do
-	for target in $TARGET_LIST; do
-		[ "$target" != "$HOST_ARCH" ] && NEEDS_CROSS_ARCH=1
-	done
-done
-if [ "$NEEDS_CROSS_ARCH" = "1" ] && [ "$HOST_OS" = "linux" ]; then
-	# Check if binfmt_misc is set up for the needed arch
-	QEMU_OK=1
-	for target in $TARGET_LIST; do
-		[ "$target" = "$HOST_ARCH" ] && continue
-		case "$target" in
-			aarch64) [ ! -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ] && QEMU_OK=0 ;;
-			x86_64)  [ ! -f /proc/sys/fs/binfmt_misc/qemu-x86_64 ] && QEMU_OK=0 ;;
-		esac
-	done
-	if [ "$QEMU_OK" = "0" ]; then
-		echo "=== Registering QEMU user-static for cross-arch emulation ==="
-		docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-	fi
-fi
-
-# ── Build Docker images for needed platforms ──
-DOCKER_IMAGE_BASE="libershare-builder"
+# ── Build Docker image (single image, runs natively on host arch) ──
+DOCKER_IMAGE="libershare-builder"
 if [ "$NEEDS_DOCKER" = "1" ]; then
-	# Collect unique Docker platforms needed
-	PLATFORMS_NEEDED=""
-	for os in $OS_LIST; do
-		for target in $TARGET_LIST; do
-			case "${os}_${target}" in
-				linux_x86_64|windows_x86_64|windows_aarch64) PLAT="linux/amd64" ;;
-				linux_aarch64) PLAT="linux/arm64" ;;
-				macos_*) continue ;;
-				*) continue ;;
-			esac
-			# Add if not already in list
-			case "$PLATFORMS_NEEDED" in
-				*"$PLAT"*) ;;
-				*) PLATFORMS_NEEDED="$PLATFORMS_NEEDED $PLAT" ;;
-			esac
-		done
-	done
-
-	for plat in $PLATFORMS_NEEDED; do
-		# Tag: libershare-builder:amd64 or libershare-builder:arm64
-		PLAT_TAG=$(echo "$plat" | sed 's|linux/||')
-		IMAGE_TAG="${DOCKER_IMAGE_BASE}:${PLAT_TAG}"
-
-		# Check if image already exists
-		if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
-			echo "=== Docker image $IMAGE_TAG already exists (cached) ==="
-		else
-			echo "=== Building Docker image for $plat ==="
-			echo "    (first build for a new platform may take a long time)"
-			DOCKER_BUILDKIT=1 docker build --network=host --platform "$plat" -t "$IMAGE_TAG" "$SCRIPT_DIR"
-		fi
-	done
+	if [ "$DOCKER_REBUILD" = "1" ]; then
+		echo "=== Rebuilding Docker image (--docker-rebuild) ==="
+		docker rmi "$DOCKER_IMAGE" 2>/dev/null || true
+		DOCKER_BUILDKIT=1 docker build --network=host --no-cache -t "$DOCKER_IMAGE" "$SCRIPT_DIR"
+	elif docker image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
+		echo "=== Docker image $DOCKER_IMAGE already exists (cached) ==="
+	else
+		echo "=== Building Docker image ==="
+		echo "    (first build may take a long time)"
+		DOCKER_BUILDKIT=1 docker build --network=host -t "$DOCKER_IMAGE" "$SCRIPT_DIR"
+	fi
 fi
 
 # ── Clean old output ──
@@ -606,41 +874,38 @@ mkdir -p "$SCRIPT_DIR/build/release/bundle"
 
 # ── Iterate over OS × target combinations ──
 
-# Build format args to pass through
-FORMAT_ARGS=""
-for fmt in $FORMAT_LIST; do
-	FORMAT_ARGS="$FORMAT_ARGS $fmt"
-done
-
 for os in $OS_LIST; do
-	for target in $TARGET_LIST; do
+	# Expand target 'all' per-OS
+	_eff_targets="$TARGET_LIST"
+	case "$_eff_targets" in
+		*all*)
+			if [ "$os" = "macos" ]; then
+				_eff_targets="x86_64 aarch64 universal"
+			else
+				_eff_targets="x86_64 aarch64"
+			fi
+			;;
+	esac
+
+	for target in $_eff_targets; do
+		# Skip 'universal' for non-macOS
+		if [ "$target" = "universal" ] && [ "$os" != "macos" ]; then
+			echo "Skipping: 'universal' target is only valid for macOS"
+			continue
+		fi
+
 		echo ""
+		# Validate formats for this OS
+		if [ -n "$FORMAT_LIST" ]; then
+			for _vf in $FORMAT_LIST; do
+				validate_format_for_os "$os" "$_vf"
+			done
+		fi
+
 		echo "╔══════════════════════════════════════════════════╗"
 		echo "║  Building: OS=$os  ARCH=$target"
 		echo "╚══════════════════════════════════════════════════╝"
 		echo ""
-
-		if [ "$os" = "macos" ]; then
-			# macOS: native build (no Docker)
-			echo "Error: macOS native build not yet implemented in new build system."
-			echo "Use the legacy build.sh directly on macOS for now."
-			exit 1
-		fi
-
-		# Determine Docker platform and image tag
-		DOCKER_PLATFORM=""
-		case "${os}_${target}" in
-			linux_x86_64)    DOCKER_PLATFORM="linux/amd64" ;;
-			linux_aarch64)   DOCKER_PLATFORM="linux/arm64" ;;
-			windows_x86_64)  DOCKER_PLATFORM="linux/amd64" ;;
-			windows_aarch64) DOCKER_PLATFORM="linux/amd64" ;;
-			*)
-				echo "Error: Unsupported combination: OS=$os ARCH=$target"
-				exit 1
-				;;
-		esac
-		PLAT_TAG=$(echo "$DOCKER_PLATFORM" | sed 's|linux/||')
-		DOCKER_IMAGE="${DOCKER_IMAGE_BASE}:${PLAT_TAG}"
 
 		# Compose --format args for inner script
 		INNER_FORMAT_ARGS=""
@@ -648,17 +913,23 @@ for os in $OS_LIST; do
 			INNER_FORMAT_ARGS="--format $FORMAT_LIST"
 		fi
 
-		# Run build inside Docker
-		docker run --rm \
-			--network=host \
-			--platform "$DOCKER_PLATFORM" \
-			-v "$ROOT_DIR:/workspace" \
-			-v "${HOME}/.cargo/registry:/root/.cargo/registry" \
-			-v "${HOME}/.cargo/git:/root/.cargo/git" \
-			-v "${HOME}/.bun/install/cache:/root/.bun/install/cache" \
-			-e APPIMAGE_EXTRACT_AND_RUN=1 \
-			"$DOCKER_IMAGE" \
-			sh -c "cd /workspace/app && ./build-new.sh --docker-inner --inner-os $os --inner-arch $target $INNER_FORMAT_ARGS"
+		if [ "$os" = "macos" ]; then
+			# macOS: native build (no Docker)
+			INNER_OS="$os"
+			INNER_ARCH="$target"
+			docker_inner_build
+		else
+			# Linux/Windows: build inside Docker (cross-compilation via linkers)
+			docker run --rm \
+				--network=host \
+				-v "$ROOT_DIR:/workspace" \
+				-v "${HOME}/.cargo/registry:/root/.cargo/registry" \
+				-v "${HOME}/.cargo/git:/root/.cargo/git" \
+				-v "${HOME}/.bun/install/cache:/root/.bun/install/cache" \
+				-e APPIMAGE_EXTRACT_AND_RUN=1 \
+				"$DOCKER_IMAGE" \
+				sh -c "cd /workspace/app && ./build-new.sh --docker-inner --inner-os $os --inner-arch $target --compress $COMPRESS_LEVEL $INNER_FORMAT_ARGS"
+		fi
 
 		echo ""
 		echo "=== Done: OS=$os ARCH=$target ==="
@@ -667,7 +938,11 @@ done
 
 echo ""
 echo "╔══════════════════════════════════════════════════╗"
-echo "║  All builds complete!                            ║"
+echo "║  All builds complete!                           ║"
 echo "╚══════════════════════════════════════════════════╝"
 echo "Output: $SCRIPT_DIR/build/release/bundle/"
-ls -la "$SCRIPT_DIR/build/release/bundle/" 2>/dev/null || true
+if [ "$(uname -s)" = "Linux" ]; then
+	ls -lah --color "$SCRIPT_DIR/build/release/bundle/"
+else
+	ls -lah "$SCRIPT_DIR/build/release/bundle/"
+fi

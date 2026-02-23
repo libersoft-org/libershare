@@ -16,5 +16,4 @@ tauri-plugin-window-state = "2"
 
 [profile.release]
 lto = "thin"
-codegen-units = 16
 strip = true
