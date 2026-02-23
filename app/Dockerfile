@@ -42,6 +42,9 @@ RUN --mount=type=cache,target=/var/cache/apt \
 		libarchive-tools \
 		git \
 		python3 \
+		llvm \
+		clang \
+		lld \
 		# Cross-compiler for the other architecture
 		$CROSS_GCC \
 		# Native-arch Tauri/WebKitGTK development libraries

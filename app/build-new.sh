@@ -346,10 +346,19 @@ LDDWRAPPER
 	fi
 
 	export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(nproc)
+
+	# Platform-specific Tauri config overlay
+	PLATFORM_CONFIG=""
+	case "$BUILD_OS" in
+		linux)   PLATFORM_CONFIG="--config tauri.linux.conf.json" ;;
+		windows) PLATFORM_CONFIG="--config tauri.windows.conf.json" ;;
+		macos)   PLATFORM_CONFIG="--config tauri.macos.conf.json" ;;
+	esac
+
 	if [ "$BUILD_OS" = "windows" ]; then
-		cargo xwin tauri build --target "$RUST_TARGET" $BUNDLE_ARGS
+		cargo tauri build --target "$RUST_TARGET" --runner cargo-xwin $PLATFORM_CONFIG $BUNDLE_ARGS
 	else
-		cargo tauri build --target "$RUST_TARGET" $BUNDLE_ARGS
+		cargo tauri build --target "$RUST_TARGET" $PLATFORM_CONFIG $BUNDLE_ARGS
 	fi
 	echo "=== Tauri done ($(elapsed_since $_t)) ==="
 }
@@ -720,7 +729,9 @@ docker_inner_build() {
 	# Build formats argument for cargo tauri build
 	# Linux packages (deb, rpm, appimage) are built manually for speed (xz, parallel).
 	# Windows/macOS packages are still built by Tauri bundler.
-	BUNDLE_ARGS=""
+	# We use --config with bundle.targets instead of --bundles because Tauri CLI
+	# filters --bundles by host OS (Linux host rejects 'nsis', 'dmg').
+	TAURI_BUNDLE_TARGETS=""
 	MAKE_ZIP=0
 	MAKE_DEB=0
 	MAKE_RPM=0
@@ -736,7 +747,7 @@ docker_inner_build() {
 						rpm)       MAKE_RPM=1 ;;
 						pacman)    MAKE_PACMAN=1 ;;
 						appimage)  MAKE_APPIMAGE=1 ;;
-						*)         BUNDLE_ARGS="$BUNDLE_ARGS --bundles $efmt" ;;
+						*)         TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $efmt" ;;
 					esac
 				done
 				;;
@@ -751,13 +762,20 @@ docker_inner_build() {
 								pacman)   MAKE_PACMAN=1 ;;
 								appimage) MAKE_APPIMAGE=1 ;;
 							 esac ;;
-					windows) case "$fmt" in nsis) BUNDLE_ARGS="$BUNDLE_ARGS --bundles $fmt" ;; esac ;;
-					macos)   case "$fmt" in dmg)  BUNDLE_ARGS="$BUNDLE_ARGS --bundles $fmt" ;; esac ;;
+					windows) case "$fmt" in nsis) TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $fmt" ;; esac ;;
+					macos)   case "$fmt" in dmg)  TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $fmt" ;; esac ;;
 				esac
 				;;
 		esac
 	done
-	# If no Tauri-native bundles requested, build only the binary (no --bundles flag)
+
+	# Convert bundle targets to --config JSON (bypasses host-OS filtering of --bundles)
+	BUNDLE_ARGS=""
+	if [ -n "$TAURI_BUNDLE_TARGETS" ]; then
+		_targets_json=$(echo $TAURI_BUNDLE_TARGETS | tr ' ' '\n' | sed 's/.*/"&"/' | tr '\n' ',' | sed 's/,$//')
+		BUNDLE_ARGS="--config {\"bundle\":{\"targets\":[$_targets_json]}}"
+	fi
+	# If no Tauri-native bundles requested, build only the binary
 	# Tauri config has "targets": [] so it won't bundle anything by default
 
 	build_icons
@@ -926,6 +944,7 @@ for os in $OS_LIST; do
 				-v "$ROOT_DIR:/workspace" \
 				-v "${HOME}/.cargo/registry:/root/.cargo/registry" \
 				-v "${HOME}/.cargo/git:/root/.cargo/git" \
+				-v "${HOME}/.cache/cargo-xwin:/root/.cache/cargo-xwin" \
 				-v "${HOME}/.bun/install/cache:/root/.bun/install/cache" \
 				-e APPIMAGE_EXTRACT_AND_RUN=1 \
 				"$DOCKER_IMAGE" \
