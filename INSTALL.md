@@ -56,6 +56,7 @@ cd app
 brew install --cask docker
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
+curl -fsSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 cargo binstall tauri-cli --no-confirm
 curl -fsSL https://bun.sh/install | bash
 brew install librsvg imagemagick jq
@@ -74,6 +75,7 @@ Download and install:
 Then install Tauri CLI:
 
 ```bat
+curl -fsSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 cargo binstall tauri-cli --no-confirm
 cd app
 ```
