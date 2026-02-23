@@ -53,7 +53,8 @@ cd app
 **On macOS:**
 
 ```sh
-brew install --cask docker
+brew install colima docker
+colima start
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 curl -fsSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
@@ -67,7 +68,7 @@ cd app
 
 Download and install:
 
-- [**Docker Desktop**](https://www.docker.com/products/docker-desktop/) (needed only if you want to build Linux packages from Windows)
+- [**Docker Desktop**](https://www.docker.com/products/docker-desktop/) (needed only for Linux builds)
 - [**Rust**](https://rustup.rs/) (includes cargo and MSVC build tools)
 - [**ImageMagick**](https://imagemagick.org/script/download.php#windows) (add to PATH)
 - [**Microsoft Visual Studio C++ Build Tools**](https://visualstudio.microsoft.com/visual-cpp-build-tools/)

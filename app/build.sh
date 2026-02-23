@@ -955,21 +955,27 @@ if [ "$NEEDS_DOCKER" = "1" ]; then
 		echo "Error: Docker is required for Linux/Windows builds. Install Docker first."
 		exit 1
 	fi
-	# On macOS, Docker Desktop must be running (docker daemon isn't a system service)
+	# On macOS, Docker daemon isn't a system service — try to start it
 	if [ "$HOST_OS" = "macos" ] && ! docker info >/dev/null 2>&1; then
-		echo "Docker daemon is not running. Starting Docker Desktop..."
-		open -a Docker
+		if command -v colima >/dev/null 2>&1; then
+			echo "Docker daemon is not running. Starting Colima..."
+			colima start
+		else
+			echo "Error: Docker daemon is not running."
+			echo "Install Colima: brew install colima docker && colima start"
+			exit 1
+		fi
 		# Wait up to 60 seconds for Docker to become responsive
 		_docker_wait=0
 		while ! docker info >/dev/null 2>&1; do
 			_docker_wait=$((_docker_wait + 1))
 			if [ "$_docker_wait" -ge 60 ]; then
-				echo "Error: Docker Desktop did not start within 60 seconds."
+				echo "Error: Docker daemon did not start within 60 seconds."
 				exit 1
 			fi
 			sleep 1
 		done
-		echo "Docker Desktop is ready."
+		echo "Docker is ready."
 	fi
 fi
 
