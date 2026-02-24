@@ -979,7 +979,13 @@ ensure_colima() {
 	_host_cpus=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
 	_min_memory=8
 
-	if colima status >/dev/null 2>&1; then
+	# --docker-rebuild: destroy and recreate the VM for a clean state
+	if [ "$DOCKER_REBUILD" = "1" ]; then
+		echo "Recreating Colima VM (--docker-rebuild)..."
+		colima stop 2>/dev/null || true
+		colima delete -f 2>/dev/null || true
+		colima start --cpu "$_host_cpus" --memory "$_min_memory"
+	elif colima status >/dev/null 2>&1; then
 		_cur_cpus=$(colima status 2>/dev/null | grep -i cpu | head -1 | grep -oE '[0-9]+' | head -1)
 		_cur_memory=$(colima status 2>/dev/null | grep -i memory | head -1 | grep -oE '[0-9]+' | head -1)
 		_cur_cpus=${_cur_cpus:-0}
