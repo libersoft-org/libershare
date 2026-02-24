@@ -35,6 +35,7 @@
 	let inputPath = $state($storagePath);
 	let saveToFile = $state(true);
 	let addToSharing = $state($autoStartSharing);
+	let showAdvanced = $state(false);
 	let name = $state('');
 	// Output path - editable state, initialized from settings
 	let outputPath = $state($storageLishPath + 'output.lish');
@@ -71,19 +72,20 @@
 	let validationError = $derived(validateLishCreateForm({ inputPath, saveToFile, addToSharing, chunkSize, threads }));
 	let errorMessage = $derived(validationError ? getLishCreateErrorMessage(validationError, $t) : '');
 	let showError = $derived(submitted && errorMessage);
-	// Form fields: name(0), description(1), chunkSize(2), algo(3), threads(4), input(5), saveToFile(6), output(7), addToSharing(8), create(9), back(10)
+	// Form fields: name(0), description(1), input(2), saveToFile(3), output(4), addToSharing(5), advancedToggle(6), chunkSize(7), algo(8), threads(9), create(10), back(11)
 	const FIELD_NAME = 0;
 	const FIELD_DESCRIPTION = 1;
-	const FIELD_CHUNK_SIZE = 2;
-	const FIELD_ALGO = 3;
-	const FIELD_THREADS = 4;
-	const FIELD_INPUT = 5;
-	const FIELD_SAVE_TO_FILE = 6;
-	const FIELD_OUTPUT = 7;
-	const FIELD_ADD_TO_SHARING = 8;
-	const FIELD_CREATE = 9;
-	const FIELD_BACK = 10;
-	const TOTAL_FIELDS = 11;
+	const FIELD_INPUT = 2;
+	const FIELD_SAVE_TO_FILE = 3;
+	const FIELD_OUTPUT = 4;
+	const FIELD_ADD_TO_SHARING = 5;
+	const FIELD_ADVANCED_TOGGLE = 6;
+	const FIELD_CHUNK_SIZE = 7;
+	const FIELD_ALGO = 8;
+	const FIELD_THREADS = 9;
+	const FIELD_CREATE = 10;
+	const FIELD_BACK = 11;
+	const TOTAL_FIELDS = 12;
 	// Algorithm selection - horizontal navigation within the algo field
 	let algoIndex = $derived(HASH_ALGORITHMS.indexOf(algorithm));
 
@@ -216,14 +218,18 @@
 	const areaHandlers = {
 		up: () => {
 			if (selectedIndex === FIELD_BACK) {
-				// Back is on same row as Create, go to previous row (threads)
-				selectedIndex = FIELD_THREADS;
+				// Back is on same row as Create, go to last visible row before buttons
+				selectedIndex = showAdvanced ? FIELD_THREADS : FIELD_ADVANCED_TOGGLE;
 				selectedColumn = 0;
 				scrollToSelected();
 				return true;
 			}
 			if (selectedIndex > 0) {
 				selectedIndex--;
+				// Skip advanced fields when collapsed
+				if (!showAdvanced && selectedIndex >= FIELD_CHUNK_SIZE && selectedIndex <= FIELD_THREADS) {
+					selectedIndex = FIELD_ADVANCED_TOGGLE;
+				}
 				// Skip disabled output field
 				if (selectedIndex === FIELD_OUTPUT && !saveToFile) {
 					selectedIndex--;
@@ -235,8 +241,6 @@
 			return false;
 		},
 		down: () => {
-			// Don't go past FIELD_THREADS with down arrow
-			// Create and Back are on the same row, reachable only via left/right
 			if (selectedIndex >= FIELD_CREATE) {
 				return false;
 			}
@@ -246,6 +250,8 @@
 				if (selectedIndex === FIELD_OUTPUT && !saveToFile) {
 					selectedIndex++;
 				}
+				// Skip advanced fields when collapsed
+				if (!showAdvanced && selectedIndex >= FIELD_CHUNK_SIZE && selectedIndex <= FIELD_THREADS) selectedIndex = FIELD_CREATE;
 				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
 				scrollToSelected();
 				return true;
@@ -297,6 +303,8 @@
 				algorithm = HASH_ALGORITHMS[selectedColumn];
 			} else if (selectedIndex === FIELD_THREADS) {
 				focusInput(FIELD_THREADS);
+			} else if (selectedIndex === FIELD_ADVANCED_TOGGLE) {
+				showAdvanced = !showAdvanced;
 			} else if (selectedIndex === FIELD_CREATE) {
 				handleCreate();
 			} else if (selectedIndex === FIELD_BACK) {
@@ -373,23 +381,6 @@
 			<div bind:this={rowElements[FIELD_DESCRIPTION]}>
 				<Input bind:this={descriptionInput} bind:value={description} label={$t('downloads.lishCreate.description')} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
 			</div>
-			<!-- Chunk Size -->
-			<div bind:this={rowElements[FIELD_CHUNK_SIZE]}>
-				<Input bind:this={chunkSizeInput} bind:value={chunkSize} label={$t('downloads.lishCreate.chunkSize')} selected={active && selectedIndex === FIELD_CHUNK_SIZE} />
-			</div>
-			<!-- Hash Algorithm -->
-			<div bind:this={rowElements[FIELD_ALGO]}>
-				<div class="label">{$t('downloads.lishCreate.algorithm')}:</div>
-				<div class="algo-selector">
-					{#each HASH_ALGORITHMS as algo, i}
-						<Button label={algo} selected={active && selectedIndex === FIELD_ALGO && selectedColumn === i} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
-					{/each}
-				</div>
-			</div>
-			<!-- Threads -->
-			<div bind:this={rowElements[FIELD_THREADS]}>
-				<Input bind:this={threadsInput} bind:value={threads} label={$t('downloads.lishCreate.threads')} type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
-			</div>
 			<!-- Input Path (required) -->
 			<div class="row" bind:this={rowElements[FIELD_INPUT]}>
 				<Input bind:this={inputPathInput} bind:value={inputPath} label={$t('downloads.lishCreate.inputPath')} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
@@ -408,6 +399,29 @@
 			<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>
 				<SwitchRow label={$t('downloads.lishImport.autoStartSharing') + ':'} checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
 			</div>
+			<!-- Advanced Settings Toggle -->
+			<div bind:this={rowElements[FIELD_ADVANCED_TOGGLE]}>
+				<Button label={(showAdvanced ? '▾ ' : '▸ ') + $t(showAdvanced ? 'downloads.lishCreate.hideAdvanced' : 'downloads.lishCreate.showAdvanced')} selected={active && selectedIndex === FIELD_ADVANCED_TOGGLE} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+			</div>
+			{#if showAdvanced}
+				<!-- Chunk Size -->
+				<div bind:this={rowElements[FIELD_CHUNK_SIZE]}>
+					<Input bind:this={chunkSizeInput} bind:value={chunkSize} label={$t('downloads.lishCreate.chunkSize')} selected={active && selectedIndex === FIELD_CHUNK_SIZE} />
+				</div>
+				<!-- Hash Algorithm -->
+				<div bind:this={rowElements[FIELD_ALGO]}>
+					<div class="label">{$t('downloads.lishCreate.algorithm')}:</div>
+					<div class="algo-selector">
+						{#each HASH_ALGORITHMS as algo, i}
+							<Button label={algo} selected={active && selectedIndex === FIELD_ALGO && selectedColumn === i} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+						{/each}
+					</div>
+				</div>
+				<!-- Threads -->
+				<div bind:this={rowElements[FIELD_THREADS]}>
+					<Input bind:this={threadsInput} bind:value={threads} label={$t('downloads.lishCreate.threads')} type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
+				</div>
+			{/if}
 			<Alert type="error" message={showError ? errorMessage : ''} />
 		</div>
 		<ButtonBar justify="center">

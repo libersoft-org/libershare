@@ -93,7 +93,9 @@
 			"inputRequired": "Input path is required",
 			"outputRequired": "You must at least save to file, or at least add to sharing, or both",
 			"invalidChunkSize": "Invalid chunk size",
-			"invalidThreads": "Number of threads must be 0 or positive"
+			"invalidThreads": "Number of threads must be 0 or positive",
+			"showAdvanced": "Show advanced settings",
+			"hideAdvanced": "Hide advanced settings"
 		},
 		"lishImport": {
 			"fromFile": "From file",
