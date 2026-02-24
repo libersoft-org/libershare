@@ -89,7 +89,9 @@ RUN --mount=type=cache,target=/var/cache/apt \
 		/usr/lib/${CROSS_MULTIARCH}/pkgconfig/*.pc 2>/dev/null || true
 
 # Install Rust with both Linux targets
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \
+	&& sh /tmp/rustup-init.sh -y --default-toolchain stable \
+	&& rm /tmp/rustup-init.sh
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN rustup target add aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu
 
@@ -98,7 +100,9 @@ RUN printf '[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"
 	>> /root/.cargo/config.toml
 
 # Install cargo-binstall (downloads pre-built binaries, avoids compiling from source)
-RUN curl -fsSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+RUN curl -fsSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh -o /tmp/binstall.sh \
+	&& bash /tmp/binstall.sh \
+	&& rm /tmp/binstall.sh
 
 # Install Tauri CLI (pre-built binary via binstall)
 RUN cargo binstall tauri-cli --no-confirm
@@ -108,7 +112,9 @@ RUN cargo binstall cargo-xwin --no-confirm
 RUN rustup target add x86_64-pc-windows-msvc
 
 # Install Bun
-RUN curl -fsSL https://bun.sh/install | bash
+RUN curl -fsSL https://bun.sh/install -o /tmp/bun-install.sh \
+	&& bash /tmp/bun-install.sh \
+	&& rm /tmp/bun-install.sh
 ENV PATH="/root/.bun/bin:${PATH}"
 
 # AppImage: disable FUSE requirement (not available in Docker)

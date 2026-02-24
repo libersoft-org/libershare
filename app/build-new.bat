@@ -241,6 +241,10 @@ if "!_NEEDS_DOCKER!"=="1" (
         echo === Rebuilding Docker image ^(--docker-rebuild^) ===
         docker rmi "!DOCKER_IMAGE!" 2>nul
         docker build --network=host --no-cache -t "!DOCKER_IMAGE!" "!SCRIPT_DIR!."
+        if errorlevel 1 (
+            echo Error: Docker image build failed. Cannot continue with Linux builds.
+            set "_NEEDS_DOCKER=0"
+        )
     ) else (
         docker image inspect "!DOCKER_IMAGE!" >nul 2>&1 && (
             echo === Docker image !DOCKER_IMAGE! already exists ^(cached^) ===
@@ -248,6 +252,10 @@ if "!_NEEDS_DOCKER!"=="1" (
             echo === Building Docker image ===
             echo     ^(first build may take a long time^)
             docker build --network=host -t "!DOCKER_IMAGE!" "!SCRIPT_DIR!."
+            if errorlevel 1 (
+                echo Error: Docker image build failed. Cannot continue with Linux builds.
+                set "_NEEDS_DOCKER=0"
+            )
         )
     )
 )
@@ -316,7 +324,18 @@ for %%o in (!OS_LIST!) do (
                 call :get_timestamp _build_start
 
                 if "!_os!"=="linux" (
-                    call :do_docker_build "!_os!" "!_target!"
+                    if "!_NEEDS_DOCKER!"=="0" (
+                        echo Skipping: Docker image not available
+                        call :resolve_formats_for_os "!_os!" "!FORMAT_LIST!" _skip_fmts
+                        for %%f in (!_skip_fmts!) do (
+                            set /a _build_count+=1
+                            set /a _fail_count+=1
+                            set "_build_fail=!_build_fail! !_os!/!_target!/%%f"
+                        )
+                        call :print_box "FAILED: OS=!_os!  ARCH=!_target!  (Docker image build failed)"
+                    ) else (
+                        call :do_docker_build "!_os!" "!_target!"
+                    )
                 ) else (
                     call :do_build "!_os!" "!_target!"
                 )
