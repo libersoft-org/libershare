@@ -240,14 +240,14 @@ if "!_NEEDS_DOCKER!"=="1" (
     if "!DOCKER_REBUILD!"=="1" (
         echo === Rebuilding Docker image ^(--docker-rebuild^) ===
         docker rmi "!DOCKER_IMAGE!" 2>nul
-        docker build --network=host --no-cache -t "!DOCKER_IMAGE!" "!SCRIPT_DIR!"
+        docker build --network=host --no-cache -t "!DOCKER_IMAGE!" "!SCRIPT_DIR!."
     ) else (
         docker image inspect "!DOCKER_IMAGE!" >nul 2>&1 && (
             echo === Docker image !DOCKER_IMAGE! already exists ^(cached^) ===
         ) || (
             echo === Building Docker image ===
             echo     ^(first build may take a long time^)
-            docker build --network=host -t "!DOCKER_IMAGE!" "!SCRIPT_DIR!"
+            docker build --network=host -t "!DOCKER_IMAGE!" "!SCRIPT_DIR!."
         )
     )
 )
@@ -793,7 +793,7 @@ rem Returns seconds since midnight (good enough for elapsed time)
 
 :get_timestamp
 setlocal EnableDelayedExpansion
-for /f "tokens=1-3 delims=:." %%a in ("!TIME: =0!") do (
+for /f "tokens=1-3 delims=:.," %%a in ("!TIME: =0!") do (
     set /a "_ts=%%a * 3600 + %%b * 60 + %%c"
 )
 endlocal & set "%~1=%_ts%"
