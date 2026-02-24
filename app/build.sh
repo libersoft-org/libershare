@@ -13,13 +13,16 @@ cleanup() {
 		wait 2>/dev/null || true
 	fi
 	[ -n "$LDD_WRAPPER_DIR" ] && rm -rf "$LDD_WRAPPER_DIR" 2>/dev/null
-	# Restore modified files if originals exist
-	[ -f "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" ] && mv "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" "$SCRIPT_DIR/desktop-entry-debug.desktop" 2>/dev/null
-	[ -f "$SCRIPT_DIR/desktop-entry.desktop.orig" ] && mv "$SCRIPT_DIR/desktop-entry.desktop.orig" "$SCRIPT_DIR/desktop-entry.desktop" 2>/dev/null
-	[ -f "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" ] && mv "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" "$SCRIPT_DIR/wix-fragment-debug.wxs" 2>/dev/null
-	[ -f "$SCRIPT_DIR/tauri.conf.json.orig" ] && mv "$SCRIPT_DIR/tauri.conf.json.orig" "$SCRIPT_DIR/tauri.conf.json" 2>/dev/null
-	[ -f "$SCRIPT_DIR/Cargo.toml.orig" ] && mv "$SCRIPT_DIR/Cargo.toml.orig" "$SCRIPT_DIR/Cargo.toml" 2>/dev/null
-	[ -f "$SCRIPT_DIR/tauri.linux.conf.json.orig" ] && mv "$SCRIPT_DIR/tauri.linux.conf.json.orig" "$SCRIPT_DIR/tauri.linux.conf.json" 2>/dev/null
+	# Restore modified files if originals exist (skip in docker-inner mode;
+	# the outer script owns the .orig lifecycle there).
+	if [ "$DOCKER_INNER" != "1" ]; then
+		[ -f "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" ] && mv "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" "$SCRIPT_DIR/desktop-entry-debug.desktop" 2>/dev/null
+		[ -f "$SCRIPT_DIR/desktop-entry.desktop.orig" ] && mv "$SCRIPT_DIR/desktop-entry.desktop.orig" "$SCRIPT_DIR/desktop-entry.desktop" 2>/dev/null
+		[ -f "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" ] && mv "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" "$SCRIPT_DIR/wix-fragment-debug.wxs" 2>/dev/null
+		[ -f "$SCRIPT_DIR/tauri.conf.json.orig" ] && mv "$SCRIPT_DIR/tauri.conf.json.orig" "$SCRIPT_DIR/tauri.conf.json" 2>/dev/null
+		[ -f "$SCRIPT_DIR/Cargo.toml.orig" ] && mv "$SCRIPT_DIR/Cargo.toml.orig" "$SCRIPT_DIR/Cargo.toml" 2>/dev/null
+		[ -f "$SCRIPT_DIR/tauri.linux.conf.json.orig" ] && mv "$SCRIPT_DIR/tauri.linux.conf.json.orig" "$SCRIPT_DIR/tauri.linux.conf.json" 2>/dev/null
+	fi
 	true
 }
 trap cleanup EXIT
@@ -366,19 +369,27 @@ sync_product_info() {
 
 	# Config files only need patching once per container invocation
 	if [ "$_PRODUCT_INFO_SYNCED" != "1" ]; then
-		cp "$SCRIPT_DIR/tauri.conf.json" "$SCRIPT_DIR/tauri.conf.json.orig" 2>/dev/null || true
+		# Only backup when NOT running as docker-inner; the outer script
+		# (build-new.bat or build.sh orchestrator) owns the .orig lifecycle.
+		if [ "$DOCKER_INNER" != "1" ]; then
+			cp "$SCRIPT_DIR/tauri.conf.json" "$SCRIPT_DIR/tauri.conf.json.orig" 2>/dev/null || true
+			cp "$SCRIPT_DIR/Cargo.toml" "$SCRIPT_DIR/Cargo.toml.orig" 2>/dev/null || true
+		fi
 		jq --tab --arg name "$PRODUCT_NAME" --arg ver "$PRODUCT_VERSION" --arg id "$PRODUCT_IDENTIFIER" \
 			'.productName = $name | .mainBinaryName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
 			"$SCRIPT_DIR/tauri.conf.json" >"$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
 
-		cp "$SCRIPT_DIR/Cargo.toml" "$SCRIPT_DIR/Cargo.toml.orig" 2>/dev/null || true
 		sed "s/^version = \"[^\"]*\"/version = \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/Cargo.toml" >"$SCRIPT_DIR/Cargo.toml.tmp" && mv "$SCRIPT_DIR/Cargo.toml.tmp" "$SCRIPT_DIR/Cargo.toml"
 		_PRODUCT_INFO_SYNCED=1
 	fi
 
 	# OS-specific config patching (once per OS)
 	if [ "$BUILD_OS" = "linux" ] && [ "$_SYNCED_LINUX" != "1" ]; then
-		cp "$SCRIPT_DIR/tauri.linux.conf.json" "$SCRIPT_DIR/tauri.linux.conf.json.orig" 2>/dev/null || true
+		if [ "$DOCKER_INNER" != "1" ]; then
+			cp "$SCRIPT_DIR/tauri.linux.conf.json" "$SCRIPT_DIR/tauri.linux.conf.json.orig" 2>/dev/null || true
+			cp "$SCRIPT_DIR/desktop-entry-debug.desktop" "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" 2>/dev/null || true
+			cp "$SCRIPT_DIR/desktop-entry.desktop" "$SCRIPT_DIR/desktop-entry.desktop.orig" 2>/dev/null || true
+		fi
 		jq --tab --arg name "$PRODUCT_NAME_LOWER" \
 			'.productName = $name | .mainBinaryName = $name
 			| .bundle.linux.deb.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}
@@ -386,16 +397,16 @@ sync_product_info() {
 			| .bundle.linux.appimage.files = {("usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}' \
 			"$SCRIPT_DIR/tauri.linux.conf.json" >"$SCRIPT_DIR/tauri.linux.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.linux.conf.json.tmp" "$SCRIPT_DIR/tauri.linux.conf.json"
 
-		cp "$SCRIPT_DIR/desktop-entry-debug.desktop" "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" 2>/dev/null || true
 		sed -i "s/{{product_name}}/$PRODUCT_NAME/g; s/{{exec_name}}/$PRODUCT_NAME_LOWER/g" "$SCRIPT_DIR/desktop-entry-debug.desktop"
 
-		cp "$SCRIPT_DIR/desktop-entry.desktop" "$SCRIPT_DIR/desktop-entry.desktop.orig" 2>/dev/null || true
 		sed -i "s/%%product_name%%/$PRODUCT_NAME/g" "$SCRIPT_DIR/desktop-entry.desktop"
 		_SYNCED_LINUX=1
 	fi
 
 	if [ "$BUILD_OS" = "windows" ] && [ "$_SYNCED_WINDOWS" != "1" ]; then
-		cp "$SCRIPT_DIR/wix-fragment-debug.wxs" "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" 2>/dev/null || true
+		if [ "$DOCKER_INNER" != "1" ]; then
+			cp "$SCRIPT_DIR/wix-fragment-debug.wxs" "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" 2>/dev/null || true
+		fi
 		sed -i "s/{{product_name}}/$PRODUCT_NAME/g" "$SCRIPT_DIR/wix-fragment-debug.wxs"
 		_SYNCED_WINDOWS=1
 	fi
@@ -1109,6 +1120,12 @@ fi
 [ -d "$SCRIPT_DIR/icons" ] && rm -rf "$SCRIPT_DIR/icons"
 [ -d "$ROOT_DIR/frontend/build" ] && rm -rf "$ROOT_DIR/frontend/build"
 mkdir -p "$SCRIPT_DIR/build/release/bundle"
+
+# ── Back up files that will be modified in-place ──
+# (cleanup trap will restore them on exit)
+for _bkp in tauri.conf.json Cargo.toml tauri.linux.conf.json wix-fragment-debug.wxs desktop-entry-debug.desktop desktop-entry.desktop; do
+	[ -f "$SCRIPT_DIR/$_bkp" ] && cp "$SCRIPT_DIR/$_bkp" "$SCRIPT_DIR/$_bkp.orig" 2>/dev/null || true
+done
 
 # ── Iterate over OS × target combinations ──
 
