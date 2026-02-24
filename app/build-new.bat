@@ -268,7 +268,11 @@ for %%o in (!OS_LIST!) do (
 
     rem Expand target 'all' per-OS
     set "_eff_targets=!TARGET_LIST!"
-    echo !_eff_targets! | findstr /i "all" >nul && set "_eff_targets=x86_64 aarch64"
+    if "!_os!"=="macos" (
+        echo !_eff_targets! | findstr /i "all" >nul && set "_eff_targets=x86_64 aarch64 universal"
+    ) else (
+        echo !_eff_targets! | findstr /i "all" >nul && set "_eff_targets=x86_64 aarch64"
+    )
 
     rem Skip macOS on Windows host
     if "!_os!"=="macos" (
