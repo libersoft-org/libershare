@@ -323,8 +323,10 @@ for %%o in (!OS_LIST!) do (
                 set "_build_start=0"
                 call :get_timestamp _build_start
 
+                set "_docker_skipped=0"
                 if "!_os!"=="linux" (
                     if "!_NEEDS_DOCKER!"=="0" (
+                        set "_docker_skipped=1"
                         echo Skipping: Docker image not available
                         call :resolve_formats_for_os "!_os!" "!FORMAT_LIST!" _skip_fmts
                         for %%f in (!_skip_fmts!) do (
@@ -339,6 +341,8 @@ for %%o in (!OS_LIST!) do (
                 ) else (
                     call :do_build "!_os!" "!_target!"
                 )
+
+                if "!_docker_skipped!"=="0" (
                 set "_rc=!errorlevel!"
 
                 set "_elapsed=0"
@@ -390,6 +394,7 @@ for %%o in (!OS_LIST!) do (
                             set "_build_fail=!_build_fail! !_os!/!_target!/%%f"
                         )
                     )
+                )
                 )
             )
         )
@@ -813,7 +818,10 @@ rem Returns seconds since midnight (good enough for elapsed time)
 :get_timestamp
 setlocal EnableDelayedExpansion
 for /f "tokens=1-3 delims=:.," %%a in ("!TIME: =0!") do (
-    set /a "_ts=%%a * 3600 + %%b * 60 + %%c"
+    set /a "_h=1%%a %% 100"
+    set /a "_m=1%%b %% 100"
+    set /a "_s=1%%c %% 100"
+    set /a "_ts=_h * 3600 + _m * 60 + _s"
 )
 endlocal & set "%~1=%_ts%"
 exit /b 0

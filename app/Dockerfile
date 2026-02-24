@@ -13,6 +13,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # CROSS_ARCH is persisted to /etc/cross-arch so later RUN steps can reuse it.
 RUN --mount=type=cache,target=/var/cache/apt \
 	--mount=type=cache,target=/var/lib/apt/lists \
+	rm -rf /var/lib/apt/lists/* && \
 	NATIVE=$(dpkg --print-architecture) && \
 	if [ "$NATIVE" = "amd64" ]; then \
 		CROSS_ARCH=arm64; \
