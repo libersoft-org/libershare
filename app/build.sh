@@ -161,17 +161,17 @@ done
 
 case "$COMPRESS_LEVEL" in
 min)
-	XZ_FLAGS="-1e -T0"
+	XZ_FLAGS="-1e -T0 --memlimit-compress=75%"
 	RPM_PAYLOAD="w1.xzdio"
 	ZIP_LEVEL="-1"
 	;;
 mid)
-	XZ_FLAGS="-6e -T0"
+	XZ_FLAGS="-6e -T0 --memlimit-compress=75%"
 	RPM_PAYLOAD="w6.xzdio"
 	ZIP_LEVEL="-6"
 	;;
 max)
-	XZ_FLAGS="-9e -T0"
+	XZ_FLAGS="-9e -T0 --memlimit-compress=75%"
 	RPM_PAYLOAD="w9.xzdio"
 	ZIP_LEVEL="-9"
 	;;
