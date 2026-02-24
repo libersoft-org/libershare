@@ -463,6 +463,14 @@ LDDWRAPPER
 	else
 		cargo tauri build --target "$RUST_TARGET" $PLATFORM_CONFIG $BUNDLE_ARGS
 	fi
+
+	# macOS: Tauri's DMG bundler auto-mounts the image — unmount it
+	if [ "$BUILD_OS" = "macos" ]; then
+		for _vol in /Volumes/LiberShare*; do
+			[ -d "$_vol" ] && hdiutil detach "$_vol" >/dev/null 2>&1 || true
+		done
+	fi
+
 	echo "=== Tauri done ($(elapsed_since $_t)) ==="
 }
 
