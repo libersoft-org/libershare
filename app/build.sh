@@ -257,14 +257,7 @@ expand_formats_for_os() {
 	_effo_os="$1"
 	case "$_effo_os" in
 	linux) echo "deb rpm pacman appimage zip" ;;
-	windows)
-		# MSI requires WiX (Windows-only); skip in Docker
-		if [ "$DOCKER_INNER" = "1" ]; then
-			echo "nsis zip"
-		else
-			echo "nsis msi zip"
-		fi
-		;;
+	windows) echo "nsis msi zip" ;;
 	macos) echo "dmg zip" ;;
 	esac
 }
@@ -832,6 +825,14 @@ docker_inner_build() {
 				rpm) MAKE_RPM=1 ;;
 				pacman) MAKE_PACMAN=1 ;;
 				appimage) MAKE_APPIMAGE=1 ;;
+				msi)
+					if [ "$DOCKER_INNER" = "1" ]; then
+						echo "Warning: MSI format requires WiX (Windows-only) - skipping in Docker"
+						SKIPPED_FORMATS="$SKIPPED_FORMATS msi"
+					else
+						TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $efmt"
+					fi
+					;;
 				*) TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $efmt" ;;
 				esac
 			done
