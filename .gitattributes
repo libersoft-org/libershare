@@ -1,0 +1,3 @@
+# Force LF line endings for shell scripts (even on Windows checkouts)
+# This prevents CRLF issues when running scripts inside Docker/Linux
+*.sh text eol=lf

@@ -17,6 +17,9 @@ cleanup() {
 	[ -f "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" ] && mv "$SCRIPT_DIR/desktop-entry-debug.desktop.orig" "$SCRIPT_DIR/desktop-entry-debug.desktop" 2>/dev/null
 	[ -f "$SCRIPT_DIR/desktop-entry.desktop.orig" ] && mv "$SCRIPT_DIR/desktop-entry.desktop.orig" "$SCRIPT_DIR/desktop-entry.desktop" 2>/dev/null
 	[ -f "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" ] && mv "$SCRIPT_DIR/wix-fragment-debug.wxs.orig" "$SCRIPT_DIR/wix-fragment-debug.wxs" 2>/dev/null
+	[ -f "$SCRIPT_DIR/tauri.conf.json.orig" ] && mv "$SCRIPT_DIR/tauri.conf.json.orig" "$SCRIPT_DIR/tauri.conf.json" 2>/dev/null
+	[ -f "$SCRIPT_DIR/Cargo.toml.orig" ] && mv "$SCRIPT_DIR/Cargo.toml.orig" "$SCRIPT_DIR/Cargo.toml" 2>/dev/null
+	[ -f "$SCRIPT_DIR/tauri.linux.conf.json.orig" ] && mv "$SCRIPT_DIR/tauri.linux.conf.json.orig" "$SCRIPT_DIR/tauri.linux.conf.json" 2>/dev/null
 	true
 }
 trap cleanup EXIT
@@ -363,16 +366,19 @@ sync_product_info() {
 
 	# Config files only need patching once per container invocation
 	if [ "$_PRODUCT_INFO_SYNCED" != "1" ]; then
+		cp "$SCRIPT_DIR/tauri.conf.json" "$SCRIPT_DIR/tauri.conf.json.orig" 2>/dev/null || true
 		jq --tab --arg name "$PRODUCT_NAME" --arg ver "$PRODUCT_VERSION" --arg id "$PRODUCT_IDENTIFIER" \
 			'.productName = $name | .mainBinaryName = $name | .version = $ver | .identifier = $id | .bundle.windows.nsis.startMenuFolder = $name' \
 			"$SCRIPT_DIR/tauri.conf.json" >"$SCRIPT_DIR/tauri.conf.json.tmp" && mv "$SCRIPT_DIR/tauri.conf.json.tmp" "$SCRIPT_DIR/tauri.conf.json"
 
+		cp "$SCRIPT_DIR/Cargo.toml" "$SCRIPT_DIR/Cargo.toml.orig" 2>/dev/null || true
 		sed "s/^version = \"[^\"]*\"/version = \"$PRODUCT_VERSION\"/" "$SCRIPT_DIR/Cargo.toml" >"$SCRIPT_DIR/Cargo.toml.tmp" && mv "$SCRIPT_DIR/Cargo.toml.tmp" "$SCRIPT_DIR/Cargo.toml"
 		_PRODUCT_INFO_SYNCED=1
 	fi
 
 	# OS-specific config patching (once per OS)
 	if [ "$BUILD_OS" = "linux" ] && [ "$_SYNCED_LINUX" != "1" ]; then
+		cp "$SCRIPT_DIR/tauri.linux.conf.json" "$SCRIPT_DIR/tauri.linux.conf.json.orig" 2>/dev/null || true
 		jq --tab --arg name "$PRODUCT_NAME_LOWER" \
 			'.productName = $name | .mainBinaryName = $name
 			| .bundle.linux.deb.files = {("/usr/share/applications/" + $name + "-debug.desktop"): "desktop-entry-debug.desktop"}

@@ -272,6 +272,21 @@ rem ─── Back up files that will be modified in-place ───────
 if exist "!SCRIPT_DIR!wix-fragment-debug.wxs" (
     copy /y "!SCRIPT_DIR!wix-fragment-debug.wxs" "!SCRIPT_DIR!wix-fragment-debug.wxs.orig" >nul 2>&1
 )
+if exist "!SCRIPT_DIR!tauri.conf.json" (
+    copy /y "!SCRIPT_DIR!tauri.conf.json" "!SCRIPT_DIR!tauri.conf.json.orig" >nul 2>&1
+)
+if exist "!SCRIPT_DIR!Cargo.toml" (
+    copy /y "!SCRIPT_DIR!Cargo.toml" "!SCRIPT_DIR!Cargo.toml.orig" >nul 2>&1
+)
+if exist "!SCRIPT_DIR!tauri.linux.conf.json" (
+    copy /y "!SCRIPT_DIR!tauri.linux.conf.json" "!SCRIPT_DIR!tauri.linux.conf.json.orig" >nul 2>&1
+)
+if exist "!SCRIPT_DIR!desktop-entry-debug.desktop" (
+    copy /y "!SCRIPT_DIR!desktop-entry-debug.desktop" "!SCRIPT_DIR!desktop-entry-debug.desktop.orig" >nul 2>&1
+)
+if exist "!SCRIPT_DIR!desktop-entry.desktop" (
+    copy /y "!SCRIPT_DIR!desktop-entry.desktop" "!SCRIPT_DIR!desktop-entry.desktop.orig" >nul 2>&1
+)
 
 rem ─── Build tracking ──────────────────────────────────────────────────────
 
@@ -406,6 +421,21 @@ rem ─── Restore backed up files ──────────────
 if exist "!SCRIPT_DIR!wix-fragment-debug.wxs.orig" (
     move /y "!SCRIPT_DIR!wix-fragment-debug.wxs.orig" "!SCRIPT_DIR!wix-fragment-debug.wxs" >nul 2>&1
 )
+if exist "!SCRIPT_DIR!tauri.conf.json.orig" (
+    move /y "!SCRIPT_DIR!tauri.conf.json.orig" "!SCRIPT_DIR!tauri.conf.json" >nul 2>&1
+)
+if exist "!SCRIPT_DIR!Cargo.toml.orig" (
+    move /y "!SCRIPT_DIR!Cargo.toml.orig" "!SCRIPT_DIR!Cargo.toml" >nul 2>&1
+)
+if exist "!SCRIPT_DIR!tauri.linux.conf.json.orig" (
+    move /y "!SCRIPT_DIR!tauri.linux.conf.json.orig" "!SCRIPT_DIR!tauri.linux.conf.json" >nul 2>&1
+)
+if exist "!SCRIPT_DIR!desktop-entry-debug.desktop.orig" (
+    move /y "!SCRIPT_DIR!desktop-entry-debug.desktop.orig" "!SCRIPT_DIR!desktop-entry-debug.desktop" >nul 2>&1
+)
+if exist "!SCRIPT_DIR!desktop-entry.desktop.orig" (
+    move /y "!SCRIPT_DIR!desktop-entry.desktop.orig" "!SCRIPT_DIR!desktop-entry.desktop" >nul 2>&1
+)
 
 rem ─── Build Summary ───────────────────────────────────────────────────────
 
@@ -501,6 +531,7 @@ if not "!FORMAT_LIST!"=="" set "INNER_FORMAT_ARGS=--format !FORMAT_LIST!"
 
 rem --init: tini as PID 1 forwards signals to the entire process group
 rem exec: build script replaces sh, becoming tini's direct child
+rem Note: Windows mounts have CRLF line endings; strip \r before running shell scripts
 docker run --rm --init ^
     --network=host ^
     -v "!ROOT_DIR!:/workspace" ^
@@ -510,7 +541,7 @@ docker run --rm --init ^
     -v "%USERPROFILE%\.bun\install\cache:/root/.bun/install/cache" ^
     -e APPIMAGE_EXTRACT_AND_RUN=1 ^
     "!DOCKER_IMAGE!" ^
-    sh -c "cd /workspace/app && exec sh build.sh --docker-inner --inner-os !_os! --inner-arch !_arch! --compress !COMPRESS_LEVEL! !INNER_FORMAT_ARGS!"
+    sh -c "cd /workspace && find . -name '*.sh' -exec sed -i 's/\r$//' {} + && cd app && exec sh build.sh --docker-inner --inner-os !_os! --inner-arch !_arch! --compress !COMPRESS_LEVEL! !INNER_FORMAT_ARGS!"
 set "_rc=!errorlevel!"
 endlocal & exit /b %_rc%
 
