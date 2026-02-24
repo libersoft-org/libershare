@@ -967,21 +967,52 @@ if [ "$NEEDS_DOCKER" = "1" ]; then
 			exit 1
 		fi
 		export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
-		if ! docker info >/dev/null 2>&1; then
-			echo "Starting Colima..."
-			colima start
-			# Wait up to 60 seconds for Docker to become responsive
-			_docker_wait=0
-			while ! docker info >/dev/null 2>&1; do
-				_docker_wait=$((_docker_wait + 1))
-				if [ "$_docker_wait" -ge 60 ]; then
-					echo "Error: Colima did not start within 60 seconds."
-					exit 1
-				fi
-				sleep 1
-			done
+
+		# Desired resources: all CPUs, at least 8 GB RAM
+		_host_cpus=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+		_min_memory=8
+
+		_colima_running=0
+		if colima status >/dev/null 2>&1; then
+			_colima_running=1
 		fi
-		echo "Docker is ready (Colima)."
+
+		if [ "$_colima_running" = "1" ]; then
+			# Check current Colima VM resources
+			_cur_cpus=$(colima status 2>/dev/null | grep -i cpu | head -1 | grep -oE '[0-9]+' | head -1)
+			_cur_memory=$(colima status 2>/dev/null | grep -i memory | head -1 | grep -oE '[0-9]+' | head -1)
+			# Convert memory from GiB (colima reports in GiB)
+			_cur_cpus=${_cur_cpus:-0}
+			_cur_memory=${_cur_memory:-0}
+			_restart_needed=0
+			if [ "$_cur_cpus" -lt "$_host_cpus" ] 2>/dev/null; then
+				echo "Colima VM has $_cur_cpus CPUs, host has $_host_cpus. Restarting with more resources..."
+				_restart_needed=1
+			fi
+			if [ "$_cur_memory" -lt "$_min_memory" ] 2>/dev/null; then
+				echo "Colima VM has ${_cur_memory}GB RAM, need at least ${_min_memory}GB. Restarting with more resources..."
+				_restart_needed=1
+			fi
+			if [ "$_restart_needed" = "1" ]; then
+				colima stop
+				colima start --cpu "$_host_cpus" --memory "$_min_memory"
+			fi
+		else
+			echo "Starting Colima (${_host_cpus} CPUs, ${_min_memory}GB RAM)..."
+			colima start --cpu "$_host_cpus" --memory "$_min_memory"
+		fi
+
+		# Wait up to 60 seconds for Docker to become responsive
+		_docker_wait=0
+		while ! docker info >/dev/null 2>&1; do
+			_docker_wait=$((_docker_wait + 1))
+			if [ "$_docker_wait" -ge 60 ]; then
+				echo "Error: Colima did not start within 60 seconds."
+				exit 1
+			fi
+			sleep 1
+		done
+		echo "Docker is ready (Colima: ${_host_cpus} CPUs, ${_min_memory}GB RAM)."
 	fi
 fi
 
@@ -1003,12 +1034,12 @@ if [ "$NEEDS_DOCKER" = "1" ] && [ "$(uname)" = "Darwin" ]; then
 	if [ -d "$_plugins_dir" ]; then
 		mkdir -p "$HOME/.docker"
 		if [ ! -f "$_docker_config" ]; then
-			printf '{"cliPluginsExtraDirs": ["%s"]}\n' "$_plugins_dir" > "$_docker_config"
+			printf '{"cliPluginsExtraDirs": ["%s"]}\n' "$_plugins_dir" >"$_docker_config"
 		elif ! grep -q "cliPluginsExtraDirs" "$_docker_config" 2>/dev/null; then
 			# Inject cliPluginsExtraDirs into existing config.json
 			if command -v jq >/dev/null 2>&1; then
 				_tmp=$(jq --arg d "$_plugins_dir" '. + {"cliPluginsExtraDirs": [$d]}' "$_docker_config")
-				printf '%s\n' "$_tmp" > "$_docker_config"
+				printf '%s\n' "$_tmp" >"$_docker_config"
 			else
 				echo "Warning: ~/.docker/config.json exists but missing cliPluginsExtraDirs."
 				echo "Add this manually: \"cliPluginsExtraDirs\": [\"$_plugins_dir\"]"
