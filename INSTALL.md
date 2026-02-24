@@ -53,7 +53,8 @@ cd app
 **On macOS:**
 
 ```sh
-brew install colima docker
+brew install colima docker docker-buildx
+mkdir -p ~/.docker && echo '{"cliPluginsExtraDirs": ["/opt/homebrew/lib/docker/cli-plugins"]}' > ~/.docker/config.json
 colima start
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"

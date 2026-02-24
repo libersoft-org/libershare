@@ -979,6 +979,38 @@ if [ "$NEEDS_DOCKER" = "1" ]; then
 	fi
 fi
 
+# ── Ensure docker-buildx is available on macOS ──
+if [ "$NEEDS_DOCKER" = "1" ] && [ "$(uname)" = "Darwin" ]; then
+	if ! docker buildx version >/dev/null 2>&1; then
+		echo "docker-buildx plugin not found."
+		if command -v brew >/dev/null 2>&1; then
+			echo "Installing docker-buildx via Homebrew..."
+			brew install docker-buildx
+		else
+			echo "Error: Install docker-buildx: brew install docker-buildx"
+			exit 1
+		fi
+	fi
+	# Ensure Docker knows where to find Homebrew CLI plugins
+	_plugins_dir="/opt/homebrew/lib/docker/cli-plugins"
+	_docker_config="$HOME/.docker/config.json"
+	if [ -d "$_plugins_dir" ]; then
+		mkdir -p "$HOME/.docker"
+		if [ ! -f "$_docker_config" ]; then
+			printf '{"cliPluginsExtraDirs": ["%s"]}\n' "$_plugins_dir" > "$_docker_config"
+		elif ! grep -q "cliPluginsExtraDirs" "$_docker_config" 2>/dev/null; then
+			# Inject cliPluginsExtraDirs into existing config.json
+			if command -v jq >/dev/null 2>&1; then
+				_tmp=$(jq --arg d "$_plugins_dir" '. + {"cliPluginsExtraDirs": [$d]}' "$_docker_config")
+				printf '%s\n' "$_tmp" > "$_docker_config"
+			else
+				echo "Warning: ~/.docker/config.json exists but missing cliPluginsExtraDirs."
+				echo "Add this manually: \"cliPluginsExtraDirs\": [\"$_plugins_dir\"]"
+			fi
+		fi
+	fi
+fi
+
 # ── Build Docker image (single image, runs natively on host arch) ──
 DOCKER_IMAGE="libershare-builder"
 if [ "$NEEDS_DOCKER" = "1" ]; then
