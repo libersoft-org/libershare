@@ -223,8 +223,10 @@ if "!_NEEDS_DOCKER!"=="1" (
 goto :docker_ready
 
 :start_docker
-echo === Docker daemon is not running, starting Docker Desktop... ===
-start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+echo === Docker daemon is not running, starting Docker Desktop (headless)... ===
+start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe" -Shutdown
+timeout /t 2 /nobreak >nul
+start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe" --background
 set "_docker_wait=0"
 :docker_wait_loop
 if !_docker_wait! geq 120 (
