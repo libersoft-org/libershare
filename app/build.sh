@@ -252,45 +252,6 @@ validate_format_values() {
 	done
 }
 
-# Validate that formats are valid for given OS
-validate_format_for_os() {
-	_vffo_os="$1"
-	_vffo_fmt="$2"
-	case "$_vffo_fmt" in
-	all | zip) return 0 ;;
-	esac
-	case "$_vffo_os" in
-	linux)
-		case "$_vffo_fmt" in
-		deb | rpm | pacman | appimage) return 0 ;;
-		*)
-			echo "Error: Format '$_vffo_fmt' is not valid for OS 'linux'. Valid: deb, rpm, pacman, appimage, zip"
-			exit 1
-			;;
-		esac
-		;;
-	windows)
-		case "$_vffo_fmt" in
-		nsis) return 0 ;;
-		msi) return 0 ;;
-		*)
-			echo "Error: Format '$_vffo_fmt' is not valid for OS 'windows'. Valid: nsis, msi, zip"
-			exit 1
-			;;
-		esac
-		;;
-	macos)
-		case "$_vffo_fmt" in
-		dmg) return 0 ;;
-		*)
-			echo "Error: Format '$_vffo_fmt' is not valid for OS 'macos'. Valid: dmg, zip"
-			exit 1
-			;;
-		esac
-		;;
-	esac
-}
-
 # Expand 'all' into concrete format list for an OS
 expand_formats_for_os() {
 	_effo_os="$1"
@@ -306,6 +267,26 @@ expand_formats_for_os() {
 		;;
 	macos) echo "dmg zip" ;;
 	esac
+}
+
+# Resolve a format list for a specific OS (expand 'all', filter invalid formats)
+resolve_formats_for_os() {
+	_rffo_os="$1"
+	_rffo_list="$2"
+	case "$_rffo_list" in
+	*all*)
+		expand_formats_for_os "$_rffo_os"
+		return
+		;;
+	esac
+	_rffo_valid=$(expand_formats_for_os "$_rffo_os")
+	_rffo_result=""
+	for _f in $_rffo_list; do
+		for _v in $_rffo_valid; do
+			[ "$_f" = "$_v" ] && _rffo_result="$_rffo_result $_f"
+		done
+	done
+	echo $_rffo_result
 }
 
 # ─── Build step functions ───────────────────────────────────────────────────
@@ -491,11 +472,12 @@ generate_desktop_entry() {
 }
 
 # ── Utility: run a package build as a background job ──
-# Usage: run_pkg_job <label> <function_name>
-# Sets up temp dir ($WORK), trap, timing; appends PID to $PKG_PIDS
+# Usage: run_pkg_job <label> <function_name> <format_name>
+# Sets up temp dir ($WORK), trap, timing; appends fmt:PID to $PKG_JOBS
 run_pkg_job() {
 	_rpj_label="$1"
 	_rpj_fn="$2"
+	_rpj_fmt="$3"
 	(
 		WORK=$(mktemp -d)
 		trap 'rm -rf "$WORK"' EXIT
@@ -504,7 +486,7 @@ run_pkg_job() {
 		"$_rpj_fn"
 		echo "=== $_rpj_label complete ($(elapsed_since $_t)) ==="
 	) &
-	PKG_PIDS="$PKG_PIDS $!"
+	PKG_JOBS="$PKG_JOBS $_rpj_fmt:$!"
 }
 
 # ── Utility: create ZIP via staging callback ──
@@ -710,22 +692,24 @@ build_linux_packages() {
 
 	PKG_INSTALLED_SIZE=$(du -sk "$PKG_STAGING" | cut -f1)
 
-	PKG_PIDS=""
-	[ "$MAKE_DEB" = "1" ] && run_pkg_job "DEB package (xz $XZ_FLAGS)" _build_deb
-	[ "$MAKE_RPM" = "1" ] && run_pkg_job "RPM package (xz, $RPM_PAYLOAD)" _build_rpm
-	[ "$MAKE_PACMAN" = "1" ] && run_pkg_job "Pacman package (xz $XZ_FLAGS)" _build_pacman
-	[ "$MAKE_APPIMAGE" = "1" ] && run_pkg_job "AppImage (xz, $(nproc) cores)" _build_appimage
+	PKG_JOBS=""
+	[ "$MAKE_DEB" = "1" ] && run_pkg_job "DEB package (xz $XZ_FLAGS)" _build_deb deb
+	[ "$MAKE_RPM" = "1" ] && run_pkg_job "RPM package (xz, $RPM_PAYLOAD)" _build_rpm rpm
+	[ "$MAKE_PACMAN" = "1" ] && run_pkg_job "Pacman package (xz $XZ_FLAGS)" _build_pacman pacman
+	[ "$MAKE_APPIMAGE" = "1" ] && run_pkg_job "AppImage (xz, $(nproc) cores)" _build_appimage appimage
 
-	# Wait for all package builds and check for failures
-	_pkg_fail=0
-	for _pid in $PKG_PIDS; do
-		wait "$_pid" || _pkg_fail=1
+	# Wait for all package builds and record per-format results
+	for _job in $PKG_JOBS; do
+		_fmt="${_job%%:*}"
+		_pid="${_job##*:}"
+		if wait "$_pid"; then
+			echo "OK $_fmt" >>"$BUILD_RESULTS_FILE"
+		else
+			echo "FAIL $_fmt" >>"$BUILD_RESULTS_FILE"
+			_inner_fail=1
+		fi
 	done
 	rm -rf "$PKG_STAGING"
-	if [ "$_pkg_fail" = "1" ]; then
-		echo "Error: One or more package builds failed"
-		exit 1
-	fi
 	echo "=== All Linux packages complete ==="
 }
 
@@ -832,6 +816,7 @@ docker_inner_build() {
 	# We use --config with bundle.targets instead of --bundles because Tauri CLI
 	# filters --bundles by host OS (Linux host rejects 'nsis', 'dmg').
 	TAURI_BUNDLE_TARGETS=""
+	SKIPPED_FORMATS=""
 	MAKE_ZIP=0
 	MAKE_DEB=0
 	MAKE_RPM=0
@@ -867,6 +852,7 @@ docker_inner_build() {
 				msi)
 					if [ "$DOCKER_INNER" = "1" ]; then
 						echo "Warning: MSI format requires WiX (Windows-only) - skipping in Docker"
+						SKIPPED_FORMATS="$SKIPPED_FORMATS msi"
 					else
 						TAURI_BUNDLE_TARGETS="$TAURI_BUNDLE_TARGETS $fmt"
 					fi
@@ -887,21 +873,57 @@ docker_inner_build() {
 	# If no Tauri-native bundles requested, build only the binary
 	# Tauri config has "targets": [] so it won't bundle anything by default
 
+	# ── Compute all expected formats and write results file ──
+	_all_expected_formats=""
+	for _bf in $TAURI_BUNDLE_TARGETS; do _all_expected_formats="$_all_expected_formats $_bf"; done
+	[ "$MAKE_DEB" = "1" ] && _all_expected_formats="$_all_expected_formats deb"
+	[ "$MAKE_RPM" = "1" ] && _all_expected_formats="$_all_expected_formats rpm"
+	[ "$MAKE_PACMAN" = "1" ] && _all_expected_formats="$_all_expected_formats pacman"
+	[ "$MAKE_APPIMAGE" = "1" ] && _all_expected_formats="$_all_expected_formats appimage"
+	[ "$MAKE_ZIP" = "1" ] && _all_expected_formats="$_all_expected_formats zip"
+	for _sf in $SKIPPED_FORMATS; do _all_expected_formats="$_all_expected_formats $_sf"; done
+	_all_expected_formats=$(echo $_all_expected_formats)  # trim leading space
+
+	# ── Output directory (needed for results file before build starts) ──
+	BUILD_RELEASE_DIR="$SCRIPT_DIR/build/${RUST_TARGET}/release"
+	BUILD_OUTPUT_DIR="$BUILD_RELEASE_DIR/bundle"
+	FINAL_DIR="$SCRIPT_DIR/build/release/bundle"
+	mkdir -p "$FINAL_DIR"
+
+	BUILD_RESULTS_FILE="$FINAL_DIR/.build-results-${BUILD_OS}-${BUILD_ARCH}"
+	echo "EXPECTED $_all_expected_formats" >"$BUILD_RESULTS_FILE"
+	for _sf in $SKIPPED_FORMATS; do echo "SKIP $_sf" >>"$BUILD_RESULTS_FILE"; done
+	_inner_fail=0
+
 	build_icons
 	build_frontend
 	build_backend
 	sync_product_info
 
-	build_tauri
-
-	# ── Output directory and naming ──
-	BUILD_RELEASE_DIR="$SCRIPT_DIR/build/${RUST_TARGET}/release"
-	BUILD_OUTPUT_DIR="$BUILD_RELEASE_DIR/bundle"
-	FINAL_DIR="$SCRIPT_DIR/build/release/bundle"
-	mkdir -p "$FINAL_DIR"
+	# ── Naming (after sync_product_info sets PRODUCT_VERSION) ──
 	VERSION="$PRODUCT_VERSION"
 	ARCH="$BUILD_ARCH"
 	OS_LABEL="$BUILD_OS"
+
+	# ── Tauri build (binary + Tauri-native bundles) ──
+	set +e
+	build_tauri
+	_tauri_rc=$?
+	set -e
+
+	if [ "$_tauri_rc" != "0" ]; then
+		# Tauri build failed → mark ALL expected formats as FAIL
+		for _bf in $_all_expected_formats; do
+			echo "FAIL $_bf" >>"$BUILD_RESULTS_FILE"
+		done
+		echo "=== Build FAILED: OS=$BUILD_OS ARCH=$BUILD_ARCH (total $(elapsed_since $BUILD_TOTAL_START)) ==="
+		exit 1
+	fi
+
+	# Mark Tauri-native bundle formats as OK
+	for _bf in $TAURI_BUNDLE_TARGETS; do
+		echo "OK $_bf" >>"$BUILD_RESULTS_FILE"
+	done
 
 	# ── Custom Linux packages (DEB, RPM, Pacman, AppImage) ──
 	PKG_LINUX_ANY=0
@@ -916,11 +938,25 @@ docker_inner_build() {
 	move_bundles
 
 	if [ "$MAKE_ZIP" = "1" ]; then
+		set +e
 		build_zip
+		_zip_rc=$?
+		set -e
+		if [ "$_zip_rc" = "0" ]; then
+			echo "OK zip" >>"$BUILD_RESULTS_FILE"
+		else
+			echo "FAIL zip" >>"$BUILD_RESULTS_FILE"
+			_inner_fail=1
+		fi
 	fi
 
-	echo "=== Build complete: OS=$BUILD_OS ARCH=$BUILD_ARCH (total $(elapsed_since $BUILD_TOTAL_START)) ==="
+	if [ "$_inner_fail" != "0" ]; then
+		echo "=== Build PARTIAL: OS=$BUILD_OS ARCH=$BUILD_ARCH (some formats failed, total $(elapsed_since $BUILD_TOTAL_START)) ==="
+	else
+		echo "=== Build complete: OS=$BUILD_OS ARCH=$BUILD_ARCH (total $(elapsed_since $BUILD_TOTAL_START)) ==="
+	fi
 	echo "Output: $FINAL_DIR/"
+	[ "$_inner_fail" != "0" ] && exit 1
 }
 
 # ─── Docker inner mode ──────────────────────────────────────────────────────
@@ -929,6 +965,93 @@ if [ "$DOCKER_INNER" = "1" ]; then
 	docker_inner_build
 	exit 0
 fi
+
+# ─── Orchestrator utility functions ─────────────────────────────────────────────────────────────
+
+ensure_colima() {
+	if ! command -v colima >/dev/null 2>&1; then
+		echo "Error: Colima is required on macOS."
+		echo "Install: brew install colima docker docker-buildx"
+		exit 1
+	fi
+	export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+
+	_host_cpus=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+	_min_memory=8
+
+	if colima status >/dev/null 2>&1; then
+		_cur_cpus=$(colima status 2>/dev/null | grep -i cpu | head -1 | grep -oE '[0-9]+' | head -1)
+		_cur_memory=$(colima status 2>/dev/null | grep -i memory | head -1 | grep -oE '[0-9]+' | head -1)
+		_cur_cpus=${_cur_cpus:-0}
+		_cur_memory=${_cur_memory:-0}
+		_restart=0
+		[ "$_cur_cpus" -lt "$_host_cpus" ] 2>/dev/null && _restart=1
+		[ "$_cur_memory" -lt "$_min_memory" ] 2>/dev/null && _restart=1
+		if [ "$_restart" = "1" ]; then
+			echo "Restarting Colima (${_host_cpus} CPUs, ${_min_memory}GB RAM)..."
+			colima stop
+			colima start --cpu "$_host_cpus" --memory "$_min_memory"
+		fi
+	else
+		echo "Starting Colima (${_host_cpus} CPUs, ${_min_memory}GB RAM)..."
+		colima start --cpu "$_host_cpus" --memory "$_min_memory"
+	fi
+
+	_wait=0
+	while ! docker info >/dev/null 2>&1; do
+		_wait=$((_wait + 1))
+		if [ "$_wait" -ge 60 ]; then
+			echo "Error: Colima did not start within 60 seconds."
+			exit 1
+		fi
+		sleep 1
+	done
+	echo "Docker is ready (Colima: ${_host_cpus} CPUs, ${_min_memory}GB RAM)."
+}
+
+ensure_docker_buildx() {
+	if ! docker buildx version >/dev/null 2>&1; then
+		echo "docker-buildx plugin not found."
+		if command -v brew >/dev/null 2>&1; then
+			echo "Installing docker-buildx via Homebrew..."
+			brew install docker-buildx
+		else
+			echo "Error: Install docker-buildx: brew install docker-buildx"
+			exit 1
+		fi
+	fi
+	# Ensure Docker knows where to find Homebrew CLI plugins
+	_plugins_dir="/opt/homebrew/lib/docker/cli-plugins"
+	_docker_config="$HOME/.docker/config.json"
+	if [ -d "$_plugins_dir" ]; then
+		mkdir -p "$HOME/.docker"
+		if [ ! -f "$_docker_config" ]; then
+			printf '{"cliPluginsExtraDirs": ["%s"]}\n' "$_plugins_dir" >"$_docker_config"
+		elif ! grep -q "cliPluginsExtraDirs" "$_docker_config" 2>/dev/null; then
+			if command -v jq >/dev/null 2>&1; then
+				_tmp=$(jq --arg d "$_plugins_dir" '. + {"cliPluginsExtraDirs": [$d]}' "$_docker_config")
+				printf '%s\n' "$_tmp" >"$_docker_config"
+			else
+				echo "Warning: ~/.docker/config.json exists but missing cliPluginsExtraDirs."
+				echo "Add this manually: \"cliPluginsExtraDirs\": [\"$_plugins_dir\"]"
+			fi
+		fi
+	fi
+}
+
+build_docker_image() {
+	if [ "$DOCKER_REBUILD" = "1" ]; then
+		echo "=== Rebuilding Docker image (--docker-rebuild) ==="
+		docker rmi "$DOCKER_IMAGE" 2>/dev/null || true
+		DOCKER_BUILDKIT=1 docker build --network=host --no-cache -t "$DOCKER_IMAGE" "$SCRIPT_DIR"
+	elif docker image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
+		echo "=== Docker image $DOCKER_IMAGE already exists (cached) ==="
+	else
+		echo "=== Building Docker image ==="
+		echo "    (first build may take a long time)"
+		DOCKER_BUILDKIT=1 docker build --network=host -t "$DOCKER_IMAGE" "$SCRIPT_DIR"
+	fi
+}
 
 # ─── Orchestrator mode (runs on host, spawns Docker containers) ─────────────
 
@@ -952,122 +1075,20 @@ validate_no_all_combined "format" $FORMAT_LIST
 case "$OS_LIST" in *all*) OS_LIST="linux windows macos" ;; esac
 # Note: target 'all' is expanded per-OS in the build loop
 
-# Validate formats against each OS (skip - formats are filtered per-OS in inner build)
-# Only check that format values are recognized (already done by validate_format_values)
-
 # Check Docker availability (needed for non-macOS builds)
 NEEDS_DOCKER=0
 for os in $OS_LIST; do
 	[ "$os" != "macos" ] && NEEDS_DOCKER=1
 done
+DOCKER_IMAGE="libershare-builder"
 if [ "$NEEDS_DOCKER" = "1" ]; then
 	if ! command -v docker >/dev/null 2>&1; then
 		echo "Error: Docker is required for Linux/Windows builds. Install Docker first."
 		exit 1
 	fi
-	# On macOS, use Colima as Docker provider
-	if [ "$HOST_OS" = "macos" ]; then
-		if ! command -v colima >/dev/null 2>&1; then
-			echo "Error: Colima is required on macOS."
-			echo "Install: brew install colima docker docker-buildx"
-			exit 1
-		fi
-		export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
-
-		# Desired resources: all CPUs, at least 8 GB RAM
-		_host_cpus=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
-		_min_memory=8
-
-		_colima_running=0
-		if colima status >/dev/null 2>&1; then
-			_colima_running=1
-		fi
-
-		if [ "$_colima_running" = "1" ]; then
-			# Check current Colima VM resources
-			_cur_cpus=$(colima status 2>/dev/null | grep -i cpu | head -1 | grep -oE '[0-9]+' | head -1)
-			_cur_memory=$(colima status 2>/dev/null | grep -i memory | head -1 | grep -oE '[0-9]+' | head -1)
-			# Convert memory from GiB (colima reports in GiB)
-			_cur_cpus=${_cur_cpus:-0}
-			_cur_memory=${_cur_memory:-0}
-			_restart_needed=0
-			if [ "$_cur_cpus" -lt "$_host_cpus" ] 2>/dev/null; then
-				echo "Colima VM has $_cur_cpus CPUs, host has $_host_cpus. Restarting with more resources..."
-				_restart_needed=1
-			fi
-			if [ "$_cur_memory" -lt "$_min_memory" ] 2>/dev/null; then
-				echo "Colima VM has ${_cur_memory}GB RAM, need at least ${_min_memory}GB. Restarting with more resources..."
-				_restart_needed=1
-			fi
-			if [ "$_restart_needed" = "1" ]; then
-				colima stop
-				colima start --cpu "$_host_cpus" --memory "$_min_memory"
-			fi
-		else
-			echo "Starting Colima (${_host_cpus} CPUs, ${_min_memory}GB RAM)..."
-			colima start --cpu "$_host_cpus" --memory "$_min_memory"
-		fi
-
-		# Wait up to 60 seconds for Docker to become responsive
-		_docker_wait=0
-		while ! docker info >/dev/null 2>&1; do
-			_docker_wait=$((_docker_wait + 1))
-			if [ "$_docker_wait" -ge 60 ]; then
-				echo "Error: Colima did not start within 60 seconds."
-				exit 1
-			fi
-			sleep 1
-		done
-		echo "Docker is ready (Colima: ${_host_cpus} CPUs, ${_min_memory}GB RAM)."
-	fi
-fi
-
-# ── Ensure docker-buildx is available on macOS ──
-if [ "$NEEDS_DOCKER" = "1" ] && [ "$(uname)" = "Darwin" ]; then
-	if ! docker buildx version >/dev/null 2>&1; then
-		echo "docker-buildx plugin not found."
-		if command -v brew >/dev/null 2>&1; then
-			echo "Installing docker-buildx via Homebrew..."
-			brew install docker-buildx
-		else
-			echo "Error: Install docker-buildx: brew install docker-buildx"
-			exit 1
-		fi
-	fi
-	# Ensure Docker knows where to find Homebrew CLI plugins
-	_plugins_dir="/opt/homebrew/lib/docker/cli-plugins"
-	_docker_config="$HOME/.docker/config.json"
-	if [ -d "$_plugins_dir" ]; then
-		mkdir -p "$HOME/.docker"
-		if [ ! -f "$_docker_config" ]; then
-			printf '{"cliPluginsExtraDirs": ["%s"]}\n' "$_plugins_dir" >"$_docker_config"
-		elif ! grep -q "cliPluginsExtraDirs" "$_docker_config" 2>/dev/null; then
-			# Inject cliPluginsExtraDirs into existing config.json
-			if command -v jq >/dev/null 2>&1; then
-				_tmp=$(jq --arg d "$_plugins_dir" '. + {"cliPluginsExtraDirs": [$d]}' "$_docker_config")
-				printf '%s\n' "$_tmp" >"$_docker_config"
-			else
-				echo "Warning: ~/.docker/config.json exists but missing cliPluginsExtraDirs."
-				echo "Add this manually: \"cliPluginsExtraDirs\": [\"$_plugins_dir\"]"
-			fi
-		fi
-	fi
-fi
-
-# ── Build Docker image (single image, runs natively on host arch) ──
-DOCKER_IMAGE="libershare-builder"
-if [ "$NEEDS_DOCKER" = "1" ]; then
-	if [ "$DOCKER_REBUILD" = "1" ]; then
-		echo "=== Rebuilding Docker image (--docker-rebuild) ==="
-		docker rmi "$DOCKER_IMAGE" 2>/dev/null || true
-		DOCKER_BUILDKIT=1 docker build --network=host --no-cache -t "$DOCKER_IMAGE" "$SCRIPT_DIR"
-	elif docker image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
-		echo "=== Docker image $DOCKER_IMAGE already exists (cached) ==="
-	else
-		echo "=== Building Docker image ==="
-		echo "    (first build may take a long time)"
-		DOCKER_BUILDKIT=1 docker build --network=host -t "$DOCKER_IMAGE" "$SCRIPT_DIR"
-	fi
+	[ "$HOST_OS" = "macos" ] && ensure_colima
+	[ "$(uname)" = "Darwin" ] && ensure_docker_buildx
+	build_docker_image
 fi
 
 # ── Clean old output ──
@@ -1080,8 +1101,10 @@ mkdir -p "$SCRIPT_DIR/build/release/bundle"
 
 _build_ok=""
 _build_fail=""
+_build_skip=""
 _build_count=0
 _fail_count=0
+_skip_count=0
 
 for os in $OS_LIST; do
 	# Expand target 'all' per-OS
@@ -1099,9 +1122,12 @@ for os in $OS_LIST; do
 	# Skip macOS on non-macOS hosts
 	if [ "$os" = "macos" ] && [ "$HOST_OS" != "macos" ]; then
 		for target in $_eff_targets; do
-			_build_count=$((_build_count + 1))
-			_fail_count=$((_fail_count + 1))
-			_build_fail="${_build_fail} ${os}/${target}"
+			_skip_fmts=$(resolve_formats_for_os "$os" "$FORMAT_LIST")
+			for _sf in $_skip_fmts; do
+				_build_count=$((_build_count + 1))
+				_skip_count=$((_skip_count + 1))
+				_build_skip="${_build_skip} ${os}/${target}/${_sf}"
+			done
 			print_box "SKIPPED: OS=$os  ARCH=$target  (requires macOS host)"
 		done
 		continue
@@ -1115,13 +1141,6 @@ for os in $OS_LIST; do
 		fi
 
 		echo ""
-		# Validate formats for this OS
-		if [ -n "$FORMAT_LIST" ]; then
-			for _vf in $FORMAT_LIST; do
-				validate_format_for_os "$os" "$_vf"
-			done
-		fi
-
 		print_box "Building: OS=$os  ARCH=$target"
 		echo ""
 
@@ -1131,7 +1150,6 @@ for os in $OS_LIST; do
 			INNER_FORMAT_ARGS="--format $FORMAT_LIST"
 		fi
 
-		_build_count=$((_build_count + 1))
 		_build_start=$(date +%s)
 
 		set +e
@@ -1164,22 +1182,60 @@ for os in $OS_LIST; do
 
 		_build_elapsed=$(elapsed_since $_build_start)
 		echo ""
+
+		# ── Read per-format results from inner build ──
+		_results_file="$SCRIPT_DIR/build/release/bundle/.build-results-${os}-${target}"
+		_got_results=0
+		if [ -f "$_results_file" ]; then
+			_expected_line=$(head -1 "$_results_file")
+			_expected="${_expected_line#EXPECTED }"
+			for _fmt in $_expected; do
+				_build_count=$((_build_count + 1))
+				if grep -q "^OK $_fmt$" "$_results_file"; then
+					_build_ok="${_build_ok} ${os}/${target}/${_fmt}"
+				elif grep -q "^SKIP $_fmt$" "$_results_file"; then
+					_build_skip="${_build_skip} ${os}/${target}/${_fmt}"
+					_skip_count=$((_skip_count + 1))
+				else
+					_build_fail="${_build_fail} ${os}/${target}/${_fmt}"
+					_fail_count=$((_fail_count + 1))
+				fi
+			done
+			_got_results=1
+			rm -f "$_results_file"
+		fi
+
 		if [ "$_rc" = "0" ]; then
 			print_box "Done: OS=$os  ARCH=$target  (${_build_elapsed})"
-			_build_ok="${_build_ok} ${os}/${target}"
+			if [ "$_got_results" = "0" ]; then
+				# No results file but success → record as os/target (shouldn't happen)
+				_build_count=$((_build_count + 1))
+				_build_ok="${_build_ok} ${os}/${target}"
+			fi
 		else
 			print_box "FAILED: OS=$os  ARCH=$target  (${_build_elapsed})"
-			_build_fail="${_build_fail} ${os}/${target}"
-			_fail_count=$((_fail_count + 1))
+			if [ "$_got_results" = "0" ]; then
+				# No results file → build crashed before writing anything
+				# Expand expected formats and mark all as failed
+				_crash_fmts=$(resolve_formats_for_os "$os" "$FORMAT_LIST")
+				for _cf in $_crash_fmts; do
+					_build_count=$((_build_count + 1))
+					_build_fail="${_build_fail} ${os}/${target}/${_cf}"
+					_fail_count=$((_fail_count + 1))
+				done
+			fi
 		fi
 	done
 done
 
 echo ""
-_ok_count=$((_build_count - _fail_count))
+_ok_count=$((_build_count - _fail_count - _skip_count))
 
 # ── Build Summary ──
-print_box "Build Summary: ${_ok_count} passed, ${_fail_count} failed (${_build_count} total)"
+_summary="Build Summary: ${_ok_count} passed, ${_fail_count} failed"
+[ "$_skip_count" -gt 0 ] && _summary="$_summary, ${_skip_count} skipped"
+_summary="$_summary (${_build_count} total)"
+print_box "$_summary"
 echo ""
 
 if [ -n "$_build_ok" ]; then
@@ -1190,9 +1246,16 @@ if [ -n "$_build_ok" ]; then
 fi
 
 if [ -n "$_build_fail" ]; then
-	echo "  FAILED:"
+	echo "  Failed:"
 	for _f in $_build_fail; do
 		echo "    - $_f"
+	done
+fi
+
+if [ -n "$_build_skip" ]; then
+	echo "  Skipped:"
+	for _sk in $_build_skip; do
+		echo "    ~ $_sk"
 	done
 fi
 
