@@ -215,8 +215,31 @@ rem Check if Docker is needed (for Linux builds)
 set "_NEEDS_DOCKER=0"
 for %%o in (!OS_LIST!) do if "%%o"=="linux" set "_NEEDS_DOCKER=1"
 if "!_NEEDS_DOCKER!"=="1" (
-    where docker >nul 2>&1 || ( echo Error: Docker Desktop is required for Linux builds. & exit /b 1 )
+    where docker >nul 2>&1 || ( echo Error: Docker Desktop is required for Linux builds. Install from https://www.docker.com/products/docker-desktop & exit /b 1 )
 )
+if "!_NEEDS_DOCKER!"=="1" (
+    docker info >nul 2>&1 || goto :start_docker
+)
+goto :docker_ready
+
+:start_docker
+echo === Docker daemon is not running, starting Docker Desktop... ===
+start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+set "_docker_wait=0"
+:docker_wait_loop
+if !_docker_wait! geq 120 (
+    echo Error: Docker Desktop did not start within 120 seconds.
+    exit /b 1
+)
+docker info >nul 2>&1
+if errorlevel 1 (
+    set /a _docker_wait+=3
+    timeout /t 3 /nobreak >nul
+    goto :docker_wait_loop
+)
+echo === Docker Desktop is ready ===
+
+:docker_ready
 
 rem ─── Build Docker image ──────────────────────────────────────────────────
 

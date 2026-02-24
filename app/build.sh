@@ -883,7 +883,7 @@ docker_inner_build() {
 	[ "$MAKE_APPIMAGE" = "1" ] && _all_expected_formats="$_all_expected_formats appimage"
 	[ "$MAKE_ZIP" = "1" ] && _all_expected_formats="$_all_expected_formats zip"
 	for _sf in $SKIPPED_FORMATS; do _all_expected_formats="$_all_expected_formats $_sf"; done
-	_all_expected_formats=$(echo $_all_expected_formats)  # trim leading space
+	_all_expected_formats=$(echo $_all_expected_formats) # trim leading space
 
 	# ── Output directory (needed for results file before build starts) ──
 	BUILD_RELEASE_DIR="$SCRIPT_DIR/build/${RUST_TARGET}/release"
