@@ -21,35 +21,42 @@ echo                 linux, windows, macos, all
 echo               Default: all
 echo.
 echo   --target    CPU architectures to build for (combinable):
-echo                 x86_64, aarch64, all
+echo                 x86_64, aarch64, universal (macOS only), all
 echo               Default: all
-echo               'all' on Windows = x86_64 + aarch64
+echo               'all' on macOS = x86_64 + aarch64 + universal
+echo               'all' on Linux/Windows = x86_64 + aarch64
 echo.
 echo   --format    Output package formats (combinable):
 echo                 Linux:   deb, rpm, pacman, appimage, zip
 echo                 Windows: nsis, msi, zip
+echo                 macOS:   dmg, zip
+echo                 all (= all valid formats for chosen OS)
 echo               Default: all (= all valid formats for chosen OS)
 echo.
-echo   --compress  Compression level (default: mid):
-echo                 min  = fast   (xz -1e / ZIP Fastest)
-echo                 mid  = balanced (xz -6e / ZIP Optimal)
-echo                 max  = smallest (xz -9e / ZIP SmallestSize)
+echo   --compress  Compression level for packages (default: mid):
+echo                 min  = xz -1e -T0  (fastest)
+echo                 mid  = xz -6e -T0  (balanced)
+echo                 max  = xz -9e -T0  (smallest - high RAM usage!)
+echo               AppImage always uses squashfs xz with BCJ filter (not affected).
+echo               RPM uses rpmbuild native xz (without -e).
 echo.
-echo   --docker-rebuild  Force rebuild of the Docker image
+echo   --docker-rebuild  Force rebuild of the Docker image (e.g. after Dockerfile changes)
 echo.
 echo   --help      Show this help
 echo.
 echo Examples:
 echo   %~nx0
-echo   %~nx0 --os windows --target x86_64 --format nsis zip
-echo   %~nx0 --os linux windows --target all --format all
 echo   %~nx0 --os linux --target x86_64 --format deb rpm
+echo   %~nx0 --os linux --target all --format all
+echo   %~nx0 --os linux windows --target x86_64 --format all
+echo   %~nx0 --os windows --target x86_64 --format nsis zip
 echo.
 echo Notes:
-echo   - Linux builds run inside Docker (requires Docker Desktop).
-echo   - macOS builds require a macOS host (skipped on Windows).
+echo   - Linux and Windows builds run inside Docker (requires Docker).
+echo   - macOS builds require a macOS host (no Docker).
 echo   - 'all' cannot be combined with other values in the same flag.
-echo   - aarch64 builds require Bun ARM64 support (Bun 1.4.0+).
+echo   - Cross-arch Linux builds use cross-linkers (no QEMU needed).
+echo   - 'universal' target creates a fat binary (macOS only, via lipo).
 exit /b 0
 
 :skip_help
@@ -69,7 +76,7 @@ if "%~1"=="--os" ( set "MODE=os" & shift & goto :parse_args )
 if "%~1"=="--target" ( set "MODE=target" & shift & goto :parse_args )
 if "%~1"=="--format" ( set "MODE=format" & shift & goto :parse_args )
 if "%~1"=="--compress" ( set "MODE=compress" & shift & goto :parse_args )
-if "%~1"=="--docker-rebuild" ( set "DOCKER_REBUILD=1" & shift & goto :parse_args )
+if "%~1"=="--docker-rebuild" ( set "DOCKER_REBUILD=1" & set "MODE=" & shift & goto :parse_args )
 if "%~1"=="--help" goto :show_help
 if "%~1"=="-h" goto :show_help
 
@@ -104,9 +111,10 @@ if "!FORMAT_LIST!"=="" set "FORMAT_LIST=all"
 
 rem ─── Resolve compression level ────────────────────────────────────────────
 
-if "!COMPRESS_LEVEL!"=="min" ( set "ZIP_PS_LEVEL=Fastest" )
-if "!COMPRESS_LEVEL!"=="mid" ( set "ZIP_PS_LEVEL=Optimal" )
-if "!COMPRESS_LEVEL!"=="max" ( set "ZIP_PS_LEVEL=SmallestSize" )
+set "ZIP_PS_LEVEL="
+if "!COMPRESS_LEVEL!"=="min" set "ZIP_PS_LEVEL=Fastest"
+if "!COMPRESS_LEVEL!"=="mid" set "ZIP_PS_LEVEL=Optimal"
+if "!COMPRESS_LEVEL!"=="max" set "ZIP_PS_LEVEL=SmallestSize"
 if "!ZIP_PS_LEVEL!"=="" (
     echo Error: Invalid --compress value '!COMPRESS_LEVEL!' ^(use: min, mid, max^)
     exit /b 1
@@ -124,31 +132,35 @@ for %%o in (!OS_LIST!) do (
 
 rem Validate target values
 for %%t in (!TARGET_LIST!) do (
-    if not "%%t"=="x86_64" if not "%%t"=="aarch64" if not "%%t"=="all" (
-        echo Error: Unknown target '%%t'. Valid: x86_64, aarch64, all
+    if not "%%t"=="x86_64" if not "%%t"=="aarch64" if not "%%t"=="universal" if not "%%t"=="all" (
+        echo Error: Unknown target '%%t'. Valid: x86_64, aarch64, universal, all
         exit /b 1
     )
 )
 
 rem Validate format values
 for %%f in (!FORMAT_LIST!) do (
-    if not "%%f"=="deb" if not "%%f"=="rpm" if not "%%f"=="pacman" if not "%%f"=="appimage" if not "%%f"=="nsis" if not "%%f"=="msi" if not "%%f"=="zip" if not "%%f"=="all" (
-        echo Error: Unknown format '%%f'. Valid: deb, rpm, pacman, appimage, nsis, msi, zip, all
+    if not "%%f"=="deb" if not "%%f"=="rpm" if not "%%f"=="pacman" if not "%%f"=="appimage" if not "%%f"=="nsis" if not "%%f"=="msi" if not "%%f"=="dmg" if not "%%f"=="zip" if not "%%f"=="all" (
+        echo Error: Unknown format '%%f'. Valid: deb, rpm, pacman, appimage, nsis, msi, dmg, zip, all
         exit /b 1
     )
 )
 
 rem Check 'all' not combined with other values
-call :check_all_combined "os" !OS_LIST! || exit /b 1
-call :check_all_combined "target" !TARGET_LIST! || exit /b 1
-call :check_all_combined "format" !FORMAT_LIST! || exit /b 1
+call :check_all_combined "os" !OS_LIST!
+if errorlevel 1 exit /b 1
+call :check_all_combined "target" !TARGET_LIST!
+if errorlevel 1 exit /b 1
+call :check_all_combined "format" !FORMAT_LIST!
+if errorlevel 1 exit /b 1
 
 rem ─── Expand 'all' ────────────────────────────────────────────────────────
 
-set "_TMP=!OS_LIST!"
-echo !_TMP! | findstr /i "all" >nul && set "OS_LIST=linux windows macos"
+rem Expand 'all' for OS (always includes all 3; macOS will be skipped on non-macOS hosts)
+echo !OS_LIST! | findstr /i "all" >nul && set "OS_LIST=linux windows macos"
 
-rem FORMAT_LIST 'all' is expanded per-OS in the build loop
+rem Note: target 'all' is expanded per-OS in the build loop
+rem Note: FORMAT_LIST 'all' is expanded per-OS in the build loop
 
 rem ─── Validate formats for each requested OS ──────────────────────────────
 
@@ -166,6 +178,9 @@ if not "!FORMAT_LIST!"=="all" (
             if "%%o"=="windows" (
                 if "%%f"=="nsis" set "_fmt_ok=1"
                 if "%%f"=="msi" set "_fmt_ok=1"
+            )
+            if "%%o"=="macos" (
+                if "%%f"=="dmg" set "_fmt_ok=1"
             )
             if "!_fmt_ok!"=="0" (
                 echo Error: Format '%%f' is not valid for OS '%%o'
@@ -210,35 +225,43 @@ if "!_NEEDS_DOCKER!"=="1" (
     if "!DOCKER_REBUILD!"=="1" (
         echo === Rebuilding Docker image ^(--docker-rebuild^) ===
         docker rmi "!DOCKER_IMAGE!" 2>nul
-        docker build --network=host --no-cache -t "!DOCKER_IMAGE!" "%SCRIPT_DIR%"
+        docker build --network=host --no-cache -t "!DOCKER_IMAGE!" "!SCRIPT_DIR!"
     ) else (
         docker image inspect "!DOCKER_IMAGE!" >nul 2>&1 && (
             echo === Docker image !DOCKER_IMAGE! already exists ^(cached^) ===
         ) || (
             echo === Building Docker image ===
             echo     ^(first build may take a long time^)
-            docker build --network=host -t "!DOCKER_IMAGE!" "%SCRIPT_DIR%"
+            docker build --network=host -t "!DOCKER_IMAGE!" "!SCRIPT_DIR!"
         )
     )
 )
 
 rem ─── Clean old output ────────────────────────────────────────────────────
 
-if exist "%SCRIPT_DIR%build\release\bundle" rmdir /s /q "%SCRIPT_DIR%build\release\bundle"
-if exist "%SCRIPT_DIR%icons" rmdir /s /q "%SCRIPT_DIR%icons"
-if exist "%ROOT_DIR%\frontend\build" rmdir /s /q "%ROOT_DIR%\frontend\build"
-mkdir "%SCRIPT_DIR%build\release\bundle" 2>nul
+if exist "!SCRIPT_DIR!build\release\bundle" rmdir /s /q "!SCRIPT_DIR!build\release\bundle"
+if exist "!SCRIPT_DIR!icons" rmdir /s /q "!SCRIPT_DIR!icons"
+if exist "!ROOT_DIR!\frontend\build" rmdir /s /q "!ROOT_DIR!\frontend\build"
+mkdir "!SCRIPT_DIR!build\release\bundle" 2>nul
+
+rem ─── Back up files that will be modified in-place ─────────────────────────
+
+if exist "!SCRIPT_DIR!wix-fragment-debug.wxs" (
+    copy /y "!SCRIPT_DIR!wix-fragment-debug.wxs" "!SCRIPT_DIR!wix-fragment-debug.wxs.orig" >nul 2>&1
+)
 
 rem ─── Build tracking ──────────────────────────────────────────────────────
 
 set "_build_ok="
 set "_build_fail="
+set "_build_skip="
 set "_build_count=0"
 set "_fail_count=0"
+set "_skip_count=0"
 set "_total_start=0"
 call :get_timestamp _total_start
 
-rem ─── Iterate over OS × target combinations ───────────────────────────────
+rem ─── Iterate over OS x target combinations ───────────────────────────────
 
 for %%o in (!OS_LIST!) do (
     set "_os=%%o"
@@ -250,51 +273,106 @@ for %%o in (!OS_LIST!) do (
     rem Skip macOS on Windows host
     if "!_os!"=="macos" (
         for %%t in (!_eff_targets!) do (
-            set /a _build_count+=1
-            set /a _fail_count+=1
-            set "_build_fail=!_build_fail! !_os!/%%t"
+            call :resolve_formats_for_os "!_os!" "!FORMAT_LIST!" _skip_fmts
+            for %%f in (!_skip_fmts!) do (
+                set /a _build_count+=1
+                set /a _skip_count+=1
+                set "_build_skip=!_build_skip! !_os!/%%t/%%f"
+            )
             call :print_box "SKIPPED: OS=!_os!  ARCH=%%t  (requires macOS host)"
         )
     ) else (
         for %%t in (!_eff_targets!) do (
             set "_target=%%t"
 
-            echo.
-            call :print_box "Building: OS=!_os!  ARCH=!_target!"
-            echo.
-
-            set /a _build_count+=1
-            set "_build_start=0"
-            call :get_timestamp _build_start
-
-            if "!_os!"=="linux" (
-                call :do_docker_build "!_os!" "!_target!"
+            rem Skip 'universal' for non-macOS
+            if "!_target!"=="universal" (
+                echo Skipping: 'universal' target is only valid for macOS
             ) else (
-                call :do_build "!_os!" "!_target!"
-            )
-            set "_rc=!errorlevel!"
+                echo.
+                call :print_box "Building: OS=!_os!  ARCH=!_target!"
+                echo.
 
-            set "_elapsed=0"
-            call :elapsed_since !_build_start! _elapsed
+                set "_build_start=0"
+                call :get_timestamp _build_start
 
-            echo.
-            if "!_rc!"=="0" (
-                call :print_box "Done: OS=!_os!  ARCH=!_target!  ^(!_elapsed!^)"
-                set "_build_ok=!_build_ok! !_os!/!_target!"
-            ) else (
-                call :print_box "FAILED: OS=!_os!  ARCH=!_target!  ^(!_elapsed!^)"
-                set "_build_fail=!_build_fail! !_os!/!_target!"
-                set /a _fail_count+=1
+                if "!_os!"=="linux" (
+                    call :do_docker_build "!_os!" "!_target!"
+                ) else (
+                    call :do_build "!_os!" "!_target!"
+                )
+                set "_rc=!errorlevel!"
+
+                set "_elapsed=0"
+                call :elapsed_since !_build_start! _elapsed
+
+                echo.
+
+                rem ── Read per-format results from inner build ──
+                set "_results_file=!SCRIPT_DIR!build\release\bundle\.build-results-!_os!-!_target!"
+                set "_got_results=0"
+                if exist "!_results_file!" (
+                    set "_got_results=1"
+                    rem Read EXPECTED line
+                    set "_expected="
+                    for /f "tokens=1,*" %%a in ('findstr /b "EXPECTED" "!_results_file!"') do set "_expected=%%b"
+                    rem Process each expected format
+                    for %%f in (!_expected!) do (
+                        set /a _build_count+=1
+                        set "_fmt_status=fail"
+                        findstr /b /c:"OK %%f" "!_results_file!" >nul 2>&1 && set "_fmt_status=ok"
+                        findstr /b /c:"SKIP %%f" "!_results_file!" >nul 2>&1 && set "_fmt_status=skip"
+                        if "!_fmt_status!"=="ok" (
+                            set "_build_ok=!_build_ok! !_os!/!_target!/%%f"
+                        ) else if "!_fmt_status!"=="skip" (
+                            set "_build_skip=!_build_skip! !_os!/!_target!/%%f"
+                            set /a _skip_count+=1
+                        ) else (
+                            set "_build_fail=!_build_fail! !_os!/!_target!/%%f"
+                            set /a _fail_count+=1
+                        )
+                    )
+                    del "!_results_file!" 2>nul
+                )
+
+                if "!_rc!"=="0" (
+                    call :print_box "Done: OS=!_os!  ARCH=!_target!  ^(!_elapsed!^)"
+                    if "!_got_results!"=="0" (
+                        set /a _build_count+=1
+                        set "_build_ok=!_build_ok! !_os!/!_target!"
+                    )
+                ) else (
+                    call :print_box "FAILED: OS=!_os!  ARCH=!_target!  ^(!_elapsed!^)"
+                    if "!_got_results!"=="0" (
+                        rem Build crashed before writing results - mark all expected formats as failed
+                        call :resolve_formats_for_os "!_os!" "!FORMAT_LIST!" _crash_fmts
+                        for %%f in (!_crash_fmts!) do (
+                            set /a _build_count+=1
+                            set /a _fail_count+=1
+                            set "_build_fail=!_build_fail! !_os!/!_target!/%%f"
+                        )
+                    )
+                )
             )
         )
     )
 )
 
+rem ─── Restore backed up files ──────────────────────────────────────────────
+
+if exist "!SCRIPT_DIR!wix-fragment-debug.wxs.orig" (
+    move /y "!SCRIPT_DIR!wix-fragment-debug.wxs.orig" "!SCRIPT_DIR!wix-fragment-debug.wxs" >nul 2>&1
+)
+
 rem ─── Build Summary ───────────────────────────────────────────────────────
 
 echo.
-set /a _ok_count=_build_count - _fail_count
-call :print_box "Build Summary: !_ok_count! passed, !_fail_count! failed (!_build_count! total)"
+set /a _ok_count=_build_count - _fail_count - _skip_count
+
+set "_summary=Build Summary: !_ok_count! passed, !_fail_count! failed"
+if !_skip_count! gtr 0 set "_summary=!_summary!, !_skip_count! skipped"
+set "_summary=!_summary! (!_build_count! total)"
+call :print_box "!_summary!"
 echo.
 
 if not "!_build_ok!"=="" (
@@ -303,14 +381,19 @@ if not "!_build_ok!"=="" (
 )
 
 if not "!_build_fail!"=="" (
-    echo   FAILED:
+    echo   Failed:
     for %%f in (!_build_fail!) do echo     - %%f
 )
 
+if not "!_build_skip!"=="" (
+    echo   Skipped:
+    for %%s in (!_build_skip!) do echo     ~ %%s
+)
+
 echo.
-echo Output: %SCRIPT_DIR%build\release\bundle\
-for /f "usebackq" %%f in (`dir /b "%SCRIPT_DIR%build\release\bundle\" 2^>nul`) do (
-    for %%F in ("%SCRIPT_DIR%build\release\bundle\%%f") do (
+echo Output: !SCRIPT_DIR!build\release\bundle\
+for /f "usebackq" %%f in (`dir /b "!SCRIPT_DIR!build\release\bundle\" 2^>nul`) do (
+    for %%F in ("!SCRIPT_DIR!build\release\bundle\%%f") do (
         set "_fsize=%%~zF"
         set /a "_fmb=!_fsize! / 1048576"
         echo   %%f  ^(!_fmb! MB^)
@@ -329,7 +412,39 @@ rem ═════════════════════════�
 rem  Functions
 rem ═══════════════════════════════════════════════════════════════════════════
 
-rem ─── do_docker_build <os> <arch> ───────────────────────────────────────────
+rem ─── resolve_formats_for_os <os> <format_list> <result_var> ───────────────
+rem Expands 'all' into concrete format list for an OS, or filters to valid formats
+
+:resolve_formats_for_os
+setlocal EnableDelayedExpansion
+set "_rffo_os=%~1"
+set "_rffo_list=%~2"
+set "_rffo_result="
+
+rem Check if list contains 'all'
+echo !_rffo_list! | findstr /i "all" >nul && (
+    if "!_rffo_os!"=="linux" set "_rffo_result=deb rpm pacman appimage zip"
+    if "!_rffo_os!"=="windows" set "_rffo_result=nsis msi zip"
+    if "!_rffo_os!"=="macos" set "_rffo_result=dmg zip"
+    goto :rffo_done
+)
+
+rem Filter to valid formats for this OS
+set "_rffo_valid="
+if "!_rffo_os!"=="linux" set "_rffo_valid=deb rpm pacman appimage zip"
+if "!_rffo_os!"=="windows" set "_rffo_valid=nsis msi zip"
+if "!_rffo_os!"=="macos" set "_rffo_valid=dmg zip"
+for %%f in (!_rffo_list!) do (
+    for %%v in (!_rffo_valid!) do (
+        if "%%f"=="%%v" set "_rffo_result=!_rffo_result! %%f"
+    )
+)
+
+:rffo_done
+endlocal & set "%~3=%_rffo_result%"
+exit /b 0
+
+rem ─── do_docker_build <os> <arch> ─────────────────────────────────────────
 rem Runs the build inside Docker (for Linux targets)
 
 :do_docker_build
@@ -344,7 +459,8 @@ if not "!FORMAT_LIST!"=="" set "INNER_FORMAT_ARGS=--format !FORMAT_LIST!"
 rem --init: tini as PID 1 forwards signals to the entire process group
 rem exec: build script replaces sh, becoming tini's direct child
 docker run --rm --init ^
-    -v "%ROOT_DIR%:/workspace" ^
+    --network=host ^
+    -v "!ROOT_DIR!:/workspace" ^
     -v "%USERPROFILE%\.cargo\registry:/root/.cargo/registry" ^
     -v "%USERPROFILE%\.cargo\git:/root/.cargo/git" ^
     -v "%USERPROFILE%\.cache\cargo-xwin:/root/.cache/cargo-xwin" ^
@@ -356,6 +472,7 @@ set "_rc=!errorlevel!"
 endlocal & exit /b %_rc%
 
 rem ─── do_build <os> <arch> ─────────────────────────────────────────────────
+rem Native Windows build
 
 :do_build
 setlocal EnableDelayedExpansion
@@ -377,58 +494,98 @@ if "!_os!_!_arch!"=="windows_x86_64" (
 rem Ensure Rust target is installed
 rustup target add !RUST_TARGET! >nul 2>&1
 
-rem ── Build icons ──
-call :build_icons || exit /b 1
-
-rem ── Build frontend ──
-call :build_frontend || exit /b 1
-
-rem ── Build backend ──
-call :build_backend "!BUN_TARGET!" || exit /b 1
-
-rem ── Sync product info ──
-call :sync_product_info || exit /b 1
-
-rem ── Expand format 'all' for Windows ──
-set "_FMT=!FORMAT_LIST!"
-echo !_FMT! | findstr /i "all" >nul && set "_FMT=nsis msi zip"
-
-rem ── Build Tauri ──
+rem ── Determine formats to build ──
 set "MAKE_NSIS=0"
 set "MAKE_MSI=0"
 set "MAKE_ZIP=0"
-for %%f in (!_FMT!) do (
-    if "%%f"=="nsis" set "MAKE_NSIS=1"
-    if "%%f"=="msi" set "MAKE_MSI=1"
-    if "%%f"=="zip" set "MAKE_ZIP=1"
+set "TAURI_BUNDLE_TARGETS="
+for %%f in (!FORMAT_LIST!) do (
+    if "%%f"=="all" (
+        set "MAKE_NSIS=1"
+        set "MAKE_MSI=1"
+        set "MAKE_ZIP=1"
+    ) else if "%%f"=="nsis" (
+        set "MAKE_NSIS=1"
+    ) else if "%%f"=="msi" (
+        set "MAKE_MSI=1"
+    ) else if "%%f"=="zip" (
+        set "MAKE_ZIP=1"
+    )
+)
+if "!MAKE_NSIS!"=="1" set "TAURI_BUNDLE_TARGETS=!TAURI_BUNDLE_TARGETS! nsis"
+if "!MAKE_MSI!"=="1" set "TAURI_BUNDLE_TARGETS=!TAURI_BUNDLE_TARGETS! msi"
+
+rem ── Compute all expected formats and write results file ──
+set "_all_expected="
+for %%f in (!TAURI_BUNDLE_TARGETS!) do set "_all_expected=!_all_expected! %%f"
+if "!MAKE_ZIP!"=="1" set "_all_expected=!_all_expected! zip"
+
+rem ── Output directories ──
+set "BUILD_RELEASE_DIR=!SCRIPT_DIR!build\!RUST_TARGET!\release"
+set "BUILD_OUTPUT_DIR=!BUILD_RELEASE_DIR!\bundle"
+set "FINAL_DIR=!SCRIPT_DIR!build\release\bundle"
+if not exist "!FINAL_DIR!" mkdir "!FINAL_DIR!"
+
+set "BUILD_RESULTS_FILE=!FINAL_DIR!\.build-results-!_os!-!_arch!"
+echo EXPECTED!_all_expected!>"!BUILD_RESULTS_FILE!"
+set "_inner_fail=0"
+
+rem ── Build icons ──
+call :build_icons
+if errorlevel 1 (
+    for %%f in (!_all_expected!) do echo FAIL %%f>>"!BUILD_RESULTS_FILE!"
+    endlocal & exit /b 1
 )
 
-set "BUNDLE_ARGS="
-if "!MAKE_NSIS!"=="1" if "!MAKE_MSI!"=="1" (
-    set "BUNDLE_ARGS=--bundles nsis msi"
-) else if "!MAKE_NSIS!"=="1" (
-    set "BUNDLE_ARGS=--bundles nsis"
-) else if "!MAKE_MSI!"=="1" (
-    set "BUNDLE_ARGS=--bundles msi"
+rem ── Build frontend ──
+call :build_frontend
+if errorlevel 1 (
+    for %%f in (!_all_expected!) do echo FAIL %%f>>"!BUILD_RESULTS_FILE!"
+    endlocal & exit /b 1
 )
+
+rem ── Build backend ──
+call :build_backend "!BUN_TARGET!"
+if errorlevel 1 (
+    for %%f in (!_all_expected!) do echo FAIL %%f>>"!BUILD_RESULTS_FILE!"
+    endlocal & exit /b 1
+)
+
+rem ── Sync product info ──
+call :sync_product_info
+if errorlevel 1 (
+    for %%f in (!_all_expected!) do echo FAIL %%f>>"!BUILD_RESULTS_FILE!"
+    endlocal & exit /b 1
+)
+
+rem ── Build Tauri (binary + Tauri-native bundles) ──
+set "BUNDLE_ARGS="
+set "_bundle_list="
+if "!MAKE_NSIS!"=="1" set "_bundle_list=!_bundle_list! nsis"
+if "!MAKE_MSI!"=="1" set "_bundle_list=!_bundle_list! msi"
+if not "!_bundle_list!"=="" set "BUNDLE_ARGS=--bundles!_bundle_list!"
 
 set "_tauri_start=0"
 call :get_timestamp _tauri_start
 echo === Building Tauri app ^(target: !RUST_TARGET!^) ===
-cd /d "%SCRIPT_DIR%"
+cd /d "!SCRIPT_DIR!"
 set "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=%NUMBER_OF_PROCESSORS%"
 cargo tauri build --target !RUST_TARGET! --config tauri.windows.conf.json !BUNDLE_ARGS!
-if errorlevel 1 ( endlocal & exit /b 1 )
+if errorlevel 1 (
+    rem Tauri build failed - mark ALL expected formats as FAIL
+    for %%f in (!_all_expected!) do echo FAIL %%f>>"!BUILD_RESULTS_FILE!"
+    endlocal & exit /b 1
+)
 set "_tauri_elapsed=0"
 call :elapsed_since !_tauri_start! _tauri_elapsed
 echo === Tauri done ^(!_tauri_elapsed!^) ===
 
-rem ── Output directory ──
-set "BUILD_RELEASE_DIR=%SCRIPT_DIR%build\!RUST_TARGET!\release"
-set "BUILD_OUTPUT_DIR=!BUILD_RELEASE_DIR!\bundle"
-set "FINAL_DIR=%SCRIPT_DIR%build\release\bundle"
+rem Mark Tauri-native bundle formats as OK
+for %%f in (!TAURI_BUNDLE_TARGETS!) do echo OK %%f>>"!BUILD_RESULTS_FILE!"
 
-rem ── Move NSIS installer ──
+rem ── Move and rename bundles ──
+
+rem Move NSIS installer
 if "!MAKE_NSIS!"=="1" (
     if exist "!BUILD_OUTPUT_DIR!\nsis\*.exe" (
         for %%f in ("!BUILD_OUTPUT_DIR!\nsis\*.exe") do (
@@ -438,7 +595,7 @@ if "!MAKE_NSIS!"=="1" (
     )
 )
 
-rem ── Move MSI installer ──
+rem Move MSI installer
 if "!MAKE_MSI!"=="1" (
     if exist "!BUILD_OUTPUT_DIR!\msi\*.msi" (
         for %%f in ("!BUILD_OUTPUT_DIR!\msi\*.msi") do (
@@ -449,29 +606,42 @@ if "!MAKE_MSI!"=="1" (
 )
 
 rem ── Create ZIP ──
-if "!MAKE_ZIP!"=="1" call :build_zip
+if "!MAKE_ZIP!"=="1" (
+    call :build_zip
+    if errorlevel 1 (
+        echo FAIL zip>>"!BUILD_RESULTS_FILE!"
+        set "_inner_fail=1"
+    ) else (
+        echo OK zip>>"!BUILD_RESULTS_FILE!"
+    )
+)
 
-echo === Build complete: OS=!_os! ARCH=!_arch! ===
+if "!_inner_fail!"=="1" (
+    echo === Build PARTIAL: OS=!_os! ARCH=!_arch! ^(some formats failed^) ===
+) else (
+    echo === Build complete: OS=!_os! ARCH=!_arch! ===
+)
+echo Output: !FINAL_DIR!\
 endlocal
 exit /b 0
 
 rem ─── build_icons ──────────────────────────────────────────────────────────
 
 :build_icons
-if exist "%SCRIPT_DIR%icons\icon.png" (
+if exist "!SCRIPT_DIR!icons\icon.png" (
     echo === Icons already built ^(cached^) ===
     exit /b 0
 )
 set "_icons_start=0"
 call :get_timestamp _icons_start
 echo === Generating icons ===
-set "SVG=%ROOT_DIR%\frontend\static\favicon.svg"
-if not exist "%SCRIPT_DIR%icons" mkdir "%SCRIPT_DIR%icons"
-magick -background none -size 32x32 "%SVG%" "%SCRIPT_DIR%icons\32x32.png"
-magick -background none -size 128x128 "%SVG%" "%SCRIPT_DIR%icons\128x128.png"
-magick -background none -size 256x256 "%SVG%" "%SCRIPT_DIR%icons\128x128@2x.png"
-magick -background none -size 256x256 "%SVG%" "%SCRIPT_DIR%icons\icon.png"
-magick -background none -size 256x256 "%SVG%" "%SCRIPT_DIR%icons\icon.ico"
+set "SVG=!ROOT_DIR!\frontend\static\favicon.svg"
+if not exist "!SCRIPT_DIR!icons" mkdir "!SCRIPT_DIR!icons"
+magick -background none -size 32x32 "!SVG!" "!SCRIPT_DIR!icons\32x32.png"
+magick -background none -size 128x128 "!SVG!" "!SCRIPT_DIR!icons\128x128.png"
+magick -background none -size 256x256 "!SVG!" "!SCRIPT_DIR!icons\128x128@2x.png"
+magick -background none -size 256x256 "!SVG!" "!SCRIPT_DIR!icons\icon.png"
+magick -background none -size 256x256 "!SVG!" "!SCRIPT_DIR!icons\icon.ico"
 if errorlevel 1 exit /b 1
 set "_icons_elapsed=0"
 call :elapsed_since !_icons_start! _icons_elapsed
@@ -481,14 +651,14 @@ exit /b 0
 rem ─── build_frontend ──────────────────────────────────────────────────────
 
 :build_frontend
-if exist "%ROOT_DIR%\frontend\build\index.html" (
+if exist "!ROOT_DIR!\frontend\build\index.html" (
     echo === Frontend already built ^(cached^) ===
     exit /b 0
 )
 set "_fe_start=0"
 call :get_timestamp _fe_start
 echo === Building frontend ===
-cd /d "%ROOT_DIR%\frontend"
+cd /d "!ROOT_DIR!\frontend"
 call build.bat
 if errorlevel 1 exit /b 1
 set "_fe_elapsed=0"
@@ -504,7 +674,7 @@ set "BUN_TGT=%~1"
 set "_be_start=0"
 call :get_timestamp _be_start
 echo === Building backend ^(target: !BUN_TGT!^) ===
-cd /d "%ROOT_DIR%\backend"
+cd /d "!ROOT_DIR!\backend"
 if exist build rmdir /s /q build
 bun i --frozen-lockfile
 if errorlevel 1 ( endlocal & exit /b 1 )
@@ -520,17 +690,20 @@ exit /b 0
 rem ─── sync_product_info ───────────────────────────────────────────────────
 
 :sync_product_info
-set "PRODUCT_JSON=%ROOT_DIR%\shared\src\product.json"
-for /f "tokens=*" %%v in ('bun -e "process.stdout.write(require(process.argv[1]).version)" "%PRODUCT_JSON%"') do set "PRODUCT_VERSION=%%v"
-for /f "tokens=*" %%n in ('bun -e "process.stdout.write(require(process.argv[1]).name)" "%PRODUCT_JSON%"') do set "PRODUCT_NAME=%%n"
-for /f "tokens=*" %%d in ('bun -e "process.stdout.write(require(process.argv[1]).identifier)" "%PRODUCT_JSON%"') do set "PRODUCT_IDENTIFIER=%%d"
+set "PRODUCT_JSON=!ROOT_DIR!\shared\src\product.json"
+for /f "tokens=*" %%v in ('bun -e "process.stdout.write(require(process.argv[1]).version)" "!PRODUCT_JSON!"') do set "PRODUCT_VERSION=%%v"
+for /f "tokens=*" %%n in ('bun -e "process.stdout.write(require(process.argv[1]).name)" "!PRODUCT_JSON!"') do set "PRODUCT_NAME=%%n"
+for /f "tokens=*" %%d in ('bun -e "process.stdout.write(require(process.argv[1]).identifier)" "!PRODUCT_JSON!"') do set "PRODUCT_IDENTIFIER=%%d"
 echo Product: !PRODUCT_NAME! v!PRODUCT_VERSION! (!PRODUCT_IDENTIFIER!)
+
 rem Sync tauri.conf.json
-bun -e "var f=require('fs'),p=require(process.argv[1]),t=process.argv[2],c=JSON.parse(f.readFileSync(t,'utf8'));c.productName=p.name;c.mainBinaryName=p.name;c.version=p.version;c.identifier=p.identifier;c.bundle.windows.nsis.startMenuFolder=p.name;f.writeFileSync(t,JSON.stringify(c,null,'\t')+'\n')" "%PRODUCT_JSON%" "%SCRIPT_DIR%tauri.conf.json"
+bun -e "var f=require('fs'),p=require(process.argv[1]),t=process.argv[2],c=JSON.parse(f.readFileSync(t,'utf8'));c.productName=p.name;c.mainBinaryName=p.name;c.version=p.version;c.identifier=p.identifier;c.bundle.windows.nsis.startMenuFolder=p.name;f.writeFileSync(t,JSON.stringify(c,null,'\t')+'\n')" "!PRODUCT_JSON!" "!SCRIPT_DIR!tauri.conf.json"
+
 rem Sync Cargo.toml version
-bun -e "var f=require('fs'),v=process.argv[1],t=process.argv[2],s=f.readFileSync(t,'utf8').replace(/^version = \"[^\"]*\"/m,'version = \"'+v+'\"');f.writeFileSync(t,s)" "!PRODUCT_VERSION!" "%SCRIPT_DIR%Cargo.toml"
+bun -e "var f=require('fs'),v=process.argv[1],t=process.argv[2],s=f.readFileSync(t,'utf8').replace(/^version = \"[^\"]*\"/m,'version = \"'+v+'\"');f.writeFileSync(t,s)" "!PRODUCT_VERSION!" "!SCRIPT_DIR!Cargo.toml"
+
 rem Sync wix-fragment-debug.wxs
-bun -e "var f=require('fs'),n=process.argv[1],s=f.readFileSync(process.argv[2],'utf8').replace(/\{\{product_name\}\}/g,n);f.writeFileSync(process.argv[2],s)" "!PRODUCT_NAME!" "%SCRIPT_DIR%wix-fragment-debug.wxs"
+bun -e "var f=require('fs'),n=process.argv[1],s=f.readFileSync(process.argv[2],'utf8').replace(/\{\{product_name\}\}/g,n);f.writeFileSync(process.argv[2],s)" "!PRODUCT_NAME!" "!SCRIPT_DIR!wix-fragment-debug.wxs"
 exit /b 0
 
 rem ─── build_zip ────────────────────────────────────────────────────────────
@@ -541,9 +714,9 @@ set "ZIP_STAGING=!FINAL_DIR!\zip_staging"
 if exist "!ZIP_STAGING!" rmdir /s /q "!ZIP_STAGING!"
 mkdir "!ZIP_STAGING!"
 copy /y "!BUILD_RELEASE_DIR!\!PRODUCT_NAME!.exe" "!ZIP_STAGING!\!PRODUCT_NAME!.exe" >nul
-copy /y "%ROOT_DIR%\backend\build\lish-backend.exe" "!ZIP_STAGING!\lish-backend.exe" >nul
+copy /y "!ROOT_DIR!\backend\build\lish-backend.exe" "!ZIP_STAGING!\lish-backend.exe" >nul
 rem Create Debug.bat from template
-powershell -Command "(Get-Content '%SCRIPT_DIR%bundle-scripts\Debug.bat' -Raw) -replace '\{\{product_name\}\}','!PRODUCT_NAME!' | Set-Content '!ZIP_STAGING!\Debug.bat' -NoNewline"
+powershell -Command "(Get-Content '!SCRIPT_DIR!bundle-scripts\Debug.bat' -Raw) -replace '\{\{product_name\}\}','!PRODUCT_NAME!' | Set-Content '!ZIP_STAGING!\Debug.bat' -NoNewline"
 powershell -Command "Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip' -CompressionLevel !ZIP_PS_LEVEL! -Force"
 rmdir /s /q "!ZIP_STAGING!"
 echo === ZIP done ===
