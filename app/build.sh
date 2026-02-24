@@ -955,27 +955,29 @@ if [ "$NEEDS_DOCKER" = "1" ]; then
 		echo "Error: Docker is required for Linux/Windows builds. Install Docker first."
 		exit 1
 	fi
-	# On macOS, Docker daemon isn't a system service — try to start it
-	if [ "$HOST_OS" = "macos" ] && ! docker info >/dev/null 2>&1; then
-		if command -v colima >/dev/null 2>&1; then
-			echo "Docker daemon is not running. Starting Colima..."
-			colima start
-		else
-			echo "Error: Docker daemon is not running."
-			echo "Install Colima: brew install colima docker && colima start"
+	# On macOS, use Colima as Docker provider
+	if [ "$HOST_OS" = "macos" ]; then
+		if ! command -v colima >/dev/null 2>&1; then
+			echo "Error: Colima is required on macOS."
+			echo "Install: brew install colima docker docker-buildx"
 			exit 1
 		fi
-		# Wait up to 60 seconds for Docker to become responsive
-		_docker_wait=0
-		while ! docker info >/dev/null 2>&1; do
-			_docker_wait=$((_docker_wait + 1))
-			if [ "$_docker_wait" -ge 60 ]; then
-				echo "Error: Docker daemon did not start within 60 seconds."
-				exit 1
-			fi
-			sleep 1
-		done
-		echo "Docker is ready."
+		export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+		if ! docker info >/dev/null 2>&1; then
+			echo "Starting Colima..."
+			colima start
+			# Wait up to 60 seconds for Docker to become responsive
+			_docker_wait=0
+			while ! docker info >/dev/null 2>&1; do
+				_docker_wait=$((_docker_wait + 1))
+				if [ "$_docker_wait" -ge 60 ]; then
+					echo "Error: Colima did not start within 60 seconds."
+					exit 1
+				fi
+				sleep 1
+			done
+		fi
+		echo "Docker is ready (Colima)."
 	fi
 fi
 
