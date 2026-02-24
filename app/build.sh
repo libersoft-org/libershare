@@ -956,7 +956,7 @@ docker_inner_build() {
 		echo "=== Build complete: OS=$BUILD_OS ARCH=$BUILD_ARCH (total $(elapsed_since $BUILD_TOTAL_START)) ==="
 	fi
 	echo "Output: $FINAL_DIR/"
-	[ "$_inner_fail" != "0" ] && exit 1
+	if [ "$_inner_fail" != "0" ]; then exit 1; fi
 }
 
 # ─── Docker inner mode ──────────────────────────────────────────────────────
