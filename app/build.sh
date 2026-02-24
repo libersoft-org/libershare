@@ -460,15 +460,13 @@ LDDWRAPPER
 
 	if [ "$BUILD_OS" = "windows" ]; then
 		cargo tauri build --target "$RUST_TARGET" --runner cargo-xwin $PLATFORM_CONFIG $BUNDLE_ARGS
+	elif [ "$BUILD_OS" = "macos" ]; then
+		# CI=true makes Tauri bundler skip Finder AppleScript (--skip-jenkins),
+		# preventing DMG volume windows from auto-opening during build.
+		# See: https://github.com/tauri-apps/tauri/issues/592
+		CI=true cargo tauri build --target "$RUST_TARGET" $PLATFORM_CONFIG $BUNDLE_ARGS
 	else
 		cargo tauri build --target "$RUST_TARGET" $PLATFORM_CONFIG $BUNDLE_ARGS
-	fi
-
-	# macOS: Tauri's DMG bundler auto-mounts the image — unmount it
-	if [ "$BUILD_OS" = "macos" ]; then
-		for _vol in /Volumes/LiberShare*; do
-			[ -d "$_vol" ] && hdiutil detach "$_vol" >/dev/null 2>&1 || true
-		done
 	fi
 
 	echo "=== Tauri done ($(elapsed_since $_t)) ==="
