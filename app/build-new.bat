@@ -486,7 +486,7 @@ docker run --rm --init ^
     -v "%USERPROFILE%\.bun\install\cache:/root/.bun/install/cache" ^
     -e APPIMAGE_EXTRACT_AND_RUN=1 ^
     "!DOCKER_IMAGE!" ^
-    sh -c "cd /workspace/app && exec ./build.sh --docker-inner --inner-os !_os! --inner-arch !_arch! --compress !COMPRESS_LEVEL! !INNER_FORMAT_ARGS!"
+    sh -c "cd /workspace/app && exec sh build.sh --docker-inner --inner-os !_os! --inner-arch !_arch! --compress !COMPRESS_LEVEL! !INNER_FORMAT_ARGS!"
 set "_rc=!errorlevel!"
 endlocal & exit /b %_rc%
 
