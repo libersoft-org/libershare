@@ -444,7 +444,11 @@ LDDWRAPPER
 		export PATH="$LDD_WRAPPER_DIR:$PATH"
 	fi
 
-	export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(nproc)
+	if command -v nproc >/dev/null 2>&1; then
+		export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(nproc)
+	elif command -v sysctl >/dev/null 2>&1; then
+		export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(sysctl -n hw.ncpu)
+	fi
 
 	# Platform-specific Tauri config overlay
 	PLATFORM_CONFIG=""
