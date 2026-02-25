@@ -3,21 +3,14 @@ import { join, sep, dirname } from 'path';
 import { homedir, platform } from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-
 const isWindows = platform() === 'win32';
 const execAsync = promisify(exec);
 
 async function getWindowsDrives() {
 	const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-	const results = await Promise.allSettled(
-		[...letters].map(letter => access(`${letter}:\\`).then(() => letter)),
-	);
-	return results
-		.filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled')
-		.map(r => ({ name: `${r.value}:`, path: `${r.value}:\\`, type: 'drive' as const }));
+	const results = await Promise.allSettled([...letters].map(letter => access(`${letter}:\\`).then(() => letter)));
+	return results.filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled').map(r => ({ name: `${r.value}:`, path: `${r.value}:\\`, type: 'drive' as const }));
 }
-
-type P = Record<string, any>;
 
 export function initFsHandlers() {
 	const info = async () => {
@@ -31,7 +24,7 @@ export function initFsHandlers() {
 		};
 	};
 
-	const list = async (p: P) => {
+	const list = async (p: { path?: string }) => {
 		let path = p.path;
 		if (!path || path === '') {
 			if (isWindows) return { path: '', entries: await getWindowsDrives() };
@@ -62,18 +55,18 @@ export function initFsHandlers() {
 		return { path, entries };
 	};
 
-	const readText = async (p: P) => {
+	const readText = async (p: { path: string }) => {
 		const file = Bun.file(p.path);
 		return { content: await file.text() };
 	};
 
-	const readGzip = async (p: P) => {
+	const readGzip = async (p: { path: string }) => {
 		const compressed = await Bun.file(p.path).arrayBuffer();
 		const decompressed = Bun.gunzipSync(new Uint8Array(compressed));
 		return { content: new TextDecoder().decode(decompressed) };
 	};
 
-	const del = async (p: P) => {
+	const del = async (p: { path: string }) => {
 		const stats = await stat(p.path);
 		if (stats.isDirectory()) {
 			const { rm } = await import('fs/promises');
@@ -81,23 +74,23 @@ export function initFsHandlers() {
 		} else await unlink(p.path);
 	};
 
-	const mkdirFn = async (p: P) => {
+	const mkdirFn = async (p: { path: string }) => {
 		await fsMkdirNode(p.path, { recursive: true });
 	};
 
-	const open = async (p: P) => {
+	const open = async (p: { path: string }) => {
 		if (isWindows) await execAsync(`start "" "${p.path}"`);
 		else if (platform() === 'darwin') await execAsync(`open "${p.path}"`);
 		else await execAsync(`xdg-open "${p.path}"`);
 	};
 
-	const renameFn = async (p: P) => {
+	const renameFn = async (p: { path: string; newName: string }) => {
 		const dir = dirname(p.path);
 		const newPath = join(dir, p.newName);
 		await fsRenameNode(p.path, newPath);
 	};
 
-	const exists = async (p: P) => {
+	const exists = async (p: { path: string }) => {
 		try {
 			await access(p.path);
 			return { exists: true };
@@ -106,12 +99,12 @@ export function initFsHandlers() {
 		}
 	};
 
-	const writeText = async (p: P) => {
+	const writeText = async (p: { path: string; content: string }) => {
 		await Bun.write(p.path, p.content);
 		return { success: true };
 	};
 
-	const writeGzip = async (p: P) => {
+	const writeGzip = async (p: { path: string; content: string }) => {
 		const compressed = Bun.gzipSync(Buffer.from(p.content, 'utf-8'));
 		await Bun.write(p.path, compressed);
 		return { success: true };

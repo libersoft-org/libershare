@@ -1,7 +1,5 @@
 import { type DataServer } from '../lish/data-server.ts';
 
-type P = Record<string, any>;
-
 export function initDatasetsHandlers(dataServer: DataServer) {
 	const getDatasets = () => {
 		return dataServer.getDatasets().map(l => ({
@@ -12,7 +10,7 @@ export function initDatasetsHandlers(dataServer: DataServer) {
 		}));
 	};
 
-	const getDataset = (p: P) => {
+	const getDataset = (p: { id: string }) => {
 		const lish = dataServer.getLish(p.id);
 		if (!lish || !lish.directory) return null;
 		return {

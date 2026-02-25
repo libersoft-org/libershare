@@ -1,11 +1,9 @@
 import { type Settings } from '../settings.ts';
 
-type P = Record<string, any>;
-
 export function initSettingsHandlers(settings: Settings) {
-	const get = (p: P) => settings.get(p.path);
+	const get = (p: { path: string }) => settings.get(p.path);
 
-	const set = async (p: P) => {
+	const set = async (p: { path: string; value: any }) => {
 		await settings.set(p.path, p.value);
 		return true;
 	};

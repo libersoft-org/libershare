@@ -1,18 +1,17 @@
 import { type LISHNetworkStorage } from '../lishnet/lishNetworkStorage.ts';
-
-type P = Record<string, any>;
+import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
 
 export function initLishNetworksHandlers(lishNetworks: LISHNetworkStorage) {
 	const getAll = () => lishNetworks.getAll();
-	const get = (p: P) => lishNetworks.get(p.networkID);
-	const exists = (p: P) => lishNetworks.exists(p.networkID);
-	const add = async (p: P) => lishNetworks.add(p.network);
-	const update = async (p: P) => lishNetworks.update(p.network);
-	const del = async (p: P) => lishNetworks.delete(p.networkID);
-	const addIfNotExists = async (p: P) => lishNetworks.addIfNotExists(p.network);
-	const importNetworks = async (p: P) => lishNetworks.importNetworks(p.networks);
+	const get = (p: { networkID: string }) => lishNetworks.get(p.networkID);
+	const exists = (p: { networkID: string }) => lishNetworks.exists(p.networkID);
+	const add = async (p: { network: LISHNetworkConfig }) => lishNetworks.add(p.network);
+	const update = async (p: { network: LISHNetworkConfig }) => lishNetworks.update(p.network);
+	const del = async (p: { networkID: string }) => lishNetworks.delete(p.networkID);
+	const addIfNotExists = async (p: { network: LISHNetworkDefinition }) => lishNetworks.addIfNotExists(p.network);
+	const importNetworks = async (p: { networks: LISHNetworkDefinition[] }) => lishNetworks.importNetworks(p.networks);
 
-	const setAll = async (p: P) => {
+	const setAll = async (p: { networks: LISHNetworkConfig[] }) => {
 		await lishNetworks.setAll(p.networks);
 		return true;
 	};

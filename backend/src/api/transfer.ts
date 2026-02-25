@@ -2,11 +2,10 @@ import { type Networks } from '../lishnet/networks.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { Downloader } from '../protocol/downloader.ts';
 import { join } from 'path';
-type P = Record<string, any>;
 type EmitFn = (client: any, event: string, data: any) => void;
 
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn) {
-	const download = async (p: P, client: any) => {
+	const download = async (p: { networkID: string; lishPath: string }, client: any) => {
 		/*
 		todo:
 		// replace this with setDownloadEnabled(lishID, networkID, enabled)

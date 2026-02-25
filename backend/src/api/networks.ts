@@ -1,23 +1,21 @@
 import { type Networks } from '../lishnet/networks.ts';
 import { type DataServer } from '../lish/data-server.ts';
 
-type P = Record<string, any>;
-
 export function initNetworksHandlers(networks: Networks, dataServer: DataServer) {
 	const list = () => networks.getAll();
-	const get = (p: P) => networks.get(p.networkID);
-	const importFromFile = async (p: P) => networks.importFromFile(p.path, p.enabled ?? false);
-	const importFromJson = async (p: P) => networks.importFromJson(p.json, p.enabled ?? false);
-	const setEnabled = async (p: P) => ({ success: await networks.setEnabled(p.networkID, p.enabled) });
-	const del = async (p: P) => ({ success: await networks.delete(p.networkID) });
+	const get = (p: { networkID: string }) => networks.get(p.networkID);
+	const importFromFile = async (p: { path: string; enabled?: boolean }) => networks.importFromFile(p.path, p.enabled ?? false);
+	const importFromJson = async (p: { json: string; enabled?: boolean }) => networks.importFromJson(p.json, p.enabled ?? false);
+	const setEnabled = async (p: { networkID: string; enabled: boolean }) => ({ success: await networks.setEnabled(p.networkID, p.enabled) });
+	const del = async (p: { networkID: string }) => ({ success: await networks.delete(p.networkID) });
 
-	const connect = async (p: P) => {
+	const connect = async (p: { multiaddr: string }) => {
 		const network = networks.getRunningNetwork();
 		await network.connectToPeer(p.multiaddr);
 		return { success: true };
 	};
 
-	const findPeer = (p: P) => {
+	const findPeer = (p: { peerID: string }) => {
 		const network = networks.getRunningNetwork();
 		return network.cliFindPeer(p.peerID);
 	};
@@ -28,14 +26,14 @@ export function initNetworksHandlers(networks: Networks, dataServer: DataServer)
 		return info?.addresses || [];
 	};
 
-	const getPeers = (p: P) => {
+	const getPeers = (p: { networkID: string }) => {
 		if (!networks.isJoined(p.networkID)) throw new Error('Network not joined');
 		return networks.getTopicPeersInfo(p.networkID);
 	};
 
 	const getNodeInfo = () => networks.getNetwork().getNodeInfo();
 
-	const getStatus = (p: P) => {
+	const getStatus = (p: { networkID: string }) => {
 		const network = networks.getRunningNetwork();
 		const allPeers = network.getPeers();
 		const topicPeers = networks.getTopicPeers(p.networkID);
