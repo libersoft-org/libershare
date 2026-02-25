@@ -55,38 +55,6 @@ export interface NetworkInfo {
 	peersInStore?: number;
 }
 
-// Stats types
-export interface Stats {
-	networks: {
-		total: number;
-		enabled: number;
-		connected: number;
-	};
-	peers: number;
-	datasets: {
-		total: number;
-		complete: number;
-		downloading: number;
-	};
-	space: SpaceInfo[];
-	transfers: {
-		download: TransferStats;
-		upload: TransferStats;
-	};
-}
-
-export interface SpaceInfo {
-	path: string;
-	free: number;
-	usedByDatabase: number;
-	usedByDatasets: number;
-}
-
-export interface TransferStats {
-	now: number;
-	total: number;
-}
-
 // Dataset types (derived from ILish entries that have a directory)
 export interface Dataset {
 	id: string;

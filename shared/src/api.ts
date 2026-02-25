@@ -1,4 +1,4 @@
-import { type NetworkDefinition, type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Stats, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition } from './index.ts';
+import { type NetworkDefinition, type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -24,7 +24,6 @@ export class Api {
 	readonly lishNetworks: LISHNetworksApi;
 	readonly lishs: LishsApi;
 	readonly transfer: TransferApi;
-	readonly stats: StatsApi;
 
 	constructor(private client: IWsClient) {
 		this.networks = new NetworksApi(client);
@@ -34,7 +33,6 @@ export class Api {
 		this.lishNetworks = new LISHNetworksApi(client);
 		this.lishs = new LishsApi(client);
 		this.transfer = new TransferApi(client);
-		this.stats = new StatsApi(client);
 	}
 
 	// Raw call access
@@ -59,11 +57,6 @@ export class Api {
 	}
 
 	// Top-level operations
-
-	/** @deprecated Use api.stats.get() */
-	getStats(): Promise<Stats> {
-		return this.client.call<Stats>('stats.get');
-	}
 
 	/** @deprecated Use api.lishs.create() */
 	createLISH(inputPath: string, saveToFile: boolean = true, addToSharing: boolean = true, name?: string, description?: string, outputFilePath?: string, algorithm?: string, chunkSize?: number, threads?: number): Promise<CreateLishResponse> {
@@ -303,13 +296,5 @@ class TransferApi {
 
 	download(networkID: string, lishPath: string): Promise<DownloadResponse> {
 		return this.client.call<DownloadResponse>('transfer.download', { networkID, lishPath });
-	}
-}
-
-class StatsApi {
-	constructor(private client: IWsClient) {}
-
-	get(): Promise<Stats> {
-		return this.client.call<Stats>('stats.get');
 	}
 }

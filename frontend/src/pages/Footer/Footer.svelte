@@ -153,10 +153,6 @@
 </style>
 
 <div class="footer" class:left={$footerPosition === 'left'} class:center={$footerPosition === 'center'} class:right={$footerPosition === 'right'}>
-	<!--	<pre>-->
-	<!--	&lt;!&ndash;{JSON.stringify($stats, null, 2)}&ndash;&gt;-->
-	<!--	&lt;!&ndash;	{JSON.stringify($wsClientState, null, 2)}&ndash;&gt;-->
-	<!--		</pre>-->
 	<div class="items" class:right={$footerPosition === 'right'}>
 		{#each displayWidgets as widget, i}
 			{#if i > 0}<Separator />{/if}

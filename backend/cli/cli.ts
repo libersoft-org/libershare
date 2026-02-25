@@ -37,7 +37,6 @@ Commands:
 
   download <lishPath>              Download from .lish file
   fetch <url>                       Fetch URL content
-  stats                             Show stats
   help                              Show this help
   quit                              Exit
 `;
@@ -421,12 +420,6 @@ async function main() {
 					console.log(`Content-Type: ${result.contentType}`);
 					console.log('---');
 					console.log(result.content);
-					break;
-				}
-
-				case 'stats': {
-					const stats = await api.stats.get();
-					console.log(JSON.stringify(stats, null, 2));
 					break;
 				}
 

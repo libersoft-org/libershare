@@ -10,7 +10,6 @@ import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
 import { initLishsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
-import { initStatsHandlers } from './stats.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
 }
@@ -64,7 +63,6 @@ export class ApiServer {
 		const _fs = initFsHandlers();
 		const _lishs = initLishsHandlers(this.dataServer, emitTo);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
-		const _stats = initStatsHandlers(this.networks, this.dataServer);
 
 		this.handlers = {
 			// Core
@@ -116,9 +114,6 @@ export class ApiServer {
 			// Datasets
 			'datasets.getDatasets': _datasets.getDatasets,
 			'datasets.getDataset': _datasets.getDataset,
-
-			// Stats
-			'stats.get': _stats.get,
 
 			// Filesystem
 			'fs.info': _fs.info,
