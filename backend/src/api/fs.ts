@@ -8,16 +8,13 @@ const isWindows = platform() === 'win32';
 const execAsync = promisify(exec);
 
 async function getWindowsDrives() {
-	const drives: { name: string; path: string; type: 'drive' }[] = [];
 	const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-	for (const letter of letters) {
-		const drivePath = `${letter}:\\`;
-		try {
-			await access(drivePath);
-			drives.push({ name: `${letter}:`, path: drivePath, type: 'drive' });
-		} catch {}
-	}
-	return drives;
+	const results = await Promise.allSettled(
+		[...letters].map(letter => access(`${letter}:\\`).then(() => letter)),
+	);
+	return results
+		.filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled')
+		.map(r => ({ name: `${r.value}:`, path: `${r.value}:\\`, type: 'drive' as const }));
 }
 
 type P = Record<string, any>;
