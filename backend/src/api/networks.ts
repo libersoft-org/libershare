@@ -1,7 +1,14 @@
-import { type Networks } from '../lishnet/networks.ts';
+import { type Networks, type NetworkDefinition } from '../lishnet/networks.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
+
+type NetworkInfoEntry = NetworkDefinition & {
+	peerID?: string;
+	addresses?: string[];
+	connected?: number;
+	connectedPeers?: string[];
+};
 
 export function initNetworksHandlers(networks: Networks, dataServer: DataServer) {
 	const list = () => networks.getAll();
@@ -66,13 +73,13 @@ export function initNetworksHandlers(networks: Networks, dataServer: DataServer)
 		};
 	};
 
-	const infoAll = () => {
+	const infoAll = (): NetworkInfoEntry[] => {
 		const definitions = networks.getAll();
 		const network = networks.getNetwork();
 		const nodeInfo = network.isRunning() ? network.getNodeInfo() : null;
-		const result = [];
+		const result: NetworkInfoEntry[] = [];
 		for (const def of definitions) {
-			const info: any = {
+			const info: NetworkInfoEntry = {
 				id: def.id,
 				version: def.version,
 				name: def.name,

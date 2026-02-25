@@ -151,7 +151,7 @@ export class Downloader {
 		}, 60000);
 	}
 
-	private async handlePubsubMessage(topic: string, data: any) {
+	private async handlePubsubMessage(topic: string, data: Record<string, any>) {
 		const expectedTopic = lishTopic(this.networkID);
 		console.log(`Received pubsub message on topic ${topic}`);
 
@@ -165,7 +165,7 @@ export class Downloader {
 				} else {
 					console.log(`Peer ...${data.peerID} has the file, connecting...`);
 					try {
-						await this.connectToPeer(data);
+						await this.connectToPeer(data as HaveMessage);
 					} catch (error) {
 						console.log(`✗ Failed to connect to peer ...${data.peerID}:`, error instanceof Error ? error.message : error);
 						return;

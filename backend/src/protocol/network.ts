@@ -14,10 +14,14 @@ import { PINK_TOPIC, PONK_TOPIC, createPinkMessage, createPonkMessage } from './
 import { HaveMessage, WantMessage } from './downloader.ts';
 import { lishTopic } from './constants.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
-
-// PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
-type PubSub = any;
-
+type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
+/** Raw gossipsub message event. */
+interface PubsubEvent {
+	topic: string;
+	data: Uint8Array;
+}
+/** Handler for parsed pubsub topic messages. */
+type TopicHandler = (data: Record<string, any>) => void;
 const PRIVATE_KEY_PATH = '/local/privatekey';
 const AUTODIAL_WORKAROUND = true;
 
@@ -38,7 +42,7 @@ export class Network {
 	private bootstrapMultiaddrs: any[] = [];
 
 	// Topic handlers: topic -> Set of handler functions
-	private topicHandlers: Map<string, Set<(data: any) => void>> = new Map();
+	private topicHandlers: Map<string, Set<TopicHandler>> = new Map();
 
 	// Peer count change callback and debounce
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
@@ -387,9 +391,9 @@ export class Network {
 		const topic = lishTopic(networkID);
 		this.pubsub.subscribe(topic);
 		// Register the Want handler for this network
-		const handler = (data: any) => {
+		const handler: TopicHandler = data => {
 			console.log(`Received pubsub message on topic ${topic}:`, data.type);
-			if (data.type === 'want') this.handleWant(data, networkID);
+			if (data.type === 'want') this.handleWant(data as WantMessage, networkID);
 		};
 		if (!this.topicHandlers.has(topic)) this.topicHandlers.set(topic, new Set());
 		this.topicHandlers.get(topic)!.add(handler);
@@ -424,7 +428,7 @@ export class Network {
 	// Pink/Ponk (debug)
 	// =========================================================================
 
-	private handleMessage(msgEvent: any) {
+	private handleMessage(msgEvent: PubsubEvent) {
 		try {
 			const topic = msgEvent.topic;
 			const data = new TextDecoder().decode(msgEvent.data);
@@ -498,7 +502,7 @@ export class Network {
 	// Public API
 	// =========================================================================
 
-	async broadcast(topic: string, data: any) {
+	async broadcast(topic: string, data: Record<string, any>) {
 		if (!this.pubsub || !this.node) {
 			console.error('Network not started');
 			return;
@@ -511,7 +515,7 @@ export class Network {
 	/**
 	 * Subscribe to a raw pubsub topic with a handler (used by Downloader etc.)
 	 */
-	async subscribe(topic: string, handler: (data: any) => void) {
+	async subscribe(topic: string, handler: TopicHandler) {
 		if (!this.pubsub) {
 			console.error('Network not started');
 			return;
