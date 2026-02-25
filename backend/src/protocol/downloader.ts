@@ -112,9 +112,13 @@ export class Downloader {
 						// Mark as downloaded
 						await this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 						downloadedCount++;
+						downloaded = true;
 						console.log(`✓ Downloaded chunk ${downloadedCount}/${missingChunks.length}`);
 						break;
 					}
+				}
+				if (!downloaded) {
+					console.log(`✗ No peer had chunk ${chunk.chunkID.slice(0, 8)}...`);
 				}
 			}
 			console.log(`✓ Download complete! Downloaded ${downloadedCount}/${missingChunks.length} chunks`);
