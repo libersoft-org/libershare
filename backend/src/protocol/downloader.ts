@@ -36,7 +36,6 @@ export class Downloader {
 	private lishID!: LishID;
 	private state: State = 'added';
 	private workMutex = new Mutex();
-	private doMoreWork: boolean = false;
 	private missingChunks: MissingChunk[] = [];
 	private peers: Map<NodeId, LishClient> = new Map();
 	private callForPeersInterval: NodeJS.Timeout | undefined;
@@ -94,7 +93,6 @@ export class Downloader {
 					await this.downloadChunks();
 				}
 			}
-			if (this.doMoreWork) this.doWork().then(r => {});
 		});
 	}
 
