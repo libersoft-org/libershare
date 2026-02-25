@@ -18,8 +18,8 @@ import { type PeerId, type PrivateKey, type PeerInfo } from '@libp2p/interface';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { join } from 'path';
 import { networkInterfaces } from 'os';
-import { DataServer } from './data-server.ts';
-import { Settings } from './settings.ts';
+import { DataServer } from '../lish/data-server.ts';
+import { Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLishProtocol } from './lish-protocol.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 import { HaveMessage, WantMessage } from './downloader.ts';
@@ -28,12 +28,12 @@ import { HaveMessage, WantMessage } from './downloader.ts';
 type PubSub = any;
 interface PinkMessage {
 	type: 'pink';
-	peerId: string;
+	peerID: string;
 	timestamp: number;
 }
 interface PonkMessage {
 	type: 'ponk';
-	peerId: string;
+	peerID: string;
 	timestamp: number;
 	inReplyTo: string;
 }
@@ -69,7 +69,7 @@ export class Network {
 	private topicHandlers: Map<string, Set<(data: any) => void>> = new Map();
 
 	// Peer count change callback and debounce
-	private _onPeerCountChange: ((counts: { networkId: string; count: number }[]) => void) | null = null;
+	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
 	private _peerCountDebounceTimer: NodeJS.Timeout | null = null;
 	private _lastPeerCounts: Map<string, number> = new Map();
 
@@ -82,7 +82,7 @@ export class Network {
 	/**
 	 * Set a callback to be called when peer counts change for any subscribed topic.
 	 */
-	set onPeerCountChange(cb: ((counts: { networkId: string; count: number }[]) => void) | null) {
+	set onPeerCountChange(cb: ((counts: { networkID: string; count: number }[]) => void) | null) {
 		this._onPeerCountChange = cb;
 	}
 
@@ -105,23 +105,23 @@ export class Network {
 		const topics = this.pubsub.getTopics();
 		const prefix = 'lish/';
 		let changed = false;
-		const counts: { networkId: string; count: number }[] = [];
+		const counts: { networkID: string; count: number }[] = [];
 		for (const topic of topics) {
 			if (!topic.startsWith(prefix)) continue;
-			const networkId = topic.slice(prefix.length);
+			const networkID = topic.slice(prefix.length);
 			let count = 0;
 			try {
 				count = this.pubsub.getSubscribers(topic).length;
 			} catch {}
-			const prev = this._lastPeerCounts.get(networkId) ?? -1;
+			const prev = this._lastPeerCounts.get(networkID) ?? -1;
 			if (count !== prev) changed = true;
-			this._lastPeerCounts.set(networkId, count);
-			counts.push({ networkId, count });
+			this._lastPeerCounts.set(networkID, count);
+			counts.push({ networkID, count });
 		}
 		// Also detect removed topics
-		const currentNetworkIds = new Set(counts.map(c => c.networkId));
+		const currentNetworkIDs = new Set(counts.map(c => c.networkID));
 		for (const [id] of this._lastPeerCounts) {
-			if (!currentNetworkIds.has(id)) {
+			if (!currentNetworkIDs.has(id)) {
 				this._lastPeerCounts.delete(id);
 				changed = true;
 			}
@@ -276,9 +276,9 @@ export class Network {
 				console.log('  -', peer);
 				try {
 					const ma = Multiaddr(peer);
-					const peerId = ma.getPeerId();
-					if (peerId) {
-						this.bootstrapPeerIds.add(peerId);
+					const peerID = ma.getPeerId();
+					if (peerID) {
+						this.bootstrapPeerIds.add(peerID);
 						this.bootstrapMultiaddrs.push(ma);
 					}
 					validBootstrapPeers.push(peer);
@@ -349,12 +349,12 @@ export class Network {
 		}
 
 		this.pubsub.addEventListener('gossipsub:graft', evt => {
-			console.log('🌿 GRAFT:', evt.detail.peerId, 'joined', evt.detail.topic);
+			console.log('🌿 GRAFT:', evt.detail.peerID, 'joined', evt.detail.topic);
 			this.schedulePeerCountCheck();
 		});
 
 		this.pubsub.addEventListener('gossipsub:prune', evt => {
-			console.log('✂️  PRUNE:', evt.detail.peerId, 'left', evt.detail.topic);
+			console.log('✂️  PRUNE:', evt.detail.peerID, 'left', evt.detail.topic);
 			this.schedulePeerCountCheck();
 		});
 
@@ -363,21 +363,21 @@ export class Network {
 
 		// Listen for peer events
 		this.node.addEventListener('peer:discovery', async evt => {
-			const peerId = evt.detail.id.toString();
+			const peerID = evt.detail.id.toString();
 			const multiaddrs = evt.detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
-			console.log('🔍 Discovered peer:', peerId);
+			console.log('🔍 Discovered peer:', peerID);
 			console.log('   Multiaddrs:', multiaddrs.join(', ') || '(empty!)');
 		});
 
 		this.node.addEventListener('peer:connect', async evt => {
-			const peerId = evt.detail.toString();
+			const peerID = evt.detail.toString();
 			const connections = this.node!.getConnections(evt.detail);
 			const remoteAddrs = connections.map(c => c.remoteAddr.toString());
-			console.log('✅ New peer connected:', peerId);
+			console.log('✅ New peer connected:', peerID);
 			console.log('   Remote addresses:', remoteAddrs.join(', '));
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 
-			if (this.bootstrapPeerIds.has(peerId)) {
+			if (this.bootstrapPeerIds.has(peerID)) {
 				const connectionMultiaddrs = connections.map(c => c.remoteAddr);
 				await this.node!.peerStore.merge(evt.detail, {
 					multiaddrs: connectionMultiaddrs,
@@ -476,17 +476,17 @@ export class Network {
 			if (peer.includes(myPeerId)) continue;
 			try {
 				const ma = Multiaddr(peer);
-				const peerId = ma.getPeerId();
-				if (peerId && this.bootstrapPeerIds.has(peerId)) continue;
-				if (peerId) {
-					this.bootstrapPeerIds.add(peerId);
+				const peerID = ma.getPeerId();
+				if (peerID && this.bootstrapPeerIds.has(peerID)) continue;
+				if (peerID) {
+					this.bootstrapPeerIds.add(peerID);
 					this.bootstrapMultiaddrs.push(ma);
 				}
 				console.log('Adding bootstrap peer:', peer);
 				try {
 					await this.node.dial(ma);
-					if (peerId) {
-						await this.node.peerStore.merge(peerIdFromString(peerId), {
+					if (peerID) {
+						await this.node.peerStore.merge(peerIdFromString(peerID), {
 							multiaddrs: [ma],
 							tags: { [KEEP_ALIVE]: { value: 1 } },
 						});
@@ -569,7 +569,7 @@ export class Network {
 
 			// Dispatch to pink handler
 			if (topic === PINK_TOPIC) {
-				this.sendPonk(message.peerId);
+				this.sendPonk(message.peerID);
 				return;
 			}
 
@@ -589,7 +589,7 @@ export class Network {
 		if (!this.pubsub || !this.node) return;
 		const message: PinkMessage = {
 			type: 'pink',
-			peerId: this.node.peerId.toString(),
+			peerID: this.node.peerId.toString(),
 			timestamp: Date.now(),
 		};
 		const data = new TextEncoder().encode(JSON.stringify(message));
@@ -604,7 +604,7 @@ export class Network {
 		if (!this.pubsub || !this.node) return;
 		const message: PonkMessage = {
 			type: 'ponk',
-			peerId: this.node.peerId.toString(),
+			peerID: this.node.peerId.toString(),
 			timestamp: Date.now(),
 			inReplyTo,
 		};
@@ -621,22 +621,22 @@ export class Network {
 	// =========================================================================
 
 	private async handleWant(data: WantMessage, networkID: string) {
-		console.log('Handling want message for lishId:', data.lishId, 'on network:', networkID);
-		let manifest = await this.dataServer.getManifest(data.lishId);
-		if (!manifest) return;
-		let haveChunks = await this.dataServer.getHaveChunks(manifest);
+		console.log('Handling want message for lishID:', data.lishID, 'on network:', networkID);
+		let lish = await this.dataServer.getLish(data.lishID);
+		if (!lish) return;
+		let haveChunks = await this.dataServer.getHaveChunks(lish);
 		if (this.dataDir === '../../data1') haveChunks = 'all'; // mock
 		if (haveChunks !== 'all' && haveChunks.size === 0) {
-			console.log('No chunks available for lishId:', data.lishId);
+			console.log('No chunks available for lishID:', data.lishID);
 			return;
 		}
-		console.log('Manifest found, sending Have');
+		console.log('LISH found, sending Have');
 		const haveMessage: HaveMessage = {
 			type: 'have',
-			lishId: manifest.id,
+			lishID: lish.id,
 			chunks: haveChunks === 'all' ? 'all' : Array.from(haveChunks),
 			multiaddrs: this.node!.getMultiaddrs(),
-			peerId: this.node!.peerId.toString(),
+			peerID: this.node!.peerId.toString(),
 		};
 		await this.broadcast(lishTopic(networkID), haveMessage);
 	}
@@ -706,7 +706,7 @@ export class Network {
 		});
 	}
 
-	async dialProtocol(peerId: string, multiaddrs: any[], protocol: string) {
+	async dialProtocol(peerID: string, multiaddrs: any[], protocol: string) {
 		if (!this.node) throw new Error('Network not started');
 		const connection = await this.node.dial(multiaddrs);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
@@ -714,12 +714,12 @@ export class Network {
 	}
 
 	/**
-	 * Get node info (peerId, addresses).
+	 * Get node info (peerID, addresses).
 	 */
 	getNodeInfo() {
 		if (!this.node) return null;
 		return {
-			peerId: this.node.peerId.toString(),
+			peerID: this.node.peerId.toString(),
 			addresses: this.node.getMultiaddrs().map((ma: any) => ma.toString()),
 		};
 	}
@@ -735,7 +735,7 @@ export class Network {
 	/**
 	 * Get topic peers with connection type info (direct vs relay).
 	 */
-	getTopicPeersInfo(networkID: string): { peerId: string; direct: number; relay: number }[] {
+	getTopicPeersInfo(networkID: string): { peerID: string; direct: number; relay: number }[] {
 		if (!this.pubsub || !this.node) return [];
 		const topic = lishTopic(networkID);
 		try {
@@ -748,7 +748,7 @@ export class Network {
 					if (conn.remoteAddr.toString().includes('/p2p-circuit/')) relay++;
 					else direct++;
 				}
-				return { peerId: p.toString(), direct, relay };
+				return { peerID: p.toString(), direct, relay };
 			});
 		} catch {
 			return [];
@@ -778,18 +778,18 @@ export class Network {
 		this.datastore = null;
 	}
 
-	async cliFindPeer(peerId: string) {
-		const id = peerIdFromString(peerId);
+	async cliFindPeer(peerID: string) {
+		const id = peerIdFromString(peerID);
 		await this.findPeer(id);
 	}
 
-	async findPeer(peerId: PeerId) {
+	async findPeer(peerID: PeerId) {
 		console.log('Finding peer:');
 		console.log('Closest peers:');
-		for await (const peer of this.node.peerRouting.getClosestPeers(peerId.toMultihash().bytes)) {
+		for await (const peer of this.node.peerRouting.getClosestPeers(peerID.toMultihash().bytes)) {
 			console.log(peer.id, peer.multiaddrs);
 		}
-		const peer: PeerInfo = await this.node.peerRouting.findPeer(peerId);
+		const peer: PeerInfo = await this.node.peerRouting.findPeer(peerID);
 		console.log('Found it, multiaddrs are:');
 		peer.multiaddrs.forEach(ma => console.log(ma.toString()));
 	}

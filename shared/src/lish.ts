@@ -1,10 +1,10 @@
-export type LishId = string;
-export type ChunkId = string;
+export type LishID = string;
+export type ChunkID = string;
 
 export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
 export type HashAlgorithm = (typeof SUPPORTED_ALGOS)[number];
 
-export interface IManifest {
+export interface ILish {
 	version: number;
 	id: string;
 	name?: string;
@@ -15,6 +15,12 @@ export interface IManifest {
 	directories?: IDirectoryEntry[];
 	files?: IFileEntry[];
 	links?: ILinkEntry[];
+}
+
+// Extended interface for LISHs stored locally in the app (lishs.json)
+export interface IStoredLish extends ILish {
+	directory?: string;
+	chunks?: string[];
 }
 
 export interface IDirectoryEntry {

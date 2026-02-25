@@ -1,11 +1,10 @@
 import { dirname, join } from 'path';
 import { productName, productVersion } from '@shared';
 import { setupLogger, type LogLevel } from './logger.ts';
-import { Networks } from './networks.ts';
-import { DataServer } from './data-server.ts';
-import { Database } from './database.ts';
-import { ApiServer } from './api.ts';
-import { LISHNetworkStorage } from './lishNetworkStorage.ts';
+import { Networks } from './lishnet/networks.ts';
+import { DataServer } from './lish/data-server.ts';
+import { ApiServer } from './api/server.ts';
+import { LISHNetworkStorage } from './lishnet/lishNetworkStorage.ts';
 import { Settings } from './settings.ts';
 
 // Parse command line arguments
@@ -55,15 +54,12 @@ console.log('='.repeat(header.length));
 console.log(`Data directory: ${dataDir}`);
 const settings = new Settings(dataDir);
 await settings.ensureStorageDirs();
-const db = new Database(dataDir);
-await db.init();
-const dataServer = new DataServer(dataDir, db);
-await dataServer.init();
+const dataServer = new DataServer(dataDir);
 const lishNetworkStorage = new LISHNetworkStorage(dataDir);
 const networks = new Networks(lishNetworkStorage, dataDir, dataServer, enablePink);
 networks.init();
 
-const apiServer = new ApiServer(dataDir, db, dataServer, networks, lishNetworkStorage, {
+const apiServer = new ApiServer(dataDir, dataServer, networks, lishNetworkStorage, {
 	host: apiHost,
 	port: apiPort,
 	secure: apiSecure,
@@ -75,7 +71,6 @@ async function shutdown() {
 	console.log('Shutting down...');
 	apiServer.stop();
 	await networks.stopAllNetworks();
-	db.close();
 	process.exit(0);
 }
 

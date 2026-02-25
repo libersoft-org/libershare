@@ -3,7 +3,7 @@ import { api } from './api.ts';
 
 /**
  * Reactive store of peer counts per network, updated via push events from backend.
- * Key: networkId, Value: number of connected peers
+ * Key: networkID, Value: number of connected peers
  */
 export const peerCounts = writable<Record<string, number>>({});
 
@@ -15,13 +15,13 @@ let unsubListener: (() => void) | null = null;
  */
 export async function subscribePeerCounts(): Promise<void> {
 	if (unsubListener) return; // already subscribed
-	unsubListener = api.on('peers:count', (data: { networkId: string; count: number }[]) => {
+	unsubListener = api.on('peers:count', (data: { networkID: string; count: number }[]) => {
 		const counts: Record<string, number> = {};
-		for (const { networkId, count } of data) {
-			counts[networkId] = count;
+		for (const { networkID, count } of data) {
+			counts[networkID] = count;
 		}
 		peerCounts.set(counts);
-	}) as (() => void);
+	}) as () => void;
 	await api.subscribe('peers:count');
 }
 

@@ -18,19 +18,23 @@ export interface IWsClient {
  */
 export class Api {
 	readonly networks: NetworksApi;
-	readonly manifests: ManifestsApi;
 	readonly datasets: DatasetsApi;
 	readonly fs: FsApi;
 	readonly settings: SettingsApi;
 	readonly lishNetworks: LISHNetworksApi;
+	readonly lishs: LishsApi;
+	readonly transfer: TransferApi;
+	readonly stats: StatsApi;
 
 	constructor(private client: IWsClient) {
 		this.networks = new NetworksApi(client);
-		this.manifests = new ManifestsApi(client);
 		this.datasets = new DatasetsApi(client);
 		this.fs = new FsApi(client);
 		this.settings = new SettingsApi(client);
 		this.lishNetworks = new LISHNetworksApi(client);
+		this.lishs = new LishsApi(client);
+		this.transfer = new TransferApi(client);
+		this.stats = new StatsApi(client);
 	}
 
 	// Raw call access
@@ -55,12 +59,15 @@ export class Api {
 	}
 
 	// Top-level operations
+
+	/** @deprecated Use api.stats.get() */
 	getStats(): Promise<Stats> {
-		return this.client.call<Stats>('getStats');
+		return this.client.call<Stats>('stats.get');
 	}
 
-	createLish(inputPath: string, saveToFile: boolean = true, addToSharing: boolean = true, name?: string, description?: string, outputFilePath?: string, algorithm?: string, chunkSize?: number, threads?: number): Promise<CreateLishResponse> {
-		return this.client.call<CreateLishResponse>('createLish', {
+	/** @deprecated Use api.lishs.create() */
+	createLISH(inputPath: string, saveToFile: boolean = true, addToSharing: boolean = true, name?: string, description?: string, outputFilePath?: string, algorithm?: string, chunkSize?: number, threads?: number): Promise<CreateLishResponse> {
+		return this.client.call<CreateLishResponse>('lishs.create', {
 			inputPath,
 			saveToFile,
 			addToSharing,
@@ -73,8 +80,9 @@ export class Api {
 		});
 	}
 
-	download(networkId: string, manifestPath: string): Promise<DownloadResponse> {
-		return this.client.call<DownloadResponse>('download', { networkId, manifestPath });
+	/** @deprecated Use api.transfer.download() */
+	download(networkID: string, lishPath: string): Promise<DownloadResponse> {
+		return this.client.call<DownloadResponse>('transfer.download', { networkID, lishPath });
 	}
 
 	fetchUrl(url: string): Promise<FetchUrlResponse> {
@@ -89,8 +97,8 @@ class NetworksApi {
 		return this.client.call<NetworkDefinition[]>('networks.list');
 	}
 
-	get(networkId: string): Promise<NetworkDefinition> {
-		return this.client.call<NetworkDefinition>('networks.get', { networkId });
+	get(networkID: string): Promise<NetworkDefinition> {
+		return this.client.call<NetworkDefinition>('networks.get', { networkID });
 	}
 
 	importFromFile(path: string, enabled = false): Promise<NetworkDefinition> {
@@ -101,52 +109,40 @@ class NetworksApi {
 		return this.client.call<NetworkDefinition>('networks.importFromJson', { json, enabled });
 	}
 
-	setEnabled(networkId: string, enabled: boolean): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('networks.setEnabled', { networkId, enabled });
+	setEnabled(networkID: string, enabled: boolean): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('networks.setEnabled', { networkID, enabled });
 	}
 
-	delete(networkId: string): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('networks.delete', { networkId });
+	delete(networkID: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('networks.delete', { networkID });
 	}
 
-	connect(networkId: string, multiaddr: string): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('networks.connect', { networkId, multiaddr });
+	connect(networkID: string, multiaddr: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('networks.connect', { networkID, multiaddr });
 	}
 
-	findPeer(networkId: string, peerId: string): Promise<any> {
-		return this.client.call<any>('networks.findPeer', { networkId, peerId });
+	findPeer(networkID: string, peerID: string): Promise<any> {
+		return this.client.call<any>('networks.findPeer', { networkID, peerID });
 	}
 
-	getAddresses(networkId: string): Promise<string[]> {
-		return this.client.call<string[]>('networks.getAddresses', { networkId });
+	getAddresses(networkID: string): Promise<string[]> {
+		return this.client.call<string[]>('networks.getAddresses', { networkID });
 	}
 
-	getPeers(networkId: string): Promise<PeerConnectionInfo[]> {
-		return this.client.call<PeerConnectionInfo[]>('networks.getPeers', { networkId });
+	getPeers(networkID: string): Promise<PeerConnectionInfo[]> {
+		return this.client.call<PeerConnectionInfo[]>('networks.getPeers', { networkID });
 	}
 
 	getNodeInfo(): Promise<NetworkNodeInfo> {
 		return this.client.call<NetworkNodeInfo>('networks.getNodeInfo');
 	}
 
-	getStatus(networkId: string): Promise<NetworkStatus> {
-		return this.client.call<NetworkStatus>('networks.getStatus', { networkId });
+	getStatus(networkID: string): Promise<NetworkStatus> {
+		return this.client.call<NetworkStatus>('networks.getStatus', { networkID });
 	}
 
 	infoAll(): Promise<NetworkInfo[]> {
 		return this.client.call<NetworkInfo[]>('networks.infoAll');
-	}
-}
-
-class ManifestsApi {
-	constructor(private client: IWsClient) {}
-
-	list(): Promise<any[]> {
-		return this.client.call<any[]>('manifests.getAllManifests');
-	}
-
-	get(lishId: string): Promise<any> {
-		return this.client.call<any>('manifests.getManifest', { lishId });
 	}
 }
 
@@ -273,5 +269,47 @@ class LISHNetworksApi {
 
 	setAll(networks: LISHNetworkConfig[]): Promise<boolean> {
 		return this.client.call<boolean>('lishNetworks.setAll', { networks });
+	}
+}
+
+class LishsApi {
+	constructor(private client: IWsClient) {}
+
+	list(): Promise<any[]> {
+		return this.client.call<any[]>('lishs.getAll');
+	}
+
+	get(lishID: string): Promise<any> {
+		return this.client.call<any>('lishs.get', { lishID });
+	}
+
+	create(inputPath: string, saveToFile: boolean = true, addToSharing: boolean = true, name?: string, description?: string, outputFilePath?: string, algorithm?: string, chunkSize?: number, threads?: number): Promise<CreateLishResponse> {
+		return this.client.call<CreateLishResponse>('lishs.create', {
+			inputPath,
+			saveToFile,
+			addToSharing,
+			name,
+			description,
+			outputFilePath,
+			algorithm,
+			chunkSize,
+			threads,
+		});
+	}
+}
+
+class TransferApi {
+	constructor(private client: IWsClient) {}
+
+	download(networkID: string, lishPath: string): Promise<DownloadResponse> {
+		return this.client.call<DownloadResponse>('transfer.download', { networkID, lishPath });
+	}
+}
+
+class StatsApi {
+	constructor(private client: IWsClient) {}
+
+	get(): Promise<Stats> {
+		return this.client.call<Stats>('stats.get');
 	}
 }

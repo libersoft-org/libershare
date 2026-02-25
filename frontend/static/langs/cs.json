@@ -72,7 +72,7 @@
 			"paused": "Pozastaveno",
 			"error": "Chyba"
 		},
-		"createLish": "Vytvořit LISH",
+		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"errorNoValidLish": "Nebyl nalezen žádný platný LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",

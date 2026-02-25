@@ -1,0 +1,284 @@
+import { type ServerWebSocket } from 'bun';
+import { type DataServer } from '../lish/data-server.ts';
+import { type Networks } from '../lishnet/networks.ts';
+import { Settings } from '../settings.ts';
+import { type LISHNetworkStorage } from '../lishnet/lishNetworkStorage.ts';
+import { initSettingsHandlers } from './settings.ts';
+import { initLishNetworksHandlers } from './lishNetworks.ts';
+import { initNetworksHandlers } from './networks.ts';
+import { initDatasetsHandlers } from './datasets.ts';
+import { initFsHandlers } from './fs.ts';
+import { initLishsHandlers } from './lishs.ts';
+import { initTransferHandlers } from './transfer.ts';
+import { initStatsHandlers } from './stats.ts';
+interface ClientData {
+	subscribedEvents: Set<string>;
+}
+type ClientSocket = ServerWebSocket<ClientData>;
+interface Request {
+	id: string | number;
+	method: string;
+	params?: Record<string, any>;
+}
+export interface ApiServerOptions {
+	host: string;
+	port: number;
+	secure: boolean;
+	keyFile: string | undefined;
+	certFile: string | undefined;
+}
+
+export class ApiServer {
+	private clients: Set<ClientSocket> = new Set();
+	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
+	private readonly settings: Settings;
+	private readonly lishNetworks: LISHNetworkStorage;
+	private readonly host: string;
+	private readonly port: number;
+	private readonly secure: boolean;
+	private readonly keyFile?: string;
+	private readonly certFile?: string;
+
+	constructor(
+		private readonly dataDir: string,
+		private readonly dataServer: DataServer,
+		private readonly networks: Networks,
+		lishNetworks: LISHNetworkStorage,
+		options: ApiServerOptions
+	) {
+		this.settings = new Settings(dataDir);
+		this.lishNetworks = lishNetworks;
+		this.host = options.host;
+		this.port = options.port;
+		this.secure = options.secure;
+		this.keyFile = options.keyFile;
+		this.certFile = options.certFile;
+
+		const emit = (event: string, data: any) => this.emit(this.currentClient, event, data);
+
+		const _settings = initSettingsHandlers(this.settings);
+		const _lishNetworks = initLishNetworksHandlers(this.lishNetworks);
+		const _networks = initNetworksHandlers(this.networks, this.dataServer);
+		const _datasets = initDatasetsHandlers(this.dataServer);
+		const _fs = initFsHandlers();
+		const _lishs = initLishsHandlers(this.dataServer, emit);
+		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emit);
+		const _stats = initStatsHandlers(this.networks, this.dataServer);
+
+		this.handlers = {
+			// Core
+			subscribe: this.handleSubscribe,
+			unsubscribe: this.handleUnsubscribe,
+			fetchUrl: this.handleFetchUrl,
+
+			// Settings
+			'settings.get': _settings.get,
+			'settings.set': _settings.set,
+			'settings.getAll': _settings.getAll,
+			'settings.getDefaults': _settings.getDefaults,
+			'settings.reset': _settings.reset,
+
+			// LISH Networks
+			'lishNetworks.getAll': _lishNetworks.getAll,
+			'lishNetworks.get': _lishNetworks.get,
+			'lishNetworks.exists': _lishNetworks.exists,
+			'lishNetworks.add': _lishNetworks.add,
+			'lishNetworks.update': _lishNetworks.update,
+			'lishNetworks.delete': _lishNetworks.delete,
+			'lishNetworks.addIfNotExists': _lishNetworks.addIfNotExists,
+			'lishNetworks.import': _lishNetworks.import,
+			'lishNetworks.setAll': _lishNetworks.setAll,
+
+			// Networks
+			'networks.list': _networks.list,
+			'networks.get': _networks.get,
+			'networks.importFromFile': _networks.importFromFile,
+			'networks.importFromJson': _networks.importFromJson,
+			'networks.setEnabled': _networks.setEnabled,
+			'networks.delete': _networks.delete,
+			'networks.connect': _networks.connect,
+			'networks.findPeer': _networks.findPeer,
+			'networks.getAddresses': _networks.getAddresses,
+			'networks.getPeers': _networks.getPeers,
+			'networks.getNodeInfo': _networks.getNodeInfo,
+			'networks.getStatus': _networks.getStatus,
+			'networks.infoAll': _networks.infoAll,
+
+			// LISHs
+			'lishs.getAll': _lishs.getAll,
+			'lishs.get': _lishs.get,
+			'lishs.create': _lishs.create,
+
+			// Transfer
+			'transfer.download': _transfer.download,
+
+			// Datasets
+			'datasets.getDatasets': _datasets.getDatasets,
+			'datasets.getDataset': _datasets.getDataset,
+
+			// Stats
+			'stats.get': _stats.get,
+		};
+	}
+
+	start(): void {
+		const self = this;
+		const serverConfig: Parameters<typeof Bun.serve<ClientData>>[0] = {
+			port: this.port,
+			hostname: this.host,
+			fetch(req, server) {
+				console.log(`[API] Incoming request: ${req.method} ${req.url}`);
+				const upgraded = server.upgrade(req, {
+					data: { subscribedEvents: new Set<string>() },
+				});
+				if (upgraded) return undefined;
+				return new Response('Expected WebSocket', { status: 400 });
+			},
+			websocket: {
+				open(ws) {
+					self.clients.add(ws);
+					console.log(`[API] Client connected (${self.clients.size} total)`);
+				},
+				close(ws) {
+					self.clients.delete(ws);
+					console.log(`[API] Client disconnected (${self.clients.size} total)`);
+				},
+				async message(ws, message) {
+					await self.handleMessage(ws, message.toString());
+				},
+			},
+		};
+		if (this.secure) {
+			if (!this.keyFile || !this.certFile) throw new Error('--secure requires --privkey and --pubkey');
+			serverConfig.tls = {
+				key: Bun.file(this.keyFile),
+				cert: Bun.file(this.certFile),
+			};
+		}
+		this.server = Bun.serve<ClientData>(serverConfig);
+
+		const actualPort = this.server.port;
+
+		// Listen for peer count changes and send to subscribed clients
+		this.networks.onPeerCountChange = counts => {
+			if (this.clients.size === 0) return;
+			for (const client of this.clients) {
+				this.emit(client, 'peers:count', counts);
+			}
+		};
+
+		const protocol = this.secure ? 'wss' : 'ws';
+		console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${actualPort}`);
+	}
+
+	stop(): void {
+		if (this.server) {
+			this.server.stop();
+			this.server = null;
+		}
+	}
+
+	private async handleMessage(client: ClientSocket, message: string): Promise<void> {
+		let req: Request;
+		try {
+			req = JSON.parse(message);
+		} catch {
+			client.send(JSON.stringify({ id: null, error: 'Parse error' }));
+			return;
+		}
+
+		if (!req.method) {
+			client.send(JSON.stringify({ id: req.id, error: 'Method required' }));
+			return;
+		}
+
+		try {
+			const result = await this.execute(client, req.method, req.params || {});
+			client.send(JSON.stringify({ id: req.id, result }));
+		} catch (err: any) {
+			console.error(`[API] Error executing ${req.method}, params=${JSON.stringify(req.params)}: ${err.message}`);
+			client.send(JSON.stringify({ id: req.id, error: err.message }));
+		}
+	}
+
+	// --- API dispatch table and core handlers ---
+	private currentClient!: ClientSocket;
+	private handlers!: Record<string, (params: Record<string, any>) => Promise<any> | any>;
+
+	private async execute(client: ClientSocket, method: string, params: Record<string, any>): Promise<any> {
+		console.log(`[API] Executing method: ${method}, params: ${JSON.stringify(params)}`);
+		const handler = this.handlers[method];
+		if (!handler) throw new Error(`Unknown method: ${method}`);
+		this.currentClient = client;
+		return handler.call(this, params);
+	}
+
+	// Event subscriptions
+
+	private handleSubscribe(params: Record<string, any>) {
+		const client = this.currentClient;
+		const events = Array.isArray(params.events) ? params.events : [params.event];
+		events.forEach((e: string) => client.data.subscribedEvents.add(e));
+		if (client.data.subscribedEvents.has('peers:count')) {
+			const counts = this.getCurrentPeerCounts();
+			if (counts.length > 0) this.emit(client, 'peers:count', counts);
+		}
+		return true;
+	}
+
+	private handleUnsubscribe(params: Record<string, any>) {
+		const client = this.currentClient;
+		const events = Array.isArray(params.events) ? params.events : [params.event];
+		events.forEach((e: string) => client.data.subscribedEvents.delete(e));
+		return true;
+	}
+
+	// fetchUrl - generic URL fetcher (used by lish import, lishnet import)
+
+	private async handleFetchUrl(params: Record<string, any>) {
+		if (!params.url) throw new Error('url parameter required');
+		const response = await fetch(params.url);
+		if (!response.ok) {
+			return {
+				url: params.url,
+				status: response.status,
+				contentType: response.headers.get('content-type'),
+				content: '',
+			};
+		}
+		const isGzipUrl = params.url.toLowerCase().endsWith('.gz');
+		const contentEncoding = response.headers.get('content-encoding');
+		const isGzipEncoded = contentEncoding?.toLowerCase().includes('gzip');
+		let content: string;
+		if (isGzipUrl && !isGzipEncoded) {
+			const compressed = await response.arrayBuffer();
+			const decompressed = Bun.gunzipSync(new Uint8Array(compressed));
+			content = new TextDecoder().decode(decompressed);
+		} else {
+			content = await response.text();
+		}
+		try {
+			JSON.parse(content);
+		} catch {
+			throw new Error('Response is not valid JSON');
+		}
+		return {
+			url: params.url,
+			status: response.status,
+			contentType: response.headers.get('content-type'),
+			content,
+		};
+	}
+
+	private getCurrentPeerCounts(): { networkID: string; count: number }[] {
+		const enabled = this.networks.getEnabled();
+		return enabled.map(def => ({
+			networkID: def.id,
+			count: this.networks.getTopicPeers(def.id).length,
+		}));
+	}
+
+	private emit(client: ClientSocket, event: string, data: any): void {
+		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) client.send(JSON.stringify({ event, data }));
+	}
+}

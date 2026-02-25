@@ -1,7 +1,6 @@
-import { type ILISHNetwork } from './makenet.ts';
-import { Network } from './network.ts';
-import { type DataServer } from './data-server.ts';
-import { type NetworkDefinition, type LISHNetworkConfig } from '@shared';
+import { Network } from '../protocol/network.ts';
+import { type DataServer } from '../lish/data-server.ts';
+import { type ILISHNetwork, type NetworkDefinition, type LISHNetworkConfig } from '@shared';
 import { LISHNetworkStorage } from './lishNetworkStorage.ts';
 
 export { type NetworkDefinition };
@@ -35,7 +34,7 @@ export class Networks {
 	private joinedNetworks: Set<string> = new Set();
 
 	// Callback for peer count changes
-	private _onPeerCountChange: ((counts: { networkId: string; count: number }[]) => void) | null = null;
+	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
 
 	constructor(storage: LISHNetworkStorage, dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
 		this.storage = storage;
@@ -44,7 +43,7 @@ export class Networks {
 		this.enablePink = enablePink;
 		this.network = new Network(dataDir, dataServer, enablePink);
 		// Forward peer count changes from the network node
-		this.network.onPeerCountChange = (counts) => {
+		this.network.onPeerCountChange = counts => {
 			if (this._onPeerCountChange) this._onPeerCountChange(counts);
 		};
 	}
@@ -52,7 +51,7 @@ export class Networks {
 	/**
 	 * Set a callback to be called when peer counts change for any joined lishnet.
 	 */
-	set onPeerCountChange(cb: ((counts: { networkId: string; count: number }[]) => void) | null) {
+	set onPeerCountChange(cb: ((counts: { networkID: string; count: number }[]) => void) | null) {
 		this._onPeerCountChange = cb;
 	}
 
@@ -172,7 +171,7 @@ export class Networks {
 	/**
 	 * Get peers with connection type info for a specific lishnet.
 	 */
-	getTopicPeersInfo(id: string): { peerId: string; direct: number; relay: number }[] {
+	getTopicPeersInfo(id: string): { peerID: string; direct: number; relay: number }[] {
 		return this.network.getTopicPeersInfo(id);
 	}
 

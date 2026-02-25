@@ -1,4 +1,4 @@
-import { ArrayStorage } from './storage.ts';
+import { ArrayStorage } from '../storage.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
 
 /**
@@ -60,7 +60,7 @@ export class LISHNetworkStorage {
 	/**
 	 * Get all network IDs
 	 */
-	getNetworkIds(): string[] {
+	getNetworkIDs(): string[] {
 		return this.getAll().map(n => n.networkID);
 	}
 

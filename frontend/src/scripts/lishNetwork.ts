@@ -33,7 +33,7 @@ export async function addNetworkIfNotExists(network: LISHNetworkDefinition): Pro
 	return api.lishNetworks.addIfNotExists(network);
 }
 
-export async function getExistingNetworkIds(): Promise<Set<string>> {
+export async function getExistingNetworkIDs(): Promise<Set<string>> {
 	const networks = await getNetworks();
 	return new Set(networks.map(n => n.networkID));
 }
@@ -176,9 +176,9 @@ export function formDataToNetwork(formData: NetworkFormData, existingNetwork?: L
 /**
  * Save or update a network from form data.
  */
-export async function saveNetworkFromForm(formData: NetworkFormData, existingNetworkId?: string): Promise<void> {
+export async function saveNetworkFromForm(formData: NetworkFormData, existingNetworkID?: string): Promise<void> {
 	const network = formDataToNetwork(formData);
-	if (existingNetworkId) await updateNetwork(network);
+	if (existingNetworkID) await updateNetwork(network);
 	else {
 		await addNetwork(network);
 	}

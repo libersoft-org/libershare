@@ -6,7 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { type LISHNetworkDefinition } from '@shared';
 	import { productNetworkList } from '@shared';
-	import { fetchPublicNetworks, getExistingNetworkIds, addNetworkIfNotExists, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { fetchPublicNetworks, getExistingNetworkIDs, addNetworkIfNotExists, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Row from '../../components/Row/Row.svelte';
@@ -26,7 +26,7 @@
 	let publicNetworks = $state<LISHNetworkDefinition[]>([]);
 	let loading = $state(false);
 	let error = $state('');
-	let addedNetworkIds = $state<Set<string>>(new Set());
+	let addedNetworkIDs = $state<Set<string>>(new Set());
 	// Items: URL row (0), network rows (1 to publicNetworks.length), Back button (last)
 	let totalItems = $derived(1 + publicNetworks.length + 1);
 
@@ -44,17 +44,17 @@
 		if (result.error) error = getNetworkErrorMessage(result.error, $t);
 		else {
 			publicNetworks = result.networks;
-			addedNetworkIds = await getExistingNetworkIds();
+			addedNetworkIDs = await getExistingNetworkIDs();
 		}
 		loading = false;
 	}
 
 	async function handleAddNetwork(network: LISHNetworkDefinition) {
-		if (await addNetworkIfNotExists(network)) addedNetworkIds = new Set([...addedNetworkIds, network.networkID]);
+		if (await addNetworkIfNotExists(network)) addedNetworkIDs = new Set([...addedNetworkIDs, network.networkID]);
 	}
 
 	function isNetworkAdded(networkID: string): boolean {
-		return addedNetworkIds.has(networkID);
+		return addedNetworkIDs.has(networkID);
 	}
 
 	onMount(() => {

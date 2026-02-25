@@ -93,7 +93,7 @@
 							return;
 						} else {
 							const peer = peers[selectedIndex - 1];
-							console.log('Peer selected:', peer.peerId);
+							console.log('Peer selected:', peer.peerID);
 						}
 					},
 					confirmCancel: () => {},
@@ -167,11 +167,11 @@
 					<div bind:this={rowElements[i + 1]}>
 						<TableRow selected={active && selectedIndex === i + 1} odd={i % 2 !== 0}>
 							<TableCell desktopOnly>{i + 1}</TableCell>
-							<TableCell wrap><span class="peer-id">{peer.peerId}</span></TableCell>
+							<TableCell wrap><span class="peer-id">{peer.peerID}</span></TableCell>
 							<TableCell>
 								<div class="connections">
-								{#if peer.direct > 0}<div>{$t('settings.lishNetwork.direct', { count: String(peer.direct) })}</div>{/if}
-								{#if peer.relay > 0}<div>{$t('settings.lishNetwork.relayed', { count: String(peer.relay) })}</div>{/if}
+									{#if peer.direct > 0}<div>{$t('settings.lishNetwork.direct', { count: String(peer.direct) })}</div>{/if}
+									{#if peer.relay > 0}<div>{$t('settings.lishNetwork.relayed', { count: String(peer.relay) })}</div>{/if}
 								</div>
 							</TableCell>
 						</TableRow>

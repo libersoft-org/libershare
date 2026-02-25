@@ -131,7 +131,7 @@
 
 <div class="download">
 	<ButtonBar>
-		<Button icon="/img/plus.svg" label={$t('downloads.createLish')} selected={toolbarActive && selectedToolbarIndex === 0} />
+		<Button icon="/img/plus.svg" label={$t('downloads.createLISH')} selected={toolbarActive && selectedToolbarIndex === 0} />
 		<Button icon="/img/download.svg" label={$t('common.import')} selected={toolbarActive && selectedToolbarIndex === 1} />
 		<Button icon="/img/upload.svg" label={$t('common.exportAll')} selected={toolbarActive && selectedToolbarIndex === 2} />
 	</ButtonBar>

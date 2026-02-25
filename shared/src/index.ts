@@ -1,7 +1,7 @@
 // Product info
 export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList } from './product.ts';
 
-// Lish manifest types
+// LISH types
 export * from './lish.ts';
 
 // API client
@@ -28,12 +28,12 @@ export interface NetworkStatus {
 }
 
 export interface NetworkNodeInfo {
-	peerId: string;
+	peerID: string;
 	addresses: string[];
 }
 
 export interface PeerConnectionInfo {
-	peerId: string;
+	peerID: string;
 	direct: number;
 	relay: number;
 }
@@ -48,7 +48,7 @@ export interface NetworkInfo {
 	bootstrap_peers: string[];
 	enabled: boolean;
 	// Runtime (only present if enabled)
-	peerId?: string;
+	peerID?: string;
 	addresses?: string[];
 	connected?: number;
 	connectedPeers?: string[];
@@ -87,10 +87,10 @@ export interface TransferStats {
 	total: number;
 }
 
-// Dataset types
+// Dataset types (derived from ILish entries that have a directory)
 export interface Dataset {
-	id: number;
-	manifestId: string;
+	id: string;
+	lishID: string;
 	directory: string;
 	complete: boolean;
 }
@@ -123,7 +123,7 @@ export interface SuccessResponse {
 }
 
 export interface CreateLishResponse {
-	manifestId: string;
+	lishID: string;
 }
 
 export interface DownloadResponse {
@@ -135,6 +135,16 @@ export interface FetchUrlResponse {
 	status: number;
 	contentType: string | null;
 	content: string;
+}
+
+// LISH Network file format (.lishnet) — fields may be optional in imported files
+export interface ILISHNetwork {
+	version: number;
+	networkID: string;
+	name: string;
+	description?: string;
+	bootstrapPeers: string[];
+	created?: string;
 }
 
 // LISH Network definition (pure network parameters)

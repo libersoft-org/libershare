@@ -1,37 +1,37 @@
 import { mkdir, readFile, open } from 'fs/promises';
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
-import { type IManifest, type LishId, type ChunkId } from './lish.ts';
+import { type IStoredLish, type LishID, type ChunkID } from '../lish/lish.ts';
 import { type Network, lishTopic } from './network.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
 import { HaveChunks, LISH_PROTOCOL, LishClient } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
-import { DataServer, MissingChunk } from './data-server.ts';
+import { DataServer, MissingChunk } from '../lish/data-server.ts';
 
 type NodeId = string;
 interface PubsubMessage {
 	type: 'want' | 'have';
-	lishId: LishId;
+	lishID: LishID;
 }
 export interface WantMessage extends PubsubMessage {
 	type: 'want';
 }
 export interface HaveMessage extends PubsubMessage {
 	type: 'have';
-	lishId: LishId;
-	peerId: NodeId;
+	lishID: LishID;
+	peerID: NodeId;
 	multiaddrs: Multiaddr[];
 	chunks: HaveChunks;
 }
 type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'downloading' | 'downloaded';
 
 export class Downloader {
-	private manifest!: IManifest;
+	private lish!: IStoredLish;
 	private readonly dataServer: DataServer;
 	private network: Network;
 	private readonly downloadDir: string;
 	private readonly networkID: string;
-	private lishId!: LishId;
+	private lishID!: LishID;
 	private state: State = 'added';
 	private workMutex = new Mutex();
 	private doMoreWork: boolean = false;
@@ -46,14 +46,14 @@ export class Downloader {
 		this.networkID = networkID;
 	}
 
-	async init(manifestPath: string): Promise<void> {
+	async init(lishPath: string): Promise<void> {
 		this.state = 'initializing';
-		// Read and parse manifest
-		const content = await readFile(manifestPath, 'utf-8');
-		this.manifest = JSON.parse(content);
-		this.lishId = this.manifest.id as LishId;
-		console.log(`Loading manifest: ${this.manifest.name} (id: ${this.lishId})`);
-		this.missingChunks = this.dataServer.getMissingChunks(this.manifest);
+		// Read and parse LISH
+		const content = await readFile(lishPath, 'utf-8');
+		this.lish = JSON.parse(content);
+		this.lishID = this.lish.id as LishID;
+		console.log(`Loading LISH: ${this.lish.name} (id: ${this.lishID})`);
+		this.missingChunks = this.dataServer.getMissingChunks(this.lish);
 		console.log(`Found ${this.missingChunks.length} chunks to download`);
 		const topic = lishTopic(this.networkID);
 		await this.network.subscribe(topic, async data => {
@@ -98,19 +98,19 @@ export class Downloader {
 
 	private async downloadChunks(): Promise<void> {
 		let downloadedCount = 0;
-		let missingChunks = this.dataServer.getMissingChunks(this.manifest);
+		let missingChunks = this.dataServer.getMissingChunks(this.lish);
 		try {
 			// Download loop - reuse the open streams
 			for (const chunk of missingChunks) {
 				let downloaded = false;
 				// Try each peer client until one succeeds
-				for (const [peerId, client] of this.peers) {
-					const data = await this.downloadChunk(client, chunk.chunkId);
+				for (const [peerID, client] of this.peers) {
+					const data = await this.downloadChunk(client, chunk.chunkID);
 					if (data) {
 						// Write chunk to file at correct offset
-						await this.dataServer.writeChunk(this.downloadDir, this.manifest, chunk.fileIndex, chunk.chunkIndex, data);
+						await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 						// Mark as downloaded
-						this.dataServer.markChunkDownloaded(this.lishId, chunk.chunkId);
+						this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 						downloadedCount++;
 						console.log(`✓ Downloaded chunk ${downloadedCount}/${missingChunks.length}`);
 						break;
@@ -119,14 +119,14 @@ export class Downloader {
 			}
 			console.log(`✓ Download complete! Downloaded ${downloadedCount}/${missingChunks.length} chunks`);
 		} finally {
-			for (const [peerId, client] of this.peers) {
+			for (const [peerID, client] of this.peers) {
 				await client.close();
 			}
 		}
 	}
 
 	private async callForPeers() {
-		const msg: PubsubMessage = { type: 'want', lishId: this.lishId };
+		const msg: PubsubMessage = { type: 'want', lishID: this.lishID };
 		await this.network.broadcast(lishTopic(this.networkID), msg);
 		this.setupCallForPeersInterval();
 	}
@@ -153,17 +153,17 @@ export class Downloader {
 
 		if (topic != expectedTopic) return;
 
-		console.debug(data); // with peerId etc.
-		if (data.type == 'have' && data.lishId == this.lishId) {
+		console.debug(data); // with peerID etc.
+		if (data.type == 'have' && data.lishID == this.lishID) {
 			if (data.chunks === 'all' /* || this.peerHasAnyMissingChunks(data.chunks)*/) {
-				if (this.peers.has(data.peerId)) {
-					console.log(`Already connected to peer ...${data.peerId}`);
+				if (this.peers.has(data.peerID)) {
+					console.log(`Already connected to peer ...${data.peerID}`);
 				} else {
-					console.log(`Peer ...${data.peerId} has the file, connecting...`);
+					console.log(`Peer ...${data.peerID} has the file, connecting...`);
 					try {
 						await this.connectToPeer(data);
 					} catch (error) {
-						console.log(`✗ Failed to connect to peer ...${data.peerId}:`, error instanceof Error ? error.message : error);
+						console.log(`✗ Failed to connect to peer ...${data.peerID}:`, error instanceof Error ? error.message : error);
 						return;
 					}
 					this.doWork().then(r => {});
@@ -173,17 +173,17 @@ export class Downloader {
 	}
 
 	private async connectToPeer(data: HaveMessage) {
-		const peerId: NodeId = data.peerId;
+		const peerID: NodeId = data.peerID;
 		// Convert from JSON strings back to Multiaddr instances
 		const multiaddrs: Multiaddr[] = data.multiaddrs.map(ma => multiaddr(ma.toString()));
 		const chunks: HaveChunks = data.chunks;
 		try {
-			console.log(`Opening stream to peer ...${peerId}`);
-			const stream = await this.network.dialProtocol(peerId, multiaddrs, LISH_PROTOCOL);
-			if (this.peers.has(data.peerId)) throw new Error(`Already connected to peer ...${peerId}`);
-			this.peers.set(peerId, new LishClient(stream));
+			console.log(`Opening stream to peer ...${peerID}`);
+			const stream = await this.network.dialProtocol(peerID, multiaddrs, LISH_PROTOCOL);
+			if (this.peers.has(data.peerID)) throw new Error(`Already connected to peer ...${peerID}`);
+			this.peers.set(peerID, new LishClient(stream));
 		} catch (error) {
-			console.log(`✗ Failed to connect to peer ...${peerId}:`, error instanceof Error ? error.message : error);
+			console.log(`✗ Failed to connect to peer ...${peerID}:`, error instanceof Error ? error.message : error);
 		}
 	}
 
@@ -191,16 +191,16 @@ export class Downloader {
 	private async createDirectoryStructure(): Promise<void> {
 		console.log('Creating directory structure in ', this.downloadDir);
 		// Create directories
-		if (this.manifest.directories) {
-			for (const dir of this.manifest.directories) {
+		if (this.lish.directories) {
+			for (const dir of this.lish.directories) {
 				const dirPath = join(this.downloadDir, dir.path);
 				await mkdir(dirPath, { recursive: true });
 				console.log(`  Created directory: ${dir.path}`);
 			}
 		}
 		// Create files filled with zeros
-		if (this.manifest.files) {
-			for (const file of this.manifest.files) {
+		if (this.lish.files) {
+			for (const file of this.lish.files) {
 				const filePath = join(this.downloadDir, file.path);
 				// Create parent directory if needed
 				const fileDir = dirname(filePath);
@@ -226,15 +226,15 @@ export class Downloader {
 	}
 
 	// Download a single chunk from a peer using an existing client
-	private async downloadChunk(client: LishClient, chunkId: ChunkId): Promise<Uint8Array | null> {
+	private async downloadChunk(client: LishClient, chunkID: ChunkID): Promise<Uint8Array | null> {
 		try {
 			// Request the chunk using the protocol
-			const data = await client.requestChunk(this.lishId, chunkId);
-			if (data) console.log(`✓ Received chunk ${chunkId.slice(0, 8)}... (${data.length} bytes)`);
-			else console.log(`✗ Peer did not have chunk ${chunkId.slice(0, 8)}...`);
+			const data = await client.requestChunk(this.lishID, chunkID);
+			if (data) console.log(`✓ Received chunk ${chunkID.slice(0, 8)}... (${data.length} bytes)`);
+			else console.log(`✗ Peer did not have chunk ${chunkID.slice(0, 8)}...`);
 			return data;
 		} catch (error) {
-			console.log(`✗ Failed to download chunk ${chunkId.slice(0, 8)}...:`, error instanceof Error ? error.message : error);
+			console.log(`✗ Failed to download chunk ${chunkID.slice(0, 8)}...:`, error instanceof Error ? error.message : error);
 			return null;
 		}
 	}

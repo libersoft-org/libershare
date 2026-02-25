@@ -1,2 +1,2 @@
 @echo off
-bun run src/makenet.ts %*
+bun run cli/makenet.ts %*

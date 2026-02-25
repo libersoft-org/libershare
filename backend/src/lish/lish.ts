@@ -1,8 +1,8 @@
 import * as fsPromises from 'node:fs/promises';
-import { type HashAlgorithm, type IManifest, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
-export { type LishId, type ChunkId, type HashAlgorithm, type IManifest, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
+import { type HashAlgorithm, type ILish, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
+export { type LishID, type ChunkID, type HashAlgorithm, type ILish, type IStoredLish, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
 export { SUPPORTED_ALGOS } from '@shared';
-export const MANIFEST_VERSION = 1;
+export const LISH_VERSION = 1;
 export const DEFAULT_CHUNK_SIZE = 1024 * 1024;
 export const DEFAULT_ALGO: HashAlgorithm = 'sha256';
 
@@ -214,12 +214,12 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	}
 }
 
-export async function createManifest(inputPath: string, name: string | undefined, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void, id?: string): Promise<IManifest> {
+export async function createLISH(inputPath: string, name: string | undefined, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void, id?: string): Promise<ILish> {
 	const created = new Date().toISOString();
-	const manifestId = id || globalThis.crypto.randomUUID();
-	const manifest: IManifest = {
-		version: MANIFEST_VERSION,
-		id: manifestId,
+	const lishId = id || globalThis.crypto.randomUUID();
+	const lish: ILish = {
+		version: LISH_VERSION,
+		id: lishId,
 		name,
 		description,
 		created,
@@ -227,8 +227,8 @@ export async function createManifest(inputPath: string, name: string | undefined
 		checksumAlgo: algo,
 	};
 	// Remove optional fields if undefined
-	if (!name) delete manifest.name;
-	if (!description) delete manifest.description;
+	if (!name) delete lish.name;
+	if (!description) delete lish.description;
 	const stat = await getStats(inputPath);
 	if (stat.isFile()) {
 		// Single file processing
@@ -242,7 +242,7 @@ export async function createManifest(inputPath: string, name: string | undefined
 		const checksums = await calcFn(inputPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
 			if (onProgress) onProgress({ type: 'chunk', path: filename, current: completed, total });
 		});
-		manifest.files = [
+		lish.files = [
 			{
 				path: filename,
 				size: stat.size,
@@ -266,9 +266,9 @@ export async function createManifest(inputPath: string, name: string | undefined
 		files.sort((a, b) => a.path.localeCompare(b.path));
 		links.sort((a, b) => a.path.localeCompare(b.path));
 		// Only add arrays if they have content
-		if (directories.length > 0) manifest.directories = directories;
-		if (files.length > 0) manifest.files = files;
-		if (links.length > 0) manifest.links = links;
+		if (directories.length > 0) lish.directories = directories;
+		if (files.length > 0) lish.files = files;
+		if (links.length > 0) lish.links = links;
 	} else throw new Error('Input must be a file or directory');
-	return manifest;
+	return lish;
 }

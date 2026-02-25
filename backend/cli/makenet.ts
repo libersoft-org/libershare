@@ -1,12 +1,5 @@
-import { Utils } from './utils.ts';
-export interface ILISHNetwork {
-	version: number;
-	networkID: string;
-	name: string;
-	description?: string;
-	bootstrapPeers: string[];
-	created?: string;
-}
+import { Utils } from '../src/utils.ts';
+import { type ILISHNetwork } from '@shared';
 interface IArgs {
 	name?: string;
 	description?: string;

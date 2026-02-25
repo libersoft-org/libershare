@@ -540,7 +540,7 @@
 				<div bind:this={rowElements[1]}>
 					<Row selected={active && selectedIndex === 1}>
 						<div class="node-info">
-							<div class="peer-id"><span class="label">{$t('settings.lishNetwork.yourPeerID')}:</span> <span class="value">{globalNodeInfo.peerId}</span></div>
+							<div class="peer-id"><span class="label">{$t('settings.lishNetwork.yourPeerID')}:</span> <span class="value">{globalNodeInfo.peerID}</span></div>
 							<div class="buttons">
 								<Button
 									icon={showAddresses ? '/img/up.svg' : '/img/down.svg'}

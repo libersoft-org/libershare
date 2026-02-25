@@ -72,7 +72,7 @@
 			"paused": "Paused",
 			"error": "Error"
 		},
-		"createLish": "Create LISH",
+		"createLISH": "Create LISH",
 		"errorInvalidFormat": "Invalid LISH format",
 		"errorNoValidLish": "No valid LISH found",
 		"emptyList": "No LISH to export found",

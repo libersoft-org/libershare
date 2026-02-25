@@ -1,18 +1,18 @@
 import { decode } from 'it-length-prefixed';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { type Stream } from '@libp2p/interface';
-import { type LishId, type ChunkId } from './lish.ts';
-import { type DataServer } from './data-server.ts';
+import { type LishID, type ChunkID } from '../lish/lish.ts';
+import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
 export const LISH_PROTOCOL = '/lish/1.0.0';
 export interface LishRequest {
-	lishId: LishId;
-	chunkId: ChunkId;
+	lishID: LishID;
+	chunkID: ChunkID;
 }
 export interface LishResponse {
 	data: number[] | null;
 }
-export type HaveChunks = 'all' | ChunkId[];
+export type HaveChunks = 'all' | ChunkID[];
 
 // Client-side stream wrapper that can send multiple requests
 export class LishClient {
@@ -25,13 +25,13 @@ export class LishClient {
 	}
 
 	// Request a single chunk (can be called multiple times on same stream)
-	async requestChunk(lishId: LishId, chunkId: ChunkId): Promise<Uint8Array | null> {
+	async requestChunk(lishID: LishID, chunkID: ChunkID): Promise<Uint8Array | null> {
 		try {
 			console.log(`[Client] Stream status before request: read=${this.stream.status}, write=${this.stream.writeStatus}`);
 			// Create the request
 			const request: LishRequest = {
-				lishId,
-				chunkId,
+				lishID,
+				chunkID,
 			};
 			// Send the request
 			const requestData = new TextEncoder().encode(JSON.stringify(request));
@@ -79,9 +79,9 @@ export async function handleLishProtocol(stream: Stream, dataServer: DataServer)
 			// Convert to Uint8Array if needed
 			const data = msg instanceof Uint8ArrayList ? msg.subarray() : msg;
 			const request: LishRequest = JSON.parse(new TextDecoder().decode(data));
-			console.log(`Received lish request: ${request.lishId.slice(0, 8)}... chunk ${request.chunkId.slice(0, 8)}...`);
+			console.log(`Received lish request: ${request.lishID.slice(0, 8)}... chunk ${request.chunkID.slice(0, 8)}...`);
 			// Get the chunk
-			const chunkData = await dataServer.getChunk(request.lishId, request.chunkId);
+			const chunkData = await dataServer.getChunk(request.lishID, request.chunkID);
 			// Write the response
 			const response: LishResponse = {
 				data: chunkData ? Array.from(chunkData) : null,

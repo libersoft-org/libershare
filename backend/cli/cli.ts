@@ -14,15 +14,15 @@ Commands:
   networks.disable <id>             Disable a network
   networks.delete <id>              Delete a network
   networks.connect <multiaddr>      Connect to a peer
-  networks.findPeer <peerId>        Find peer by ID
+  networks.findPeer <peerID>        Find peer by ID
   networks.infoAll                  Show all networks with config and runtime info
   networks.status                   Show network status
   networks.peers                    List connected peers
   networks.addresses                List node addresses
   networks.nodeInfo                 Show node info (peer ID, addresses)
 
-  manifests.list                    List all manifests
-  manifests.get <id>                Get manifest details
+  lishs.list                       List all LISHs
+  lishs.get <id>                   Get LISH details
 
   datasets.list                     List all datasets
   datasets.get <id>                 Get dataset details
@@ -34,7 +34,7 @@ Commands:
   fs.mkdir <path>                   Create directory
   fs.delete <path>                  Delete file or directory
 
-  download <manifestPath>           Download from .lish file
+  download <lishPath>              Download from .lish file
   fetch <url>                       Fetch URL content
   stats                             Show stats
   help                              Show this help
@@ -83,7 +83,7 @@ async function main() {
 
 	const api = new Api(client);
 
-	async function getFirstNetworkId(): Promise<string | null> {
+	async function getFirstNetworkID(): Promise<string | null> {
 		const networks = await api.networks.list();
 		const enabled = networks.filter(n => n.enabled);
 		if (enabled.length === 0) {
@@ -181,21 +181,21 @@ async function main() {
 						console.log('Usage: networks.connect <multiaddr>');
 						break;
 					}
-					const networkId = await getFirstNetworkId();
-					if (!networkId) break;
-					await api.networks.connect(networkId, arg);
+					const networkID = await getFirstNetworkID();
+					if (!networkID) break;
+					await api.networks.connect(networkID, arg);
 					console.log('✓ Connected');
 					break;
 				}
 
 				case 'networks.findPeer': {
 					if (!arg) {
-						console.log('Usage: networks.findPeer <peerId>');
+						console.log('Usage: networks.findPeer <peerID>');
 						break;
 					}
-					const networkId = await getFirstNetworkId();
-					if (!networkId) break;
-					const result = await api.networks.findPeer(networkId, arg);
+					const networkID = await getFirstNetworkID();
+					if (!networkID) break;
+					const result = await api.networks.findPeer(networkID, arg);
 					console.log('Peer info:', JSON.stringify(result, null, 2));
 					break;
 				}
@@ -212,8 +212,8 @@ async function main() {
 						console.log(`    version: ${info.version}`);
 						if (info.description) console.log(`    description: ${info.description}`);
 						console.log(`    bootstrap_peers: ${info.bootstrap_peers.length}`);
-						if (info.enabled && info.peerId) {
-							console.log(`    peerId: ${info.peerId}`);
+						if (info.enabled && info.peerID) {
+							console.log(`    peerID: ${info.peerID}`);
 							console.log(`    addresses: ${info.addresses?.length || 0}`);
 							info.addresses?.forEach(a => console.log(`      ${a}`));
 							console.log(`    connected: ${info.connected || 0}`);
@@ -229,16 +229,16 @@ async function main() {
 
 				case 'networks.nodeInfo': {
 					const info = await api.networks.getNodeInfo();
-					console.log(`Peer ID: ${info.peerId}`);
+					console.log(`Peer ID: ${info.peerID}`);
 					console.log('Addresses:');
 					info.addresses.forEach(addr => console.log(`  ${addr}`));
 					break;
 				}
 
 				case 'networks.status': {
-					const networkId = await getFirstNetworkId();
-					if (!networkId) break;
-					const status = await api.networks.getStatus(networkId);
+					const networkID = await getFirstNetworkID();
+					if (!networkID) break;
+					const status = await api.networks.getStatus(networkID);
 					console.log(`Connected peers: ${status.connected}`);
 					console.log(`Peers in store: ${status.peersInStore}`);
 					console.log(`Datasets: ${status.datasets}`);
@@ -250,9 +250,9 @@ async function main() {
 				}
 
 				case 'networks.peers': {
-					const networkId = await getFirstNetworkId();
-					if (!networkId) break;
-					const peers = await api.networks.getPeers(networkId);
+					const networkID = await getFirstNetworkID();
+					if (!networkID) break;
+					const peers = await api.networks.getPeers(networkID);
 					console.log('Peers:');
 					if (peers.length === 0) {
 						console.log('  (none)');
@@ -263,9 +263,9 @@ async function main() {
 				}
 
 				case 'networks.addresses': {
-					const networkId = await getFirstNetworkId();
-					if (!networkId) break;
-					const addresses = await api.networks.getAddresses(networkId);
+					const networkID = await getFirstNetworkID();
+					if (!networkID) break;
+					const addresses = await api.networks.getAddresses(networkID);
 					console.log('Addresses:');
 					if (addresses.length === 0) {
 						console.log('  (none)');
@@ -275,25 +275,25 @@ async function main() {
 					break;
 				}
 
-				// ============ Manifests ============
-				case 'manifests.list': {
-					const manifests = await api.manifests.list();
-					console.log('Manifests:');
-					if (manifests.length === 0) {
+				// ============ LISHs ============
+				case 'lishs.list': {
+					const lishs = await api.lishs.list();
+					console.log('LISHs:');
+					if (lishs.length === 0) {
 						console.log('  (none)');
 					} else {
-						manifests.forEach(m => console.log(`  ${m.id}`));
+						lishs.forEach(m => console.log(`  ${m.id}`));
 					}
 					break;
 				}
 
-				case 'manifests.get': {
+				case 'lishs.get': {
 					if (!arg) {
-						console.log('Usage: manifests.get <id>');
+						console.log('Usage: lishs.get <id>');
 						break;
 					}
-					const manifest = await api.manifests.get(arg);
-					console.log(JSON.stringify(manifest, null, 2));
+					const lish = await api.lishs.get(arg);
+					console.log(JSON.stringify(lish, null, 2));
 					break;
 				}
 
@@ -306,7 +306,7 @@ async function main() {
 					} else {
 						datasets.forEach(d => {
 							const status = d.complete ? '✓' : '⋯';
-							console.log(`  ${status} ${d.manifestId} (${d.directory})`);
+							console.log(`  ${status} ${d.lishID} (${d.directory})`);
 						});
 					}
 					break;
@@ -329,8 +329,8 @@ async function main() {
 					}
 					arg = resolvePath(arg);
 					console.log(`Importing: ${arg}`);
-					const result = await api.createLish(arg);
-					console.log(`✓ Import complete. Manifest ID: ${result.manifestId}`);
+					const result = await api.lishs.create(arg);
+					console.log(`✓ Import complete. LISH ID: ${result.lishID}`);
 					break;
 				}
 
@@ -394,13 +394,13 @@ async function main() {
 				// ============ Top-level ============
 				case 'download': {
 					if (!arg) {
-						console.log('Usage: download <manifestPath>');
+						console.log('Usage: download <lishPath>');
 						break;
 					}
-					const networkId = await getFirstNetworkId();
-					if (!networkId) break;
+					const networkID = await getFirstNetworkID();
+					if (!networkID) break;
 					console.log(`Downloading: ${arg}`);
-					const result = await api.download(networkId, arg);
+					const result = await api.transfer.download(networkID, arg);
 					console.log(`✓ Download started. Directory: ${result.downloadDir}`);
 					break;
 				}
@@ -419,7 +419,7 @@ async function main() {
 				}
 
 				case 'stats': {
-					const stats = await api.getStats();
+					const stats = await api.stats.get();
 					console.log(JSON.stringify(stats, null, 2));
 					break;
 				}

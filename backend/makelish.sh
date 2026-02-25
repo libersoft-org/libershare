@@ -1,3 +1,3 @@
 #!/bin/sh
 
-bun run src/makelish.ts "$@"
+bun run cli/makelish.ts "$@"
