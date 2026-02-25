@@ -3,6 +3,8 @@ import { join, sep, dirname } from 'path';
 import { homedir, platform } from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { Utils } from '../utils.ts';
+const assert = Utils.assertParams;
 const isWindows = platform() === 'win32';
 const execAsync = promisify(exec);
 
@@ -56,17 +58,20 @@ export function initFsHandlers() {
 	};
 
 	const readText = async (p: { path: string }) => {
+		assert(p, ['path']);
 		const file = Bun.file(p.path);
 		return { content: await file.text() };
 	};
 
 	const readGzip = async (p: { path: string }) => {
+		assert(p, ['path']);
 		const compressed = await Bun.file(p.path).arrayBuffer();
 		const decompressed = Bun.gunzipSync(new Uint8Array(compressed));
 		return { content: new TextDecoder().decode(decompressed) };
 	};
 
 	const del = async (p: { path: string }) => {
+		assert(p, ['path']);
 		const stats = await stat(p.path);
 		if (stats.isDirectory()) {
 			const { rm } = await import('fs/promises');
@@ -75,22 +80,26 @@ export function initFsHandlers() {
 	};
 
 	const mkdirFn = async (p: { path: string }) => {
+		assert(p, ['path']);
 		await fsMkdirNode(p.path, { recursive: true });
 	};
 
 	const open = async (p: { path: string }) => {
+		assert(p, ['path']);
 		if (isWindows) await execAsync(`start "" "${p.path}"`);
 		else if (platform() === 'darwin') await execAsync(`open "${p.path}"`);
 		else await execAsync(`xdg-open "${p.path}"`);
 	};
 
 	const renameFn = async (p: { path: string; newName: string }) => {
+		assert(p, ['path', 'newName']);
 		const dir = dirname(p.path);
 		const newPath = join(dir, p.newName);
 		await fsRenameNode(p.path, newPath);
 	};
 
 	const exists = async (p: { path: string }) => {
+		assert(p, ['path']);
 		try {
 			await access(p.path);
 			return { exists: true };
@@ -100,11 +109,13 @@ export function initFsHandlers() {
 	};
 
 	const writeText = async (p: { path: string; content: string }) => {
+		assert(p, ['path', 'content']);
 		await Bun.write(p.path, p.content);
 		return { success: true };
 	};
 
 	const writeGzip = async (p: { path: string; content: string }) => {
+		assert(p, ['path', 'content']);
 		const compressed = Bun.gzipSync(Buffer.from(p.content, 'utf-8'));
 		await Bun.write(p.path, compressed);
 		return { success: true };

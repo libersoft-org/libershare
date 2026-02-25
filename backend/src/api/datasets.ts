@@ -1,4 +1,6 @@
 import { type DataServer } from '../lish/data-server.ts';
+import { Utils } from '../utils.ts';
+const assert = Utils.assertParams;
 
 export function initDatasetsHandlers(dataServer: DataServer) {
 	const getDatasets = () => {
@@ -11,6 +13,7 @@ export function initDatasetsHandlers(dataServer: DataServer) {
 	};
 
 	const getDataset = (p: { id: string }) => {
+		assert(p, ['id']);
 		const lish = dataServer.getLish(p.id);
 		if (!lish || !lish.directory) return null;
 		return {

@@ -1,9 +1,15 @@
 import { type Settings } from '../settings.ts';
+import { Utils } from '../utils.ts';
+const assert = Utils.assertParams;
 
 export function initSettingsHandlers(settings: Settings) {
-	const get = (p: { path: string }) => settings.get(p.path);
+	const get = (p: { path: string }) => {
+		assert(p, ['path']);
+		return settings.get(p.path);
+	};
 
 	const set = async (p: { path: string; value: any }) => {
+		assert(p, ['path', 'value']);
 		await settings.set(p.path, p.value);
 		return true;
 	};

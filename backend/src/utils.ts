@@ -42,4 +42,14 @@ export class Utils {
 			throw new Error(`Invalid JSON from ${source}: ${err.message}`);
 		}
 	}
+
+	/**
+	 * Validate that all required parameters are present.
+	 * Throws a descriptive error if any are missing (undefined).
+	 */
+	static assertParams<K extends string>(params: Record<string, any>, required: K[]): void {
+		for (const key of required) {
+			if (params[key] === undefined) throw new Error(`Missing required parameter: ${key}`);
+		}
+	}
 }

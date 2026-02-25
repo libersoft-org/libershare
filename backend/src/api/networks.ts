@@ -1,21 +1,40 @@
 import { type Networks } from '../lishnet/networks.ts';
 import { type DataServer } from '../lish/data-server.ts';
+import { Utils } from '../utils.ts';
+const assert = Utils.assertParams;
 
 export function initNetworksHandlers(networks: Networks, dataServer: DataServer) {
 	const list = () => networks.getAll();
-	const get = (p: { networkID: string }) => networks.get(p.networkID);
-	const importFromFile = async (p: { path: string; enabled?: boolean }) => networks.importFromFile(p.path, p.enabled ?? false);
-	const importFromJson = async (p: { json: string; enabled?: boolean }) => networks.importFromJson(p.json, p.enabled ?? false);
-	const setEnabled = async (p: { networkID: string; enabled: boolean }) => ({ success: await networks.setEnabled(p.networkID, p.enabled) });
-	const del = async (p: { networkID: string }) => ({ success: await networks.delete(p.networkID) });
+	const get = (p: { networkID: string }) => {
+		assert(p, ['networkID']);
+		return networks.get(p.networkID);
+	};
+	const importFromFile = async (p: { path: string; enabled?: boolean }) => {
+		assert(p, ['path']);
+		return networks.importFromFile(p.path, p.enabled ?? false);
+	};
+	const importFromJson = async (p: { json: string; enabled?: boolean }) => {
+		assert(p, ['json']);
+		return networks.importFromJson(p.json, p.enabled ?? false);
+	};
+	const setEnabled = async (p: { networkID: string; enabled: boolean }) => {
+		assert(p, ['networkID', 'enabled']);
+		return { success: await networks.setEnabled(p.networkID, p.enabled) };
+	};
+	const del = async (p: { networkID: string }) => {
+		assert(p, ['networkID']);
+		return { success: await networks.delete(p.networkID) };
+	};
 
 	const connect = async (p: { multiaddr: string }) => {
+		assert(p, ['multiaddr']);
 		const network = networks.getRunningNetwork();
 		await network.connectToPeer(p.multiaddr);
 		return { success: true };
 	};
 
 	const findPeer = (p: { peerID: string }) => {
+		assert(p, ['peerID']);
 		const network = networks.getRunningNetwork();
 		return network.cliFindPeer(p.peerID);
 	};
@@ -27,6 +46,7 @@ export function initNetworksHandlers(networks: Networks, dataServer: DataServer)
 	};
 
 	const getPeers = (p: { networkID: string }) => {
+		assert(p, ['networkID']);
 		if (!networks.isJoined(p.networkID)) throw new Error('Network not joined');
 		return networks.getTopicPeersInfo(p.networkID);
 	};
@@ -34,6 +54,7 @@ export function initNetworksHandlers(networks: Networks, dataServer: DataServer)
 	const getNodeInfo = () => networks.getNetwork().getNodeInfo();
 
 	const getStatus = (p: { networkID: string }) => {
+		assert(p, ['networkID']);
 		const network = networks.getRunningNetwork();
 		const allPeers = network.getPeers();
 		const topicPeers = networks.getTopicPeers(p.networkID);

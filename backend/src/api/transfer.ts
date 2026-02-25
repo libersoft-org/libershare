@@ -2,10 +2,13 @@ import { type Networks } from '../lishnet/networks.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { Downloader } from '../protocol/downloader.ts';
 import { join } from 'path';
+import { Utils } from '../utils.ts';
+const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn) {
 	const download = async (p: { networkID: string; lishPath: string }, client: any) => {
+		assert(p, ['networkID', 'lishPath']);
 		/*
 		todo:
 		// replace this with setDownloadEnabled(lishID, networkID, enabled)

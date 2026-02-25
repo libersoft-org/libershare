@@ -1,5 +1,6 @@
 import { type DataServer } from '../lish/data-server.ts';
-
+import { Utils } from '../utils.ts';
+const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 interface CreateLishParams {
 	inputPath: string;
@@ -16,9 +17,13 @@ interface CreateLishParams {
 
 export function initLishsHandlers(dataServer: DataServer, emit: EmitFn) {
 	const getAll = () => dataServer.getAllLishs();
-	const get = (p: { lishID: string }) => dataServer.getLish(p.lishID);
+	const get = (p: { lishID: string }) => {
+		assert(p, ['lishID']);
+		return dataServer.getLish(p.lishID);
+	};
 
 	const create = async (p: CreateLishParams, client: any) => {
+		assert(p, ['inputPath', 'name', 'algorithm', 'chunkSize', 'threads']);
 		const lish = await dataServer.createLISH(
 			p.inputPath,
 			p.saveToFile,
