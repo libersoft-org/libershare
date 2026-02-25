@@ -13,7 +13,7 @@ abstract class BaseStorage<T> {
 		console.log(`[Storage] ${this.filePath}`);
 	}
 
-	protected loadFile<U extends T>(defaultValue: U): U {
+	protected loadFile(defaultValue: T): T {
 		if (!existsSync(this.filePath)) {
 			// Fire-and-forget: write default to disk (constructor is sync, saveFile is async).
 			this.saveFile(defaultValue);
@@ -109,7 +109,7 @@ export class ArrayStorage<T extends Record<string, any>> extends BaseStorage<T[]
 		private readonly keyField: keyof T
 	) {
 		super(dataDir, fileName);
-		const loaded = this.loadFile<T[]>([]);
+		const loaded = this.loadFile([]);
 		this.items = Array.isArray(loaded) ? loaded : [];
 	}
 
