@@ -157,6 +157,15 @@ export class Networks {
 	}
 
 	/**
+	 * Get the shared Network instance, throwing if it's not running.
+	 * Use this in API handlers that require an active network.
+	 */
+	getRunningNetwork(): Network {
+		if (!this.network.isRunning()) throw new Error('Network not running');
+		return this.network;
+	}
+
+	/**
 	 * Check if a lishnet is currently joined.
 	 */
 	isJoined(id: string): boolean {

@@ -12,21 +12,18 @@ export function initNetworksHandlers(networks: Networks, dataServer: DataServer)
 	const del = async (p: P) => ({ success: await networks.delete(p.networkID) });
 
 	const connect = async (p: P) => {
-		const network = networks.getNetwork();
-		if (!network.isRunning()) throw new Error('Network not running');
+		const network = networks.getRunningNetwork();
 		await network.connectToPeer(p.multiaddr);
 		return { success: true };
 	};
 
 	const findPeer = (p: P) => {
-		const network = networks.getNetwork();
-		if (!network.isRunning()) throw new Error('Network not running');
+		const network = networks.getRunningNetwork();
 		return network.cliFindPeer(p.peerID);
 	};
 
 	const getAddresses = () => {
-		const network = networks.getNetwork();
-		if (!network.isRunning()) throw new Error('Network not running');
+		const network = networks.getRunningNetwork();
 		const info = network.getNodeInfo();
 		return info?.addresses || [];
 	};
@@ -39,15 +36,14 @@ export function initNetworksHandlers(networks: Networks, dataServer: DataServer)
 	const getNodeInfo = () => networks.getNetwork().getNodeInfo();
 
 	const getStatus = (p: P) => {
-		const network = networks.getNetwork();
-		if (!network.isRunning()) throw new Error('Network not running');
+		const network = networks.getRunningNetwork();
 		const allPeers = network.getPeers();
 		const topicPeers = networks.getTopicPeers(p.networkID);
 		return {
 			connected: topicPeers.length,
 			connectedPeers: topicPeers,
 			peersInStore: allPeers.length,
-			datasets: dataServer.getAllLishs().filter(l => l.directory).length,
+			datasets: dataServer.getDatasets().length,
 		};
 	};
 

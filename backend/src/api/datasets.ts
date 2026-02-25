@@ -4,7 +4,7 @@ type P = Record<string, any>;
 
 export function initDatasetsHandlers(dataServer: DataServer) {
 	const getDatasets = () => {
-		return dataServer.getAllLishs().filter(l => l.directory).map(l => ({
+		return dataServer.getDatasets().map(l => ({
 			id: l.id,
 			lishID: l.id,
 			directory: l.directory!,

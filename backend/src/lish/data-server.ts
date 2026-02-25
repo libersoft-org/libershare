@@ -28,6 +28,13 @@ export class DataServer {
 		return this.storage.getAll();
 	}
 
+	/**
+	 * Get all lishs that have a directory (i.e. are actual datasets, not just metadata).
+	 */
+	getDatasets(): IStoredLish[] {
+		return this.storage.getAll().filter(l => l.directory);
+	}
+
 	addLish(lish: IStoredLish): void {
 		this.storage.upsert(lish);
 	}

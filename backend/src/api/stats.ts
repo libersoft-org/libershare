@@ -4,7 +4,7 @@ import { type DataServer } from '../lish/data-server.ts';
 export function initStatsHandlers(networks: Networks, dataServer: DataServer) {
 	const get = () => {
 		const network = networks.getNetwork();
-		const allLishs = dataServer.getAllLishs().filter(l => l.directory);
+		const allLishs = dataServer.getDatasets();
 		return {
 			networks: {
 				total: networks.getAll().length,

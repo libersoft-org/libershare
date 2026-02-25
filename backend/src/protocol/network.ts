@@ -12,6 +12,7 @@ import { LISH_PROTOCOL, handleLishProtocol } from './lish-protocol.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { PINK_TOPIC, PONK_TOPIC, createPinkMessage, createPonkMessage } from './pink-ponk.ts';
 import { HaveMessage, WantMessage } from './downloader.ts';
+import { lishTopic } from './constants.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 
 // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
@@ -19,13 +20,6 @@ type PubSub = any;
 
 const PRIVATE_KEY_PATH = '/local/privatekey';
 const AUTODIAL_WORKAROUND = true;
-
-/**
- * Returns the pubsub topic name for a given lishnet/network ID.
- */
-export function lishTopic(networkID: string): string {
-	return `lish/${networkID}`;
-}
 
 /**
  * Single shared libp2p node.

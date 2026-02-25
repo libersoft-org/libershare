@@ -2,6 +2,7 @@ import * as fsPromises from 'node:fs/promises';
 import { type HashAlgorithm, type ILish, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
 export { type LishID, type ChunkID, type HashAlgorithm, type ILish, type IStoredLish, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
 export { SUPPORTED_ALGOS } from '@shared';
+import { calculateChecksum } from './checksum.ts';
 export const LISH_VERSION = 1;
 export const DEFAULT_CHUNK_SIZE = 1024 * 1024;
 export const DEFAULT_ALGO: HashAlgorithm = 'sha256';
@@ -41,15 +42,6 @@ async function getStats(fullPath: string) {
 	} catch (e) {
 		throw new Error(`Cannot access path: ${fullPath}`);
 	}
-}
-
-async function calculateChecksum(file: ReturnType<typeof Bun.file>, offset: number, chunkSize: number, algo: HashAlgorithm): Promise<string> {
-	const end = Math.min(offset + chunkSize, file.size);
-	const chunk = file.slice(offset, end);
-	const buffer = await chunk.arrayBuffer();
-	const hasher = new Bun.CryptoHasher(algo as any);
-	hasher.update(buffer);
-	return hasher.digest('hex');
 }
 
 // Calculate checksums sequentially (single-threaded, no worker overhead)
