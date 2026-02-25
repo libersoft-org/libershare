@@ -12,7 +12,7 @@ abstract class BaseStorage<T> {
 		console.log(`[Storage] ${this.filePath}`);
 	}
 
-	protected loadFile<U>(defaultValue: U): U {
+	protected loadFile<U extends T>(defaultValue: U): U {
 		if (!existsSync(this.filePath)) {
 			this.saveFile(defaultValue);
 			return defaultValue;

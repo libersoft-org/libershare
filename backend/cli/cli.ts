@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import * as readline from 'readline';
+import { join } from 'path';
 import { ApiClient } from './api-client';
 import { Api } from '@shared';
 
@@ -62,9 +63,14 @@ ${HELP}`);
 	}
 }
 
+function expandHome(p: string): string {
+	if (p.startsWith('~')) return p.replace('~', process.env.HOME || '/');
+	return p;
+}
+
 function resolvePath(x: string) {
 	x = expandHome(x);
-	if (!x.startswith('/')) x = resolvePath(x);
+	if (!x.startsWith('/')) x = join(process.cwd(), x);
 	return x;
 }
 
@@ -327,9 +333,9 @@ async function main() {
 						console.log('Usage: datasets.import <path>');
 						break;
 					}
-					arg = resolvePath(arg);
-					console.log(`Importing: ${arg}`);
-					const result = await api.lishs.create(arg);
+					const resolvedArg = resolvePath(arg);
+					console.log(`Importing: ${resolvedArg}`);
+					const result = await api.lishs.create(resolvedArg);
 					console.log(`✓ Import complete. LISH ID: ${result.lishID}`);
 					break;
 				}

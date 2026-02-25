@@ -78,8 +78,10 @@ export function initFsHandlers() {
 
 	const del = async (p: P) => {
 		const stats = await stat(p.path);
-		if (stats.isDirectory()) await rmdir(p.path, { recursive: true });
-		else await unlink(p.path);
+		if (stats.isDirectory()) {
+			const { rm } = await import('fs/promises');
+			await rm(p.path, { recursive: true });
+		} else await unlink(p.path);
 	};
 
 	const mkdirFn = async (p: P) => {
