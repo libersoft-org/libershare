@@ -126,6 +126,7 @@ export class Downloader {
 			for (const [peerID, client] of this.peers) {
 				await client.close();
 			}
+			this.peers.clear();
 		}
 	}
 
