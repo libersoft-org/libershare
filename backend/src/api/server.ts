@@ -118,6 +118,19 @@ export class ApiServer {
 
 			// Stats
 			'stats.get': _stats.get,
+
+			// Filesystem
+			'fs.info': _fs.info,
+			'fs.list': _fs.list,
+			'fs.readText': _fs.readText,
+			'fs.readGzip': _fs.readGzip,
+			'fs.delete': _fs.delete,
+			'fs.mkdir': _fs.mkdir,
+			'fs.open': _fs.open,
+			'fs.rename': _fs.rename,
+			'fs.exists': _fs.exists,
+			'fs.writeText': _fs.writeText,
+			'fs.writeGzip': _fs.writeGzip,
 		};
 	}
 

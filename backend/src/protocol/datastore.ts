@@ -9,7 +9,12 @@ import { mkdirSync } from 'fs';
  * Replaces datastore-level to avoid native C++ addon (classic-level)
  * which can't be bundled with `bun build --compile`.
  */
-export class SqliteDatastore extends BaseDatastore {
+// Workaround: bun creates duplicate interface-datastore copies in node_modules,
+// causing TypeScript to see identical Key types (v9.0.2) as incompatible
+// due to private field nominal typing. Runtime behavior is unaffected.
+const _BaseDatastore: any = BaseDatastore;
+
+export class SqliteDatastore extends _BaseDatastore {
 	private db!: Database;
 	private readonly dbPath: string;
 
@@ -27,6 +32,10 @@ export class SqliteDatastore extends BaseDatastore {
 		this.dbPath = path.endsWith('.db') ? path : path + '.db';
 	}
 
+	private ensureOpen(): void {
+		if (!this.db) throw new Error('Datastore not opened. Call open() first.');
+	}
+
 	open(): void {
 		mkdirSync(dirname(this.dbPath), { recursive: true });
 		this.db = new Database(this.dbPath);
@@ -42,9 +51,9 @@ export class SqliteDatastore extends BaseDatastore {
 		this.stmtHas = this.db.prepare('SELECT 1 FROM datastore WHERE key = ?');
 		this.stmtDelete = this.db.prepare('DELETE FROM datastore WHERE key = ?');
 		this.stmtAll = this.db.prepare('SELECT key, value FROM datastore');
-		this.stmtAllPrefix = this.db.prepare('SELECT key, value FROM datastore WHERE key LIKE ?');
+		this.stmtAllPrefix = this.db.prepare("SELECT key, value FROM datastore WHERE key LIKE ? ESCAPE '\\'");
 		this.stmtAllKeys = this.db.prepare('SELECT key FROM datastore');
-		this.stmtAllKeysPrefix = this.db.prepare('SELECT key FROM datastore WHERE key LIKE ?');
+		this.stmtAllKeysPrefix = this.db.prepare("SELECT key FROM datastore WHERE key LIKE ? ESCAPE '\\'");
 	}
 
 	close(): void {
@@ -52,11 +61,13 @@ export class SqliteDatastore extends BaseDatastore {
 	}
 
 	put(key: Key, val: Uint8Array): Key {
+		this.ensureOpen();
 		this.stmtPut.run(key.toString(), Buffer.from(val));
 		return key;
 	}
 
 	get(key: Key): Uint8Array {
+		this.ensureOpen();
 		const row = this.stmtGet.get(key.toString()) as { value: Buffer } | null;
 		if (row == null) {
 			const err = new Error(`Key not found: ${key.toString()}`);
@@ -67,10 +78,12 @@ export class SqliteDatastore extends BaseDatastore {
 	}
 
 	has(key: Key): boolean {
+		this.ensureOpen();
 		return this.stmtHas.get(key.toString()) != null;
 	}
 
 	delete(key: Key): void {
+		this.ensureOpen();
 		this.stmtDelete.run(key.toString());
 	}
 
@@ -97,9 +110,14 @@ export class SqliteDatastore extends BaseDatastore {
 		};
 	}
 
+	private escapeLikePrefix(prefix: string): string {
+		return prefix.replace(/[%_]/g, '\\$&') + '%';
+	}
+
 	*_all(q: { prefix?: string }) {
+		this.ensureOpen();
 		const rows = q.prefix
-			? this.stmtAllPrefix.all(q.prefix + '%') as Array<{ key: string; value: Buffer }>
+			? this.stmtAllPrefix.all(this.escapeLikePrefix(q.prefix)) as Array<{ key: string; value: Buffer }>
 			: this.stmtAll.all() as Array<{ key: string; value: Buffer }>;
 		for (const row of rows) {
 			yield { key: new Key(row.key), value: new Uint8Array(row.value) };
@@ -107,8 +125,9 @@ export class SqliteDatastore extends BaseDatastore {
 	}
 
 	*_allKeys(q: { prefix?: string }) {
+		this.ensureOpen();
 		const rows = q.prefix
-			? this.stmtAllKeysPrefix.all(q.prefix + '%') as Array<{ key: string }>
+			? this.stmtAllKeysPrefix.all(this.escapeLikePrefix(q.prefix)) as Array<{ key: string }>
 			: this.stmtAllKeys.all() as Array<{ key: string }>;
 		for (const row of rows) {
 			yield new Key(row.key);
