@@ -18,8 +18,9 @@ export type HaveChunks = 'all' | ChunkID[];
 export class LishClient {
 	private stream: Stream;
 	private decoder: AsyncGenerator<Uint8Array | Uint8ArrayList>;
+	// TODO: is haveChunks still used? review whether this belongs here
 	public haveChunks: HaveChunks;
-	constructor(stream: Stream, onDisconnect?: () => void) {
+	constructor(stream: Stream) {
 		this.stream = stream;
 		this.decoder = decode(stream);
 	}

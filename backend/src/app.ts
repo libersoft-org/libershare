@@ -74,16 +74,6 @@ async function shutdown() {
 	process.exit(0);
 }
 
-// Helper to get the shared network instance for CLI commands
-function getNetwork() {
-	const network = networks.getNetwork();
-	if (!network.isRunning()) {
-		console.log('Network not running');
-		return null;
-	}
-	return network;
-}
-
 process.on('SIGINT', shutdown);
 
 // Transient libp2p errors that can occur during normal peer churn, stream
