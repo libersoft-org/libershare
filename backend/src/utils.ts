@@ -30,4 +30,16 @@ export class Utils {
 		}
 		return path;
 	}
+
+	/**
+	 * Parse JSON with a descriptive error message on failure.
+	 * Use this for user-provided or external data where the source is helpful for debugging.
+	 */
+	static safeJsonParse<T = unknown>(text: string, source: string): T {
+		try {
+			return JSON.parse(text);
+		} catch (err: any) {
+			throw new Error(`Invalid JSON from ${source}: ${err.message}`);
+		}
+	}
 }

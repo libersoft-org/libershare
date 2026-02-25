@@ -1,15 +1,4 @@
 import { createLibp2p } from 'libp2p';
-import { tcp } from '@libp2p/tcp';
-import { noise, pureJsCrypto } from '@chainsafe/libp2p-noise';
-import { yamux } from '@chainsafe/libp2p-yamux';
-import { gossipsub } from '@chainsafe/libp2p-gossipsub';
-import { identify, identifyPush } from '@libp2p/identify';
-import { bootstrap } from '@libp2p/bootstrap';
-import { kadDHT } from '@libp2p/kad-dht';
-import { ping } from '@libp2p/ping';
-import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
-import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
-import { autoNAT } from '@libp2p/autonat';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { SqliteDatastore } from './datastore.ts';
 import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
@@ -17,28 +6,17 @@ import { type Libp2p } from 'libp2p';
 import { type PeerId, type PrivateKey, type PeerInfo } from '@libp2p/interface';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { join } from 'path';
-import { networkInterfaces } from 'os';
 import { DataServer } from '../lish/data-server.ts';
-import { Settings } from '../settings.ts';
+import { type Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLishProtocol } from './lish-protocol.ts';
-const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
+import { buildLibp2pConfig } from './network-config.ts';
+import { PINK_TOPIC, PONK_TOPIC, createPinkMessage, createPonkMessage } from './pink-ponk.ts';
 import { HaveMessage, WantMessage } from './downloader.ts';
+const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 
 // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 type PubSub = any;
-interface PinkMessage {
-	type: 'pink';
-	peerID: string;
-	timestamp: number;
-}
-interface PonkMessage {
-	type: 'ponk';
-	peerID: string;
-	timestamp: number;
-	inReplyTo: string;
-}
-const PINK_TOPIC = 'pink';
-const PONK_TOPIC = 'ponk';
+
 const PRIVATE_KEY_PATH = '/local/privatekey';
 const AUTODIAL_WORKAROUND = true;
 
@@ -73,10 +51,13 @@ export class Network {
 	private _peerCountDebounceTimer: NodeJS.Timeout | null = null;
 	private _lastPeerCounts: Map<string, number> = new Map();
 
-	constructor(dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
+	private readonly settings: Settings;
+
+	constructor(dataDir: string, dataServer: DataServer, settings: Settings, enablePink: boolean = false) {
 		this.dataDir = dataDir;
 		this.enablePink = enablePink;
 		this.dataServer = dataServer;
+		this.settings = settings;
 	}
 
 	/**
@@ -158,148 +139,27 @@ export class Network {
 			return;
 		}
 
-		// Load settings
-		const settings = new Settings(this.dataDir);
-		const allSettings = settings.getAll();
+		// Read settings
+		const allSettings = this.settings.getAll();
+
 		// Initialize datastore (single shared datastore)
 		const datastorePath = join(this.dataDir, 'datastore');
 		this.datastore = new SqliteDatastore(datastorePath);
 		this.datastore.open();
 		console.log('✓ Datastore opened at:', datastorePath);
+
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
-		// Build transports array
-		const transports: any[] = [tcp()];
-		transports.push(circuitRelayTransport());
-		console.log(`✓ Circuit relay client enabled`);
 
-		// Build listen addresses
-		const port = allSettings.network?.incomingPort || 0;
-		const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
-
-		const maxRelays = 10;
-		for (let i = 0; i < maxRelays; i++) {
-			listenAddresses.push('/p2p-circuit');
-		}
-		console.log(`✓ Configured to reserve ${maxRelays} relay slots`);
-
-		// Build appendAnnounce addresses.
-		// libp2p detects all network interfaces when listening on 0.0.0.0,
-		// but marks public transport addresses as unverified (requires AutoNAT confirmation).
-		// appendAnnounce addresses are always marked as verified, so they appear immediately.
-		// We auto-detect non-internal IPv4 interfaces and add them here.
-		const appendAnnounceAddresses: string[] = [];
-		const ifaces = networkInterfaces();
-		for (const [name, addrs] of Object.entries(ifaces)) {
-			if (!addrs) continue;
-			for (const addr of addrs) {
-				if (addr.family === 'IPv4' && !addr.internal) {
-					appendAnnounceAddresses.push(`/ip4/${addr.address}/tcp/${port}`);
-					console.log(`✓ Announce address (auto-detected, ${name}): /ip4/${addr.address}/tcp/${port}`);
-				}
-			}
-		}
-		// Add user-configured announce addresses
-		if (allSettings.network?.announceAddresses?.length) {
-			for (const addr of allSettings.network.announceAddresses) {
-				appendAnnounceAddresses.push(addr);
-				console.log(`✓ Announce address (configured): ${addr}`);
-			}
-		}
-
-		const config: any = {
+		// Build libp2p config via extracted helper
+		const { config, port, bootstrapPeerIds, bootstrapMultiaddrs } = buildLibp2pConfig({
 			privateKey,
 			datastore: this.datastore,
-			addresses: {
-				listen: listenAddresses,
-				appendAnnounce: appendAnnounceAddresses.length > 0 ? appendAnnounceAddresses : undefined,
-			},
-			transports,
-			connectionEncrypters: [noise({ crypto: pureJsCrypto })],
-			streamMuxers: [yamux()],
-			connectionManager: {
-				minConnections: 1,
-				maxConnections: 100,
-				autoDial: true,
-				autoDialInterval: 1000,
-			},
-			// No connectionProtector - swarm key removed. Open network, isolation via topics.
-			peerStore: {
-				persistence: true,
-				threshold: 15,
-			},
-			services: {
-				identify: identify(),
-				identifyPush: identifyPush(),
-				ping: ping(),
-				pubsub: gossipsub({
-					emitSelf: false,
-					allowPublishToZeroTopicPeers: true,
-					floodPublish: true,
-					D: 2,
-					Dlo: 1,
-					Dhi: 3,
-					Dlazy: 2,
-					heartbeatInterval: 1000,
-					fanoutTTL: 60000,
-				}),
-				dht: kadDHT({
-					clientMode: false,
-					initialQuerySelfInterval: 3600000,
-					querySelfInterval: 3600000,
-				}),
-			},
-		};
-
-		// Add relay server service if enabled
-		if (allSettings.network?.allowRelay) {
-			const maxReservationsRaw = allSettings.network?.maxRelayReservations ?? 0;
-			const maxReservations = maxReservationsRaw === 0 ? Infinity : maxReservationsRaw;
-			config.services.relay = circuitRelayServer({
-				reservations: { maxReservations },
-			});
-			console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservationsRaw === 0 ? 'unlimited' : maxReservationsRaw})`);
-		}
-
-		// Add autonat service
-		config.services.autonat = autoNAT();
-		console.log('✓ AutoNAT enabled');
-
-		// Deduplicate bootstrap peers and filter out our own peer ID
-		const myPeerId = privateKey.publicKey.toString();
-		const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => !p.includes(myPeerId));
-
-		if (uniqueBootstrapPeers.length > 0) {
-			console.log('Configuring bootstrap peers:');
-			const validBootstrapPeers: string[] = [];
-
-			for (const peer of uniqueBootstrapPeers) {
-				console.log('  -', peer);
-				try {
-					const ma = Multiaddr(peer);
-					const peerID = ma.getPeerId();
-					if (peerID) {
-						this.bootstrapPeerIds.add(peerID);
-						this.bootstrapMultiaddrs.push(ma);
-					}
-					validBootstrapPeers.push(peer);
-				} catch (error: any) {
-					console.log('  ⚠️  Skipping invalid multiaddr:', peer, '-', error.message);
-				}
-			}
-
-			if (validBootstrapPeers.length > 0) {
-				config.peerDiscovery = [
-					bootstrap({
-						list: validBootstrapPeers,
-						timeout: 1000,
-						tagTTL: 2147483647,
-						tagValue: 100,
-					}),
-				];
-			}
-		} else {
-			console.log('No bootstrap peers configured. Node will start in standalone mode.');
-		}
+			allSettings,
+			bootstrapPeers,
+			myPeerId: privateKey.publicKey.toString(),
+		});
+		this.bootstrapPeerIds = bootstrapPeerIds;
+		this.bootstrapMultiaddrs = bootstrapMultiaddrs;
 
 		console.log('Creating libp2p node...');
 		try {
@@ -361,15 +221,26 @@ export class Network {
 		console.log('Peers in store:', this.node.getPeers().length);
 		console.log('Services loaded:', Object.keys(this.node.services));
 
-		// Listen for peer events
-		this.node.addEventListener('peer:discovery', async evt => {
+		this.setupEventListeners();
+		this.setupPinkPonk();
+		this.setupPubsubDispatch();
+		this.setupBootstrapWorkaround();
+		this.setupStatusInterval();
+	}
+
+	// =========================================================================
+	// Event listeners setup (extracted from start() for readability)
+	// =========================================================================
+
+	private setupEventListeners(): void {
+		this.node!.addEventListener('peer:discovery', async evt => {
 			const peerID = evt.detail.id.toString();
 			const multiaddrs = evt.detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
 			console.log('🔍 Discovered peer:', peerID);
 			console.log('   Multiaddrs:', multiaddrs.join(', ') || '(empty!)');
 		});
 
-		this.node.addEventListener('peer:connect', async evt => {
+		this.node!.addEventListener('peer:connect', async evt => {
 			const peerID = evt.detail.toString();
 			const connections = this.node!.getConnections(evt.detail);
 			const remoteAddrs = connections.map(c => c.remoteAddr.toString());
@@ -388,53 +259,55 @@ export class Network {
 			this.schedulePeerCountCheck();
 		});
 
-		this.node.addEventListener('peer:disconnect', evt => {
+		this.node!.addEventListener('peer:disconnect', evt => {
 			console.log('❌ Lost connection with peer:', evt.detail.toString());
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 			this.schedulePeerCountCheck();
 		});
 
-		// Relay events
-		this.node.addEventListener('relay:created-reservation' as any, (evt: any) => {
+		this.node!.addEventListener('relay:created-reservation' as any, (evt: any) => {
 			console.log('🔄 Relay reservation created with:', evt.detail.relay.toString());
 		});
-		this.node.addEventListener('relay:removed' as any, (evt: any) => {
+		this.node!.addEventListener('relay:removed' as any, (evt: any) => {
 			console.log('⚠️  Relay removed:', evt.detail.relay.toString());
 		});
+	}
 
-		if (this.enablePink) {
-			this.pubsub.subscribe(PINK_TOPIC);
-			this.pubsub.subscribe(PONK_TOPIC);
-			console.log('✓ Subscribed to pink/ponk topics');
-			this.pingInterval = setInterval(async () => {
-				await this.sendPink();
-			}, 10000);
-		}
+	private setupPinkPonk(): void {
+		if (!this.enablePink) return;
+		this.pubsub!.subscribe(PINK_TOPIC);
+		this.pubsub!.subscribe(PONK_TOPIC);
+		console.log('✓ Subscribed to pink/ponk topics');
+		this.pingInterval = setInterval(async () => {
+			await this.sendPink();
+		}, 10000);
+	}
 
-		// Handle incoming pubsub messages - dispatch to per-topic handlers
-		this.pubsub.addEventListener('message', evt => {
+	private setupPubsubDispatch(): void {
+		this.pubsub!.addEventListener('message', evt => {
 			this.handleMessage(evt.detail);
 		});
+	}
 
-		// Immediate bootstrap dial workaround
-		if (AUTODIAL_WORKAROUND && this.bootstrapMultiaddrs.length > 0) {
-			setTimeout(async () => {
-				if (this.node!.getPeers().length === 0) {
-					console.log('⚠️  Bootstrap module failed - dialing directly...');
-					for (const ma of this.bootstrapMultiaddrs) {
-						try {
-							await this.node!.dial(ma);
-							console.log('✓ Connected to bootstrap peer via direct dial');
-							break;
-						} catch (err: any) {
-							console.log('✗ Direct dial failed:', err.message);
-						}
+	private setupBootstrapWorkaround(): void {
+		if (!AUTODIAL_WORKAROUND || this.bootstrapMultiaddrs.length === 0) return;
+		setTimeout(async () => {
+			if (this.node!.getPeers().length === 0) {
+				console.log('⚠️  Bootstrap module failed - dialing directly...');
+				for (const ma of this.bootstrapMultiaddrs) {
+					try {
+						await this.node!.dial(ma);
+						console.log('✓ Connected to bootstrap peer via direct dial');
+						break;
+					} catch (err: any) {
+						console.log('✗ Direct dial failed:', err.message);
 					}
 				}
-			}, 2000);
-		}
+			}
+		}, 2000);
+	}
 
-		// Periodic status log
+	private setupStatusInterval(): void {
 		this.statusInterval = setInterval(async () => {
 			const connectedPeers = this.node!.getPeers();
 			const allPeers = await this.node!.peerStore.all();
@@ -453,6 +326,10 @@ export class Network {
 			}
 		}, 10000);
 	}
+
+	// =========================================================================
+	// Runtime state
+	// =========================================================================
 
 	/**
 	 * Whether the node is running.
@@ -549,14 +426,6 @@ export class Network {
 		}
 	}
 
-	/**
-	 * Get all topics this node is subscribed to.
-	 */
-	getSubscribedTopics(): string[] {
-		if (!this.pubsub) return [];
-		return this.pubsub.getTopics();
-	}
-
 	// =========================================================================
 	// Pink/Ponk (debug)
 	// =========================================================================
@@ -587,11 +456,7 @@ export class Network {
 
 	public async sendPink() {
 		if (!this.pubsub || !this.node) return;
-		const message: PinkMessage = {
-			type: 'pink',
-			peerID: this.node.peerId.toString(),
-			timestamp: Date.now(),
-		};
+		const message = createPinkMessage(this.node.peerId.toString());
 		const data = new TextEncoder().encode(JSON.stringify(message));
 		try {
 			await this.pubsub.publish(PINK_TOPIC, data);
@@ -602,12 +467,7 @@ export class Network {
 
 	private async sendPonk(inReplyTo: string) {
 		if (!this.pubsub || !this.node) return;
-		const message: PonkMessage = {
-			type: 'ponk',
-			peerID: this.node.peerId.toString(),
-			timestamp: Date.now(),
-			inReplyTo,
-		};
+		const message = createPonkMessage(this.node.peerId.toString(), inReplyTo);
 		const data = new TextEncoder().encode(JSON.stringify(message));
 		try {
 			await this.pubsub.publish(PONK_TOPIC, data);
@@ -622,10 +482,9 @@ export class Network {
 
 	private async handleWant(data: WantMessage, networkID: string) {
 		console.log('Handling want message for lishID:', data.lishID, 'on network:', networkID);
-		let lish = await this.dataServer.getLish(data.lishID);
+		const lish = this.dataServer.getLish(data.lishID);
 		if (!lish) return;
-		let haveChunks = await this.dataServer.getHaveChunks(lish);
-		if (this.dataDir === '../../data1') haveChunks = 'all'; // mock
+		const haveChunks = this.dataServer.getHaveChunks(lish);
 		if (haveChunks !== 'all' && haveChunks.size === 0) {
 			console.log('No chunks available for lishID:', data.lishID);
 			return;
@@ -674,36 +533,6 @@ export class Network {
 		const ma = Multiaddr(multiaddr);
 		await this.node.dial(ma);
 		console.log('→ Connected to:', multiaddr);
-	}
-
-	public printMultiaddrs() {
-		if (!this.node) {
-			console.log('Network not started');
-			return;
-		}
-		const addrs = this.node.getMultiaddrs();
-		console.log('Current multiaddrs:');
-		addrs.forEach(addr => {
-			let emoji = '?';
-			const protos = addr.protos();
-			if (protos.some(p => p.name === 'p2p-circuit')) {
-				emoji = '🔄';
-			} else {
-				try {
-					const nodeAddr = addr.nodeAddress();
-					if (nodeAddr.address === '127.0.0.1' || nodeAddr.address === '::1') emoji = '🏠';
-					else if (nodeAddr.family === 4) {
-						const octets = nodeAddr.address.split('.').map(Number);
-						if (octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168)) emoji = '🏢';
-						else emoji = '🌍';
-					} else if (nodeAddr.family === 6) {
-						if (nodeAddr.address.startsWith('fe80:') || nodeAddr.address.startsWith('fc')) emoji = '🏢';
-						else emoji = '🌍';
-					}
-				} catch (e) {}
-			}
-			console.log(`${emoji} ${addr.toString()}`);
-		});
 	}
 
 	async dialProtocol(peerID: string, multiaddrs: any[], protocol: string) {

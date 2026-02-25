@@ -1,7 +1,7 @@
 import { type ServerWebSocket } from 'bun';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/networks.ts';
-import { Settings } from '../settings.ts';
+import { type Settings } from '../settings.ts';
 import { type LISHNetworkStorage } from '../lishnet/lishNetworkStorage.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLishNetworksHandlers } from './lishNetworks.ts';
@@ -44,9 +44,10 @@ export class ApiServer {
 		private readonly dataServer: DataServer,
 		private readonly networks: Networks,
 		lishNetworks: LISHNetworkStorage,
+		settings: Settings,
 		options: ApiServerOptions
 	) {
-		this.settings = new Settings(dataDir);
+		this.settings = settings;
 		this.lishNetworks = lishNetworks;
 		this.host = options.host;
 		this.port = options.port;
@@ -54,15 +55,15 @@ export class ApiServer {
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
 
-		const emit = (event: string, data: any) => this.emit(this.currentClient, event, data);
+		const emitTo = (client: ClientSocket, event: string, data: any) => this.emit(client, event, data);
 
 		const _settings = initSettingsHandlers(this.settings);
 		const _lishNetworks = initLishNetworksHandlers(this.lishNetworks);
 		const _networks = initNetworksHandlers(this.networks, this.dataServer);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
-		const _lishs = initLishsHandlers(this.dataServer, emit);
-		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emit);
+		const _lishs = initLishsHandlers(this.dataServer, emitTo);
+		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
 		const _stats = initStatsHandlers(this.networks, this.dataServer);
 
 		this.handlers = {
@@ -215,21 +216,18 @@ export class ApiServer {
 	}
 
 	// --- API dispatch table and core handlers ---
-	private currentClient!: ClientSocket;
-	private handlers!: Record<string, (params: Record<string, any>) => Promise<any> | any>;
+	private handlers!: Record<string, (params: Record<string, any>, client: ClientSocket) => Promise<any> | any>;
 
 	private async execute(client: ClientSocket, method: string, params: Record<string, any>): Promise<any> {
 		console.log(`[API] Executing method: ${method}, params: ${JSON.stringify(params)}`);
 		const handler = this.handlers[method];
 		if (!handler) throw new Error(`Unknown method: ${method}`);
-		this.currentClient = client;
-		return handler.call(this, params);
+		return handler.call(this, params, client);
 	}
 
 	// Event subscriptions
 
-	private handleSubscribe(params: Record<string, any>) {
-		const client = this.currentClient;
+	private handleSubscribe(params: Record<string, any>, client: ClientSocket) {
 		const events = Array.isArray(params.events) ? params.events : [params.event];
 		events.forEach((e: string) => client.data.subscribedEvents.add(e));
 		if (client.data.subscribedEvents.has('peers:count')) {
@@ -239,8 +237,7 @@ export class ApiServer {
 		return true;
 	}
 
-	private handleUnsubscribe(params: Record<string, any>) {
-		const client = this.currentClient;
+	private handleUnsubscribe(params: Record<string, any>, client: ClientSocket) {
 		const events = Array.isArray(params.events) ? params.events : [params.event];
 		events.forEach((e: string) => client.data.subscribedEvents.delete(e));
 		return true;

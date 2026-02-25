@@ -3,6 +3,7 @@ import { join, dirname } from 'path';
 import { existsSync } from 'fs';
 import { type IStoredLish, type LishID, type ChunkID } from '../lish/lish.ts';
 import { type Network, lishTopic } from './network.ts';
+import { Utils } from '../utils.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
 import { HaveChunks, LISH_PROTOCOL, LishClient } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
@@ -50,7 +51,7 @@ export class Downloader {
 		this.state = 'initializing';
 		// Read and parse LISH
 		const content = await readFile(lishPath, 'utf-8');
-		this.lish = JSON.parse(content);
+		this.lish = Utils.safeJsonParse(content, `LISH file: ${lishPath}`);
 		this.lishID = this.lish.id as LishID;
 		console.log(`Loading LISH: ${this.lish.name} (id: ${this.lishID})`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.lish);

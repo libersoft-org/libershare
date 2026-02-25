@@ -4,10 +4,10 @@ import { Downloader } from '../protocol/downloader.ts';
 import { join } from 'path';
 
 type P = Record<string, any>;
-type EmitFn = (event: string, data: any) => void;
+type EmitFn = (client: any, event: string, data: any) => void;
 
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn) {
-	const download = async (p: P) => {
+	const download = async (p: P, client: any) => {
 		/*
 		todo:
 		// replace this with setDownloadEnabled(lishID, networkID, enabled)
@@ -22,8 +22,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		await downloader.init(p.lishPath);
 		downloader
 			.download()
-			.then(() => emit('transfer.download:complete', { downloadDir }))
-			.catch(err => emit('transfer.download:error', { error: err.message }));
+			.then(() => emit(client, 'transfer.download:complete', { downloadDir }))
+			.catch(err => emit(client, 'transfer.download:error', { error: err.message }));
 		return { downloadDir };
 	};
 

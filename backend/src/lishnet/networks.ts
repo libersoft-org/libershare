@@ -1,5 +1,7 @@
 import { Network } from '../protocol/network.ts';
+import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
+import { type Settings } from '../settings.ts';
 import { type ILISHNetwork, type NetworkDefinition, type LISHNetworkConfig } from '@shared';
 import { LISHNetworkStorage } from './lishNetworkStorage.ts';
 
@@ -36,12 +38,12 @@ export class Networks {
 	// Callback for peer count changes
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
 
-	constructor(storage: LISHNetworkStorage, dataDir: string, dataServer: DataServer, enablePink: boolean = false) {
+	constructor(storage: LISHNetworkStorage, dataDir: string, dataServer: DataServer, settings: Settings, enablePink: boolean = false) {
 		this.storage = storage;
 		this.dataDir = dataDir;
 		this.dataServer = dataServer;
 		this.enablePink = enablePink;
-		this.network = new Network(dataDir, dataServer, enablePink);
+		this.network = new Network(dataDir, dataServer, settings, enablePink);
 		// Forward peer count changes from the network node
 		this.network.onPeerCountChange = counts => {
 			if (this._onPeerCountChange) this._onPeerCountChange(counts);
@@ -203,7 +205,7 @@ export class Networks {
 	}
 
 	async importFromJson(jsonString: string, enabled: boolean = false): Promise<NetworkDefinition> {
-		const data: ILISHNetwork = JSON.parse(jsonString);
+		const data: ILISHNetwork = Utils.safeJsonParse<ILISHNetwork>(jsonString, 'network JSON import');
 		const def = this.importFromLishnet(data, enabled);
 		if (enabled) await this.joinNetwork(def.id);
 		return def;
