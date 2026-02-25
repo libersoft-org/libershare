@@ -10,6 +10,7 @@ import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
 import { initLishsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
+import { initCoreHandlers } from './core.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
 }
@@ -56,6 +57,7 @@ export class ApiServer {
 
 		const emitTo = (client: ClientSocket, event: string, data: any) => this.emit(client, event, data);
 
+		const _core = initCoreHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _settings = initSettingsHandlers(this.settings);
 		const _lishNetworks = initLishNetworksHandlers(this.lishNetworks);
 		const _networks = initNetworksHandlers(this.networks, this.dataServer);
@@ -66,9 +68,9 @@ export class ApiServer {
 
 		this.handlers = {
 			// Core
-			subscribe: this.handleSubscribe,
-			unsubscribe: this.handleUnsubscribe,
-			fetchUrl: this.handleFetchUrl,
+			subscribe: _core.subscribe,
+			unsubscribe: _core.unsubscribe,
+			fetchUrl: _core.fetchUrl,
 
 			// Settings
 			'settings.get': _settings.get,
@@ -218,61 +220,6 @@ export class ApiServer {
 		const handler = this.handlers[method];
 		if (!handler) throw new Error(`Unknown method: ${method}`);
 		return handler.call(this, params, client);
-	}
-
-	// Event subscriptions
-
-	private handleSubscribe(params: Record<string, any>, client: ClientSocket) {
-		const events = Array.isArray(params.events) ? params.events : [params.event];
-		events.forEach((e: string) => client.data.subscribedEvents.add(e));
-		if (client.data.subscribedEvents.has('peers:count')) {
-			const counts = this.getCurrentPeerCounts();
-			if (counts.length > 0) this.emit(client, 'peers:count', counts);
-		}
-		return true;
-	}
-
-	private handleUnsubscribe(params: Record<string, any>, client: ClientSocket) {
-		const events = Array.isArray(params.events) ? params.events : [params.event];
-		events.forEach((e: string) => client.data.subscribedEvents.delete(e));
-		return true;
-	}
-
-	// fetchUrl - generic URL fetcher (used by lish import, lishnet import)
-
-	private async handleFetchUrl(params: Record<string, any>) {
-		if (!params.url) throw new Error('url parameter required');
-		const response = await fetch(params.url);
-		if (!response.ok) {
-			return {
-				url: params.url,
-				status: response.status,
-				contentType: response.headers.get('content-type'),
-				content: '',
-			};
-		}
-		const isGzipUrl = params.url.toLowerCase().endsWith('.gz');
-		const contentEncoding = response.headers.get('content-encoding');
-		const isGzipEncoded = contentEncoding?.toLowerCase().includes('gzip');
-		let content: string;
-		if (isGzipUrl && !isGzipEncoded) {
-			const compressed = await response.arrayBuffer();
-			const decompressed = Bun.gunzipSync(new Uint8Array(compressed));
-			content = new TextDecoder().decode(decompressed);
-		} else {
-			content = await response.text();
-		}
-		try {
-			JSON.parse(content);
-		} catch {
-			throw new Error('Response is not valid JSON');
-		}
-		return {
-			url: params.url,
-			status: response.status,
-			contentType: response.headers.get('content-type'),
-			content,
-		};
 	}
 
 	private getCurrentPeerCounts(): { networkID: string; count: number }[] {
