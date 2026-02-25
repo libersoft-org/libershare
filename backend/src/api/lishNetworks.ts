@@ -6,14 +6,14 @@ export function initLishNetworksHandlers(lishNetworks: LISHNetworkStorage) {
 	const getAll = () => lishNetworks.getAll();
 	const get = (p: P) => lishNetworks.get(p.networkID);
 	const exists = (p: P) => lishNetworks.exists(p.networkID);
-	const add = (p: P) => lishNetworks.add(p.network);
-	const update = (p: P) => lishNetworks.update(p.network);
-	const del = (p: P) => lishNetworks.delete(p.networkID);
-	const addIfNotExists = (p: P) => lishNetworks.addIfNotExists(p.network);
-	const importNetworks = (p: P) => lishNetworks.importNetworks(p.networks);
+	const add = async (p: P) => lishNetworks.add(p.network);
+	const update = async (p: P) => lishNetworks.update(p.network);
+	const del = async (p: P) => lishNetworks.delete(p.networkID);
+	const addIfNotExists = async (p: P) => lishNetworks.addIfNotExists(p.network);
+	const importNetworks = async (p: P) => lishNetworks.importNetworks(p.networks);
 
-	const setAll = (p: P) => {
-		lishNetworks.setAll(p.networks);
+	const setAll = async (p: P) => {
+		await lishNetworks.setAll(p.networks);
 		return true;
 	};
 

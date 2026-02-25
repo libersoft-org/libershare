@@ -90,7 +90,7 @@ export class Networks {
 		if (!config) return false;
 
 		config.enabled = enabled;
-		this.storage.update(config);
+		await this.storage.update(config);
 
 		if (enabled) {
 			await this.joinNetwork(id);
@@ -197,7 +197,7 @@ export class Networks {
 		return [...new Set(allPeers)];
 	}
 
-	importFromLishnet(data: ILISHNetwork, enabled: boolean = false): NetworkDefinition {
+	async importFromLishnet(data: ILISHNetwork, enabled: boolean = false): Promise<NetworkDefinition> {
 		const config: LISHNetworkConfig = {
 			version: data.version,
 			networkID: data.networkID,
@@ -208,14 +208,14 @@ export class Networks {
 			created: data.created || new Date().toISOString(),
 		};
 		// Upsert: update if exists, add if not
-		if (this.storage.exists(config.networkID)) this.storage.update(config);
-		else this.storage.add(config);
+		if (this.storage.exists(config.networkID)) await this.storage.update(config);
+		else await this.storage.add(config);
 		return toNetworkDef(config);
 	}
 
 	async importFromJson(jsonString: string, enabled: boolean = false): Promise<NetworkDefinition> {
 		const data: ILISHNetwork = Utils.safeJsonParse<ILISHNetwork>(jsonString, 'network JSON import');
-		const def = this.importFromLishnet(data, enabled);
+		const def = await this.importFromLishnet(data, enabled);
 		if (enabled) await this.joinNetwork(def.id);
 		return def;
 	}
@@ -223,7 +223,7 @@ export class Networks {
 	async importFromFile(filePath: string, enabled: boolean = false): Promise<NetworkDefinition> {
 		const file = Bun.file(filePath);
 		const content = await file.text();
-		return this.importFromJson(content, enabled);
+		return await this.importFromJson(content, enabled);
 	}
 
 	get(id: string): NetworkDefinition | null {

@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
+import { writeFile } from 'fs/promises';
 import { join } from 'path';
 
 /**
@@ -14,6 +15,7 @@ abstract class BaseStorage<T> {
 
 	protected loadFile<U extends T>(defaultValue: U): U {
 		if (!existsSync(this.filePath)) {
+			// Fire-and-forget: write default to disk (constructor is sync, saveFile is async).
 			this.saveFile(defaultValue);
 			return defaultValue;
 		}
@@ -25,9 +27,9 @@ abstract class BaseStorage<T> {
 		}
 	}
 
-	protected saveFile(data: T): void {
+	protected async saveFile(data: T): Promise<void> {
 		try {
-			writeFileSync(this.filePath, JSON.stringify(data, null, '\t'));
+			await writeFile(this.filePath, JSON.stringify(data, null, '\t'));
 		} catch (error) {
 			console.error(`[Storage] Error saving ${this.filePath}:`, error);
 		}
@@ -72,7 +74,7 @@ export class JsonStorage<T extends Record<string, any>> extends BaseStorage<T> {
 		return value;
 	}
 
-	set(path: string, value: any): void {
+	async set(path: string, value: any): Promise<void> {
 		const keys = path.split('.');
 		let obj: any = this.data;
 		for (let i = 0; i < keys.length - 1; i++) {
@@ -81,16 +83,16 @@ export class JsonStorage<T extends Record<string, any>> extends BaseStorage<T> {
 			obj = obj[key];
 		}
 		obj[keys[keys.length - 1]] = value;
-		this.saveFile(this.data);
+		await this.saveFile(this.data);
 	}
 
 	getAll(): T {
 		return this.data;
 	}
 
-	reset(): T {
+	async reset(): Promise<T> {
 		this.data = structuredClone(this.defaults);
-		this.saveFile(this.data);
+		await this.saveFile(this.data);
 		return this.data;
 	}
 }
@@ -123,45 +125,45 @@ export class ArrayStorage<T extends Record<string, any>> extends BaseStorage<T[]
 		return this.items.some(item => item[this.keyField] === key);
 	}
 
-	add(item: T): boolean {
+	async add(item: T): Promise<boolean> {
 		if (this.exists(item[this.keyField] as string)) return false;
 		this.items.push(item);
-		this.saveFile(this.items);
+		await this.saveFile(this.items);
 		return true;
 	}
 
-	update(item: T): boolean {
+	async update(item: T): Promise<boolean> {
 		const index = this.items.findIndex(i => i[this.keyField] === item[this.keyField]);
 		if (index === -1) return false;
 		this.items[index] = item;
-		this.saveFile(this.items);
+		await this.saveFile(this.items);
 		return true;
 	}
 
-	upsert(item: T): void {
+	async upsert(item: T): Promise<void> {
 		const index = this.items.findIndex(i => i[this.keyField] === item[this.keyField]);
 		if (index === -1) this.items.push(item);
 		else this.items[index] = item;
-		this.saveFile(this.items);
+		await this.saveFile(this.items);
 	}
 
-	delete(key: string): boolean {
+	async delete(key: string): Promise<boolean> {
 		const len = this.items.length;
 		this.items = this.items.filter(item => item[this.keyField] !== key);
 		if (this.items.length !== len) {
-			this.saveFile(this.items);
+			await this.saveFile(this.items);
 			return true;
 		}
 		return false;
 	}
 
-	setAll(items: T[]): void {
+	async setAll(items: T[]): Promise<void> {
 		this.items = items;
-		this.saveFile(this.items);
+		await this.saveFile(this.items);
 	}
 
-	clear(): void {
+	async clear(): Promise<void> {
 		this.items = [];
-		this.saveFile(this.items);
+		await this.saveFile(this.items);
 	}
 }

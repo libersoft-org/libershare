@@ -35,11 +35,11 @@ export class DataServer {
 		return this.storage.getAll().filter(l => l.directory);
 	}
 
-	addLish(lish: IStoredLish): void {
-		this.storage.upsert(lish);
+	async addLish(lish: IStoredLish): Promise<void> {
+		await this.storage.upsert(lish);
 	}
 
-	deleteLish(lishID: LishID): boolean {
+	async deleteLish(lishID: LishID): Promise<boolean> {
 		return this.storage.delete(lishID);
 	}
 
@@ -50,13 +50,13 @@ export class DataServer {
 		return lish?.chunks?.includes(chunkID) ?? false;
 	}
 
-	markChunkDownloaded(lishID: LishID, chunkID: ChunkID): void {
+	async markChunkDownloaded(lishID: LishID, chunkID: ChunkID): Promise<void> {
 		const lish = this.getLish(lishID);
 		if (!lish) return;
 		if (!lish.chunks) lish.chunks = [];
 		if (!lish.chunks.includes(chunkID)) {
 			lish.chunks.push(chunkID);
-			this.storage.update(lish);
+			await this.storage.update(lish);
 		}
 	}
 
@@ -158,7 +158,7 @@ export class DataServer {
 			if (lish.files) {
 				lish.chunks = lish.files.flatMap(f => f.checksums);
 			}
-			this.addLish(lish);
+			await this.addLish(lish);
 			console.log(`✓ Dataset imported: ${lish.id}`);
 		}
 		return lish;

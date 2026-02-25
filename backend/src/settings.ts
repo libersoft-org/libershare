@@ -122,8 +122,8 @@ export class Settings {
 		return this.storage.get(path);
 	}
 
-	set(path: string, value: any): void {
-		this.storage.set(path, value);
+	async set(path: string, value: any): Promise<void> {
+		await this.storage.set(path, value);
 	}
 
 	getAll(): SettingsData {
@@ -134,8 +134,8 @@ export class Settings {
 		return structuredClone(DEFAULT_SETTINGS);
 	}
 
-	reset(): SettingsData {
-		return this.storage.reset();
+	async reset(): Promise<SettingsData> {
+		return await this.storage.reset();
 	}
 
 	/** Create all storage directories from current settings (expanding ~ to home). */

@@ -112,7 +112,7 @@ export class Downloader {
 						// Write chunk to file at correct offset
 						await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 						// Mark as downloaded
-						this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
+						await this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 						downloadedCount++;
 						console.log(`✓ Downloaded chunk ${downloadedCount}/${missingChunks.length}`);
 						break;
