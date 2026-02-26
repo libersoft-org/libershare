@@ -1,10 +1,10 @@
-import { type Networks, type NetworkDefinition } from '../lishnet/networks.ts';
+import { type Networks } from '../lishnet/networks.ts';
 import { type DataServer } from '../lish/data-server.ts';
-import { type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type PeerConnectionInfo } from '@shared';
+import { type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type PeerConnectionInfo, type LISHNetworkConfig } from '@shared';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
-type NetworkInfoEntry = NetworkDefinition & {
+type NetworkInfoEntry = LISHNetworkConfig & {
 	peerID?: string;
 	addresses?: string[];
 	connected?: number;
@@ -12,18 +12,11 @@ type NetworkInfoEntry = NetworkDefinition & {
 };
 
 export function initNetworksHandlers(networks: Networks, dataServer: DataServer) {
-	function list(): NetworkDefinition[] {
-		return networks.getAll();
-	}
-	function get(p: { networkID: string }): NetworkDefinition | null {
-		assert(p, ['networkID']);
-		return networks.get(p.networkID);
-	}
-	async function importFromFile(p: { path: string; enabled?: boolean }): Promise<NetworkDefinition> {
+	async function importFromFile(p: { path: string; enabled?: boolean }): Promise<LISHNetworkConfig> {
 		assert(p, ['path']);
 		return networks.importFromFile(p.path, p.enabled ?? false);
 	}
-	async function importFromJson(p: { json: string; enabled?: boolean }): Promise<NetworkDefinition> {
+	async function importFromJson(p: { json: string; enabled?: boolean }): Promise<LISHNetworkConfig> {
 		assert(p, ['json']);
 		return networks.importFromJson(p.json, p.enabled ?? false);
 	}
@@ -79,23 +72,16 @@ export function initNetworksHandlers(networks: Networks, dataServer: DataServer)
 	}
 
 	function infoAll(): NetworkInfoEntry[] {
-		const definitions = networks.getAll();
+		const configs = networks.getAll();
 		const network = networks.getNetwork();
 		const nodeInfo = network.isRunning() ? network.getNodeInfo() : null;
 		const result: NetworkInfoEntry[] = [];
-		for (const def of definitions) {
-			const info: NetworkInfoEntry = {
-				id: def.id,
-				version: def.version,
-				name: def.name,
-				description: def.description,
-				bootstrap_peers: def.bootstrap_peers,
-				enabled: def.enabled,
-			};
-			if (def.enabled && nodeInfo) {
+		for (const config of configs) {
+			const info: NetworkInfoEntry = { ...config };
+			if (config.enabled && nodeInfo) {
 				info.peerID = nodeInfo.peerID;
 				info.addresses = nodeInfo.addresses;
-				const topicPeers = networks.getTopicPeers(def.id);
+				const topicPeers = networks.getTopicPeers(config.networkID);
 				info.connected = topicPeers.length;
 				info.connectedPeers = topicPeers;
 			}
@@ -104,5 +90,5 @@ export function initNetworksHandlers(networks: Networks, dataServer: DataServer)
 		return result;
 	}
 
-	return { list, get, importFromFile, importFromJson, setEnabled, delete: del, connect, findPeer, getAddresses, getPeers, getNodeInfo, getStatus, infoAll };
+	return { importFromFile, importFromJson, setEnabled, delete: del, connect, findPeer, getAddresses, getPeers, getNodeInfo, getStatus, infoAll };
 }

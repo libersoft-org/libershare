@@ -2,24 +2,8 @@ import { Network } from '../protocol/network.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type ILISHNetwork, type NetworkDefinition, type LISHNetworkConfig } from '@shared';
+import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
 import { LISHNetworkStorage } from './lishNetworkStorage.ts';
-
-export { type NetworkDefinition };
-
-/**
- * Convert LISHNetworkConfig to NetworkDefinition (used by API layer).
- */
-function toNetworkDef(config: LISHNetworkConfig): NetworkDefinition {
-	return {
-		id: config.networkID,
-		version: config.version,
-		name: config.name,
-		description: config.description || null,
-		bootstrap_peers: config.bootstrapPeers,
-		enabled: config.enabled,
-	};
-}
 
 /**
  * Manages lishnets (logical network groups) on top of a single shared Network (libp2p) node.
@@ -75,10 +59,10 @@ export class Networks {
 		await this.network.start(bootstrapPeers);
 
 		// Subscribe to topics for all enabled lishnets
-		for (const def of enabled) {
-			this.network.subscribeTopic(def.id);
-			this.joinedNetworks.add(def.id);
-			console.log(`✓ Joined lishnet: ${def.name} (${def.id})`);
+		for (const net of enabled) {
+			this.network.subscribeTopic(net.networkID);
+			this.joinedNetworks.add(net.networkID);
+			console.log(`✓ Joined lishnet: ${net.name} (${net.networkID})`);
 		}
 	}
 
@@ -119,12 +103,12 @@ export class Networks {
 		this.network.subscribeTopic(id);
 		this.joinedNetworks.add(id);
 
-		const def = this.get(id);
-		if (def && def.bootstrap_peers.length > 0) {
-			await this.network.addBootstrapPeers(def.bootstrap_peers);
+		const net = this.get(id);
+		if (net && net.bootstrapPeers.length > 0) {
+			await this.network.addBootstrapPeers(net.bootstrapPeers);
 		}
 
-		console.log(`✓ Joined lishnet: ${def?.name ?? id}`);
+		console.log(`✓ Joined lishnet: ${net?.name ?? id}`);
 	}
 
 	/**
@@ -136,8 +120,8 @@ export class Networks {
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
 
-		const def = this.get(id);
-		console.log(`✓ Left lishnet: ${def?.name ?? id}`);
+		const net = this.get(id);
+		console.log(`✓ Left lishnet: ${net?.name ?? id}`);
 	}
 
 	/**
@@ -187,17 +171,17 @@ export class Networks {
 	}
 
 	/**
-	 * Collect and deduplicate bootstrap peers from a set of network definitions.
+	 * Collect and deduplicate bootstrap peers from a set of network configs.
 	 */
-	private collectBootstrapPeers(defs: NetworkDefinition[]): string[] {
+	private collectBootstrapPeers(configs: LISHNetworkConfig[]): string[] {
 		const allPeers: string[] = [];
-		for (const def of defs) {
-			allPeers.push(...def.bootstrap_peers);
+		for (const config of configs) {
+			allPeers.push(...config.bootstrapPeers);
 		}
 		return [...new Set(allPeers)];
 	}
 
-	async importFromLishnet(data: ILISHNetwork, enabled: boolean = false): Promise<NetworkDefinition> {
+	async importFromLishnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
 		const config: LISHNetworkConfig = {
 			version: data.version,
 			networkID: data.networkID,
@@ -210,37 +194,40 @@ export class Networks {
 		// Upsert: update if exists, add if not
 		if (this.storage.exists(config.networkID)) await this.storage.update(config);
 		else await this.storage.add(config);
-		return toNetworkDef(config);
+		return config;
 	}
 
-	async importFromJson(jsonString: string, enabled: boolean = false): Promise<NetworkDefinition> {
+	async importFromJson(jsonString: string, enabled: boolean = false): Promise<LISHNetworkConfig> {
 		const data: ILISHNetwork = Utils.safeJsonParse<ILISHNetwork>(jsonString, 'network JSON import');
-		const def = await this.importFromLishnet(data, enabled);
-		if (enabled) await this.joinNetwork(def.id);
-		return def;
+		const config = await this.importFromLishnet(data, enabled);
+		if (enabled) await this.joinNetwork(config.networkID);
+		return config;
 	}
 
-	async importFromFile(filePath: string, enabled: boolean = false): Promise<NetworkDefinition> {
+	async importFromFile(filePath: string, enabled: boolean = false): Promise<LISHNetworkConfig> {
 		const file = Bun.file(filePath);
 		const content = await file.text();
 		return await this.importFromJson(content, enabled);
 	}
 
-	get(id: string): NetworkDefinition | null {
-		const config = this.storage.get(id);
-		if (!config) return null;
-		return toNetworkDef(config);
+	get(id: string): LISHNetworkConfig | undefined {
+		return this.storage.get(id);
 	}
 
-	getAll(): NetworkDefinition[] {
-		return this.storage.getAll().map(toNetworkDef);
+	getAll(): LISHNetworkConfig[] {
+		return this.storage.getAll();
 	}
 
-	getEnabled(): NetworkDefinition[] {
-		return this.storage
-			.getAll()
-			.filter(c => c.enabled)
-			.map(toNetworkDef);
+	getEnabled(): LISHNetworkConfig[] {
+		return this.storage.getAll().filter(c => c.enabled);
+	}
+
+	async add(network: LISHNetworkConfig): Promise<boolean> {
+		return this.storage.add(network);
+	}
+
+	async update(network: LISHNetworkConfig): Promise<boolean> {
+		return this.storage.update(network);
 	}
 
 	async delete(id: string): Promise<boolean> {
@@ -250,5 +237,17 @@ export class Networks {
 
 	exists(id: string): boolean {
 		return this.storage.exists(id);
+	}
+
+	async addIfNotExists(network: LISHNetworkDefinition): Promise<boolean> {
+		return this.storage.addIfNotExists(network);
+	}
+
+	async importNetworks(networks: LISHNetworkDefinition[]): Promise<number> {
+		return this.storage.importNetworks(networks);
+	}
+
+	async setAll(networks: LISHNetworkConfig[]): Promise<void> {
+		return this.storage.setAll(networks);
 	}
 }

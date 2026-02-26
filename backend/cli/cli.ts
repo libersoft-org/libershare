@@ -8,12 +8,12 @@ const DEFAULT_URL = 'ws://localhost:1158';
 
 const HELP = `
 Commands:
-  networks.list                     List all networks
-  networks.get <id>                 Get network details
+  lishNetworks.list                  List all networks
+  lishNetworks.get <id>              Get network details
   networks.import <path>            Import network from file
   networks.enable <id>              Enable a network
   networks.disable <id>             Disable a network
-  networks.delete <id>              Delete a network
+  lishNetworks.delete <id>           Delete a network
   networks.connect <multiaddr>      Connect to a peer
   networks.findPeer <peerID>        Find peer by ID
   networks.infoAll                  Show all networks with config and runtime info
@@ -86,13 +86,13 @@ async function main(): Promise<void> {
 	const api = new Api(client);
 
 	async function getFirstNetworkID(): Promise<string | null> {
-		const networks = await api.networks.list();
+		const networks = await api.lishNetworks.getAll();
 		const enabled = networks.filter(n => n.enabled);
 		if (enabled.length === 0) {
 			console.log('No enabled networks');
 			return null;
 		}
-		return enabled[0].id;
+		return enabled[0].networkID;
 	}
 
 	const rl = readline.createInterface({
@@ -111,26 +111,26 @@ async function main(): Promise<void> {
 		try {
 			switch (command) {
 				// ============ Networks ============
-				case 'networks.list': {
-					const networks = await api.networks.list();
+				case 'lishNetworks.list': {
+					const networks = await api.lishNetworks.getAll();
 					console.log('Networks:');
 					if (networks.length === 0) {
 						console.log('  (none)');
 					} else {
 						networks.forEach(n => {
 							const status = n.enabled ? '✓' : '✗';
-							console.log(`  ${status} ${n.name} (${n.id})`);
+							console.log(`  ${status} ${n.name} (${n.networkID})`);
 						});
 					}
 					break;
 				}
 
-				case 'networks.get': {
+				case 'lishNetworks.get': {
 					if (!arg) {
-						console.log('Usage: networks.get <id>');
+						console.log('Usage: lishNetworks.get <id>');
 						break;
 					}
-					const network = await api.networks.get(arg);
+					const network = await api.lishNetworks.get(arg);
 					console.log(JSON.stringify(network, null, 2));
 					break;
 				}
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
 					}
 					console.log(`Importing network from: ${arg}`);
 					const network = await api.networks.importFromFile(arg, true);
-					console.log(`✓ Network imported: ${network.name} (${network.id})`);
+					console.log(`✓ Network imported: ${network.name} (${network.networkID})`);
 					break;
 				}
 
@@ -166,12 +166,12 @@ async function main(): Promise<void> {
 					break;
 				}
 
-				case 'networks.delete': {
+				case 'lishNetworks.delete': {
 					if (!arg) {
-						console.log('Usage: networks.delete <id>');
+						console.log('Usage: lishNetworks.delete <id>');
 						break;
 					}
-					await api.networks.delete(arg);
+					await api.lishNetworks.delete(arg);
 					console.log(`✓ Network deleted`);
 					break;
 				}
@@ -208,10 +208,10 @@ async function main(): Promise<void> {
 					}
 					for (const info of infos) {
 						const status = info.enabled ? '✓' : '✗';
-						console.log(`${status} ${info.name} (${info.id})`);
+						console.log(`${status} ${info.name} (${info.networkID})`);
 						console.log(`    version: ${info.version}`);
 						if (info.description) console.log(`    description: ${info.description}`);
-						console.log(`    bootstrap_peers: ${info.bootstrap_peers.length}`);
+						console.log(`    bootstrapPeers: ${info.bootstrapPeers.length}`);
 						if (info.enabled && info.peerID) {
 							console.log(`    peerID: ${info.peerID}`);
 							console.log(`    addresses: ${info.addresses?.length || 0}`);

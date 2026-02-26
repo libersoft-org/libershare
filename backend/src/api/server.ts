@@ -2,7 +2,6 @@ import { type ServerWebSocket } from 'bun';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/networks.ts';
 import { type Settings } from '../settings.ts';
-import { type LISHNetworkStorage } from '../lishnet/lishNetworkStorage.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLishNetworksHandlers } from './lishNetworks.ts';
 import { initNetworksHandlers } from './networks.ts';
@@ -33,7 +32,6 @@ export class ApiServer {
 	private clients: Set<ClientSocket> = new Set();
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
 	private readonly settings: Settings;
-	private readonly lishNetworks: LISHNetworkStorage;
 	private readonly host: string;
 	private readonly port: number;
 	private readonly secure: boolean;
@@ -44,12 +42,10 @@ export class ApiServer {
 		private readonly dataDir: string,
 		private readonly dataServer: DataServer,
 		private readonly networks: Networks,
-		lishNetworks: LISHNetworkStorage,
 		settings: Settings,
 		options: ApiServerOptions
 	) {
 		this.settings = settings;
-		this.lishNetworks = lishNetworks;
 		this.host = options.host;
 		this.port = options.port;
 		this.secure = options.secure;
@@ -61,7 +57,7 @@ export class ApiServer {
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _core = initCoreHandlers();
 		const _settings = initSettingsHandlers(this.settings);
-		const _lishNetworks = initLishNetworksHandlers(this.lishNetworks);
+		const _lishNetworks = initLishNetworksHandlers(this.networks);
 		const _networks = initNetworksHandlers(this.networks, this.dataServer);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
@@ -95,12 +91,9 @@ export class ApiServer {
 			'lishNetworks.setAll': _lishNetworks.setAll,
 
 			// Networks
-			'networks.list': _networks.list,
-			'networks.get': _networks.get,
 			'networks.importFromFile': _networks.importFromFile,
 			'networks.importFromJson': _networks.importFromJson,
 			'networks.setEnabled': _networks.setEnabled,
-			'networks.delete': _networks.delete,
 			'networks.connect': _networks.connect,
 			'networks.findPeer': _networks.findPeer,
 			'networks.getAddresses': _networks.getAddresses,
@@ -228,9 +221,9 @@ export class ApiServer {
 
 	private getCurrentPeerCounts(): { networkID: string; count: number }[] {
 		const enabled = this.networks.getEnabled();
-		return enabled.map(def => ({
-			networkID: def.id,
-			count: this.networks.getTopicPeers(def.id).length,
+		return enabled.map(net => ({
+			networkID: net.networkID,
+			count: this.networks.getTopicPeers(net.networkID).length,
 		}));
 	}
 

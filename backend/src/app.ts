@@ -59,7 +59,7 @@ const lishNetworkStorage = new LISHNetworkStorage(dataDir);
 const networks = new Networks(lishNetworkStorage, dataDir, dataServer, settings, enablePink);
 networks.init();
 
-const apiServer = new ApiServer(dataDir, dataServer, networks, lishNetworkStorage, settings, {
+const apiServer = new ApiServer(dataDir, dataServer, networks, settings, {
 	host: apiHost,
 	port: apiPort,
 	secure: apiSecure,

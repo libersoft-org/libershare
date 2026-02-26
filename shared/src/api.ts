@@ -1,4 +1,4 @@
-import { type NetworkDefinition, type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -64,28 +64,16 @@ export class Api {
 class NetworksApi {
 	constructor(private client: IWsClient) {}
 
-	list(): Promise<NetworkDefinition[]> {
-		return this.client.call<NetworkDefinition[]>('networks.list');
+	importFromFile(path: string, enabled = false): Promise<LISHNetworkConfig> {
+		return this.client.call<LISHNetworkConfig>('networks.importFromFile', { path, enabled });
 	}
 
-	get(networkID: string): Promise<NetworkDefinition> {
-		return this.client.call<NetworkDefinition>('networks.get', { networkID });
-	}
-
-	importFromFile(path: string, enabled = false): Promise<NetworkDefinition> {
-		return this.client.call<NetworkDefinition>('networks.importFromFile', { path, enabled });
-	}
-
-	importFromJson(json: string, enabled = false): Promise<NetworkDefinition> {
-		return this.client.call<NetworkDefinition>('networks.importFromJson', { json, enabled });
+	importFromJson(json: string, enabled = false): Promise<LISHNetworkConfig> {
+		return this.client.call<LISHNetworkConfig>('networks.importFromJson', { json, enabled });
 	}
 
 	setEnabled(networkID: string, enabled: boolean): Promise<SuccessResponse> {
 		return this.client.call<SuccessResponse>('networks.setEnabled', { networkID, enabled });
-	}
-
-	delete(networkID: string): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('networks.delete', { networkID });
 	}
 
 	connect(networkID: string, multiaddr: string): Promise<SuccessResponse> {
