@@ -69,12 +69,12 @@ export class ApiServer {
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
 
 		this.handlers = {
+			// Core
+			fetchUrl: _core.fetchUrl,
+
 			// Events
 			'events.subscribe': _events.subscribe,
 			'events.unsubscribe': _events.unsubscribe,
-
-			// Core
-			fetchUrl: _core.fetchUrl,
 
 			// Settings
 			'settings.get': _settings.get,
