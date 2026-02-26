@@ -27,27 +27,27 @@
 	let active = $derived($activeArea === areaID);
 	// Browse state
 	let browsingInputPath = $state(false);
-	let browsingOutputPath = $state(false);
+	let browsingLishFile = $state(false);
 	let browseFolder = $state('');
 	let browseFile = $state<string | undefined>(undefined);
-	let outputFileName = $state(''); // File name input in output browse dialog
+	let lishFileName = $state(''); // File name input in lishFile browse dialog
 	// Form state
-	let inputPath = $state($storagePath);
+	let dataPath = $state($storagePath);
 	let saveToFile = $state(true);
 	let addToSharing = $state($autoStartSharing);
 	let showAdvanced = $state(false);
 	let name = $state('');
-	// Output path - editable state, initialized from settings
-	let outputPath = $state($storageLishPath + 'output.lish');
-	let outputPathManuallyEdited = $state(false); // Track if user manually edited the path
+	// LISH file path - editable state, initialized from settings
+	let lishFile = $state(joinPath($storageLishPath, 'output.lish'));
+	let lishFileManuallyEdited = $state(false); // Track if user manually edited the path
 
 	function handleNameChange(newName: string) {
 		name = newName;
-		if (!outputPathManuallyEdited && newName) {
+		if (!lishFileManuallyEdited && newName) {
 			const sanitized = sanitizeFilename(newName);
 			if (sanitized) {
-				const { folder } = splitPath(outputPath, $storageLishPath);
-				outputPath = joinPath(folder, sanitized + '.lish');
+				const { folder } = splitPath(lishFile || $storageLishPath, $storageLishPath);
+				lishFile = joinPath(folder, sanitized + '.lish');
 			}
 		}
 	}
@@ -63,21 +63,21 @@
 	let submitted = $state(false);
 	// Input refs
 	let inputPathInput: Input | undefined = $state();
-	let outputPathInput: Input | undefined = $state();
+	let lishFileInput: Input | undefined = $state();
 	let nameInput: Input | undefined = $state();
 	let descriptionInput: Input | undefined = $state();
 	let chunkSizeInput: Input | undefined = $state();
 	let threadsInput: Input | undefined = $state();
 	// Validation using lish.ts
-	let validationError = $derived(validateLishCreateForm({ inputPath, saveToFile, addToSharing, chunkSize, threads }));
+	let validationError = $derived(validateLishCreateForm({ dataPath, lishFile: saveToFile ? (lishFile || undefined) : undefined, addToSharing, chunkSize, threads }));
 	let errorMessage = $derived(validationError ? getLishCreateErrorMessage(validationError, $t) : '');
 	let showError = $derived(submitted && errorMessage);
-	// Form fields: name(0), description(1), input(2), saveToFile(3), output(4), addToSharing(5), advancedToggle(6), chunkSize(7), algo(8), threads(9), create(10), back(11)
+	// Form fields: name(0), description(1), dataPath(2), saveToFile(3), lishFile(4), addToSharing(5), advancedToggle(6), chunkSize(7), algo(8), threads(9), create(10), back(11)
 	const FIELD_NAME = 0;
 	const FIELD_DESCRIPTION = 1;
 	const FIELD_INPUT = 2;
 	const FIELD_SAVE_TO_FILE = 3;
-	const FIELD_OUTPUT = 4;
+	const FIELD_LISH_FILE = 4;
 	const FIELD_ADD_TO_SHARING = 5;
 	const FIELD_ADVANCED_TOGGLE = 6;
 	const FIELD_CHUNK_SIZE = 7;
@@ -91,7 +91,7 @@
 
 	function getMaxColumn(fieldIndex: number): number {
 		if (fieldIndex === FIELD_INPUT) return 1; // input + browse
-		if (fieldIndex === FIELD_OUTPUT && saveToFile) return 1; // output + browse
+		if (fieldIndex === FIELD_LISH_FILE) return 1; // lishFile + browse
 		if (fieldIndex === FIELD_ALGO) return HASH_ALGORITHMS.length - 1;
 		return 0;
 	}
@@ -101,8 +101,8 @@
 			case FIELD_INPUT:
 				if (selectedColumn === 0) inputPathInput?.focus();
 				break;
-			case FIELD_OUTPUT:
-				if (selectedColumn === 0) outputPathInput?.focus();
+			case FIELD_LISH_FILE:
+				if (selectedColumn === 0) lishFileInput?.focus();
 				break;
 			case FIELD_NAME:
 				nameInput?.focus();
@@ -124,21 +124,20 @@
 		if (!errorMessage) {
 			// TODO: Call backend API to create LISH
 			console.log('Creating LISH:', {
-				inputPath,
-				saveToFile,
-				outputPath: saveToFile ? outputPath : undefined,
-				addToSharing,
 				name: name || undefined,
 				description: description || undefined,
+				dataPath,
+				lishFile: saveToFile ? lishFile || undefined : undefined,
+				addToSharing,
 				chunkSize: parseChunkSize(chunkSize),
 				algorithm,
-				threads: parseInt(threads) || 1,
+				threads: parseInt(threads) || 0,
 			});
 		}
 	}
 
 	function openInputPathBrowse() {
-		const { folder, fileName } = splitPath(inputPath.trim(), $storagePath);
+		const { folder, fileName } = splitPath(dataPath.trim(), $storagePath);
 		browseFolder = folder;
 		browseFile = fileName;
 		browsingInputPath = true;
@@ -146,32 +145,32 @@
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t('downloads.lishCreate.inputPath'));
+		pushBreadcrumb($t('downloads.lishCreate.dataPath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
 	function handleInputPathSelect(path: string) {
-		inputPath = path;
+		dataPath = path;
 		handleBrowseBack();
 	}
 
 	function openOutputPathBrowse() {
-		const { folder, fileName } = splitPath(outputPath.trim(), $storageLishPath);
+		const { folder, fileName } = splitPath(lishFile.trim() || $storageLishPath, $storageLishPath);
 		browseFolder = folder;
-		outputFileName = fileName || '';
-		browsingOutputPath = true;
+		lishFileName = fileName || '';
+		browsingLishFile = true;
 		if (unregisterArea) {
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t('downloads.lishCreate.outputPath'));
+		pushBreadcrumb($t('downloads.lishCreate.lishFile'));
 		removeBackHandler = pushBackHandler(handleOutputBrowseBack);
 	}
 
 	function handleOutputPathSelect(folderPath: string) {
-		const fileName = outputFileName.trim() || 'output.lish';
-		outputPath = joinPath(folderPath, fileName);
-		outputPathManuallyEdited = true;
+		const fileName = lishFileName.trim() || 'output.lish';
+		lishFile = joinPath(folderPath, fileName);
+		lishFileManuallyEdited = true;
 		handleOutputBrowseBack();
 	}
 
@@ -181,11 +180,11 @@
 			removeBackHandler = null;
 		}
 		popBreadcrumb();
-		browsingOutputPath = false;
+		browsingLishFile = false;
 		await tick();
 		unregisterArea = registerAreaHandler();
 		// Restore focus to the browse button
-		selectedIndex = FIELD_OUTPUT;
+		selectedIndex = FIELD_LISH_FILE;
 		selectedColumn = 1;
 		activateArea(areaID);
 		await tick();
@@ -226,13 +225,11 @@
 			}
 			if (selectedIndex > 0) {
 				selectedIndex--;
+				// Skip disabled lish file field when saveToFile is off
+				if (!saveToFile && selectedIndex === FIELD_LISH_FILE) selectedIndex--;
 				// Skip advanced fields when collapsed
 				if (!showAdvanced && selectedIndex >= FIELD_CHUNK_SIZE && selectedIndex <= FIELD_THREADS) {
 					selectedIndex = FIELD_ADVANCED_TOGGLE;
-				}
-				// Skip disabled output field
-				if (selectedIndex === FIELD_OUTPUT && !saveToFile) {
-					selectedIndex--;
 				}
 				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
 				scrollToSelected();
@@ -246,10 +243,8 @@
 			}
 			if (selectedIndex < FIELD_CREATE) {
 				selectedIndex++;
-				// Skip disabled output field
-				if (selectedIndex === FIELD_OUTPUT && !saveToFile) {
-					selectedIndex++;
-				}
+				// Skip disabled lish file field when saveToFile is off
+				if (!saveToFile && selectedIndex === FIELD_LISH_FILE) selectedIndex++;
 				// Skip advanced fields when collapsed
 				if (!showAdvanced && selectedIndex >= FIELD_CHUNK_SIZE && selectedIndex <= FIELD_THREADS) selectedIndex = FIELD_CREATE;
 				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
@@ -283,28 +278,28 @@
 		},
 		confirmDown: () => {},
 		confirmUp: () => {
-			if (selectedIndex === FIELD_INPUT) {
+			if (selectedIndex === FIELD_NAME) {
+				focusInput(FIELD_NAME);
+			} else if (selectedIndex === FIELD_DESCRIPTION) {
+				focusInput(FIELD_DESCRIPTION);
+			} else if (selectedIndex === FIELD_INPUT) {
 				if (selectedColumn === 0) focusInput(FIELD_INPUT);
 				else openInputPathBrowse();
 			} else if (selectedIndex === FIELD_SAVE_TO_FILE) {
 				saveToFile = !saveToFile;
-			} else if (selectedIndex === FIELD_OUTPUT) {
-				if (selectedColumn === 0) focusInput(FIELD_OUTPUT);
+			} else if (selectedIndex === FIELD_LISH_FILE) {
+				if (selectedColumn === 0) focusInput(FIELD_LISH_FILE);
 				else openOutputPathBrowse();
 			} else if (selectedIndex === FIELD_ADD_TO_SHARING) {
 				addToSharing = !addToSharing;
-			} else if (selectedIndex === FIELD_NAME) {
-				focusInput(FIELD_NAME);
-			} else if (selectedIndex === FIELD_DESCRIPTION) {
-				focusInput(FIELD_DESCRIPTION);
+			} else if (selectedIndex === FIELD_ADVANCED_TOGGLE) {
+				showAdvanced = !showAdvanced;
 			} else if (selectedIndex === FIELD_CHUNK_SIZE) {
 				focusInput(FIELD_CHUNK_SIZE);
 			} else if (selectedIndex === FIELD_ALGO) {
 				algorithm = HASH_ALGORITHMS[selectedColumn];
 			} else if (selectedIndex === FIELD_THREADS) {
 				focusInput(FIELD_THREADS);
-			} else if (selectedIndex === FIELD_ADVANCED_TOGGLE) {
-				showAdvanced = !showAdvanced;
 			} else if (selectedIndex === FIELD_CREATE) {
 				handleCreate();
 			} else if (selectedIndex === FIELD_BACK) {
@@ -368,8 +363,8 @@
 
 {#if browsingInputPath}
 	<FileBrowser {areaID} {position} initialPath={browseFolder} initialFile={browseFile} showPath selectFolderButton selectFileButton onSelect={handleInputPathSelect} onBack={handleBrowseBack} />
-{:else if browsingOutputPath}
-	<FileBrowser {areaID} {position} initialPath={browseFolder} showPath foldersOnly selectFolderButton saveFileName={outputFileName} onSaveFileNameChange={v => (outputFileName = v)} onSelect={handleOutputPathSelect} onBack={handleOutputBrowseBack} />
+{:else if browsingLishFile}
+	<FileBrowser {areaID} {position} initialPath={browseFolder} showPath foldersOnly selectFolderButton saveFileName={lishFileName} onSaveFileNameChange={v => (lishFileName = v)} onSelect={handleOutputPathSelect} onBack={handleOutputBrowseBack} />
 {:else}
 	<div class="create">
 		<div class="container">
@@ -381,19 +376,19 @@
 			<div bind:this={rowElements[FIELD_DESCRIPTION]}>
 				<Input bind:this={descriptionInput} bind:value={description} label={$t('downloads.lishCreate.description')} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
 			</div>
-			<!-- Input Path (required) -->
+			<!-- Data Path (required) -->
 			<div class="row" bind:this={rowElements[FIELD_INPUT]}>
-				<Input bind:this={inputPathInput} bind:value={inputPath} label={$t('downloads.lishCreate.inputPath')} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
+				<Input bind:this={inputPathInput} bind:value={dataPath} label={$t('downloads.lishCreate.dataPath')} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={openInputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<!-- Save to File Switch -->
 			<div bind:this={rowElements[FIELD_SAVE_TO_FILE]}>
 				<SwitchRow label={$t('downloads.lishCreate.saveToFile') + ':'} checked={saveToFile} selected={active && selectedIndex === FIELD_SAVE_TO_FILE} onConfirm={() => (saveToFile = !saveToFile)} />
 			</div>
-			<!-- Output Path (optional) -->
-			<div class="row" bind:this={rowElements[FIELD_OUTPUT]}>
-				<Input bind:this={outputPathInput} bind:value={outputPath} label={$t('downloads.lishCreate.outputPath')} selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 0} flex disabled={!saveToFile} onchange={() => (outputPathManuallyEdited = true)} />
-				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_OUTPUT && selectedColumn === 1} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
+			<!-- LISH File Path (optional, enabled when saveToFile is on) -->
+			<div class="row" bind:this={rowElements[FIELD_LISH_FILE]}>
+				<Input bind:this={lishFileInput} bind:value={lishFile} label={$t('downloads.lishCreate.lishFile')} selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 0} flex disabled={!saveToFile} onchange={() => (lishFileManuallyEdited = true)} />
+				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 1} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
 			</div>
 			<!-- Add to Sharing Switch -->
 			<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>

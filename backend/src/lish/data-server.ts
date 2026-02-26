@@ -146,12 +146,12 @@ export class DataServer {
 
 	// Create & export
 
-	public async createLISH(inputPath: string, saveToFile: boolean = false, addToSharing: boolean = true, name: string | undefined, description: string | undefined, outputFilePath: string | undefined, algo: string = DEFAULT_ALGO, chunkSize: number = DEFAULT_CHUNK_SIZE, threads: number = 0, onProgress?: (info: { type: string; path?: string; current?: number; total?: number }) => void): Promise<IStoredLish> {
-		console.log(`Importing dataset from: ${inputPath}, saveToFile=${saveToFile}, addToSharing=${addToSharing}, name=${name}, description=${description}, outputFilePath=${outputFilePath}`);
-		const absolutePath = Utils.expandHome(inputPath);
-		outputFilePath = outputFilePath ? Utils.expandHome(outputFilePath) : undefined;
+	public async createLISH(dataPath: string, lishFile: string | undefined, addToSharing: boolean = false, name: string | undefined, description: string | undefined, algo: string = DEFAULT_ALGO, chunkSize: number = DEFAULT_CHUNK_SIZE, threads: number = 0, onProgress?: (info: { type: string; path?: string; current?: number; total?: number }) => void): Promise<IStoredLish> {
+		console.log(`Importing dataset from: ${dataPath}, lishFile=${lishFile}, addToSharing=${addToSharing}, name=${name}, description=${description}`);
+		const absolutePath = Utils.expandHome(dataPath);
+		const absoluteLishFile = lishFile ? Utils.expandHome(lishFile) : undefined;
 		const lish: IStoredLish = await createLISH(absolutePath, name, chunkSize, algo as any, threads, description, onProgress);
-		if (saveToFile) await this.exportLishToFile(lish, outputFilePath);
+		if (absoluteLishFile) await this.exportLishToFile(lish, absoluteLishFile);
 		if (addToSharing) {
 			// Set directory and mark all chunks as downloaded
 			lish.directory = absolutePath;

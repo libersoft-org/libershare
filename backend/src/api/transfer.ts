@@ -10,7 +10,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	const download = async (p: { networkID: string; lishPath: string }, client: any) => {
 		assert(p, ['networkID', 'lishPath']);
 		/*
-		todo:
+		TODO:
 		// replace this with setDownloadEnabled(lishID, networkID, enabled)
 		//  can a dataset be associated with multiple networks, for download and for upload?
 		//  split state of Downloader runtime object from the dataset state (initializing = creating directory structure, ...)

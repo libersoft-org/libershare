@@ -3,16 +3,14 @@ import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 interface CreateLishParams {
-	inputPath: string;
-	saveToFile: boolean;
-	addToSharing: boolean;
-	name: string;
-	description: string;
-	outputFilePath?: string;
-	algorithm: string;
-	chunkSize: number;
-	threads: number;
-	path?: string;
+	name?: string;
+	description?: string;
+	dataPath: string;
+	lishFile?: string;
+	addToSharing?: boolean;
+	chunkSize?: number;
+	algorithm?: string;
+	threads?: number;
 }
 
 export function initLishsHandlers(dataServer: DataServer, emit: EmitFn) {
@@ -23,21 +21,24 @@ export function initLishsHandlers(dataServer: DataServer, emit: EmitFn) {
 	};
 
 	const create = async (p: CreateLishParams, client: any) => {
-		assert(p, ['inputPath', 'name', 'algorithm', 'chunkSize', 'threads']);
+		assert(p, ['dataPath']);
+		const addToSharing = p.addToSharing ?? false;
+		const algorithm = p.algorithm ?? 'sha256';
+		const chunkSize = p.chunkSize ?? 1024 * 1024; // 1MB
+		const threads = p.threads ?? 0; // 0 = all CPU threads
 		const lish = await dataServer.createLISH(
-			p.inputPath,
-			p.saveToFile,
-			p.addToSharing,
+			p.dataPath,
+			p.lishFile,
+			addToSharing,
 			p.name,
 			p.description,
-			p.outputFilePath,
-			p.algorithm,
-			p.chunkSize,
-			p.threads,
-			// todo: check that path is not already in datasets.
-			// todo: check that path exists
+			algorithm,
+			chunkSize,
+			threads,
+			// TODO: check that dataPath is not already in datasets.
+			// TODO: check that dataPath exists
 			info => {
-				emit(client, 'lishs.create:progress', { path: p.path, ...info });
+				emit(client, 'lishs.create:progress', info);
 			}
 		);
 		return { lishID: lish.id };

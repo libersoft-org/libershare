@@ -56,28 +56,6 @@ export class Api {
 		return this.client.call<boolean>('unsubscribe', { events });
 	}
 
-	// Top-level operations
-
-	/** @deprecated Use api.lishs.create() */
-	createLISH(inputPath: string, saveToFile: boolean = true, addToSharing: boolean = true, name?: string, description?: string, outputFilePath?: string, algorithm?: string, chunkSize?: number, threads?: number): Promise<CreateLishResponse> {
-		return this.client.call<CreateLishResponse>('lishs.create', {
-			inputPath,
-			saveToFile,
-			addToSharing,
-			name,
-			description,
-			outputFilePath,
-			algorithm,
-			chunkSize,
-			threads,
-		});
-	}
-
-	/** @deprecated Use api.transfer.download() */
-	download(networkID: string, lishPath: string): Promise<DownloadResponse> {
-		return this.client.call<DownloadResponse>('transfer.download', { networkID, lishPath });
-	}
-
 	fetchUrl(url: string): Promise<FetchUrlResponse> {
 		return this.client.call<FetchUrlResponse>('fetchUrl', { url });
 	}
@@ -276,16 +254,15 @@ class LishsApi {
 		return this.client.call<any>('lishs.get', { lishID });
 	}
 
-	create(inputPath: string, saveToFile: boolean = true, addToSharing: boolean = true, name?: string, description?: string, outputFilePath?: string, algorithm?: string, chunkSize?: number, threads?: number): Promise<CreateLishResponse> {
+	create(dataPath: string, lishFile?: string, addToSharing?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number): Promise<CreateLishResponse> {
 		return this.client.call<CreateLishResponse>('lishs.create', {
-			inputPath,
-			saveToFile,
-			addToSharing,
 			name,
 			description,
-			outputFilePath,
-			algorithm,
+			dataPath,
+			lishFile,
+			addToSharing,
 			chunkSize,
+			algorithm,
 			threads,
 		});
 	}
