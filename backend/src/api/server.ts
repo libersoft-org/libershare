@@ -11,6 +11,7 @@ import { initFsHandlers } from './fs.ts';
 import { initLishsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initCoreHandlers } from './core.ts';
+import { initEventsHandlers } from './events.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
 }
@@ -57,7 +58,8 @@ export class ApiServer {
 
 		const emitTo = (client: ClientSocket, event: string, data: any) => this.emit(client, event, data);
 
-		const _core = initCoreHandlers(() => this.getCurrentPeerCounts(), emitTo);
+		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
+		const _core = initCoreHandlers();
 		const _settings = initSettingsHandlers(this.settings);
 		const _lishNetworks = initLishNetworksHandlers(this.lishNetworks);
 		const _networks = initNetworksHandlers(this.networks, this.dataServer);
@@ -67,9 +69,11 @@ export class ApiServer {
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
 
 		this.handlers = {
+			// Events
+			'events.subscribe': _events.subscribe,
+			'events.unsubscribe': _events.unsubscribe,
+
 			// Core
-			subscribe: _core.subscribe,
-			unsubscribe: _core.unsubscribe,
 			fetchUrl: _core.fetchUrl,
 
 			// Settings

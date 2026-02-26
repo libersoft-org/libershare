@@ -49,11 +49,11 @@ export class Api {
 	}
 
 	subscribe(...events: string[]): Promise<boolean> {
-		return this.client.call<boolean>('subscribe', { events });
+		return this.client.call<boolean>('events.subscribe', { events });
 	}
 
 	unsubscribe(...events: string[]): Promise<boolean> {
-		return this.client.call<boolean>('unsubscribe', { events });
+		return this.client.call<boolean>('events.unsubscribe', { events });
 	}
 
 	fetchUrl(url: string): Promise<FetchUrlResponse> {
