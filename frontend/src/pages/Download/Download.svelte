@@ -28,7 +28,9 @@
 	let toolbarAreaID = $derived(`${areaID}-toolbar`);
 	let toolbarActive = $derived($activeArea === toolbarAreaID);
 	let selectedToolbarIndex = $state(0);
-	const scrollToSelected = () => scrollToElement(itemElements, selectedIndex);
+	function scrollToSelected() {
+		scrollToElement(itemElements, selectedIndex);
+	}
 
 	function openDetail() {
 		const download = downloads[selectedIndex];

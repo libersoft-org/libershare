@@ -30,7 +30,9 @@
 	let inputRef: Input | undefined = $state();
 	let browsingSaveAs = $state(false);
 	let saveFolder = $state($storageLishnetPath);
-	const getInitialBaseFileName = () => (network ? `${network.name}.lishnet` : 'network.lishnet');
+	function getInitialBaseFileName() {
+		return network ? `${network.name}.lishnet` : 'network.lishnet';
+	}
 	let baseFileName = $state(getInitialBaseFileName());
 	let networkJson = $state(''); // Get full network data as JSON (editable)
 	let minifyJsonState = $state($defaultMinifyJson);

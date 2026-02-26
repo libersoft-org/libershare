@@ -73,7 +73,9 @@
 		return unregister;
 	});
 
-	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
+	function scrollToSelected() {
+		scrollToElement(rowElements, selectedIndex);
+	}
 </script>
 
 <style>

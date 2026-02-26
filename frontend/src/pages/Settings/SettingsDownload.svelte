@@ -219,7 +219,7 @@
 		autoStart = settingsDefaults?.network?.autoStartSharing ?? true;
 	}
 
-	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
+	function scrollToSelected() { scrollToElement(rowElements, selectedIndex); }
 
 	function registerAreaHandler() {
 		return useArea(

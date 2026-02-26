@@ -42,8 +42,12 @@
 	let bootstrapOffset = $derived(isEditing ? 3 : 4);
 	let totalItems = $derived(bootstrapOffset + bootstrapServers.length + 2);
 	// Helper to get field type using extracted function
-	const getItemType = (index: number) => getNetworkFormFieldType(index, isEditing, bootstrapServers.length);
-	const getMaxColumn = (bootstrapIndex: number) => getNetworkFormMaxColumn(bootstrapIndex, bootstrapServers.length);
+	function getItemType(index: number) {
+		return getNetworkFormFieldType(index, isEditing, bootstrapServers.length);
+	}
+	function getMaxColumn(bootstrapIndex: number) {
+		return getNetworkFormMaxColumn(bootstrapIndex, bootstrapServers.length);
+	}
 
 	function handleSave() {
 		submitted = true;
@@ -86,7 +90,9 @@
 		else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined && bootstrapInputs[item.bootstrapIndex]) bootstrapInputs[item.bootstrapIndex].focus();
 	}
 
-	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
+	function scrollToSelected() {
+		scrollToElement(rowElements, selectedIndex);
+	}
 
 	onMount(() => {
 		const unregister = useArea(

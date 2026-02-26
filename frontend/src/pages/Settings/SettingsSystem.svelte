@@ -67,7 +67,9 @@
 		onBack?.();
 	}
 
-	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
+	function scrollToSelected() {
+		scrollToElement(rowElements, selectedIndex);
+	}
 
 	// Get actual field index considering hidden items
 	function getActualIndex(index: number): number {

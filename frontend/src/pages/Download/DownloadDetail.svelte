@@ -44,7 +44,9 @@
 			icon: action.getIcon?.(isPaused) ?? action.icon,
 		}))
 	);
-	const scrollToSelected = () => scrollToElement(itemElements, selectedFileIndex);
+	function scrollToSelected() {
+		scrollToElement(itemElements, selectedFileIndex);
+	}
 
 	function scrollToInfo(): void {
 		if (infoElement) infoElement.scrollIntoView({ behavior: 'smooth', block: 'start' });

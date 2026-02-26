@@ -69,7 +69,7 @@
 	let chunkSizeInput: Input | undefined = $state();
 	let threadsInput: Input | undefined = $state();
 	// Validation using lish.ts
-	let validationError = $derived(validateLishCreateForm({ dataPath, lishFile: saveToFile ? (lishFile || undefined) : undefined, addToSharing, chunkSize, threads }));
+	let validationError = $derived(validateLishCreateForm({ dataPath, lishFile: saveToFile ? lishFile || undefined : undefined, addToSharing, chunkSize, threads }));
 	let errorMessage = $derived(validationError ? getLishCreateErrorMessage(validationError, $t) : '');
 	let showError = $derived(submitted && errorMessage);
 	// Form fields: name(0), description(1), dataPath(2), saveToFile(3), lishFile(4), addToSharing(5), advancedToggle(6), chunkSize(7), algo(8), threads(9), create(10), back(11)
@@ -212,7 +212,9 @@
 		return useArea(areaID, areaHandlers, position);
 	}
 
-	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
+	function scrollToSelected() {
+		scrollToElement(rowElements, selectedIndex);
+	}
 
 	const areaHandlers = {
 		up: () => {

@@ -45,7 +45,9 @@
 		loading = false;
 	}
 
-	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
+	function scrollToSelected() {
+		scrollToElement(rowElements, selectedIndex);
+	}
 
 	onMount(() => {
 		let unregister: (() => void) | undefined;

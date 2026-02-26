@@ -14,7 +14,9 @@
 	});
 
 	// Calculate position for each area in the overlay
-	const getOverlayPosition = (pos: { x: number; y: number }) => getDebugOverlayPosition(pos, bounds);
+	function getOverlayPosition(pos: { x: number; y: number }) {
+		return getDebugOverlayPosition(pos, bounds);
+	}
 </script>
 
 <style>

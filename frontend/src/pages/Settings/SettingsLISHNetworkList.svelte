@@ -316,7 +316,9 @@
 		activateArea(areaID);
 	}
 
-	const scrollToSelected = () => scrollToElement(rowElements, selectedIndex);
+	function scrollToSelected() {
+		scrollToElement(rowElements, selectedIndex);
+	}
 
 	function registerAreaHandler() {
 		return useArea(

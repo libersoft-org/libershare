@@ -94,7 +94,9 @@
 	let unregisterFilter: (() => void) | null = null;
 	let unregisterSaveFileName: (() => void) | null = null;
 	// Save file name mode
-	const getInitialSaveFileName = () => saveFileName ?? '';
+	function getInitialSaveFileName() {
+		return saveFileName ?? '';
+	}
 	let internalSaveFileName = $state(getInitialSaveFileName());
 	let saveFileNameInput: ReturnType<typeof Input> | undefined = $state();
 	let saveFileNameActive = $derived($activeArea === `${areaID}-save-filename`);
@@ -148,7 +150,9 @@
 		}
 	}
 
-	const scrollToSelected = () => scrollToElement(itemElements, selectedIndex);
+	function scrollToSelected() {
+		scrollToElement(itemElements, selectedIndex);
+	}
 
 	async function navigateInto(item: StorageItemData): Promise<void> {
 		if (item.type === 'folder' || item.type === 'drive') {
