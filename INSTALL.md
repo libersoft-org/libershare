@@ -134,8 +134,8 @@ The NSIS installer (.exe) includes a language selector dialog, license agreement
 | **Format: dmg** (macOS)    | ❌          | ❌            | ✅          |
 | **Format: zip**            | ✅          | ✅            | ✅          |
 
-¹ Windows cross-compilation via `cargo-xwin` inside Docker
-² MSI requires WiX toolset (Windows-only)
+- ¹ Windows cross-compilation via `cargo-xwin` inside Docker
+- ² MSI requires WiX toolset (Windows-only)
 
 #### Running the native app
 
