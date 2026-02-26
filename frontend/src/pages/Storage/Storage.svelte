@@ -18,21 +18,21 @@
 	let importMode = $state<'lish' | 'lishnet' | null>(null);
 	let importFilePath = $state('');
 
-	function handleOpenSpecialFile(path: string, type: 'lish' | 'lishnet') {
+	function handleOpenSpecialFile(path: string, type: 'lish' | 'lishnet'): void {
 		importFilePath = path;
 		importMode = type;
 		if (type === 'lish') pushBreadcrumb($t('common.import') + ' LISH');
 		else pushBreadcrumb($t('common.import') + ' LISHNET');
 	}
 
-	async function handleImportBack() {
+	async function handleImportBack(): Promise<void> {
 		popBreadcrumb();
 		importMode = null;
 		importFilePath = '';
 		await tick();
 	}
 
-	function handleImportComplete() {
+	function handleImportComplete(): void {
 		popBreadcrumb();
 		importMode = null;
 		importFilePath = '';

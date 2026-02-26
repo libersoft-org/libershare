@@ -9,6 +9,8 @@ export const cursorSizes: Record<CursorSize, string> = {
 	medium: '5vh',
 	large: '7.5vh',
 };
+// Defaults
+const DEFAULT_INCOMING_PORT = 9090;
 // Settings stores (will be loaded from backend)
 export const audioEnabled = writable(true);
 export const cursorSize = writable<CursorSize>('medium');
@@ -55,10 +57,7 @@ async function updateSetting<T>(store: Writable<T>, path: string, value: T): Pro
 // Load all settings from backend
 export async function loadSettings(): Promise<void> {
 	try {
-		const [settings, defaults] = await Promise.all([
-			api.settings.getAll(),
-			api.settings.getDefaults(),
-		]);
+		const [settings, defaults] = await Promise.all([api.settings.getAll(), api.settings.getDefaults()]);
 		settingsDefaults = defaults;
 
 		// Language

@@ -41,7 +41,7 @@
 		return 0;
 	}
 
-	async function handleImport() {
+	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (!filePath.trim()) {
 			errorMessage = $t('settings.lishNetworkImport.filePathRequired');
@@ -68,13 +68,13 @@
 		}
 	}
 
-	function handleImportDone() {
+	function handleImportDone(): void {
 		onImport?.();
 		onBack?.();
 		onBack?.();
 	}
 
-	function openFilePathBrowse() {
+	function openFilePathBrowse(): void {
 		browsingFilePath = true;
 		if (unregisterArea) {
 			unregisterArea();
@@ -84,12 +84,12 @@
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
-	function handleFilePathSelect(path: string) {
+	function handleFilePathSelect(path: string): void {
 		filePath = path;
 		handleBrowseBack();
 	}
 
-	async function handleBrowseBack() {
+	async function handleBrowseBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -101,7 +101,7 @@
 		activateArea(areaID);
 	}
 
-	function registerAreaHandler() {
+	function registerAreaHandler(): () => void {
 		return useArea(areaID, areaHandlers, position);
 	}
 

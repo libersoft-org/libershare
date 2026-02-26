@@ -44,7 +44,7 @@
 			icon: action.getIcon?.(isPaused) ?? action.icon,
 		}))
 	);
-	function scrollToSelected() {
+	function scrollToSelected(): void {
 		scrollToElement(itemElements, selectedFileIndex);
 	}
 
@@ -56,7 +56,7 @@
 		if (filesElement) filesElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
-	function handleToolbarAction(actionId: DownloadToolbarActionId) {
+	function handleToolbarAction(actionId: DownloadToolbarActionId): void {
 		const result = handleDownloadToolbarAction(actionId, download);
 		if (result.needsBack) onBack?.();
 	}

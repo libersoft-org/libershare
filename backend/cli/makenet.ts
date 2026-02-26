@@ -7,7 +7,7 @@ interface IArgs {
 	output?: string;
 }
 
-function showHelp() {
+function showHelp(): void {
 	console.log('Usage: ./makenet.sh --name <network-name> --bootstrap <multiaddr> [options]');
 	console.log('');
 	console.log('Options:');
@@ -61,7 +61,7 @@ function validateMultiaddr(multiaddr: string): boolean {
 	return hasTransport && hasTcp && hasP2p;
 }
 
-async function main() {
+async function main(): Promise<void> {
 	console.log('');
 	console.log('=========================');
 	console.log('LISH network file creator');

@@ -67,7 +67,7 @@ const apiServer = new ApiServer(dataDir, dataServer, networks, lishNetworkStorag
 	certFile: apiCertFile,
 });
 
-async function shutdown() {
+async function shutdown(): Promise<void> {
 	console.log('Shutting down...');
 	apiServer.stop();
 	await networks.stopAllNetworks();

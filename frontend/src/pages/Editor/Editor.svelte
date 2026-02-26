@@ -40,7 +40,7 @@
 	let unregisterToolbar: (() => void) | null = null;
 	let unregisterEditor: (() => void) | null = null;
 
-	async function loadFile() {
+	async function loadFile(): Promise<void> {
 		loading = true;
 		error = null;
 		try {
@@ -53,7 +53,7 @@
 		}
 	}
 
-	async function handleSave() {
+	async function handleSave(): Promise<void> {
 		if (!hasChanges || saving) return;
 		saving = true;
 		error = null;
@@ -68,7 +68,7 @@
 		}
 	}
 
-	function handleToolbarAction(actionId: string) {
+	function handleToolbarAction(actionId: string): void {
 		switch (actionId) {
 			case 'save':
 				handleSave();

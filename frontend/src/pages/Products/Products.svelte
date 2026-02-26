@@ -37,7 +37,7 @@
 	let searchBar: SearchBar | undefined = $state();
 
 	// Use extracted grid columns function
-	function getColumnsCount() {
+	function getColumnsCount(): number {
 		return getGridColumnsCount(itemElements);
 	}
 
@@ -60,7 +60,7 @@
 		scrollToSelectedItem();
 	}
 
-	function scrollToSelectedItem(instant = false) {
+	function scrollToSelectedItem(instant = false): void {
 		scrollToElement(itemElements, selectedIndex, instant);
 	}
 

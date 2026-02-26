@@ -10,7 +10,7 @@ interface IArgs {
 	threads?: number;
 }
 
-function showHelp() {
+function showHelp(): void {
 	console.log('Usage: ./makelish.sh --input <file-or-directory> [options]');
 	console.log('');
 	console.log('Options:');
@@ -63,7 +63,7 @@ function parseArgs(args: string[]): IArgs {
 	return parsed;
 }
 
-async function main() {
+async function main(): Promise<void> {
 	console.log('');
 	console.log('=================');
 	console.log('LISH file creator');
@@ -88,7 +88,7 @@ async function main() {
 	}
 }
 
-async function makeLish(args) {
+async function makeLish(args: IArgs): Promise<void> {
 	const inputPath = args.input;
 	const name = args.name;
 	const defaultOutput = name ? '[NAME].lish' : '[UUID].lish';

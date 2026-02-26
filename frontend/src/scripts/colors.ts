@@ -1,6 +1,6 @@
 import { hexToCSSFilter } from 'hex-to-css-filter';
 
-export function getColorFromCSSToFilter(name: string) {
+export function getColorFromCSSToFilter(name: string): string {
 	//console.log('getColorFromCSSToFilter');
 	//console.log(name);
 	if (!name.startsWith('--')) throw new Error('getColorFromCSSToFilter: name must start with --');
@@ -11,13 +11,13 @@ export function getColorFromCSSToFilter(name: string) {
 	return hexToCSSFilter(v).filter;
 }
 
-export function convertFromShortHex(v: string) {
+export function convertFromShortHex(v: string): string {
 	//console.log('convertFromShortHex', v);
 	if (v.length === 4) v = `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}`;
 	//console.log('convertFromShortHex=', v);
 	return v;
 }
 
-export function getColorFromCSS(name: string) {
+export function getColorFromCSS(name: string): string {
 	return getComputedStyle(document.documentElement).getPropertyValue(name);
 }

@@ -4,18 +4,19 @@ import { homedir, platform } from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { Utils } from '../utils.ts';
+import { type FsInfo, type FsEntry, type FsListResult, type SuccessResponse } from '@shared';
 const assert = Utils.assertParams;
 const isWindows = platform() === 'win32';
 const execAsync = promisify(exec);
 
-async function getWindowsDrives() {
+async function getWindowsDrives(): Promise<FsEntry[]> {
 	const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 	const results = await Promise.allSettled([...letters].map(letter => access(`${letter}:\\`).then(() => letter)));
 	return results.filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled').map(r => ({ name: `${r.value}:`, path: `${r.value}:\\`, type: 'drive' as const }));
 }
 
 export function initFsHandlers() {
-	async function info() {
+	async function info(): Promise<FsInfo> {
 		const plat = platform();
 		const roots = isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];
 		return {
@@ -26,7 +27,7 @@ export function initFsHandlers() {
 		};
 	}
 
-	async function list(p: { path?: string }) {
+	async function list(p: { path?: string }): Promise<FsListResult> {
 		let path = p.path;
 		if (!path || path === '') {
 			if (isWindows) return { path: '', entries: await getWindowsDrives() };
@@ -57,20 +58,20 @@ export function initFsHandlers() {
 		return { path, entries };
 	}
 
-	async function readText(p: { path: string }) {
+	async function readText(p: { path: string }): Promise<{ content: string }> {
 		assert(p, ['path']);
 		const file = Bun.file(p.path);
 		return { content: await file.text() };
 	}
 
-	async function readGzip(p: { path: string }) {
+	async function readGzip(p: { path: string }): Promise<{ content: string }> {
 		assert(p, ['path']);
 		const compressed = await Bun.file(p.path).arrayBuffer();
 		const decompressed = Bun.gunzipSync(new Uint8Array(compressed));
 		return { content: new TextDecoder().decode(decompressed) };
 	}
 
-	async function del(p: { path: string }) {
+	async function del(p: { path: string }): Promise<void> {
 		assert(p, ['path']);
 		const stats = await stat(p.path);
 		if (stats.isDirectory()) {
@@ -79,26 +80,26 @@ export function initFsHandlers() {
 		} else await unlink(p.path);
 	}
 
-	async function mkdirFn(p: { path: string }) {
+	async function mkdirFn(p: { path: string }): Promise<void> {
 		assert(p, ['path']);
 		await fsMkdirNode(p.path, { recursive: true });
 	}
 
-	async function open(p: { path: string }) {
+	async function open(p: { path: string }): Promise<void> {
 		assert(p, ['path']);
 		if (isWindows) await execAsync(`start "" "${p.path}"`);
 		else if (platform() === 'darwin') await execAsync(`open "${p.path}"`);
 		else await execAsync(`xdg-open "${p.path}"`);
 	}
 
-	async function renameFn(p: { path: string; newName: string }) {
+	async function renameFn(p: { path: string; newName: string }): Promise<void> {
 		assert(p, ['path', 'newName']);
 		const dir = dirname(p.path);
 		const newPath = join(dir, p.newName);
 		await fsRenameNode(p.path, newPath);
 	}
 
-	async function exists(p: { path: string }) {
+	async function exists(p: { path: string }): Promise<{ exists: boolean }> {
 		assert(p, ['path']);
 		try {
 			await access(p.path);
@@ -108,13 +109,13 @@ export function initFsHandlers() {
 		}
 	}
 
-	async function writeText(p: { path: string; content: string }) {
+	async function writeText(p: { path: string; content: string }): Promise<SuccessResponse> {
 		assert(p, ['path', 'content']);
 		await Bun.write(p.path, p.content);
 		return { success: true };
 	}
 
-	async function writeGzip(p: { path: string; content: string }) {
+	async function writeGzip(p: { path: string; content: string }): Promise<SuccessResponse> {
 		assert(p, ['path', 'content']);
 		const compressed = Bun.gzipSync(Buffer.from(p.content, 'utf-8'));
 		await Bun.write(p.path, compressed);

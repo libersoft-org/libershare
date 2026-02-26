@@ -17,7 +17,7 @@
 	let newNetworks = $state<LISHNetworkDefinition[]>([]);
 	let currentOverwriteNetwork = $derived(overwriteQueue.length > 0 ? overwriteQueue[0] : null);
 
-	async function processNetworks() {
+	async function processNetworks(): Promise<void> {
 		const toConfirm: LISHNetworkDefinition[] = [];
 		const toAdd: LISHNetworkDefinition[] = [];
 
@@ -38,7 +38,7 @@
 		}
 	}
 
-	async function confirmOverwrite() {
+	async function confirmOverwrite(): Promise<void> {
 		if (currentOverwriteNetwork) {
 			const existing = await getNetworkById(currentOverwriteNetwork.networkID);
 			if (existing) {
@@ -52,7 +52,7 @@
 		}
 	}
 
-	async function skipOverwrite() {
+	async function skipOverwrite(): Promise<void> {
 		overwriteQueue = overwriteQueue.slice(1);
 
 		if (overwriteQueue.length === 0) {
@@ -60,7 +60,7 @@
 		}
 	}
 
-	async function finishImport() {
+	async function finishImport(): Promise<void> {
 		for (const network of newNetworks) {
 			await addNetworkIfNotExists(network);
 		}

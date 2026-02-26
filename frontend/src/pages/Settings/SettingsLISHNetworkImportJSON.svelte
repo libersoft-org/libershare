@@ -29,7 +29,7 @@
 	let errorMessage = $state('');
 	let parsedNetworks = $state<LISHNetworkDefinition[] | null>(null);
 
-	async function handleImport() {
+	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		const result = parseNetworksFromJson(networkJson);
 		if (result.error) {
@@ -44,13 +44,13 @@
 		}
 	}
 
-	function handleImportDone() {
+	function handleImportDone(): void {
 		onImport?.();
 		onBack?.();
 		onBack?.();
 	}
 
-	async function loadInitialFile() {
+	async function loadInitialFile(): Promise<void> {
 		if (initialFilePath) {
 			try {
 				const isGzip = initialFilePath.toLowerCase().endsWith('.gz');
@@ -70,7 +70,7 @@
 		}
 	}
 
-	function registerAreaHandler() {
+	function registerAreaHandler(): () => void {
 		return useArea(
 			areaID,
 			{

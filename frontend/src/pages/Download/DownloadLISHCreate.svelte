@@ -41,7 +41,7 @@
 	let lishFile = $state(joinPath($storageLishPath, 'output.lish'));
 	let lishFileManuallyEdited = $state(false); // Track if user manually edited the path
 
-	function handleNameChange(newName: string) {
+	function handleNameChange(newName: string): void {
 		name = newName;
 		if (!lishFileManuallyEdited && newName) {
 			const sanitized = sanitizeFilename(newName);
@@ -96,7 +96,7 @@
 		return 0;
 	}
 
-	function focusInput(fieldIndex: number) {
+	function focusInput(fieldIndex: number): void {
 		switch (fieldIndex) {
 			case FIELD_INPUT:
 				if (selectedColumn === 0) inputPathInput?.focus();
@@ -119,7 +119,7 @@
 		}
 	}
 
-	function handleCreate() {
+	function handleCreate(): void {
 		submitted = true;
 		if (!errorMessage) {
 			// TODO: Call backend API to create LISH
@@ -136,7 +136,7 @@
 		}
 	}
 
-	function openInputPathBrowse() {
+	function openInputPathBrowse(): void {
 		const { folder, fileName } = splitPath(dataPath.trim(), $storagePath);
 		browseFolder = folder;
 		browseFile = fileName;
@@ -149,12 +149,12 @@
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
-	function handleInputPathSelect(path: string) {
+	function handleInputPathSelect(path: string): void {
 		dataPath = path;
 		handleBrowseBack();
 	}
 
-	function openOutputPathBrowse() {
+	function openOutputPathBrowse(): void {
 		const { folder, fileName } = splitPath(lishFile.trim() || $storageLishPath, $storageLishPath);
 		browseFolder = folder;
 		lishFileName = fileName || '';
@@ -167,14 +167,14 @@
 		removeBackHandler = pushBackHandler(handleOutputBrowseBack);
 	}
 
-	function handleOutputPathSelect(folderPath: string) {
+	function handleOutputPathSelect(folderPath: string): void {
 		const fileName = lishFileName.trim() || 'output.lish';
 		lishFile = joinPath(folderPath, fileName);
 		lishFileManuallyEdited = true;
 		handleOutputBrowseBack();
 	}
 
-	async function handleOutputBrowseBack() {
+	async function handleOutputBrowseBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -191,7 +191,7 @@
 		scrollToSelected();
 	}
 
-	async function handleBrowseBack() {
+	async function handleBrowseBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -208,11 +208,11 @@
 		scrollToSelected();
 	}
 
-	function registerAreaHandler() {
+	function registerAreaHandler(): () => void {
 		return useArea(areaID, areaHandlers, position);
 	}
 
-	function scrollToSelected() {
+	function scrollToSelected(): void {
 		scrollToElement(rowElements, selectedIndex);
 	}
 

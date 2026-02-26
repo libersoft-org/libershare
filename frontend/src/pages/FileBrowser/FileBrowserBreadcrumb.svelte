@@ -15,12 +15,12 @@
 	let { areaID, position, path, separator, onNavigate, onDown }: Props = $props();
 	let breadcrumbItems = $derived(parsePathToBreadcrumbs(path, separator));
 
-	function handleSelect(item: BreadcrumbItem) {
+	function handleSelect(item: BreadcrumbItem): void {
 		const pathItem = item as PathBreadcrumbItem;
 		onNavigate?.(pathItem.path);
 	}
 
-	function handleBack() {
+	function handleBack(): void {
 		// Navigate to parent (second to last item)
 		if (breadcrumbItems.length > 1) {
 			const parentItem = breadcrumbItems[breadcrumbItems.length - 2];
@@ -28,7 +28,7 @@
 		}
 	}
 
-	export function activate() {
+	export function activate(): void {
 		activateArea(areaID);
 	}
 </script>

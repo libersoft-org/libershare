@@ -1,4 +1,5 @@
 import * as fsPromises from 'node:fs/promises';
+import { type Stats } from 'node:fs';
 import { type HashAlgorithm, type ILish, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
 export { type LishID, type ChunkID, type HashAlgorithm, type ILish, type IStoredLish, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
 export { SUPPORTED_ALGOS } from '@shared';
@@ -35,7 +36,7 @@ function getPermissions(mode: number): string {
 }
 
 // Helper to get file/directory stats
-async function getStats(fullPath: string) {
+async function getStats(fullPath: string): Promise<Stats> {
 	try {
 		const stat = await Bun.file(fullPath).stat();
 		return stat;
@@ -74,7 +75,7 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 	// Process chunks by feeding workers one at a time
 	await new Promise<void>((resolveAll, rejectAll) => {
 		let finished = false;
-		function feedWorker(workerIndex: number) {
+		function feedWorker(workerIndex: number): void {
 			if (finished) return;
 			if (nextChunk >= totalChunks) return;
 			const chunkIndex = nextChunk++;

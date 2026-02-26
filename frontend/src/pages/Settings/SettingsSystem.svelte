@@ -36,29 +36,29 @@
 	// Calculate total visible items (skip MINIMIZE_TO_TRAY if tray not visible)
 	let totalItems = $derived(trayVisible ? 6 : 5);
 
-	function toggleAutoStart() {
+	function toggleAutoStart(): void {
 		autoStart = !autoStart;
 	}
 
-	function toggleShowInTray() {
+	function toggleShowInTray(): void {
 		trayVisible = !trayVisible;
 		// Business rule: if disabling tray, also disable minimize to tray
 		if (!trayVisible) trayMinimize = false;
 	}
 
-	function toggleMinimizeToTray() {
+	function toggleMinimizeToTray(): void {
 		trayMinimize = !trayMinimize;
 	}
 
-	function toggleMinifyJson() {
+	function toggleMinifyJson(): void {
 		minifyJson = !minifyJson;
 	}
 
-	function toggleCompressGzip() {
+	function toggleCompressGzip(): void {
 		compressGzip = !compressGzip;
 	}
 
-	function saveSettings() {
+	function saveSettings(): void {
 		setAutoStartOnBoot(autoStart);
 		setShowInTray(trayVisible);
 		setMinimizeToTray(trayMinimize);
@@ -67,7 +67,7 @@
 		onBack?.();
 	}
 
-	function scrollToSelected() {
+	function scrollToSelected(): void {
 		scrollToElement(rowElements, selectedIndex);
 	}
 
@@ -83,7 +83,7 @@
 		return actualIndex;
 	}
 
-	function registerAreaHandler() {
+	function registerAreaHandler(): () => void {
 		return useArea(
 			areaID,
 			{

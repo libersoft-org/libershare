@@ -20,26 +20,26 @@
 	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', min, max, multiline = false, rows = 3, fontSize = '2.5vh', fontFamily, padding = '1.5vh 2vh', flex = false, readonly = false, disabled = false, onchange }: Props = $props();
 	let inputElement: HTMLInputElement | HTMLTextAreaElement | undefined = $state();
 
-	export function focus() {
+	export function focus(): void {
 		inputElement?.focus();
 	}
 
-	export function blur() {
+	export function blur(): void {
 		inputElement?.blur();
 	}
 
-	export function getInputElement() {
+	export function getInputElement(): HTMLInputElement | HTMLTextAreaElement | undefined {
 		return inputElement;
 	}
 
-	function handleKeydown(event: KeyboardEvent) {
+	function handleKeydown(event: KeyboardEvent): void {
 		if (event.key === 'Enter' && !event.shiftKey) {
 			event.preventDefault();
 			inputElement?.blur();
 		}
 	}
 
-	function handleInput(event: Event) {
+	function handleInput(event: Event): void {
 		const target = event.target as HTMLInputElement | HTMLTextAreaElement;
 		value = target.value;
 		onchange?.(value);

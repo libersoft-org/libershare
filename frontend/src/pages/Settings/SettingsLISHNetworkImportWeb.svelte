@@ -35,7 +35,7 @@
 		return 0;
 	}
 
-	async function handleImport() {
+	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (!url.trim()) {
 			errorMessage = $t('settings.lishNetworkImport.urlRequired');
@@ -67,7 +67,7 @@
 		}
 	}
 
-	function handleImportDone() {
+	function handleImportDone(): void {
 		onImport?.();
 		onBack?.();
 		onBack?.();

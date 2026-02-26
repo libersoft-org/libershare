@@ -20,7 +20,7 @@
 		}))
 	);
 
-	async function handleSelect(_item: BreadcrumbItem, index: number) {
+	async function handleSelect(_item: BreadcrumbItem, index: number): Promise<void> {
 		// Navigate to the selected breadcrumb level by calling onBack multiple times
 		const stepsBack = items.length - 1 - index;
 		for (let i = 0; i < stepsBack; i++) {

@@ -45,7 +45,7 @@
 		return 0;
 	}
 
-	function handleImport() {
+	function handleImport(): void {
 		errorMessage = '';
 		if (!downloadPath.trim()) {
 			errorMessage = $t('downloads.lishImport.downloadPathRequired');
@@ -61,7 +61,7 @@
 		onImport?.();
 	}
 
-	function openDownloadPathBrowse() {
+	function openDownloadPathBrowse(): void {
 		browsingDownloadPath = true;
 		if (unregisterArea) {
 			unregisterArea();
@@ -71,12 +71,12 @@
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
-	function handleBrowseSelect(path: string) {
+	function handleBrowseSelect(path: string): void {
 		downloadPath = normalizePath(path);
 		handleBrowseBack();
 	}
 
-	async function handleBrowseBack() {
+	async function handleBrowseBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -88,11 +88,11 @@
 		activateArea(areaID);
 	}
 
-	function registerAreaHandler() {
+	function registerAreaHandler(): () => void {
 		return useArea(areaID, areaHandlers, position);
 	}
 
-	async function loadInitialFile() {
+	async function loadInitialFile(): Promise<void> {
 		if (initialFilePath) {
 			try {
 				const isGzip = initialFilePath.toLowerCase().endsWith('.gz');

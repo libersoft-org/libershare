@@ -67,15 +67,14 @@ function expandHome(p: string): string {
 	return p;
 }
 
-function resolvePath(x: string) {
+function resolvePath(x: string): string {
 	x = expandHome(x);
 	if (!x.startsWith('/')) x = join(process.cwd(), x);
 	return x;
 }
 
-async function main() {
+async function main(): Promise<void> {
 	console.log(`Connecting to ${serverUrl}...`);
-
 	const client = new ApiClient(serverUrl);
 	try {
 		await client.connect();
@@ -83,9 +82,7 @@ async function main() {
 		console.error(`Failed to connect: ${error.message}`);
 		process.exit(1);
 	}
-
 	console.log('Connected!\n');
-
 	const api = new Api(client);
 
 	async function getFirstNetworkID(): Promise<string | null> {
@@ -110,9 +107,7 @@ async function main() {
 		const parts = line.trim().split(/\s+/);
 		const command = parts[0];
 		const arg = parts.slice(1).join(' ');
-
 		if (!command) return;
-
 		try {
 			switch (command) {
 				// ============ Networks ============

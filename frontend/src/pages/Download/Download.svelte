@@ -28,11 +28,11 @@
 	let toolbarAreaID = $derived(`${areaID}-toolbar`);
 	let toolbarActive = $derived($activeArea === toolbarAreaID);
 	let selectedToolbarIndex = $state(0);
-	function scrollToSelected() {
+	function scrollToSelected(): void {
 		scrollToElement(itemElements, selectedIndex);
 	}
 
-	function openDetail() {
+	function openDetail(): void {
 		const download = downloads[selectedIndex];
 		selectedDownload.set(download);
 		navigateTo('download-detail', download.name || download.id);

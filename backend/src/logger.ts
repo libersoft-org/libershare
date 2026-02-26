@@ -43,7 +43,7 @@ function createPreciseReporter(): ConsolaReporter {
 	};
 }
 
-export function setupLogger(level: LogLevel = 'info') {
+export function setupLogger(level: LogLevel = 'info'): ReturnType<typeof createConsola> {
 	const consola = createConsola({
 		level: levelMap[level],
 		reporters: [createPreciseReporter()],

@@ -28,19 +28,19 @@
 	let exitAction = $state<'restart' | 'shutdown' | 'quit' | null>(null);
 	let cursorSizeValue = $derived(cursorSizes[$cursorSize]);
 
-	function handleMouseMove(e: MouseEvent) {
+	function handleMouseMove(e: MouseEvent): void {
 		if (isTouchDevice) return; // Ignore mouse events triggered by touch
 		cursorX = e.clientX;
 		cursorY = e.clientY;
 		cursorMoved = true;
 	}
 
-	function handleTouchStart() {
+	function handleTouchStart(): void {
 		isTouchDevice = true;
 		cursorMoved = false;
 	}
 
-	async function handleConfirm() {
+	async function handleConfirm(): Promise<void> {
 		if ($confirmDialog.action && $confirmDialog.action !== 'back') {
 			const action = $confirmDialog.action as 'restart' | 'shutdown' | 'quit';
 			hideConfirmDialog();
@@ -59,11 +59,11 @@
 		hideConfirmDialog();
 	}
 
-	function handleCancel() {
+	function handleCancel(): void {
 		hideConfirmDialog();
 	}
 
-	async function onConnected() {
+	async function onConnected(): Promise<void> {
 		try {
 			await loadSettings();
 			play('welcome');

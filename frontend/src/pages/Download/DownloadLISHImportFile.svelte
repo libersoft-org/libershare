@@ -44,7 +44,7 @@
 		return 0;
 	}
 
-	function handleImport() {
+	function handleImport(): void {
 		errorMessage = '';
 		if (!filePath.trim()) {
 			errorMessage = $t('downloads.lishImport.filePathRequired');
@@ -59,7 +59,7 @@
 		onImport?.();
 	}
 
-	function openFilePathBrowse() {
+	function openFilePathBrowse(): void {
 		browsingFilePath = true;
 		if (unregisterArea) {
 			unregisterArea();
@@ -69,7 +69,7 @@
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
-	function openDownloadPathBrowse() {
+	function openDownloadPathBrowse(): void {
 		browsingDownloadPath = true;
 		if (unregisterArea) {
 			unregisterArea();
@@ -79,17 +79,17 @@
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
-	function handleFilePathSelect(path: string) {
+	function handleFilePathSelect(path: string): void {
 		filePath = path;
 		handleBrowseBack();
 	}
 
-	function handleDownloadPathSelect(path: string) {
+	function handleDownloadPathSelect(path: string): void {
 		downloadPath = normalizePath(path);
 		handleBrowseBack();
 	}
 
-	async function handleBrowseBack() {
+	async function handleBrowseBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -102,7 +102,7 @@
 		activateArea(areaID);
 	}
 
-	function registerAreaHandler() {
+	function registerAreaHandler(): () => void {
 		return useArea(areaID, areaHandlers, position);
 	}
 

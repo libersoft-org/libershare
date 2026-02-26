@@ -9,7 +9,7 @@
  *
  * Originally in Network class (protocol/network.ts).
  */
-export function printMultiaddrs(node: any) {
+export function printMultiaddrs(node: any): void {
 	if (!node) {
 		console.log('Network not started');
 		return;

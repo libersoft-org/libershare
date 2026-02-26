@@ -94,7 +94,7 @@
 	let unregisterFilter: (() => void) | null = null;
 	let unregisterSaveFileName: (() => void) | null = null;
 	// Save file name mode
-	function getInitialSaveFileName() {
+	function getInitialSaveFileName(): string {
 		return saveFileName ?? '';
 	}
 	let internalSaveFileName = $state(getInitialSaveFileName());
@@ -150,7 +150,7 @@
 		}
 	}
 
-	function scrollToSelected() {
+	function scrollToSelected(): void {
 		scrollToElement(itemElements, selectedIndex);
 	}
 
@@ -373,12 +373,12 @@
 		},
 	};
 
-	function handleSaveFileNameChange(value: string) {
+	function handleSaveFileNameChange(value: string): void {
 		internalSaveFileName = value;
 		onSaveFileNameChange?.(value);
 	}
 
-	function handleAction(actionId: string) {
+	function handleAction(actionId: string): void {
 		const item = items[selectedIndex];
 		if (!item || item.type !== 'file') return;
 		switch (actionId) {
@@ -404,7 +404,7 @@
 		activateArea(listAreaID);
 	}
 
-	function handleFolderAction(actionId: string) {
+	function handleFolderAction(actionId: string): void {
 		switch (actionId) {
 			case 'select':
 				onSelect?.(currentPath);
@@ -424,7 +424,7 @@
 		}
 	}
 
-	function openFilterPanel() {
+	function openFilterPanel(): void {
 		showFilterPanel = true;
 		selectedFilterIndex = 0;
 		// Find current filter in the list to pre-select it
@@ -436,7 +436,7 @@
 		activateArea(`${areaID}-filter`);
 	}
 
-	function closeFilterPanel() {
+	function closeFilterPanel(): void {
 		showFilterPanel = false;
 		if (unregisterFilter) {
 			unregisterFilter();
@@ -445,7 +445,7 @@
 		activateArea(`${areaID}-folder-actions`);
 	}
 
-	function handleFilterAction(actionId: string) {
+	function handleFilterAction(actionId: string): void {
 		if (actionId === 'back') {
 			closeFilterPanel();
 			return;
@@ -466,7 +466,7 @@
 		closeFilterPanel();
 	}
 
-	function openCustomFilterDialog() {
+	function openCustomFilterDialog(): void {
 		showCustomFilterDialog = true;
 		if (unregisterFilter) {
 			unregisterFilter();
@@ -475,14 +475,14 @@
 		pushBreadcrumb($t('fileBrowser.customFilter'));
 	}
 
-	function closeCustomFilterDialog() {
+	function closeCustomFilterDialog(): void {
 		showCustomFilterDialog = false;
 		popBreadcrumb();
 		unregisterFilter = useArea(`${areaID}-filter`, filterAreaHandlers, actionsPosition);
 		tick().then(() => activateArea(`${areaID}-filter`));
 	}
 
-	function confirmCustomFilter(value: string) {
+	function confirmCustomFilter(value: string): void {
 		customFilter = value.trim();
 		showAllFiles = false;
 		showCustomFilterDialog = false;
@@ -491,7 +491,7 @@
 		closeFilterPanel();
 	}
 
-	function showDeleteConfirmDialog() {
+	function showDeleteConfirmDialog(): void {
 		showDeleteConfirm = true;
 		// Unregister areas so dialog can take over
 		if (unregisterFolderActions) {
@@ -509,7 +509,7 @@
 		pushBreadcrumb($t('common.delete'));
 	}
 
-	async function confirmDeleteFolder() {
+	async function confirmDeleteFolder(): Promise<void> {
 		const result = await deleteFileOrFolder(currentPath);
 		if (result.success) {
 			if (parentPath !== null) await loadDirectory(parentPath); // Navigate to parent after deletion
@@ -517,7 +517,7 @@
 		cancelDeleteFolder();
 	}
 
-	async function cancelDeleteFolder() {
+	async function cancelDeleteFolder(): Promise<void> {
 		showDeleteConfirm = false;
 		popBreadcrumb();
 		await tick();
@@ -528,7 +528,7 @@
 		activateArea(`${areaID}-folder-actions`);
 	}
 
-	function showNewFolderDialog() {
+	function showNewFolderDialog(): void {
 		showNewFolderDialogState = true;
 		dialogError = undefined;
 		// Unregister areas so dialog can take over
@@ -547,7 +547,7 @@
 		pushBreadcrumb($t('fileBrowser.newFolder'));
 	}
 
-	async function confirmNewFolder(folderName: string) {
+	async function confirmNewFolder(folderName: string): Promise<void> {
 		if (!folderName) {
 			dialogError = $t('fileBrowser.folderNameRequired');
 			return;
@@ -563,7 +563,7 @@
 		}
 	}
 
-	async function cancelNewFolder(focusList = false) {
+	async function cancelNewFolder(focusList = false): Promise<void> {
 		showNewFolderDialogState = false;
 		popBreadcrumb();
 		await tick();
@@ -579,7 +579,7 @@
 		}
 	}
 
-	function showCreateFileDialog() {
+	function showCreateFileDialog(): void {
 		showCreateFileDialogState = true;
 		dialogError = undefined;
 		// Unregister areas so dialog can take over
@@ -598,7 +598,7 @@
 		pushBreadcrumb($t('fileBrowser.createFile'));
 	}
 
-	async function confirmCreateFile(fileName: string) {
+	async function confirmCreateFile(fileName: string): Promise<void> {
 		if (!fileName) {
 			dialogError = $t('fileBrowser.fileNameRequired');
 			return;
@@ -612,7 +612,7 @@
 		} else dialogError = withDetail($t('fileBrowser.createFileFailed'), result.error);
 	}
 
-	async function cancelCreateFile(focusList = false) {
+	async function cancelCreateFile(focusList = false): Promise<void> {
 		showCreateFileDialogState = false;
 		popBreadcrumb();
 		await tick();
@@ -624,7 +624,7 @@
 		else activateArea(`${areaID}-folder-actions`);
 	}
 
-	async function handleOpenFile(item: StorageItemData) {
+	async function handleOpenFile(item: StorageItemData): Promise<void> {
 		// Check for special file types (.lish, .lishs, .lishnet, .lishnets) including .gz variants
 		const lowerName = item.name.toLowerCase();
 		if (onOpenSpecialFile) {
@@ -648,7 +648,7 @@
 		activateArea(listAreaID);
 	}
 
-	function showDeleteFileConfirmDialog(item: StorageItemData) {
+	function showDeleteFileConfirmDialog(item: StorageItemData): void {
 		fileToDelete = item;
 		showDeleteFileConfirm = true;
 		showActions = false;
@@ -668,7 +668,7 @@
 		pushBreadcrumb($t('fileBrowser.deleteFile'));
 	}
 
-	async function confirmDeleteFile() {
+	async function confirmDeleteFile(): Promise<void> {
 		if (!fileToDelete) return;
 		const result = await deleteFileOrFolder(fileToDelete.path);
 		if (result.success) {
@@ -680,7 +680,7 @@
 		cancelDeleteFile();
 	}
 
-	async function cancelDeleteFile() {
+	async function cancelDeleteFile(): Promise<void> {
 		showDeleteFileConfirm = false;
 		fileToDelete = null;
 		popBreadcrumb();
@@ -692,7 +692,7 @@
 		activateArea(listAreaID);
 	}
 
-	function showRenameFileDialog(item: StorageItemData) {
+	function showRenameFileDialog(item: StorageItemData): void {
 		fileToRename = item;
 		showRenameFileDialogState = true;
 		showActions = false;
@@ -712,7 +712,7 @@
 		pushBreadcrumb($t('fileBrowser.renameFile'));
 	}
 
-	async function confirmRenameFile(newName: string) {
+	async function confirmRenameFile(newName: string): Promise<void> {
 		if (!fileToRename) return;
 		const result = await renameFile(fileToRename.path, newName);
 		if (result.success) {
@@ -722,7 +722,7 @@
 		cancelRenameFile();
 	}
 
-	async function cancelRenameFile() {
+	async function cancelRenameFile(): Promise<void> {
 		showRenameFileDialogState = false;
 		fileToRename = null;
 		popBreadcrumb();
@@ -734,7 +734,7 @@
 		activateArea(listAreaID);
 	}
 
-	function showEditor(item: StorageItemData) {
+	function showEditor(item: StorageItemData): void {
 		// Check if file is larger than 1MB
 		if (item.size && item.size > LARGE_FILE_THRESHOLD) {
 			showLargeFileWarning = true;
@@ -759,7 +759,7 @@
 		openEditor(item);
 	}
 
-	function openEditor(item: StorageItemData) {
+	function openEditor(item: StorageItemData): void {
 		fileToEdit = item;
 		showEditorState = true;
 		showActions = false;
@@ -778,7 +778,7 @@
 		}
 	}
 
-	function confirmLargeFileEdit() {
+	function confirmLargeFileEdit(): void {
 		if (pendingEditFile) {
 			showLargeFileWarning = false;
 			popBreadcrumb();
@@ -787,7 +787,7 @@
 		}
 	}
 
-	async function cancelLargeFileEdit() {
+	async function cancelLargeFileEdit(): Promise<void> {
 		showLargeFileWarning = false;
 		pendingEditFile = null;
 		popBreadcrumb();
@@ -799,7 +799,7 @@
 		activateArea(listAreaID);
 	}
 
-	async function closeEditor() {
+	async function closeEditor(): Promise<void> {
 		showEditorState = false;
 		fileToEdit = null;
 		await tick();
@@ -811,7 +811,7 @@
 	}
 
 	// Save file with content - handles exists check and overwrite dialog
-	async function handleSave() {
+	async function handleSave(): Promise<void> {
 		if (saveContent === undefined) {
 			// No content to save, just call onSelect
 			onSelect?.(currentPath);
@@ -838,7 +838,7 @@
 		}
 	}
 
-	async function confirmOverwrite() {
+	async function confirmOverwrite(): Promise<void> {
 		showOverwriteConfirmState = false;
 		saveErrorMessage = '';
 		if (saveContent === undefined) return;
@@ -853,7 +853,7 @@
 		}
 	}
 
-	async function cancelOverwrite() {
+	async function cancelOverwrite(): Promise<void> {
 		showOverwriteConfirmState = false;
 		await tick();
 		// Reactivate the save filename area after dialog closes
@@ -864,7 +864,7 @@
 		}
 	}
 
-	async function handleBreadcrumbNavigate(path: string) {
+	async function handleBreadcrumbNavigate(path: string): Promise<void> {
 		// If editor is open, close it first
 		if (showEditorState) {
 			showEditorState = false;
@@ -882,7 +882,7 @@
 		return currentPath;
 	}
 
-	export function getItemElements() {
+	export function getItemElements(): HTMLElement[] {
 		return itemElements;
 	}
 

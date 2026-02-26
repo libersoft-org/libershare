@@ -69,7 +69,7 @@
 	const totalItems = 13;
 
 	// Browse functions
-	function openBrowse(type: 'storage' | 'temp' | 'lish' | 'lishnet') {
+	function openBrowse(type: 'storage' | 'temp' | 'lish' | 'lishnet'): void {
 		browsingFor = type;
 		if (unregisterArea) {
 			unregisterArea();
@@ -85,7 +85,7 @@
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
-	function handleBrowseSelect(path: string) {
+	function handleBrowseSelect(path: string): void {
 		const normalizedPath = normalizePath(path);
 		if (browsingFor === 'storage') {
 			storagePathValue = normalizedPath;
@@ -99,7 +99,7 @@
 		handleBrowseBack();
 	}
 
-	async function handleBrowseBack() {
+	async function handleBrowseBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -112,37 +112,37 @@
 	}
 
 	// Save functions
-	function savePort() {
+	function savePort(): void {
 		setIncomingPort(parseInt(port) || 9090);
 		port = $incomingPort.toString();
 	}
 
-	function saveDownloadConnections() {
+	function saveDownloadConnections(): void {
 		setMaxDownloadConnections(parseInt(downloadConnections) || 0);
 		downloadConnections = $maxDownloadConnections.toString();
 	}
 
-	function saveUploadConnections() {
+	function saveUploadConnections(): void {
 		setMaxUploadConnections(parseInt(uploadConnections) || 0);
 		uploadConnections = $maxUploadConnections.toString();
 	}
 
-	function saveDownloadSpeed() {
+	function saveDownloadSpeed(): void {
 		setMaxDownloadSpeed(parseInt(downloadSpeed) || 0);
 		downloadSpeed = $maxDownloadSpeed.toString();
 	}
 
-	function saveUploadSpeed() {
+	function saveUploadSpeed(): void {
 		setMaxUploadSpeed(parseInt(uploadSpeed) || 0);
 		uploadSpeed = $maxUploadSpeed.toString();
 	}
 
-	function saveRelayReservations() {
+	function saveRelayReservations(): void {
 		setMaxRelayReservations(parseInt(relayReservations) || 100);
 		relayReservations = $maxRelayReservations.toString();
 	}
 
-	function saveAll() {
+	function saveAll(): void {
 		setStoragePath(storagePathValue);
 		setStorageTempPath(tempPathValue);
 		setStorageLishPath(lishPathValue);
@@ -155,73 +155,73 @@
 		saveRelayReservations();
 	}
 
-	function handleSave() {
+	function handleSave(): void {
 		saveAll();
 		onBack?.();
 	}
 
-	function toggleAllowRelay() {
+	function toggleAllowRelay(): void {
 		relay = !relay;
 		setAllowRelay(relay);
 	}
 
-	function toggleAutoStart() {
+	function toggleAutoStart(): void {
 		autoStart = !autoStart;
 		setAutoStartSharing(autoStart);
 	}
 
 	// Reset functions
-	function resetStoragePath() {
+	function resetStoragePath(): void {
 		storagePathValue = settingsDefaults?.storage?.downloadPath ?? '';
 	}
 
-	function resetTempPath() {
+	function resetTempPath(): void {
 		tempPathValue = settingsDefaults?.storage?.tempPath ?? '';
 	}
 
-	function resetLishPath() {
+	function resetLishPath(): void {
 		lishPathValue = settingsDefaults?.storage?.lishPath ?? '';
 	}
 
-	function resetLishnetPath() {
+	function resetLishnetPath(): void {
 		lishnetPathValue = settingsDefaults?.storage?.lishnetPath ?? '';
 	}
 
-	function resetPort() {
+	function resetPort(): void {
 		port = String(settingsDefaults?.network?.incomingPort ?? 0);
 	}
 
-	function resetDownloadConnections() {
+	function resetDownloadConnections(): void {
 		downloadConnections = String(settingsDefaults?.network?.maxDownloadConnections ?? 0);
 	}
 
-	function resetUploadConnections() {
+	function resetUploadConnections(): void {
 		uploadConnections = String(settingsDefaults?.network?.maxUploadConnections ?? 0);
 	}
 
-	function resetDownloadSpeed() {
+	function resetDownloadSpeed(): void {
 		downloadSpeed = String(settingsDefaults?.network?.maxDownloadSpeed ?? 0);
 	}
 
-	function resetUploadSpeed() {
+	function resetUploadSpeed(): void {
 		uploadSpeed = String(settingsDefaults?.network?.maxUploadSpeed ?? 0);
 	}
 
-	function resetAllowRelay() {
+	function resetAllowRelay(): void {
 		relay = settingsDefaults?.network?.allowRelay ?? true;
 	}
 
-	function resetRelayReservations() {
+	function resetRelayReservations(): void {
 		relayReservations = String(settingsDefaults?.network?.maxRelayReservations ?? 0);
 	}
 
-	function resetAutoStart() {
+	function resetAutoStart(): void {
 		autoStart = settingsDefaults?.network?.autoStartSharing ?? true;
 	}
 
-	function scrollToSelected() { scrollToElement(rowElements, selectedIndex); }
+	function scrollToSelected(): void { scrollToElement(rowElements, selectedIndex); }
 
-	function registerAreaHandler() {
+	function registerAreaHandler(): () => void {
 		return useArea(
 			areaID,
 			{

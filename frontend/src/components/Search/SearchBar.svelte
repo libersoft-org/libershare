@@ -11,7 +11,7 @@
 	let { value = $bindable(''), placeholder, selected = false, onchange, onConfirm }: Props = $props();
 	let searchPlaceholder = $derived(placeholder ?? $t('common.search') + ' ...');
 	let inputComponent: Input;
-	export function toggleFocus() {
+	export function toggleFocus(): void {
 		const inputElement = inputComponent?.getInputElement();
 		const isFocused = inputElement && document.activeElement === inputElement;
 		if (isFocused) inputComponent?.blur();

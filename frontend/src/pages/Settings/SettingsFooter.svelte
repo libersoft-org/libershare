@@ -25,7 +25,7 @@
 	const totalItems = 3 + footerWidgets.length;
 	let rowElements: HTMLElement[] = $state([]);
 
-	function openPositionDialog() {
+	function openPositionDialog(): void {
 		navigateTo('footer-position');
 	}
 
@@ -73,7 +73,7 @@
 		return unregister;
 	});
 
-	function scrollToSelected() {
+	function scrollToSelected(): void {
 		scrollToElement(rowElements, selectedIndex);
 	}
 </script>

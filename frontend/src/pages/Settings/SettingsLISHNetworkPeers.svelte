@@ -33,7 +33,7 @@
 	// Items: Back button (0), peer rows (1 to peers.length)
 	let totalItems = $derived(peers.length + 1);
 
-	async function loadPeers() {
+	async function loadPeers(): Promise<void> {
 		loading = true;
 		error = '';
 		try {
@@ -45,7 +45,7 @@
 		loading = false;
 	}
 
-	function scrollToSelected() {
+	function scrollToSelected(): void {
 		scrollToElement(rowElements, selectedIndex);
 	}
 

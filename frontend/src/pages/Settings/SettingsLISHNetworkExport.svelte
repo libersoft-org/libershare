@@ -30,7 +30,7 @@
 	let inputRef: Input | undefined = $state();
 	let browsingSaveAs = $state(false);
 	let saveFolder = $state($storageLishnetPath);
-	function getInitialBaseFileName() {
+	function getInitialBaseFileName(): string {
 		return network ? `${network.name}.lishnet` : 'network.lishnet';
 	}
 	let baseFileName = $state(getInitialBaseFileName());
@@ -67,7 +67,7 @@
 		return 'network.lishnet';
 	}
 
-	function openSaveAs() {
+	function openSaveAs(): void {
 		errorMessage = '';
 		try {
 			const parsed = JSON.parse(networkJson);
@@ -93,7 +93,7 @@
 		removeBackHandler = pushBackHandler(handleSaveAsBack);
 	}
 
-	async function handleSaveAsBack() {
+	async function handleSaveAsBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -105,11 +105,11 @@
 		activateArea(areaID);
 	}
 
-	function handleSaveComplete(path: string) {
+	function handleSaveComplete(path: string): void {
 		handleSaveAsBack();
 	}
 
-	function registerAreaHandler() {
+	function registerAreaHandler(): () => void {
 		return useArea(
 			areaID,
 			{

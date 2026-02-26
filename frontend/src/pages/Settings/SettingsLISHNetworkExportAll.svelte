@@ -43,12 +43,12 @@
 	// Compute save content based on minify setting
 	let saveContent = $derived(minifyJsonState ? minifyJson(networksJson) : networksJson);
 
-	async function loadData() {
+	async function loadData(): Promise<void> {
 		networks = await getNetworks();
 		networksJson = await exportAllNetworksToJson();
 	}
 
-	function openSaveAs() {
+	function openSaveAs(): void {
 		browsingSaveAs = true;
 		if (unregisterArea) {
 			unregisterArea();
@@ -58,7 +58,7 @@
 		removeBackHandler = pushBackHandler(handleSaveAsBack);
 	}
 
-	async function handleSaveAsBack() {
+	async function handleSaveAsBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -70,11 +70,11 @@
 		activateArea(areaID);
 	}
 
-	function handleSaveComplete(path: string) {
+	function handleSaveComplete(path: string): void {
 		handleSaveAsBack();
 	}
 
-	function registerAreaHandler() {
+	function registerAreaHandler(): () => void {
 		return useArea(
 			areaID,
 			{

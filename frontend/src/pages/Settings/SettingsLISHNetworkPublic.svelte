@@ -30,7 +30,7 @@
 	// Items: URL row (0), network rows (1 to publicNetworks.length), Back button (last)
 	let totalItems = $derived(1 + publicNetworks.length + 1);
 
-	async function loadPublicList() {
+	async function loadPublicList(): Promise<void> {
 		if (!url.trim()) {
 			error = $t('settings.lishNetwork.errorUrlRequired');
 			return;
@@ -49,7 +49,7 @@
 		loading = false;
 	}
 
-	async function handleAddNetwork(network: LISHNetworkDefinition) {
+	async function handleAddNetwork(network: LISHNetworkDefinition): Promise<void> {
 		if (await addNetworkIfNotExists(network)) addedNetworkIDs = new Set([...addedNetworkIDs, network.networkID]);
 	}
 

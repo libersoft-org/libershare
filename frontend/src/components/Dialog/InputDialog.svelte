@@ -28,7 +28,7 @@
 	let isPressed = $state(false);
 	let inputRef: ReturnType<typeof Input> | undefined = $state();
 
-	function handleConfirm() {
+	function handleConfirm(): void {
 		onConfirm(value.trim());
 	}
 

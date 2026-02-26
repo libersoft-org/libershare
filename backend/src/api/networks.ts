@@ -1,5 +1,6 @@
 import { type Networks, type NetworkDefinition } from '../lishnet/networks.ts';
 import { type DataServer } from '../lish/data-server.ts';
+import { type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type PeerConnectionInfo } from '@shared';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
@@ -11,56 +12,60 @@ type NetworkInfoEntry = NetworkDefinition & {
 };
 
 export function initNetworksHandlers(networks: Networks, dataServer: DataServer) {
-	function list() { return networks.getAll(); }
-	function get(p: { networkID: string }) {
+	function list(): NetworkDefinition[] {
+		return networks.getAll();
+	}
+	function get(p: { networkID: string }): NetworkDefinition | null {
 		assert(p, ['networkID']);
 		return networks.get(p.networkID);
 	}
-	async function importFromFile(p: { path: string; enabled?: boolean }) {
+	async function importFromFile(p: { path: string; enabled?: boolean }): Promise<NetworkDefinition> {
 		assert(p, ['path']);
 		return networks.importFromFile(p.path, p.enabled ?? false);
 	}
-	async function importFromJson(p: { json: string; enabled?: boolean }) {
+	async function importFromJson(p: { json: string; enabled?: boolean }): Promise<NetworkDefinition> {
 		assert(p, ['json']);
 		return networks.importFromJson(p.json, p.enabled ?? false);
 	}
-	async function setEnabled(p: { networkID: string; enabled: boolean }) {
+	async function setEnabled(p: { networkID: string; enabled: boolean }): Promise<SuccessResponse> {
 		assert(p, ['networkID', 'enabled']);
 		return { success: await networks.setEnabled(p.networkID, p.enabled) };
 	}
-	async function del(p: { networkID: string }) {
+	async function del(p: { networkID: string }): Promise<SuccessResponse> {
 		assert(p, ['networkID']);
 		return { success: await networks.delete(p.networkID) };
 	}
 
-	async function connect(p: { multiaddr: string }) {
+	async function connect(p: { multiaddr: string }): Promise<SuccessResponse> {
 		assert(p, ['multiaddr']);
 		const network = networks.getRunningNetwork();
 		await network.connectToPeer(p.multiaddr);
 		return { success: true };
 	}
 
-	function findPeer(p: { peerID: string }) {
+	function findPeer(p: { peerID: string }): Promise<void> {
 		assert(p, ['peerID']);
 		const network = networks.getRunningNetwork();
 		return network.cliFindPeer(p.peerID);
 	}
 
-	function getAddresses() {
+	function getAddresses(): string[] {
 		const network = networks.getRunningNetwork();
 		const info = network.getNodeInfo();
 		return info?.addresses || [];
 	}
 
-	function getPeers(p: { networkID: string }) {
+	function getPeers(p: { networkID: string }): PeerConnectionInfo[] {
 		assert(p, ['networkID']);
 		if (!networks.isJoined(p.networkID)) throw new Error('Network not joined');
 		return networks.getTopicPeersInfo(p.networkID);
 	}
 
-	function getNodeInfo() { return networks.getNetwork().getNodeInfo(); }
+	function getNodeInfo(): NetworkNodeInfo | null {
+		return networks.getNetwork().getNodeInfo();
+	}
 
-	function getStatus(p: { networkID: string }) {
+	function getStatus(p: { networkID: string }): NetworkStatus {
 		assert(p, ['networkID']);
 		const network = networks.getRunningNetwork();
 		const allPeers = network.getPeers();

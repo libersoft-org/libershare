@@ -52,7 +52,7 @@
 	let globalNodeInfo = $state<NetworkNodeInfo | null>(null);
 	let networkErrors = $state<Record<string, string>>({});
 
-	async function loadNodeInfo() {
+	async function loadNodeInfo(): Promise<void> {
 		try {
 			globalNodeInfo = await api.networks.getNodeInfo();
 		} catch (e: any) {
@@ -60,7 +60,7 @@
 		}
 	}
 
-	async function loadNetworks() {
+	async function loadNetworks(): Promise<void> {
 		const [nets, nodeInfo] = await Promise.all([getNetworks(), api.networks.getNodeInfo().catch((): null => null)]);
 		globalNodeInfo = nodeInfo;
 		networks = nets;
@@ -76,7 +76,7 @@
 	// Check if current row is a network row (has Edit/Delete buttons)
 	let isNetworkRow = $derived(selectedIndex >= 1 + nodeInfoOffset && selectedIndex < totalItems);
 
-	function openPublic() {
+	function openPublic(): void {
 		showPublic = true;
 		// Unregister our area - sub-component will create its own
 		if (unregisterArea) {
@@ -87,7 +87,7 @@
 		removeBackHandler = pushBackHandler(handlePublicBack);
 	}
 
-	async function handlePublicBack() {
+	async function handlePublicBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -102,7 +102,7 @@
 		activateArea(areaID);
 	}
 
-	function openAddNetwork() {
+	function openAddNetwork(): void {
 		editingNetwork = null;
 		showAddEdit = true;
 		// Unregister our area - sub-component will create its own
@@ -114,11 +114,11 @@
 		removeBackHandler = pushBackHandler(handleAddEditBack);
 	}
 
-	function openImport() {
+	function openImport(): void {
 		navigateTo('import-lishnet');
 	}
 
-	function openExportAll() {
+	function openExportAll(): void {
 		showExportAll = true;
 		// Unregister our area - sub-component will create its own
 		if (unregisterArea) {
@@ -129,7 +129,7 @@
 		removeBackHandler = pushBackHandler(handleExportAllBack);
 	}
 
-	async function handleExportAllBack() {
+	async function handleExportAllBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -142,7 +142,7 @@
 		activateArea(areaID);
 	}
 
-	async function connectNetwork(network: LISHNetworkConfig) {
+	async function connectNetwork(network: LISHNetworkConfig): Promise<void> {
 		// Toggle enabled state
 		const newEnabled = !network.enabled;
 		network.enabled = newEnabled;
@@ -157,7 +157,7 @@
 		}
 	}
 
-	async function moveNetwork(index: number, up: boolean) {
+	async function moveNetwork(index: number, up: boolean): Promise<void> {
 		const newIndex = up ? index - 1 : index + 1;
 		if (newIndex < 0 || newIndex >= networks.length) return;
 		const temp = networks[index];
@@ -176,7 +176,7 @@
 		await api.lishNetworks.setAll(networks);
 	}
 
-	function openPeers(network: LISHNetworkConfig) {
+	function openPeers(network: LISHNetworkConfig): void {
 		peersNetwork = network;
 		showPeers = true;
 		if (unregisterArea) {
@@ -187,7 +187,7 @@
 		removeBackHandler = pushBackHandler(handlePeersBack);
 	}
 
-	async function handlePeersBack() {
+	async function handlePeersBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -200,7 +200,7 @@
 		activateArea(areaID);
 	}
 
-	function openExport(network: LISHNetworkConfig) {
+	function openExport(network: LISHNetworkConfig): void {
 		exportingNetwork = network;
 		showExport = true;
 		// Unregister our area - sub-component will create its own
@@ -212,7 +212,7 @@
 		removeBackHandler = pushBackHandler(handleExportBack);
 	}
 
-	async function handleExportBack() {
+	async function handleExportBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -226,7 +226,7 @@
 		activateArea(areaID);
 	}
 
-	function openEditNetwork(network: LISHNetworkConfig) {
+	function openEditNetwork(network: LISHNetworkConfig): void {
 		editingNetwork = network;
 		showAddEdit = true;
 		// Unregister our area - sub-component will create its own
@@ -238,7 +238,7 @@
 		removeBackHandler = pushBackHandler(handleAddEditBack);
 	}
 
-	function deleteNetwork(network: LISHNetworkConfig) {
+	function deleteNetwork(network: LISHNetworkConfig): void {
 		deletingNetwork = network;
 		showDeleteConfirm = true;
 		// Unregister our area - ConfirmDialog will create its own
@@ -249,7 +249,7 @@
 		pushBreadcrumb(`${network.name} - ${$t('common.delete')}`);
 	}
 
-	async function confirmDeleteNetwork() {
+	async function confirmDeleteNetwork(): Promise<void> {
 		if (deletingNetwork) {
 			await deleteNetworkFromApi(deletingNetwork.networkID);
 			networks = networks.filter(n => n.networkID !== deletingNetwork!.networkID);
@@ -266,7 +266,7 @@
 		}
 	}
 
-	async function cancelDelete() {
+	async function cancelDelete(): Promise<void> {
 		deletingNetwork = null;
 		showDeleteConfirm = false;
 		popBreadcrumb();
@@ -276,7 +276,7 @@
 		activateArea(areaID);
 	}
 
-	async function handleAddEditBack() {
+	async function handleAddEditBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
@@ -290,7 +290,7 @@
 		activateArea(areaID);
 	}
 
-	async function handleSave(savedNetwork: NetworkFormData) {
+	async function handleSave(savedNetwork: NetworkFormData): Promise<void> {
 		const network = formDataToNetwork(savedNetwork, editingNetwork ?? undefined);
 		if (editingNetwork) {
 			// Update existing
@@ -316,11 +316,11 @@
 		activateArea(areaID);
 	}
 
-	function scrollToSelected() {
+	function scrollToSelected(): void {
 		scrollToElement(rowElements, selectedIndex);
 	}
 
-	function registerAreaHandler() {
+	function registerAreaHandler(): () => void {
 		return useArea(
 			areaID,
 			{

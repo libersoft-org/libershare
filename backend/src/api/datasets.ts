@@ -1,9 +1,10 @@
 import { type DataServer } from '../lish/data-server.ts';
+import { type Dataset } from '@shared';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
 export function initDatasetsHandlers(dataServer: DataServer) {
-	function getDatasets() {
+	function getDatasets(): Dataset[] {
 		return dataServer.getDatasets().map(l => ({
 			id: l.id,
 			lishID: l.id,
@@ -12,7 +13,7 @@ export function initDatasetsHandlers(dataServer: DataServer) {
 		}));
 	}
 
-	function getDataset(p: { id: string }) {
+	function getDataset(p: { id: string }): Dataset | null {
 		assert(p, ['id']);
 		const lish = dataServer.getLish(p.id);
 		if (!lish || !lish.directory) return null;

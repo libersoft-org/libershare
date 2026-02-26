@@ -42,7 +42,7 @@
 		isPressed: index => active && selectedIndex === index && isAPressed,
 	});
 
-	function updateTranslateX() {
+	function updateTranslateX(): void {
 		if (!itemsElement || orientation !== 'horizontal') return;
 		const children = itemsElement.children;
 		if (children.length === 0) return;

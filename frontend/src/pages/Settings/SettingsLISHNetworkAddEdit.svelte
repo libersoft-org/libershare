@@ -42,14 +42,14 @@
 	let bootstrapOffset = $derived(isEditing ? 3 : 4);
 	let totalItems = $derived(bootstrapOffset + bootstrapServers.length + 2);
 	// Helper to get field type using extracted function
-	function getItemType(index: number) {
+	function getItemType(index: number): ReturnType<typeof getNetworkFormFieldType> {
 		return getNetworkFormFieldType(index, isEditing, bootstrapServers.length);
 	}
-	function getMaxColumn(bootstrapIndex: number) {
+	function getMaxColumn(bootstrapIndex: number): number {
 		return getNetworkFormMaxColumn(bootstrapIndex, bootstrapServers.length);
 	}
 
-	function handleSave() {
+	function handleSave(): void {
 		submitted = true;
 		if (!errorMessage) {
 			onSave?.({
@@ -61,28 +61,28 @@
 		}
 	}
 
-	function addBootstrapServer() {
+	function addBootstrapServer(): void {
 		bootstrapServers = [...bootstrapServers, ''];
 		// Move to the new input
 		selectedIndex = bootstrapOffset + bootstrapServers.length - 1;
 		selectedColumn = 0;
 	}
 
-	function removeBootstrapServer(index: number) {
+	function removeBootstrapServer(index: number): void {
 		bootstrapServers = bootstrapServers.filter((_, i) => i !== index);
 		// Adjust selectedIndex if needed
 		if (selectedIndex > bootstrapOffset + index) selectedIndex--;
 		selectedColumn = 0;
 	}
 
-	function toggleAutoGenerateID() {
+	function toggleAutoGenerateID(): void {
 		autoGenerateID = !autoGenerateID;
 		if (autoGenerateID) {
 			networkID = '';
 		}
 	}
 
-	function focusInput(index: number) {
+	function focusInput(index: number): void {
 		const item = getItemType(index);
 		if (item.type === 'name' && nameInput) nameInput.focus();
 		else if (item.type === 'description' && descriptionInput) descriptionInput.focus();
@@ -90,7 +90,7 @@
 		else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined && bootstrapInputs[item.bootstrapIndex]) bootstrapInputs[item.bootstrapIndex].focus();
 	}
 
-	function scrollToSelected() {
+	function scrollToSelected(): void {
 		scrollToElement(rowElements, selectedIndex);
 	}
 
