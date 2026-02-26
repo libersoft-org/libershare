@@ -7,7 +7,7 @@ const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn) {
-	const download = async (p: { networkID: string; lishPath: string }, client: any) => {
+	async function download(p: { networkID: string; lishPath: string }, client: any) {
 		assert(p, ['networkID', 'lishPath']);
 		/*
 		TODO:
@@ -25,6 +25,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			.then(() => emit(client, 'transfer.download:complete', { downloadDir }))
 			.catch(err => emit(client, 'transfer.download:error', { error: err.message }));
 		return { downloadDir };
-	};
+	}
 	return { download };
 }

@@ -15,7 +15,7 @@ async function getWindowsDrives() {
 }
 
 export function initFsHandlers() {
-	const info = async () => {
+	async function info() {
 		const plat = platform();
 		const roots = isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];
 		return {
@@ -24,9 +24,9 @@ export function initFsHandlers() {
 			home: homedir(),
 			roots,
 		};
-	};
+	}
 
-	const list = async (p: { path?: string }) => {
+	async function list(p: { path?: string }) {
 		let path = p.path;
 		if (!path || path === '') {
 			if (isWindows) return { path: '', entries: await getWindowsDrives() };
@@ -55,50 +55,50 @@ export function initFsHandlers() {
 			return a.name.localeCompare(b.name);
 		});
 		return { path, entries };
-	};
+	}
 
-	const readText = async (p: { path: string }) => {
+	async function readText(p: { path: string }) {
 		assert(p, ['path']);
 		const file = Bun.file(p.path);
 		return { content: await file.text() };
-	};
+	}
 
-	const readGzip = async (p: { path: string }) => {
+	async function readGzip(p: { path: string }) {
 		assert(p, ['path']);
 		const compressed = await Bun.file(p.path).arrayBuffer();
 		const decompressed = Bun.gunzipSync(new Uint8Array(compressed));
 		return { content: new TextDecoder().decode(decompressed) };
-	};
+	}
 
-	const del = async (p: { path: string }) => {
+	async function del(p: { path: string }) {
 		assert(p, ['path']);
 		const stats = await stat(p.path);
 		if (stats.isDirectory()) {
 			const { rm } = await import('fs/promises');
 			await rm(p.path, { recursive: true });
 		} else await unlink(p.path);
-	};
+	}
 
-	const mkdirFn = async (p: { path: string }) => {
+	async function mkdirFn(p: { path: string }) {
 		assert(p, ['path']);
 		await fsMkdirNode(p.path, { recursive: true });
-	};
+	}
 
-	const open = async (p: { path: string }) => {
+	async function open(p: { path: string }) {
 		assert(p, ['path']);
 		if (isWindows) await execAsync(`start "" "${p.path}"`);
 		else if (platform() === 'darwin') await execAsync(`open "${p.path}"`);
 		else await execAsync(`xdg-open "${p.path}"`);
-	};
+	}
 
-	const renameFn = async (p: { path: string; newName: string }) => {
+	async function renameFn(p: { path: string; newName: string }) {
 		assert(p, ['path', 'newName']);
 		const dir = dirname(p.path);
 		const newPath = join(dir, p.newName);
 		await fsRenameNode(p.path, newPath);
-	};
+	}
 
-	const exists = async (p: { path: string }) => {
+	async function exists(p: { path: string }) {
 		assert(p, ['path']);
 		try {
 			await access(p.path);
@@ -106,20 +106,20 @@ export function initFsHandlers() {
 		} catch {
 			return { exists: false };
 		}
-	};
+	}
 
-	const writeText = async (p: { path: string; content: string }) => {
+	async function writeText(p: { path: string; content: string }) {
 		assert(p, ['path', 'content']);
 		await Bun.write(p.path, p.content);
 		return { success: true };
-	};
+	}
 
-	const writeGzip = async (p: { path: string; content: string }) => {
+	async function writeGzip(p: { path: string; content: string }) {
 		assert(p, ['path', 'content']);
 		const compressed = Bun.gzipSync(Buffer.from(p.content, 'utf-8'));
 		await Bun.write(p.path, compressed);
 		return { success: true };
-	};
+	}
 
 	return { info, list, readText, readGzip, delete: del, mkdir: mkdirFn, open, rename: renameFn, exists, writeText, writeGzip };
 }

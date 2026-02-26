@@ -14,13 +14,13 @@ interface CreateLishParams {
 }
 
 export function initLishsHandlers(dataServer: DataServer, emit: EmitFn) {
-	const getAll = () => dataServer.getAllLishs();
-	const get = (p: { lishID: string }) => {
+	function getAll() { return dataServer.getAllLishs(); }
+	function get(p: { lishID: string }) {
 		assert(p, ['lishID']);
 		return dataServer.getLish(p.lishID);
-	};
+	}
 
-	const create = async (p: CreateLishParams, client: any) => {
+	async function create(p: CreateLishParams, client: any) {
 		assert(p, ['dataPath']);
 		const addToSharing = p.addToSharing ?? false;
 		const algorithm = p.algorithm ?? 'sha256';
@@ -42,7 +42,7 @@ export function initLishsHandlers(dataServer: DataServer, emit: EmitFn) {
 			}
 		);
 		return { lishID: lish.id };
-	};
+	}
 
 	return { getAll, get, create };
 }

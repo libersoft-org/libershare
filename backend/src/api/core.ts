@@ -4,7 +4,7 @@ type EmitFn = (client: any, event: string, data: any) => void;
 type GetPeerCountsFn = () => { networkID: string; count: number }[];
 
 export function initCoreHandlers(getPeerCounts: GetPeerCountsFn, emit: EmitFn) {
-	const subscribe = (p: { events?: string[]; event?: string }, client: any) => {
+	function subscribe(p: { events?: string[]; event?: string }, client: any) {
 		const events = Array.isArray(p.events) ? p.events : [p.event];
 		events.forEach((e: string) => client.data.subscribedEvents.add(e));
 		if (client.data.subscribedEvents.has('peers:count')) {
@@ -12,15 +12,15 @@ export function initCoreHandlers(getPeerCounts: GetPeerCountsFn, emit: EmitFn) {
 			if (counts.length > 0) emit(client, 'peers:count', counts);
 		}
 		return true;
-	};
+	}
 
-	const unsubscribe = (p: { events?: string[]; event?: string }, client: any) => {
+	function unsubscribe(p: { events?: string[]; event?: string }, client: any) {
 		const events = Array.isArray(p.events) ? p.events : [p.event];
 		events.forEach((e: string) => client.data.subscribedEvents.delete(e));
 		return true;
-	};
+	}
 
-	const fetchUrl = async (p: { url: string }) => {
+	async function fetchUrl(p: { url: string }) {
 		assert(p, ['url']);
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), 10000);
@@ -59,7 +59,7 @@ export function initCoreHandlers(getPeerCounts: GetPeerCountsFn, emit: EmitFn) {
 		} finally {
 			clearTimeout(timeout);
 		}
-	};
+	}
 
 	return { subscribe, unsubscribe, fetchUrl };
 }

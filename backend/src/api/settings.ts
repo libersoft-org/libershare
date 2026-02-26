@@ -3,20 +3,20 @@ import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
 export function initSettingsHandlers(settings: Settings) {
-	const get = (p: { path: string }) => {
+	function get(p: { path: string }) {
 		assert(p, ['path']);
 		return settings.get(p.path);
-	};
+	}
 
-	const set = async (p: { path: string; value: any }) => {
+	async function set(p: { path: string; value: any }) {
 		assert(p, ['path', 'value']);
 		await settings.set(p.path, p.value);
 		return true;
-	};
+	}
 
-	const getAll = () => settings.getAll();
-	const getDefaults = () => settings.getDefaults();
-	const reset = async () => settings.reset();
+	function getAll() { return settings.getAll(); }
+	function getDefaults() { return settings.getDefaults(); }
+	async function reset() { return settings.reset(); }
 
 	return { get, set, getAll, getDefaults, reset };
 }
