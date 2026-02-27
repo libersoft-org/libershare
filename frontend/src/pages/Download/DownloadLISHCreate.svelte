@@ -7,7 +7,8 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { scrollToElement, sanitizeFilename } from '../../scripts/utils.ts';
-	import { HASH_ALGORITHMS, parseChunkSize, validateLISHCreateForm, getLISHCreateErrorMessage, type HashAlgorithm } from '../../scripts/lish.ts';
+	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm } from '@shared';
+	import { parseChunkSize, validateLISHCreateForm, getLISHCreateErrorMessage } from '../../scripts/lish.ts';
 	import { storageLISHPath, storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -54,13 +55,12 @@
 
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
-	let algorithm = $state<HashAlgorithm>('sha256');
+	let algorithm = $state<HashAlgorithm>(DEFAULT_ALGO);
 	let threads = $state('0');
 	// Navigation state
 	let selectedIndex = $state(0);
 	let selectedColumn = $state(0); // For rows with multiple elements (input + browse, algo selector)
 	let rowElements: HTMLElement[] = $state([]);
-	let submitted = $state(false);
 	// Input refs
 	let inputPathInput: Input | undefined = $state();
 	let lishFileInput: Input | undefined = $state();
@@ -68,10 +68,8 @@
 	let descriptionInput: Input | undefined = $state();
 	let chunkSizeInput: Input | undefined = $state();
 	let threadsInput: Input | undefined = $state();
-	// Validation using lish.ts
-	let validationError = $derived(validateLISHCreateForm({ dataPath, lishFile: saveToFile ? lishFile || undefined : undefined, addToSharing, chunkSize, threads }));
-	let errorMessage = $derived(validationError ? getLISHCreateErrorMessage(validationError, $t) : '');
-	let showError = $derived(submitted && errorMessage);
+	// Validation error - only set on submit
+	let errorMessage = $state('');
 	// Form fields: name(0), description(1), dataPath(2), saveToFile(3), lishFile(4), addToSharing(5), advancedToggle(6), chunkSize(7), algo(8), threads(9), create(10), back(11)
 	const FIELD_NAME = 0;
 	const FIELD_DESCRIPTION = 1;
@@ -87,12 +85,12 @@
 	const FIELD_BACK = 11;
 	const TOTAL_FIELDS = 12;
 	// Algorithm selection - horizontal navigation within the algo field
-	let algoIndex = $derived(HASH_ALGORITHMS.indexOf(algorithm));
+	let algoIndex = $derived(SUPPORTED_ALGOS.indexOf(algorithm));
 
 	function getMaxColumn(fieldIndex: number): number {
 		if (fieldIndex === FIELD_INPUT) return 1; // input + browse
 		if (fieldIndex === FIELD_LISH_FILE) return 1; // lishFile + browse
-		if (fieldIndex === FIELD_ALGO) return HASH_ALGORITHMS.length - 1;
+		if (fieldIndex === FIELD_ALGO) return SUPPORTED_ALGOS.length - 1;
 		return 0;
 	}
 
@@ -120,19 +118,24 @@
 	}
 
 	function handleCreate(): void {
-		submitted = true;
+		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, addToSharing, chunkSize, threads });
+		errorMessage = validationError ? getLISHCreateErrorMessage(validationError, $t) : '';
 		if (!errorMessage) {
 			// TODO: Call backend API to create LISH
-			console.log('Creating LISH:', {
-				name: name || undefined,
-				description: description || undefined,
+			const params: Record<string, any> = {
 				dataPath,
-				lishFile: saveToFile ? lishFile || undefined : undefined,
-				addToSharing,
-				chunkSize: parseChunkSize(chunkSize),
-				algorithm,
-				threads: parseInt(threads) || 0,
-			});
+			};
+			if (name) params.name = name;
+			if (description) params.description = description;
+			if (saveToFile && lishFile) params.lishFile = lishFile;
+			if (addToSharing) params.addToSharing = addToSharing;
+			// Only pass non-default advanced options
+			const parsedChunkSize = parseChunkSize(chunkSize);
+			if (parsedChunkSize !== null && parsedChunkSize !== 1024 * 1024) params.chunkSize = parsedChunkSize;
+			if (algorithm !== DEFAULT_ALGO) params.algorithm = algorithm;
+			const parsedThreads = parseInt(threads) || 0;
+			if (parsedThreads !== 0) params.threads = parsedThreads;
+			console.log('Creating LISH:', params);
 		}
 	}
 
@@ -288,7 +291,7 @@
 			} else if (selectedIndex === FIELD_ADD_TO_SHARING) addToSharing = !addToSharing;
 			else if (selectedIndex === FIELD_ADVANCED_TOGGLE) showAdvanced = !showAdvanced;
 			else if (selectedIndex === FIELD_CHUNK_SIZE) focusInput(FIELD_CHUNK_SIZE);
-			else if (selectedIndex === FIELD_ALGO) algorithm = HASH_ALGORITHMS[selectedColumn];
+			else if (selectedIndex === FIELD_ALGO) algorithm = SUPPORTED_ALGOS[selectedColumn];
 			else if (selectedIndex === FIELD_THREADS) focusInput(FIELD_THREADS);
 			else if (selectedIndex === FIELD_CREATE) handleCreate();
 			else if (selectedIndex === FIELD_BACK) onBack?.();
@@ -394,7 +397,7 @@
 				<div bind:this={rowElements[FIELD_ALGO]}>
 					<div class="label">{$t('downloads.lishCreate.algorithm')}:</div>
 					<div class="algo-selector">
-						{#each HASH_ALGORITHMS as algo, i}
+						{#each SUPPORTED_ALGOS as algo, i}
 							<Button label={algo} selected={active && selectedIndex === FIELD_ALGO && selectedColumn === i} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 						{/each}
 					</div>
@@ -404,7 +407,7 @@
 					<Input bind:this={threadsInput} bind:value={threads} label={$t('downloads.lishCreate.threads')} type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
 				</div>
 			{/if}
-			<Alert type="error" message={showError ? errorMessage : ''} />
+			<Alert type="error" message={errorMessage} />
 		</div>
 		<ButtonBar justify="center">
 			<div bind:this={rowElements[FIELD_CREATE]}>

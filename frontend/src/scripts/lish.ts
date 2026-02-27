@@ -5,11 +5,6 @@ export interface LISH {
 	// TODO: Add more fields as needed (size, hash, files, etc.)
 }
 
-// Supported hash algorithms for LISH creation
-export const HASH_ALGORITHMS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
-
-export type HashAlgorithm = (typeof HASH_ALGORITHMS)[number];
-
 /**
  * Size unit multipliers (base 1024)
  */
@@ -149,16 +144,18 @@ export function validateThreads(threads: string): 'INVALID_THREADS' | null {
  */
 export interface LISHCreateFormData {
 	dataPath: string;
+	saveToFile?: boolean;
 	lishFile?: string;
 	addToSharing?: boolean;
 	chunkSize?: string;
 	threads?: string;
 }
 
-export type LISHCreateError = 'INPUT_REQUIRED' | 'INVALID_CHUNK_SIZE' | 'INVALID_THREADS' | null;
+export type LISHCreateError = 'INPUT_REQUIRED' | 'LISH_FILE_REQUIRED' | 'INVALID_CHUNK_SIZE' | 'INVALID_THREADS' | null;
 
 export function validateLISHCreateForm(data: LISHCreateFormData): LISHCreateError {
 	if (!data.dataPath.trim()) return 'INPUT_REQUIRED';
+	if (data.saveToFile && !data.lishFile?.trim()) return 'LISH_FILE_REQUIRED';
 	if (data.chunkSize) {
 		const chunkError = validateChunkSize(data.chunkSize);
 		if (chunkError) return chunkError;
@@ -177,6 +174,8 @@ export function getLISHCreateErrorMessage(errorCode: LISHCreateError, t: (key: s
 	switch (errorCode) {
 		case 'INPUT_REQUIRED':
 			return t('downloads.lishCreate.dataPathRequired');
+		case 'LISH_FILE_REQUIRED':
+			return t('downloads.lishCreate.lishFileRequired');
 		case 'INVALID_CHUNK_SIZE':
 			return t('downloads.lishCreate.invalidChunkSize');
 		case 'INVALID_THREADS':

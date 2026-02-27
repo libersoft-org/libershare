@@ -1,7 +1,7 @@
 import { mkdir, readFile, open } from 'fs/promises';
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
-import { type IStoredLISH, type LISHid, type ChunkID } from '../lish/lish.ts';
+import { type IStoredLISH, type LISHid, type ChunkID } from '@shared';
 import { type Network } from './network.ts';
 import { lishTopic } from './constants.ts';
 import { Utils } from '../utils.ts';

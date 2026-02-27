@@ -91,6 +91,7 @@
 			"threads": "Number of threads (0 = auto)",
 			"create": "Create LISH",
 			"dataPathRequired": "Data path is required",
+			"lishFileRequired": "LISH file path is required when saving to file is enabled",
 			"invalidChunkSize": "Invalid chunk size",
 			"invalidThreads": "Number of threads must be 0 or positive",
 			"showAdvanced": "Show advanced settings",

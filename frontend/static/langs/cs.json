@@ -91,6 +91,7 @@
 			"threads": "Počet vláken (0 = automaticky)",
 			"create": "Vytvořit LISH",
 			"dataPathRequired": "Cesta k datům je povinná",
+			"lishFileRequired": "Cesta k souboru .lish je povinná, pokud je zapnuto ukládání do souboru",
 			"invalidChunkSize": "Neplatná velikost chunku",
 			"invalidThreads": "Počet vláken musí být 0 nebo kladné číslo",
 			"showAdvanced": "Zobrazit pokročilá nastavení",

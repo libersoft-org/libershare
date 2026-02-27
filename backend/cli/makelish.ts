@@ -1,5 +1,6 @@
 import { Utils } from '../src/utils.ts';
-import { createLISH, SUPPORTED_ALGOS, HashAlgorithm, DEFAULT_CHUNK_SIZE, DEFAULT_ALGO } from '../src/lish/lish.ts';
+import { SUPPORTED_ALGOS, type HashAlgorithm, DEFAULT_ALGO } from '@shared';
+import { createLISH, DEFAULT_CHUNK_SIZE } from '../src/lish/lish.ts';
 interface IArgs {
 	input?: string;
 	name?: string;

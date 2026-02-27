@@ -1,7 +1,7 @@
 import { mkdir, open } from 'fs/promises';
 import { join, dirname } from 'path';
-import { type ILISH, type IStoredLISH, type LISHid, type ChunkID } from './lish.ts';
-import { createLISH, DEFAULT_CHUNK_SIZE, DEFAULT_ALGO } from './lish.ts';
+import { type ILISH, type IStoredLISH, type LISHid, type ChunkID, DEFAULT_ALGO } from '@shared';
+import { createLISH, DEFAULT_CHUNK_SIZE } from './lish.ts';
 import { ArrayStorage } from '../storage.ts';
 import { Utils } from '../utils.ts';
 

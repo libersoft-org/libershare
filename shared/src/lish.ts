@@ -3,6 +3,7 @@ export type ChunkID = string;
 
 export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
 export type HashAlgorithm = (typeof SUPPORTED_ALGOS)[number];
+export const DEFAULT_ALGO: HashAlgorithm = 'sha256';
 
 export interface ILISH {
 	version: number;

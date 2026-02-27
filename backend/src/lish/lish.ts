@@ -1,12 +1,9 @@
 import * as fsPromises from 'node:fs/promises';
 import { type Stats } from 'node:fs';
-import { type HashAlgorithm, type ILISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
-export { type LISHid, type ChunkID, type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
-export { SUPPORTED_ALGOS } from '@shared';
+import { type HashAlgorithm, type ILISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, DEFAULT_ALGO } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 export const LISH_VERSION = 1;
 export const DEFAULT_CHUNK_SIZE = 1024 * 1024;
-export const DEFAULT_ALGO: HashAlgorithm = 'sha256';
 
 // Helper to normalize paths to forward slashes
 function normalizePath(p: string): string {
