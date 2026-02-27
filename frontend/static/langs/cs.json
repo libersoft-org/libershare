@@ -36,7 +36,8 @@
 		"uploads": "Odesílání",
 		"show": "Zobrazit",
 		"hide": "Skrýt",
-		"refresh": "Obnovit"
+		"refresh": "Obnovit",
+		"size": "Velikost"
 	},
 	"library": {
 		"title": "Online knihovna",
@@ -95,7 +96,14 @@
 			"invalidChunkSize": "Neplatná velikost chunku",
 			"invalidThreads": "Počet vláken musí být 0 nebo kladné číslo",
 			"showAdvanced": "Zobrazit pokročilá nastavení",
-			"hideAdvanced": "Skrýt pokročilá nastavení"
+			"hideAdvanced": "Skrýt pokročilá nastavení",
+			"progress": {
+				"title": "Vytváření",
+				"creating": "Vytváření LISHe...",
+				"chunks": "Části",
+				"done": "LISH byl úspěšně vytvořen",
+				"filesProcessed": "Zpracovaných souborů"
+			}
 		},
 		"lishImport": {
 			"fromFile": "Ze souboru",

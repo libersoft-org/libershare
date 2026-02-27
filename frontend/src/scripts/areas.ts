@@ -44,14 +44,17 @@ export function useArea(areaID: string, handlers: AreaHandlers, position: Positi
 	areaHandlers.set(areaID, handlers);
 	// Register position
 	areaLayout.update(layout => ({ ...layout, [areaID]: position }));
-	// Return cleanup function
+	// Return cleanup function - only unregister if our handlers are still the active ones
+	// (prevents race conditions when components sharing the same areaID overlap during transitions)
 	return () => {
-		areaHandlers.delete(areaID);
-		areaLayout.update(layout => {
-			const { [areaID]: _, ...rest } = layout;
-			return rest;
-		});
-		if (get(activeArea) === areaID) activeArea.set(null);
+		if (areaHandlers.get(areaID) === handlers) {
+			areaHandlers.delete(areaID);
+			areaLayout.update(layout => {
+				const { [areaID]: _, ...rest } = layout;
+				return rest;
+			});
+			if (get(activeArea) === areaID) activeArea.set(null);
+		}
 	};
 }
 

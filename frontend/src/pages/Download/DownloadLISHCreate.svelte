@@ -17,6 +17,7 @@
 	import Input from '../../components/Input/Input.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
+	import DownloadLISHProgress from './DownloadLISHProgress.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -29,6 +30,8 @@
 	// Browse state
 	let browsingInputPath = $state(false);
 	let browsingLISHFile = $state(false);
+	let creating = $state(false);
+	let createParams = $state<Record<string, any>>({});
 	let browseFolder = $state('');
 	let browseFile = $state<string | undefined>(undefined);
 	let lishFileName = $state(''); // File name input in LISH file browse dialog
@@ -121,7 +124,6 @@
 		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, addToSharing, chunkSize, threads });
 		errorMessage = validationError ? getLISHCreateErrorMessage(validationError, $t) : '';
 		if (!errorMessage) {
-			// TODO: Call backend API to create LISH
 			const params: Record<string, any> = {
 				dataPath,
 			};
@@ -135,8 +137,46 @@
 			if (algorithm !== DEFAULT_ALGO) params.algorithm = algorithm;
 			const parsedThreads = parseInt(threads) || 0;
 			if (parsedThreads !== 0) params.threads = parsedThreads;
-			console.log('Creating LISH:', params);
+			openProgressPage(params);
 		}
+	}
+
+	function openProgressPage(params: Record<string, any>): void {
+		createParams = params;
+		creating = true;
+		if (unregisterArea) {
+			unregisterArea();
+			unregisterArea = null;
+		}
+		pushBreadcrumb($t('downloads.lishCreate.progress.title'));
+		removeBackHandler = pushBackHandler(handleProgressBack);
+	}
+
+	async function handleProgressBack(): Promise<void> {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
+		popBreadcrumb();
+		creating = false;
+		await tick();
+		unregisterArea = registerAreaHandler();
+		selectedIndex = FIELD_CREATE;
+		selectedColumn = 0;
+		activateArea(areaID);
+		await tick();
+		scrollToSelected();
+	}
+
+	function handleProgressDone(lishID: string): void {
+		// Clean up without re-registering area (we're navigating away)
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
+		popBreadcrumb();
+		creating = false;
+		onBack?.();
 	}
 
 	function openInputPathBrowse(): void {
@@ -355,6 +395,8 @@
 	<FileBrowser {areaID} {position} initialPath={browseFolder} initialFile={browseFile} showPath selectFolderButton selectFileButton onSelect={handleInputPathSelect} onBack={handleBrowseBack} />
 {:else if browsingLISHFile}
 	<FileBrowser {areaID} {position} initialPath={browseFolder} showPath foldersOnly selectFolderButton saveFileName={lishFileName} onSaveFileNameChange={v => (lishFileName = v)} onSelect={handleOutputPathSelect} onBack={handleOutputBrowseBack} />
+{:else if creating}
+	<DownloadLISHProgress {areaID} {position} params={createParams} onBack={handleProgressBack} onDone={handleProgressDone} />
 {:else}
 	<div class="create">
 		<div class="container">

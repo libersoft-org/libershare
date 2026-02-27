@@ -24,6 +24,7 @@ function setMenuBreadcrumb(items: string[]): void {
 // Public function for components to push breadcrumb items
 export function pushBreadcrumb(item: string): void {
 	breadcrumbStore.update(items => [...items, { label: item, source: 'component' as const }]);
+	scrollContentToTop();
 }
 
 // Public function for components to pop their breadcrumb items
@@ -35,6 +36,7 @@ export function popBreadcrumb(): void {
 		if (last.source === 'component') return items.slice(0, -1);
 		return items;
 	});
+	scrollContentToTop();
 }
 
 // Reset all breadcrumbs
@@ -51,8 +53,16 @@ export function setContentElement(element: HTMLElement): void {
 	contentElement = element;
 }
 
+function getContentElement(): HTMLElement | null {
+	// Fallback to DOM query if reference was lost (e.g. after HMR)
+	if (!contentElement) contentElement = document.querySelector('[data-content-scroll]') as HTMLElement | null;
+	return contentElement;
+}
+
 export function scrollContentToTop(): void {
-	if (contentElement) contentElement.scrollTo({ top: 0, behavior: 'instant' });
+	const el = getContentElement();
+	if (!el) return;
+	el.scrollTop = 0;
 }
 
 // Confirm dialog state
@@ -142,6 +152,7 @@ export function createNavigation() {
 		}
 		// Navigate into submenu - find selected item if any
 		pathIDs.update(p => [...p, id]);
+		scrollContentToTop();
 		// If custom label provided, update breadcrumb with it
 		if (customLabel) {
 			breadcrumbStore.update(items => {
@@ -163,6 +174,7 @@ export function createNavigation() {
 		if (currentPathIds.length > 0) {
 			selectedId.set(currentPathIds[currentPathIds.length - 1]);
 			pathIDs.update(p => p.slice(0, -1));
+			scrollContentToTop();
 		} else {
 			const $menuStructure = get(menuStructure);
 			const exitItem = $menuStructure.items.find(i => i.id === 'exit');

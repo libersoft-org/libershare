@@ -36,7 +36,8 @@
 		"uploads": "Uploads",
 		"show": "Show",
 		"hide": "Hide",
-		"refresh": "Refresh"
+		"refresh": "Refresh",
+		"size": "Size"
 	},
 	"library": {
 		"title": "Online library",
@@ -95,7 +96,14 @@
 			"invalidChunkSize": "Invalid chunk size",
 			"invalidThreads": "Number of threads must be 0 or positive",
 			"showAdvanced": "Show advanced settings",
-			"hideAdvanced": "Hide advanced settings"
+			"hideAdvanced": "Hide advanced settings",
+			"progress": {
+				"title": "Creating",
+				"creating": "Creating LISH ...",
+				"chunks": "Chunks",
+				"done": "LISH created successfully",
+				"filesProcessed": "Files processed"
+			}
 		},
 		"lishImport": {
 			"fromFile": "From file",

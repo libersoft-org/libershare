@@ -98,6 +98,7 @@
 	.content {
 		flex: 1;
 		overflow-y: auto;
+		overflow-anchor: none;
 		background-color: var(--secondary-hard-background);
 	}
 </style>
@@ -118,7 +119,7 @@
 	<div class="page">
 		<Header areaID="header" position={LAYOUT.header} {onBack} />
 		<NavigationBreadcrumb areaID="breadcrumb" position={LAYOUT.breadcrumb} items={$breadcrumbItems} {onBack} />
-		<div class="content" bind:this={contentElement}>
+		<div class="content" data-content-scroll bind:this={contentElement}>
 			{#if $confirmDialog.visible && $confirmDialog.action && $confirmDialog.action !== 'back'}
 				{@const dialogConfig = $confirmDialogs[$confirmDialog.action as 'restart' | 'shutdown' | 'quit']}
 				<ConfirmDialog title={dialogConfig.title ?? ''} message={dialogConfig.message ?? ''} confirmLabel={dialogConfig.confirmLabel} cancelLabel={dialogConfig.cancelLabel} position={LAYOUT.content} onConfirm={handleConfirm} onBack={handleCancel} />

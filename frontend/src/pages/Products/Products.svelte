@@ -3,7 +3,7 @@
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb, scrollContentToTop } from '../../scripts/navigation.ts';
+	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import { getGridColumnsCount } from '../../scripts/products.ts';
 	import SearchBar from '../../components/Search/SearchBar.svelte';
@@ -67,7 +67,6 @@
 	function openItem(): void {
 		selectedItem = items[selectedIndex];
 		pushBreadcrumb(items[selectedIndex].title);
-		scrollContentToTop();
 		isAPressed = false;
 		if (unregisterList) {
 			unregisterList();
