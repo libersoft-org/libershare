@@ -230,9 +230,7 @@
 				// Skip disabled lish file field when saveToFile is off
 				if (!saveToFile && selectedIndex === FIELD_LISH_FILE) selectedIndex--;
 				// Skip advanced fields when collapsed
-				if (!showAdvanced && selectedIndex >= FIELD_CHUNK_SIZE && selectedIndex <= FIELD_THREADS) {
-					selectedIndex = FIELD_ADVANCED_TOGGLE;
-				}
+				if (!showAdvanced && selectedIndex >= FIELD_CHUNK_SIZE && selectedIndex <= FIELD_THREADS) selectedIndex = FIELD_ADVANCED_TOGGLE;
 				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
 				scrollToSelected();
 				return true;
@@ -240,9 +238,7 @@
 			return false;
 		},
 		down: () => {
-			if (selectedIndex >= FIELD_CREATE) {
-				return false;
-			}
+			if (selectedIndex >= FIELD_CREATE) return false;
 			if (selectedIndex < FIELD_CREATE) {
 				selectedIndex++;
 				// Skip disabled lish file field when saveToFile is off
@@ -280,33 +276,22 @@
 		},
 		confirmDown: () => {},
 		confirmUp: () => {
-			if (selectedIndex === FIELD_NAME) {
-				focusInput(FIELD_NAME);
-			} else if (selectedIndex === FIELD_DESCRIPTION) {
-				focusInput(FIELD_DESCRIPTION);
-			} else if (selectedIndex === FIELD_INPUT) {
+			if (selectedIndex === FIELD_NAME) focusInput(FIELD_NAME);
+			else if (selectedIndex === FIELD_DESCRIPTION) focusInput(FIELD_DESCRIPTION);
+			else if (selectedIndex === FIELD_INPUT) {
 				if (selectedColumn === 0) focusInput(FIELD_INPUT);
 				else openInputPathBrowse();
-			} else if (selectedIndex === FIELD_SAVE_TO_FILE) {
-				saveToFile = !saveToFile;
-			} else if (selectedIndex === FIELD_LISH_FILE) {
+			} else if (selectedIndex === FIELD_SAVE_TO_FILE) saveToFile = !saveToFile;
+			else if (selectedIndex === FIELD_LISH_FILE) {
 				if (selectedColumn === 0) focusInput(FIELD_LISH_FILE);
 				else openOutputPathBrowse();
-			} else if (selectedIndex === FIELD_ADD_TO_SHARING) {
-				addToSharing = !addToSharing;
-			} else if (selectedIndex === FIELD_ADVANCED_TOGGLE) {
-				showAdvanced = !showAdvanced;
-			} else if (selectedIndex === FIELD_CHUNK_SIZE) {
-				focusInput(FIELD_CHUNK_SIZE);
-			} else if (selectedIndex === FIELD_ALGO) {
-				algorithm = HASH_ALGORITHMS[selectedColumn];
-			} else if (selectedIndex === FIELD_THREADS) {
-				focusInput(FIELD_THREADS);
-			} else if (selectedIndex === FIELD_CREATE) {
-				handleCreate();
-			} else if (selectedIndex === FIELD_BACK) {
-				onBack?.();
-			}
+			} else if (selectedIndex === FIELD_ADD_TO_SHARING) addToSharing = !addToSharing;
+			else if (selectedIndex === FIELD_ADVANCED_TOGGLE) showAdvanced = !showAdvanced;
+			else if (selectedIndex === FIELD_CHUNK_SIZE) focusInput(FIELD_CHUNK_SIZE);
+			else if (selectedIndex === FIELD_ALGO) algorithm = HASH_ALGORITHMS[selectedColumn];
+			else if (selectedIndex === FIELD_THREADS) focusInput(FIELD_THREADS);
+			else if (selectedIndex === FIELD_CREATE) handleCreate();
+			else if (selectedIndex === FIELD_BACK) onBack?.();
 		},
 		confirmCancel: () => {},
 		back: () => onBack?.(),
