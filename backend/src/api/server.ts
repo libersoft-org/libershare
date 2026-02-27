@@ -4,7 +4,6 @@ import { type Networks } from '../lishnet/networks.ts';
 import { type Settings } from '../settings.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLishNetworksHandlers } from './lishNetworks.ts';
-import { initNetworksHandlers } from './networks.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
 import { initLishsHandlers } from './lishs.ts';
@@ -57,8 +56,7 @@ export class ApiServer {
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _core = initCoreHandlers();
 		const _settings = initSettingsHandlers(this.settings);
-		const _lishNetworks = initLishNetworksHandlers(this.networks);
-		const _networks = initNetworksHandlers(this.networks, this.dataServer);
+		const _lishNetworks = initLishNetworksHandlers(this.networks, this.dataServer);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		const _lishs = initLishsHandlers(this.dataServer, emitTo);
@@ -89,18 +87,16 @@ export class ApiServer {
 			'lishNetworks.addIfNotExists': _lishNetworks.addIfNotExists,
 			'lishNetworks.import': _lishNetworks.import,
 			'lishNetworks.setAll': _lishNetworks.setAll,
-
-			// Networks
-			'networks.importFromFile': _networks.importFromFile,
-			'networks.importFromJson': _networks.importFromJson,
-			'networks.setEnabled': _networks.setEnabled,
-			'networks.connect': _networks.connect,
-			'networks.findPeer': _networks.findPeer,
-			'networks.getAddresses': _networks.getAddresses,
-			'networks.getPeers': _networks.getPeers,
-			'networks.getNodeInfo': _networks.getNodeInfo,
-			'networks.getStatus': _networks.getStatus,
-			'networks.infoAll': _networks.infoAll,
+			'lishNetworks.importFromFile': _lishNetworks.importFromFile,
+			'lishNetworks.importFromJson': _lishNetworks.importFromJson,
+			'lishNetworks.setEnabled': _lishNetworks.setEnabled,
+			'lishNetworks.connect': _lishNetworks.connect,
+			'lishNetworks.findPeer': _lishNetworks.findPeer,
+			'lishNetworks.getAddresses': _lishNetworks.getAddresses,
+			'lishNetworks.getPeers': _lishNetworks.getPeers,
+			'lishNetworks.getNodeInfo': _lishNetworks.getNodeInfo,
+			'lishNetworks.getStatus': _lishNetworks.getStatus,
+			'lishNetworks.infoAll': _lishNetworks.infoAll,
 
 			// LISHs
 			'lishs.getAll': _lishs.getAll,

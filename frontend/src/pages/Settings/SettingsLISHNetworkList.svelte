@@ -54,14 +54,14 @@
 
 	async function loadNodeInfo(): Promise<void> {
 		try {
-			globalNodeInfo = await api.networks.getNodeInfo();
+			globalNodeInfo = await api.lishNetworks.getNodeInfo();
 		} catch (e: any) {
 			globalNodeInfo = null;
 		}
 	}
 
 	async function loadNetworks(): Promise<void> {
-		const [nets, nodeInfo] = await Promise.all([getNetworks(), api.networks.getNodeInfo().catch((): null => null)]);
+		const [nets, nodeInfo] = await Promise.all([getNetworks(), api.lishNetworks.getNodeInfo().catch((): null => null)]);
 		globalNodeInfo = nodeInfo;
 		networks = nets;
 	}
@@ -151,7 +151,7 @@
 		const { [network.networkID]: _err, ...restErrors } = networkErrors;
 		networkErrors = restErrors;
 		try {
-			await api.networks.setEnabled(network.networkID, newEnabled);
+			await api.lishNetworks.setEnabled(network.networkID, newEnabled);
 		} catch (e: any) {
 			networkErrors = { ...networkErrors, [network.networkID]: e?.message || 'Connection failed' };
 		}

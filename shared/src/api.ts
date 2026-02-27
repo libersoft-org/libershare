@@ -17,7 +17,6 @@ export interface IWsClient {
  * Can be used in both browser and CLI environments.
  */
 export class Api {
-	readonly networks: NetworksApi;
 	readonly datasets: DatasetsApi;
 	readonly fs: FsApi;
 	readonly settings: SettingsApi;
@@ -26,7 +25,6 @@ export class Api {
 	readonly transfer: TransferApi;
 
 	constructor(private client: IWsClient) {
-		this.networks = new NetworksApi(client);
 		this.datasets = new DatasetsApi(client);
 		this.fs = new FsApi(client);
 		this.settings = new SettingsApi(client);
@@ -58,50 +56,6 @@ export class Api {
 
 	fetchUrl(url: string): Promise<FetchUrlResponse> {
 		return this.client.call<FetchUrlResponse>('fetchUrl', { url });
-	}
-}
-
-class NetworksApi {
-	constructor(private client: IWsClient) {}
-
-	importFromFile(path: string, enabled = false): Promise<LISHNetworkConfig> {
-		return this.client.call<LISHNetworkConfig>('networks.importFromFile', { path, enabled });
-	}
-
-	importFromJson(json: string, enabled = false): Promise<LISHNetworkConfig> {
-		return this.client.call<LISHNetworkConfig>('networks.importFromJson', { json, enabled });
-	}
-
-	setEnabled(networkID: string, enabled: boolean): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('networks.setEnabled', { networkID, enabled });
-	}
-
-	connect(networkID: string, multiaddr: string): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('networks.connect', { networkID, multiaddr });
-	}
-
-	findPeer(networkID: string, peerID: string): Promise<any> {
-		return this.client.call<any>('networks.findPeer', { networkID, peerID });
-	}
-
-	getAddresses(networkID: string): Promise<string[]> {
-		return this.client.call<string[]>('networks.getAddresses', { networkID });
-	}
-
-	getPeers(networkID: string): Promise<PeerConnectionInfo[]> {
-		return this.client.call<PeerConnectionInfo[]>('networks.getPeers', { networkID });
-	}
-
-	getNodeInfo(): Promise<NetworkNodeInfo> {
-		return this.client.call<NetworkNodeInfo>('networks.getNodeInfo');
-	}
-
-	getStatus(networkID: string): Promise<NetworkStatus> {
-		return this.client.call<NetworkStatus>('networks.getStatus', { networkID });
-	}
-
-	infoAll(): Promise<NetworkInfo[]> {
-		return this.client.call<NetworkInfo[]>('networks.infoAll');
 	}
 }
 
@@ -228,6 +182,48 @@ class LISHNetworksApi {
 
 	setAll(networks: LISHNetworkConfig[]): Promise<boolean> {
 		return this.client.call<boolean>('lishNetworks.setAll', { networks });
+	}
+
+	// Runtime methods
+
+	importFromFile(path: string, enabled = false): Promise<LISHNetworkConfig> {
+		return this.client.call<LISHNetworkConfig>('lishNetworks.importFromFile', { path, enabled });
+	}
+
+	importFromJson(json: string, enabled = false): Promise<LISHNetworkConfig> {
+		return this.client.call<LISHNetworkConfig>('lishNetworks.importFromJson', { json, enabled });
+	}
+
+	setEnabled(networkID: string, enabled: boolean): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishNetworks.setEnabled', { networkID, enabled });
+	}
+
+	connect(networkID: string, multiaddr: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishNetworks.connect', { networkID, multiaddr });
+	}
+
+	findPeer(networkID: string, peerID: string): Promise<any> {
+		return this.client.call<any>('lishNetworks.findPeer', { networkID, peerID });
+	}
+
+	getAddresses(networkID: string): Promise<string[]> {
+		return this.client.call<string[]>('lishNetworks.getAddresses', { networkID });
+	}
+
+	getPeers(networkID: string): Promise<PeerConnectionInfo[]> {
+		return this.client.call<PeerConnectionInfo[]>('lishNetworks.getPeers', { networkID });
+	}
+
+	getNodeInfo(): Promise<NetworkNodeInfo> {
+		return this.client.call<NetworkNodeInfo>('lishNetworks.getNodeInfo');
+	}
+
+	getStatus(networkID: string): Promise<NetworkStatus> {
+		return this.client.call<NetworkStatus>('lishNetworks.getStatus', { networkID });
+	}
+
+	infoAll(): Promise<NetworkInfo[]> {
+		return this.client.call<NetworkInfo[]>('lishNetworks.infoAll');
 	}
 }
 

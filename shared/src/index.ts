@@ -11,14 +11,6 @@ export { Api, type IWsClient } from './api.ts';
 export { WsClient } from './client.ts';
 
 // Network types
-export interface NetworkDefinition {
-	id: string;
-	version: number;
-	name: string;
-	description: string | null;
-	bootstrap_peers: string[];
-	enabled: boolean;
-}
 
 export interface NetworkStatus {
 	connected: number;
@@ -39,14 +31,7 @@ export interface PeerConnectionInfo {
 }
 
 // Combined network info (config + runtime)
-export interface NetworkInfo {
-	// Config
-	id: string;
-	version: number;
-	name: string;
-	description: string | null;
-	bootstrap_peers: string[];
-	enabled: boolean;
+export interface NetworkInfo extends LISHNetworkConfig {
 	// Runtime (only present if enabled)
 	peerID?: string;
 	addresses?: string[];
