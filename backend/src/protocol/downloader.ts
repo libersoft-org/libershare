@@ -1,26 +1,26 @@
 import { mkdir, readFile, open } from 'fs/promises';
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
-import { type IStoredLish, type LishID, type ChunkID } from '../lish/lish.ts';
+import { type IStoredLISH, type LISHid, type ChunkID } from '../lish/lish.ts';
 import { type Network } from './network.ts';
 import { lishTopic } from './constants.ts';
 import { Utils } from '../utils.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
-import { HaveChunks, LISH_PROTOCOL, LishClient } from './lish-protocol.ts';
+import { HaveChunks, LISH_PROTOCOL, LISHClient } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { DataServer, MissingChunk } from '../lish/data-server.ts';
 
 type NodeId = string;
 interface PubsubMessage {
 	type: 'want' | 'have';
-	lishID: LishID;
+	lishID: LISHid;
 }
 export interface WantMessage extends PubsubMessage {
 	type: 'want';
 }
 export interface HaveMessage extends PubsubMessage {
 	type: 'have';
-	lishID: LishID;
+	lishID: LISHid;
 	peerID: NodeId;
 	multiaddrs: Multiaddr[];
 	chunks: HaveChunks;
@@ -28,16 +28,16 @@ export interface HaveMessage extends PubsubMessage {
 type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'downloading' | 'downloaded';
 
 export class Downloader {
-	private lish!: IStoredLish;
+	private lish!: IStoredLISH;
 	private readonly dataServer: DataServer;
 	private network: Network;
 	private readonly downloadDir: string;
 	private readonly networkID: string;
-	private lishID!: LishID;
+	private lishID!: LISHid;
 	private state: State = 'added';
 	private workMutex = new Mutex();
 	private missingChunks: MissingChunk[] = [];
-	private peers: Map<NodeId, LishClient> = new Map();
+	private peers: Map<NodeId, LISHClient> = new Map();
 	private callForPeersInterval: NodeJS.Timeout | undefined;
 
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkID: string) {
@@ -52,7 +52,7 @@ export class Downloader {
 		// Read and parse LISH
 		const content = await readFile(lishPath, 'utf-8');
 		this.lish = Utils.safeJsonParse(content, `LISH file: ${lishPath}`);
-		this.lishID = this.lish.id as LishID;
+		this.lishID = this.lish.id as LISHid;
 		console.log(`Loading LISH: ${this.lish.name} (id: ${this.lishID})`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.lish);
 		console.log(`Found ${this.missingChunks.length} chunks to download`);
@@ -186,7 +186,7 @@ export class Downloader {
 			console.log(`Opening stream to peer ...${peerID}`);
 			const stream = await this.network.dialProtocol(peerID, multiaddrs, LISH_PROTOCOL);
 			if (this.peers.has(data.peerID)) throw new Error(`Already connected to peer ...${peerID}`);
-			this.peers.set(peerID, new LishClient(stream));
+			this.peers.set(peerID, new LISHClient(stream));
 		} catch (error) {
 			console.log(`✗ Failed to connect to peer ...${peerID}:`, error instanceof Error ? error.message : error);
 		}
@@ -231,7 +231,7 @@ export class Downloader {
 	}
 
 	// Download a single chunk from a peer using an existing client
-	private async downloadChunk(client: LishClient, chunkID: ChunkID): Promise<Uint8Array | null> {
+	private async downloadChunk(client: LISHClient, chunkID: ChunkID): Promise<Uint8Array | null> {
 		try {
 			// Request the chunk using the protocol
 			const data = await client.requestChunk(this.lishID, chunkID);

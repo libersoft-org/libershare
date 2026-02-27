@@ -17,7 +17,7 @@
 	let active = $derived($activeArea === areaID);
 	// TODO: Get all LISH from storage/backend
 	let lishList: unknown[] = $state([]);
-	let hasLish = $derived(lishList.length > 0);
+	let hasLISH = $derived(lishList.length > 0);
 	let selectedIndex = $state(0); // 0 = input (if has lish), 1 = buttons row
 	let selectedColumn = $state(0); // 0 = save as, 1 = back
 	let inputRef: Input | undefined = $state();
@@ -29,14 +29,14 @@
 			areaID,
 			{
 				up: () => {
-					if (hasLish && selectedIndex > 0) {
+					if (hasLISH && selectedIndex > 0) {
 						selectedIndex--;
 						return true;
 					}
 					return false;
 				},
 				down: () => {
-					if (hasLish && selectedIndex < 1) {
+					if (hasLISH && selectedIndex < 1) {
 						selectedIndex++;
 						selectedColumn = 0;
 						return true;
@@ -58,11 +58,11 @@
 					return false;
 				},
 				confirmDown: () => {
-					if (hasLish && selectedIndex === 0) inputRef?.focus();
+					if (hasLISH && selectedIndex === 0) inputRef?.focus();
 				},
 				confirmUp: () => {
-					if (hasLish && selectedIndex === 1 && selectedColumn === 1) onBack?.();
-					else if (!hasLish) onBack?.();
+					if (hasLISH && selectedIndex === 1 && selectedColumn === 1) onBack?.();
+					else if (!hasLISH) onBack?.();
 				},
 				confirmCancel: () => {},
 				back: () => onBack?.(),
@@ -95,16 +95,16 @@
 
 <div class="export-all">
 	<div class="container">
-		{#if hasLish}
+		{#if hasLISH}
 			<Input bind:this={inputRef} value={lishJson} multiline rows={15} readonly fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
 		{:else}
 			<Alert type="warning" message={$t('downloads.emptyList')} />
 		{/if}
 	</div>
 	<ButtonBar justify="center">
-		{#if hasLish}
+		{#if hasLISH}
 			<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 1 && selectedColumn === 0} />
 		{/if}
-		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && (hasLish ? selectedIndex === 1 && selectedColumn === 1 : true)} onConfirm={onBack} />
+		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && (hasLISH ? selectedIndex === 1 && selectedColumn === 1 : true)} onConfirm={onBack} />
 	</ButtonBar>
 </div>

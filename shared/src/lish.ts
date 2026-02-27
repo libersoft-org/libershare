@@ -1,10 +1,10 @@
-export type LishID = string;
+export type LISHid = string;
 export type ChunkID = string;
 
 export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
 export type HashAlgorithm = (typeof SUPPORTED_ALGOS)[number];
 
-export interface ILish {
+export interface ILISH {
 	version: number;
 	id: string;
 	name?: string;
@@ -18,7 +18,7 @@ export interface ILish {
 }
 
 // Extended interface for LISHs stored locally in the app (lishs.json)
-export interface IStoredLish extends ILish {
+export interface IStoredLISH extends ILISH {
 	directory?: string;
 	chunks?: string[];
 }

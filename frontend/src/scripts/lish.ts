@@ -118,7 +118,7 @@ export function getLISHErrorMessage(errorCode: ParseLISHResult['error'], t: (key
 		case 'INVALID_JSON':
 			return t('downloads.errorInvalidFormat');
 		case 'NO_VALID_LISH':
-			return t('downloads.errorNoValidLish');
+			return t('downloads.errorNoValidLISH');
 		default:
 			return '';
 	}
@@ -147,7 +147,7 @@ export function validateThreads(threads: string): 'INVALID_THREADS' | null {
 /**
  * Validate LISH create form
  */
-export interface LishCreateFormData {
+export interface LISHCreateFormData {
 	dataPath: string;
 	lishFile?: string;
 	addToSharing?: boolean;
@@ -155,9 +155,9 @@ export interface LishCreateFormData {
 	threads?: string;
 }
 
-export type LishCreateError = 'INPUT_REQUIRED' | 'INVALID_CHUNK_SIZE' | 'INVALID_THREADS' | null;
+export type LISHCreateError = 'INPUT_REQUIRED' | 'INVALID_CHUNK_SIZE' | 'INVALID_THREADS' | null;
 
-export function validateLishCreateForm(data: LishCreateFormData): LishCreateError {
+export function validateLISHCreateForm(data: LISHCreateFormData): LISHCreateError {
 	if (!data.dataPath.trim()) return 'INPUT_REQUIRED';
 	if (data.chunkSize) {
 		const chunkError = validateChunkSize(data.chunkSize);
@@ -173,7 +173,7 @@ export function validateLishCreateForm(data: LishCreateFormData): LishCreateErro
 /**
  * Get localized error message for LISH create validation errors
  */
-export function getLishCreateErrorMessage(errorCode: LishCreateError, t: (key: string) => string): string {
+export function getLISHCreateErrorMessage(errorCode: LISHCreateError, t: (key: string) => string): string {
 	switch (errorCode) {
 		case 'INPUT_REQUIRED':
 			return t('downloads.lishCreate.dataPathRequired');

@@ -1,4 +1,3 @@
-
 /*
  * A simple API client that communicates with a server over WebSocket.
  * we should partly unify this with the
@@ -16,7 +15,7 @@ interface Response {
 	error?: string;
 }
 
-export class ApiClient {
+export class APIClient {
 	private ws: WebSocket | null = null;
 	private requestId = 0;
 	private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
@@ -29,9 +28,9 @@ export class ApiClient {
 			this.ws = new WebSocket(this.url);
 
 			this.ws.onopen = () => resolve();
-			this.ws.onerror = (err) => reject(new Error(`WebSocket error: ${err}`));
+			this.ws.onerror = err => reject(new Error(`WebSocket error: ${err}`));
 
-			this.ws.onmessage = (event) => {
+			this.ws.onmessage = event => {
 				const msg = JSON.parse(event.data as string);
 
 				if (msg.id !== undefined) {

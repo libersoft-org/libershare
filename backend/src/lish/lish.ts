@@ -1,7 +1,7 @@
 import * as fsPromises from 'node:fs/promises';
 import { type Stats } from 'node:fs';
-import { type HashAlgorithm, type ILish, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
-export { type LishID, type ChunkID, type HashAlgorithm, type ILish, type IStoredLish, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
+import { type HashAlgorithm, type ILISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
+export { type LISHid, type ChunkID, type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
 export { SUPPORTED_ALGOS } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 export const LISH_VERSION = 1;
@@ -207,10 +207,10 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	}
 }
 
-export async function createLISH(inputPath: string, name: string | undefined, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void, id?: string): Promise<ILish> {
+export async function createLISH(inputPath: string, name: string | undefined, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void, id?: string): Promise<ILISH> {
 	const created = new Date().toISOString();
 	const lishId = id || globalThis.crypto.randomUUID();
-	const lish: ILish = {
+	const lish: ILISH = {
 		version: LISH_VERSION,
 		id: lishId,
 		name,

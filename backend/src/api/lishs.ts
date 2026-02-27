@@ -1,9 +1,9 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type IStoredLish, type CreateLishResponse } from '@shared';
+import { type IStoredLISH, type CreateLISHResponse } from '@shared';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
-interface CreateLishParams {
+interface CreateLISHParams {
 	name?: string;
 	description?: string;
 	dataPath: string;
@@ -14,16 +14,16 @@ interface CreateLishParams {
 	threads?: number;
 }
 
-export function initLishsHandlers(dataServer: DataServer, emit: EmitFn) {
-	function getAll(): IStoredLish[] {
-		return dataServer.getAllLishs();
+export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn) {
+	function getAll(): IStoredLISH[] {
+		return dataServer.getAllLISHs();
 	}
-	function get(p: { lishID: string }): IStoredLish | null {
+	function get(p: { lishID: string }): IStoredLISH | null {
 		assert(p, ['lishID']);
-		return dataServer.getLish(p.lishID);
+		return dataServer.getLISH(p.lishID);
 	}
 
-	async function create(p: CreateLishParams, client: any): Promise<CreateLishResponse> {
+	async function create(p: CreateLISHParams, client: any): Promise<CreateLISHResponse> {
 		assert(p, ['dataPath']);
 		const addToSharing = p.addToSharing ?? false;
 		const algorithm = p.algorithm ?? 'sha256';

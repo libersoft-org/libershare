@@ -120,7 +120,7 @@ export interface LoadDirectoryResult {
 /**
  * Load directory contents from API
  */
-export async function loadDirectoryFromApi(path: string | undefined, separator: string, options: LoadDirectoryOptions = {}): Promise<LoadDirectoryResult> {
+export async function loadDirectoryFromAPI(path: string | undefined, separator: string, options: LoadDirectoryOptions = {}): Promise<LoadDirectoryResult> {
 	const { foldersOnly = false, filesOnly = false, fileFilter } = options;
 	const result = await api.fs.list(path);
 	const currentPath = result.path;

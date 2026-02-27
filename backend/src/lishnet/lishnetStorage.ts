@@ -5,7 +5,7 @@ import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
  * Storage for user-configured LISH networks.
  * These are networks that the user has added/imported (separate from running network instances).
  */
-export class LISHNetworkStorage {
+export class LISHnetStorage {
 	private storage: ArrayStorage<LISHNetworkConfig>;
 
 	constructor(dataDir: string) {

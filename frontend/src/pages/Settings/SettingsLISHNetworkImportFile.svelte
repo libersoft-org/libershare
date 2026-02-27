@@ -8,7 +8,7 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { parseNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
 	import { type LISHNetworkDefinition } from '@shared';
-	import { storageLishnetPath } from '../../scripts/settings.ts';
+	import { storageLISHnetPath } from '../../scripts/settings.ts';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -192,7 +192,7 @@
 {#if parsedNetworks}
 	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleImportDone} />
 {:else if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storageLishnetPath} showPath fileFilter={['*.lishnet', '*.lishnets', '*.json', '*.lishnet.gz', '*.lishnets.gz', '*.json.gz']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={filePath || $storageLISHnetPath} showPath fileFilter={['*.lishnet', '*.lishnets', '*.json', '*.lishnet.gz', '*.lishnets.gz', '*.json.gz']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">
 		<div class="container">

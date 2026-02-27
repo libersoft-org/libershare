@@ -8,7 +8,7 @@ import { peerIdFromString } from '@libp2p/peer-id';
 import { join } from 'path';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { LISH_PROTOCOL, handleLishProtocol } from './lish-protocol.ts';
+import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { PINK_TOPIC, PONK_TOPIC, createPinkMessage, createPonkMessage } from './pink-ponk.ts';
 import { HaveMessage, WantMessage } from './downloader.ts';
@@ -27,7 +27,7 @@ const AUTODIAL_WORKAROUND = true;
 
 /**
  * Single shared libp2p node.
- * Lishnets are logical groups represented as pubsub topics on this one node.
+ * LISH networks are logical groups represented as pubsub topics on this one node.
  */
 export class Network {
 	private node: Libp2p | null = null;
@@ -194,7 +194,7 @@ export class Network {
 		await this.node.handle(
 			LISH_PROTOCOL,
 			async stream => {
-				await handleLishProtocol(stream, this.dataServer);
+				await handleLISHProtocol(stream, this.dataServer);
 			},
 			{ runOnLimitedConnection: true }
 		);
@@ -480,7 +480,7 @@ export class Network {
 
 	private async handleWant(data: WantMessage, networkID: string) {
 		console.log('Handling want message for lishID:', data.lishID, 'on network:', networkID);
-		const lish = this.dataServer.getLish(data.lishID);
+		const lish = this.dataServer.getLISH(data.lishID);
 		if (!lish) return;
 		const haveChunks = this.dataServer.getHaveChunks(lish);
 		if (haveChunks !== 'all' && haveChunks.size === 0) {

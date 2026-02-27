@@ -4,7 +4,7 @@ import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessRespons
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
-export function initLishNetworksHandlers(networks: Networks, dataServer: DataServer) {
+export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer) {
 	function getAll(): LISHNetworkConfig[] {
 		return networks.getAll();
 	}

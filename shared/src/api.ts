@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLishResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -16,21 +16,21 @@ export interface IWsClient {
  * High-level API client that wraps a WebSocket client.
  * Can be used in both browser and CLI environments.
  */
-export class Api {
-	readonly datasets: DatasetsApi;
-	readonly fs: FsApi;
-	readonly settings: SettingsApi;
-	readonly lishNetworks: LISHNetworksApi;
-	readonly lishs: LishsApi;
-	readonly transfer: TransferApi;
+export class API {
+	readonly datasets: DatasetsAPI;
+	readonly fs: FsAPI;
+	readonly settings: SettingsAPI;
+	readonly lishnets: LISHnetsAPI;
+	readonly lishs: LISHsAPI;
+	readonly transfer: TransferAPI;
 
 	constructor(private client: IWsClient) {
-		this.datasets = new DatasetsApi(client);
-		this.fs = new FsApi(client);
-		this.settings = new SettingsApi(client);
-		this.lishNetworks = new LISHNetworksApi(client);
-		this.lishs = new LishsApi(client);
-		this.transfer = new TransferApi(client);
+		this.datasets = new DatasetsAPI(client);
+		this.fs = new FsAPI(client);
+		this.settings = new SettingsAPI(client);
+		this.lishnets = new LISHnetsAPI(client);
+		this.lishs = new LISHsAPI(client);
+		this.transfer = new TransferAPI(client);
 	}
 
 	// Raw call access
@@ -59,7 +59,7 @@ export class Api {
 	}
 }
 
-class DatasetsApi {
+class DatasetsAPI {
 	constructor(private client: IWsClient) {}
 
 	list(): Promise<Dataset[]> {
@@ -71,7 +71,7 @@ class DatasetsApi {
 	}
 }
 
-class FsApi {
+class FsAPI {
 	constructor(private client: IWsClient) {}
 
 	info(): Promise<FsInfo> {
@@ -121,7 +121,7 @@ class FsApi {
 	}
 }
 
-class SettingsApi {
+class SettingsAPI {
 	constructor(private client: IWsClient) {}
 
 	get<T = any>(path?: string): Promise<T> {
@@ -145,89 +145,89 @@ class SettingsApi {
 	}
 }
 
-class LISHNetworksApi {
+class LISHnetsAPI {
 	constructor(private client: IWsClient) {}
 
 	getAll(): Promise<LISHNetworkConfig[]> {
-		return this.client.call<LISHNetworkConfig[]>('lishNetworks.getAll');
+		return this.client.call<LISHNetworkConfig[]>('lishnets.getAll');
 	}
 
 	get(networkID: string): Promise<LISHNetworkConfig | undefined> {
-		return this.client.call<LISHNetworkConfig | undefined>('lishNetworks.get', { networkID });
+		return this.client.call<LISHNetworkConfig | undefined>('lishnets.get', { networkID });
 	}
 
 	exists(networkID: string): Promise<boolean> {
-		return this.client.call<boolean>('lishNetworks.exists', { networkID });
+		return this.client.call<boolean>('lishnets.exists', { networkID });
 	}
 
 	add(network: LISHNetworkConfig): Promise<boolean> {
-		return this.client.call<boolean>('lishNetworks.add', { network });
+		return this.client.call<boolean>('lishnets.add', { network });
 	}
 
 	update(network: LISHNetworkConfig): Promise<boolean> {
-		return this.client.call<boolean>('lishNetworks.update', { network });
+		return this.client.call<boolean>('lishnets.update', { network });
 	}
 
 	delete(networkID: string): Promise<boolean> {
-		return this.client.call<boolean>('lishNetworks.delete', { networkID });
+		return this.client.call<boolean>('lishnets.delete', { networkID });
 	}
 
 	addIfNotExists(network: LISHNetworkDefinition): Promise<boolean> {
-		return this.client.call<boolean>('lishNetworks.addIfNotExists', { network });
+		return this.client.call<boolean>('lishnets.addIfNotExists', { network });
 	}
 
 	import(networks: LISHNetworkDefinition[]): Promise<number> {
-		return this.client.call<number>('lishNetworks.import', { networks });
+		return this.client.call<number>('lishnets.import', { networks });
 	}
 
 	setAll(networks: LISHNetworkConfig[]): Promise<boolean> {
-		return this.client.call<boolean>('lishNetworks.setAll', { networks });
+		return this.client.call<boolean>('lishnets.setAll', { networks });
 	}
 
 	// Runtime methods
 
 	importFromFile(path: string, enabled = false): Promise<LISHNetworkConfig> {
-		return this.client.call<LISHNetworkConfig>('lishNetworks.importFromFile', { path, enabled });
+		return this.client.call<LISHNetworkConfig>('lishnets.importFromFile', { path, enabled });
 	}
 
 	importFromJson(json: string, enabled = false): Promise<LISHNetworkConfig> {
-		return this.client.call<LISHNetworkConfig>('lishNetworks.importFromJson', { json, enabled });
+		return this.client.call<LISHNetworkConfig>('lishnets.importFromJson', { json, enabled });
 	}
 
 	setEnabled(networkID: string, enabled: boolean): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('lishNetworks.setEnabled', { networkID, enabled });
+		return this.client.call<SuccessResponse>('lishnets.setEnabled', { networkID, enabled });
 	}
 
 	connect(networkID: string, multiaddr: string): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('lishNetworks.connect', { networkID, multiaddr });
+		return this.client.call<SuccessResponse>('lishnets.connect', { networkID, multiaddr });
 	}
 
 	findPeer(networkID: string, peerID: string): Promise<any> {
-		return this.client.call<any>('lishNetworks.findPeer', { networkID, peerID });
+		return this.client.call<any>('lishnets.findPeer', { networkID, peerID });
 	}
 
 	getAddresses(networkID: string): Promise<string[]> {
-		return this.client.call<string[]>('lishNetworks.getAddresses', { networkID });
+		return this.client.call<string[]>('lishnets.getAddresses', { networkID });
 	}
 
 	getPeers(networkID: string): Promise<PeerConnectionInfo[]> {
-		return this.client.call<PeerConnectionInfo[]>('lishNetworks.getPeers', { networkID });
+		return this.client.call<PeerConnectionInfo[]>('lishnets.getPeers', { networkID });
 	}
 
 	getNodeInfo(): Promise<NetworkNodeInfo> {
-		return this.client.call<NetworkNodeInfo>('lishNetworks.getNodeInfo');
+		return this.client.call<NetworkNodeInfo>('lishnets.getNodeInfo');
 	}
 
 	getStatus(networkID: string): Promise<NetworkStatus> {
-		return this.client.call<NetworkStatus>('lishNetworks.getStatus', { networkID });
+		return this.client.call<NetworkStatus>('lishnets.getStatus', { networkID });
 	}
 
 	infoAll(): Promise<NetworkInfo[]> {
-		return this.client.call<NetworkInfo[]>('lishNetworks.infoAll');
+		return this.client.call<NetworkInfo[]>('lishnets.infoAll');
 	}
 }
 
-class LishsApi {
+class LISHsAPI {
 	constructor(private client: IWsClient) {}
 
 	list(): Promise<any[]> {
@@ -238,8 +238,8 @@ class LishsApi {
 		return this.client.call<any>('lishs.get', { lishID });
 	}
 
-	create(dataPath: string, lishFile?: string, addToSharing?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number): Promise<CreateLishResponse> {
-		return this.client.call<CreateLishResponse>('lishs.create', {
+	create(dataPath: string, lishFile?: string, addToSharing?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number): Promise<CreateLISHResponse> {
+		return this.client.call<CreateLISHResponse>('lishs.create', {
 			name,
 			description,
 			dataPath,
@@ -252,7 +252,7 @@ class LishsApi {
 	}
 }
 
-class TransferApi {
+class TransferAPI {
 	constructor(private client: IWsClient) {}
 
 	download(networkID: string, lishPath: string): Promise<DownloadResponse> {

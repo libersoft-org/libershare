@@ -7,7 +7,7 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { exportNetworkToJson } from '../../scripts/lishNetwork.ts';
-	import { storageLishnetPath, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
+	import { storageLISHnetPath, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
 	import { minifyJson } from '../../scripts/utils.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -29,7 +29,7 @@
 	let selectedColumn = $state(0); // 0 = save as, 1 = back
 	let inputRef: Input | undefined = $state();
 	let browsingSaveAs = $state(false);
-	let saveFolder = $state($storageLishnetPath);
+	let saveFolder = $state($storageLISHnetPath);
 	function getInitialBaseFileName(): string {
 		return network ? `${network.name}.lishnet` : 'network.lishnet';
 	}

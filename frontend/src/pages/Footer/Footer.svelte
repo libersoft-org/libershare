@@ -4,7 +4,7 @@
 	import { volume, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
 	import { type FooterWidget, getVolumeIcon } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
-	import LishStatus from './FooterLISHStatus.svelte';
+	import LISHStatus from './FooterLISHStatus.svelte';
 	import Connection from './FooterConnection.svelte';
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
@@ -12,7 +12,7 @@
 
 	type Widget = {
 		id: FooterWidget;
-		component: typeof Item | typeof Bar | typeof Clock | typeof LishStatus | typeof Connection;
+		component: typeof Item | typeof Bar | typeof Clock | typeof LISHStatus | typeof Connection;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		props?: () => Record<string, any>;
 	};
@@ -77,7 +77,7 @@
 		},
 		{
 			id: 'lishStatus',
-			component: LishStatus,
+			component: LISHStatus,
 			props: () => ({
 				networkName: 'Main Network',
 				lishConnected: false,

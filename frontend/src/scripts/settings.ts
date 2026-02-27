@@ -25,8 +25,8 @@ export const timeFormat = writable(true);
 export const showSeconds = writable(false);
 export const storagePath = writable('');
 export const storageTempPath = writable('');
-export const storageLishPath = writable('');
-export const storageLishnetPath = writable('');
+export const storageLISHPath = writable('');
+export const storageLISHnetPath = writable('');
 export const incomingPort = writable(0);
 export const maxDownloadConnections = writable(0);
 export const maxUploadConnections = writable(0);
@@ -80,8 +80,8 @@ export async function loadSettings(): Promise<void> {
 		// Storage
 		storagePath.set(settings.storage.downloadPath);
 		storageTempPath.set(settings.storage.tempPath);
-		storageLishPath.set(settings.storage.lishPath);
-		storageLishnetPath.set(settings.storage.lishnetPath);
+		storageLISHPath.set(settings.storage.lishPath);
+		storageLISHnetPath.set(settings.storage.lishnetPath);
 
 		// Network
 		incomingPort.set(settings.network.incomingPort);
@@ -154,12 +154,12 @@ export function setStorageTempPath(path: string): void {
 	updateSetting(storageTempPath, 'storage.tempPath', path);
 }
 
-export function setStorageLishPath(path: string): void {
-	updateSetting(storageLishPath, 'storage.lishPath', path);
+export function setStorageLISHPath(path: string): void {
+	updateSetting(storageLISHPath, 'storage.lishPath', path);
 }
 
-export function setStorageLishnetPath(path: string): void {
-	updateSetting(storageLishnetPath, 'storage.lishnetPath', path);
+export function setStorageLISHnetPath(path: string): void {
+	updateSetting(storageLISHnetPath, 'storage.lishnetPath', path);
 }
 
 export function setIncomingPort(value: number): void {

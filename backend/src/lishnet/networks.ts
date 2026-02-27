@@ -3,14 +3,14 @@ import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
-import { LISHNetworkStorage } from './lishNetworkStorage.ts';
+import { LISHnetStorage } from './lishnetStorage.ts';
 
 /**
  * Manages lishnets (logical network groups) on top of a single shared Network (libp2p) node.
  * Each lishnet is represented as a pubsub topic on the shared node.
  */
 export class Networks {
-	private storage: LISHNetworkStorage;
+	private storage: LISHnetStorage;
 	private dataDir: string;
 	private dataServer: DataServer;
 	private enablePink: boolean;
@@ -22,7 +22,7 @@ export class Networks {
 	// Callback for peer count changes
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
 
-	constructor(storage: LISHNetworkStorage, dataDir: string, dataServer: DataServer, settings: Settings, enablePink: boolean = false) {
+	constructor(storage: LISHnetStorage, dataDir: string, dataServer: DataServer, settings: Settings, enablePink: boolean = false) {
 		this.storage = storage;
 		this.dataDir = dataDir;
 		this.dataServer = dataServer;
@@ -90,7 +90,7 @@ export class Networks {
 	 */
 	private async joinNetwork(id: string): Promise<void> {
 		if (this.joinedNetworks.has(id)) {
-			console.log(`Lishnet ${id} is already joined`);
+			console.log(`LISH network ${id} is already joined`);
 			return;
 		}
 
@@ -181,7 +181,7 @@ export class Networks {
 		return [...new Set(allPeers)];
 	}
 
-	async importFromLishnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
+	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
 		const config: LISHNetworkConfig = {
 			version: data.version,
 			networkID: data.networkID,
@@ -199,7 +199,7 @@ export class Networks {
 
 	async importFromJson(jsonString: string, enabled: boolean = false): Promise<LISHNetworkConfig> {
 		const data: ILISHNetwork = Utils.safeJsonParse<ILISHNetwork>(jsonString, 'network JSON import');
-		const config = await this.importFromLishnet(data, enabled);
+		const config = await this.importFromLISHnet(data, enabled);
 		if (enabled) await this.joinNetwork(config.networkID);
 		return config;
 	}

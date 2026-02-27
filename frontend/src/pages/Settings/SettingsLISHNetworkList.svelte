@@ -8,7 +8,7 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { type LISHNetworkConfig, type NetworkNodeInfo } from '@shared';
 	import { api } from '../../scripts/api.ts';
-	import { getNetworks, deleteNetwork as deleteNetworkFromApi, updateNetwork as updateNetworkFromApi, addNetwork as addNetworkFromApi, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
+	import { getNetworks, deleteNetwork as deleteNetworkFromAPI, updateNetwork as updateNetworkFromAPI, addNetwork as addNetworkFromAPI, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import { peerCounts, subscribePeerCounts, unsubscribePeerCounts } from '../../scripts/networks.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -54,14 +54,14 @@
 
 	async function loadNodeInfo(): Promise<void> {
 		try {
-			globalNodeInfo = await api.lishNetworks.getNodeInfo();
+			globalNodeInfo = await api.lishnets.getNodeInfo();
 		} catch (e: any) {
 			globalNodeInfo = null;
 		}
 	}
 
 	async function loadNetworks(): Promise<void> {
-		const [nets, nodeInfo] = await Promise.all([getNetworks(), api.lishNetworks.getNodeInfo().catch((): null => null)]);
+		const [nets, nodeInfo] = await Promise.all([getNetworks(), api.lishnets.getNodeInfo().catch((): null => null)]);
 		globalNodeInfo = nodeInfo;
 		networks = nets;
 	}
@@ -151,7 +151,7 @@
 		const { [network.networkID]: _err, ...restErrors } = networkErrors;
 		networkErrors = restErrors;
 		try {
-			await api.lishNetworks.setEnabled(network.networkID, newEnabled);
+			await api.lishnets.setEnabled(network.networkID, newEnabled);
 		} catch (e: any) {
 			networkErrors = { ...networkErrors, [network.networkID]: e?.message || 'Connection failed' };
 		}
@@ -173,7 +173,7 @@
 		const maxButtonIndex = isNowFirst || isNowLast ? 5 : 6;
 		if (buttonIndex > maxButtonIndex) buttonIndex = maxButtonIndex;
 		// Save new order to backend
-		await api.lishNetworks.setAll(networks);
+		await api.lishnets.setAll(networks);
 	}
 
 	function openPeers(network: LISHNetworkConfig): void {
@@ -251,7 +251,7 @@
 
 	async function confirmDeleteNetwork(): Promise<void> {
 		if (deletingNetwork) {
-			await deleteNetworkFromApi(deletingNetwork.networkID);
+			await deleteNetworkFromAPI(deletingNetwork.networkID);
 			networks = networks.filter(n => n.networkID !== deletingNetwork!.networkID);
 			// Adjust selected index if needed
 			if (selectedIndex >= totalItems) selectedIndex = totalItems - 1;
@@ -294,12 +294,12 @@
 		const network = formDataToNetwork(savedNetwork, editingNetwork ?? undefined);
 		if (editingNetwork) {
 			// Update existing
-			await updateNetworkFromApi(network);
+			await updateNetworkFromAPI(network);
 			const index = networks.findIndex(n => n.networkID === editingNetwork!.networkID);
 			if (index !== -1) networks[index] = network;
 		} else {
 			// Add new - backend generates networkID and key if empty
-			await addNetworkFromApi(network);
+			await addNetworkFromAPI(network);
 			// Reload from backend to get the generated values
 			await loadNetworks();
 		}

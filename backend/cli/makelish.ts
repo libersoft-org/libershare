@@ -81,14 +81,14 @@ async function main(): Promise<void> {
 		process.exit(1);
 	}
 	try {
-		await makeLish(args);
+		await makeLISH(args);
 	} catch (error) {
 		console.error('Error:', error);
 		process.exit(1);
 	}
 }
 
-async function makeLish(args: IArgs): Promise<void> {
+async function makeLISH(args: IArgs): Promise<void> {
 	const inputPath = args.input;
 	const name = args.name;
 	const defaultOutput = name ? '[NAME].lish' : '[UUID].lish';

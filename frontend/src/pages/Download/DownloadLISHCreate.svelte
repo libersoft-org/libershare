@@ -7,8 +7,8 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { scrollToElement, sanitizeFilename } from '../../scripts/utils.ts';
-	import { HASH_ALGORITHMS, parseChunkSize, validateLishCreateForm, getLishCreateErrorMessage, type HashAlgorithm } from '../../scripts/lish.ts';
-	import { storageLishPath, storagePath, autoStartSharing } from '../../scripts/settings.ts';
+	import { HASH_ALGORITHMS, parseChunkSize, validateLISHCreateForm, getLISHCreateErrorMessage, type HashAlgorithm } from '../../scripts/lish.ts';
+	import { storageLISHPath, storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -27,10 +27,10 @@
 	let active = $derived($activeArea === areaID);
 	// Browse state
 	let browsingInputPath = $state(false);
-	let browsingLishFile = $state(false);
+	let browsingLISHFile = $state(false);
 	let browseFolder = $state('');
 	let browseFile = $state<string | undefined>(undefined);
-	let lishFileName = $state(''); // File name input in lishFile browse dialog
+	let lishFileName = $state(''); // File name input in LISH file browse dialog
 	// Form state
 	let dataPath = $state($storagePath);
 	let saveToFile = $state(true);
@@ -38,7 +38,7 @@
 	let showAdvanced = $state(false);
 	let name = $state('');
 	// LISH file path - editable state, initialized from settings
-	let lishFile = $state(joinPath($storageLishPath, 'output.lish'));
+	let lishFile = $state(joinPath($storageLISHPath, 'output.lish'));
 	let lishFileManuallyEdited = $state(false); // Track if user manually edited the path
 
 	function handleNameChange(newName: string): void {
@@ -46,7 +46,7 @@
 		if (!lishFileManuallyEdited && newName) {
 			const sanitized = sanitizeFilename(newName);
 			if (sanitized) {
-				const { folder } = splitPath(lishFile || $storageLishPath, $storageLishPath);
+				const { folder } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
 				lishFile = joinPath(folder, sanitized + '.lish');
 			}
 		}
@@ -69,8 +69,8 @@
 	let chunkSizeInput: Input | undefined = $state();
 	let threadsInput: Input | undefined = $state();
 	// Validation using lish.ts
-	let validationError = $derived(validateLishCreateForm({ dataPath, lishFile: saveToFile ? lishFile || undefined : undefined, addToSharing, chunkSize, threads }));
-	let errorMessage = $derived(validationError ? getLishCreateErrorMessage(validationError, $t) : '');
+	let validationError = $derived(validateLISHCreateForm({ dataPath, lishFile: saveToFile ? lishFile || undefined : undefined, addToSharing, chunkSize, threads }));
+	let errorMessage = $derived(validationError ? getLISHCreateErrorMessage(validationError, $t) : '');
 	let showError = $derived(submitted && errorMessage);
 	// Form fields: name(0), description(1), dataPath(2), saveToFile(3), lishFile(4), addToSharing(5), advancedToggle(6), chunkSize(7), algo(8), threads(9), create(10), back(11)
 	const FIELD_NAME = 0;
@@ -155,10 +155,10 @@
 	}
 
 	function openOutputPathBrowse(): void {
-		const { folder, fileName } = splitPath(lishFile.trim() || $storageLishPath, $storageLishPath);
+		const { folder, fileName } = splitPath(lishFile.trim() || $storageLISHPath, $storageLISHPath);
 		browseFolder = folder;
 		lishFileName = fileName || '';
-		browsingLishFile = true;
+		browsingLISHFile = true;
 		if (unregisterArea) {
 			unregisterArea();
 			unregisterArea = null;
@@ -180,7 +180,7 @@
 			removeBackHandler = null;
 		}
 		popBreadcrumb();
-		browsingLishFile = false;
+		browsingLISHFile = false;
 		await tick();
 		unregisterArea = registerAreaHandler();
 		// Restore focus to the browse button
@@ -365,7 +365,7 @@
 
 {#if browsingInputPath}
 	<FileBrowser {areaID} {position} initialPath={browseFolder} initialFile={browseFile} showPath selectFolderButton selectFileButton onSelect={handleInputPathSelect} onBack={handleBrowseBack} />
-{:else if browsingLishFile}
+{:else if browsingLISHFile}
 	<FileBrowser {areaID} {position} initialPath={browseFolder} showPath foldersOnly selectFolderButton saveFileName={lishFileName} onSaveFileNameChange={v => (lishFileName = v)} onSelect={handleOutputPathSelect} onBack={handleOutputBrowseBack} />
 {:else}
 	<div class="create">

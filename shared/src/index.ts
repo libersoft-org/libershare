@@ -5,7 +5,7 @@ export { productName, productVersion, productIdentifier, productWebsite, product
 export * from './lish.ts';
 
 // API client
-export { Api, type IWsClient } from './api.ts';
+export { API, type IWsClient } from './api.ts';
 
 // WebSocket client
 export { WsClient } from './client.ts';
@@ -30,6 +30,21 @@ export interface PeerConnectionInfo {
 	relay: number;
 }
 
+// LISH Network definition (pure network parameters)
+export interface LISHNetworkDefinition {
+	version: number;
+	networkID: string;
+	name: string;
+	description: string;
+	bootstrapPeers: string[];
+	created: string;
+}
+
+// LISH Network config (stored network with enabled state)
+export interface LISHNetworkConfig extends LISHNetworkDefinition {
+	enabled: boolean;
+}
+
 // Combined network info (config + runtime)
 export interface NetworkInfo extends LISHNetworkConfig {
 	// Runtime (only present if enabled)
@@ -40,7 +55,7 @@ export interface NetworkInfo extends LISHNetworkConfig {
 	peersInStore?: number;
 }
 
-// Dataset types (derived from ILish entries that have a directory)
+// Dataset types (derived from ILISH entries that have a directory)
 export interface Dataset {
 	id: string;
 	lishID: string;
@@ -75,7 +90,7 @@ export interface SuccessResponse {
 	success: boolean;
 }
 
-export interface CreateLishResponse {
+export interface CreateLISHResponse {
 	lishID: string;
 }
 
@@ -98,19 +113,4 @@ export interface ILISHNetwork {
 	description?: string;
 	bootstrapPeers: string[];
 	created?: string;
-}
-
-// LISH Network definition (pure network parameters)
-export interface LISHNetworkDefinition {
-	version: number;
-	networkID: string;
-	name: string;
-	description: string;
-	bootstrapPeers: string[];
-	created: string;
-}
-
-// LISH Network config (stored network with enabled state)
-export interface LISHNetworkConfig extends LISHNetworkDefinition {
-	enabled: boolean;
 }

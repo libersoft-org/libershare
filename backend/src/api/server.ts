@@ -3,10 +3,10 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/networks.ts';
 import { type Settings } from '../settings.ts';
 import { initSettingsHandlers } from './settings.ts';
-import { initLishNetworksHandlers } from './lishNetworks.ts';
+import { initLISHnetsHandlers } from './lishnets.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
-import { initLishsHandlers } from './lishs.ts';
+import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initCoreHandlers } from './core.ts';
 import { initEventsHandlers } from './events.ts';
@@ -19,7 +19,7 @@ interface Request {
 	method: string;
 	params?: Record<string, any>;
 }
-export interface ApiServerOptions {
+export interface APIServerOptions {
 	host: string;
 	port: number;
 	secure: boolean;
@@ -27,7 +27,7 @@ export interface ApiServerOptions {
 	certFile: string | undefined;
 }
 
-export class ApiServer {
+export class APIServer {
 	private clients: Set<ClientSocket> = new Set();
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
 	private readonly settings: Settings;
@@ -42,7 +42,7 @@ export class ApiServer {
 		private readonly dataServer: DataServer,
 		private readonly networks: Networks,
 		settings: Settings,
-		options: ApiServerOptions
+		options: APIServerOptions
 	) {
 		this.settings = settings;
 		this.host = options.host;
@@ -56,10 +56,10 @@ export class ApiServer {
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _core = initCoreHandlers();
 		const _settings = initSettingsHandlers(this.settings);
-		const _lishNetworks = initLishNetworksHandlers(this.networks, this.dataServer);
+		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
-		const _lishs = initLishsHandlers(this.dataServer, emitTo);
+		const _lishs = initLISHsHandlers(this.dataServer, emitTo);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
 
 		this.handlers = {
@@ -78,25 +78,25 @@ export class ApiServer {
 			'settings.reset': _settings.reset,
 
 			// LISH Networks
-			'lishNetworks.getAll': _lishNetworks.getAll,
-			'lishNetworks.get': _lishNetworks.get,
-			'lishNetworks.exists': _lishNetworks.exists,
-			'lishNetworks.add': _lishNetworks.add,
-			'lishNetworks.update': _lishNetworks.update,
-			'lishNetworks.delete': _lishNetworks.delete,
-			'lishNetworks.addIfNotExists': _lishNetworks.addIfNotExists,
-			'lishNetworks.import': _lishNetworks.import,
-			'lishNetworks.setAll': _lishNetworks.setAll,
-			'lishNetworks.importFromFile': _lishNetworks.importFromFile,
-			'lishNetworks.importFromJson': _lishNetworks.importFromJson,
-			'lishNetworks.setEnabled': _lishNetworks.setEnabled,
-			'lishNetworks.connect': _lishNetworks.connect,
-			'lishNetworks.findPeer': _lishNetworks.findPeer,
-			'lishNetworks.getAddresses': _lishNetworks.getAddresses,
-			'lishNetworks.getPeers': _lishNetworks.getPeers,
-			'lishNetworks.getNodeInfo': _lishNetworks.getNodeInfo,
-			'lishNetworks.getStatus': _lishNetworks.getStatus,
-			'lishNetworks.infoAll': _lishNetworks.infoAll,
+			'lishnets.getAll': _lishnets.getAll,
+			'lishnets.get': _lishnets.get,
+			'lishnets.exists': _lishnets.exists,
+			'lishnets.add': _lishnets.add,
+			'lishnets.update': _lishnets.update,
+			'lishnets.delete': _lishnets.delete,
+			'lishnets.addIfNotExists': _lishnets.addIfNotExists,
+			'lishnets.import': _lishnets.import,
+			'lishnets.setAll': _lishnets.setAll,
+			'lishnets.importFromFile': _lishnets.importFromFile,
+			'lishnets.importFromJson': _lishnets.importFromJson,
+			'lishnets.setEnabled': _lishnets.setEnabled,
+			'lishnets.connect': _lishnets.connect,
+			'lishnets.findPeer': _lishnets.findPeer,
+			'lishnets.getAddresses': _lishnets.getAddresses,
+			'lishnets.getPeers': _lishnets.getPeers,
+			'lishnets.getNodeInfo': _lishnets.getNodeInfo,
+			'lishnets.getStatus': _lishnets.getStatus,
+			'lishnets.infoAll': _lishnets.infoAll,
 
 			// LISHs
 			'lishs.getAll': _lishs.getAll,

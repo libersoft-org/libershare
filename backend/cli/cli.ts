@@ -1,26 +1,26 @@
 #!/usr/bin/env bun
 import * as readline from 'readline';
 import { join } from 'path';
-import { ApiClient } from './api-client';
-import { Api } from '@shared';
+import { APIClient } from './api-client';
+import { API } from '@shared';
 
 const DEFAULT_URL = 'ws://localhost:1158';
 
 const HELP = `
 Commands:
-  lishNetworks.list                  List all networks
-  lishNetworks.get <id>              Get network details
-  lishNetworks.import <path>         Import network from file
-  lishNetworks.enable <id>           Enable a network
-  lishNetworks.disable <id>          Disable a network
-  lishNetworks.delete <id>           Delete a network
-  lishNetworks.connect <multiaddr>   Connect to a peer
-  lishNetworks.findPeer <peerID>     Find peer by ID
-  lishNetworks.infoAll               Show all networks with config and runtime info
-  lishNetworks.status                Show network status
-  lishNetworks.peers                 List connected peers
-  lishNetworks.addresses             List node addresses
-  lishNetworks.nodeInfo              Show node info (peer ID, addresses)
+  lishnets.list                      List all networks
+  lishnets.get <id>                  Get network details
+  lishnets.import <path>             Import network from file
+  lishnets.enable <id>               Enable a network
+  lishnets.disable <id>              Disable a network
+  lishnets.delete <id>               Delete a network
+  lishnets.connect <multiaddr>       Connect to a peer
+  lishnets.findPeer <peerID>         Find peer by ID
+  lishnets.infoAll                   Show all networks with config and runtime info
+  lishnets.status                    Show network status
+  lishnets.peers                     List connected peers
+  lishnets.addresses                 List node addresses
+  lishnets.nodeInfo                  Show node info (peer ID, addresses)
 
   lishs.list                       List all LISHs
   lishs.get <id>                   Get LISH details
@@ -75,7 +75,7 @@ function resolvePath(x: string): string {
 
 async function main(): Promise<void> {
 	console.log(`Connecting to ${serverUrl}...`);
-	const client = new ApiClient(serverUrl);
+	const client = new APIClient(serverUrl);
 	try {
 		await client.connect();
 	} catch (error: any) {
@@ -83,10 +83,10 @@ async function main(): Promise<void> {
 		process.exit(1);
 	}
 	console.log('Connected!\n');
-	const api = new Api(client);
+	const api = new API(client);
 
 	async function getFirstNetworkID(): Promise<string | null> {
-		const networks = await api.lishNetworks.getAll();
+		const networks = await api.lishnets.getAll();
 		const enabled = networks.filter(n => n.enabled);
 		if (enabled.length === 0) {
 			console.log('No enabled networks');
@@ -111,8 +111,8 @@ async function main(): Promise<void> {
 		try {
 			switch (command) {
 				// ============ Networks ============
-				case 'lishNetworks.list': {
-					const networks = await api.lishNetworks.getAll();
+				case 'lishnets.list': {
+					const networks = await api.lishnets.getAll();
 					console.log('Networks:');
 					if (networks.length === 0) {
 						console.log('  (none)');
@@ -125,83 +125,83 @@ async function main(): Promise<void> {
 					break;
 				}
 
-				case 'lishNetworks.get': {
+				case 'lishnets.get': {
 					if (!arg) {
-						console.log('Usage: lishNetworks.get <id>');
+						console.log('Usage: lishnets.get <id>');
 						break;
 					}
-					const network = await api.lishNetworks.get(arg);
+					const network = await api.lishnets.get(arg);
 					console.log(JSON.stringify(network, null, 2));
 					break;
 				}
 
-				case 'lishNetworks.import': {
+				case 'lishnets.import': {
 					if (!arg) {
-						console.log('Usage: lishNetworks.import <path>');
+						console.log('Usage: lishnets.import <path>');
 						break;
 					}
 					console.log(`Importing network from: ${arg}`);
-					const network = await api.lishNetworks.importFromFile(arg, true);
+					const network = await api.lishnets.importFromFile(arg, true);
 					console.log(`✓ Network imported: ${network.name} (${network.networkID})`);
 					break;
 				}
 
-				case 'lishNetworks.enable': {
+				case 'lishnets.enable': {
 					if (!arg) {
-						console.log('Usage: lishNetworks.enable <id>');
+						console.log('Usage: lishnets.enable <id>');
 						break;
 					}
-					await api.lishNetworks.setEnabled(arg, true);
+					await api.lishnets.setEnabled(arg, true);
 					console.log(`✓ Network enabled`);
 					break;
 				}
 
-				case 'lishNetworks.disable': {
+				case 'lishnets.disable': {
 					if (!arg) {
-						console.log('Usage: lishNetworks.disable <id>');
+						console.log('Usage: lishnets.disable <id>');
 						break;
 					}
-					await api.lishNetworks.setEnabled(arg, false);
+					await api.lishnets.setEnabled(arg, false);
 					console.log(`✓ Network disabled`);
 					break;
 				}
 
-				case 'lishNetworks.delete': {
+				case 'lishnets.delete': {
 					if (!arg) {
-						console.log('Usage: lishNetworks.delete <id>');
+						console.log('Usage: lishnets.delete <id>');
 						break;
 					}
-					await api.lishNetworks.delete(arg);
+					await api.lishnets.delete(arg);
 					console.log(`✓ Network deleted`);
 					break;
 				}
 
-				case 'lishNetworks.connect': {
+				case 'lishnets.connect': {
 					if (!arg) {
-						console.log('Usage: lishNetworks.connect <multiaddr>');
+						console.log('Usage: lishnets.connect <multiaddr>');
 						break;
 					}
 					const networkID = await getFirstNetworkID();
 					if (!networkID) break;
-					await api.lishNetworks.connect(networkID, arg);
+					await api.lishnets.connect(networkID, arg);
 					console.log('✓ Connected');
 					break;
 				}
 
-				case 'lishNetworks.findPeer': {
+				case 'lishnets.findPeer': {
 					if (!arg) {
-						console.log('Usage: lishNetworks.findPeer <peerID>');
+						console.log('Usage: lishnets.findPeer <peerID>');
 						break;
 					}
 					const networkID = await getFirstNetworkID();
 					if (!networkID) break;
-					const result = await api.lishNetworks.findPeer(networkID, arg);
+					const result = await api.lishnets.findPeer(networkID, arg);
 					console.log('Peer info:', JSON.stringify(result, null, 2));
 					break;
 				}
 
-				case 'lishNetworks.infoAll': {
-					const infos = await api.lishNetworks.infoAll();
+				case 'lishnets.infoAll': {
+					const infos = await api.lishnets.infoAll();
 					if (infos.length === 0) {
 						console.log('No networks');
 						break;
@@ -227,18 +227,18 @@ async function main(): Promise<void> {
 					break;
 				}
 
-				case 'lishNetworks.nodeInfo': {
-					const info = await api.lishNetworks.getNodeInfo();
+				case 'lishnets.nodeInfo': {
+					const info = await api.lishnets.getNodeInfo();
 					console.log(`Peer ID: ${info.peerID}`);
 					console.log('Addresses:');
 					info.addresses.forEach(addr => console.log(`  ${addr}`));
 					break;
 				}
 
-				case 'lishNetworks.status': {
+				case 'lishnets.status': {
 					const networkID = await getFirstNetworkID();
 					if (!networkID) break;
-					const status = await api.lishNetworks.getStatus(networkID);
+					const status = await api.lishnets.getStatus(networkID);
 					console.log(`Connected peers: ${status.connected}`);
 					console.log(`Peers in store: ${status.peersInStore}`);
 					console.log(`Datasets: ${status.datasets}`);
@@ -249,10 +249,10 @@ async function main(): Promise<void> {
 					break;
 				}
 
-				case 'lishNetworks.peers': {
+				case 'lishnets.peers': {
 					const networkID = await getFirstNetworkID();
 					if (!networkID) break;
-					const peers = await api.lishNetworks.getPeers(networkID);
+					const peers = await api.lishnets.getPeers(networkID);
 					console.log('Peers:');
 					if (peers.length === 0) {
 						console.log('  (none)');
@@ -262,10 +262,10 @@ async function main(): Promise<void> {
 					break;
 				}
 
-				case 'lishNetworks.addresses': {
+				case 'lishnets.addresses': {
 					const networkID = await getFirstNetworkID();
 					if (!networkID) break;
-					const addresses = await api.lishNetworks.getAddresses(networkID);
+					const addresses = await api.lishnets.getAddresses(networkID);
 					console.log('Addresses:');
 					if (addresses.length === 0) {
 						console.log('  (none)');

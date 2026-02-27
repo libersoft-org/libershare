@@ -6,31 +6,31 @@ import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
 // ============================================================================
 
 export async function getNetworks(): Promise<LISHNetworkConfig[]> {
-	return api.lishNetworks.getAll();
+	return api.lishnets.getAll();
 }
 
 export async function getNetworkById(networkID: string): Promise<LISHNetworkConfig | undefined> {
-	return api.lishNetworks.get(networkID);
+	return api.lishnets.get(networkID);
 }
 
 export async function addNetwork(network: LISHNetworkConfig): Promise<boolean> {
-	return api.lishNetworks.add(network);
+	return api.lishnets.add(network);
 }
 
 export async function updateNetwork(network: LISHNetworkConfig): Promise<boolean> {
-	return api.lishNetworks.update(network);
+	return api.lishnets.update(network);
 }
 
 export async function deleteNetwork(networkID: string): Promise<boolean> {
-	return api.lishNetworks.delete(networkID);
+	return api.lishnets.delete(networkID);
 }
 
 export async function networkExists(networkID: string): Promise<boolean> {
-	return api.lishNetworks.exists(networkID);
+	return api.lishnets.exists(networkID);
 }
 
 export async function addNetworkIfNotExists(network: LISHNetworkDefinition): Promise<boolean> {
-	return api.lishNetworks.addIfNotExists(network);
+	return api.lishnets.addIfNotExists(network);
 }
 
 export async function getExistingNetworkIDs(): Promise<Set<string>> {
@@ -112,7 +112,7 @@ export async function importNetworksFromJson(json: string): Promise<{ imported: 
 	if (result.error) {
 		return { imported: 0, error: result.error };
 	}
-	const imported = await api.lishNetworks.import(result.networks);
+	const imported = await api.lishnets.import(result.networks);
 	return { imported, error: null };
 }
 

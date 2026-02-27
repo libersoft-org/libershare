@@ -37,7 +37,7 @@
 		loading = true;
 		error = '';
 		try {
-			peers = await api.lishNetworks.getPeers(network.networkID);
+			peers = await api.lishnets.getPeers(network.networkID);
 		} catch (e: any) {
 			error = e?.message || 'Failed to load peers';
 			peers = [];

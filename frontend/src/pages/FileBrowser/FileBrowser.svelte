@@ -6,7 +6,7 @@
 	import { t, withDetail } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
-	import { getParentPath, loadDirectoryFromApi, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
+	import { getParentPath, loadDirectoryFromAPI, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
 	import { type StorageItemData } from '../../scripts/storage.ts';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -128,7 +128,7 @@
 		}
 		try {
 			const options: LoadDirectoryOptions = { foldersOnly, filesOnly, fileFilter: activeFilter };
-			const result = await loadDirectoryFromApi(path, separator, options);
+			const result = await loadDirectoryFromAPI(path, separator, options);
 			currentPath = result.path;
 			parentPath = result.parentPath;
 			items = result.items;

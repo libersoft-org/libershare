@@ -1,3 +1,3 @@
 import { wsClient } from './ws-client.ts';
-import { Api } from '@shared';
-export const api = new Api(wsClient);
+import { API } from '@shared';
+export const api = new API(wsClient);
