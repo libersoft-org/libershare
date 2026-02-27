@@ -11,6 +11,16 @@
 	}
 	let { areaID, position, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
+	let selectedIndex = $state(0);
+
+	function toggleFullscreen() {
+		const tauri = (window as any).__TAURI_INTERNALS__;
+		if (tauri) tauri.invoke('app_fullscreen');
+		else {
+			if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+			else document.exitFullscreen().catch(() => {});
+		}
+	}
 
 	onMount(() => {
 		return useArea(
@@ -18,9 +28,24 @@
 			{
 				up: () => false,
 				down: () => false,
-				left: () => false,
-				right: () => false,
-				confirmUp: () => onBack?.(),
+				left: () => {
+					if (selectedIndex > 0) {
+						selectedIndex--;
+						return true;
+					}
+					return false;
+				},
+				right: () => {
+					if (selectedIndex < 1) {
+						selectedIndex++;
+						return true;
+					}
+					return false;
+				},
+				confirmUp: () => {
+					if (selectedIndex === 0) onBack?.();
+					else toggleFullscreen();
+				},
 				back: () => onBack?.(),
 			},
 			position
@@ -66,11 +91,12 @@
 </style>
 
 <div class="header">
-	<Button icon="/img/back.svg" alt="Back" selected={active} padding="1vh" width="5vh" height="5vh" borderRadius="50%" />
+	<Button icon="/img/back.svg" alt="Back" selected={active && selectedIndex === 0} padding="1vh" width="5vh" height="5vh" borderRadius="50%" />
 	<div class="title">{productName}</div>
 	<div class="spacer"></div>
 	<div class="debug-hint">
 		<div>F2 / START = debug</div>
 		<div>F3 / SELECT = reload</div>
 	</div>
+	<Button icon="/img/fullscreen.svg" alt="Fullscreen" selected={active && selectedIndex === 1} padding="1vh" width="5vh" height="5vh" borderRadius="50%" onConfirm={toggleFullscreen} />
 </div>

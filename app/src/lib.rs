@@ -93,6 +93,12 @@ fn app_shutdown(app: tauri::AppHandle) {
 	app.exit(0);
 }
 
+#[tauri::command]
+fn app_fullscreen(window: tauri::Window) {
+	let is_fullscreen = window.is_fullscreen().unwrap_or(false);
+	let _ = window.set_fullscreen(!is_fullscreen);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	let debug_mode = std::env::args().any(|a| a == "--debug" || a == "/debug");
@@ -103,7 +109,8 @@ pub fn run() {
 		.invoke_handler(tauri::generate_handler![
 			app_quit,
 			app_restart,
-			app_shutdown
+			app_shutdown,
+			app_fullscreen
 		])
 		.setup(move |app| {
 			let data_dir = app.path().app_data_dir()?;
