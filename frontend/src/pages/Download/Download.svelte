@@ -140,11 +140,11 @@
 	<div class="container">
 		<Table columns={DOWNLOAD_TABLE_COLUMNS} noBorder>
 			<Header fontSize="1.4vh">
-				<Cell>{$t('downloads.name')}</Cell>
+				<Cell>{$t('common.name')}</Cell>
 				<Cell align="center" desktopOnly>{$t('downloads.id')}</Cell>
-				<Cell align="center" desktopOnly>{$t('downloads.size')}</Cell>
-				<Cell align="center" desktopOnly>{$t('downloads.progress')}</Cell>
-				<Cell align="center" desktopOnly>{$t('downloads.status')}</Cell>
+				<Cell align="center" desktopOnly>{$t('common.size')}</Cell>
+				<Cell align="center" desktopOnly>{$t('common.progress')}</Cell>
+				<Cell align="center" desktopOnly>{$t('common.status')}</Cell>
 				<Cell align="center" desktopOnly>{$t('downloads.downloadingFrom')}</Cell>
 				<Cell align="center" desktopOnly>{$t('downloads.uploadingTo')}</Cell>
 				<Cell align="center" desktopOnly>{$t('downloads.downloadSpeed')}</Cell>

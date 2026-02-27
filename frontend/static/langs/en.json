@@ -37,30 +37,33 @@
 		"show": "Show",
 		"hide": "Hide",
 		"refresh": "Refresh",
-		"size": "Size"
+		"size": "Size",
+		"progress": "Progress",
+		"status": "Status",
+		"name": "Name",
+		"description": "Description",
+		"optional": "optional",
+		"fromFile": "From file",
+		"fromWeb": "From web",
+		"openFolder": "Open folder",
+		"filePathRequired": "File path is required",
+		"urlRequired": "URL is required"
 	},
 	"library": {
 		"title": "Online library",
 		"product": {
 			"downloads": "Downloads",
-			"size": "Size",
 			"download": "Download",
 			"play": "Play"
 		}
 	},
 	"localStorage": {
 		"title": "Local storage",
-		"name": "Name",
-		"size": "Size",
 		"modified": "Modified"
 	},
 	"downloads": {
 		"title": "Downloads and sharing",
-		"name": "Name",
 		"id": "ID",
-		"size": "Size",
-		"progress": "Progress",
-		"status": "Status",
 		"targetFolder": "Target folder",
 		"downloadingFrom": "Downloading from",
 		"uploadingTo": "Uploading to",
@@ -77,16 +80,13 @@
 		"errorInvalidFormat": "Invalid LISH format",
 		"errorNoValidLISH": "No valid LISH found",
 		"emptyList": "No LISH to export found",
-		"openFolder": "Open folder",
 		"start": "Start",
 		"pause": "Pause",
 		"moveData": "Move data",
 		"lishCreate": {
-			"name": "Name (optional)",
-			"description": "Description (optional)",
 			"dataPath": "Data location (file or directory)",
 			"saveToFile": "Save to .lish file",
-			"lishFile": "Path to .lish file (optional)",
+			"lishFile": "Path to .lish file",
 			"chunkSize": "Chunk size (B, K, M, G, T)",
 			"algorithm": "Hash algorithm",
 			"threads": "Number of threads (0 = auto)",
@@ -106,16 +106,12 @@
 			}
 		},
 		"lishImport": {
-			"fromFile": "From file",
-			"fromWeb": "From web",
 			"fromJSON": "From LISH JSON",
 			"filePath": "LISH file",
 			"url": "URL address of LISH file",
 			"placeholder": "Paste LISH JSON here...",
 			"downloadPath": "Download folder",
 			"lishJSON": "LISH JSON",
-			"filePathRequired": "File path is required",
-			"urlRequired": "URL is required",
 			"downloadPathRequired": "Download folder is required",
 			"autoStartSharing": "Automatically start sharing after adding"
 		}
@@ -146,8 +142,6 @@
 		},
 		"lishNetwork": {
 			"title": "LISH Network",
-			"name": "Name",
-			"description": "Description",
 			"networkID": "Network ID",
 			"key": "Network key",
 			"autoGenerate": "Auto-generate network ID (new network)",
@@ -155,7 +149,6 @@
 			"errorNameRequired": "Network name is required",
 			"errorNetworkIDRequired": "Network ID is required",
 			"errorBootstrapRequired": "At least one bootstrap server is required",
-			"errorUrlRequired": "URL is required",
 			"errorInvalidFormat": "Invalid format of network list",
 			"errorNoValidNetworks": "No valid networks found",
 			"publicList": "Public list",
@@ -175,13 +168,9 @@
 			"compressGzip": "Compress to gzip"
 		},
 		"lishNetworkImport": {
-			"fromFile": "From file",
-			"fromWeb": "From web",
 			"fromJSON": "From LISHNET JSON",
 			"filePath": "LISHNET file",
 			"url": "URL address of LISHNET file",
-			"filePathRequired": "File path is required",
-			"urlRequired": "URL is required",
 			"fileReadError": "Failed to read file"
 		},
 		"language": "Language",
@@ -222,7 +211,6 @@
 		}
 	},
 	"fileBrowser": {
-		"openFolder": "Open folder",
 		"selectFolder": "Select folder",
 		"newFolder": "New folder",
 		"deleteFolder": "Delete folder",

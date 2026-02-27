@@ -38,7 +38,7 @@
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (!url.trim()) {
-			errorMessage = $t('settings.lishNetworkImport.urlRequired');
+			errorMessage = $t('common.urlRequired');
 			return;
 		}
 		loading = true;

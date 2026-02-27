@@ -402,11 +402,11 @@
 		<div class="container">
 			<!-- Name (optional) -->
 			<div bind:this={rowElements[FIELD_NAME]}>
-				<Input bind:this={nameInput} value={name} onchange={handleNameChange} label={$t('downloads.lishCreate.name')} selected={active && selectedIndex === FIELD_NAME} />
+				<Input bind:this={nameInput} value={name} onchange={handleNameChange} label={`${$t('common.name')} (${$t('common.optional')})`} selected={active && selectedIndex === FIELD_NAME} />
 			</div>
 			<!-- Description (optional) -->
 			<div bind:this={rowElements[FIELD_DESCRIPTION]}>
-				<Input bind:this={descriptionInput} bind:value={description} label={$t('downloads.lishCreate.description')} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
+				<Input bind:this={descriptionInput} bind:value={description} label={`${$t('common.description')} (${$t('common.optional')})`} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
 			</div>
 			<!-- Data Path (required) -->
 			<div class="row" bind:this={rowElements[FIELD_INPUT]}>
@@ -419,7 +419,7 @@
 			</div>
 			<!-- LISH File Path (optional, enabled when saveToFile is on) -->
 			<div class="row" bind:this={rowElements[FIELD_LISH_FILE]}>
-				<Input bind:this={lishFileInput} bind:value={lishFile} label={$t('downloads.lishCreate.lishFile')} selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 0} flex disabled={!saveToFile} onchange={() => (lishFileManuallyEdited = true)} />
+				<Input bind:this={lishFileInput} bind:value={lishFile} label={`${$t('downloads.lishCreate.lishFile')} (${$t('common.optional')})`} selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 0} flex disabled={!saveToFile} onchange={() => (lishFileManuallyEdited = true)} />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 1} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
 			</div>
 			<!-- Add to Sharing Switch -->

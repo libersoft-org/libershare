@@ -48,7 +48,7 @@
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (!url.trim()) {
-			errorMessage = $t('downloads.lishImport.urlRequired');
+			errorMessage = $t('common.urlRequired');
 			return;
 		}
 		if (!downloadPath.trim()) {

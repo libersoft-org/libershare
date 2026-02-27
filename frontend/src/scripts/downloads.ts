@@ -36,7 +36,7 @@ export interface DownloadToolbarAction {
 }
 export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
 	{ id: 'back', icon: '/img/back.svg', getLabel: t => t('common.back') },
-	{ id: 'open-folder', icon: '/img/folder.svg', getLabel: t => t('downloads.openFolder') },
+	{ id: 'open-folder', icon: '/img/folder.svg', getLabel: t => t('common.openFolder') },
 	{ id: 'toggle', icon: '/img/pause.svg', getLabel: (t, isPaused) => (isPaused ? t('downloads.start') : t('downloads.pause')), getIcon: isPaused => (isPaused ? '/img/play.svg' : '/img/pause.svg') },
 	{ id: 'export', icon: '/img/upload.svg', getLabel: t => t('common.export') },
 	{ id: 'move', icon: '/img/move.svg', getLabel: t => t('downloads.moveData') },

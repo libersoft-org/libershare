@@ -146,7 +146,7 @@ export class DataServer {
 
 	// Create & export
 
-	public async createLISH(dataPath: string, lishFile: string | undefined, addToSharing: boolean = false, name: string | undefined, description: string | undefined, algo: string = DEFAULT_ALGO, chunkSize: number = DEFAULT_CHUNK_SIZE, threads: number = 0, onProgress?: (info: { type: string; path?: string; current?: number; total?: number }) => void): Promise<IStoredLISH> {
+	public async createLISH(dataPath: string, lishFile: string | undefined, addToSharing: boolean = false, name: string | undefined, description: string | undefined, algo: string = DEFAULT_ALGO, chunkSize: number = DEFAULT_CHUNK_SIZE, threads: number = 0, onProgress?: (info: any) => void): Promise<IStoredLISH> {
 		console.log(`Importing dataset from: ${dataPath}, lishFile=${lishFile}, addToSharing=${addToSharing}, name=${name}, description=${description}`);
 		const absolutePath = Utils.expandHome(dataPath);
 		const absoluteLISHFile = lishFile ? Utils.expandHome(lishFile) : undefined;

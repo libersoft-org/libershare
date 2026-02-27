@@ -51,7 +51,7 @@
 <Row {selected}>
 	<div class="info">
 		<div class="name">{name}</div>
-		<div class="size">{$t('library.product.size')}: {size}</div>
+		<div class="size">{$t('common.size')}: {size}</div>
 	</div>
 	<div class="actions">
 		<Button label={$t('library.product.download')} selected={selected && selectedButton === 0} {pressed} />

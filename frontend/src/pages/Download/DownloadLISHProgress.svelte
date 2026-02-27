@@ -26,13 +26,22 @@
 		threads?: number;
 	}
 
+	interface FileProgress {
+		path: string;
+		size: number;
+		chunks: number;
+		currentChunk: number;
+		done: boolean;
+	}
+
 	interface ProgressEvent {
-		type: 'file-start' | 'chunk' | 'file';
+		type: 'file-list' | 'file-start' | 'chunk' | 'file';
 		path?: string;
 		current?: number;
 		total?: number;
 		size?: number;
 		chunks?: number;
+		files?: { path: string; size: number; chunks: number }[];
 	}
 
 	interface Props {
@@ -52,15 +61,9 @@
 	let resultLishID = $state('');
 	let errorText = $state('');
 
-	// Current file progress
-	let currentFile = $state('');
-	let currentFileSize = $state(0);
-	let currentChunk = $state(0);
-	let totalChunks = $state(0);
-	let fileProgress = $derived(totalChunks > 0 ? (currentChunk / totalChunks) * 100 : 0);
-
-	// Log of completed files
-	let completedFiles = $state<{ path: string; size: number }[]>([]);
+	// File list with per-file progress
+	let allFiles = $state<FileProgress[]>([]);
+	let completedCount = $derived(allFiles.filter(f => f.done).length);
 
 	// Navigation: 0 = button, 1+ = table rows
 	let selectedIndex = $state(0);
@@ -86,26 +89,34 @@
 	}
 
 	function handleProgressEvent(data: ProgressEvent): void {
-		if (data.type === 'file-start') {
-			currentFile = data.path || '';
-			currentFileSize = data.size || 0;
-			currentChunk = 0;
-			totalChunks = data.chunks || 0;
+		if (data.type === 'file-list') {
+			allFiles = (data.files || []).map(f => ({
+				path: f.path,
+				size: f.size,
+				chunks: f.chunks,
+				currentChunk: 0,
+				done: false,
+			}));
 		} else if (data.type === 'chunk') {
-			currentChunk = data.current || 0;
-			totalChunks = data.total || totalChunks;
+			const path = data.path || '';
+			const idx = allFiles.findIndex(f => f.path === path);
+			if (idx >= 0) {
+				allFiles[idx].currentChunk = data.current || 0;
+			}
 		} else if (data.type === 'file') {
-			completedFiles = [...completedFiles, { path: data.path || currentFile, size: currentFileSize }];
+			const path = data.path || '';
+			const idx = allFiles.findIndex(f => f.path === path);
+			if (idx >= 0) {
+				allFiles[idx].done = true;
+				allFiles[idx].currentChunk = allFiles[idx].chunks;
+			}
 		}
 	}
 
 	async function startCreate(): Promise<void> {
 		status = 'creating';
 		errorText = '';
-		completedFiles = [];
-		currentFile = '';
-		currentChunk = 0;
-		totalChunks = 0;
+		allFiles = [];
 
 		// Subscribe to progress events (both local listener and server subscription)
 		unsubProgress = api.on('lishs.create:progress', handleProgressEvent) || null;
@@ -147,7 +158,7 @@
 			return false;
 		},
 		down: () => {
-			if (completedFiles.length > 0 && selectedIndex < completedFiles.length) {
+			if (allFiles.length > 0 && selectedIndex < allFiles.length) {
 				selectedIndex++;
 				scrollToSelected();
 				return true;
@@ -211,26 +222,6 @@
 		font-weight: bold;
 	}
 
-	.current-file {
-		font-size: 2vh;
-		color: var(--secondary-foreground);
-		word-break: break-all;
-	}
-
-	.current-file .file-path {
-		color: var(--primary-foreground);
-	}
-
-	.current-file .file-size {
-		color: var(--disabled-foreground);
-		margin-left: 1vh;
-	}
-
-	.chunk-info {
-		font-size: 1.8vh;
-		color: var(--disabled-foreground);
-	}
-
 	.done-info {
 		font-size: 2vh;
 		color: var(--secondary-foreground);
@@ -246,98 +237,44 @@
 <div class="progress-page">
 	<div class="container">
 		<ButtonBar>
-			{#if status === 'creating'}
-				<div bind:this={rowElements[0]}>
-					<Button icon="/img/back.svg" label={$t('common.cancel')} selected={active && selectedIndex === 0} onConfirm={handleBack} />
-				</div>
-			{:else if status === 'done'}
-				<div bind:this={rowElements[0]}>
-					<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 0} onConfirm={handleDone} />
-				</div>
-			{:else}
-				<div bind:this={rowElements[0]}>
-					<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 0} onConfirm={handleBack} />
-				</div>
-			{/if}
+			<div bind:this={rowElements[0]}>
+				<Button icon="/img/back.svg" label={status === 'creating' ? $t('common.cancel') : $t('common.back')} selected={active && selectedIndex === 0} onConfirm={status === 'done' ? handleDone : handleBack} />
+			</div>
 		</ButtonBar>
-
 		{#if status === 'creating'}
 			<div class="status-label">{$t('downloads.lishCreate.progress.creating')}</div>
-
-			{#if currentFile}
-				<div class="current-file">
-					<span class="file-path">{currentFile}</span>
-					{#if currentFileSize > 0}
-						<span class="file-size">({formatBytes(currentFileSize)})</span>
-					{/if}
-				</div>
-
-				<ProgressBar progress={fileProgress} animated />
-
-				{#if totalChunks > 0}
-					<div class="chunk-info">
-						{$t('downloads.lishCreate.progress.chunks')}: {currentChunk} / {totalChunks}
-					</div>
-				{/if}
-			{/if}
-
-			{#if completedFiles.length > 0}
-				<Table columns="1fr auto" columnsMobile="1fr auto">
-					<TableHeader>
-						<TableCell>{$t('common.fileName')}</TableCell>
-						<TableCell>{$t('common.size')}</TableCell>
-					</TableHeader>
-					{#each completedFiles as file, i}
-						<div bind:this={tableRowElements[i]}>
-							<TableRow odd={i % 2 === 0} selected={active && selectedTableRow === i}>
-								<TableCell wrap>✓ {file.path}</TableCell>
-								<TableCell align="right">{formatBytes(file.size)}</TableCell>
-							</TableRow>
-						</div>
-					{/each}
-				</Table>
-			{/if}
 		{:else if status === 'done'}
 			<Alert type="info" message={$t('downloads.lishCreate.progress.done')} />
 			<div class="done-info">
 				<div>LISH ID: <span class="lish-id">{resultLishID}</span></div>
-				<div>{$t('downloads.lishCreate.progress.filesProcessed')}: {completedFiles.length}</div>
+				<div>{$t('downloads.lishCreate.progress.filesProcessed')}: {allFiles.length}</div>
 			</div>
-
-			{#if completedFiles.length > 0}
-				<Table columns="1fr auto" columnsMobile="1fr auto">
-					<TableHeader>
-						<TableCell>{$t('common.fileName')}</TableCell>
-						<TableCell>{$t('common.size')}</TableCell>
-					</TableHeader>
-					{#each completedFiles as file, i}
-						<div bind:this={tableRowElements[i]}>
-							<TableRow odd={i % 2 === 0} selected={active && selectedTableRow === i}>
-								<TableCell wrap>✓ {file.path}</TableCell>
-								<TableCell align="right">{formatBytes(file.size)}</TableCell>
-							</TableRow>
-						</div>
-					{/each}
-				</Table>
-			{/if}
 		{:else if status === 'error'}
 			<Alert type="error" message={errorText} />
-
-			{#if completedFiles.length > 0}
-				<Table columns="1fr auto" columnsMobile="1fr auto">
-					<TableHeader>
-						<TableCell>{$t('common.fileName')}</TableCell>
-						<TableCell>{$t('common.size')}</TableCell>
-					</TableHeader>
-					{#each completedFiles as file, i}
-						<div bind:this={tableRowElements[i]}>
-							<TableRow odd={i % 2 === 0} selected={active && selectedTableRow === i}>
-								<TableCell wrap>✓ {file.path}</TableCell>
-								<TableCell align="right">{formatBytes(file.size)}</TableCell>
-							</TableRow>
-						</div>
-					{/each}
-				</Table>
+		{/if}
+		{#if allFiles.length > 0}
+			<Table columns="1fr 10vh 14vh" columnsMobile="1fr 10vh 14vh">
+				<TableHeader>
+					<TableCell>{$t('common.fileName')}</TableCell>
+					<TableCell align="right">{$t('common.size')}</TableCell>
+					<TableCell align="center">{$t('common.progress')}</TableCell>
+				</TableHeader>
+				{#each allFiles as file, i}
+					<div bind:this={tableRowElements[i]}>
+						<TableRow odd={i % 2 === 0} selected={active && selectedTableRow === i}>
+							<TableCell wrap>{file.path}</TableCell>
+							<TableCell align="right">{formatBytes(file.size)}</TableCell>
+							<TableCell align="center">
+								<ProgressBar progress={file.chunks > 0 ? (file.currentChunk / file.chunks) * 100 : file.done ? 100 : 0} height="3vh" animated={status === 'creating' && !file.done && file.currentChunk > 0} />
+							</TableCell>
+						</TableRow>
+					</div>
+				{/each}
+			</Table>
+			{#if status === 'creating'}
+				<div class="done-info">
+					{$t('downloads.lishCreate.progress.filesProcessed')}: {completedCount} / {allFiles.length}
+				</div>
 			{/if}
 		{/if}
 	</div>

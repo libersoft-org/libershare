@@ -1015,8 +1015,8 @@
 				<div class="container">
 					<Table {columns} noBorder>
 						<Header>
-							<Cell>{$t('localStorage.name')}</Cell>
-							<Cell align="right" desktopOnly>{$t('localStorage.size')}</Cell>
+							<Cell>{$t('common.name')}</Cell>
+							<Cell align="right" desktopOnly>{$t('common.size')}</Cell>
 							<Cell align="right" desktopOnly>{$t('localStorage.modified')}</Cell>
 						</Header>
 						<div class="items">

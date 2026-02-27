@@ -115,13 +115,13 @@ export const menuStructure = derived(
 						submenu: [
 							{
 								id: 'import-lish-file',
-								label: tt('downloads.lishImport.fromFile'),
-								icon: '/img/folder.svg',
-								component: DownloadLISHImportFile,
-							},
-							{
-								id: 'import-lish-web',
-								label: tt('downloads.lishImport.fromWeb'),
+							label: tt('common.fromFile'),
+							icon: '/img/folder.svg',
+							component: DownloadLISHImportFile,
+						},
+						{
+							id: 'import-lish-web',
+							label: tt('common.fromWeb'),
 								icon: '/img/online.svg',
 								component: DownloadLISHImportWeb,
 							},
@@ -193,13 +193,13 @@ export const menuStructure = derived(
 								submenu: [
 									{
 										id: 'import-lishnet-file',
-										label: tt('settings.lishNetworkImport.fromFile'),
-										icon: '/img/folder.svg',
-										component: LISHNetworkImportFile,
-									},
-									{
-										id: 'import-lishnet-web',
-										label: tt('settings.lishNetworkImport.fromWeb'),
+									label: tt('common.fromFile'),
+									icon: '/img/folder.svg',
+									component: LISHNetworkImportFile,
+								},
+								{
+									id: 'import-lishnet-web',
+									label: tt('common.fromWeb'),
 										icon: '/img/online.svg',
 										component: LISHNetworkImportWeb,
 									},

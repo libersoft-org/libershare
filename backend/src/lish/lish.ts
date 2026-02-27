@@ -114,7 +114,53 @@ interface InodeMap {
 	[inode: string]: string; // inode -> first file path encountered
 }
 
-async function processDirectory(dirPath: string, basePath: string, chunkSize: number, algo: HashAlgorithm, maxWorkers: number, directories: IDirectoryEntry[], files: IFileEntry[], links: ILinkEntry[], inodeMap: InodeMap, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void): Promise<void> {
+// Scan directory recursively to collect all regular files (without computing checksums)
+// Used to send the complete file list to the frontend before starting checksum computation
+async function scanFiles(dirPath: string, basePath: string, chunkSize: number, inodeMap: { [key: string]: boolean } = {}): Promise<{ path: string; size: number; chunks: number }[]> {
+	const result: { path: string; size: number; chunks: number }[] = [];
+	const glob = new Bun.Glob('*');
+	const scannedPaths: string[] = [];
+	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) {
+		scannedPaths.push(entry);
+	}
+	scannedPaths.sort();
+	for (const entry of scannedPaths) {
+		const fullPath = `${dirPath}/${entry}`;
+		let stat: Stats;
+		try {
+			stat = await getStats(fullPath);
+		} catch {
+			continue;
+		}
+		// Check symlink
+		let isSymlink = false;
+		try {
+			const lstat = await fsPromises.lstat(fullPath);
+			isSymlink = lstat.isSymbolicLink();
+		} catch {}
+		if (isSymlink) {
+			continue;
+		} else if (stat.isDirectory()) {
+			const subFiles = await scanFiles(fullPath, basePath, chunkSize, inodeMap);
+			result.push(...subFiles);
+		} else if (stat.isFile()) {
+			const inodeKey = `${stat.dev}:${stat.ino}`;
+			// Skip hard links (already seen inode)
+			if (stat.ino > 0 && inodeMap[inodeKey]) {
+				continue;
+			}
+			if (stat.ino > 0) inodeMap[inodeKey] = true;
+			const relativePath = getRelativePath(fullPath, basePath);
+			const totalChunks = Math.ceil(stat.size / chunkSize);
+			result.push({ path: relativePath, size: stat.size, chunks: totalChunks });
+		}
+	}
+	return result;
+}
+
+type ProgressInfo = { type: 'file-list'; files: { path: string; size: number; chunks: number }[] } | { type: 'file-start'; path: string; size: number; chunks: number } | { type: 'chunk'; path: string; current: number; total: number } | { type: 'file'; path: string };
+
+async function processDirectory(dirPath: string, basePath: string, chunkSize: number, algo: HashAlgorithm, maxWorkers: number, directories: IDirectoryEntry[], files: IFileEntry[], links: ILinkEntry[], inodeMap: InodeMap, onProgress?: (info: ProgressInfo) => void): Promise<void> {
 	const stat = await getStats(dirPath);
 	// Add directory entry
 	const relativePath = getRelativePath(dirPath, basePath);
@@ -204,7 +250,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	}
 }
 
-export async function createLISH(inputPath: string, name: string | undefined, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: { type: 'file' | 'chunk' | 'file-start'; path?: string; current?: number; total?: number; size?: number; chunks?: number }) => void, id?: string): Promise<ILISH> {
+export async function createLISH(inputPath: string, name: string | undefined, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: ProgressInfo) => void, id?: string): Promise<ILISH> {
 	const created = new Date().toISOString();
 	const lishId = id || globalThis.crypto.randomUUID();
 	const lish: ILISH = {
@@ -225,6 +271,8 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		const totalChunks = Math.ceil(stat.size / chunkSize);
 		// Get filename from path
 		const filename = inputPath.split(/[\\/]/).pop() || inputPath;
+		// Emit file list before starting checksums
+		if (onProgress) onProgress({ type: 'file-list', files: [{ path: filename, size: stat.size, chunks: totalChunks }] });
 		// Progress feedback - file start
 		if (onProgress) onProgress({ type: 'file-start', path: filename, size: stat.size, chunks: totalChunks });
 		// Calculate checksums (sequential for 1 thread, parallel for multiple)
@@ -250,6 +298,10 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		const files: IFileEntry[] = [];
 		const links: ILinkEntry[] = [];
 		const inodeMap: InodeMap = {};
+		// Scan all files first and emit the complete file list
+		const scannedFiles = await scanFiles(inputPath, inputPath, chunkSize);
+		if (onProgress) onProgress({ type: 'file-list', files: scannedFiles });
+		// Now process directory (computes checksums with per-file progress)
 		await processDirectory(inputPath, inputPath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress);
 		// Sort all arrays alphabetically by path
 		directories.sort((a, b) => a.path.localeCompare(b.path));

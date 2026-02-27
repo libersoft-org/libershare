@@ -37,30 +37,33 @@
 		"show": "Zobrazit",
 		"hide": "Skrýt",
 		"refresh": "Obnovit",
-		"size": "Velikost"
+		"size": "Velikost",
+		"progress": "Průběh",
+		"status": "Stav",
+		"name": "Název",
+		"description": "Popis",
+		"optional": "volitelné",
+		"fromFile": "Ze souboru",
+		"fromWeb": "Z webu",
+		"openFolder": "Otevřít složku",
+		"filePathRequired": "Cesta k souboru je povinná",
+		"urlRequired": "URL je povinná"
 	},
 	"library": {
 		"title": "Online knihovna",
 		"product": {
 			"downloads": "Ke stažení",
-			"size": "Velikost",
 			"download": "Stáhnout",
 			"play": "Přehrát"
 		}
 	},
 	"localStorage": {
 		"title": "Místní úložiště",
-		"name": "Název",
-		"size": "Velikost",
 		"modified": "Změněno"
 	},
 	"downloads": {
 		"title": "Stahování a sdílení",
-		"name": "Název",
 		"id": "ID",
-		"size": "Velikost",
-		"progress": "Průběh",
-		"status": "Stav",
 		"targetFolder": "Cílová složka",
 		"downloadingFrom": "Stahování od",
 		"uploadingTo": "Odesílání k",
@@ -77,16 +80,13 @@
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"errorNoValidLISH": "Nebyl nalezen žádný platný LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",
-		"openFolder": "Otevřít složku",
 		"start": "Spustit",
 		"pause": "Pozastavit",
 		"moveData": "Přesunout data",
 		"lishCreate": {
-			"name": "Název (volitelné)",
-			"description": "Popis (volitelné)",
 			"dataPath": "Umístění dat (soubor nebo složka)",
 			"saveToFile": "Uložit do souboru .lish",
-			"lishFile": "Cesta k .lish souboru (volitelné)",
+			"lishFile": "Cesta k .lish souboru",
 			"chunkSize": "Velikost chunku (B, K, M, G, T)",
 			"algorithm": "Hashovací algoritmus",
 			"threads": "Počet vláken (0 = automaticky)",
@@ -106,16 +106,12 @@
 			}
 		},
 		"lishImport": {
-			"fromFile": "Ze souboru",
-			"fromWeb": "Z webu",
 			"fromJSON": "Z LISH JSON",
 			"filePath": "LISH soubor",
 			"url": "URL adresa LISH souboru",
 			"placeholder": "Vložte LISH JSON zde...",
 			"downloadPath": "Složka pro stažení",
 			"lishJSON": "LISH JSON",
-			"filePathRequired": "Cesta k souboru je povinná",
-			"urlRequired": "URL je povinná",
 			"downloadPathRequired": "Složka pro stažení je povinná",
 			"autoStartSharing": "Automaticky spustit sdílení po přidání"
 		}
@@ -146,8 +142,6 @@
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",
-			"name": "Název",
-			"description": "Popis",
 			"networkID": "ID sítě",
 			"key": "Klíč sítě",
 			"autoGenerate": "Automaticky vygenerovat ID sítě (nová síť)",
@@ -155,7 +149,6 @@
 			"errorNameRequired": "Název sítě je povinný",
 			"errorNetworkIDRequired": "ID sítě je povinné",
 			"errorBootstrapRequired": "Je vyžadován alespoň jeden bootstrap server",
-			"errorUrlRequired": "URL je povinná",
 			"errorInvalidFormat": "Neplatný formát seznamu sítí",
 			"errorNoValidNetworks": "Nebyly nalezeny žádné platné sítě",
 			"publicList": "Veřejný seznam",
@@ -175,13 +168,9 @@
 			"compressGzip": "Komprimovat do gzip"
 		},
 		"lishNetworkImport": {
-			"fromFile": "Ze souboru",
-			"fromWeb": "Z webu",
 			"fromJSON": "Z LISHNET JSON",
 			"filePath": "LISHNET soubor",
 			"url": "URL adresa LISHNET souboru",
-			"filePathRequired": "Cesta k souboru je povinná",
-			"urlRequired": "URL je povinná",
 			"fileReadError": "Nepodařilo se přečíst soubor"
 		},
 		"language": "Jazyk",
@@ -222,7 +211,6 @@
 		}
 	},
 	"fileBrowser": {
-		"openFolder": "Otevřít složku",
 		"selectFolder": "Vybrat složku",
 		"newFolder": "Nová složka",
 		"deleteFolder": "Smazat složku",

@@ -32,7 +32,7 @@
 
 	async function loadPublicList(): Promise<void> {
 		if (!url.trim()) {
-			error = $t('settings.lishNetwork.errorUrlRequired');
+			error = $t('common.urlRequired');
 			return;
 		}
 		loading = true;

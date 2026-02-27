@@ -223,10 +223,10 @@
 <div class="add-edit">
 	<div class="container">
 		<div bind:this={rowElements[0]}>
-			<Input bind:this={nameInput} bind:value={name} label={$t('settings.lishNetwork.name')} selected={active && selectedIndex === 0} />
+			<Input bind:this={nameInput} bind:value={name} label={$t('common.name')} selected={active && selectedIndex === 0} />
 		</div>
 		<div bind:this={rowElements[1]}>
-			<Input bind:this={descriptionInput} bind:value={description} label={$t('settings.lishNetwork.description')} multiline rows={4} selected={active && selectedIndex === 1} />
+			<Input bind:this={descriptionInput} bind:value={description} label={$t('common.description')} multiline rows={4} selected={active && selectedIndex === 1} />
 		</div>
 		{#if !isEditing}
 			<div bind:this={rowElements[2]}>

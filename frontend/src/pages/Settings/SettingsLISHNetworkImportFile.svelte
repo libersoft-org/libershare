@@ -44,7 +44,7 @@
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (!filePath.trim()) {
-			errorMessage = $t('settings.lishNetworkImport.filePathRequired');
+			errorMessage = $t('common.filePathRequired');
 			return;
 		}
 		try {

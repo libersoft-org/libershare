@@ -47,7 +47,7 @@
 	function handleImport(): void {
 		errorMessage = '';
 		if (!filePath.trim()) {
-			errorMessage = $t('downloads.lishImport.filePathRequired');
+			errorMessage = $t('common.filePathRequired');
 			return;
 		}
 		if (!downloadPath.trim()) {
