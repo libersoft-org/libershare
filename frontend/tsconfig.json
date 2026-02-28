@@ -17,6 +17,8 @@
 		"exactOptionalPropertyTypes": true,
 		"noUncheckedIndexedAccess": true,
 		"noPropertyAccessFromIndexSignature": true,
+		"noUncheckedSideEffectImports": true,
+		"verbatimModuleSyntax": true,
 		"moduleResolution": "bundler",
 		"allowImportingTsExtensions": true
 	}

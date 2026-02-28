@@ -11,7 +11,7 @@ import { type Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { PINK_TOPIC, PONK_TOPIC, createPinkMessage, createPonkMessage } from './pink-ponk.ts';
-import { HaveMessage, WantMessage } from './downloader.ts';
+import { type HaveMessage, type WantMessage } from './downloader.ts';
 import { lishTopic } from './constants.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
@@ -605,7 +605,7 @@ export class Network {
 		this.datastore = null;
 	}
 
-	async cliFindPeer(peerID: string) {
+	async cliFindPeer(peerID: string): Promise<void> {
 		const id = peerIdFromString(peerID);
 		await this.findPeer(id);
 	}

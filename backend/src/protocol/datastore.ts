@@ -121,7 +121,7 @@ export class SqliteDatastore extends _BaseDatastore {
 		return prefix.replace(/[%_]/g, '\\$&') + '%';
 	}
 
-	*_all(q: { prefix?: string }) {
+	*_all(q: { prefix?: string }): Generator<{ key: Key; value: Uint8Array }> {
 		this.ensureOpen();
 		const rows = q.prefix
 			? this.stmtAllPrefix.all(this.escapeLikePrefix(q.prefix)) as Array<{ key: string; value: Buffer }>
@@ -131,7 +131,7 @@ export class SqliteDatastore extends _BaseDatastore {
 		}
 	}
 
-	*_allKeys(q: { prefix?: string }) {
+	*_allKeys(q: { prefix?: string }): Generator<Key> {
 		this.ensureOpen();
 		const rows = q.prefix
 			? this.stmtAllKeysPrefix.all(this.escapeLikePrefix(q.prefix)) as Array<{ key: string }>

@@ -5,9 +5,9 @@ import { type Network } from './network.ts';
 import { lishTopic } from './constants.ts';
 import { Utils } from '../utils.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
-import { HaveChunks, LISH_PROTOCOL, LISHClient } from './lish-protocol.ts';
+import { type HaveChunks, LISH_PROTOCOL, LISHClient } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
-import { DataServer, MissingChunk } from '../lish/data-server.ts';
+import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 
 type NodeId = string;
 interface PubsubMessage {

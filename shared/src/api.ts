@@ -17,6 +17,7 @@ export interface IWsClient {
  * Can be used in both browser and CLI environments.
  */
 export class API {
+	private client: IWsClient;
 	readonly datasets: DatasetsAPI;
 	readonly fs: FsAPI;
 	readonly settings: SettingsAPI;
@@ -24,7 +25,8 @@ export class API {
 	readonly lishs: LISHsAPI;
 	readonly transfer: TransferAPI;
 
-	constructor(private client: IWsClient) {
+	constructor(client: IWsClient) {
+		this.client = client;
 		this.datasets = new DatasetsAPI(client);
 		this.fs = new FsAPI(client);
 		this.settings = new SettingsAPI(client);
@@ -60,7 +62,10 @@ export class API {
 }
 
 class DatasetsAPI {
-	constructor(private client: IWsClient) {}
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
 
 	list(): Promise<Dataset[]> {
 		return this.client.call<Dataset[]>('datasets.getDatasets');
@@ -72,7 +77,10 @@ class DatasetsAPI {
 }
 
 class FsAPI {
-	constructor(private client: IWsClient) {}
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
 
 	info(): Promise<FsInfo> {
 		return this.client.call<FsInfo>('fs.info');
@@ -122,7 +130,10 @@ class FsAPI {
 }
 
 class SettingsAPI {
-	constructor(private client: IWsClient) {}
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
 
 	get<T = any>(path?: string): Promise<T> {
 		return this.client.call<T>('settings.get', { path });
@@ -146,7 +157,10 @@ class SettingsAPI {
 }
 
 class LISHnetsAPI {
-	constructor(private client: IWsClient) {}
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
 
 	list(): Promise<LISHNetworkConfig[]> {
 		return this.client.call<LISHNetworkConfig[]>('lishnets.list');
@@ -228,7 +242,10 @@ class LISHnetsAPI {
 }
 
 class LISHsAPI {
-	constructor(private client: IWsClient) {}
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
 
 	list(): Promise<any[]> {
 		return this.client.call<any[]>('lishs.list');
@@ -255,7 +272,10 @@ class LISHsAPI {
 }
 
 class TransferAPI {
-	constructor(private client: IWsClient) {}
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
 
 	download(networkID: string, lishPath: string): Promise<DownloadResponse> {
 		return this.client.call<DownloadResponse>('transfer.download', { networkID, lishPath });

@@ -17,11 +17,15 @@ export class WsClient {
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private connected = false;
 	private connectPromise: Promise<void> | null = null;
+	private apiURL: string;
+	private onStateChange: (state: State) => void;
 
 	constructor(
-		private apiURL: string,
-		private onStateChange: (state: State) => void
+		apiURL: string,
+		onStateChange: (state: State) => void
 	) {
+		this.apiURL = apiURL;
+		this.onStateChange = onStateChange;
 		this.connect();
 	}
 

@@ -36,14 +36,20 @@ export class APIServer {
 	private readonly secure: boolean;
 	private readonly keyFile?: string | undefined;
 	private readonly certFile?: string | undefined;
+	private readonly dataDir: string;
+	private readonly dataServer: DataServer;
+	private readonly networks: Networks;
 
 	constructor(
-		private readonly dataDir: string,
-		private readonly dataServer: DataServer,
-		private readonly networks: Networks,
+		dataDir: string,
+		dataServer: DataServer,
+		networks: Networks,
 		settings: Settings,
 		options: APIServerOptions
 	) {
+		this.dataDir = dataDir;
+		this.dataServer = dataServer;
+		this.networks = networks;
 		this.settings = settings;
 		this.host = options.host;
 		this.port = options.port;

@@ -10,12 +10,15 @@ interface Request {
 }
 
 export class APIClient {
+	private readonly url: string;
 	private ws: WebSocket | null = null;
 	private requestId = 0;
 	private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
 	private eventHandlers = new Map<string, ((data: any) => void)[]>();
 
-	constructor(private readonly url: string) {}
+	constructor(url: string) {
+		this.url = url;
+	}
 
 	async connect(): Promise<void> {
 		return new Promise((resolve, reject) => {

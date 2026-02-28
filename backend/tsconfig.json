@@ -6,6 +6,7 @@
 		"moduleResolution": "bundler",
 		"allowImportingTsExtensions": true,
 		"noEmit": true,
+		"declaration": true,
 		"esModuleInterop": true,
 		"allowSyntheticDefaultImports": true,
 		"strict": true,
@@ -20,6 +21,10 @@
 		"exactOptionalPropertyTypes": true,
 		"noUncheckedIndexedAccess": true,
 		"noPropertyAccessFromIndexSignature": true,
+		"noUncheckedSideEffectImports": true,
+		"erasableSyntaxOnly": true,
+		"verbatimModuleSyntax": true,
+		"isolatedDeclarations": true,
 		"paths": {
 			"@shared": ["../shared/src/index.ts"],
 			"@shared/*": ["../shared/src/*"]

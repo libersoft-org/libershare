@@ -40,13 +40,11 @@ abstract class BaseStorage<T> {
  */
 export class JsonStorage<T extends Record<string, any>> extends BaseStorage<T> {
 	private data!: T;
+	private readonly defaults: T;
 
-	private constructor(
-		dataDir: string,
-		fileName: string,
-		private readonly defaults: T
-	) {
+	private constructor(dataDir: string, fileName: string, defaults: T) {
 		super(dataDir, fileName);
+		this.defaults = defaults;
 	}
 
 	static async create<T extends Record<string, any>>(dataDir: string, fileName: string, defaults: T): Promise<JsonStorage<T>> {
@@ -107,12 +105,11 @@ export class JsonStorage<T extends Record<string, any>> extends BaseStorage<T> {
 export class ArrayStorage<T extends Record<string, any>> extends BaseStorage<T[]> {
 	private items!: T[];
 
-	private constructor(
-		dataDir: string,
-		fileName: string,
-		private readonly keyField: keyof T
-	) {
+	private readonly keyField: keyof T;
+
+	private constructor(dataDir: string, fileName: string, keyField: keyof T) {
 		super(dataDir, fileName);
+		this.keyField = keyField;
 	}
 
 	static async create<T extends Record<string, any>>(dataDir: string, fileName: string, keyField: keyof T): Promise<ArrayStorage<T>> {
