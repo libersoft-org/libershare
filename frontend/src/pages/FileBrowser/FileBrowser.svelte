@@ -825,8 +825,12 @@
 		saveErrorMessage = '';
 		const fullPath = joinPathWithSeparator(currentPath, internalSaveFileName, separator);
 		try {
-			const { exists } = await api.fs.exists(fullPath);
-			if (exists) {
+			const result = await api.fs.exists(fullPath);
+			if (result.exists && result.type === 'directory') {
+				saveErrorMessage = $t('common.fileNameIsDirectory', { name: internalSaveFileName });
+				return;
+			}
+			if (result.exists) {
 				// File exists, show confirmation dialog
 				pendingSavePath = fullPath;
 				showOverwriteConfirmState = true;
