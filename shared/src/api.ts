@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -247,12 +247,16 @@ class LISHsAPI {
 		this.client = client;
 	}
 
-	list(): Promise<any[]> {
-		return this.client.call<any[]>('lishs.list');
+	list(): Promise<ILISHSummary[]> {
+		return this.client.call<ILISHSummary[]>('lishs.list');
 	}
 
-	get(lishID: string): Promise<any> {
-		return this.client.call<any>('lishs.get', { lishID });
+	get(lishID: string): Promise<ILISHDetail | null> {
+		return this.client.call<ILISHDetail | null>('lishs.get', { lishID });
+	}
+
+	backup(): Promise<IStoredLISH[]> {
+		return this.client.call<IStoredLISH[]>('lishs.backup');
 	}
 
 	create(dataPath: string, lishFile?: string, addToSharing?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJson?: boolean, compressGzip?: boolean): Promise<CreateLISHResponse> {

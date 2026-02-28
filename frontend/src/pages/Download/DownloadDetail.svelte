@@ -4,8 +4,9 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { selectedDownload, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadData, type DownloadToolbarActionId } from '../../scripts/downloads.ts';
+	import { selectedDownload, selectedDownloadLoading, subscribeDownloadDetail, unsubscribeDownloadDetail, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadData, type DownloadToolbarActionId } from '../../scripts/downloads.ts';
 	import { scrollToElement, truncateID } from '../../scripts/utils.ts';
+	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import Header from '../../components/Table/TableHeader.svelte';
@@ -22,7 +23,11 @@
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 	// Get download from store
 	let download = $state<DownloadData | null>(null);
-	const unsubscribe = selectedDownload.subscribe(d => (download = d));
+	let lishID: string | null = null;
+	const unsubscribeStore = selectedDownload.subscribe(d => {
+		download = d;
+		if (d && !lishID) lishID = d.id;
+	});
 	// Toolbar state
 	let toolbarAreaID = $derived(`${areaID}-toolbar`);
 	let infoAreaID = $derived(`${areaID}-info`);
@@ -56,9 +61,13 @@
 		if (filesElement) filesElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
+	function handleBack(): void {
+		onBack?.();
+	}
+
 	function handleToolbarAction(actionId: DownloadToolbarActionId): void {
 		const result = handleDownloadToolbarAction(actionId, download);
-		if (result.needsBack) onBack?.();
+		if (result.needsBack) handleBack();
 	}
 
 	const toolbarHandlers = {
@@ -94,7 +103,7 @@
 		},
 		confirmCancel() {},
 		back() {
-			onBack?.();
+			handleBack();
 		},
 	};
 
@@ -121,7 +130,7 @@
 		confirmUp() {},
 		confirmCancel() {},
 		back() {
-			onBack?.();
+			handleBack();
 		},
 	};
 
@@ -156,7 +165,7 @@
 		},
 		confirmCancel() {},
 		back() {
-			onBack?.();
+			handleBack();
 		},
 	};
 
@@ -165,11 +174,13 @@
 		const unregisterInfo = useArea(infoAreaID, infoHandlers, position);
 		const unregisterList = useArea(listAreaID, listHandlers, position);
 		activateArea(toolbarAreaID);
+		if (lishID) subscribeDownloadDetail(lishID);
 		return () => {
 			unregisterToolbar();
 			unregisterInfo();
 			unregisterList();
-			unsubscribe();
+			unsubscribeStore();
+			if (lishID) unsubscribeDownloadDetail(lishID);
 		};
 	});
 </script>
@@ -254,7 +265,9 @@
 			<Button icon={action.icon} label={action.label} selected={toolbarActive && selectedToolbarIndex === index} onConfirm={() => handleToolbarAction(action.id)} />
 		{/each}
 	</div>
-	{#if download}
+	{#if $selectedDownloadLoading}
+		<Spinner size="8vh" />
+	{:else if download}
 		<div class="content">
 			<!-- Info with LISH details -->
 			<div class="info" class:selected={infoActive} bind:this={infoElement}>

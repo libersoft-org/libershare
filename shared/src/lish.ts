@@ -47,3 +47,39 @@ export interface ILinkEntry {
 	modified?: string;
 	created?: string;
 }
+
+// Summary for the download list table (lightweight, no files/chunks)
+export interface ILISHSummary {
+	id: string;
+	name?: string | undefined;
+	description?: string | undefined;
+	created: string;
+	totalSize: number;
+	fileCount: number;
+	directoryCount: number;
+}
+
+// Detail for the download detail view (files without checksums, no chunks)
+export interface ILISHDetailFile {
+	path: string;
+	size: number;
+	permissions?: string | undefined;
+	modified?: string | undefined;
+	created?: string | undefined;
+}
+
+export interface ILISHDetail {
+	id: string;
+	name?: string | undefined;
+	description?: string | undefined;
+	created: string;
+	chunkSize: number;
+	checksumAlgo: HashAlgorithm;
+	totalSize: number;
+	fileCount: number;
+	directoryCount: number;
+	directory?: string | undefined;
+	files: ILISHDetailFile[];
+	directories: IDirectoryEntry[];
+	links: ILinkEntry[];
+}

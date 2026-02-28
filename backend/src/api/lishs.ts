@@ -1,5 +1,5 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type IStoredLISH, type CreateLISHResponse, DEFAULT_ALGO } from '@shared';
+import { type IStoredLISH, type ILISHSummary, type ILISHDetail, type CreateLISHResponse, DEFAULT_ALGO } from '@shared';
 import { createLISH, DEFAULT_CHUNK_SIZE } from '../lish/lish.ts';
 import { exportLISHToFile } from '../lish/lish-export.ts';
 import { Utils } from '../utils.ts';
@@ -21,19 +21,55 @@ interface CreateLISHParams {
 }
 
 interface LISHsHandlers {
-	list: () => IStoredLISH[];
-	get: (p: { lishID: string }) => IStoredLISH | null;
+	list: () => ILISHSummary[];
+	get: (p: { lishID: string }) => ILISHDetail | null;
+	backup: () => IStoredLISH[];
 	create: (p: CreateLISHParams, client: any) => Promise<CreateLISHResponse>;
 }
 
+function toSummary(lish: IStoredLISH): ILISHSummary {
+	return {
+		id: lish.id,
+		name: lish.name,
+		description: lish.description,
+		created: lish.created,
+		totalSize: lish.files?.reduce((sum, f) => sum + f.size, 0) ?? 0,
+		fileCount: lish.files?.length ?? 0,
+		directoryCount: lish.directories?.length ?? 0,
+	};
+}
+
+function toDetail(lish: IStoredLISH): ILISHDetail {
+	return {
+		id: lish.id,
+		name: lish.name,
+		description: lish.description,
+		created: lish.created,
+		chunkSize: lish.chunkSize,
+		checksumAlgo: lish.checksumAlgo,
+		totalSize: lish.files?.reduce((sum, f) => sum + f.size, 0) ?? 0,
+		fileCount: lish.files?.length ?? 0,
+		directoryCount: lish.directories?.length ?? 0,
+		directory: lish.directory,
+		files: lish.files?.map(f => ({ path: f.path, size: f.size, permissions: f.permissions, modified: f.modified, created: f.created })) ?? [],
+		directories: lish.directories ?? [],
+		links: lish.links ?? [],
+	};
+}
+
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHandlers {
-	function list(): IStoredLISH[] {
-		return dataServer.list();
+	function list(): ILISHSummary[] {
+		return dataServer.list().map(toSummary);
 	}
 
-	function get(p: { lishID: string }): IStoredLISH | null {
+	function get(p: { lishID: string }): ILISHDetail | null {
 		assert(p, ['lishID']);
-		return dataServer.get(p.lishID) ?? null;
+		const lish = dataServer.get(p.lishID);
+		return lish ? toDetail(lish) : null;
+	}
+
+	function backup(): IStoredLISH[] {
+		return dataServer.list();
 	}
 
 	async function create(p: CreateLISHParams, client: any): Promise<CreateLISHResponse> {
@@ -95,5 +131,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		}
 		return { lishID: lish.id, lishFile: resultLISHFile };
 	}
-	return { list, get, create };
+	return { list, get, backup, create };
 }

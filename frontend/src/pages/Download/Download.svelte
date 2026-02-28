@@ -5,8 +5,9 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
-	import { selectedDownload, DOWNLOAD_TABLE_COLUMNS, TEST_DOWNLOADS } from '../../scripts/downloads.ts';
+	import { selectedDownload, downloads, downloadsLoading, subscribeDownloadList, unsubscribeDownloadList, DOWNLOAD_TABLE_COLUMNS } from '../../scripts/downloads.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
+	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Table from '../../components/Table/Table.svelte';
@@ -21,7 +22,6 @@
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
-	const downloads = TEST_DOWNLOADS;
 	let selectedIndex = $state(0);
 	let itemElements: HTMLElement[] = $state([]);
 	// Toolbar state
@@ -33,7 +33,7 @@
 	}
 
 	function openDetail(): void {
-		const download = downloads[selectedIndex]!;
+		const download = $downloads[selectedIndex]!;
 		selectedDownload.set(download);
 		navigateTo('download-detail', download.name || download.id);
 	}
@@ -84,7 +84,7 @@
 			return true;
 		},
 		down() {
-			if (selectedIndex < downloads.length - 1) {
+			if (selectedIndex < $downloads.length - 1) {
 				selectedIndex++;
 				scrollToSelected();
 				return true;
@@ -111,9 +111,11 @@
 		const unregisterToolbar = useArea(toolbarAreaID, toolbarHandlers, position);
 		const unregister = useArea(areaID, areaHandlers, position);
 		activateArea(toolbarAreaID);
+		subscribeDownloadList();
 		return () => {
 			unregisterToolbar();
 			unregister();
+			unsubscribeDownloadList();
 		};
 	});
 </script>
@@ -147,26 +149,30 @@
 		<Button icon="/img/download.svg" label={$t('common.import')} selected={toolbarActive && selectedToolbarIndex === 1} />
 		<Button icon="/img/upload.svg" label={$t('common.exportAll')} selected={toolbarActive && selectedToolbarIndex === 2} />
 	</ButtonBar>
-	<div class="container">
-		<Table columns={DOWNLOAD_TABLE_COLUMNS} noBorder>
-			<Header fontSize="1.4vh">
-				<Cell>{$t('common.name')}</Cell>
-				<Cell align="center" desktopOnly>{$t('downloads.id')}</Cell>
-				<Cell align="center" desktopOnly>{$t('common.size')}</Cell>
-				<Cell align="center" desktopOnly>{$t('common.progress')}</Cell>
-				<Cell align="center" desktopOnly>{$t('common.status')}</Cell>
-				<Cell align="center" desktopOnly>{$t('downloads.downloadingFrom')}</Cell>
-				<Cell align="center" desktopOnly>{$t('downloads.uploadingTo')}</Cell>
-				<Cell align="center" desktopOnly>{$t('downloads.downloadSpeed')}</Cell>
-				<Cell align="center" desktopOnly>{$t('downloads.uploadSpeed')}</Cell>
-			</Header>
-			<div class="items">
-				{#each downloads as download, index (download.id)}
-					<div bind:this={itemElements[index]}>
-						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} selected={active && selectedIndex === index} isLast={index === downloads.length - 1} odd={index % 2 === 0} />
-					</div>
-				{/each}
-			</div>
-		</Table>
-	</div>
+	{#if $downloadsLoading}
+		<Spinner size="8vh" />
+	{:else}
+		<div class="container">
+			<Table columns={DOWNLOAD_TABLE_COLUMNS} noBorder>
+				<Header fontSize="1.4vh">
+					<Cell>{$t('common.name')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.id')}</Cell>
+					<Cell align="center" desktopOnly>{$t('common.size')}</Cell>
+					<Cell align="center" desktopOnly>{$t('common.progress')}</Cell>
+					<Cell align="center" desktopOnly>{$t('common.status')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.downloadingFrom')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.uploadingTo')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.downloadSpeed')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.uploadSpeed')}</Cell>
+				</Header>
+				<div class="items">
+					{#each $downloads as download, index (download.id)}
+						<div bind:this={itemElements[index]}>
+							<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} selected={active && selectedIndex === index} isLast={index === $downloads.length - 1} odd={index % 2 === 0} />
+						</div>
+					{/each}
+				</div>
+			</Table>
+		</div>
+	{/if}
 </div>

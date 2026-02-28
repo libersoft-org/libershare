@@ -101,6 +101,7 @@ export class APIServer {
 			// LISHs
 			'lishs.list': _lishs.list,
 			'lishs.get': _lishs.get,
+			'lishs.backup': _lishs.backup,
 			'lishs.create': _lishs.create,
 
 			// Transfer
