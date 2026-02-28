@@ -6,10 +6,10 @@
 		checked: boolean;
 		selected?: boolean;
 		disabled?: boolean;
-		onToggle?: () => void;
-		onConfirm?: () => void;
+		onToggle?: (() => void) | undefined;
+		onConfirm?: (() => void) | undefined;
 	}
-	let { label, checked, selected = false, disabled = false }: Props = $props();
+	let { label, checked, selected = false, disabled = false, onToggle, onConfirm }: Props = $props();
 </script>
 
 <style>

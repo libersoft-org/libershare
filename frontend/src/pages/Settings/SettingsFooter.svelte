@@ -91,8 +91,8 @@
 		else if (index === 1) openPositionDialog();
 		else if (index === totalItems - 1) onBack?.();
 		else {
-			const widget = footerWidgets[index - 2];
-			setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget]);
+			const widget = footerWidgets[index - 2]!;
+			setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget]!);
 		}
 	}
 </script>

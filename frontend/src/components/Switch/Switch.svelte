@@ -4,8 +4,9 @@
 		checked?: boolean;
 		selected?: boolean;
 		disabled?: boolean;
+		onToggle?: (() => void) | undefined;
 	}
-	let { checked = false, selected = false, disabled = false }: Props = $props();
+	let { checked = false, selected = false, disabled = false, onToggle }: Props = $props();
 	let mounted = $state(false);
 
 	onMount(() => {

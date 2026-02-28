@@ -26,6 +26,7 @@
 	let buttons: { onConfirm?: (() => void) | undefined }[] = [];
 	let active = $derived($activeArea === areaID);
 	let itemsElement = $state<HTMLElement | null>(null);
+	// @ts-ignore used via bind:this in template
 	let wrapperElement = $state<HTMLElement | null>(null);
 	let translateX = $state(0);
 
