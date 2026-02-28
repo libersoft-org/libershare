@@ -3,7 +3,7 @@ import { type IStoredLISH, type CreateLISHResponse, DEFAULT_ALGO } from '@shared
 import { createLISH, DEFAULT_CHUNK_SIZE } from '../lish/lish.ts';
 import { exportLISHToFile } from '../lish/lish-export.ts';
 import { Utils } from '../utils.ts';
-import { readdir, stat } from 'fs/promises';
+import { readdir, stat, access } from 'fs/promises';
 import { join } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -65,8 +65,20 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 			try {
 				const fileStat = await stat(lishFilePath);
 				if (fileStat.isDirectory()) {
-					const fileName = lish.id + (compressGzip ? '.lish.gz' : '.lish');
-					lishFilePath = join(lishFilePath, fileName);
+					const ext = compressGzip ? '.lish.gz' : '.lish';
+					let candidate = join(lishFilePath, lish.id + ext);
+					// Handle unlikely collision: append numeric suffix
+					let suffix = 1;
+					while (true) {
+						try {
+							await access(candidate);
+							candidate = join(lishFilePath, lish.id + '-' + suffix + ext);
+							suffix++;
+						} catch {
+							break; // Path doesn't exist — use it
+						}
+					}
+					lishFilePath = candidate;
 				}
 			} catch {
 				// Path doesn't exist yet — treat as a file path
