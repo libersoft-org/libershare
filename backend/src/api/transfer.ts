@@ -7,7 +7,11 @@ import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 
-export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn) {
+interface TransferHandlers {
+	download: (p: { networkID: string; lishPath: string }, client: any) => Promise<DownloadResponse>;
+}
+
+export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn): TransferHandlers {
 	async function download(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
 		assert(p, ['networkID', 'lishPath']);
 		/*

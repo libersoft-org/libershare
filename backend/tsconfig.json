@@ -12,6 +12,8 @@
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
 		"resolveJsonModule": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
 		"paths": {
 			"@shared": ["../shared/src/index.ts"],
 			"@shared/*": ["../shared/src/*"]

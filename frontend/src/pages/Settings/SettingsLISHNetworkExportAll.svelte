@@ -78,14 +78,14 @@
 		return useArea(
 			areaID,
 			{
-				up: () => {
+				up() {
 					if (hasNetworks && selectedIndex > 0) {
 						selectedIndex--;
 						return true;
 					}
 					return false;
 				},
-				down: () => {
+				down() {
 					if (hasNetworks && selectedIndex < 3) {
 						selectedIndex++;
 						selectedColumn = 0;
@@ -93,32 +93,32 @@
 					}
 					return false;
 				},
-				left: () => {
+				left() {
 					if (selectedIndex === 3 && selectedColumn > 0) {
 						selectedColumn--;
 						return true;
 					}
 					return false;
 				},
-				right: () => {
+				right() {
 					if (selectedIndex === 3 && selectedColumn < 1) {
 						selectedColumn++;
 						return true;
 					}
 					return false;
 				},
-				confirmDown: () => {
+				confirmDown() {
 					if (hasNetworks && selectedIndex === 0) inputRef?.focus();
 				},
-				confirmUp: () => {
+				confirmUp() {
 					if (hasNetworks && selectedIndex === 1) minifyJsonState = !minifyJsonState;
 					else if (hasNetworks && selectedIndex === 2) compressGzip = !compressGzip;
 					else if (hasNetworks && selectedIndex === 3 && selectedColumn === 0) openSaveAs();
 					else if (hasNetworks && selectedIndex === 3 && selectedColumn === 1) onBack?.();
 					else if (!hasNetworks) onBack?.();
 				},
-				confirmCancel: () => {},
-				back: () => onBack?.(),
+				confirmCancel() {},
+				back() { onBack?.(); },
 			},
 			position
 		);

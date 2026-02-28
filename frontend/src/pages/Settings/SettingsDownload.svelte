@@ -227,7 +227,7 @@
 		return useArea(
 			areaID,
 			{
-				up: () => {
+				up() {
 					if (selectedIndex > 0) {
 						selectedIndex--;
 						selectedColumn = 0;
@@ -236,7 +236,7 @@
 					}
 					return false;
 				},
-				down: () => {
+				down() {
 					if (selectedIndex < totalItems - 1) {
 						selectedIndex++;
 						selectedColumn = 0;
@@ -245,14 +245,14 @@
 					}
 					return false;
 				},
-				left: () => {
+				left() {
 					if (selectedColumn > 0) {
 						selectedColumn--;
 						return true;
 					}
 					return false;
 				},
-				right: () => {
+				right() {
 					const maxCol = selectedIndex === FIELD_STORAGE_PATH || selectedIndex === FIELD_TEMP_PATH || selectedIndex === FIELD_LISH_PATH || selectedIndex === FIELD_LISHNET_PATH ? 2 : selectedIndex === FIELD_PORT || selectedIndex === FIELD_DOWNLOAD_CONNECTIONS || selectedIndex === FIELD_UPLOAD_CONNECTIONS || selectedIndex === FIELD_DOWNLOAD_SPEED || selectedIndex === FIELD_UPLOAD_SPEED || selectedIndex === FIELD_RELAY_RESERVATIONS ? 1 : selectedIndex === FIELD_BUTTONS ? 1 : 0;
 					if (selectedColumn < maxCol) {
 						selectedColumn++;
@@ -260,7 +260,7 @@
 					}
 					return false;
 				},
-				confirmDown: () => {
+				confirmDown() {
 					if (selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 0) storagePathRef?.focus();
 					else if (selectedIndex === FIELD_TEMP_PATH && selectedColumn === 0) tempPathRef?.focus();
 					else if (selectedIndex === FIELD_LISH_PATH && selectedColumn === 0) lishPathRef?.focus();
@@ -272,7 +272,7 @@
 					else if (selectedIndex === FIELD_UPLOAD_SPEED && selectedColumn === 0) uploadSpeedRef?.focus();
 					else if (selectedIndex === FIELD_RELAY_RESERVATIONS && selectedColumn === 0) relayReservationsRef?.focus();
 				},
-				confirmUp: () => {
+				confirmUp() {
 					if (selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 1) openBrowse('storage');
 					else if (selectedIndex === FIELD_STORAGE_PATH && selectedColumn === 2) resetStoragePath();
 					else if (selectedIndex === FIELD_TEMP_PATH && selectedColumn === 1) openBrowse('temp');
@@ -294,8 +294,8 @@
 						else onBack?.();
 					}
 				},
-				confirmCancel: () => {},
-				back: () => onBack?.(),
+				confirmCancel() {},
+				back() { onBack?.(); },
 			},
 			position
 		);

@@ -33,7 +33,7 @@
 		const unregister = useArea(
 			areaID,
 			{
-				up: () => {
+				up() {
 					if (selectedIndex > 0) {
 						selectedIndex--;
 						scrollToSelected();
@@ -41,7 +41,7 @@
 					}
 					return false;
 				},
-				down: () => {
+				down() {
 					if (selectedIndex < totalItems - 1) {
 						selectedIndex++;
 						scrollToSelected();
@@ -49,10 +49,14 @@
 					}
 					return false;
 				},
-				left: () => false,
-				right: () => false,
-				confirmDown: () => {},
-				confirmUp: () => {
+				left() {
+					return false;
+				},
+				right() {
+					return false;
+				},
+				confirmDown() {},
+				confirmUp() {
 					if (selectedIndex === 0)
 						setFooterVisible(!$footerVisible); // Toggle footer visibility
 					else if (selectedIndex === 1) openPositionDialog();
@@ -64,8 +68,10 @@
 						setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget]);
 					}
 				},
-				confirmCancel: () => {},
-				back: () => onBack?.(),
+				confirmCancel() {},
+				back() {
+					onBack?.();
+				},
 			},
 			position
 		);

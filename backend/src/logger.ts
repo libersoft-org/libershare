@@ -15,7 +15,9 @@ const levelNames: Record<number, string> = {
 const LOG_PREFIX = process.env.LOG_PREFIX || '';
 
 function formatTimestamp(date: Date): string {
-	const pad = (n: number, len = 2) => n.toString().padStart(len, '0');
+	function pad(n: number, len = 2): string {
+		return n.toString().padStart(len, '0');
+	}
 	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
@@ -29,7 +31,7 @@ const RESET = '\x1b[0m';
 
 function createPreciseReporter(): ConsolaReporter {
 	return {
-		log(logObj: LogObject) {
+		log(logObj: LogObject): void {
 			const timestamp = formatTimestamp(logObj.date);
 			const levelName = levelNames[logObj.level] || 'INFO';
 			const prefix = LOG_PREFIX ? `[${LOG_PREFIX}] ` : '';

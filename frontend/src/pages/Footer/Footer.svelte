@@ -21,86 +21,104 @@
 		{
 			id: 'version',
 			component: Item,
-			props: () => ({
-				topLabel: $t('common.version'),
-				bottomLabel: productVersion,
-			}),
+			props() {
+				return {
+					topLabel: $t('common.version'),
+					bottomLabel: productVersion,
+				};
+			},
 		},
 		{
 			id: 'download',
 			component: Item,
-			props: () => ({
-				topIcon: 'img/download.svg',
-				topIconAlt: $t('common.download'),
-				topLabel: '- 12',
-				bottomLabel: '13.2 MB/s',
-			}),
+			props() {
+				return {
+					topIcon: 'img/download.svg',
+					topIconAlt: $t('common.download'),
+					topLabel: '- 12',
+					bottomLabel: '13.2 MB/s',
+				};
+			},
 		},
 		{
 			id: 'upload',
 			component: Item,
-			props: () => ({
-				topIcon: 'img/upload.svg',
-				topIconAlt: $t('common.upload'),
-				topLabel: '- 5',
-				bottomLabel: '3.2 MB/s',
-			}),
+			props() {
+				return {
+					topIcon: 'img/upload.svg',
+					topIconAlt: $t('common.upload'),
+					topLabel: '- 5',
+					bottomLabel: '3.2 MB/s',
+				};
+			},
 		},
 		{
 			id: 'cpu',
 			component: Bar,
-			props: () => ({
-				topIcon: 'img/cpu.svg',
-				topIconAlt: $t('settings.footerWidgets.cpu'),
-				progress: 12,
-			}),
+			props() {
+				return {
+					topIcon: 'img/cpu.svg',
+					topIconAlt: $t('settings.footerWidgets.cpu'),
+					progress: 12,
+				};
+			},
 		},
 		{
 			id: 'ram',
 			component: Bar,
-			props: () => ({
-				topIcon: 'img/ram.svg',
-				topIconAlt: $t('settings.footerWidgets.ram'),
-				topLabel: '12.1 / 32 GB',
-				progress: 32,
-			}),
+			props() {
+				return {
+					topIcon: 'img/ram.svg',
+					topIconAlt: $t('settings.footerWidgets.ram'),
+					topLabel: '12.1 / 32 GB',
+					progress: 32,
+				};
+			},
 		},
 		{
 			id: 'storage',
 			component: Bar,
-			props: () => ({
-				topIcon: 'img/storage.svg',
-				topIconAlt: $t('settings.footerWidgets.storage'),
-				topLabel: '0.88 / 2 TB',
-				progress: 44.1,
-			}),
+			props() {
+				return {
+					topIcon: 'img/storage.svg',
+					topIconAlt: $t('settings.footerWidgets.storage'),
+					topLabel: '0.88 / 2 TB',
+					progress: 44.1,
+				};
+			},
 		},
 		{
 			id: 'lishStatus',
 			component: LISHStatus,
-			props: () => ({
-				networkName: 'Main Network',
-				lishConnected: false,
-				vpnConnected: null,
-			}),
+			props() {
+				return {
+					networkName: 'Main Network',
+					lishConnected: false,
+					vpnConnected: null,
+				};
+			},
 		},
 		{
 			id: 'connection',
 			component: Connection,
-			props: () => ({
-				type: 'wifi',
-				connected: true,
-				signal: 70,
-			}),
+			props() {
+				return {
+					type: 'wifi',
+					connected: true,
+					signal: 70,
+				};
+			},
 		},
 		{
 			id: 'volume',
 			component: Item,
-			props: () => ({
-				topIcon: `img/${getVolumeIcon($volume)}.svg`,
-				topIconAlt: $t('settings.footerWidgets.volume'),
-				bottomLabel: `${$volume}%`,
-			}),
+			props() {
+				return {
+					topIcon: `img/${getVolumeIcon($volume)}.svg`,
+					topIconAlt: $t('settings.footerWidgets.volume'),
+					bottomLabel: `${$volume}%`,
+				};
+			},
 		},
 		{
 			id: 'clock',

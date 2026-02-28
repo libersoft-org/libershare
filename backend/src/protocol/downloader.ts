@@ -151,7 +151,7 @@ export class Downloader {
 		}, 60000);
 	}
 
-	private async handlePubsubMessage(topic: string, data: Record<string, any>) {
+	private async handlePubsubMessage(topic: string, data: Record<string, any>): Promise<void> {
 		const expectedTopic = lishTopic(this.networkID);
 		console.log(`Received pubsub message on topic ${topic}`);
 
@@ -176,7 +176,7 @@ export class Downloader {
 		}
 	}
 
-	private async connectToPeer(data: HaveMessage) {
+	private async connectToPeer(data: HaveMessage): Promise<void> {
 		const peerID: NodeId = data.peerID;
 		// Convert from JSON strings back to Multiaddr instances
 		const multiaddrs: Multiaddr[] = data.multiaddrs.map(ma => multiaddr(ma.toString()));

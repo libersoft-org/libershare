@@ -63,45 +63,45 @@
 		const unregisterArea = useArea(
 			areaID,
 			{
-				up: () => {
+				up() {
 					if (selectedRow > -1) {
 						navigate('up');
 						return true;
 					}
 					return false;
 				},
-				down: () => {
+				down() {
 					if (selectedRow < files.length - 1) {
 						navigate('down');
 						return true;
 					}
 					return false;
 				},
-				left: () => {
+				left() {
 					if (selectedRow >= 0 && selectedButton > 0) {
 						navigate('left');
 						return true;
 					}
 					return false;
 				},
-				right: () => {
+				right() {
 					if (selectedRow >= 0 && selectedButton < 1) {
 						navigate('right');
 						return true;
 					}
 					return false;
 				},
-				confirmDown: () => {
+				confirmDown() {
 					isAPressed = true;
 				},
-				confirmUp: () => {
+				confirmUp() {
 					isAPressed = false;
 					selectButton();
 				},
-				confirmCancel: () => {
+				confirmCancel() {
 					isAPressed = false;
 				},
-				back: () => onBack?.(),
+				back() { onBack?.(); },
 			},
 			position
 		);

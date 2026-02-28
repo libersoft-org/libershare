@@ -98,7 +98,7 @@
 		const unregister = useArea(
 			areaID,
 			{
-				up: () => {
+				up() {
 					const item = getItemType(selectedIndex);
 					if (item.type === 'back') {
 						// From back, go to last bootstrap server (row above)
@@ -116,7 +116,7 @@
 					}
 					return false;
 				},
-				down: () => {
+				down() {
 					const item = getItemType(selectedIndex);
 					// Don't go down from save or back (they are on the same row)
 					if (item.type === 'save' || item.type === 'back') return false;
@@ -129,7 +129,7 @@
 					}
 					return false;
 				},
-				left: () => {
+				left() {
 					const item = getItemType(selectedIndex);
 					if (item.type === 'back') {
 						selectedIndex--;
@@ -142,7 +142,7 @@
 					}
 					return false;
 				},
-				right: () => {
+				right() {
 					const item = getItemType(selectedIndex);
 					if (item.type === 'save') {
 						selectedIndex++;
@@ -158,8 +158,8 @@
 					}
 					return false;
 				},
-				confirmDown: () => {},
-				confirmUp: () => {
+				confirmDown() {},
+				confirmUp() {
 					const item = getItemType(selectedIndex);
 					if (item.type === 'name' || item.type === 'description') focusInput(selectedIndex);
 					else if (item.type === 'autoGenerate') toggleAutoGenerateID();
@@ -177,8 +177,8 @@
 					} else if (item.type === 'save') handleSave();
 					else if (item.type === 'back') onBack?.();
 				},
-				confirmCancel: () => {},
-				back: () => onBack?.(),
+				confirmCancel() {},
+				back() { onBack?.(); },
 			},
 			position
 		);

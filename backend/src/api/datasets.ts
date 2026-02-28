@@ -3,7 +3,12 @@ import { type Dataset } from '@shared';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
-export function initDatasetsHandlers(dataServer: DataServer) {
+interface DatasetsHandlers {
+	getDatasets: () => Dataset[];
+	getDataset: (p: { id: string }) => Dataset | null;
+}
+
+export function initDatasetsHandlers(dataServer: DataServer): DatasetsHandlers {
 	function getDatasets(): Dataset[] {
 		return dataServer.getDatasets().map(l => ({
 			id: l.id,

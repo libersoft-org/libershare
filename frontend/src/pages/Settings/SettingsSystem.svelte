@@ -87,7 +87,7 @@
 		return useArea(
 			areaID,
 			{
-				up: () => {
+				up() {
 					if (selectedIndex > 0) {
 						selectedIndex--;
 						selectedColumn = 0;
@@ -96,7 +96,7 @@
 					}
 					return false;
 				},
-				down: () => {
+				down() {
 					if (selectedIndex < totalItems - 1) {
 						selectedIndex++;
 						selectedColumn = 0;
@@ -105,7 +105,7 @@
 					}
 					return false;
 				},
-				left: () => {
+				left() {
 					const actualIndex = getActualIndex(selectedIndex);
 					if (actualIndex === FIELD_BUTTONS && selectedColumn > 0) {
 						selectedColumn--;
@@ -113,7 +113,7 @@
 					}
 					return false;
 				},
-				right: () => {
+				right() {
 					const actualIndex = getActualIndex(selectedIndex);
 					if (actualIndex === FIELD_BUTTONS && selectedColumn < 1) {
 						selectedColumn++;
@@ -121,8 +121,8 @@
 					}
 					return false;
 				},
-				confirmDown: () => {},
-				confirmUp: () => {
+				confirmDown() {},
+				confirmUp() {
 					const actualIndex = getActualIndex(selectedIndex);
 					if (actualIndex === FIELD_AUTO_START) toggleAutoStart();
 					else if (actualIndex === FIELD_SHOW_IN_TRAY) toggleShowInTray();
@@ -134,8 +134,8 @@
 						else onBack?.();
 					}
 				},
-				confirmCancel: () => {},
-				back: () => onBack?.(),
+				confirmCancel() {},
+				back() { onBack?.(); },
 			},
 			position
 		);

@@ -3,7 +3,7 @@ import { KEEP_ALIVE } from '@libp2p/interface';
 import { SqliteDatastore } from './datastore.ts';
 import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { type Libp2p } from 'libp2p';
-import { type PeerId, type PrivateKey, type PeerInfo } from '@libp2p/interface';
+import { type PeerId, type PrivateKey, type PeerInfo, type Stream } from '@libp2p/interface';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { join } from 'path';
 import { DataServer } from '../lish/data-server.ts';
@@ -131,7 +131,7 @@ export class Network {
 	 * Start the single libp2p node.
 	 * @param bootstrapPeers - merged list of bootstrap peers from all enabled lishnets
 	 */
-	async start(bootstrapPeers: string[] = []) {
+	async start(bootstrapPeers: string[] = []): Promise<void> {
 		if (this.node) {
 			console.log('Network node is already running');
 			return;
@@ -383,7 +383,7 @@ export class Network {
 	/**
 	 * Subscribe to a lishnet topic. The node will receive pubsub messages for this network.
 	 */
-	subscribeTopic(networkID: string) {
+	subscribeTopic(networkID: string): void {
 		if (!this.pubsub) {
 			console.error('Network not started - cannot subscribe to topic');
 			return;
@@ -403,7 +403,7 @@ export class Network {
 	/**
 	 * Unsubscribe from a lishnet topic.
 	 */
-	unsubscribeTopic(networkID: string) {
+	unsubscribeTopic(networkID: string): void {
 		if (!this.pubsub) return;
 		const topic = lishTopic(networkID);
 		this.pubsub.unsubscribe(topic);
@@ -428,7 +428,7 @@ export class Network {
 	// Pink/Ponk (debug)
 	// =========================================================================
 
-	private handleMessage(msgEvent: PubsubEvent) {
+	private handleMessage(msgEvent: PubsubEvent): void {
 		try {
 			const topic = msgEvent.topic;
 			const data = new TextDecoder().decode(msgEvent.data);
@@ -452,7 +452,7 @@ export class Network {
 		}
 	}
 
-	public async sendPink() {
+	public async sendPink(): Promise<void> {
 		if (!this.pubsub || !this.node) return;
 		const message = createPinkMessage(this.node.peerId.toString());
 		const data = new TextEncoder().encode(JSON.stringify(message));
@@ -463,7 +463,7 @@ export class Network {
 		}
 	}
 
-	private async sendPonk(inReplyTo: string) {
+	private async sendPonk(inReplyTo: string): Promise<void> {
 		if (!this.pubsub || !this.node) return;
 		const message = createPonkMessage(this.node.peerId.toString(), inReplyTo);
 		const data = new TextEncoder().encode(JSON.stringify(message));
@@ -478,7 +478,7 @@ export class Network {
 	// Want/Have protocol (LISH data exchange)
 	// =========================================================================
 
-	private async handleWant(data: WantMessage, networkID: string) {
+	private async handleWant(data: WantMessage, networkID: string): Promise<void> {
 		console.log('Handling want message for lishID:', data.lishID, 'on network:', networkID);
 		const lish = this.dataServer.get(data.lishID);
 		if (!lish) return;
@@ -502,7 +502,7 @@ export class Network {
 	// Public API
 	// =========================================================================
 
-	async broadcast(topic: string, data: Record<string, any>) {
+	async broadcast(topic: string, data: Record<string, any>): Promise<void> {
 		if (!this.pubsub || !this.node) {
 			console.error('Network not started');
 			return;
@@ -515,7 +515,7 @@ export class Network {
 	/**
 	 * Subscribe to a raw pubsub topic with a handler (used by Downloader etc.)
 	 */
-	async subscribe(topic: string, handler: TopicHandler) {
+	async subscribe(topic: string, handler: TopicHandler): Promise<void> {
 		if (!this.pubsub) {
 			console.error('Network not started');
 			return;
@@ -526,14 +526,14 @@ export class Network {
 		console.log(`Subscribed to topic: ${topic}`);
 	}
 
-	async connectToPeer(multiaddr: string) {
+	async connectToPeer(multiaddr: string): Promise<void> {
 		if (!this.node) throw new Error('Network not started');
 		const ma = Multiaddr(multiaddr);
 		await this.node.dial(ma);
 		console.log('→ Connected to:', multiaddr);
 	}
 
-	async dialProtocol(peerID: string, multiaddrs: any[], protocol: string) {
+	async dialProtocol(peerID: string, multiaddrs: any[], protocol: string): Promise<Stream> {
 		if (!this.node) throw new Error('Network not started');
 		const connection = await this.node.dial(multiaddrs);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
@@ -543,7 +543,7 @@ export class Network {
 	/**
 	 * Get node info (peerID, addresses).
 	 */
-	getNodeInfo() {
+	getNodeInfo(): { peerID: string; addresses: string[] } | null {
 		if (!this.node) return null;
 		return {
 			peerID: this.node.peerId.toString(),
@@ -582,7 +582,7 @@ export class Network {
 		}
 	}
 
-	async stop() {
+	async stop(): Promise<void> {
 		if (this.pingInterval) {
 			clearInterval(this.pingInterval);
 			this.pingInterval = null;
@@ -610,7 +610,7 @@ export class Network {
 		await this.findPeer(id);
 	}
 
-	async findPeer(peerID: PeerId) {
+	async findPeer(peerID: PeerId): Promise<void> {
 		console.log('Finding peer:');
 		console.log('Closest peers:');
 		for await (const peer of this.node.peerRouting.getClosestPeers(peerID.toMultihash().bytes)) {

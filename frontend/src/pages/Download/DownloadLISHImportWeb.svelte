@@ -110,7 +110,7 @@
 	}
 
 	const areaHandlers = {
-		up: () => {
+		up() {
 			if (selectedIndex > 0) {
 				selectedIndex--;
 				selectedColumn = 0;
@@ -118,7 +118,7 @@
 			}
 			return false;
 		},
-		down: () => {
+		down() {
 			if (selectedIndex < 3) {
 				selectedIndex++;
 				selectedColumn = 0;
@@ -126,14 +126,14 @@
 			}
 			return false;
 		},
-		left: () => {
+		left() {
 			if (selectedColumn > 0) {
 				selectedColumn--;
 				return true;
 			}
 			return false;
 		},
-		right: () => {
+		right() {
 			const maxCol = getMaxColumn(selectedIndex);
 			if (selectedColumn < maxCol) {
 				selectedColumn++;
@@ -141,11 +141,11 @@
 			}
 			return false;
 		},
-		confirmDown: () => {
+		confirmDown() {
 			if (selectedIndex === 0) urlRef?.focus();
 			else if (selectedIndex === 1 && selectedColumn === 0) downloadPathRef?.focus();
 		},
-		confirmUp: () => {
+		confirmUp() {
 			if (selectedIndex === 1 && selectedColumn === 1) {
 				openDownloadPathBrowse();
 			} else if (selectedIndex === 2) {
@@ -155,8 +155,8 @@
 				else if (selectedColumn === 1) onBack?.();
 			}
 		},
-		confirmCancel: () => {},
-		back: () => onBack?.(),
+		confirmCancel() {},
+		back() { onBack?.(); },
 	};
 
 	onMount(() => {

@@ -39,37 +39,37 @@
 	}
 
 	const toolbarHandlers = {
-		up: () => false,
-		down: () => {
+		up() { return false; },
+		down() {
 			activateArea(areaID);
 			return true;
 		},
-		left: () => {
+		left() {
 			if (selectedToolbarIndex > 0) {
 				selectedToolbarIndex--;
 				return true;
 			}
 			return false;
 		},
-		right: () => {
+		right() {
 			if (selectedToolbarIndex < 2) {
 				selectedToolbarIndex++;
 				return true;
 			}
 			return false;
 		},
-		confirmDown: () => {},
-		confirmUp: () => {
+		confirmDown() {},
+		confirmUp() {
 			if (selectedToolbarIndex === 0) navigateTo('create-lish');
 			else if (selectedToolbarIndex === 1) navigateTo('import-lish');
 			else if (selectedToolbarIndex === 2) navigateTo('export-all-lish');
 		},
-		confirmCancel: () => {},
-		back: () => onBack?.(),
+		confirmCancel() {},
+		back() { onBack?.(); },
 	};
 
 	const areaHandlers = {
-		up: () => {
+		up() {
 			if (selectedIndex > 0) {
 				selectedIndex--;
 				scrollToSelected();
@@ -79,7 +79,7 @@
 			activateArea(toolbarAreaID);
 			return true;
 		},
-		down: () => {
+		down() {
 			if (selectedIndex < downloads.length - 1) {
 				selectedIndex++;
 				scrollToSelected();
@@ -87,14 +87,14 @@
 			}
 			return false;
 		},
-		left: () => false,
-		right: () => false,
-		confirmDown: () => {},
-		confirmUp: () => {
+		left() { return false; },
+		right() { return false; },
+		confirmDown() {},
+		confirmUp() {
 			openDetail();
 		},
-		confirmCancel: () => {},
-		back: () => onBack?.(),
+		confirmCancel() {},
+		back() { onBack?.(); },
 	};
 
 	onMount(() => {

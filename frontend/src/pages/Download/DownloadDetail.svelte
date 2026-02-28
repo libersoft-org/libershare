@@ -62,8 +62,8 @@
 	}
 
 	const toolbarHandlers = {
-		up: () => false,
-		down: () => {
+		up() { return false; },
+		down() {
 			if (download) {
 				activateArea(infoAreaID);
 				scrollToInfo();
@@ -71,35 +71,35 @@
 			}
 			return false;
 		},
-		left: () => {
+		left() {
 			if (selectedToolbarIndex > 0) {
 				selectedToolbarIndex--;
 				return true;
 			}
 			return false;
 		},
-		right: () => {
+		right() {
 			if (selectedToolbarIndex < toolbarActions.length - 1) {
 				selectedToolbarIndex++;
 				return true;
 			}
 			return false;
 		},
-		confirmDown: () => {},
-		confirmUp: () => {
+		confirmDown() {},
+		confirmUp() {
 			const action = toolbarActions[selectedToolbarIndex];
 			if (action) handleToolbarAction(action.id);
 		},
-		confirmCancel: () => {},
-		back: () => onBack?.(),
+		confirmCancel() {},
+		back() { onBack?.(); },
 	};
 
 	const infoHandlers = {
-		up: () => {
+		up() {
 			activateArea(toolbarAreaID);
 			return true;
 		},
-		down: () => {
+		down() {
 			if (download && download.files.length > 0) {
 				activateArea(listAreaID);
 				scrollToFiles();
@@ -107,16 +107,16 @@
 			}
 			return false;
 		},
-		left: () => false,
-		right: () => false,
-		confirmDown: () => {},
-		confirmUp: () => {},
-		confirmCancel: () => {},
-		back: () => onBack?.(),
+		left() { return false; },
+		right() { return false; },
+		confirmDown() {},
+		confirmUp() {},
+		confirmCancel() {},
+		back() { onBack?.(); },
 	};
 
 	const listHandlers = {
-		up: () => {
+		up() {
 			if (selectedFileIndex > 0) {
 				selectedFileIndex--;
 				scrollToSelected();
@@ -126,7 +126,7 @@
 			scrollToInfo();
 			return true;
 		},
-		down: () => {
+		down() {
 			if (download && selectedFileIndex < download.files.length - 1) {
 				selectedFileIndex++;
 				scrollToSelected();
@@ -134,14 +134,14 @@
 			}
 			return false;
 		},
-		left: () => false,
-		right: () => false,
-		confirmDown: () => {},
-		confirmUp: () => {
+		left() { return false; },
+		right() { return false; },
+		confirmDown() {},
+		confirmUp() {
 			// TODO: Open file or show file actions
 		},
-		confirmCancel: () => {},
-		back: () => onBack?.(),
+		confirmCancel() {},
+		back() { onBack?.(); },
 	};
 
 	onMount(() => {

@@ -74,14 +74,14 @@
 		return useArea(
 			areaID,
 			{
-				up: () => {
+				up() {
 					if (selectedIndex > 0) {
 						selectedIndex--;
 						return true;
 					}
 					return false;
 				},
-				down: () => {
+				down() {
 					if (selectedIndex < 1) {
 						selectedIndex++;
 						selectedColumn = 0;
@@ -89,24 +89,24 @@
 					}
 					return false;
 				},
-				left: () => {
+				left() {
 					if (selectedIndex === 1 && selectedColumn > 0) {
 						selectedColumn--;
 						return true;
 					}
 					return false;
 				},
-				right: () => {
+				right() {
 					if (selectedIndex === 1 && selectedColumn < 1) {
 						selectedColumn++;
 						return true;
 					}
 					return false;
 				},
-				confirmDown: () => {
+				confirmDown() {
 					if (selectedIndex === 0) inputRef?.focus();
 				},
-				confirmUp: () => {
+				confirmUp() {
 					if (selectedIndex === 1) {
 						if (selectedColumn === 0) {
 							handleImport();
@@ -115,8 +115,8 @@
 						}
 					}
 				},
-				confirmCancel: () => {},
-				back: () => onBack?.(),
+				confirmCancel() {},
+				back() { onBack?.(); },
 			},
 			position
 		);

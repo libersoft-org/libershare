@@ -14,6 +14,12 @@ import { mkdirSync } from 'fs';
 // due to private field nominal typing. Runtime behavior is unaffected.
 const _BaseDatastore: any = BaseDatastore;
 
+interface Batch {
+	put(key: Key, value: Uint8Array): void;
+	delete(key: Key): void;
+	commit(): void;
+}
+
 export class SqliteDatastore extends _BaseDatastore {
 	private db!: Database;
 	private readonly dbPath: string;
@@ -87,22 +93,23 @@ export class SqliteDatastore extends _BaseDatastore {
 		this.stmtDelete.run(key.toString());
 	}
 
-	batch() {
+	batch(): Batch {
 		const ops: Array<{ type: 'put'; key: Key; value: Uint8Array } | { type: 'del'; key: Key }> = [];
+		const self = this;
 		return {
-			put: (key: Key, value: Uint8Array) => {
+			put(key: Key, value: Uint8Array): void {
 				ops.push({ type: 'put', key, value });
 			},
-			delete: (key: Key) => {
+			delete(key: Key): void {
 				ops.push({ type: 'del', key });
 			},
-			commit: () => {
-				this.db.transaction(() => {
+			commit(): void {
+				self.db.transaction(() => {
 					for (const op of ops) {
 						if (op.type === 'put') {
-							this.stmtPut.run(op.key.toString(), Buffer.from(op.value));
+							self.stmtPut.run(op.key.toString(), Buffer.from(op.value));
 						} else {
-							this.stmtDelete.run(op.key.toString());
+							self.stmtDelete.run(op.key.toString());
 						}
 					}
 				})();

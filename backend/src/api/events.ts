@@ -1,7 +1,12 @@
 type EmitFn = (client: any, event: string, data: any) => void;
 type GetPeerCountsFn = () => { networkID: string; count: number }[];
 
-export function initEventsHandlers(getPeerCounts: GetPeerCountsFn, emit: EmitFn) {
+interface EventsHandlers {
+	subscribe: (p: { events?: string[]; event?: string }, client: any) => boolean;
+	unsubscribe: (p: { events?: string[]; event?: string }, client: any) => boolean;
+}
+
+export function initEventsHandlers(getPeerCounts: GetPeerCountsFn, emit: EmitFn): EventsHandlers {
 	function subscribe(p: { events?: string[]; event?: string }, client: any): boolean {
 		const events = Array.isArray(p.events) ? p.events : [p.event];
 		events.forEach((e: string) => client.data.subscribedEvents.add(e));

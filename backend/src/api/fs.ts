@@ -15,7 +15,21 @@ async function getWindowsDrives(): Promise<FsEntry[]> {
 	return results.filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled').map(r => ({ name: `${r.value}:`, path: `${r.value}:\\`, type: 'drive' as const }));
 }
 
-export function initFsHandlers() {
+interface FsHandlers {
+	info: () => Promise<FsInfo>;
+	list: (p: { path?: string }) => Promise<FsListResult>;
+	readText: (p: { path: string }) => Promise<{ content: string }>;
+	readGzip: (p: { path: string }) => Promise<{ content: string }>;
+	delete: (p: { path: string }) => Promise<void>;
+	mkdir: (p: { path: string }) => Promise<void>;
+	open: (p: { path: string }) => Promise<void>;
+	rename: (p: { path: string; newName: string }) => Promise<void>;
+	exists: (p: { path: string }) => Promise<{ exists: boolean }>;
+	writeText: (p: { path: string; content: string }) => Promise<SuccessResponse>;
+	writeGzip: (p: { path: string; content: string }) => Promise<SuccessResponse>;
+}
+
+export function initFsHandlers(): FsHandlers {
 	async function info(): Promise<FsInfo> {
 		const plat = platform();
 		const roots = isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];

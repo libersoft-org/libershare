@@ -106,7 +106,7 @@
 	}
 
 	const areaHandlers = {
-		up: () => {
+		up() {
 			if (selectedIndex > 0) {
 				selectedIndex--;
 				selectedColumn = 0;
@@ -114,7 +114,7 @@
 			}
 			return false;
 		},
-		down: () => {
+		down() {
 			if (selectedIndex < 1) {
 				selectedIndex++;
 				selectedColumn = 0;
@@ -122,14 +122,14 @@
 			}
 			return false;
 		},
-		left: () => {
+		left() {
 			if (selectedColumn > 0) {
 				selectedColumn--;
 				return true;
 			}
 			return false;
 		},
-		right: () => {
+		right() {
 			const maxCol = getMaxColumn(selectedIndex);
 			if (selectedColumn < maxCol) {
 				selectedColumn++;
@@ -137,10 +137,10 @@
 			}
 			return false;
 		},
-		confirmDown: () => {
+		confirmDown() {
 			if (selectedIndex === 0 && selectedColumn === 0) filePathRef?.focus();
 		},
-		confirmUp: () => {
+		confirmUp() {
 			if (selectedIndex === 0 && selectedColumn === 1) {
 				openFilePathBrowse();
 			} else if (selectedIndex === 1) {
@@ -151,8 +151,8 @@
 				}
 			}
 		},
-		confirmCancel: () => {},
-		back: () => onBack?.(),
+		confirmCancel() {},
+		back() { onBack?.(); },
 	};
 
 	onMount(() => {

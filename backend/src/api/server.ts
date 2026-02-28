@@ -130,7 +130,7 @@ export class APIServer {
 		const serverConfig: Parameters<typeof Bun.serve<ClientData>>[0] = {
 			port: this.port,
 			hostname: this.host,
-			fetch(req, server) {
+			fetch(req, server): Response | undefined {
 				console.log(`[API] Incoming request: ${req.method} ${req.url}`);
 				const upgraded = server.upgrade(req, {
 					data: { subscribedEvents: new Set<string>() },
@@ -139,15 +139,15 @@ export class APIServer {
 				return new Response('Expected WebSocket', { status: 400 });
 			},
 			websocket: {
-				open(ws) {
+				open(ws): void {
 					self.clients.add(ws);
 					console.log(`[API] Client connected (${self.clients.size} total)`);
 				},
-				close(ws) {
+				close(ws): void {
 					self.clients.delete(ws);
 					console.log(`[API] Client disconnected (${self.clients.size} total)`);
 				},
-				async message(ws, message) {
+				async message(ws, message): Promise<void> {
 					await self.handleMessage(ws, message.toString());
 				},
 			},

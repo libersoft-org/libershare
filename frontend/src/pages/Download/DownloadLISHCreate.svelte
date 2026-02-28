@@ -11,12 +11,14 @@
 	import { parseChunkSize, validateLISHCreateForm, getLISHCreateErrorMessage } from '../../scripts/lish.ts';
 	import { storageLISHPath, storagePath, autoStartSharing, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
+	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
+	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	import DownloadLISHProgress from './DownloadLISHProgress.svelte';
 	interface Props {
 		areaID: string;
@@ -31,6 +33,8 @@
 	let browsingInputPath = $state(false);
 	let browsingLISHFile = $state(false);
 	let creating = $state(false);
+	let showOverwriteConfirm = $state(false);
+	let pendingCreateParams = $state<Record<string, any>>({});
 	let createParams = $state<Record<string, any>>({});
 	let browseFolder = $state('');
 	let browseFile = $state<string | undefined>(undefined);
@@ -130,7 +134,7 @@
 		}
 	}
 
-	function handleCreate(): void {
+	async function handleCreate(): Promise<void> {
 		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, addToSharing, chunkSize, threads });
 		errorMessage = validationError ? getLISHCreateErrorMessage(validationError, $t) : '';
 		if (!errorMessage) {
@@ -151,8 +155,32 @@
 			if (algorithm !== DEFAULT_ALGO) params.algorithm = algorithm;
 			const parsedThreads = parseInt(threads) || 0;
 			if (parsedThreads !== 0) params.threads = parsedThreads;
+			// Check if LISH file already exists
+			if (saveToFile && lishFile) {
+				try {
+					const { exists } = await api.fs.exists(lishFile);
+					if (exists) {
+						pendingCreateParams = params;
+						showOverwriteConfirm = true;
+						return;
+					}
+				} catch (e) {
+					// If check fails, proceed anyway
+				}
+			}
 			openProgressPage(params);
 		}
+	}
+
+	function confirmOverwrite(): void {
+		showOverwriteConfirm = false;
+		openProgressPage(pendingCreateParams);
+	}
+
+	async function cancelOverwrite(): Promise<void> {
+		showOverwriteConfirm = false;
+		await tick();
+		activateArea(areaID);
 	}
 
 	function openProgressPage(params: Record<string, any>): void {
@@ -274,7 +302,7 @@
 	}
 
 	const areaHandlers = {
-		up: () => {
+		up() {
 			if (selectedIndex === FIELD_BACK) {
 				// Back is on same row as Create, go to last visible row before buttons
 				selectedIndex = showAdvanced ? FIELD_THREADS : FIELD_ADVANCED_TOGGLE;
@@ -294,7 +322,7 @@
 			}
 			return false;
 		},
-		down: () => {
+		down() {
 			if (selectedIndex >= FIELD_CREATE) return false;
 			if (selectedIndex < FIELD_CREATE) {
 				selectedIndex++;
@@ -308,7 +336,7 @@
 			}
 			return false;
 		},
-		left: () => {
+		left() {
 			if (selectedIndex === FIELD_BACK) {
 				selectedIndex = FIELD_CREATE;
 				return true;
@@ -319,7 +347,7 @@
 			}
 			return false;
 		},
-		right: () => {
+		right() {
 			if (selectedIndex === FIELD_CREATE) {
 				selectedIndex = FIELD_BACK;
 				return true;
@@ -331,8 +359,8 @@
 			}
 			return false;
 		},
-		confirmDown: () => {},
-		confirmUp: () => {
+		confirmDown() {},
+		confirmUp() {
 			if (selectedIndex === FIELD_NAME) focusInput(FIELD_NAME);
 			else if (selectedIndex === FIELD_DESCRIPTION) focusInput(FIELD_DESCRIPTION);
 			else if (selectedIndex === FIELD_INPUT) {
@@ -352,9 +380,11 @@
 			else if (selectedIndex === FIELD_CREATE) handleCreate();
 			else if (selectedIndex === FIELD_BACK) onBack?.();
 		},
-		confirmCancel: () => {},
-		back: () => onBack?.(),
-		onActivate: () => {
+		confirmCancel() {},
+		back() {
+			onBack?.();
+		},
+		onActivate() {
 			// When algo row is active, sync selectedColumn with current algorithm
 			if (selectedIndex === FIELD_ALGO) selectedColumn = algoIndex;
 		},
@@ -486,4 +516,7 @@
 			</div>
 		</ButtonBar>
 	</div>
+{/if}
+{#if showOverwriteConfirm}
+	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.fileExistsOverwrite', { name: lishFile })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
 {/if}

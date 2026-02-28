@@ -84,7 +84,7 @@
 	}
 
 	const areaHandlers = {
-		up: () => {
+		up() {
 			const cols = getColumnsCount();
 			if (selectedIndex >= cols) {
 				navigate('up');
@@ -92,7 +92,7 @@
 			}
 			return false; // Let system navigate to search area
 		},
-		down: () => {
+		down() {
 			const cols = getColumnsCount();
 			if (selectedIndex + cols < items.length) {
 				navigate('down');
@@ -100,7 +100,7 @@
 			}
 			return false;
 		},
-		left: () => {
+		left() {
 			const cols = getColumnsCount();
 			if (selectedIndex % cols !== 0) {
 				navigate('left');
@@ -108,7 +108,7 @@
 			}
 			return false;
 		},
-		right: () => {
+		right() {
 			const cols = getColumnsCount();
 			if (selectedIndex % cols !== cols - 1 && selectedIndex < items.length - 1) {
 				navigate('right');
@@ -116,27 +116,27 @@
 			}
 			return false;
 		},
-		confirmDown: () => {
+		confirmDown() {
 			isAPressed = true;
 		},
-		confirmUp: () => {
+		confirmUp() {
 			isAPressed = false;
 			openItem();
 		},
-		confirmCancel: () => {
+		confirmCancel() {
 			isAPressed = false;
 		},
-		back: () => onBack?.(),
+		back() { onBack?.(); },
 	};
 
 	onMount(() => {
 		const unregisterSearch = useArea(
 			searchAreaID,
 			{
-				up: () => false,
-				down: () => false,
-				confirmUp: () => searchBar?.toggleFocus(),
-				back: () => onBack?.(),
+				up() { return false; },
+				down() { return false; },
+				confirmUp() { searchBar?.toggleFocus(); },
+				back() { onBack?.(); },
 			},
 			searchPosition
 		);

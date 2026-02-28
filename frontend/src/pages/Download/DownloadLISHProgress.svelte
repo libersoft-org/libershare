@@ -151,7 +151,7 @@
 
 	// Area handlers
 	const areaHandlers = {
-		up: () => {
+		up() {
 			if (selectedIndex > 0) {
 				selectedIndex--;
 				scrollToSelected();
@@ -159,7 +159,7 @@
 			}
 			return false;
 		},
-		down: () => {
+		down() {
 			if (allFiles.length > 0 && selectedIndex < allFiles.length) {
 				selectedIndex++;
 				scrollToSelected();
@@ -167,19 +167,25 @@
 			}
 			return false;
 		},
-		left: () => false,
-		right: () => false,
-		confirmDown: () => {},
-		confirmUp: () => {
+		left() {
+			return false;
+		},
+		right() {
+			return false;
+		},
+		confirmDown() {},
+		confirmUp() {
 			if (selectedIndex === 0) {
 				if (status === 'creating') handleBack();
 				else if (status === 'done') handleDone();
 				else if (status === 'error') handleBack();
 			}
 		},
-		confirmCancel: () => {},
-		back: () => handleBack(),
-		onActivate: () => {},
+		confirmCancel() {},
+		back() {
+			handleBack();
+		},
+		onActivate() {},
 	};
 
 	let unregisterArea: (() => void) | null = null;

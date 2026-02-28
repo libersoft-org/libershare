@@ -17,7 +17,7 @@ export interface WorkerResponse {
 }
 
 // Listen for messages from main thread
-self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
+self.onmessage = async function (event: MessageEvent<WorkerRequest>) {
 	const { filePath, offset, chunkSize, algo, index } = event.data;
 	try {
 		const file = Bun.file(filePath);

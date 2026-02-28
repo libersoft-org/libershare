@@ -324,7 +324,7 @@
 		return useArea(
 			areaID,
 			{
-				up: () => {
+				up() {
 					if (selectedIndex > 0) {
 						selectedIndex--;
 						buttonIndex = 0;
@@ -333,7 +333,7 @@
 					}
 					return false;
 				},
-				down: () => {
+				down() {
 					if (selectedIndex < totalItems - 1) {
 						selectedIndex++;
 						buttonIndex = 0;
@@ -342,14 +342,14 @@
 					}
 					return false;
 				},
-				left: () => {
+				left() {
 					if ((isTopRow || isNetworkRow) && buttonIndex > 0) {
 						buttonIndex--;
 						return true;
 					}
 					return false;
 				},
-				right: () => {
+				right() {
 					if (!isNetworkRow && !isTopRow) return false;
 					let maxIndex = 4; // top row: 5 buttons (0-4)
 					if (isNetworkRow) {
@@ -365,8 +365,8 @@
 					}
 					return false;
 				},
-				confirmDown: () => {},
-				confirmUp: () => {
+				confirmDown() {},
+				confirmUp() {
 					if (selectedIndex === 0) {
 						if (buttonIndex === 0) onBack?.();
 						else if (buttonIndex === 1) openPublic();
@@ -392,8 +392,8 @@
 						}
 					}
 				},
-				confirmCancel: () => {},
-				back: () => onBack?.(),
+				confirmCancel() {},
+				back() { onBack?.(); },
 			},
 			position
 		);

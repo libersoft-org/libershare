@@ -78,7 +78,7 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 			const chunkIndex = nextChunk++;
 			const offset = chunkIndex * chunkSize;
 			const worker = workers[workerIndex];
-			const handler = (event: MessageEvent) => {
+			function handler(event: MessageEvent): void {
 				if (event.data.index === chunkIndex) {
 					worker.removeEventListener('message', handler);
 					if (event.data.error) {
@@ -95,7 +95,7 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 						feedWorker(workerIndex);
 					}
 				}
-			};
+			}
 			worker.addEventListener('message', handler);
 			worker.postMessage({ filePath, offset, chunkSize, algo, index: chunkIndex });
 		}

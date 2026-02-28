@@ -28,18 +28,18 @@
 	let translateX = $state(0);
 
 	setContext<ButtonsGroupContext>('buttonsGroup', {
-		register: button => {
+		register(button) {
 			const index = buttons.length;
 			buttons.push(button);
 			return {
 				index,
-				unregister: () => {
+				unregister() {
 					buttons = buttons.filter((_, i) => i !== index);
 				},
 			};
 		},
-		isSelected: index => active && selectedIndex === index,
-		isPressed: index => active && selectedIndex === index && isAPressed,
+		isSelected(index) { return active && selectedIndex === index; },
+		isPressed(index) { return active && selectedIndex === index && isAPressed; },
 	});
 
 	function updateTranslateX(): void {
@@ -62,9 +62,9 @@
 		const handlers =
 			orientation === 'horizontal'
 				? {
-						up: () => false,
-						down: () => false,
-						left: () => {
+						up() { return false; },
+						down() { return false; },
+						left() {
 							if (selectedIndex > 0) {
 								selectedIndex--;
 								updateTranslateX();
@@ -72,7 +72,7 @@
 							}
 							return false;
 						},
-						right: () => {
+						right() {
 							if (selectedIndex < buttons.length - 1) {
 								selectedIndex++;
 								updateTranslateX();
@@ -82,38 +82,38 @@
 						},
 					}
 				: {
-						up: () => {
+						up() {
 							if (selectedIndex > 0) {
 								selectedIndex--;
 								return true;
 							}
 							return false;
 						},
-						down: () => {
+						down() {
 							if (selectedIndex < buttons.length - 1) {
 								selectedIndex++;
 								return true;
 							}
 							return false;
 						},
-						left: () => false,
-						right: () => false,
+						left() { return false; },
+						right() { return false; },
 					};
 		const unregister = useArea(
 			areaID,
 			{
 				...handlers,
-				confirmDown: () => {
+				confirmDown() {
 					isAPressed = true;
 				},
-				confirmUp: () => {
+				confirmUp() {
 					isAPressed = false;
 					buttons[selectedIndex]?.onConfirm?.();
 				},
-				confirmCancel: () => {
+				confirmCancel() {
 					isAPressed = false;
 				},
-				back: () => onBack?.(),
+				back() { onBack?.(); },
 			},
 			position
 		);

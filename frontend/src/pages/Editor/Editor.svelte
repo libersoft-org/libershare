@@ -80,42 +80,42 @@
 	}
 
 	const toolbarAreaHandlers = {
-		up: () => {
+		up() {
 			onUp?.();
 			return true;
 		},
-		down: () => {
+		down() {
 			if (!loading && !error) activateArea(editorAreaID);
 			return true;
 		},
-		left: () => {
+		left() {
 			if (selectedToolbarIndex > 0) selectedToolbarIndex--;
 			return true;
 		},
-		right: () => {
+		right() {
 			if (selectedToolbarIndex < toolbarActions.length - 1) selectedToolbarIndex++;
 			return true;
 		},
-		confirmUp: () => {
+		confirmUp() {
 			const action = toolbarActions[selectedToolbarIndex];
 			if (!action.disabled) handleToolbarAction(action.id);
 		},
-		back: () => onBack(),
+		back() { onBack(); },
 	};
 
 	const editorAreaHandlers = {
-		up: () => {
+		up() {
 			inputRef?.blur();
 			activateArea(toolbarAreaID);
 			return true;
 		},
-		down: () => true,
-		left: () => false,
-		right: () => false,
-		confirmUp: () => {
+		down() { return true; },
+		left() { return false; },
+		right() { return false; },
+		confirmUp() {
 			inputRef?.focus();
 		},
-		back: () => {
+		back() {
 			inputRef?.blur();
 			activateArea(toolbarAreaID);
 		},

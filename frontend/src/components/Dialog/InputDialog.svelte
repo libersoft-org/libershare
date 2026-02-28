@@ -36,7 +36,7 @@
 		const unregister = useArea(
 			'input-dialog',
 			{
-				up: () => {
+				up() {
 					if (selectedElement === 'cancel' || selectedElement === 'confirm') {
 						selectedElement = 'input';
 						tick().then(() => inputRef?.focus());
@@ -44,7 +44,7 @@
 					}
 					return true; // Block navigation outside dialog
 				},
-				down: () => {
+				down() {
 					if (selectedElement === 'input') {
 						inputRef?.blur();
 						selectedElement = 'cancel';
@@ -52,24 +52,24 @@
 					}
 					return true; // Block navigation outside dialog
 				},
-				left: () => {
+				left() {
 					if (selectedElement === 'cancel') {
 						selectedElement = 'confirm';
 						return true;
 					}
 					return true;
 				},
-				right: () => {
+				right() {
 					if (selectedElement === 'confirm') {
 						selectedElement = 'cancel';
 						return true;
 					}
 					return true;
 				},
-				confirmDown: () => {
+				confirmDown() {
 					if (selectedElement !== 'input') isPressed = true;
 				},
-				confirmUp: () => {
+				confirmUp() {
 					isPressed = false;
 					if (selectedElement === 'input') {
 						// Focus input for editing
@@ -77,7 +77,7 @@
 					} else if (selectedElement === 'confirm') handleConfirm();
 					else onBack();
 				},
-				confirmCancel: () => {
+				confirmCancel() {
 					isPressed = false;
 				},
 				back: onBack,

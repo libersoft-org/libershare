@@ -2,7 +2,11 @@ import { type FetchUrlResponse } from '@shared';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
-export function initCoreHandlers() {
+interface CoreHandlers {
+	fetchUrl: (p: { url: string }) => Promise<FetchUrlResponse>;
+}
+
+export function initCoreHandlers(): CoreHandlers {
 	async function fetchUrl(p: { url: string }): Promise<FetchUrlResponse> {
 		assert(p, ['url']);
 		const controller = new AbortController();

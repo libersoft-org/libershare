@@ -28,14 +28,14 @@
 		const unregister = useArea(
 			areaID,
 			{
-				up: () => {
+				up() {
 					if (hasLISH && selectedIndex > 0) {
 						selectedIndex--;
 						return true;
 					}
 					return false;
 				},
-				down: () => {
+				down() {
 					if (hasLISH && selectedIndex < 1) {
 						selectedIndex++;
 						selectedColumn = 0;
@@ -43,29 +43,29 @@
 					}
 					return false;
 				},
-				left: () => {
+				left() {
 					if (selectedIndex === 1 && selectedColumn > 0) {
 						selectedColumn--;
 						return true;
 					}
 					return false;
 				},
-				right: () => {
+				right() {
 					if (selectedIndex === 1 && selectedColumn < 1) {
 						selectedColumn++;
 						return true;
 					}
 					return false;
 				},
-				confirmDown: () => {
+				confirmDown() {
 					if (hasLISH && selectedIndex === 0) inputRef?.focus();
 				},
-				confirmUp: () => {
+				confirmUp() {
 					if (hasLISH && selectedIndex === 1 && selectedColumn === 1) onBack?.();
 					else if (!hasLISH) onBack?.();
 				},
-				confirmCancel: () => {},
-				back: () => onBack?.(),
+				confirmCancel() {},
+				back() { onBack?.(); },
 			},
 			position
 		);

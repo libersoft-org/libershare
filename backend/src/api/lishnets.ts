@@ -4,7 +4,29 @@ import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessRespons
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
-export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer) {
+interface LISHnetsHandlers {
+	list: () => LISHNetworkConfig[];
+	get: (p: { networkID: string }) => LISHNetworkConfig | undefined;
+	exists: (p: { networkID: string }) => boolean;
+	add: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
+	update: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
+	delete: (p: { networkID: string }) => Promise<boolean>;
+	addIfNotExists: (p: { network: LISHNetworkDefinition }) => Promise<boolean>;
+	import: (p: { networks: LISHNetworkDefinition[] }) => Promise<number>;
+	replace: (p: { networks: LISHNetworkConfig[] }) => Promise<boolean>;
+	importFromFile: (p: { path: string; enabled?: boolean }) => Promise<LISHNetworkConfig>;
+	importFromJson: (p: { json: string; enabled?: boolean }) => Promise<LISHNetworkConfig>;
+	setEnabled: (p: { networkID: string; enabled: boolean }) => Promise<SuccessResponse>;
+	connect: (p: { multiaddr: string }) => Promise<SuccessResponse>;
+	findPeer: (p: { peerID: string }) => Promise<void>;
+	getAddresses: () => string[];
+	getPeers: (p: { networkID: string }) => PeerConnectionInfo[];
+	getNodeInfo: () => NetworkNodeInfo | null;
+	getStatus: (p: { networkID: string }) => NetworkStatus;
+	infoAll: () => NetworkInfo[];
+}
+
+export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer): LISHnetsHandlers {
 	function list(): LISHNetworkConfig[] {
 		return networks.list();
 	}

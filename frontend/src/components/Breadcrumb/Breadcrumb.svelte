@@ -17,22 +17,22 @@
 	let active = $derived($activeArea === areaID);
 	let maxIndex = $derived(items.length - 2); // Last item (current) is not selectable
 	const areaHandlers = {
-		left: () => {
+		left() {
 			if (selectedIndex > 0) {
 				selectedIndex--;
 				return true;
 			}
 			return false;
 		},
-		right: () => {
+		right() {
 			if (selectedIndex < maxIndex) {
 				selectedIndex++;
 				return true;
 			}
 			return false;
 		},
-		up: () => false,
-		down: () => {
+		up() { return false; },
+		down() {
 			if (onDown) {
 				const target = onDown();
 				if (target) {
@@ -42,14 +42,14 @@
 			}
 			return false;
 		},
-		confirmDown: () => {},
-		confirmUp: () => {
+		confirmDown() {},
+		confirmUp() {
 			const item = items[selectedIndex];
 			if (item && selectedIndex < items.length - 1) onSelect?.(item, selectedIndex);
 		},
-		confirmCancel: () => {},
-		back: () => onBack?.(),
-		onActivate: () => (selectedIndex = Math.max(0, items.length - 2)),
+		confirmCancel() {},
+		back() { onBack?.(); },
+		onActivate() { selectedIndex = Math.max(0, items.length - 2); },
 	};
 
 	onMount(() => {

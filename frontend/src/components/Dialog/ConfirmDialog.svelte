@@ -27,25 +27,25 @@
 		const unregister = useArea(
 			'confirm-dialog',
 			{
-				up: () => true, // Block navigation outside dialog
-				down: () => true, // Block navigation outside dialog
-				left: () => {
+				up() { return true; }, // Block navigation outside dialog
+				down() { return true; }, // Block navigation outside dialog
+				left() {
 					selectedButton = 'confirm';
 					return true;
 				},
-				right: () => {
+				right() {
 					selectedButton = 'cancel';
 					return true;
 				},
-				confirmDown: () => {
+				confirmDown() {
 					isPressed = true;
 				},
-				confirmUp: () => {
+				confirmUp() {
 					isPressed = false;
 					if (selectedButton === 'confirm') onConfirm();
 					else onBack();
 				},
-				confirmCancel: () => {
+				confirmCancel() {
 					isPressed = false;
 				},
 				back: onBack,

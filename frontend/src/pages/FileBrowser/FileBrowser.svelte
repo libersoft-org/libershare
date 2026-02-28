@@ -179,7 +179,7 @@
 	}
 
 	const areaHandlers = {
-		up: () => {
+		up() {
 			if (selectedIndex > 0) {
 				selectedIndex--;
 				showActions = false; // Hide actions when selection changes
@@ -194,7 +194,7 @@
 			else activateArea(`${areaID}-folder-actions`);
 			return true;
 		},
-		down: () => {
+		down() {
 			if (selectedIndex < items.length - 1) {
 				selectedIndex++;
 				showActions = false; // Hide actions when selection changes
@@ -204,10 +204,14 @@
 			if (onDownAtEnd) return onDownAtEnd();
 			return false; // Allow navigation to other areas
 		},
-		left: () => false, // Allow navigation to other areas
-		right: () => !showActions, // Allow navigation to actions panel only when it's visible
-		confirmDown: () => {},
-		confirmUp: () => {
+		left() {
+			return false;
+		}, // Allow navigation to other areas
+		right() {
+			return !showActions;
+		}, // Allow navigation to actions panel only when it's visible
+		confirmDown() {},
+		confirmUp() {
 			const item = items[selectedIndex];
 			if (item && (item.type === 'folder' || item.type === 'drive'))
 				navigateInto(item); // Folders/drives - navigate into them
@@ -221,15 +225,15 @@
 				else openActions(); // Otherwise show actions panel
 			}
 		},
-		confirmCancel: () => {},
-		back: () => {
+		confirmCancel() {},
+		back() {
 			if (parentPath !== null) navigateUp();
 			else onBack?.();
 		},
 	};
 
 	const folderActionsAreaHandlers = {
-		up: () => {
+		up() {
 			// Go to path breadcrumb if available
 			if (showPath) {
 				activateArea(`${areaID}-path`);
@@ -238,33 +242,33 @@
 			// Otherwise let areaNavigate handle it (go to global breadcrumb)
 			return false;
 		},
-		down: () => {
+		down() {
 			// Go to save filename input if in save mode, otherwise to file list
 			if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
 			else activateArea(listAreaID);
 			return true;
 		},
-		left: () => {
+		left() {
 			if (selectedFolderActionIndex > 0) {
 				selectedFolderActionIndex--;
 				return true;
 			}
 			return false;
 		},
-		right: () => {
+		right() {
 			if (selectedFolderActionIndex < folderActions.length - 1) {
 				selectedFolderActionIndex++;
 				return true;
 			}
 			return false;
 		},
-		confirmDown: () => {},
-		confirmUp: () => {
+		confirmDown() {},
+		confirmUp() {
 			const action = folderActions[selectedFolderActionIndex];
 			if (action) handleFolderAction(action.id);
 		},
-		confirmCancel: () => {},
-		back: () => {
+		confirmCancel() {},
+		back() {
 			if (parentPath !== null) navigateUp();
 			else onBack?.();
 		},
@@ -274,81 +278,91 @@
 	let fileActions = $derived(getFileActions($t, selectFileButton));
 
 	const actionsAreaHandlers = {
-		up: () => {
+		up() {
 			if (selectedActionIndex > 0) {
 				selectedActionIndex--;
 				return true;
 			}
 			return true; // Block navigation outside actions panel
 		},
-		down: () => {
+		down() {
 			if (selectedActionIndex < fileActions.length - 1) {
 				selectedActionIndex++;
 				return true;
 			}
 			return true; // Block navigation outside actions panel
 		},
-		left: () => true, // Block navigation outside actions panel
-		right: () => true, // Block navigation outside actions panel
-		confirmDown: () => {},
-		confirmUp: () => {
+		left() {
+			return true;
+		}, // Block navigation outside actions panel
+		right() {
+			return true;
+		}, // Block navigation outside actions panel
+		confirmDown() {},
+		confirmUp() {
 			const action = fileActions[selectedActionIndex];
 			if (action) handleAction(action.id);
 		},
-		confirmCancel: () => {},
-		back: () => {
+		confirmCancel() {},
+		back() {
 			showActions = false;
 			activateArea(listAreaID);
 		},
 	};
 
 	const filterAreaHandlers = {
-		up: () => {
+		up() {
 			if (selectedFilterIndex > 0) {
 				selectedFilterIndex--;
 				return true;
 			}
 			return true; // Block navigation outside filter panel
 		},
-		down: () => {
+		down() {
 			if (selectedFilterIndex < filterActions.length - 1) {
 				selectedFilterIndex++;
 				return true;
 			}
 			return true; // Block navigation outside filter panel
 		},
-		left: () => true, // Block navigation outside filter panel
-		right: () => true, // Block navigation outside filter panel
-		confirmDown: () => {},
-		confirmUp: () => {
+		left() {
+			return true;
+		}, // Block navigation outside filter panel
+		right() {
+			return true;
+		}, // Block navigation outside filter panel
+		confirmDown() {},
+		confirmUp() {
 			const action = filterActions[selectedFilterIndex];
 			if (action) handleFilterAction(action.id);
 		},
-		confirmCancel: () => {},
-		back: () => closeFilterPanel(),
+		confirmCancel() {},
+		back() {
+			closeFilterPanel();
+		},
 	};
 
 	const saveFileNameAreaHandlers = {
-		up: () => {
+		up() {
 			// Go back to folder actions
 			saveFileNameInput?.blur();
 			activateArea(`${areaID}-folder-actions`);
 			return true;
 		},
-		down: () => {
+		down() {
 			// Go to file list
 			saveFileNameInput?.blur();
 			activateArea(listAreaID);
 			return true;
 		},
-		left: () => {
+		left() {
 			if (saveFileNameColumn > 0) {
 				saveFileNameColumn--;
 				return true;
 			}
 			return true; // Stay in input, let it handle cursor
 		},
-		right: () => {
+		right() {
 			if (saveFileNameColumn < 1) {
 				saveFileNameColumn++;
 				saveFileNameInput?.blur();
@@ -356,8 +370,8 @@
 			}
 			return true;
 		},
-		confirmDown: () => {},
-		confirmUp: () => {
+		confirmDown() {},
+		confirmUp() {
 			if (saveFileNameColumn === 0) {
 				// Input is selected - focus it for editing
 				saveFileNameInput?.focus();
@@ -366,8 +380,8 @@
 				handleSave();
 			}
 		},
-		confirmCancel: () => {},
-		back: () => {
+		confirmCancel() {},
+		back() {
 			saveFileNameInput?.blur();
 			onBack?.();
 		},

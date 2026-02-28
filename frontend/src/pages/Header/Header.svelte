@@ -13,7 +13,7 @@
 	let active = $derived($activeArea === areaID);
 	let selectedIndex = $state(0);
 
-	function toggleFullscreen() {
+	function toggleFullscreen(): void {
 		const tauri = (window as any).__TAURI_INTERNALS__;
 		if (tauri) tauri.invoke('app_fullscreen');
 		else {
@@ -26,27 +26,33 @@
 		return useArea(
 			areaID,
 			{
-				up: () => false,
-				down: () => false,
-				left: () => {
+				up() {
+					return false;
+				},
+				down() {
+					return false;
+				},
+				left() {
 					if (selectedIndex > 0) {
 						selectedIndex--;
 						return true;
 					}
 					return false;
 				},
-				right: () => {
+				right() {
 					if (selectedIndex < 1) {
 						selectedIndex++;
 						return true;
 					}
 					return false;
 				},
-				confirmUp: () => {
+				confirmUp() {
 					if (selectedIndex === 0) onBack?.();
 					else toggleFullscreen();
 				},
-				back: () => onBack?.(),
+				back() {
+					onBack?.();
+				},
 			},
 			position
 		);

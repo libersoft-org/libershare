@@ -61,38 +61,38 @@
 		const unregister = useArea(
 			areaID,
 			{
-				up: () => {
+				up() {
 					if (selectedIndex > 0) {
 						selectedIndex--;
 						return true;
 					}
 					return false;
 				},
-				down: () => {
+				down() {
 					if (selectedIndex < totalItems - 1) {
 						selectedIndex++;
 						return true;
 					}
 					return false;
 				},
-				left: () => {
+				left() {
 					if (selectedIndex === 0 && selectedColumn > 0) {
 						selectedColumn--;
 						return true;
 					}
 					return false;
 				},
-				right: () => {
+				right() {
 					if (selectedIndex === 0 && selectedColumn < 1 && !loading) {
 						selectedColumn++;
 						return true;
 					}
 					return false;
 				},
-				confirmDown: () => {
+				confirmDown() {
 					if (selectedIndex === 0 && selectedColumn === 0) urlInput?.focus();
 				},
-				confirmUp: () => {
+				confirmUp() {
 					if (selectedIndex === 0 && selectedColumn === 1) loadPublicList();
 					else if (selectedIndex >= 1 && selectedIndex < totalItems - 1) {
 						const networkIndex = selectedIndex - 1;
@@ -100,8 +100,8 @@
 						if (network && !isNetworkAdded(network.networkID)) handleAddNetwork(network);
 					} else if (selectedIndex === totalItems - 1) onBack?.();
 				},
-				confirmCancel: () => {},
-				back: () => onBack?.(),
+				confirmCancel() {},
+				back() { onBack?.(); },
 			},
 			position
 		);

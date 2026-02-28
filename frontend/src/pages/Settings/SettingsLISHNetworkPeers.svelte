@@ -55,7 +55,7 @@
 			unregister = useArea(
 				areaID,
 				{
-					up: () => {
+					up() {
 						if (selectedIndex > 0) {
 							selectedIndex--;
 							buttonIndex = 0;
@@ -64,7 +64,7 @@
 						}
 						return false;
 					},
-					down: () => {
+					down() {
 						if (selectedIndex < totalItems - 1) {
 							selectedIndex++;
 							buttonIndex = 0;
@@ -73,22 +73,22 @@
 						}
 						return false;
 					},
-					left: () => {
+					left() {
 						if (selectedIndex === 0 && buttonIndex > 0) {
 							buttonIndex--;
 							return true;
 						}
 						return false;
 					},
-					right: () => {
+					right() {
 						if (selectedIndex === 0 && buttonIndex < 1) {
 							buttonIndex++;
 							return true;
 						}
 						return false;
 					},
-					confirmDown: () => {},
-					confirmUp: () => {
+					confirmDown() {},
+					confirmUp() {
 						if (selectedIndex === 0) {
 							if (buttonIndex === 0) onBack?.();
 							else if (buttonIndex === 1) loadPeers();
@@ -98,8 +98,8 @@
 							console.log('Peer selected:', peer.peerID);
 						}
 					},
-					confirmCancel: () => {},
-					back: () => onBack?.(),
+					confirmCancel() {},
+					back() { onBack?.(); },
 				},
 				position
 			);
