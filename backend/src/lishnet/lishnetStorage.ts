@@ -64,7 +64,7 @@ export class LISHnetStorage {
 	/**
 	 * Replace all networks (for reordering)
 	 */
-	async setAll(networks: LISHNetworkConfig[]): Promise<void> {
-		await this.storage.setAll(networks);
+	async replace(networks: LISHNetworkConfig[]): Promise<void> {
+		await this.storage.replace(networks);
 	}
 }

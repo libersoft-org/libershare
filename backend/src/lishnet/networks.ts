@@ -247,7 +247,7 @@ export class Networks {
 		return this.storage.importNetworks(networks);
 	}
 
-	async setAll(networks: LISHNetworkConfig[]): Promise<void> {
-		return this.storage.setAll(networks);
+	async replace(networks: LISHNetworkConfig[]): Promise<void> {
+		return this.storage.replace(networks);
 	}
 }

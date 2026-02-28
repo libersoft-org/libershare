@@ -166,7 +166,7 @@ export class ArrayStorage<T extends Record<string, any>> extends BaseStorage<T[]
 		return false;
 	}
 
-	async setAll(items: T[]): Promise<void> {
+	async replace(items: T[]): Promise<void> {
 		this.items = items;
 		await this.saveFile(this.items);
 	}

@@ -36,9 +36,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		assert(p, ['networks']);
 		return networks.importNetworks(p.networks);
 	}
-	async function setAll(p: { networks: LISHNetworkConfig[] }): Promise<boolean> {
+	async function replace(p: { networks: LISHNetworkConfig[] }): Promise<boolean> {
 		assert(p, ['networks']);
-		await networks.setAll(p.networks);
+		await networks.replace(p.networks);
 		return true;
 	}
 	async function importFromFile(p: { path: string; enabled?: boolean }): Promise<LISHNetworkConfig> {
@@ -108,7 +108,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		return result;
 	}
 	return {
-		list, get, exists, add, update, delete: del, addIfNotExists, import: importNetworks, setAll,
+		list, get, exists, add, update, delete: del, addIfNotExists, import: importNetworks, replace,
 		importFromFile, importFromJson, setEnabled, connect, findPeer, getAddresses, getPeers, getNodeInfo, getStatus, infoAll,
 	};
 }

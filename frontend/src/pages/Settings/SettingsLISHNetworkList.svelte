@@ -173,7 +173,7 @@
 		const maxButtonIndex = isNowFirst || isNowLast ? 5 : 6;
 		if (buttonIndex > maxButtonIndex) buttonIndex = maxButtonIndex;
 		// Save new order to backend
-		await api.lishnets.setAll(networks);
+		await api.lishnets.replace(networks);
 	}
 
 	function openPeers(network: LISHNetworkConfig): void {

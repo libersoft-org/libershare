@@ -86,7 +86,7 @@ export class APIServer {
 			'lishnets.delete': _lishnets.delete,
 			'lishnets.addIfNotExists': _lishnets.addIfNotExists,
 			'lishnets.import': _lishnets.import,
-			'lishnets.setAll': _lishnets.setAll,
+			'lishnets.replace': _lishnets.replace,
 			'lishnets.importFromFile': _lishnets.importFromFile,
 			'lishnets.importFromJson': _lishnets.importFromJson,
 			'lishnets.setEnabled': _lishnets.setEnabled,

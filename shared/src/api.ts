@@ -180,8 +180,8 @@ class LISHnetsAPI {
 		return this.client.call<number>('lishnets.import', { networks });
 	}
 
-	setAll(networks: LISHNetworkConfig[]): Promise<boolean> {
-		return this.client.call<boolean>('lishnets.setAll', { networks });
+	replace(networks: LISHNetworkConfig[]): Promise<boolean> {
+		return this.client.call<boolean>('lishnets.replace', { networks });
 	}
 
 	// Runtime methods
