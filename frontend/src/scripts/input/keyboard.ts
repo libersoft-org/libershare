@@ -17,6 +17,7 @@ const CONFIRM_KEYS = ['Enter', ' '];
 class KeyboardManager {
 	private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 	private keyupHandler: ((e: KeyboardEvent) => void) | null = null;
+
 	private callbacks: Map<string, KeyboardCallback> = new Map();
 	private heldKey: string | null = null;
 	private repeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -111,6 +112,7 @@ class KeyboardManager {
 			window.removeEventListener('keyup', this.keyupHandler);
 			this.keyupHandler = null;
 		}
+
 		if (this.repeatTimer) clearTimeout(this.repeatTimer);
 		if (this.repeatInterval) clearInterval(this.repeatInterval);
 		this.repeatTimer = null;
