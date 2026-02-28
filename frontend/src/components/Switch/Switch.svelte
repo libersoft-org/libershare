@@ -3,10 +3,11 @@
 	interface Props {
 		checked?: boolean;
 		selected?: boolean;
+		disabled?: boolean;
 		onToggle?: () => void;
 		onConfirm?: () => void;
 	}
-	let { checked = false, selected = false, onToggle, onConfirm }: Props = $props();
+	let { checked = false, selected = false, disabled = false, onToggle, onConfirm }: Props = $props();
 	let mounted = $state(false);
 
 	onMount(() => {
@@ -34,21 +35,26 @@
 		left: 0;
 		right: 0;
 		bottom: 0;
-		background-color: var(--secondary-background); /* background - switched off */
 		border-radius: 3vh;
 		border: 0.5vh solid var(--secondary-softer-background);
+		background-color: var(--secondary-background); /* background - switched off */
+	}
+
+	.slider.checked {
+		background-color: var(--primary-background); /* background - switched on */
 	}
 
 	.slider.selected {
 		border-color: var(--primary-foreground);
 	}
 
-	.transition {
-		transition: 0.4s;
+	.slider.disabled {
+		border-color: var(--disabled-background);
+		background-color: var(--disabled-background);
 	}
 
-	.transition:before {
-		transition: 0.4s;
+	.slider.disabled.checked:before {
+		background-color: var(--disabled-foreground);
 	}
 
 	.slider:before {
@@ -63,17 +69,21 @@
 		border-radius: 50%;
 	}
 
-	.slider.checked {
-		background-color: var(--primary-background); /* background - switched on */
-	}
-
 	.slider.checked:before {
 		/* ball - switched on */
 		transform: translateX(4vh);
 		background-color: var(--primary-foreground);
 	}
+
+	.transition {
+		transition: 0.4s;
+	}
+
+	.transition:before {
+		transition: 0.4s;
+	}
 </style>
 
 <div class="switch">
-	<span class="slider {mounted ? 'transition' : ''}" class:checked class:selected></span>
+	<span class="slider {mounted ? 'transition' : ''}" class:checked class:selected class:disabled></span>
 </div>

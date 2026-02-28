@@ -1,9 +1,7 @@
-import { mkdir, open } from 'fs/promises';
-import { join, dirname } from 'path';
-import { type ILISH, type IStoredLISH, type LISHid, type ChunkID, DEFAULT_ALGO } from '@shared';
-import { createLISH, DEFAULT_CHUNK_SIZE } from './lish.ts';
+import { open } from 'fs/promises';
+import { join } from 'path';
+import { type ILISH, type IStoredLISH, type LISHid, type ChunkID } from '@shared';
 import { ArrayStorage } from '../storage.ts';
-import { Utils } from '../utils.ts';
 
 export interface MissingChunk {
 	fileIndex: number;
@@ -12,19 +10,21 @@ export interface MissingChunk {
 }
 
 export class DataServer {
-	private storage: ArrayStorage<IStoredLISH>;
-	private downloadDir: string;
+	private storage!: ArrayStorage<IStoredLISH>;
 
-	constructor(dataDir: string) {
-		this.downloadDir = join(dataDir, 'downloads');
-		this.storage = new ArrayStorage<IStoredLISH>(dataDir, 'lishs.json', 'id');
+	private constructor() {}
+
+	static async create(dataDir: string): Promise<DataServer> {
+		const server = new DataServer();
+		server.storage = await ArrayStorage.create<IStoredLISH>(dataDir, 'lishs.json', 'id');
+		return server;
 	}
 
-	getLISH(lishID: LISHid): IStoredLISH | null {
+	get(lishID: LISHid): IStoredLISH | null {
 		return this.storage.get(lishID) || null;
 	}
 
-	getAllLISHs(): IStoredLISH[] {
+	getAll(): IStoredLISH[] {
 		return this.storage.getAll();
 	}
 
@@ -35,23 +35,23 @@ export class DataServer {
 		return this.storage.getAll().filter(l => l.directory);
 	}
 
-	async addLISH(lish: IStoredLISH): Promise<void> {
+	async add(lish: IStoredLISH): Promise<void> {
 		await this.storage.upsert(lish);
 	}
 
-	async deleteLISH(lishID: LISHid): Promise<boolean> {
+	async delete(lishID: LISHid): Promise<boolean> {
 		return this.storage.delete(lishID);
 	}
 
 	// Chunk state operations (stored in lish.chunks[])
 
 	isChunkDownloaded(lishID: LISHid, chunkID: ChunkID): boolean {
-		const lish = this.getLISH(lishID);
+		const lish = this.get(lishID);
 		return lish?.chunks?.includes(chunkID) ?? false;
 	}
 
 	async markChunkDownloaded(lishID: LISHid, chunkID: ChunkID): Promise<void> {
-		const lish = this.getLISH(lishID);
+		const lish = this.get(lishID);
 		if (!lish) return;
 		if (!lish.chunks) lish.chunks = [];
 		if (!lish.chunks.includes(chunkID)) {
@@ -62,8 +62,8 @@ export class DataServer {
 
 	isComplete(lish: IStoredLISH): boolean {
 		if (!lish.files || !lish.chunks) return false;
-		const allChunks = lish.files.flatMap(f => f.checksums);
-		return allChunks.every(c => lish.chunks!.includes(c));
+		const chunkSet = new Set(lish.chunks);
+		return lish.files.every(f => f.checksums.every(c => chunkSet.has(c)));
 	}
 
 	getHaveChunks(lish: IStoredLISH): Set<ChunkID> | 'all' {
@@ -96,7 +96,7 @@ export class DataServer {
 	// Chunk I/O
 
 	public async getChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | null> {
-		const lish = this.getLISH(lishID);
+		const lish = this.get(lishID);
 		if (!lish) {
 			console.log(`LISH not found: ${lishID}`);
 			return null;
@@ -142,36 +142,5 @@ export class DataServer {
 		const fd = await open(filePath, 'r+');
 		await fd.write(data, 0, data.length, offset);
 		await fd.close();
-	}
-
-	// Create & export
-
-	public async createLISH(dataPath: string, lishFile: string | undefined, addToSharing: boolean = false, name: string | undefined, description: string | undefined, algo: string = DEFAULT_ALGO, chunkSize: number = DEFAULT_CHUNK_SIZE, threads: number = 0, onProgress?: (info: any) => void): Promise<IStoredLISH> {
-		console.log(`Importing dataset from: ${dataPath}, lishFile=${lishFile}, addToSharing=${addToSharing}, name=${name}, description=${description}`);
-		const absolutePath = Utils.expandHome(dataPath);
-		const absoluteLISHFile = lishFile ? Utils.expandHome(lishFile) : undefined;
-		const lish: IStoredLISH = await createLISH(absolutePath, name, chunkSize, algo as any, threads, description, onProgress);
-		if (absoluteLISHFile) await this.exportLISHToFile(lish, absoluteLISHFile);
-		if (addToSharing) {
-			// Set directory and mark all chunks as downloaded
-			lish.directory = absolutePath;
-			if (lish.files) {
-				lish.chunks = lish.files.flatMap(f => f.checksums);
-			}
-			await this.addLISH(lish);
-			console.log(`✓ Dataset imported: ${lish.id}`);
-		}
-		return lish;
-	}
-
-	public async exportLISHToFile(lish: IStoredLISH, outputFilePath: string | undefined): Promise<void> {
-		if (!outputFilePath) throw new Error('Output file path is required when saveToFile is true');
-		const { writeFile } = await import('fs/promises');
-		const outputDir = dirname(outputFilePath);
-		await mkdir(outputDir, { recursive: true });
-		// Export without local-only fields
-		const { directory, chunks, ...exportData } = lish;
-		await writeFile(outputFilePath, JSON.stringify(exportData, null, 2));
-		console.log(`✓ LISH exported to: ${outputFilePath}`);
 	}
 }

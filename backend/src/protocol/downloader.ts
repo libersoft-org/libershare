@@ -1,6 +1,5 @@
-import { mkdir, readFile, open } from 'fs/promises';
+import { mkdir, open } from 'fs/promises';
 import { join, dirname } from 'path';
-import { existsSync } from 'fs';
 import { type IStoredLISH, type LISHid, type ChunkID } from '@shared';
 import { type Network } from './network.ts';
 import { lishTopic } from './constants.ts';
@@ -50,7 +49,7 @@ export class Downloader {
 	async init(lishPath: string): Promise<void> {
 		this.state = 'initializing';
 		// Read and parse LISH
-		const content = await readFile(lishPath, 'utf-8');
+		const content = await Bun.file(lishPath).text();
 		this.lish = Utils.safeJsonParse(content, `LISH file: ${lishPath}`);
 		this.lishID = this.lish.id as LISHid;
 		console.log(`Loading LISH: ${this.lish.name} (id: ${this.lishID})`);
@@ -211,7 +210,7 @@ export class Downloader {
 				const fileDir = dirname(filePath);
 				await mkdir(fileDir, { recursive: true });
 				// Check if file already exists
-				if (!existsSync(filePath)) {
+				if (!(await Bun.file(filePath).exists())) {
 					// Create file with zeros
 					const fd = await open(filePath, 'w');
 					// Write zeros in chunks to avoid memory issues with large files

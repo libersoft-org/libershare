@@ -6,10 +6,14 @@ import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
  * These are networks that the user has added/imported (separate from running network instances).
  */
 export class LISHnetStorage {
-	private storage: ArrayStorage<LISHNetworkConfig>;
+	private storage!: ArrayStorage<LISHNetworkConfig>;
 
-	constructor(dataDir: string) {
-		this.storage = new ArrayStorage(dataDir, 'lishnets.json', 'networkID');
+	private constructor() {}
+
+	static async create(dataDir: string): Promise<LISHnetStorage> {
+		const instance = new LISHnetStorage();
+		instance.storage = await ArrayStorage.create(dataDir, 'lishnets.json', 'networkID');
+		return instance;
 	}
 
 	getAll(): LISHNetworkConfig[] {
@@ -55,12 +59,5 @@ export class LISHnetStorage {
 			if (await this.addIfNotExists(network)) imported++;
 		}
 		return imported;
-	}
-
-	/**
-	 * Replace all networks (for reordering)
-	 */
-	async setAll(networks: LISHNetworkConfig[]): Promise<void> {
-		await this.storage.setAll(networks);
 	}
 }

@@ -9,7 +9,7 @@
 	import { scrollToElement, sanitizeFilename } from '../../scripts/utils.ts';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm } from '@shared';
 	import { parseChunkSize, validateLISHCreateForm, getLISHCreateErrorMessage } from '../../scripts/lish.ts';
-	import { storageLISHPath, storagePath, autoStartSharing } from '../../scripts/settings.ts';
+	import { storageLISHPath, storagePath, autoStartSharing, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -39,6 +39,8 @@
 	let dataPath = $state($storagePath);
 	let saveToFile = $state(true);
 	let addToSharing = $state($autoStartSharing);
+	let minifyJson = $state($defaultMinifyJson);
+	let compressGzip = $state($defaultCompressGzip);
 	let showAdvanced = $state(false);
 	let name = $state('');
 	// LISH file path - editable state, initialized from settings
@@ -73,20 +75,22 @@
 	let threadsInput: Input | undefined = $state();
 	// Validation error - only set on submit
 	let errorMessage = $state('');
-	// Form fields: name(0), description(1), dataPath(2), saveToFile(3), lishFile(4), addToSharing(5), advancedToggle(6), chunkSize(7), algo(8), threads(9), create(10), back(11)
+	// Form fields: name(0), description(1), dataPath(2), saveToFile(3), lishFile(4), minifyJson(5), compressGzip(6), addToSharing(7), advancedToggle(8), chunkSize(9), algo(10), threads(11), create(12), back(13)
 	const FIELD_NAME = 0;
 	const FIELD_DESCRIPTION = 1;
 	const FIELD_INPUT = 2;
 	const FIELD_SAVE_TO_FILE = 3;
 	const FIELD_LISH_FILE = 4;
-	const FIELD_ADD_TO_SHARING = 5;
-	const FIELD_ADVANCED_TOGGLE = 6;
-	const FIELD_CHUNK_SIZE = 7;
-	const FIELD_ALGO = 8;
-	const FIELD_THREADS = 9;
-	const FIELD_CREATE = 10;
-	const FIELD_BACK = 11;
-	const TOTAL_FIELDS = 12;
+	const FIELD_MINIFY_JSON = 5;
+	const FIELD_COMPRESS_GZIP = 6;
+	const FIELD_ADD_TO_SHARING = 7;
+	const FIELD_ADVANCED_TOGGLE = 8;
+	const FIELD_CHUNK_SIZE = 9;
+	const FIELD_ALGO = 10;
+	const FIELD_THREADS = 11;
+	const FIELD_CREATE = 12;
+	const FIELD_BACK = 13;
+	const TOTAL_FIELDS = 14;
 	// Algorithm selection - horizontal navigation within the algo field
 	let algoIndex = $derived(SUPPORTED_ALGOS.indexOf(algorithm));
 
@@ -130,6 +134,10 @@
 			if (name) params.name = name;
 			if (description) params.description = description;
 			if (saveToFile && lishFile) params.lishFile = lishFile;
+			if (saveToFile) {
+				params.minifyJson = minifyJson;
+				params.compressGzip = compressGzip;
+			}
 			if (addToSharing) params.addToSharing = addToSharing;
 			// Only pass non-default advanced options
 			const parsedChunkSize = parseChunkSize(chunkSize);
@@ -270,8 +278,8 @@
 			}
 			if (selectedIndex > 0) {
 				selectedIndex--;
-				// Skip disabled lish file field when saveToFile is off
-				if (!saveToFile && selectedIndex === FIELD_LISH_FILE) selectedIndex--;
+				// Skip disabled lish file/minify/gzip fields when saveToFile is off
+				if (!saveToFile && selectedIndex >= FIELD_LISH_FILE && selectedIndex <= FIELD_COMPRESS_GZIP) selectedIndex = FIELD_SAVE_TO_FILE;
 				// Skip advanced fields when collapsed
 				if (!showAdvanced && selectedIndex >= FIELD_CHUNK_SIZE && selectedIndex <= FIELD_THREADS) selectedIndex = FIELD_ADVANCED_TOGGLE;
 				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
@@ -284,8 +292,8 @@
 			if (selectedIndex >= FIELD_CREATE) return false;
 			if (selectedIndex < FIELD_CREATE) {
 				selectedIndex++;
-				// Skip disabled lish file field when saveToFile is off
-				if (!saveToFile && selectedIndex === FIELD_LISH_FILE) selectedIndex++;
+				// Skip disabled lish file/minify/gzip fields when saveToFile is off
+				if (!saveToFile && selectedIndex >= FIELD_LISH_FILE && selectedIndex <= FIELD_COMPRESS_GZIP) selectedIndex = FIELD_ADD_TO_SHARING;
 				// Skip advanced fields when collapsed
 				if (!showAdvanced && selectedIndex >= FIELD_CHUNK_SIZE && selectedIndex <= FIELD_THREADS) selectedIndex = FIELD_CREATE;
 				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
@@ -328,7 +336,9 @@
 			else if (selectedIndex === FIELD_LISH_FILE) {
 				if (selectedColumn === 0) focusInput(FIELD_LISH_FILE);
 				else openOutputPathBrowse();
-			} else if (selectedIndex === FIELD_ADD_TO_SHARING) addToSharing = !addToSharing;
+			} else if (selectedIndex === FIELD_MINIFY_JSON) minifyJson = !minifyJson;
+			else if (selectedIndex === FIELD_COMPRESS_GZIP) compressGzip = !compressGzip;
+			else if (selectedIndex === FIELD_ADD_TO_SHARING) addToSharing = !addToSharing;
 			else if (selectedIndex === FIELD_ADVANCED_TOGGLE) showAdvanced = !showAdvanced;
 			else if (selectedIndex === FIELD_CHUNK_SIZE) focusInput(FIELD_CHUNK_SIZE);
 			else if (selectedIndex === FIELD_ALGO) algorithm = SUPPORTED_ALGOS[selectedColumn];
@@ -421,6 +431,14 @@
 			<div class="row" bind:this={rowElements[FIELD_LISH_FILE]}>
 				<Input bind:this={lishFileInput} bind:value={lishFile} label={`${$t('downloads.lishCreate.lishFile')} (${$t('common.optional')})`} selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 0} flex disabled={!saveToFile} onchange={() => (lishFileManuallyEdited = true)} />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 1} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
+			</div>
+			<!-- Minify JSON Switch -->
+			<div bind:this={rowElements[FIELD_MINIFY_JSON]}>
+				<SwitchRow label={$t('settings.lishNetwork.minifyJson') + ':'} checked={minifyJson} selected={active && selectedIndex === FIELD_MINIFY_JSON} onConfirm={() => (minifyJson = !minifyJson)} disabled={!saveToFile} />
+			</div>
+			<!-- Compress Gzip Switch -->
+			<div bind:this={rowElements[FIELD_COMPRESS_GZIP]}>
+				<SwitchRow label={$t('settings.lishNetwork.compressGzip') + ':'} checked={compressGzip} selected={active && selectedIndex === FIELD_COMPRESS_GZIP} onConfirm={() => (compressGzip = !compressGzip)} disabled={!saveToFile} />
 			</div>
 			<!-- Add to Sharing Switch -->
 			<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>

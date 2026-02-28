@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { BaseDatastore } from 'datastore-core';
 import { Key } from 'interface-datastore';
-import { join, dirname } from 'path';
+import { dirname } from 'path';
 import { mkdirSync } from 'fs';
 
 /**

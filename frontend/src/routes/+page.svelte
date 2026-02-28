@@ -67,7 +67,7 @@
 		try {
 			await loadSettings();
 			play('welcome');
-			console.log(await api.lishnets.getAll());
+			console.log(await api.lishnets.list());
 		} catch (error) {
 			console.error('[App] Backend initialization error:', error);
 		}

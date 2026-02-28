@@ -1,5 +1,3 @@
-import { existsSync, readFileSync } from 'fs';
-import { writeFile } from 'fs/promises';
 import { join } from 'path';
 
 /**
@@ -13,14 +11,15 @@ abstract class BaseStorage<T> {
 		console.log(`[Storage] ${this.filePath}`);
 	}
 
-	protected loadFile(defaultValue: T): T {
-		if (!existsSync(this.filePath)) {
-			// Fire-and-forget: write default to disk (constructor is sync, saveFile is async).
-			this.saveFile(defaultValue);
+	protected async loadFile(defaultValue: T): Promise<T> {
+		const file = Bun.file(this.filePath);
+		if (!(await file.exists())) {
+			// Write default to disk
+			await this.saveFile(defaultValue);
 			return defaultValue;
 		}
 		try {
-			return JSON.parse(readFileSync(this.filePath, 'utf-8'));
+			return JSON.parse(await file.text());
 		} catch (error) {
 			console.error(`[Storage] Error loading ${this.filePath}:`, error);
 			return defaultValue;
@@ -29,7 +28,7 @@ abstract class BaseStorage<T> {
 
 	protected async saveFile(data: T): Promise<void> {
 		try {
-			await writeFile(this.filePath, JSON.stringify(data, null, '\t'));
+			await Bun.write(this.filePath, JSON.stringify(data, null, '\t'));
 		} catch (error) {
 			console.error(`[Storage] Error saving ${this.filePath}:`, error);
 		}
@@ -40,16 +39,21 @@ abstract class BaseStorage<T> {
  * JSON storage with path-based access (e.g., "ui.theme").
  */
 export class JsonStorage<T extends Record<string, any>> extends BaseStorage<T> {
-	private data: T;
+	private data!: T;
 
-	constructor(
+	private constructor(
 		dataDir: string,
 		fileName: string,
 		private readonly defaults: T
 	) {
 		super(dataDir, fileName);
-		const loaded = this.loadFile(structuredClone(defaults));
-		this.data = this.deepMerge(defaults, loaded);
+	}
+
+	static async create<T extends Record<string, any>>(dataDir: string, fileName: string, defaults: T): Promise<JsonStorage<T>> {
+		const storage = new JsonStorage(dataDir, fileName, defaults);
+		const loaded = await storage.loadFile(structuredClone(defaults));
+		storage.data = storage.deepMerge(defaults, loaded);
+		return storage;
 	}
 
 	private deepMerge<U extends Record<string, any>>(defaults: U, override: Partial<U>): U {
@@ -101,16 +105,21 @@ export class JsonStorage<T extends Record<string, any>> extends BaseStorage<T> {
  * Array storage with key-based CRUD operations.
  */
 export class ArrayStorage<T extends Record<string, any>> extends BaseStorage<T[]> {
-	private items: T[];
+	private items!: T[];
 
-	constructor(
+	private constructor(
 		dataDir: string,
 		fileName: string,
 		private readonly keyField: keyof T
 	) {
 		super(dataDir, fileName);
-		const loaded = this.loadFile([]);
-		this.items = Array.isArray(loaded) ? loaded : [];
+	}
+
+	static async create<T extends Record<string, any>>(dataDir: string, fileName: string, keyField: keyof T): Promise<ArrayStorage<T>> {
+		const storage = new ArrayStorage<T>(dataDir, fileName, keyField);
+		const loaded = await storage.loadFile([]);
+		storage.items = Array.isArray(loaded) ? loaded : [];
+		return storage;
 	}
 
 	getAll(): T[] {

@@ -5,10 +5,11 @@
 		label: string;
 		checked: boolean;
 		selected?: boolean;
+		disabled?: boolean;
 		onToggle?: () => void;
 		onConfirm?: () => void;
 	}
-	let { label, checked, selected = false, onToggle, onConfirm }: Props = $props();
+	let { label, checked, selected = false, disabled = false, onToggle, onConfirm }: Props = $props();
 </script>
 
 <style>
@@ -21,13 +22,12 @@
 
 	.label {
 		font-size: 2vh;
-		color: var(--secondary-foreground);
 	}
 </style>
 
-<Row {selected}>
+<Row {selected} {disabled}>
 	<div class="switch-row">
 		<span class="label">{label}</span>
-		<Switch {checked} {selected} {onToggle} {onConfirm} />
+		<Switch {checked} {selected} {disabled} {onToggle} {onConfirm} />
 	</div>
 </Row>

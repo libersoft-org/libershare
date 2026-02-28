@@ -6,7 +6,7 @@ import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
 // ============================================================================
 
 export async function getNetworks(): Promise<LISHNetworkConfig[]> {
-	return api.lishnets.getAll();
+	return api.lishnets.list();
 }
 
 export async function getNetworkById(networkID: string): Promise<LISHNetworkConfig | undefined> {

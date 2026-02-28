@@ -86,7 +86,7 @@ async function main(): Promise<void> {
 	const api = new API(client);
 
 	async function getFirstNetworkID(): Promise<string | null> {
-		const networks = await api.lishnets.getAll();
+		const networks = await api.lishnets.list();
 		const enabled = networks.filter(n => n.enabled);
 		if (enabled.length === 0) {
 			console.log('No enabled networks');
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
 			switch (command) {
 				// ============ Networks ============
 				case 'lishnets.list': {
-					const networks = await api.lishnets.getAll();
+					const networks = await api.lishnets.list();
 					console.log('Networks:');
 					if (networks.length === 0) {
 						console.log('  (none)');

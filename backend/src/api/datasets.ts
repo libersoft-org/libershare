@@ -15,7 +15,7 @@ export function initDatasetsHandlers(dataServer: DataServer) {
 
 	function getDataset(p: { id: string }): Dataset | null {
 		assert(p, ['id']);
-		const lish = dataServer.getLISH(p.id);
+		const lish = dataServer.get(p.id);
 		if (!lish || !lish.directory) return null;
 		return {
 			id: lish.id,

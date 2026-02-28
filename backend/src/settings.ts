@@ -112,10 +112,14 @@ const DEFAULT_SETTINGS: SettingsData = {
  * Wraps JsonStorage with SettingsData type.
  */
 export class Settings {
-	private storage: JsonStorage<SettingsData>;
+	private storage!: JsonStorage<SettingsData>;
 
-	constructor(dataDir: string) {
-		this.storage = new JsonStorage(dataDir, 'settings.json', DEFAULT_SETTINGS);
+	private constructor() {}
+
+	static async create(dataDir: string): Promise<Settings> {
+		const instance = new Settings();
+		instance.storage = await JsonStorage.create(dataDir, 'settings.json', DEFAULT_SETTINGS);
+		return instance;
 	}
 
 	get(path?: string): any {

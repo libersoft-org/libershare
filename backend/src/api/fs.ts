@@ -1,4 +1,4 @@
-import { readdir, stat, access, unlink, rmdir, mkdir as fsMkdirNode, rename as fsRenameNode } from 'fs/promises';
+import { readdir, stat, access, unlink, mkdir as fsMkdirNode, rename as fsRenameNode } from 'fs/promises';
 import { join, sep, dirname } from 'path';
 import { homedir, platform } from 'os';
 import { exec } from 'child_process';

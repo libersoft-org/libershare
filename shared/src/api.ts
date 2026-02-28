@@ -148,8 +148,8 @@ class SettingsAPI {
 class LISHnetsAPI {
 	constructor(private client: IWsClient) {}
 
-	getAll(): Promise<LISHNetworkConfig[]> {
-		return this.client.call<LISHNetworkConfig[]>('lishnets.getAll');
+	list(): Promise<LISHNetworkConfig[]> {
+		return this.client.call<LISHNetworkConfig[]>('lishnets.list');
 	}
 
 	get(networkID: string): Promise<LISHNetworkConfig | undefined> {
@@ -231,14 +231,14 @@ class LISHsAPI {
 	constructor(private client: IWsClient) {}
 
 	list(): Promise<any[]> {
-		return this.client.call<any[]>('lishs.getAll');
+		return this.client.call<any[]>('lishs.list');
 	}
 
 	get(lishID: string): Promise<any> {
 		return this.client.call<any>('lishs.get', { lishID });
 	}
 
-	create(dataPath: string, lishFile?: string, addToSharing?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number): Promise<CreateLISHResponse> {
+	create(dataPath: string, lishFile?: string, addToSharing?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJson?: boolean, compressGzip?: boolean): Promise<CreateLISHResponse> {
 		return this.client.call<CreateLISHResponse>('lishs.create', {
 			name,
 			description,
@@ -248,6 +248,8 @@ class LISHsAPI {
 			chunkSize,
 			algorithm,
 			threads,
+			minifyJson,
+			compressGzip,
 		});
 	}
 }

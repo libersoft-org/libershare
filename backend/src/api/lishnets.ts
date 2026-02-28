@@ -5,7 +5,7 @@ import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
 export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer) {
-	function getAll(): LISHNetworkConfig[] {
+	function list(): LISHNetworkConfig[] {
 		return networks.getAll();
 	}
 	function get(p: { networkID: string }): LISHNetworkConfig | undefined {
@@ -108,7 +108,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		return result;
 	}
 	return {
-		getAll, get, exists, add, update, delete: del, addIfNotExists, import: importNetworks, setAll,
+		list, get, exists, add, update, delete: del, addIfNotExists, import: importNetworks, setAll,
 		importFromFile, importFromJson, setEnabled, connect, findPeer, getAddresses, getPeers, getNodeInfo, getStatus, infoAll,
 	};
 }

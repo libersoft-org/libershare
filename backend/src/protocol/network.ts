@@ -480,7 +480,7 @@ export class Network {
 
 	private async handleWant(data: WantMessage, networkID: string) {
 		console.log('Handling want message for lishID:', data.lishID, 'on network:', networkID);
-		const lish = this.dataServer.getLISH(data.lishID);
+		const lish = this.dataServer.get(data.lishID);
 		if (!lish) return;
 		const haveChunks = this.dataServer.getHaveChunks(lish);
 		if (haveChunks !== 'all' && haveChunks.size === 0) {

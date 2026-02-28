@@ -52,10 +52,10 @@ console.log('='.repeat(header.length));
 console.log(header);
 console.log('='.repeat(header.length));
 console.log(`Data directory: ${dataDir}`);
-const settings = new Settings(dataDir);
+const settings = await Settings.create(dataDir);
 await settings.ensureStorageDirs();
-const dataServer = new DataServer(dataDir);
-const lishnetStorage = new LISHnetStorage(dataDir);
+const dataServer = await DataServer.create(dataDir);
+const lishnetStorage = await LISHnetStorage.create(dataDir);
 const networks = new Networks(lishnetStorage, dataDir, dataServer, settings, enablePink);
 networks.init();
 

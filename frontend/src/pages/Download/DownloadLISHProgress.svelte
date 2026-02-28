@@ -24,6 +24,8 @@
 		algorithm?: string;
 		chunkSize?: number;
 		threads?: number;
+		minifyJson?: boolean;
+		compressGzip?: boolean;
 	}
 
 	interface FileProgress {
@@ -123,7 +125,7 @@
 		await api.subscribe('lishs.create:progress');
 
 		try {
-			const result = await api.lishs.create(params.dataPath, params.lishFile, params.addToSharing, params.name, params.description, params.algorithm, params.chunkSize, params.threads);
+			const result = await api.lishs.create(params.dataPath, params.lishFile, params.addToSharing, params.name, params.description, params.algorithm, params.chunkSize, params.threads, params.minifyJson, params.compressGzip);
 			resultLishID = result.lishID;
 			status = 'done';
 		} catch (err: any) {

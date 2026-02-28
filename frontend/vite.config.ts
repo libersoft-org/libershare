@@ -75,5 +75,8 @@ export default defineConfig({
 		allowedHosts: true,
 		host: true,
 		port: 6003,
+		watch: {
+			usePolling: true,
+		},
 	},
 });
