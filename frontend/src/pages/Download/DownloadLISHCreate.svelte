@@ -44,7 +44,7 @@
 	let showAdvanced = $state(false);
 	let name = $state('');
 	// LISH file path - editable state, initialized from settings
-	let lishFile = $state(joinPath($storageLISHPath, 'output.lish'));
+	let lishFile = $state(joinPath($storageLISHPath, $defaultCompressGzip ? 'output.lish.gz' : 'output.lish'));
 	let lishFileManuallyEdited = $state(false); // Track if user manually edited the path
 
 	function handleNameChange(newName: string): void {
@@ -53,9 +53,15 @@
 			const sanitized = sanitizeFilename(newName);
 			if (sanitized) {
 				const { folder } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
-				lishFile = joinPath(folder, sanitized + '.lish');
+				lishFile = joinPath(folder, sanitized + (compressGzip ? '.lish.gz' : '.lish'));
 			}
 		}
+	}
+
+	function handleCompressGzipToggle(): void {
+		compressGzip = !compressGzip;
+		if (compressGzip && lishFile.endsWith('.lish')) lishFile = lishFile + '.gz';
+		else if (!compressGzip && lishFile.endsWith('.lish.gz')) lishFile = lishFile.slice(0, -3);
 	}
 
 	let description = $state('');
@@ -337,7 +343,7 @@
 				if (selectedColumn === 0) focusInput(FIELD_LISH_FILE);
 				else openOutputPathBrowse();
 			} else if (selectedIndex === FIELD_MINIFY_JSON) minifyJson = !minifyJson;
-			else if (selectedIndex === FIELD_COMPRESS_GZIP) compressGzip = !compressGzip;
+			else if (selectedIndex === FIELD_COMPRESS_GZIP) handleCompressGzipToggle();
 			else if (selectedIndex === FIELD_ADD_TO_SHARING) addToSharing = !addToSharing;
 			else if (selectedIndex === FIELD_ADVANCED_TOGGLE) showAdvanced = !showAdvanced;
 			else if (selectedIndex === FIELD_CHUNK_SIZE) focusInput(FIELD_CHUNK_SIZE);
@@ -427,19 +433,21 @@
 			<div bind:this={rowElements[FIELD_SAVE_TO_FILE]}>
 				<SwitchRow label={$t('downloads.lishCreate.saveToFile') + ':'} checked={saveToFile} selected={active && selectedIndex === FIELD_SAVE_TO_FILE} onConfirm={() => (saveToFile = !saveToFile)} />
 			</div>
-			<!-- LISH File Path (optional, enabled when saveToFile is on) -->
-			<div class="row" bind:this={rowElements[FIELD_LISH_FILE]}>
-				<Input bind:this={lishFileInput} bind:value={lishFile} label={`${$t('downloads.lishCreate.lishFile')} (${$t('common.optional')})`} selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 0} flex disabled={!saveToFile} onchange={() => (lishFileManuallyEdited = true)} />
-				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 1} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" disabled={!saveToFile} />
-			</div>
-			<!-- Minify JSON Switch -->
-			<div bind:this={rowElements[FIELD_MINIFY_JSON]}>
-				<SwitchRow label={$t('settings.lishNetwork.minifyJson') + ':'} checked={minifyJson} selected={active && selectedIndex === FIELD_MINIFY_JSON} onConfirm={() => (minifyJson = !minifyJson)} disabled={!saveToFile} />
-			</div>
-			<!-- Compress Gzip Switch -->
-			<div bind:this={rowElements[FIELD_COMPRESS_GZIP]}>
-				<SwitchRow label={$t('settings.lishNetwork.compressGzip') + ':'} checked={compressGzip} selected={active && selectedIndex === FIELD_COMPRESS_GZIP} onConfirm={() => (compressGzip = !compressGzip)} disabled={!saveToFile} />
-			</div>
+			{#if saveToFile}
+				<!-- LISH File Path (optional) -->
+				<div class="row" bind:this={rowElements[FIELD_LISH_FILE]}>
+					<Input bind:this={lishFileInput} bind:value={lishFile} label={`${$t('downloads.lishCreate.lishFile')} (${$t('common.optional')})`} selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 0} flex onchange={() => (lishFileManuallyEdited = true)} />
+					<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 1} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				</div>
+				<!-- Minify JSON Switch -->
+				<div bind:this={rowElements[FIELD_MINIFY_JSON]}>
+					<SwitchRow label={$t('settings.lishNetwork.minifyJson') + ':'} checked={minifyJson} selected={active && selectedIndex === FIELD_MINIFY_JSON} onConfirm={() => (minifyJson = !minifyJson)} />
+				</div>
+				<!-- Compress Gzip Switch -->
+				<div bind:this={rowElements[FIELD_COMPRESS_GZIP]}>
+					<SwitchRow label={$t('settings.lishNetwork.compressGzip') + ':'} checked={compressGzip} selected={active && selectedIndex === FIELD_COMPRESS_GZIP} onConfirm={handleCompressGzipToggle} />
+				</div>
+			{/if}
 			<!-- Add to Sharing Switch -->
 			<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>
 				<SwitchRow label={$t('downloads.lishImport.autoStartSharing') + ':'} checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />

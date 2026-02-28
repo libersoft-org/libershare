@@ -11,9 +11,8 @@ export async function exportLISHToFile(lish: IStoredLISH, outputFilePath: string
 	if (compressGzip) {
 		const { gzipSync } = await import('zlib');
 		const compressed = gzipSync(Buffer.from(jsonContent));
-		const finalPath = outputFilePath.endsWith('.gz') ? outputFilePath : outputFilePath + '.gz';
-		await Bun.write(finalPath, compressed);
-		console.log(`✓ LISH exported (gzip) to: ${finalPath}`);
+		await Bun.write(outputFilePath, compressed);
+		console.log(`✓ LISH exported (gzip) to: ${outputFilePath}`);
 	} else {
 		await Bun.write(outputFilePath, jsonContent);
 		console.log(`✓ LISH exported to: ${outputFilePath}`);

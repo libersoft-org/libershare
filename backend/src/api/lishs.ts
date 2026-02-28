@@ -3,6 +3,7 @@ import { type IStoredLISH, type CreateLISHResponse, DEFAULT_ALGO } from '@shared
 import { createLISH, DEFAULT_CHUNK_SIZE } from '../lish/lish.ts';
 import { exportLISHToFile } from '../lish/lish-export.ts';
 import { Utils } from '../utils.ts';
+import { readdir, stat } from 'fs/promises';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 interface CreateLISHParams {
@@ -37,8 +38,17 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn) {
 		const compressGzip = p.compressGzip ?? false;
 
 		// TODO: check that dataPath is not already in datasets.
-		// TODO: check that dataPath exists
 		const dataPath = Utils.expandHome(p.dataPath);
+
+		// Check that the path exists and is not an empty directory
+		const dataPathStat = await stat(dataPath);
+		if (dataPathStat.isDirectory()) {
+			const entries = await readdir(dataPath);
+			if (entries.length === 0) {
+				throw new Error('Directory is empty - nothing to create LISH from');
+			}
+		}
+
 		console.log(`Creating LISH from: ${dataPath}, lishFile=${p.lishFile}, addToSharing=${addToSharing}, name=${p.name}, description=${p.description}`);
 
 		// 1. Create the LISH structure
