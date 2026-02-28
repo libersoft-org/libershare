@@ -24,7 +24,7 @@ interface FsHandlers {
 	mkdir: (p: { path: string }) => Promise<void>;
 	open: (p: { path: string }) => Promise<void>;
 	rename: (p: { path: string; newName: string }) => Promise<void>;
-	exists: (p: { path: string }) => Promise<{ exists: boolean }>;
+	exists: (p: { path: string }) => Promise<{ exists: boolean; type?: 'file' | 'directory' }>;
 	writeText: (p: { path: string; content: string }) => Promise<SuccessResponse>;
 	writeGzip: (p: { path: string; content: string }) => Promise<SuccessResponse>;
 }
@@ -113,11 +113,11 @@ export function initFsHandlers(): FsHandlers {
 		await fsRenameNode(p.path, newPath);
 	}
 
-	async function exists(p: { path: string }): Promise<{ exists: boolean }> {
+	async function exists(p: { path: string }): Promise<{ exists: boolean; type?: 'file' | 'directory' }> {
 		assert(p, ['path']);
 		try {
-			await access(p.path);
-			return { exists: true };
+			const s = await stat(p.path);
+			return { exists: true, type: s.isDirectory() ? 'directory' : 'file' };
 		} catch {
 			return { exists: false };
 		}

@@ -16,6 +16,7 @@
 		"save": "Save",
 		"saveAs": "Save as",
 		"fileExistsOverwrite": "File \"{name}\" already exists. Do you want to overwrite it?",
+		"fileNameIsDirectory": "The name \"{name}\" already exists as a directory, so the file cannot be saved.",
 		"overwriteFile": "Overwrite file",
 		"delete": "Delete",
 		"edit": "Edit",

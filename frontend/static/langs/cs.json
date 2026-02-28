@@ -16,6 +16,7 @@
 		"save": "Uložit",
 		"saveAs": "Uložit jako",
 		"fileExistsOverwrite": "Soubor \"{name}\" již existuje. Chcete ho přepsat?",
+		"fileNameIsDirectory": "Název \"{name}\" již existuje jakožto adresář, proto není možné soubor uložit.",
 		"overwriteFile": "Přepsat soubor",
 		"delete": "Smazat",
 		"edit": "Upravit",

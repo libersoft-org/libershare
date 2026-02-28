@@ -157,8 +157,12 @@
 			// Check if LISH file already exists
 			if (saveToFile && lishFile) {
 				try {
-					const { exists } = await api.fs.exists(lishFile);
-					if (exists) {
+					const result = await api.fs.exists(lishFile);
+					if (result.exists && result.type === 'directory') {
+						errorMessage = $t('common.fileNameIsDirectory', { name: lishFile });
+						return;
+					}
+					if (result.exists) {
 						pendingCreateParams = params;
 						showOverwriteConfirm = true;
 						return;
