@@ -92,6 +92,7 @@ export interface SuccessResponse {
 
 export interface CreateLISHResponse {
 	lishID: string;
+	lishFile?: string | undefined;
 }
 
 export interface DownloadResponse {

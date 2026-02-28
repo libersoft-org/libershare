@@ -4,6 +4,7 @@ import { createLISH, DEFAULT_CHUNK_SIZE } from '../lish/lish.ts';
 import { exportLISHToFile } from '../lish/lish-export.ts';
 import { Utils } from '../utils.ts';
 import { readdir, stat } from 'fs/promises';
+import { join } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 interface CreateLISHParams {
@@ -57,9 +58,21 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 			emit(client, 'lishs.create:progress', info);
 		});
 		// 2. Export to .lish(.gz) file if requested
+		let resultLISHFile: string | undefined;
 		if (p.lishFile) {
-			const lishFilePath = Utils.expandHome(p.lishFile);
+			let lishFilePath = Utils.expandHome(p.lishFile);
+			// If the path is a directory, use [lish-id].lish(.gz) as filename
+			try {
+				const fileStat = await stat(lishFilePath);
+				if (fileStat.isDirectory()) {
+					const fileName = lish.id + (compressGzip ? '.lish.gz' : '.lish');
+					lishFilePath = join(lishFilePath, fileName);
+				}
+			} catch {
+				// Path doesn't exist yet — treat as a file path
+			}
 			await exportLISHToFile(lish, lishFilePath, minifyJson, compressGzip);
+			resultLISHFile = lishFilePath;
 		}
 		// 3. Save to data-server if requested
 		if (addToSharing) {
@@ -68,7 +81,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 			await dataServer.add(lish);
 			console.log(`✓ Dataset imported: ${lish.id}`);
 		}
-		return { lishID: lish.id };
+		return { lishID: lish.id, lishFile: resultLISHFile };
 	}
 	return { list, get, create };
 }

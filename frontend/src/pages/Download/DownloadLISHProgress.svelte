@@ -47,7 +47,8 @@
 	// Progress state
 	type Status = 'creating' | 'done' | 'error';
 	let status = $state<Status>('creating');
-	let resultLishID = $state('');
+	let resultLISHID = $state('');
+	let resultLISHFile = $state('');
 	let errorText = $state('');
 
 	// File list with per-file progress
@@ -113,7 +114,8 @@
 
 		try {
 			const result = await api.lishs.create(params['dataPath'], params['lishFile'], params['addToSharing'], params['name'], params['description'], params['algorithm'], params['chunkSize'], params['threads'], params['minifyJson'], params['compressGzip']);
-			resultLishID = result.lishID;
+			resultLISHID = result.lishID;
+			resultLISHFile = result.lishFile || '';
 			status = 'done';
 		} catch (err: any) {
 			errorText = err?.message || String(err);
@@ -132,7 +134,7 @@
 	}
 
 	function handleDone(): void {
-		if (onDone) onDone(resultLishID);
+		if (onDone) onDone(resultLISHID);
 		else onBack?.();
 	}
 
@@ -241,7 +243,10 @@
 		{:else if status === 'done'}
 			<Alert type="info" message={$t('downloads.lishCreate.progress.done')} />
 			<div class="done-info">
-				<div>LISH ID: <span class="lish-id">{resultLishID}</span></div>
+				<div>LISH ID: <span class="lish-id">{resultLISHID}</span></div>
+				{#if resultLISHFile}
+					<div>{$t('common.file')}: <span class="lish-id">{resultLISHFile}</span></div>
+				{/if}
 				<div>{$t('downloads.lishCreate.progress.filesProcessed')}: {allFiles.length}</div>
 			</div>
 		{:else if status === 'error'}

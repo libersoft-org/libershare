@@ -48,24 +48,29 @@
 	let showAdvanced = $state(false);
 	let name = $state('');
 	// LISH file path - editable state, initialized from settings
-	let lishFile = $state(joinPath($storageLISHPath, $defaultCompressGzip ? 'output.lish.gz' : 'output.lish'));
+	let lishFile = $state($storageLISHPath);
 	let lishFileManuallyEdited = $state(false); // Track if user manually edited the path
 
 	function handleNameChange(newName: string): void {
 		name = newName;
-		if (!lishFileManuallyEdited && newName) {
-			const sanitized = sanitizeFilename(newName);
+		if (!lishFileManuallyEdited) {
+			const sanitized = newName ? sanitizeFilename(newName) : '';
 			if (sanitized) {
 				const { folder } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
 				lishFile = joinPath(folder, sanitized + (compressGzip ? '.lish.gz' : '.lish'));
+			} else {
+				const { folder } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
+				lishFile = folder;
 			}
 		}
 	}
 
 	function handleCompressGzipToggle(): void {
 		compressGzip = !compressGzip;
-		if (compressGzip && lishFile.endsWith('.lish')) lishFile = lishFile + '.gz';
-		else if (!compressGzip && lishFile.endsWith('.lish.gz')) lishFile = lishFile.slice(0, -3);
+		if (lishFile.endsWith('.lish') || lishFile.endsWith('.lish.gz')) {
+			if (compressGzip && lishFile.endsWith('.lish')) lishFile = lishFile + '.gz';
+			else if (!compressGzip && lishFile.endsWith('.lish.gz')) lishFile = lishFile.slice(0, -3);
+		}
 	}
 
 	let description = $state('');
@@ -171,15 +176,11 @@
 			if (algorithm !== DEFAULT_ALGO) params['algorithm'] = algorithm;
 			const parsedThreads = parseInt(threads) || 0;
 			if (parsedThreads !== 0) params['threads'] = parsedThreads;
-			// Check if LISH file already exists
+			// Check if LISH file already exists (skip if it's a directory - backend will auto-name the file)
 			if (saveToFile && lishFile) {
 				try {
 					const result = await api.fs.exists(lishFile);
-					if (result.exists && result.type === 'directory') {
-						errorMessage = $t('common.fileNameIsDirectory', { name: lishFile });
-						return;
-					}
-					if (result.exists) {
+					if (result.exists && result.type === 'file') {
 						pendingCreateParams = params;
 						showOverwriteConfirm = true;
 						return;
