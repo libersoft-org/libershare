@@ -127,10 +127,13 @@
 		gap: 2vh;
 		height: 100%;
 		padding: 2vh;
+		box-sizing: border-box;
+		overflow: hidden;
 	}
 
 	.container {
 		flex: 1;
+		min-height: 0;
 		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
 		overflow: hidden;
