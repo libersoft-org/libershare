@@ -8,8 +8,8 @@ export const DEFAULT_ALGO: HashAlgorithm = 'sha256';
 export interface ILISH {
 	version: number;
 	id: string;
-	name?: string;
-	description?: string;
+	name?: string | undefined;
+	description?: string | undefined;
 	created: string;
 	chunkSize: number;
 	checksumAlgo: HashAlgorithm;

@@ -1,21 +1,21 @@
 <script lang="ts">
 	interface Props {
-		value?: string;
-		label?: string;
-		placeholder?: string;
-		selected?: boolean;
-		type?: 'text' | 'password' | 'email' | 'number' | 'url';
-		min?: number;
-		max?: number;
-		multiline?: boolean;
-		rows?: number;
-		fontSize?: string;
-		fontFamily?: string;
-		padding?: string;
-		flex?: boolean;
-		readonly?: boolean;
-		disabled?: boolean;
-		onchange?: (value: string) => void;
+		value?: string | undefined;
+		label?: string | undefined;
+		placeholder?: string | undefined;
+		selected?: boolean | undefined;
+		type?: 'text' | 'password' | 'email' | 'number' | 'url' | undefined;
+		min?: number | undefined;
+		max?: number | undefined;
+		multiline?: boolean | undefined;
+		rows?: number | undefined;
+		fontSize?: string | undefined;
+		fontFamily?: string | undefined;
+		padding?: string | undefined;
+		flex?: boolean | undefined;
+		readonly?: boolean | undefined;
+		disabled?: boolean | undefined;
+		onchange?: ((value: string) => void) | undefined;
 	}
 	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', min, max, multiline = false, rows = 3, fontSize = '2.5vh', fontFamily, padding = '1.5vh 2vh', flex = false, readonly = false, disabled = false, onchange }: Props = $props();
 	let inputElement: HTMLInputElement | HTMLTextAreaElement | undefined = $state();

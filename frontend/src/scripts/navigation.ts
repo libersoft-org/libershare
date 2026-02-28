@@ -32,7 +32,7 @@ export function popBreadcrumb(): void {
 	breadcrumbStore.update(items => {
 		// Only pop component items, preserve menu items
 		if (items.length === 0) return items;
-		const last = items[items.length - 1];
+		const last = items[items.length - 1]!;
 		if (last.source === 'component') return items.slice(0, -1);
 		return items;
 	});
@@ -159,7 +159,7 @@ export function createNavigation() {
 				const newItems = [...items];
 				// Replace last item's label with custom label
 				if (newItems.length > 0) {
-					newItems[newItems.length - 1] = { ...newItems[newItems.length - 1], label: customLabel };
+					newItems[newItems.length - 1] = { ...newItems[newItems.length - 1]!, label: customLabel };
 				}
 				return newItems;
 			});

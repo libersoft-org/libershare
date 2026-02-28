@@ -9,11 +9,11 @@
 	interface Props {
 		title: string;
 		message: string;
-		confirmLabel?: string;
-		cancelLabel?: string;
-		confirmIcon?: string;
-		cancelIcon?: string;
-		defaultButton?: 'confirm' | 'cancel';
+		confirmLabel?: string | undefined;
+		cancelLabel?: string | undefined;
+		confirmIcon?: string | undefined;
+		cancelIcon?: string | undefined;
+		defaultButton?: 'confirm' | 'cancel' | undefined;
 		position: Position;
 		onConfirm: () => void;
 		onBack: () => void;

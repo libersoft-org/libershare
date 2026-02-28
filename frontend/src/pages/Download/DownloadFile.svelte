@@ -6,10 +6,10 @@
 		name: string;
 		progress: number;
 		size: string;
-		downloadedSize?: string;
-		selected?: boolean;
-		odd?: boolean;
-		animated?: boolean;
+		downloadedSize?: string | undefined;
+		selected?: boolean | undefined;
+		odd?: boolean | undefined;
+		animated?: boolean | undefined;
 	}
 	let { name, progress, size, downloadedSize, selected = false, odd = false, animated = false }: Props = $props();
 	// Show "downloaded / total" format when downloading (progress < 100 and downloadedSize is provided)

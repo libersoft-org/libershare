@@ -12,7 +12,7 @@ const levelNames: Record<number, string> = {
 	[LogLevels.warn]: 'WARN',
 	[LogLevels.error]: 'ERROR',
 };
-const LOG_PREFIX = process.env.LOG_PREFIX || '';
+const LOG_PREFIX = process.env['LOG_PREFIX'] || '';
 
 function formatTimestamp(date: Date): string {
 	function pad(n: number, len = 2): string {

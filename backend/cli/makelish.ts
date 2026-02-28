@@ -52,12 +52,12 @@ function parseArgs(args: string[]): IArgs {
 		'--threads': 'threads',
 	};
 	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
+		const arg = args[i]!;
 		const key = argMap[arg];
 		if (key && i + 1 < args.length) {
-			const value = args[++i];
-			if (key === 'chunk') (parsed as any)[key] = Utils.parseBytes(value);
-			else if (key === 'threads') (parsed as any)[key] = parseInt(value, 10);
+			const value = args[++i]!;
+			if (key === 'chunk') (parsed as any)[key] = Utils.parseBytes(value!);
+			else if (key === 'threads') (parsed as any)[key] = parseInt(value!, 10);
 			else (parsed as any)[key] = value;
 		}
 	}
@@ -91,6 +91,7 @@ async function main(): Promise<void> {
 
 async function makeLISH(args: IArgs): Promise<void> {
 	const inputPath = args.input;
+	if (!inputPath) throw new Error('--input parameter is required');
 	const name = args.name;
 	const defaultOutput = name ? '[NAME].lish' : '[UUID].lish';
 	const outputTemplate = args.output || defaultOutput;

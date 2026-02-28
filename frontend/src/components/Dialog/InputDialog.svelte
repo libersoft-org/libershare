@@ -10,14 +10,14 @@
 	import Alert from '../Alert/Alert.svelte';
 	interface Props {
 		title: string;
-		label?: string;
-		placeholder?: string;
-		initialValue?: string;
-		confirmLabel?: string;
-		cancelLabel?: string;
-		confirmIcon?: string;
-		cancelIcon?: string;
-		error?: string;
+		label?: string | undefined;
+		placeholder?: string | undefined;
+		initialValue?: string | undefined;
+		confirmLabel?: string | undefined;
+		cancelLabel?: string | undefined;
+		confirmIcon?: string | undefined;
+		cancelIcon?: string | undefined;
+		error?: string | undefined;
 		position: Position;
 		onConfirm: (value: string) => void;
 		onBack: () => void;

@@ -100,8 +100,8 @@ export class GamepadManager {
 			return;
 		}
 		const buttons = gamepad.buttons.map(b => b.pressed);
-		const leftStickX = gamepad.axes[0];
-		const leftStickY = gamepad.axes[1];
+		const leftStickX = gamepad.axes[0] ?? 0;
+		const leftStickY = gamepad.axes[1] ?? 0;
 		const now = Date.now();
 		// A/B button press/release events
 		this.handleButtons(buttons);

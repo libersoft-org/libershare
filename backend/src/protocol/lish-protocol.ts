@@ -19,7 +19,7 @@ export class LISHClient {
 	private stream: Stream;
 	private decoder: AsyncGenerator<Uint8Array | Uint8ArrayList>;
 	// TODO: is haveChunks still used? review whether this belongs here
-	public haveChunks: HaveChunks;
+	public haveChunks!: HaveChunks;
 	constructor(stream: Stream) {
 		this.stream = stream;
 		this.decoder = decode(stream);

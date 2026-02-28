@@ -97,7 +97,7 @@
 			return true;
 		},
 		confirmUp() {
-			const action = toolbarActions[selectedToolbarIndex];
+			const action = toolbarActions[selectedToolbarIndex]!;
 			if (!action.disabled) handleToolbarAction(action.id);
 		},
 		back() { onBack(); },

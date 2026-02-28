@@ -16,16 +16,16 @@ export class Utils {
 			.match(/^(\d+(?:\.\d+)?)\s*([KMGTPEZY])?B?$/);
 		if (!match) throw new Error('Invalid size format. Use number with optional suffix: K, M, G, T, P, E, Z, Y');
 		const [, num, suffix] = match;
-		if (!suffix) return Math.floor(parseFloat(num));
+		if (!suffix) return Math.floor(parseFloat(num!));
 		const sizes = ['', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y'];
 		const i = sizes.indexOf(suffix);
-		return Math.floor(parseFloat(num) * Math.pow(1024, i));
+		return Math.floor(parseFloat(num!) * Math.pow(1024, i));
 	}
 
 	static expandHome(path: string): string {
 		// expand ~ to home directory
 		if (path.startsWith('~')) {
-			const home = process.env.HOME || process.env.USERPROFILE;
+			const home = process.env['HOME'] || process.env['USERPROFILE'];
 			if (home) return home + path.slice(1);
 		}
 		return path;

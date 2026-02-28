@@ -8,9 +8,9 @@
 		areaID: string;
 		items: BreadcrumbItem[];
 		position: Position;
-		onSelect?: (item: BreadcrumbItem, index: number) => void;
-		onBack?: () => void;
-		onDown?: () => string | false; // Return area ID to navigate to, or false for default behavior
+		onSelect?: ((item: BreadcrumbItem, index: number) => void) | undefined;
+		onBack?: (() => void) | undefined;
+		onDown?: (() => string | false) | undefined; // Return area ID to navigate to, or false for default behavior
 	}
 	let { areaID, items, position, onSelect, onBack, onDown }: Props = $props();
 	let selectedIndex = $state(0);

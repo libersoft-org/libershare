@@ -46,7 +46,7 @@ let serverUrl = DEFAULT_URL;
 
 for (let i = 0; i < args.length; i++) {
 	if ((args[i] === '--url' || args[i] === '-u') && i + 1 < args.length) {
-		serverUrl = args[i + 1];
+		serverUrl = args[i + 1]!;
 		i++;
 	} else if (args[i] === '--help' || args[i] === '-h') {
 		console.log(`
@@ -63,7 +63,7 @@ ${HELP}`);
 }
 
 function expandHome(p: string): string {
-	if (p.startsWith('~')) return p.replace('~', process.env.HOME || '/');
+	if (p.startsWith('~')) return p.replace('~', process.env['HOME'] || '/');
 	return p;
 }
 
@@ -92,7 +92,7 @@ async function main(): Promise<void> {
 			console.log('No enabled networks');
 			return null;
 		}
-		return enabled[0].networkID;
+		return enabled[0]!.networkID;
 	}
 
 	const rl = readline.createInterface({

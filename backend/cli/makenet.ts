@@ -41,10 +41,10 @@ function parseArgs(args: string[]): IArgs {
 		'--output': 'output',
 	};
 	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
+		const arg = args[i]!;
 		const key = argMap[arg];
 		if (key && i + 1 < args.length) (parsed as any)[key] = args[++i];
-		else if (arg === '--bootstrap' && i + 1 < args.length) parsed.bootstrap!.push(args[++i]);
+		else if (arg === '--bootstrap' && i + 1 < args.length) parsed.bootstrap!.push(args[++i]!);
 	}
 	return parsed;
 }

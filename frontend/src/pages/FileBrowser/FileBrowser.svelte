@@ -24,24 +24,24 @@
 	interface Props {
 		areaID: string;
 		position: Position;
-		initialPath?: string;
-		initialFile?: string; // File name to select in the initial directory
-		foldersOnly?: boolean;
-		filesOnly?: boolean;
-		fileFilter?: string[]; // Array of extensions like ['.lish', '.json'] or ['*'] for all
-		showPath?: boolean;
-		selectFolderButton?: boolean;
-		selectFileButton?: boolean;
-		saveFileName?: string; // If provided, shows a filename input for "save as" mode
-		saveContent?: string; // Content to save - if provided, FileBrowser handles the save operation
-		useGzip?: boolean; // If true, compress content with gzip before saving
-		onBack?: () => void;
-		onSelect?: (path: string) => void;
-		onSaveFileNameChange?: (fileName: string) => void;
-		onSaveComplete?: (path: string) => void; // Called after successful save
-		onSaveError?: (error: string) => void; // Called on save error
-		onDownAtEnd?: () => boolean;
-		onOpenSpecialFile?: (path: string, type: 'lish' | 'lishnet') => void; // Called for .lish/.lishs/.lishnet/.lishnets files
+		initialPath?: string | undefined;
+		initialFile?: string | undefined; // File name to select in the initial directory
+		foldersOnly?: boolean | undefined;
+		filesOnly?: boolean | undefined;
+		fileFilter?: string[] | undefined; // Array of extensions like ['.lish', '.json'] or ['*'] for all
+		showPath?: boolean | undefined;
+		selectFolderButton?: boolean | undefined;
+		selectFileButton?: boolean | undefined;
+		saveFileName?: string | undefined; // If provided, shows a filename input for "save as" mode
+		saveContent?: string | undefined; // Content to save - if provided, FileBrowser handles the save operation
+		useGzip?: boolean | undefined; // If true, compress content with gzip before saving
+		onBack?: (() => void) | undefined;
+		onSelect?: ((path: string) => void) | undefined;
+		onSaveFileNameChange?: ((fileName: string) => void) | undefined;
+		onSaveComplete?: ((path: string) => void) | undefined; // Called after successful save
+		onSaveError?: ((error: string) => void) | undefined; // Called on save error
+		onDownAtEnd?: (() => boolean) | undefined;
+		onOpenSpecialFile?: ((path: string, type: 'lish' | 'lishnet') => void) | undefined; // Called for .lish/.lishs/.lishnet/.lishnets files
 	}
 	const columns = '1fr 8vw 12vw';
 	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, onOpenSpecialFile }: Props = $props();

@@ -58,19 +58,19 @@ export default defineConfig({
 		__COMMIT_HASH__: JSON.stringify(getCommitHash()),
 	},
 	server: {
-		https: (() => {
-			const keyPath = process.env.VITE_SSL_KEY;
-			const certPath = process.env.VITE_SSL_CERT;
+		...(() => {
+			const keyPath = process.env['VITE_SSL_KEY'];
+			const certPath = process.env['VITE_SSL_CERT'];
 			if (keyPath && certPath && fs.existsSync(keyPath) && fs.existsSync(certPath)) {
-				return { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
+				return { https: { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) } };
 			}
 			if (fs.existsSync(path.resolve(__dirname, 'server.key'))) {
-				return { key: fs.readFileSync(path.resolve(__dirname, 'server.key')), cert: fs.readFileSync(path.resolve(__dirname, 'server.crt')) };
+				return { https: { key: fs.readFileSync(path.resolve(__dirname, 'server.key')), cert: fs.readFileSync(path.resolve(__dirname, 'server.crt')) } };
 			}
 			if (fs.existsSync(path.resolve(__dirname, 'certs/server.key'))) {
-				return { key: fs.readFileSync(path.resolve(__dirname, 'certs/server.key')), cert: fs.readFileSync(path.resolve(__dirname, 'certs/server.crt')) };
+				return { https: { key: fs.readFileSync(path.resolve(__dirname, 'certs/server.key')), cert: fs.readFileSync(path.resolve(__dirname, 'certs/server.crt')) } };
 			}
-			return undefined;
+			return {};
 		})(),
 		allowedHosts: true,
 		host: true,

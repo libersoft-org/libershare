@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { getColorFromCSSToFilter } from '../../scripts/colors.ts';
 	interface Props {
-		img?: string;
-		alt?: string;
-		size?: string;
-		padding?: string;
-		colorVariable?: string;
-		noColorFilter?: boolean;
-		badgeIcon?: string;
-		badgeColorVariable?: string;
+		img?: string | undefined;
+		alt?: string | undefined;
+		size?: string | undefined;
+		padding?: string | undefined;
+		colorVariable?: string | undefined;
+		noColorFilter?: boolean | undefined;
+		badgeIcon?: string | undefined;
+		badgeColorVariable?: string | undefined;
 	}
 	let { img, alt = '', size = '24px', padding = '10px', colorVariable, noColorFilter = false, badgeIcon, badgeColorVariable = '--color-success' }: Props = $props();
 	let filterValue = $derived.by(() => {

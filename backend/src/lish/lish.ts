@@ -77,7 +77,7 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 			if (nextChunk >= totalChunks) return;
 			const chunkIndex = nextChunk++;
 			const offset = chunkIndex * chunkSize;
-			const worker = workers[workerIndex];
+			const worker = workers[workerIndex]!;
 			function handler(event: MessageEvent): void {
 				if (event.data.index === chunkIndex) {
 					worker.removeEventListener('message', handler);

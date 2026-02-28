@@ -158,16 +158,16 @@ export class Downloader {
 		if (topic != expectedTopic) return;
 
 		console.debug(data); // with peerID etc.
-		if (data.type == 'have' && data.lishID == this.lishID) {
-			if (data.chunks === 'all' /* || this.peerHasAnyMissingChunks(data.chunks)*/) {
-				if (this.peers.has(data.peerID)) {
-					console.log(`Already connected to peer ...${data.peerID}`);
+		if (data['type'] == 'have' && data['lishID'] == this.lishID) {
+			if (data['chunks'] === 'all' /* || this.peerHasAnyMissingChunks(data.chunks)*/) {
+				if (this.peers.has(data['peerID'])) {
+					console.log(`Already connected to peer ...${data['peerID']}`);
 				} else {
-					console.log(`Peer ...${data.peerID} has the file, connecting...`);
+					console.log(`Peer ...${data['peerID']} has the file, connecting...`);
 					try {
 						await this.connectToPeer(data as HaveMessage);
 					} catch (error) {
-						console.log(`✗ Failed to connect to peer ...${data.peerID}:`, error instanceof Error ? error.message : error);
+						console.log(`✗ Failed to connect to peer ...${data['peerID']}:`, error instanceof Error ? error.message : error);
 						return;
 					}
 					this.doWork().then(() => {});

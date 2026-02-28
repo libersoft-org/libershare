@@ -15,8 +15,8 @@
 	import TableCell from '../../components/Table/TableCell.svelte';
 	interface Props {
 		areaID: string;
-		position?: Position;
-		onBack?: () => void;
+		position?: Position | undefined;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
@@ -64,7 +64,7 @@
 						onBack?.(); // Back button
 					else {
 						// Toggle the widget switch
-						const widget = footerWidgets[selectedIndex - 2];
+						const widget = footerWidgets[selectedIndex - 2]!;
 						setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget]);
 					}
 				},

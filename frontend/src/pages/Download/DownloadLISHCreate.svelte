@@ -22,8 +22,8 @@
 	import DownloadLISHProgress from './DownloadLISHProgress.svelte';
 	interface Props {
 		areaID: string;
-		position?: Position;
-		onBack?: () => void;
+		position?: Position | undefined;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let unregisterArea: (() => void) | null = null;
@@ -140,20 +140,20 @@
 			const params: Record<string, any> = {
 				dataPath,
 			};
-			if (name) params.name = name;
-			if (description) params.description = description;
-			if (saveToFile && lishFile) params.lishFile = lishFile;
+			if (name) params['name'] = name;
+			if (description) params['description'] = description;
+			if (saveToFile && lishFile) params['lishFile'] = lishFile;
 			if (saveToFile) {
-				params.minifyJson = minifyJson;
-				params.compressGzip = compressGzip;
+				params['minifyJson'] = minifyJson;
+				params['compressGzip'] = compressGzip;
 			}
-			if (addToSharing) params.addToSharing = addToSharing;
+			if (addToSharing) params['addToSharing'] = addToSharing;
 			// Only pass non-default advanced options
 			const parsedChunkSize = parseChunkSize(chunkSize);
-			if (parsedChunkSize !== null && parsedChunkSize !== 1024 * 1024) params.chunkSize = parsedChunkSize;
-			if (algorithm !== DEFAULT_ALGO) params.algorithm = algorithm;
+			if (parsedChunkSize !== null && parsedChunkSize !== 1024 * 1024) params['chunkSize'] = parsedChunkSize;
+			if (algorithm !== DEFAULT_ALGO) params['algorithm'] = algorithm;
 			const parsedThreads = parseInt(threads) || 0;
-			if (parsedThreads !== 0) params.threads = parsedThreads;
+			if (parsedThreads !== 0) params['threads'] = parsedThreads;
 			// Check if LISH file already exists
 			if (saveToFile && lishFile) {
 				try {
@@ -374,7 +374,7 @@
 			else if (selectedIndex === FIELD_ADD_TO_SHARING) addToSharing = !addToSharing;
 			else if (selectedIndex === FIELD_ADVANCED_TOGGLE) showAdvanced = !showAdvanced;
 			else if (selectedIndex === FIELD_CHUNK_SIZE) focusInput(FIELD_CHUNK_SIZE);
-			else if (selectedIndex === FIELD_ALGO) algorithm = SUPPORTED_ALGOS[selectedColumn];
+			else if (selectedIndex === FIELD_ALGO) algorithm = SUPPORTED_ALGOS[selectedColumn]!;
 			else if (selectedIndex === FIELD_THREADS) focusInput(FIELD_THREADS);
 			else if (selectedIndex === FIELD_CREATE) handleCreate();
 			else if (selectedIndex === FIELD_BACK) onBack?.();

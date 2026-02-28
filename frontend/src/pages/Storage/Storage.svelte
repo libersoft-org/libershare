@@ -10,8 +10,8 @@
 	import SettingsLISHNetworkImportJSON from '../Settings/SettingsLISHNetworkImportJSON.svelte';
 	interface Props {
 		areaID: string;
-		position?: Position;
-		onBack?: () => void;
+		position?: Position | undefined;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 	// Special file import state

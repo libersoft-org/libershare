@@ -15,9 +15,9 @@
 	import DownloadItem from './DownloadItem.svelte';
 	interface Props {
 		areaID: string;
-		position?: Position;
-		title?: string;
-		onBack?: () => void;
+		position?: Position | undefined;
+		title?: string | undefined;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
@@ -33,7 +33,7 @@
 	}
 
 	function openDetail(): void {
-		const download = downloads[selectedIndex];
+		const download = downloads[selectedIndex]!;
 		selectedDownload.set(download);
 		navigateTo('download-detail', download.name || download.id);
 	}

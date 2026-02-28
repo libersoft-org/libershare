@@ -34,8 +34,8 @@ export function parseChunkSize(value: string): number | null {
 	const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*([BKMGT])$/);
 	if (!match) return null;
 
-	const num = parseFloat(match[1]);
-	const unit = match[2];
+	const num = parseFloat(match[1]!);
+	const unit = match[2]!;
 	const multiplier = SIZE_UNITS[unit];
 
 	if (isNaN(num) || num <= 0 || !multiplier) return null;
@@ -62,10 +62,10 @@ export function validateLISH(obj: unknown): LISH | null {
 	if (!obj || typeof obj !== 'object') return null;
 	const parsed = obj as Record<string, unknown>;
 	// Validate required fields
-	if (typeof parsed.name !== 'string' || !parsed.name.trim()) return null;
+	if (typeof parsed['name'] !== 'string' || !parsed['name'].trim()) return null;
 	return {
-		version: (parsed.version as number) ?? 1,
-		name: parsed.name.trim(),
+		version: (parsed['version'] as number) ?? 1,
+		name: parsed['name'].trim(),
 	};
 }
 
@@ -144,11 +144,11 @@ export function validateThreads(threads: string): 'INVALID_THREADS' | null {
  */
 export interface LISHCreateFormData {
 	dataPath: string;
-	saveToFile?: boolean;
-	lishFile?: string;
-	addToSharing?: boolean;
-	chunkSize?: string;
-	threads?: string;
+	saveToFile?: boolean | undefined;
+	lishFile?: string | undefined;
+	addToSharing?: boolean | undefined;
+	chunkSize?: string | undefined;
+	threads?: string | undefined;
 }
 
 export type LISHCreateError = 'INPUT_REQUIRED' | 'LISH_FILE_REQUIRED' | 'INVALID_CHUNK_SIZE' | 'INVALID_THREADS' | null;

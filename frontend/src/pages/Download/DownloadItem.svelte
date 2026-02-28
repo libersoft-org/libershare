@@ -11,15 +11,15 @@
 		id: string;
 		progress: number;
 		size: string;
-		downloadedSize?: string;
+		downloadedSize?: string | undefined;
 		status: DownloadStatus;
 		downloadPeers: number;
 		uploadPeers: number;
 		downloadSpeed: string;
 		uploadSpeed: string;
-		selected?: boolean;
-		isLast?: boolean;
-		odd?: boolean;
+		selected?: boolean | undefined;
+		isLast?: boolean | undefined;
+		odd?: boolean | undefined;
 	}
 	let { name, id, progress, size, downloadedSize, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, selected = false, odd = false }: Props = $props();
 	// Show "downloaded / total" format when downloading

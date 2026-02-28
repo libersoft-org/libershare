@@ -1,6 +1,6 @@
 <script lang="ts" module>
 	export type ButtonsGroupContext = {
-		register: (button: { onConfirm?: () => void }) => { index: number; unregister: () => void };
+		register: (button: { onConfirm?: (() => void) | undefined }) => { index: number; unregister: () => void };
 		isSelected: (index: number) => boolean;
 		isPressed: (index: number) => boolean;
 	};
@@ -15,14 +15,14 @@
 		children: Snippet;
 		areaID: string;
 		position: Position;
-		initialIndex?: number;
-		orientation?: 'horizontal' | 'vertical';
-		onBack?: () => void;
+		initialIndex?: number | undefined;
+		orientation?: 'horizontal' | 'vertical' | undefined;
+		onBack?: (() => void) | undefined;
 	}
 	let { children, areaID, position, initialIndex = 0, orientation = 'vertical', onBack }: Props = $props();
 	let selectedIndex = $state(untrack(() => initialIndex));
 	let isAPressed = $state(false);
-	let buttons: { onConfirm?: () => void }[] = [];
+	let buttons: { onConfirm?: (() => void) | undefined }[] = [];
 	let active = $derived($activeArea === areaID);
 	let itemsElement = $state<HTMLElement | null>(null);
 	let translateX = $state(0);

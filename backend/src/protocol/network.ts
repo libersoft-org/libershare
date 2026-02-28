@@ -188,7 +188,7 @@ export class Network {
 		console.log('Listening on addresses:');
 		addresses.forEach(addr => console.log('  -', addr.toString()));
 
-		this.pubsub = this.node.services.pubsub as PubSub;
+		this.pubsub = this.node.services['pubsub'] as PubSub;
 
 		// Register lish protocol handler
 		await this.node.handle(
@@ -200,18 +200,18 @@ export class Network {
 		);
 		console.log(`✓ Registered ${LISH_PROTOCOL} protocol handler`);
 
-		const dht = this.node.services.dht as any;
+		const dht = this.node.services['dht'] as any;
 		if (dht) {
 			const mode = dht.clientMode === false ? 'server' : 'client';
 			console.log('✓ DHT running in', mode, 'mode');
 		}
 
-		this.pubsub.addEventListener('gossipsub:graft', evt => {
+		this.pubsub.addEventListener('gossipsub:graft', (evt: any) => {
 			console.log('🌿 GRAFT:', evt.detail.peerID, 'joined', evt.detail.topic);
 			this.schedulePeerCountCheck();
 		});
 
-		this.pubsub.addEventListener('gossipsub:prune', evt => {
+		this.pubsub.addEventListener('gossipsub:prune', (evt: any) => {
 			console.log('✂️  PRUNE:', evt.detail.peerID, 'left', evt.detail.topic);
 			this.schedulePeerCountCheck();
 		});
@@ -282,7 +282,7 @@ export class Network {
 	}
 
 	private setupPubsubDispatch(): void {
-		this.pubsub!.addEventListener('message', evt => {
+		this.pubsub!.addEventListener('message', (evt: any) => {
 			this.handleMessage(evt.detail);
 		});
 	}
@@ -392,8 +392,8 @@ export class Network {
 		this.pubsub.subscribe(topic);
 		// Register the Want handler for this network
 		const handler: TopicHandler = data => {
-			console.log(`Received pubsub message on topic ${topic}:`, data.type);
-			if (data.type === 'want') this.handleWant(data as WantMessage, networkID);
+			console.log(`Received pubsub message on topic ${topic}:`, data['type']);
+			if (data['type'] === 'want') this.handleWant(data as WantMessage, networkID);
 		};
 		if (!this.topicHandlers.has(topic)) this.topicHandlers.set(topic, new Set());
 		this.topicHandlers.get(topic)!.add(handler);
@@ -507,7 +507,7 @@ export class Network {
 			console.error('Network not started');
 			return;
 		}
-		console.log(`Broadcasting to topic ${topic}:`, data.type);
+		console.log(`Broadcasting to topic ${topic}:`, data['type']);
 		const encoded = new TextEncoder().encode(JSON.stringify(data));
 		await this.pubsub.publish(topic, encoded);
 	}
@@ -613,10 +613,10 @@ export class Network {
 	async findPeer(peerID: PeerId): Promise<void> {
 		console.log('Finding peer:');
 		console.log('Closest peers:');
-		for await (const peer of this.node.peerRouting.getClosestPeers(peerID.toMultihash().bytes)) {
+		for await (const peer of this.node!.peerRouting.getClosestPeers(peerID.toMultihash().bytes)) {
 			console.log(peer.id, peer.multiaddrs);
 		}
-		const peer: PeerInfo = await this.node.peerRouting.findPeer(peerID);
+		const peer: PeerInfo = await this.node!.peerRouting.findPeer(peerID);
 		console.log('Found it, multiaddrs are:');
 		peer.multiaddrs.forEach(ma => console.log(ma.toString()));
 	}

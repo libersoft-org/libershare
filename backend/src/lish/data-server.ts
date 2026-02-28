@@ -84,9 +84,9 @@ export class DataServer {
 		const chunkSet = new Set(lish.chunks || []);
 		const missing: Array<MissingChunk> = [];
 		for (let fileIndex = 0; fileIndex < lish.files.length; fileIndex++) {
-			const file = lish.files[fileIndex];
+			const file = lish.files[fileIndex]!;
 			for (let chunkIndex = 0; chunkIndex < file.checksums.length; chunkIndex++) {
-				const chunkID = file.checksums[chunkIndex] as ChunkID;
+				const chunkID = file.checksums[chunkIndex]! as ChunkID;
 				if (!chunkSet.has(chunkID)) missing.push({ fileIndex, chunkIndex, chunkID });
 			}
 		}
@@ -136,7 +136,7 @@ export class DataServer {
 
 	public async writeChunk(downloadDir: string, lish: ILISH, fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
 		if (!lish.files || fileIndex >= lish.files.length) throw new Error(`Invalid file index: ${fileIndex}`);
-		const file = lish.files[fileIndex];
+		const file = lish.files[fileIndex]!;
 		const filePath = join(downloadDir, file.path);
 		const offset = chunkIndex * lish.chunkSize;
 		const fd = await open(filePath, 'r+');

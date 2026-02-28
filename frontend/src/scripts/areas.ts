@@ -85,7 +85,7 @@ export function areaNavigate(direction: Direction): boolean {
 		console.log('areaNavigate: current area not in layout');
 		return false;
 	}
-	const currentPos = layout[current];
+	const currentPos = layout[current]!;
 	const target = findAreaInDirection(layout, currentPos, direction);
 	console.log('areaNavigate: target', target);
 	if (target) {

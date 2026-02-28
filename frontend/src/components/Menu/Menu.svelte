@@ -7,13 +7,13 @@
 	interface Props {
 		areaID: string;
 		title: string;
-		items: Array<{ id: string; label: string; icon?: string; selected?: boolean; iconPosition?: 'left' | 'top'; iconSize?: string; noColorFilter?: boolean }>;
-		orientation?: 'horizontal' | 'vertical';
-		selectedId?: string;
-		buttonWidth?: string;
+		items: Array<{ id: string; label: string; icon?: string | undefined; selected?: boolean | undefined; iconPosition?: 'left' | 'top' | undefined; iconSize?: string | undefined; noColorFilter?: boolean | undefined }>;
+		orientation?: 'horizontal' | 'vertical' | undefined;
+		selectedId?: string | undefined;
+		buttonWidth?: string | undefined;
 		position: Position;
-		onselect?: (id: string) => void;
-		onBack?: () => void;
+		onselect?: ((id: string) => void) | undefined;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, title, items, orientation = 'horizontal', selectedId, buttonWidth, position, onselect, onBack }: Props = $props();
 	let initialIndex = $derived(

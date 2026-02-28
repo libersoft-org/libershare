@@ -4,10 +4,10 @@
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	interface Props {
 		areaID: string;
-		position?: Position;
-		initialPath?: string;
-		onSelect?: (path: string) => void;
-		onBack?: () => void;
+		position?: Position | undefined;
+		initialPath?: string | undefined;
+		onSelect?: ((path: string) => void) | undefined;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, initialPath = '', onSelect, onBack }: Props = $props();
 </script>

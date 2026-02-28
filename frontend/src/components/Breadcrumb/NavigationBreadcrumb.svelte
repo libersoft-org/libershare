@@ -7,7 +7,7 @@
 		areaID: string;
 		position: Position;
 		items: string[];
-		onBack?: () => void;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position, items, onBack }: Props = $props();
 	// Convert string items to BreadcrumbItem format

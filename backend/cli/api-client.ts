@@ -6,7 +6,7 @@
 interface Request {
 	id: number;
 	method: string;
-	params?: Record<string, any>;
+	params?: Record<string, any> | undefined;
 }
 
 export class APIClient {

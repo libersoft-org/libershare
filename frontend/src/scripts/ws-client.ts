@@ -7,7 +7,7 @@ function getAPIURL(): string {
 		return `ws://localhost:${(window as any).__BACKEND_PORT__}`;
 	}
 	const defaultAPIURL = 'ws://localhost:1158';
-	return import.meta.env.VITE_BACKEND_URL || defaultAPIURL;
+	return import.meta.env['VITE_BACKEND_URL'] || defaultAPIURL;
 }
 
 export const apiURL = getAPIURL();

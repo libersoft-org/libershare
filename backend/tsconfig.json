@@ -16,6 +16,10 @@
 		"noUnusedParameters": true,
 		"noImplicitReturns": true,
 		"noFallthroughCasesInSwitch": true,
+		"noImplicitOverride": true,
+		"exactOptionalPropertyTypes": true,
+		"noUncheckedIndexedAccess": true,
+		"noPropertyAccessFromIndexSignature": true,
 		"paths": {
 			"@shared": ["../shared/src/index.ts"],
 			"@shared/*": ["../shared/src/*"]

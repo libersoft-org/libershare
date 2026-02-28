@@ -9,8 +9,8 @@
 		position: Position;
 		path: string;
 		separator: string;
-		onNavigate?: (path: string) => void;
-		onDown?: () => string | false;
+		onNavigate?: ((path: string) => void) | undefined;
+		onDown?: (() => string | false) | undefined;
 	}
 	let { areaID, position, path, separator, onNavigate, onDown }: Props = $props();
 	let breadcrumbItems = $derived(parsePathToBreadcrumbs(path, separator));
@@ -23,7 +23,7 @@
 	function handleBack(): void {
 		// Navigate to parent (second to last item)
 		if (breadcrumbItems.length > 1) {
-			const parentItem = breadcrumbItems[breadcrumbItems.length - 2];
+			const parentItem = breadcrumbItems[breadcrumbItems.length - 2]!;
 			onNavigate?.(parentItem.path);
 		}
 	}

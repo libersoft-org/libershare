@@ -2,12 +2,12 @@
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Icon from '../../components/Icon/Icon.svelte';
 	interface Props {
-		topIcon?: string;
-		topIconAlt?: string;
-		topLabel?: string;
-		bottomIcon?: string;
-		bottomIconAlt?: string;
-		bottomLabel?: string;
+		topIcon?: string | undefined;
+		topIconAlt?: string | undefined;
+		topLabel?: string | undefined;
+		bottomIcon?: string | undefined;
+		bottomIconAlt?: string | undefined;
+		bottomLabel?: string | undefined;
 		progress: number;
 	}
 	const { topIcon, topIconAlt, topLabel, bottomIcon, bottomIconAlt, bottomLabel, progress }: Props = $props();

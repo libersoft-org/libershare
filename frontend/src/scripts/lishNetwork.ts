@@ -55,16 +55,16 @@ export function validateNetwork(obj: unknown): LISHNetworkDefinition | null {
 	// - networkID: required, non-empty string
 	// - name: required, non-empty string
 	// - bootstrapPeers: optional, can be empty
-	if (typeof parsed.networkID !== 'string' || !parsed.networkID.trim() || typeof parsed.name !== 'string' || !parsed.name.trim()) return null;
-	const bootstrapPeers = Array.isArray(parsed.bootstrapPeers) ? (parsed.bootstrapPeers as string[]).filter(p => typeof p === 'string' && p.trim()) : [];
+	if (typeof parsed['networkID'] !== 'string' || !parsed['networkID'].trim() || typeof parsed['name'] !== 'string' || !parsed['name'].trim()) return null;
+	const bootstrapPeers = Array.isArray(parsed['bootstrapPeers']) ? (parsed['bootstrapPeers'] as string[]).filter(p => typeof p === 'string' && p.trim()) : [];
 	// Only pick specific fields — 'enabled' is never part of a network definition
 	return {
-		version: (parsed.version as number) ?? 1,
-		networkID: parsed.networkID.trim(),
-		name: parsed.name.trim(),
-		description: typeof parsed.description === 'string' ? parsed.description : '',
+		version: (parsed['version'] as number) ?? 1,
+		networkID: parsed['networkID'].trim(),
+		name: parsed['name'].trim(),
+		description: typeof parsed['description'] === 'string' ? parsed['description'] : '',
 		bootstrapPeers,
-		created: (parsed.created as string) ?? new Date().toISOString(),
+		created: (parsed['created'] as string) ?? new Date().toISOString(),
 	};
 }
 

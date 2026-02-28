@@ -20,7 +20,7 @@ export function hasBackHandler(): boolean {
 
 export function executeBackHandler(): boolean {
 	if (backStack.length > 0) {
-		const handler = backStack[backStack.length - 1];
+		const handler = backStack[backStack.length - 1]!;
 		handler();
 		return true;
 	}

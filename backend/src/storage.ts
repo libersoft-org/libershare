@@ -82,11 +82,11 @@ export class JsonStorage<T extends Record<string, any>> extends BaseStorage<T> {
 		const keys = path.split('.');
 		let obj: any = this.data;
 		for (let i = 0; i < keys.length - 1; i++) {
-			const key = keys[i];
+			const key = keys[i]!;
 			if (obj[key] === undefined) obj[key] = {};
 			obj = obj[key];
 		}
-		obj[keys[keys.length - 1]] = value;
+		obj[keys[keys.length - 1]!] = value;
 		await this.saveFile(this.data);
 	}
 

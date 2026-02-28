@@ -7,11 +7,11 @@
 	interface Props {
 		name: string;
 		type: StorageItemType;
-		size?: number;
-		modified?: string;
-		selected?: boolean;
-		isLast?: boolean;
-		odd?: boolean;
+		size?: number | undefined;
+		modified?: string | undefined;
+		selected?: boolean | undefined;
+		isLast?: boolean | undefined;
+		odd?: boolean | undefined;
 	}
 	let { name, type, size, modified, selected = false, odd = false }: Props = $props();
 </script>

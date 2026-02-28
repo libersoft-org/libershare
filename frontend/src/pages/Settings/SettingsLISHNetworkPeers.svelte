@@ -17,9 +17,9 @@
 	import TableCell from '../../components/Table/TableCell.svelte';
 	interface Props {
 		areaID: string;
-		position?: Position;
+		position?: Position | undefined;
 		network: LISHNetworkConfig;
-		onBack?: () => void;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, network, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
@@ -94,7 +94,7 @@
 							else if (buttonIndex === 1) loadPeers();
 							return;
 						} else {
-							const peer = peers[selectedIndex - 1];
+							const peer = peers[selectedIndex - 1]!;
 							console.log('Peer selected:', peer.peerID);
 						}
 					},

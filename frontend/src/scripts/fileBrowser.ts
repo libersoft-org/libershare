@@ -102,9 +102,9 @@ export function transformFsEntry(entry: FsEntry, index: number): StorageItemData
  * Filter options for loadDirectory
  */
 export interface LoadDirectoryOptions {
-	foldersOnly?: boolean;
-	filesOnly?: boolean;
-	fileFilter?: string[];
+	foldersOnly?: boolean | undefined;
+	filesOnly?: boolean | undefined;
+	fileFilter?: string[] | undefined;
 }
 
 /**
@@ -258,8 +258,8 @@ export function parsePathToBreadcrumbs(path: string, separator: string): PathBre
 		items.push({ id: '0', name: '/', path: '/', icon: '/img/storage.svg' });
 		let currentPath = '';
 		for (let i = 0; i < parts.length; i++) {
-			currentPath += '/' + parts[i];
-			items.push({ id: String(i + 1), name: parts[i], path: currentPath });
+			currentPath += '/' + parts[i]!;
+			items.push({ id: String(i + 1), name: parts[i]!, path: currentPath });
 		}
 	} else {
 		// Windows: start with drive list, then drive, then folders
@@ -268,11 +268,11 @@ export function parsePathToBreadcrumbs(path: string, separator: string): PathBre
 		for (let i = 0; i < parts.length; i++) {
 			if (i === 0) {
 				// Drive letter (e.g., "C:")
-				currentPath = parts[i] + separator;
-				items.push({ id: String(i + 1), name: parts[i], path: currentPath });
+				currentPath = parts[i]! + separator;
+				items.push({ id: String(i + 1), name: parts[i]!, path: currentPath });
 			} else {
-				currentPath += parts[i];
-				items.push({ id: String(i + 1), name: parts[i], path: currentPath });
+				currentPath += parts[i]!;
+				items.push({ id: String(i + 1), name: parts[i]!, path: currentPath });
 				if (i < parts.length - 1) currentPath += separator;
 			}
 		}

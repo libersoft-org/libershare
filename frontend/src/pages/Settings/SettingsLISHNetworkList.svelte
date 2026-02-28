@@ -26,8 +26,8 @@
 	import LISHNetworkPeers from './SettingsLISHNetworkPeers.svelte';
 	interface Props {
 		areaID: string;
-		position?: Position;
-		onBack?: () => void;
+		position?: Position | undefined;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 	let unregisterArea: (() => void) | null = null;
@@ -152,8 +152,8 @@
 	async function moveNetwork(index: number, up: boolean): Promise<void> {
 		const newIndex = up ? index - 1 : index + 1;
 		if (newIndex < 0 || newIndex >= networks.length) return;
-		const temp = networks[index];
-		networks[index] = networks[newIndex];
+		const temp = networks[index]!;
+		networks[index] = networks[newIndex]!;
 		networks[newIndex] = temp;
 		networks = [...networks]; // Trigger reactivity
 		// Move selection with the item (immediately, before async call)
@@ -573,14 +573,14 @@
 								<div class="header">
 									<div class="name">{network.name}</div>
 									{#if network.enabled && $peerCounts[network.networkID] !== undefined}
-										<div class="peer-count">{$t('settings.lishNetwork.connectedPeers', { count: String($peerCounts[network.networkID]) })}</div>
+								<div class="peer-count">{$t('settings.lishNetwork.connectedPeers', { count: String($peerCounts[network.networkID]!) })}</div>
 									{/if}
 								</div>
 								{#if network.description}
 									<div class="description">{@html network.description.replaceAll('\n', '<br />')}</div>
 								{/if}
 								{#if networkErrors[network.networkID]}
-									<Alert type="error" message={networkErrors[network.networkID]} />
+								<Alert type="error" message={networkErrors[network.networkID]!} />
 								{/if}
 								<div class="buttons">
 									<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} selected={active && selectedIndex === i + 1 + nodeInfoOffset && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />

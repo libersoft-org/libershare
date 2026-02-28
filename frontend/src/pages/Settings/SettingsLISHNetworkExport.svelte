@@ -17,9 +17,9 @@
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	interface Props {
 		areaID: string;
-		position?: Position;
-		network?: { id: string; name: string } | null;
-		onBack?: () => void;
+		position?: Position | undefined;
+		network?: { id: string; name: string } | null | undefined;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, network = null, onBack }: Props = $props();
 	let unregisterArea: (() => void) | null = null;

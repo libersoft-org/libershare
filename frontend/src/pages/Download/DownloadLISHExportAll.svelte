@@ -10,8 +10,8 @@
 	import Alert from '../../components/Alert/Alert.svelte';
 	interface Props {
 		areaID: string;
-		position?: Position;
-		onBack?: () => void;
+		position?: Position | undefined;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);

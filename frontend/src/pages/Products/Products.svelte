@@ -65,8 +65,8 @@
 	}
 
 	function openItem(): void {
-		selectedItem = items[selectedIndex];
-		pushBreadcrumb(items[selectedIndex].title);
+		selectedItem = items[selectedIndex]!;
+		pushBreadcrumb(items[selectedIndex]!.title);
 		isAPressed = false;
 		if (unregisterList) {
 			unregisterList();

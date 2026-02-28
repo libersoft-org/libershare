@@ -13,10 +13,10 @@
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	interface Props {
 		areaID: string;
-		position?: Position;
-		network?: NetworkFormData | null;
-		onBack?: () => void;
-		onSave?: (network: NetworkFormData) => void;
+		position?: Position | undefined;
+		network?: NetworkFormData | null | undefined;
+		onBack?: (() => void) | undefined;
+		onSave?: ((network: NetworkFormData) => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, network = null, onBack, onSave }: Props = $props();
 	let active = $derived($activeArea === areaID);
@@ -87,7 +87,7 @@
 		if (item.type === 'name' && nameInput) nameInput.focus();
 		else if (item.type === 'description' && descriptionInput) descriptionInput.focus();
 		else if (item.type === 'networkID' && networkIDInput && (isEditing || !autoGenerateID)) networkIDInput.focus();
-		else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined && bootstrapInputs[item.bootstrapIndex]) bootstrapInputs[item.bootstrapIndex].focus();
+		else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined && bootstrapInputs[item.bootstrapIndex]) bootstrapInputs[item.bootstrapIndex]!.focus();
 	}
 
 	function scrollToSelected(): void {

@@ -22,18 +22,18 @@ let apiCertFile: string | undefined;
 
 for (let i = 0; i < args.length; i++) {
 	if (args[i] === '--datadir' && i + 1 < args.length) {
-		dataDir = args[i + 1];
+		dataDir = args[i + 1]!;
 		i++;
 	} else if (args[i] === '--pink') {
 		enablePink = true;
 	} else if (args[i] === '--loglevel' && i + 1 < args.length) {
-		logLevel = args[i + 1] as LogLevel;
+		logLevel = args[i + 1]! as LogLevel;
 		i++;
 	} else if (args[i] === '--host' && i + 1 < args.length) {
-		apiHost = args[i + 1];
+		apiHost = args[i + 1]!;
 		i++;
 	} else if (args[i] === '--port' && i + 1 < args.length) {
-		apiPort = parseInt(args[i + 1], 10);
+		apiPort = parseInt(args[i + 1]!, 10);
 		i++;
 	} else if (args[i] === '--secure') {
 		apiSecure = true;

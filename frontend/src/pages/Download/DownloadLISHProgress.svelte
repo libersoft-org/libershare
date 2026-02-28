@@ -90,14 +90,14 @@
 			const path = data.path || '';
 			const idx = allFiles.findIndex(f => f.path === path);
 			if (idx >= 0) {
-				allFiles[idx].currentChunk = data.current || 0;
+				allFiles[idx]!.currentChunk = data.current || 0;
 			}
 		} else if (data.type === 'file') {
 			const path = data.path || '';
 			const idx = allFiles.findIndex(f => f.path === path);
 			if (idx >= 0) {
-				allFiles[idx].done = true;
-				allFiles[idx].currentChunk = allFiles[idx].chunks;
+				allFiles[idx]!.done = true;
+				allFiles[idx]!.currentChunk = allFiles[idx]!.chunks;
 			}
 		}
 	}
@@ -112,7 +112,7 @@
 		await api.subscribe('lishs.create:progress');
 
 		try {
-			const result = await api.lishs.create(params.dataPath, params.lishFile, params.addToSharing, params.name, params.description, params.algorithm, params.chunkSize, params.threads, params.minifyJson, params.compressGzip);
+			const result = await api.lishs.create(params['dataPath'], params['lishFile'], params['addToSharing'], params['name'], params['description'], params['algorithm'], params['chunkSize'], params['threads'], params['minifyJson'], params['compressGzip']);
 			resultLishID = result.lishID;
 			status = 'done';
 		} catch (err: any) {

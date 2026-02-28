@@ -15,8 +15,8 @@
 	import SettingsStorageBrowse from './SettingsStorageBrowse.svelte';
 	interface Props {
 		areaID: string;
-		position?: Position;
-		onBack?: () => void;
+		position?: Position | undefined;
+		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 	let unregisterArea: (() => void) | null = null;

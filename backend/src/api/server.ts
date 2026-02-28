@@ -34,8 +34,8 @@ export class APIServer {
 	private readonly host: string;
 	private readonly port: number;
 	private readonly secure: boolean;
-	private readonly keyFile?: string;
-	private readonly certFile?: string;
+	private readonly keyFile?: string | undefined;
+	private readonly certFile?: string | undefined;
 
 	constructor(
 		private readonly dataDir: string,
@@ -206,7 +206,7 @@ export class APIServer {
 	}
 
 	// --- API dispatch table and core handlers ---
-	private handlers!: Record<string, (params: Record<string, any>, client: ClientSocket) => Promise<any> | any>;
+	private handlers!: Record<string, (params: any, client: ClientSocket) => any>;
 
 	private async execute(client: ClientSocket, method: string, params: Record<string, any>): Promise<any> {
 		console.log(`[API] Executing method: ${method}, params: ${JSON.stringify(params)}`);

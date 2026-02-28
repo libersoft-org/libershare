@@ -5,9 +5,9 @@ export interface StorageItemData {
 	name: string;
 	path: string;
 	type: StorageItemType;
-	size?: number;
-	modified?: string;
-	hidden?: boolean;
+	size?: number | undefined;
+	modified?: string | undefined;
+	hidden?: boolean | undefined;
 }
 
 /**
