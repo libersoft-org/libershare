@@ -64,6 +64,13 @@
 		scrollToElement(itemElements, selectedIndex, instant);
 	}
 
+	function handleProductClick(index: number) {
+		activateArea(listAreaID);
+		selectedIndex = index;
+		scrollToSelectedItem();
+		openItem();
+	}
+
 	function openItem(): void {
 		selectedItem = items[selectedIndex]!;
 		pushBreadcrumb(items[selectedIndex]!.title);
@@ -191,7 +198,7 @@
 	<SearchBar bind:this={searchBar} selected={searchSelected} />
 	<div class="items">
 		{#each items as item, index (item.id)}
-			<div bind:this={itemElements[index]}>
+			<div bind:this={itemElements[index]} onclick={() => handleProductClick(index)} onmouseenter={() => { activateArea(listAreaID); selectedIndex = index; }} onkeydown={e => e.key === 'Enter' && handleProductClick(index)} role="button" tabindex="-1">
 				<ProductsItem title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={active && index === selectedIndex} isAPressed={active && isAPressed && index === selectedIndex} />
 			</div>
 		{/each}

@@ -82,6 +82,19 @@
 	function scrollToSelected(): void {
 		scrollToElement(rowElements, selectedIndex);
 	}
+
+	function handleRowClick(index: number): void {
+		activateArea(areaID);
+		selectedIndex = index;
+		scrollToSelected();
+		if (index === 0) setFooterVisible(!$footerVisible);
+		else if (index === 1) openPositionDialog();
+		else if (index === totalItems - 1) onBack?.();
+		else {
+			const widget = footerWidgets[index - 2]!;
+			setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget]!);
+		}
+	}
 </script>
 
 <style>
@@ -121,7 +134,7 @@
 	<div class="content">
 		<div class="inner">
 			<Table columns="1fr 10vw" columnsMobile="1fr auto">
-				<div bind:this={rowElements[0]}>
+				<div bind:this={rowElements[0]} onclick={() => handleRowClick(0)} onmouseenter={() => { activateArea(areaID); selectedIndex = 0; }} onkeydown={e => e.key === 'Enter' && handleRowClick(0)} role="row" tabindex="-1">
 					<TableRow selected={active && selectedIndex === 0} odd>
 						<TableCell>{$t('settings.footerVisible')}</TableCell>
 						<TableCell align="right"><Switch checked={$footerVisible} /></TableCell>
@@ -133,7 +146,7 @@
 			</div>
 			<Table columns="1fr 10vw" columnsMobile="1fr auto">
 				{#each footerWidgets as widget, index}
-					<div bind:this={rowElements[index + 2]}>
+					<div bind:this={rowElements[index + 2]} onclick={() => handleRowClick(index + 2)} onmouseenter={() => { activateArea(areaID); selectedIndex = index + 2; }} onkeydown={e => e.key === 'Enter' && handleRowClick(index + 2)} role="row" tabindex="-1">
 						<TableRow selected={active && selectedIndex === index + 2} odd={index % 2 === 0}>
 							<TableCell>{getWidgetLabel(widget, $t)}</TableCell>
 							<TableCell align="right"><Switch checked={$footerWidgetVisibility[widget]} /></TableCell>

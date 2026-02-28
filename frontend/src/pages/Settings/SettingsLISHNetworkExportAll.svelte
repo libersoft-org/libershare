@@ -157,8 +157,12 @@
 		<div class="container">
 			{#if hasNetworks}
 				<Input bind:this={inputRef} value={networksJson} multiline rows={15} readonly fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
-				<SwitchRow label={$t('settings.lishNetwork.minifyJson')} checked={minifyJsonState} selected={active && selectedIndex === 1} onToggle={() => (minifyJsonState = !minifyJsonState)} />
-				<SwitchRow label={$t('settings.lishNetwork.compressGzip')} checked={compressGzip} selected={active && selectedIndex === 2} onToggle={() => (compressGzip = !compressGzip)} />
+				<div onmouseenter={() => { activateArea(areaID); selectedIndex = 1; }}>
+					<SwitchRow label={$t('settings.lishNetwork.minifyJson')} checked={minifyJsonState} selected={active && selectedIndex === 1} onToggle={() => (minifyJsonState = !minifyJsonState)} />
+				</div>
+				<div onmouseenter={() => { activateArea(areaID); selectedIndex = 2; }}>
+					<SwitchRow label={$t('settings.lishNetwork.compressGzip')} checked={compressGzip} selected={active && selectedIndex === 2} onToggle={() => (compressGzip = !compressGzip)} />
+				</div>
 			{:else}
 				<Alert type="warning" message={$t('settings.lishNetwork.emptyList')} />
 			{/if}

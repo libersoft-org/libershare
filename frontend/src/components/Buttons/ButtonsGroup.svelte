@@ -3,6 +3,7 @@
 		register: (button: { onConfirm?: (() => void) | undefined }) => { index: number; unregister: () => void };
 		isSelected: (index: number) => boolean;
 		isPressed: (index: number) => boolean;
+		handleClick: (index: number) => void;
 	};
 </script>
 
@@ -25,7 +26,66 @@
 	let buttons: { onConfirm?: (() => void) | undefined }[] = [];
 	let active = $derived($activeArea === areaID);
 	let itemsElement = $state<HTMLElement | null>(null);
+	// @ts-ignore used via bind:this in template
+	let wrapperElement = $state<HTMLElement | null>(null);
 	let translateX = $state(0);
+
+	// Mouse wheel & drag scrolling
+	let dragStartY = $state(0);
+	let dragStartX = $state(0);
+	let isDragging = $state(false);
+	let didDrag = $state(false);
+	const DRAG_THRESHOLD = 120;
+
+	function selectPrev() {
+		if (selectedIndex > 0) {
+			activateArea(areaID);
+			selectedIndex--;
+			updateTranslateX();
+		}
+	}
+
+	function selectNext() {
+		if (selectedIndex < buttons.length - 1) {
+			activateArea(areaID);
+			selectedIndex++;
+			updateTranslateX();
+		}
+	}
+
+	function handleWheel(e: WheelEvent) {
+		e.preventDefault();
+		if (e.deltaY > 0 || e.deltaX > 0) selectNext();
+		else if (e.deltaY < 0 || e.deltaX < 0) selectPrev();
+	}
+
+	function handleDragStart(e: MouseEvent) {
+		isDragging = true;
+		didDrag = false;
+		dragStartY = e.clientY;
+		dragStartX = e.clientX;
+		document.addEventListener('mousemove', handleDragMove);
+		document.addEventListener('mouseup', handleDragEnd);
+	}
+
+	function handleDragMove(e: MouseEvent) {
+		if (!isDragging) return;
+		const isHoriz = orientation === 'horizontal';
+		const delta = isHoriz ? dragStartX - e.clientX : dragStartY - e.clientY;
+		if (Math.abs(delta) >= DRAG_THRESHOLD) {
+			didDrag = true;
+			if (delta > 0) selectNext();
+			else selectPrev();
+			dragStartY = e.clientY;
+			dragStartX = e.clientX;
+		}
+	}
+
+	function handleDragEnd() {
+		isDragging = false;
+		document.removeEventListener('mousemove', handleDragMove);
+		document.removeEventListener('mouseup', handleDragEnd);
+	}
 
 	setContext<ButtonsGroupContext>('buttonsGroup', {
 		register(button) {
@@ -40,6 +100,16 @@
 		},
 		isSelected(index) { return active && selectedIndex === index; },
 		isPressed(index) { return active && selectedIndex === index && isAPressed; },
+		handleClick(index: number) {
+			if (didDrag) {
+				didDrag = false;
+				return;
+			}
+			activateArea(areaID);
+			selectedIndex = index;
+			updateTranslateX();
+			buttons[index]?.onConfirm?.();
+		},
 	});
 
 	function updateTranslateX(): void {
@@ -119,7 +189,11 @@
 		);
 		activateArea(areaID);
 		updateTranslateX();
-		return unregister;
+		return () => {
+			unregister();
+			document.removeEventListener('mousemove', handleDragMove);
+			document.removeEventListener('mouseup', handleDragEnd);
+		};
 	});
 </script>
 
@@ -153,13 +227,13 @@
 </style>
 
 {#if orientation === 'horizontal'}
-	<div class="buttons-wrapper">
+	<div class="buttons-wrapper" bind:this={wrapperElement} onwheel={handleWheel} onmousedown={handleDragStart} role="listbox" tabindex="-1">
 		<div class="buttons horizontal" bind:this={itemsElement} style="transform: translateX({translateX}px)">
 			{@render children()}
 		</div>
 	</div>
 {:else}
-	<div class="buttons-wrapper">
+	<div class="buttons-wrapper" bind:this={wrapperElement} onwheel={handleWheel} onmousedown={handleDragStart} role="listbox" tabindex="-1">
 		<div class="buttons vertical">
 			{@render children()}
 		</div>

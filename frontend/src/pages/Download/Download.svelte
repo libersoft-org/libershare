@@ -32,6 +32,21 @@
 		scrollToElement(itemElements, selectedIndex);
 	}
 
+	function handleDownloadClick(index: number): void {
+		activateArea(areaID);
+		selectedIndex = index;
+		scrollToSelected();
+		openDetail();
+	}
+
+	function handleToolbarClick(index: number): void {
+		activateArea(toolbarAreaID);
+		selectedToolbarIndex = index;
+		if (index === 0) navigateTo('create-lish');
+		else if (index === 1) navigateTo('import-lish');
+		else if (index === 2) navigateTo('export-all-lish');
+	}
+
 	function openDetail(): void {
 		const download = downloads[selectedIndex]!;
 		selectedDownload.set(download);
@@ -133,9 +148,9 @@
 
 <div class="download">
 	<ButtonBar>
-		<Button icon="/img/plus.svg" label={$t('downloads.createLISH')} selected={toolbarActive && selectedToolbarIndex === 0} />
-		<Button icon="/img/download.svg" label={$t('common.import')} selected={toolbarActive && selectedToolbarIndex === 1} />
-		<Button icon="/img/upload.svg" label={$t('common.exportAll')} selected={toolbarActive && selectedToolbarIndex === 2} />
+		<Button icon="/img/plus.svg" label={$t('downloads.createLISH')} selected={toolbarActive && selectedToolbarIndex === 0} onConfirm={() => handleToolbarClick(0)} />
+		<Button icon="/img/download.svg" label={$t('common.import')} selected={toolbarActive && selectedToolbarIndex === 1} onConfirm={() => handleToolbarClick(1)} />
+		<Button icon="/img/upload.svg" label={$t('common.exportAll')} selected={toolbarActive && selectedToolbarIndex === 2} onConfirm={() => handleToolbarClick(2)} />
 	</ButtonBar>
 	<div class="container">
 		<Table columns={DOWNLOAD_TABLE_COLUMNS} noBorder>
@@ -152,7 +167,7 @@
 			</Header>
 			<div class="items">
 				{#each downloads as download, index (download.id)}
-					<div bind:this={itemElements[index]}>
+					<div bind:this={itemElements[index]} onclick={() => handleDownloadClick(index)} onmouseenter={() => { activateArea(areaID); selectedIndex = index; }} onkeydown={e => e.key === 'Enter' && handleDownloadClick(index)} role="row" tabindex="-1">
 						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} selected={active && selectedIndex === index} isLast={index === downloads.length - 1} odd={index % 2 === 0} />
 					</div>
 				{/each}

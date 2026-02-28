@@ -52,6 +52,14 @@
 		onActivate() { selectedIndex = Math.max(0, items.length - 2); },
 	};
 
+	function handleItemClick(index: number) {
+		if (index >= items.length - 1) return; // Current item not selectable
+		activateArea(areaID);
+		selectedIndex = index;
+		const item = items[index];
+		if (item) onSelect?.(item, index);
+	}
+
 	onMount(() => {
 		return useArea(areaID, areaHandlers, position);
 	});
@@ -86,6 +94,11 @@
 		background-color: var(--primary-foreground);
 		color: var(--secondary-background);
 	}
+
+	.item.clickable:hover:not(.selected) {
+		color: var(--secondary-foreground);
+		background-color: var(--secondary-softer-background);
+	}
 </style>
 
 <div class="breadcrumb">
@@ -94,7 +107,7 @@
 			<Icon img="/img/caret-right.svg" size="2vh" padding="0" colorVariable="--disabled-foreground" />
 		{/if}
 		{@const isSelected = active && selectedIndex === index}
-		<div class="item" class:current={index === items.length - 1} class:selected={isSelected}>
+		<div class="item" class:current={index === items.length - 1} class:selected={isSelected} class:clickable={index < items.length - 1} onclick={() => handleItemClick(index)} role={index < items.length - 1 ? 'button' : undefined} tabindex="-1">
 			{#if item.icon}
 				<Icon img={item.icon} size="2vh" padding="0" colorVariable={isSelected ? '--primary-background' : '--disabled-foreground'} />
 			{:else}
