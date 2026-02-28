@@ -33,6 +33,7 @@
 			index = idx;
 			return unregister;
 		}
+		return undefined;
 	});
 </script>
 

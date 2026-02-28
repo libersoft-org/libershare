@@ -8,12 +8,14 @@
 		"noEmit": true,
 		"esModuleInterop": true,
 		"allowSyntheticDefaultImports": true,
-		"strict": false,
+		"strict": true,
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
 		"resolveJsonModule": true,
 		"noUnusedLocals": true,
 		"noUnusedParameters": true,
+		"noImplicitReturns": true,
+		"noFallthroughCasesInSwitch": true,
 		"paths": {
 			"@shared": ["../shared/src/index.ts"],
 			"@shared/*": ["../shared/src/*"]
