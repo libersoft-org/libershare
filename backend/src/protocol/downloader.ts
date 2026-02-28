@@ -103,7 +103,7 @@ export class Downloader {
 			for (const chunk of missingChunks) {
 				let downloaded = false;
 				// Try each peer client until one succeeds
-				for (const [peerID, client] of this.peers) {
+				for (const [, client] of this.peers) {
 					const data = await this.downloadChunk(client, chunk.chunkID);
 					if (data) {
 						// Write chunk to file at correct offset
@@ -122,7 +122,7 @@ export class Downloader {
 			}
 			console.log(`✓ Download complete! Downloaded ${downloadedCount}/${missingChunks.length} chunks`);
 		} finally {
-			for (const [peerID, client] of this.peers) {
+			for (const [, client] of this.peers) {
 				await client.close();
 			}
 			this.peers.clear();
@@ -170,7 +170,7 @@ export class Downloader {
 						console.log(`✗ Failed to connect to peer ...${data.peerID}:`, error instanceof Error ? error.message : error);
 						return;
 					}
-					this.doWork().then(r => {});
+					this.doWork().then(() => {});
 				}
 			}
 		}
@@ -180,10 +180,9 @@ export class Downloader {
 		const peerID: NodeId = data.peerID;
 		// Convert from JSON strings back to Multiaddr instances
 		const multiaddrs: Multiaddr[] = data.multiaddrs.map(ma => multiaddr(ma.toString()));
-		const chunks: HaveChunks = data.chunks;
 		try {
 			console.log(`Opening stream to peer ...${peerID}`);
-			const stream = await this.network.dialProtocol(peerID, multiaddrs, LISH_PROTOCOL);
+			const stream = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL);
 			if (this.peers.has(data.peerID)) throw new Error(`Already connected to peer ...${peerID}`);
 			this.peers.set(peerID, new LISHClient(stream));
 		} catch (error) {

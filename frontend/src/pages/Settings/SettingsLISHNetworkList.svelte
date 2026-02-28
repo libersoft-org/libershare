@@ -52,14 +52,6 @@
 	let globalNodeInfo = $state<NetworkNodeInfo | null>(null);
 	let networkErrors = $state<Record<string, string>>({});
 
-	async function loadNodeInfo(): Promise<void> {
-		try {
-			globalNodeInfo = await api.lishnets.getNodeInfo();
-		} catch (e: any) {
-			globalNodeInfo = null;
-		}
-	}
-
 	async function loadNetworks(): Promise<void> {
 		const [nets, nodeInfo] = await Promise.all([getNetworks(), api.lishnets.getNodeInfo().catch((): null => null)]);
 		globalNodeInfo = nodeInfo;

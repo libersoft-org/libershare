@@ -132,7 +132,6 @@ async function makeLISH(args: IArgs): Promise<void> {
 	console.log('\x1b[33mThreads:\x1b[0m              ' + actualThreads + (threads === 0 ? ' (auto detect)' : ''));
 	console.log('');
 	let lastProgress = '';
-	let currentFile = '';
 	let processedFiles = new Map<string, { size: number; chunks: number }>();
 	const lish = await createLISH(
 		inputPath,
@@ -147,7 +146,6 @@ async function makeLISH(args: IArgs): Promise<void> {
 					process.stdout.write('\n');
 					lastProgress = '';
 				}
-				currentFile = info.path;
 				processedFiles.set(info.path, { size: info.size, chunks: info.chunks });
 				lastProgress = '\x1b[33mCreating checksums:\x1b[0m   ' + info.path + ' (' + Utils.formatBytes(info.size) + ')';
 				process.stdout.write(lastProgress);

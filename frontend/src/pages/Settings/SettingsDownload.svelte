@@ -207,16 +207,8 @@
 		uploadSpeed = String(settingsDefaults?.network?.maxUploadSpeed ?? 0);
 	}
 
-	function resetAllowRelay(): void {
-		relay = settingsDefaults?.network?.allowRelay ?? true;
-	}
-
 	function resetRelayReservations(): void {
 		relayReservations = String(settingsDefaults?.network?.maxRelayReservations ?? 0);
-	}
-
-	function resetAutoStart(): void {
-		autoStart = settingsDefaults?.network?.autoStartSharing ?? true;
 	}
 
 	function scrollToSelected(): void {

@@ -11,9 +11,6 @@ import { LISHnetStorage } from './lishnetStorage.ts';
  */
 export class Networks {
 	private storage: LISHnetStorage;
-	private dataDir: string;
-	private dataServer: DataServer;
-	private enablePink: boolean;
 	private network: Network;
 
 	// Track which lishnets are currently joined (subscribed)
@@ -24,9 +21,6 @@ export class Networks {
 
 	constructor(storage: LISHnetStorage, dataDir: string, dataServer: DataServer, settings: Settings, enablePink: boolean = false) {
 		this.storage = storage;
-		this.dataDir = dataDir;
-		this.dataServer = dataServer;
-		this.enablePink = enablePink;
 		this.network = new Network(dataDir, dataServer, settings, enablePink);
 		// Forward peer count changes from the network node
 		this.network.onPeerCountChange = counts => {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
@@ -17,7 +17,7 @@
 		onBack: () => void;
 		onUp?: () => void;
 	}
-	let { areaID, filePath, fileName, position, onBack, onUp }: Props = $props();
+	let { areaID, filePath, position, onBack, onUp }: Props = $props();
 	// Calculate sub-area positions
 	let toolbarPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
 	let editorPosition = $derived({ x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y });

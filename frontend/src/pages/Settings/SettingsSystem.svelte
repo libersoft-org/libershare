@@ -77,12 +77,6 @@
 		return index;
 	}
 
-	// Get visual index from actual field index
-	function getVisualIndex(actualIndex: number): number {
-		if (!trayVisible && actualIndex > FIELD_SHOW_IN_TRAY) return actualIndex - 1;
-		return actualIndex;
-	}
-
 	function registerAreaHandler(): () => void {
 		return useArea(
 			areaID,

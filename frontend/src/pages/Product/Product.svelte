@@ -56,7 +56,7 @@
 
 	function selectButton(): void {
 		if (selectedRow === -1) return; // image selected, no	action
-		const action = selectedButton === 0 ? 'download' : 'play';
+		// TODO: implement download/play action
 	}
 
 	onMount(() => {

@@ -21,7 +21,7 @@
 		isLast?: boolean;
 		odd?: boolean;
 	}
-	let { name, id, progress, size, downloadedSize, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, selected = false, isLast = false, odd = false }: Props = $props();
+	let { name, id, progress, size, downloadedSize, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, selected = false, odd = false }: Props = $props();
 	// Show "downloaded / total" format when downloading
 	let sizeDisplay = $derived(downloadedSize && progress < 100 ? `${downloadedSize} / ${size}` : size);
 </script>

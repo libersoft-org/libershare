@@ -1,6 +1,6 @@
 import * as fsPromises from 'node:fs/promises';
 import { type Stats } from 'node:fs';
-import { type HashAlgorithm, type ILISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, DEFAULT_ALGO } from '@shared';
+import { type HashAlgorithm, type ILISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 export const LISH_VERSION = 1;
 export const DEFAULT_CHUNK_SIZE = 1024 * 1024;

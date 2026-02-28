@@ -13,7 +13,7 @@
 		isLast?: boolean;
 		odd?: boolean;
 	}
-	let { name, type, size, modified, selected = false, isLast = false, odd = false }: Props = $props();
+	let { name, type, size, modified, selected = false, odd = false }: Props = $props();
 </script>
 
 <style>

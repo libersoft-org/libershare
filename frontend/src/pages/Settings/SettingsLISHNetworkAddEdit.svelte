@@ -241,7 +241,7 @@
 			</div>
 		{/if}
 		<div class="label">{$t('settings.lishNetwork.bootstrapServers')}:</div>
-		{#each bootstrapServers as server, index (index)}
+		{#each bootstrapServers as _server, index (index)}
 			{@const isLast = index === bootstrapServers.length - 1}
 			{@const hasRemove = bootstrapServers.length > 1}
 			{@const isRowSelected = active && selectedIndex === bootstrapOffset + index}

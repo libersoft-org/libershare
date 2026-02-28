@@ -19,7 +19,7 @@
 		title?: string;
 		onBack?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, title = 'Downloads', onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let active = $derived($activeArea === areaID);
 	const downloads = TEST_DOWNLOADS;
 	let selectedIndex = $state(0);

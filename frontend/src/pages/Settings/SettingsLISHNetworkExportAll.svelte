@@ -70,10 +70,6 @@
 		activateArea(areaID);
 	}
 
-	function handleSaveComplete(path: string): void {
-		handleSaveAsBack();
-	}
-
 	function registerAreaHandler(): () => void {
 		return useArea(
 			areaID,
@@ -155,7 +151,7 @@
 </style>
 
 {#if browsingSaveAs}
-	<FileBrowser {areaID} {position} initialPath={saveFolder} showPath fileFilter={compressGzip ? ['*.lishnets.gz'] : ['*.lishnets']} {saveFileName} {saveContent} useGzip={compressGzip} onSaveFileNameChange={v => (saveFileName = v)} onSaveComplete={handleSaveComplete} onBack={handleSaveAsBack} />
+	<FileBrowser {areaID} {position} initialPath={saveFolder} showPath fileFilter={compressGzip ? ['*.lishnets.gz'] : ['*.lishnets']} {saveFileName} {saveContent} useGzip={compressGzip} onSaveFileNameChange={v => (saveFileName = v)} onSaveComplete={handleSaveAsBack} onBack={handleSaveAsBack} />
 {:else}
 	<div class="export-all">
 		<div class="container">

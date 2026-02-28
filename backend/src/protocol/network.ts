@@ -533,7 +533,7 @@ export class Network {
 		console.log('→ Connected to:', multiaddr);
 	}
 
-	async dialProtocol(peerID: string, multiaddrs: any[], protocol: string): Promise<Stream> {
+	async dialProtocol(multiaddrs: any[], protocol: string): Promise<Stream> {
 		if (!this.node) throw new Error('Network not started');
 		const connection = await this.node.dial(multiaddrs);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });

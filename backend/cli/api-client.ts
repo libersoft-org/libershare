@@ -9,12 +9,6 @@ interface Request {
 	params?: Record<string, any>;
 }
 
-interface Response {
-	id: number;
-	result?: any;
-	error?: string;
-}
-
 export class APIClient {
 	private ws: WebSocket | null = null;
 	private requestId = 0;
@@ -53,7 +47,7 @@ export class APIClient {
 
 			this.ws.onclose = () => {
 				// Reject all pending requests
-				for (const [id, pending] of this.pending) {
+				for (const [, pending] of this.pending) {
 					pending.reject(new Error('Connection closed'));
 				}
 				this.pending.clear();

@@ -9,7 +9,7 @@
 		onToggle?: () => void;
 		onConfirm?: () => void;
 	}
-	let { label, checked, selected = false, disabled = false, onToggle, onConfirm }: Props = $props();
+	let { label, checked, selected = false, disabled = false }: Props = $props();
 </script>
 
 <style>
@@ -28,6 +28,6 @@
 <Row {selected} {disabled}>
 	<div class="switch-row">
 		<span class="label">{label}</span>
-		<Switch {checked} {selected} {disabled} {onToggle} {onConfirm} />
+		<Switch {checked} {selected} {disabled} />
 	</div>
 </Row>

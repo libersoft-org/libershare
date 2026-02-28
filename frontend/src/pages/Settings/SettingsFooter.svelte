@@ -4,7 +4,7 @@
 	import { navigateTo } from '../../scripts/navigation.ts';
 	import { footerVisible, setFooterVisible, footerPosition, footerWidgetVisibility, setFooterWidgetVisibility } from '../../scripts/settings.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
-	import { footerWidgets, getWidgetLabel, type FooterWidget } from '../../scripts/footerWidgets.ts';
+	import { footerWidgets, getWidgetLabel } from '../../scripts/footerWidgets.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';

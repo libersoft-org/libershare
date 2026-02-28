@@ -15,19 +15,6 @@
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import TableCell from '../../components/Table/TableCell.svelte';
 
-	interface CreateParams {
-		dataPath: string;
-		lishFile?: string;
-		addToSharing?: boolean;
-		name?: string;
-		description?: string;
-		algorithm?: string;
-		chunkSize?: number;
-		threads?: number;
-		minifyJson?: boolean;
-		compressGzip?: boolean;
-	}
-
 	interface FileProgress {
 		path: string;
 		size: number;

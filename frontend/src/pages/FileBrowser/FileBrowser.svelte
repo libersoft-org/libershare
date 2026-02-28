@@ -71,7 +71,6 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let separator = $state('/');
-	let pathBreadcrumb: ReturnType<typeof PathBreadcrumb> | undefined = $state();
 	let showDeleteConfirm = $state(false);
 	let showNewFolderDialogState = $state(false);
 	let showCreateFileDialogState = $state(false);
@@ -102,14 +101,6 @@
 	let saveFileNameActive = $derived($activeArea === `${areaID}-save-filename`);
 	let saveFileNameColumn = $state(0); // 0 = input, 1 = button
 	let selectedItem = $derived(items[selectedIndex]);
-	let isEmpty = $derived(items.length === 0 || (items.length === 1 && items[0].name === '..'));
-	// Format filter for display
-	let filterLabel = $derived.by(() => {
-		if (customFilter) return customFilter;
-		if (!fileFilter || fileFilter.length === 0) return null;
-		if (showAllFiles) return '*.*';
-		return fileFilter.join(', ');
-	});
 	// Folder toolbar actions
 	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, selectFolderButton, customFilter ?? undefined, currentPath));
 	let selectedFolderActionIndex = $state(0);
@@ -1001,7 +992,7 @@
 
 <div class="browser">
 	{#if showPath}
-		<PathBreadcrumb bind:this={pathBreadcrumb} areaID="{areaID}-path" position={pathBreadcrumbPosition} path={showEditorState && fileToEdit ? fileToEdit.path : currentPath} {separator} onNavigate={handleBreadcrumbNavigate} onDown={() => (showEditorState ? `${areaID}-editor-toolbar` : error ? `${areaID}-list` : `${areaID}-folder-actions`)} />
+		<PathBreadcrumb areaID="{areaID}-path" position={pathBreadcrumbPosition} path={showEditorState && fileToEdit ? fileToEdit.path : currentPath} {separator} onNavigate={handleBreadcrumbNavigate} onDown={() => (showEditorState ? `${areaID}-editor-toolbar` : error ? `${areaID}-list` : `${areaID}-folder-actions`)} />
 	{/if}
 	{#if showEditorState && fileToEdit}
 		<Editor areaID="{areaID}-editor" filePath={fileToEdit.path} fileName={fileToEdit.name} {position} onBack={closeEditor} onUp={() => activateArea(`${areaID}-path`)} />

@@ -100,7 +100,6 @@
 	const FIELD_THREADS = 11;
 	const FIELD_CREATE = 12;
 	const FIELD_BACK = 13;
-	const TOTAL_FIELDS = 14;
 	// Algorithm selection - horizontal navigation within the algo field
 	let algoIndex = $derived(SUPPORTED_ALGOS.indexOf(algorithm));
 
@@ -210,7 +209,7 @@
 		scrollToSelected();
 	}
 
-	function handleProgressDone(lishID: string): void {
+	function handleProgressDone(): void {
 		// Clean up without re-registering area (we're navigating away)
 		if (removeBackHandler) {
 			removeBackHandler();

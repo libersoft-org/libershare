@@ -6,9 +6,8 @@
 		placeholder?: string;
 		selected?: boolean;
 		onchange?: (value: string) => void;
-		onConfirm?: () => void;
 	}
-	let { value = $bindable(''), placeholder, selected = false, onchange, onConfirm }: Props = $props();
+	let { value = $bindable(''), placeholder, selected = false, onchange }: Props = $props();
 	let searchPlaceholder = $derived(placeholder ?? $t('common.search') + ' ...');
 	let inputComponent: Input;
 	export function toggleFocus(): void {
