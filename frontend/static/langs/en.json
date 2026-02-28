@@ -96,6 +96,8 @@
 			"lishFileRequired": "LISH file path is required when saving to file is enabled",
 			"invalidChunkSize": "Invalid chunk size",
 			"invalidThreads": "Number of threads must be 0 or positive",
+			"emptyDirectory": "The selected data directory is empty, there is nothing to create.",
+			"dataPathNotFound": "The specified data path does not exist.",
 			"showAdvanced": "Show advanced settings",
 			"hideAdvanced": "Hide advanced settings",
 			"progress": {

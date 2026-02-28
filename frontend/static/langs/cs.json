@@ -96,6 +96,8 @@
 			"lishFileRequired": "Cesta k souboru .lish je povinná, pokud je zapnuto ukládání do souboru",
 			"invalidChunkSize": "Neplatná velikost chunku",
 			"invalidThreads": "Počet vláken musí být 0 nebo kladné číslo",
+			"emptyDirectory": "Zvolený adresář s daty je prázdný, není co vytvářet.",
+			"dataPathNotFound": "Zadaná cesta k datům neexistuje.",
 			"showAdvanced": "Zobrazit pokročilá nastavení",
 			"hideAdvanced": "Skrýt pokročilá nastavení",
 			"progress": {

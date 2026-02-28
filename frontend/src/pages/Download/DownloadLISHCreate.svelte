@@ -137,6 +137,23 @@
 		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, addToSharing, chunkSize, threads });
 		errorMessage = validationError ? getLISHCreateErrorMessage(validationError, $t) : '';
 		if (!errorMessage) {
+			// Check if data path exists and is not an empty directory
+			try {
+				const pathCheck = await api.fs.exists(dataPath);
+				if (!pathCheck.exists) {
+					errorMessage = $t('downloads.lishCreate.dataPathNotFound');
+					return;
+				}
+				if (pathCheck.type === 'directory') {
+					const listing = await api.fs.list(dataPath);
+					if (listing.entries.length === 0) {
+						errorMessage = $t('downloads.lishCreate.emptyDirectory');
+						return;
+					}
+				}
+			} catch {
+				// If checks fail, let the backend handle it
+			}
 			const params: Record<string, any> = {
 				dataPath,
 			};
