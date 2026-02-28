@@ -90,7 +90,7 @@ export class JsonStorage<T extends Record<string, any>> extends BaseStorage<T> {
 		await this.saveFile(this.data);
 	}
 
-	getAll(): T {
+	list(): T {
 		return this.data;
 	}
 
@@ -122,7 +122,7 @@ export class ArrayStorage<T extends Record<string, any>> extends BaseStorage<T[]
 		return storage;
 	}
 
-	getAll(): T[] {
+	list(): T[] {
 		return this.items;
 	}
 

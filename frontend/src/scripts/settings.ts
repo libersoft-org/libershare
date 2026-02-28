@@ -57,7 +57,7 @@ async function updateSetting<T>(store: Writable<T>, path: string, value: T): Pro
 // Load all settings from backend
 export async function loadSettings(): Promise<void> {
 	try {
-		const [settings, defaults] = await Promise.all([api.settings.getAll(), api.settings.getDefaults()]);
+		const [settings, defaults] = await Promise.all([api.settings.list(), api.settings.getDefaults()]);
 		settingsDefaults = defaults;
 
 		// Language

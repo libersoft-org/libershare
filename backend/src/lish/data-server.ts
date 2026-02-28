@@ -24,15 +24,15 @@ export class DataServer {
 		return this.storage.get(lishID) || null;
 	}
 
-	getAll(): IStoredLISH[] {
-		return this.storage.getAll();
+	list(): IStoredLISH[] {
+		return this.storage.list();
 	}
 
 	/**
 	 * Get all lishs that have a directory (i.e. are actual datasets, not just metadata).
 	 */
 	getDatasets(): IStoredLISH[] {
-		return this.storage.getAll().filter(l => l.directory);
+		return this.storage.list().filter(l => l.directory);
 	}
 
 	async add(lish: IStoredLISH): Promise<void> {

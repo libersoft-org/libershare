@@ -214,12 +214,12 @@ export class Networks {
 		return this.storage.get(id);
 	}
 
-	getAll(): LISHNetworkConfig[] {
-		return this.storage.getAll();
+	list(): LISHNetworkConfig[] {
+		return this.storage.list();
 	}
 
 	getEnabled(): LISHNetworkConfig[] {
-		return this.storage.getAll().filter(c => c.enabled);
+		return this.storage.list().filter(c => c.enabled);
 	}
 
 	async add(network: LISHNetworkConfig): Promise<boolean> {

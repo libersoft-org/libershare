@@ -14,8 +14,8 @@ export function initSettingsHandlers(settings: Settings) {
 		return true;
 	}
 
-	function getAll(): SettingsData {
-		return settings.getAll();
+	function list(): SettingsData {
+		return settings.list();
 	}
 	function getDefaults(): SettingsData {
 		return settings.getDefaults();
@@ -24,5 +24,5 @@ export function initSettingsHandlers(settings: Settings) {
 		return settings.reset();
 	}
 
-	return { get, set, getAll, getDefaults, reset };
+	return { get, set, list, getDefaults, reset };
 }

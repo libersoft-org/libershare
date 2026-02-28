@@ -132,8 +132,8 @@ class SettingsAPI {
 		return this.client.call<boolean>('settings.set', { path, value });
 	}
 
-	getAll<T = any>(): Promise<T> {
-		return this.client.call<T>('settings.getAll');
+	list<T = any>(): Promise<T> {
+		return this.client.call<T>('settings.list');
 	}
 
 	getDefaults<T = any>(): Promise<T> {

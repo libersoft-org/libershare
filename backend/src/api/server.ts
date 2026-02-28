@@ -73,12 +73,12 @@ export class APIServer {
 			// Settings
 			'settings.get': _settings.get,
 			'settings.set': _settings.set,
-			'settings.getAll': _settings.getAll,
+			'settings.list': _settings.list,
 			'settings.getDefaults': _settings.getDefaults,
 			'settings.reset': _settings.reset,
 
 			// LISH Networks
-			'lishnets.getAll': _lishnets.getAll,
+			'lishnets.list': _lishnets.list,
 			'lishnets.get': _lishnets.get,
 			'lishnets.exists': _lishnets.exists,
 			'lishnets.add': _lishnets.add,
@@ -99,7 +99,7 @@ export class APIServer {
 			'lishnets.infoAll': _lishnets.infoAll,
 
 			// LISHs
-			'lishs.getAll': _lishs.getAll,
+			'lishs.list': _lishs.list,
 			'lishs.get': _lishs.get,
 			'lishs.create': _lishs.create,
 

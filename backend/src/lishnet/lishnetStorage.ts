@@ -16,8 +16,8 @@ export class LISHnetStorage {
 		return instance;
 	}
 
-	getAll(): LISHNetworkConfig[] {
-		return this.storage.getAll();
+	list(): LISHNetworkConfig[] {
+		return this.storage.list();
 	}
 
 	get(networkID: string): LISHNetworkConfig | undefined {
@@ -59,5 +59,12 @@ export class LISHnetStorage {
 			if (await this.addIfNotExists(network)) imported++;
 		}
 		return imported;
+	}
+
+	/**
+	 * Replace all networks (for reordering)
+	 */
+	async setAll(networks: LISHNetworkConfig[]): Promise<void> {
+		await this.storage.setAll(networks);
 	}
 }

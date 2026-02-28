@@ -130,8 +130,8 @@ export class Settings {
 		await this.storage.set(path, value);
 	}
 
-	getAll(): SettingsData {
-		return this.storage.getAll();
+	list(): SettingsData {
+		return this.storage.list();
 	}
 
 	getDefaults(): SettingsData {

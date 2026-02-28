@@ -6,7 +6,7 @@ const assert = Utils.assertParams;
 
 export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer) {
 	function list(): LISHNetworkConfig[] {
-		return networks.getAll();
+		return networks.list();
 	}
 	function get(p: { networkID: string }): LISHNetworkConfig | undefined {
 		assert(p, ['networkID']);
@@ -90,7 +90,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		};
 	}
 	function infoAll(): NetworkInfo[] {
-		const configs = networks.getAll();
+		const configs = networks.list();
 		const network = networks.getNetwork();
 		const nodeInfo = network.isRunning() ? network.getNodeInfo() : null;
 		const result: NetworkInfo[] = [];

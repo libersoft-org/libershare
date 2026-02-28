@@ -20,7 +20,7 @@ interface CreateLISHParams {
 
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn) {
 	function list(): IStoredLISH[] {
-		return dataServer.getAll();
+		return dataServer.list();
 	}
 	function get(p: { lishID: string }): IStoredLISH | null {
 		assert(p, ['lishID']);

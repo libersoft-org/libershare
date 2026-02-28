@@ -138,7 +138,7 @@ export class Network {
 		}
 
 		// Read settings
-		const allSettings = this.settings.getAll();
+		const allSettings = this.settings.list();
 
 		// Initialize datastore (single shared datastore)
 		const datastorePath = join(this.dataDir, 'datastore');
