@@ -33,6 +33,7 @@
 	let dragStartY = $state(0);
 	let dragStartX = $state(0);
 	let isDragging = $state(false);
+	let didDrag = $state(false);
 	const DRAG_THRESHOLD = 120;
 
 	function selectPrev() {
@@ -59,6 +60,7 @@
 
 	function handleDragStart(e: MouseEvent) {
 		isDragging = true;
+		didDrag = false;
 		dragStartY = e.clientY;
 		dragStartX = e.clientX;
 		document.addEventListener('mousemove', handleDragMove);
@@ -70,6 +72,7 @@
 		const isHoriz = orientation === 'horizontal';
 		const delta = isHoriz ? dragStartX - e.clientX : dragStartY - e.clientY;
 		if (Math.abs(delta) >= DRAG_THRESHOLD) {
+			didDrag = true;
 			if (delta > 0) selectNext();
 			else selectPrev();
 			dragStartY = e.clientY;
@@ -97,6 +100,10 @@
 		isSelected(index) { return active && selectedIndex === index; },
 		isPressed(index) { return active && selectedIndex === index && isAPressed; },
 		handleClick(index: number) {
+			if (didDrag) {
+				didDrag = false;
+				return;
+			}
 			activateArea(areaID);
 			selectedIndex = index;
 			updateTranslateX();
