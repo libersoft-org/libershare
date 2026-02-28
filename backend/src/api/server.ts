@@ -40,13 +40,7 @@ export class APIServer {
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
 
-	constructor(
-		dataDir: string,
-		dataServer: DataServer,
-		networks: Networks,
-		settings: Settings,
-		options: APIServerOptions
-	) {
+	constructor(dataDir: string, dataServer: DataServer, networks: Networks, settings: Settings, options: APIServerOptions) {
 		this.dataDir = dataDir;
 		this.dataServer = dataServer;
 		this.networks = networks;

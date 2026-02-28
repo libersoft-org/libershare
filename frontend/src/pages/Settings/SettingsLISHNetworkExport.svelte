@@ -148,7 +148,9 @@
 					else if (selectedIndex === 3 && selectedColumn === 1) onBack?.();
 				},
 				confirmCancel() {},
-				back() { onBack?.(); },
+				back() {
+					onBack?.();
+				},
 			},
 			position
 		);

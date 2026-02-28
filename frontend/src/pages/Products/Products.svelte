@@ -126,17 +126,27 @@
 		confirmCancel() {
 			isAPressed = false;
 		},
-		back() { onBack?.(); },
+		back() {
+			onBack?.();
+		},
 	};
 
 	onMount(() => {
 		const unregisterSearch = useArea(
 			searchAreaID,
 			{
-				up() { return false; },
-				down() { return false; },
-				confirmUp() { searchBar?.toggleFocus(); },
-				back() { onBack?.(); },
+				up() {
+					return false;
+				},
+				down() {
+					return false;
+				},
+				confirmUp() {
+					searchBar?.toggleFocus();
+				},
+				back() {
+					onBack?.();
+				},
 			},
 			searchPosition
 		);

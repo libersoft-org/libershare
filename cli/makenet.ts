@@ -1,4 +1,4 @@
-import { Utils } from '../src/utils.ts';
+import { Utils } from '../backend/src/utils.ts';
 import { type ILISHNetwork } from '@shared';
 interface IArgs {
 	name?: string;

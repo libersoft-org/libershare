@@ -115,7 +115,9 @@
 			}
 		},
 		confirmCancel() {},
-		back() { onBack?.(); },
+		back() {
+			onBack?.();
+		},
 	};
 
 	onMount(() => {

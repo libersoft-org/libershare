@@ -27,8 +27,12 @@
 		const unregister = useArea(
 			'confirm-dialog',
 			{
-				up() { return true; }, // Block navigation outside dialog
-				down() { return true; }, // Block navigation outside dialog
+				up() {
+					return true;
+				}, // Block navigation outside dialog
+				down() {
+					return true;
+				}, // Block navigation outside dialog
 				left() {
 					selectedButton = 'confirm';
 					return true;

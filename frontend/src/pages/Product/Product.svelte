@@ -101,7 +101,9 @@
 				confirmCancel() {
 					isAPressed = false;
 				},
-				back() { onBack?.(); },
+				back() {
+					onBack?.();
+				},
 			},
 			position
 		);

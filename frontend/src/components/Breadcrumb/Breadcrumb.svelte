@@ -31,7 +31,9 @@
 			}
 			return false;
 		},
-		up() { return false; },
+		up() {
+			return false;
+		},
 		down() {
 			if (onDown) {
 				const target = onDown();
@@ -48,8 +50,12 @@
 			if (item && selectedIndex < items.length - 1) onSelect?.(item, selectedIndex);
 		},
 		confirmCancel() {},
-		back() { onBack?.(); },
-		onActivate() { selectedIndex = Math.max(0, items.length - 2); },
+		back() {
+			onBack?.();
+		},
+		onActivate() {
+			selectedIndex = Math.max(0, items.length - 2);
+		},
 	};
 
 	onMount(() => {

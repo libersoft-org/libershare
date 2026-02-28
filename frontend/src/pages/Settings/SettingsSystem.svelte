@@ -129,7 +129,9 @@
 					}
 				},
 				confirmCancel() {},
-				back() { onBack?.(); },
+				back() {
+					onBack?.();
+				},
 			},
 			position
 		);

@@ -385,7 +385,9 @@
 					}
 				},
 				confirmCancel() {},
-				back() { onBack?.(); },
+				back() {
+					onBack?.();
+				},
 			},
 			position
 		);
@@ -573,14 +575,14 @@
 								<div class="header">
 									<div class="name">{network.name}</div>
 									{#if network.enabled && $peerCounts[network.networkID] !== undefined}
-								<div class="peer-count">{$t('settings.lishNetwork.connectedPeers', { count: String($peerCounts[network.networkID]!) })}</div>
+										<div class="peer-count">{$t('settings.lishNetwork.connectedPeers', { count: String($peerCounts[network.networkID]!) })}</div>
 									{/if}
 								</div>
 								{#if network.description}
 									<div class="description">{@html network.description.replaceAll('\n', '<br />')}</div>
 								{/if}
 								{#if networkErrors[network.networkID]}
-								<Alert type="error" message={networkErrors[network.networkID]!} />
+									<Alert type="error" message={networkErrors[network.networkID]!} />
 								{/if}
 								<div class="buttons">
 									<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} selected={active && selectedIndex === i + 1 + nodeInfoOffset && buttonIndex === 0} onConfirm={() => connectNetwork(network)} />

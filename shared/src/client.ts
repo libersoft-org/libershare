@@ -20,10 +20,7 @@ export class WsClient {
 	private apiURL: string;
 	private onStateChange: (state: State) => void;
 
-	constructor(
-		apiURL: string,
-		onStateChange: (state: State) => void
-	) {
+	constructor(apiURL: string, onStateChange: (state: State) => void) {
 		this.apiURL = apiURL;
 		this.onStateChange = onStateChange;
 		this.connect();

@@ -41,7 +41,7 @@ initLanguage();
 
 function initLanguage(): void {
 	const browserLang = navigator.language?.split('-')[0];
-	const initialLang = (browserLang && languages.some(l => l.id === browserLang)) ? browserLang : 'en';
+	const initialLang = browserLang && languages.some(l => l.id === browserLang) ? browserLang : 'en';
 	currentLanguage.set(initialLang);
 }
 

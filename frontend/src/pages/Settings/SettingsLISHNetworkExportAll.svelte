@@ -114,7 +114,9 @@
 					else if (!hasNetworks) onBack?.();
 				},
 				confirmCancel() {},
-				back() { onBack?.(); },
+				back() {
+					onBack?.();
+				},
 			},
 			position
 		);

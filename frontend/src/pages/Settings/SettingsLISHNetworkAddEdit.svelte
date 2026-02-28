@@ -178,7 +178,9 @@
 					else if (item.type === 'back') onBack?.();
 				},
 				confirmCancel() {},
-				back() { onBack?.(); },
+				back() {
+					onBack?.();
+				},
 			},
 			position
 		);

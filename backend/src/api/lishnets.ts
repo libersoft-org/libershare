@@ -130,7 +130,24 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		return result;
 	}
 	return {
-		list, get, exists, add, update, delete: del, addIfNotExists, import: importNetworks, replace,
-		importFromFile, importFromJson, setEnabled, connect, findPeer, getAddresses, getPeers, getNodeInfo, getStatus, infoAll,
+		list,
+		get,
+		exists,
+		add,
+		update,
+		delete: del,
+		addIfNotExists,
+		import: importNetworks,
+		replace,
+		importFromFile,
+		importFromJson,
+		setEnabled,
+		connect,
+		findPeer,
+		getAddresses,
+		getPeers,
+		getNodeInfo,
+		getStatus,
+		infoAll,
 	};
 }

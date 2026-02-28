@@ -101,7 +101,9 @@
 					} else if (selectedIndex === totalItems - 1) onBack?.();
 				},
 				confirmCancel() {},
-				back() { onBack?.(); },
+				back() {
+					onBack?.();
+				},
 			},
 			position
 		);

@@ -62,7 +62,9 @@
 	}
 
 	const toolbarHandlers = {
-		up() { return false; },
+		up() {
+			return false;
+		},
 		down() {
 			if (download) {
 				activateArea(infoAreaID);
@@ -91,7 +93,9 @@
 			if (action) handleToolbarAction(action.id);
 		},
 		confirmCancel() {},
-		back() { onBack?.(); },
+		back() {
+			onBack?.();
+		},
 	};
 
 	const infoHandlers = {
@@ -107,12 +111,18 @@
 			}
 			return false;
 		},
-		left() { return false; },
-		right() { return false; },
+		left() {
+			return false;
+		},
+		right() {
+			return false;
+		},
 		confirmDown() {},
 		confirmUp() {},
 		confirmCancel() {},
-		back() { onBack?.(); },
+		back() {
+			onBack?.();
+		},
 	};
 
 	const listHandlers = {
@@ -134,14 +144,20 @@
 			}
 			return false;
 		},
-		left() { return false; },
-		right() { return false; },
+		left() {
+			return false;
+		},
+		right() {
+			return false;
+		},
 		confirmDown() {},
 		confirmUp() {
 			// TODO: Open file or show file actions
 		},
 		confirmCancel() {},
-		back() { onBack?.(); },
+		back() {
+			onBack?.();
+		},
 	};
 
 	onMount(() => {
@@ -244,7 +260,7 @@
 			<div class="info" class:selected={infoActive} bind:this={infoElement}>
 				<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
 					<TableRow odd>
-					<Cell>{$t('common.name')}:</Cell>
+						<Cell>{$t('common.name')}:</Cell>
 						<Cell align="right">{download.name}</Cell>
 					</TableRow>
 					<TableRow>
@@ -289,7 +305,7 @@
 			<div class="container" bind:this={filesElement}>
 				<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
 					<Header fontSize="1.4vh">
-					<Cell>{$t('common.name')}</Cell>
+						<Cell>{$t('common.name')}</Cell>
 						<Cell align="center">{$t('common.size')}</Cell>
 						<Cell align="center">{$t('common.progress')}</Cell>
 					</Header>

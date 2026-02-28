@@ -39,7 +39,9 @@
 	}
 
 	const toolbarHandlers = {
-		up() { return false; },
+		up() {
+			return false;
+		},
 		down() {
 			activateArea(areaID);
 			return true;
@@ -65,7 +67,9 @@
 			else if (selectedToolbarIndex === 2) navigateTo('export-all-lish');
 		},
 		confirmCancel() {},
-		back() { onBack?.(); },
+		back() {
+			onBack?.();
+		},
 	};
 
 	const areaHandlers = {
@@ -87,14 +91,20 @@
 			}
 			return false;
 		},
-		left() { return false; },
-		right() { return false; },
+		left() {
+			return false;
+		},
+		right() {
+			return false;
+		},
 		confirmDown() {},
 		confirmUp() {
 			openDetail();
 		},
 		confirmCancel() {},
-		back() { onBack?.(); },
+		back() {
+			onBack?.();
+		},
 	};
 
 	onMount(() => {

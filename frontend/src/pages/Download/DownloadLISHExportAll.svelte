@@ -65,7 +65,9 @@
 					else if (!hasLISH) onBack?.();
 				},
 				confirmCancel() {},
-				back() { onBack?.(); },
+				back() {
+					onBack?.();
+				},
 			},
 			position
 		);
