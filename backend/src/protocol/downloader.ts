@@ -53,7 +53,7 @@ export class Downloader {
 		this.lish = Utils.safeJsonParse(content, `LISH file: ${lishPath}`);
 		this.lishID = this.lish.id as LISHid;
 		console.log(`Loading LISH: ${this.lish.name} (id: ${this.lishID})`);
-		this.missingChunks = this.dataServer.getMissingChunks(this.lish);
+		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 		console.log(`Found ${this.missingChunks.length} chunks to download`);
 		const topic = lishTopic(this.networkID);
 		await this.network.subscribe(topic, async data => {
@@ -97,7 +97,7 @@ export class Downloader {
 
 	private async downloadChunks(): Promise<void> {
 		let downloadedCount = 0;
-		let missingChunks = this.dataServer.getMissingChunks(this.lish);
+		let missingChunks = this.dataServer.getMissingChunks(this.lishID);
 		try {
 			// Download loop - reuse the open streams
 			for (const chunk of missingChunks) {
@@ -109,7 +109,7 @@ export class Downloader {
 						// Write chunk to file at correct offset
 						await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 						// Mark as downloaded
-						await this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
+						this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 						downloadedCount++;
 						downloaded = true;
 						console.log(`✓ Downloaded chunk ${downloadedCount}/${missingChunks.length}`);

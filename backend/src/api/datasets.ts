@@ -14,7 +14,7 @@ export function initDatasetsHandlers(dataServer: DataServer): DatasetsHandlers {
 			id: l.id,
 			lishID: l.id,
 			directory: l.directory!,
-			complete: dataServer.isComplete(l),
+			complete: dataServer.isCompleteLISH(l),
 		}));
 	}
 
@@ -26,7 +26,7 @@ export function initDatasetsHandlers(dataServer: DataServer): DatasetsHandlers {
 			id: lish.id,
 			lishID: lish.id,
 			directory: lish.directory,
-			complete: dataServer.isComplete(lish),
+			complete: dataServer.isCompleteLISH(lish),
 		};
 	}
 

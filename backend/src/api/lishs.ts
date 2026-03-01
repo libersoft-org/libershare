@@ -29,36 +29,6 @@ interface LISHsHandlers {
 	delete: (p: { lishID: string; deleteLISH: boolean; deleteData: boolean }) => Promise<boolean>;
 }
 
-function toSummary(lish: IStoredLISH): ILISHSummary {
-	return {
-		id: lish.id,
-		name: lish.name,
-		description: lish.description,
-		created: lish.created,
-		totalSize: lish.files?.reduce((sum, f) => sum + f.size, 0) ?? 0,
-		fileCount: lish.files?.length ?? 0,
-		directoryCount: lish.directories?.length ?? 0,
-	};
-}
-
-function toDetail(lish: IStoredLISH): ILISHDetail {
-	return {
-		id: lish.id,
-		name: lish.name,
-		description: lish.description,
-		created: lish.created,
-		chunkSize: lish.chunkSize,
-		checksumAlgo: lish.checksumAlgo,
-		totalSize: lish.files?.reduce((sum, f) => sum + f.size, 0) ?? 0,
-		fileCount: lish.files?.length ?? 0,
-		directoryCount: lish.directories?.length ?? 0,
-		directory: lish.directory,
-		files: lish.files?.map(f => ({ path: f.path, size: f.size, permissions: f.permissions, modified: f.modified, created: f.created })) ?? [],
-		directories: lish.directories ?? [],
-		links: lish.links ?? [],
-	};
-}
-
 /**
  * Delete only the files and empty directories that belong to a LISH structure.
  * Files not part of the LISH are left untouched.
@@ -101,27 +71,12 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHandlers {
 	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): ILISHSummary[] {
-		const summaries = dataServer.list().map(toSummary);
-		if (p?.sortBy) {
-			const sortBy = p.sortBy;
-			const dir = (p.sortOrder ?? 'asc') === 'desc' ? -1 : 1;
-			summaries.sort((a, b) => {
-				const va = a[sortBy];
-				const vb = b[sortBy];
-				if (typeof va === 'string' && typeof vb === 'string') return va.localeCompare(vb) * dir;
-				if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
-				return 0;
-			});
-		} else if (p?.sortOrder === 'desc') {
-			summaries.reverse();
-		}
-		return summaries;
+		return dataServer.listSummaries(p?.sortBy, p?.sortOrder);
 	}
 
 	function get(p: { lishID: string }): ILISHDetail | null {
 		assert(p, ['lishID']);
-		const lish = dataServer.get(p.lishID);
-		return lish ? toDetail(lish) : null;
+		return dataServer.getDetail(p.lishID);
 	}
 
 	function backup(): IStoredLISH[] {
@@ -182,7 +137,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		if (addToSharing) {
 			lish.directory = dataPath;
 			if (lish.files) lish.chunks = lish.files.flatMap(f => f.checksums);
-			await dataServer.add(lish);
+			dataServer.add(lish);
 			console.log(`✓ Dataset imported: ${lish.id}`);
 		}
 		return { lishID: lish.id, lishFile: resultLISHFile };
@@ -196,7 +151,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		if (p.deleteData && lish.directory) await deleteLISHData(lish);
 		// Delete LISH from storage if requested
 		if (p.deleteLISH) {
-			const deleted = await dataServer.delete(p.lishID);
+			const deleted = dataServer.delete(p.lishID);
 			if (deleted) console.log(`✓ LISH deleted: ${p.lishID}`);
 			return deleted;
 		}

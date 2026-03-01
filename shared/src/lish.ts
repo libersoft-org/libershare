@@ -7,7 +7,6 @@ export const DEFAULT_ALGO: HashAlgorithm = 'sha256';
 export const DEFAULT_CHUNK_SIZE: number = 1024 * 1024;
 
 export interface ILISH {
-	version: number;
 	id: string;
 	name?: string | undefined;
 	description?: string | undefined;

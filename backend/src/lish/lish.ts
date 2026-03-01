@@ -2,7 +2,6 @@ import * as fsPromises from 'node:fs/promises';
 import { type Stats } from 'node:fs';
 import { type HashAlgorithm, type ILISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
 import { calculateChecksum } from './checksum.ts';
-export const LISH_VERSION = 1;
 
 // Helper to normalize paths to forward slashes
 function normalizePath(p: string): string {
@@ -251,10 +250,9 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 
 export async function createLISH(inputPath: string, name: string | undefined, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: ProgressInfo) => void, id?: string): Promise<ILISH> {
 	const created = new Date().toISOString();
-	const lishId = id || globalThis.crypto.randomUUID();
+	const lishID = id || globalThis.crypto.randomUUID();
 	const lish: ILISH = {
-		version: LISH_VERSION,
-		id: lishId,
+		id: lishID,
 		name,
 		description,
 		created,
