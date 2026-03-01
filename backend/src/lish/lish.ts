@@ -228,11 +228,16 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				const totalChunks = Math.ceil(stat.size / chunkSize);
 				// Progress feedback - file start
 				if (onProgress) onProgress({ type: 'file-start', path: relativePath, size: stat.size, chunks: totalChunks });
-				// Calculate checksums (sequential for 1 thread, parallel for multiple)
-				const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
-				const checksums = await calcFn(fullPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
-					if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: completed, total });
-				});
+				// Calculate checksums (skip for empty files)
+				let checksums: string[];
+				if (stat.size === 0) {
+					checksums = [];
+				} else {
+					const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
+					checksums = await calcFn(fullPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
+						if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: completed, total });
+					});
+				}
 				files.push({
 					path: relativePath,
 					size: stat.size,
@@ -272,11 +277,16 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		if (onProgress) onProgress({ type: 'file-list', files: [{ path: filename, size: stat.size, chunks: totalChunks }] });
 		// Progress feedback - file start
 		if (onProgress) onProgress({ type: 'file-start', path: filename, size: stat.size, chunks: totalChunks });
-		// Calculate checksums (sequential for 1 thread, parallel for multiple)
-		const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
-		const checksums = await calcFn(inputPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
-			if (onProgress) onProgress({ type: 'chunk', path: filename, current: completed, total });
-		});
+		// Calculate checksums (skip for empty files)
+		let checksums: string[];
+		if (stat.size === 0) {
+			checksums = [];
+		} else {
+			const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
+			checksums = await calcFn(inputPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
+				if (onProgress) onProgress({ type: 'chunk', path: filename, current: completed, total });
+			});
+		}
 		lish.files = [
 			{
 				path: filename,
