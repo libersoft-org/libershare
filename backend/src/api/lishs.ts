@@ -90,6 +90,13 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 		}
 	}
 	console.log(`✓ LISH data deleted: ${deletedFiles} files, ${deletedDirs} directories removed`);
+	// 3. Delete the base directory itself if empty
+	try {
+		await rmdir(baseDir);
+		console.log(`✓ Base directory removed: ${baseDir}`);
+	} catch (err: any) {
+		if (err.code !== 'ENOENT' && err.code !== 'ENOTEMPTY') console.error(`Failed to delete base directory: ${baseDir}`, err);
+	}
 }
 
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHandlers {
