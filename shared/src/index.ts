@@ -35,7 +35,6 @@ export interface PeerConnectionInfo {
 
 // LISH Network definition (pure network parameters)
 export interface LISHNetworkDefinition {
-	version: number;
 	networkID: string;
 	name: string;
 	description: string;
@@ -111,7 +110,6 @@ export interface FetchUrlResponse {
 
 // LISH Network file format (.lishnet) — fields may be optional in imported files
 export interface ILISHNetwork {
-	version: number;
 	networkID: string;
 	name: string;
 	description?: string;

@@ -177,7 +177,6 @@ export class Networks {
 
 	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
 		const config: LISHNetworkConfig = {
-			version: data.version,
 			networkID: data.networkID,
 			name: data.name,
 			description: data.description || '',
