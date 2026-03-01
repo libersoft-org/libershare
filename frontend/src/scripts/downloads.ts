@@ -179,7 +179,7 @@ export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
  * Handle toolbar action for download detail
  * @returns true if action was handled internally, false if needs UI handling (e.g., onBack)
  */
-export function handleDownloadToolbarAction(actionId: DownloadToolbarActionId, download: DownloadData | null): { handled: boolean; needsBack?: boolean } {
+export function handleDownloadToolbarAction(actionId: DownloadToolbarActionId, download: DownloadData | null): { handled: boolean; needsBack?: boolean; needsDelete?: boolean } {
 	switch (actionId) {
 		case 'back':
 			return { handled: false, needsBack: true };
@@ -200,10 +200,25 @@ export function handleDownloadToolbarAction(actionId: DownloadToolbarActionId, d
 			console.log('Move data for download:', download?.id);
 			return { handled: true };
 		case 'delete':
-			// TODO: Implement delete download
-			console.log('Delete download:', download?.id);
-			return { handled: true };
+			return { handled: false, needsDelete: true };
 		default:
 			return { handled: false };
+	}
+}
+
+/**
+ * Delete a LISH and/or its data from the backend.
+ * @param lishID - The LISH ID to delete
+ * @param deleteLISH - Whether to delete the LISH entry from storage
+ * @param deleteData - Whether to also delete the associated data directory
+ * @returns true if deletion succeeded
+ */
+export async function deleteDownload(lishID: string, deleteLISH: boolean, deleteData: boolean): Promise<boolean> {
+	try {
+		const result = await api.lishs.delete(lishID, deleteLISH, deleteData);
+		return result;
+	} catch (err) {
+		console.error('Failed to delete LISH:', err);
+		return false;
 	}
 }

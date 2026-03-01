@@ -273,6 +273,10 @@ class LISHsAPI {
 			compressGzip,
 		});
 	}
+
+	delete(lishID: string, deleteLISH: boolean, deleteData: boolean): Promise<boolean> {
+		return this.client.call<boolean>('lishs.delete', { lishID, deleteLISH: deleteLISH, deleteData });
+	}
 }
 
 class TransferAPI {

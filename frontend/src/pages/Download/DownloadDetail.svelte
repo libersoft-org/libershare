@@ -15,6 +15,8 @@
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Badge from '../../components/Badge/Badge.svelte';
 	import DownloadFile from './DownloadFile.svelte';
+	import Alert from '../../components/Alert/Alert.svelte';
+	import DownloadDetailDelete from './DownloadDetailDelete.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -49,6 +51,9 @@
 			icon: action.getIcon?.(isPaused) ?? action.icon,
 		}))
 	);
+	// Delete dialog state
+	let showDeleteDialog = $state(false);
+	let deleteError = $state('');
 	function scrollToSelected(): void {
 		scrollToElement(itemElements, selectedFileIndex);
 	}
@@ -68,6 +73,22 @@
 	function handleToolbarAction(actionId: DownloadToolbarActionId): void {
 		const result = handleDownloadToolbarAction(actionId, download);
 		if (result.needsBack) handleBack();
+		if (result.needsDelete) showDeleteDialog = true;
+	}
+
+	function handleDeleteCancel(): void {
+		showDeleteDialog = false;
+		activateArea(toolbarAreaID);
+	}
+
+	function handleDeleteResult(deleteLISH: boolean, success: boolean): void {
+		showDeleteDialog = false;
+		if (success && deleteLISH) {
+			handleBack();
+			return;
+		}
+		if (!success) deleteError = $t('downloads.deleteFailed');
+		activateArea(toolbarAreaID);
 	}
 
 	const toolbarHandlers = {
@@ -265,6 +286,9 @@
 			<Button icon={action.icon} label={action.label} selected={toolbarActive && selectedToolbarIndex === index} onConfirm={() => handleToolbarAction(action.id)} />
 		{/each}
 	</div>
+	{#if deleteError}
+		<Alert type="error" message={deleteError} />
+	{/if}
 	{#if $selectedDownloadLoading}
 		<Spinner size="8vh" />
 	{:else if download}
@@ -334,3 +358,7 @@
 		</div>
 	{/if}
 </div>
+
+{#if showDeleteDialog && download}
+	<DownloadDetailDelete lishID={download.id} lishName={download.name} {position} onResult={handleDeleteResult} onBack={handleDeleteCancel} />
+{/if}

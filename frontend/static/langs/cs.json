@@ -85,6 +85,13 @@
 		"start": "Spustit",
 		"pause": "Pozastavit",
 		"moveData": "Přesunout data",
+		"deleteDialog": {
+			"message": "Co chcete smazat?",
+			"lishOnly": "Smazat pouze LISH",
+			"lishAndData": "Smazat LISH i data",
+			"dataOnly": "Smazat pouze data"
+		},
+		"deleteFailed": "Smazání se nezdařilo",
 		"lishCreate": {
 			"dataPath": "Umístění dat (soubor nebo složka)",
 			"saveToFile": "Uložit do souboru .lish",

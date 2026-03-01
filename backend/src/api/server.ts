@@ -103,6 +103,7 @@ export class APIServer {
 			'lishs.get': _lishs.get,
 			'lishs.backup': _lishs.backup,
 			'lishs.create': _lishs.create,
+			'lishs.delete': _lishs.delete,
 
 			// Transfer
 			'transfer.download': _transfer.download,

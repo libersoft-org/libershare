@@ -3,7 +3,7 @@ import { type IStoredLISH, type ILISHSummary, type ILISHDetail, type CreateLISHR
 import { createLISH, DEFAULT_CHUNK_SIZE } from '../lish/lish.ts';
 import { exportLISHToFile } from '../lish/lish-export.ts';
 import { Utils } from '../utils.ts';
-import { readdir, stat, access } from 'fs/promises';
+import { readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { join } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -25,6 +25,7 @@ interface LISHsHandlers {
 	get: (p: { lishID: string }) => ILISHDetail | null;
 	backup: () => IStoredLISH[];
 	create: (p: CreateLISHParams, client: any) => Promise<CreateLISHResponse>;
+	delete: (p: { lishID: string; deleteLISH: boolean; deleteData: boolean }) => Promise<boolean>;
 }
 
 function toSummary(lish: IStoredLISH): ILISHSummary {
@@ -55,6 +56,39 @@ function toDetail(lish: IStoredLISH): ILISHDetail {
 		directories: lish.directories ?? [],
 		links: lish.links ?? [],
 	};
+}
+
+/**
+ * Delete only the files and empty directories that belong to a LISH structure.
+ * Files not part of the LISH are left untouched.
+ * Directories are removed only if they are empty after file deletion (deepest first).
+ */
+async function deleteLISHData(lish: IStoredLISH): Promise<void> {
+	const baseDir = lish.directory!;
+	// 1. Delete all files listed in the LISH
+	let deletedFiles = 0;
+	for (const file of lish.files ?? []) {
+		const filePath = join(baseDir, file.path);
+		try {
+			await unlink(filePath);
+			deletedFiles++;
+		} catch (err: any) {
+			if (err.code !== 'ENOENT') console.error(`Failed to delete file: ${filePath}`, err);
+		}
+	}
+	// 2. Delete LISH directories if empty (deepest first)
+	const dirs = (lish.directories ?? []).map(d => d.path).sort((a, b) => b.split('/').length - a.split('/').length || b.localeCompare(a));
+	let deletedDirs = 0;
+	for (const dir of dirs) {
+		const dirPath = join(baseDir, dir);
+		try {
+			await rmdir(dirPath); // Fails if not empty — that's what we want
+			deletedDirs++;
+		} catch (err: any) {
+			if (err.code !== 'ENOENT' && err.code !== 'ENOTEMPTY') console.error(`Failed to delete directory: ${dirPath}`, err);
+		}
+	}
+	console.log(`✓ LISH data deleted: ${deletedFiles} files, ${deletedDirs} directories removed`);
 }
 
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHandlers {
@@ -131,5 +165,21 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		}
 		return { lishID: lish.id, lishFile: resultLISHFile };
 	}
-	return { list, get, backup, create };
+
+	async function del(p: { lishID: string; deleteLISH: boolean; deleteData: boolean }): Promise<boolean> {
+		assert(p, ['lishID']);
+		const lish = dataServer.get(p.lishID);
+		if (!lish) return false;
+		// Delete LISH data files selectively
+		if (p.deleteData && lish.directory) await deleteLISHData(lish);
+		// Delete LISH from storage if requested
+		if (p.deleteLISH) {
+			const deleted = await dataServer.delete(p.lishID);
+			if (deleted) console.log(`✓ LISH deleted: ${p.lishID}`);
+			return deleted;
+		}
+		return true;
+	}
+
+	return { list, get, backup, create, delete: del };
 }

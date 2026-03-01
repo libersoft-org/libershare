@@ -85,6 +85,13 @@
 		"start": "Start",
 		"pause": "Pause",
 		"moveData": "Move data",
+		"deleteDialog": {
+			"message": "What do you want to delete?",
+			"lishOnly": "Delete LISH only",
+			"lishAndData": "Delete LISH and data",
+			"dataOnly": "Delete data only"
+		},
+		"deleteFailed": "Failed to delete",
 		"lishCreate": {
 			"dataPath": "Data location (file or directory)",
 			"saveToFile": "Save to .lish file",
