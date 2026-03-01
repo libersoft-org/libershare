@@ -103,7 +103,6 @@ async function main(): Promise<void> {
 	}
 	try {
 		const network: ILISHNetwork = {
-			version: 1,
 			networkID: networkID,
 			name: name,
 			bootstrapPeers: args.bootstrap,

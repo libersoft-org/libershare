@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { join } from 'path';
 import { initLISHsTables } from './lishs.ts';
+import { initLISHnetsTables } from './lishnets.ts';
 const DB_FILENAME = 'libershare.db';
 let db: Database;
 
@@ -11,6 +12,7 @@ export function openDatabase(dataDir: string): Database {
 	db.run('PRAGMA foreign_keys = ON');
 	console.log(`[DB] ${dbPath}`);
 	initLISHsTables(db);
+	initLISHnetsTables(db);
 	return db;
 }
 

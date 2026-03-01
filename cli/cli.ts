@@ -207,7 +207,6 @@ async function main(): Promise<void> {
 					for (const info of infos) {
 						const status = info.enabled ? '✓' : '✗';
 						console.log(`${status} ${info.name} (${info.networkID})`);
-						console.log(`    version: ${info.version}`);
 						if (info.description) console.log(`    description: ${info.description}`);
 						console.log(`    bootstrapPeers: ${info.bootstrapPeers.length}`);
 						if (info.enabled && info.peerID) {

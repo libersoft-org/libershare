@@ -8,12 +8,12 @@ interface LISHnetsHandlers {
 	list: () => LISHNetworkConfig[];
 	get: (p: { networkID: string }) => LISHNetworkConfig | undefined;
 	exists: (p: { networkID: string }) => boolean;
-	add: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
-	update: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
+	add: (p: { network: LISHNetworkConfig }) => boolean;
+	update: (p: { network: LISHNetworkConfig }) => boolean;
 	delete: (p: { networkID: string }) => Promise<boolean>;
-	addIfNotExists: (p: { network: LISHNetworkDefinition }) => Promise<boolean>;
-	import: (p: { networks: LISHNetworkDefinition[] }) => Promise<number>;
-	replace: (p: { networks: LISHNetworkConfig[] }) => Promise<boolean>;
+	addIfNotExists: (p: { network: LISHNetworkDefinition }) => boolean;
+	import: (p: { networks: LISHNetworkDefinition[] }) => number;
+	replace: (p: { networks: LISHNetworkConfig[] }) => boolean;
 	importFromFile: (p: { path: string; enabled?: boolean }) => Promise<LISHNetworkConfig>;
 	importFromJson: (p: { json: string; enabled?: boolean }) => Promise<LISHNetworkConfig>;
 	setEnabled: (p: { networkID: string; enabled: boolean }) => Promise<SuccessResponse>;
@@ -38,11 +38,11 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		assert(p, ['networkID']);
 		return networks.exists(p.networkID);
 	}
-	async function add(p: { network: LISHNetworkConfig }): Promise<boolean> {
+	function add(p: { network: LISHNetworkConfig }): boolean {
 		assert(p, ['network']);
 		return networks.add(p.network);
 	}
-	async function update(p: { network: LISHNetworkConfig }): Promise<boolean> {
+	function update(p: { network: LISHNetworkConfig }): boolean {
 		assert(p, ['network']);
 		return networks.update(p.network);
 	}
@@ -50,17 +50,17 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		assert(p, ['networkID']);
 		return networks.delete(p.networkID);
 	}
-	async function addIfNotExists(p: { network: LISHNetworkDefinition }): Promise<boolean> {
+	function addIfNotExists(p: { network: LISHNetworkDefinition }): boolean {
 		assert(p, ['network']);
 		return networks.addIfNotExists(p.network);
 	}
-	async function importNetworks(p: { networks: LISHNetworkDefinition[] }): Promise<number> {
+	function importNetworks(p: { networks: LISHNetworkDefinition[] }): number {
 		assert(p, ['networks']);
 		return networks.importNetworks(p.networks);
 	}
-	async function replace(p: { networks: LISHNetworkConfig[] }): Promise<boolean> {
+	function replace(p: { networks: LISHNetworkConfig[] }): boolean {
 		assert(p, ['networks']);
-		await networks.replace(p.networks);
+		networks.replace(p.networks);
 		return true;
 	}
 	async function importFromFile(p: { path: string; enabled?: boolean }): Promise<LISHNetworkConfig> {

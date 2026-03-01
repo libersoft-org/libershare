@@ -5,7 +5,6 @@ import { Networks } from './lishnet/networks.ts';
 import { DataServer } from './lish/data-server.ts';
 import { openDatabase } from './db/database.ts';
 import { APIServer } from './api/server.ts';
-import { LISHnetStorage } from './lishnet/lishnetStorage.ts';
 import { Settings } from './settings.ts';
 
 // Parse command line arguments
@@ -57,8 +56,7 @@ const settings = await Settings.create(dataDir);
 await settings.ensureStorageDirs();
 const db = openDatabase(dataDir);
 const dataServer = new DataServer(db);
-const lishnetStorage = await LISHnetStorage.create(dataDir);
-const networks = new Networks(lishnetStorage, dataDir, dataServer, settings, enablePink);
+const networks = new Networks(db, dataDir, dataServer, settings, enablePink);
 networks.init();
 
 const apiServer = new APIServer(dataDir, dataServer, networks, settings, {

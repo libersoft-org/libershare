@@ -59,7 +59,6 @@ export function validateNetwork(obj: unknown): LISHNetworkDefinition | null {
 	const bootstrapPeers = Array.isArray(parsed['bootstrapPeers']) ? (parsed['bootstrapPeers'] as string[]).filter(p => typeof p === 'string' && p.trim()) : [];
 	// Only pick specific fields — 'enabled' is never part of a network definition
 	return {
-		version: (parsed['version'] as number) ?? 1,
 		networkID: parsed['networkID'].trim(),
 		name: parsed['name'].trim(),
 		description: typeof parsed['description'] === 'string' ? parsed['description'] : '',
@@ -163,7 +162,6 @@ export function networkToFormData(network: LISHNetworkConfig): NetworkFormData {
  */
 export function formDataToNetwork(formData: NetworkFormData, existingNetwork?: LISHNetworkConfig): LISHNetworkConfig {
 	return {
-		version: 1,
 		networkID: formData.id,
 		name: formData.name,
 		description: formData.description,
