@@ -35,7 +35,7 @@ export interface DownloadData {
 function summaryToDownload(summary: ILISHSummary): DownloadData {
 	return {
 		id: summary.id,
-		name: summary.name ?? summary.id,
+		name: summary.name ?? '-',
 		progress: 0,
 		size: formatSize(summary.totalSize),
 		downloadedSize: '0 B',
@@ -54,7 +54,7 @@ function summaryToDownload(summary: ILISHSummary): DownloadData {
 function detailToDownload(detail: ILISHDetail): DownloadData {
 	return {
 		id: detail.id,
-		name: detail.name ?? detail.id,
+		name: detail.name ?? '-',
 		directory: detail.directory,
 		progress: 0,
 		size: formatSize(detail.totalSize),
