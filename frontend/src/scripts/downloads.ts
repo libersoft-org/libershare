@@ -87,7 +87,7 @@ export async function subscribeDownloadList(): Promise<void> {
 	if (listUnsub) return;
 	downloadsLoading.set(true);
 	try {
-		const summaries = await api.lishs.list();
+		const summaries = await api.lishs.list(undefined, 'desc');
 		downloads.set(summaries.map(summaryToDownload));
 	} catch (err) {
 		console.error('Failed to load LISH list:', err);

@@ -1,5 +1,5 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type IStoredLISH, type ILISHSummary, type ILISHDetail, type CreateLISHResponse, DEFAULT_ALGO } from '@shared';
+import { type IStoredLISH, type ILISHSummary, type ILISHDetail, type CreateLISHResponse, type LISHSortField, type SortOrder, DEFAULT_ALGO } from '@shared';
 import { createLISH, DEFAULT_CHUNK_SIZE } from '../lish/lish.ts';
 import { exportLISHToFile } from '../lish/lish-export.ts';
 import { Utils } from '../utils.ts';
@@ -21,7 +21,7 @@ interface CreateLISHParams {
 }
 
 interface LISHsHandlers {
-	list: () => ILISHSummary[];
+	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => ILISHSummary[];
 	get: (p: { lishID: string }) => ILISHDetail | null;
 	backup: () => IStoredLISH[];
 	create: (p: CreateLISHParams, client: any) => Promise<CreateLISHResponse>;
@@ -92,8 +92,22 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 }
 
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHandlers {
-	function list(): ILISHSummary[] {
-		return dataServer.list().map(toSummary);
+	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): ILISHSummary[] {
+		const summaries = dataServer.list().map(toSummary);
+		if (p?.sortBy) {
+			const sortBy = p.sortBy;
+			const dir = (p.sortOrder ?? 'asc') === 'desc' ? -1 : 1;
+			summaries.sort((a, b) => {
+				const va = a[sortBy];
+				const vb = b[sortBy];
+				if (typeof va === 'string' && typeof vb === 'string') return va.localeCompare(vb) * dir;
+				if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+				return 0;
+			});
+		} else if (p?.sortOrder === 'desc') {
+			summaries.reverse();
+		}
+		return summaries;
 	}
 
 	function get(p: { lishID: string }): ILISHDetail | null {

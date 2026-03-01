@@ -49,6 +49,9 @@ export interface ILinkEntry {
 }
 
 // Summary for the download list table (lightweight, no files/chunks)
+export type LISHSortField = 'created' | 'name' | 'totalSize' | 'fileCount';
+export type SortOrder = 'asc' | 'desc';
+
 export interface ILISHSummary {
 	id: string;
 	name?: string | undefined;

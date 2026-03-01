@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHSortField, type SortOrder } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -247,8 +247,8 @@ class LISHsAPI {
 		this.client = client;
 	}
 
-	list(): Promise<ILISHSummary[]> {
-		return this.client.call<ILISHSummary[]>('lishs.list');
+	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<ILISHSummary[]> {
+		return this.client.call<ILISHSummary[]>('lishs.list', { sortBy, sortOrder });
 	}
 
 	get(lishID: string): Promise<ILISHDetail | null> {
