@@ -16,6 +16,7 @@ export interface DownloadFileData {
 export interface DownloadData {
 	id: string;
 	name: string;
+	directory?: string | undefined;
 	progress: number;
 	size: string;
 	downloadedSize?: string;
@@ -54,6 +55,7 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 	return {
 		id: detail.id,
 		name: detail.name ?? detail.id,
+		directory: detail.directory,
 		progress: 0,
 		size: formatSize(detail.totalSize),
 		downloadedSize: '0 B',

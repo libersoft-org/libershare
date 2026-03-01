@@ -1,13 +1,12 @@
 import { writable } from 'svelte/store';
-import { WsClient } from '@shared';
+import { WsClient, DEFAULT_API_URL } from '@shared';
 
 function getAPIURL(): string {
 	// When running inside Tauri, the backend port is passed via initialization script
 	if (typeof window !== 'undefined' && (window as any).__BACKEND_PORT__) {
 		return `ws://localhost:${(window as any).__BACKEND_PORT__}`;
 	}
-	const defaultAPIURL = 'ws://localhost:1158';
-	return import.meta.env['VITE_BACKEND_URL'] || defaultAPIURL;
+	return import.meta.env['VITE_BACKEND_URL'] || DEFAULT_API_URL;
 }
 
 export const apiURL = getAPIURL();

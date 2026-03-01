@@ -1,5 +1,8 @@
 // Product info
-export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList } from './product.ts';
+export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, DEFAULT_API_PORT, DEFAULT_API_URL } from './product.ts';
+
+// Utils
+export { formatBytes, parseBytes } from './utils.ts';
 
 // LISH types
 export * from './lish.ts';

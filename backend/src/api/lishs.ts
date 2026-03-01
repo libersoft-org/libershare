@@ -1,6 +1,7 @@
 import { type DataServer } from '../lish/data-server.ts';
 import { type IStoredLISH, type ILISHSummary, type ILISHDetail, type CreateLISHResponse, type LISHSortField, type SortOrder, DEFAULT_ALGO } from '@shared';
-import { createLISH, DEFAULT_CHUNK_SIZE } from '../lish/lish.ts';
+import { createLISH } from '../lish/lish.ts';
+import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { exportLISHToFile } from '../lish/lish-export.ts';
 import { Utils } from '../utils.ts';
 import { readdir, stat, access, unlink, rmdir } from 'fs/promises';

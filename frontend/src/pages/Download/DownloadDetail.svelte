@@ -306,7 +306,7 @@
 					</TableRow>
 					<TableRow odd>
 						<Cell>{$t('downloads.targetFolder')}:</Cell>
-						<Cell align="right">/share/download/debian/</Cell>
+						<Cell align="right">{download.directory ?? '-'}</Cell>
 					</TableRow>
 					<TableRow>
 						<Cell>{$t('common.size')}:</Cell>

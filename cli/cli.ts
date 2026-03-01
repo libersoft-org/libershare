@@ -2,9 +2,7 @@
 import * as readline from 'readline';
 import { join } from 'path';
 import { APIClient } from './api-client';
-import { API } from '@shared';
-
-const DEFAULT_URL = 'ws://localhost:1158';
+import { API, DEFAULT_API_URL } from '@shared';
 
 const HELP = `
 Commands:
@@ -42,7 +40,7 @@ Commands:
 `;
 
 const args = process.argv.slice(2);
-let serverUrl = DEFAULT_URL;
+let serverUrl = DEFAULT_API_URL;
 
 for (let i = 0; i < args.length; i++) {
 	if ((args[i] === '--url' || args[i] === '-u') && i + 1 < args.length) {
@@ -55,7 +53,7 @@ CLI - Connect to a running server
 Usage: bun cli.ts [options]
 
 Options:
-  -u, --url <url>   Server WebSocket URL (default: ${DEFAULT_URL})
+  -u, --url <url>   Server WebSocket URL (default: ${DEFAULT_API_URL})
   -h, --help        Show this help message
 ${HELP}`);
 		process.exit(0);
@@ -103,7 +101,7 @@ async function main(): Promise<void> {
 
 	console.log('Type "help" for commands\n');
 
-	rl.on('line', async line => {
+	rl.on('line', async (line: string) => {
 		const parts = line.trim().split(/\s+/);
 		const command = parts[0];
 		const arg = parts.slice(1).join(' ');
@@ -426,11 +424,13 @@ async function main(): Promise<void> {
 
 				case 'quit':
 				case 'exit':
-				case 'q':
+				case 'q': {
 					console.log('Bye!');
 					client.close();
 					rl.close();
 					process.exit(0);
+					break;
+				}
 
 				default:
 					console.log(`Unknown command: ${command}. Type "help" for commands.`);

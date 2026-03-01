@@ -1,5 +1,4 @@
-import { Utils } from '../backend/src/utils.ts';
-import { type ILISHNetwork } from '@shared';
+import { formatBytes, type ILISHNetwork } from '@shared';
 interface IArgs {
 	name?: string;
 	description?: string;
@@ -129,7 +128,7 @@ async function main(): Promise<void> {
 		const elapsedMs = endTime - startTime;
 		const networkFile = Bun.file(outputFile);
 		const networkFileSize = networkFile.size;
-		console.log('\x1b[33mNetwork file size:\x1b[0m    ' + Utils.formatBytes(networkFileSize));
+		console.log('\x1b[33mNetwork file size:\x1b[0m    ' + formatBytes(networkFileSize));
 		console.log('\x1b[33mElapsed time:\x1b[0m         ' + elapsedMs + 'ms');
 		console.log('');
 		console.log('\x1b[32mNetwork definition created successfully!\x1b[0m');

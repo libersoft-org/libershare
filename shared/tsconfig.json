@@ -6,6 +6,7 @@
 		"moduleResolution": "bundler",
 		"allowImportingTsExtensions": true,
 		"noEmit": true,
+		"declaration": true,
 		"esModuleInterop": true,
 		"allowSyntheticDefaultImports": true,
 		"strict": true,
@@ -23,11 +24,8 @@
 		"noUncheckedSideEffectImports": true,
 		"erasableSyntaxOnly": true,
 		"verbatimModuleSyntax": true,
-		"paths": {
-			"@shared": ["../shared/src/index.ts"],
-			"@shared/*": ["../shared/src/*"]
-		}
+		"isolatedDeclarations": true
 	},
-	"include": ["*.ts", "../shared/src/**/*.ts"],
+	"include": ["src/**/*.ts"],
 	"exclude": ["node_modules"]
 }
