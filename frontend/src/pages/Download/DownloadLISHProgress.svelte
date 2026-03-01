@@ -203,6 +203,7 @@
 		padding: 2vh;
 		gap: 2vh;
 		overflow-y: auto;
+		box-sizing: border-box;
 	}
 
 	.container {
