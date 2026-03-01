@@ -5,7 +5,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { selectedDownload, selectedDownloadLoading, subscribeDownloadDetail, unsubscribeDownloadDetail, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadData, type DownloadToolbarActionId } from '../../scripts/downloads.ts';
-	import { scrollToElement, truncateID } from '../../scripts/utils.ts';
+	import { scrollToElement } from '../../scripts/utils.ts';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Table from '../../components/Table/Table.svelte';
@@ -302,7 +302,7 @@
 					</TableRow>
 					<TableRow>
 						<Cell>{$t('downloads.id')}:</Cell>
-						<Cell align="right">{truncateID(download.id)}</Cell>
+						<Cell align="right">{download.id}</Cell>
 					</TableRow>
 					<TableRow odd>
 						<Cell>{$t('downloads.targetFolder')}:</Cell>
