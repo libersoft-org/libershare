@@ -8,7 +8,6 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
-	import { parseLISHFromJson, getLISHErrorMessage } from '../../scripts/lish.ts';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -156,9 +155,7 @@
 			}
 		},
 		confirmCancel() {},
-		back() {
-			onBack?.();
-		},
+		back() { onBack?.(); },
 	};
 
 	onMount(() => {

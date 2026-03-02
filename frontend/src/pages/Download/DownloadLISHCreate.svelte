@@ -7,9 +7,58 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { scrollToElement, sanitizeFilename } from '../../scripts/utils.ts';
-	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm } from '@shared';
-	import { parseChunkSize, validateLISHCreateForm, getLISHCreateErrorMessage } from '../../scripts/lish.ts';
+	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
 	import { storageLISHPath, storagePath, autoStartSharing, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
+
+	function parseChunkSize(value: string): number | null {
+		if (!value.trim()) return null;
+		try {
+			const bytes = parseBytes(value);
+			return bytes > 0 ? bytes : null;
+		} catch {
+			return null;
+		}
+	}
+
+	interface LISHCreateFormData {
+		dataPath: string;
+		saveToFile?: boolean | undefined;
+		lishFile?: string | undefined;
+		addToSharing?: boolean | undefined;
+		chunkSize?: string | undefined;
+		threads?: string | undefined;
+	}
+
+	type LISHCreateError = 'INPUT_REQUIRED' | 'LISH_FILE_REQUIRED' | 'INVALID_CHUNK_SIZE' | 'INVALID_THREADS' | null;
+
+	function validateLISHCreateForm(data: LISHCreateFormData): LISHCreateError {
+		if (!data.dataPath.trim()) return 'INPUT_REQUIRED';
+		if (data.saveToFile && !data.lishFile?.trim()) return 'LISH_FILE_REQUIRED';
+		if (data.chunkSize) {
+			const parsed = parseChunkSize(data.chunkSize);
+			if (parsed === null) return 'INVALID_CHUNK_SIZE';
+		}
+		if (data.threads) {
+			const num = parseInt(data.threads);
+			if (isNaN(num) || num < 0) return 'INVALID_THREADS';
+		}
+		return null;
+	}
+
+	function getLISHCreateErrorMessage(errorCode: LISHCreateError, t: (key: string) => string): string {
+		switch (errorCode) {
+			case 'INPUT_REQUIRED':
+				return t('downloads.lishCreate.dataPathRequired');
+			case 'LISH_FILE_REQUIRED':
+				return t('downloads.lishCreate.lishFileRequired');
+			case 'INVALID_CHUNK_SIZE':
+				return t('downloads.lishCreate.invalidChunkSize');
+			case 'INVALID_THREADS':
+				return t('downloads.lishCreate.invalidThreads');
+			default:
+				return '';
+		}
+	}
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';

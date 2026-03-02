@@ -6,7 +6,6 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { parseLISHFromJson, getLISHErrorMessage } from '../../scripts/lish.ts';
 	import { storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
@@ -162,9 +161,7 @@
 			}
 		},
 		confirmCancel() {},
-		back() {
-			onBack?.();
-		},
+		back() { onBack?.(); },
 	};
 
 	onMount(() => {
