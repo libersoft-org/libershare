@@ -174,50 +174,67 @@ export class Networks {
 		return [...new Set(allPeers)];
 	}
 
-	// Validate a raw network object into a LISHNetworkDefinition (without storing).
-	validateNetwork(data: ILISHNetwork): LISHNetworkDefinition {
+	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
 		if (!data.networkID || !data.name) throw new Error('Invalid network: missing networkID or name');
-		return {
+		const config: LISHNetworkConfig = {
 			networkID: data.networkID,
 			name: data.name,
 			description: data.description || '',
 			bootstrapPeers: Array.isArray(data.bootstrapPeers) ? data.bootstrapPeers.filter(p => typeof p === 'string' && p.trim()) : [],
+			enabled,
 			created: data.created || new Date().toISOString(),
 		};
-	}
-
-	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
-		const definition = this.validateNetwork(data);
-		const config: LISHNetworkConfig = { ...definition, enabled };
 		upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
 		if (enabled) await this.joinNetwork(config.networkID);
 		return config;
 	}
 
-	// Parse JSON string and return validated network definitions (without storing).
-	parseFromJSON(jsonString: string): LISHNetworkDefinition[] {
+	async importFromJson(jsonString: string, enabled: boolean = false): Promise<LISHNetworkConfig[]> {
 		const data = Utils.safeJSONParse<unknown>(jsonString, 'network JSON import');
 		const items = Array.isArray(data) ? data : [data];
-		const results: LISHNetworkDefinition[] = [];
+		const results: LISHNetworkConfig[] = [];
 		for (const item of items) {
-			results.push(this.validateNetwork(item as ILISHNetwork));
+			const config = await this.importFromLISHnet(item as ILISHNetwork, enabled);
+			results.push(config);
 		}
 		if (results.length === 0) throw new Error('No valid networks found');
 		return results;
 	}
 
-	// Read a file and return validated network definitions (without storing).
-	async parseFromFile(filePath: string): Promise<LISHNetworkDefinition[]> {
+	async importFromFile(filePath: string, enabled: boolean = false): Promise<LISHNetworkConfig[]> {
 		const content = await Utils.readFileCompressed(filePath);
-		return this.parseFromJSON(content);
+		return await this.importFromJson(content, enabled);
+	}
+
+	async importFromUrl(url: string, enabled: boolean = false): Promise<LISHNetworkConfig[]> {
+		const content = await Utils.fetchURL(url);
+		return await this.importFromJson(content, enabled);
 	}
 
 	/**
-	 * Fetch a URL and return validated network definitions (without storing).
+	 * Fetch a URL and return validated network definitions without importing.
+	 * Used for the public network list UI where users browse and pick individual networks.
 	 */
-	async parseFromURL(url: string): Promise<LISHNetworkDefinition[]> {
+	async fetchPublicList(url: string): Promise<LISHNetworkDefinition[]> {
 		const content = await Utils.fetchURL(url);
-		return this.parseFromJSON(content);
+		const data = Utils.safeJSONParse<unknown>(content, 'public network list');
+		if (!Array.isArray(data)) throw new Error('Invalid format: expected array');
+		const networks: LISHNetworkDefinition[] = [];
+		for (const item of data) {
+			if (!item || typeof item !== 'object') continue;
+			const obj = item as Record<string, unknown>;
+			if (typeof obj['networkID'] !== 'string' || !obj['networkID'].trim()) continue;
+			if (typeof obj['name'] !== 'string' || !obj['name'].trim()) continue;
+			networks.push({
+				networkID: obj['networkID'].trim(),
+				name: obj['name'].trim(),
+				description: typeof obj['description'] === 'string' ? obj['description'] : '',
+				bootstrapPeers: Array.isArray(obj['bootstrapPeers']) ? (obj['bootstrapPeers'] as string[]).filter(p => typeof p === 'string' && p.trim()) : [],
+				created: typeof obj['created'] === 'string' ? obj['created'] : new Date().toISOString(),
+			});
+		}
+		if (networks.length === 0) throw new Error('No valid networks found');
+		return networks;
 	}
 
 	get(id: string): LISHNetworkConfig | undefined {

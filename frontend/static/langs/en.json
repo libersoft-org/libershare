@@ -137,7 +137,7 @@
 			"autoStartOnBoot": "Start application on system startup",
 			"showInTray": "Show in system tray",
 			"minimizeToTray": "Minimize to system tray",
-			"defaultMinifyJson": "Minify JSON (default)",
+			"defaultMinifyJSON": "Minify JSON (default)",
 			"defaultCompress": "Compress (default)"
 		},
 		"download": {
@@ -177,7 +177,7 @@
 			"relayed": "{count} relayed",
 			"noPeers": "No peers connected",
 			"connectedPeers": "Peers: {count}",
-			"minifyJson": "Minify JSON",
+			"minifyJSON": "Minify JSON",
 			"compress": "Compress"
 		},
 		"lishNetworkImport": {

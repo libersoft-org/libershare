@@ -8,7 +8,7 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
-	import { storageLISHnetPath, defaultMinifyJson, defaultCompress } from '../../scripts/settings.ts';
+	import { storageLISHnetPath, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
 	import { sanitizeFilename } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -33,9 +33,10 @@
 	let browsingFolder = $state(false);
 	let browseFolder = $state('');
 	let saving = $state(false);
-	let minifyJsonState = $state($defaultMinifyJson);
+	let minifyJSONState = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
 	let errorMessage = $state('');
+	defaultMinifyJSON;
 	let showOverwriteConfirm = $state(false);
 
 	function getInitialFileName(): string {
@@ -121,7 +122,7 @@
 		saving = true;
 		errorMessage = '';
 		try {
-			const result = await api.lishnets.exportToFile(network.id, filePath.trim(), minifyJsonState, compress);
+			const result = await api.lishnets.exportToFile(network.id, filePath.trim(), minifyJSONState, compress);
 			if (result.success) {
 				onBack?.();
 				return;
@@ -194,7 +195,7 @@
 				confirmUp() {
 					if (selectedIndex === 0 && selectedColumn === 1) openFolderBrowse();
 					else if (selectedIndex === 1) {
-						minifyJsonState = !minifyJsonState;
+						minifyJSONState = !minifyJSONState;
 					} else if (selectedIndex === 2) handleCompressToggle();
 					else if (selectedIndex === 3 && selectedColumn === 0) handleSave();
 					else if (selectedIndex === 3 && selectedColumn === 1) onBack?.();
@@ -243,7 +244,7 @@
 				<Input bind:this={filePathInput} bind:value={filePath} label={$t('common.file')} selected={active && selectedIndex === 0 && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === 0 && selectedColumn === 1} onConfirm={openFolderBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('settings.lishNetwork.minifyJson')} checked={minifyJsonState} selected={active && selectedIndex === 1} onToggle={() => (minifyJsonState = !minifyJsonState)} />
+			<SwitchRow label={$t('settings.lishNetwork.minifyJSON')} checked={minifyJSONState} selected={active && selectedIndex === 1} onToggle={() => (minifyJSONState = !minifyJSONState)} />
 			<SwitchRow label={$t('settings.lishNetwork.compress')} checked={compress} selected={active && selectedIndex === 2} onToggle={handleCompressToggle} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />

@@ -38,7 +38,7 @@ abstract class BaseStorage<T> {
 /**
  * JSON storage with path-based access (e.g., "ui.theme").
  */
-export class JsonStorage<T extends Record<string, any>> extends BaseStorage<T> {
+export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 	private data!: T;
 	private readonly defaults: T;
 
@@ -47,8 +47,8 @@ export class JsonStorage<T extends Record<string, any>> extends BaseStorage<T> {
 		this.defaults = defaults;
 	}
 
-	static async create<T extends Record<string, any>>(dataDir: string, fileName: string, defaults: T): Promise<JsonStorage<T>> {
-		const storage = new JsonStorage(dataDir, fileName, defaults);
+	static async create<T extends Record<string, any>>(dataDir: string, fileName: string, defaults: T): Promise<JSONStorage<T>> {
+		const storage = new JSONStorage(dataDir, fileName, defaults);
 		const loaded = await storage.loadFile(structuredClone(defaults));
 		storage.data = storage.deepMerge(defaults, loaded);
 		return storage;

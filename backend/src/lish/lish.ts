@@ -328,10 +328,10 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 // LISH Export / Import / Validation
 // ============================================================================
 
-export async function exportLISHToFile(lish: IStoredLISH, outputFilePath: string, minifyJson: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<void> {
+export async function exportLISHToFile(lish: IStoredLISH, outputFilePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<void> {
 	await fsPromises.mkdir(dirname(outputFilePath), { recursive: true });
 	const { directory, chunks, ...exportData } = lish;
-	await Utils.writeJsonToFile(exportData, outputFilePath, minifyJson, compress, compressionAlgorithm);
+	await Utils.writeJSONToFile(exportData, outputFilePath, minifyJSON, compress, compressionAlgorithm);
 	console.log(`✓ LISH exported to: ${outputFilePath}`);
 }
 
@@ -356,7 +356,7 @@ export function validateImportedLISH(data: unknown): ILISH {
  */
 export async function importLISHFromFile(filePath: string): Promise<ILISH> {
 	const content = await Utils.readFileCompressed(filePath);
-	const data = Utils.safeJsonParse(content, filePath);
+	const data = Utils.safeJSONParse(content, filePath);
 	return validateImportedLISH(data);
 }
 
@@ -364,8 +364,8 @@ export async function importLISHFromFile(filePath: string): Promise<ILISH> {
  * Parse a JSON string into a validated ILISH object.
  * Throws if the string is not valid JSON, is an array, or fails validation.
  */
-export function parseLISHFromJson(json: string): ILISH {
-	const data = Utils.safeJsonParse(json, 'JSON input');
+export function parseLISHFromJSON(json: string): ILISH {
+	const data = Utils.safeJSONParse(json, 'JSON input');
 	if (Array.isArray(data)) throw new Error('Expected a single LISH object, got an array');
 	return validateImportedLISH(data);
 }

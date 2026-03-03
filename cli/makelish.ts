@@ -10,7 +10,7 @@ interface IArgs {
 	threads?: number;
 	url?: string;
 	addToSharing?: boolean;
-	minifyJson?: boolean;
+	minifyJSON?: boolean;
 	compress?: boolean;
 }
 
@@ -67,7 +67,7 @@ function parseArgs(args: string[]): IArgs {
 			continue;
 		}
 		if (arg === '--minify-json') {
-			parsed.minifyJson = true;
+			parsed.minifyJSON = true;
 			continue;
 		}
 		if (arg === '--compress-gzip' || arg === '--compress') {
@@ -135,7 +135,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	const threads = args.threads !== undefined ? args.threads : 0;
 	const serverURL = args.url || DEFAULT_API_URL;
 	const addToSharing = args.addToSharing || false;
-	const minifyJson = args.minifyJson || false;
+	const minifyJSON = args.minifyJSON || false;
 	const compress = args.compress || false;
 	const lishFile = args.output;
 
@@ -151,7 +151,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	console.log('\x1b[33mThreads:\x1b[0m              ' + threads + (threads === 0 ? ' (auto detect)' : ''));
 	console.log('\x1b[33mServer:\x1b[0m               ' + serverURL);
 	if (addToSharing) console.log('\x1b[33mAdd to sharing:\x1b[0m       yes');
-	if (minifyJson) console.log('\x1b[33mMinify JSON:\x1b[0m          yes');
+	if (minifyJSON) console.log('\x1b[33mMinify JSON:\x1b[0m          yes');
 	if (compress) console.log('\x1b[33mCompress:\x1b[0m              yes');
 	console.log('');
 
@@ -196,7 +196,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	await api.subscribe('lishs.create:progress');
 
 	try {
-		const result = await api.lishs.create(inputPath, lishFile, addToSharing, name, description, algo, chunkSize, threads, minifyJson, compress);
+		const result = await api.lishs.create(inputPath, lishFile, addToSharing, name, description, algo, chunkSize, threads, minifyJSON, compress);
 		if (lastProgress) process.stdout.write('\n');
 
 		const endTime = Date.now();

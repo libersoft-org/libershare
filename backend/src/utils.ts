@@ -14,7 +14,7 @@ export class Utils {
 	 * Parse JSON with a descriptive error message on failure.
 	 * Use this for user-provided or external data where the source is helpful for debugging.
 	 */
-	static safeJsonParse<T = unknown>(text: string, source: string): T {
+	static safeJSONParse<T = unknown>(text: string, source: string): T {
 		try {
 			return JSON.parse(text);
 		} catch (err: any) {
@@ -81,10 +81,10 @@ export class Utils {
 		try {
 			const response = await fetch(url, { signal: controller.signal });
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
-			const isCompressedUrl = isCompressed(url);
+			const isCompressedURL = isCompressed(url);
 			const contentEncoding = response.headers.get('content-encoding');
 			const isGzipEncoded = contentEncoding?.toLowerCase().includes('gzip');
-			if (isCompressedUrl && !isGzipEncoded) {
+			if (isCompressedURL && !isGzipEncoded) {
 				const compressed = await response.arrayBuffer();
 				const decompressed = Utils.decompress(new Uint8Array(compressed));
 				return new TextDecoder().decode(decompressed);
@@ -98,8 +98,8 @@ export class Utils {
 	/**
 	 * Write JSON data to a file, optionally minified and/or compressed.
 	 */
-	static async writeJsonToFile(data: unknown, filePath: string, minifyJson: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<void> {
-		const jsonContent = minifyJson ? JSON.stringify(data) : JSON.stringify(data, null, '\t');
+	static async writeJSONToFile(data: unknown, filePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<void> {
+		const jsonContent = minifyJSON ? JSON.stringify(data) : JSON.stringify(data, null, '\t');
 		if (compress) await Bun.write(filePath, Utils.compress(Buffer.from(jsonContent, 'utf-8'), compressionAlgorithm));
 		else await Bun.write(filePath, jsonContent);
 	}

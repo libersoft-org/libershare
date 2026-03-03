@@ -194,12 +194,12 @@ class LISHnetsAPI {
 		return this.client.call<boolean>('lishnets.replace', { networks });
 	}
 
-	exportToFile(networkID: string, filePath: string, minifyJson?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('lishnets.exportToFile', { networkID, filePath, minifyJson, compress, compressionAlgorithm });
+	exportToFile(networkID: string, filePath: string, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishnets.exportToFile', { networkID, filePath, minifyJSON: minifyJSON, compress, compressionAlgorithm });
 	}
 
-	exportAllToFile(filePath: string, minifyJson?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('lishnets.exportAllToFile', { filePath, minifyJson, compress, compressionAlgorithm });
+	exportAllToFile(filePath: string, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishnets.exportAllToFile', { filePath, minifyJSON: minifyJSON, compress, compressionAlgorithm });
 	}
 
 	// Runtime methods
@@ -212,8 +212,8 @@ class LISHnetsAPI {
 		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromFile', { path });
 	}
 
-	parseFromJson(json: string): Promise<LISHNetworkDefinition[]> {
-		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromJson', { json });
+	parseFromJSON(json: string): Promise<LISHNetworkDefinition[]> {
+		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromJSON', { json });
 	}
 
 	parseFromURL(url: string): Promise<LISHNetworkDefinition[]> {
@@ -267,19 +267,19 @@ class LISHsAPI {
 		return this.client.call<ILISHDetail | null>('lishs.get', { lishID });
 	}
 
-	exportToFile(lishID: string, filePath: string, minifyJson?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('lishs.exportToFile', { lishID, filePath, minifyJson, compress, compressionAlgorithm });
+	exportToFile(lishID: string, filePath: string, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.exportToFile', { lishID, filePath, minifyJSON, compress, compressionAlgorithm });
 	}
 
-	exportAllToFile(filePath: string, minifyJson?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('lishs.exportAllToFile', { filePath, minifyJson, compress, compressionAlgorithm });
+	exportAllToFile(filePath: string, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.exportAllToFile', { filePath, minifyJSON, compress, compressionAlgorithm });
 	}
 
 	backup(): Promise<IStoredLISH[]> {
 		return this.client.call<IStoredLISH[]>('lishs.backup');
 	}
 
-	create(dataPath: string, lishFile?: string, addToSharing?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJson?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<CreateLISHResponse> {
+	create(dataPath: string, lishFile?: string, addToSharing?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<CreateLISHResponse> {
 		return this.client.call<CreateLISHResponse>('lishs.create', {
 			name,
 			description,
@@ -289,7 +289,7 @@ class LISHsAPI {
 			chunkSize,
 			algorithm,
 			threads,
-			minifyJson,
+			minifyJSON,
 			compress,
 			compressionAlgorithm,
 		});
@@ -303,8 +303,8 @@ class LISHsAPI {
 		return this.client.call<ImportLISHResponse>('lishs.importFromFile', { filePath, downloadPath, overwrite });
 	}
 
-	importFromJson(json: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromJson', { json, downloadPath, overwrite });
+	importFromJSON(json: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromJSON', { json, downloadPath, overwrite });
 	}
 
 	importFromURL(url: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {

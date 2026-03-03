@@ -137,7 +137,7 @@
 			"autoStartOnBoot": "Spustit aplikaci po spuštění systému",
 			"showInTray": "Zobrazit v oznamovací oblasti",
 			"minimizeToTray": "Minimalizovat do oznamovací oblasti",
-			"defaultMinifyJson": "Minifikovat JSON (výchozí hodnota)",
+			"defaultMinifyJSON": "Minifikovat JSON (výchozí hodnota)",
 			"defaultCompress": "Komprimovat (výchozí hodnota)"
 		},
 		"download": {
@@ -177,7 +177,7 @@
 			"relayed": "{count} předaných",
 			"noPeers": "Žádní účastníci nejsou připojeni",
 			"connectedPeers": "Účastníků: {count}",
-			"minifyJson": "Minifikovat JSON",
+			"minifyJSON": "Minifikovat JSON",
 			"compress": "Komprimovat"
 		},
 		"lishNetworkImport": {

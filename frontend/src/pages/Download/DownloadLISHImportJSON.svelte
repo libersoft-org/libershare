@@ -32,7 +32,7 @@
 	let selectedColumn = $state(0);
 	let inputRef: Input | undefined = $state();
 	let downloadPathRef: Input | undefined = $state();
-	let lishJson = $state('');
+	let lishJSON = $state('');
 	let downloadPath = $state($storagePath);
 	let autoStart = $state($autoStartSharing);
 	let errorMessage = $state('');
@@ -47,7 +47,7 @@
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
-		if (!lishJson.trim()) {
+		if (!lishJSON.trim()) {
 			errorMessage = $t('downloads.lishImport.jsonRequired');
 			return;
 		}
@@ -56,7 +56,7 @@
 			return;
 		}
 		try {
-			await api.lishs.importFromJson(lishJson, downloadPath);
+			await api.lishs.importFromJSON(lishJSON, downloadPath);
 			onImport?.();
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);
@@ -103,9 +103,9 @@
 					// Pretty-print minified JSON for readability
 					try {
 						const parsed = JSON.parse(content);
-						lishJson = JSON.stringify(parsed, null, '\t');
+						lishJSON = JSON.stringify(parsed, null, '\t');
 					} catch {
-						lishJson = content;
+						lishJSON = content;
 					}
 				}
 			} catch (e) {
@@ -209,7 +209,7 @@
 {:else}
 	<div class="import">
 		<div class="container">
-			<Input bind:this={inputRef} bind:value={lishJson} label={$t('downloads.lishImport.lishJSON')} multiline rows={10} placeholder={$t('downloads.lishImport.placeholder')} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
+			<Input bind:this={inputRef} bind:value={lishJSON} label={$t('downloads.lishImport.lishJSON')} multiline rows={10} placeholder={$t('downloads.lishImport.placeholder')} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
 			<div class="row">
 				<Input bind:this={downloadPathRef} bind:value={downloadPath} label={$t('downloads.lishImport.downloadPath')} selected={active && selectedIndex === 1 && selectedColumn === 0} flex />
 				<Button icon="/img/folder.svg" selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />

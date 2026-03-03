@@ -14,11 +14,11 @@ interface LISHnetsHandlers {
 	addIfNotExists: (p: { network: LISHNetworkDefinition }) => boolean;
 	import: (p: { networks: LISHNetworkDefinition[] }) => number;
 	replace: (p: { networks: LISHNetworkConfig[] }) => boolean;
-	exportToFile: (p: { networkID: string; filePath: string; minifyJson?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
-	exportAllToFile: (p: { filePath: string; minifyJson?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
+	exportToFile: (p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
+	exportAllToFile: (p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 	importFromFile: (p: { path: string; enabled?: boolean }) => Promise<LISHNetworkConfig[]>;
 	parseFromFile: (p: { path: string }) => Promise<LISHNetworkDefinition[]>;
-	parseFromJson: (p: { json: string }) => LISHNetworkDefinition[];
+	parseFromJSON: (p: { json: string }) => LISHNetworkDefinition[];
 	parseFromURL: (p: { url: string }) => Promise<LISHNetworkDefinition[]>;
 	setEnabled: (p: { networkID: string; enabled: boolean }) => Promise<SuccessResponse>;
 	connect: (p: { multiaddr: string }) => Promise<SuccessResponse>;
@@ -67,22 +67,22 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		networks.replace(p.networks);
 		return true;
 	}
-	async function exportToFile(p: { networkID: string; filePath: string; minifyJson?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
+	async function exportToFile(p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
 		assert(p, ['networkID', 'filePath']);
 		const network = networks.get(p.networkID);
 		if (!network) throw new Error(`Network not found: ${p.networkID}`);
 		const { enabled, ...definition } = network;
-		await Utils.writeJsonToFile(definition, p.filePath, p.minifyJson, p.compress, p.compressionAlgorithm);
+		await Utils.writeJSONToFile(definition, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
 		console.log(`✓ Network exported to: ${p.filePath}`);
 		return { success: true };
 	}
 
-	async function exportAllToFile(p: { filePath: string; minifyJson?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
+	async function exportAllToFile(p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
 		assert(p, ['filePath']);
 		const nets = networks.list();
 		if (nets.length === 0) throw new Error('No networks to export');
 		const exportData = nets.map(({ enabled, ...definition }) => definition);
-		await Utils.writeJsonToFile(exportData, p.filePath, p.minifyJson, p.compress, p.compressionAlgorithm);
+		await Utils.writeJSONToFile(exportData, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
 		console.log(`✓ All networks exported to: ${p.filePath}`);
 		return { success: true };
 	}
@@ -100,9 +100,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		assert(p, ['path']);
 		return networks.parseFromFile(p.path);
 	}
-	function parseFromJson(p: { json: string }): LISHNetworkDefinition[] {
+	function parseFromJSON(p: { json: string }): LISHNetworkDefinition[] {
 		assert(p, ['json']);
-		return networks.parseFromJson(p.json);
+		return networks.parseFromJSON(p.json);
 	}
 	async function parseFromURL(p: { url: string }): Promise<LISHNetworkDefinition[]> {
 		assert(p, ['url']);
@@ -180,7 +180,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		exportAllToFile,
 		importFromFile,
 		parseFromFile,
-		parseFromJson,
+		parseFromJSON,
 		parseFromURL,
 		setEnabled,
 		connect,

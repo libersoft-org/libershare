@@ -24,18 +24,18 @@
 	let selectedIndex = $state(0); // 0 = input, 1 = buttons row
 	let selectedColumn = $state(0); // 0 = import, 1 = back
 	let inputRef: Input | undefined = $state();
-	let networkJson = $state('');
+	let networkJSON = $state('');
 	let errorMessage = $state('');
 	let parsedNetworks = $state<LISHNetworkDefinition[] | null>(null);
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
-		if (!networkJson.trim()) {
+		if (!networkJSON.trim()) {
 			errorMessage = $t('settings.lishNetwork.errorInvalidFormat');
 			return;
 		}
 		try {
-			parsedNetworks = await api.lishnets.parseFromJson(networkJson);
+			parsedNetworks = await api.lishnets.parseFromJSON(networkJSON);
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);
 		}
@@ -57,9 +57,9 @@
 					// Pretty-print minified JSON for readability
 					try {
 						const parsed = JSON.parse(content);
-						networkJson = JSON.stringify(parsed, null, '\t');
+						networkJSON = JSON.stringify(parsed, null, '\t');
 					} catch {
-						networkJson = content;
+						networkJSON = content;
 					}
 				}
 			} catch (e) {
@@ -156,7 +156,7 @@
 {:else}
 	<div class="import">
 		<div class="container">
-			<Input bind:this={inputRef} bind:value={networkJson} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} placeholder={'{"networkID": "...", "name": "...", ...}'} />
+			<Input bind:this={inputRef} bind:value={networkJSON} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} placeholder={'{"networkID": "...", "name": "...", ...}'} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}

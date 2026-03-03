@@ -5,7 +5,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
-	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJson, defaultCompress, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJson, setDefaultCompress } from '../../scripts/settings.ts';
+	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJSON, defaultCompress, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJSON, setDefaultCompress } from '../../scripts/settings.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
@@ -24,7 +24,7 @@
 	let autoStart = $state($autoStartOnBoot);
 	let trayVisible = $state($showInTray);
 	let trayMinimize = $state($minimizeToTray);
-	let minifyJson = $state($defaultMinifyJson);
+	let minifyJSON = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
 	// Field indices
 	const FIELD_AUTO_START = 0;
@@ -50,8 +50,8 @@
 		trayMinimize = !trayMinimize;
 	}
 
-	function toggleMinifyJson(): void {
-		minifyJson = !minifyJson;
+	function toggleMinifyJSON(): void {
+		minifyJSON = !minifyJSON;
 	}
 
 	function toggleCompress(): void {
@@ -62,7 +62,7 @@
 		setAutoStartOnBoot(autoStart);
 		setShowInTray(trayVisible);
 		setMinimizeToTray(trayMinimize);
-		setDefaultMinifyJson(minifyJson);
+		setDefaultMinifyJSON(minifyJSON);
 		setDefaultCompress(compress);
 		onBack?.();
 	}
@@ -121,7 +121,7 @@
 					if (actualIndex === FIELD_AUTO_START) toggleAutoStart();
 					else if (actualIndex === FIELD_SHOW_IN_TRAY) toggleShowInTray();
 					else if (actualIndex === FIELD_MINIMIZE_TO_TRAY) toggleMinimizeToTray();
-					else if (actualIndex === FIELD_MINIFY_JSON) toggleMinifyJson();
+					else if (actualIndex === FIELD_MINIFY_JSON) toggleMinifyJSON();
 					else if (actualIndex === FIELD_COMPRESS) toggleCompress();
 					else if (actualIndex === FIELD_BUTTONS) {
 						if (selectedColumn === 0) saveSettings();
@@ -180,7 +180,7 @@
 			</div>
 		{/if}
 		<div bind:this={rowElements[trayVisible ? 3 : 2]}>
-			<SwitchRow label={$t('settings.system.defaultMinifyJson') + ':'} checked={minifyJson} selected={active && getActualIndex(selectedIndex) === FIELD_MINIFY_JSON} onToggle={toggleMinifyJson} />
+			<SwitchRow label={$t('settings.system.defaultMinifyJSON') + ':'} checked={minifyJSON} selected={active && getActualIndex(selectedIndex) === FIELD_MINIFY_JSON} onToggle={toggleMinifyJSON} />
 		</div>
 		<div bind:this={rowElements[trayVisible ? 4 : 3]}>
 			<SwitchRow label={$t('settings.system.defaultCompress') + ':'} checked={compress} selected={active && getActualIndex(selectedIndex) === FIELD_COMPRESS} onToggle={toggleCompress} />

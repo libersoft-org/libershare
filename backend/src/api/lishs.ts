@@ -1,6 +1,6 @@
 import { type DataServer } from '../lish/data-server.ts';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename } from '@shared';
-import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJson } from '../lish/lish.ts';
+import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
@@ -16,7 +16,7 @@ interface CreateLISHParams {
 	chunkSize?: number;
 	algorithm?: string;
 	threads?: number;
-	minifyJson?: boolean;
+	minifyJSON?: boolean;
 	compress?: boolean;
 	compressionAlgorithm?: CompressionAlgorithm;
 }
@@ -25,7 +25,7 @@ interface ImportFromFileParams {
 	downloadPath: string;
 	overwrite?: boolean;
 }
-interface ImportFromJsonParams {
+interface ImportFromJSONParams {
 	json: string;
 	downloadPath: string;
 	overwrite?: boolean;
@@ -38,13 +38,13 @@ interface ImportFromURLParams {
 interface ExportToFileParams {
 	lishID: string;
 	filePath: string;
-	minifyJson?: boolean;
+	minifyJSON?: boolean;
 	compress?: boolean;
 	compressionAlgorithm?: CompressionAlgorithm;
 }
 interface ExportAllToFileParams {
 	filePath: string;
-	minifyJson?: boolean;
+	minifyJSON?: boolean;
 	compress?: boolean;
 	compressionAlgorithm?: CompressionAlgorithm;
 }
@@ -57,7 +57,7 @@ interface LISHsHandlers {
 	create: (p: CreateLISHParams, client: any) => Promise<CreateLISHResponse>;
 	delete: (p: { lishID: string; deleteLISH: boolean; deleteData: boolean }) => Promise<boolean>;
 	importFromFile: (p: ImportFromFileParams) => Promise<ImportLISHResponse>;
-	importFromJson: (p: ImportFromJsonParams) => Promise<ImportLISHResponse>;
+	importFromJSON: (p: ImportFromJSONParams) => Promise<ImportLISHResponse>;
 	importFromURL: (p: ImportFromURLParams) => Promise<ImportLISHResponse>;
 }
 
@@ -116,7 +116,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		const lish = dataServer.get(p.lishID);
 		if (!lish) throw new Error(`LISH not found: ${p.lishID}`);
 		const { directory, chunks, ...exportData } = lish;
-		await Utils.writeJsonToFile(exportData, p.filePath, p.minifyJson, p.compress, p.compressionAlgorithm);
+		await Utils.writeJSONToFile(exportData, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
 		console.log(`✓ LISH exported to: ${p.filePath}`);
 		return { success: true };
 	}
@@ -129,7 +129,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 			const { directory, chunks, ...data } = lish;
 			return data;
 		});
-		await Utils.writeJsonToFile(exportData, p.filePath, p.minifyJson, p.compress, p.compressionAlgorithm);
+		await Utils.writeJSONToFile(exportData, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
 		console.log(`✓ All LISHs exported to: ${p.filePath}`);
 		return { success: true };
 	}
@@ -144,7 +144,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		const algorithm = p.algorithm ?? DEFAULT_ALGO;
 		const chunkSize = p.chunkSize ?? DEFAULT_CHUNK_SIZE;
 		const threads = p.threads ?? 0; // 0 = all CPU threads
-		const minifyJson = p.minifyJson ?? false;
+		const minifyJSON = p.minifyJSON ?? false;
 		const compress = p.compress ?? false;
 		const compressionAlgorithm = p.compressionAlgorithm ?? 'gzip';
 		// TODO: check that dataPath is not already in datasets.
@@ -186,7 +186,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 			} catch {
 				// Path doesn't exist yet — treat as a file path
 			}
-			await exportLISHToFile(lish, lishFilePath, minifyJson, compress, compressionAlgorithm);
+			await exportLISHToFile(lish, lishFilePath, minifyJSON, compress, compressionAlgorithm);
 			resultLISHFile = lishFilePath;
 		}
 		// 3. Save to data-server if requested
@@ -237,18 +237,18 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
 	}
 
-	async function importFromJson(p: ImportFromJsonParams): Promise<ImportLISHResponse> {
+	async function importFromJSON(p: ImportFromJSONParams): Promise<ImportLISHResponse> {
 		assert(p, ['json', 'downloadPath']);
-		const lish = parseLISHFromJson(p.json);
+		const lish = parseLISHFromJSON(p.json);
 		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
 	}
 
 	async function importFromURL(p: ImportFromURLParams): Promise<ImportLISHResponse> {
 		assert(p, ['url', 'downloadPath']);
 		const content = await Utils.fetchURL(p.url);
-		const lish = parseLISHFromJson(content);
+		const lish = parseLISHFromJSON(content);
 		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJson, importFromURL: importFromURL };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON: importFromJSON, importFromURL: importFromURL };
 }

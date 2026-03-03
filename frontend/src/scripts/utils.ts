@@ -64,7 +64,7 @@ export function openExternalURL(url: string): void {
 }
 
 // Minify JSON string by removing whitespace
-export function minifyJson(json: string): string {
+export function minifyJSON(json: string): string {
 	try {
 		return JSON.stringify(JSON.parse(json));
 	} catch {

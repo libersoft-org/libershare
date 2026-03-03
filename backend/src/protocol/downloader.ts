@@ -50,7 +50,7 @@ export class Downloader {
 		this.state = 'initializing';
 		// Read and parse LISH
 		const content = await Bun.file(lishPath).text();
-		this.lish = Utils.safeJsonParse(content, `LISH file: ${lishPath}`);
+		this.lish = Utils.safeJSONParse(content, `LISH file: ${lishPath}`);
 		this.lishID = this.lish.id as LISHid;
 		console.log(`Loading LISH: ${this.lish.name} (id: ${this.lishID})`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);

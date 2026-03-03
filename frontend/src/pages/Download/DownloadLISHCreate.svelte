@@ -9,7 +9,7 @@
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import { sanitizeFilename } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
-	import { storageLISHPath, storagePath, autoStartSharing, defaultMinifyJson, defaultCompress } from '../../scripts/settings.ts';
+	import { storageLISHPath, storagePath, autoStartSharing, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
 
 	function parseChunkSize(value: string): number | null {
 		if (!value.trim()) return null;
@@ -93,7 +93,7 @@
 	let dataPath = $state($storagePath);
 	let saveToFile = $state(true);
 	let addToSharing = $state($autoStartSharing);
-	let minifyJson = $state($defaultMinifyJson);
+	let minifyJSON = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
 	let showAdvanced = $state(false);
 	let name = $state('');
@@ -140,7 +140,7 @@
 	let threadsInput: Input | undefined = $state();
 	// Validation error - only set on submit
 	let errorMessage = $state('');
-	// Form fields: name(0), description(1), dataPath(2), saveToFile(3), lishFile(4), addToSharing(5), advancedToggle(6), minifyJson(7), compress(8), chunkSize(9), algo(10), threads(11), create(12), back(13)
+	// Form fields: name(0), description(1), dataPath(2), saveToFile(3), lishFile(4), addToSharing(5), advancedToggle(6), minifyJSON(7), compress(8), chunkSize(9), algo(10), threads(11), create(12), back(13)
 	const FIELD_NAME = 0;
 	const FIELD_DESCRIPTION = 1;
 	const FIELD_INPUT = 2;
@@ -216,7 +216,7 @@
 			if (description) params['description'] = description;
 			if (saveToFile && lishFile) params['lishFile'] = lishFile;
 			if (saveToFile) {
-				params['minifyJson'] = minifyJson;
+				params['minifyJSON'] = minifyJSON;
 				params['compress'] = compress;
 			}
 			if (addToSharing) params['addToSharing'] = addToSharing;
@@ -445,7 +445,7 @@
 			else if (selectedIndex === FIELD_LISH_FILE) {
 				if (selectedColumn === 0) focusInput(FIELD_LISH_FILE);
 				else openOutputPathBrowse();
-			} else if (selectedIndex === FIELD_MINIFY_JSON) minifyJson = !minifyJson;
+			} else if (selectedIndex === FIELD_MINIFY_JSON) minifyJSON = !minifyJSON;
 			else if (selectedIndex === FIELD_COMPRESS) handleCompressToggle();
 			else if (selectedIndex === FIELD_ADD_TO_SHARING) addToSharing = !addToSharing;
 			else if (selectedIndex === FIELD_ADVANCED_TOGGLE) showAdvanced = !showAdvanced;
@@ -557,7 +557,7 @@
 				{#if saveToFile}
 					<!-- Minify JSON Switch -->
 					<div bind:this={rowElements[FIELD_MINIFY_JSON]}>
-						<SwitchRow label={$t('settings.lishNetwork.minifyJson') + ':'} checked={minifyJson} selected={active && selectedIndex === FIELD_MINIFY_JSON} onConfirm={() => (minifyJson = !minifyJson)} />
+						<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} selected={active && selectedIndex === FIELD_MINIFY_JSON} onConfirm={() => (minifyJSON = !minifyJSON)} />
 					</div>
 					<!-- Compress Switch -->
 					<div bind:this={rowElements[FIELD_COMPRESS]}>
