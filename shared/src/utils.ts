@@ -20,3 +20,11 @@ export function parseBytes(value: string | number): number {
 	const i = sizes.indexOf(suffix);
 	return Math.floor(parseFloat(num!) * Math.pow(1024, i));
 }
+
+// Sanitize filename - remove invalid characters and normalize spaces
+export function sanitizeFilename(filename: string): string {
+	return filename
+		.replace(/[<>:"/\\|?*]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+}

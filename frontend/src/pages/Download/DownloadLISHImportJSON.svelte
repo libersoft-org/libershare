@@ -8,6 +8,7 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
+	import { isCompressed } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -44,20 +45,22 @@
 		return 0;
 	}
 
-	function handleImport(): void {
+	async function handleImport(): Promise<void> {
 		errorMessage = '';
+		if (!lishJson.trim()) {
+			errorMessage = $t('downloads.lishImport.jsonRequired');
+			return;
+		}
 		if (!downloadPath.trim()) {
 			errorMessage = $t('downloads.lishImport.downloadPathRequired');
 			return;
 		}
-		const result = parseLISHFromJson(lishJson);
-		if (result.error) {
-			errorMessage = getLISHErrorMessage(result.error, $t);
-			return;
+		try {
+			await api.lishs.importFromJson(lishJson, downloadPath);
+			onImport?.();
+		} catch (e) {
+			errorMessage = e instanceof Error ? e.message : String(e);
 		}
-		// TODO: Add LISH items to storage/backend
-		// result.items contains validated LISH objects
-		onImport?.();
 	}
 
 	function openDownloadPathBrowse(): void {
@@ -94,8 +97,8 @@
 	async function loadInitialFile(): Promise<void> {
 		if (initialFilePath) {
 			try {
-				const isGzip = initialFilePath.toLowerCase().endsWith('.gz');
-				const content = isGzip ? await api.fs.readGzip(initialFilePath) : await api.fs.readText(initialFilePath);
+				const compressed = isCompressed(initialFilePath);
+				const content = compressed ? await api.fs.readCompressed(initialFilePath, 'gzip') : await api.fs.readText(initialFilePath);
 				if (content) {
 					// Pretty-print minified JSON for readability
 					try {
@@ -161,7 +164,9 @@
 			}
 		},
 		confirmCancel() {},
-		back() { onBack?.(); },
+		back() {
+			onBack?.();
+		},
 	};
 
 	onMount(() => {

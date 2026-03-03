@@ -1,6 +1,6 @@
 import { type ServerWebSocket } from 'bun';
 import { type DataServer } from '../lish/data-server.ts';
-import { type Networks } from '../lishnet/networks.ts';
+import { type Networks } from '../lishnet/lishnets.ts';
 import { type Settings } from '../settings.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
@@ -8,7 +8,6 @@ import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
 import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
-import { initCoreHandlers } from './core.ts';
 import { initEventsHandlers } from './events.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
@@ -54,7 +53,6 @@ export class APIServer {
 		const emitTo = (client: ClientSocket, event: string, data: any) => this.emit(client, event, data);
 
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
-		const _core = initCoreHandlers();
 		const _settings = initSettingsHandlers(this.settings);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer);
 		const _datasets = initDatasetsHandlers(this.dataServer);
@@ -63,9 +61,6 @@ export class APIServer {
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
 
 		this.handlers = {
-			// Core
-			fetchUrl: _core.fetchUrl,
-
 			// Events
 			'events.subscribe': _events.subscribe,
 			'events.unsubscribe': _events.unsubscribe,
@@ -87,8 +82,12 @@ export class APIServer {
 			'lishnets.addIfNotExists': _lishnets.addIfNotExists,
 			'lishnets.import': _lishnets.import,
 			'lishnets.replace': _lishnets.replace,
+			'lishnets.exportToFile': _lishnets.exportToFile,
+			'lishnets.exportAllToFile': _lishnets.exportAllToFile,
 			'lishnets.importFromFile': _lishnets.importFromFile,
-			'lishnets.importFromJson': _lishnets.importFromJson,
+			'lishnets.parseFromFile': _lishnets.parseFromFile,
+			'lishnets.parseFromJson': _lishnets.parseFromJson,
+			'lishnets.parseFromUrl': _lishnets.parseFromUrl,
 			'lishnets.setEnabled': _lishnets.setEnabled,
 			'lishnets.connect': _lishnets.connect,
 			'lishnets.findPeer': _lishnets.findPeer,
@@ -101,9 +100,14 @@ export class APIServer {
 			// LISHs
 			'lishs.list': _lishs.list,
 			'lishs.get': _lishs.get,
+			'lishs.exportToFile': _lishs.exportToFile,
+			'lishs.exportAllToFile': _lishs.exportAllToFile,
 			'lishs.backup': _lishs.backup,
 			'lishs.create': _lishs.create,
 			'lishs.delete': _lishs.delete,
+			'lishs.importFromFile': _lishs.importFromFile,
+			'lishs.importFromJson': _lishs.importFromJson,
+			'lishs.importFromUrl': _lishs.importFromUrl,
 
 			// Transfer
 			'transfer.download': _transfer.download,
@@ -116,14 +120,14 @@ export class APIServer {
 			'fs.info': _fs.info,
 			'fs.list': _fs.list,
 			'fs.readText': _fs.readText,
-			'fs.readGzip': _fs.readGzip,
+			'fs.readCompressed': _fs.readCompressed,
 			'fs.delete': _fs.delete,
 			'fs.mkdir': _fs.mkdir,
 			'fs.open': _fs.open,
 			'fs.rename': _fs.rename,
 			'fs.exists': _fs.exists,
 			'fs.writeText': _fs.writeText,
-			'fs.writeGzip': _fs.writeGzip,
+			'fs.writeCompressed': _fs.writeCompressed,
 		};
 	}
 

@@ -5,7 +5,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
-	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJson, defaultCompressGzip, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJson, setDefaultCompressGzip } from '../../scripts/settings.ts';
+	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJson, defaultCompress, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJson, setDefaultCompress } from '../../scripts/settings.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
@@ -25,13 +25,13 @@
 	let trayVisible = $state($showInTray);
 	let trayMinimize = $state($minimizeToTray);
 	let minifyJson = $state($defaultMinifyJson);
-	let compressGzip = $state($defaultCompressGzip);
+	let compress = $state($defaultCompress);
 	// Field indices
 	const FIELD_AUTO_START = 0;
 	const FIELD_SHOW_IN_TRAY = 1;
 	const FIELD_MINIMIZE_TO_TRAY = 2;
 	const FIELD_MINIFY_JSON = 3;
-	const FIELD_COMPRESS_GZIP = 4;
+	const FIELD_COMPRESS = 4;
 	const FIELD_BUTTONS = 5;
 	// Calculate total visible items (skip MINIMIZE_TO_TRAY if tray not visible)
 	let totalItems = $derived(trayVisible ? 6 : 5);
@@ -54,8 +54,8 @@
 		minifyJson = !minifyJson;
 	}
 
-	function toggleCompressGzip(): void {
-		compressGzip = !compressGzip;
+	function toggleCompress(): void {
+		compress = !compress;
 	}
 
 	function saveSettings(): void {
@@ -63,7 +63,7 @@
 		setShowInTray(trayVisible);
 		setMinimizeToTray(trayMinimize);
 		setDefaultMinifyJson(minifyJson);
-		setDefaultCompressGzip(compressGzip);
+		setDefaultCompress(compress);
 		onBack?.();
 	}
 
@@ -122,7 +122,7 @@
 					else if (actualIndex === FIELD_SHOW_IN_TRAY) toggleShowInTray();
 					else if (actualIndex === FIELD_MINIMIZE_TO_TRAY) toggleMinimizeToTray();
 					else if (actualIndex === FIELD_MINIFY_JSON) toggleMinifyJson();
-					else if (actualIndex === FIELD_COMPRESS_GZIP) toggleCompressGzip();
+					else if (actualIndex === FIELD_COMPRESS) toggleCompress();
 					else if (actualIndex === FIELD_BUTTONS) {
 						if (selectedColumn === 0) saveSettings();
 						else onBack?.();
@@ -183,7 +183,7 @@
 			<SwitchRow label={$t('settings.system.defaultMinifyJson') + ':'} checked={minifyJson} selected={active && getActualIndex(selectedIndex) === FIELD_MINIFY_JSON} onToggle={toggleMinifyJson} />
 		</div>
 		<div bind:this={rowElements[trayVisible ? 4 : 3]}>
-			<SwitchRow label={$t('settings.system.defaultCompressGzip') + ':'} checked={compressGzip} selected={active && getActualIndex(selectedIndex) === FIELD_COMPRESS_GZIP} onToggle={toggleCompressGzip} />
+			<SwitchRow label={$t('settings.system.defaultCompress') + ':'} checked={compress} selected={active && getActualIndex(selectedIndex) === FIELD_COMPRESS} onToggle={toggleCompress} />
 		</div>
 	</div>
 	<div bind:this={rowElements[trayVisible ? 5 : 4]}>

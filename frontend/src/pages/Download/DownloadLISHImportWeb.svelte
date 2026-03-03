@@ -56,19 +56,7 @@
 		}
 		loading = true;
 		try {
-			// Use backend API to bypass CORS restrictions
-			const response = await api.fetchUrl(url);
-			if (response.status !== 200) {
-				errorMessage = `HTTP ${response.status}`;
-				return;
-			}
-			const result = parseLISHFromJson(response.content);
-			if (result.error) {
-				errorMessage = getLISHErrorMessage(result.error, $t);
-				return;
-			}
-			// TODO: Add LISH items to storage/backend
-			// result.items contains validated LISH objects
+			await api.lishs.importFromUrl(url, downloadPath);
 			onImport?.();
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);
@@ -155,7 +143,9 @@
 			}
 		},
 		confirmCancel() {},
-		back() { onBack?.(); },
+		back() {
+			onBack?.();
+		},
 	};
 
 	onMount(() => {

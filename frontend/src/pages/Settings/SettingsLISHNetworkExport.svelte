@@ -6,15 +6,17 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { exportNetworkToJson } from '../../scripts/lishNetwork.ts';
-	import { storageLISHnetPath, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
-	import { minifyJson } from '../../scripts/utils.ts';
+	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
+	import { api } from '../../scripts/api.ts';
+	import { storageLISHnetPath, defaultMinifyJson, defaultCompress } from '../../scripts/settings.ts';
+	import { sanitizeFilename } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
+	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -25,83 +27,122 @@
 	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
-	let selectedIndex = $state(0); // 0 = input, 1 = minify switch, 2 = gzip switch, 3 = buttons row
-	let selectedColumn = $state(0); // 0 = save as, 1 = back
-	let inputRef: Input | undefined = $state();
-	let browsingSaveAs = $state(false);
-	let saveFolder = $state($storageLISHnetPath);
-	function getInitialBaseFileName(): string {
-		return network ? `${network.name}.lishnet` : 'network.lishnet';
-	}
-	let baseFileName = $state(getInitialBaseFileName());
-	let networkJson = $state(''); // Get full network data as JSON (editable)
+	let selectedIndex = $state(0); // 0 = file path row, 1 = minify switch, 2 = gzip switch, 3 = buttons row
+	let selectedColumn = $state(0); // row 0: 0=input,1=browse; row 3: 0=save,1=back
+	let filePathInput: Input | undefined = $state();
+	let browsingFolder = $state(false);
+	let browseFolder = $state('');
+	let saving = $state(false);
 	let minifyJsonState = $state($defaultMinifyJson);
-	let compressGzip = $state($defaultCompressGzip);
+	let compress = $state($defaultCompress);
 	let errorMessage = $state('');
+	let showOverwriteConfirm = $state(false);
 
-	// Load network JSON on mount
+	function getInitialFileName(): string {
+		const baseName = network ? sanitizeFilename(network.name || network.id) : 'network';
+		return `${baseName}.lishnet`;
+	}
+
+	const initialFileName = getInitialFileName();
+	let filePath = $state(joinPath($storageLISHnetPath, $defaultCompress ? initialFileName + '.gz' : initialFileName));
+
+	function updateFileExtension(): void {
+		if (filePath.endsWith('.lishnet') || filePath.endsWith('.lishnet.gz')) {
+			if (compress && filePath.endsWith('.lishnet')) filePath = filePath + '.gz';
+			else if (!compress && filePath.endsWith('.lishnet.gz')) filePath = filePath.slice(0, -3);
+		}
+	}
+
+	function handleCompressToggle(): void {
+		compress = !compress;
+		updateFileExtension();
+	}
+
 	onMount(() => {
-		const init = async () => {
-			if (network) networkJson = await exportNetworkToJson(network.id);
-			unregisterArea = registerAreaHandler();
-			activateArea(areaID);
-		};
-		init();
+		unregisterArea = registerAreaHandler();
+		activateArea(areaID);
 		return () => {
 			if (unregisterArea) unregisterArea();
 		};
 	});
 
-	// Compute final filename with .gz extension if gzip is enabled
-	let saveFileName = $derived(compressGzip ? `${baseFileName}.gz` : baseFileName);
-
-	// Compute save content based on minify setting
-	let saveContent = $derived(minifyJsonState ? minifyJson(networkJson) : networkJson);
-
-	function getBaseFileNameFromJson(): string {
-		try {
-			const parsed = JSON.parse(networkJson);
-			if (parsed.name && typeof parsed.name === 'string' && parsed.name.trim()) return `${parsed.name.trim()}.lishnet`;
-			if (parsed.networkID && typeof parsed.networkID === 'string' && parsed.networkID.trim()) return `${parsed.networkID.trim()}.lishnet`;
-		} catch {}
-		return 'network.lishnet';
-	}
-
-	function openSaveAs(): void {
-		errorMessage = '';
-		try {
-			const parsed = JSON.parse(networkJson);
-			if (!parsed.name || typeof parsed.name !== 'string' || !parsed.name.trim()) {
-				errorMessage = $t('settings.lishNetwork.errorNameRequired');
-				return;
-			}
-			if (!parsed.networkID || typeof parsed.networkID !== 'string' || !parsed.networkID.trim()) {
-				errorMessage = $t('settings.lishNetwork.errorNetworkIDRequired');
-				return;
-			}
-		} catch {
-			errorMessage = $t('settings.lishNetwork.errorInvalidFormat');
-			return;
-		}
-		baseFileName = getBaseFileNameFromJson();
-		browsingSaveAs = true;
+	function openFolderBrowse(): void {
+		const { folder } = splitPath(filePath.trim(), $storageLISHnetPath);
+		browseFolder = folder;
+		browsingFolder = true;
 		if (unregisterArea) {
 			unregisterArea();
 			unregisterArea = null;
 		}
-		pushBreadcrumb($t('common.saveAs'));
-		removeBackHandler = pushBackHandler(handleSaveAsBack);
+		pushBreadcrumb($t('common.openFolder'));
+		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
-	async function handleSaveAsBack(): Promise<void> {
+	function handleFolderSelect(folderPath: string): void {
+		const { fileName } = splitPath(filePath.trim(), $storageLISHnetPath);
+		filePath = joinPath(folderPath, fileName || getInitialFileName());
+		handleBrowseBack();
+	}
+
+	async function handleBrowseBack(): Promise<void> {
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
 		}
 		popBreadcrumb();
-		browsingSaveAs = false;
+		browsingFolder = false;
 		await tick();
 		unregisterArea = registerAreaHandler();
+		selectedIndex = 0;
+		selectedColumn = 1;
+		activateArea(areaID);
+	}
+
+	async function handleSave(): Promise<void> {
+		errorMessage = '';
+		if (!filePath.trim()) {
+			errorMessage = $t('common.filePathRequired');
+			return;
+		}
+		if (!network) {
+			errorMessage = $t('settings.lishNetwork.errorNetworkIDRequired');
+			return;
+		}
+		const check = await api.fs.exists(filePath.trim());
+		if (check.exists) {
+			showOverwriteConfirm = true;
+			return;
+		}
+		await doSave();
+	}
+
+	async function doSave(): Promise<void> {
+		if (!network) return;
+		saving = true;
+		errorMessage = '';
+		try {
+			const result = await api.lishnets.exportToFile(network.id, filePath.trim(), minifyJsonState, compress);
+			if (result.success) {
+				onBack?.();
+				return;
+			} else {
+				errorMessage = 'Save failed';
+			}
+		} catch (e: any) {
+			errorMessage = e?.message || 'Save failed';
+		} finally {
+			saving = false;
+		}
+	}
+
+	function confirmOverwrite(): void {
+		showOverwriteConfirm = false;
+		doSave();
+	}
+
+	async function cancelOverwrite(): Promise<void> {
+		showOverwriteConfirm = false;
+		await tick();
 		activateArea(areaID);
 	}
 
@@ -112,6 +153,7 @@
 				up() {
 					if (selectedIndex > 0) {
 						selectedIndex--;
+						selectedColumn = 0;
 						return true;
 					}
 					return false;
@@ -125,6 +167,10 @@
 					return false;
 				},
 				left() {
+					if (selectedIndex === 0 && selectedColumn > 0) {
+						selectedColumn--;
+						return true;
+					}
 					if (selectedIndex === 3 && selectedColumn > 0) {
 						selectedColumn--;
 						return true;
@@ -132,6 +178,10 @@
 					return false;
 				},
 				right() {
+					if (selectedIndex === 0 && selectedColumn < 1) {
+						selectedColumn++;
+						return true;
+					}
 					if (selectedIndex === 3 && selectedColumn < 1) {
 						selectedColumn++;
 						return true;
@@ -139,12 +189,14 @@
 					return false;
 				},
 				confirmDown() {
-					if (selectedIndex === 0) inputRef?.focus();
+					if (selectedIndex === 0 && selectedColumn === 0) filePathInput?.focus();
 				},
 				confirmUp() {
-					if (selectedIndex === 1) minifyJsonState = !minifyJsonState;
-					else if (selectedIndex === 2) compressGzip = !compressGzip;
-					else if (selectedIndex === 3 && selectedColumn === 0) openSaveAs();
+					if (selectedIndex === 0 && selectedColumn === 1) openFolderBrowse();
+					else if (selectedIndex === 1) {
+						minifyJsonState = !minifyJsonState;
+					} else if (selectedIndex === 2) handleCompressToggle();
+					else if (selectedIndex === 3 && selectedColumn === 0) handleSave();
 					else if (selectedIndex === 3 && selectedColumn === 1) onBack?.();
 				},
 				confirmCancel() {},
@@ -174,23 +226,35 @@
 		width: 800px;
 		max-width: 100%;
 	}
+
+	.row {
+		display: flex;
+		gap: 1vh;
+		align-items: flex-end;
+	}
 </style>
 
-{#if browsingSaveAs}
-	<FileBrowser {areaID} {position} initialPath={saveFolder} showPath fileFilter={compressGzip ? ['*.lishnet.gz'] : ['*.lishnet']} {saveFileName} {saveContent} useGzip={compressGzip} onSaveFileNameChange={v => (saveFileName = v)} onSaveComplete={handleSaveAsBack} onBack={handleSaveAsBack} />
+{#if browsingFolder}
+	<FileBrowser {areaID} {position} initialPath={browseFolder} showPath foldersOnly selectFolderButton onSelect={handleFolderSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="export">
 		<div class="container">
-			<Input bind:this={inputRef} bind:value={networkJson} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" selected={active && selectedIndex === 0} />
+			<div class="row">
+				<Input bind:this={filePathInput} bind:value={filePath} label={$t('common.file')} selected={active && selectedIndex === 0 && selectedColumn === 0} flex />
+				<Button icon="/img/folder.svg" selected={active && selectedIndex === 0 && selectedColumn === 1} onConfirm={openFolderBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
 			<SwitchRow label={$t('settings.lishNetwork.minifyJson')} checked={minifyJsonState} selected={active && selectedIndex === 1} onToggle={() => (minifyJsonState = !minifyJsonState)} />
-			<SwitchRow label={$t('settings.lishNetwork.compressGzip')} checked={compressGzip} selected={active && selectedIndex === 2} onToggle={() => (compressGzip = !compressGzip)} />
+			<SwitchRow label={$t('settings.lishNetwork.compress')} checked={compress} selected={active && selectedIndex === 2} onToggle={handleCompressToggle} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
 		<ButtonBar justify="center">
-			<Button icon="/img/save.svg" label="{$t('common.saveAs')} ..." selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={openSaveAs} />
+			<Button icon="/img/save.svg" label={$t('common.save')} disabled={saving} selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={handleSave} />
 			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 3 && selectedColumn === 1} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
+{/if}
+{#if showOverwriteConfirm}
+	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.fileExistsOverwrite', { name: filePath })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
 {/if}

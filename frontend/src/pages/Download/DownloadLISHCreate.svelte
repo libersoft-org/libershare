@@ -1,4 +1,4 @@
-<script lang="ts">
+﻿<script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
@@ -6,9 +6,10 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { scrollToElement, sanitizeFilename } from '../../scripts/utils.ts';
+	import { scrollToElement } from '../../scripts/utils.ts';
+	import { sanitizeFilename } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
-	import { storageLISHPath, storagePath, autoStartSharing, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
+	import { storageLISHPath, storagePath, autoStartSharing, defaultMinifyJson, defaultCompress } from '../../scripts/settings.ts';
 
 	function parseChunkSize(value: string): number | null {
 		if (!value.trim()) return null;
@@ -93,7 +94,7 @@
 	let saveToFile = $state(true);
 	let addToSharing = $state($autoStartSharing);
 	let minifyJson = $state($defaultMinifyJson);
-	let compressGzip = $state($defaultCompressGzip);
+	let compress = $state($defaultCompress);
 	let showAdvanced = $state(false);
 	let name = $state('');
 	// LISH file path - editable state, initialized from settings
@@ -106,7 +107,7 @@
 			const sanitized = newName ? sanitizeFilename(newName) : '';
 			if (sanitized) {
 				const { folder } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
-				lishFile = joinPath(folder, sanitized + (compressGzip ? '.lish.gz' : '.lish'));
+				lishFile = joinPath(folder, sanitized + (compress ? '.lish.gz' : '.lish'));
 			} else {
 				const { folder } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
 				lishFile = folder;
@@ -114,11 +115,11 @@
 		}
 	}
 
-	function handleCompressGzipToggle(): void {
-		compressGzip = !compressGzip;
+	function handleCompressToggle(): void {
+		compress = !compress;
 		if (lishFile.endsWith('.lish') || lishFile.endsWith('.lish.gz')) {
-			if (compressGzip && lishFile.endsWith('.lish')) lishFile = lishFile + '.gz';
-			else if (!compressGzip && lishFile.endsWith('.lish.gz')) lishFile = lishFile.slice(0, -3);
+			if (compress && lishFile.endsWith('.lish')) lishFile = lishFile + '.gz';
+			else if (!compress && lishFile.endsWith('.lish.gz')) lishFile = lishFile.slice(0, -3);
 		}
 	}
 
@@ -139,7 +140,7 @@
 	let threadsInput: Input | undefined = $state();
 	// Validation error - only set on submit
 	let errorMessage = $state('');
-	// Form fields: name(0), description(1), dataPath(2), saveToFile(3), lishFile(4), addToSharing(5), advancedToggle(6), minifyJson(7), compressGzip(8), chunkSize(9), algo(10), threads(11), create(12), back(13)
+	// Form fields: name(0), description(1), dataPath(2), saveToFile(3), lishFile(4), addToSharing(5), advancedToggle(6), minifyJson(7), compress(8), chunkSize(9), algo(10), threads(11), create(12), back(13)
 	const FIELD_NAME = 0;
 	const FIELD_DESCRIPTION = 1;
 	const FIELD_INPUT = 2;
@@ -148,7 +149,7 @@
 	const FIELD_ADD_TO_SHARING = 5;
 	const FIELD_ADVANCED_TOGGLE = 6;
 	const FIELD_MINIFY_JSON = 7;
-	const FIELD_COMPRESS_GZIP = 8;
+	const FIELD_COMPRESS = 8;
 	const FIELD_CHUNK_SIZE = 9;
 	const FIELD_ALGO = 10;
 	const FIELD_THREADS = 11;
@@ -216,7 +217,7 @@
 			if (saveToFile && lishFile) params['lishFile'] = lishFile;
 			if (saveToFile) {
 				params['minifyJson'] = minifyJson;
-				params['compressGzip'] = compressGzip;
+				params['compress'] = compress;
 			}
 			if (addToSharing) params['addToSharing'] = addToSharing;
 			// Only pass non-default advanced options
@@ -386,8 +387,8 @@
 				if (!saveToFile && selectedIndex === FIELD_LISH_FILE) selectedIndex = FIELD_SAVE_TO_FILE;
 				// Skip advanced fields when collapsed
 				if (!showAdvanced && selectedIndex >= FIELD_MINIFY_JSON && selectedIndex <= FIELD_THREADS) selectedIndex = FIELD_ADVANCED_TOGGLE;
-				// Skip minify/gzip in advanced when not saving to file
-				if (!saveToFile && selectedIndex >= FIELD_MINIFY_JSON && selectedIndex <= FIELD_COMPRESS_GZIP) selectedIndex = FIELD_ADVANCED_TOGGLE;
+				// Skip minify/compress in advanced when not saving to file
+				if (!saveToFile && selectedIndex >= FIELD_MINIFY_JSON && selectedIndex <= FIELD_COMPRESS) selectedIndex = FIELD_ADVANCED_TOGGLE;
 				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
 				scrollToSelected();
 				return true;
@@ -402,8 +403,8 @@
 				if (!saveToFile && selectedIndex === FIELD_LISH_FILE) selectedIndex = FIELD_ADD_TO_SHARING;
 				// Skip advanced fields when collapsed
 				if (!showAdvanced && selectedIndex >= FIELD_MINIFY_JSON && selectedIndex <= FIELD_THREADS) selectedIndex = FIELD_CREATE;
-				// Skip minify/gzip in advanced when not saving to file
-				if (!saveToFile && selectedIndex >= FIELD_MINIFY_JSON && selectedIndex <= FIELD_COMPRESS_GZIP) selectedIndex = FIELD_CHUNK_SIZE;
+				// Skip minify/compress in advanced when not saving to file
+				if (!saveToFile && selectedIndex >= FIELD_MINIFY_JSON && selectedIndex <= FIELD_COMPRESS) selectedIndex = FIELD_CHUNK_SIZE;
 				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
 				scrollToSelected();
 				return true;
@@ -445,7 +446,7 @@
 				if (selectedColumn === 0) focusInput(FIELD_LISH_FILE);
 				else openOutputPathBrowse();
 			} else if (selectedIndex === FIELD_MINIFY_JSON) minifyJson = !minifyJson;
-			else if (selectedIndex === FIELD_COMPRESS_GZIP) handleCompressGzipToggle();
+			else if (selectedIndex === FIELD_COMPRESS) handleCompressToggle();
 			else if (selectedIndex === FIELD_ADD_TO_SHARING) addToSharing = !addToSharing;
 			else if (selectedIndex === FIELD_ADVANCED_TOGGLE) showAdvanced = !showAdvanced;
 			else if (selectedIndex === FIELD_CHUNK_SIZE) focusInput(FIELD_CHUNK_SIZE);
@@ -550,7 +551,7 @@
 			</div>
 			<!-- Advanced Settings Toggle -->
 			<div bind:this={rowElements[FIELD_ADVANCED_TOGGLE]}>
-				<Button label={(showAdvanced ? '▾ ' : '▸ ') + $t(showAdvanced ? 'downloads.lishCreate.hideAdvanced' : 'downloads.lishCreate.showAdvanced')} selected={active && selectedIndex === FIELD_ADVANCED_TOGGLE} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+				<Button icon={showAdvanced ? '/img/up.svg' : '/img/down.svg'} label={$t(showAdvanced ? 'downloads.lishCreate.hideAdvanced' : 'downloads.lishCreate.showAdvanced')} selected={active && selectedIndex === FIELD_ADVANCED_TOGGLE} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 			</div>
 			{#if showAdvanced}
 				{#if saveToFile}
@@ -558,9 +559,9 @@
 					<div bind:this={rowElements[FIELD_MINIFY_JSON]}>
 						<SwitchRow label={$t('settings.lishNetwork.minifyJson') + ':'} checked={minifyJson} selected={active && selectedIndex === FIELD_MINIFY_JSON} onConfirm={() => (minifyJson = !minifyJson)} />
 					</div>
-					<!-- Compress Gzip Switch -->
-					<div bind:this={rowElements[FIELD_COMPRESS_GZIP]}>
-						<SwitchRow label={$t('settings.lishNetwork.compressGzip') + ':'} checked={compressGzip} selected={active && selectedIndex === FIELD_COMPRESS_GZIP} onConfirm={handleCompressGzipToggle} />
+					<!-- Compress Switch -->
+					<div bind:this={rowElements[FIELD_COMPRESS]}>
+						<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} selected={active && selectedIndex === FIELD_COMPRESS} onConfirm={handleCompressToggle} />
 					</div>
 				{/if}
 				<!-- Chunk Size -->

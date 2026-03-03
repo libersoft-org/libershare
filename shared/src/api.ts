@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type DownloadResponse, type FetchUrlResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHSortField, type SortOrder } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHSortField, type SortOrder, type CompressionAlgorithm } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -55,10 +55,6 @@ export class API {
 	unsubscribe(...events: string[]): Promise<boolean> {
 		return this.client.call<boolean>('events.unsubscribe', { events });
 	}
-
-	fetchUrl(url: string): Promise<FetchUrlResponse> {
-		return this.client.call<FetchUrlResponse>('fetchUrl', { url });
-	}
 }
 
 class DatasetsAPI {
@@ -95,8 +91,8 @@ class FsAPI {
 		return result.content;
 	}
 
-	async readGzip(path: string): Promise<string> {
-		const result = await this.client.call<{ content: string }>('fs.readGzip', { path });
+	async readCompressed(path: string, algorithm: CompressionAlgorithm = 'gzip'): Promise<string> {
+		const result = await this.client.call<{ content: string }>('fs.readCompressed', { path, algorithm });
 		return result.content;
 	}
 
@@ -124,8 +120,8 @@ class FsAPI {
 		return this.client.call<{ success: boolean; error?: string }>('fs.writeText', { path, content });
 	}
 
-	writeGzip(path: string, content: string): Promise<{ success: boolean; error?: string }> {
-		return this.client.call<{ success: boolean; error?: string }>('fs.writeGzip', { path, content });
+	writeCompressed(path: string, content: string, algorithm: CompressionAlgorithm = 'gzip'): Promise<{ success: boolean; error?: string }> {
+		return this.client.call<{ success: boolean; error?: string }>('fs.writeCompressed', { path, content, algorithm });
 	}
 }
 
@@ -198,14 +194,30 @@ class LISHnetsAPI {
 		return this.client.call<boolean>('lishnets.replace', { networks });
 	}
 
-	// Runtime methods
-
-	importFromFile(path: string, enabled = false): Promise<LISHNetworkConfig> {
-		return this.client.call<LISHNetworkConfig>('lishnets.importFromFile', { path, enabled });
+	exportToFile(networkID: string, filePath: string, minifyJson?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishnets.exportToFile', { networkID, filePath, minifyJson, compress, compressionAlgorithm });
 	}
 
-	importFromJson(json: string, enabled = false): Promise<LISHNetworkConfig> {
-		return this.client.call<LISHNetworkConfig>('lishnets.importFromJson', { json, enabled });
+	exportAllToFile(filePath: string, minifyJson?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishnets.exportAllToFile', { filePath, minifyJson, compress, compressionAlgorithm });
+	}
+
+	// Runtime methods
+
+	importFromFile(path: string, enabled = false): Promise<LISHNetworkConfig[]> {
+		return this.client.call<LISHNetworkConfig[]>('lishnets.importFromFile', { path, enabled });
+	}
+
+	parseFromFile(path: string): Promise<LISHNetworkDefinition[]> {
+		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromFile', { path });
+	}
+
+	parseFromJson(json: string): Promise<LISHNetworkDefinition[]> {
+		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromJson', { json });
+	}
+
+	parseFromUrl(url: string): Promise<LISHNetworkDefinition[]> {
+		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromUrl', { url });
 	}
 
 	setEnabled(networkID: string, enabled: boolean): Promise<SuccessResponse> {
@@ -255,11 +267,19 @@ class LISHsAPI {
 		return this.client.call<ILISHDetail | null>('lishs.get', { lishID });
 	}
 
+	exportToFile(lishID: string, filePath: string, minifyJson?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.exportToFile', { lishID, filePath, minifyJson, compress, compressionAlgorithm });
+	}
+
+	exportAllToFile(filePath: string, minifyJson?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.exportAllToFile', { filePath, minifyJson, compress, compressionAlgorithm });
+	}
+
 	backup(): Promise<IStoredLISH[]> {
 		return this.client.call<IStoredLISH[]>('lishs.backup');
 	}
 
-	create(dataPath: string, lishFile?: string, addToSharing?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJson?: boolean, compressGzip?: boolean): Promise<CreateLISHResponse> {
+	create(dataPath: string, lishFile?: string, addToSharing?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJson?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<CreateLISHResponse> {
 		return this.client.call<CreateLISHResponse>('lishs.create', {
 			name,
 			description,
@@ -270,12 +290,25 @@ class LISHsAPI {
 			algorithm,
 			threads,
 			minifyJson,
-			compressGzip,
+			compress,
+			compressionAlgorithm,
 		});
 	}
 
 	delete(lishID: string, deleteLISH: boolean, deleteData: boolean): Promise<boolean> {
 		return this.client.call<boolean>('lishs.delete', { lishID, deleteLISH: deleteLISH, deleteData });
+	}
+
+	importFromFile(filePath: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromFile', { filePath, downloadPath, overwrite });
+	}
+
+	importFromJson(json: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromJson', { json, downloadPath, overwrite });
+	}
+
+	importFromUrl(url: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromUrl', { url, downloadPath, overwrite });
 	}
 }
 

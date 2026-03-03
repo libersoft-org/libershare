@@ -34,7 +34,6 @@ Commands:
   fs.delete <path>                  Delete file or directory
 
   download <lishPath>              Download from .lish file
-  fetch <url>                       Fetch URL content
   help                              Show this help
   quit                              Exit
 `;
@@ -139,8 +138,8 @@ async function main(): Promise<void> {
 						break;
 					}
 					console.log(`Importing network from: ${arg}`);
-					const network = await api.lishnets.importFromFile(arg, true);
-					console.log(`✓ Network imported: ${network.name} (${network.networkID})`);
+					const networks = await api.lishnets.importFromFile(arg, true);
+					for (const n of networks) console.log(`✓ Network imported: ${n.name} (${n.networkID})`);
 					break;
 				}
 
@@ -399,19 +398,6 @@ async function main(): Promise<void> {
 					console.log(`Downloading: ${arg}`);
 					const result = await api.transfer.download(networkID, arg);
 					console.log(`✓ Download started. Directory: ${result.downloadDir}`);
-					break;
-				}
-
-				case 'fetch': {
-					if (!arg) {
-						console.log('Usage: fetch <url>');
-						break;
-					}
-					const result = await api.fetchUrl(arg);
-					console.log(`Status: ${result.status}`);
-					console.log(`Content-Type: ${result.contentType}`);
-					console.log('---');
-					console.log(result.content);
 					break;
 				}
 

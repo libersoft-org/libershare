@@ -11,7 +11,7 @@ interface IArgs {
 	url?: string;
 	addToSharing?: boolean;
 	minifyJson?: boolean;
-	compressGzip?: boolean;
+	compress?: boolean;
 }
 
 function showHelp(): void {
@@ -32,7 +32,7 @@ function showHelp(): void {
 	console.log('  --url <url>             Backend WebSocket URL (optional, default: ' + DEFAULT_API_URL + ')');
 	console.log('  --add-to-sharing        Add to sharing after creation (default: false)');
 	console.log('  --minify-json           Minify JSON output (default: false)');
-	console.log('  --compress-gzip         Compress LISH file with gzip (default: false)');
+	console.log('  --compress              Compress LISH file (default algorithm: gzip)');
 	console.log('  --help                  Show this help message');
 	console.log('');
 	console.log('Supported algorithms:');
@@ -70,8 +70,8 @@ function parseArgs(args: string[]): IArgs {
 			parsed.minifyJson = true;
 			continue;
 		}
-		if (arg === '--compress-gzip') {
-			parsed.compressGzip = true;
+		if (arg === '--compress-gzip' || arg === '--compress') {
+			parsed.compress = true;
 			continue;
 		}
 		const key = argMap[arg];
@@ -136,7 +136,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	const serverUrl = args.url || DEFAULT_API_URL;
 	const addToSharing = args.addToSharing || false;
 	const minifyJson = args.minifyJson || false;
-	const compressGzip = args.compressGzip || false;
+	const compress = args.compress || false;
 	const lishFile = args.output;
 
 	const startTime = Date.now();
@@ -152,7 +152,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	console.log('\x1b[33mServer:\x1b[0m               ' + serverUrl);
 	if (addToSharing) console.log('\x1b[33mAdd to sharing:\x1b[0m       yes');
 	if (minifyJson) console.log('\x1b[33mMinify JSON:\x1b[0m          yes');
-	if (compressGzip) console.log('\x1b[33mCompress gzip:\x1b[0m        yes');
+	if (compress) console.log('\x1b[33mCompress:\x1b[0m              yes');
 	console.log('');
 
 	// Connect to backend via WebSocket
@@ -196,7 +196,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	await api.subscribe('lishs.create:progress');
 
 	try {
-		const result = await api.lishs.create(inputPath, lishFile, addToSharing, name, description, algo, chunkSize, threads, minifyJson, compressGzip);
+		const result = await api.lishs.create(inputPath, lishFile, addToSharing, name, description, algo, chunkSize, threads, minifyJson, compress);
 		if (lastProgress) process.stdout.write('\n');
 
 		const endTime = Date.now();

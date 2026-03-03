@@ -3,52 +3,53 @@
 	import { t } from '../../scripts/language.ts';
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
-	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
+	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
 	import { storageLISHPath, defaultMinifyJson, defaultCompress } from '../../scripts/settings.ts';
+	import { sanitizeFilename } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
-	import Alert from '../../components/Alert/Alert.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
+	import Alert from '../../components/Alert/Alert.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
+		lish?: { id: string; name: string } | null | undefined;
 		onBack?: (() => void) | undefined;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, lish = null, onBack }: Props = $props();
 	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
 	let active = $derived($activeArea === areaID);
-	let saving = $state(false);
 	let selectedIndex = $state(0); // 0 = file path row, 1 = minify switch, 2 = gzip switch, 3 = buttons row
 	let selectedColumn = $state(0); // row 0: 0=input,1=browse; row 3: 0=save,1=back
 	let filePathInput: Input | undefined = $state();
 	let browsingFolder = $state(false);
 	let browseFolder = $state('');
+	let saving = $state(false);
 	let minifyJsonState = $state($defaultMinifyJson);
 	let compress = $state($defaultCompress);
 	let errorMessage = $state('');
 	let showOverwriteConfirm = $state(false);
 
-	function generateFileName(): string {
-		const now = new Date();
-		const ts = now.getFullYear().toString() + '-' + (now.getMonth() + 1).toString().padStart(2, '0') + '-' + now.getDate().toString().padStart(2, '0') + '_' + now.getHours().toString().padStart(2, '0') + now.getMinutes().toString().padStart(2, '0') + now.getSeconds().toString().padStart(2, '0');
-		return `lishs_${ts}.lishs`;
+	function getInitialFileName(): string {
+		const baseName = lish ? sanitizeFilename(lish.name || lish.id) : 'export';
+		return `${baseName}.lish`;
 	}
 
-	const initialFileName = generateFileName();
+	const initialFileName = getInitialFileName();
 	let filePath = $state(joinPath($storageLISHPath, $defaultCompress ? initialFileName + '.gz' : initialFileName));
 
 	function updateFileExtension(): void {
-		if (filePath.endsWith('.lishs') || filePath.endsWith('.lishs.gz')) {
-			if (compress && filePath.endsWith('.lishs')) filePath = filePath + '.gz';
-			else if (!compress && filePath.endsWith('.lishs.gz')) filePath = filePath.slice(0, -3);
+		if (filePath.endsWith('.lish') || filePath.endsWith('.lish.gz')) {
+			if (compress && filePath.endsWith('.lish')) filePath = filePath + '.gz';
+			else if (!compress && filePath.endsWith('.lish.gz')) filePath = filePath.slice(0, -3);
 		}
 	}
 
@@ -56,6 +57,14 @@
 		compress = !compress;
 		updateFileExtension();
 	}
+
+	onMount(() => {
+		unregisterArea = registerAreaHandler();
+		activateArea(areaID);
+		return () => {
+			if (unregisterArea) unregisterArea();
+		};
+	});
 
 	function openFolderBrowse(): void {
 		const { folder } = splitPath(filePath.trim(), $storageLISHPath);
@@ -71,7 +80,7 @@
 
 	function handleFolderSelect(folderPath: string): void {
 		const { fileName } = splitPath(filePath.trim(), $storageLISHPath);
-		filePath = joinPath(folderPath, fileName || generateFileName());
+		filePath = joinPath(folderPath, fileName || getInitialFileName());
 		handleBrowseBack();
 	}
 
@@ -95,6 +104,10 @@
 			errorMessage = $t('common.filePathRequired');
 			return;
 		}
+		if (!lish) {
+			errorMessage = $t('downloads.lishExport.errorIDRequired');
+			return;
+		}
 		const check = await api.fs.exists(filePath.trim());
 		if (check.exists) {
 			showOverwriteConfirm = true;
@@ -104,10 +117,11 @@
 	}
 
 	async function doSave(): Promise<void> {
+		if (!lish) return;
 		saving = true;
 		errorMessage = '';
 		try {
-			const result = await api.lishs.exportAllToFile(filePath.trim(), minifyJsonState, compress);
+			const result = await api.lishs.exportToFile(lish.id, filePath.trim(), minifyJsonState, compress);
 			if (result.success) {
 				onBack?.();
 				return;
@@ -193,18 +207,10 @@
 			position
 		);
 	}
-
-	onMount(() => {
-		unregisterArea = registerAreaHandler();
-		activateArea(areaID);
-		return () => {
-			if (unregisterArea) unregisterArea();
-		};
-	});
 </script>
 
 <style>
-	.export-all {
+	.export {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -231,7 +237,7 @@
 {#if browsingFolder}
 	<FileBrowser {areaID} {position} initialPath={browseFolder} showPath foldersOnly selectFolderButton onSelect={handleFolderSelect} onBack={handleBrowseBack} />
 {:else}
-	<div class="export-all">
+	<div class="export">
 		<div class="container">
 			<div class="row">
 				<Input bind:this={filePathInput} bind:value={filePath} label={$t('common.file')} selected={active && selectedIndex === 0 && selectedColumn === 0} flex />

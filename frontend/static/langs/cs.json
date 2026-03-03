@@ -80,7 +80,6 @@
 		},
 		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",
-		"errorNoValidLISH": "Nebyl nalezen žádný platný LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",
 		"start": "Spustit",
 		"pause": "Pozastavit",
@@ -124,7 +123,11 @@
 			"downloadPath": "Složka pro stažení",
 			"lishJSON": "LISH JSON",
 			"downloadPathRequired": "Složka pro stažení je povinná",
+			"jsonRequired": "LISH JSON je povinný",
 			"autoStartSharing": "Automaticky spustit sdílení po přidání"
+		},
+		"lishExport": {
+			"errorIDRequired": "LISH ID je povinné"
 		}
 	},
 	"settings": {
@@ -135,7 +138,7 @@
 			"showInTray": "Zobrazit v oznamovací oblasti",
 			"minimizeToTray": "Minimalizovat do oznamovací oblasti",
 			"defaultMinifyJson": "Minifikovat JSON (výchozí hodnota)",
-			"defaultCompressGzip": "Komprimovat do gzipu (výchozí hodnota)"
+			"defaultCompress": "Komprimovat (výchozí hodnota)"
 		},
 		"download": {
 			"folderDownload": "Složka pro dokončená stahování",
@@ -161,7 +164,6 @@
 			"errorNetworkIDRequired": "ID sítě je povinné",
 			"errorBootstrapRequired": "Je vyžadován alespoň jeden bootstrap server",
 			"errorInvalidFormat": "Neplatný formát seznamu sítí",
-			"errorNoValidNetworks": "Nebyly nalezeny žádné platné sítě",
 			"publicList": "Veřejný seznam",
 			"emptyList": "Žádná síť není přidána. Přidejte nebo importujte novou síť.",
 			"confirmDelete": "Opravdu chcete smazat síť \"{name}\"?",
@@ -175,8 +177,8 @@
 			"relayed": "{count} předaných",
 			"noPeers": "Žádní účastníci nejsou připojeni",
 			"connectedPeers": "Účastníků: {count}",
-			"minifyJson": "Minifikovat JSON při uložení",
-			"compressGzip": "Komprimovat do gzip"
+			"minifyJson": "Minifikovat JSON",
+			"compress": "Komprimovat"
 		},
 		"lishNetworkImport": {
 			"fromJSON": "Z LISHNET JSON",

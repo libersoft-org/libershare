@@ -1,6 +1,7 @@
 import { mkdir } from 'fs/promises';
 import { JsonStorage } from './storage.ts';
 import { Utils } from './utils.ts';
+import { type CompressionAlgorithm } from '@shared';
 
 export interface SettingsData {
 	language: string;
@@ -40,7 +41,8 @@ export interface SettingsData {
 	};
 	export: {
 		minifyJson: boolean;
-		compressGzip: boolean;
+		compress: boolean;
+		compressionAlgorithm: CompressionAlgorithm;
 	};
 	input: {
 		initialDelay: number;
@@ -98,7 +100,8 @@ const DEFAULT_SETTINGS: SettingsData = {
 	},
 	export: {
 		minifyJson: false,
-		compressGzip: false,
+		compress: false,
+		compressionAlgorithm: 'gzip' as CompressionAlgorithm,
 	},
 	input: {
 		initialDelay: 400,

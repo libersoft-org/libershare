@@ -80,7 +80,6 @@
 		},
 		"createLISH": "Create LISH",
 		"errorInvalidFormat": "Invalid LISH format",
-		"errorNoValidLISH": "No valid LISH found",
 		"emptyList": "No LISH to export found",
 		"start": "Start",
 		"pause": "Pause",
@@ -124,7 +123,11 @@
 			"downloadPath": "Download folder",
 			"lishJSON": "LISH JSON",
 			"downloadPathRequired": "Download folder is required",
+			"jsonRequired": "LISH JSON is required",
 			"autoStartSharing": "Automatically start sharing after adding"
+		},
+		"lishExport": {
+			"errorIDRequired": "LISH ID is required"
 		}
 	},
 	"settings": {
@@ -135,7 +138,7 @@
 			"showInTray": "Show in system tray",
 			"minimizeToTray": "Minimize to system tray",
 			"defaultMinifyJson": "Minify JSON (default)",
-			"defaultCompressGzip": "Compress to gzip (default)"
+			"defaultCompress": "Compress (default)"
 		},
 		"download": {
 			"folderDownload": "Finished download folder",
@@ -161,7 +164,6 @@
 			"errorNetworkIDRequired": "Network ID is required",
 			"errorBootstrapRequired": "At least one bootstrap server is required",
 			"errorInvalidFormat": "Invalid format of network list",
-			"errorNoValidNetworks": "No valid networks found",
 			"publicList": "Public list",
 			"emptyList": "No networks added. Add or Import a new network.",
 			"confirmDelete": "Are you sure you want to delete network \"{name}\"?",
@@ -175,8 +177,8 @@
 			"relayed": "{count} relayed",
 			"noPeers": "No peers connected",
 			"connectedPeers": "Peers: {count}",
-			"minifyJson": "Minify JSON on save",
-			"compressGzip": "Compress to gzip"
+			"minifyJson": "Minify JSON",
+			"compress": "Compress"
 		},
 		"lishNetworkImport": {
 			"fromJSON": "From LISHNET JSON",

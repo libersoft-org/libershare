@@ -1,6 +1,6 @@
-import { type Networks } from '../lishnet/networks.ts';
+import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
-import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerConnectionInfo } from '@shared';
+import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerConnectionInfo, type CompressionAlgorithm } from '@shared';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
@@ -14,8 +14,12 @@ interface LISHnetsHandlers {
 	addIfNotExists: (p: { network: LISHNetworkDefinition }) => boolean;
 	import: (p: { networks: LISHNetworkDefinition[] }) => number;
 	replace: (p: { networks: LISHNetworkConfig[] }) => boolean;
-	importFromFile: (p: { path: string; enabled?: boolean }) => Promise<LISHNetworkConfig>;
-	importFromJson: (p: { json: string; enabled?: boolean }) => Promise<LISHNetworkConfig>;
+	exportToFile: (p: { networkID: string; filePath: string; minifyJson?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
+	exportAllToFile: (p: { filePath: string; minifyJson?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
+	importFromFile: (p: { path: string; enabled?: boolean }) => Promise<LISHNetworkConfig[]>;
+	parseFromFile: (p: { path: string }) => Promise<LISHNetworkDefinition[]>;
+	parseFromJson: (p: { json: string }) => LISHNetworkDefinition[];
+	parseFromUrl: (p: { url: string }) => Promise<LISHNetworkDefinition[]>;
 	setEnabled: (p: { networkID: string; enabled: boolean }) => Promise<SuccessResponse>;
 	connect: (p: { multiaddr: string }) => Promise<SuccessResponse>;
 	findPeer: (p: { peerID: string }) => Promise<void>;
@@ -63,13 +67,46 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		networks.replace(p.networks);
 		return true;
 	}
-	async function importFromFile(p: { path: string; enabled?: boolean }): Promise<LISHNetworkConfig> {
-		assert(p, ['path']);
-		return networks.importFromFile(p.path, p.enabled ?? false);
+	async function exportToFile(p: { networkID: string; filePath: string; minifyJson?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
+		assert(p, ['networkID', 'filePath']);
+		const network = networks.get(p.networkID);
+		if (!network) throw new Error(`Network not found: ${p.networkID}`);
+		const { enabled, ...definition } = network;
+		await Utils.writeJsonToFile(definition, p.filePath, p.minifyJson, p.compress, p.compressionAlgorithm);
+		console.log(`✓ Network exported to: ${p.filePath}`);
+		return { success: true };
 	}
-	async function importFromJson(p: { json: string; enabled?: boolean }): Promise<LISHNetworkConfig> {
+
+	async function exportAllToFile(p: { filePath: string; minifyJson?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
+		assert(p, ['filePath']);
+		const nets = networks.list();
+		if (nets.length === 0) throw new Error('No networks to export');
+		const exportData = nets.map(({ enabled, ...definition }) => definition);
+		await Utils.writeJsonToFile(exportData, p.filePath, p.minifyJson, p.compress, p.compressionAlgorithm);
+		console.log(`✓ All networks exported to: ${p.filePath}`);
+		return { success: true };
+	}
+
+	async function importFromFile(p: { path: string; enabled?: boolean }): Promise<LISHNetworkConfig[]> {
+		assert(p, ['path']);
+		const definitions = await networks.parseFromFile(p.path);
+		const results: LISHNetworkConfig[] = [];
+		for (const def of definitions) {
+			results.push(await networks.importFromLISHnet(def as any, p.enabled ?? false));
+		}
+		return results;
+	}
+	async function parseFromFile(p: { path: string }): Promise<LISHNetworkDefinition[]> {
+		assert(p, ['path']);
+		return networks.parseFromFile(p.path);
+	}
+	function parseFromJson(p: { json: string }): LISHNetworkDefinition[] {
 		assert(p, ['json']);
-		return networks.importFromJson(p.json, p.enabled ?? false);
+		return networks.parseFromJson(p.json);
+	}
+	async function parseFromUrl(p: { url: string }): Promise<LISHNetworkDefinition[]> {
+		assert(p, ['url']);
+		return networks.parseFromUrl(p.url);
 	}
 	async function setEnabled(p: { networkID: string; enabled: boolean }): Promise<SuccessResponse> {
 		assert(p, ['networkID', 'enabled']);
@@ -139,8 +176,12 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		addIfNotExists,
 		import: importNetworks,
 		replace,
+		exportToFile,
+		exportAllToFile,
 		importFromFile,
-		importFromJson,
+		parseFromFile,
+		parseFromJson,
+		parseFromUrl,
 		setEnabled,
 		connect,
 		findPeer,

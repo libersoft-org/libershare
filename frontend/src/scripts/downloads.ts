@@ -5,6 +5,10 @@ import { formatSize } from './utils.ts';
 
 export type DownloadStatus = 'completed' | 'downloading' | 'waiting' | 'paused' | 'error';
 
+// ============================================================================
+// Download Data Types
+// ============================================================================
+
 export interface DownloadFileData {
 	id: number;
 	name: string;
@@ -181,7 +185,7 @@ export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
  * Handle toolbar action for download detail
  * @returns true if action was handled internally, false if needs UI handling (e.g., onBack)
  */
-export function handleDownloadToolbarAction(actionId: DownloadToolbarActionId, download: DownloadData | null): { handled: boolean; needsBack?: boolean; needsDelete?: boolean } {
+export function handleDownloadToolbarAction(actionId: DownloadToolbarActionId, download: DownloadData | null): { handled: boolean; needsBack?: boolean; needsDelete?: boolean; needsExport?: boolean } {
 	switch (actionId) {
 		case 'back':
 			return { handled: false, needsBack: true };
@@ -194,9 +198,7 @@ export function handleDownloadToolbarAction(actionId: DownloadToolbarActionId, d
 			console.log('Toggle pause/resume for download:', download?.id);
 			return { handled: true };
 		case 'export':
-			// TODO: Implement export LISH
-			console.log('Export LISH for download:', download?.id);
-			return { handled: true };
+			return { handled: false, needsExport: true };
 		case 'move':
 			// TODO: Implement move data
 			console.log('Move data for download:', download?.id);

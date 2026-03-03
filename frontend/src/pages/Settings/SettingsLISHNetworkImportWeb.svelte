@@ -4,9 +4,8 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { parseNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
-	import { type LISHNetworkDefinition } from '@shared';
 	import { api } from '../../scripts/api.ts';
+	import { type LISHNetworkDefinition } from '@shared';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -43,23 +42,7 @@
 		}
 		loading = true;
 		try {
-			// Use backend API to bypass CORS restrictions
-			const response = await api.fetchUrl(url);
-			if (response.status !== 200) {
-				errorMessage = `HTTP ${response.status}`;
-				return;
-			}
-			const result = parseNetworksFromJson(response.content);
-			if (result.error) {
-				errorMessage = getNetworkErrorMessage(result.error, $t);
-				return;
-			}
-			parsedNetworks = result.networks;
-			// Unregister our area - ImportOverwrite/ConfirmDialog will create its own
-			if (unregisterArea) {
-				unregisterArea();
-				unregisterArea = null;
-			}
+			parsedNetworks = await api.lishnets.parseFromUrl(url);
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -67,7 +50,8 @@
 		}
 	}
 
-	function handleImportDone(): void {
+	function handleOverwriteDone(): void {
+		parsedNetworks = null;
 		onImport?.();
 		onBack?.();
 		onBack?.();
@@ -149,7 +133,7 @@
 </style>
 
 {#if parsedNetworks}
-	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleImportDone} />
+	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleOverwriteDone} />
 {:else}
 	<div class="import">
 		<div class="container">

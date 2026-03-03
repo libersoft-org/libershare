@@ -8,6 +8,7 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
+	import { api } from '../../scripts/api.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -44,7 +45,7 @@
 		return 0;
 	}
 
-	function handleImport(): void {
+	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (!filePath.trim()) {
 			errorMessage = $t('common.filePathRequired');
@@ -54,9 +55,12 @@
 			errorMessage = $t('downloads.lishImport.downloadPathRequired');
 			return;
 		}
-		// TODO: Load and parse LISH file from filePath
-		// TODO: Add LISH items to storage/backend
-		onImport?.();
+		try {
+			await api.lishs.importFromFile(filePath, downloadPath);
+			onImport?.();
+		} catch (e) {
+			errorMessage = e instanceof Error ? e.message : String(e);
+		}
 	}
 
 	function openFilePathBrowse(): void {

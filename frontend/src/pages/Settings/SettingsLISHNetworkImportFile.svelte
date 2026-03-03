@@ -6,16 +6,15 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { parseNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
-	import { type LISHNetworkDefinition } from '@shared';
 	import { storageLISHnetPath } from '../../scripts/settings.ts';
 	import { api } from '../../scripts/api.ts';
+	import { type LISHNetworkDefinition } from '@shared';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
-	import ImportOverwrite from './SettingsLISHNetworkImportOverwrite.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
+	import ImportOverwrite from './SettingsLISHNetworkImportOverwrite.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -48,27 +47,14 @@
 			return;
 		}
 		try {
-			// Read file from backend using WebSocket API
-			// Use readGzip for .gz files, readText otherwise
-			const isGzip = filePath.toLowerCase().endsWith('.gz');
-			const content = isGzip ? await api.fs.readGzip(filePath) : await api.fs.readText(filePath);
-			const result = parseNetworksFromJson(content);
-			if (result.error) {
-				errorMessage = getNetworkErrorMessage(result.error, $t);
-				return;
-			}
-			parsedNetworks = result.networks;
-			// Unregister our area - ImportOverwrite/ConfirmDialog will create its own
-			if (unregisterArea) {
-				unregisterArea();
-				unregisterArea = null;
-			}
+			parsedNetworks = await api.lishnets.parseFromFile(filePath);
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);
 		}
 	}
 
-	function handleImportDone(): void {
+	function handleOverwriteDone(): void {
+		parsedNetworks = null;
 		onImport?.();
 		onBack?.();
 		onBack?.();
@@ -192,7 +178,7 @@
 </style>
 
 {#if parsedNetworks}
-	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleImportDone} />
+	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleOverwriteDone} />
 {:else if browsingFilePath}
 	<FileBrowser {areaID} {position} initialPath={filePath || $storageLISHnetPath} showPath fileFilter={['*.lishnet', '*.lishnets', '*.json', '*.lishnet.gz', '*.lishnets.gz', '*.json.gz']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else}

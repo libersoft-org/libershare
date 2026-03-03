@@ -837,7 +837,7 @@
 				return;
 			}
 			// File doesn't exist, write directly
-			if (useGzip) await api.fs.writeGzip(fullPath, saveContent);
+			if (useGzip) await api.fs.writeCompressed(fullPath, saveContent, 'gzip');
 			else await api.fs.writeText(fullPath, saveContent);
 			onSaveComplete?.(fullPath);
 		} catch (e) {
@@ -852,7 +852,7 @@
 		saveErrorMessage = '';
 		if (saveContent === undefined) return;
 		try {
-			if (useGzip) await api.fs.writeGzip(pendingSavePath, saveContent);
+			if (useGzip) await api.fs.writeCompressed(pendingSavePath, saveContent, 'gzip');
 			else await api.fs.writeText(pendingSavePath, saveContent);
 			onSaveComplete?.(pendingSavePath);
 		} catch (e) {

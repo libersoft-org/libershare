@@ -1,4 +1,4 @@
-import { type Networks } from '../lishnet/networks.ts';
+import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';

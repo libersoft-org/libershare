@@ -17,6 +17,7 @@
 	import DownloadFile from './DownloadFile.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import DownloadDetailDelete from './DownloadDetailDelete.svelte';
+	import DownloadLISHExport from './DownloadLISHExport.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -54,6 +55,13 @@
 	// Delete dialog state
 	let showDeleteDialog = $state(false);
 	let deleteError = $state('');
+	// Export state
+	let showExport = $state(false);
+
+	function handleExportBack(): void {
+		showExport = false;
+		activateArea(toolbarAreaID);
+	}
 	function scrollToSelected(): void {
 		scrollToElement(itemElements, selectedFileIndex);
 	}
@@ -74,6 +82,7 @@
 		const result = handleDownloadToolbarAction(actionId, download);
 		if (result.needsBack) handleBack();
 		if (result.needsDelete) showDeleteDialog = true;
+		if (result.needsExport) showExport = true;
 	}
 
 	function handleDeleteCancel(): void {
@@ -280,85 +289,88 @@
 	}
 </style>
 
-<div class="detail">
-	<div class="toolbar">
-		{#each toolbarActions as action, index (action.id)}
-			<Button icon={action.icon} label={action.label} selected={toolbarActive && selectedToolbarIndex === index} onConfirm={() => handleToolbarAction(action.id)} />
-		{/each}
-	</div>
-	{#if deleteError}
-		<Alert type="error" message={deleteError} />
-	{/if}
-	{#if $selectedDownloadLoading}
-		<Spinner size="8vh" />
-	{:else if download}
-		<div class="content">
-			<!-- Info with LISH details -->
-			<div class="info" class:selected={infoActive} bind:this={infoElement}>
-				<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
-					<TableRow odd>
-						<Cell>{$t('common.name')}:</Cell>
-						<Cell align="right">{download.name}</Cell>
-					</TableRow>
-					<TableRow>
-						<Cell>{$t('downloads.id')}:</Cell>
-						<Cell align="right">{download.id}</Cell>
-					</TableRow>
-					<TableRow odd>
-						<Cell>{$t('downloads.targetFolder')}:</Cell>
-						<Cell align="right">{download.directory ?? '-'}</Cell>
-					</TableRow>
-					<TableRow>
-						<Cell>{$t('common.size')}:</Cell>
-						<Cell align="right">{download.downloadedSize && download.progress < 100 ? `${download.downloadedSize} / ${download.size}` : download.size}</Cell>
-					</TableRow>
-					<TableRow odd>
-						<Cell>{$t('common.progress')}:</Cell>
-						<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading'} /></span></Cell>
-					</TableRow>
-					<TableRow>
-						<Cell>{$t('common.status')}:</Cell>
-						<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} /></Cell>
-					</TableRow>
-					<TableRow odd>
-						<Cell>{$t('downloads.downloadingFrom')}:</Cell>
-						<Cell align="right">{download.downloadPeers}</Cell>
-					</TableRow>
-					<TableRow>
-						<Cell>{$t('downloads.uploadingTo')}:</Cell>
-						<Cell align="right">{download.uploadPeers}</Cell>
-					</TableRow>
-					<TableRow odd>
-						<Cell>{$t('downloads.downloadSpeed')}:</Cell>
-						<Cell align="right">{download.downloadSpeed}</Cell>
-					</TableRow>
-					<TableRow>
-						<Cell>{$t('downloads.uploadSpeed')}:</Cell>
-						<Cell align="right">{download.uploadSpeed}</Cell>
-					</TableRow>
-				</Table>
-			</div>
-			<!-- Files table -->
-			<div class="container" bind:this={filesElement}>
-				<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
-					<Header fontSize="1.4vh">
-						<Cell>{$t('common.name')}</Cell>
-						<Cell align="center">{$t('common.size')}</Cell>
-						<Cell align="center">{$t('common.progress')}</Cell>
-					</Header>
-					<div class="items">
-						{#each download.files as file, index (file.id)}
-							<div bind:this={itemElements[index]}>
-								<DownloadFile name={file.name} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} odd={index % 2 === 0} animated={download.status === 'downloading' && file.progress < 100} />
-							</div>
-						{/each}
-					</div>
-				</Table>
-			</div>
+{#if showExport && download}
+	<DownloadLISHExport {areaID} {position} lish={{ id: download.id, name: download.name }} onBack={handleExportBack} />
+{:else}
+	<div class="detail">
+		<div class="toolbar">
+			{#each toolbarActions as action, index (action.id)}
+				<Button icon={action.icon} label={action.label} selected={toolbarActive && selectedToolbarIndex === index} onConfirm={() => handleToolbarAction(action.id)} />
+			{/each}
 		</div>
+		{#if deleteError}
+			<Alert type="error" message={deleteError} />
+		{/if}
+		{#if $selectedDownloadLoading}
+			<Spinner size="8vh" />
+		{:else if download}
+			<div class="content">
+				<!-- Info with LISH details -->
+				<div class="info" class:selected={infoActive} bind:this={infoElement}>
+					<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
+						<TableRow odd>
+							<Cell>{$t('common.name')}:</Cell>
+							<Cell align="right">{download.name}</Cell>
+						</TableRow>
+						<TableRow>
+							<Cell>{$t('downloads.id')}:</Cell>
+							<Cell align="right">{download.id}</Cell>
+						</TableRow>
+						<TableRow odd>
+							<Cell>{$t('downloads.targetFolder')}:</Cell>
+							<Cell align="right">{download.directory ?? '-'}</Cell>
+						</TableRow>
+						<TableRow>
+							<Cell>{$t('common.size')}:</Cell>
+							<Cell align="right">{download.downloadedSize && download.progress < 100 ? `${download.downloadedSize} / ${download.size}` : download.size}</Cell>
+						</TableRow>
+						<TableRow odd>
+							<Cell>{$t('common.progress')}:</Cell>
+							<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading'} /></span></Cell>
+						</TableRow>
+						<TableRow>
+							<Cell>{$t('common.status')}:</Cell>
+							<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} /></Cell>
+						</TableRow>
+						<TableRow odd>
+							<Cell>{$t('downloads.downloadingFrom')}:</Cell>
+							<Cell align="right">{download.downloadPeers}</Cell>
+						</TableRow>
+						<TableRow>
+							<Cell>{$t('downloads.uploadingTo')}:</Cell>
+							<Cell align="right">{download.uploadPeers}</Cell>
+						</TableRow>
+						<TableRow odd>
+							<Cell>{$t('downloads.downloadSpeed')}:</Cell>
+							<Cell align="right">{download.downloadSpeed}</Cell>
+						</TableRow>
+						<TableRow>
+							<Cell>{$t('downloads.uploadSpeed')}:</Cell>
+							<Cell align="right">{download.uploadSpeed}</Cell>
+						</TableRow>
+					</Table>
+				</div>
+				<!-- Files table -->
+				<div class="container" bind:this={filesElement}>
+					<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
+						<Header fontSize="1.4vh">
+							<Cell>{$t('common.name')}</Cell>
+							<Cell align="center">{$t('common.size')}</Cell>
+							<Cell align="center">{$t('common.progress')}</Cell>
+						</Header>
+						<div class="items">
+							{#each download.files as file, index (file.id)}
+								<div bind:this={itemElements[index]}>
+									<DownloadFile name={file.name} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} odd={index % 2 === 0} animated={download.status === 'downloading' && file.progress < 100} />
+								</div>
+							{/each}
+						</div>
+					</Table>
+				</div>
+			</div>
+		{/if}
+	</div>
+	{#if showDeleteDialog && download}
+		<DownloadDetailDelete lishID={download.id} lishName={download.name} {position} onResult={handleDeleteResult} onBack={handleDeleteCancel} />
 	{/if}
-</div>
-
-{#if showDeleteDialog && download}
-	<DownloadDetailDelete lishID={download.id} lishName={download.name} {position} onResult={handleDeleteResult} onBack={handleDeleteCancel} />
 {/if}

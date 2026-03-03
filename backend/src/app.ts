@@ -1,7 +1,7 @@
 import { dirname, join } from 'path';
 import { productName, productVersion } from '@shared';
 import { setupLogger, type LogLevel } from './logger.ts';
-import { Networks } from './lishnet/networks.ts';
+import { Networks } from './lishnet/lishnets.ts';
 import { DataServer } from './lish/data-server.ts';
 import { openDatabase } from './db/database.ts';
 import { APIServer } from './api/server.ts';

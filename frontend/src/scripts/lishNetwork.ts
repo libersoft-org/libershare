@@ -39,102 +39,6 @@ export async function getExistingNetworkIDs(): Promise<Set<string>> {
 }
 
 // ============================================================================
-// Validation & Parsing
-// ============================================================================
-
-/**
- * Validate and normalize a raw object into a LISHNetworkDefinition.
- * Returns null if validation fails.
- * Only picks whitelisted fields: version, networkID, key, name, description, bootstrapPeers, created.
- * The 'enabled' field is never imported — it's a storage-only concern.
- */
-export function validateNetwork(obj: unknown): LISHNetworkDefinition | null {
-	if (!obj || typeof obj !== 'object') return null;
-	const parsed = obj as Record<string, unknown>;
-	// Validate required fields:
-	// - networkID: required, non-empty string
-	// - name: required, non-empty string
-	// - bootstrapPeers: optional, can be empty
-	if (typeof parsed['networkID'] !== 'string' || !parsed['networkID'].trim() || typeof parsed['name'] !== 'string' || !parsed['name'].trim()) return null;
-	const bootstrapPeers = Array.isArray(parsed['bootstrapPeers']) ? (parsed['bootstrapPeers'] as string[]).filter(p => typeof p === 'string' && p.trim()) : [];
-	// Only pick specific fields — 'enabled' is never part of a network definition
-	return {
-		networkID: parsed['networkID'].trim(),
-		name: parsed['name'].trim(),
-		description: typeof parsed['description'] === 'string' ? parsed['description'] : '',
-		bootstrapPeers,
-		created: (parsed['created'] as string) ?? new Date().toISOString(),
-	};
-}
-
-/**
- * Parse JSON string and extract valid networks.
- * Handles both single network and array of networks.
- */
-export interface ParseNetworksResult {
-	networks: LISHNetworkDefinition[];
-	error: 'INVALID_JSON' | 'INVALID_FORMAT' | 'NO_VALID_NETWORKS' | null;
-}
-
-export function parseNetworksFromJson(json: string): ParseNetworksResult {
-	if (!json.trim()) {
-		return { networks: [], error: 'INVALID_FORMAT' };
-	}
-	try {
-		const parsed = JSON.parse(json);
-		const networksToImport: LISHNetworkDefinition[] = [];
-		// Check if it's an array of networks or a single network
-		if (Array.isArray(parsed)) {
-			for (const item of parsed) {
-				const network = validateNetwork(item);
-				if (network) networksToImport.push(network);
-			}
-		} else {
-			const network = validateNetwork(parsed);
-			if (network) networksToImport.push(network);
-		}
-		if (networksToImport.length === 0) {
-			return { networks: [], error: 'NO_VALID_NETWORKS' };
-		}
-		return { networks: networksToImport, error: null };
-	} catch {
-		return { networks: [], error: 'INVALID_JSON' };
-	}
-}
-
-/**
- * Import networks from JSON string, adding only those that don't exist.
- * Returns count of successfully imported networks.
- */
-export async function importNetworksFromJson(json: string): Promise<{ imported: number; error: ParseNetworksResult['error'] }> {
-	const result = parseNetworksFromJson(json);
-	if (result.error) {
-		return { imported: 0, error: result.error };
-	}
-	const imported = await api.lishnets.import(result.networks);
-	return { imported, error: null };
-}
-
-/**
- * Export a single network to JSON string (as LISHNetworkDefinition, without 'enabled').
- */
-export async function exportNetworkToJson(networkID: string): Promise<string> {
-	const network = await getNetworkById(networkID);
-	if (!network) return '';
-	const { enabled, ...definition } = network;
-	return JSON.stringify(definition, null, '\t');
-}
-
-/**
- * Export all networks to JSON string (as LISHNetworkDefinition[], without 'enabled').
- */
-export async function exportAllNetworksToJson(): Promise<string> {
-	const networks = await getNetworks();
-	const exportData = networks.map(({ enabled, ...definition }) => definition);
-	return JSON.stringify(exportData, null, '\t');
-}
-
-// ============================================================================
 // Network Data Conversion (for AddEdit form)
 // ============================================================================
 
@@ -193,37 +97,10 @@ export interface FetchPublicNetworksResult {
 
 export async function fetchPublicNetworks(url: string): Promise<FetchPublicNetworksResult> {
 	try {
-		// Use backend API to bypass CORS restrictions
-		const response = await api.fetchUrl(url);
-		if (response.status !== 200) return { networks: [], error: `HTTP ${response.status}` };
-		const data = JSON.parse(response.content);
-		// Validate the data - should be an array of networks
-		if (!Array.isArray(data)) return { networks: [], error: 'INVALID_FORMAT' };
-		// Validate each network has required fields
-		const validNetworks: LISHNetworkDefinition[] = [];
-		for (const item of data) {
-			const network = validateNetwork(item);
-			if (network) validNetworks.push(network);
-		}
-		if (validNetworks.length === 0) return { networks: [], error: 'NO_VALID_NETWORKS' };
-		return { networks: validNetworks, error: null };
+		const networks = await api.lishnets.parseFromUrl(url);
+		return { networks, error: null };
 	} catch (e) {
 		return { networks: [], error: e instanceof Error ? e.message : String(e) };
-	}
-}
-
-/**
- * Get localized error message for network errors.
- */
-export function getNetworkErrorMessage(errorCode: string, t: (key: string) => string): string {
-	switch (errorCode) {
-		case 'INVALID_FORMAT':
-		case 'INVALID_JSON':
-			return t('settings.lishNetwork.errorInvalidFormat');
-		case 'NO_VALID_NETWORKS':
-			return t('settings.lishNetwork.errorNoValidNetworks');
-		default:
-			return errorCode;
 	}
 }
 

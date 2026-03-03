@@ -4,7 +4,7 @@ import { homedir, platform } from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { Utils } from '../utils.ts';
-import { type FsInfo, type FsEntry, type FsListResult, type SuccessResponse } from '@shared';
+import { type FsInfo, type FsEntry, type FsListResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
 const assert = Utils.assertParams;
 const isWindows = platform() === 'win32';
 const execAsync = promisify(exec);
@@ -19,14 +19,14 @@ interface FsHandlers {
 	info: () => Promise<FsInfo>;
 	list: (p: { path?: string }) => Promise<FsListResult>;
 	readText: (p: { path: string }) => Promise<{ content: string }>;
-	readGzip: (p: { path: string }) => Promise<{ content: string }>;
+	readCompressed: (p: { path: string; algorithm?: CompressionAlgorithm }) => Promise<{ content: string }>;
 	delete: (p: { path: string }) => Promise<void>;
 	mkdir: (p: { path: string }) => Promise<void>;
 	open: (p: { path: string }) => Promise<void>;
 	rename: (p: { path: string; newName: string }) => Promise<void>;
 	exists: (p: { path: string }) => Promise<{ exists: boolean; type?: 'file' | 'directory' }>;
 	writeText: (p: { path: string; content: string }) => Promise<SuccessResponse>;
-	writeGzip: (p: { path: string; content: string }) => Promise<SuccessResponse>;
+	writeCompressed: (p: { path: string; content: string; algorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 }
 
 export function initFsHandlers(): FsHandlers {
@@ -78,10 +78,10 @@ export function initFsHandlers(): FsHandlers {
 		return { content: await file.text() };
 	}
 
-	async function readGzip(p: { path: string }): Promise<{ content: string }> {
+	async function readCompressed(p: { path: string; algorithm?: CompressionAlgorithm }): Promise<{ content: string }> {
 		assert(p, ['path']);
 		const compressed = await Bun.file(p.path).arrayBuffer();
-		const decompressed = Bun.gunzipSync(new Uint8Array(compressed));
+		const decompressed = Utils.decompress(new Uint8Array(compressed), p.algorithm);
 		return { content: new TextDecoder().decode(decompressed) };
 	}
 
@@ -129,12 +129,12 @@ export function initFsHandlers(): FsHandlers {
 		return { success: true };
 	}
 
-	async function writeGzip(p: { path: string; content: string }): Promise<SuccessResponse> {
+	async function writeCompressed(p: { path: string; content: string; algorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
 		assert(p, ['path', 'content']);
-		const compressed = Bun.gzipSync(Buffer.from(p.content, 'utf-8'));
+		const compressed = Utils.compress(Buffer.from(p.content, 'utf-8'), p.algorithm);
 		await Bun.write(p.path, compressed);
 		return { success: true };
 	}
 
-	return { info, list, readText, readGzip, delete: del, mkdir: mkdirFn, open, rename: renameFn, exists, writeText, writeGzip };
+	return { info, list, readText, readCompressed, delete: del, mkdir: mkdirFn, open, rename: renameFn, exists, writeText, writeCompressed };
 }

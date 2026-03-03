@@ -1,10 +1,9 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type IStoredLISH, type ILISHSummary, type ILISHDetail, type CreateLISHResponse, type LISHSortField, type SortOrder, DEFAULT_ALGO } from '@shared';
-import { createLISH } from '../lish/lish.ts';
+import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename } from '@shared';
+import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJson } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
-import { exportLISHToFile } from '../lish/lish-export.ts';
 import { Utils } from '../utils.ts';
-import { readdir, stat, access, unlink, rmdir } from 'fs/promises';
+import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { join } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -18,15 +17,48 @@ interface CreateLISHParams {
 	algorithm?: string;
 	threads?: number;
 	minifyJson?: boolean;
-	compressGzip?: boolean;
+	compress?: boolean;
+	compressionAlgorithm?: CompressionAlgorithm;
 }
-
+interface ImportFromFileParams {
+	filePath: string;
+	downloadPath: string;
+	overwrite?: boolean;
+}
+interface ImportFromJsonParams {
+	json: string;
+	downloadPath: string;
+	overwrite?: boolean;
+}
+interface ImportFromUrlParams {
+	url: string;
+	downloadPath: string;
+	overwrite?: boolean;
+}
+interface ExportToFileParams {
+	lishID: string;
+	filePath: string;
+	minifyJson?: boolean;
+	compress?: boolean;
+	compressionAlgorithm?: CompressionAlgorithm;
+}
+interface ExportAllToFileParams {
+	filePath: string;
+	minifyJson?: boolean;
+	compress?: boolean;
+	compressionAlgorithm?: CompressionAlgorithm;
+}
 interface LISHsHandlers {
 	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => ILISHSummary[];
 	get: (p: { lishID: string }) => ILISHDetail | null;
+	exportToFile: (p: ExportToFileParams) => Promise<SuccessResponse>;
+	exportAllToFile: (p: ExportAllToFileParams) => Promise<SuccessResponse>;
 	backup: () => IStoredLISH[];
 	create: (p: CreateLISHParams, client: any) => Promise<CreateLISHResponse>;
 	delete: (p: { lishID: string; deleteLISH: boolean; deleteData: boolean }) => Promise<boolean>;
+	importFromFile: (p: ImportFromFileParams) => Promise<ImportLISHResponse>;
+	importFromJson: (p: ImportFromJsonParams) => Promise<ImportLISHResponse>;
+	importFromUrl: (p: ImportFromUrlParams) => Promise<ImportLISHResponse>;
 }
 
 /**
@@ -79,6 +111,29 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		return dataServer.getDetail(p.lishID);
 	}
 
+	async function exportToFile(p: ExportToFileParams): Promise<SuccessResponse> {
+		assert(p, ['lishID', 'filePath']);
+		const lish = dataServer.get(p.lishID);
+		if (!lish) throw new Error(`LISH not found: ${p.lishID}`);
+		const { directory, chunks, ...exportData } = lish;
+		await Utils.writeJsonToFile(exportData, p.filePath, p.minifyJson, p.compress, p.compressionAlgorithm);
+		console.log(`✓ LISH exported to: ${p.filePath}`);
+		return { success: true };
+	}
+
+	async function exportAllToFile(p: ExportAllToFileParams): Promise<SuccessResponse> {
+		assert(p, ['filePath']);
+		const lishs = dataServer.list();
+		if (lishs.length === 0) throw new Error('No LISHs to export');
+		const exportData: ILISH[] = lishs.map(lish => {
+			const { directory, chunks, ...data } = lish;
+			return data;
+		});
+		await Utils.writeJsonToFile(exportData, p.filePath, p.minifyJson, p.compress, p.compressionAlgorithm);
+		console.log(`✓ All LISHs exported to: ${p.filePath}`);
+		return { success: true };
+	}
+
 	function backup(): IStoredLISH[] {
 		return dataServer.list();
 	}
@@ -90,7 +145,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		const chunkSize = p.chunkSize ?? DEFAULT_CHUNK_SIZE;
 		const threads = p.threads ?? 0; // 0 = all CPU threads
 		const minifyJson = p.minifyJson ?? false;
-		const compressGzip = p.compressGzip ?? false;
+		const compress = p.compress ?? false;
+		const compressionAlgorithm = p.compressionAlgorithm ?? 'gzip';
 		// TODO: check that dataPath is not already in datasets.
 		const dataPath = Utils.expandHome(p.dataPath);
 		// Check that the path exists and is not an empty directory
@@ -112,7 +168,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 			try {
 				const fileStat = await stat(lishFilePath);
 				if (fileStat.isDirectory()) {
-					const ext = compressGzip ? '.lish.gz' : '.lish';
+					const ext = compress ? '.lish.gz' : '.lish';
 					let candidate = join(lishFilePath, lish.id + ext);
 					// Handle unlikely collision: append numeric suffix
 					let suffix = 1;
@@ -130,7 +186,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 			} catch {
 				// Path doesn't exist yet — treat as a file path
 			}
-			await exportLISHToFile(lish, lishFilePath, minifyJson, compressGzip);
+			await exportLISHToFile(lish, lishFilePath, minifyJson, compress, compressionAlgorithm);
 			resultLISHFile = lishFilePath;
 		}
 		// 3. Save to data-server if requested
@@ -158,5 +214,41 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		return true;
 	}
 
-	return { list, get, backup, create, delete: del };
+	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean): Promise<ImportLISHResponse> {
+		const existing = dataServer.get(lish.id);
+		if (existing && !overwrite) throw new Error(`LISH already exists: ${lish.id}`);
+		if (existing) dataServer.delete(lish.id);
+		const dirName = sanitizeFilename(lish.name || lish.id) || lish.id;
+		const directory = join(Utils.expandHome(downloadPath), dirName);
+		await mkdir(directory, { recursive: true });
+		const storedLISH: IStoredLISH = {
+			...lish,
+			directory,
+			...(lish.files ? { chunks: lish.files.flatMap(f => f.checksums) } : {}),
+		};
+		dataServer.add(storedLISH);
+		console.log(`✓ LISH imported: ${lish.id}`);
+		return { lishID: lish.id, directory };
+	}
+
+	async function importFromFile(p: ImportFromFileParams): Promise<ImportLISHResponse> {
+		assert(p, ['filePath', 'downloadPath']);
+		const lish = await importLISHFromFile(Utils.expandHome(p.filePath));
+		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
+	}
+
+	async function importFromJson(p: ImportFromJsonParams): Promise<ImportLISHResponse> {
+		assert(p, ['json', 'downloadPath']);
+		const lish = parseLISHFromJson(p.json);
+		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
+	}
+
+	async function importFromUrl(p: ImportFromUrlParams): Promise<ImportLISHResponse> {
+		assert(p, ['url', 'downloadPath']);
+		const content = await Utils.fetchUrl(p.url);
+		const lish = parseLISHFromJson(content);
+		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
+	}
+
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJson, importFromUrl };
 }

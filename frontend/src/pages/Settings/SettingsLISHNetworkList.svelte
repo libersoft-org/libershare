@@ -345,7 +345,7 @@
 					if (!isNetworkRow && !isTopRow) return false;
 					let maxIndex = 4; // top row: 5 buttons (0-4)
 					if (isNetworkRow) {
-						const networkIndex = selectedIndex - 1;
+						const networkIndex = selectedIndex - 1 - nodeInfoOffset;
 						const isFirst = networkIndex === 0;
 						const isLast = networkIndex === networks.length - 1;
 						// 5 base buttons + up (if not first) + down (if not last)

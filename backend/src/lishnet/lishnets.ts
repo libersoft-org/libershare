@@ -174,30 +174,50 @@ export class Networks {
 		return [...new Set(allPeers)];
 	}
 
-	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
-		const config: LISHNetworkConfig = {
+	// Validate a raw network object into a LISHNetworkDefinition (without storing).
+	validateNetwork(data: ILISHNetwork): LISHNetworkDefinition {
+		if (!data.networkID || !data.name) throw new Error('Invalid network: missing networkID or name');
+		return {
 			networkID: data.networkID,
 			name: data.name,
 			description: data.description || '',
-			bootstrapPeers: data.bootstrapPeers,
-			enabled,
+			bootstrapPeers: Array.isArray(data.bootstrapPeers) ? data.bootstrapPeers.filter(p => typeof p === 'string' && p.trim()) : [],
 			created: data.created || new Date().toISOString(),
 		};
-		upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
-		return config;
 	}
 
-	async importFromJson(jsonString: string, enabled: boolean = false): Promise<LISHNetworkConfig> {
-		const data: ILISHNetwork = Utils.safeJsonParse<ILISHNetwork>(jsonString, 'network JSON import');
-		const config = await this.importFromLISHnet(data, enabled);
+	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
+		const definition = this.validateNetwork(data);
+		const config: LISHNetworkConfig = { ...definition, enabled };
+		upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
 		if (enabled) await this.joinNetwork(config.networkID);
 		return config;
 	}
 
-	async importFromFile(filePath: string, enabled: boolean = false): Promise<LISHNetworkConfig> {
-		const file = Bun.file(filePath);
-		const content = await file.text();
-		return await this.importFromJson(content, enabled);
+	// Parse JSON string and return validated network definitions (without storing).
+	parseFromJson(jsonString: string): LISHNetworkDefinition[] {
+		const data = Utils.safeJsonParse<unknown>(jsonString, 'network JSON import');
+		const items = Array.isArray(data) ? data : [data];
+		const results: LISHNetworkDefinition[] = [];
+		for (const item of items) {
+			results.push(this.validateNetwork(item as ILISHNetwork));
+		}
+		if (results.length === 0) throw new Error('No valid networks found');
+		return results;
+	}
+
+	// Read a file and return validated network definitions (without storing).
+	async parseFromFile(filePath: string): Promise<LISHNetworkDefinition[]> {
+		const content = await Utils.readFileCompressed(filePath);
+		return this.parseFromJson(content);
+	}
+
+	/**
+	 * Fetch a URL and return validated network definitions (without storing).
+	 */
+	async parseFromUrl(url: string): Promise<LISHNetworkDefinition[]> {
+		const content = await Utils.fetchUrl(url);
+		return this.parseFromJson(content);
 	}
 
 	get(id: string): LISHNetworkConfig | undefined {

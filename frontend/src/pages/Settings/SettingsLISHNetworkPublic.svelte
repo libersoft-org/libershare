@@ -6,7 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { type LISHNetworkDefinition } from '@shared';
 	import { productNetworkList } from '@shared';
-	import { fetchPublicNetworks, getExistingNetworkIDs, addNetworkIfNotExists, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { fetchPublicNetworks, getExistingNetworkIDs, addNetworkIfNotExists } from '../../scripts/lishNetwork.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Row from '../../components/Row/Row.svelte';
@@ -41,7 +41,7 @@
 		publicNetworks = [];
 
 		const result = await fetchPublicNetworks(url);
-		if (result.error) error = getNetworkErrorMessage(result.error, $t);
+		if (result.error) error = result.error;
 		else {
 			publicNetworks = result.networks;
 			addedNetworkIDs = await getExistingNetworkIDs();

@@ -4,9 +4,8 @@
 	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { parseNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
-	import { type LISHNetworkDefinition } from '@shared';
 	import { api } from '../../scripts/api.ts';
+	import { type LISHNetworkDefinition, isCompressed } from '@shared';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -31,20 +30,19 @@
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
-		const result = parseNetworksFromJson(networkJson);
-		if (result.error) {
-			errorMessage = getNetworkErrorMessage(result.error, $t);
+		if (!networkJson.trim()) {
+			errorMessage = $t('settings.lishNetwork.errorInvalidFormat');
 			return;
 		}
-		parsedNetworks = result.networks;
-		// Unregister our area - ImportOverwrite/ConfirmDialog will create its own
-		if (unregisterArea) {
-			unregisterArea();
-			unregisterArea = null;
+		try {
+			parsedNetworks = await api.lishnets.parseFromJson(networkJson);
+		} catch (e) {
+			errorMessage = e instanceof Error ? e.message : String(e);
 		}
 	}
 
-	function handleImportDone(): void {
+	function handleOverwriteDone(): void {
+		parsedNetworks = null;
 		onImport?.();
 		onBack?.();
 		onBack?.();
@@ -53,8 +51,8 @@
 	async function loadInitialFile(): Promise<void> {
 		if (initialFilePath) {
 			try {
-				const isGzip = initialFilePath.toLowerCase().endsWith('.gz');
-				const content = isGzip ? await api.fs.readGzip(initialFilePath) : await api.fs.readText(initialFilePath);
+				const compressed = isCompressed(initialFilePath);
+				const content = compressed ? await api.fs.readCompressed(initialFilePath, 'gzip') : await api.fs.readText(initialFilePath);
 				if (content) {
 					// Pretty-print minified JSON for readability
 					try {
@@ -154,7 +152,7 @@
 </style>
 
 {#if parsedNetworks}
-	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleImportDone} />
+	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleOverwriteDone} />
 {:else}
 	<div class="import">
 		<div class="container">

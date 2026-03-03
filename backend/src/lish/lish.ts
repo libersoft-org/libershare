@@ -1,7 +1,10 @@
 import * as fsPromises from 'node:fs/promises';
 import { type Stats } from 'node:fs';
-import { type HashAlgorithm, type ILISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
+import { dirname } from 'node:path';
+import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS } from '@shared';
+import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
+import { Utils } from '../utils.ts';
 
 // Helper to normalize paths to forward slashes
 function normalizePath(p: string): string {
@@ -320,4 +323,49 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		if (links.length > 0) lish.links = links;
 	} else throw new Error('Input must be a file or directory');
 	return lish;
+}
+// ============================================================================
+// LISH Export / Import / Validation
+// ============================================================================
+
+export async function exportLISHToFile(lish: IStoredLISH, outputFilePath: string, minifyJson: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<void> {
+	await fsPromises.mkdir(dirname(outputFilePath), { recursive: true });
+	const { directory, chunks, ...exportData } = lish;
+	await Utils.writeJsonToFile(exportData, outputFilePath, minifyJson, compress, compressionAlgorithm);
+	console.log(`✓ LISH exported to: ${outputFilePath}`);
+}
+
+/**
+ * Validate that the given data is a valid ILISH object.
+ * Throws a descriptive error if any required field is missing or invalid.
+ */
+export function validateImportedLISH(data: unknown): ILISH {
+	if (!data || typeof data !== 'object') throw new Error('Invalid LISH: not an object');
+	const obj = data as Record<string, unknown>;
+	if (typeof obj['id'] !== 'string' || !obj['id']) throw new Error('Invalid LISH: missing or empty id');
+	if (typeof obj['created'] !== 'string' || !obj['created']) throw new Error('Invalid LISH: missing or empty created');
+	if (typeof obj['chunkSize'] !== 'number' || obj['chunkSize'] <= 0) throw new Error('Invalid LISH: missing or invalid chunkSize');
+	if (typeof obj['checksumAlgo'] !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(obj['checksumAlgo'])) {
+		throw new Error(`Invalid LISH: unsupported checksumAlgo: ${obj['checksumAlgo']}`);
+	}
+	return data as ILISH;
+}
+
+/**
+ * Read a .lish or .lish.gz file and return the parsed ILISH.
+ */
+export async function importLISHFromFile(filePath: string): Promise<ILISH> {
+	const content = await Utils.readFileCompressed(filePath);
+	const data = Utils.safeJsonParse(content, filePath);
+	return validateImportedLISH(data);
+}
+
+/**
+ * Parse a JSON string into a validated ILISH object.
+ * Throws if the string is not valid JSON, is an array, or fails validation.
+ */
+export function parseLISHFromJson(json: string): ILISH {
+	const data = Utils.safeJsonParse(json, 'JSON input');
+	if (Array.isArray(data)) throw new Error('Expected a single LISH object, got an array');
+	return validateImportedLISH(data);
 }
