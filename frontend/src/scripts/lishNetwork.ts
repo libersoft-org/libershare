@@ -97,7 +97,7 @@ export interface FetchPublicNetworksResult {
 
 export async function fetchPublicNetworks(url: string): Promise<FetchPublicNetworksResult> {
 	try {
-		const networks = await api.lishnets.parseFromUrl(url);
+		const networks = await api.lishnets.parseFromURL(url);
 		return { networks, error: null };
 	} catch (e) {
 		return { networks: [], error: e instanceof Error ? e.message : String(e) };

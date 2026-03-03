@@ -216,8 +216,8 @@ class LISHnetsAPI {
 		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromJson', { json });
 	}
 
-	parseFromUrl(url: string): Promise<LISHNetworkDefinition[]> {
-		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromUrl', { url });
+	parseFromURL(url: string): Promise<LISHNetworkDefinition[]> {
+		return this.client.call<LISHNetworkDefinition[]>('lishnets.parseFromURL', { url });
 	}
 
 	setEnabled(networkID: string, enabled: boolean): Promise<SuccessResponse> {
@@ -307,8 +307,8 @@ class LISHsAPI {
 		return this.client.call<ImportLISHResponse>('lishs.importFromJson', { json, downloadPath, overwrite });
 	}
 
-	importFromUrl(url: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromUrl', { url, downloadPath, overwrite });
+	importFromURL(url: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromURL', { url, downloadPath, overwrite });
 	}
 }
 

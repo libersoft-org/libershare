@@ -30,7 +30,7 @@ interface ImportFromJsonParams {
 	downloadPath: string;
 	overwrite?: boolean;
 }
-interface ImportFromUrlParams {
+interface ImportFromURLParams {
 	url: string;
 	downloadPath: string;
 	overwrite?: boolean;
@@ -58,7 +58,7 @@ interface LISHsHandlers {
 	delete: (p: { lishID: string; deleteLISH: boolean; deleteData: boolean }) => Promise<boolean>;
 	importFromFile: (p: ImportFromFileParams) => Promise<ImportLISHResponse>;
 	importFromJson: (p: ImportFromJsonParams) => Promise<ImportLISHResponse>;
-	importFromUrl: (p: ImportFromUrlParams) => Promise<ImportLISHResponse>;
+	importFromURL: (p: ImportFromURLParams) => Promise<ImportLISHResponse>;
 }
 
 /**
@@ -243,12 +243,12 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
 	}
 
-	async function importFromUrl(p: ImportFromUrlParams): Promise<ImportLISHResponse> {
+	async function importFromURL(p: ImportFromURLParams): Promise<ImportLISHResponse> {
 		assert(p, ['url', 'downloadPath']);
-		const content = await Utils.fetchUrl(p.url);
+		const content = await Utils.fetchURL(p.url);
 		const lish = parseLISHFromJson(content);
 		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJson, importFromUrl };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJson, importFromURL: importFromURL };
 }

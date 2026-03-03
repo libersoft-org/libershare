@@ -87,7 +87,7 @@ export class APIServer {
 			'lishnets.importFromFile': _lishnets.importFromFile,
 			'lishnets.parseFromFile': _lishnets.parseFromFile,
 			'lishnets.parseFromJson': _lishnets.parseFromJson,
-			'lishnets.parseFromUrl': _lishnets.parseFromUrl,
+			'lishnets.parseFromURL': _lishnets.parseFromURL,
 			'lishnets.setEnabled': _lishnets.setEnabled,
 			'lishnets.connect': _lishnets.connect,
 			'lishnets.findPeer': _lishnets.findPeer,
@@ -107,7 +107,7 @@ export class APIServer {
 			'lishs.delete': _lishs.delete,
 			'lishs.importFromFile': _lishs.importFromFile,
 			'lishs.importFromJson': _lishs.importFromJson,
-			'lishs.importFromUrl': _lishs.importFromUrl,
+			'lishs.importFromURL': _lishs.importFromURL,
 
 			// Transfer
 			'transfer.download': _transfer.download,

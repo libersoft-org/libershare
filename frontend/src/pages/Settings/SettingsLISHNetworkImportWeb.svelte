@@ -42,7 +42,7 @@
 		}
 		loading = true;
 		try {
-			parsedNetworks = await api.lishnets.parseFromUrl(url);
+			parsedNetworks = await api.lishnets.parseFromURL(url);
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);
 		} finally {

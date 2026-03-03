@@ -39,11 +39,11 @@ Commands:
 `;
 
 const args = process.argv.slice(2);
-let serverUrl = DEFAULT_API_URL;
+let serverURL = DEFAULT_API_URL;
 
 for (let i = 0; i < args.length; i++) {
 	if ((args[i] === '--url' || args[i] === '-u') && i + 1 < args.length) {
-		serverUrl = args[i + 1]!;
+		serverURL = args[i + 1]!;
 		i++;
 	} else if (args[i] === '--help' || args[i] === '-h') {
 		console.log(`
@@ -71,8 +71,8 @@ function resolvePath(x: string): string {
 }
 
 async function main(): Promise<void> {
-	console.log(`Connecting to ${serverUrl}...`);
-	const client = new APIClient(serverUrl);
+	console.log(`Connecting to ${serverURL}...`);
+	const client = new APIClient(serverURL);
 	try {
 		await client.connect();
 	} catch (error: any) {

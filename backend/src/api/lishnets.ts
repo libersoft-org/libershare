@@ -19,7 +19,7 @@ interface LISHnetsHandlers {
 	importFromFile: (p: { path: string; enabled?: boolean }) => Promise<LISHNetworkConfig[]>;
 	parseFromFile: (p: { path: string }) => Promise<LISHNetworkDefinition[]>;
 	parseFromJson: (p: { json: string }) => LISHNetworkDefinition[];
-	parseFromUrl: (p: { url: string }) => Promise<LISHNetworkDefinition[]>;
+	parseFromURL: (p: { url: string }) => Promise<LISHNetworkDefinition[]>;
 	setEnabled: (p: { networkID: string; enabled: boolean }) => Promise<SuccessResponse>;
 	connect: (p: { multiaddr: string }) => Promise<SuccessResponse>;
 	findPeer: (p: { peerID: string }) => Promise<void>;
@@ -104,9 +104,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		assert(p, ['json']);
 		return networks.parseFromJson(p.json);
 	}
-	async function parseFromUrl(p: { url: string }): Promise<LISHNetworkDefinition[]> {
+	async function parseFromURL(p: { url: string }): Promise<LISHNetworkDefinition[]> {
 		assert(p, ['url']);
-		return networks.parseFromUrl(p.url);
+		return networks.parseFromURL(p.url);
 	}
 	async function setEnabled(p: { networkID: string; enabled: boolean }): Promise<SuccessResponse> {
 		assert(p, ['networkID', 'enabled']);
@@ -181,7 +181,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		importFromFile,
 		parseFromFile,
 		parseFromJson,
-		parseFromUrl,
+		parseFromURL,
 		setEnabled,
 		connect,
 		findPeer,

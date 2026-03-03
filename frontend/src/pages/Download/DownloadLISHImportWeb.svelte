@@ -56,7 +56,7 @@
 		}
 		loading = true;
 		try {
-			await api.lishs.importFromUrl(url, downloadPath);
+			await api.lishs.importFromURL(url, downloadPath);
 			onImport?.();
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);

@@ -1,7 +1,7 @@
 import { type Component } from 'svelte';
 import { derived, get } from 'svelte/store';
 import { productName } from '@shared';
-import { t, tt, currentLanguage, setLanguage, languages, getFlagUrl } from './language.ts';
+import { t, tt, currentLanguage, setLanguage, languages, getFlagURL } from './language.ts';
 import { audioEnabled, setAudioEnabled, cursorSize, setCursorSize, type CursorSize, timeFormat, setTimeFormat, showSeconds, setShowSeconds } from './settings.ts';
 import { footerPosition, setFooterPosition } from './settings.ts';
 import { type FooterPosition } from './footerWidgets.ts';
@@ -227,7 +227,7 @@ export const menuStructure = derived(
 							...languages.map(lang => ({
 								id: `lang-${lang.id}`,
 								label: lang.nativeLabel,
-								icon: getFlagUrl(lang.id),
+								icon: getFlagURL(lang.id),
 								noColorFilter: true,
 								selected: () => get(currentLanguage) === lang.id,
 								onSelect: () => setLanguage(lang.id),

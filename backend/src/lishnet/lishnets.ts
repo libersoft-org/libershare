@@ -215,8 +215,8 @@ export class Networks {
 	/**
 	 * Fetch a URL and return validated network definitions (without storing).
 	 */
-	async parseFromUrl(url: string): Promise<LISHNetworkDefinition[]> {
-		const content = await Utils.fetchUrl(url);
+	async parseFromURL(url: string): Promise<LISHNetworkDefinition[]> {
+		const content = await Utils.fetchURL(url);
 		return this.parseFromJson(content);
 	}
 

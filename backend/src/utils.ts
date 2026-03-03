@@ -75,7 +75,7 @@ export class Utils {
 	 * Fetch a URL and return the response body as a string.
 	 * Automatically decompresses .gz URLs. Throws on non-OK responses.
 	 */
-	static async fetchUrl(url: string, timeoutMs: number = 10000): Promise<string> {
+	static async fetchURL(url: string, timeoutMs: number = 10000): Promise<string> {
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), timeoutMs);
 		try {
