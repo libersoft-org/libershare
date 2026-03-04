@@ -79,27 +79,46 @@ export function scrollToNavItem(item: NavItem): void {
 
 // Options for createNavArea
 export interface NavAreaOptions {
+	/** Unique identifier for the area */
+	areaID: string;
+	/** Position in the spatial area layout */
+	position: Position;
 	/** Activate this area on mount */
 	activate?: boolean;
+	/** Trap navigation — prevent leaving the area (for modal dialogs) */
+	trap?: boolean;
+	/** Initial selected position (defaults to top-left item) */
+	initialPosition?: NavPos | undefined;
 	onBack?: (() => void) | undefined;
+	/** Called when the area is activated */
+	onActivate?: (() => void) | undefined;
 	/** Called when selected item changes */
 	onSelect?: ((pos: NavPos) => void) | undefined;
+}
+
+/** Handle returned by createNavArea for dynamic area management */
+export interface NavAreaHandle {
+	/** Temporarily unregister the area (e.g. when opening a sub-page) */
+	pause(): void;
+	/** Re-register the area after pausing */
+	resume(): void;
+	/** Direct access to the controller for manual item registration */
+	readonly controller: NavAreaController;
 }
 
 /**
  * Create a declarative navigation area. Call this in a component's top-level script.
  * Sets up context for child components (Button, NavItem, etc.) to register into.
  *
- * @param areaID - Unique identifier for the area
- * @param position - Position in the spatial area layout
- * @param options - Optional callbacks and settings
+ * @param getConfig - Getter function returning area config (wraps props in closure to avoid state_referenced_locally warnings)
+ * @returns Handle with pause/resume for dynamic area management
  */
-export function createNavArea(areaID: string, position: Position, options: NavAreaOptions = {}): void {
-	const { activate = false, onBack, onSelect } = options;
+export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
+	const { areaID, position, activate = false, trap = false, initialPosition, onBack, onActivate: onAreaActivate, onSelect } = getConfig();
 
 	// Reactive state (runes work in .svelte.ts)
 	let items: NavItem[] = [];
-	let selectedPos = $state<NavPos | null>(null);
+	let selectedPos = $state<NavPos | null>(initialPosition ?? null);
 	let pressed = $state(false);
 	let isAreaActive = $state(get(activeArea) === areaID);
 
@@ -127,14 +146,48 @@ export function createNavArea(areaID: string, position: Position, options: NavAr
 	}
 
 	function navigate(direction: Direction): boolean {
-		if (!selectedPos || items.length === 0) return false;
+		if (!selectedPos || items.length === 0) return trap;
 		const target = findItemInDirection(items, selectedPos, direction);
 		if (target) {
 			selectItem(target);
 			return true;
 		}
-		return false;
+		return trap; // trap: block navigation from leaving
 	}
+
+	// Area handlers for useArea
+	const areaHandlers = {
+		up: () => navigate('up'),
+		down: () => navigate('down'),
+		left: () => navigate('left'),
+		right: () => navigate('right'),
+		confirmDown() {
+			pressed = true;
+			currentItem()?.onPress?.();
+		},
+		confirmUp() {
+			pressed = false;
+			currentItem()?.onConfirm?.();
+		},
+		confirmCancel() {
+			pressed = false;
+			currentItem()?.onRelease?.();
+		},
+		back() {
+			onBack?.();
+		},
+		onActivate() {
+			onAreaActivate?.();
+			if (!selectedPos && items.length > 0) selectFirst();
+			else if (selectedPos) {
+				const item = currentItem();
+				if (item) {
+					scrollToNavItem(item);
+					item.onActivate?.();
+				}
+			}
+		},
+	};
 
 	// Controller exposed via context
 	const controller: NavAreaController = {
@@ -165,44 +218,42 @@ export function createNavArea(areaID: string, position: Position, options: NavAr
 
 	setContext<NavAreaController>('navArea', controller);
 
-	onMount(() => {
-		const unsubActiveArea = activeArea.subscribe(a => {
+	// Dynamic area management
+	let unregArea: (() => void) | null = null;
+	let unsubActiveArea: (() => void) | null = null;
+
+	function registerArea(): void {
+		unsubActiveArea = activeArea.subscribe(a => {
 			isAreaActive = a === areaID;
 		});
+		unregArea = useArea(areaID, areaHandlers, position);
+	}
 
-		const unregister = useArea(
-			areaID,
-			{
-				up: () => navigate('up'),
-				down: () => navigate('down'),
-				left: () => navigate('left'),
-				right: () => navigate('right'),
-				confirmDown() {
-					pressed = true;
-					currentItem()?.onPress?.();
-				},
-				confirmUp() {
-					pressed = false;
-					currentItem()?.onConfirm?.();
-				},
-				confirmCancel() {
-					pressed = false;
-					currentItem()?.onRelease?.();
-				},
-				back() {
-					onBack?.();
-				},
-				onActivate() {
-					if (!selectedPos && items.length > 0) selectFirst();
-					else if (selectedPos) currentItem()?.onActivate?.();
-				},
-			},
-			position
-		);
+	function unregisterArea(): void {
+		unregArea?.();
+		unregArea = null;
+		unsubActiveArea?.();
+		unsubActiveArea = null;
+		isAreaActive = false;
+	}
+
+	const handle: NavAreaHandle = {
+		pause() {
+			unregisterArea();
+		},
+		resume() {
+			registerArea();
+		},
+		get controller() {
+			return controller;
+		},
+	};
+
+	onMount(() => {
+		registerArea();
 		if (activate) activateArea(areaID);
-		return () => {
-			unregister();
-			unsubActiveArea();
-		};
+		return () => unregisterArea();
 	});
+
+	return handle;
 }

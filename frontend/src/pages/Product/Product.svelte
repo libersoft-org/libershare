@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { scrollToElement } from '../../scripts/utils.ts';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { t } from '../../scripts/language.ts';
 	import ProductFile from './ProductFile.svelte';
 	interface Props {
@@ -16,7 +15,6 @@
 		onBack?: () => void;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, itemTitle = 'Item', itemId = 1, onBack }: Props = $props();
-	let active = $derived($activeArea === areaID);
 	let files = $derived([
 		{ id: 1, name: `${itemTitle} - 240p`, size: '218.32 MB' },
 		{ id: 2, name: `${itemTitle} - 480p`, size: '780.12 MB' },
@@ -25,92 +23,21 @@
 		{ id: 5, name: `${itemTitle} - 2160p`, size: '26.81 GB' },
 		{ id: 6, name: `${itemTitle} - 4320p`, size: '68.27 GB' },
 	]);
-	let selectedRow = $state(-1); // -1 = image, 0+ = files
-	let selectedButton = $state(0); // 0 = Download, 1 = Play
-	let isAPressed = $state(false);
-	let fileElements: HTMLElement[] = $state([]);
 	let imageElement: HTMLElement;
 
-	function navigate(direction: string): void {
-		switch (direction) {
-			case 'up':
-				if (selectedRow > -1) selectedRow--;
-				break;
-			case 'down':
-				if (selectedRow < files.length - 1) selectedRow++;
-				break;
-			case 'left':
-				if (selectedRow >= 0) selectedButton = 0;
-				break;
-			case 'right':
-				if (selectedRow >= 0) selectedButton = 1;
-				break;
-		}
-		scrollToSelected();
-	}
-
-	function scrollToSelected(): void {
-		if (selectedRow === -1) imageElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-		else scrollToElement(fileElements, selectedRow);
-	}
-
-	function selectButton(): void {
-		if (selectedRow === -1) return; // image selected, no	action
-		// TODO: implement download/play action
-	}
+	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
+	let imageSelected = $derived(navHandle.controller.isSelected([0, 0]));
 
 	onMount(() => {
-		const unregisterArea = useArea(
-			areaID,
-			{
-				up() {
-					if (selectedRow > -1) {
-						navigate('up');
-						return true;
-					}
-					return false;
-				},
-				down() {
-					if (selectedRow < files.length - 1) {
-						navigate('down');
-						return true;
-					}
-					return false;
-				},
-				left() {
-					if (selectedRow >= 0 && selectedButton > 0) {
-						navigate('left');
-						return true;
-					}
-					return false;
-				},
-				right() {
-					if (selectedRow >= 0 && selectedButton < 1) {
-						navigate('right');
-						return true;
-					}
-					return false;
-				},
-				confirmDown() {
-					isAPressed = true;
-				},
-				confirmUp() {
-					isAPressed = false;
-					selectButton();
-				},
-				confirmCancel() {
-					isAPressed = false;
-				},
-				back() {
-					onBack?.();
-				},
+		const unregImage = navHandle.controller.register({
+			pos: [0, 0],
+			get el() {
+				return imageElement;
 			},
-			position
-		);
-		activateArea(areaID);
+		});
 		const unregisterBack = pushBackHandler(() => onBack?.());
 		return () => {
-			unregisterArea();
+			unregImage();
 			unregisterBack();
 		};
 	});
@@ -189,15 +116,13 @@
 
 <div class="detail">
 	<div class="content">
-		<div class="image" class:selected={active && selectedRow === -1} bind:this={imageElement}>
+		<div class="image" class:selected={imageSelected} bind:this={imageElement}>
 			<img src="https://picsum.photos/seed/{itemId}/800/450" alt={itemTitle} />
 		</div>
 		<div class="files">
 			<div class="title">{$t('library.product.downloads')}:</div>
 			{#each files as file, rowIndex (file.id)}
-				<div bind:this={fileElements[rowIndex]}>
-					<ProductFile name={file.name} size={file.size} selected={active && rowIndex === selectedRow} {selectedButton} pressed={active && isAPressed} />
-				</div>
+				<ProductFile name={file.name} size={file.size} rowY={rowIndex + 1} />
 			{/each}
 		</div>
 	</div>

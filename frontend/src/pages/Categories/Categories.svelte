@@ -26,8 +26,7 @@
 	let searchBar: SearchBar;
 
 	onMount(() => {
-		// Register search area with position - cleanup is automatic
-		const unregisterSearch = useArea(
+		return useArea(
 			searchAreaID,
 			{
 				up() {
@@ -45,8 +44,6 @@
 			},
 			searchPosition
 		);
-
-		return unregisterSearch;
 	});
 </script>
 

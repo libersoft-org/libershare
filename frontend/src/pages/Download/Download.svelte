@@ -21,7 +21,7 @@
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 
-	createNavArea(areaID, position, { onBack, activate: true });
+	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 
 	function openDetail(index: number): void {
 		const download = $downloads[index]!;

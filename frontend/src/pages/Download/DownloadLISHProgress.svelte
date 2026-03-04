@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { scrollToElement } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -42,8 +41,6 @@
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, params, onBack, onDone }: Props = $props();
 
-	let active = $derived($activeArea === areaID);
-
 	// Progress state
 	type Status = 'creating' | 'done' | 'error';
 	let status = $state<Status>('creating');
@@ -54,17 +51,6 @@
 	// File list with per-file progress
 	let allFiles = $state<FileProgress[]>([]);
 	let completedCount = $derived(allFiles.filter(f => f.done).length);
-
-	// Navigation: 0 = button, 1+ = table rows
-	let selectedIndex = $state(0);
-	let rowElements: HTMLElement[] = $state([]);
-	let tableRowElements: HTMLElement[] = $state([]);
-	let selectedTableRow = $derived(selectedIndex - 1); // -1 means button is selected
-
-	function scrollToSelected(): void {
-		if (selectedIndex === 0) scrollToElement(rowElements, 0, true);
-		else scrollToElement(tableRowElements, selectedIndex - 1);
-	}
 
 	// Unsubscribe function for progress events
 	let unsubProgress: (() => void) | null = null;
@@ -138,55 +124,11 @@
 		else onBack?.();
 	}
 
-	// Area handlers
-	const areaHandlers = {
-		up() {
-			if (selectedIndex > 0) {
-				selectedIndex--;
-				scrollToSelected();
-				return true;
-			}
-			return false;
-		},
-		down() {
-			if (allFiles.length > 0 && selectedIndex < allFiles.length) {
-				selectedIndex++;
-				scrollToSelected();
-				return true;
-			}
-			return false;
-		},
-		left() {
-			return false;
-		},
-		right() {
-			return false;
-		},
-		confirmDown() {},
-		confirmUp() {
-			if (selectedIndex === 0) {
-				if (status === 'creating') handleBack();
-				else if (status === 'done') handleDone();
-				else if (status === 'error') handleBack();
-			}
-		},
-		confirmCancel() {},
-		back() {
-			handleBack();
-		},
-		onActivate() {},
-	};
+	createNavArea(() => ({ areaID, position, activate: true, onBack: handleBack }));
 
-	let unregisterArea: (() => void) | null = null;
-
-	onMount(() => {
-		unregisterArea = useArea(areaID, areaHandlers, position);
-		activateArea(areaID);
-		startCreate();
-	});
+	startCreate();
 
 	onDestroy(() => {
-		if (unregisterArea) unregisterArea();
 		if (unsubProgress) {
 			unsubProgress();
 			unsubProgress = null;
@@ -235,9 +177,7 @@
 <div class="progress-page">
 	<div class="container">
 		<ButtonBar>
-			<div bind:this={rowElements[0]}>
-				<Button icon="/img/back.svg" label={status === 'creating' ? $t('common.cancel') : $t('common.back')} selected={active && selectedIndex === 0} onConfirm={status === 'done' ? handleDone : handleBack} />
-			</div>
+			<Button icon="/img/back.svg" label={status === 'creating' ? $t('common.cancel') : $t('common.back')} position={[0, 0]} onConfirm={status === 'done' ? handleDone : handleBack} />
 		</ButtonBar>
 		{#if status === 'creating'}
 			<div class="status-label">{$t('downloads.lishCreate.progress.creating')}</div>
@@ -261,15 +201,13 @@
 					<TableCell align="center">{$t('common.progress')}</TableCell>
 				</TableHeader>
 				{#each allFiles as file, i}
-					<div bind:this={tableRowElements[i]}>
-						<TableRow odd={i % 2 === 0} selected={active && selectedTableRow === i}>
-							<TableCell wrap>{file.path}</TableCell>
-							<TableCell align="right">{formatBytes(file.size)}</TableCell>
-							<TableCell align="center">
-								<ProgressBar progress={file.chunks > 0 ? (file.currentChunk / file.chunks) * 100 : file.done ? 100 : 0} height="3vh" animated={status === 'creating' && !file.done && file.currentChunk > 0} />
-							</TableCell>
-						</TableRow>
-					</div>
+				<TableRow odd={i % 2 === 0} position={[0, i + 1]}>
+					<TableCell wrap>{file.path}</TableCell>
+					<TableCell align="right">{formatBytes(file.size)}</TableCell>
+					<TableCell align="center">
+						<ProgressBar progress={file.chunks > 0 ? (file.currentChunk / file.chunks) * 100 : file.done ? 100 : 0} height="3vh" animated={status === 'creating' && !file.done && file.currentChunk > 0} />
+					</TableCell>
+				</TableRow>
 				{/each}
 			</Table>
 			{#if status === 'creating'}

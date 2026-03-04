@@ -1,7 +1,6 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { useArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { t } from '../../scripts/language.ts';
 	import { deleteDownload } from '../../scripts/downloads.ts';
 	import Dialog from '../../components/Dialog/Dialog.svelte';
@@ -25,14 +24,11 @@
 		{ label: $t('downloads.deleteDialog.dataOnly'), icon: '/img/del.svg', deleteLISH: false, deleteData: true },
 	];
 
-	let selectedIndex = $state(0);
-	let isPressed = $state(false);
 	let deleting = $state(false);
 
-	async function handleConfirm(): Promise<void> {
-		const option = options[selectedIndex];
+	async function handleConfirm(index: number): Promise<void> {
+		const option = options[index];
 		if (!option) return;
-		// Cancel
 		if (!option.deleteLISH && !option.deleteData) {
 			onBack();
 			return;
@@ -43,53 +39,7 @@
 		onResult(option.deleteLISH, success);
 	}
 
-	onMount(() => {
-		const unregister = useArea(
-			'delete-dialog',
-			{
-				up() {
-					if (deleting) return true;
-					if (selectedIndex > 0) {
-						selectedIndex--;
-						return true;
-					}
-					return true;
-				},
-				down() {
-					if (deleting) return true;
-					if (selectedIndex < options.length - 1) {
-						selectedIndex++;
-						return true;
-					}
-					return true;
-				},
-				left() {
-					return true;
-				},
-				right() {
-					return true;
-				},
-				confirmDown() {
-					if (deleting) return;
-					isPressed = true;
-				},
-				confirmUp() {
-					if (deleting) return;
-					isPressed = false;
-					handleConfirm();
-				},
-				confirmCancel() {
-					isPressed = false;
-				},
-				back() {
-					if (!deleting) onBack();
-				},
-			},
-			position
-		);
-		activateArea('delete-dialog');
-		return unregister;
-	});
+	createNavArea(() => ({ areaID: 'delete-dialog', position, activate: true, trap: true, onBack: () => { if (!deleting) onBack(); } }));
 </script>
 
 <style>
@@ -136,12 +86,8 @@
 					<Button
 						icon={option.icon}
 						label={option.label}
-						selected={selectedIndex === index}
-						pressed={selectedIndex === index && isPressed}
-						onConfirm={() => {
-							selectedIndex = index;
-							handleConfirm();
-						}}
+						position={[0, index]}
+						onConfirm={() => handleConfirm(index)}
 					/>
 				{/each}
 			</ButtonBar>

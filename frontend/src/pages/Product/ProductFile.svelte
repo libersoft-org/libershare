@@ -1,15 +1,17 @@
 <script lang="ts">
+	import { getContext } from 'svelte';
 	import { t } from '../../scripts/language.ts';
+	import type { NavAreaController } from '../../scripts/navArea.svelte.ts';
 	import Row from '../../components/Row/Row.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	interface Props {
 		name: string;
 		size: string;
-		selected?: boolean;
-		selectedButton?: number; // 0 = Download, 1 = Play
-		pressed?: boolean;
+		rowY: number;
 	}
-	let { name, size, selected = false, selectedButton = 0, pressed = false }: Props = $props();
+	let { name, size, rowY }: Props = $props();
+	const navArea = getContext<NavAreaController | undefined>('navArea');
+	let rowSelected = $derived(navArea ? navArea.isSelected([0, rowY]) || navArea.isSelected([1, rowY]) : false);
 </script>
 
 <style>
@@ -48,13 +50,13 @@
 	}
 </style>
 
-<Row {selected}>
+<Row selected={rowSelected}>
 	<div class="info">
 		<div class="name">{name}</div>
 		<div class="size">{$t('common.size')}: {size}</div>
 	</div>
 	<div class="actions">
-		<Button label={$t('library.product.download')} selected={selected && selectedButton === 0} {pressed} />
-		<Button label={$t('library.product.play')} selected={selected && selectedButton === 1} {pressed} />
+		<Button label={$t('library.product.download')} position={[0, rowY]} />
+		<Button label={$t('library.product.play')} position={[1, rowY]} />
 	</div>
 </Row>
