@@ -33,9 +33,7 @@
 	let sizeDisplay = $derived(downloadedSize && progress < 100 ? `${downloadedSize} / ${size}` : size);
 
 	onMount(() => {
-		if (navArea && position) {
-			return navArea.register({ pos: position, el: rowEl, onConfirm });
-		}
+		if (navArea && position) return navArea.register({ pos: position, el: rowEl, onConfirm });
 		return undefined;
 	});
 </script>
@@ -50,8 +48,7 @@
 	}
 </style>
 
-<div bind:this={rowEl}>
-<TableRow selected={isSelected} {odd}>
+<TableRow bind:el={rowEl} selected={isSelected} {odd}>
 	<TableCell>
 		<div class="name">{name}</div>
 	</TableCell>
@@ -64,4 +61,3 @@
 	<TableCell align="center" desktopOnly>{downloadSpeed}</TableCell>
 	<TableCell align="center" desktopOnly>{uploadSpeed}</TableCell>
 </TableRow>
-</div>

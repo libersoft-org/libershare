@@ -4,8 +4,9 @@
 		children: Snippet;
 		selected?: boolean;
 		odd?: boolean;
+		el?: HTMLElement | undefined;
 	}
-	let { children, selected = false, odd = false }: Props = $props();
+	let { children, selected = false, odd = false, el = $bindable() }: Props = $props();
 </script>
 
 <style>
@@ -42,6 +43,6 @@
 	}
 </style>
 
-<div class="row" class:odd class:even={!odd} class:selected>
+<div bind:this={el} class="row" class:odd class:even={!odd} class:selected>
 	{@render children()}
 </div>
