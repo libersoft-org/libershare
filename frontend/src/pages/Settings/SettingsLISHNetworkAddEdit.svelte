@@ -224,23 +224,13 @@
 
 <div class="add-edit">
 	<div class="container">
-		<div bind:this={rowElements[0]}>
-			<Input bind:this={nameInput} bind:value={name} label={$t('common.name')} selected={active && selectedIndex === 0} />
-		</div>
-		<div bind:this={rowElements[1]}>
-			<Input bind:this={descriptionInput} bind:value={description} label={$t('common.description')} multiline rows={4} selected={active && selectedIndex === 1} />
-		</div>
+		<Input bind:this={nameInput} bind:value={name} bind:el={rowElements[0]} label={$t('common.name')} selected={active && selectedIndex === 0} />
+		<Input bind:this={descriptionInput} bind:value={description} bind:el={rowElements[1]} label={$t('common.description')} multiline rows={4} selected={active && selectedIndex === 1} />
 		{#if !isEditing}
-			<div bind:this={rowElements[2]}>
-				<SwitchRow label={$t('settings.lishNetwork.autoGenerate') + ':'} checked={autoGenerateID} selected={active && selectedIndex === 2} onConfirm={toggleAutoGenerateID} />
-			</div>
-			<div bind:this={rowElements[3]}>
-				<Input bind:this={networkIDInput} bind:value={networkID} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 3} disabled={autoGenerateID} />
-			</div>
+			<SwitchRow bind:el={rowElements[2]} label={$t('settings.lishNetwork.autoGenerate') + ':'} checked={autoGenerateID} selected={active && selectedIndex === 2} onConfirm={toggleAutoGenerateID} />
+			<Input bind:this={networkIDInput} bind:value={networkID} bind:el={rowElements[3]} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 3} disabled={autoGenerateID} />
 		{:else}
-			<div bind:this={rowElements[2]}>
-				<Input bind:this={networkIDInput} bind:value={networkID} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 2} />
-			</div>
+			<Input bind:this={networkIDInput} bind:value={networkID} bind:el={rowElements[2]} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 2} />
 		{/if}
 		<div class="label">{$t('settings.lishNetwork.bootstrapServers')}:</div>
 		{#each bootstrapServers as _server, index (index)}
@@ -261,11 +251,7 @@
 	</div>
 
 	<ButtonBar justify="center">
-		<div bind:this={rowElements[bootstrapOffset + bootstrapServers.length]}>
-			<Button icon="/img/save.svg" label={$t('common.save')} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length} onConfirm={handleSave} />
-		</div>
-		<div bind:this={rowElements[bootstrapOffset + bootstrapServers.length + 1]}>
-			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length + 1} onConfirm={onBack} />
-		</div>
+		<Button bind:el={rowElements[bootstrapOffset + bootstrapServers.length]} icon="/img/save.svg" label={$t('common.save')} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length} onConfirm={handleSave} />
+		<Button bind:el={rowElements[bootstrapOffset + bootstrapServers.length + 1]} icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length + 1} onConfirm={onBack} />
 	</ButtonBar>
 </div>

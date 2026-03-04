@@ -39,7 +39,15 @@
 		onResult(option.deleteLISH, success);
 	}
 
-	createNavArea(() => ({ areaID: 'delete-dialog', position, activate: true, trap: true, onBack: () => { if (!deleting) onBack(); } }));
+	createNavArea(() => ({
+		areaID: 'delete-dialog',
+		position,
+		activate: true,
+		trap: true,
+		onBack: () => {
+			if (!deleting) onBack();
+		},
+	}));
 </script>
 
 <style>
@@ -83,12 +91,7 @@
 			</div>
 			<ButtonBar justify="center" direction="column">
 				{#each options as option, index}
-					<Button
-						icon={option.icon}
-						label={option.label}
-						position={[0, index]}
-						onConfirm={() => handleConfirm(index)}
-					/>
+					<Button icon={option.icon} label={option.label} position={[0, index]} onConfirm={() => handleConfirm(index)} />
 				{/each}
 			</ButtonBar>
 		{/if}

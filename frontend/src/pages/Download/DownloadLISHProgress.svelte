@@ -201,13 +201,13 @@
 					<TableCell align="center">{$t('common.progress')}</TableCell>
 				</TableHeader>
 				{#each allFiles as file, i}
-				<TableRow odd={i % 2 === 0} position={[0, i + 1]}>
-					<TableCell wrap>{file.path}</TableCell>
-					<TableCell align="right">{formatBytes(file.size)}</TableCell>
-					<TableCell align="center">
-						<ProgressBar progress={file.chunks > 0 ? (file.currentChunk / file.chunks) * 100 : file.done ? 100 : 0} height="3vh" animated={status === 'creating' && !file.done && file.currentChunk > 0} />
-					</TableCell>
-				</TableRow>
+					<TableRow odd={i % 2 === 0} position={[0, i + 1]}>
+						<TableCell wrap>{file.path}</TableCell>
+						<TableCell align="right">{formatBytes(file.size)}</TableCell>
+						<TableCell align="center">
+							<ProgressBar progress={file.chunks > 0 ? (file.currentChunk / file.chunks) * 100 : file.done ? 100 : 0} height="3vh" animated={status === 'creating' && !file.done && file.currentChunk > 0} />
+						</TableCell>
+					</TableRow>
 				{/each}
 			</Table>
 			{#if status === 'creating'}

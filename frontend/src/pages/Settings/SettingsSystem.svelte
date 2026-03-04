@@ -168,28 +168,16 @@
 
 <div class="settings">
 	<div class="container">
-		<div bind:this={rowElements[0]}>
-			<SwitchRow label={$t('settings.system.autoStartOnBoot') + ':'} checked={autoStart} selected={active && getActualIndex(selectedIndex) === FIELD_AUTO_START} onToggle={toggleAutoStart} />
-		</div>
-		<div bind:this={rowElements[1]}>
-			<SwitchRow label={$t('settings.system.showInTray') + ':'} checked={trayVisible} selected={active && getActualIndex(selectedIndex) === FIELD_SHOW_IN_TRAY} onToggle={toggleShowInTray} />
-		</div>
+		<SwitchRow bind:el={rowElements[0]} label={$t('settings.system.autoStartOnBoot') + ':'} checked={autoStart} selected={active && getActualIndex(selectedIndex) === FIELD_AUTO_START} onToggle={toggleAutoStart} />
+		<SwitchRow bind:el={rowElements[1]} label={$t('settings.system.showInTray') + ':'} checked={trayVisible} selected={active && getActualIndex(selectedIndex) === FIELD_SHOW_IN_TRAY} onToggle={toggleShowInTray} />
 		{#if trayVisible}
-			<div bind:this={rowElements[2]}>
-				<SwitchRow label={$t('settings.system.minimizeToTray') + ':'} checked={trayMinimize} selected={active && getActualIndex(selectedIndex) === FIELD_MINIMIZE_TO_TRAY} onToggle={toggleMinimizeToTray} />
-			</div>
+			<SwitchRow bind:el={rowElements[2]} label={$t('settings.system.minimizeToTray') + ':'} checked={trayMinimize} selected={active && getActualIndex(selectedIndex) === FIELD_MINIMIZE_TO_TRAY} onToggle={toggleMinimizeToTray} />
 		{/if}
-		<div bind:this={rowElements[trayVisible ? 3 : 2]}>
-			<SwitchRow label={$t('settings.system.defaultMinifyJSON') + ':'} checked={minifyJSON} selected={active && getActualIndex(selectedIndex) === FIELD_MINIFY_JSON} onToggle={toggleMinifyJSON} />
-		</div>
-		<div bind:this={rowElements[trayVisible ? 4 : 3]}>
-			<SwitchRow label={$t('settings.system.defaultCompress') + ':'} checked={compress} selected={active && getActualIndex(selectedIndex) === FIELD_COMPRESS} onToggle={toggleCompress} />
-		</div>
+		<SwitchRow bind:el={rowElements[trayVisible ? 3 : 2]} label={$t('settings.system.defaultMinifyJSON') + ':'} checked={minifyJSON} selected={active && getActualIndex(selectedIndex) === FIELD_MINIFY_JSON} onToggle={toggleMinifyJSON} />
+		<SwitchRow bind:el={rowElements[trayVisible ? 4 : 3]} label={$t('settings.system.defaultCompress') + ':'} checked={compress} selected={active && getActualIndex(selectedIndex) === FIELD_COMPRESS} onToggle={toggleCompress} />
 	</div>
-	<div bind:this={rowElements[trayVisible ? 5 : 4]}>
-		<ButtonBar justify="center">
-			<Button icon="/img/save.svg" label={$t('common.save')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 0} onConfirm={saveSettings} />
-			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 1} onConfirm={onBack} />
-		</ButtonBar>
-	</div>
+	<ButtonBar bind:el={rowElements[trayVisible ? 5 : 4]} justify="center">
+		<Button icon="/img/save.svg" label={$t('common.save')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 0} onConfirm={saveSettings} />
+		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && getActualIndex(selectedIndex) === FIELD_BUTTONS && selectedColumn === 1} onConfirm={onBack} />
+	</ButtonBar>
 </div>

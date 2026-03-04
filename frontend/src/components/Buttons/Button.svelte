@@ -23,18 +23,24 @@
 		onConfirm?: (() => void) | undefined;
 		/** Position in NavArea grid [x, y]. When set, registers with parent NavArea. */
 		position?: NavPos | undefined;
+		el?: HTMLElement | undefined;
 	}
-	let { label, icon, iconPosition = 'left', iconSize, noColorFilter = false, badgeIcon, alt = '', selected = false, pressed = false, active = false, disabled = false, padding = '2vh', fontSize = '2vh', borderRadius = '2vh', width, height, onConfirm, position }: Props = $props();
+	let { label, icon, iconPosition = 'left', iconSize, noColorFilter = false, badgeIcon, alt = '', selected = false, pressed = false, active = false, disabled = false, padding = '2vh', fontSize = '2vh', borderRadius = '2vh', width, height, onConfirm, position, el = $bindable() }: Props = $props();
 	const buttonsGroup = getContext<ButtonsGroupContext | undefined>('buttonsGroup');
 	const navArea = getContext<NavAreaController | undefined>('navArea');
-	let buttonEl = $state<HTMLElement | undefined>(undefined);
 	let index = $state(-1);
 	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : buttonsGroup ? buttonsGroup.isSelected(index) : selected);
 	let isPressed = $derived(navArea && position ? navArea.isPressed(position) : buttonsGroup ? buttonsGroup.isPressed(index) : pressed);
 
 	onMount(() => {
 		if (navArea && position) {
-			return navArea.register({ pos: position, el: buttonEl, onConfirm });
+			return navArea.register({
+				pos: position,
+				get el() {
+					return el;
+				},
+				onConfirm,
+			});
 		}
 		if (buttonsGroup) {
 			const { index: idx, unregister } = buttonsGroup.register({ onConfirm });
@@ -92,7 +98,7 @@
 	}
 </style>
 
-<div bind:this={buttonEl} class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:active class:disabled class:icon-only={icon && !label} class:icon-top={iconPosition === 'top'} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}">
+<div bind:this={el} class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:active class:disabled class:icon-only={icon && !label} class:icon-top={iconPosition === 'top'} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}">
 	{#if icon}
 		<Icon img={icon} {alt} size={iconSize ?? fontSize} padding="0" colorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} {noColorFilter} {badgeIcon} badgeColorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} />
 	{/if}

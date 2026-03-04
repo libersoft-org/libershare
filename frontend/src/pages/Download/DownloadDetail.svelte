@@ -360,9 +360,7 @@
 						</Header>
 						<div class="items">
 							{#each download.files as file, index (file.id)}
-								<div bind:this={itemElements[index]}>
-									<DownloadFile name={file.name} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} odd={index % 2 === 0} animated={download.status === 'downloading' && file.progress < 100} />
-								</div>
+								<DownloadFile bind:el={itemElements[index]} name={file.name} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} odd={index % 2 === 0} animated={download.status === 'downloading' && file.progress < 100} />
 							{/each}
 						</div>
 					</Table>

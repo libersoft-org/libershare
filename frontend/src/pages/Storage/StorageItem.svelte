@@ -12,8 +12,9 @@
 		selected?: boolean | undefined;
 		isLast?: boolean | undefined;
 		odd?: boolean | undefined;
+		el?: HTMLElement | undefined;
 	}
-	let { name, type, size, modified, selected = false, odd = false }: Props = $props();
+	let { name, type, size, modified, selected = false, odd = false, el = $bindable() }: Props = $props();
 </script>
 
 <style>
@@ -29,7 +30,7 @@
 	}
 </style>
 
-<TableRow {selected} {odd}>
+<TableRow {selected} {odd} bind:el>
 	<TableCell>
 		<div class="name">
 			<Icon img={getStorageIcon(type)} size="2vh" padding="0" colorVariable={selected ? '--primary-background' : '--secondary-foreground'} />

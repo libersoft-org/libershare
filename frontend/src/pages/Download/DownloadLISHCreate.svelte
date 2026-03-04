@@ -282,7 +282,6 @@
 		navHandle.resume();
 		activateArea(areaID);
 	}
-
 </script>
 
 <style>

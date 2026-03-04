@@ -12,15 +12,21 @@
 		onConfirm?: () => void;
 		/** Position in NavArea grid [x, y]. When set, registers with parent NavArea. */
 		position?: NavPos | undefined;
+		el?: HTMLElement | undefined;
 	}
-	let { label, checked, selected = false, disabled = false, onToggle, onConfirm, position }: Props = $props();
+	let { label, checked, selected = false, disabled = false, onToggle, onConfirm, position, el = $bindable() }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
-	let rowEl = $state<HTMLElement | undefined>(undefined);
 	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : selected);
 
 	onMount(() => {
 		if (navArea && position) {
-			return navArea.register({ pos: position, get el() { return rowEl; }, onConfirm: onToggle ?? onConfirm });
+			return navArea.register({
+				pos: position,
+				get el() {
+					return el;
+				},
+				onConfirm: onToggle ?? onConfirm,
+			});
 		}
 		return undefined;
 	});
@@ -39,7 +45,7 @@
 	}
 </style>
 
-<Row selected={isSelected} {disabled} bind:el={rowEl}>
+<Row selected={isSelected} {disabled} bind:el>
 	<div class="switch-row">
 		<span class="label">{label}</span>
 		<Switch {checked} selected={isSelected} {disabled} />

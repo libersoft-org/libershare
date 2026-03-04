@@ -10,8 +10,9 @@
 		selected?: boolean | undefined;
 		odd?: boolean | undefined;
 		animated?: boolean | undefined;
+		el?: HTMLElement | undefined;
 	}
-	let { name, progress, size, downloadedSize, selected = false, odd = false, animated = false }: Props = $props();
+	let { name, progress, size, downloadedSize, selected = false, odd = false, animated = false, el = $bindable() }: Props = $props();
 	// Show "downloaded / total" format when downloading (progress < 100 and downloadedSize is provided)
 	let sizeDisplay = $derived(downloadedSize && progress < 100 ? `${downloadedSize} / ${size}` : size);
 </script>
@@ -25,7 +26,7 @@
 	}
 </style>
 
-<TableRow {selected} {odd}>
+<TableRow {selected} {odd} bind:el>
 	<TableCell><span class="name">{name}</span></TableCell>
 	<TableCell align="center">{sizeDisplay}</TableCell>
 	<TableCell><ProgressBar {progress} {animated} /></TableCell>

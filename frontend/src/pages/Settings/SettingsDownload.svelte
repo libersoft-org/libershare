@@ -377,16 +377,12 @@
 				<Input bind:this={uploadSpeedRef} bind:value={uploadSpeed} label={$t('settings.download.maxUploadSpeed')} type="number" selected={active && selectedIndex === FIELD_UPLOAD_SPEED && selectedColumn === 0} flex />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_UPLOAD_SPEED && selectedColumn === 1} onConfirm={resetUploadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div bind:this={rowElements[FIELD_ALLOW_RELAY]}>
-				<SwitchRow label={$t('settings.download.allowRelay') + ':'} checked={relay} selected={active && selectedIndex === FIELD_ALLOW_RELAY} onToggle={toggleAllowRelay} />
-			</div>
+			<SwitchRow bind:el={rowElements[FIELD_ALLOW_RELAY]} label={$t('settings.download.allowRelay') + ':'} checked={relay} selected={active && selectedIndex === FIELD_ALLOW_RELAY} onToggle={toggleAllowRelay} />
 			<div class="row" bind:this={rowElements[FIELD_RELAY_RESERVATIONS]}>
 				<Input bind:this={relayReservationsRef} bind:value={relayReservations} label={$t('settings.download.maxRelayReservations')} type="number" selected={active && selectedIndex === FIELD_RELAY_RESERVATIONS && selectedColumn === 0} flex />
 				<Button icon="/img/restart.svg" selected={active && selectedIndex === FIELD_RELAY_RESERVATIONS && selectedColumn === 1} onConfirm={resetRelayReservations} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div bind:this={rowElements[FIELD_AUTO_START]}>
-				<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} selected={active && selectedIndex === FIELD_AUTO_START} onToggle={toggleAutoStart} />
-			</div>
+			<SwitchRow bind:el={rowElements[FIELD_AUTO_START]} label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} selected={active && selectedIndex === FIELD_AUTO_START} onToggle={toggleAutoStart} />
 		</div>
 		<ButtonBar justify="center">
 			<Button icon="/img/save.svg" label={$t('common.save')} selected={active && selectedIndex === FIELD_BUTTONS && selectedColumn === 0} onConfirm={handleSave} />

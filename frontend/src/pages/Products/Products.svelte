@@ -201,9 +201,7 @@
 	<SearchBar bind:this={searchBar} selected={searchSelected} />
 	<div class="items">
 		{#each items as item, index (item.id)}
-			<div bind:this={itemElements[index]}>
-				<ProductsItem title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={active && index === selectedIndex} isAPressed={active && isAPressed && index === selectedIndex} />
-			</div>
+			<ProductsItem bind:el={itemElements[index]} title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={active && index === selectedIndex} isAPressed={active && isAPressed && index === selectedIndex} />
 		{/each}
 	</div>
 {/if}

@@ -20,11 +20,11 @@
 		onchange?: ((value: string) => void) | undefined;
 		/** Position in NavArea grid [x, y]. When set, registers with parent NavArea. */
 		position?: NavPos | undefined;
+		el?: HTMLElement | undefined;
 	}
-	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', min, max, multiline = false, rows = 3, fontSize = '2.5vh', fontFamily, padding = '1.5vh 2vh', flex = false, readonly = false, disabled = false, onchange, position }: Props = $props();
+	let { value = $bindable(''), label, placeholder, selected = false, type = 'text', min, max, multiline = false, rows = 3, fontSize = '2.5vh', fontFamily, padding = '1.5vh 2vh', flex = false, readonly = false, disabled = false, onchange, position, el = $bindable() }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let inputElement: HTMLInputElement | HTMLTextAreaElement | undefined = $state();
-	let wrapperEl = $state<HTMLElement | undefined>(undefined);
 	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : selected);
 
 	export function focus(): void {
@@ -53,7 +53,14 @@
 	}
 
 	onMount(() => {
-		if (navArea && position) return navArea.register({ pos: position, el: wrapperEl, onConfirm: () => focus() });
+		if (navArea && position)
+			return navArea.register({
+				pos: position,
+				get el() {
+					return el;
+				},
+				onConfirm: () => focus(),
+			});
 		return undefined;
 	});
 </script>
@@ -110,7 +117,7 @@
 	}
 </style>
 
-<div bind:this={wrapperEl} class="input-field" class:selected={isSelected} class:flex class:disabled style="--input-font-size: {fontSize}; --input-padding: {padding};{fontFamily ? ` --input-font-family: ${fontFamily};` : ''}">
+<div bind:this={el} class="input-field" class:selected={isSelected} class:flex class:disabled style="--input-font-size: {fontSize}; --input-padding: {padding};{fontFamily ? ` --input-font-family: ${fontFamily};` : ''}">
 	{#if label}
 		<div class="label">{label}:</div>
 	{/if}
