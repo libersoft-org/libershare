@@ -2,6 +2,7 @@
 	import { productName } from '@shared';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { setFullscreenLocked } from '../../scripts/input/keyboard.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	interface Props {
 		areaID: string;
@@ -12,10 +13,26 @@
 
 	function toggleFullscreen(): void {
 		const tauri = (window as any).__TAURI_INTERNALS__;
-		if (tauri) tauri.invoke('app_fullscreen');
-		else {
-			if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
-			else document.exitFullscreen().catch(() => {});
+		if (tauri) {
+			tauri.invoke('app_fullscreen');
+			return;
+		}
+		const kb = (navigator as any).keyboard;
+		if (!document.fullscreenElement) {
+			setFullscreenLocked(true);
+			document.documentElement
+				.requestFullscreen()
+				.then(() => {
+					// Chrome/Edge/Opera: lock Escape key so it doesn't exit fullscreen
+					kb?.lock?.(['Escape']).catch(() => {});
+				})
+				.catch(() => {
+					setFullscreenLocked(false);
+				});
+		} else {
+			kb?.unlock?.();
+			setFullscreenLocked(false);
+			document.exitFullscreen().catch(() => {});
 		}
 	}
 
