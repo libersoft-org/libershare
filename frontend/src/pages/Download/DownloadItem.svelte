@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { getContext, onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { type DownloadStatus } from '../../scripts/downloads.ts';
 	import { truncateID } from '../../scripts/utils.ts';
+	import { type NavAreaController, type NavPos } from '../../scripts/navArea.svelte.ts';
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Badge from '../../components/Badge/Badge.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
@@ -17,13 +19,25 @@
 		uploadPeers: number;
 		downloadSpeed: string;
 		uploadSpeed: string;
+		position?: NavPos | undefined;
+		onConfirm?: (() => void) | undefined;
 		selected?: boolean | undefined;
 		isLast?: boolean | undefined;
 		odd?: boolean | undefined;
 	}
-	let { name, id, progress, size, downloadedSize, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, selected = false, odd = false }: Props = $props();
+	let { name, id, progress, size, downloadedSize, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, position, onConfirm, selected = false, odd = false }: Props = $props();
+	const navArea = getContext<NavAreaController | undefined>('navArea');
+	let rowEl = $state<HTMLElement | undefined>(undefined);
+	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : selected);
 	// Show "downloaded / total" format when downloading
 	let sizeDisplay = $derived(downloadedSize && progress < 100 ? `${downloadedSize} / ${size}` : size);
+
+	onMount(() => {
+		if (navArea && position) {
+			return navArea.register({ pos: position, el: rowEl, onConfirm });
+		}
+		return undefined;
+	});
 </script>
 
 <style>
@@ -36,7 +50,8 @@
 	}
 </style>
 
-<TableRow {selected} {odd}>
+<div bind:this={rowEl}>
+<TableRow selected={isSelected} {odd}>
 	<TableCell>
 		<div class="name">{name}</div>
 	</TableCell>
@@ -49,3 +64,4 @@
 	<TableCell align="center" desktopOnly>{downloadSpeed}</TableCell>
 	<TableCell align="center" desktopOnly>{uploadSpeed}</TableCell>
 </TableRow>
+</div>

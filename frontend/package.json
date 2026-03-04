@@ -17,7 +17,7 @@
 		"hex-to-css-filter": "^6.0.0"
 	},
 	"devDependencies": {
-		"svelte": "^5.53.6",
+		"svelte": "^5.53.7",
 		"@sveltejs/kit": "^2.53.4",
 		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/adapter-static": "^3.0.10",
@@ -27,6 +27,6 @@
 		"@types/node": "^25.3.3",
 		"svelte-check": "^4.4.4",
 		"prettier": "^3.8.1",
-		"prettier-plugin-svelte": "^3.5.0"
+		"prettier-plugin-svelte": "^3.5.1"
 	}
 }
