@@ -18,7 +18,6 @@
 		border-radius: 1vh;
 		overflow: hidden;
 		width: 100%;
-		height: 100%;
 		color: var(--secondary-foreground);
 	}
 
