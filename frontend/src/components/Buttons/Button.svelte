@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getContext, onMount } from 'svelte';
 	import { type ButtonsGroupContext } from './ButtonsGroup.svelte';
-	import { type NavAreaController, type NavPos } from '../../scripts/navArea.svelte.ts';
+	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
 	import Icon from '../Icon/Icon.svelte';
 	interface Props {
 		label?: string | undefined;
@@ -33,15 +33,7 @@
 	let isPressed = $derived(navArea && position ? navArea.isPressed(position) : buttonsGroup ? buttonsGroup.isPressed(index) : pressed);
 
 	onMount(() => {
-		if (navArea && position) {
-			return navArea.register({
-				pos: position,
-				get el() {
-					return el;
-				},
-				onConfirm,
-			});
-		}
+		if (navArea && position) return navArea.register(navItem(() => position!, () => el, onConfirm));
 		if (buttonsGroup) {
 			const { index: idx, unregister } = buttonsGroup.register({ onConfirm });
 			index = idx;

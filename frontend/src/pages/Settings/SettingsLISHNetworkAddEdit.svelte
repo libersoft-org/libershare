@@ -97,7 +97,9 @@
 		<Input bind:value={description} label={$t('common.description')} multiline rows={4} position={[0, 1]} />
 		{#if !isEditing}
 			<SwitchRow label={$t('settings.lishNetwork.autoGenerate') + ':'} checked={autoGenerateID} position={[0, 2]} onToggle={toggleAutoGenerateID} />
-			<Input bind:value={networkID} label={$t('settings.lishNetwork.networkID')} position={autoGenerateID ? undefined : [0, 3]} disabled={autoGenerateID} />
+			{#key autoGenerateID}
+				<Input bind:value={networkID} label={$t('settings.lishNetwork.networkID')} position={autoGenerateID ? undefined : [0, 3]} disabled={autoGenerateID} />
+			{/key}
 		{:else}
 			<Input bind:value={networkID} label={$t('settings.lishNetwork.networkID')} position={[0, 2]} />
 		{/if}
@@ -117,7 +119,6 @@
 		{/each}
 		<Alert type="error" message={showError ? errorMessage : ''} />
 	</div>
-
 	<ButtonBar justify="center">
 		<Button icon="/img/save.svg" label={$t('common.save')} position={[0, bootstrapOffset + bootstrapServers.length]} onConfirm={handleSave} />
 		<Button icon="/img/back.svg" label={$t('common.back')} position={[1, bootstrapOffset + bootstrapServers.length]} onConfirm={onBack} />

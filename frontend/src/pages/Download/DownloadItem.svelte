@@ -3,7 +3,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { type DownloadStatus } from '../../scripts/downloads.ts';
 	import { truncateID } from '../../scripts/utils.ts';
-	import { type NavAreaController, type NavPos } from '../../scripts/navArea.svelte.ts';
+	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Badge from '../../components/Badge/Badge.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
@@ -33,7 +33,8 @@
 	let sizeDisplay = $derived(downloadedSize && progress < 100 ? `${downloadedSize} / ${size}` : size);
 
 	onMount(() => {
-		if (navArea && position) return navArea.register({ pos: position, el: rowEl, onConfirm });
+		if (navArea && position)
+			return navArea.register(navItem(() => position!, () => rowEl, onConfirm));
 		return undefined;
 	});
 </script>

@@ -15,6 +15,19 @@ export interface NavItem {
 	onActivate?: (() => void) | undefined;
 }
 
+/** Create a NavItem with reactive pos and el getters */
+export function navItem(getPos: () => NavPos, getEl: () => HTMLElement | undefined, onConfirm?: () => void): NavItem {
+	return {
+		get pos() {
+			return getPos();
+		},
+		get el() {
+			return getEl();
+		},
+		onConfirm,
+	};
+}
+
 export interface NavAreaController {
 	/** Register a navigable item. Returns cleanup function. */
 	register(item: NavItem): () => void;
@@ -200,8 +213,7 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 				const idx = items.indexOf(item);
 				if (idx !== -1) items.splice(idx, 1);
 				if (selectedPos && item.pos[0] === selectedPos[0] && item.pos[1] === selectedPos[1]) {
-					if (items.length > 0) selectFirst();
-					else selectedPos = null;
+					if (items.length === 0) selectedPos = null;
 				}
 			};
 		},

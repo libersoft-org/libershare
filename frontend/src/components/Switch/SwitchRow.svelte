@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getContext, onMount } from 'svelte';
-	import { type NavAreaController, type NavPos } from '../../scripts/navArea.svelte.ts';
+	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
 	import Row from '../Row/Row.svelte';
 	import Switch from './Switch.svelte';
 	interface Props {
@@ -20,13 +20,7 @@
 
 	onMount(() => {
 		if (navArea && position) {
-			return navArea.register({
-				pos: position,
-				get el() {
-					return el;
-				},
-				onConfirm: onToggle ?? onConfirm,
-			});
+			return navArea.register(navItem(() => position!, () => el, onToggle ?? onConfirm));
 		}
 		return undefined;
 	});
