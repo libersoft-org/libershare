@@ -20,7 +20,13 @@
 
 	onMount(() => {
 		if (navArea && position) {
-			return navArea.register(navItem(() => position!, () => el, onToggle ?? onConfirm));
+			return navArea.register(
+				navItem(
+					() => position!,
+					() => el,
+					onToggle ?? onConfirm
+				)
+			);
 		}
 		return undefined;
 	});

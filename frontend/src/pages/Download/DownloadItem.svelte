@@ -34,7 +34,13 @@
 
 	onMount(() => {
 		if (navArea && position)
-			return navArea.register(navItem(() => position!, () => rowEl, onConfirm));
+			return navArea.register(
+				navItem(
+					() => position!,
+					() => rowEl,
+					onConfirm
+				)
+			);
 		return undefined;
 	});
 </script>

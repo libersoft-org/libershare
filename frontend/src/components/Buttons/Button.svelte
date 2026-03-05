@@ -33,7 +33,14 @@
 	let isPressed = $derived(navArea && position ? navArea.isPressed(position) : buttonsGroup ? buttonsGroup.isPressed(index) : pressed);
 
 	onMount(() => {
-		if (navArea && position) return navArea.register(navItem(() => position!, () => el, onConfirm));
+		if (navArea && position)
+			return navArea.register(
+				navItem(
+					() => position!,
+					() => el,
+					onConfirm
+				)
+			);
 		if (buttonsGroup) {
 			const { index: idx, unregister } = buttonsGroup.register({ onConfirm });
 			index = idx;

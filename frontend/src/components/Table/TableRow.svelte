@@ -17,7 +17,13 @@
 
 	onMount(() => {
 		if (navArea && position) {
-			return navArea.register(navItem(() => position!, () => el, onConfirm));
+			return navArea.register(
+				navItem(
+					() => position!,
+					() => el,
+					onConfirm
+				)
+			);
 		}
 		return undefined;
 	});

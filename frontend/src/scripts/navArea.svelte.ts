@@ -87,7 +87,7 @@ export function findItemInDirection(items: NavItem[], currentPos: NavPos, direct
 export function scrollToNavItem(item: NavItem): void {
 	if (!item.el) return;
 	// Use scrollIntoView with smooth behavior
-	item.el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+	item.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 // Options for createNavArea

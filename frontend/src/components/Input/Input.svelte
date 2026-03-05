@@ -54,7 +54,13 @@
 
 	onMount(() => {
 		if (navArea && position)
-			return navArea.register(navItem(() => position!, () => el, () => focus()));
+			return navArea.register(
+				navItem(
+					() => position!,
+					() => el,
+					() => focus()
+				)
+			);
 		return undefined;
 	});
 </script>
