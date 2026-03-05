@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { type NetworkFormData, getNetworkFormFieldType, getNetworkFormMaxColumn } from '../../scripts/lishNetwork.ts';
-	import { scrollToElement } from '../../scripts/utils.ts';
+	import { type NetworkFormData } from '../../scripts/lishNetwork.ts';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -19,35 +18,16 @@
 		onSave?: ((network: NetworkFormData) => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, network = null, onBack, onSave }: Props = $props();
-	let active = $derived($activeArea === areaID);
-	let selectedIndex = $state(0);
-	let selectedColumn = $state(0); // 0 = input, 1 = remove btn, 2 = add btn
-	let rowElements: HTMLElement[] = $state([]);
-	let nameInput: Input | undefined = $state();
-	let descriptionInput: Input | undefined = $state();
-	let networkIDInput: Input | undefined = $state();
-	let bootstrapInputs: Input[] = $state([]);
 	let name = $state(untrack(() => network?.name ?? ''));
 	let description = $state(untrack(() => network?.description ?? ''));
 	let isEditing = $derived(network !== null);
-	let autoGenerateID = $state(untrack(() => !network)); // Auto-generate when adding new, manual when editing
+	let autoGenerateID = $state(untrack(() => !network));
 	let networkID = $state(untrack(() => network?.id ?? ''));
 	let bootstrapServers = $state<string[]>(untrack(() => (network?.bootstrapServers?.length ? [...network.bootstrapServers] : [''])));
 	let submitted = $state(false);
-	// Validation - skip networkID check if auto-generate is enabled
 	let errorMessage = $derived(!name.trim() ? $t('settings.lishNetwork.errorNameRequired') : !autoGenerateID && !networkID.trim() ? $t('settings.lishNetwork.errorNetworkIDRequired') : '');
 	let showError = $derived(submitted && errorMessage);
-	// Dynamic total items: name + description + (autoGenerate when adding) + networkID + bootstrap servers + save + back
-	// When editing: no switch row, so offset is 3; when adding: switch row exists, offset is 4
 	let bootstrapOffset = $derived(isEditing ? 3 : 4);
-	let totalItems = $derived(bootstrapOffset + bootstrapServers.length + 2);
-	// Helper to get field type using extracted function
-	function getItemType(index: number): ReturnType<typeof getNetworkFormFieldType> {
-		return getNetworkFormFieldType(index, isEditing, bootstrapServers.length);
-	}
-	function getMaxColumn(bootstrapIndex: number): number {
-		return getNetworkFormMaxColumn(bootstrapIndex, bootstrapServers.length);
-	}
 
 	function handleSave(): void {
 		submitted = true;
@@ -63,16 +43,10 @@
 
 	function addBootstrapServer(): void {
 		bootstrapServers = [...bootstrapServers, ''];
-		// Move to the new input
-		selectedIndex = bootstrapOffset + bootstrapServers.length - 1;
-		selectedColumn = 0;
 	}
 
 	function removeBootstrapServer(index: number): void {
 		bootstrapServers = bootstrapServers.filter((_, i) => i !== index);
-		// Adjust selectedIndex if needed
-		if (selectedIndex > bootstrapOffset + index) selectedIndex--;
-		selectedColumn = 0;
 	}
 
 	function toggleAutoGenerateID(): void {
@@ -82,112 +56,7 @@
 		}
 	}
 
-	function focusInput(index: number): void {
-		const item = getItemType(index);
-		if (item.type === 'name' && nameInput) nameInput.focus();
-		else if (item.type === 'description' && descriptionInput) descriptionInput.focus();
-		else if (item.type === 'networkID' && networkIDInput && (isEditing || !autoGenerateID)) networkIDInput.focus();
-		else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined && bootstrapInputs[item.bootstrapIndex]) bootstrapInputs[item.bootstrapIndex]!.focus();
-	}
-
-	function scrollToSelected(): void {
-		scrollToElement(rowElements, selectedIndex);
-	}
-
-	onMount(() => {
-		const unregister = useArea(
-			areaID,
-			{
-				up() {
-					const item = getItemType(selectedIndex);
-					if (item.type === 'back') {
-						// From back, go to last bootstrap server (row above)
-						selectedIndex = bootstrapOffset + bootstrapServers.length - 1;
-						selectedColumn = 0;
-						scrollToSelected();
-						return true;
-					}
-					if (selectedIndex > 0) {
-						selectedIndex--;
-						if (!isEditing && selectedIndex === 3 && autoGenerateID) selectedIndex--; // Skip networkID if disabled (autoGenerateID is on) - only when adding
-						selectedColumn = 0;
-						scrollToSelected();
-						return true;
-					}
-					return false;
-				},
-				down() {
-					const item = getItemType(selectedIndex);
-					// Don't go down from save or back (they are on the same row)
-					if (item.type === 'save' || item.type === 'back') return false;
-					if (selectedIndex < totalItems - 1) {
-						selectedIndex++;
-						if (!isEditing && selectedIndex === 3 && autoGenerateID) selectedIndex++; // Skip networkID if disabled (autoGenerateID is on) - only when adding
-						selectedColumn = 0;
-						scrollToSelected();
-						return true;
-					}
-					return false;
-				},
-				left() {
-					const item = getItemType(selectedIndex);
-					if (item.type === 'back') {
-						selectedIndex--;
-						scrollToSelected();
-						return true;
-					}
-					if (item.type === 'bootstrap' && selectedColumn > 0) {
-						selectedColumn--;
-						return true;
-					}
-					return false;
-				},
-				right() {
-					const item = getItemType(selectedIndex);
-					if (item.type === 'save') {
-						selectedIndex++;
-						scrollToSelected();
-						return true;
-					}
-					if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined) {
-						const maxCol = getMaxColumn(item.bootstrapIndex);
-						if (selectedColumn < maxCol) {
-							selectedColumn++;
-							return true;
-						}
-					}
-					return false;
-				},
-				confirmDown() {},
-				confirmUp() {
-					const item = getItemType(selectedIndex);
-					if (item.type === 'name' || item.type === 'description') focusInput(selectedIndex);
-					else if (item.type === 'autoGenerate') toggleAutoGenerateID();
-					else if (item.type === 'networkID') {
-						if (isEditing || !autoGenerateID) focusInput(selectedIndex);
-					} else if (item.type === 'bootstrap' && item.bootstrapIndex !== undefined) {
-						if (selectedColumn === 0) focusInput(selectedIndex);
-						else {
-							const isLast = item.bootstrapIndex === bootstrapServers.length - 1;
-							const hasRemove = bootstrapServers.length > 1;
-							// Determine which button is at current column
-							if (hasRemove && selectedColumn === 1) removeBootstrapServer(item.bootstrapIndex);
-							else if (isLast && ((hasRemove && selectedColumn === 2) || (!hasRemove && selectedColumn === 1))) addBootstrapServer();
-						}
-					} else if (item.type === 'save') handleSave();
-					else if (item.type === 'back') onBack?.();
-				},
-				confirmCancel() {},
-				back() {
-					onBack?.();
-				},
-			},
-			position
-		);
-		// Activate this area
-		activateArea(areaID);
-		return unregister;
-	});
+	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
 
 <style>
@@ -224,26 +93,25 @@
 
 <div class="add-edit">
 	<div class="container">
-		<Input bind:this={nameInput} bind:value={name} bind:el={rowElements[0]} label={$t('common.name')} selected={active && selectedIndex === 0} />
-		<Input bind:this={descriptionInput} bind:value={description} bind:el={rowElements[1]} label={$t('common.description')} multiline rows={4} selected={active && selectedIndex === 1} />
+		<Input bind:value={name} label={$t('common.name')} position={[0, 0]} />
+		<Input bind:value={description} label={$t('common.description')} multiline rows={4} position={[0, 1]} />
 		{#if !isEditing}
-			<SwitchRow bind:el={rowElements[2]} label={$t('settings.lishNetwork.autoGenerate') + ':'} checked={autoGenerateID} selected={active && selectedIndex === 2} onConfirm={toggleAutoGenerateID} />
-			<Input bind:this={networkIDInput} bind:value={networkID} bind:el={rowElements[3]} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 3} disabled={autoGenerateID} />
+			<SwitchRow label={$t('settings.lishNetwork.autoGenerate') + ':'} checked={autoGenerateID} position={[0, 2]} onToggle={toggleAutoGenerateID} />
+			<Input bind:value={networkID} label={$t('settings.lishNetwork.networkID')} position={autoGenerateID ? undefined : [0, 3]} disabled={autoGenerateID} />
 		{:else}
-			<Input bind:this={networkIDInput} bind:value={networkID} bind:el={rowElements[2]} label={$t('settings.lishNetwork.networkID')} selected={active && selectedIndex === 2} />
+			<Input bind:value={networkID} label={$t('settings.lishNetwork.networkID')} position={[0, 2]} />
 		{/if}
 		<div class="label">{$t('settings.lishNetwork.bootstrapServers')}:</div>
 		{#each bootstrapServers as _server, index (index)}
 			{@const isLast = index === bootstrapServers.length - 1}
 			{@const hasRemove = bootstrapServers.length > 1}
-			{@const isRowSelected = active && selectedIndex === bootstrapOffset + index}
-			<div class="bootstrap-row" bind:this={rowElements[bootstrapOffset + index]}>
-				<Input bind:this={bootstrapInputs[index]} bind:value={bootstrapServers[index]} placeholder="address:port" selected={isRowSelected && selectedColumn === 0} flex />
+			<div class="bootstrap-row">
+				<Input bind:value={bootstrapServers[index]} placeholder="address:port" position={[0, bootstrapOffset + index]} flex />
 				{#if hasRemove}
-					<Button icon="/img/minus.svg" selected={isRowSelected && selectedColumn === 1} onConfirm={() => removeBootstrapServer(index)} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+					<Button icon="/img/minus.svg" position={[1, bootstrapOffset + index]} onConfirm={() => removeBootstrapServer(index)} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				{/if}
 				{#if isLast}
-					<Button icon="/img/plus.svg" selected={isRowSelected && ((hasRemove && selectedColumn === 2) || (!hasRemove && selectedColumn === 1))} onConfirm={() => addBootstrapServer()} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+					<Button icon="/img/plus.svg" position={hasRemove ? [2, bootstrapOffset + index] : [1, bootstrapOffset + index]} onConfirm={() => addBootstrapServer()} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				{/if}
 			</div>
 		{/each}
@@ -251,7 +119,7 @@
 	</div>
 
 	<ButtonBar justify="center">
-		<Button bind:el={rowElements[bootstrapOffset + bootstrapServers.length]} icon="/img/save.svg" label={$t('common.save')} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length} onConfirm={handleSave} />
-		<Button bind:el={rowElements[bootstrapOffset + bootstrapServers.length + 1]} icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === bootstrapOffset + bootstrapServers.length + 1} onConfirm={onBack} />
+		<Button icon="/img/save.svg" label={$t('common.save')} position={[0, bootstrapOffset + bootstrapServers.length]} onConfirm={handleSave} />
+		<Button icon="/img/back.svg" label={$t('common.back')} position={[1, bootstrapOffset + bootstrapServers.length]} onConfirm={onBack} />
 	</ButtonBar>
 </div>
