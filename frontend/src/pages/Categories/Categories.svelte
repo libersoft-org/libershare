@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useArea, activeArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
+	import { createNavArea, navItem, type NavPos } from '../../scripts/navArea.svelte.ts';
 	import SearchBar from '../../components/Search/SearchBar.svelte';
 	import Menu from '../../components/Menu/Menu.svelte';
 	interface Props {
@@ -22,27 +22,21 @@
 	// Calculate sub-area positions
 	let searchPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
 	let menuPosition = $derived({ x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y });
-	let searchSelected = $derived($activeArea === searchAreaID);
 	let searchBar: SearchBar;
 
+	const searchNavHandle = createNavArea(() => ({
+		areaID: searchAreaID,
+		position: searchPosition,
+		onBack,
+	}));
+
 	onMount(() => {
-		return useArea(
-			searchAreaID,
-			{
-				up() {
-					return false;
-				},
-				down() {
-					return false;
-				},
-				confirmUp() {
-					searchBar?.toggleFocus();
-				},
-				back() {
-					onBack?.();
-				},
-			},
-			searchPosition
+		return searchNavHandle.controller.register(
+			navItem(
+				() => [0, 0] as NavPos,
+				() => undefined,
+				() => searchBar?.toggleFocus()
+			)
 		);
 	});
 </script>
@@ -67,7 +61,7 @@
 </style>
 
 <div class="categories">
-	<SearchBar bind:this={searchBar} selected={searchSelected} />
+	<SearchBar bind:this={searchBar} selected={searchNavHandle.controller.isSelected([0, 0])} />
 	<div class="content">
 		<Menu areaID={menuAreaID} position={menuPosition} {title} {items} {orientation} {selectedId} {buttonWidth} {onselect} {onBack} />
 	</div>

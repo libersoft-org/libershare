@@ -33,8 +33,12 @@ export interface NavAreaController {
 	register(item: NavItem): () => void;
 	/** Check if item at given position is the currently selected one */
 	isSelected(pos: NavPos): boolean;
+	/** Check if any item at the given Y coordinate is selected */
+	isYSelected(y: number): boolean;
 	/** Check if item at given position is currently pressed (confirmDown active) */
 	isPressed(pos: NavPos): boolean;
+	/** Programmatically set the selected position */
+	select(pos: NavPos): void;
 	/** Get the active area ID for this controller */
 	readonly areaID: string;
 }
@@ -219,6 +223,12 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		},
 		isSelected(pos: NavPos): boolean {
 			return isAreaActive && selectedPos !== null && pos[0] === selectedPos[0] && pos[1] === selectedPos[1];
+		},
+		isYSelected(y: number): boolean {
+			return isAreaActive && selectedPos !== null && selectedPos[1] === y;
+		},
+		select(pos: NavPos): void {
+			selectedPos = pos;
 		},
 		isPressed(pos: NavPos): boolean {
 			return isAreaActive && pressed && selectedPos !== null && pos[0] === selectedPos[0] && pos[1] === selectedPos[1];

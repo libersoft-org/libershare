@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { tick } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
+	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
@@ -22,19 +23,13 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
-	let active = $derived($activeArea === areaID);
 	let saving = $state(false);
-	let selectedIndex = $state(0); // 0 = file path row, 1 = minify switch, 2 = gzip switch, 3 = buttons row
-	let selectedColumn = $state(0); // row 0: 0=input,1=browse; row 3: 0=save,1=back
-	let filePathInput: Input | undefined = $state();
 	let browsingFolder = $state(false);
 	let browseFolder = $state('');
 	let minifyJSONState = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
 	let errorMessage = $state('');
-	defaultMinifyJSON;
 	let showOverwriteConfirm = $state(false);
 
 	function generateFileName(): string {
@@ -58,14 +53,13 @@
 		updateFileExtension();
 	}
 
+	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+
 	function openFolderBrowse(): void {
 		const { folder } = splitPath(filePath.trim(), $storageLISHnetPath);
 		browseFolder = folder;
 		browsingFolder = true;
-		if (unregisterArea) {
-			unregisterArea();
-			unregisterArea = null;
-		}
+		navHandle.pause();
 		pushBreadcrumb($t('common.openFolder'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
@@ -84,9 +78,7 @@
 		popBreadcrumb();
 		browsingFolder = false;
 		await tick();
-		unregisterArea = registerAreaHandler();
-		selectedIndex = 0;
-		selectedColumn = 1;
+		navHandle.resume();
 		activateArea(areaID);
 	}
 
@@ -132,75 +124,6 @@
 		await tick();
 		activateArea(areaID);
 	}
-
-	function registerAreaHandler(): () => void {
-		return useArea(
-			areaID,
-			{
-				up() {
-					if (selectedIndex > 0) {
-						selectedIndex--;
-						selectedColumn = 0;
-						return true;
-					}
-					return false;
-				},
-				down() {
-					if (selectedIndex < 3) {
-						selectedIndex++;
-						selectedColumn = 0;
-						return true;
-					}
-					return false;
-				},
-				left() {
-					if (selectedIndex === 0 && selectedColumn > 0) {
-						selectedColumn--;
-						return true;
-					}
-					if (selectedIndex === 3 && selectedColumn > 0) {
-						selectedColumn--;
-						return true;
-					}
-					return false;
-				},
-				right() {
-					if (selectedIndex === 0 && selectedColumn < 1) {
-						selectedColumn++;
-						return true;
-					}
-					if (selectedIndex === 3 && selectedColumn < 1) {
-						selectedColumn++;
-						return true;
-					}
-					return false;
-				},
-				confirmDown() {
-					if (selectedIndex === 0 && selectedColumn === 0) filePathInput?.focus();
-				},
-				confirmUp() {
-					if (selectedIndex === 0 && selectedColumn === 1) openFolderBrowse();
-					else if (selectedIndex === 1) minifyJSONState = !minifyJSONState;
-					else if (selectedIndex === 2) handleCompressToggle();
-					else if (selectedIndex === 3 && selectedColumn === 0) handleSave();
-					else if (selectedIndex === 3 && selectedColumn === 1) onBack?.();
-				},
-				confirmCancel() {},
-				back() {
-					onBack?.();
-				},
-			},
-			position
-		);
-	}
-
-	onMount(() => {
-		unregisterArea = registerAreaHandler();
-		activateArea(areaID);
-		return () => {
-			if (unregisterArea) unregisterArea();
-		};
-	});
 </script>
 
 <style>
@@ -234,18 +157,18 @@
 	<div class="export-all">
 		<div class="container">
 			<div class="row">
-				<Input bind:this={filePathInput} bind:value={filePath} label={$t('common.file')} selected={active && selectedIndex === 0 && selectedColumn === 0} flex />
-				<Button icon="/img/folder.svg" selected={active && selectedIndex === 0 && selectedColumn === 1} onConfirm={openFolderBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Input bind:value={filePath} label={$t('common.file')} position={[0, 0]} flex />
+				<Button icon="/img/folder.svg" position={[1, 0]} onConfirm={openFolderBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('settings.lishNetwork.minifyJSON')} checked={minifyJSONState} selected={active && selectedIndex === 1} onToggle={() => (minifyJSONState = !minifyJSONState)} />
-			<SwitchRow label={$t('settings.lishNetwork.compress')} checked={compress} selected={active && selectedIndex === 2} onToggle={handleCompressToggle} />
+			<SwitchRow label={$t('settings.lishNetwork.minifyJSON')} checked={minifyJSONState} position={[0, 1]} onToggle={() => (minifyJSONState = !minifyJSONState)} />
+			<SwitchRow label={$t('settings.lishNetwork.compress')} checked={compress} position={[0, 2]} onToggle={handleCompressToggle} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
 		<ButtonBar justify="center">
-			<Button icon="/img/save.svg" label={$t('common.save')} disabled={saving} selected={active && selectedIndex === 3 && selectedColumn === 0} onConfirm={handleSave} />
-			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 3 && selectedColumn === 1} onConfirm={onBack} />
+			<Button icon="/img/save.svg" label={$t('common.save')} disabled={saving} position={[0, 3]} onConfirm={handleSave} />
+			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 3]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

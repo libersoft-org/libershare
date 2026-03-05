@@ -1,12 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { type LISHNetworkConfig, type PeerConnectionInfo } from '@shared';
 	import { api } from '../../scripts/api.ts';
-	import { scrollToElement } from '../../scripts/utils.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -22,16 +21,9 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, network, onBack }: Props = $props();
-	let active = $derived($activeArea === areaID);
-	let selectedIndex = $state(0);
-	let buttonIndex = $state(0);
 	let peers = $state<PeerConnectionInfo[]>([]);
 	let loading = $state(true);
 	let error = $state('');
-	let rowElements: HTMLElement[] = $state([]);
-
-	// Items: Back button (0), peer rows (1 to peers.length)
-	let totalItems = $derived(peers.length + 1);
 
 	async function loadPeers(): Promise<void> {
 		loading = true;
@@ -45,71 +37,10 @@
 		loading = false;
 	}
 
-	function scrollToSelected(): void {
-		scrollToElement(rowElements, selectedIndex);
-	}
+	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 
 	onMount(() => {
-		let unregister: (() => void) | undefined;
-		loadPeers().then(() => {
-			unregister = useArea(
-				areaID,
-				{
-					up() {
-						if (selectedIndex > 0) {
-							selectedIndex--;
-							buttonIndex = 0;
-							scrollToSelected();
-							return true;
-						}
-						return false;
-					},
-					down() {
-						if (selectedIndex < totalItems - 1) {
-							selectedIndex++;
-							buttonIndex = 0;
-							scrollToSelected();
-							return true;
-						}
-						return false;
-					},
-					left() {
-						if (selectedIndex === 0 && buttonIndex > 0) {
-							buttonIndex--;
-							return true;
-						}
-						return false;
-					},
-					right() {
-						if (selectedIndex === 0 && buttonIndex < 1) {
-							buttonIndex++;
-							return true;
-						}
-						return false;
-					},
-					confirmDown() {},
-					confirmUp() {
-						if (selectedIndex === 0) {
-							if (buttonIndex === 0) onBack?.();
-							else if (buttonIndex === 1) loadPeers();
-							return;
-						} else {
-							const peer = peers[selectedIndex - 1]!;
-							console.log('Peer selected:', peer.peerID);
-						}
-					},
-					confirmCancel() {},
-					back() {
-						onBack?.();
-					},
-				},
-				position
-			);
-			activateArea(areaID);
-		});
-		return () => {
-			if (unregister) unregister();
-		};
+		loadPeers();
 	});
 </script>
 
@@ -151,8 +82,8 @@
 <div class="peer-list">
 	<div class="container">
 		<ButtonBar>
-			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 0 && buttonIndex === 0} onConfirm={onBack} width="auto" />
-			<Button icon="/img/restart.svg" label={$t('common.refresh')} selected={active && selectedIndex === 0 && buttonIndex === 1} onConfirm={loadPeers} width="auto" />
+			<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} width="auto" />
+			<Button icon="/img/restart.svg" label={$t('common.refresh')} position={[1, 0]} onConfirm={loadPeers} width="auto" />
 		</ButtonBar>
 		{#if loading}
 			<Spinner size="8vh" />
@@ -168,7 +99,7 @@
 					<TableCell>{$t('settings.lishNetwork.connections')}</TableCell>
 				</TableHeader>
 				{#each peers as peer, i}
-					<TableRow bind:el={rowElements[i + 1]} selected={active && selectedIndex === i + 1} odd={i % 2 !== 0}>
+					<TableRow position={[0, i + 1]} odd={i % 2 !== 0} onConfirm={() => console.log('Peer selected:', peer.peerID)}>
 						<TableCell desktopOnly>{i + 1}</TableCell>
 						<TableCell wrap><span class="peer-id">{peer.peerID}</span></TableCell>
 						<TableCell>

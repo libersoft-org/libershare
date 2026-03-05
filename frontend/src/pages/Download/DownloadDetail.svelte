@@ -305,7 +305,6 @@
 			<Spinner size="8vh" />
 		{:else if download}
 			<div class="content">
-				<!-- Info with LISH details -->
 				<div class="info" class:selected={infoActive} bind:this={infoElement}>
 					<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
 						<TableRow odd>

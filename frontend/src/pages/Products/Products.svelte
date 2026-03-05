@@ -3,6 +3,7 @@
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
+	import { createNavArea, navItem, type NavPos } from '../../scripts/navArea.svelte.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import { getGridColumnsCount } from '../../scripts/products.ts';
@@ -22,7 +23,6 @@
 	// Calculate sub-area positions based on base position
 	let searchPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
 	let listPosition = $derived({ x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y });
-	let searchSelected = $derived($activeArea === searchAreaID);
 	let active = $derived($activeArea === listAreaID);
 	// Some test data
 	const items = Array.from({ length: 200 }, (_, i) => ({
@@ -35,6 +35,13 @@
 	let selectedItem = $state<{ id: number; title: string } | null>(null);
 	let unregisterList: (() => void) | null = null;
 	let searchBar: SearchBar | undefined = $state();
+
+	// Search area - createNavArea with manual NavItem for toggleFocus
+	const searchNavHandle = createNavArea(() => ({
+		areaID: searchAreaID,
+		position: searchPosition,
+		onBack,
+	}));
 
 	// Use extracted grid columns function
 	function getColumnsCount(): number {
@@ -83,6 +90,8 @@
 		activateArea(listAreaID);
 	}
 
+	// List area uses useArea directly — dynamic grid navigation with responsive columns
+	// doesn't fit the position-based NavArea system
 	const areaHandlers = {
 		up() {
 			const cols = getColumnsCount();
@@ -132,30 +141,19 @@
 	};
 
 	onMount(() => {
-		const unregisterSearch = useArea(
-			searchAreaID,
-			{
-				up() {
-					return false;
-				},
-				down() {
-					return false;
-				},
-				confirmUp() {
-					searchBar?.toggleFocus();
-				},
-				back() {
-					onBack?.();
-				},
-			},
-			searchPosition
+		const searchCleanup = searchNavHandle.controller.register(
+			navItem(
+				() => [0, 0] as NavPos,
+				() => undefined,
+				() => searchBar?.toggleFocus()
+			)
 		);
 
 		unregisterList = useArea(listAreaID, areaHandlers, listPosition);
 		activateArea(listAreaID);
 		return () => {
 			if (unregisterList) unregisterList();
-			unregisterSearch();
+			searchCleanup();
 		};
 	});
 </script>
@@ -198,7 +196,7 @@
 {#if selectedItem}
 	<Product areaID={listAreaID} category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onBack={closeDetail} />
 {:else}
-	<SearchBar bind:this={searchBar} selected={searchSelected} />
+	<SearchBar bind:this={searchBar} selected={searchNavHandle.controller.isSelected([0, 0])} />
 	<div class="items">
 		{#each items as item, index (item.id)}
 			<ProductsItem bind:el={itemElements[index]} title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={active && index === selectedIndex} isAPressed={active && isAPressed && index === selectedIndex} />
