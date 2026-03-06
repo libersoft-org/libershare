@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { t } from '../../scripts/language.ts';
 	import ProductFile from './ProductFile.svelte';
@@ -29,17 +28,12 @@
 	let imageSelected = $derived(navHandle.controller.isSelected([0, 0]));
 
 	onMount(() => {
-		const unregImage = navHandle.controller.register({
+		return navHandle.controller.register({
 			pos: [0, 0],
 			get el() {
 				return imageElement;
 			},
 		});
-		const unregisterBack = pushBackHandler(() => onBack?.());
-		return () => {
-			unregImage();
-			unregisterBack();
-		};
 	});
 </script>
 

@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { createNavArea, type NavPos, type NavItem } from '../../scripts/navArea.svelte.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { getGridColumnsCount } from '../../scripts/products.ts';
 	import ProductsItem from './ProductsItem.svelte';
 	import Product from '../Product/Product.svelte';
@@ -18,6 +19,7 @@
 
 	let selectedItem = $state<{ id: number; title: string } | null>(null);
 	let itemElements: HTMLElement[] = $state([]);
+	let removeBackHandler: (() => void) | null = null;
 
 	function getItemPos(index: number): NavPos {
 		const cols = getGridColumnsCount(itemElements);
@@ -28,11 +30,17 @@
 		selectedItem = items[index]!;
 		pushBreadcrumb(items[index]!.title);
 		navHandle.pause();
+		removeBackHandler = pushBackHandler(closeDetail);
 	}
 
-	function closeDetail(): void {
+	async function closeDetail(): Promise<void> {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
 		selectedItem = null;
 		popBreadcrumb();
+		await tick();
 		navHandle.resume();
 		activateArea(areaID);
 	}
