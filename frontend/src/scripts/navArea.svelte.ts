@@ -107,6 +107,8 @@ export interface NavAreaOptions {
 	/** Initial selected position (defaults to top-left item) */
 	initialPosition?: NavPos | undefined;
 	onBack?: (() => void) | undefined;
+	/** Called when pressing down and no item below. Return area ID to navigate to, or false */
+	onDown?: (() => string | false) | undefined;
 	/** Called when the area is activated */
 	onActivate?: (() => void) | undefined;
 	/** Called when selected item changes */
@@ -131,7 +133,7 @@ export interface NavAreaHandle {
  * @returns Handle with pause/resume for dynamic area management
  */
 export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
-	const { areaID, position, activate = false, trap = false, initialPosition, onBack, onActivate: onAreaActivate, onSelect } = getConfig();
+	const { areaID, position, activate = false, trap = false, initialPosition, onBack, onDown, onActivate: onAreaActivate, onSelect } = getConfig();
 
 	// Reactive state (runes work in .svelte.ts)
 	let items: NavItem[] = [];
@@ -175,7 +177,17 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 	// Area handlers for useArea
 	const areaHandlers = {
 		up: () => navigate('up'),
-		down: () => navigate('down'),
+		down() {
+			if (navigate('down')) return true;
+			if (onDown) {
+				const target = onDown();
+				if (target) {
+					activateArea(target);
+					return true;
+				}
+			}
+			return trap;
+		},
 		left: () => navigate('left'),
 		right: () => navigate('right'),
 		confirmDown() {
