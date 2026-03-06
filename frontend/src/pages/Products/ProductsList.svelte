@@ -16,7 +16,6 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position, title, items, onBack }: Props = $props();
-
 	let selectedItem = $state<{ id: number; title: string } | null>(null);
 	let itemElements: HTMLElement[] = $state([]);
 	let removeBackHandler: (() => void) | null = null;
