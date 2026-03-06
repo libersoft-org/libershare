@@ -24,7 +24,7 @@
 	]);
 	let imageElement: HTMLElement;
 
-	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
+	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack, initialPosition: [0, 0] }));
 	let imageSelected = $derived(navHandle.controller.isSelected([0, 0]));
 
 	onMount(() => {
