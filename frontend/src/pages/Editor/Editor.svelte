@@ -100,7 +100,9 @@
 			const action = toolbarActions[selectedToolbarIndex]!;
 			if (!action.disabled) handleToolbarAction(action.id);
 		},
-		back() { onBack(); },
+		back() {
+			onBack();
+		},
 	};
 
 	const editorAreaHandlers = {
@@ -109,9 +111,15 @@
 			activateArea(toolbarAreaID);
 			return true;
 		},
-		down() { return true; },
-		left() { return false; },
-		right() { return false; },
+		down() {
+			return true;
+		},
+		left() {
+			return false;
+		},
+		right() {
+			return false;
+		},
 		confirmUp() {
 			inputRef?.focus();
 		},

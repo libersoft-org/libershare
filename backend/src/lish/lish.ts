@@ -1,9 +1,10 @@
 import * as fsPromises from 'node:fs/promises';
 import { type Stats } from 'node:fs';
-import { type HashAlgorithm, type ILISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry } from '@shared';
+import { dirname } from 'node:path';
+import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS } from '@shared';
+import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
-export const LISH_VERSION = 1;
-export const DEFAULT_CHUNK_SIZE: number = 1024 * 1024;
+import { Utils } from '../utils.ts';
 
 // Helper to normalize paths to forward slashes
 function normalizePath(p: string): string {
@@ -230,11 +231,16 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				const totalChunks = Math.ceil(stat.size / chunkSize);
 				// Progress feedback - file start
 				if (onProgress) onProgress({ type: 'file-start', path: relativePath, size: stat.size, chunks: totalChunks });
-				// Calculate checksums (sequential for 1 thread, parallel for multiple)
-				const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
-				const checksums = await calcFn(fullPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
-					if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: completed, total });
-				});
+				// Calculate checksums (skip for empty files)
+				let checksums: string[];
+				if (stat.size === 0) {
+					checksums = [];
+				} else {
+					const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
+					checksums = await calcFn(fullPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
+						if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: completed, total });
+					});
+				}
 				files.push({
 					path: relativePath,
 					size: stat.size,
@@ -252,10 +258,9 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 
 export async function createLISH(inputPath: string, name: string | undefined, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: ProgressInfo) => void, id?: string): Promise<ILISH> {
 	const created = new Date().toISOString();
-	const lishId = id || globalThis.crypto.randomUUID();
+	const lishID = id || globalThis.crypto.randomUUID();
 	const lish: ILISH = {
-		version: LISH_VERSION,
-		id: lishId,
+		id: lishID,
 		name,
 		description,
 		created,
@@ -275,11 +280,16 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		if (onProgress) onProgress({ type: 'file-list', files: [{ path: filename, size: stat.size, chunks: totalChunks }] });
 		// Progress feedback - file start
 		if (onProgress) onProgress({ type: 'file-start', path: filename, size: stat.size, chunks: totalChunks });
-		// Calculate checksums (sequential for 1 thread, parallel for multiple)
-		const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
-		const checksums = await calcFn(inputPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
-			if (onProgress) onProgress({ type: 'chunk', path: filename, current: completed, total });
-		});
+		// Calculate checksums (skip for empty files)
+		let checksums: string[];
+		if (stat.size === 0) {
+			checksums = [];
+		} else {
+			const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
+			checksums = await calcFn(inputPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
+				if (onProgress) onProgress({ type: 'chunk', path: filename, current: completed, total });
+			});
+		}
 		lish.files = [
 			{
 				path: filename,
@@ -313,4 +323,49 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		if (links.length > 0) lish.links = links;
 	} else throw new Error('Input must be a file or directory');
 	return lish;
+}
+// ============================================================================
+// LISH Export / Import / Validation
+// ============================================================================
+
+export async function exportLISHToFile(lish: IStoredLISH, outputFilePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<void> {
+	await fsPromises.mkdir(dirname(outputFilePath), { recursive: true });
+	const { directory, chunks, ...exportData } = lish;
+	await Utils.writeJSONToFile(exportData, outputFilePath, minifyJSON, compress, compressionAlgorithm);
+	console.log(`✓ LISH exported to: ${outputFilePath}`);
+}
+
+/**
+ * Validate that the given data is a valid ILISH object.
+ * Throws a descriptive error if any required field is missing or invalid.
+ */
+export function validateImportedLISH(data: unknown): ILISH {
+	if (!data || typeof data !== 'object') throw new Error('Invalid LISH: not an object');
+	const obj = data as Record<string, unknown>;
+	if (typeof obj['id'] !== 'string' || !obj['id']) throw new Error('Invalid LISH: missing or empty id');
+	if (typeof obj['created'] !== 'string' || !obj['created']) throw new Error('Invalid LISH: missing or empty created');
+	if (typeof obj['chunkSize'] !== 'number' || obj['chunkSize'] <= 0) throw new Error('Invalid LISH: missing or invalid chunkSize');
+	if (typeof obj['checksumAlgo'] !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(obj['checksumAlgo'])) {
+		throw new Error(`Invalid LISH: unsupported checksumAlgo: ${obj['checksumAlgo']}`);
+	}
+	return data as ILISH;
+}
+
+/**
+ * Read a .lish or .lish.gz file and return the parsed ILISH.
+ */
+export async function importLISHFromFile(filePath: string): Promise<ILISH> {
+	const content = await Utils.readFileCompressed(filePath);
+	const data = Utils.safeJSONParse(content, filePath);
+	return validateImportedLISH(data);
+}
+
+/**
+ * Parse a JSON string into a validated ILISH object.
+ * Throws if the string is not valid JSON, is an array, or fails validation.
+ */
+export function parseLISHFromJSON(json: string): ILISH {
+	const data = Utils.safeJSONParse(json, 'JSON input');
+	if (Array.isArray(data)) throw new Error('Expected a single LISH object, got an array');
+	return validateImportedLISH(data);
 }

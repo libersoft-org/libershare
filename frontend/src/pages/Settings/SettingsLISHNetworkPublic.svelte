@@ -1,12 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
+	import { createNavArea, type NavPos } from '../../scripts/navArea.svelte.ts';
 	import { type LISHNetworkDefinition } from '@shared';
 	import { productNetworkList } from '@shared';
-	import { fetchPublicNetworks, getExistingNetworkIDs, addNetworkIfNotExists, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
+	import { fetchPublicNetworks, getExistingNetworkIDs, addNetworkIfNotExists } from '../../scripts/lishNetwork.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Row from '../../components/Row/Row.svelte';
@@ -18,17 +17,12 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-	let active = $derived($activeArea === areaID);
-	let selectedIndex = $state(0); // 0 = URL row (input + Load), 1+ = network rows, last = Back
-	let selectedColumn = $state(0); // 0 = URL input, 1 = Load button
-	let urlInput: Input;
 	let url = $state(productNetworkList);
 	let publicNetworks = $state<LISHNetworkDefinition[]>([]);
 	let loading = $state(false);
 	let error = $state('');
 	let addedNetworkIDs = $state<Set<string>>(new Set());
-	// Items: URL row (0), network rows (1 to publicNetworks.length), Back button (last)
-	let totalItems = $derived(1 + publicNetworks.length + 1);
+	let backPos = $derived<NavPos>([0, publicNetworks.length + 1]);
 
 	async function loadPublicList(): Promise<void> {
 		if (!url.trim()) {
@@ -36,12 +30,11 @@
 			return;
 		}
 		loading = true;
-		selectedColumn = 0; // Move selection to URL input while loading
 		error = '';
 		publicNetworks = [];
 
 		const result = await fetchPublicNetworks(url);
-		if (result.error) error = getNetworkErrorMessage(result.error, $t);
+		if (result.error) error = result.error;
 		else {
 			publicNetworks = result.networks;
 			addedNetworkIDs = await getExistingNetworkIDs();
@@ -57,57 +50,7 @@
 		return addedNetworkIDs.has(networkID);
 	}
 
-	onMount(() => {
-		const unregister = useArea(
-			areaID,
-			{
-				up() {
-					if (selectedIndex > 0) {
-						selectedIndex--;
-						return true;
-					}
-					return false;
-				},
-				down() {
-					if (selectedIndex < totalItems - 1) {
-						selectedIndex++;
-						return true;
-					}
-					return false;
-				},
-				left() {
-					if (selectedIndex === 0 && selectedColumn > 0) {
-						selectedColumn--;
-						return true;
-					}
-					return false;
-				},
-				right() {
-					if (selectedIndex === 0 && selectedColumn < 1 && !loading) {
-						selectedColumn++;
-						return true;
-					}
-					return false;
-				},
-				confirmDown() {
-					if (selectedIndex === 0 && selectedColumn === 0) urlInput?.focus();
-				},
-				confirmUp() {
-					if (selectedIndex === 0 && selectedColumn === 1) loadPublicList();
-					else if (selectedIndex >= 1 && selectedIndex < totalItems - 1) {
-						const networkIndex = selectedIndex - 1;
-						const network = publicNetworks[networkIndex];
-						if (network && !isNetworkAdded(network.networkID)) handleAddNetwork(network);
-					} else if (selectedIndex === totalItems - 1) onBack?.();
-				},
-				confirmCancel() {},
-				back() { onBack?.(); },
-			},
-			position
-		);
-		activateArea(areaID);
-		return unregister;
-	});
+	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
 
 <style>
@@ -182,10 +125,10 @@
 	<div class="container">
 		<div class="url-row">
 			<div class="url-input">
-				<Input bind:this={urlInput} bind:value={url} label="URL" selected={active && selectedIndex === 0 && selectedColumn === 0} />
+				<Input bind:value={url} label="URL" position={[0, 0]} />
 			</div>
 			{#if !loading}
-				<Button icon="/img/download.svg" label={$t('common.load')} selected={active && selectedIndex === 0 && selectedColumn === 1} onConfirm={loadPublicList} />
+				<Button icon="/img/download.svg" label={$t('common.load')} position={[1, 0]} onConfirm={loadPublicList} />
 			{/if}
 		</div>
 		{#if loading}
@@ -197,7 +140,7 @@
 		{#if publicNetworks.length > 0}
 			<div class="networks">
 				{#each publicNetworks as network, i}
-					<Row selected={active && selectedIndex === i + 1}>
+					<Row selected={navHandle.controller.isSelected([0, i + 1])}>
 						<div class="network">
 							<div class="network-info">
 								<div class="network-name">{network.name}</div>
@@ -206,9 +149,9 @@
 								{/if}
 							</div>
 							{#if isNetworkAdded(network.networkID)}
-								<Button icon="/img/check.svg" label={$t('common.added')} selected={false} />
+								<Button icon="/img/check.svg" label={$t('common.added')} position={[0, i + 1]} />
 							{:else}
-								<Button icon="/img/plus.svg" label={$t('common.add')} selected={active && selectedIndex === i + 1} onConfirm={() => handleAddNetwork(network)} />
+								<Button icon="/img/plus.svg" label={$t('common.add')} position={[0, i + 1]} onConfirm={() => handleAddNetwork(network)} />
 							{/if}
 						</div>
 					</Row>
@@ -217,6 +160,6 @@
 		{/if}
 	</div>
 	<div class="back">
-		<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === totalItems - 1} onConfirm={onBack} />
+		<Button icon="/img/back.svg" label={$t('common.back')} position={backPos} onConfirm={onBack} />
 	</div>
 </div>

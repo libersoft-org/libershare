@@ -1,6 +1,5 @@
 # LISH data structure format specification
 
-**Version**: 1
 **Created**: 24 October 2025
 **Last update**: 29 October 2025
 
@@ -25,7 +24,6 @@ This specification describes the logical structure, with JSON examples for clari
 
 ```typescript
 interface ILISH {
-	version: number; // Format version (required)
 	id: string; // Unique UUID for this LISH (required)
 	name?: string; // LISH name (optional)
 	description?: string; // Free-form text description such as author, notes, etc. (optional)
@@ -108,7 +106,6 @@ Files are divided into fixed-size chunks specified by `chunkSize` in LISH. Each 
 
 ```json
 {
-	"version": 1,
 	"id": "34aacabb-9c6f-42a2-aaf4-61fc89c45056",
 	"name": "Project Documentation",
 	"description": "User manual and guides - created by John Doe",
@@ -187,6 +184,4 @@ Files are divided into fixed-size chunks specified by `chunkSize` in LISH. Each 
 - The `created`, `modified`, and `permissions` fields are optional - if `permissions` is not provided, file permissions will not be modified during extraction
 - If `permissions` is omitted, implementations should use default permissions for the target platform
 
-## Version history
 
-- **Version 1**: First version - supports files, directories, links, permissions, and timestamps

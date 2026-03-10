@@ -1,11 +1,32 @@
 <script lang="ts">
-	import { type Snippet } from 'svelte';
+	import { type Snippet, getContext, onMount } from 'svelte';
+	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
 	interface Props {
 		children: Snippet;
 		selected?: boolean;
 		odd?: boolean;
+		el?: HTMLElement | undefined;
+		position?: NavPos | undefined;
+		onConfirm?: (() => void) | undefined;
 	}
-	let { children, selected = false, odd = false }: Props = $props();
+	let { children, selected = false, odd = false, el = $bindable(), position, onConfirm }: Props = $props();
+
+	const navArea = getContext<NavAreaController | undefined>('navArea');
+
+	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : selected);
+
+	onMount(() => {
+		if (navArea && position) {
+			return navArea.register(
+				navItem(
+					() => position!,
+					() => el,
+					onConfirm
+				)
+			);
+		}
+		return undefined;
+	});
 </script>
 
 <style>
@@ -42,6 +63,6 @@
 	}
 </style>
 
-<div class="row" class:odd class:even={!odd} class:selected>
+<div bind:this={el} class="row" class:odd class:even={!odd} class:selected={isSelected}>
 	{@render children()}
 </div>

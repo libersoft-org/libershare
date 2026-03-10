@@ -825,15 +825,19 @@
 		saveErrorMessage = '';
 		const fullPath = joinPathWithSeparator(currentPath, internalSaveFileName, separator);
 		try {
-			const { exists } = await api.fs.exists(fullPath);
-			if (exists) {
+			const result = await api.fs.exists(fullPath);
+			if (result.exists && result.type === 'directory') {
+				saveErrorMessage = $t('common.fileNameIsDirectory', { name: internalSaveFileName });
+				return;
+			}
+			if (result.exists) {
 				// File exists, show confirmation dialog
 				pendingSavePath = fullPath;
 				showOverwriteConfirmState = true;
 				return;
 			}
 			// File doesn't exist, write directly
-			if (useGzip) await api.fs.writeGzip(fullPath, saveContent);
+			if (useGzip) await api.fs.writeCompressed(fullPath, saveContent, 'gzip');
 			else await api.fs.writeText(fullPath, saveContent);
 			onSaveComplete?.(fullPath);
 		} catch (e) {
@@ -848,7 +852,7 @@
 		saveErrorMessage = '';
 		if (saveContent === undefined) return;
 		try {
-			if (useGzip) await api.fs.writeGzip(pendingSavePath, saveContent);
+			if (useGzip) await api.fs.writeCompressed(pendingSavePath, saveContent, 'gzip');
 			else await api.fs.writeText(pendingSavePath, saveContent);
 			onSaveComplete?.(pendingSavePath);
 		} catch (e) {
@@ -1031,15 +1035,11 @@
 								</div>
 							{:else if error}
 								{#each items as item, index (item.id)}
-									<div bind:this={itemElements[index]}>
-										<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
-									</div>
+									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
 								{/each}
 							{:else}
 								{#each items as item, index (item.id)}
-									<div bind:this={itemElements[index]}>
-										<StorageItem name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
-									</div>
+									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === items.length - 1} odd={index % 2 === 0} />
 								{/each}
 							{/if}
 						</div>

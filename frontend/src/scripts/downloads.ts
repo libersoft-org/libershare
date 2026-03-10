@@ -1,5 +1,13 @@
 import { writable } from 'svelte/store';
+import { type ILISHSummary, type ILISHDetail } from '@shared';
+import { api } from './api.ts';
+import { formatSize } from './utils.ts';
+
 export type DownloadStatus = 'completed' | 'downloading' | 'waiting' | 'paused' | 'error';
+
+// ============================================================================
+// Download Data Types
+// ============================================================================
 
 export interface DownloadFileData {
 	id: number;
@@ -12,6 +20,7 @@ export interface DownloadFileData {
 export interface DownloadData {
 	id: string;
 	name: string;
+	directory?: string | undefined;
 	progress: number;
 	size: string;
 	downloadedSize?: string;
@@ -22,8 +31,137 @@ export interface DownloadData {
 	uploadSpeed: string;
 	files: DownloadFileData[];
 }
-// Store for currently selected download (for detail view)
+
+/**
+ * Convert a backend ILISHSummary to frontend DownloadData (for list table).
+ * Status, progress, peers, and speeds are mocked for now.
+ */
+function summaryToDownload(summary: ILISHSummary): DownloadData {
+	return {
+		id: summary.id,
+		name: summary.name ?? '-',
+		progress: 0,
+		size: formatSize(summary.totalSize),
+		downloadedSize: '0 B',
+		status: 'waiting',
+		downloadPeers: 0,
+		uploadPeers: 0,
+		downloadSpeed: '0 B/s',
+		uploadSpeed: '0 B/s',
+		files: [],
+	};
+}
+
+/**
+ * Convert a backend ILISHDetail to frontend DownloadData (for detail view).
+ */
+function detailToDownload(detail: ILISHDetail): DownloadData {
+	return {
+		id: detail.id,
+		name: detail.name ?? '-',
+		directory: detail.directory,
+		progress: 0,
+		size: formatSize(detail.totalSize),
+		downloadedSize: '0 B',
+		status: 'waiting',
+		downloadPeers: 0,
+		uploadPeers: 0,
+		downloadSpeed: '0 B/s',
+		uploadSpeed: '0 B/s',
+		files: detail.files.map((f, i) => ({
+			id: i,
+			name: f.path,
+			progress: 0,
+			size: formatSize(f.size),
+			downloadedSize: '0 B',
+		})),
+	};
+}
+
+// --- List page stores ---
+
+export const downloads = writable<DownloadData[]>([]);
+export const downloadsLoading = writable<boolean>(true);
+
+let listUnsub: (() => void) | null = null;
+
+/**
+ * Load download list from backend and subscribe to list changes.
+ * Call when entering the Downloads page.
+ */
+export async function subscribeDownloadList(): Promise<void> {
+	if (listUnsub) return;
+	downloadsLoading.set(true);
+	try {
+		const summaries = await api.lishs.list(undefined, 'desc');
+		downloads.set(summaries.map(summaryToDownload));
+	} catch (err) {
+		console.error('Failed to load LISH list:', err);
+		downloads.set([]);
+	} finally {
+		downloadsLoading.set(false);
+	}
+
+	listUnsub = api.on('lishs:list', (summaries: ILISHSummary[]) => {
+		downloads.set(summaries.map(summaryToDownload));
+	}) as () => void;
+	await api.subscribe('lishs:list');
+}
+
+/**
+ * Unsubscribe from download list changes.
+ * Call when leaving the Downloads page.
+ */
+export async function unsubscribeDownloadList(): Promise<void> {
+	if (!listUnsub) return;
+	await api.unsubscribe('lishs:list');
+	listUnsub();
+	listUnsub = null;
+}
+
+// --- Detail page stores ---
+
 export const selectedDownload = writable<DownloadData | null>(null);
+export const selectedDownloadLoading = writable<boolean>(false);
+
+let detailUnsub: (() => void) | null = null;
+
+/**
+ * Load download detail from backend and subscribe to detail changes.
+ * Call when entering the Download detail page.
+ */
+export async function subscribeDownloadDetail(lishID: string): Promise<void> {
+	if (detailUnsub) return;
+
+	selectedDownloadLoading.set(true);
+	try {
+		const detail = await api.lishs.get(lishID);
+		selectedDownload.set(detail ? detailToDownload(detail) : null);
+	} catch (err) {
+		console.error('Failed to load LISH detail:', err);
+		selectedDownload.set(null);
+	} finally {
+		selectedDownloadLoading.set(false);
+	}
+
+	const eventName = `lishs:detail:${lishID}`;
+	detailUnsub = api.on(eventName, (detail: ILISHDetail) => {
+		selectedDownload.set(detailToDownload(detail));
+	}) as () => void;
+	await api.subscribe(eventName);
+}
+
+/**
+ * Unsubscribe from download detail changes.
+ * Call when leaving the Download detail page.
+ */
+export async function unsubscribeDownloadDetail(lishID: string): Promise<void> {
+	if (!detailUnsub) return;
+	await api.unsubscribe(`lishs:detail:${lishID}`);
+	detailUnsub();
+	detailUnsub = null;
+	selectedDownload.set(null);
+}
 // Table columns definition
 export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 10vw 10vw 8vw 8vw 8vw 8vw 8vw';
 // Toolbar action IDs for download detail view
@@ -47,7 +185,7 @@ export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
  * Handle toolbar action for download detail
  * @returns true if action was handled internally, false if needs UI handling (e.g., onBack)
  */
-export function handleDownloadToolbarAction(actionId: DownloadToolbarActionId, download: DownloadData | null): { handled: boolean; needsBack?: boolean } {
+export function handleDownloadToolbarAction(actionId: DownloadToolbarActionId, download: DownloadData | null): { handled: boolean; needsBack?: boolean; needsDelete?: boolean; needsExport?: boolean } {
 	switch (actionId) {
 		case 'back':
 			return { handled: false, needsBack: true };
@@ -60,80 +198,31 @@ export function handleDownloadToolbarAction(actionId: DownloadToolbarActionId, d
 			console.log('Toggle pause/resume for download:', download?.id);
 			return { handled: true };
 		case 'export':
-			// TODO: Implement export LISH
-			console.log('Export LISH for download:', download?.id);
-			return { handled: true };
+			return { handled: false, needsExport: true };
 		case 'move':
 			// TODO: Implement move data
 			console.log('Move data for download:', download?.id);
 			return { handled: true };
 		case 'delete':
-			// TODO: Implement delete download
-			console.log('Delete download:', download?.id);
-			return { handled: true };
+			return { handled: false, needsDelete: true };
 		default:
 			return { handled: false };
 	}
 }
 
-// Test data for development
-export const TEST_DOWNLOADS: DownloadData[] = [
-	{
-		id: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0',
-		name: 'Ubuntu 24.04 LTS',
-		progress: 50,
-		size: '4.2 GB',
-		downloadedSize: '2.1 GB',
-		status: 'downloading',
-		downloadPeers: 12,
-		uploadPeers: 5,
-		downloadSpeed: '15.3 MB/s',
-		uploadSpeed: '2.1 MB/s',
-		files: [
-			{ id: 1, name: 'ubuntu-24.04-desktop-amd64.iso', progress: 100, size: '4.1 GB', downloadedSize: '4.1 GB' },
-			{ id: 2, name: 'SHA256SUMS', progress: 45, size: '1.2 KB', downloadedSize: '540 B' },
-			{ id: 3, name: 'SHA256SUMS.gpg', progress: 0, size: '833 B', downloadedSize: '0 B' },
-		],
-	},
-	{
-		id: 'b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1',
-		name: 'Fedora Workstation 40',
-		progress: 100,
-		size: '2.1 GB',
-		status: 'completed',
-		downloadPeers: 0,
-		uploadPeers: 8,
-		downloadSpeed: '0 B/s',
-		uploadSpeed: '8.7 MB/s',
-		files: [{ id: 1, name: 'Fedora-Workstation-Live-x86_64-40.iso', progress: 100, size: '2.1 GB' }],
-	},
-	{
-		id: 'c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2',
-		name: 'Arch Linux 2024.01',
-		progress: 45.7,
-		size: '850 MB',
-		downloadedSize: '388 MB',
-		status: 'downloading',
-		downloadPeers: 3,
-		uploadPeers: 1,
-		downloadSpeed: '1.2 MB/s',
-		uploadSpeed: '256 KB/s',
-		files: [{ id: 1, name: 'archlinux-2024.01.01-x86_64.iso', progress: 23.8, size: '850 MB', downloadedSize: '202 MB' }],
-	},
-	{
-		id: 'd4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3',
-		name: 'Linux Mint 21.3',
-		progress: 0,
-		size: '2.8 GB',
-		downloadedSize: '0 B',
-		status: 'waiting',
-		downloadPeers: 0,
-		uploadPeers: 0,
-		downloadSpeed: '0 B/s',
-		uploadSpeed: '0 B/s',
-		files: [
-			{ id: 1, name: 'linuxmint-21.3-cinnamon-64bit.iso', progress: 0, size: '2.7 GB', downloadedSize: '0 B' },
-			{ id: 2, name: 'sha256sum.txt', progress: 0, size: '104 B', downloadedSize: '0 B' },
-		],
-	},
-];
+/**
+ * Delete a LISH and/or its data from the backend.
+ * @param lishID - The LISH ID to delete
+ * @param deleteLISH - Whether to delete the LISH entry from storage
+ * @param deleteData - Whether to also delete the associated data directory
+ * @returns true if deletion succeeded
+ */
+export async function deleteDownload(lishID: string, deleteLISH: boolean, deleteData: boolean): Promise<boolean> {
+	try {
+		const result = await api.lishs.delete(lishID, deleteLISH, deleteData);
+		return result;
+	} catch (err) {
+		console.error('Failed to delete LISH:', err);
+		return false;
+	}
+}

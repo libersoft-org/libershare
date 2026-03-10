@@ -4,9 +4,12 @@
 		justify?: string;
 		wrap?: boolean;
 		gap?: string;
+		direction?: 'row' | 'column';
 		children: Snippet;
+		el?: HTMLElement | undefined;
 	}
-	let { justify = 'flex-start', wrap = true, gap = '2vh', children }: Props = $props();
+	let { justify = 'flex-start', wrap = true, gap = '2vh', direction = 'row', children, el = $bindable() }: Props = $props();
+	void el;
 </script>
 
 <style>
@@ -15,6 +18,6 @@
 	}
 </style>
 
-<div class="button-bar" style="justify-content: {justify}; gap: {gap}; {wrap ? ' flex-wrap: wrap;' : ''}">
+<div bind:this={el} class="button-bar" style="flex-direction: {direction}; justify-content: {justify}; gap: {gap}; {wrap ? ' flex-wrap: wrap;' : ''}">
 	{@render children()}
 </div>

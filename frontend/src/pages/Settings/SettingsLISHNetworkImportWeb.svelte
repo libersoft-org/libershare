@@ -1,12 +1,10 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { parseNetworksFromJson, getNetworkErrorMessage } from '../../scripts/lishNetwork.ts';
-	import { type LISHNetworkDefinition } from '@shared';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
+	import { type LISHNetworkDefinition } from '@shared';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -19,21 +17,10 @@
 		onImport?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack, onImport }: Props = $props();
-	let unregisterArea: (() => void) | null = null;
-	let active = $derived($activeArea === areaID);
-	// 0 = url, 1 = buttons row
-	let selectedIndex = $state(0);
-	let selectedColumn = $state(0);
-	let urlRef: Input | undefined = $state();
 	let url = $state('');
 	let errorMessage = $state('');
 	let loading = $state(false);
 	let parsedNetworks = $state<LISHNetworkDefinition[] | null>(null);
-
-	function getMaxColumn(index: number): number {
-		if (index === 1) return 1; // import, back
-		return 0;
-	}
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
@@ -43,23 +30,7 @@
 		}
 		loading = true;
 		try {
-			// Use backend API to bypass CORS restrictions
-			const response = await api.fetchUrl(url);
-			if (response.status !== 200) {
-				errorMessage = `HTTP ${response.status}`;
-				return;
-			}
-			const result = parseNetworksFromJson(response.content);
-			if (result.error) {
-				errorMessage = getNetworkErrorMessage(result.error, $t);
-				return;
-			}
-			parsedNetworks = result.networks;
-			// Unregister our area - ImportOverwrite/ConfirmDialog will create its own
-			if (unregisterArea) {
-				unregisterArea();
-				unregisterArea = null;
-			}
+			parsedNetworks = await api.lishnets.parseFromURL(url);
 		} catch (e) {
 			errorMessage = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -67,64 +38,14 @@
 		}
 	}
 
-	function handleImportDone(): void {
+	function handleOverwriteDone(): void {
+		parsedNetworks = null;
 		onImport?.();
 		onBack?.();
 		onBack?.();
 	}
 
-	const areaHandlers = {
-		up() {
-			if (selectedIndex > 0) {
-				selectedIndex--;
-				selectedColumn = 0;
-				return true;
-			}
-			return false;
-		},
-		down() {
-			if (selectedIndex < 1) {
-				selectedIndex++;
-				selectedColumn = 0;
-				return true;
-			}
-			return false;
-		},
-		left() {
-			if (selectedColumn > 0) {
-				selectedColumn--;
-				return true;
-			}
-			return false;
-		},
-		right() {
-			const maxCol = getMaxColumn(selectedIndex);
-			if (selectedColumn < maxCol) {
-				selectedColumn++;
-				return true;
-			}
-			return false;
-		},
-		confirmDown() {
-			if (selectedIndex === 0) urlRef?.focus();
-		},
-		confirmUp() {
-			if (selectedIndex === 1) {
-				if (selectedColumn === 0) handleImport();
-				else if (selectedColumn === 1) onBack?.();
-			}
-		},
-		confirmCancel() {},
-		back() { onBack?.(); },
-	};
-
-	onMount(() => {
-		unregisterArea = useArea(areaID, areaHandlers, position);
-		activateArea(areaID);
-		return () => {
-			if (unregisterArea) unregisterArea();
-		};
-	});
+	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
 
 <style>
@@ -147,18 +68,18 @@
 </style>
 
 {#if parsedNetworks}
-	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleImportDone} />
+	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleOverwriteDone} />
 {:else}
 	<div class="import">
 		<div class="container">
-			<Input bind:this={urlRef} bind:value={url} label={$t('settings.lishNetworkImport.url')} placeholder="https://..." selected={active && selectedIndex === 0} flex />
+			<Input bind:value={url} label={$t('settings.lishNetworkImport.url')} placeholder="https://..." position={[0, 0]} flex />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
 		<ButtonBar justify="center">
-			<Button icon="/img/download.svg" label={$t('common.import')} selected={active && selectedIndex === 1 && selectedColumn === 0} onConfirm={handleImport} disabled={loading} />
-			<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === 1 && selectedColumn === 1} onConfirm={onBack} />
+			<Button icon="/img/download.svg" label={$t('common.import')} position={[0, 1]} onConfirm={handleImport} disabled={loading} />
+			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 1]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

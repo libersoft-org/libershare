@@ -13,16 +13,6 @@ export function normalizePath(path: string): string {
 	return path.endsWith('/') || path.endsWith('\\') ? path : path + '/';
 }
 
-// Sanitize filename - remove invalid characters and normalize spaces
-export function sanitizeFilename(filename: string): string {
-	// Remove characters not allowed in filenames: < > : " / \ | ? *
-	// Then replace multiple spaces with single space
-	return filename
-		.replace(/[<>:"/\\|?*]/g, '')
-		.replace(/\s+/g, ' ')
-		.trim();
-}
-
 // Join path segments
 export function joinPath(...segments: string[]): string {
 	return segments.filter(Boolean).join('/').replace(/\/+/g, '/');
@@ -69,12 +59,12 @@ export function scrollToElement(elements: (HTMLElement | undefined)[], index: nu
 }
 
 // Open an external URL in a new browser tab/window
-export function openExternalUrl(url: string): void {
+export function openExternalURL(url: string): void {
 	window.open(url, '_blank');
 }
 
 // Minify JSON string by removing whitespace
-export function minifyJson(json: string): string {
+export function minifyJSON(json: string): string {
 	try {
 		return JSON.stringify(JSON.parse(json));
 	} catch {

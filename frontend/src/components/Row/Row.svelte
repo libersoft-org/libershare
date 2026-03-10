@@ -4,8 +4,10 @@
 		selected?: boolean;
 		disabled?: boolean;
 		children?: Snippet;
+		el?: HTMLElement | undefined;
 	}
-	let { selected = false, disabled = false, children }: Props = $props();
+	let { selected = false, disabled = false, children, el = $bindable() }: Props = $props();
+	void el; // used in template bind:this
 </script>
 
 <style>
@@ -34,6 +36,6 @@
 	}
 </style>
 
-<div class="row" class:selected class:disabled>
+<div class="row" class:selected class:disabled bind:this={el}>
 	{#if children}{@render children()}{/if}
 </div>

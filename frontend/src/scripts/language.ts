@@ -41,7 +41,7 @@ initLanguage();
 
 function initLanguage(): void {
 	const browserLang = navigator.language?.split('-')[0];
-	const initialLang = (browserLang && languages.some(l => l.id === browserLang)) ? browserLang : 'en';
+	const initialLang = browserLang && languages.some(l => l.id === browserLang) ? browserLang : 'en';
 	currentLanguage.set(initialLang);
 }
 
@@ -69,7 +69,7 @@ export function getLanguage(id: string): Language | undefined {
 }
 
 // Get flag URL for a language
-export function getFlagUrl(langId: string): string {
+export function getFlagURL(langId: string): string {
 	const lang = getLanguage(langId);
 	const flagCode = lang?.flag ?? langId;
 	return `/flags/${flagCode}.svg`;

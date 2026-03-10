@@ -1,10 +1,10 @@
 import { dirname, join } from 'path';
 import { productName, productVersion } from '@shared';
 import { setupLogger, type LogLevel } from './logger.ts';
-import { Networks } from './lishnet/networks.ts';
+import { Networks } from './lishnet/lishnets.ts';
 import { DataServer } from './lish/data-server.ts';
+import { openDatabase } from './db/database.ts';
 import { APIServer } from './api/server.ts';
-import { LISHnetStorage } from './lishnet/lishnetStorage.ts';
 import { Settings } from './settings.ts';
 
 // Parse command line arguments
@@ -54,9 +54,9 @@ console.log('='.repeat(header.length));
 console.log(`Data directory: ${dataDir}`);
 const settings = await Settings.create(dataDir);
 await settings.ensureStorageDirs();
-const dataServer = await DataServer.create(dataDir);
-const lishnetStorage = await LISHnetStorage.create(dataDir);
-const networks = new Networks(lishnetStorage, dataDir, dataServer, settings, enablePink);
+const db = openDatabase(dataDir);
+const dataServer = new DataServer(db);
+const networks = new Networks(db, dataDir, dataServer, settings, enablePink);
 networks.init();
 
 const apiServer = new APIServer(dataDir, dataServer, networks, settings, {

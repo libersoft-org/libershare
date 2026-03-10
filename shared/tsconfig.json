@@ -1,0 +1,31 @@
+{
+	"compilerOptions": {
+		"target": "ES2020",
+		"module": "ES2022",
+		"lib": ["ES2020", "DOM"],
+		"moduleResolution": "bundler",
+		"allowImportingTsExtensions": true,
+		"noEmit": true,
+		"declaration": true,
+		"esModuleInterop": true,
+		"allowSyntheticDefaultImports": true,
+		"strict": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"noImplicitReturns": true,
+		"noFallthroughCasesInSwitch": true,
+		"noImplicitOverride": true,
+		"exactOptionalPropertyTypes": true,
+		"noUncheckedIndexedAccess": true,
+		"noPropertyAccessFromIndexSignature": true,
+		"noUncheckedSideEffectImports": true,
+		"erasableSyntaxOnly": true,
+		"verbatimModuleSyntax": true,
+		"isolatedDeclarations": true
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["node_modules"]
+}

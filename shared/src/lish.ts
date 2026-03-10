@@ -4,9 +4,9 @@ export type ChunkID = string;
 export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
 export type HashAlgorithm = (typeof SUPPORTED_ALGOS)[number];
 export const DEFAULT_ALGO: HashAlgorithm = 'sha256';
+export const DEFAULT_CHUNK_SIZE: number = 1024 * 1024;
 
 export interface ILISH {
-	version: number;
 	id: string;
 	name?: string | undefined;
 	description?: string | undefined;
@@ -46,4 +46,43 @@ export interface ILinkEntry {
 	hardlink?: boolean;
 	modified?: string;
 	created?: string;
+}
+
+// Summary for the download list table (lightweight, no files/chunks)
+export type LISHSortField = 'created' | 'name' | 'totalSize' | 'fileCount';
+export type SortOrder = 'asc' | 'desc';
+
+export interface ILISHSummary {
+	id: string;
+	name?: string | undefined;
+	description?: string | undefined;
+	created: string;
+	totalSize: number;
+	fileCount: number;
+	directoryCount: number;
+}
+
+// Detail for the download detail view (files without checksums, no chunks)
+export interface ILISHDetailFile {
+	path: string;
+	size: number;
+	permissions?: string | undefined;
+	modified?: string | undefined;
+	created?: string | undefined;
+}
+
+export interface ILISHDetail {
+	id: string;
+	name?: string | undefined;
+	description?: string | undefined;
+	created: string;
+	chunkSize: number;
+	checksumAlgo: HashAlgorithm;
+	totalSize: number;
+	fileCount: number;
+	directoryCount: number;
+	directory?: string | undefined;
+	files: ILISHDetailFile[];
+	directories: IDirectoryEntry[];
+	links: ILinkEntry[];
 }

@@ -14,6 +14,27 @@ const VOLUME_KEYS: Record<string, () => void> = {
 };
 const CONFIRM_KEYS = ['Enter', ' '];
 
+// Fullscreen lock: prevents Escape from triggering back navigation while in fullscreen.
+// Chrome/Edge/Opera use Keyboard.lock(['Escape']) to fully block Escape (set in Header.svelte).
+// Firefox/Safari fallback: Escape exits fullscreen but doesn't navigate back.
+let fullscreenLocked = false;
+
+export function setFullscreenLocked(locked: boolean): void {
+	fullscreenLocked = locked;
+}
+
+// Detect when browser exits fullscreen (Firefox Escape bypass) to suppress back navigation
+let fullscreenJustExited = false;
+document.addEventListener('fullscreenchange', () => {
+	if (fullscreenLocked && !document.fullscreenElement) {
+		fullscreenJustExited = true;
+		fullscreenLocked = false;
+		setTimeout(() => {
+			fullscreenJustExited = false;
+		}, 200);
+	}
+});
+
 class KeyboardManager {
 	private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 	private keyupHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -74,6 +95,10 @@ class KeyboardManager {
 			// Back keys (single press)
 			if (e.key === 'Escape' || e.key === 'Backspace') {
 				e.preventDefault();
+				// If Escape just caused browser fullscreen exit, suppress back navigation
+				if (e.key === 'Escape' && (fullscreenLocked || fullscreenJustExited)) {
+					return;
+				}
 				this.emit('back');
 				return;
 			}

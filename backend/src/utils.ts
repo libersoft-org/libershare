@@ -1,27 +1,6 @@
+import { type CompressionAlgorithm, isCompressed } from '@shared';
+
 export class Utils {
-	static formatBytes(bytes: number, decimals: number = 2): string {
-		if (bytes === 0) return '0 Bytes';
-		const k = 1024;
-		const dm = decimals < 0 ? 0 : decimals;
-		const sizes = ['B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-	}
-
-	static parseBytes(value: string | number): number {
-		if (typeof value === 'number') return value;
-		const match = value
-			.trim()
-			.toUpperCase()
-			.match(/^(\d+(?:\.\d+)?)\s*([KMGTPEZY])?B?$/);
-		if (!match) throw new Error('Invalid size format. Use number with optional suffix: K, M, G, T, P, E, Z, Y');
-		const [, num, suffix] = match;
-		if (!suffix) return Math.floor(parseFloat(num!));
-		const sizes = ['', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y'];
-		const i = sizes.indexOf(suffix);
-		return Math.floor(parseFloat(num!) * Math.pow(1024, i));
-	}
-
 	static expandHome(path: string): string {
 		// expand ~ to home directory
 		if (path.startsWith('~')) {
@@ -35,7 +14,7 @@ export class Utils {
 	 * Parse JSON with a descriptive error message on failure.
 	 * Use this for user-provided or external data where the source is helpful for debugging.
 	 */
-	static safeJsonParse<T = unknown>(text: string, source: string): T {
+	static safeJSONParse<T = unknown>(text: string, source: string): T {
 		try {
 			return JSON.parse(text);
 		} catch (err: any) {
@@ -51,5 +30,77 @@ export class Utils {
 		for (const key of required) {
 			if (params[key] === undefined) throw new Error(`Missing required parameter: ${key}`);
 		}
+	}
+
+	/**
+	 * Compress data using the specified algorithm.
+	 * Single unified compression point for the entire project.
+	 */
+	static compress(data: Uint8Array<ArrayBuffer>, algorithm: CompressionAlgorithm = 'gzip'): Uint8Array<ArrayBuffer> {
+		switch (algorithm) {
+			case 'gzip':
+				return Bun.gzipSync(data);
+			default:
+				throw new Error(`Unsupported compression algorithm: ${algorithm}`);
+		}
+	}
+
+	/**
+	 * Decompress data using the specified algorithm.
+	 * Single unified decompression point for the entire project.
+	 */
+	static decompress(data: Uint8Array<ArrayBuffer>, algorithm: CompressionAlgorithm = 'gzip'): Uint8Array<ArrayBuffer> {
+		switch (algorithm) {
+			case 'gzip':
+				return Bun.gunzipSync(data);
+			default:
+				throw new Error(`Unsupported decompression algorithm: ${algorithm}`);
+		}
+	}
+
+	/**
+	 * Read a file, automatically decompressing compressed files.
+	 * Returns the file content as a string.
+	 */
+	static async readFileCompressed(filePath: string, algorithm: CompressionAlgorithm = 'gzip'): Promise<string> {
+		if (isCompressed(filePath)) {
+			const compressed = await Bun.file(filePath).arrayBuffer();
+			const decompressed = Utils.decompress(new Uint8Array(compressed), algorithm);
+			return new TextDecoder().decode(decompressed);
+		}
+		return Bun.file(filePath).text();
+	}
+
+	/**
+	 * Fetch a URL and return the response body as a string.
+	 * Automatically decompresses .gz URLs. Throws on non-OK responses.
+	 */
+	static async fetchURL(url: string, timeoutMs: number = 10000): Promise<string> {
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), timeoutMs);
+		try {
+			const response = await fetch(url, { signal: controller.signal });
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			const isCompressedURL = isCompressed(url);
+			const contentEncoding = response.headers.get('content-encoding');
+			const isGzipEncoded = contentEncoding?.toLowerCase().includes('gzip');
+			if (isCompressedURL && !isGzipEncoded) {
+				const compressed = await response.arrayBuffer();
+				const decompressed = Utils.decompress(new Uint8Array(compressed));
+				return new TextDecoder().decode(decompressed);
+			}
+			return response.text();
+		} finally {
+			clearTimeout(timeout);
+		}
+	}
+
+	/**
+	 * Write JSON data to a file, optionally minified and/or compressed.
+	 */
+	static async writeJSONToFile(data: unknown, filePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<void> {
+		const jsonContent = minifyJSON ? JSON.stringify(data) : JSON.stringify(data, null, '\t');
+		if (compress) await Bun.write(filePath, Utils.compress(Buffer.from(jsonContent, 'utf-8'), compressionAlgorithm));
+		else await Bun.write(filePath, jsonContent);
 	}
 }

@@ -482,7 +482,7 @@ export class Network {
 		console.log('Handling want message for lishID:', data.lishID, 'on network:', networkID);
 		const lish = this.dataServer.get(data.lishID);
 		if (!lish) return;
-		const haveChunks = this.dataServer.getHaveChunks(lish);
+		const haveChunks = this.dataServer.getHaveChunks(data.lishID);
 		if (haveChunks !== 'all' && haveChunks.size === 0) {
 			console.log('No chunks available for lishID:', data.lishID);
 			return;

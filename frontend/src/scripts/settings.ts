@@ -38,8 +38,9 @@ export const autoStartSharing = writable(true);
 export const autoStartOnBoot = writable(true);
 export const showInTray = writable(true);
 export const minimizeToTray = writable(true);
-export const defaultMinifyJson = writable(false);
-export const defaultCompressGzip = writable(false);
+export const defaultMinifyJSON = writable(false);
+export const defaultCompress = writable(false);
+export const defaultCompressionAlgorithm = writable('gzip');
 
 // Cached defaults from backend (loaded once)
 export let settingsDefaults: any = null;
@@ -99,8 +100,9 @@ export async function loadSettings(): Promise<void> {
 		minimizeToTray.set(settings.system.minimizeToTray);
 
 		// Export
-		defaultMinifyJson.set(settings.export.minifyJson);
-		defaultCompressGzip.set(settings.export.compressGzip);
+		defaultMinifyJSON.set(settings.export.minifyJSON);
+		defaultCompress.set(settings.export.compress);
+		defaultCompressionAlgorithm.set(settings.export.compressionAlgorithm);
 
 		// Input
 		inputInitialDelay.set(settings.input.initialDelay);
@@ -216,12 +218,16 @@ export function setMinimizeToTray(enabled: boolean): void {
 	updateSetting(minimizeToTray, 'system.minimizeToTray', enabled);
 }
 
-export function setDefaultMinifyJson(enabled: boolean): void {
-	updateSetting(defaultMinifyJson, 'export.minifyJson', enabled);
+export function setDefaultMinifyJSON(enabled: boolean): void {
+	updateSetting(defaultMinifyJSON, 'export.minifyJSON', enabled);
 }
 
-export function setDefaultCompressGzip(enabled: boolean): void {
-	updateSetting(defaultCompressGzip, 'export.compressGzip', enabled);
+export function setDefaultCompress(enabled: boolean): void {
+	updateSetting(defaultCompress, 'export.compress', enabled);
+}
+
+export function setDefaultCompressionAlgorithm(algorithm: string): void {
+	updateSetting(defaultCompressionAlgorithm, 'export.compressionAlgorithm', algorithm);
 }
 
 // Volume helpers

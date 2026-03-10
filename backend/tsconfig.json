@@ -30,6 +30,6 @@
 			"@shared/*": ["../shared/src/*"]
 		}
 	},
-	"include": ["src/**/*.ts", "cli/**/*.ts", "../shared/src/**/*.ts"],
+	"include": ["src/**/*.ts", "../shared/src/**/*.ts"],
 	"exclude": ["node_modules"]
 }

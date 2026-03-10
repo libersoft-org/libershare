@@ -1,6 +1,7 @@
 import { mkdir } from 'fs/promises';
-import { JsonStorage } from './storage.ts';
+import { JSONStorage } from './storage.ts';
 import { Utils } from './utils.ts';
+import { type CompressionAlgorithm } from '@shared';
 
 export interface SettingsData {
 	language: string;
@@ -39,8 +40,9 @@ export interface SettingsData {
 		minimizeToTray: boolean;
 	};
 	export: {
-		minifyJson: boolean;
-		compressGzip: boolean;
+		minifyJSON: boolean;
+		compress: boolean;
+		compressionAlgorithm: CompressionAlgorithm;
 	};
 	input: {
 		initialDelay: number;
@@ -97,8 +99,9 @@ const DEFAULT_SETTINGS: SettingsData = {
 		minimizeToTray: true,
 	},
 	export: {
-		minifyJson: false,
-		compressGzip: false,
+		minifyJSON: false,
+		compress: false,
+		compressionAlgorithm: 'gzip' as CompressionAlgorithm,
 	},
 	input: {
 		initialDelay: 400,
@@ -109,16 +112,16 @@ const DEFAULT_SETTINGS: SettingsData = {
 
 /**
  * Settings storage.
- * Wraps JsonStorage with SettingsData type.
+ * Wraps JSONStorage with SettingsData type.
  */
 export class Settings {
-	private storage!: JsonStorage<SettingsData>;
+	private storage!: JSONStorage<SettingsData>;
 
 	private constructor() {}
 
 	static async create(dataDir: string): Promise<Settings> {
 		const instance = new Settings();
-		instance.storage = await JsonStorage.create(dataDir, 'settings.json', DEFAULT_SETTINGS);
+		instance.storage = await JSONStorage.create(dataDir, 'settings.json', DEFAULT_SETTINGS);
 		return instance;
 	}
 

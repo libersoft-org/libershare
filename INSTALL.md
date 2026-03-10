@@ -116,23 +116,23 @@ The NSIS installer (.exe) includes a language selector dialog, license agreement
 
 #### Build compatibility matrix
 
-| Target                     | Host: Linux | Host: Windows | Host: macOS |
-| -------------------------- | :---------: | :-----------: | :---------: |
-| **Linux x86_64**           | ✅ Docker   | ✅ Docker     | ✅ Docker   |
-| **Linux aarch64**          | ✅ Docker   | ✅ Docker     | ✅ Docker   |
-| **Windows x86_64**         | ✅ Docker¹  | ✅ Native     | ✅ Docker¹  |
-| **Windows aarch64**        | ✅ Docker¹  | ✅ Native     | ✅ Docker¹  |
-| **macOS x86_64**           | ❌          | ❌            | ✅ Native   |
-| **macOS aarch64**          | ❌          | ❌            | ✅ Native   |
-| **macOS universal**        | ❌          | ❌            | ✅ Native   |
-| **Format: deb**            | ✅          | ✅            | ✅          |
-| **Format: rpm**            | ✅          | ✅            | ✅          |
-| **Format: pacman**         | ✅          | ✅            | ✅          |
-| **Format: appimage**       | ✅          | ✅            | ✅          |
-| **Format: nsis** (Win)     | ✅          | ✅            | ✅          |
-| **Format: msi** (Win)      | ❌²         | ✅            | ❌²         |
-| **Format: dmg** (macOS)    | ❌          | ❌            | ✅          |
-| **Format: zip**            | ✅          | ✅            | ✅          |
+| Target                  | Host: Linux | Host: Windows | Host: macOS |
+| ----------------------- | :---------: | :-----------: | :---------: |
+| **Linux x86_64**        |  ✅ Docker  |   ✅ Docker   |  ✅ Docker  |
+| **Linux aarch64**       |  ✅ Docker  |   ✅ Docker   |  ✅ Docker  |
+| **Windows x86_64**      | ✅ Docker¹  |   ✅ Native   | ✅ Docker¹  |
+| **Windows aarch64**     | ✅ Docker¹  |   ✅ Native   | ✅ Docker¹  |
+| **macOS x86_64**        |     ❌      |      ❌       |  ✅ Native  |
+| **macOS aarch64**       |     ❌      |      ❌       |  ✅ Native  |
+| **macOS universal**     |     ❌      |      ❌       |  ✅ Native  |
+| **Format: deb**         |     ✅      |      ✅       |     ✅      |
+| **Format: rpm**         |     ✅      |      ✅       |     ✅      |
+| **Format: pacman**      |     ✅      |      ✅       |     ✅      |
+| **Format: appimage**    |     ✅      |      ✅       |     ✅      |
+| **Format: nsis** (Win)  |     ✅      |      ✅       |     ✅      |
+| **Format: msi** (Win)   |     ❌²     |      ✅       |     ❌²     |
+| **Format: dmg** (macOS) |     ❌      |      ❌       |     ✅      |
+| **Format: zip**         |     ✅      |      ✅       |     ✅      |
 
 - ¹ Windows cross-compilation via `cargo-xwin` inside Docker
 - ² MSI requires WiX toolset (Windows-only)
@@ -249,3 +249,17 @@ chrome --autoplay-policy=no-user-gesture-required
 Navigate to: https://127.0.0.1:6003/
 
 Browser will show the certificate error, just skip it.
+
+## 3. Kiosk mode (Linux)
+
+The `install-kiosk.sh` script turns a clean minimal Debian installation (netinst) into a dedicated LiberShare kiosk — the app starts automatically in fullscreen after boot with no desktop environment, login screen, or visible OS interface. This is intended for standalone devices such as TV boxes.
+
+**Important note**: Do not run this on a machine with an existing desktop environment or other services!
+
+**Usage:**
+
+```sh
+sudo ./install-kiosk.sh
+```
+
+After the script finishes, reboot the machine. It will boot directly into LiberShare in kiosk mode.

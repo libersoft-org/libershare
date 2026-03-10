@@ -3,6 +3,7 @@
 		"home": "Home",
 		"back": "Back",
 		"fileName": "File name",
+		"file": "File",
 		"ok": "OK",
 		"cancel": "Cancel",
 		"close": "Close",
@@ -16,6 +17,7 @@
 		"save": "Save",
 		"saveAs": "Save as",
 		"fileExistsOverwrite": "File \"{name}\" already exists. Do you want to overwrite it?",
+		"fileNameIsDirectory": "The name \"{name}\" already exists as a directory, so the file cannot be saved.",
 		"overwriteFile": "Overwrite file",
 		"delete": "Delete",
 		"edit": "Edit",
@@ -78,11 +80,17 @@
 		},
 		"createLISH": "Create LISH",
 		"errorInvalidFormat": "Invalid LISH format",
-		"errorNoValidLISH": "No valid LISH found",
 		"emptyList": "No LISH to export found",
 		"start": "Start",
 		"pause": "Pause",
 		"moveData": "Move data",
+		"deleteDialog": {
+			"message": "What do you want to delete?",
+			"lishOnly": "Delete LISH only",
+			"lishAndData": "Delete LISH and data",
+			"dataOnly": "Delete data only"
+		},
+		"deleteFailed": "Failed to delete",
 		"lishCreate": {
 			"dataPath": "Data location (file or directory)",
 			"saveToFile": "Save to .lish file",
@@ -95,6 +103,8 @@
 			"lishFileRequired": "LISH file path is required when saving to file is enabled",
 			"invalidChunkSize": "Invalid chunk size",
 			"invalidThreads": "Number of threads must be 0 or positive",
+			"emptyDirectory": "The selected data directory is empty, there is nothing to create.",
+			"dataPathNotFound": "The specified data path does not exist.",
 			"showAdvanced": "Show advanced settings",
 			"hideAdvanced": "Hide advanced settings",
 			"progress": {
@@ -113,7 +123,11 @@
 			"downloadPath": "Download folder",
 			"lishJSON": "LISH JSON",
 			"downloadPathRequired": "Download folder is required",
+			"jsonRequired": "LISH JSON is required",
 			"autoStartSharing": "Automatically start sharing after adding"
+		},
+		"lishExport": {
+			"errorIDRequired": "LISH ID is required"
 		}
 	},
 	"settings": {
@@ -123,8 +137,8 @@
 			"autoStartOnBoot": "Start application on system startup",
 			"showInTray": "Show in system tray",
 			"minimizeToTray": "Minimize to system tray",
-			"defaultMinifyJson": "Minify JSON (default)",
-			"defaultCompressGzip": "Compress to gzip (default)"
+			"defaultMinifyJSON": "Minify JSON (default)",
+			"defaultCompress": "Compress (default)"
 		},
 		"download": {
 			"folderDownload": "Finished download folder",
@@ -150,7 +164,6 @@
 			"errorNetworkIDRequired": "Network ID is required",
 			"errorBootstrapRequired": "At least one bootstrap server is required",
 			"errorInvalidFormat": "Invalid format of network list",
-			"errorNoValidNetworks": "No valid networks found",
 			"publicList": "Public list",
 			"emptyList": "No networks added. Add or Import a new network.",
 			"confirmDelete": "Are you sure you want to delete network \"{name}\"?",
@@ -164,8 +177,8 @@
 			"relayed": "{count} relayed",
 			"noPeers": "No peers connected",
 			"connectedPeers": "Peers: {count}",
-			"minifyJson": "Minify JSON on save",
-			"compressGzip": "Compress to gzip"
+			"minifyJSON": "Minify JSON",
+			"compress": "Compress"
 		},
 		"lishNetworkImport": {
 			"fromJSON": "From LISHNET JSON",

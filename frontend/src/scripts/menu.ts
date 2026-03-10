@@ -1,7 +1,7 @@
 import { type Component } from 'svelte';
 import { derived, get } from 'svelte/store';
 import { productName } from '@shared';
-import { t, tt, currentLanguage, setLanguage, languages, getFlagUrl } from './language.ts';
+import { t, tt, currentLanguage, setLanguage, languages, getFlagURL } from './language.ts';
 import { audioEnabled, setAudioEnabled, cursorSize, setCursorSize, type CursorSize, timeFormat, setTimeFormat, showSeconds, setShowSeconds } from './settings.ts';
 import { footerPosition, setFooterPosition } from './settings.ts';
 import { type FooterPosition } from './footerWidgets.ts';
@@ -87,12 +87,6 @@ export const menuStructure = derived(
 				],
 			},
 			{
-				id: 'localStorage',
-				label: tt('localStorage.title'),
-				icon: '/img/folder.svg',
-				component: Storage,
-			},
-			{
 				id: 'downloads',
 				label: tt('downloads.title'),
 				icon: '/img/download.svg',
@@ -115,13 +109,13 @@ export const menuStructure = derived(
 						submenu: [
 							{
 								id: 'import-lish-file',
-							label: tt('common.fromFile'),
-							icon: '/img/folder.svg',
-							component: DownloadLISHImportFile,
-						},
-						{
-							id: 'import-lish-web',
-							label: tt('common.fromWeb'),
+								label: tt('common.fromFile'),
+								icon: '/img/folder.svg',
+								component: DownloadLISHImportFile,
+							},
+							{
+								id: 'import-lish-web',
+								label: tt('common.fromWeb'),
 								icon: '/img/online.svg',
 								component: DownloadLISHImportWeb,
 							},
@@ -163,6 +157,12 @@ export const menuStructure = derived(
 				],
 			},
 			{
+				id: 'localStorage',
+				label: tt('localStorage.title'),
+				icon: '/img/folder.svg',
+				component: Storage,
+			},
+			{
 				id: 'settings',
 				label: tt('settings.title'),
 				icon: '/img/settings.svg',
@@ -193,13 +193,13 @@ export const menuStructure = derived(
 								submenu: [
 									{
 										id: 'import-lishnet-file',
-									label: tt('common.fromFile'),
-									icon: '/img/folder.svg',
-									component: LISHNetworkImportFile,
-								},
-								{
-									id: 'import-lishnet-web',
-									label: tt('common.fromWeb'),
+										label: tt('common.fromFile'),
+										icon: '/img/folder.svg',
+										component: LISHNetworkImportFile,
+									},
+									{
+										id: 'import-lishnet-web',
+										label: tt('common.fromWeb'),
 										icon: '/img/online.svg',
 										component: LISHNetworkImportWeb,
 									},
@@ -227,7 +227,7 @@ export const menuStructure = derived(
 							...languages.map(lang => ({
 								id: `lang-${lang.id}`,
 								label: lang.nativeLabel,
-								icon: getFlagUrl(lang.id),
+								icon: getFlagURL(lang.id),
 								noColorFilter: true,
 								selected: () => get(currentLanguage) === lang.id,
 								onSelect: () => setLanguage(lang.id),

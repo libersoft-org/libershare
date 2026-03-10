@@ -1,17 +1,67 @@
-<script lang="ts">
-	import { onMount, tick } from 'svelte';
+﻿<script lang="ts">
+	import { tick } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { useArea, activeArea, activateArea } from '../../scripts/areas.ts';
+	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { scrollToElement, sanitizeFilename } from '../../scripts/utils.ts';
-	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm } from '@shared';
-	import { parseChunkSize, validateLISHCreateForm, getLISHCreateErrorMessage } from '../../scripts/lish.ts';
-	import { storageLISHPath, storagePath, autoStartSharing, defaultMinifyJson, defaultCompressGzip } from '../../scripts/settings.ts';
+	import { sanitizeFilename } from '@shared';
+	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
+	import { storageLISHPath, storagePath, autoStartSharing, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
+
+	function parseChunkSize(value: string): number | null {
+		if (!value.trim()) return null;
+		try {
+			const bytes = parseBytes(value);
+			return bytes > 0 ? bytes : null;
+		} catch {
+			return null;
+		}
+	}
+
+	interface LISHCreateFormData {
+		dataPath: string;
+		saveToFile?: boolean | undefined;
+		lishFile?: string | undefined;
+		addToSharing?: boolean | undefined;
+		chunkSize?: string | undefined;
+		threads?: string | undefined;
+	}
+
+	type LISHCreateError = 'INPUT_REQUIRED' | 'LISH_FILE_REQUIRED' | 'INVALID_CHUNK_SIZE' | 'INVALID_THREADS' | null;
+
+	function validateLISHCreateForm(data: LISHCreateFormData): LISHCreateError {
+		if (!data.dataPath.trim()) return 'INPUT_REQUIRED';
+		if (data.saveToFile && !data.lishFile?.trim()) return 'LISH_FILE_REQUIRED';
+		if (data.chunkSize) {
+			const parsed = parseChunkSize(data.chunkSize);
+			if (parsed === null) return 'INVALID_CHUNK_SIZE';
+		}
+		if (data.threads) {
+			const num = parseInt(data.threads);
+			if (isNaN(num) || num < 0) return 'INVALID_THREADS';
+		}
+		return null;
+	}
+
+	function getLISHCreateErrorMessage(errorCode: LISHCreateError, t: (key: string) => string): string {
+		switch (errorCode) {
+			case 'INPUT_REQUIRED':
+				return t('downloads.lishCreate.dataPathRequired');
+			case 'LISH_FILE_REQUIRED':
+				return t('downloads.lishCreate.lishFileRequired');
+			case 'INVALID_CHUNK_SIZE':
+				return t('downloads.lishCreate.invalidChunkSize');
+			case 'INVALID_THREADS':
+				return t('downloads.lishCreate.invalidThreads');
+			default:
+				return '';
+		}
+	}
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -26,9 +76,7 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
-	let unregisterArea: (() => void) | null = null;
 	let removeBackHandler: (() => void) | null = null;
-	let active = $derived($activeArea === areaID);
 	// Browse state
 	let browsingInputPath = $state(false);
 	let browsingLISHFile = $state(false);
@@ -43,100 +91,64 @@
 	let dataPath = $state($storagePath);
 	let saveToFile = $state(true);
 	let addToSharing = $state($autoStartSharing);
-	let minifyJson = $state($defaultMinifyJson);
-	let compressGzip = $state($defaultCompressGzip);
+	let minifyJSON = $state($defaultMinifyJSON);
+	let compress = $state($defaultCompress);
 	let showAdvanced = $state(false);
 	let name = $state('');
 	// LISH file path - editable state, initialized from settings
-	let lishFile = $state(joinPath($storageLISHPath, $defaultCompressGzip ? 'output.lish.gz' : 'output.lish'));
+	let lishFile = $state($storageLISHPath);
 	let lishFileManuallyEdited = $state(false); // Track if user manually edited the path
 
 	function handleNameChange(newName: string): void {
 		name = newName;
-		if (!lishFileManuallyEdited && newName) {
-			const sanitized = sanitizeFilename(newName);
+		if (!lishFileManuallyEdited) {
+			const sanitized = newName ? sanitizeFilename(newName) : '';
 			if (sanitized) {
 				const { folder } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
-				lishFile = joinPath(folder, sanitized + (compressGzip ? '.lish.gz' : '.lish'));
+				lishFile = joinPath(folder, sanitized + (compress ? '.lish.gz' : '.lish'));
+			} else {
+				const { folder } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
+				lishFile = folder;
 			}
 		}
 	}
 
-	function handleCompressGzipToggle(): void {
-		compressGzip = !compressGzip;
-		if (compressGzip && lishFile.endsWith('.lish')) lishFile = lishFile + '.gz';
-		else if (!compressGzip && lishFile.endsWith('.lish.gz')) lishFile = lishFile.slice(0, -3);
+	function handleCompressToggle(): void {
+		compress = !compress;
+		if (lishFile.endsWith('.lish') || lishFile.endsWith('.lish.gz')) {
+			if (compress && lishFile.endsWith('.lish')) lishFile = lishFile + '.gz';
+			else if (!compress && lishFile.endsWith('.lish.gz')) lishFile = lishFile.slice(0, -3);
+		}
 	}
 
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
 	let algorithm = $state<HashAlgorithm>(DEFAULT_ALGO);
 	let threads = $state('0');
-	// Navigation state
-	let selectedIndex = $state(0);
-	let selectedColumn = $state(0); // For rows with multiple elements (input + browse, algo selector)
-	let rowElements: HTMLElement[] = $state([]);
-	// Input refs
-	let inputPathInput: Input | undefined = $state();
-	let lishFileInput: Input | undefined = $state();
-	let nameInput: Input | undefined = $state();
-	let descriptionInput: Input | undefined = $state();
-	let chunkSizeInput: Input | undefined = $state();
-	let threadsInput: Input | undefined = $state();
 	// Validation error - only set on submit
 	let errorMessage = $state('');
-	// Form fields: name(0), description(1), dataPath(2), saveToFile(3), lishFile(4), minifyJson(5), compressGzip(6), addToSharing(7), advancedToggle(8), chunkSize(9), algo(10), threads(11), create(12), back(13)
-	const FIELD_NAME = 0;
-	const FIELD_DESCRIPTION = 1;
-	const FIELD_INPUT = 2;
-	const FIELD_SAVE_TO_FILE = 3;
-	const FIELD_LISH_FILE = 4;
-	const FIELD_MINIFY_JSON = 5;
-	const FIELD_COMPRESS_GZIP = 6;
-	const FIELD_ADD_TO_SHARING = 7;
-	const FIELD_ADVANCED_TOGGLE = 8;
-	const FIELD_CHUNK_SIZE = 9;
-	const FIELD_ALGO = 10;
-	const FIELD_THREADS = 11;
-	const FIELD_CREATE = 12;
-	const FIELD_BACK = 13;
-	// Algorithm selection - horizontal navigation within the algo field
-	let algoIndex = $derived(SUPPORTED_ALGOS.indexOf(algorithm));
-
-	function getMaxColumn(fieldIndex: number): number {
-		if (fieldIndex === FIELD_INPUT) return 1; // input + browse
-		if (fieldIndex === FIELD_LISH_FILE) return 1; // lishFile + browse
-		if (fieldIndex === FIELD_ALGO) return SUPPORTED_ALGOS.length - 1;
-		return 0;
-	}
-
-	function focusInput(fieldIndex: number): void {
-		switch (fieldIndex) {
-			case FIELD_INPUT:
-				if (selectedColumn === 0) inputPathInput?.focus();
-				break;
-			case FIELD_LISH_FILE:
-				if (selectedColumn === 0) lishFileInput?.focus();
-				break;
-			case FIELD_NAME:
-				nameInput?.focus();
-				break;
-			case FIELD_DESCRIPTION:
-				descriptionInput?.focus();
-				break;
-			case FIELD_CHUNK_SIZE:
-				chunkSizeInput?.focus();
-				break;
-			case FIELD_THREADS:
-				threadsInput?.focus();
-				break;
-		}
-	}
 
 	async function handleCreate(): Promise<void> {
 		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, addToSharing, chunkSize, threads });
 		errorMessage = validationError ? getLISHCreateErrorMessage(validationError, $t) : '';
 		if (!errorMessage) {
+			// Check if data path exists and is not an empty directory
+			try {
+				const pathCheck = await api.fs.exists(dataPath);
+				if (!pathCheck.exists) {
+					errorMessage = $t('downloads.lishCreate.dataPathNotFound');
+					return;
+				}
+				if (pathCheck.type === 'directory') {
+					const listing = await api.fs.list(dataPath);
+					if (listing.entries.length === 0) {
+						errorMessage = $t('downloads.lishCreate.emptyDirectory');
+						return;
+					}
+				}
+			} catch {
+				// If checks fail, let the backend handle it
+			}
 			const params: Record<string, any> = {
 				dataPath,
 			};
@@ -144,8 +156,8 @@
 			if (description) params['description'] = description;
 			if (saveToFile && lishFile) params['lishFile'] = lishFile;
 			if (saveToFile) {
-				params['minifyJson'] = minifyJson;
-				params['compressGzip'] = compressGzip;
+				params['minifyJSON'] = minifyJSON;
+				params['compress'] = compress;
 			}
 			if (addToSharing) params['addToSharing'] = addToSharing;
 			// Only pass non-default advanced options
@@ -154,11 +166,11 @@
 			if (algorithm !== DEFAULT_ALGO) params['algorithm'] = algorithm;
 			const parsedThreads = parseInt(threads) || 0;
 			if (parsedThreads !== 0) params['threads'] = parsedThreads;
-			// Check if LISH file already exists
+			// Check if LISH file already exists (skip if it's a directory - backend will auto-name the file)
 			if (saveToFile && lishFile) {
 				try {
-					const { exists } = await api.fs.exists(lishFile);
-					if (exists) {
+					const result = await api.fs.exists(lishFile);
+					if (result.exists && result.type === 'file') {
 						pendingCreateParams = params;
 						showOverwriteConfirm = true;
 						return;
@@ -182,13 +194,12 @@
 		activateArea(areaID);
 	}
 
+	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
+
 	function openProgressPage(params: Record<string, any>): void {
 		createParams = params;
 		creating = true;
-		if (unregisterArea) {
-			unregisterArea();
-			unregisterArea = null;
-		}
+		navHandle.pause();
 		pushBreadcrumb($t('downloads.lishCreate.progress.title'));
 		removeBackHandler = pushBackHandler(handleProgressBack);
 	}
@@ -201,12 +212,8 @@
 		popBreadcrumb();
 		creating = false;
 		await tick();
-		unregisterArea = registerAreaHandler();
-		selectedIndex = FIELD_CREATE;
-		selectedColumn = 0;
+		navHandle.resume();
 		activateArea(areaID);
-		await tick();
-		scrollToSelected();
 	}
 
 	function handleProgressDone(): void {
@@ -225,10 +232,7 @@
 		browseFolder = folder;
 		browseFile = fileName;
 		browsingInputPath = true;
-		if (unregisterArea) {
-			unregisterArea();
-			unregisterArea = null;
-		}
+		navHandle.pause();
 		pushBreadcrumb($t('downloads.lishCreate.dataPath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
@@ -243,10 +247,7 @@
 		browseFolder = folder;
 		lishFileName = fileName || '';
 		browsingLISHFile = true;
-		if (unregisterArea) {
-			unregisterArea();
-			unregisterArea = null;
-		}
+		navHandle.pause();
 		pushBreadcrumb($t('downloads.lishCreate.lishFile'));
 		removeBackHandler = pushBackHandler(handleOutputBrowseBack);
 	}
@@ -266,13 +267,8 @@
 		popBreadcrumb();
 		browsingLISHFile = false;
 		await tick();
-		unregisterArea = registerAreaHandler();
-		// Restore focus to the browse button
-		selectedIndex = FIELD_LISH_FILE;
-		selectedColumn = 1;
+		navHandle.resume();
 		activateArea(areaID);
-		await tick();
-		scrollToSelected();
 	}
 
 	async function handleBrowseBack(): Promise<void> {
@@ -283,119 +279,9 @@
 		popBreadcrumb();
 		browsingInputPath = false;
 		await tick();
-		unregisterArea = registerAreaHandler();
-		// Restore focus to the browse button
-		selectedIndex = FIELD_INPUT;
-		selectedColumn = 1;
+		navHandle.resume();
 		activateArea(areaID);
-		await tick();
-		scrollToSelected();
 	}
-
-	function registerAreaHandler(): () => void {
-		return useArea(areaID, areaHandlers, position);
-	}
-
-	function scrollToSelected(): void {
-		scrollToElement(rowElements, selectedIndex);
-	}
-
-	const areaHandlers = {
-		up() {
-			if (selectedIndex === FIELD_BACK) {
-				// Back is on same row as Create, go to last visible row before buttons
-				selectedIndex = showAdvanced ? FIELD_THREADS : FIELD_ADVANCED_TOGGLE;
-				selectedColumn = 0;
-				scrollToSelected();
-				return true;
-			}
-			if (selectedIndex > 0) {
-				selectedIndex--;
-				// Skip disabled lish file/minify/gzip fields when saveToFile is off
-				if (!saveToFile && selectedIndex >= FIELD_LISH_FILE && selectedIndex <= FIELD_COMPRESS_GZIP) selectedIndex = FIELD_SAVE_TO_FILE;
-				// Skip advanced fields when collapsed
-				if (!showAdvanced && selectedIndex >= FIELD_CHUNK_SIZE && selectedIndex <= FIELD_THREADS) selectedIndex = FIELD_ADVANCED_TOGGLE;
-				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
-				scrollToSelected();
-				return true;
-			}
-			return false;
-		},
-		down() {
-			if (selectedIndex >= FIELD_CREATE) return false;
-			if (selectedIndex < FIELD_CREATE) {
-				selectedIndex++;
-				// Skip disabled lish file/minify/gzip fields when saveToFile is off
-				if (!saveToFile && selectedIndex >= FIELD_LISH_FILE && selectedIndex <= FIELD_COMPRESS_GZIP) selectedIndex = FIELD_ADD_TO_SHARING;
-				// Skip advanced fields when collapsed
-				if (!showAdvanced && selectedIndex >= FIELD_CHUNK_SIZE && selectedIndex <= FIELD_THREADS) selectedIndex = FIELD_CREATE;
-				selectedColumn = selectedIndex === FIELD_ALGO ? algoIndex : 0;
-				scrollToSelected();
-				return true;
-			}
-			return false;
-		},
-		left() {
-			if (selectedIndex === FIELD_BACK) {
-				selectedIndex = FIELD_CREATE;
-				return true;
-			}
-			if (selectedColumn > 0) {
-				selectedColumn--;
-				return true;
-			}
-			return false;
-		},
-		right() {
-			if (selectedIndex === FIELD_CREATE) {
-				selectedIndex = FIELD_BACK;
-				return true;
-			}
-			const maxCol = getMaxColumn(selectedIndex);
-			if (selectedColumn < maxCol) {
-				selectedColumn++;
-				return true;
-			}
-			return false;
-		},
-		confirmDown() {},
-		confirmUp() {
-			if (selectedIndex === FIELD_NAME) focusInput(FIELD_NAME);
-			else if (selectedIndex === FIELD_DESCRIPTION) focusInput(FIELD_DESCRIPTION);
-			else if (selectedIndex === FIELD_INPUT) {
-				if (selectedColumn === 0) focusInput(FIELD_INPUT);
-				else openInputPathBrowse();
-			} else if (selectedIndex === FIELD_SAVE_TO_FILE) saveToFile = !saveToFile;
-			else if (selectedIndex === FIELD_LISH_FILE) {
-				if (selectedColumn === 0) focusInput(FIELD_LISH_FILE);
-				else openOutputPathBrowse();
-			} else if (selectedIndex === FIELD_MINIFY_JSON) minifyJson = !minifyJson;
-			else if (selectedIndex === FIELD_COMPRESS_GZIP) handleCompressGzipToggle();
-			else if (selectedIndex === FIELD_ADD_TO_SHARING) addToSharing = !addToSharing;
-			else if (selectedIndex === FIELD_ADVANCED_TOGGLE) showAdvanced = !showAdvanced;
-			else if (selectedIndex === FIELD_CHUNK_SIZE) focusInput(FIELD_CHUNK_SIZE);
-			else if (selectedIndex === FIELD_ALGO) algorithm = SUPPORTED_ALGOS[selectedColumn]!;
-			else if (selectedIndex === FIELD_THREADS) focusInput(FIELD_THREADS);
-			else if (selectedIndex === FIELD_CREATE) handleCreate();
-			else if (selectedIndex === FIELD_BACK) onBack?.();
-		},
-		confirmCancel() {},
-		back() {
-			onBack?.();
-		},
-		onActivate() {
-			// When algo row is active, sync selectedColumn with current algorithm
-			if (selectedIndex === FIELD_ALGO) selectedColumn = algoIndex;
-		},
-	};
-
-	onMount(() => {
-		unregisterArea = registerAreaHandler();
-		activateArea(areaID);
-		return () => {
-			if (unregisterArea) unregisterArea();
-		};
-	});
 </script>
 
 <style>
@@ -446,73 +332,53 @@
 	<div class="create">
 		<div class="container">
 			<!-- Name (optional) -->
-			<div bind:this={rowElements[FIELD_NAME]}>
-				<Input bind:this={nameInput} value={name} onchange={handleNameChange} label={`${$t('common.name')} (${$t('common.optional')})`} selected={active && selectedIndex === FIELD_NAME} />
-			</div>
+			<Input value={name} onchange={handleNameChange} label={`${$t('common.name')} (${$t('common.optional')})`} position={[0, 0]} />
 			<!-- Description (optional) -->
-			<div bind:this={rowElements[FIELD_DESCRIPTION]}>
-				<Input bind:this={descriptionInput} bind:value={description} label={`${$t('common.description')} (${$t('common.optional')})`} multiline rows={3} selected={active && selectedIndex === FIELD_DESCRIPTION} />
-			</div>
+			<Input bind:value={description} label={`${$t('common.description')} (${$t('common.optional')})`} multiline rows={3} position={[0, 1]} />
 			<!-- Data Path (required) -->
-			<div class="row" bind:this={rowElements[FIELD_INPUT]}>
-				<Input bind:this={inputPathInput} bind:value={dataPath} label={$t('downloads.lishCreate.dataPath')} selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 0} flex />
-				<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_INPUT && selectedColumn === 1} onConfirm={openInputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			<div class="row">
+				<Input bind:value={dataPath} label={$t('downloads.lishCreate.dataPath')} position={[0, 2]} flex />
+				<Button icon="/img/folder.svg" position={[1, 2]} onConfirm={openInputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<!-- Save to File Switch -->
-			<div bind:this={rowElements[FIELD_SAVE_TO_FILE]}>
-				<SwitchRow label={$t('downloads.lishCreate.saveToFile') + ':'} checked={saveToFile} selected={active && selectedIndex === FIELD_SAVE_TO_FILE} onConfirm={() => (saveToFile = !saveToFile)} />
-			</div>
+			<SwitchRow label={$t('downloads.lishCreate.saveToFile') + ':'} checked={saveToFile} position={[0, 3]} onConfirm={() => (saveToFile = !saveToFile)} />
 			{#if saveToFile}
 				<!-- LISH File Path (optional) -->
-				<div class="row" bind:this={rowElements[FIELD_LISH_FILE]}>
-					<Input bind:this={lishFileInput} bind:value={lishFile} label={`${$t('downloads.lishCreate.lishFile')} (${$t('common.optional')})`} selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 0} flex onchange={() => (lishFileManuallyEdited = true)} />
-					<Button icon="/img/folder.svg" selected={active && selectedIndex === FIELD_LISH_FILE && selectedColumn === 1} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
-				</div>
-				<!-- Minify JSON Switch -->
-				<div bind:this={rowElements[FIELD_MINIFY_JSON]}>
-					<SwitchRow label={$t('settings.lishNetwork.minifyJson') + ':'} checked={minifyJson} selected={active && selectedIndex === FIELD_MINIFY_JSON} onConfirm={() => (minifyJson = !minifyJson)} />
-				</div>
-				<!-- Compress Gzip Switch -->
-				<div bind:this={rowElements[FIELD_COMPRESS_GZIP]}>
-					<SwitchRow label={$t('settings.lishNetwork.compressGzip') + ':'} checked={compressGzip} selected={active && selectedIndex === FIELD_COMPRESS_GZIP} onConfirm={handleCompressGzipToggle} />
+				<div class="row">
+					<Input bind:value={lishFile} label={`${$t('downloads.lishCreate.lishFile')} (${$t('common.optional')})`} position={[0, 4]} flex onchange={() => (lishFileManuallyEdited = true)} />
+					<Button icon="/img/folder.svg" position={[1, 4]} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
 			{/if}
 			<!-- Add to Sharing Switch -->
-			<div bind:this={rowElements[FIELD_ADD_TO_SHARING]}>
-				<SwitchRow label={$t('downloads.lishImport.autoStartSharing') + ':'} checked={addToSharing} selected={active && selectedIndex === FIELD_ADD_TO_SHARING} onConfirm={() => (addToSharing = !addToSharing)} />
-			</div>
+			<SwitchRow label={$t('downloads.lishImport.autoStartSharing') + ':'} checked={addToSharing} position={[0, 5]} onConfirm={() => (addToSharing = !addToSharing)} />
 			<!-- Advanced Settings Toggle -->
-			<div bind:this={rowElements[FIELD_ADVANCED_TOGGLE]}>
-				<Button label={(showAdvanced ? '▾ ' : '▸ ') + $t(showAdvanced ? 'downloads.lishCreate.hideAdvanced' : 'downloads.lishCreate.showAdvanced')} selected={active && selectedIndex === FIELD_ADVANCED_TOGGLE} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
-			</div>
+			<Button icon={showAdvanced ? '/img/up.svg' : '/img/down.svg'} label={$t(showAdvanced ? 'downloads.lishCreate.hideAdvanced' : 'downloads.lishCreate.showAdvanced')} position={[0, 6]} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 			{#if showAdvanced}
+				{#if saveToFile}
+					<!-- Minify JSON Switch -->
+					<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} position={[0, 7]} onConfirm={() => (minifyJSON = !minifyJSON)} />
+					<!-- Compress Switch -->
+					<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 8]} onConfirm={handleCompressToggle} />
+				{/if}
 				<!-- Chunk Size -->
-				<div bind:this={rowElements[FIELD_CHUNK_SIZE]}>
-					<Input bind:this={chunkSizeInput} bind:value={chunkSize} label={$t('downloads.lishCreate.chunkSize')} selected={active && selectedIndex === FIELD_CHUNK_SIZE} />
-				</div>
+				<Input bind:value={chunkSize} label={$t('downloads.lishCreate.chunkSize')} position={[0, 9]} />
 				<!-- Hash Algorithm -->
-				<div bind:this={rowElements[FIELD_ALGO]}>
+				<div>
 					<div class="label">{$t('downloads.lishCreate.algorithm')}:</div>
 					<div class="algo-selector">
 						{#each SUPPORTED_ALGOS as algo, i}
-							<Button label={algo} selected={active && selectedIndex === FIELD_ALGO && selectedColumn === i} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+							<Button label={algo} position={[i, 10]} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 						{/each}
 					</div>
 				</div>
 				<!-- Threads -->
-				<div bind:this={rowElements[FIELD_THREADS]}>
-					<Input bind:this={threadsInput} bind:value={threads} label={$t('downloads.lishCreate.threads')} type="number" min={0} selected={active && selectedIndex === FIELD_THREADS} />
-				</div>
+				<Input bind:value={threads} label={$t('downloads.lishCreate.threads')} type="number" min={0} position={[0, 11]} />
 			{/if}
 			<Alert type="error" message={errorMessage} />
 		</div>
 		<ButtonBar justify="center">
-			<div bind:this={rowElements[FIELD_CREATE]}>
-				<Button icon="/img/plus.svg" label={$t('downloads.lishCreate.create')} selected={active && selectedIndex === FIELD_CREATE} onConfirm={handleCreate} />
-			</div>
-			<div bind:this={rowElements[FIELD_BACK]}>
-				<Button icon="/img/back.svg" label={$t('common.back')} selected={active && selectedIndex === FIELD_BACK} onConfirm={onBack} />
-			</div>
+			<Button icon="/img/plus.svg" label={$t('downloads.lishCreate.create')} position={[0, 12]} onConfirm={handleCreate} />
+			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 12]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

@@ -1,6 +1,5 @@
 # LISH network structure format specification
 
-**Version**: 1
 **Created**: 29 October 2025
 **Last update**: 29 October 2025
 
@@ -32,7 +31,6 @@ This specification describes the logical structure, with JSON examples for clari
 
 ```typescript
 interface ILISHNetwork {
-	version: number; // Format version (required)
 	networkID: string; // Unique UUID for this network (required)
 	name: string; // Network name (required)
 	description?: string; // Free-form text description such as purpose, rules, etc. (optional)
@@ -57,7 +55,6 @@ Bootstrap peers are initial connection points for discovering other peers in the
 
 ```json
 {
-	"version": 1,
 	"networkID": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
 	"name": "Public LISH Network",
 	"bootstrapPeers": ["/ip4/192.168.1.10/tcp/9090/p2p/QmYyQSo1c1Ym7orWxLYvCrM2EmxFTANf8wXmmE7DWjhx5N"]
@@ -68,7 +65,6 @@ Bootstrap peers are initial connection points for discovering other peers in the
 
 ```json
 {
-	"version": 1,
 	"networkID": "a3f8c2e1-9b7d-4f2a-8c5e-1a2b3c4d5e6f",
 	"name": "Research Lab Network",
 	"description": "Private network for research collaboration",
@@ -82,6 +78,4 @@ Bootstrap peers are initial connection points for discovering other peers in the
 - At least one bootstrap peer must be provided
 - All timestamps must use ISO 8601 format in UTC timezone (e.g., "2025-10-20T14:30:00.000Z")
 
-## Version history
 
-- **Version 1**: First version - supports network identity, bootstrap peers, and basic metadata

@@ -4,8 +4,10 @@
 		image?: string;
 		isGamepadHovered?: boolean;
 		isAPressed?: boolean;
+		el?: HTMLElement | undefined;
 	}
-	let { title = '', image = 'https://picsum.photos/400/225', isGamepadHovered = false, isAPressed = false }: Props = $props();
+	let { title = '', image = 'https://picsum.photos/400/225', isGamepadHovered = false, isAPressed = false, el = $bindable() }: Props = $props();
+	void el;
 </script>
 
 <style>
@@ -45,6 +47,6 @@
 	}
 </style>
 
-<div class="item" class:hover={isGamepadHovered} class:pressed={isAPressed} style="background-image: url('{image}')">
+<div bind:this={el} class="item" class:hover={isGamepadHovered} class:pressed={isAPressed} style="background-image: url('{image}')">
 	<div class="title">{title}</div>
 </div>
