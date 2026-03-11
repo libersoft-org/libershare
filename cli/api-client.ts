@@ -4,7 +4,7 @@
  */
 
 interface Request {
-	id: number;
+	id: string;
 	method: string;
 	params?: Record<string, any> | undefined;
 }
@@ -12,8 +12,7 @@ interface Request {
 export class APIClient {
 	private readonly url: string;
 	private ws: WebSocket | null = null;
-	private requestId = 0;
-	private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+	private pending = new Map<string, { resolve: (value: any) => void; reject: (error: Error) => void }>();
 	private eventHandlers = new Map<string, ((data: any) => void)[]>();
 
 	constructor(url: string) {
@@ -59,13 +58,9 @@ export class APIClient {
 	}
 
 	async call<T = any>(method: string, params?: Record<string, any>): Promise<T> {
-		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-			throw new Error('Not connected');
-		}
-
-		const id = ++this.requestId;
+		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('Not connected');
+		const id = crypto.randomUUID();
 		const request: Request = { id, method, params };
-
 		return new Promise((resolve, reject) => {
 			this.pending.set(id, { resolve, reject });
 			this.ws!.send(JSON.stringify(request));
@@ -81,9 +76,7 @@ export class APIClient {
 	off(event: string, handler: (data: any) => void): void {
 		const handlers = this.eventHandlers.get(event) || [];
 		const index = handlers.indexOf(handler);
-		if (index !== -1) {
-			handlers.splice(index, 1);
-		}
+		if (index !== -1) handlers.splice(index, 1);
 	}
 
 	close(): void {

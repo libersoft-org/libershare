@@ -11,8 +11,7 @@ interface State {
 
 export class WsClient {
 	private ws: WebSocket | null = null;
-	private requestId = 0;
-	private pendingRequests = new Map<string | number, PendingRequest>();
+	private pendingRequests = new Map<string, PendingRequest>();
 	private eventListeners = new Map<string, Set<EventCallback>>();
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private connected = false;
@@ -106,7 +105,7 @@ export class WsClient {
 
 	async call<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
 		await this.ensureConnected();
-		const id = ++this.requestId;
+		const id = crypto.randomUUID();
 		const request = { id, method, params };
 		return new Promise<T>((resolve, reject) => {
 			this.pendingRequests.set(id, { resolve, reject });

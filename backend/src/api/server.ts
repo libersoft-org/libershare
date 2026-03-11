@@ -15,7 +15,7 @@ interface ClientData {
 }
 type ClientSocket = ServerWebSocket<ClientData>;
 interface Request {
-	id: string | number;
+	id: string;
 	method: string;
 	params?: Record<string, any>;
 }
