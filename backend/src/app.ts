@@ -4,7 +4,7 @@ import { setupLogger, type LogLevel } from './logger.ts';
 import { Networks } from './lishnet/lishnets.ts';
 import { DataServer } from './lish/data-server.ts';
 import { openDatabase } from './db/database.ts';
-import { APIServer } from './api/server.ts';
+import { APIServer } from './api/api.ts';
 import { Settings } from './settings.ts';
 
 // Parse command line arguments
