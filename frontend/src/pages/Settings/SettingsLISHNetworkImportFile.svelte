@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
@@ -31,13 +31,13 @@
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (!filePath.trim()) {
-			errorMessage = $t('common.filePathRequired');
+			errorMessage = $t('common.errorFilePathRequired');
 			return;
 		}
 		try {
 			parsedNetworks = await api.lishnets.parseFromFile(filePath);
 		} catch (e) {
-			errorMessage = e instanceof Error ? e.message : String(e);
+			errorMessage = translateError(e);
 		}
 	}
 

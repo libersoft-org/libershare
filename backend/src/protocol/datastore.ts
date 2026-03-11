@@ -3,7 +3,6 @@ import { BaseDatastore } from 'datastore-core';
 import { Key } from 'interface-datastore';
 import { dirname } from 'path';
 import { mkdirSync } from 'fs';
-
 /**
  * SQLite-based datastore for libp2p.
  * Replaces datastore-level to avoid native C++ addon (classic-level)
@@ -39,7 +38,7 @@ export class SqliteDatastore extends _BaseDatastore {
 	}
 
 	private ensureOpen(): void {
-		if (!this.db) throw new Error('Datastore not opened. Call open() first.');
+		if (!this.db) throw new Error('Datastore not opened');
 	}
 
 	open(): void {

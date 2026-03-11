@@ -1,5 +1,5 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, CodedError, ErrorCodes } from '@shared';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
@@ -114,7 +114,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 	async function exportToFile(p: ExportToFileParams): Promise<SuccessResponse> {
 		assert(p, ['lishID', 'filePath']);
 		const lish = dataServer.get(p.lishID);
-		if (!lish) throw new Error(`LISH not found: ${p.lishID}`);
+		if (!lish) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, p.lishID);
 		const { directory, chunks, ...exportData } = lish;
 		await Utils.writeJSONToFile(exportData, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
 		console.log(`✓ LISH exported to: ${p.filePath}`);
@@ -124,7 +124,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 	async function exportAllToFile(p: ExportAllToFileParams): Promise<SuccessResponse> {
 		assert(p, ['filePath']);
 		const lishs = dataServer.list();
-		if (lishs.length === 0) throw new Error('No LISHs to export');
+		if (lishs.length === 0) throw new CodedError(ErrorCodes.NO_LISHS);
 		const exportData: ILISH[] = lishs.map(lish => {
 			const { directory, chunks, ...data } = lish;
 			return data;
@@ -153,7 +153,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		const dataPathStat = await stat(dataPath);
 		if (dataPathStat.isDirectory()) {
 			const entries = await readdir(dataPath);
-			if (entries.length === 0) throw new Error('Directory is empty - nothing to create LISH from');
+			if (entries.length === 0) throw new CodedError(ErrorCodes.DIRECTORY_EMPTY);
 		}
 		console.log(`Creating LISH from: ${dataPath}, lishFile=${p.lishFile}, addToSharing=${addToSharing}, name=${p.name}, description=${p.description}`);
 		// 1. Create the LISH structure
@@ -216,7 +216,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 
 	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean): Promise<ImportLISHResponse> {
 		const existing = dataServer.get(lish.id);
-		if (existing && !overwrite) throw new Error(`LISH already exists: ${lish.id}`);
+		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
 		if (existing) dataServer.delete(lish.id);
 		const dirName = sanitizeFilename(lish.name || lish.id) || lish.id;
 		const directory = join(Utils.expandHome(downloadPath), dirName);

@@ -1,4 +1,4 @@
-﻿<script lang="ts">
+<script lang="ts">
 	import { tick } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
@@ -48,13 +48,13 @@
 	function getLISHCreateErrorMessage(errorCode: LISHCreateError, t: (key: string) => string): string {
 		switch (errorCode) {
 			case 'INPUT_REQUIRED':
-				return t('downloads.lishCreate.dataPathRequired');
+				return t('lish.create.dataPathRequired');
 			case 'LISH_FILE_REQUIRED':
-				return t('downloads.lishCreate.lishFileRequired');
+				return t('lish.create.lishFileRequired');
 			case 'INVALID_CHUNK_SIZE':
-				return t('downloads.lishCreate.invalidChunkSize');
+				return t('lish.create.invalidChunkSize');
 			case 'INVALID_THREADS':
-				return t('downloads.lishCreate.invalidThreads');
+				return t('lish.create.invalidThreads');
 			default:
 				return '';
 		}
@@ -136,13 +136,13 @@
 			try {
 				const pathCheck = await api.fs.exists(dataPath);
 				if (!pathCheck.exists) {
-					errorMessage = $t('downloads.lishCreate.dataPathNotFound');
+					errorMessage = $t('lish.create.dataPathNotFound');
 					return;
 				}
 				if (pathCheck.type === 'directory') {
 					const listing = await api.fs.list(dataPath);
 					if (listing.entries.length === 0) {
-						errorMessage = $t('downloads.lishCreate.emptyDirectory');
+						errorMessage = $t('lish.create.emptyDirectory');
 						return;
 					}
 				}
@@ -200,7 +200,7 @@
 		createParams = params;
 		creating = true;
 		navHandle.pause();
-		pushBreadcrumb($t('downloads.lishCreate.progress.title'));
+		pushBreadcrumb($t('lish.create.progress.title'));
 		removeBackHandler = pushBackHandler(handleProgressBack);
 	}
 
@@ -233,7 +233,7 @@
 		browseFile = fileName;
 		browsingInputPath = true;
 		navHandle.pause();
-		pushBreadcrumb($t('downloads.lishCreate.dataPath'));
+		pushBreadcrumb($t('lish.create.dataPath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
@@ -248,7 +248,7 @@
 		lishFileName = fileName || '';
 		browsingLISHFile = true;
 		navHandle.pause();
-		pushBreadcrumb($t('downloads.lishCreate.lishFile'));
+		pushBreadcrumb($t('lish.create.lishFile'));
 		removeBackHandler = pushBackHandler(handleOutputBrowseBack);
 	}
 
@@ -337,22 +337,22 @@
 			<Input bind:value={description} label={`${$t('common.description')} (${$t('common.optional')})`} multiline rows={3} position={[0, 1]} />
 			<!-- Data Path (required) -->
 			<div class="row">
-				<Input bind:value={dataPath} label={$t('downloads.lishCreate.dataPath')} position={[0, 2]} flex />
+				<Input bind:value={dataPath} label={$t('lish.create.dataPath')} position={[0, 2]} flex />
 				<Button icon="/img/folder.svg" position={[1, 2]} onConfirm={openInputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<!-- Save to File Switch -->
-			<SwitchRow label={$t('downloads.lishCreate.saveToFile') + ':'} checked={saveToFile} position={[0, 3]} onConfirm={() => (saveToFile = !saveToFile)} />
+			<SwitchRow label={$t('lish.create.saveToFile') + ':'} checked={saveToFile} position={[0, 3]} onConfirm={() => (saveToFile = !saveToFile)} />
 			{#if saveToFile}
 				<!-- LISH File Path (optional) -->
 				<div class="row">
-					<Input bind:value={lishFile} label={`${$t('downloads.lishCreate.lishFile')} (${$t('common.optional')})`} position={[0, 4]} flex onchange={() => (lishFileManuallyEdited = true)} />
+					<Input bind:value={lishFile} label={`${$t('lish.create.lishFile')} (${$t('common.optional')})`} position={[0, 4]} flex onchange={() => (lishFileManuallyEdited = true)} />
 					<Button icon="/img/folder.svg" position={[1, 4]} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
 			{/if}
 			<!-- Add to Sharing Switch -->
-			<SwitchRow label={$t('downloads.lishImport.autoStartSharing') + ':'} checked={addToSharing} position={[0, 5]} onConfirm={() => (addToSharing = !addToSharing)} />
+			<SwitchRow label={$t('lish.import.autoStartSharing') + ':'} checked={addToSharing} position={[0, 5]} onConfirm={() => (addToSharing = !addToSharing)} />
 			<!-- Advanced Settings Toggle -->
-			<Button icon={showAdvanced ? '/img/up.svg' : '/img/down.svg'} label={$t(showAdvanced ? 'downloads.lishCreate.hideAdvanced' : 'downloads.lishCreate.showAdvanced')} position={[0, 6]} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+			<Button icon={showAdvanced ? '/img/up.svg' : '/img/down.svg'} label={$t(showAdvanced ? 'lish.create.hideAdvanced' : 'lish.create.showAdvanced')} position={[0, 6]} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 			{#if showAdvanced}
 				{#if saveToFile}
 					<!-- Minify JSON Switch -->
@@ -361,10 +361,10 @@
 					<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 8]} onConfirm={handleCompressToggle} />
 				{/if}
 				<!-- Chunk Size -->
-				<Input bind:value={chunkSize} label={$t('downloads.lishCreate.chunkSize')} position={[0, 9]} />
+				<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 9]} />
 				<!-- Hash Algorithm -->
 				<div>
-					<div class="label">{$t('downloads.lishCreate.algorithm')}:</div>
+					<div class="label">{$t('lish.create.algorithm')}:</div>
 					<div class="algo-selector">
 						{#each SUPPORTED_ALGOS as algo, i}
 							<Button label={algo} position={[i, 10]} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
@@ -372,16 +372,16 @@
 					</div>
 				</div>
 				<!-- Threads -->
-				<Input bind:value={threads} label={$t('downloads.lishCreate.threads')} type="number" min={0} position={[0, 11]} />
+				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 11]} />
 			{/if}
 			<Alert type="error" message={errorMessage} />
 		</div>
 		<ButtonBar justify="center">
-			<Button icon="/img/plus.svg" label={$t('downloads.lishCreate.create')} position={[0, 12]} onConfirm={handleCreate} />
+			<Button icon="/img/plus.svg" label={$t('lish.create.create')} position={[0, 12]} onConfirm={handleCreate} />
 			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 12]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}
 {#if showOverwriteConfirm}
-	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.fileExistsOverwrite', { name: lishFile })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
+	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.errorFileExistsOverwrite', { name: lishFile })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
 {/if}

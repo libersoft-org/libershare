@@ -2,6 +2,7 @@ import { type ServerWebSocket } from 'bun';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type Settings } from '../settings.ts';
+import { CodedError, ErrorCodes } from '@shared';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
 import { initDatasetsHandlers } from './datasets.ts';
@@ -193,12 +194,12 @@ export class APIServer {
 		try {
 			req = JSON.parse(message);
 		} catch {
-			client.send(JSON.stringify({ id: null, error: 'Parse error' }));
+			client.send(JSON.stringify({ id: null, error: ErrorCodes.PARSE_ERROR }));
 			return;
 		}
 
 		if (!req.method) {
-			client.send(JSON.stringify({ id: req.id, error: 'Method required' }));
+			client.send(JSON.stringify({ id: req.id, error: ErrorCodes.METHOD_REQUIRED }));
 			return;
 		}
 
@@ -207,7 +208,8 @@ export class APIServer {
 			client.send(JSON.stringify({ id: req.id, result }));
 		} catch (err: any) {
 			console.error(`[API] Error executing ${req.method}, params=${JSON.stringify(req.params)}: ${err.message}`);
-			client.send(JSON.stringify({ id: req.id, error: err.message }));
+			if (err instanceof CodedError) client.send(JSON.stringify({ id: req.id, error: err.code, ...(err.detail !== undefined && { errorDetail: err.detail }) }));
+			else client.send(JSON.stringify({ id: req.id, error: ErrorCodes.INTERNAL_ERROR, errorDetail: err.message }));
 		}
 	}
 
@@ -217,7 +219,7 @@ export class APIServer {
 	private async execute(client: ClientSocket, method: string, params: Record<string, any>): Promise<any> {
 		console.log(`[API] Executing method: ${method}, params: ${JSON.stringify(params)}`);
 		const handler = this.handlers[method];
-		if (!handler) throw new Error(`Unknown method: ${method}`);
+		if (!handler) throw new CodedError(ErrorCodes.UNKNOWN_METHOD, method);
 		return handler.call(this, params, client);
 	}
 

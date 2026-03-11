@@ -26,7 +26,7 @@
 
 	async function loadPublicList(): Promise<void> {
 		if (!url.trim()) {
-			error = $t('common.urlRequired');
+			error = $t('common.errorURLRequired');
 			return;
 		}
 		loading = true;

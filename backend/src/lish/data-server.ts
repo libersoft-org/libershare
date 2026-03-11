@@ -1,7 +1,7 @@
 import { open } from 'fs/promises';
 import { join } from 'path';
 import { type Database } from 'bun:sqlite';
-import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder, CodedError, ErrorCodes } from '@shared';
 import { type MissingChunk, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, findChunkLocation } from '../db/lishs.ts';
 
 export type { MissingChunk };
@@ -104,7 +104,7 @@ export class DataServer {
 	}
 
 	public async writeChunk(downloadDir: string, lish: ILISH, fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
-		if (!lish.files || fileIndex >= lish.files.length) throw new Error(`Invalid file index: ${fileIndex}`);
+		if (!lish.files || fileIndex >= lish.files.length) throw new CodedError(ErrorCodes.INVALID_FILE_INDEX, String(fileIndex));
 		const file = lish.files[fileIndex]!;
 		const filePath = join(downloadDir, file.path);
 		const offset = chunkIndex * lish.chunkSize;

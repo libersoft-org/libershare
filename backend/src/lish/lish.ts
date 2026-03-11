@@ -1,7 +1,7 @@
 import * as fsPromises from 'node:fs/promises';
 import { type Stats } from 'node:fs';
 import { dirname } from 'node:path';
-import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS } from '@shared';
+import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
@@ -39,7 +39,7 @@ async function getStats(fullPath: string): Promise<Stats> {
 		const stat = await Bun.file(fullPath).stat();
 		return stat;
 	} catch (e) {
-		throw new Error(`Cannot access path: ${fullPath}`);
+		throw new CodedError(ErrorCodes.PATH_ACCESS_DENIED, fullPath);
 	}
 }
 
@@ -321,7 +321,7 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		if (directories.length > 0) lish.directories = directories;
 		if (files.length > 0) lish.files = files;
 		if (links.length > 0) lish.links = links;
-	} else throw new Error('Input must be a file or directory');
+	} else throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE);
 	return lish;
 }
 // ============================================================================
@@ -340,13 +340,13 @@ export async function exportLISHToFile(lish: IStoredLISH, outputFilePath: string
  * Throws a descriptive error if any required field is missing or invalid.
  */
 export function validateImportedLISH(data: unknown): ILISH {
-	if (!data || typeof data !== 'object') throw new Error('Invalid LISH: not an object');
+	if (!data || typeof data !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_FORMAT);
 	const obj = data as Record<string, unknown>;
-	if (typeof obj['id'] !== 'string' || !obj['id']) throw new Error('Invalid LISH: missing or empty id');
-	if (typeof obj['created'] !== 'string' || !obj['created']) throw new Error('Invalid LISH: missing or empty created');
-	if (typeof obj['chunkSize'] !== 'number' || obj['chunkSize'] <= 0) throw new Error('Invalid LISH: missing or invalid chunkSize');
+	if (typeof obj['id'] !== 'string' || !obj['id']) throw new CodedError(ErrorCodes.LISH_MISSING_ID);
+	if (typeof obj['created'] !== 'string' || !obj['created']) throw new CodedError(ErrorCodes.LISH_MISSING_CREATED);
+	if (typeof obj['chunkSize'] !== 'number' || obj['chunkSize'] <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE);
 	if (typeof obj['checksumAlgo'] !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(obj['checksumAlgo'])) {
-		throw new Error(`Invalid LISH: unsupported checksumAlgo: ${obj['checksumAlgo']}`);
+		throw new CodedError(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM, String(obj['checksumAlgo']));
 	}
 	return data as ILISH;
 }
@@ -366,6 +366,6 @@ export async function importLISHFromFile(filePath: string): Promise<ILISH> {
  */
 export function parseLISHFromJSON(json: string): ILISH {
 	const data = Utils.safeJSONParse(json, 'JSON input');
-	if (Array.isArray(data)) throw new Error('Expected a single LISH object, got an array');
+	if (Array.isArray(data)) throw new CodedError(ErrorCodes.LISH_UNEXPECTED_ARRAY);
 	return validateImportedLISH(data);
 }

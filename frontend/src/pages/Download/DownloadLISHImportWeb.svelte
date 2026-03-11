@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
@@ -34,11 +34,11 @@
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (!url.trim()) {
-			errorMessage = $t('common.urlRequired');
+			errorMessage = $t('common.errorURLRequired');
 			return;
 		}
 		if (!downloadPath.trim()) {
-			errorMessage = $t('downloads.lishImport.downloadPathRequired');
+			errorMessage = $t('lish.import.downloadPathRequired');
 			return;
 		}
 		loading = true;
@@ -46,7 +46,7 @@
 			await api.lishs.importFromURL(url, downloadPath);
 			onImport?.();
 		} catch (e) {
-			errorMessage = e instanceof Error ? e.message : String(e);
+			errorMessage = translateError(e);
 		} finally {
 			loading = false;
 		}
@@ -56,7 +56,7 @@
 	function openDownloadPathBrowse(): void {
 		browsingDownloadPath = true;
 		navHandle.pause();
-		pushBreadcrumb($t('downloads.lishImport.downloadPath'));
+		pushBreadcrumb($t('lish.import.downloadPath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
@@ -108,12 +108,12 @@
 {:else}
 	<div class="import">
 		<div class="container">
-			<Input bind:value={url} label={$t('downloads.lishImport.url')} placeholder="https://..." position={[0, 0]} flex />
+			<Input bind:value={url} label={$t('lish.import.url')} placeholder="https://..." position={[0, 0]} flex />
 			<div class="row">
-				<Input bind:value={downloadPath} label={$t('downloads.lishImport.downloadPath')} position={[0, 1]} flex />
+				<Input bind:value={downloadPath} label={$t('lish.import.downloadPath')} position={[0, 1]} flex />
 				<Button icon="/img/folder.svg" position={[1, 1]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('downloads.lishImport.autoStartSharing')} checked={autoStart} position={[0, 2]} onToggle={() => (autoStart = !autoStart)} />
+			<SwitchRow label={$t('lish.import.autoStartSharing')} checked={autoStart} position={[0, 2]} onToggle={() => (autoStart = !autoStart)} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}

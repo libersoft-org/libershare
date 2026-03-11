@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
@@ -31,7 +31,7 @@
 		try {
 			peers = await api.lishnets.getPeers(network.networkID);
 		} catch (e: any) {
-			error = e?.message || 'Failed to load peers';
+			error = translateError(e);
 			peers = [];
 		}
 		loading = false;

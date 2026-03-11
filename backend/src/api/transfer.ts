@@ -1,6 +1,6 @@
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
-import { type DownloadResponse } from '@shared';
+import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
 import { join } from 'path';
 import { Utils } from '../utils.ts';
@@ -28,7 +28,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		downloader
 			.download()
 			.then(() => emit(client, 'transfer.download:complete', { downloadDir }))
-			.catch(err => emit(client, 'transfer.download:error', { error: err.message }));
+			.catch(err => {
+				if (err instanceof CodedError) emit(client, 'transfer.download:error', { error: err.code, errorDetail: err.detail });
+				else emit(client, 'transfer.download:error', { error: ErrorCodes.DOWNLOAD_ERROR, errorDetail: err.message });
+			});
 		return { downloadDir };
 	}
 	return { download };

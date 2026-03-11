@@ -1,4 +1,4 @@
-import { type CompressionAlgorithm, isCompressed } from '@shared';
+import { type CompressionAlgorithm, isCompressed, CodedError, ErrorCodes } from '@shared';
 
 export class Utils {
 	static expandHome(path: string): string {
@@ -18,7 +18,7 @@ export class Utils {
 		try {
 			return JSON.parse(text);
 		} catch (err: any) {
-			throw new Error(`Invalid JSON from ${source}: ${err.message}`);
+			throw new CodedError(ErrorCodes.INVALID_JSON, `${source}: ${err.message}`);
 		}
 	}
 
@@ -28,7 +28,7 @@ export class Utils {
 	 */
 	static assertParams<K extends string>(params: Record<string, any>, required: K[]): void {
 		for (const key of required) {
-			if (params[key] === undefined) throw new Error(`Missing required parameter: ${key}`);
+			if (params[key] === undefined) throw new CodedError(ErrorCodes.MISSING_PARAMETER, key);
 		}
 	}
 
@@ -41,7 +41,7 @@ export class Utils {
 			case 'gzip':
 				return Bun.gzipSync(data);
 			default:
-				throw new Error(`Unsupported compression algorithm: ${algorithm}`);
+				throw new CodedError(ErrorCodes.UNSUPPORTED_COMPRESSION, algorithm);
 		}
 	}
 
@@ -54,7 +54,7 @@ export class Utils {
 			case 'gzip':
 				return Bun.gunzipSync(data);
 			default:
-				throw new Error(`Unsupported decompression algorithm: ${algorithm}`);
+				throw new CodedError(ErrorCodes.UNSUPPORTED_DECOMPRESSION, algorithm);
 		}
 	}
 
@@ -80,7 +80,7 @@ export class Utils {
 		const timeout = setTimeout(() => controller.abort(), timeoutMs);
 		try {
 			const response = await fetch(url, { signal: controller.signal });
-			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			if (!response.ok) throw new CodedError(ErrorCodes.HTTP_ERROR, String(response.status));
 			const isCompressedURL = isCompressed(url);
 			const contentEncoding = response.headers.get('content-encoding');
 			const isGzipEncoded = contentEncoding?.toLowerCase().includes('gzip');

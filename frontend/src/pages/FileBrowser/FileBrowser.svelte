@@ -3,7 +3,7 @@
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
-	import { t, withDetail } from '../../scripts/language.ts';
+	import { t, withDetail, translateError } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
 	import { getParentPath, loadDirectoryFromAPI, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
@@ -129,7 +129,7 @@
 				selectedIndex = idx >= 0 ? idx : 0;
 			} else selectedIndex = 0;
 		} catch (e: any) {
-			error = withDetail($t('fileBrowser.loadDirectoryFailed'), e.message);
+			error = withDetail($t('fileBrowser.loadDirectoryFailed'), translateError(e));
 			// Even on error, provide ".." entry to navigate up if we have a parent path
 			// Don't show ".." at root level (Linux "/" or empty path, Windows drive list)
 			if (!isAtRoot(currentPath, separator) && parentPath !== null) {
@@ -827,7 +827,7 @@
 		try {
 			const result = await api.fs.exists(fullPath);
 			if (result.exists && result.type === 'directory') {
-				saveErrorMessage = $t('common.fileNameIsDirectory', { name: internalSaveFileName });
+				saveErrorMessage = $t('common.errorFileNameIsDirectory', { name: internalSaveFileName });
 				return;
 			}
 			if (result.exists) {
@@ -842,7 +842,7 @@
 			onSaveComplete?.(fullPath);
 		} catch (e) {
 			console.error('Failed to save file:', e);
-			saveErrorMessage = e instanceof Error ? e.message : String(e);
+			saveErrorMessage = translateError(e);
 			onSaveError?.(saveErrorMessage);
 		}
 	}
@@ -857,7 +857,7 @@
 			onSaveComplete?.(pendingSavePath);
 		} catch (e) {
 			console.error('Failed to save file:', e);
-			saveErrorMessage = e instanceof Error ? e.message : String(e);
+			saveErrorMessage = translateError(e);
 			onSaveError?.(saveErrorMessage);
 		}
 	}
@@ -911,7 +911,7 @@
 				if (startPath.startsWith('~')) startPath = (info.home || '') + startPath.slice(1);
 				await loadDirectory(startPath || info.home || '', initialFile);
 			} catch (e: any) {
-				error = withDetail($t('fileBrowser.initializeFailed'), e.message);
+				error = withDetail($t('fileBrowser.initializeFailed'), translateError(e));
 				loading = false;
 			}
 		})();
@@ -1085,5 +1085,5 @@
 	<InputDialog title={$t('fileBrowser.customFilter')} label={$t('fileBrowser.filterPattern')} placeholder={$t('fileBrowser.enterFilterPattern')} initialValue={customFilter ?? ''} confirmLabel={$t('common.ok')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmCustomFilter} onBack={closeCustomFilterDialog} />
 {/if}
 {#if showOverwriteConfirmState}
-	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.fileExistsOverwrite', { name: internalSaveFileName })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
+	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.errorFileExistsOverwrite', { name: internalSaveFileName })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
 {/if}

@@ -4,7 +4,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { api } from '../../scripts/api.ts';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
@@ -47,7 +47,7 @@
 			content = await api.fs.readText(filePath);
 			originalContent = content;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load file';
+			error = translateError(e);
 		} finally {
 			loading = false;
 		}
@@ -62,7 +62,7 @@
 			if (result.success) originalContent = content;
 			else error = 'Failed to save file';
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to save file';
+			error = translateError(e);
 		} finally {
 			saving = false;
 		}

@@ -1,3 +1,5 @@
+import { CodedError, ErrorCodes } from './errors.ts';
+
 export function formatBytes(bytes: number, decimals: number = 2): string {
 	if (bytes === 0) return '0 Bytes';
 	const k = 1024;
@@ -13,7 +15,7 @@ export function parseBytes(value: string | number): number {
 		.trim()
 		.toUpperCase()
 		.match(/^(\d+(?:\.\d+)?)\s*([KMGTPEZY])?B?$/);
-	if (!match) throw new Error('Invalid size format. Use number with optional suffix: K, M, G, T, P, E, Z, Y');
+	if (!match) throw new CodedError(ErrorCodes.INVALID_SIZE_FORMAT);
 	const [, num, suffix] = match;
 	if (!suffix) return Math.floor(parseFloat(num!));
 	const sizes = ['', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y'];

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
@@ -34,18 +34,18 @@
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (!filePath.trim()) {
-			errorMessage = $t('common.filePathRequired');
+			errorMessage = $t('common.errorFilePathRequired');
 			return;
 		}
 		if (!downloadPath.trim()) {
-			errorMessage = $t('downloads.lishImport.downloadPathRequired');
+			errorMessage = $t('lish.import.downloadPathRequired');
 			return;
 		}
 		try {
 			await api.lishs.importFromFile(filePath, downloadPath);
 			onImport?.();
 		} catch (e) {
-			errorMessage = e instanceof Error ? e.message : String(e);
+			errorMessage = translateError(e);
 		}
 	}
 
@@ -54,14 +54,14 @@
 	function openFilePathBrowse(): void {
 		browsingFilePath = true;
 		navHandle.pause();
-		pushBreadcrumb($t('downloads.lishImport.filePath'));
+		pushBreadcrumb($t('lish.import.filePath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
 	function openDownloadPathBrowse(): void {
 		browsingDownloadPath = true;
 		navHandle.pause();
-		pushBreadcrumb($t('downloads.lishImport.downloadPath'));
+		pushBreadcrumb($t('lish.import.downloadPath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
@@ -122,14 +122,14 @@
 	<div class="import">
 		<div class="container">
 			<div class="row">
-				<Input bind:value={filePath} label={$t('downloads.lishImport.filePath')} position={[0, 0]} flex />
+				<Input bind:value={filePath} label={$t('lish.import.filePath')} position={[0, 0]} flex />
 				<Button icon="/img/folder.svg" position={[1, 0]} onConfirm={openFilePathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row">
-				<Input bind:value={downloadPath} label={$t('downloads.lishImport.downloadPath')} position={[0, 1]} flex />
+				<Input bind:value={downloadPath} label={$t('lish.import.downloadPath')} position={[0, 1]} flex />
 				<Button icon="/img/folder.svg" position={[1, 1]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('downloads.lishImport.autoStartSharing')} checked={autoStart} position={[0, 2]} onToggle={() => (autoStart = !autoStart)} />
+			<SwitchRow label={$t('lish.import.autoStartSharing')} checked={autoStart} position={[0, 2]} onToggle={() => (autoStart = !autoStart)} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}

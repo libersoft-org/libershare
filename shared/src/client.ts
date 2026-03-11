@@ -89,8 +89,12 @@ export class WsClient {
 			const pending = this.pendingRequests.get(msg.id);
 			if (pending) {
 				this.pendingRequests.delete(msg.id);
-				if (msg.error) pending.reject(new Error(msg.error));
-				else pending.resolve(msg.result);
+				if (msg.error) {
+					const err = new Error(msg.error);
+					(err as any).code = msg.error;
+					(err as any).detail = msg.errorDetail;
+					pending.reject(err);
+				} else pending.resolve(msg.result);
 			}
 		}
 	}

@@ -25,6 +25,9 @@ export { API, type IWsClient } from './api.ts';
 // WebSocket client
 export { WsClient } from './client.ts';
 
+// Error codes
+export { ErrorCodes, CodedError, type ErrorCode } from './errors.ts';
+
 // Network types
 
 export interface NetworkStatus {

@@ -121,7 +121,7 @@ export const menuStructure = derived(
 							},
 							{
 								id: 'import-lish-json',
-								label: tt('downloads.lishImport.fromJSON'),
+								label: tt('lish.import.fromJSON'),
 								icon: '/img/json.svg',
 								component: DownloadLISHImportJSON,
 							},

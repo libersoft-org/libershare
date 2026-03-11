@@ -1,7 +1,7 @@
 import { api } from './api.ts';
 import { type StorageItemData } from './storage.ts';
 import { formatDate } from './utils.ts';
-import { tt, withDetail } from './language.ts';
+import { tt, withDetail, translateError } from './language.ts';
 /**
  * File system entry from API
  */
@@ -297,7 +297,7 @@ export async function deleteFileOrFolder(path: string): Promise<FileOperationRes
 		await api.fs.delete(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: withDetail(tt('fileBrowser.deleteFailed'), e.message) };
+		return { success: false, error: withDetail(tt('fileBrowser.deleteFailed'), translateError(e)) };
 	}
 }
 
@@ -309,7 +309,7 @@ export async function createFolder(path: string): Promise<FileOperationResult> {
 		await api.fs.mkdir(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: withDetail(tt('fileBrowser.createFolderFailed'), e.message) };
+		return { success: false, error: withDetail(tt('fileBrowser.createFolderFailed'), translateError(e)) };
 	}
 }
 
@@ -321,7 +321,7 @@ export async function openFile(path: string): Promise<FileOperationResult> {
 		await api.fs.open(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: withDetail(tt('fileBrowser.openFileFailed'), e.message) };
+		return { success: false, error: withDetail(tt('fileBrowser.openFileFailed'), translateError(e)) };
 	}
 }
 
@@ -333,7 +333,7 @@ export async function renameFile(path: string, newName: string): Promise<FileOpe
 		await api.fs.rename(path, newName);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: withDetail(tt('fileBrowser.renameFileFailed'), e.message) };
+		return { success: false, error: withDetail(tt('fileBrowser.renameFileFailed'), translateError(e)) };
 	}
 }
 
