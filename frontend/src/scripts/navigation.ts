@@ -16,6 +16,7 @@ let contentElement: HTMLElement | null = null;
 const confirmDialogStore = writable<ConfirmDialogState>({ visible: false, action: null });
 // Global navigation store - set by createNavigation, used by components
 let globalNavigate: ((id: string, label?: string) => void) | null = null;
+let globalNavigateBack: (() => void) | null = null;
 // Internal function to set menu breadcrumb (clears component items)
 function setMenuBreadcrumb(items: string[]): void {
 	breadcrumbStore.set(items.map(label => ({ label, source: 'menu' as const })));
@@ -85,6 +86,10 @@ export function hideConfirmDialog(): void {
 
 export function navigateTo(id: string, label?: string): void {
 	if (globalNavigate) globalNavigate(id, label);
+}
+
+export function navigateBack(): void {
+	if (globalNavigateBack) globalNavigateBack();
 }
 
 // Helper to find menu item by path of IDs
@@ -193,6 +198,7 @@ export function createNavigation() {
 
 	// Set global navigate function so components can use navigateTo()
 	globalNavigate = navigate;
+	globalNavigateBack = navigateBack;
 
 	return {
 		path: pathIDs,

@@ -102,7 +102,7 @@
 {#if parsedNetworks}
 	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleOverwriteDone} />
 {:else if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storageLISHnetPath} showPath fileFilter={['*.lishnet', '*.lishnets', '*.json', '*.lishnet.gz', '*.lishnets.gz', '*.json.gz']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={filePath || $storageLISHnetPath} showPath fileFilter={['*.lishnet', '*.lishnets', '*.json', '*.lishnet.gz', '*.lishnets.gz', '*.json.gz', '*.lishnet.gzip', '*.lishnets.gzip', '*.json.gzip']} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">
 		<div class="container">

@@ -4,7 +4,7 @@
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBreadcrumb, popBreadcrumb, navigateBack } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
@@ -44,7 +44,11 @@
 		loading = true;
 		try {
 			await api.lishs.importFromURL(url, downloadPath);
-			onImport?.();
+			if (onImport) onImport();
+			else {
+				navigateBack();
+				navigateBack();
+			}
 		} catch (e) {
 			errorMessage = translateError(e);
 		} finally {
