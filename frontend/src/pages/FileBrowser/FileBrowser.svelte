@@ -29,6 +29,7 @@
 		foldersOnly?: boolean | undefined;
 		filesOnly?: boolean | undefined;
 		fileFilter?: string[] | undefined; // Array of extensions like ['.lish', '.json'] or ['*'] for all
+		fileFilterName?: string | undefined; // Display name for the filter (e.g. 'LISH files')
 		showPath?: boolean | undefined;
 		selectFolderButton?: boolean | undefined;
 		selectFileButton?: boolean | undefined;
@@ -41,10 +42,10 @@
 		onSaveComplete?: ((path: string) => void) | undefined; // Called after successful save
 		onSaveError?: ((error: string) => void) | undefined; // Called on save error
 		onDownAtEnd?: (() => boolean) | undefined;
-		onOpenSpecialFile?: ((path: string, type: 'lish' | 'lishnet') => void) | undefined; // Called for .lish/.lishs/.lishnet/.lishnets files
+		specialFileTypes?: { extensions: string[]; onOpen: (path: string) => void }[] | undefined;
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, onOpenSpecialFile }: Props = $props();
+	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, fileFilterName, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, specialFileTypes }: Props = $props();
 
 	// File filter state
 	let showAllFiles = $state(false);
@@ -102,11 +103,11 @@
 	let saveFileNameColumn = $state(0); // 0 = input, 1 = button
 	let selectedItem = $derived(items[selectedIndex]);
 	// Folder toolbar actions
-	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, selectFolderButton, customFilter ?? undefined, currentPath));
+	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectFolderButton, customFilter ?? undefined, currentPath));
 	let selectedFolderActionIndex = $state(0);
 	let folderActionsActive = $derived($activeArea === `${areaID}-folder-actions`);
 	// Filter panel actions
-	let filterActions = $derived(buildFilterActions($t, fileFilter, customFilter ?? undefined));
+	let filterActions = $derived(buildFilterActions($t, fileFilter, fileFilterName, customFilter ?? undefined));
 	let showCustomFilterDialog = $state(false);
 
 	async function loadDirectory(path?: string, selectName?: string): Promise<void> {
@@ -627,18 +628,14 @@
 	async function handleOpenFile(item: StorageItemData): Promise<void> {
 		// Check for special file types (.lish, .lishs, .lishnet, .lishnets) including .gz variants
 		const lowerName = item.name.toLowerCase();
-		if (onOpenSpecialFile) {
-			if (lowerName.endsWith('.lish') || lowerName.endsWith('.lishs') || lowerName.endsWith('.lish.gz') || lowerName.endsWith('.lishs.gz')) {
-				onOpenSpecialFile(item.path, 'lish');
-				showActions = false;
-				activateArea(listAreaID);
-				return;
-			}
-			if (lowerName.endsWith('.lishnet') || lowerName.endsWith('.lishnets') || lowerName.endsWith('.lishnet.gz') || lowerName.endsWith('.lishnets.gz')) {
-				onOpenSpecialFile(item.path, 'lishnet');
-				showActions = false;
-				activateArea(listAreaID);
-				return;
+		if (specialFileTypes) {
+			for (const { extensions, onOpen } of specialFileTypes) {
+				if (extensions.some(ext => lowerName.endsWith(ext))) {
+					onOpen(item.path);
+					showActions = false;
+					activateArea(listAreaID);
+					return;
+				}
 			}
 		}
 		// Standard file open

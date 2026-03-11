@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { type Component } from 'svelte';
 	import { storagePath } from '../../scripts/settings.ts';
-	import { t } from '../../scripts/language.ts';
+	import { tt } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -14,16 +15,32 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-	// Special file import state
-	let importMode = $state<'lish' | 'lishnet' | null>(null);
+	const SPECIAL_FILE_TYPES = [
+		{
+			mode: 'lish',
+			label: 'LISH',
+			extensions: ['.lish', '.lishs', '.lish.gz', '.lishs.gz', '.lish.gzip', '.lishs.gzip'],
+			component: DownloadLISHImportJSON,
+		},
+		{
+			mode: 'lishnet',
+			label: 'LISHNET',
+			extensions: ['.lishnet', '.lishnets', '.lishnet.gz', '.lishnets.gz', '.lishnet.gzip', '.lishnets.gzip'],
+			component: SettingsLISHNetworkImportJSON,
+		},
+	] as const;
+	let importMode = $state<string | null>(null);
 	let importFilePath = $state('');
+	let ImportComponent = $derived(SPECIAL_FILE_TYPES.find(t => t.mode === importMode)?.component as Component<any> | undefined);
 
-	function handleOpenSpecialFile(path: string, type: 'lish' | 'lishnet'): void {
-		importFilePath = path;
-		importMode = type;
-		if (type === 'lish') pushBreadcrumb($t('common.import') + ' LISH');
-		else pushBreadcrumb($t('common.import') + ' LISHNET');
-	}
+	const specialFileTypes = SPECIAL_FILE_TYPES.map(t => ({
+		extensions: t.extensions as unknown as string[],
+		onOpen: (path: string) => {
+			importFilePath = path;
+			importMode = t.mode;
+			pushBreadcrumb(tt('common.import') + ' ' + t.label);
+		},
+	}));
 
 	async function handleImportBack(): Promise<void> {
 		popBreadcrumb();
@@ -39,10 +56,8 @@
 	}
 </script>
 
-{#if importMode === 'lish'}
-	<DownloadLISHImportJSON {areaID} {position} initialFilePath={importFilePath} onBack={handleImportBack} onImport={handleImportComplete} />
-{:else if importMode === 'lishnet'}
-	<SettingsLISHNetworkImportJSON {areaID} {position} initialFilePath={importFilePath} onBack={handleImportBack} onImport={handleImportComplete} />
+{#if ImportComponent}
+	<ImportComponent {areaID} {position} initialFilePath={importFilePath} onBack={handleImportBack} onImport={handleImportComplete} />
 {:else}
-	<FileBrowser {areaID} {position} {onBack} initialPath={$storagePath} onOpenSpecialFile={handleOpenSpecialFile} />
+	<FileBrowser {areaID} {position} {onBack} initialPath={$storagePath} {specialFileTypes} />
 {/if}

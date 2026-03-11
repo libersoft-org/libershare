@@ -45,6 +45,7 @@
 		"optional": "optional",
 		"fromFile": "From file",
 		"fromWeb": "From web",
+		"extensions": "extensions",
 		"openFolder": "Open folder",
 		"errorFileExistsOverwrite": "File \"{name}\" already exists. Do you want to overwrite it?",
 		"errorFileNameIsDirectory": "The name \"{name}\" already exists as a directory, so the file cannot be saved.",

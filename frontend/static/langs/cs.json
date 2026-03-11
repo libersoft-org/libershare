@@ -45,6 +45,7 @@
 		"optional": "volitelné",
 		"fromFile": "Ze souboru",
 		"fromWeb": "Z webu",
+		"extensions": "přípony",
 		"openFolder": "Otevřít složku",
 		"errorFileExistsOverwrite": "Soubor \"{name}\" již existuje. Chcete ho přepsat?",
 		"errorFileNameIsDirectory": "Název \"{name}\" již existuje jakožto adresář, proto není možné soubor uložit.",
