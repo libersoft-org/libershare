@@ -105,7 +105,5 @@ async function sendLengthPrefixed(stream: Stream, data: Uint8Array): Promise<voi
 	// Encode the message with length prefix - returns AsyncGenerator<Uint8Array>
 	const encoded = lpEncode([data]);
 	// Send all chunks from the encoder
-	for await (const chunk of encoded) {
-		stream.send(chunk);
-	}
+	for await (const chunk of encoded) stream.send(chunk);
 }

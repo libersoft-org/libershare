@@ -91,9 +91,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		assert(p, ['path']);
 		const definitions = await networks.parseFromFile(p.path);
 		const results: LISHNetworkConfig[] = [];
-		for (const def of definitions) {
-			results.push(await networks.importFromLISHnet(def as any, p.enabled ?? false));
-		}
+		for (const def of definitions) results.push(await networks.importFromLISHnet(def as any, p.enabled ?? false));
 		return results;
 	}
 	async function parseFromFile(p: { path: string }): Promise<LISHNetworkDefinition[]> {

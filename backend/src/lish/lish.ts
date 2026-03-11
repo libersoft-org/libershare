@@ -114,9 +114,7 @@ async function scanFiles(dirPath: string, basePath: string, chunkSize: number, i
 	const result: { path: string; size: number; chunks: number }[] = [];
 	const glob = new Bun.Glob('*');
 	const scannedPaths: string[] = [];
-	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) {
-		scannedPaths.push(entry);
-	}
+	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) scannedPaths.push(entry);
 	scannedPaths.sort();
 	for (const entry of scannedPaths) {
 		const fullPath = `${dirPath}/${entry}`;
@@ -167,9 +165,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	// Read directory contents
 	const glob = new Bun.Glob('*');
 	const scannedPaths: string[] = [];
-	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) {
-		scannedPaths.push(entry);
-	}
+	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) scannedPaths.push(entry);
 	// Sort paths alphabetically
 	scannedPaths.sort();
 	for (const entry of scannedPaths) {

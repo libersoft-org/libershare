@@ -76,9 +76,7 @@
 		} else if (data.type === 'chunk') {
 			const path = data.path || '';
 			const idx = allFiles.findIndex(f => f.path === path);
-			if (idx >= 0) {
-				allFiles[idx]!.currentChunk = data.current || 0;
-			}
+			if (idx >= 0) allFiles[idx]!.currentChunk = data.current || 0;
 		} else if (data.type === 'file') {
 			const path = data.path || '';
 			const idx = allFiles.findIndex(f => f.path === path);

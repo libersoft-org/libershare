@@ -611,9 +611,7 @@ export class Network {
 	async findPeer(peerID: PeerId): Promise<void> {
 		console.log('Finding peer:');
 		console.log('Closest peers:');
-		for await (const peer of this.node!.peerRouting.getClosestPeers(peerID.toMultihash().bytes)) {
-			console.log(peer.id, peer.multiaddrs);
-		}
+		for await (const peer of this.node!.peerRouting.getClosestPeers(peerID.toMultihash().bytes)) console.log(peer.id, peer.multiaddrs);
 		const peer: PeerInfo = await this.node!.peerRouting.findPeer(peerID);
 		console.log('Found it, multiaddrs are:');
 		peer.multiaddrs.forEach(ma => console.log(ma.toString()));

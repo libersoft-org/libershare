@@ -24,9 +24,8 @@ for (let i = 0; i < args.length; i++) {
 	if (args[i] === '--datadir' && i + 1 < args.length) {
 		dataDir = args[i + 1]!;
 		i++;
-	} else if (args[i] === '--pink') {
-		enablePink = true;
-	} else if (args[i] === '--loglevel' && i + 1 < args.length) {
+	} else if (args[i] === '--pink') enablePink = true;
+	else if (args[i] === '--loglevel' && i + 1 < args.length) {
 		logLevel = args[i + 1]! as LogLevel;
 		i++;
 	} else if (args[i] === '--host' && i + 1 < args.length) {
@@ -35,9 +34,8 @@ for (let i = 0; i < args.length; i++) {
 	} else if (args[i] === '--port' && i + 1 < args.length) {
 		apiPort = parseInt(args[i + 1]!, 10);
 		i++;
-	} else if (args[i] === '--secure') {
-		apiSecure = true;
-	} else if (args[i] === '--privkey' && i + 1 < args.length) {
+	} else if (args[i] === '--secure') apiSecure = true;
+	else if (args[i] === '--privkey' && i + 1 < args.length) {
 		apiKeyFile = args[i + 1];
 		i++;
 	} else if (args[i] === '--pubkey' && i + 1 < args.length) {
