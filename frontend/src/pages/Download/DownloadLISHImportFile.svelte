@@ -10,12 +10,14 @@
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { type ILISH } from '@shared';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
+	import ImportOverwrite from './DownloadLISHImportOverwrite.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -30,6 +32,7 @@
 	let errorMessage = $state('');
 	let browsingFilePath = $state(false);
 	let browsingDownloadPath = $state(false);
+	let parsedLishs = $state<ILISH[] | null>(null);
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
@@ -42,14 +45,18 @@
 			return;
 		}
 		try {
-			await api.lishs.importFromFile(filePath, downloadPath);
-			if (onImport) onImport();
-			else {
-				navigateBack();
-				navigateBack();
-			}
+			parsedLishs = await api.lishs.parseFromFile(filePath);
 		} catch (e) {
 			errorMessage = translateError(e);
+		}
+	}
+
+	function handleOverwriteDone(): void {
+		parsedLishs = null;
+		if (onImport) onImport();
+		else {
+			navigateBack();
+			navigateBack();
 		}
 	}
 
@@ -118,7 +125,9 @@
 	}
 </style>
 
-{#if browsingFilePath}
+{#if parsedLishs}
+	<ImportOverwrite lishs={parsedLishs} {downloadPath} {position} onDone={handleOverwriteDone} />
+{:else if browsingFilePath}
 	<FileBrowser {areaID} {position} initialPath={filePath || $storagePath} showPath fileFilter={['*.lish', '*.lishs', '*.json', '*.lish.gz', '*.lishs.gz', '*.json.gz', '*.lish.gzip', '*.lishs.gzip', '*.json.gzip']} fileFilterName={'LISH ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else if browsingDownloadPath}
 	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath selectFolderButton onSelect={handleDownloadPathSelect} onBack={handleBrowseBack} />

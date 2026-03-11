@@ -109,6 +109,9 @@ export class APIServer {
 			'lishs.importFromFile': _lishs.importFromFile,
 			'lishs.importFromJSON': _lishs.importFromJSON,
 			'lishs.importFromURL': _lishs.importFromURL,
+			'lishs.parseFromFile': _lishs.parseFromFile,
+			'lishs.parseFromJSON': _lishs.parseFromJSON,
+			'lishs.parseFromURL': _lishs.parseFromURL,
 
 			// Transfer
 			'transfer.download': _transfer.download,

@@ -59,6 +59,9 @@ interface LISHsHandlers {
 	importFromFile: (p: ImportFromFileParams) => Promise<ImportLISHResponse>;
 	importFromJSON: (p: ImportFromJSONParams) => Promise<ImportLISHResponse>;
 	importFromURL: (p: ImportFromURLParams) => Promise<ImportLISHResponse>;
+	parseFromFile: (p: { filePath: string }) => Promise<ILISH[]>;
+	parseFromJSON: (p: { json: string }) => ILISH[];
+	parseFromURL: (p: { url: string }) => Promise<ILISH[]>;
 }
 
 /**
@@ -233,22 +236,46 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 
 	async function importFromFile(p: ImportFromFileParams): Promise<ImportLISHResponse> {
 		assert(p, ['filePath', 'downloadPath']);
-		const lish = await importLISHFromFile(Utils.expandHome(p.filePath));
-		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
+		let lastResponse!: ImportLISHResponse;
+		for (const lish of lishs) {
+			lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		}
+		return lastResponse;
 	}
 
 	async function importFromJSON(p: ImportFromJSONParams): Promise<ImportLISHResponse> {
 		assert(p, ['json', 'downloadPath']);
-		const lish = parseLISHFromJSON(p.json);
-		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		const lishs = parseLISHFromJSON(p.json);
+		let lastResponse!: ImportLISHResponse;
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		return lastResponse;
 	}
 
 	async function importFromURL(p: ImportFromURLParams): Promise<ImportLISHResponse> {
 		assert(p, ['url', 'downloadPath']);
 		const content = await Utils.fetchURL(p.url);
-		const lish = parseLISHFromJSON(content);
-		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		const lishs = parseLISHFromJSON(content);
+		let lastResponse!: ImportLISHResponse;
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		return lastResponse;
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON: importFromJSON, importFromURL: importFromURL };
+	async function parseFromFile(p: { filePath: string }): Promise<ILISH[]> {
+		assert(p, ['filePath']);
+		return importLISHFromFile(Utils.expandHome(p.filePath));
+	}
+
+	function parseFromJSON(p: { json: string }): ILISH[] {
+		assert(p, ['json']);
+		return parseLISHFromJSON(p.json);
+	}
+
+	async function parseFromURL(p: { url: string }): Promise<ILISH[]> {
+		assert(p, ['url']);
+		const content = await Utils.fetchURL(p.url);
+		return parseLISHFromJSON(content);
+	}
+
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL };
 }

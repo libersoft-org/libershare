@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHSortField, type SortOrder, type CompressionAlgorithm } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -309,6 +309,18 @@ class LISHsAPI {
 
 	importFromURL(url: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
 		return this.client.call<ImportLISHResponse>('lishs.importFromURL', { url, downloadPath, overwrite });
+	}
+
+	parseFromFile(filePath: string): Promise<ILISH[]> {
+		return this.client.call<ILISH[]>('lishs.parseFromFile', { filePath });
+	}
+
+	parseFromJSON(json: string): Promise<ILISH[]> {
+		return this.client.call<ILISH[]>('lishs.parseFromJSON', { json });
+	}
+
+	parseFromURL(url: string): Promise<ILISH[]> {
+		return this.client.call<ILISH[]>('lishs.parseFromURL', { url });
 	}
 }
 

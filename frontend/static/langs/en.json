@@ -137,7 +137,8 @@
 			"lishJSON": "LISH JSON",
 			"downloadPathRequired": "Download folder is required",
 			"jsonRequired": "LISH JSON is required",
-			"autoStartSharing": "Automatically start sharing after adding"
+			"autoStartSharing": "Automatically start sharing after adding",
+			"confirmOverwrite": "The following LISH already exists:\n\nName: {name}\nID: {id}\n\nDo you want to overwrite it?"
 		},
 		"export": {
 			"errorIDRequired": "LISH ID is required"

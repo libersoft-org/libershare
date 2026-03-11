@@ -10,12 +10,14 @@
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { type ILISH } from '@shared';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
+	import ImportOverwrite from './DownloadLISHImportOverwrite.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -30,6 +32,7 @@
 	let errorMessage = $state('');
 	let loading = $state(false);
 	let browsingDownloadPath = $state(false);
+	let parsedLishs = $state<ILISH[] | null>(null);
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
@@ -43,16 +46,20 @@
 		}
 		loading = true;
 		try {
-			await api.lishs.importFromURL(url, downloadPath);
-			if (onImport) onImport();
-			else {
-				navigateBack();
-				navigateBack();
-			}
+			parsedLishs = await api.lishs.parseFromURL(url);
 		} catch (e) {
 			errorMessage = translateError(e);
 		} finally {
 			loading = false;
+		}
+	}
+
+	function handleOverwriteDone(): void {
+		parsedLishs = null;
+		if (onImport) onImport();
+		else {
+			navigateBack();
+			navigateBack();
 		}
 	}
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
@@ -107,7 +114,9 @@
 	}
 </style>
 
-{#if browsingDownloadPath}
+{#if parsedLishs}
+	<ImportOverwrite lishs={parsedLishs} {downloadPath} {position} onDone={handleOverwriteDone} />
+{:else if browsingDownloadPath}
 	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath selectFolderButton onSelect={handleDownloadPathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">

@@ -137,7 +137,8 @@
 			"lishJSON": "LISH JSON",
 			"downloadPathRequired": "Složka pro stažení je povinná",
 			"jsonRequired": "LISH JSON je povinný",
-			"autoStartSharing": "Automaticky spustit sdílení po přidání"
+			"autoStartSharing": "Automaticky spustit sdílení po přidání",
+			"confirmOverwrite": "Následující LISH již existuje:\n\nJméno: {name}\nID: {id}\n\nChcete jej přepsat?"
 		},
 		"export": {
 			"errorIDRequired": "LISH ID je povinné"
