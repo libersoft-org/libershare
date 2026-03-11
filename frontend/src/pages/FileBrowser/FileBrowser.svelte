@@ -563,9 +563,7 @@
 			// Reload directory and select the new folder
 			await loadDirectory(currentPath, folderName);
 			cancelNewFolder(true); // Pass true to indicate success - focus on list
-		} else {
-			dialogError = withDetail($t('fileBrowser.createFolderFailed'), result.error);
-		}
+		} else dialogError = withDetail($t('fileBrowser.createFolderFailed'), result.error);
 	}
 
 	async function cancelNewFolder(focusList = false): Promise<void> {
@@ -577,11 +575,8 @@
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		// Focus on list if folder was created successfully, otherwise on toolbar
-		if (focusList) {
-			activateArea(listAreaID);
-		} else {
-			activateArea(`${areaID}-folder-actions`);
-		}
+		if (focusList) activateArea(listAreaID);
+		else activateArea(`${areaID}-folder-actions`);
 	}
 
 	function showCreateFileDialog(): void {
@@ -679,9 +674,7 @@
 		if (result.success) {
 			// Reload directory
 			await loadDirectory(currentPath);
-		} else {
-			error = withDetail($t('fileBrowser.deleteFileFailed'), result.error);
-		}
+		} else error = withDetail($t('fileBrowser.deleteFileFailed'), result.error);
 		cancelDeleteFile();
 	}
 
@@ -866,11 +859,8 @@
 		showOverwriteConfirmState = false;
 		await tick();
 		// Reactivate the save filename area after dialog closes
-		if (saveFileName !== undefined) {
-			activateArea(`${areaID}-save-filename`);
-		} else {
-			activateArea(listAreaID);
-		}
+		if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
+		else activateArea(listAreaID);
 	}
 
 	async function handleBreadcrumbNavigate(path: string): Promise<void> {

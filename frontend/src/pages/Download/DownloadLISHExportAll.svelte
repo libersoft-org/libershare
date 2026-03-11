@@ -104,9 +104,7 @@
 			if (result.success) {
 				onBack?.();
 				return;
-			} else {
-				errorMessage = 'Save failed';
-			}
+			} else errorMessage = 'Save failed';
 		} catch (e: any) {
 			errorMessage = translateError(e);
 		} finally {

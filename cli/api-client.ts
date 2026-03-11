@@ -34,11 +34,8 @@ export class APIClient {
 					const pending = this.pending.get(msg.id);
 					if (pending) {
 						this.pending.delete(msg.id);
-						if (msg.error) {
-							pending.reject(new Error(msg.error));
-						} else {
-							pending.resolve(msg.result);
-						}
+						if (msg.error) pending.reject(new Error(msg.error));
+						else pending.resolve(msg.result);
 					}
 				} else if (msg.event) {
 					// Event notification
@@ -49,9 +46,7 @@ export class APIClient {
 
 			this.ws.onclose = () => {
 				// Reject all pending requests
-				for (const [, pending] of this.pending) {
-					pending.reject(new Error('Connection closed'));
-				}
+				for (const [, pending] of this.pending) pending.reject(new Error('Connection closed'));
 				this.pending.clear();
 			};
 		});

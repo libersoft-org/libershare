@@ -51,9 +51,7 @@
 
 	function toggleAutoGenerateID(): void {
 		autoGenerateID = !autoGenerateID;
-		if (autoGenerateID) {
-			networkID = '';
-		}
+		if (autoGenerateID) networkID = '';
 	}
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));

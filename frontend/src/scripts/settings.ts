@@ -62,9 +62,7 @@ export async function loadSettings(): Promise<void> {
 		settingsDefaults = defaults;
 
 		// Language
-		if (settings.language && languages.some(l => l.id === settings.language)) {
-			currentLanguage.set(settings.language);
-		}
+		if (settings.language && languages.some(l => l.id === settings.language)) currentLanguage.set(settings.language);
 
 		// UI
 		cursorSize.set(settings.ui.cursorSize);
@@ -209,9 +207,7 @@ export function setAutoStartOnBoot(enabled: boolean): void {
 export function setShowInTray(enabled: boolean): void {
 	updateSetting(showInTray, 'system.showInTray', enabled);
 	// If disabling tray, also disable minimize to tray
-	if (!enabled) {
-		updateSetting(minimizeToTray, 'system.minimizeToTray', false);
-	}
+	if (!enabled) updateSetting(minimizeToTray, 'system.minimizeToTray', false);
 }
 
 export function setMinimizeToTray(enabled: boolean): void {

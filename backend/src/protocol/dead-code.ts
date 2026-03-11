@@ -19,9 +19,8 @@ export function printMultiaddrs(node: any): void {
 	addrs.forEach((addr: any) => {
 		let emoji = '?';
 		const protos = addr.protos();
-		if (protos.some((p: any) => p.name === 'p2p-circuit')) {
-			emoji = '🔄';
-		} else {
+		if (protos.some((p: any) => p.name === 'p2p-circuit')) emoji = '🔄';
+		else {
 			try {
 				const nodeAddr = addr.nodeAddress();
 				if (nodeAddr.address === '127.0.0.1' || nodeAddr.address === '::1') emoji = '🏠';

@@ -156,11 +156,7 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 	function selectFirst(): void {
 		if (items.length === 0) return;
 		let best = items[0]!;
-		for (const item of items) {
-			if (item.pos[1] < best.pos[1] || (item.pos[1] === best.pos[1] && item.pos[0] < best.pos[0])) {
-				best = item;
-			}
-		}
+		for (const item of items) if (item.pos[1] < best.pos[1] || (item.pos[1] === best.pos[1] && item.pos[0] < best.pos[0])) best = item;
 		selectItem(best);
 	}
 
@@ -222,15 +218,11 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 	const controller: NavAreaController = {
 		register(item: NavItem): () => void {
 			items.push(item);
-			if (items.length === 1 && !selectedPos) {
-				selectedPos = item.pos;
-			}
+			if (items.length === 1 && !selectedPos) selectedPos = item.pos;
 			return () => {
 				const idx = items.indexOf(item);
 				if (idx !== -1) items.splice(idx, 1);
-				if (selectedPos && item.pos[0] === selectedPos[0] && item.pos[1] === selectedPos[1]) {
-					if (items.length === 0) selectedPos = null;
-				}
+				if (selectedPos && item.pos[0] === selectedPos[0] && item.pos[1] === selectedPos[1]) if (items.length === 0) selectedPos = null;
 			};
 		},
 		isSelected(pos: NavPos): boolean {

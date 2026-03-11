@@ -105,11 +105,8 @@ export class SqliteDatastore extends _BaseDatastore {
 			commit(): void {
 				self.db.transaction(() => {
 					for (const op of ops) {
-						if (op.type === 'put') {
-							self.stmtPut.run(op.key.toString(), Buffer.from(op.value));
-						} else {
-							self.stmtDelete.run(op.key.toString());
-						}
+						if (op.type === 'put') self.stmtPut.run(op.key.toString(), Buffer.from(op.value));
+						else self.stmtDelete.run(op.key.toString());
 					}
 				})();
 			},
@@ -123,16 +120,12 @@ export class SqliteDatastore extends _BaseDatastore {
 	*_all(q: { prefix?: string }): Generator<{ key: Key; value: Uint8Array }> {
 		this.ensureOpen();
 		const rows = q.prefix ? (this.stmtAllPrefix.all(this.escapeLikePrefix(q.prefix)) as Array<{ key: string; value: Buffer }>) : (this.stmtAll.all() as Array<{ key: string; value: Buffer }>);
-		for (const row of rows) {
-			yield { key: new Key(row.key), value: new Uint8Array(row.value) };
-		}
+		for (const row of rows) yield { key: new Key(row.key), value: new Uint8Array(row.value) };
 	}
 
 	*_allKeys(q: { prefix?: string }): Generator<Key> {
 		this.ensureOpen();
 		const rows = q.prefix ? (this.stmtAllKeysPrefix.all(this.escapeLikePrefix(q.prefix)) as Array<{ key: string }>) : (this.stmtAllKeys.all() as Array<{ key: string }>);
-		for (const row of rows) {
-			yield new Key(row.key);
-		}
+		for (const row of rows) yield new Key(row.key);
 	}
 }

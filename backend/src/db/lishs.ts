@@ -109,9 +109,7 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 					[internalID, file.path, file.size, file.permissions ?? null, file.modified ?? null, file.created ?? null]
 				);
 				const fileId = Number(fileResult.lastInsertRowid);
-				for (const checksum of file.checksums) {
-					db.run('INSERT INTO lishs_chunks (id_lishs_files, checksum, have) VALUES (?, ?, ?)', [fileId, checksum, haveChunks.has(checksum) ? 1 : 0]);
-				}
+				for (const checksum of file.checksums) db.run('INSERT INTO lishs_chunks (id_lishs_files, checksum, have) VALUES (?, ?, ?)', [fileId, checksum, haveChunks.has(checksum) ? 1 : 0]);
 			}
 		}
 
@@ -348,9 +346,7 @@ export function getMissingChunks(db: Database, lishID: LISHid): MissingChunk[] {
 		const chunks = db.query<{ checksum: string; have: number }, [number]>('SELECT checksum, have FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(file.id);
 		for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
 			const chunk = chunks[chunkIndex]!;
-			if (!chunk.have) {
-				missing.push({ fileIndex, chunkIndex, chunkID: chunk.checksum as ChunkID });
-			}
+			if (!chunk.have) missing.push({ fileIndex, chunkIndex, chunkID: chunk.checksum as ChunkID });
 		}
 	}
 	return missing;
@@ -369,9 +365,7 @@ export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID
 	for (const file of files) {
 		const chunks = db.query<{ checksum: string }, [number]>('SELECT checksum FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(file.id);
 		const chunkIndex = chunks.findIndex(c => c.checksum === chunkID);
-		if (chunkIndex !== -1) {
-			return { filePath: file.path, chunkIndex };
-		}
+		if (chunkIndex !== -1) return { filePath: file.path, chunkIndex };
 	}
 	return null;
 }

@@ -183,7 +183,5 @@ export function emit(action: InputAction): void {
 		const navigated = areaNavigate(action as Direction);
 		// Only play move sound if we actually moved somewhere
 		if (navigated) play('move');
-	} else {
-		play('move');
-	}
+	} else play('move');
 }

@@ -27,9 +27,7 @@ export class Utils {
 	 * Throws a descriptive error if any are missing (undefined).
 	 */
 	static assertParams<K extends string>(params: Record<string, any>, required: K[]): void {
-		for (const key of required) {
-			if (params[key] === undefined) throw new CodedError(ErrorCodes.MISSING_PARAMETER, key);
-		}
+		for (const key of required) if (params[key] === undefined) throw new CodedError(ErrorCodes.MISSING_PARAMETER, key);
 	}
 
 	/**

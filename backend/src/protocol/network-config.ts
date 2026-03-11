@@ -43,9 +43,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	const port = allSettings.network?.incomingPort || 0;
 	const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
 	const maxRelays = 10;
-	for (let i = 0; i < maxRelays; i++) {
-		listenAddresses.push('/p2p-circuit');
-	}
+	for (let i = 0; i < maxRelays; i++) listenAddresses.push('/p2p-circuit');
 	console.log(`✓ Configured to reserve ${maxRelays} relay slots`);
 	// Build appendAnnounce addresses.
 	// libp2p detects all network interfaces when listening on 0.0.0.0,
@@ -154,8 +152,6 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				}),
 			];
 		}
-	} else {
-		console.log('No bootstrap peers configured. Node will start in standalone mode.');
-	}
+	} else console.log('No bootstrap peers configured. Node will start in standalone mode.');
 	return { config, port, bootstrapPeerIds, bootstrapMultiaddrs };
 }

@@ -41,11 +41,7 @@ function countryFlags(): Plugin {
 			const outDir = path.resolve(__dirname, 'build', 'flags');
 			if (fs.existsSync(flagsDir)) {
 				if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-				for (const file of fs.readdirSync(flagsDir)) {
-					if (file.endsWith('.svg')) {
-						fs.copyFileSync(path.join(flagsDir, file), path.join(outDir, file));
-					}
-				}
+				for (const file of fs.readdirSync(flagsDir)) if (file.endsWith('.svg')) fs.copyFileSync(path.join(flagsDir, file), path.join(outDir, file));
 			}
 		},
 	};
@@ -61,15 +57,9 @@ export default defineConfig({
 		...(() => {
 			const keyPath = process.env['VITE_SSL_KEY'];
 			const certPath = process.env['VITE_SSL_CERT'];
-			if (keyPath && certPath && fs.existsSync(keyPath) && fs.existsSync(certPath)) {
-				return { https: { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) } };
-			}
-			if (fs.existsSync(path.resolve(__dirname, 'server.key'))) {
-				return { https: { key: fs.readFileSync(path.resolve(__dirname, 'server.key')), cert: fs.readFileSync(path.resolve(__dirname, 'server.crt')) } };
-			}
-			if (fs.existsSync(path.resolve(__dirname, 'certs/server.key'))) {
-				return { https: { key: fs.readFileSync(path.resolve(__dirname, 'certs/server.key')), cert: fs.readFileSync(path.resolve(__dirname, 'certs/server.crt')) } };
-			}
+			if (keyPath && certPath && fs.existsSync(keyPath) && fs.existsSync(certPath)) return { https: { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) } };
+			if (fs.existsSync(path.resolve(__dirname, 'server.key'))) return { https: { key: fs.readFileSync(path.resolve(__dirname, 'server.key')), cert: fs.readFileSync(path.resolve(__dirname, 'server.crt')) } };
+			if (fs.existsSync(path.resolve(__dirname, 'certs/server.key'))) return { https: { key: fs.readFileSync(path.resolve(__dirname, 'certs/server.key')), cert: fs.readFileSync(path.resolve(__dirname, 'certs/server.crt')) } };
 			return {};
 		})(),
 		allowedHosts: true,

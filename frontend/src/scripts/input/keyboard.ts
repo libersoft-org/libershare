@@ -96,9 +96,7 @@ class KeyboardManager {
 			if (e.key === 'Escape' || e.key === 'Backspace') {
 				e.preventDefault();
 				// If Escape just caused browser fullscreen exit, suppress back navigation
-				if (e.key === 'Escape' && (fullscreenLocked || fullscreenJustExited)) {
-					return;
-				}
+				if (e.key === 'Escape' && (fullscreenLocked || fullscreenJustExited)) return;
 				this.emit('back');
 				return;
 			}

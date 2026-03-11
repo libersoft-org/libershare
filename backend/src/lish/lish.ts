@@ -63,9 +63,7 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 	const workerCount = Math.min(cpuCount, totalChunks);
 	// Create workers
 	const workers: Worker[] = [];
-	for (let i = 0; i < workerCount; i++) {
-		workers.push(new Worker(new URL('./checksum-worker.ts', import.meta.url).href));
-	}
+	for (let i = 0; i < workerCount; i++) workers.push(new Worker(new URL('./checksum-worker.ts', import.meta.url).href));
 	let completedChunks = 0;
 	const results: string[] = new Array(totalChunks);
 	let nextChunk = 0;
@@ -90,20 +88,15 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 					results[chunkIndex] = event.data.checksum;
 					completedChunks++;
 					if (onProgress) onProgress(completedChunks, totalChunks);
-					if (completedChunks === totalChunks) {
-						resolveAll();
-					} else {
-						feedWorker(workerIndex);
-					}
+					if (completedChunks === totalChunks) resolveAll();
+					else feedWorker(workerIndex);
 				}
 			}
 			worker.addEventListener('message', handler);
 			worker.postMessage({ filePath, offset, chunkSize, algo, index: chunkIndex });
 		}
 		// Start one chunk per worker
-		for (let i = 0; i < workerCount; i++) {
-			feedWorker(i);
-		}
+		for (let i = 0; i < workerCount; i++) feedWorker(i);
 	});
 	// Terminate workers
 	workers.forEach(w => w.terminate());
@@ -139,17 +132,14 @@ async function scanFiles(dirPath: string, basePath: string, chunkSize: number, i
 			const lstat = await fsPromises.lstat(fullPath);
 			isSymlink = lstat.isSymbolicLink();
 		} catch {}
-		if (isSymlink) {
-			continue;
-		} else if (stat.isDirectory()) {
+		if (isSymlink) continue;
+		else if (stat.isDirectory()) {
 			const subFiles = await scanFiles(fullPath, basePath, chunkSize, inodeMap);
 			result.push(...subFiles);
 		} else if (stat.isFile()) {
 			const inodeKey = `${stat.dev}:${stat.ino}`;
 			// Skip hard links (already seen inode)
-			if (stat.ino > 0 && inodeMap[inodeKey]) {
-				continue;
-			}
+			if (stat.ino > 0 && inodeMap[inodeKey]) continue;
 			if (stat.ino > 0) inodeMap[inodeKey] = true;
 			const relativePath = getRelativePath(fullPath, basePath);
 			const totalChunks = Math.ceil(stat.size / chunkSize);
@@ -233,9 +223,8 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				if (onProgress) onProgress({ type: 'file-start', path: relativePath, size: stat.size, chunks: totalChunks });
 				// Calculate checksums (skip for empty files)
 				let checksums: string[];
-				if (stat.size === 0) {
-					checksums = [];
-				} else {
+				if (stat.size === 0) checksums = [];
+				else {
 					const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
 					checksums = await calcFn(fullPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
 						if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: completed, total });
@@ -282,9 +271,8 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		if (onProgress) onProgress({ type: 'file-start', path: filename, size: stat.size, chunks: totalChunks });
 		// Calculate checksums (skip for empty files)
 		let checksums: string[];
-		if (stat.size === 0) {
-			checksums = [];
-		} else {
+		if (stat.size === 0) checksums = [];
+		else {
 			const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
 			checksums = await calcFn(inputPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
 				if (onProgress) onProgress({ type: 'chunk', path: filename, current: completed, total });
@@ -345,9 +333,7 @@ export function validateImportedLISH(data: unknown): ILISH {
 	if (typeof obj['id'] !== 'string' || !obj['id']) throw new CodedError(ErrorCodes.LISH_MISSING_ID);
 	if (typeof obj['created'] !== 'string' || !obj['created']) throw new CodedError(ErrorCodes.LISH_MISSING_CREATED);
 	if (typeof obj['chunkSize'] !== 'number' || obj['chunkSize'] <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE);
-	if (typeof obj['checksumAlgo'] !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(obj['checksumAlgo'])) {
-		throw new CodedError(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM, String(obj['checksumAlgo']));
-	}
+	if (typeof obj['checksumAlgo'] !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(obj['checksumAlgo'])) throw new CodedError(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM, String(obj['checksumAlgo']));
 	return data as ILISH;
 }
 

@@ -158,9 +158,7 @@ export function createNavigation() {
 			breadcrumbStore.update(items => {
 				const newItems = [...items];
 				// Replace last item's label with custom label
-				if (newItems.length > 0) {
-					newItems[newItems.length - 1] = { ...newItems[newItems.length - 1]!, label: customLabel };
-				}
+				if (newItems.length > 0) newItems[newItems.length - 1] = { ...newItems[newItems.length - 1]!, label: customLabel };
 				return newItems;
 			});
 		}

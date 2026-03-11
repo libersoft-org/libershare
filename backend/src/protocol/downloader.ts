@@ -116,15 +116,11 @@ export class Downloader {
 						break;
 					}
 				}
-				if (!downloaded) {
-					console.log(`✗ No peer had chunk ${chunk.chunkID.slice(0, 8)}...`);
-				}
+				if (!downloaded) console.log(`✗ No peer had chunk ${chunk.chunkID.slice(0, 8)}...`);
 			}
 			console.log(`✓ Download complete! Downloaded ${downloadedCount}/${missingChunks.length} chunks`);
 		} finally {
-			for (const [, client] of this.peers) {
-				await client.close();
-			}
+			for (const [, client] of this.peers) await client.close();
 			this.peers.clear();
 		}
 	}
@@ -160,9 +156,8 @@ export class Downloader {
 		console.debug(data); // with peerID etc.
 		if (data['type'] == 'have' && data['lishID'] == this.lishID) {
 			if (data['chunks'] === 'all' /* || this.peerHasAnyMissingChunks(data.chunks)*/) {
-				if (this.peers.has(data['peerID'])) {
-					console.log(`Already connected to peer ...${data['peerID']}`);
-				} else {
+				if (this.peers.has(data['peerID'])) console.log(`Already connected to peer ...${data['peerID']}`);
+				else {
 					console.log(`Peer ...${data['peerID']} has the file, connecting...`);
 					try {
 						await this.connectToPeer(data as HaveMessage);

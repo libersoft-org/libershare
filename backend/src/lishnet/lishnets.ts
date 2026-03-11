@@ -69,11 +69,8 @@ export class Networks {
 
 		setLISHnetEnabled(this.db, id, enabled);
 
-		if (enabled) {
-			await this.joinNetwork(id);
-		} else {
-			await this.leaveNetwork(id);
-		}
+		if (enabled) await this.joinNetwork(id);
+		else await this.leaveNetwork(id);
 
 		return true;
 	}
@@ -97,9 +94,7 @@ export class Networks {
 		this.joinedNetworks.add(id);
 
 		const net = this.get(id);
-		if (net && net.bootstrapPeers.length > 0) {
-			await this.network.addBootstrapPeers(net.bootstrapPeers);
-		}
+		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers);
 
 		console.log(`✓ Joined lishnet: ${net?.name ?? id}`);
 	}
@@ -168,9 +163,7 @@ export class Networks {
 	 */
 	private collectBootstrapPeers(configs: LISHNetworkConfig[]): string[] {
 		const allPeers: string[] = [];
-		for (const config of configs) {
-			allPeers.push(...config.bootstrapPeers);
-		}
+		for (const config of configs) allPeers.push(...config.bootstrapPeers);
 		return [...new Set(allPeers)];
 	}
 
@@ -199,9 +192,7 @@ export class Networks {
 		const data = Utils.safeJSONParse<unknown>(jsonString, 'network JSON import');
 		const items = Array.isArray(data) ? data : [data];
 		const results: LISHNetworkDefinition[] = [];
-		for (const item of items) {
-			results.push(this.validateNetwork(item as ILISHNetwork));
-		}
+		for (const item of items) results.push(this.validateNetwork(item as ILISHNetwork));
 		if (results.length === 0) throw new CodedError(ErrorCodes.NO_VALID_NETWORKS);
 		return results;
 	}

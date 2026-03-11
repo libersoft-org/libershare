@@ -444,11 +444,7 @@ export class Network {
 
 			// Dispatch to registered topic handlers
 			const handlers = this.topicHandlers.get(topic);
-			if (handlers) {
-				for (const handler of handlers) {
-					handler(message);
-				}
-			}
+			if (handlers) for (const handler of handlers) handler(message);
 		} catch (error) {
 			console.error('Error in handleMessage:', error);
 		}

@@ -17,9 +17,7 @@ export async function subscribePeerCounts(): Promise<void> {
 	if (unsubListener) return; // already subscribed
 	unsubListener = api.on('peers:count', (data: { networkID: string; count: number }[]) => {
 		const counts: Record<string, number> = {};
-		for (const { networkID, count } of data) {
-			counts[networkID] = count;
-		}
+		for (const { networkID, count } of data) counts[networkID] = count;
 		peerCounts.set(counts);
 	}) as () => void;
 	await api.subscribe('peers:count');

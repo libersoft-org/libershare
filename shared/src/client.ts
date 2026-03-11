@@ -123,9 +123,7 @@ export class WsClient {
 
 		return () => {
 			listeners!.delete(callback);
-			if (listeners!.size === 0) {
-				this.eventListeners.delete(event);
-			}
+			if (listeners!.size === 0) this.eventListeners.delete(event);
 		};
 	}
 

@@ -173,9 +173,7 @@ export class APIServer {
 		// Listen for peer count changes and send to subscribed clients
 		this.networks.onPeerCountChange = counts => {
 			if (this.clients.size === 0) return;
-			for (const client of this.clients) {
-				this.emit(client, 'peers:count', counts);
-			}
+			for (const client of this.clients) this.emit(client, 'peers:count', counts);
 		};
 
 		const protocol = this.secure ? 'wss' : 'ws';
