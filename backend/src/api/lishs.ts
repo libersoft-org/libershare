@@ -1,12 +1,13 @@
 import { type DataServer } from '../lish/data-server.ts';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, CodedError, ErrorCodes } from '@shared';
-import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON } from '../lish/lish.ts';
+import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, resetVerification, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { join } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
+type BroadcastFn = (event: string, data: any) => void;
 interface CreateLISHParams {
 	name?: string;
 	description?: string;
@@ -62,6 +63,7 @@ interface LISHsHandlers {
 	parseFromFile: (p: { filePath: string }) => Promise<ILISH[]>;
 	parseFromJSON: (p: { json: string }) => ILISH[];
 	parseFromURL: (p: { url: string }) => Promise<ILISH[]>;
+	verify: (p: { lishID: string }) => Promise<SuccessResponse>;
 }
 
 /**
@@ -104,7 +106,7 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 	}
 }
 
-export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHandlers {
+export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn): LISHsHandlers {
 	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): ILISHSummary[] {
 		return dataServer.listSummaries(p?.sortBy, p?.sortOrder);
 	}
@@ -195,9 +197,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		// 3. Save to data-server if requested
 		if (addToSharing) {
 			lish.directory = dataPath;
-			if (lish.files) lish.chunks = lish.files.flatMap(f => f.checksums);
 			dataServer.add(lish);
 			console.log(`✓ Dataset imported: ${lish.id}`);
+			broadcast('lishs:add', dataServer.getDetail(lish.id));
+			startVerification(lish.id);
 		}
 		return { lishID: lish.id, lishFile: resultLISHFile };
 	}
@@ -211,7 +214,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		// Delete LISH from storage if requested
 		if (p.deleteLISH) {
 			const deleted = dataServer.delete(p.lishID);
-			if (deleted) console.log(`✓ LISH deleted: ${p.lishID}`);
+			if (deleted) {
+				console.log(`✓ LISH deleted: ${p.lishID}`);
+				broadcast('lishs:remove', { lishID: p.lishID });
+			}
 			return deleted;
 		}
 		return true;
@@ -227,10 +233,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		const storedLISH: IStoredLISH = {
 			...lish,
 			directory,
-			...(lish.files ? { chunks: lish.files.flatMap(f => f.checksums) } : {}),
 		};
 		dataServer.add(storedLISH);
 		console.log(`✓ LISH imported: ${lish.id}`);
+		broadcast('lishs:add', dataServer.getDetail(lish.id));
+		startVerification(lish.id);
 		return { lishID: lish.id, directory };
 	}
 
@@ -277,5 +284,34 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		return parseLISHFromJSON(content);
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL };
+	const activeVerifications = new Map<string, AbortController>();
+
+	function startVerification(lishID: string): void {
+		const prev = activeVerifications.get(lishID);
+		if (prev) prev.abort();
+		const ac = new AbortController();
+		activeVerifications.set(lishID, ac);
+		runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
+			if (activeVerifications.get(lishID) === ac) activeVerifications.delete(lishID);
+		});
+	}
+
+	async function verify(p: { lishID: string }): Promise<SuccessResponse> {
+		assert(p, ['lishID']);
+		// Cancel any running verification for this LISH
+		const prev = activeVerifications.get(p.lishID);
+		if (prev) prev.abort();
+		const ac = new AbortController();
+		activeVerifications.set(p.lishID, ac);
+		resetVerification(dataServer, p.lishID);
+		// Notify all clients to reset their UI state
+		broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, reset: true });
+		// Run verification in background — response is sent immediately after DB reset
+		runVerification(dataServer, p.lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
+			if (activeVerifications.get(p.lishID) === ac) activeVerifications.delete(p.lishID);
+		});
+		return { success: true };
+	}
+
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify };
 }

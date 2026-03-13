@@ -91,7 +91,7 @@ export function withDetail(message: string, detail?: string | null): string {
 const errorCodeKeys: Record<string, string> = {
 	// LISH
 	LISH_NOT_FOUND: 'lish.errorNotFound',
-	NO_LISHS: 'lish.errorNoLishs',
+	NO_LISHS: 'lish.errorNoLISHs',
 	DIRECTORY_EMPTY: 'lish.errorDirectoryEmpty',
 	LISH_ALREADY_EXISTS: 'lish.errorAlreadyExists',
 	INVALID_INPUT_TYPE: 'lish.errorInvalidInputType',

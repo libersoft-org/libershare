@@ -83,17 +83,22 @@
 		"downloadSpeed": "Rychlost stahování",
 		"uploadSpeed": "Rychlost odesílání",
 		"statuses": {
-			"completed": "Dokončeno",
-			"downloading": "Stahuje se",
-			"waiting": "Čeká",
-			"paused": "Pozastaveno",
-			"error": "Chyba"
+			"downloading": "Stahuji",
+			"uploading": "Odesílám",
+			"downloading-uploading": "Stahuji a odesílám",
+			"idling": "Nečinný",
+			"verifying": "Ověřuje se"
 		},
 		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",
 		"start": "Spustit",
 		"pause": "Pozastavit",
+		"startDownload": "Spustit stahování",
+		"pauseDownload": "Pozastavit stahování",
+		"startUpload": "Spustit odesílání",
+		"pauseUpload": "Pozastavit odesílání",
+		"verify": "Ověřit",
 		"moveData": "Přesunout data",
 		"deleteDialog": {
 			"message": "Co chcete smazat?",
@@ -144,7 +149,7 @@
 			"errorIDRequired": "LISH ID je povinné"
 		},
 		"errorNotFound": "LISH nebyl nalezen: {detail}",
-		"errorNoLishs": "Žádné LISHy k exportu",
+		"errorNoLISHs": "Žádné LISHy k exportu",
 		"errorDirectoryEmpty": "Adresář je prázdný \u2014 není co vytvářet",
 		"errorAlreadyExists": "LISH již existuje: {detail}",
 		"errorInvalidInputType": "Vstup musí být soubor nebo adresář",

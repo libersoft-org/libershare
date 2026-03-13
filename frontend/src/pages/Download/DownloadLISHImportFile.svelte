@@ -32,7 +32,7 @@
 	let errorMessage = $state('');
 	let browsingFilePath = $state(false);
 	let browsingDownloadPath = $state(false);
-	let parsedLishs = $state<ILISH[] | null>(null);
+	let parsedLISHs = $state<ILISH[] | null>(null);
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
@@ -45,14 +45,14 @@
 			return;
 		}
 		try {
-			parsedLishs = await api.lishs.parseFromFile(filePath);
+			parsedLISHs = await api.lishs.parseFromFile(filePath);
 		} catch (e) {
 			errorMessage = translateError(e);
 		}
 	}
 
 	function handleOverwriteDone(): void {
-		parsedLishs = null;
+		parsedLISHs = null;
 		if (onImport) onImport();
 		else {
 			navigateBack();
@@ -125,8 +125,8 @@
 	}
 </style>
 
-{#if parsedLishs}
-	<ImportOverwrite lishs={parsedLishs} {downloadPath} {position} onDone={handleOverwriteDone} />
+{#if parsedLISHs}
+	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} onDone={handleOverwriteDone} />
 {:else if browsingFilePath}
 	<FileBrowser {areaID} {position} initialPath={filePath || $storagePath} showPath fileFilter={['*.lish', '*.lishs', '*.json', '*.lish.gz', '*.lishs.gz', '*.json.gz', '*.lish.gzip', '*.lishs.gzip', '*.json.gzip']} fileFilterName={'LISH ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else if browsingDownloadPath}

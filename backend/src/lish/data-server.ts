@@ -2,7 +2,7 @@ import { open } from 'fs/promises';
 import { join } from 'path';
 import { type Database } from 'bun:sqlite';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder, CodedError, ErrorCodes } from '@shared';
-import { type MissingChunk, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, findChunkLocation } from '../db/lishs.ts';
+import { type MissingChunk, type VerificationProgress, type FileVerificationProgress, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, findChunkLocation, getVerificationProgress as dbGetVerificationProgress, getFileVerificationProgress as dbGetFileVerificationProgress, markChunkVerified as dbMarkChunkVerified, markChunkFailed as dbMarkChunkFailed, resetVerification as dbResetVerification, isVerified as dbIsVerified, getFilesForVerification as dbGetFilesForVerification } from '../db/lishs.ts';
 
 export type { MissingChunk };
 
@@ -68,6 +68,36 @@ export class DataServer {
 
 	getMissingChunks(lishID: LISHid): MissingChunk[] {
 		return dbGetMissingChunks(this.db, lishID);
+	}
+
+	// Verification operations
+
+	getVerificationProgress(lishID: LISHid): VerificationProgress {
+		return dbGetVerificationProgress(this.db, lishID);
+	}
+
+	getFileVerificationProgress(lishID: LISHid): FileVerificationProgress[] {
+		return dbGetFileVerificationProgress(this.db, lishID);
+	}
+
+	markChunkVerified(lishID: LISHid, fileInternalID: number, chunkIndex: number): void {
+		dbMarkChunkVerified(this.db, lishID, fileInternalID, chunkIndex);
+	}
+
+	markChunkFailed(lishID: LISHid, fileInternalID: number, chunkIndex: number): void {
+		dbMarkChunkFailed(this.db, lishID, fileInternalID, chunkIndex);
+	}
+
+	resetVerification(lishID: LISHid): void {
+		dbResetVerification(this.db, lishID);
+	}
+
+	isVerified(lishID: LISHid): boolean {
+		return dbIsVerified(this.db, lishID);
+	}
+
+	getFilesForVerification(lishID: LISHid): Array<{ fileInternalID: number; path: string; checksums: string[] }> | null {
+		return dbGetFilesForVerification(this.db, lishID);
 	}
 
 	// Chunk I/O

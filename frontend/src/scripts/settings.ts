@@ -106,8 +106,6 @@ export async function loadSettings(): Promise<void> {
 		inputInitialDelay.set(settings.input.initialDelay);
 		inputRepeatDelay.set(settings.input.repeatDelay);
 		gamepadDeadzone.set(settings.input.gamepadDeadzone);
-
-		console.log('[Settings] Loaded from backend');
 	} catch (error) {
 		console.error('[Settings] Error loading settings:', error);
 	}

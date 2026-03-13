@@ -1,10 +1,11 @@
 import * as fsPromises from 'node:fs/promises';
 import { type Stats } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
+import { type DataServer } from './data-server.ts';
 
 // Helper to normalize paths to forward slashes
 function normalizePath(p: string): string {
@@ -352,4 +353,82 @@ export function parseLISHFromJSON(json: string): ILISH[] {
 	const data = Utils.safeJSONParse(json, 'JSON input');
 	if (Array.isArray(data)) return data.map(item => validateImportedLISH(item));
 	return [validateImportedLISH(data)];
+}
+
+export interface VerifyFileProgress {
+	lishID: string;
+	filePath: string;
+	verifiedChunks: number;
+	done?: boolean;
+	reset?: boolean;
+}
+
+/**
+ * Verify all chunks of a LISH by comparing stored checksums against actual file data.
+ * Emits progress events per chunk via onProgress callback.
+ */
+/**
+ * Reset verification state in DB. Call before starting verification.
+ */
+export function resetVerification(dataServer: DataServer, lishID: string): void {
+	const meta = dataServer.get(lishID);
+	if (!meta) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, lishID);
+	dataServer.resetVerification(lishID);
+}
+
+/**
+ * Run verification of all chunks (call after resetVerification).
+ * Fire & forget — errors are logged, not thrown.
+ * Pass an AbortSignal to allow cancellation.
+ */
+export async function runVerification(dataServer: DataServer, lishID: string, onProgress: (progress: VerifyFileProgress) => void, signal?: AbortSignal): Promise<void> {
+	const meta = dataServer.get(lishID);
+	if (!meta || !meta.directory) return;
+	const files = dataServer.getFilesForVerification(lishID);
+	if (!files) return;
+	for (const fileEntry of files) {
+		if (signal?.aborted) return;
+		if (!dataServer.get(lishID)) return;
+		const filePath = join(meta.directory, fileEntry.path);
+		let fileVerified = 0;
+		const file = Bun.file(filePath);
+		const fileExists = await file.exists();
+		if (!fileExists) {
+			// console.log(`[Verify] MISSING ${fileEntry.path} — file does not exist on disk (${fileEntry.checksums.length} chunks skipped)`);
+			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: 0 });
+			continue;
+		}
+		for (let chunkIndex = 0; chunkIndex < fileEntry.checksums.length; chunkIndex++) {
+			if (signal?.aborted) return;
+			const expectedChecksum = fileEntry.checksums[chunkIndex]!;
+			const offset = chunkIndex * meta.chunkSize;
+			// File is smaller than this chunk's offset — data is missing
+			if (offset >= file.size) {
+				if (chunkIndex === 0 || offset === chunkIndex * meta.chunkSize) {
+					// console.log(`[Verify] SHORT ${fileEntry.path} chunk ${chunkIndex}: file size ${file.size} < offset ${offset} — file is smaller than expected`);
+				}
+				onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
+				continue;
+			}
+			try {
+				const actualChecksum = await calculateChecksum(file, offset, meta.chunkSize, meta.checksumAlgo);
+				if (actualChecksum === expectedChecksum) {
+					dataServer.markChunkVerified(lishID, fileEntry.fileInternalID, chunkIndex);
+					fileVerified++;
+					// console.log(`[Verify] PASS ${fileEntry.path} chunk ${chunkIndex}: db=${expectedChecksum.slice(0, 16)}… disk=${actualChecksum.slice(0, 16)}…`);
+				} else {
+					dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
+					// console.log(`[Verify] FAIL ${fileEntry.path} chunk ${chunkIndex}: db=${expectedChecksum.slice(0, 16)}… disk=${actualChecksum.slice(0, 16)}…`);
+				}
+			} catch (err: any) {
+				dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
+				// console.log(`[Verify] ERROR ${fileEntry.path} chunk ${chunkIndex}: ${err.message}`);
+			}
+			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
+		}
+		// console.log(`[Verify] ${fileEntry.path}: ${fileVerified}/${fileEntry.checksums.length} PASS`);
+	}
+
+	onProgress({ lishID, filePath: '', verifiedChunks: 0, done: true });
+	return;
 }

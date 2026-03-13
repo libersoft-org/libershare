@@ -83,17 +83,22 @@
 		"downloadSpeed": "Download speed",
 		"uploadSpeed": "Upload speed",
 		"statuses": {
-			"completed": "Completed",
 			"downloading": "Downloading",
-			"waiting": "Waiting",
-			"paused": "Paused",
-			"error": "Error"
+			"uploading": "Uploading",
+			"downloading-uploading": "Downloading and uploading",
+			"idling": "Idling",
+			"verifying": "Verifying"
 		},
 		"createLISH": "Create LISH",
 		"errorInvalidFormat": "Invalid LISH format",
 		"emptyList": "No LISH to export found",
 		"start": "Start",
 		"pause": "Pause",
+		"startDownload": "Start download",
+		"pauseDownload": "Pause download",
+		"startUpload": "Start upload",
+		"pauseUpload": "Pause upload",
+		"verify": "Verify",
 		"moveData": "Move data",
 		"deleteDialog": {
 			"message": "What do you want to delete?",
@@ -144,7 +149,7 @@
 			"errorIDRequired": "LISH ID is required"
 		},
 		"errorNotFound": "LISH not found: {detail}",
-		"errorNoLishs": "No LISHs to export",
+		"errorNoLISHs": "No LISHs to export",
 		"errorDirectoryEmpty": "Directory is empty \u2014 nothing to create LISH from",
 		"errorAlreadyExists": "LISH already exists: {detail}",
 		"errorInvalidInputType": "Input must be a file or directory",

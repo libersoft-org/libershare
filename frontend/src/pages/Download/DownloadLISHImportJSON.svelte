@@ -33,7 +33,7 @@
 	let autoStart = $state($autoStartSharing);
 	let errorMessage = $state('');
 	let browsingDownloadPath = $state(false);
-	let parsedLishs = $state<ILISH[] | null>(null);
+	let parsedLISHs = $state<ILISH[] | null>(null);
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
@@ -46,14 +46,14 @@
 			return;
 		}
 		try {
-			parsedLishs = await api.lishs.parseFromJSON(lishJSON);
+			parsedLISHs = await api.lishs.parseFromJSON(lishJSON);
 		} catch (e) {
 			errorMessage = translateError(e);
 		}
 	}
 
 	function handleOverwriteDone(): void {
-		parsedLishs = null;
+		parsedLISHs = null;
 		if (onImport) onImport();
 		else {
 			navigateBack();
@@ -137,8 +137,8 @@
 	}
 </style>
 
-{#if parsedLishs}
-	<ImportOverwrite lishs={parsedLishs} {downloadPath} {position} onDone={handleOverwriteDone} />
+{#if parsedLISHs}
+	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} onDone={handleOverwriteDone} />
 {:else if browsingDownloadPath}
 	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath selectFolderButton onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
 {:else}

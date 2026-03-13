@@ -71,23 +71,9 @@ export function activateArea(areaID: string): void {
 export function areaNavigate(direction: Direction): boolean {
 	const layout = get(areaLayout);
 	const current = get(activeArea);
-	console.log(
-		'areaNavigate',
-		direction,
-		'from',
-		current,
-		'layout:',
-		Object.keys(layout)
-			.map(k => `${k}:${JSON.stringify(layout[k])}`)
-			.join(', ')
-	);
-	if (!current || !(current in layout)) {
-		console.log('areaNavigate: current area not in layout');
-		return false;
-	}
+	if (!current || !(current in layout)) return false;
 	const currentPos = layout[current]!;
 	const target = findAreaInDirection(layout, currentPos, direction);
-	console.log('areaNavigate: target', target);
 	if (target) {
 		activateArea(target);
 		return true;

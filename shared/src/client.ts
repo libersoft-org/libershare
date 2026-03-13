@@ -30,14 +30,12 @@ export class WsClient {
 		this.connectPromise = new Promise((resolve, reject) => {
 			this.ws = new WebSocket(this.apiURL);
 			this.ws.onopen = () => {
-				console.log('[API] Connected');
 				this.connected = true;
 				this.onStateChange({ connected: true });
 				this.connectPromise = null;
 				resolve();
 			};
 			this.ws.onclose = () => {
-				console.log('[API] Disconnected');
 				this.connected = false;
 				this.onStateChange({ connected: false });
 				this.connectPromise = null;

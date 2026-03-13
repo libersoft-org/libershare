@@ -4,9 +4,9 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { selectedDownload, selectedDownloadLoading, subscribeDownloadDetail, unsubscribeDownloadDetail, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadData, type DownloadToolbarActionId } from '../../scripts/downloads.ts';
+	import { downloads, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID } from '../../scripts/downloads.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
-	import Spinner from '../../components/Spinner/Spinner.svelte';
+	import { api } from '../../scripts/api.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import Header from '../../components/Table/TableHeader.svelte';
@@ -21,16 +21,12 @@
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
+		lishID: string;
 		onBack?: (() => void) | undefined;
 	}
-	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-	// Get download from store
-	let download = $state<DownloadData | null>(null);
-	let lishID: string | null = null;
-	const unsubscribeStore = selectedDownload.subscribe(d => {
-		download = d;
-		if (d && !lishID) lishID = d.id;
-	});
+	let { areaID, position = LAYOUT.content, lishID, onBack }: Props = $props();
+	// Get download from store by lishID
+	let download = $derived($downloads.find(d => d.id === lishID) ?? null);
 	// Toolbar state
 	let toolbarAreaID = $derived(`${areaID}-toolbar`);
 	let infoAreaID = $derived(`${areaID}-info`);
@@ -44,12 +40,13 @@
 	let infoElement: HTMLElement | null = $state(null);
 	let filesElement: HTMLElement | null = $state(null);
 	// Toolbar actions - use config from downloads.ts
-	let isPaused = $derived(download?.status === 'paused');
+	let downloadPaused = $state(true);
+	let uploadPaused = $state(true);
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.map(action => ({
 			id: action.id,
-			label: action.getLabel($t, isPaused),
-			icon: action.getIcon?.(isPaused) ?? action.icon,
+			label: action.getLabel($t, downloadPaused, uploadPaused),
+			icon: typeof action.icon === 'function' ? action.icon(downloadPaused, uploadPaused) : action.icon,
 		}))
 	);
 	// Delete dialog state
@@ -78,11 +75,17 @@
 		onBack?.();
 	}
 
-	function handleToolbarAction(actionId: DownloadToolbarActionId): void {
-		const result = handleDownloadToolbarAction(actionId, download);
+	function handleToolbarAction(actionId: DownloadToolbarActionID): void {
+		if (actionId === 'toggle-download') { downloadPaused = !downloadPaused; return; }
+		if (actionId === 'toggle-upload') { uploadPaused = !uploadPaused; return; }
+		const result = handleDownloadToolbarAction(actionId);
 		if (result.needsBack) handleBack();
 		if (result.needsDelete) showDeleteDialog = true;
 		if (result.needsExport) showExport = true;
+		if (result.needsVerify && download) {
+			resetVerifyState(download.id);
+			api.lishs.verify(download.id).catch(err => console.error('Verification failed:', err));
+		}
 	}
 
 	function handleDeleteCancel(): void {
@@ -200,17 +203,16 @@
 	};
 
 	onMount(() => {
+		setCurrentDetailLISHID(lishID);
 		const unregisterToolbar = useArea(toolbarAreaID, toolbarHandlers, position);
 		const unregisterInfo = useArea(infoAreaID, infoHandlers, position);
 		const unregisterList = useArea(listAreaID, listHandlers, position);
 		activateArea(toolbarAreaID);
-		if (lishID) subscribeDownloadDetail(lishID);
 		return () => {
+			setCurrentDetailLISHID(null);
 			unregisterToolbar();
 			unregisterInfo();
 			unregisterList();
-			unsubscribeStore();
-			if (lishID) unsubscribeDownloadDetail(lishID);
 		};
 	});
 </script>
@@ -301,9 +303,7 @@
 		{#if deleteError}
 			<Alert type="error" message={deleteError} />
 		{/if}
-		{#if $selectedDownloadLoading}
-			<Spinner size="8vh" />
-		{:else if download}
+		{#if download}
 			<div class="content">
 				<div class="info" class:selected={infoActive} bind:this={infoElement}>
 					<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
@@ -321,7 +321,7 @@
 						</TableRow>
 						<TableRow>
 							<Cell>{$t('common.size')}:</Cell>
-							<Cell align="right">{download.downloadedSize && download.progress < 100 ? `${download.downloadedSize} / ${download.size}` : download.size}</Cell>
+							<Cell align="right">{download.downloadedSize ? `${download.downloadedSize} / ${download.size}` : download.size}</Cell>
 						</TableRow>
 						<TableRow odd>
 							<Cell>{$t('common.progress')}:</Cell>

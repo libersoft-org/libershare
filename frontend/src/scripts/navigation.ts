@@ -15,7 +15,7 @@ export const breadcrumbItems = derived([breadcrumbStore, t], ([$items, $t]) => [
 let contentElement: HTMLElement | null = null;
 const confirmDialogStore = writable<ConfirmDialogState>({ visible: false, action: null });
 // Global navigation store - set by createNavigation, used by components
-let globalNavigate: ((id: string, label?: string) => void) | null = null;
+let globalNavigate: ((id: string, label?: string, props?: Record<string, any>) => void) | null = null;
 let globalNavigateBack: (() => void) | null = null;
 // Internal function to set menu breadcrumb (clears component items)
 function setMenuBreadcrumb(items: string[]): void {
@@ -84,8 +84,8 @@ export function hideConfirmDialog(): void {
 	confirmDialogStore.set({ visible: false, action: null });
 }
 
-export function navigateTo(id: string, label?: string): void {
-	if (globalNavigate) globalNavigate(id, label);
+export function navigateTo(id: string, label?: string, props?: Record<string, any>): void {
+	if (globalNavigate) globalNavigate(id, label, props);
 }
 
 export function navigateBack(): void {
@@ -115,10 +115,11 @@ export function createNavigation() {
 	// Store only IDs, not full items
 	const pathIDs = writable<string[]>([]);
 	const selectedId = writable<string | undefined>(undefined);
+	const dynamicProps = writable<Record<string, any>>({});
 	// Derived stores that react to both pathIds and menuStructure changes
 	const currentItems = derived([pathIDs, menuStructure], ([$pathIds, $menuStructure]) => getItemsAtPath($menuStructure, $pathIds));
 	const currentItem = derived([pathIDs, menuStructure], ([$pathIds, $menuStructure]) => ($pathIds.length > 0 ? findItemByPath($menuStructure, $pathIds) : null));
-	const currentComponent = derived(currentItem, $item => ($item && $item.component ? $item : null));
+	const currentComponent = derived([currentItem, dynamicProps], ([$item, $dynProps]) => ($item && $item.component ? { ...$item, props: { ...$item.props, ...$dynProps } } : null));
 	const currentTitle = derived([currentItem, menuStructure], ([$item, $menuStructure]) => ($item ? $item.label : $menuStructure.title));
 	const currentOrientation = derived(currentItem, $item => $item?.orientation ?? 'horizontal');
 	// Update breadcrumb when path or language changes
@@ -136,7 +137,7 @@ export function createNavigation() {
 		return labels;
 	}).subscribe(() => {}); // Subscribe to activate the derived store
 
-	function navigate(id: string, customLabel?: string): void {
+	function navigate(id: string, customLabel?: string, props?: Record<string, any>): void {
 		const items = get(currentItems);
 		const item = items.find((i: MenuItem) => i.id === id);
 		if (!item) return;
@@ -156,6 +157,7 @@ export function createNavigation() {
 			return;
 		}
 		// Navigate into submenu - find selected item if any
+		dynamicProps.set(props ?? {});
 		pathIDs.update(p => [...p, id]);
 		scrollContentToTop();
 		// If custom label provided, update breadcrumb with it
@@ -176,6 +178,7 @@ export function createNavigation() {
 		const currentPathIds = get(pathIDs);
 		if (currentPathIds.length > 0) {
 			selectedId.set(currentPathIds[currentPathIds.length - 1]);
+			dynamicProps.set({});
 			pathIDs.update(p => p.slice(0, -1));
 			scrollContentToTop();
 		} else {
@@ -193,6 +196,7 @@ export function createNavigation() {
 	function reset(): void {
 		pathIDs.set([]);
 		selectedId.set(undefined);
+		dynamicProps.set({});
 		resetBreadcrumb();
 	}
 

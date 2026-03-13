@@ -1,9 +1,10 @@
 import { writable } from 'svelte/store';
-import { type ILISHSummary, type ILISHDetail } from '@shared';
+import { type ILISHDetail } from '@shared';
 import { api } from './api.ts';
 import { formatSize } from './utils.ts';
+import { navigateBack } from './navigation.ts';
 
-export type DownloadStatus = 'completed' | 'downloading' | 'waiting' | 'paused' | 'error';
+export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying';
 
 // ============================================================================
 // Download Data Types
@@ -14,6 +15,9 @@ export interface DownloadFileData {
 	name: string;
 	progress: number;
 	size: string;
+	rawSize: number;
+	totalChunks: number;
+	verifiedChunks: number;
 	downloadedSize?: string;
 }
 
@@ -23,6 +27,7 @@ export interface DownloadData {
 	directory?: string | undefined;
 	progress: number;
 	size: string;
+	rawTotalSize: number;
 	downloadedSize?: string;
 	status: DownloadStatus;
 	downloadPeers: number;
@@ -30,71 +35,79 @@ export interface DownloadData {
 	downloadSpeed: string;
 	uploadSpeed: string;
 	files: DownloadFileData[];
+	verifiedChunks: number;
+	totalChunks: number;
+	chunkSize: number;
 }
 
 /**
- * Convert a backend ILISHSummary to frontend DownloadData (for list table).
- * Status, progress, peers, and speeds are mocked for now.
- */
-function summaryToDownload(summary: ILISHSummary): DownloadData {
-	return {
-		id: summary.id,
-		name: summary.name ?? '-',
-		progress: 0,
-		size: formatSize(summary.totalSize),
-		downloadedSize: '0 B',
-		status: 'waiting',
-		downloadPeers: 0,
-		uploadPeers: 0,
-		downloadSpeed: '0 B/s',
-		uploadSpeed: '0 B/s',
-		files: [],
-	};
-}
-
-/**
- * Convert a backend ILISHDetail to frontend DownloadData (for detail view).
+ * Convert a backend ILISHDetail to frontend DownloadData.
  */
 function detailToDownload(detail: ILISHDetail): DownloadData {
+	const files = detail.files.map((f, i) => {
+		const totalChunks = f.totalChunks > 0 ? f.totalChunks : Math.ceil(f.size / detail.chunkSize);
+		const verifiedChunks = f.verifiedChunks ?? 0;
+		const progress = totalChunks > 0 ? Math.round((verifiedChunks / totalChunks) * 10000) / 100 : 0;
+		const downloadedSize = totalChunks > 0 && verifiedChunks > 0 ? formatSize(Math.round((f.size * verifiedChunks) / totalChunks)) : '0 B';
+		return {
+			id: i,
+			name: f.path,
+			progress,
+			size: formatSize(f.size),
+			rawSize: f.size,
+			totalChunks,
+			verifiedChunks,
+			downloadedSize,
+		};
+	});
+	const progress = detail.totalChunks > 0 ? Math.round((detail.verifiedChunks / detail.totalChunks) * 10000) / 100 : 0;
+	const downloadedSize = detail.totalSize > 0 && detail.verifiedChunks > 0 ? formatSize(Math.round((detail.totalSize * detail.verifiedChunks) / detail.totalChunks)) : '0 B';
 	return {
 		id: detail.id,
 		name: detail.name ?? '-',
 		directory: detail.directory,
-		progress: 0,
+		progress,
 		size: formatSize(detail.totalSize),
-		downloadedSize: '0 B',
-		status: 'waiting',
+		rawTotalSize: detail.totalSize,
+		downloadedSize,
+		status: 'idling',
 		downloadPeers: 0,
 		uploadPeers: 0,
 		downloadSpeed: '0 B/s',
 		uploadSpeed: '0 B/s',
-		files: detail.files.map((f, i) => ({
-			id: i,
-			name: f.path,
-			progress: 0,
-			size: formatSize(f.size),
-			downloadedSize: '0 B',
-		})),
+		files,
+		verifiedChunks: detail.verifiedChunks,
+		totalChunks: detail.totalChunks,
+		chunkSize: detail.chunkSize,
 	};
 }
 
-// --- List page stores ---
+// ============================================================================
+// Stores
+// ============================================================================
+
+let handlersRegistered = false;
+let currentDetailLISHID: string | null = null;
 
 export const downloads = writable<DownloadData[]>([]);
 export const downloadsLoading = writable<boolean>(true);
 
-let listUnsub: (() => void) | null = null;
+export function setCurrentDetailLISHID(lishID: string | null): void {
+	currentDetailLISHID = lishID;
+}
 
 /**
- * Load download list from backend and subscribe to list changes.
- * Call when entering the Downloads page.
+ * Initialize download state: load all details from backend, subscribe to events.
+ * Called from onConnected — may be called multiple times on reconnect.
+ * Event handlers are registered once, subscriptions are sent on every connect.
  */
-export async function subscribeDownloadList(): Promise<void> {
-	if (listUnsub) return;
+export async function initDownloads(): Promise<void> {
+	// Reload data on every connect
 	downloadsLoading.set(true);
 	try {
 		const summaries = await api.lishs.list(undefined, 'desc');
-		downloads.set(summaries.map(summaryToDownload));
+		const details = await Promise.all(summaries.map(s => api.lishs.get(s.id)));
+		downloads.set(details.filter((d): d is ILISHDetail => d !== null).map(detailToDownload));
 	} catch (err) {
 		console.error('Failed to load LISH list:', err);
 		downloads.set([]);
@@ -102,80 +115,99 @@ export async function subscribeDownloadList(): Promise<void> {
 		downloadsLoading.set(false);
 	}
 
-	listUnsub = api.on('lishs:list', (summaries: ILISHSummary[]) => {
-		downloads.set(summaries.map(summaryToDownload));
-	}) as () => void;
-	await api.subscribe('lishs:list');
-}
+	// Register event handlers only once (they persist across reconnects)
+	if (!handlersRegistered) {
+		handlersRegistered = true;
 
-/**
- * Unsubscribe from download list changes.
- * Call when leaving the Downloads page.
- */
-export async function unsubscribeDownloadList(): Promise<void> {
-	if (!listUnsub) return;
-	await api.unsubscribe('lishs:list');
-	listUnsub();
-	listUnsub = null;
-}
+		// lishs:add — new LISH created or imported (broadcast from backend)
+		api.on('lishs:add', (detail: ILISHDetail) => {
+			downloads.update(list => {
+				const idx = list.findIndex(d => d.id === detail.id);
+				const entry = detailToDownload(detail);
+				if (idx >= 0) {
+					const updated = [...list];
+					updated[idx] = entry;
+					return updated;
+				}
+				return [entry, ...list];
+			});
+		});
 
-// --- Detail page stores ---
+		// lishs:remove — LISH deleted (broadcast from backend)
+		api.on('lishs:remove', (data: { lishID: string }) => {
+			if (currentDetailLISHID === data.lishID) navigateBack();
+			downloads.update(list => list.filter(d => d.id !== data.lishID));
+		});
 
-export const selectedDownload = writable<DownloadData | null>(null);
-export const selectedDownloadLoading = writable<boolean>(false);
-
-let detailUnsub: (() => void) | null = null;
-
-/**
- * Load download detail from backend and subscribe to detail changes.
- * Call when entering the Download detail page.
- */
-export async function subscribeDownloadDetail(lishID: string): Promise<void> {
-	if (detailUnsub) return;
-
-	selectedDownloadLoading.set(true);
-	try {
-		const detail = await api.lishs.get(lishID);
-		selectedDownload.set(detail ? detailToDownload(detail) : null);
-	} catch (err) {
-		console.error('Failed to load LISH detail:', err);
-		selectedDownload.set(null);
-	} finally {
-		selectedDownloadLoading.set(false);
+		// lishs:verify — verification progress (broadcast from backend)
+		api.on('lishs:verify', (data: { lishID: string; filePath: string; verifiedChunks: number; done?: boolean; reset?: boolean }) => {
+			// console.log('[downloads] lishs:verify received:', data.filePath, 'verified:', data.verifiedChunks, 'done:', data.done);
+			if (data.reset) {
+				resetVerifyState(data.lishID);
+				return;
+			}
+			if (data.done) {
+				// Verification finished — recalculate status from final chunk counts
+				downloads.update(list =>
+					list.map(d => {
+						if (d.id !== data.lishID) return d;
+						const status: DownloadStatus = 'idling';
+						return { ...d, status };
+					})
+				);
+				return;
+			}
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					let overallVerified = 0;
+					const files = d.files.map(f => {
+						const fVerified = f.name === data.filePath ? data.verifiedChunks : f.verifiedChunks;
+						overallVerified += fVerified;
+						if (f.name !== data.filePath) return f;
+						const fileProgress = f.totalChunks > 0 ? Math.round((fVerified / f.totalChunks) * 10000) / 100 : 0;
+						const downloadedSize = f.totalChunks > 0 ? formatSize(Math.round((f.rawSize * fVerified) / f.totalChunks)) : '0 B';
+						return { ...f, verifiedChunks: fVerified, progress: fileProgress, downloadedSize };
+					});
+					const status: DownloadStatus = overallVerified === d.totalChunks ? 'idling' : 'verifying';
+					const progress = d.totalChunks > 0 ? Math.round((overallVerified / d.totalChunks) * 10000) / 100 : 0;
+					const downloadedSize = d.totalChunks > 0 ? formatSize(Math.round((d.rawTotalSize * overallVerified) / d.totalChunks)) : '0 B';
+					return { ...d, verifiedChunks: overallVerified, status, progress, files, downloadedSize };
+				})
+			);
+		});
 	}
-
-	const eventName = `lishs:detail:${lishID}`;
-	detailUnsub = api.on(eventName, (detail: ILISHDetail) => {
-		selectedDownload.set(detailToDownload(detail));
-	}) as () => void;
-	await api.subscribe(eventName);
+	// Subscribe on every connect (backend has fresh subscribedEvents after reconnect)
+	api.subscribe('lishs:add');
+	api.subscribe('lishs:remove');
+	api.subscribe('lishs:verify');
 }
 
-/**
- * Unsubscribe from download detail changes.
- * Call when leaving the Download detail page.
- */
-export async function unsubscribeDownloadDetail(lishID: string): Promise<void> {
-	if (!detailUnsub) return;
-	await api.unsubscribe(`lishs:detail:${lishID}`);
-	detailUnsub();
-	detailUnsub = null;
-	selectedDownload.set(null);
+/** Reset verify state for a LISH in the downloads store (set all to 0, status to verifying). */
+export function resetVerifyState(lishID: string): void {
+	downloads.update(list =>
+		list.map(d => {
+			if (d.id !== lishID) return d;
+			const files = d.files.map(f => ({ ...f, verifiedChunks: 0, progress: 0, downloadedSize: '0 B' }));
+			return { ...d, verifiedChunks: 0, progress: 0, status: 'verifying' as DownloadStatus, files, downloadedSize: '0 B' };
+		})
+	);
 }
 // Table columns definition
 export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 10vw 10vw 8vw 8vw 8vw 8vw 8vw';
 // Toolbar action IDs for download detail view
-export type DownloadToolbarActionId = 'back' | 'open-folder' | 'toggle' | 'export' | 'move' | 'delete';
+export type DownloadToolbarActionID = 'back' | 'open-folder' | 'toggle-download' | 'toggle-upload' | 'verify' | 'export' | 'move' | 'delete';
 export interface DownloadToolbarAction {
-	id: DownloadToolbarActionId;
-	icon: string;
-	getLabel: (t: (key: string) => string, isPaused: boolean) => string;
-	getIcon?: (isPaused: boolean) => string;
+	id: DownloadToolbarActionID;
+	icon: string | ((downloadPaused: boolean, uploadPaused: boolean) => string);
+	getLabel: (t: (key: string) => string, downloadPaused: boolean, uploadPaused: boolean) => string;
 }
 export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
 	{ id: 'back', icon: '/img/back.svg', getLabel: t => t('common.back') },
 	{ id: 'open-folder', icon: '/img/folder.svg', getLabel: t => t('common.openFolder') },
-	{ id: 'toggle', icon: '/img/pause.svg', getLabel: (t, isPaused) => (isPaused ? t('downloads.start') : t('downloads.pause')), getIcon: isPaused => (isPaused ? '/img/play.svg' : '/img/pause.svg') },
+	{ id: 'toggle-download', icon: (dp) => dp ? '/img/play.svg' : '/img/pause.svg', getLabel: (t, dp) => dp ? t('downloads.startDownload') : t('downloads.pauseDownload') },
+	{ id: 'toggle-upload', icon: (_dp, up) => up ? '/img/play.svg' : '/img/pause.svg', getLabel: (t, _dp, up) => up ? t('downloads.startUpload') : t('downloads.pauseUpload') },
+	{ id: 'verify', icon: '/img/check.svg', getLabel: t => t('downloads.verify') },
 	{ id: 'export', icon: '/img/upload.svg', getLabel: t => t('common.export') },
 	{ id: 'move', icon: '/img/move.svg', getLabel: t => t('downloads.moveData') },
 	{ id: 'delete', icon: '/img/del.svg', getLabel: t => t('common.delete') },
@@ -185,23 +217,25 @@ export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
  * Handle toolbar action for download detail
  * @returns true if action was handled internally, false if needs UI handling (e.g., onBack)
  */
-export function handleDownloadToolbarAction(actionId: DownloadToolbarActionId, download: DownloadData | null): { handled: boolean; needsBack?: boolean; needsDelete?: boolean; needsExport?: boolean } {
+export function handleDownloadToolbarAction(actionId: DownloadToolbarActionID): { handled: boolean; needsBack?: boolean; needsDelete?: boolean; needsExport?: boolean; needsVerify?: boolean } {
 	switch (actionId) {
 		case 'back':
 			return { handled: false, needsBack: true };
 		case 'open-folder':
 			// TODO: Implement open folder in file browser
-			console.log('Open folder for download:', download?.id);
 			return { handled: true };
-		case 'toggle':
-			// TODO: Implement toggle pause/resume
-			console.log('Toggle pause/resume for download:', download?.id);
+		case 'toggle-download':
+			// TODO: Implement toggle pause/resume download
 			return { handled: true };
+		case 'toggle-upload':
+			// TODO: Implement toggle pause/resume upload
+			return { handled: true };
+		case 'verify':
+			return { handled: false, needsVerify: true };
 		case 'export':
 			return { handled: false, needsExport: true };
 		case 'move':
 			// TODO: Implement move data
-			console.log('Move data for download:', download?.id);
 			return { handled: true };
 		case 'delete':
 			return { handled: false, needsDelete: true };

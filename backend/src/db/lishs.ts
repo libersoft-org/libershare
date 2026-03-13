@@ -162,7 +162,6 @@ export function getLISHMeta(db: Database, lishID: LISHid): { internalID: number;
 export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrder?: SortOrder): ILISHSummary[] {
 	const dir = (sortOrder ?? 'asc') === 'desc' ? 'DESC' : 'ASC';
 	let orderClause: string;
-
 	switch (sortBy) {
 		case 'name':
 			orderClause = `l.name ${dir}`;
@@ -180,7 +179,6 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 			orderClause = sortOrder === 'desc' ? 'l.added DESC' : 'l.added ASC';
 			break;
 	}
-
 	const rows = db
 		.query<
 			{
@@ -191,6 +189,8 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 				total_size: number;
 				file_count: number;
 				directory_count: number;
+				verified_chunks: number;
+				total_chunks: number;
 			},
 			[]
 		>(
@@ -202,7 +202,9 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 			l.created,
 			COALESCE(f.total_size, 0)  AS total_size,
 			COALESCE(f.file_count, 0)  AS file_count,
-			COALESCE(d.dir_count, 0)   AS directory_count
+			COALESCE(d.dir_count, 0)   AS directory_count,
+			COALESCE(v.verified_chunks, 0) AS verified_chunks,
+			COALESCE(v.total_chunks, 0)    AS total_chunks
 		FROM lishs l
 		LEFT JOIN (
 			SELECT id_lishs, SUM(size) AS total_size, COUNT(*) AS file_count
@@ -212,6 +214,14 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 			SELECT id_lishs, COUNT(*) AS dir_count
 			FROM lishs_directories GROUP BY id_lishs
 		) d ON d.id_lishs = l.id
+		LEFT JOIN (
+			SELECT f2.id_lishs,
+				SUM(CASE WHEN c.have THEN 1 ELSE 0 END) AS verified_chunks,
+				COUNT(*) AS total_chunks
+			FROM lishs_chunks c
+			JOIN lishs_files f2 ON f2.id = c.id_lishs_files
+			GROUP BY f2.id_lishs
+		) v ON v.id_lishs = l.id
 		ORDER BY ${orderClause}
 	`
 		)
@@ -225,6 +235,8 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 		totalSize: r.total_size,
 		fileCount: r.file_count,
 		directoryCount: r.directory_count,
+		verifiedChunks: r.verified_chunks,
+		totalChunks: r.total_chunks,
 	}));
 }
 
@@ -235,6 +247,9 @@ export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null 
 	const files = getFiles(db, row.id);
 	const directories = getDirectories(db, row.id);
 	const links = getLinks(db, row.id);
+	const vp = getVerificationProgress(db, lishID);
+	const fileVP = getFileVerificationProgress(db, lishID);
+	const fileVPMap = new Map(fileVP.map(f => [f.filePath, f]));
 
 	return {
 		id: row.lish_id,
@@ -247,9 +262,14 @@ export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null 
 		fileCount: files.length,
 		directoryCount: directories.length,
 		directory: row.directory ?? undefined,
-		files: files.map(f => ({ path: f.path, size: f.size, permissions: f.permissions ?? undefined, modified: f.modified ?? undefined, created: f.created ?? undefined })),
+		files: files.map(f => {
+			const fvp = fileVPMap.get(f.path);
+			return { path: f.path, size: f.size, permissions: f.permissions ?? undefined, modified: f.modified ?? undefined, created: f.created ?? undefined, verifiedChunks: fvp?.verifiedChunks ?? 0, totalChunks: fvp?.totalChunks ?? 0 };
+		}),
 		directories,
 		links,
+		verifiedChunks: vp.verifiedChunks,
+		totalChunks: vp.totalChunks,
 	};
 }
 
@@ -368,6 +388,100 @@ export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID
 		if (chunkIndex !== -1) return { filePath: file.path, chunkIndex };
 	}
 	return null;
+}
+
+// -- Verification operations --
+
+export interface VerificationProgress {
+	verifiedChunks: number;
+	totalChunks: number;
+}
+
+export interface FileVerificationProgress {
+	filePath: string;
+	verifiedChunks: number;
+	totalChunks: number;
+}
+
+export function getVerificationProgress(db: Database, lishID: LISHid): VerificationProgress {
+	const internalID = getInternalID(db, lishID);
+	if (internalID === null) return { verifiedChunks: 0, totalChunks: 0 };
+	const row = db
+		.query<{ total: number; verified: number }, [number]>(
+			`SELECT COUNT(*) as total, SUM(CASE WHEN c.have THEN 1 ELSE 0 END) as verified
+		 FROM lishs_chunks c
+		 JOIN lishs_files f ON f.id = c.id_lishs_files
+		 WHERE f.id_lishs = ?`
+		)
+		.get(internalID);
+	return { verifiedChunks: row?.verified ?? 0, totalChunks: row?.total ?? 0 };
+}
+
+export function getFileVerificationProgress(db: Database, lishID: LISHid): FileVerificationProgress[] {
+	const internalID = getInternalID(db, lishID);
+	if (internalID === null) return [];
+	return db
+		.query<{ path: string; total: number; verified: number }, [number]>(
+			`SELECT f.path, COUNT(*) as total, SUM(CASE WHEN c.have THEN 1 ELSE 0 END) as verified
+		 FROM lishs_chunks c
+		 JOIN lishs_files f ON f.id = c.id_lishs_files
+		 WHERE f.id_lishs = ?
+		 GROUP BY f.id
+		 ORDER BY f.id`
+		)
+		.all(internalID)
+		.map(r => ({ filePath: r.path, verifiedChunks: r.verified, totalChunks: r.total }));
+}
+
+export function markChunkVerified(db: Database, _lishID: LISHid, fileInternalID: number, chunkIndex: number): void {
+	const chunks = db.query<{ id: number }, [number]>('SELECT id FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(fileInternalID);
+	const chunk = chunks[chunkIndex];
+	if (chunk) db.run('UPDATE lishs_chunks SET have = TRUE WHERE id = ?', [chunk.id]);
+}
+
+export function markChunkFailed(db: Database, _lishID: LISHid, fileInternalID: number, chunkIndex: number): void {
+	const chunks = db.query<{ id: number }, [number]>('SELECT id FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(fileInternalID);
+	const chunk = chunks[chunkIndex];
+	if (chunk) db.run('UPDATE lishs_chunks SET have = FALSE WHERE id = ?', [chunk.id]);
+}
+
+export function resetVerification(db: Database, lishID: LISHid): void {
+	const internalID = getInternalID(db, lishID);
+	if (internalID === null) return;
+	db.run(
+		`UPDATE lishs_chunks SET have = FALSE
+		 WHERE id_lishs_files IN (SELECT id FROM lishs_files WHERE id_lishs = ?)`,
+		[internalID]
+	);
+}
+
+export function isVerified(db: Database, lishID: LISHid): boolean {
+	const internalID = getInternalID(db, lishID);
+	if (internalID === null) return false;
+	const row = db
+		.query<{ unverified: number }, [number]>(
+			`SELECT COUNT(*) as unverified FROM lishs_chunks c
+		 JOIN lishs_files f ON f.id = c.id_lishs_files
+		 WHERE f.id_lishs = ? AND c.have = FALSE`
+		)
+		.get(internalID);
+	return (row?.unverified ?? 1) === 0;
+}
+
+/**
+ * Get files with their internal IDs and chunk checksums, for verification.
+ */
+export function getFilesForVerification(db: Database, lishID: LISHid): Array<{ fileInternalID: number; path: string; checksums: string[] }> | null {
+	const internalID = getInternalID(db, lishID);
+	if (internalID === null) return null;
+	const files = db.query<{ id: number; path: string }, [number]>('SELECT id, path FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
+	return files.map(f => {
+		const checksums = db
+			.query<{ checksum: string }, [number]>('SELECT checksum FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id')
+			.all(f.id)
+			.map(c => c.checksum);
+		return { fileInternalID: f.id, path: f.path, checksums };
+	});
 }
 
 // -- Internal helpers --

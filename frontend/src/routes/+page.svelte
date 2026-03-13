@@ -11,6 +11,7 @@
 	import { cursorVisible } from '../scripts/input/mouse.ts';
 	import { cursorSize, cursorSizes, footerVisible, loadSettings } from '../scripts/settings.ts';
 	import { connected, apiURL } from '../scripts/ws-client.ts';
+	import { initDownloads } from '../scripts/downloads.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
 	import Debug from '../components/Debug/Debug.svelte';
 	import Header from '../pages/Header/Header.svelte';
@@ -65,9 +66,9 @@
 
 	async function onConnected(): Promise<void> {
 		try {
-			await loadSettings();
-			play('welcome');
-			console.log(await api.lishnets.list());
+			await loadSettings(); //	Load settings immediately on connect to ensure they're available for the rest of the initialization
+			await initDownloads(); // Load download list and subscribe to verify/list events
+			play('welcome'); //	Play welcome sound on connect
 		} catch (error) {
 			console.error('[App] Backend initialization error:', error);
 		}

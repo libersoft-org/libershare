@@ -322,6 +322,10 @@ class LISHsAPI {
 	parseFromURL(url: string): Promise<ILISH[]> {
 		return this.client.call<ILISH[]>('lishs.parseFromURL', { url });
 	}
+
+	verify(lishID: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.verify', { lishID });
+	}
 }
 
 class TransferAPI {

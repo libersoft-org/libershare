@@ -50,29 +50,25 @@ export class APIServer {
 		this.secure = options.secure;
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
-
 		const emitTo = (client: ClientSocket, event: string, data: any) => this.emit(client, event, data);
-
+		const broadcastFn = (event: string, data: any) => this.broadcast(event, data);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _settings = initSettingsHandlers(this.settings);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
-		const _lishs = initLISHsHandlers(this.dataServer, emitTo);
+		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
-
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
 			'events.unsubscribe': _events.unsubscribe,
-
 			// Settings
 			'settings.get': _settings.get,
 			'settings.set': _settings.set,
 			'settings.list': _settings.list,
 			'settings.getDefaults': _settings.getDefaults,
 			'settings.reset': _settings.reset,
-
 			// LISH Networks
 			'lishnets.list': _lishnets.list,
 			'lishnets.get': _lishnets.get,
@@ -97,7 +93,6 @@ export class APIServer {
 			'lishnets.getNodeInfo': _lishnets.getNodeInfo,
 			'lishnets.getStatus': _lishnets.getStatus,
 			'lishnets.infoAll': _lishnets.infoAll,
-
 			// LISHs
 			'lishs.list': _lishs.list,
 			'lishs.get': _lishs.get,
@@ -112,14 +107,12 @@ export class APIServer {
 			'lishs.parseFromFile': _lishs.parseFromFile,
 			'lishs.parseFromJSON': _lishs.parseFromJSON,
 			'lishs.parseFromURL': _lishs.parseFromURL,
-
+			'lishs.verify': _lishs.verify,
 			// Transfer
 			'transfer.download': _transfer.download,
-
 			// Datasets
 			'datasets.getDatasets': _datasets.getDatasets,
 			'datasets.getDataset': _datasets.getDataset,
-
 			// Filesystem
 			'fs.info': _fs.info,
 			'fs.list': _fs.list,
@@ -234,5 +227,17 @@ export class APIServer {
 
 	private emit(client: ClientSocket, event: string, data: any): void {
 		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) client.send(JSON.stringify({ event, data }));
+	}
+
+	private broadcast(event: string, data: any): void {
+		const msg = JSON.stringify({ event, data });
+		let sent = 0;
+		for (const client of this.clients) {
+			if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
+				client.send(msg);
+				sent++;
+			}
+		}
+		// console.log(`[API] broadcast '${event}' to ${sent}/${this.clients.size} clients`, JSON.stringify(data));
 	}
 }

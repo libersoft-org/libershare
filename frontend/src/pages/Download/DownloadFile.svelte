@@ -16,7 +16,7 @@
 	}
 	let { name, progress, size, downloadedSize, selected = false, odd = false, animated = false, el = $bindable(), position }: Props = $props();
 	// Show "downloaded / total" format when downloading (progress < 100 and downloadedSize is provided)
-	let sizeDisplay = $derived(downloadedSize && progress < 100 ? `${downloadedSize} / ${size}` : size);
+	let sizeDisplay = $derived(downloadedSize ? `${downloadedSize} / ${size}` : size);
 </script>
 
 <style>

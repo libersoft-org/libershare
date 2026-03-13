@@ -99,7 +99,7 @@
 					<TableCell>{$t('settings.lishNetwork.connections')}</TableCell>
 				</TableHeader>
 				{#each peers as peer, i}
-					<TableRow position={[0, i + 1]} odd={i % 2 !== 0} onConfirm={() => console.log('Peer selected:', peer.peerID)}>
+					<TableRow position={[0, i + 1]} odd={i % 2 !== 0}>
 						<TableCell desktopOnly>{i + 1}</TableCell>
 						<TableCell wrap><span class="peer-id">{peer.peerID}</span></TableCell>
 						<TableCell>
