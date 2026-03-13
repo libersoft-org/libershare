@@ -4,7 +4,7 @@ import { api } from './api.ts';
 import { formatSize } from './utils.ts';
 import { navigateBack } from './navigation.ts';
 
-export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying';
+export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification';
 
 // ============================================================================
 // Download Data Types
@@ -104,10 +104,23 @@ export function setCurrentDetailLISHID(lishID: string | null): void {
 export async function initDownloads(): Promise<void> {
 	// Reload data on every connect
 	downloadsLoading.set(true);
+	let verifying: string | null = null;
+	let pendingVerification: string[] = [];
 	try {
-		const summaries = await api.lishs.list(undefined, 'desc');
+		const { items: summaries, verifying: v, pendingVerification: pv } = await api.lishs.list(undefined, 'desc');
+		verifying = v;
+		pendingVerification = pv;
 		const details = await Promise.all(summaries.map(s => api.lishs.get(s.id)));
-		downloads.set(details.filter((d): d is ILISHDetail => d !== null).map(detailToDownload));
+		downloads.set(
+			details
+				.filter((d): d is ILISHDetail => d !== null)
+				.map(d => {
+					const entry = detailToDownload(d);
+					if (d.id === verifying) entry.status = 'verifying';
+					else if (pendingVerification.includes(d.id)) entry.status = 'pending-verification';
+					return entry;
+				})
+		);
 	} catch (err) {
 		console.error('Failed to load LISH list:', err);
 		downloads.set([]);
@@ -140,10 +153,28 @@ export async function initDownloads(): Promise<void> {
 		});
 
 		// lishs:verify — verification progress (broadcast from backend)
-		api.on('lishs:verify', (data: { lishID: string; filePath: string; verifiedChunks: number; done?: boolean; reset?: boolean }) => {
+		api.on('lishs:verify', (data: { lishID: string; filePath: string; verifiedChunks: number; done?: boolean; reset?: boolean; queued?: boolean; started?: boolean }) => {
 			// console.log('[downloads] lishs:verify received:', data.filePath, 'verified:', data.verifiedChunks, 'done:', data.done);
 			if (data.reset) {
 				resetVerifyState(data.lishID);
+				return;
+			}
+			if (data.queued) {
+				downloads.update(list =>
+					list.map(d => {
+						if (d.id !== data.lishID) return d;
+						return { ...d, status: 'pending-verification' as DownloadStatus };
+					})
+				);
+				return;
+			}
+			if (data.started) {
+				downloads.update(list =>
+					list.map(d => {
+						if (d.id !== data.lishID) return d;
+						return { ...d, status: 'verifying' as DownloadStatus };
+					})
+				);
 				return;
 			}
 			if (data.done) {
@@ -183,13 +214,13 @@ export async function initDownloads(): Promise<void> {
 	api.subscribe('lishs:verify');
 }
 
-/** Reset verify state for a LISH in the downloads store (set all to 0, status to verifying). */
+/** Reset verify state for a LISH in the downloads store (set all to 0, status to pending-verification). */
 export function resetVerifyState(lishID: string): void {
 	downloads.update(list =>
 		list.map(d => {
 			if (d.id !== lishID) return d;
 			const files = d.files.map(f => ({ ...f, verifiedChunks: 0, progress: 0, downloadedSize: '0 B' }));
-			return { ...d, verifiedChunks: 0, progress: 0, status: 'verifying' as DownloadStatus, files, downloadedSize: '0 B' };
+			return { ...d, verifiedChunks: 0, progress: 0, status: 'pending-verification' as DownloadStatus, files, downloadedSize: '0 B' };
 		})
 	);
 }

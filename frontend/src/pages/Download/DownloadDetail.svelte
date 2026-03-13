@@ -42,7 +42,7 @@
 	// Toolbar actions - use config from downloads.ts
 	let downloadPaused = $state(true);
 	let uploadPaused = $state(true);
-	let isVerifying = $derived(download?.status === 'verifying');
+	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => (action.id === 'verify' && !isVerifying) || (action.id === 'stop-verify' && isVerifying) || (action.id !== 'verify' && action.id !== 'stop-verify')).map(action => ({
 			id: action.id,

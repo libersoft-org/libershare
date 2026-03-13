@@ -264,7 +264,7 @@ async function main(): Promise<void> {
 
 				// ============ LISHs ============
 				case 'lishs.list': {
-					const lishs = await api.lishs.list();
+					const { items: lishs } = await api.lishs.list();
 					console.log('LISHs:');
 					if (lishs.length === 0) console.log('  (none)');
 					else lishs.forEach(m => console.log(`  ${m.id}`));

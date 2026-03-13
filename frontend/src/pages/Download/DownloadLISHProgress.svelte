@@ -37,9 +37,9 @@
 		position?: Position;
 		params: Record<string, any>;
 		onBack?: () => void;
-		onDone?: (lishID: string) => void;
+		onComplete?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, params, onBack, onDone }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, params, onBack, onComplete }: Props = $props();
 
 	// Progress state
 	type Status = 'creating' | 'done' | 'error';
@@ -101,6 +101,7 @@
 			resultLISHID = result.lishID;
 			resultLISHFile = result.lishFile || '';
 			status = 'done';
+			onComplete?.();
 		} catch (err: any) {
 			errorText = translateError(err);
 			status = 'error';
@@ -113,16 +114,7 @@
 		}
 	}
 
-	function handleBack(): void {
-		onBack?.();
-	}
-
-	function handleDone(): void {
-		if (onDone) onDone(resultLISHID);
-		else onBack?.();
-	}
-
-	createNavArea(() => ({ areaID, position, activate: true, onBack: handleBack }));
+	createNavArea(() => ({ areaID, position, activate: true, onBack }));
 
 	startCreate();
 
@@ -175,7 +167,7 @@
 <div class="progress-page">
 	<div class="container">
 		<ButtonBar>
-			<Button icon="/img/back.svg" label={status === 'creating' ? $t('common.cancel') : $t('common.back')} position={[0, 0]} onConfirm={status === 'done' ? handleDone : handleBack} />
+			<Button icon="/img/back.svg" label={status === 'creating' ? $t('common.cancel') : $t('common.back')} position={[0, 0]} onConfirm={onBack} />
 		</ButtonBar>
 		{#if status === 'creating'}
 			<div class="status-label">{$t('lish.create.progress.creating')}</div>

@@ -50,7 +50,7 @@ interface ExportAllToFileParams {
 	compressionAlgorithm?: CompressionAlgorithm;
 }
 interface LISHsHandlers {
-	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => ILISHSummary[];
+	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] };
 	get: (p: { lishID: string }) => ILISHDetail | null;
 	exportToFile: (p: ExportToFileParams) => Promise<SuccessResponse>;
 	exportAllToFile: (p: ExportAllToFileParams) => Promise<SuccessResponse>;
@@ -108,8 +108,12 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 }
 
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn): LISHsHandlers {
-	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): ILISHSummary[] {
-		return dataServer.listSummaries(p?.sortBy, p?.sortOrder);
+	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] } {
+		return {
+			items: dataServer.listSummaries(p?.sortBy, p?.sortOrder),
+			verifying: currentVerification?.lishID ?? null,
+			pendingVerification: [...verificationQueue],
+		};
 	}
 
 	function get(p: { lishID: string }): ILISHDetail | null {
@@ -285,45 +289,63 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return parseLISHFromJSON(content);
 	}
 
-	const activeVerifications = new Map<string, AbortController>();
+	// Verification queue — only one verification runs at a time
+	let currentVerification: { lishID: string; ac: AbortController } | null = null;
+	const verificationQueue: string[] = [];
+
+	function enqueueVerification(lishID: string): void {
+		if (currentVerification?.lishID === lishID) return;
+		if (verificationQueue.includes(lishID)) return;
+		verificationQueue.push(lishID);
+		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, queued: true });
+		processVerificationQueue();
+	}
+
+	function processVerificationQueue(): void {
+		if (currentVerification || verificationQueue.length === 0) return;
+		const lishID = verificationQueue.shift()!;
+		const ac = new AbortController();
+		currentVerification = { lishID, ac };
+		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, started: true });
+		runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
+			if (currentVerification?.lishID === lishID) {
+				if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
+				currentVerification = null;
+			}
+			processVerificationQueue();
+		});
+	}
 
 	function startVerification(lishID: string): void {
-		const prev = activeVerifications.get(lishID);
-		if (prev) prev.abort();
-		const ac = new AbortController();
-		activeVerifications.set(lishID, ac);
-		runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
-			if (activeVerifications.get(lishID) === ac) {
-				activeVerifications.delete(lishID);
-				if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
-			}
-		});
+		enqueueVerification(lishID);
 	}
 
 	async function verify(p: { lishID: string }): Promise<SuccessResponse> {
 		assert(p, ['lishID']);
-		// Cancel any running verification for this LISH
-		const prev = activeVerifications.get(p.lishID);
-		if (prev) prev.abort();
-		const ac = new AbortController();
-		activeVerifications.set(p.lishID, ac);
+		// Cancel if currently running for this LISH
+		if (currentVerification?.lishID === p.lishID) {
+			currentVerification.ac.abort();
+			currentVerification = null;
+		}
+		// Remove from queue if pending
+		const qIdx = verificationQueue.indexOf(p.lishID);
+		if (qIdx >= 0) verificationQueue.splice(qIdx, 1);
 		resetVerification(dataServer, p.lishID);
-		// Notify all clients to reset their UI state
 		broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, reset: true });
-		// Run verification in background — response is sent immediately after DB reset
-		runVerification(dataServer, p.lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
-			if (activeVerifications.get(p.lishID) === ac) {
-				activeVerifications.delete(p.lishID);
-				if (ac.signal.aborted) broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, done: true });
-			}
-		});
+		enqueueVerification(p.lishID);
 		return { success: true };
 	}
 
 	async function stopVerify(p: { lishID: string }): Promise<SuccessResponse> {
 		assert(p, ['lishID']);
-		const ac = activeVerifications.get(p.lishID);
-		if (ac) ac.abort();
+		// Stop if currently running
+		if (currentVerification?.lishID === p.lishID) currentVerification.ac.abort();
+		// Remove from queue if pending
+		const qIdx = verificationQueue.indexOf(p.lishID);
+		if (qIdx >= 0) {
+			verificationQueue.splice(qIdx, 1);
+			broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, done: true });
+		}
 		return { success: true };
 	}
 

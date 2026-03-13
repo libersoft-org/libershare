@@ -87,7 +87,8 @@
 			"uploading": "Odesílám",
 			"downloading-uploading": "Stahuji a odesílám",
 			"idling": "Nečinný",
-			"verifying": "Ověřuje se"
+			"verifying": "Ověřuje se",
+			"pending-verification": "Čeká na ověření"
 		},
 		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",

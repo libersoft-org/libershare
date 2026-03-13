@@ -4,7 +4,7 @@
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBreadcrumb, popBreadcrumb, navigateBack } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { sanitizeFilename } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
@@ -196,12 +196,20 @@
 
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
 
+	let progressDone = false;
+
 	function openProgressPage(params: Record<string, any>): void {
 		createParams = params;
 		creating = true;
+		progressDone = false;
 		navHandle.pause();
 		pushBreadcrumb($t('lish.create.progress.title'));
-		removeBackHandler = pushBackHandler(handleProgressBack);
+		removeBackHandler = pushBackHandler(handleProgressNavBack);
+	}
+
+	function handleProgressNavBack(): void {
+		if (progressDone) handleProgressDone();
+		else handleProgressBack();
 	}
 
 	async function handleProgressBack(): Promise<void> {
@@ -211,20 +219,21 @@
 		}
 		popBreadcrumb();
 		creating = false;
+		progressDone = false;
 		await tick();
 		navHandle.resume();
+		await tick();
 		activateArea(areaID);
 	}
 
 	function handleProgressDone(): void {
-		// Clean up without re-registering area (we're navigating away)
 		if (removeBackHandler) {
 			removeBackHandler();
 			removeBackHandler = null;
 		}
 		popBreadcrumb();
-		creating = false;
-		onBack?.();
+		progressDone = false;
+		navigateBack();
 	}
 
 	function openInputPathBrowse(): void {
@@ -327,7 +336,7 @@
 {:else if browsingLISHFile}
 	<FileBrowser {areaID} {position} initialPath={browseFolder} showPath foldersOnly selectFolderButton saveFileName={lishFileName} onSaveFileNameChange={v => (lishFileName = v)} onSelect={handleOutputPathSelect} onBack={handleOutputBrowseBack} />
 {:else if creating}
-	<DownloadLISHProgress {areaID} {position} params={createParams} onBack={handleProgressBack} onDone={handleProgressDone} />
+	<DownloadLISHProgress {areaID} {position} params={createParams} onBack={handleProgressNavBack} onComplete={() => (progressDone = true)} />
 {:else}
 	<div class="create">
 		<div class="container">
