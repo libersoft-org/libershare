@@ -99,6 +99,7 @@
 		"startUpload": "Start upload",
 		"pauseUpload": "Pause upload",
 		"verify": "Verify",
+		"stopVerify": "Stop verification",
 		"moveData": "Move data",
 		"deleteDialog": {
 			"message": "What do you want to delete?",

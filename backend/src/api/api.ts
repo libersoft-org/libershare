@@ -108,6 +108,7 @@ export class APIServer {
 			'lishs.parseFromJSON': _lishs.parseFromJSON,
 			'lishs.parseFromURL': _lishs.parseFromURL,
 			'lishs.verify': _lishs.verify,
+			'lishs.stopVerify': _lishs.stopVerify,
 			// Transfer
 			'transfer.download': _transfer.download,
 			// Datasets

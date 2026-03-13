@@ -42,8 +42,9 @@
 	// Toolbar actions - use config from downloads.ts
 	let downloadPaused = $state(true);
 	let uploadPaused = $state(true);
+	let isVerifying = $derived(download?.status === 'verifying');
 	let toolbarActions = $derived(
-		DOWNLOAD_TOOLBAR_ACTIONS.map(action => ({
+		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => (action.id === 'verify' && !isVerifying) || (action.id === 'stop-verify' && isVerifying) || (action.id !== 'verify' && action.id !== 'stop-verify')).map(action => ({
 			id: action.id,
 			label: action.getLabel($t, downloadPaused, uploadPaused),
 			icon: typeof action.icon === 'function' ? action.icon(downloadPaused, uploadPaused) : action.icon,
@@ -76,8 +77,18 @@
 	}
 
 	function handleToolbarAction(actionId: DownloadToolbarActionID): void {
-		if (actionId === 'toggle-download') { downloadPaused = !downloadPaused; return; }
-		if (actionId === 'toggle-upload') { uploadPaused = !uploadPaused; return; }
+		if (actionId === 'toggle-download') {
+			downloadPaused = !downloadPaused;
+			return;
+		}
+		if (actionId === 'toggle-upload') {
+			uploadPaused = !uploadPaused;
+			return;
+		}
+		if (actionId === 'stop-verify' && download) {
+			api.lishs.stopVerify(download.id).catch(err => console.error('Stop verification failed:', err));
+			return;
+		}
 		const result = handleDownloadToolbarAction(actionId);
 		if (result.needsBack) handleBack();
 		if (result.needsDelete) showDeleteDialog = true;

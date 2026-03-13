@@ -99,6 +99,7 @@
 		"startUpload": "Spustit odesílání",
 		"pauseUpload": "Pozastavit odesílání",
 		"verify": "Ověřit",
+		"stopVerify": "Zastavit ověřování",
 		"moveData": "Přesunout data",
 		"deleteDialog": {
 			"message": "Co chcete smazat?",

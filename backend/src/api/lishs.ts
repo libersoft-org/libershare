@@ -64,6 +64,7 @@ interface LISHsHandlers {
 	parseFromJSON: (p: { json: string }) => ILISH[];
 	parseFromURL: (p: { url: string }) => Promise<ILISH[]>;
 	verify: (p: { lishID: string }) => Promise<SuccessResponse>;
+	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
 }
 
 /**
@@ -292,7 +293,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const ac = new AbortController();
 		activeVerifications.set(lishID, ac);
 		runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
-			if (activeVerifications.get(lishID) === ac) activeVerifications.delete(lishID);
+			if (activeVerifications.get(lishID) === ac) {
+				activeVerifications.delete(lishID);
+				if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
+			}
 		});
 	}
 
@@ -308,10 +312,20 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, reset: true });
 		// Run verification in background — response is sent immediately after DB reset
 		runVerification(dataServer, p.lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
-			if (activeVerifications.get(p.lishID) === ac) activeVerifications.delete(p.lishID);
+			if (activeVerifications.get(p.lishID) === ac) {
+				activeVerifications.delete(p.lishID);
+				if (ac.signal.aborted) broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, done: true });
+			}
 		});
 		return { success: true };
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify };
+	async function stopVerify(p: { lishID: string }): Promise<SuccessResponse> {
+		assert(p, ['lishID']);
+		const ac = activeVerifications.get(p.lishID);
+		if (ac) ac.abort();
+		return { success: true };
+	}
+
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, stopVerify };
 }

@@ -326,6 +326,10 @@ class LISHsAPI {
 	verify(lishID: string): Promise<SuccessResponse> {
 		return this.client.call<SuccessResponse>('lishs.verify', { lishID });
 	}
+
+	stopVerify(lishID: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.stopVerify', { lishID });
+	}
 }
 
 class TransferAPI {
