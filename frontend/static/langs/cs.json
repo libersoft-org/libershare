@@ -16,8 +16,6 @@
 		"load": "Načíst",
 		"save": "Uložit",
 		"saveAs": "Uložit jako",
-		"fileExistsOverwrite": "Soubor \"{name}\" již existuje. Chcete ho přepsat?",
-		"fileNameIsDirectory": "Název \"{name}\" již existuje jakožto adresář, proto není možné soubor uložit.",
 		"overwriteFile": "Přepsat soubor",
 		"delete": "Smazat",
 		"edit": "Upravit",
@@ -47,9 +45,22 @@
 		"optional": "volitelné",
 		"fromFile": "Ze souboru",
 		"fromWeb": "Z webu",
+		"extensions": "přípony",
 		"openFolder": "Otevřít složku",
-		"filePathRequired": "Cesta k souboru je povinná",
-		"urlRequired": "URL je povinná"
+		"errorFileExistsOverwrite": "Soubor \"{name}\" již existuje. Chcete ho přepsat?",
+		"errorFileNameIsDirectory": "Název \"{name}\" již existuje jakožto adresář, proto není možné soubor uložit.",
+		"errorFilePathRequired": "Cesta k souboru je povinná",
+		"errorURLRequired": "URL je povinná",
+		"errorInvalidJSON": "Neplatný JSON: {detail}",
+		"errorMissingParameter": "Chybí povinný parametr: {detail}",
+		"errorUnsupportedCompression": "Nepodporovaný kompresní algoritmus: {detail}",
+		"errorUnsupportedDecompression": "Nepodporovaný dekompresní algoritmus: {detail}",
+		"errorHTTP": "HTTP chyba: {detail}",
+		"errorInvalidSizeFormat": "Neplatný formát velikosti. Použijte číslo s volitelnou příponou: K, M, G, T, P, E, Z, Y",
+		"errorParseError": "Neplatný formát požadavku",
+		"errorMethodRequired": "Metoda je povinná",
+		"errorUnknownMethod": "Neznámá metoda: {detail}",
+		"errorInternal": "Interní chyba: {detail}"
 	},
 	"library": {
 		"title": "Online knihovna",
@@ -72,17 +83,24 @@
 		"downloadSpeed": "Rychlost stahování",
 		"uploadSpeed": "Rychlost odesílání",
 		"statuses": {
-			"completed": "Dokončeno",
-			"downloading": "Stahuje se",
-			"waiting": "Čeká",
-			"paused": "Pozastaveno",
-			"error": "Chyba"
+			"downloading": "Stahuji",
+			"uploading": "Odesílám",
+			"downloading-uploading": "Stahuji a odesílám",
+			"idling": "Nečinný",
+			"verifying": "Ověřuje se",
+			"pending-verification": "Čeká na ověření"
 		},
 		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",
 		"start": "Spustit",
 		"pause": "Pozastavit",
+		"startDownload": "Spustit stahování",
+		"pauseDownload": "Pozastavit stahování",
+		"startUpload": "Spustit odesílání",
+		"pauseUpload": "Pozastavit odesílání",
+		"verify": "Ověřit",
+		"stopVerify": "Zastavit ověřování",
 		"moveData": "Přesunout data",
 		"deleteDialog": {
 			"message": "Co chcete smazat?",
@@ -90,8 +108,10 @@
 			"lishAndData": "Smazat LISH i data",
 			"dataOnly": "Smazat pouze data"
 		},
-		"deleteFailed": "Smazání se nezdařilo",
-		"lishCreate": {
+		"deleteFailed": "Smazání se nezdařilo"
+	},
+	"lish": {
+		"create": {
 			"dataPath": "Umístění dat (soubor nebo složka)",
 			"saveToFile": "Uložit do souboru .lish",
 			"lishFile": "Cesta k .lish souboru",
@@ -115,7 +135,7 @@
 				"filesProcessed": "Zpracovaných souborů"
 			}
 		},
-		"lishImport": {
+		"import": {
 			"fromJSON": "Z LISH JSON",
 			"filePath": "LISH soubor",
 			"url": "URL adresa LISH souboru",
@@ -124,11 +144,27 @@
 			"lishJSON": "LISH JSON",
 			"downloadPathRequired": "Složka pro stažení je povinná",
 			"jsonRequired": "LISH JSON je povinný",
-			"autoStartSharing": "Automaticky spustit sdílení po přidání"
+			"autoStartSharing": "Automaticky spustit sdílení po přidání",
+			"confirmOverwrite": "Následující LISH již existuje:\n\nJméno: {name}\nID: {id}\n\nChcete jej přepsat?"
 		},
-		"lishExport": {
+		"export": {
 			"errorIDRequired": "LISH ID je povinné"
-		}
+		},
+		"errorNotFound": "LISH nebyl nalezen: {detail}",
+		"errorNoLISHs": "Žádné LISHy k exportu",
+		"errorDirectoryEmpty": "Adresář je prázdný \u2014 není co vytvářet",
+		"errorAlreadyExists": "LISH již existuje: {detail}",
+		"errorInvalidInputType": "Vstup musí být soubor nebo adresář",
+		"errorInvalidFormat": "Neplatný LISH: není objekt",
+		"errorMissingID": "Neplatný LISH: chybí nebo prázdné ID",
+		"errorMissingCreated": "Neplatný LISH: chybí nebo prázdný časový údaj vytvoření",
+		"errorInvalidChunkSize": "Neplatný LISH: chybí nebo neplatná velikost chunku",
+		"errorUnsupportedChecksum": "Neplatný LISH: nepodporovaný hashovací algoritmus: {detail}",
+		"errorUnexpectedArray": "Očekáván jeden LISH objekt, obdrženo pole",
+		"errorPathAccessDenied": "Nelze přistoupit k cestě: {detail}",
+		"errorInvalidFileIndex": "Neplatný index souboru: {detail}",
+		"errorDownloaderNotInitialized": "Stahovač nebyl inicializován",
+		"errorDownload": "Stahování selhalo: {detail}"
 	},
 	"settings": {
 		"title": "Nastavení",
@@ -178,7 +214,15 @@
 			"noPeers": "Žádní účastníci nejsou připojeni",
 			"connectedPeers": "Účastníků: {count}",
 			"minifyJSON": "Minifikovat JSON",
-			"compress": "Komprimovat"
+			"compress": "Komprimovat",
+			"errorNotFound": "Síť nebyla nalezena: {detail}",
+			"errorNoNetworks": "Žádné sítě k exportu",
+			"errorNotJoined": "Síť není připojena",
+			"errorNotRunning": "Síť neběží",
+			"errorInvalid": "Neplatná síť: chybí ID sítě nebo název",
+			"errorNoValidNetworks": "Nebyly nalezeny žádné platné sítě",
+			"errorNotStarted": "Síť nebyla spuštěna",
+			"errorPortInUse": "Nepodařilo se spustit síť: port {detail} je pravděpodobně již obsazen"
 		},
 		"lishNetworkImport": {
 			"fromJSON": "Z LISHNET JSON",

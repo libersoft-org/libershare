@@ -95,9 +95,7 @@ export function addLISHnet(db: Database, network: LISHNetworkConfig): boolean {
 		);
 		const internalID = Number(result.lastInsertRowid);
 
-		for (const peer of network.bootstrapPeers) {
-			db.run('INSERT INTO lishnets_peers (id_lishnets, address) VALUES (?, ?)', [internalID, peer]);
-		}
+		for (const peer of network.bootstrapPeers) db.run('INSERT INTO lishnets_peers (id_lishnets, address) VALUES (?, ?)', [internalID, peer]);
 	});
 	tx();
 	return true;
@@ -116,9 +114,7 @@ export function updateLISHnet(db: Database, network: LISHNetworkConfig): boolean
 
 		// Replace peers
 		db.run('DELETE FROM lishnets_peers WHERE id_lishnets = ?', [internalID]);
-		for (const peer of network.bootstrapPeers) {
-			db.run('INSERT INTO lishnets_peers (id_lishnets, address) VALUES (?, ?)', [internalID, peer]);
-		}
+		for (const peer of network.bootstrapPeers) db.run('INSERT INTO lishnets_peers (id_lishnets, address) VALUES (?, ?)', [internalID, peer]);
 	});
 	tx();
 	return true;
@@ -141,9 +137,7 @@ export function addLISHnetIfNotExists(db: Database, network: LISHNetworkDefiniti
 
 export function importLISHnets(db: Database, networks: LISHNetworkDefinition[]): number {
 	let imported = 0;
-	for (const network of networks) {
-		if (addLISHnetIfNotExists(db, network)) imported++;
-	}
+	for (const network of networks) if (addLISHnetIfNotExists(db, network)) imported++;
 	return imported;
 }
 
@@ -152,11 +146,8 @@ export function importLISHnets(db: Database, networks: LISHNetworkDefinition[]):
  */
 export function upsertLISHnet(db: Database, networkID: string, name: string, description: string, bootstrapPeers: string[], enabled: boolean, created: string): void {
 	const config: LISHNetworkConfig = { networkID, name, description, bootstrapPeers, enabled, created };
-	if (lishnetExists(db, networkID)) {
-		updateLISHnet(db, config);
-	} else {
-		addLISHnet(db, config);
-	}
+	if (lishnetExists(db, networkID)) updateLISHnet(db, config);
+	else addLISHnet(db, config);
 }
 
 /**
@@ -172,9 +163,7 @@ export function replaceLISHnets(db: Database, networks: LISHNetworkConfig[]): vo
 				[network.networkID, network.name, network.description || null, network.enabled ? 1 : 0, network.created || null]
 			);
 			const internalID = Number(result.lastInsertRowid);
-			for (const peer of network.bootstrapPeers) {
-				db.run('INSERT INTO lishnets_peers (id_lishnets, address) VALUES (?, ?)', [internalID, peer]);
-			}
+			for (const peer of network.bootstrapPeers) db.run('INSERT INTO lishnets_peers (id_lishnets, address) VALUES (?, ?)', [internalID, peer]);
 		}
 	});
 	tx();

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -86,11 +86,11 @@
 	async function handleSave(): Promise<void> {
 		errorMessage = '';
 		if (!filePath.trim()) {
-			errorMessage = $t('common.filePathRequired');
+			errorMessage = $t('common.errorFilePathRequired');
 			return;
 		}
 		if (!lish) {
-			errorMessage = $t('downloads.lishExport.errorIDRequired');
+			errorMessage = $t('lish.export.errorIDRequired');
 			return;
 		}
 		const check = await api.fs.exists(filePath.trim());
@@ -110,11 +110,9 @@
 			if (result.success) {
 				onBack?.();
 				return;
-			} else {
-				errorMessage = 'Save failed';
-			}
+			} else errorMessage = 'Save failed';
 		} catch (e: any) {
-			errorMessage = e?.message || 'Save failed';
+			errorMessage = translateError(e);
 		} finally {
 			saving = false;
 		}
@@ -179,5 +177,5 @@
 	</div>
 {/if}
 {#if showOverwriteConfirm}
-	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.fileExistsOverwrite', { name: filePath })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
+	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.errorFileExistsOverwrite', { name: filePath })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
 {/if}

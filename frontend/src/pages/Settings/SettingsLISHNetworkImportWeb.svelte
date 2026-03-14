@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
@@ -25,14 +25,14 @@
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (!url.trim()) {
-			errorMessage = $t('common.urlRequired');
+			errorMessage = $t('common.errorURLRequired');
 			return;
 		}
 		loading = true;
 		try {
 			parsedNetworks = await api.lishnets.parseFromURL(url);
 		} catch (e) {
-			errorMessage = e instanceof Error ? e.message : String(e);
+			errorMessage = translateError(e);
 		} finally {
 			loading = false;
 		}

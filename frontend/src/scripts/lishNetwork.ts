@@ -1,5 +1,6 @@
 import { api } from './api.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
+import { translateError } from './language.ts';
 
 // Storage Operations (async, using backend API)
 
@@ -86,6 +87,6 @@ export async function fetchPublicNetworks(url: string): Promise<FetchPublicNetwo
 		const networks = await api.lishnets.parseFromURL(url);
 		return { networks, error: null };
 	} catch (e) {
-		return { networks: [], error: e instanceof Error ? e.message : String(e) };
+		return { networks: [], error: translateError(e) };
 	}
 }

@@ -1,10 +1,9 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
-	import { selectedDownload, downloads, downloadsLoading, subscribeDownloadList, unsubscribeDownloadList, DOWNLOAD_TABLE_COLUMNS } from '../../scripts/downloads.ts';
+	import { downloads, downloadsLoading, DOWNLOAD_TABLE_COLUMNS } from '../../scripts/downloads.ts';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -25,16 +24,8 @@
 
 	function openDetail(index: number): void {
 		const download = $downloads[index]!;
-		selectedDownload.set(download);
-		navigateTo('download-detail', download.name || download.id);
+		navigateTo('download-detail', download.name || download.id, { lishID: download.id });
 	}
-
-	onMount(() => {
-		subscribeDownloadList();
-		return () => {
-			unsubscribeDownloadList();
-		};
-	});
 </script>
 
 <style>

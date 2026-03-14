@@ -1,6 +1,6 @@
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
-import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerConnectionInfo, type CompressionAlgorithm } from '@shared';
+import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerConnectionInfo, type CompressionAlgorithm, CodedError, ErrorCodes } from '@shared';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
@@ -70,7 +70,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 	async function exportToFile(p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
 		assert(p, ['networkID', 'filePath']);
 		const network = networks.get(p.networkID);
-		if (!network) throw new Error(`Network not found: ${p.networkID}`);
+		if (!network) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, p.networkID);
 		const { enabled, ...definition } = network;
 		await Utils.writeJSONToFile(definition, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
 		console.log(`✓ Network exported to: ${p.filePath}`);
@@ -80,7 +80,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 	async function exportAllToFile(p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
 		assert(p, ['filePath']);
 		const nets = networks.list();
-		if (nets.length === 0) throw new Error('No networks to export');
+		if (nets.length === 0) throw new CodedError(ErrorCodes.NO_NETWORKS);
 		const exportData = nets.map(({ enabled, ...definition }) => definition);
 		await Utils.writeJSONToFile(exportData, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
 		console.log(`✓ All networks exported to: ${p.filePath}`);
@@ -91,9 +91,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 		assert(p, ['path']);
 		const definitions = await networks.parseFromFile(p.path);
 		const results: LISHNetworkConfig[] = [];
-		for (const def of definitions) {
-			results.push(await networks.importFromLISHnet(def as any, p.enabled ?? false));
-		}
+		for (const def of definitions) results.push(await networks.importFromLISHnet(def as any, p.enabled ?? false));
 		return results;
 	}
 	async function parseFromFile(p: { path: string }): Promise<LISHNetworkDefinition[]> {
@@ -130,7 +128,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 	}
 	function getPeers(p: { networkID: string }): PeerConnectionInfo[] {
 		assert(p, ['networkID']);
-		if (!networks.isJoined(p.networkID)) throw new Error('Network not joined');
+		if (!networks.isJoined(p.networkID)) throw new CodedError(ErrorCodes.NETWORK_NOT_JOINED);
 		return networks.getTopicPeersInfo(p.networkID);
 	}
 	function getNodeInfo(): NetworkNodeInfo | null {

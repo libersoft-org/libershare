@@ -1,12 +1,13 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename } from '@shared';
-import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON } from '../lish/lish.ts';
+import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, CodedError, ErrorCodes } from '@shared';
+import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, resetVerification, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { join } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
+type BroadcastFn = (event: string, data: any) => void;
 interface CreateLISHParams {
 	name?: string;
 	description?: string;
@@ -49,7 +50,7 @@ interface ExportAllToFileParams {
 	compressionAlgorithm?: CompressionAlgorithm;
 }
 interface LISHsHandlers {
-	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => ILISHSummary[];
+	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] };
 	get: (p: { lishID: string }) => ILISHDetail | null;
 	exportToFile: (p: ExportToFileParams) => Promise<SuccessResponse>;
 	exportAllToFile: (p: ExportAllToFileParams) => Promise<SuccessResponse>;
@@ -59,6 +60,11 @@ interface LISHsHandlers {
 	importFromFile: (p: ImportFromFileParams) => Promise<ImportLISHResponse>;
 	importFromJSON: (p: ImportFromJSONParams) => Promise<ImportLISHResponse>;
 	importFromURL: (p: ImportFromURLParams) => Promise<ImportLISHResponse>;
+	parseFromFile: (p: { filePath: string }) => Promise<ILISH[]>;
+	parseFromJSON: (p: { json: string }) => ILISH[];
+	parseFromURL: (p: { url: string }) => Promise<ILISH[]>;
+	verify: (p: { lishID: string }) => Promise<SuccessResponse>;
+	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
 }
 
 /**
@@ -101,9 +107,13 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 	}
 }
 
-export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHandlers {
-	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): ILISHSummary[] {
-		return dataServer.listSummaries(p?.sortBy, p?.sortOrder);
+export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn): LISHsHandlers {
+	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] } {
+		return {
+			items: dataServer.listSummaries(p?.sortBy, p?.sortOrder),
+			verifying: currentVerification?.lishID ?? null,
+			pendingVerification: [...verificationQueue],
+		};
 	}
 
 	function get(p: { lishID: string }): ILISHDetail | null {
@@ -114,7 +124,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 	async function exportToFile(p: ExportToFileParams): Promise<SuccessResponse> {
 		assert(p, ['lishID', 'filePath']);
 		const lish = dataServer.get(p.lishID);
-		if (!lish) throw new Error(`LISH not found: ${p.lishID}`);
+		if (!lish) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, p.lishID);
 		const { directory, chunks, ...exportData } = lish;
 		await Utils.writeJSONToFile(exportData, p.filePath, p.minifyJSON, p.compress, p.compressionAlgorithm);
 		console.log(`✓ LISH exported to: ${p.filePath}`);
@@ -124,7 +134,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 	async function exportAllToFile(p: ExportAllToFileParams): Promise<SuccessResponse> {
 		assert(p, ['filePath']);
 		const lishs = dataServer.list();
-		if (lishs.length === 0) throw new Error('No LISHs to export');
+		if (lishs.length === 0) throw new CodedError(ErrorCodes.NO_LISHS);
 		const exportData: ILISH[] = lishs.map(lish => {
 			const { directory, chunks, ...data } = lish;
 			return data;
@@ -153,7 +163,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		const dataPathStat = await stat(dataPath);
 		if (dataPathStat.isDirectory()) {
 			const entries = await readdir(dataPath);
-			if (entries.length === 0) throw new Error('Directory is empty - nothing to create LISH from');
+			if (entries.length === 0) throw new CodedError(ErrorCodes.DIRECTORY_EMPTY);
 		}
 		console.log(`Creating LISH from: ${dataPath}, lishFile=${p.lishFile}, addToSharing=${addToSharing}, name=${p.name}, description=${p.description}`);
 		// 1. Create the LISH structure
@@ -192,9 +202,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		// 3. Save to data-server if requested
 		if (addToSharing) {
 			lish.directory = dataPath;
-			if (lish.files) lish.chunks = lish.files.flatMap(f => f.checksums);
 			dataServer.add(lish);
 			console.log(`✓ Dataset imported: ${lish.id}`);
+			broadcast('lishs:add', dataServer.getDetail(lish.id));
+			startVerification(lish.id);
 		}
 		return { lishID: lish.id, lishFile: resultLISHFile };
 	}
@@ -208,7 +219,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		// Delete LISH from storage if requested
 		if (p.deleteLISH) {
 			const deleted = dataServer.delete(p.lishID);
-			if (deleted) console.log(`✓ LISH deleted: ${p.lishID}`);
+			if (deleted) {
+				console.log(`✓ LISH deleted: ${p.lishID}`);
+				broadcast('lishs:remove', { lishID: p.lishID });
+			}
 			return deleted;
 		}
 		return true;
@@ -216,7 +230,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 
 	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean): Promise<ImportLISHResponse> {
 		const existing = dataServer.get(lish.id);
-		if (existing && !overwrite) throw new Error(`LISH already exists: ${lish.id}`);
+		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
 		if (existing) dataServer.delete(lish.id);
 		const dirName = sanitizeFilename(lish.name || lish.id) || lish.id;
 		const directory = join(Utils.expandHome(downloadPath), dirName);
@@ -224,31 +238,116 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn): LISHsHa
 		const storedLISH: IStoredLISH = {
 			...lish,
 			directory,
-			...(lish.files ? { chunks: lish.files.flatMap(f => f.checksums) } : {}),
 		};
 		dataServer.add(storedLISH);
 		console.log(`✓ LISH imported: ${lish.id}`);
+		broadcast('lishs:add', dataServer.getDetail(lish.id));
+		startVerification(lish.id);
 		return { lishID: lish.id, directory };
 	}
 
 	async function importFromFile(p: ImportFromFileParams): Promise<ImportLISHResponse> {
 		assert(p, ['filePath', 'downloadPath']);
-		const lish = await importLISHFromFile(Utils.expandHome(p.filePath));
-		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
+		let lastResponse!: ImportLISHResponse;
+		for (const lish of lishs) {
+			lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		}
+		return lastResponse;
 	}
 
 	async function importFromJSON(p: ImportFromJSONParams): Promise<ImportLISHResponse> {
 		assert(p, ['json', 'downloadPath']);
-		const lish = parseLISHFromJSON(p.json);
-		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		const lishs = parseLISHFromJSON(p.json);
+		let lastResponse!: ImportLISHResponse;
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		return lastResponse;
 	}
 
 	async function importFromURL(p: ImportFromURLParams): Promise<ImportLISHResponse> {
 		assert(p, ['url', 'downloadPath']);
 		const content = await Utils.fetchURL(p.url);
-		const lish = parseLISHFromJSON(content);
-		return importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		const lishs = parseLISHFromJSON(content);
+		let lastResponse!: ImportLISHResponse;
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		return lastResponse;
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON: importFromJSON, importFromURL: importFromURL };
+	async function parseFromFile(p: { filePath: string }): Promise<ILISH[]> {
+		assert(p, ['filePath']);
+		return importLISHFromFile(Utils.expandHome(p.filePath));
+	}
+
+	function parseFromJSON(p: { json: string }): ILISH[] {
+		assert(p, ['json']);
+		return parseLISHFromJSON(p.json);
+	}
+
+	async function parseFromURL(p: { url: string }): Promise<ILISH[]> {
+		assert(p, ['url']);
+		const content = await Utils.fetchURL(p.url);
+		return parseLISHFromJSON(content);
+	}
+
+	// Verification queue — only one verification runs at a time
+	let currentVerification: { lishID: string; ac: AbortController } | null = null;
+	const verificationQueue: string[] = [];
+
+	function enqueueVerification(lishID: string): void {
+		if (currentVerification?.lishID === lishID) return;
+		if (verificationQueue.includes(lishID)) return;
+		verificationQueue.push(lishID);
+		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, queued: true });
+		processVerificationQueue();
+	}
+
+	function processVerificationQueue(): void {
+		if (currentVerification || verificationQueue.length === 0) return;
+		const lishID = verificationQueue.shift()!;
+		const ac = new AbortController();
+		currentVerification = { lishID, ac };
+		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, started: true });
+		runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
+			if (currentVerification?.lishID === lishID) {
+				if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
+				currentVerification = null;
+			}
+			processVerificationQueue();
+		});
+	}
+
+	function startVerification(lishID: string): void {
+		enqueueVerification(lishID);
+	}
+
+	async function verify(p: { lishID: string }): Promise<SuccessResponse> {
+		assert(p, ['lishID']);
+		// Cancel if currently running for this LISH
+		if (currentVerification?.lishID === p.lishID) {
+			currentVerification.ac.abort();
+			currentVerification = null;
+		}
+		// Remove from queue if pending
+		const qIdx = verificationQueue.indexOf(p.lishID);
+		if (qIdx >= 0) verificationQueue.splice(qIdx, 1);
+		resetVerification(dataServer, p.lishID);
+		broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, reset: true });
+		enqueueVerification(p.lishID);
+		return { success: true };
+	}
+
+	async function stopVerify(p: { lishID: string }): Promise<SuccessResponse> {
+		assert(p, ['lishID']);
+		// Stop if currently running
+		if (currentVerification?.lishID === p.lishID) currentVerification.ac.abort();
+		// Remove from queue if pending
+		const qIdx = verificationQueue.indexOf(p.lishID);
+		if (qIdx >= 0) {
+			verificationQueue.splice(qIdx, 1);
+			broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, done: true });
+		}
+		return { success: true };
+	}
+
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, stopVerify };
 }

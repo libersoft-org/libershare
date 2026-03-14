@@ -13,6 +13,7 @@ import { buildLibp2pConfig } from './network-config.ts';
 import { PINK_TOPIC, PONK_TOPIC, createPinkMessage, createPonkMessage } from './pink-ponk.ts';
 import { type HaveMessage, type WantMessage } from './downloader.ts';
 import { lishTopic } from './constants.ts';
+import { CodedError, ErrorCodes } from '@shared';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 /** Raw gossipsub message event. */
@@ -166,7 +167,7 @@ export class Network {
 			if (err?.name === 'UnsupportedListenAddressesError' || err?.code === 'ERR_NO_VALID_ADDRESSES') {
 				console.error(`✗ Failed to start network: port ${port} is likely already in use or the listen address is invalid.`);
 				console.error(`  Try changing the port in settings or stop the other process using port ${port}.`);
-				throw err;
+				throw new CodedError(ErrorCodes.NETWORK_PORT_IN_USE, String(port));
 			}
 			throw err;
 		}
@@ -179,6 +180,7 @@ export class Network {
 			if (err?.name === 'UnsupportedListenAddressesError' || err?.code === 'ERR_NO_VALID_ADDRESSES') {
 				console.error(`✗ Failed to start network: port ${port} is likely already in use or the listen address is invalid.`);
 				console.error(`  Try changing the port in settings or stop the other process using port ${port}.`);
+				throw new CodedError(ErrorCodes.NETWORK_PORT_IN_USE, String(port));
 			}
 			throw err;
 		}
@@ -442,11 +444,7 @@ export class Network {
 
 			// Dispatch to registered topic handlers
 			const handlers = this.topicHandlers.get(topic);
-			if (handlers) {
-				for (const handler of handlers) {
-					handler(message);
-				}
-			}
+			if (handlers) for (const handler of handlers) handler(message);
 		} catch (error) {
 			console.error('Error in handleMessage:', error);
 		}
@@ -527,14 +525,14 @@ export class Network {
 	}
 
 	async connectToPeer(multiaddr: string): Promise<void> {
-		if (!this.node) throw new Error('Network not started');
+		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
 		const ma = Multiaddr(multiaddr);
 		await this.node.dial(ma);
 		console.log('→ Connected to:', multiaddr);
 	}
 
 	async dialProtocol(multiaddrs: any[], protocol: string): Promise<Stream> {
-		if (!this.node) throw new Error('Network not started');
+		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
 		const connection = await this.node.dial(multiaddrs);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
 		return stream;
@@ -613,9 +611,7 @@ export class Network {
 	async findPeer(peerID: PeerId): Promise<void> {
 		console.log('Finding peer:');
 		console.log('Closest peers:');
-		for await (const peer of this.node!.peerRouting.getClosestPeers(peerID.toMultihash().bytes)) {
-			console.log(peer.id, peer.multiaddrs);
-		}
+		for await (const peer of this.node!.peerRouting.getClosestPeers(peerID.toMultihash().bytes)) console.log(peer.id, peer.multiaddrs);
 		const peer: PeerInfo = await this.node!.peerRouting.findPeer(peerID);
 		console.log('Found it, multiaddrs are:');
 		peer.multiaddrs.forEach(ma => console.log(ma.toString()));

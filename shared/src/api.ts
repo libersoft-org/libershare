@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHSortField, type SortOrder, type CompressionAlgorithm } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -259,8 +259,8 @@ class LISHsAPI {
 		this.client = client;
 	}
 
-	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<ILISHSummary[]> {
-		return this.client.call<ILISHSummary[]>('lishs.list', { sortBy, sortOrder });
+	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] }> {
+		return this.client.call<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] }>('lishs.list', { sortBy, sortOrder });
 	}
 
 	get(lishID: string): Promise<ILISHDetail | null> {
@@ -309,6 +309,26 @@ class LISHsAPI {
 
 	importFromURL(url: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
 		return this.client.call<ImportLISHResponse>('lishs.importFromURL', { url, downloadPath, overwrite });
+	}
+
+	parseFromFile(filePath: string): Promise<ILISH[]> {
+		return this.client.call<ILISH[]>('lishs.parseFromFile', { filePath });
+	}
+
+	parseFromJSON(json: string): Promise<ILISH[]> {
+		return this.client.call<ILISH[]>('lishs.parseFromJSON', { json });
+	}
+
+	parseFromURL(url: string): Promise<ILISH[]> {
+		return this.client.call<ILISH[]>('lishs.parseFromURL', { url });
+	}
+
+	verify(lishID: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.verify', { lishID });
+	}
+
+	stopVerify(lishID: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.stopVerify', { lishID });
 	}
 }
 

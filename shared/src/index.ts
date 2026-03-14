@@ -9,11 +9,11 @@ export type CompressionAlgorithm = 'gzip';
 
 /**
  * Check if a file path has a compressed file extension.
- * Returns true for known compression extensions (.gz, etc.).
+ * Returns true for known compression extensions (.gz, .gzip, etc.).
  */
 export function isCompressed(filePath: string): boolean {
 	const lower = filePath.toLowerCase();
-	return lower.endsWith('.gz');
+	return lower.endsWith('.gz') || lower.endsWith('.gzip');
 }
 
 // LISH types
@@ -24,6 +24,9 @@ export { API, type IWsClient } from './api.ts';
 
 // WebSocket client
 export { WsClient } from './client.ts';
+
+// Error codes
+export { ErrorCodes, CodedError, type ErrorCode } from './errors.ts';
 
 // Network types
 

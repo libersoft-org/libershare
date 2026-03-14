@@ -3,7 +3,7 @@ import { Network } from '../protocol/network.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
+import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, CodedError, ErrorCodes } from '@shared';
 import { lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
 
 /**
@@ -69,11 +69,8 @@ export class Networks {
 
 		setLISHnetEnabled(this.db, id, enabled);
 
-		if (enabled) {
-			await this.joinNetwork(id);
-		} else {
-			await this.leaveNetwork(id);
-		}
+		if (enabled) await this.joinNetwork(id);
+		else await this.leaveNetwork(id);
 
 		return true;
 	}
@@ -97,9 +94,7 @@ export class Networks {
 		this.joinedNetworks.add(id);
 
 		const net = this.get(id);
-		if (net && net.bootstrapPeers.length > 0) {
-			await this.network.addBootstrapPeers(net.bootstrapPeers);
-		}
+		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers);
 
 		console.log(`✓ Joined lishnet: ${net?.name ?? id}`);
 	}
@@ -138,7 +133,7 @@ export class Networks {
 	 * Use this in API handlers that require an active network.
 	 */
 	getRunningNetwork(): Network {
-		if (!this.network.isRunning()) throw new Error('Network not running');
+		if (!this.network.isRunning()) throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING);
 		return this.network;
 	}
 
@@ -168,15 +163,13 @@ export class Networks {
 	 */
 	private collectBootstrapPeers(configs: LISHNetworkConfig[]): string[] {
 		const allPeers: string[] = [];
-		for (const config of configs) {
-			allPeers.push(...config.bootstrapPeers);
-		}
+		for (const config of configs) allPeers.push(...config.bootstrapPeers);
 		return [...new Set(allPeers)];
 	}
 
 	// Validate a raw network object into a LISHNetworkDefinition (without storing).
 	validateNetwork(data: ILISHNetwork): LISHNetworkDefinition {
-		if (!data.networkID || !data.name) throw new Error('Invalid network: missing networkID or name');
+		if (!data.networkID || !data.name) throw new CodedError(ErrorCodes.NETWORK_INVALID);
 		return {
 			networkID: data.networkID,
 			name: data.name,
@@ -199,10 +192,8 @@ export class Networks {
 		const data = Utils.safeJSONParse<unknown>(jsonString, 'network JSON import');
 		const items = Array.isArray(data) ? data : [data];
 		const results: LISHNetworkDefinition[] = [];
-		for (const item of items) {
-			results.push(this.validateNetwork(item as ILISHNetwork));
-		}
-		if (results.length === 0) throw new Error('No valid networks found');
+		for (const item of items) results.push(this.validateNetwork(item as ILISHNetwork));
+		if (results.length === 0) throw new CodedError(ErrorCodes.NO_VALID_NETWORKS);
 		return results;
 	}
 

@@ -2,7 +2,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { t } from '../../scripts/language.ts';
-	import { deleteDownload } from '../../scripts/downloads.ts';
+	import { deleteDownload, setCurrentDetailLISHID } from '../../scripts/downloads.ts';
 	import Dialog from '../../components/Dialog/Dialog.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -34,6 +34,7 @@
 			return;
 		}
 		deleting = true;
+		if (option.deleteLISH) setCurrentDetailLISHID(null);
 		const success = await deleteDownload(lishID, option.deleteLISH, option.deleteData);
 		deleting = false;
 		onResult(option.deleteLISH, success);

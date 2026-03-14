@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
@@ -31,7 +31,7 @@
 		try {
 			peers = await api.lishnets.getPeers(network.networkID);
 		} catch (e: any) {
-			error = e?.message || 'Failed to load peers';
+			error = translateError(e);
 			peers = [];
 		}
 		loading = false;
@@ -99,7 +99,7 @@
 					<TableCell>{$t('settings.lishNetwork.connections')}</TableCell>
 				</TableHeader>
 				{#each peers as peer, i}
-					<TableRow position={[0, i + 1]} odd={i % 2 !== 0} onConfirm={() => console.log('Peer selected:', peer.peerID)}>
+					<TableRow position={[0, i + 1]} odd={i % 2 !== 0}>
 						<TableCell desktopOnly>{i + 1}</TableCell>
 						<TableCell wrap><span class="peer-id">{peer.peerID}</span></TableCell>
 						<TableCell>

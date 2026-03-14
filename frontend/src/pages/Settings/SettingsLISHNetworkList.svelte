@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -119,7 +119,7 @@
 		try {
 			await api.lishnets.setEnabled(network.networkID, newEnabled);
 		} catch (e: any) {
-			networkErrors = { ...networkErrors, [network.networkID]: e?.message || 'Connection failed' };
+			networkErrors = { ...networkErrors, [network.networkID]: translateError(e) };
 		}
 	}
 
@@ -429,7 +429,9 @@
 								{/if}
 							</div>
 							{#if network.description}
-								<div class="description">{@html network.description.replaceAll('\n', '<br />')}</div>
+								<div class="description">
+									{#each network.description.split('\n') as line, li}{#if li > 0}<br />{/if}{line}{/each}
+								</div>
 							{/if}
 							{#if networkErrors[network.networkID]}
 								<Alert type="error" message={networkErrors[network.networkID]!} />

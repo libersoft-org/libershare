@@ -147,9 +147,7 @@ export class GamepadManager {
 		// Check repeat timing
 		const delay = this.firstInputTime > 0 && now - this.firstInputTime > get(inputInitialDelay) ? get(inputRepeatDelay) : get(inputInitialDelay);
 		if (now - this.lastInputTime >= delay) {
-			for (const dir of uniqueDirections) {
-				this.emit(dir);
-			}
+			for (const dir of uniqueDirections) this.emit(dir);
 			this.lastInputTime = now;
 			if (this.firstInputTime === 0) this.firstInputTime = now;
 		}

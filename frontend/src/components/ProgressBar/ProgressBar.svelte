@@ -1,6 +1,7 @@
 <script lang="ts">
 	interface Props {
 		progress: number; // 0-100
+		decimals?: number;
 		showText?: boolean;
 		width?: string;
 		height?: string;
@@ -9,7 +10,7 @@
 		color?: string;
 		animated?: boolean;
 	}
-	let { progress, showText = true, height = '2vh', width, fontSize = '1.4vh', backgroundColor = 'var(--secondary-background)', color = 'var(--primary-foreground)', animated = false }: Props = $props();
+	let { progress, decimals = 2, showText = true, height = '2vh', width, fontSize = '1.4vh', backgroundColor = 'var(--secondary-background)', color = 'var(--primary-foreground)', animated = false }: Props = $props();
 	let clampedProgress = $derived(Math.min(100, Math.max(0, progress)));
 	let barWidth = $state(0);
 </script>
@@ -82,9 +83,9 @@
 <div class="progressbar" style="height: {height}; {width ? `width: ${width};` : ''} --height: {height}; --font-size: {fontSize}; --bg-color: {backgroundColor}; --fill-color: {color}" bind:clientWidth={barWidth}>
 	<div class="fill" class:animated style="width: {clampedProgress}%"></div>
 	{#if showText}
-		<span class="text background">{clampedProgress.toFixed(1)}%</span>
+		<span class="text background">{clampedProgress.toFixed(decimals)}%</span>
 		<div class="clip" style="width: {clampedProgress}%; --bar-width: {barWidth}px">
-			<span class="text">{clampedProgress.toFixed(1)}%</span>
+			<span class="text">{clampedProgress.toFixed(decimals)}%</span>
 		</div>
 	{/if}
 </div>

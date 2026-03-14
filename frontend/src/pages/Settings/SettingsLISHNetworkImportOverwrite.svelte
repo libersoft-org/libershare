@@ -42,9 +42,7 @@
 	}
 
 	async function finishImport(): Promise<void> {
-		for (const network of newNetworks) {
-			await addNetworkIfNotExists(network);
-		}
+		for (const network of newNetworks) await addNetworkIfNotExists(network);
 		newNetworks = [];
 		onDone();
 	}

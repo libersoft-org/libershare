@@ -111,9 +111,8 @@ async function main(): Promise<void> {
 				case 'lishnets.list': {
 					const networks = await api.lishnets.list();
 					console.log('Networks:');
-					if (networks.length === 0) {
-						console.log('  (none)');
-					} else {
+					if (networks.length === 0) console.log('  (none)');
+					else {
 						networks.forEach(n => {
 							const status = n.enabled ? '✓' : '✗';
 							console.log(`  ${status} ${n.name} (${n.networkID})`);
@@ -213,9 +212,7 @@ async function main(): Promise<void> {
 							console.log(`    addresses: ${info.addresses?.length || 0}`);
 							info.addresses?.forEach(a => console.log(`      ${a}`));
 							console.log(`    connected: ${info.connected || 0}`);
-							if (info.connectedPeers && info.connectedPeers.length > 0) {
-								info.connectedPeers.forEach(p => console.log(`      ${p}`));
-							}
+							if (info.connectedPeers && info.connectedPeers.length > 0) info.connectedPeers.forEach(p => console.log(`      ${p}`));
 							console.log(`    peersInStore: ${info.peersInStore || 0}`);
 						}
 						console.log('');
@@ -250,11 +247,8 @@ async function main(): Promise<void> {
 					if (!networkID) break;
 					const peers = await api.lishnets.getPeers(networkID);
 					console.log('Peers:');
-					if (peers.length === 0) {
-						console.log('  (none)');
-					} else {
-						peers.forEach(p => console.log(`  ${p}`));
-					}
+					if (peers.length === 0) console.log('  (none)');
+					else peers.forEach(p => console.log(`  ${p}`));
 					break;
 				}
 
@@ -263,23 +257,17 @@ async function main(): Promise<void> {
 					if (!networkID) break;
 					const addresses = await api.lishnets.getAddresses(networkID);
 					console.log('Addresses:');
-					if (addresses.length === 0) {
-						console.log('  (none)');
-					} else {
-						addresses.forEach(a => console.log(`  ${a}`));
-					}
+					if (addresses.length === 0) console.log('  (none)');
+					else addresses.forEach(a => console.log(`  ${a}`));
 					break;
 				}
 
 				// ============ LISHs ============
 				case 'lishs.list': {
-					const lishs = await api.lishs.list();
+					const { items: lishs } = await api.lishs.list();
 					console.log('LISHs:');
-					if (lishs.length === 0) {
-						console.log('  (none)');
-					} else {
-						lishs.forEach(m => console.log(`  ${m.id}`));
-					}
+					if (lishs.length === 0) console.log('  (none)');
+					else lishs.forEach(m => console.log(`  ${m.id}`));
 					break;
 				}
 
@@ -297,9 +285,8 @@ async function main(): Promise<void> {
 				case 'datasets.list': {
 					const datasets = await api.datasets.list();
 					console.log('Datasets:');
-					if (datasets.length === 0) {
-						console.log('  (none)');
-					} else {
+					if (datasets.length === 0) console.log('  (none)');
+					else {
 						datasets.forEach(d => {
 							const status = d.complete ? '✓' : '⋯';
 							console.log(`  ${status} ${d.lishID} (${d.directory})`);
@@ -345,9 +332,8 @@ async function main(): Promise<void> {
 					const result = await api.fs.list(arg || undefined);
 					console.log(`Path: ${result.path}`);
 					console.log('Entries:');
-					if (result.entries.length === 0) {
-						console.log('  (empty)');
-					} else {
+					if (result.entries.length === 0) console.log('  (empty)');
+					else {
 						result.entries.forEach(e => {
 							const icon = e.type === 'directory' ? '📁' : e.type === 'drive' ? '💾' : '📄';
 							const size = e.size !== undefined ? ` (${e.size})` : '';

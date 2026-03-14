@@ -16,8 +16,6 @@
 		"load": "Load",
 		"save": "Save",
 		"saveAs": "Save as",
-		"fileExistsOverwrite": "File \"{name}\" already exists. Do you want to overwrite it?",
-		"fileNameIsDirectory": "The name \"{name}\" already exists as a directory, so the file cannot be saved.",
 		"overwriteFile": "Overwrite file",
 		"delete": "Delete",
 		"edit": "Edit",
@@ -47,9 +45,22 @@
 		"optional": "optional",
 		"fromFile": "From file",
 		"fromWeb": "From web",
+		"extensions": "extensions",
 		"openFolder": "Open folder",
-		"filePathRequired": "File path is required",
-		"urlRequired": "URL is required"
+		"errorFileExistsOverwrite": "File \"{name}\" already exists. Do you want to overwrite it?",
+		"errorFileNameIsDirectory": "The name \"{name}\" already exists as a directory, so the file cannot be saved.",
+		"errorFilePathRequired": "File path is required",
+		"errorURLRequired": "URL is required",
+		"errorInvalidJSON": "Invalid JSON: {detail}",
+		"errorMissingParameter": "Missing required parameter: {detail}",
+		"errorUnsupportedCompression": "Unsupported compression algorithm: {detail}",
+		"errorUnsupportedDecompression": "Unsupported decompression algorithm: {detail}",
+		"errorHTTP": "HTTP error: {detail}",
+		"errorInvalidSizeFormat": "Invalid size format. Use number with optional suffix: K, M, G, T, P, E, Z, Y",
+		"errorParseError": "Invalid request format",
+		"errorMethodRequired": "Method is required",
+		"errorUnknownMethod": "Unknown method: {detail}",
+		"errorInternal": "Internal error: {detail}"
 	},
 	"library": {
 		"title": "Online library",
@@ -72,17 +83,24 @@
 		"downloadSpeed": "Download speed",
 		"uploadSpeed": "Upload speed",
 		"statuses": {
-			"completed": "Completed",
 			"downloading": "Downloading",
-			"waiting": "Waiting",
-			"paused": "Paused",
-			"error": "Error"
+			"uploading": "Uploading",
+			"downloading-uploading": "Downloading and uploading",
+			"idling": "Idling",
+			"verifying": "Verifying",
+			"pending-verification": "Pending verification"
 		},
 		"createLISH": "Create LISH",
 		"errorInvalidFormat": "Invalid LISH format",
 		"emptyList": "No LISH to export found",
 		"start": "Start",
 		"pause": "Pause",
+		"startDownload": "Start download",
+		"pauseDownload": "Pause download",
+		"startUpload": "Start upload",
+		"pauseUpload": "Pause upload",
+		"verify": "Verify",
+		"stopVerify": "Stop verification",
 		"moveData": "Move data",
 		"deleteDialog": {
 			"message": "What do you want to delete?",
@@ -90,8 +108,10 @@
 			"lishAndData": "Delete LISH and data",
 			"dataOnly": "Delete data only"
 		},
-		"deleteFailed": "Failed to delete",
-		"lishCreate": {
+		"deleteFailed": "Failed to delete"
+	},
+	"lish": {
+		"create": {
 			"dataPath": "Data location (file or directory)",
 			"saveToFile": "Save to .lish file",
 			"lishFile": "Path to .lish file",
@@ -115,7 +135,7 @@
 				"filesProcessed": "Files processed"
 			}
 		},
-		"lishImport": {
+		"import": {
 			"fromJSON": "From LISH JSON",
 			"filePath": "LISH file",
 			"url": "URL address of LISH file",
@@ -124,11 +144,27 @@
 			"lishJSON": "LISH JSON",
 			"downloadPathRequired": "Download folder is required",
 			"jsonRequired": "LISH JSON is required",
-			"autoStartSharing": "Automatically start sharing after adding"
+			"autoStartSharing": "Automatically start sharing after adding",
+			"confirmOverwrite": "The following LISH already exists:\n\nName: {name}\nID: {id}\n\nDo you want to overwrite it?"
 		},
-		"lishExport": {
+		"export": {
 			"errorIDRequired": "LISH ID is required"
-		}
+		},
+		"errorNotFound": "LISH not found: {detail}",
+		"errorNoLISHs": "No LISHs to export",
+		"errorDirectoryEmpty": "Directory is empty \u2014 nothing to create LISH from",
+		"errorAlreadyExists": "LISH already exists: {detail}",
+		"errorInvalidInputType": "Input must be a file or directory",
+		"errorInvalidFormat": "Invalid LISH: not an object",
+		"errorMissingID": "Invalid LISH: missing or empty ID",
+		"errorMissingCreated": "Invalid LISH: missing or empty created timestamp",
+		"errorInvalidChunkSize": "Invalid LISH: missing or invalid chunk size",
+		"errorUnsupportedChecksum": "Invalid LISH: unsupported checksum algorithm: {detail}",
+		"errorUnexpectedArray": "Expected a single LISH object, got an array",
+		"errorPathAccessDenied": "Cannot access path: {detail}",
+		"errorInvalidFileIndex": "Invalid file index: {detail}",
+		"errorDownloaderNotInitialized": "Downloader not initialized",
+		"errorDownload": "Download failed: {detail}"
 	},
 	"settings": {
 		"title": "Settings",
@@ -178,7 +214,15 @@
 			"noPeers": "No peers connected",
 			"connectedPeers": "Peers: {count}",
 			"minifyJSON": "Minify JSON",
-			"compress": "Compress"
+			"compress": "Compress",
+			"errorNotFound": "Network not found: {detail}",
+			"errorNoNetworks": "No networks to export",
+			"errorNotJoined": "Network not joined",
+			"errorNotRunning": "Network not running",
+			"errorInvalid": "Invalid network: missing network ID or name",
+			"errorNoValidNetworks": "No valid networks found",
+			"errorNotStarted": "Network not started",
+			"errorPortInUse": "Failed to start network: port {detail} is likely already in use"
 		},
 		"lishNetworkImport": {
 			"fromJSON": "From LISHNET JSON",

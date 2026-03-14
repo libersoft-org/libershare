@@ -3,7 +3,7 @@
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
-	import { t, withDetail } from '../../scripts/language.ts';
+	import { t, withDetail, translateError } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
 	import { getParentPath, loadDirectoryFromAPI, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
@@ -29,6 +29,7 @@
 		foldersOnly?: boolean | undefined;
 		filesOnly?: boolean | undefined;
 		fileFilter?: string[] | undefined; // Array of extensions like ['.lish', '.json'] or ['*'] for all
+		fileFilterName?: string | undefined; // Display name for the filter (e.g. 'LISH files')
 		showPath?: boolean | undefined;
 		selectFolderButton?: boolean | undefined;
 		selectFileButton?: boolean | undefined;
@@ -41,10 +42,10 @@
 		onSaveComplete?: ((path: string) => void) | undefined; // Called after successful save
 		onSaveError?: ((error: string) => void) | undefined; // Called on save error
 		onDownAtEnd?: (() => boolean) | undefined;
-		onOpenSpecialFile?: ((path: string, type: 'lish' | 'lishnet') => void) | undefined; // Called for .lish/.lishs/.lishnet/.lishnets files
+		specialFileTypes?: { extensions: string[]; onOpen: (path: string) => void }[] | undefined;
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, onOpenSpecialFile }: Props = $props();
+	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, fileFilterName, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, specialFileTypes }: Props = $props();
 
 	// File filter state
 	let showAllFiles = $state(false);
@@ -102,11 +103,11 @@
 	let saveFileNameColumn = $state(0); // 0 = input, 1 = button
 	let selectedItem = $derived(items[selectedIndex]);
 	// Folder toolbar actions
-	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, selectFolderButton, customFilter ?? undefined, currentPath));
+	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectFolderButton, customFilter ?? undefined, currentPath));
 	let selectedFolderActionIndex = $state(0);
 	let folderActionsActive = $derived($activeArea === `${areaID}-folder-actions`);
 	// Filter panel actions
-	let filterActions = $derived(buildFilterActions($t, fileFilter, customFilter ?? undefined));
+	let filterActions = $derived(buildFilterActions($t, fileFilter, fileFilterName, customFilter ?? undefined));
 	let showCustomFilterDialog = $state(false);
 
 	async function loadDirectory(path?: string, selectName?: string): Promise<void> {
@@ -129,7 +130,7 @@
 				selectedIndex = idx >= 0 ? idx : 0;
 			} else selectedIndex = 0;
 		} catch (e: any) {
-			error = withDetail($t('fileBrowser.loadDirectoryFailed'), e.message);
+			error = withDetail($t('fileBrowser.loadDirectoryFailed'), translateError(e));
 			// Even on error, provide ".." entry to navigate up if we have a parent path
 			// Don't show ".." at root level (Linux "/" or empty path, Windows drive list)
 			if (!isAtRoot(currentPath, separator) && parentPath !== null) {
@@ -563,9 +564,7 @@
 			// Reload directory and select the new folder
 			await loadDirectory(currentPath, folderName);
 			cancelNewFolder(true); // Pass true to indicate success - focus on list
-		} else {
-			dialogError = withDetail($t('fileBrowser.createFolderFailed'), result.error);
-		}
+		} else dialogError = withDetail($t('fileBrowser.createFolderFailed'), result.error);
 	}
 
 	async function cancelNewFolder(focusList = false): Promise<void> {
@@ -577,11 +576,8 @@
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		// Focus on list if folder was created successfully, otherwise on toolbar
-		if (focusList) {
-			activateArea(listAreaID);
-		} else {
-			activateArea(`${areaID}-folder-actions`);
-		}
+		if (focusList) activateArea(listAreaID);
+		else activateArea(`${areaID}-folder-actions`);
 	}
 
 	function showCreateFileDialog(): void {
@@ -632,18 +628,14 @@
 	async function handleOpenFile(item: StorageItemData): Promise<void> {
 		// Check for special file types (.lish, .lishs, .lishnet, .lishnets) including .gz variants
 		const lowerName = item.name.toLowerCase();
-		if (onOpenSpecialFile) {
-			if (lowerName.endsWith('.lish') || lowerName.endsWith('.lishs') || lowerName.endsWith('.lish.gz') || lowerName.endsWith('.lishs.gz')) {
-				onOpenSpecialFile(item.path, 'lish');
-				showActions = false;
-				activateArea(listAreaID);
-				return;
-			}
-			if (lowerName.endsWith('.lishnet') || lowerName.endsWith('.lishnets') || lowerName.endsWith('.lishnet.gz') || lowerName.endsWith('.lishnets.gz')) {
-				onOpenSpecialFile(item.path, 'lishnet');
-				showActions = false;
-				activateArea(listAreaID);
-				return;
+		if (specialFileTypes) {
+			for (const { extensions, onOpen } of specialFileTypes) {
+				if (extensions.some(ext => lowerName.endsWith(ext))) {
+					onOpen(item.path);
+					showActions = false;
+					activateArea(listAreaID);
+					return;
+				}
 			}
 		}
 		// Standard file open
@@ -679,9 +671,7 @@
 		if (result.success) {
 			// Reload directory
 			await loadDirectory(currentPath);
-		} else {
-			error = withDetail($t('fileBrowser.deleteFileFailed'), result.error);
-		}
+		} else error = withDetail($t('fileBrowser.deleteFileFailed'), result.error);
 		cancelDeleteFile();
 	}
 
@@ -827,7 +817,7 @@
 		try {
 			const result = await api.fs.exists(fullPath);
 			if (result.exists && result.type === 'directory') {
-				saveErrorMessage = $t('common.fileNameIsDirectory', { name: internalSaveFileName });
+				saveErrorMessage = $t('common.errorFileNameIsDirectory', { name: internalSaveFileName });
 				return;
 			}
 			if (result.exists) {
@@ -842,7 +832,7 @@
 			onSaveComplete?.(fullPath);
 		} catch (e) {
 			console.error('Failed to save file:', e);
-			saveErrorMessage = e instanceof Error ? e.message : String(e);
+			saveErrorMessage = translateError(e);
 			onSaveError?.(saveErrorMessage);
 		}
 	}
@@ -857,7 +847,7 @@
 			onSaveComplete?.(pendingSavePath);
 		} catch (e) {
 			console.error('Failed to save file:', e);
-			saveErrorMessage = e instanceof Error ? e.message : String(e);
+			saveErrorMessage = translateError(e);
 			onSaveError?.(saveErrorMessage);
 		}
 	}
@@ -866,11 +856,8 @@
 		showOverwriteConfirmState = false;
 		await tick();
 		// Reactivate the save filename area after dialog closes
-		if (saveFileName !== undefined) {
-			activateArea(`${areaID}-save-filename`);
-		} else {
-			activateArea(listAreaID);
-		}
+		if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
+		else activateArea(listAreaID);
 	}
 
 	async function handleBreadcrumbNavigate(path: string): Promise<void> {
@@ -911,7 +898,7 @@
 				if (startPath.startsWith('~')) startPath = (info.home || '') + startPath.slice(1);
 				await loadDirectory(startPath || info.home || '', initialFile);
 			} catch (e: any) {
-				error = withDetail($t('fileBrowser.initializeFailed'), e.message);
+				error = withDetail($t('fileBrowser.initializeFailed'), translateError(e));
 				loading = false;
 			}
 		})();
@@ -1085,5 +1072,5 @@
 	<InputDialog title={$t('fileBrowser.customFilter')} label={$t('fileBrowser.filterPattern')} placeholder={$t('fileBrowser.enterFilterPattern')} initialValue={customFilter ?? ''} confirmLabel={$t('common.ok')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmCustomFilter} onBack={closeCustomFilterDialog} />
 {/if}
 {#if showOverwriteConfirmState}
-	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.fileExistsOverwrite', { name: internalSaveFileName })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
+	<ConfirmDialog title={$t('common.overwriteFile')} message={$t('common.errorFileExistsOverwrite', { name: internalSaveFileName })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={cancelOverwrite} />
 {/if}

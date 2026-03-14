@@ -1,6 +1,6 @@
 import { mkdir, open } from 'fs/promises';
 import { join, dirname } from 'path';
-import { type IStoredLISH, type LISHid, type ChunkID } from '@shared';
+import { type IStoredLISH, type LISHid, type ChunkID, CodedError, ErrorCodes } from '@shared';
 import { type Network } from './network.ts';
 import { lishTopic } from './constants.ts';
 import { Utils } from '../utils.ts';
@@ -65,7 +65,7 @@ export class Downloader {
 	// Main download loop
 	async download(): Promise<void> {
 		console.log('Starting download...');
-		if (this.state !== 'initialized') throw new Error('Downloader not initialized');
+		if (this.state !== 'initialized') throw new CodedError(ErrorCodes.DOWNLOADER_NOT_INITIALIZED);
 		this.state = 'preparing';
 		await this.doWork();
 	}
@@ -116,15 +116,11 @@ export class Downloader {
 						break;
 					}
 				}
-				if (!downloaded) {
-					console.log(`✗ No peer had chunk ${chunk.chunkID.slice(0, 8)}...`);
-				}
+				if (!downloaded) console.log(`✗ No peer had chunk ${chunk.chunkID.slice(0, 8)}...`);
 			}
 			console.log(`✓ Download complete! Downloaded ${downloadedCount}/${missingChunks.length} chunks`);
 		} finally {
-			for (const [, client] of this.peers) {
-				await client.close();
-			}
+			for (const [, client] of this.peers) await client.close();
 			this.peers.clear();
 		}
 	}
@@ -160,9 +156,8 @@ export class Downloader {
 		console.debug(data); // with peerID etc.
 		if (data['type'] == 'have' && data['lishID'] == this.lishID) {
 			if (data['chunks'] === 'all' /* || this.peerHasAnyMissingChunks(data.chunks)*/) {
-				if (this.peers.has(data['peerID'])) {
-					console.log(`Already connected to peer ...${data['peerID']}`);
-				} else {
+				if (this.peers.has(data['peerID'])) console.log(`Already connected to peer ...${data['peerID']}`);
+				else {
 					console.log(`Peer ...${data['peerID']} has the file, connecting...`);
 					try {
 						await this.connectToPeer(data as HaveMessage);
@@ -183,7 +178,7 @@ export class Downloader {
 		try {
 			console.log(`Opening stream to peer ...${peerID}`);
 			const stream = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL);
-			if (this.peers.has(data.peerID)) throw new Error(`Already connected to peer ...${peerID}`);
+			if (this.peers.has(data.peerID)) throw new Error(`Already connected to peer: ${peerID}`);
 			this.peers.set(peerID, new LISHClient(stream));
 		} catch (error) {
 			console.log(`✗ Failed to connect to peer ...${peerID}:`, error instanceof Error ? error.message : error);

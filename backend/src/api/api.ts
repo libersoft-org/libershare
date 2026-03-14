@@ -2,6 +2,7 @@ import { type ServerWebSocket } from 'bun';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type Settings } from '../settings.ts';
+import { CodedError, ErrorCodes } from '@shared';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
 import { initDatasetsHandlers } from './datasets.ts';
@@ -14,7 +15,7 @@ interface ClientData {
 }
 type ClientSocket = ServerWebSocket<ClientData>;
 interface Request {
-	id: string | number;
+	id: string;
 	method: string;
 	params?: Record<string, any>;
 }
@@ -49,29 +50,25 @@ export class APIServer {
 		this.secure = options.secure;
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
-
 		const emitTo = (client: ClientSocket, event: string, data: any) => this.emit(client, event, data);
-
+		const broadcastFn = (event: string, data: any) => this.broadcast(event, data);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _settings = initSettingsHandlers(this.settings);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
-		const _lishs = initLISHsHandlers(this.dataServer, emitTo);
+		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
-
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
 			'events.unsubscribe': _events.unsubscribe,
-
 			// Settings
 			'settings.get': _settings.get,
 			'settings.set': _settings.set,
 			'settings.list': _settings.list,
 			'settings.getDefaults': _settings.getDefaults,
 			'settings.reset': _settings.reset,
-
 			// LISH Networks
 			'lishnets.list': _lishnets.list,
 			'lishnets.get': _lishnets.get,
@@ -96,7 +93,6 @@ export class APIServer {
 			'lishnets.getNodeInfo': _lishnets.getNodeInfo,
 			'lishnets.getStatus': _lishnets.getStatus,
 			'lishnets.infoAll': _lishnets.infoAll,
-
 			// LISHs
 			'lishs.list': _lishs.list,
 			'lishs.get': _lishs.get,
@@ -108,14 +104,16 @@ export class APIServer {
 			'lishs.importFromFile': _lishs.importFromFile,
 			'lishs.importFromJSON': _lishs.importFromJSON,
 			'lishs.importFromURL': _lishs.importFromURL,
-
+			'lishs.parseFromFile': _lishs.parseFromFile,
+			'lishs.parseFromJSON': _lishs.parseFromJSON,
+			'lishs.parseFromURL': _lishs.parseFromURL,
+			'lishs.verify': _lishs.verify,
+			'lishs.stopVerify': _lishs.stopVerify,
 			// Transfer
 			'transfer.download': _transfer.download,
-
 			// Datasets
 			'datasets.getDatasets': _datasets.getDatasets,
 			'datasets.getDataset': _datasets.getDataset,
-
 			// Filesystem
 			'fs.info': _fs.info,
 			'fs.list': _fs.list,
@@ -172,9 +170,7 @@ export class APIServer {
 		// Listen for peer count changes and send to subscribed clients
 		this.networks.onPeerCountChange = counts => {
 			if (this.clients.size === 0) return;
-			for (const client of this.clients) {
-				this.emit(client, 'peers:count', counts);
-			}
+			for (const client of this.clients) this.emit(client, 'peers:count', counts);
 		};
 
 		const protocol = this.secure ? 'wss' : 'ws';
@@ -193,12 +189,12 @@ export class APIServer {
 		try {
 			req = JSON.parse(message);
 		} catch {
-			client.send(JSON.stringify({ id: null, error: 'Parse error' }));
+			client.send(JSON.stringify({ id: null, error: ErrorCodes.PARSE_ERROR }));
 			return;
 		}
 
 		if (!req.method) {
-			client.send(JSON.stringify({ id: req.id, error: 'Method required' }));
+			client.send(JSON.stringify({ id: req.id, error: ErrorCodes.METHOD_REQUIRED }));
 			return;
 		}
 
@@ -207,7 +203,8 @@ export class APIServer {
 			client.send(JSON.stringify({ id: req.id, result }));
 		} catch (err: any) {
 			console.error(`[API] Error executing ${req.method}, params=${JSON.stringify(req.params)}: ${err.message}`);
-			client.send(JSON.stringify({ id: req.id, error: err.message }));
+			if (err instanceof CodedError) client.send(JSON.stringify({ id: req.id, error: err.code, ...(err.detail !== undefined && { errorDetail: err.detail }) }));
+			else client.send(JSON.stringify({ id: req.id, error: ErrorCodes.INTERNAL_ERROR, errorDetail: err.message }));
 		}
 	}
 
@@ -217,7 +214,7 @@ export class APIServer {
 	private async execute(client: ClientSocket, method: string, params: Record<string, any>): Promise<any> {
 		console.log(`[API] Executing method: ${method}, params: ${JSON.stringify(params)}`);
 		const handler = this.handlers[method];
-		if (!handler) throw new Error(`Unknown method: ${method}`);
+		if (!handler) throw new CodedError(ErrorCodes.UNKNOWN_METHOD, method);
 		return handler.call(this, params, client);
 	}
 
@@ -231,5 +228,17 @@ export class APIServer {
 
 	private emit(client: ClientSocket, event: string, data: any): void {
 		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) client.send(JSON.stringify({ event, data }));
+	}
+
+	private broadcast(event: string, data: any): void {
+		const msg = JSON.stringify({ event, data });
+		let sent = 0;
+		for (const client of this.clients) {
+			if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
+				client.send(msg);
+				sent++;
+			}
+		}
+		// console.log(`[API] broadcast '${event}' to ${sent}/${this.clients.size} clients`, JSON.stringify(data));
 	}
 }

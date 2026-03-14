@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { api } from '../../scripts/api.ts';
@@ -37,9 +37,9 @@
 		position?: Position;
 		params: Record<string, any>;
 		onBack?: () => void;
-		onDone?: (lishID: string) => void;
+		onComplete?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, params, onBack, onDone }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, params, onBack, onComplete }: Props = $props();
 
 	// Progress state
 	type Status = 'creating' | 'done' | 'error';
@@ -76,9 +76,7 @@
 		} else if (data.type === 'chunk') {
 			const path = data.path || '';
 			const idx = allFiles.findIndex(f => f.path === path);
-			if (idx >= 0) {
-				allFiles[idx]!.currentChunk = data.current || 0;
-			}
+			if (idx >= 0) allFiles[idx]!.currentChunk = data.current || 0;
 		} else if (data.type === 'file') {
 			const path = data.path || '';
 			const idx = allFiles.findIndex(f => f.path === path);
@@ -103,8 +101,9 @@
 			resultLISHID = result.lishID;
 			resultLISHFile = result.lishFile || '';
 			status = 'done';
+			onComplete?.();
 		} catch (err: any) {
-			errorText = err?.message || String(err);
+			errorText = translateError(err);
 			status = 'error';
 		} finally {
 			await api.unsubscribe('lishs.create:progress').catch(() => {});
@@ -115,16 +114,7 @@
 		}
 	}
 
-	function handleBack(): void {
-		onBack?.();
-	}
-
-	function handleDone(): void {
-		if (onDone) onDone(resultLISHID);
-		else onBack?.();
-	}
-
-	createNavArea(() => ({ areaID, position, activate: true, onBack: handleBack }));
+	createNavArea(() => ({ areaID, position, activate: true, onBack }));
 
 	startCreate();
 
@@ -177,18 +167,18 @@
 <div class="progress-page">
 	<div class="container">
 		<ButtonBar>
-			<Button icon="/img/back.svg" label={status === 'creating' ? $t('common.cancel') : $t('common.back')} position={[0, 0]} onConfirm={status === 'done' ? handleDone : handleBack} />
+			<Button icon="/img/back.svg" label={status === 'creating' ? $t('common.cancel') : $t('common.back')} position={[0, 0]} onConfirm={onBack} />
 		</ButtonBar>
 		{#if status === 'creating'}
-			<div class="status-label">{$t('downloads.lishCreate.progress.creating')}</div>
+			<div class="status-label">{$t('lish.create.progress.creating')}</div>
 		{:else if status === 'done'}
-			<Alert type="info" message={$t('downloads.lishCreate.progress.done')} />
+			<Alert type="info" message={$t('lish.create.progress.done')} />
 			<div class="done-info">
 				<div>LISH ID: <span class="lish-id">{resultLISHID}</span></div>
 				{#if resultLISHFile}
 					<div>{$t('common.file')}: <span class="lish-id">{resultLISHFile}</span></div>
 				{/if}
-				<div>{$t('downloads.lishCreate.progress.filesProcessed')}: {allFiles.length}</div>
+				<div>{$t('lish.create.progress.filesProcessed')}: {allFiles.length}</div>
 			</div>
 		{:else if status === 'error'}
 			<Alert type="error" message={errorText} />
@@ -212,7 +202,7 @@
 			</Table>
 			{#if status === 'creating'}
 				<div class="done-info">
-					{$t('downloads.lishCreate.progress.filesProcessed')}: {completedCount} / {allFiles.length}
+					{$t('lish.create.progress.filesProcessed')}: {completedCount} / {allFiles.length}
 				</div>
 			{/if}
 		{/if}

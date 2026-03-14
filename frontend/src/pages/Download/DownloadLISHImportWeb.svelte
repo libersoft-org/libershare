@@ -1,21 +1,23 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBreadcrumb, popBreadcrumb, navigateBack } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storagePath, autoStartSharing } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { type ILISH } from '@shared';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
+	import ImportOverwrite from './DownloadLISHImportOverwrite.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -30,25 +32,34 @@
 	let errorMessage = $state('');
 	let loading = $state(false);
 	let browsingDownloadPath = $state(false);
+	let parsedLISHs = $state<ILISH[] | null>(null);
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (!url.trim()) {
-			errorMessage = $t('common.urlRequired');
+			errorMessage = $t('common.errorURLRequired');
 			return;
 		}
 		if (!downloadPath.trim()) {
-			errorMessage = $t('downloads.lishImport.downloadPathRequired');
+			errorMessage = $t('lish.import.downloadPathRequired');
 			return;
 		}
 		loading = true;
 		try {
-			await api.lishs.importFromURL(url, downloadPath);
-			onImport?.();
+			parsedLISHs = await api.lishs.parseFromURL(url);
 		} catch (e) {
-			errorMessage = e instanceof Error ? e.message : String(e);
+			errorMessage = translateError(e);
 		} finally {
 			loading = false;
+		}
+	}
+
+	function handleOverwriteDone(): void {
+		parsedLISHs = null;
+		if (onImport) onImport();
+		else {
+			navigateBack();
+			navigateBack();
 		}
 	}
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
@@ -56,7 +67,7 @@
 	function openDownloadPathBrowse(): void {
 		browsingDownloadPath = true;
 		navHandle.pause();
-		pushBreadcrumb($t('downloads.lishImport.downloadPath'));
+		pushBreadcrumb($t('lish.import.downloadPath'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
@@ -103,17 +114,19 @@
 	}
 </style>
 
-{#if browsingDownloadPath}
+{#if parsedLISHs}
+	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} onDone={handleOverwriteDone} />
+{:else if browsingDownloadPath}
 	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath selectFolderButton onSelect={handleDownloadPathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">
 		<div class="container">
-			<Input bind:value={url} label={$t('downloads.lishImport.url')} placeholder="https://..." position={[0, 0]} flex />
+			<Input bind:value={url} label={$t('lish.import.url')} placeholder="https://..." position={[0, 0]} flex />
 			<div class="row">
-				<Input bind:value={downloadPath} label={$t('downloads.lishImport.downloadPath')} position={[0, 1]} flex />
+				<Input bind:value={downloadPath} label={$t('lish.import.downloadPath')} position={[0, 1]} flex />
 				<Button icon="/img/folder.svg" position={[1, 1]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('downloads.lishImport.autoStartSharing')} checked={autoStart} position={[0, 2]} onToggle={() => (autoStart = !autoStart)} />
+			<SwitchRow label={$t('lish.import.autoStartSharing')} checked={autoStart} position={[0, 2]} onToggle={() => (autoStart = !autoStart)} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}

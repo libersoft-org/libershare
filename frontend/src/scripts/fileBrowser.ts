@@ -1,7 +1,7 @@
 import { api } from './api.ts';
 import { type StorageItemData } from './storage.ts';
 import { formatDate } from './utils.ts';
-import { tt, withDetail } from './language.ts';
+import { tt, withDetail, translateError } from './language.ts';
 /**
  * File system entry from API
  */
@@ -201,7 +201,7 @@ export function getFileActions(t: (key: string) => string, selectFileButton?: bo
 /**
  * Build folder toolbar actions based on mode
  */
-export function buildFolderActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], selectFolderButton?: boolean, customFilter?: string, currentPath?: string): FileBrowserAction[] {
+export function buildFolderActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], fileFilterName?: string, selectFolderButton?: boolean, customFilter?: string, currentPath?: string): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	const isDriveList = currentPath === '' || currentPath === undefined;
 	if (!filesOnly && !isDriveList) {
@@ -214,7 +214,7 @@ export function buildFolderActions(t: (key: string) => string, filesOnly: boolea
 	let filterLabel: string;
 	if (customFilter) filterLabel = customFilter;
 	else if (showAllFiles) filterLabel = '*.*';
-	else if (fileFilter && fileFilter.length > 0) filterLabel = fileFilter.join(', ');
+	else if (fileFilter && fileFilter.length > 0) filterLabel = fileFilterName ?? fileFilter.join(', ');
 	else filterLabel = '*.*';
 	actions.push({ id: 'filter', label: filterLabel, icon: '/img/filter.svg' });
 	return actions;
@@ -223,10 +223,10 @@ export function buildFolderActions(t: (key: string) => string, filesOnly: boolea
 /**
  * Build filter panel actions
  */
-export function buildFilterActions(t: (key: string) => string, fileFilter?: string[], customFilter?: string): FileBrowserAction[] {
+export function buildFilterActions(t: (key: string) => string, fileFilter?: string[], fileFilterName?: string, customFilter?: string): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	// Show all extensions as one combined option
-	if (fileFilter && fileFilter.length > 0) actions.push({ id: 'filter', label: fileFilter.join(', '), icon: '/img/file.svg' });
+	if (fileFilter && fileFilter.length > 0) actions.push({ id: 'filter', label: fileFilterName ?? fileFilter.join(', '), icon: '/img/file.svg' });
 	actions.push({ id: '*', label: '*.*', icon: '/img/file.svg' });
 	// Custom filter - show current value in parentheses if set
 	const customLabel = customFilter ? `${t('fileBrowser.customFilter')} (${customFilter})` : t('fileBrowser.customFilter');
@@ -297,7 +297,7 @@ export async function deleteFileOrFolder(path: string): Promise<FileOperationRes
 		await api.fs.delete(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: withDetail(tt('fileBrowser.deleteFailed'), e.message) };
+		return { success: false, error: withDetail(tt('fileBrowser.deleteFailed'), translateError(e)) };
 	}
 }
 
@@ -309,7 +309,7 @@ export async function createFolder(path: string): Promise<FileOperationResult> {
 		await api.fs.mkdir(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: withDetail(tt('fileBrowser.createFolderFailed'), e.message) };
+		return { success: false, error: withDetail(tt('fileBrowser.createFolderFailed'), translateError(e)) };
 	}
 }
 
@@ -321,7 +321,7 @@ export async function openFile(path: string): Promise<FileOperationResult> {
 		await api.fs.open(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: withDetail(tt('fileBrowser.openFileFailed'), e.message) };
+		return { success: false, error: withDetail(tt('fileBrowser.openFileFailed'), translateError(e)) };
 	}
 }
 
@@ -333,7 +333,7 @@ export async function renameFile(path: string, newName: string): Promise<FileOpe
 		await api.fs.rename(path, newName);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: withDetail(tt('fileBrowser.renameFileFailed'), e.message) };
+		return { success: false, error: withDetail(tt('fileBrowser.renameFileFailed'), translateError(e)) };
 	}
 }
 
