@@ -38,7 +38,6 @@
 	let selectedFileIndex = $state(0);
 	let itemElements: HTMLElement[] = $state([]);
 	let infoElement: HTMLElement | null = $state(null);
-	let filesElement: HTMLElement | null = $state(null);
 	// Toolbar actions - use config from downloads.ts
 	let downloadPaused = $state(true);
 	let uploadPaused = $state(true);
@@ -66,10 +65,6 @@
 
 	function scrollToInfo(): void {
 		if (infoElement) infoElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-	}
-
-	function scrollToFiles(): void {
-		if (filesElement) filesElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
 	function handleBack(): void {
@@ -159,7 +154,7 @@
 		down() {
 			if (download && download.files.length > 0) {
 				activateArea(listAreaID);
-				scrollToFiles();
+				scrollToSelected();
 				return true;
 			}
 			return false;
@@ -361,7 +356,7 @@
 					</Table>
 				</div>
 				<!-- Files table -->
-				<div class="container" bind:this={filesElement}>
+				<div class="container">
 					<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
 						<Header fontSize="1.4vh">
 							<Cell>{$t('common.name')}</Cell>
