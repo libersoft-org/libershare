@@ -145,7 +145,9 @@
 							<div class="network-info">
 								<div class="network-name">{network.name}</div>
 								{#if network.description}
-									<div class="network-description">{@html network.description.replaceAll('\n', '<br />')}</div>
+									<div class="network-description">
+										{#each network.description.split('\n') as line, li}{#if li > 0}<br />{/if}{line}{/each}
+									</div>
 								{/if}
 							</div>
 							{#if isNetworkAdded(network.networkID)}

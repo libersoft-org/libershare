@@ -429,7 +429,9 @@
 								{/if}
 							</div>
 							{#if network.description}
-								<div class="description">{@html network.description.replaceAll('\n', '<br />')}</div>
+								<div class="description">
+									{#each network.description.split('\n') as line, li}{#if li > 0}<br />{/if}{line}{/each}
+								</div>
 							{/if}
 							{#if networkErrors[network.networkID]}
 								<Alert type="error" message={networkErrors[network.networkID]!} />
