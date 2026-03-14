@@ -16,6 +16,18 @@
 	--color-error: #e00;
 	--color-warning: #da0;
 	--color-success: #080;
+	--status-idling-fg: #aaa;
+	--status-idling-bg: #222;
+	--status-downloading-fg: #0a0;
+	--status-downloading-bg: #050;
+	--status-uploading-fg: #08f;
+	--status-uploading-bg: #024;
+	--status-downloading-uploading-fg: #080;
+	--status-downloading-uploading-bg: #020;
+	--status-verifying-fg: #fa0;
+	--status-verifying-bg: #420;
+	--status-pending-verification-fg: #fe0;
+	--status-pending-verification-bg: #750;
 }
 
 html,
