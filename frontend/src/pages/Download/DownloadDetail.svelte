@@ -44,13 +44,11 @@
 	let uploadPaused = $state(true);
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
 	let toolbarActions = $derived(
-		DOWNLOAD_TOOLBAR_ACTIONS
-			.filter(action => (action.id === 'verify' && !isVerifying) || (action.id === 'stop-verify' && isVerifying) || (action.id !== 'verify' && action.id !== 'stop-verify'))
-			.map(action => ({
-				id: action.id,
-				label: action.getLabel($t, downloadPaused, uploadPaused),
-				icon: typeof action.icon === 'function' ? action.icon(downloadPaused, uploadPaused) : action.icon,
-			}))
+		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => (action.id === 'verify' && !isVerifying) || (action.id === 'stop-verify' && isVerifying) || (action.id !== 'verify' && action.id !== 'stop-verify')).map(action => ({
+			id: action.id,
+			label: action.getLabel($t, downloadPaused, uploadPaused),
+			icon: typeof action.icon === 'function' ? action.icon(downloadPaused, uploadPaused) : action.icon,
+		}))
 	);
 	// Delete dialog state
 	let showDeleteDialog = $state(false);
@@ -79,8 +77,14 @@
 	}
 
 	function handleToolbarAction(actionId: DownloadToolbarActionID): void {
-		if (actionId === 'toggle-download') { downloadPaused = !downloadPaused; return; }
-		if (actionId === 'toggle-upload') { uploadPaused = !uploadPaused; return; }
+		if (actionId === 'toggle-download') {
+			downloadPaused = !downloadPaused;
+			return;
+		}
+		if (actionId === 'toggle-upload') {
+			uploadPaused = !uploadPaused;
+			return;
+		}
 		if (actionId === 'stop-verify' && download) {
 			api.lishs.stopVerify(download.id).catch(err => console.error('Stop verification failed:', err));
 			return;
