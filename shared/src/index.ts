@@ -129,4 +129,5 @@ export interface ILISHNetwork {
 	description?: string;
 	bootstrapPeers: string[];
 	created?: string;
+	ownerPeerID?: string | undefined;
 }

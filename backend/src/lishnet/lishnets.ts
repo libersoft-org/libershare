@@ -66,6 +66,10 @@ export class Networks {
 			this.network.subscribeTopic(net.networkID);
 			this.joinedNetworks.add(net.networkID);
 			console.log(`✓ Joined lishnet: ${net.name} (${net.networkID})`);
+			// Join catalog if network has ownerPeerID
+			if (this.catalogManager && net.ownerPeerID) {
+				this.catalogManager.join(net.networkID, net.ownerPeerID);
+			}
 		}
 	}
 
@@ -194,13 +198,15 @@ export class Networks {
 	// Validate a raw network object into a LISHNetworkDefinition (without storing).
 	validateNetwork(data: ILISHNetwork): LISHNetworkDefinition {
 		if (!data.networkID || !data.name) throw new CodedError(ErrorCodes.NETWORK_INVALID);
-		return {
+		const def: LISHNetworkDefinition = {
 			networkID: data.networkID,
 			name: data.name,
 			description: data.description || '',
 			bootstrapPeers: Array.isArray(data.bootstrapPeers) ? data.bootstrapPeers.filter(p => typeof p === 'string' && p.trim()) : [],
 			created: data.created || new Date().toISOString(),
 		};
+		if (data.ownerPeerID) def.ownerPeerID = data.ownerPeerID;
+		return def;
 	}
 
 	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
