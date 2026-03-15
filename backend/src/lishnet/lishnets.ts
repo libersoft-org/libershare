@@ -4,6 +4,7 @@ import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, CodedError, ErrorCodes } from '@shared';
+import { type CatalogManager } from '../catalog/catalog-manager.ts';
 import { lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
 
 /**
@@ -20,6 +21,9 @@ export class Networks {
 	// Callback for peer count changes
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
 
+	// Catalog manager (set after construction via setCatalogManager)
+	private catalogManager: CatalogManager | null = null;
+
 	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings, enablePink: boolean = false) {
 		this.db = db;
 		this.network = new Network(dataDir, dataServer, settings, enablePink);
@@ -34,6 +38,10 @@ export class Networks {
 	 */
 	set onPeerCountChange(cb: ((counts: { networkID: string; count: number }[]) => void) | null) {
 		this._onPeerCountChange = cb;
+	}
+
+	setCatalogManager(cm: CatalogManager): void {
+		this.catalogManager = cm;
 	}
 
 	init(): void {
@@ -97,6 +105,11 @@ export class Networks {
 		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers);
 
 		console.log(`✓ Joined lishnet: ${net?.name ?? id}`);
+
+		// Join catalog if network has ownerPeerID
+		if (this.catalogManager && net?.ownerPeerID) {
+			this.catalogManager.join(id, net.ownerPeerID);
+		}
 	}
 
 	/**
@@ -110,6 +123,10 @@ export class Networks {
 
 		const net = this.get(id);
 		console.log(`✓ Left lishnet: ${net?.name ?? id}`);
+
+		if (this.catalogManager) {
+			this.catalogManager.leave(id);
+		}
 	}
 
 	/**

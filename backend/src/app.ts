@@ -71,6 +71,7 @@ const catalogManager = new CatalogManager({
 		} catch { /* network not running — skip broadcast */ }
 	},
 });
+networks.setCatalogManager(catalogManager);
 
 const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 	host: apiHost,
