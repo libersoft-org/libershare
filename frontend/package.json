@@ -17,7 +17,7 @@
 		"hex-to-css-filter": "^6.0.0"
 	},
 	"devDependencies": {
-		"svelte": "^5.53.11",
+		"svelte": "^5.53.12",
 		"@sveltejs/kit": "^2.55.0",
 		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/adapter-static": "^3.0.10",
