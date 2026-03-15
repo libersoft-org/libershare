@@ -10,6 +10,8 @@ import { initFsHandlers } from './fs.ts';
 import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
+import { initCatalogHandlers } from './catalog.ts';
+import { type CatalogManager } from '../catalog/catalog-manager.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
 }
@@ -40,7 +42,7 @@ export class APIServer {
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
 
-	constructor(dataDir: string, dataServer: DataServer, networks: Networks, settings: Settings, options: APIServerOptions) {
+	constructor(dataDir: string, dataServer: DataServer, networks: Networks, settings: Settings, options: APIServerOptions, catalogManager?: CatalogManager | undefined) {
 		this.dataDir = dataDir;
 		this.dataServer = dataServer;
 		this.networks = networks;
@@ -59,6 +61,7 @@ export class APIServer {
 		const _fs = initFsHandlers();
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
+		const _catalog = catalogManager ? initCatalogHandlers(catalogManager) : null;
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
@@ -126,6 +129,18 @@ export class APIServer {
 			'fs.exists': _fs.exists,
 			'fs.writeText': _fs.writeText,
 			'fs.writeCompressed': _fs.writeCompressed,
+			// Catalog (optional — requires CatalogManager)
+			...(_catalog ? {
+				'catalog.list': _catalog.list,
+				'catalog.get': _catalog.get,
+				'catalog.search': _catalog.search,
+				'catalog.publish': _catalog.publish,
+				'catalog.update': _catalog.update,
+				'catalog.remove': _catalog.remove,
+				'catalog.getAccess': _catalog.getAccess,
+				'catalog.grantRole': _catalog.grantRole,
+				'catalog.revokeRole': _catalog.revokeRole,
+			} : {}),
 		};
 	}
 

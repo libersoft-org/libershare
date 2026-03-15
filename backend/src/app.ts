@@ -6,6 +6,7 @@ import { DataServer } from './lish/data-server.ts';
 import { openDatabase } from './db/database.ts';
 import { APIServer } from './api/api.ts';
 import { Settings } from './settings.ts';
+import { CatalogManager } from './catalog/catalog-manager.ts';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -57,13 +58,24 @@ const dataServer = new DataServer(db);
 const networks = new Networks(db, dataDir, dataServer, settings, enablePink);
 networks.init();
 
+// CatalogManager requires Network extensions (getPrivateKey, registerStreamHandler)
+// that are not yet implemented. For now, create without network integration.
+// Phase 2 will wire up broadcast and bilateral sync via Network class.
+const catalogManager = new CatalogManager({
+	db,
+	getPrivateKey: () => { throw new Error('Network private key access not yet implemented (Phase 2)'); },
+	getLocalPeerID: () => {
+		try { return networks.getRunningNetwork().getNodeInfo()?.peerID ?? 'local'; } catch { return 'local'; }
+	},
+});
+
 const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 	host: apiHost,
 	port: apiPort,
 	secure: apiSecure,
 	keyFile: apiKeyFile,
 	certFile: apiCertFile,
-});
+}, catalogManager);
 
 async function shutdown(): Promise<void> {
 	console.log('Shutting down...');
