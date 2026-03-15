@@ -1,9 +1,8 @@
 import { describe, test, expect } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
-import type { Ed25519PrivateKey } from '@libp2p/interface';
 import { decode } from 'cbor-x';
-import { initCatalogTables, ensureCatalogACL, listCatalogEntries, getCatalogEntry, updateCatalogACL } from '../../db/catalog.ts';
+import { initCatalogTables, ensureCatalogACL, listCatalogEntries, getCatalogEntry } from '../../db/catalog.ts';
 import { signCatalogOp, type SignedCatalogOp } from '../catalog-signer.ts';
 import { handleRemoteOp } from '../catalog-validator.ts';
 import type { HLC } from '../catalog-hlc.ts';
@@ -29,14 +28,13 @@ describe('Convergence: Two peers reach same state', () => {
 		const ownerID = owner.publicKey.toString();
 
 		// Grant both moderators
-		let oClock = clock();
-		const { op: g1, updatedClock: oc1 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
+		const oClock = clock();
+		const { op: g1, updatedClock: oClock2 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
 			role: 'moderator', delegatee: mod1.publicKey.toString(),
 		}, oClock);
-		oClock = oc1;
 		const { op: g2 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
 			role: 'moderator', delegatee: mod2.publicKey.toString(),
-		}, oClock);
+		}, oClock2);
 
 		// Each mod publishes different entries (different authors → no vector clock conflict)
 		let m1Clock = clock();
@@ -99,14 +97,13 @@ describe('Convergence: Two peers reach same state', () => {
 		const ownerID = owner.publicKey.toString();
 
 		// Setup: owner grants both mods
-		let oClock = clock();
-		const { op: g1, updatedClock: oc1 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
+		const oClock = clock();
+		const { op: g1, updatedClock: oClock2 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
 			role: 'moderator', delegatee: mod1.publicKey.toString(),
 		}, oClock);
-		oClock = oc1;
-		const { op: g2, updatedClock: oc2 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
+		const { op: g2 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
 			role: 'moderator', delegatee: mod2.publicKey.toString(),
-		}, oClock);
+		}, oClock2);
 
 		// Mod1 creates entry with lower HLC
 		const lowFuture: HLC = { wallTime: Date.now() + 10_000, logical: 0, nodeID: 'conv' };
@@ -152,7 +149,7 @@ describe('Convergence: Two peers reach same state', () => {
 		const ownerID = owner.publicKey.toString();
 
 		let oClock = clock();
-		const { op: grant, updatedClock: oc1 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
+		const { op: grant, } = await signCatalogOp(owner, 'acl_grant', 'net1', {
 			role: 'moderator', delegatee: mod.publicKey.toString(),
 		}, oClock);
 
@@ -191,7 +188,7 @@ describe('Convergence: Two peers reach same state', () => {
 		// Peer A generates and stores ops
 		const dbA = createPeerDB(ownerID);
 		let oClock = clock();
-		const { op: grant, updatedClock: oc1 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
+		const { op: grant, } = await signCatalogOp(owner, 'acl_grant', 'net1', {
 			role: 'moderator', delegatee: mod.publicKey.toString(),
 		}, oClock);
 		await handleRemoteOp(dbA, 'net1', grant);

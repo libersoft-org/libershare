@@ -5,7 +5,7 @@ import type { Ed25519PrivateKey } from '@libp2p/interface';
 import { initCatalogTables, getCatalogEntry, listCatalogEntries, isTombstoned, getCatalogACL, ensureCatalogACL, searchCatalog, getDeltaEntries, getVectorClock } from '../../db/catalog.ts';
 import { signCatalogOp } from '../catalog-signer.ts';
 import { handleRemoteOp } from '../catalog-validator.ts';
-import { hlcTick, type HLC } from '../catalog-hlc.ts';
+import type { HLC } from '../catalog-hlc.ts';
 
 let db: Database;
 let ownerKey: Ed25519PrivateKey;

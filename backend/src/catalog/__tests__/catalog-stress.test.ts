@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
-import { initCatalogTables, ensureCatalogACL, updateCatalogACL, listCatalogEntries, searchCatalog, getCatalogEntry, deleteTombstonesOlderThan } from '../../db/catalog.ts';
+import { initCatalogTables, ensureCatalogACL, listCatalogEntries, getCatalogEntry, deleteTombstonesOlderThan } from '../../db/catalog.ts';
 import { signCatalogOp } from '../catalog-signer.ts';
 import { handleRemoteOp } from '../catalog-validator.ts';
 import type { HLC } from '../catalog-hlc.ts';

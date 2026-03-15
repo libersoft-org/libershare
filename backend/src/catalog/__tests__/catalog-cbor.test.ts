@@ -32,7 +32,7 @@ beforeEach(async () => {
 describe('CBOR signed_op blob', () => {
 	test('stored blob can be decoded back to valid SignedCatalogOp', async () => {
 		let clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'test' };
-		const { op, updatedClock } = await signCatalogOp(modKey, 'add', 'net1', {
+		const { op } = await signCatalogOp(modKey, 'add', 'net1', {
 			lishID: 'cbor-test', name: 'CBOR Test', description: 'Testing blob round-trip',
 			publisherPeerID: modKey.publicKey.toString(), publishedAt: '2026-03-15T00:00:00Z',
 			chunkSize: 2048, checksumAlgo: 'sha256', totalSize: 999, fileCount: 2,
