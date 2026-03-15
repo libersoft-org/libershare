@@ -2,16 +2,14 @@ import type { Database } from 'bun:sqlite';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
 import { signCatalogOp, type SignedCatalogOp } from './catalog-signer.ts';
 import { handleRemoteOp } from './catalog-validator.ts';
-import { hlcTick, type HLC } from './catalog-hlc.ts';
+import type { HLC } from './catalog-hlc.ts';
 import {
 	ensureCatalogACL,
 	getCatalogACL,
-	updateCatalogACL,
 	getCatalogEntry,
 	listCatalogEntries,
 	searchCatalog,
 	getVectorClock,
-	isTombstoned,
 	deleteTombstonesOlderThan,
 	type CatalogEntryRow,
 	type CatalogACLRow,

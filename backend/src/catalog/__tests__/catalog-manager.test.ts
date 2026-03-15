@@ -310,7 +310,6 @@ describe('CatalogManager: Remote op application', () => {
 
 describe('CatalogManager: Multi-network', () => {
 	test('publish to different networks independently', async () => {
-		const owner2Key = await generateKeyPair('Ed25519');
 		const mgr = createManager(ownerKey);
 		mgr.join('net1', ownerPeerID);
 		mgr.join('net2', ownerPeerID);
