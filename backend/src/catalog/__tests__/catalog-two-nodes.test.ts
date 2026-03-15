@@ -14,7 +14,7 @@ import { DataServer } from '../../lish/data-server.ts';
 import { Settings } from '../../settings.ts';
 import { openDatabase } from '../../db/database.ts';
 import { CatalogManager } from '../catalog-manager.ts';
-import { initCatalogTables, getCatalogEntry, listCatalogEntries, ensureCatalogACL, updateCatalogACL, getEntryCount } from '../../db/catalog.ts';
+import { getCatalogEntry, listCatalogEntries, updateCatalogACL } from '../../db/catalog.ts';
 import type { SignedCatalogOp } from '../catalog-signer.ts';
 
 let tmpDir1: string;
@@ -204,7 +204,7 @@ describe('Two-Node P2P Catalog', () => {
 
 	test('registerStreamHandler works on both nodes', async () => {
 		let received = false;
-		await network1.registerStreamHandler('/test/echo/1.0.0', async (stream) => {
+		await network1.registerStreamHandler('/test/echo/1.0.0', async (_stream) => {
 			received = true;
 		});
 

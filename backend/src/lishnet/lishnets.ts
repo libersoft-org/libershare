@@ -216,7 +216,13 @@ export class Networks {
 			bootstrapPeers: Array.isArray(data.bootstrapPeers) ? data.bootstrapPeers.filter(p => typeof p === 'string' && p.trim()) : [],
 			created: data.created || new Date().toISOString(),
 		};
-		if (data.ownerPeerID) def.ownerPeerID = data.ownerPeerID;
+		if (data.ownerPeerID) {
+			if (!data.ownerPeerID.startsWith('12D3KooW')) {
+				console.warn(`[Networks] Invalid ownerPeerID format: ${data.ownerPeerID} (expected Ed25519 PeerID starting with 12D3KooW)`);
+			} else {
+				def.ownerPeerID = data.ownerPeerID;
+			}
+		}
 		return def;
 	}
 

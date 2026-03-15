@@ -4,12 +4,12 @@
  * Simulates actual user workflows — not unit testing isolated functions,
  * but full scenarios a real user would go through.
  */
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
 import { decode } from 'cbor-x';
-import { initCatalogTables, getCatalogEntry, listCatalogEntries, isTombstoned, getCatalogACL, getEntryCount, searchCatalog } from '../../db/catalog.ts';
+import { initCatalogTables, getCatalogEntry, listCatalogEntries, isTombstoned, getEntryCount, searchCatalog } from '../../db/catalog.ts';
 import { CatalogManager } from '../catalog-manager.ts';
 import { buildSyncResponse, applySyncResponse, encodeSyncResponse, decodeSyncResponse } from '../catalog-sync.ts';
 import { CatalogRateLimiter } from '../catalog-rate-limiter.ts';

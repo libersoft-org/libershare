@@ -22,6 +22,7 @@ export function subscribeCatalogEvents(callbacks: {
 	onUpdated?: (data: { networkID: string; entry: CatalogEntryResponse }) => void;
 	onRemoved?: (data: { networkID: string; lishID: string }) => void;
 	onACL?: (data: { networkID: string; access: CatalogACLResponse }) => void;
+	onSync?: (data: { networkID: string; newEntries: number; phase: 'start' | 'complete' }) => void;
 }): () => void {
 	const unsubs: (() => void)[] = [];
 	if (callbacks.onUpdated) {
@@ -36,7 +37,11 @@ export function subscribeCatalogEvents(callbacks: {
 		const u = api.on('catalog:acl', callbacks.onACL);
 		if (u) unsubs.push(u);
 	}
-	api.subscribe('catalog:updated', 'catalog:removed', 'catalog:acl');
+	if (callbacks.onSync) {
+		const u = api.on('catalog:sync', callbacks.onSync);
+		if (u) unsubs.push(u);
+	}
+	api.subscribe('catalog:updated', 'catalog:removed', 'catalog:acl', 'catalog:sync');
 	return () => unsubs.forEach(u => u());
 }
 

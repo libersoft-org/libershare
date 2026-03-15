@@ -17,7 +17,7 @@ import { openDatabase } from '../../db/database.ts';
 import { CatalogManager } from '../catalog-manager.ts';
 import { signCatalogOp, verifyCatalogOp, type SignedCatalogOp } from '../catalog-signer.ts';
 import { handleRemoteOp } from '../catalog-validator.ts';
-import { initCatalogTables, getCatalogEntry, listCatalogEntries, ensureCatalogACL, updateCatalogACL, getEntryCount } from '../../db/catalog.ts';
+import { getCatalogEntry, updateCatalogACL } from '../../db/catalog.ts';
 import type { HLC } from '../catalog-hlc.ts';
 
 interface TestNode {
@@ -237,7 +237,7 @@ describe('Forgery: Crafted invalid signed operations', () => {
 
 		// Apply on our network — should pass signature but fail ACL (not registered for this network context)
 		// The op's networkID doesn't match what we pass to handleRemoteOp
-		const result = await handleRemoteOp(nodes[0]!.db, NET, op);
+		await handleRemoteOp(nodes[0]!.db, NET, op);
 		// This should work because handleRemoteOp checks ACL based on the networkID param, not the op's networkID
 		// The moderator IS authorized on NET — but the signed payload says 'wrong-network'
 		// Signature is valid (covers 'wrong-network'), but that's a different concern
@@ -277,7 +277,7 @@ describe('Forgery: Crafted invalid signed operations', () => {
 		// First ensure node1 has the entry via gossipsub
 		await new Promise(r => setTimeout(r, 2000));
 
-		const result = await handleRemoteOp(nodes[1]!.db, NET, originalOp);
+		await handleRemoteOp(nodes[1]!.db, NET, originalOp);
 		// If node1 already received the op via gossipsub, it will have the vector clock entry
 		// and reject the replay. If not, it might accept (first time seeing it).
 		// Either way, signature is valid
@@ -312,9 +312,6 @@ describe('Partition: Nodes operate independently then merge', () => {
 
 		// After reconnect, both groups should have both entries
 		// (gossipsub delivers during the wait)
-		const count0 = getEntryCount(nodes[0]!.db, NET);
-		const count2 = getEntryCount(nodes[2]!.db, NET);
-
 		// At minimum, each node has its own entry
 		expect(getCatalogEntry(nodes[0]!.db, NET, 'partition-a1')).not.toBeNull();
 		expect(getCatalogEntry(nodes[2]!.db, NET, 'partition-b1')).not.toBeNull();

@@ -257,6 +257,15 @@ export class CatalogManager {
 	async applyRemoteOp(networkID: string, op: SignedCatalogOp): Promise<boolean> {
 		if (!this.joined.has(networkID)) return false;
 		const result = await handleRemoteOp(this.db, networkID, op);
+		if (result.valid) {
+			const net = this.joined.get(networkID);
+			if (net) net.lastSyncAt = new Date().toISOString();
+			this.emitEventFn?.('catalog:sync', {
+				networkID,
+				newEntries: 1,
+				phase: 'complete',
+			});
+		}
 		return result.valid;
 	}
 
