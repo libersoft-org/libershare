@@ -14,6 +14,7 @@
 	import TableHeader from '../../components/Table/TableHeader.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import TableCell from '../../components/Table/TableCell.svelte';
+	import Input from '../../components/Input/Input.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -24,6 +25,8 @@
 	let peers = $state<PeerConnectionInfo[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let search = $state('');
+	let filteredPeers = $derived(search ? peers.filter(p => p.peerID.toLowerCase().includes(search.toLowerCase())) : peers);
 
 	async function loadPeers(): Promise<void> {
 		loading = true;
@@ -92,14 +95,15 @@
 		{:else if peers.length === 0}
 			<Alert type="warning" message={$t('settings.lishNetwork.noPeers')} />
 		{:else}
+			<Input bind:value={search} placeholder={$t('settings.lishNetwork.peerID') + ' ...'} fontSize="2vh" padding="1vh 1.5vh" position={[0, 1]} />
 			<Table columns="auto 1fr auto" columnsMobile="1fr auto">
 				<TableHeader>
 					<TableCell desktopOnly>#</TableCell>
 					<TableCell>{$t('settings.lishNetwork.peerID')}</TableCell>
 					<TableCell>{$t('settings.lishNetwork.connections')}</TableCell>
 				</TableHeader>
-				{#each peers as peer, i}
-					<TableRow position={[0, i + 1]} odd={i % 2 !== 0}>
+				{#each filteredPeers as peer, i}
+					<TableRow position={[0, i + 2]} odd={i % 2 !== 0}>
 						<TableCell desktopOnly>{i + 1}</TableCell>
 						<TableCell wrap><span class="peer-id">{peer.peerID}</span></TableCell>
 						<TableCell>
