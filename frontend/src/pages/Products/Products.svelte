@@ -81,7 +81,7 @@
 	});
 </script>
 
-<SearchBar bind:this={searchBar} selected={searchNavHandle.controller.isSelected([0, 0])} />
+<SearchBar bind:this={searchBar} bind:value={searchQuery} selected={searchNavHandle.controller.isSelected([0, 0])} onchange={() => loadEntries()} />
 {#if loading}
 	<div class="loading">Loading catalog...</div>
 {:else if error}

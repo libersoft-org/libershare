@@ -117,7 +117,7 @@
 {:else}
 	<div class="items">
 		{#each items as item, index (item.id)}
-			<ProductsItem bind:el={itemElements[index]} title={item.title} isGamepadHovered={navHandle.controller.isSelected(getItemPos(index))} isAPressed={navHandle.controller.isPressed(getItemPos(index))} />
+			<ProductsItem bind:el={itemElements[index]} title={item.title} description={item.description} totalSize={item.totalSize} fileCount={item.fileCount} tags={item.tags} contentType={item.contentType} isGamepadHovered={navHandle.controller.isSelected(getItemPos(index))} isAPressed={navHandle.controller.isPressed(getItemPos(index))} />
 		{/each}
 	</div>
 {/if}
