@@ -64,7 +64,9 @@ interface LISHsHandlers {
 	parseFromJSON: (p: { json: string }) => ILISH[];
 	parseFromURL: (p: { url: string }) => Promise<ILISH[]>;
 	verify: (p: { lishID: string }) => Promise<SuccessResponse>;
+	verifyAll: () => Promise<SuccessResponse>;
 	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
+	stopVerifyAll: () => Promise<SuccessResponse>;
 	stopCreate: () => Promise<SuccessResponse>;
 }
 
@@ -345,6 +347,19 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return { success: true };
 	}
 
+	async function verifyAll(): Promise<SuccessResponse> {
+		const allLISHs = dataServer.listSummaries(undefined, 'desc');
+		for (const lish of allLISHs) {
+			// Skip if already verifying or already in queue
+			if (currentVerification?.lishID === lish.id) continue;
+			if (verificationQueue.includes(lish.id)) continue;
+			resetVerification(dataServer, lish.id);
+			broadcast('lishs:verify', { lishID: lish.id, filePath: '', verifiedChunks: 0, reset: true });
+			enqueueVerification(lish.id);
+		}
+		return { success: true };
+	}
+
 	async function stopVerify(p: { lishID: string }): Promise<SuccessResponse> {
 		assert(p, ['lishID']);
 		// Stop if currently running
@@ -358,6 +373,19 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return { success: true };
 	}
 
+	async function stopVerifyAll(): Promise<SuccessResponse> {
+		// Abort current verification
+		if (currentVerification) {
+			currentVerification.ac.abort();
+		}
+		// Clear the queue and broadcast done for each
+		while (verificationQueue.length > 0) {
+			const lishID = verificationQueue.shift()!;
+			broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
+		}
+		return { success: true };
+	}
+
 	async function stopCreate(): Promise<SuccessResponse> {
 		if (currentCreation) {
 			currentCreation.abort();
@@ -366,5 +394,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return { success: true };
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, stopVerify, stopCreate };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate };
 }

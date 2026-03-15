@@ -183,7 +183,8 @@ export async function initDownloads(): Promise<void> {
 					list.map(d => {
 						if (d.id !== data.lishID) return d;
 						const status: DownloadStatus = 'idling';
-						return { ...d, status };
+						const progress = d.totalChunks === 0 ? 100 : d.progress;
+						return { ...d, status, progress };
 					})
 				);
 				return;

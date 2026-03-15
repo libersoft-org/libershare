@@ -222,7 +222,18 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 			return () => {
 				const idx = items.indexOf(item);
 				if (idx !== -1) items.splice(idx, 1);
-				if (selectedPos && item.pos[0] === selectedPos[0] && item.pos[1] === selectedPos[1]) if (items.length === 0) selectedPos = null;
+				if (selectedPos && item.pos[0] === selectedPos[0] && item.pos[1] === selectedPos[1]) {
+					if (items.length === 0) selectedPos = null;
+					else {
+						// Move selection to the nearest remaining item
+						const left = findItemInDirection(items, selectedPos, 'left');
+						const up = findItemInDirection(items, selectedPos, 'up');
+						const right = findItemInDirection(items, selectedPos, 'right');
+						const down = findItemInDirection(items, selectedPos, 'down');
+						const fallback = left || up || right || down || items[0]!;
+						selectedPos = fallback.pos;
+					}
+				}
 			};
 		},
 		isSelected(pos: NavPos): boolean {
