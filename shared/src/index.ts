@@ -55,6 +55,7 @@ export interface LISHNetworkDefinition {
 	description: string;
 	bootstrapPeers: string[];
 	created: string;
+	ownerPeerID?: string | undefined;
 }
 
 // LISH Network config (stored network with enabled state)
