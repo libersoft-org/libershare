@@ -637,4 +637,18 @@ export class Network {
 		const connection = await this.node.dial(peerId);
 		return connection.newStream(protocol, { runOnLimitedConnection: true });
 	}
+
+	registerTopicValidator(topic: string, validator: (peerID: any, msg: any) => Promise<'accept' | 'reject' | 'ignore'>): void {
+		if (!this.pubsub) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		const pubsub = this.pubsub as any;
+		if (typeof pubsub.topicValidators?.set === 'function') {
+			pubsub.topicValidators.set(topic, async (peerID: any, msg: any) => {
+				const result = await validator(peerID, msg);
+				// Map string results to gossipsub TopicValidatorResult enum values
+				if (result === 'reject') return 'reject';
+				if (result === 'ignore') return 'ignore';
+				return 'accept';
+			});
+		}
+	}
 }

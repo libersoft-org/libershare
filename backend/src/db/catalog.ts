@@ -318,3 +318,36 @@ export function getDeltaEntries(db: Database, networkID: string, sinceHlcWall: n
 		'SELECT * FROM catalog_entries WHERE network_id = ? AND hlc_wall > ? ORDER BY hlc_wall ASC'
 	).all(networkID, sinceHlcWall);
 }
+
+export interface TombstoneRow {
+	network_id: string;
+	lish_id: string;
+	removed_by: string;
+	removed_at: string;
+	hlc_wall: number;
+	hlc_logical: number;
+	hlc_node: string;
+	signed_op: Uint8Array;
+}
+
+export function getDeltaTombstones(db: Database, networkID: string, sinceHlcWall: number): TombstoneRow[] {
+	return db.query<TombstoneRow, [string, number]>(
+		'SELECT * FROM catalog_tombstones WHERE network_id = ? AND hlc_wall > ? ORDER BY hlc_wall ASC'
+	).all(networkID, sinceHlcWall);
+}
+
+export function getAllVectorClocks(db: Database, networkID: string): VectorClockRow[] {
+	return db.query<VectorClockRow, [string]>(
+		'SELECT * FROM catalog_clocks WHERE network_id = ?'
+	).all(networkID);
+}
+
+export function getEntryCount(db: Database, networkID: string): number {
+	const row = db.query<{ c: number }, [string]>('SELECT COUNT(*) as c FROM catalog_entries WHERE network_id = ?').get(networkID);
+	return row?.c ?? 0;
+}
+
+export function getTombstoneCount(db: Database, networkID: string): number {
+	const row = db.query<{ c: number }, [string]>('SELECT COUNT(*) as c FROM catalog_tombstones WHERE network_id = ?').get(networkID);
+	return row?.c ?? 0;
+}
