@@ -66,9 +66,10 @@ export class Networks {
 			this.network.subscribeTopic(net.networkID);
 			this.joinedNetworks.add(net.networkID);
 			console.log(`✓ Joined lishnet: ${net.name} (${net.networkID})`);
-			// Join catalog if network has ownerPeerID
+			// Join catalog if network has ownerPeerID (graceful — errors never block)
 			if (this.catalogManager && net.ownerPeerID) {
-				this.catalogManager.join(net.networkID, net.ownerPeerID);
+				try { this.catalogManager.join(net.networkID, net.ownerPeerID); }
+				catch (err) { console.warn(`[Catalog] Failed to join catalog for ${net.networkID}:`, (err as Error).message); }
 			}
 		}
 	}
@@ -110,16 +111,24 @@ export class Networks {
 
 		console.log(`✓ Joined lishnet: ${net?.name ?? id}`);
 
-		// Join catalog if network has ownerPeerID
+		// Join catalog if network has ownerPeerID (graceful — errors never block file sharing)
 		if (this.catalogManager && net?.ownerPeerID) {
-			this.catalogManager.join(id, net.ownerPeerID);
+			try {
+				this.catalogManager.join(id, net.ownerPeerID);
 
-			// Register GossipSub handler for catalog_op messages
-			await this.network.subscribe(`lish/${id}`, async (msg: Record<string, any>) => {
-				if (msg['type'] === 'catalog_op' && this.catalogManager) {
-					await this.catalogManager.applyRemoteOp(id, msg as any);
-				}
-			});
+				// Register GossipSub handler for catalog_op messages
+				await this.network.subscribe(`lish/${id}`, async (msg: Record<string, any>) => {
+					if (msg['type'] === 'catalog_op' && this.catalogManager) {
+						try {
+							await this.catalogManager.applyRemoteOp(id, msg as any);
+						} catch (err) {
+							console.warn(`[Catalog] Error applying remote op for ${id}:`, (err as Error).message);
+						}
+					}
+				});
+			} catch (err) {
+				console.warn(`[Catalog] Failed to join catalog for ${id}:`, (err as Error).message);
+			}
 		}
 	}
 
