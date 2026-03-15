@@ -93,13 +93,15 @@ const handlers: Record<string, RpcHandler> = {
 	'catalog.update': () => undefined,
 	'catalog.remove': () => undefined,
 	'catalog.getAccess': () => ({
-		owner: 'test-owner-peer-id',
-		admins: ['test-admin-1'],
-		moderators: ['test-mod-1', 'test-mod-2'],
+		network_id: 'net-test',
+		owner: '12D3KooWTestOwnerPeerID000000000000000000000000',
+		admins: ['12D3KooWTestAdmin1PeerID00000000000000000000000'],
+		moderators: ['12D3KooWTestMod1PeerID000000000000000000000000', '12D3KooWTestMod2PeerID000000000000000000000000'],
 		restrict_writes: 1,
 	}),
 	'catalog.grantRole': () => undefined,
 	'catalog.revokeRole': () => undefined,
+	'catalog.getSyncStatus': () => ({ entryCount: 4, tombstoneCount: 0, lastSyncAt: null }),
 };
 
 const MOCK_CATALOG_ENTRIES = [
