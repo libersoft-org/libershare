@@ -140,6 +140,15 @@ export function initCatalogTables(db: Database): void {
 			content_rowid=id
 		)
 	`);
+
+	// Schema version tracking
+	db.run(`
+		CREATE TABLE IF NOT EXISTS catalog_meta (
+			key   TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)
+	`);
+	db.run("INSERT OR IGNORE INTO catalog_meta (key, value) VALUES ('schema_version', '1')");
 }
 
 export function upsertCatalogEntry(db: Database, entry: CatalogEntryInput): void {

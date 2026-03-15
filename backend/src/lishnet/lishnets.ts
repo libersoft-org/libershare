@@ -119,6 +119,8 @@ export class Networks {
 				// Register GossipSub handler for catalog_op messages
 				await this.network.subscribe(`lish/${id}`, async (msg: Record<string, any>) => {
 					if (msg['type'] === 'catalog_op' && this.catalogManager) {
+						// Unknown version — IGNORE (don't penalize newer peers)
+						if (msg['version'] !== undefined && msg['version'] !== 1) return;
 						try {
 							await this.catalogManager.applyRemoteOp(id, msg as any);
 						} catch (err) {

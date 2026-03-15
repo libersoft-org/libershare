@@ -118,14 +118,21 @@ export function checkVectorClock(db: Database, networkID: string, op: SignedCata
 export async function handleRemoteOp(db: Database, networkID: string, op: SignedCatalogOp): Promise<ValidationResult> {
 	// 1. SIGNATURE
 	const sigValid = await verifyCatalogOp(op);
-	if (!sigValid) return { valid: false, reason: 'INVALID_SIGNATURE' };
+	if (!sigValid) {
+		console.warn(`[Catalog] REJECTED: invalid signature from ${op.signer} on ${networkID}`);
+		return { valid: false, reason: 'INVALID_SIGNATURE' };
+	}
 
 	// 2. ACL
 	const aclResult = checkACL(db, networkID, op);
-	if (!aclResult.valid) return aclResult;
+	if (!aclResult.valid) {
+		console.warn(`[Catalog] REJECTED: ${(aclResult as { reason: string }).reason} — peer ${op.signer}, type ${op.payload.type}, network ${networkID}`);
+		return aclResult;
+	}
 
 	// 3. DRIFT
 	if (op.payload.hlc.wallTime > Date.now() + MAX_DRIFT) {
+		console.warn(`[Catalog] REJECTED: clock drift from ${op.signer} — wallTime ${op.payload.hlc.wallTime} vs now ${Date.now()}`);
 		return { valid: false, reason: 'CLOCK_DRIFT_TOO_HIGH' };
 	}
 
