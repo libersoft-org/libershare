@@ -450,6 +450,7 @@ describe('5. Multi-Peer — Broadcast and Remote Op Application', () => {
 	});
 
 	test('5.4 full multi-peer lifecycle: owner publishes, peer2 syncs, mod updates on peer2', async () => {
+		broadcasts.length = 0; // clear broadcasts from previous tests
 		// Setup on DB1
 		owner.manager.join('net1', owner.peerID);
 		mod1.manager.join('net1', owner.peerID);
