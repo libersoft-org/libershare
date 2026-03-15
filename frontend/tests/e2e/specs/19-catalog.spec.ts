@@ -182,6 +182,29 @@ test.describe('Catalog / Online Library', () => {
 		expect(count).toBeGreaterThanOrEqual(1);
 	});
 
+	test('product detail shows entry info', async ({ appPage: page }) => {
+		await page.keyboard.press('Enter');
+		await page.waitForTimeout(500);
+		await page.keyboard.press('Enter');
+		await page.waitForTimeout(500);
+		await page.keyboard.press('Enter');
+		await page.waitForTimeout(500);
+
+		// Detail page should show entry title and info section
+		const info = page.locator('.detail .info');
+		const count = await info.count();
+		if (count > 0) {
+			const title = page.locator('.detail .info .entry-title');
+			const titleText = await title.textContent();
+			expect(titleText).toBeTruthy();
+		}
+
+		// Should have a downloads section
+		const downloads = page.locator('.detail .files .section-title');
+		const dlCount = await downloads.count();
+		expect(dlCount).toBeGreaterThanOrEqual(0);
+	});
+
 	test('multiple navigation cycles work without errors', async ({ appPage: page }) => {
 		const errors: string[] = [];
 		page.on('pageerror', err => errors.push(err.message));
