@@ -45,11 +45,12 @@ async function getStats(fullPath: string): Promise<Stats> {
 }
 
 // Calculate checksums sequentially (single-threaded, no worker overhead)
-async function calculateChecksumsSequential(filePath: string, fileSize: number, chunkSize: number, algo: HashAlgorithm, _maxWorkers: number, onProgress?: (completed: number, total: number) => void): Promise<string[]> {
+async function calculateChecksumsSequential(filePath: string, fileSize: number, chunkSize: number, algo: HashAlgorithm, _maxWorkers: number, onProgress?: (completed: number, total: number) => void, signal?: AbortSignal): Promise<string[]> {
 	const totalChunks = Math.ceil(fileSize / chunkSize);
 	const file = Bun.file(filePath);
 	const results: string[] = [];
 	for (let i = 0; i < totalChunks; i++) {
+		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 		const checksum = await calculateChecksum(file, i * chunkSize, chunkSize, algo);
 		results.push(checksum);
 		if (onProgress) onProgress(i + 1, totalChunks);
@@ -58,7 +59,8 @@ async function calculateChecksumsSequential(filePath: string, fileSize: number, 
 }
 
 // Calculate checksums in parallel using workers
-async function calculateChecksumsParallel(filePath: string, fileSize: number, chunkSize: number, algo: HashAlgorithm, maxWorkers: number, onProgress?: (completed: number, total: number) => void): Promise<string[]> {
+async function calculateChecksumsParallel(filePath: string, fileSize: number, chunkSize: number, algo: HashAlgorithm, maxWorkers: number, onProgress?: (completed: number, total: number) => void, signal?: AbortSignal): Promise<string[]> {
+	if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 	const totalChunks = Math.ceil(fileSize / chunkSize);
 	const cpuCount = maxWorkers > 0 ? maxWorkers : navigator.hardwareConcurrency || 1;
 	const workerCount = Math.min(cpuCount, totalChunks);
@@ -72,6 +74,17 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 	// Process chunks by feeding workers one at a time
 	await new Promise<void>((resolveAll, rejectAll) => {
 		let finished = false;
+		function abortHandler(): void {
+			if (finished) return;
+			finished = true;
+			workers.forEach(w => w.terminate());
+			rejectAll(new CodedError(ErrorCodes.LISH_CREATE_CANCELLED));
+		}
+		if (signal?.aborted) {
+			abortHandler();
+			return;
+		}
+		signal?.addEventListener('abort', abortHandler, { once: true });
 		function feedWorker(workerIndex: number): void {
 			if (finished) return;
 			if (nextChunk >= totalChunks) return;
@@ -81,6 +94,7 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 			function handler(event: MessageEvent): void {
 				if (event.data.index === chunkIndex) {
 					worker.removeEventListener('message', handler);
+					if (finished) return;
 					if (event.data.error) {
 						finished = true;
 						rejectAll(new Error(event.data.error));
@@ -89,8 +103,10 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 					results[chunkIndex] = event.data.checksum;
 					completedChunks++;
 					if (onProgress) onProgress(completedChunks, totalChunks);
-					if (completedChunks === totalChunks) resolveAll();
-					else feedWorker(workerIndex);
+					if (completedChunks === totalChunks) {
+						signal?.removeEventListener('abort', abortHandler);
+						resolveAll();
+					} else feedWorker(workerIndex);
 				}
 			}
 			worker.addEventListener('message', handler);
@@ -150,7 +166,7 @@ async function scanFiles(dirPath: string, basePath: string, chunkSize: number, i
 
 type ProgressInfo = { type: 'file-list'; files: { path: string; size: number; chunks: number }[] } | { type: 'file-start'; path: string; size: number; chunks: number } | { type: 'chunk'; path: string; current: number; total: number } | { type: 'file'; path: string };
 
-async function processDirectory(dirPath: string, basePath: string, chunkSize: number, algo: HashAlgorithm, maxWorkers: number, directories: IDirectoryEntry[], files: IFileEntry[], links: ILinkEntry[], inodeMap: InodeMap, onProgress?: (info: ProgressInfo) => void): Promise<void> {
+async function processDirectory(dirPath: string, basePath: string, chunkSize: number, algo: HashAlgorithm, maxWorkers: number, directories: IDirectoryEntry[], files: IFileEntry[], links: ILinkEntry[], inodeMap: InodeMap, onProgress?: (info: ProgressInfo) => void, signal?: AbortSignal): Promise<void> {
 	const stat = await getStats(dirPath);
 	// Add directory entry
 	const relativePath = getRelativePath(dirPath, basePath);
@@ -170,6 +186,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	// Sort paths alphabetically
 	scannedPaths.sort();
 	for (const entry of scannedPaths) {
+		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 		const fullPath = `${dirPath}/${entry}`;
 		const stat = await getStats(fullPath);
 		// Check if it's a symlink using lstat (lstat does NOT follow symlinks, stat does)
@@ -196,7 +213,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 			}
 		} else if (stat.isDirectory()) {
 			// Recursively process subdirectory
-			await processDirectory(fullPath, basePath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress);
+			await processDirectory(fullPath, basePath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress, signal);
 		} else if (stat.isFile()) {
 			const inodeKey = `${stat.dev}:${stat.ino}`;
 			const relativePath = getRelativePath(fullPath, basePath);
@@ -223,9 +240,17 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				if (stat.size === 0) checksums = [];
 				else {
 					const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
-					checksums = await calcFn(fullPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
-						if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: completed, total });
-					});
+					checksums = await calcFn(
+						fullPath,
+						stat.size,
+						chunkSize,
+						algo,
+						maxWorkers,
+						(completed, total) => {
+							if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: completed, total });
+						},
+						signal
+					);
 				}
 				files.push({
 					path: relativePath,
@@ -242,7 +267,7 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	}
 }
 
-export async function createLISH(inputPath: string, name: string | undefined, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: ProgressInfo) => void, id?: string): Promise<ILISH> {
+export async function createLISH(inputPath: string, name: string | undefined, chunkSize: number, algo: HashAlgorithm, maxWorkers: number = 0, description?: string, onProgress?: (info: ProgressInfo) => void, id?: string, signal?: AbortSignal): Promise<ILISH> {
 	const created = new Date().toISOString();
 	const lishID = id || globalThis.crypto.randomUUID();
 	const lish: ILISH = {
@@ -270,10 +295,19 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		let checksums: string[];
 		if (stat.size === 0) checksums = [];
 		else {
+			if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 			const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
-			checksums = await calcFn(inputPath, stat.size, chunkSize, algo, maxWorkers, (completed, total) => {
-				if (onProgress) onProgress({ type: 'chunk', path: filename, current: completed, total });
-			});
+			checksums = await calcFn(
+				inputPath,
+				stat.size,
+				chunkSize,
+				algo,
+				maxWorkers,
+				(completed, total) => {
+					if (onProgress) onProgress({ type: 'chunk', path: filename, current: completed, total });
+				},
+				signal
+			);
 		}
 		lish.files = [
 			{
@@ -297,7 +331,7 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		const scannedFiles = await scanFiles(inputPath, inputPath, chunkSize);
 		if (onProgress) onProgress({ type: 'file-list', files: scannedFiles });
 		// Now process directory (computes checksums with per-file progress)
-		await processDirectory(inputPath, inputPath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress);
+		await processDirectory(inputPath, inputPath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress, signal);
 		// Sort all arrays alphabetically by path
 		directories.sort((a, b) => a.path.localeCompare(b.path));
 		files.sort((a, b) => a.path.localeCompare(b.path));

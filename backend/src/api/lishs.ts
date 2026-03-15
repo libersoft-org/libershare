@@ -65,6 +65,7 @@ interface LISHsHandlers {
 	parseFromURL: (p: { url: string }) => Promise<ILISH[]>;
 	verify: (p: { lishID: string }) => Promise<SuccessResponse>;
 	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
+	stopCreate: () => Promise<SuccessResponse>;
 }
 
 /**
@@ -108,6 +109,9 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 }
 
 export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn): LISHsHandlers {
+	// Track current creation so it can be aborted
+	let currentCreation: AbortController | null = null;
+
 	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] } {
 		return {
 			items: dataServer.listSummaries(p?.sortBy, p?.sortOrder),
@@ -167,9 +171,14 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		}
 		console.log(`Creating LISH from: ${dataPath}, lishFile=${p.lishFile}, addToSharing=${addToSharing}, name=${p.name}, description=${p.description}`);
 		// 1. Create the LISH structure
-		const lish: IStoredLISH = await createLISH(dataPath, p.name, chunkSize, algorithm as any, threads, p.description, info => {
-			emit(client, 'lishs.create:progress', info);
-		});
+		const ac = new AbortController();
+		currentCreation = ac;
+		let lish: IStoredLISH;
+		try {
+			lish = await createLISH(dataPath, p.name, chunkSize, algorithm as any, threads, p.description, info => emit(client, 'lishs.create:progress', info), undefined, ac.signal);
+		} finally {
+			if (currentCreation === ac) currentCreation = null;
+		}
 		// 2. Export to .lish(.gz) file if requested
 		let resultLISHFile: string | undefined;
 		if (p.lishFile) {
@@ -349,5 +358,13 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return { success: true };
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, stopVerify };
+	async function stopCreate(): Promise<SuccessResponse> {
+		if (currentCreation) {
+			currentCreation.abort();
+			currentCreation = null;
+		}
+		return { success: true };
+	}
+
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, stopVerify, stopCreate };
 }
