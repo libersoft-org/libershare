@@ -109,6 +109,13 @@ export class Networks {
 		// Join catalog if network has ownerPeerID
 		if (this.catalogManager && net?.ownerPeerID) {
 			this.catalogManager.join(id, net.ownerPeerID);
+
+			// Register GossipSub handler for catalog_op messages
+			await this.network.subscribe(`lish/${id}`, async (msg: Record<string, any>) => {
+				if (msg['type'] === 'catalog_op' && this.catalogManager) {
+					await this.catalogManager.applyRemoteOp(id, msg as any);
+				}
+			});
 		}
 	}
 

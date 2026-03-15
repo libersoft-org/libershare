@@ -22,7 +22,7 @@ interface PubsubEvent {
 	data: Uint8Array;
 }
 /** Handler for parsed pubsub topic messages. */
-type TopicHandler = (data: Record<string, any>) => void;
+type TopicHandler = (data: Record<string, any>) => void | Promise<void>;
 const PRIVATE_KEY_PATH = '/local/privatekey';
 const AUTODIAL_WORKAROUND = true;
 
@@ -432,7 +432,7 @@ export class Network {
 	// Pink/Ponk (debug)
 	// =========================================================================
 
-	private handleMessage(msgEvent: PubsubEvent): void {
+	private async handleMessage(msgEvent: PubsubEvent): Promise<void> {
 		try {
 			const topic = msgEvent.topic;
 			const data = new TextDecoder().decode(msgEvent.data);
@@ -446,7 +446,7 @@ export class Network {
 
 			// Dispatch to registered topic handlers
 			const handlers = this.topicHandlers.get(topic);
-			if (handlers) for (const handler of handlers) handler(message);
+			if (handlers) for (const handler of handlers) await handler(message);
 		} catch (error) {
 			console.error('Error in handleMessage:', error);
 		}
