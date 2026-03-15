@@ -46,6 +46,16 @@ const errorCodes = [
 	// Download events
 	'DOWNLOAD_ERROR',
 
+	// Catalog
+	'CATALOG_NOT_JOINED',
+	'CATALOG_ENTRY_NOT_FOUND',
+	'CATALOG_UNAUTHORIZED',
+	'CATALOG_INVALID_SIGNATURE',
+	'CATALOG_CLOCK_DRIFT',
+	'CATALOG_REPLAY_DETECTED',
+	'CATALOG_FIELD_TOO_LARGE',
+	'CATALOG_TOMBSTONED',
+
 	// Internal (catch-all for uncoded errors)
 	'INTERNAL_ERROR',
 ] as const;
