@@ -13,6 +13,7 @@
 	import Cell from '../../components/Table/TableCell.svelte';
 	import DownloadItem from './DownloadItem.svelte';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
+	import Input from '../../components/Input/Input.svelte';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	interface Props {
@@ -23,7 +24,16 @@
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let showVerifyAllDialog = $state(false);
+	let search = $state('');
 	let anyVerifying = $derived($downloads.some(d => d.status === 'verifying' || d.status === 'pending-verification'));
+	let filteredDownloads = $derived(
+		search.trim()
+			? $downloads.filter(d => {
+					const q = search.trim().toLowerCase();
+					return d.name.toLowerCase().includes(q) || d.id.toLowerCase().includes(q);
+				})
+			: $downloads
+	);
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 
@@ -32,8 +42,7 @@
 		activateArea(areaID);
 	}
 
-	function openDetail(index: number): void {
-		const download = $downloads[index]!;
+	function openDetail(download: (typeof $downloads)[number]): void {
 		navigateTo('download-detail', download.name || download.id, { lishID: download.id });
 	}
 </script>
@@ -74,6 +83,7 @@
 			<Button icon="/img/cross.svg" label={$t('downloads.stopVerifyAll')} position={[4, 0]} onConfirm={() => api.lishs.stopVerifyAll()} />
 		{/if}
 	</ButtonBar>
+	<Input bind:value={search} placeholder={$t('common.search') + ' ...'} fontSize="2vh" position={[0, 1]} />
 	{#if $downloadsLoading}
 		<Spinner size="8vh" />
 	{:else}
@@ -91,8 +101,8 @@
 					<Cell align="center" desktopOnly>{$t('downloads.uploadSpeed')}</Cell>
 				</Header>
 				<div class="items">
-					{#each $downloads as download, index (download.id)}
-						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} position={[0, index + 1]} onConfirm={() => openDetail(index)} isLast={index === $downloads.length - 1} odd={index % 2 === 0} />
+					{#each filteredDownloads as download, index (download.id)}
+						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} position={[0, index + 2]} onConfirm={() => openDetail(download)} isLast={index === filteredDownloads.length - 1} odd={index % 2 === 0} />
 					{/each}
 				</div>
 			</Table>
