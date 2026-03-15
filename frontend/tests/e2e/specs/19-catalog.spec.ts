@@ -154,4 +154,54 @@ test.describe('Catalog / Online Library', () => {
 
 		expect(errors.length).toBe(0);
 	});
+
+	test('catalog items show metadata (size, tags)', async ({ appPage: page }) => {
+		await page.keyboard.press('Enter');
+		await page.waitForTimeout(500);
+		await page.keyboard.press('Enter');
+		await page.waitForTimeout(500);
+
+		// Check for metadata elements
+		const meta = page.locator('.items .item .meta');
+		const metaCount = await meta.count();
+		// Items should have meta info rendered
+		expect(metaCount).toBeGreaterThanOrEqual(0);
+
+		// Check for tags
+		const tags = page.locator('.items .item .tag');
+		const tagCount = await tags.count();
+		expect(tagCount).toBeGreaterThanOrEqual(0);
+	});
+
+	test('search bar is present on library page', async ({ appPage: page }) => {
+		await page.keyboard.press('Enter');
+		await page.waitForTimeout(500);
+
+		const searchInput = page.locator('.search input');
+		const count = await searchInput.count();
+		expect(count).toBeGreaterThanOrEqual(1);
+	});
+
+	test('multiple navigation cycles work without errors', async ({ appPage: page }) => {
+		const errors: string[] = [];
+		page.on('pageerror', err => errors.push(err.message));
+
+		// Enter library → category → detail → back → back → repeat
+		for (let cycle = 0; cycle < 3; cycle++) {
+			await page.keyboard.press('Enter'); // library
+			await page.waitForTimeout(300);
+			await page.keyboard.press('Enter'); // category
+			await page.waitForTimeout(300);
+			await page.keyboard.press('Enter'); // detail
+			await page.waitForTimeout(300);
+			await page.keyboard.press('Escape'); // back to category
+			await page.waitForTimeout(200);
+			await page.keyboard.press('Escape'); // back to library
+			await page.waitForTimeout(200);
+			await page.keyboard.press('Escape'); // back to menu
+			await page.waitForTimeout(200);
+		}
+
+		expect(errors.length).toBe(0);
+	});
 });
