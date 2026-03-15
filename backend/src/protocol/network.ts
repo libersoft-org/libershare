@@ -34,6 +34,7 @@ export class Network {
 	private node: Libp2p | null = null;
 	private pubsub: PubSub | null = null;
 	private datastore: SqliteDatastore | null = null;
+	private privateKey: PrivateKey | null = null;
 	private readonly dataServer: DataServer;
 	private readonly dataDir: string;
 	private pingInterval: NodeJS.Timeout | null = null;
@@ -148,6 +149,7 @@ export class Network {
 		console.log('✓ Datastore opened at:', datastorePath);
 
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
+		this.privateKey = privateKey;
 
 		// Build libp2p config via extracted helper
 		const { config, port, bootstrapPeerIds, bootstrapMultiaddrs } = buildLibp2pConfig({
@@ -615,5 +617,24 @@ export class Network {
 		const peer: PeerInfo = await this.node!.peerRouting.findPeer(peerID);
 		console.log('Found it, multiaddrs are:');
 		peer.multiaddrs.forEach(ma => console.log(ma.toString()));
+	}
+
+	// --- Catalog extensions ---
+
+	getPrivateKey(): PrivateKey {
+		if (!this.privateKey) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		return this.privateKey;
+	}
+
+	async registerStreamHandler(protocol: string, handler: (stream: Stream) => Promise<void>): Promise<void> {
+		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		await this.node.handle(protocol, async (stream) => handler(stream), { runOnLimitedConnection: true });
+	}
+
+	async dialProtocolByPeerId(peerIDString: string, protocol: string): Promise<Stream> {
+		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		const peerId = peerIdFromString(peerIDString);
+		const connection = await this.node.dial(peerId);
+		return connection.newStream(protocol, { runOnLimitedConnection: true });
 	}
 }

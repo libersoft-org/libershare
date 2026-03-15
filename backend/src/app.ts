@@ -58,14 +58,17 @@ const dataServer = new DataServer(db);
 const networks = new Networks(db, dataDir, dataServer, settings, enablePink);
 networks.init();
 
-// CatalogManager requires Network extensions (getPrivateKey, registerStreamHandler)
-// that are not yet implemented. For now, create without network integration.
-// Phase 2 will wire up broadcast and bilateral sync via Network class.
 const catalogManager = new CatalogManager({
 	db,
-	getPrivateKey: () => { throw new Error('Network private key access not yet implemented (Phase 2)'); },
+	getPrivateKey: () => networks.getRunningNetwork().getPrivateKey() as any,
 	getLocalPeerID: () => {
 		try { return networks.getRunningNetwork().getNodeInfo()?.peerID ?? 'local'; } catch { return 'local'; }
+	},
+	broadcast: (networkID, op) => {
+		try {
+			const net = networks.getRunningNetwork();
+			net.broadcast(`lish/${networkID}`, { type: 'catalog_op', ...op });
+		} catch { /* network not running — skip broadcast */ }
 	},
 });
 
