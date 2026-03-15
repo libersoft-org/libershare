@@ -55,14 +55,26 @@ export class CatalogManager {
 		const peerID = this.getLocalPeerID();
 		const lastClock = getVectorClock(this.db, networkID, peerID);
 
-		this.joined.set(networkID, {
+		const net: JoinedNetwork = {
 			localClock: lastClock
 				? { wallTime: Math.max(lastClock.hlc_wall, Date.now()), logical: lastClock.hlc_logical, nodeID: peerID }
 				: { wallTime: Date.now(), logical: 0, nodeID: peerID },
 			ownerPeerID,
 			antiEntropyTimer: null,
 			lastSyncAt: null,
-		});
+		};
+
+		// Start tombstone GC timer (every 6 hours)
+		net.antiEntropyTimer = setInterval(() => {
+			try {
+				const deleted = deleteTombstonesOlderThan(this.db, networkID, 30);
+				if (deleted > 0) console.log(`[Catalog] GC: removed ${deleted} tombstones from ${networkID}`);
+			} catch (err) {
+				console.warn(`[Catalog] GC error for ${networkID}:`, (err as Error).message);
+			}
+		}, 6 * 60 * 60 * 1000); // 6 hours
+
+		this.joined.set(networkID, net);
 	}
 
 	leave(networkID: string): void {
