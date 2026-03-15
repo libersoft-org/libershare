@@ -5,7 +5,7 @@
 	import { createNavArea, navItem, type NavPos } from '../../scripts/navArea.svelte.ts';
 	import SearchBar from '../../components/Search/SearchBar.svelte';
 	import ProductsList from './ProductsList.svelte';
-	import { listCatalogEntries, searchCatalog, type CatalogEntryResponse } from '../../scripts/catalog.ts';
+	import { listCatalogEntries, searchCatalog, subscribeCatalogEvents, type CatalogEntryResponse } from '../../scripts/catalog.ts';
 	interface Props {
 		areaID: string;
 		position: Position;
@@ -66,13 +66,18 @@
 
 	onMount(() => {
 		loadEntries();
-		return searchNavHandle.controller.register(
+		const unsubNav = searchNavHandle.controller.register(
 			navItem(
 				() => [0, 0] as NavPos,
 				() => undefined,
 				() => searchBar?.toggleFocus()
 			)
 		);
+		const unsubEvents = subscribeCatalogEvents({
+			onUpdated: () => loadEntries(),
+			onRemoved: () => loadEntries(),
+		});
+		return () => { unsubNav(); unsubEvents(); };
 	});
 </script>
 

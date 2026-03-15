@@ -113,9 +113,6 @@ test.describe('Catalog / Online Library', () => {
 		await page.keyboard.press('Enter');
 		await page.waitForTimeout(500);
 
-		// Should show detail view
-		const detail = page.locator('.detail');
-		const count = await detail.count();
 		// Detail or breadcrumb should update
 		const breadcrumb = page.locator('.breadcrumb');
 		const text = await breadcrumb.textContent();

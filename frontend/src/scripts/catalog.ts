@@ -18,6 +18,28 @@ export async function getCatalogAccess(networkID: string): Promise<CatalogACLRes
 	return api.catalog.getAccess(networkID);
 }
 
+export function subscribeCatalogEvents(callbacks: {
+	onUpdated?: (data: { networkID: string; entry: CatalogEntryResponse }) => void;
+	onRemoved?: (data: { networkID: string; lishID: string }) => void;
+	onACL?: (data: { networkID: string; access: CatalogACLResponse }) => void;
+}): () => void {
+	const unsubs: (() => void)[] = [];
+	if (callbacks.onUpdated) {
+		const u = api.on('catalog:updated', callbacks.onUpdated);
+		if (u) unsubs.push(u);
+	}
+	if (callbacks.onRemoved) {
+		const u = api.on('catalog:removed', callbacks.onRemoved);
+		if (u) unsubs.push(u);
+	}
+	if (callbacks.onACL) {
+		const u = api.on('catalog:acl', callbacks.onACL);
+		if (u) unsubs.push(u);
+	}
+	api.subscribe('catalog:updated', 'catalog:removed', 'catalog:acl');
+	return () => unsubs.forEach(u => u());
+}
+
 export function formatSize(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
