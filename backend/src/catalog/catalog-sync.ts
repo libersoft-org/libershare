@@ -64,15 +64,33 @@ export function buildSyncResponse(db: Database, networkID: string, sinceHlcWall:
 }
 
 export async function applySyncResponse(db: Database, networkID: string, response: SyncResponse): Promise<number> {
-	let applied = 0;
+	// Decode all operations first
+	const ops: SignedCatalogOp[] = [];
 	for (const opBytes of response.operations) {
 		try {
-			const op = decode(Buffer.from(opBytes)) as SignedCatalogOp;
-			const result = await handleRemoteOp(db, networkID, op);
-			if (result.valid) applied++;
+			ops.push(decode(Buffer.from(opBytes)) as SignedCatalogOp);
 		} catch {
-			// Skip malformed operations
+			// Skip malformed
 		}
+	}
+
+	// Power-events-first: ACL operations before data operations (Matrix pattern)
+	const aclOps = ops.filter(op => op.payload.type === 'acl_grant' || op.payload.type === 'acl_revoke');
+	const dataOps = ops.filter(op => op.payload.type !== 'acl_grant' && op.payload.type !== 'acl_revoke');
+
+	// Sort each group by HLC (wallTime ASC, logical ASC)
+	const byHLC = (a: SignedCatalogOp, b: SignedCatalogOp): number => {
+		if (a.payload.hlc.wallTime !== b.payload.hlc.wallTime) return a.payload.hlc.wallTime - b.payload.hlc.wallTime;
+		return a.payload.hlc.logical - b.payload.hlc.logical;
+	};
+	aclOps.sort(byHLC);
+	dataOps.sort(byHLC);
+
+	let applied = 0;
+	// Apply ACL first, then data
+	for (const op of [...aclOps, ...dataOps]) {
+		const result = await handleRemoteOp(db, networkID, op);
+		if (result.valid) applied++;
 	}
 	return applied;
 }

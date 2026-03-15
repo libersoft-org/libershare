@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
-import { initCatalogTables, getCatalogEntry, getEntryCount } from '../../db/catalog.ts';
+import { initCatalogTables, ensureCatalogACL, getCatalogEntry, getEntryCount } from '../../db/catalog.ts';
 import { CatalogManager } from '../catalog-manager.ts';
 import { buildSyncResponse, applySyncResponse, encodeSyncResponse, decodeSyncResponse, encodeSyncRequest, decodeSyncRequest } from '../catalog-sync.ts';
 import type { SyncRequest } from '../catalog-sync.ts';
@@ -189,5 +189,41 @@ describe('Bilateral Sync', () => {
 		for (let i = 0; i < 5; i++) {
 			expect(getCatalogEntry(dbB, 'net1', `e${i}`)!.name).toBe(`Entry ${i}`);
 		}
+	});
+
+	test('sync response includes ACL state for peer setup', async () => {
+		const dbA = createDB();
+		const mgrA = createManager(ownerKey, dbA);
+		mgrA.join('net1', ownerPeerID);
+
+		const modKey = await generateKeyPair('Ed25519');
+		await mgrA.grantRole('net1', modKey.publicKey.toString(), 'moderator');
+
+		const response = buildSyncResponse(dbA, 'net1', 0);
+		const acl = JSON.parse(response.aclJSON);
+		expect(acl.owner).toBe(ownerPeerID);
+		expect(acl.moderators).toContain(modKey.publicKey.toString());
+	});
+
+	test('applySyncResponse with owner entries on fresh peer', async () => {
+		const dbA = createDB();
+		const dbB = createDB();
+		const mgrA = createManager(ownerKey, dbA);
+
+		mgrA.join('net1', ownerPeerID);
+
+		// Owner publishes directly (no moderator needed — owner has all permissions)
+		await mgrA.publish('net1', {
+			lishID: 'owner-entry', name: 'By Owner', chunkSize: 1024, checksumAlgo: 'sha256',
+			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+		});
+
+		const response = buildSyncResponse(dbA, 'net1', 0);
+
+		// Peer B sets up ACL from sync response, then applies ops
+		ensureCatalogACL(dbB, 'net1', ownerPeerID);
+		const applied = await applySyncResponse(dbB, 'net1', response);
+		expect(applied).toBe(1);
+		expect(getCatalogEntry(dbB, 'net1', 'owner-entry')!.name).toBe('By Owner');
 	});
 });
