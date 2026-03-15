@@ -8,15 +8,24 @@
 	import { getGridColumnsCount } from '../../scripts/products.ts';
 	import ProductsItem from './ProductsItem.svelte';
 	import Product from '../Product/Product.svelte';
+	interface CatalogItem {
+		id: string;
+		title: string;
+		description?: string | null;
+		totalSize?: number;
+		fileCount?: number;
+		tags?: string | null;
+		contentType?: string | null;
+	}
 	interface Props {
 		areaID: string;
 		position: Position;
 		title: string;
-		items: { id: number; title: string }[];
+		items: CatalogItem[];
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position, title, items, onBack }: Props = $props();
-	let selectedItem = $state<{ id: number; title: string } | null>(null);
+	let selectedItem = $state<CatalogItem | null>(null);
 	let itemElements: HTMLElement[] = $state([]);
 	let removeBackHandler: (() => void) | null = null;
 
@@ -104,11 +113,11 @@
 </style>
 
 {#if selectedItem}
-	<Product {areaID} category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onBack={closeDetail} />
+	<Product {areaID} category={title} itemTitle={selectedItem.title} itemId={typeof selectedItem.id === 'string' ? 0 : selectedItem.id} onBack={closeDetail} />
 {:else}
 	<div class="items">
 		{#each items as item, index (item.id)}
-			<ProductsItem bind:el={itemElements[index]} title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={navHandle.controller.isSelected(getItemPos(index))} isAPressed={navHandle.controller.isPressed(getItemPos(index))} />
+			<ProductsItem bind:el={itemElements[index]} title={item.title} isGamepadHovered={navHandle.controller.isSelected(getItemPos(index))} isAPressed={navHandle.controller.isPressed(getItemPos(index))} />
 		{/each}
 	</div>
 {/if}

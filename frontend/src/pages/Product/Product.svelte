@@ -10,7 +10,7 @@
 		position?: Position;
 		category?: string;
 		itemTitle?: string;
-		itemId?: number;
+		itemId?: number | string;
 		onBack?: () => void;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, itemTitle = 'Item', itemId = 1, onBack }: Props = $props();
