@@ -178,9 +178,10 @@ function applyOp(db: Database, networkID: string, op: SignedCatalogOp): void {
 			break;
 		}
 		case 'remove': {
+			const lishID = data['lishID'] as string;
 			upsertTombstone(db, {
 				network_id: networkID,
-				lish_id: data['lishID'] as string,
+				lish_id: lishID,
 				removed_by: op.signer,
 				removed_at: new Date().toISOString(),
 				hlc_wall: hlc.wallTime,
@@ -188,6 +189,8 @@ function applyOp(db: Database, networkID: string, op: SignedCatalogOp): void {
 				hlc_node: hlc.nodeID,
 				signed_op: signedOpBlob,
 			});
+			// Remove entry from catalog (tombstone takes precedence)
+			db.run('DELETE FROM catalog_entries WHERE network_id = ? AND lish_id = ?', [networkID, lishID]);
 			break;
 		}
 		case 'acl_grant': {
