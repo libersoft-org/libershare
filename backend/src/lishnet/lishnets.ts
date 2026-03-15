@@ -265,6 +265,15 @@ export class Networks {
 	}
 
 	add(network: LISHNetworkConfig): boolean {
+		// Auto-assign ownerPeerID to local peer if creating new network without one
+		if (!network.ownerPeerID && this.network.isRunning()) {
+			try {
+				const nodeInfo = this.network.getNodeInfo();
+				if (nodeInfo?.peerID) {
+					network = { ...network, ownerPeerID: nodeInfo.peerID };
+				}
+			} catch { /* network not started yet */ }
+		}
 		return addLISHnet(this.db, network);
 	}
 
