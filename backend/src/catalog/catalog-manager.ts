@@ -19,7 +19,7 @@ export interface CatalogManagerConfig {
 	db: Database;
 	getPrivateKey: () => Ed25519PrivateKey;
 	getLocalPeerID: () => string;
-	broadcast?: (networkID: string, op: SignedCatalogOp) => void;
+	broadcast?: ((networkID: string, op: SignedCatalogOp) => void) | undefined;
 }
 
 interface JoinedNetwork {
