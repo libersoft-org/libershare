@@ -4,7 +4,7 @@ import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
 import { initCatalogTables, ensureCatalogACL, getCatalogACL, getCatalogEntry, isTombstoned, updateCatalogACL } from '../../db/catalog.ts';
 import { signCatalogOp } from '../catalog-signer.ts';
-import { handleRemoteOp, validateFields, type ValidationResult } from '../catalog-validator.ts';
+import { handleRemoteOp, validateFields } from '../catalog-validator.ts';
 import type { HLC } from '../catalog-hlc.ts';
 import type { SignedCatalogOp } from '../catalog-signer.ts';
 
@@ -83,7 +83,7 @@ describe('handleRemoteOp — full validation chain', () => {
 	test('replay rejected (HLC <= last seen)', async () => {
 		// Use a high future clock so hlcTick increments logical, not wallTime
 		const futureBase: HLC = { wallTime: Date.now() + 50_000, logical: 0, nodeID: 'test' };
-		const { op: op1, updatedClock } = await signAdd(moderatorKey, { lishID: 'lish1' }, futureBase);
+		const { op: op1 } = await signAdd(moderatorKey, { lishID: 'lish1' }, futureBase);
 		// op1 has HLC = (futureBase.wallTime, 1, ...) since hlcTick increments logical
 		await handleRemoteOp(db, 'net1', op1);
 
@@ -120,7 +120,7 @@ describe('ACL operations', () => {
 	test('admin can grant moderator', async () => {
 		// First make an admin
 		const adminKey = await generateKeyPair('Ed25519');
-		const { op: grantOp, updatedClock } = await signCatalogOp(ownerKey, 'acl_grant', 'net1', {
+		const { op: grantOp } = await signCatalogOp(ownerKey, 'acl_grant', 'net1', {
 			role: 'admin', delegatee: adminKey.publicKey.toString(),
 		}, makeClock());
 		await handleRemoteOp(db, 'net1', grantOp);

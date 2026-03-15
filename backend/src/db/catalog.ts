@@ -144,7 +144,7 @@ export function initCatalogTables(db: Database): void {
 
 export function upsertCatalogEntry(db: Database, entry: CatalogEntryInput): void {
 	const tx = db.transaction(() => {
-		const result = db.run(
+		db.run(
 			`INSERT INTO catalog_entries (network_id, lish_id, name, description,
 				publisher_peer_id, published_at, chunk_size, checksum_algo,
 				total_size, file_count, manifest_hash, content_type, tags,
