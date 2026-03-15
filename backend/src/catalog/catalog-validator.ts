@@ -9,8 +9,10 @@ import {
 	updateCatalogACL,
 	getVectorClock,
 	updateVectorClock,
+	getEntryCount,
 	type CatalogEntryInput,
 } from '../db/catalog.ts';
+import { RATE_LIMITS } from './catalog-rate-limiter.ts';
 
 const MAX_DRIFT = 5 * 60 * 1000; // 5 minutes
 
@@ -130,6 +132,20 @@ export async function handleRemoteOp(db: Database, networkID: string, op: Signed
 	// 4. CONTENT
 	const fieldsResult = validateFields(op);
 	if (!fieldsResult.valid) return fieldsResult;
+
+	// 4b. CATALOG SIZE LIMITS (only for add operations)
+	if (op.payload.type === 'add') {
+		const totalEntries = getEntryCount(db, networkID);
+		if (totalEntries >= RATE_LIMITS.maxCatalogSize) {
+			return { valid: false, reason: 'CATALOG_SIZE_LIMIT' };
+		}
+		const publisherCount = db.query<{ c: number }, [string, string]>(
+			'SELECT COUNT(*) as c FROM catalog_entries WHERE network_id = ? AND publisher_peer_id = ?'
+		).get(networkID, op.signer);
+		if ((publisherCount?.c ?? 0) >= RATE_LIMITS.maxEntriesPerPublisher) {
+			return { valid: false, reason: 'PUBLISHER_QUOTA_EXCEEDED' };
+		}
+	}
 
 	// 5. ANTI-REPLAY
 	const clockResult = checkVectorClock(db, networkID, op);
