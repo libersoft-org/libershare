@@ -70,6 +70,9 @@ const catalogManager = new CatalogManager({
 			net.broadcast(`lish/${networkID}`, { type: 'catalog_op', ...op });
 		} catch { /* network not running — skip broadcast */ }
 	},
+	emitEvent: (event, data) => {
+		try { apiServer.broadcastEvent(event, data); } catch { /* server not started */ }
+	},
 });
 networks.setCatalogManager(catalogManager);
 

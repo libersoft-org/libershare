@@ -20,6 +20,7 @@ export interface CatalogManagerConfig {
 	getPrivateKey: () => Ed25519PrivateKey;
 	getLocalPeerID: () => string;
 	broadcast?: ((networkID: string, op: SignedCatalogOp) => void) | undefined;
+	emitEvent?: ((event: string, data: any) => void) | undefined;
 }
 
 interface JoinedNetwork {
@@ -32,6 +33,7 @@ export class CatalogManager {
 	private readonly getPrivateKey: () => Ed25519PrivateKey;
 	private readonly getLocalPeerID: () => string;
 	private readonly broadcastFn: ((networkID: string, op: SignedCatalogOp) => void) | null;
+	private readonly emitEventFn: ((event: string, data: any) => void) | null;
 	private joined: Map<string, JoinedNetwork> = new Map();
 
 	constructor(config: CatalogManagerConfig) {
@@ -39,6 +41,7 @@ export class CatalogManager {
 		this.getPrivateKey = config.getPrivateKey;
 		this.getLocalPeerID = config.getLocalPeerID;
 		this.broadcastFn = config.broadcast ?? null;
+		this.emitEventFn = config.emitEvent ?? null;
 	}
 
 	join(networkID: string, ownerPeerID: string): void {
@@ -139,6 +142,7 @@ export class CatalogManager {
 		if (!result.valid) throw new Error(`Publish failed: ${(result as { reason: string }).reason}`);
 
 		this.broadcastFn?.(networkID, op);
+		this.emitEventFn?.('catalog:updated', { networkID, entry: getCatalogEntry(this.db, networkID, data.lishID) });
 	}
 
 	async update(networkID: string, lishID: string, fields: {
@@ -177,6 +181,7 @@ export class CatalogManager {
 		if (!result.valid) throw new Error(`Update failed: ${(result as { reason: string }).reason}`);
 
 		this.broadcastFn?.(networkID, op);
+		this.emitEventFn?.('catalog:updated', { networkID, entry: getCatalogEntry(this.db, networkID, lishID) });
 	}
 
 	async remove(networkID: string, lishID: string): Promise<void> {
@@ -192,6 +197,7 @@ export class CatalogManager {
 		if (!result.valid) throw new Error(`Remove failed: ${(result as { reason: string }).reason}`);
 
 		this.broadcastFn?.(networkID, op);
+		this.emitEventFn?.('catalog:removed', { networkID, lishID });
 	}
 
 	async grantRole(networkID: string, delegatee: string, role: 'admin' | 'moderator'): Promise<void> {
@@ -208,6 +214,7 @@ export class CatalogManager {
 		if (!result.valid) throw new Error(`Grant failed: ${(result as { reason: string }).reason}`);
 
 		this.broadcastFn?.(networkID, op);
+		this.emitEventFn?.('catalog:acl', { networkID, access: getCatalogACL(this.db, networkID) });
 	}
 
 	async revokeRole(networkID: string, delegatee: string, role: 'admin' | 'moderator'): Promise<void> {
@@ -224,6 +231,7 @@ export class CatalogManager {
 		if (!result.valid) throw new Error(`Revoke failed: ${(result as { reason: string }).reason}`);
 
 		this.broadcastFn?.(networkID, op);
+		this.emitEventFn?.('catalog:acl', { networkID, access: getCatalogACL(this.db, networkID) });
 	}
 
 	async applyRemoteOp(networkID: string, op: SignedCatalogOp): Promise<boolean> {

@@ -245,6 +245,10 @@ export class APIServer {
 		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) client.send(JSON.stringify({ event, data }));
 	}
 
+	broadcastEvent(event: string, data: any): void {
+		this.broadcast(event, data);
+	}
+
 	private broadcast(event: string, data: any): void {
 		const msg = JSON.stringify({ event, data });
 		let sent = 0;
