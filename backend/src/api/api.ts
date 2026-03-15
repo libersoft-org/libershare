@@ -140,6 +140,7 @@ export class APIServer {
 				'catalog.getAccess': _catalog.getAccess,
 				'catalog.grantRole': _catalog.grantRole,
 				'catalog.revokeRole': _catalog.revokeRole,
+				'catalog.getSyncStatus': _catalog.getSyncStatus,
 			} : {}),
 		};
 	}

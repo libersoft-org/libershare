@@ -18,6 +18,7 @@ export interface CatalogHandlers {
 	getAccess: (p: { networkID: string }) => CatalogACLRow | null;
 	grantRole: (p: { networkID: string; delegatee: string; role: 'admin' | 'moderator' }) => Promise<void>;
 	revokeRole: (p: { networkID: string; delegatee: string; role: 'admin' | 'moderator' }) => Promise<void>;
+	getSyncStatus: (p: { networkID: string }) => { entryCount: number; tombstoneCount: number; lastSyncAt: string | null };
 }
 
 export function initCatalogHandlers(catalogManager: CatalogManager): CatalogHandlers {
@@ -62,6 +63,10 @@ export function initCatalogHandlers(catalogManager: CatalogManager): CatalogHand
 		async revokeRole(p) {
 			assert(p, ['networkID', 'delegatee', 'role']);
 			await catalogManager.revokeRole(p.networkID, p.delegatee, p.role);
+		},
+		getSyncStatus(p) {
+			assert(p, ['networkID']);
+			return catalogManager.getSyncStatus(p.networkID);
 		},
 	};
 }

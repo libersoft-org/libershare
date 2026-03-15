@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
-import { initCatalogTables, ensureCatalogACL, getCatalogEntry, listCatalogEntries, getEntryCount, getTombstoneCount } from '../../db/catalog.ts';
+import { initCatalogTables, getCatalogEntry, getEntryCount } from '../../db/catalog.ts';
 import { CatalogManager } from '../catalog-manager.ts';
 import { buildSyncResponse, applySyncResponse, encodeSyncResponse, decodeSyncResponse, encodeSyncRequest, decodeSyncRequest } from '../catalog-sync.ts';
 import type { SyncRequest } from '../catalog-sync.ts';

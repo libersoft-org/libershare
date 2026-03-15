@@ -11,6 +11,8 @@ import {
 	searchCatalog,
 	getVectorClock,
 	deleteTombstonesOlderThan,
+	getEntryCount,
+	getTombstoneCount,
 	type CatalogEntryRow,
 	type CatalogACLRow,
 } from '../db/catalog.ts';
@@ -26,6 +28,8 @@ export interface CatalogManagerConfig {
 interface JoinedNetwork {
 	localClock: HLC;
 	ownerPeerID: string;
+	antiEntropyTimer: ReturnType<typeof setInterval> | null;
+	lastSyncAt: string | null;
 }
 
 export class CatalogManager {
@@ -56,10 +60,14 @@ export class CatalogManager {
 				? { wallTime: Math.max(lastClock.hlc_wall, Date.now()), logical: lastClock.hlc_logical, nodeID: peerID }
 				: { wallTime: Date.now(), logical: 0, nodeID: peerID },
 			ownerPeerID,
+			antiEntropyTimer: null,
+			lastSyncAt: null,
 		});
 	}
 
 	leave(networkID: string): void {
+		const net = this.joined.get(networkID);
+		if (net?.antiEntropyTimer) clearInterval(net.antiEntropyTimer);
 		this.joined.delete(networkID);
 	}
 
@@ -242,5 +250,14 @@ export class CatalogManager {
 
 	gcTombstones(networkID: string, days: number = 30): number {
 		return deleteTombstonesOlderThan(this.db, networkID, days);
+	}
+
+	getSyncStatus(networkID: string): { entryCount: number; tombstoneCount: number; lastSyncAt: string | null } {
+		const net = this.getNetwork(networkID);
+		return {
+			entryCount: getEntryCount(this.db, networkID),
+			tombstoneCount: getTombstoneCount(this.db, networkID),
+			lastSyncAt: net.lastSyncAt,
+		};
 	}
 }
