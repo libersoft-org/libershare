@@ -51,3 +51,29 @@ export function parseTags(tagsJson: string | null): string[] {
 	if (!tagsJson) return [];
 	try { return JSON.parse(tagsJson) as string[]; } catch { return []; }
 }
+
+export async function grantCatalogRole(networkID: string, delegatee: string, role: 'admin' | 'moderator'): Promise<void> {
+	return api.catalog.grantRole(networkID, delegatee, role);
+}
+
+export async function revokeCatalogRole(networkID: string, delegatee: string, role: 'admin' | 'moderator'): Promise<void> {
+	return api.catalog.revokeRole(networkID, delegatee, role);
+}
+
+export async function publishCatalogEntry(networkID: string, params: {
+	lishID: string; name?: string; description?: string;
+	chunkSize: number; checksumAlgo: string; totalSize: number;
+	fileCount: number; manifestHash: string; contentType?: string; tags?: string[];
+}): Promise<void> {
+	return api.catalog.publish(networkID, params);
+}
+
+export async function updateCatalogEntry(networkID: string, lishID: string, fields: {
+	name?: string; description?: string; contentType?: string; tags?: string[];
+}): Promise<void> {
+	return api.catalog.update(networkID, lishID, fields);
+}
+
+export async function removeCatalogEntry(networkID: string, lishID: string): Promise<void> {
+	return api.catalog.remove(networkID, lishID);
+}

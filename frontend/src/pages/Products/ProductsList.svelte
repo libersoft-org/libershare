@@ -113,7 +113,7 @@
 </style>
 
 {#if selectedItem}
-	<Product {areaID} category={title} itemTitle={selectedItem.title} itemId={typeof selectedItem.id === 'string' ? 0 : selectedItem.id} onBack={closeDetail} />
+	<Product {areaID} category={title} itemTitle={selectedItem.title} itemId={typeof selectedItem.id === 'string' ? 0 : selectedItem.id} description={selectedItem.description} totalSize={selectedItem.totalSize} fileCount={selectedItem.fileCount} tags={selectedItem.tags} contentType={selectedItem.contentType} onBack={closeDetail} />
 {:else}
 	<div class="items">
 		{#each items as item, index (item.id)}
