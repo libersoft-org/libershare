@@ -29,18 +29,19 @@
 	let { areaID, position = CONTENT_POSITIONS.main, itemTitle = 'Item', itemId = 1, description, totalSize, fileCount, tags, contentType, networkID, lishID, onBack }: Props = $props();
 	let parsedTags = $derived(parseTags(tags ?? null));
 	let sizeLabel = $derived(totalSize ? formatSize(totalSize) : null);
-	let downloadStatus = $state<'idle' | 'starting' | 'started' | 'error'>('idle');
-	let downloadError = $state('');
+	let downloadStatus = $state<'idle' | 'starting' | 'downloading' | 'not_available' | 'error'>('idle');
+	let downloadMessage = $state('');
 
 	async function startDownload(): Promise<void> {
-		if (!networkID || !lishID) { downloadError = 'Missing network or LISH ID'; return; }
+		if (!networkID || !lishID) { downloadMessage = 'Missing network or LISH ID'; downloadStatus = 'error'; return; }
 		downloadStatus = 'starting';
-		downloadError = '';
+		downloadMessage = '';
 		try {
-			await api.transfer.download(networkID, lishID);
-			downloadStatus = 'started';
+			const result = await api.catalog.startDownload(networkID, lishID);
+			downloadStatus = result.status === 'downloading' ? 'downloading' : 'not_available';
+			downloadMessage = result.message;
 		} catch (e: any) {
-			downloadError = e.message || 'Download failed';
+			downloadMessage = e.message || 'Download failed';
 			downloadStatus = 'error';
 		}
 	}
@@ -269,11 +270,12 @@
 			</div>
 		{/if}
 
-		{#if downloadError}
-			<Alert type="error" message={downloadError} />
-		{/if}
-		{#if downloadStatus === 'started'}
-			<Alert type="info" message="Download started — check Downloads page for progress" />
+		{#if downloadStatus === 'error'}
+			<Alert type="error" message={downloadMessage} />
+		{:else if downloadStatus === 'downloading'}
+			<Alert type="info" message={downloadMessage || 'Download started — check Downloads page for progress'} />
+		{:else if downloadStatus === 'not_available'}
+			<Alert type="warning" message={downloadMessage} />
 		{/if}
 
 		<div class="section-title">{$t('library.product.downloads')}:</div>
@@ -283,7 +285,7 @@
 				<div class="file-size">{sizeLabel ?? 'Unknown size'} · {fileCount ?? 1} {(fileCount ?? 1) === 1 ? 'file' : 'files'}</div>
 			</div>
 			<div class="file-actions">
-				<Button icon="/img/download.svg" label={downloadStatus === 'starting' ? '...' : $t('library.product.download')} position={[0, 1]} onConfirm={startDownload} disabled={downloadStatus === 'starting' || downloadStatus === 'started'} width="auto" />
+				<Button icon="/img/download.svg" label={downloadStatus === 'starting' ? '...' : $t('library.product.download')} position={[0, 1]} onConfirm={startDownload} disabled={downloadStatus === 'starting' || downloadStatus === 'downloading'} width="auto" />
 				{#if contentType?.startsWith('video/') || contentType?.startsWith('audio/')}
 					<Button icon="/img/play.svg" label={$t('library.product.play')} position={[1, 1]} width="auto" />
 				{/if}

@@ -4,6 +4,12 @@ import type { CatalogEntryRow, CatalogACLRow } from '../db/catalog.ts';
 
 const assert = Utils.assertParams;
 
+export interface StartDownloadResult {
+	status: 'downloading' | 'not_available';
+	message: string;
+	downloadDir?: string;
+}
+
 export interface CatalogHandlers {
 	list: (p: { networkID: string; limit?: number }) => CatalogEntryRow[];
 	get: (p: { networkID: string; lishID: string }) => CatalogEntryRow | null;
@@ -19,6 +25,7 @@ export interface CatalogHandlers {
 	grantRole: (p: { networkID: string; delegatee: string; role: 'admin' | 'moderator' }) => Promise<void>;
 	revokeRole: (p: { networkID: string; delegatee: string; role: 'admin' | 'moderator' }) => Promise<void>;
 	getSyncStatus: (p: { networkID: string }) => { entryCount: number; tombstoneCount: number; lastSyncAt: string | null };
+	startDownload: (p: { networkID: string; lishID: string }) => StartDownloadResult;
 }
 
 export function initCatalogHandlers(catalogManager: CatalogManager): CatalogHandlers {
@@ -67,6 +74,21 @@ export function initCatalogHandlers(catalogManager: CatalogManager): CatalogHand
 		getSyncStatus(p) {
 			assert(p, ['networkID']);
 			return catalogManager.getSyncStatus(p.networkID);
+		},
+		startDownload(p): StartDownloadResult {
+			assert(p, ['networkID', 'lishID']);
+			const entry = catalogManager.get(p.networkID, p.lishID);
+			if (!entry) {
+				return { status: 'not_available', message: 'Entry not found in catalog' };
+			}
+			// Check if LISH exists locally (can be downloaded from this node's storage)
+			// For now, catalog entries are remote metadata — the actual .lish manifest
+			// needs to be fetched from the publisher peer via P2P before download can start.
+			// This is a placeholder until manifest-fetch-from-peer is implemented.
+			return {
+				status: 'not_available',
+				message: `"${entry.name}" is available in the catalog but the LISH manifest has not been downloaded yet. In a future version, clicking Download will fetch the manifest from the publisher and start the P2P download automatically.`,
+			};
 		},
 	};
 }

@@ -427,4 +427,8 @@ class CatalogAPI {
 	revokeRole(networkID: string, delegatee: string, role: 'admin' | 'moderator'): Promise<void> {
 		return this.client.call<void>('catalog.revokeRole', { networkID, delegatee, role });
 	}
+
+	startDownload(networkID: string, lishID: string): Promise<{ status: string; message: string; downloadDir?: string }> {
+		return this.client.call<{ status: string; message: string; downloadDir?: string }>('catalog.startDownload', { networkID, lishID });
+	}
 }

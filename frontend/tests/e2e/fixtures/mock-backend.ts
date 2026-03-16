@@ -110,6 +110,11 @@ const handlers: Record<string, RpcHandler> = {
 	'catalog.grantRole': () => undefined,
 	'catalog.revokeRole': () => undefined,
 	'catalog.getSyncStatus': () => ({ entryCount: 4, tombstoneCount: 0, lastSyncAt: null }),
+	'catalog.startDownload': (params) => ({
+		status: 'not_available',
+		message: `"${(params as any).lishID}" is available in the catalog but the LISH manifest has not been downloaded yet.`,
+	}),
+	'transfer.download': () => ({ downloadDir: '/tmp/test-download' }),
 };
 
 const MOCK_CATALOG_ENTRIES = [
