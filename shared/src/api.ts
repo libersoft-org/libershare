@@ -329,8 +329,20 @@ class LISHsAPI {
 		return this.client.call<SuccessResponse>('lishs.verify', { lishID });
 	}
 
+	verifyAll(): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.verifyAll');
+	}
+
 	stopVerify(lishID: string): Promise<SuccessResponse> {
 		return this.client.call<SuccessResponse>('lishs.stopVerify', { lishID });
+	}
+
+	stopVerifyAll(): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.stopVerifyAll');
+	}
+
+	stopCreate(): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.stopCreate');
 	}
 }
 

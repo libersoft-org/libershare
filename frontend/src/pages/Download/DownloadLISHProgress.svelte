@@ -103,6 +103,8 @@
 			status = 'done';
 			onComplete?.();
 		} catch (err: any) {
+			const code = err?.code || err?.message || '';
+			if (code === 'LISH_CREATE_CANCELLED') return;
 			errorText = translateError(err);
 			status = 'error';
 		} finally {
@@ -114,11 +116,17 @@
 		}
 	}
 
-	createNavArea(() => ({ areaID, position, activate: true, onBack }));
+	createNavArea(() => ({ areaID, position, activate: true, onBack: handleCancel }));
+
+	function handleCancel(): void {
+		if (status === 'creating') api.lishs.stopCreate().catch(() => {});
+		onBack?.();
+	}
 
 	startCreate();
 
 	onDestroy(() => {
+		if (status === 'creating') api.lishs.stopCreate().catch(() => {});
 		if (unsubProgress) {
 			unsubProgress();
 			unsubProgress = null;
@@ -167,7 +175,7 @@
 <div class="progress-page">
 	<div class="container">
 		<ButtonBar>
-			<Button icon="/img/back.svg" label={status === 'creating' ? $t('common.cancel') : $t('common.back')} position={[0, 0]} onConfirm={onBack} />
+			<Button icon="/img/back.svg" label={status === 'creating' ? $t('common.cancel') : $t('common.back')} position={[0, 0]} onConfirm={handleCancel} />
 		</ButtonBar>
 		{#if status === 'creating'}
 			<div class="status-label">{$t('lish.create.progress.creating')}</div>

@@ -100,7 +100,10 @@
 		"startUpload": "Spustit odesílání",
 		"pauseUpload": "Pozastavit odesílání",
 		"verify": "Ověřit",
+		"verifyAll": "Ověřit vše",
+		"verifyAllConfirm": "Opravdu chcete ověřit integritu všech LISHů? Tato akce může trvat velmi dlouhou dobu.",
 		"stopVerify": "Zastavit ověřování",
+		"stopVerifyAll": "Zastavit všechna ověřování",
 		"moveData": "Přesunout data",
 		"deleteDialog": {
 			"message": "Co chcete smazat?",

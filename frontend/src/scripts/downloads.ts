@@ -10,15 +10,19 @@ export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploadin
 // Download Data Types
 // ============================================================================
 
+export type DownloadFileType = 'file' | 'directory' | 'link';
+
 export interface DownloadFileData {
 	id: number;
 	name: string;
+	type: DownloadFileType;
 	progress: number;
 	size: string;
 	rawSize: number;
 	totalChunks: number;
 	verifiedChunks: number;
 	downloadedSize?: string;
+	linkTarget?: string;
 }
 
 export interface DownloadData {
@@ -44,14 +48,16 @@ export interface DownloadData {
  * Convert a backend ILISHDetail to frontend DownloadData.
  */
 function detailToDownload(detail: ILISHDetail): DownloadData {
-	const files = detail.files.map((f, i) => {
+	let nextId = 0;
+	const files: DownloadFileData[] = detail.files.map(f => {
 		const totalChunks = f.totalChunks > 0 ? f.totalChunks : Math.ceil(f.size / detail.chunkSize);
 		const verifiedChunks = f.verifiedChunks ?? 0;
 		const progress = totalChunks > 0 ? Math.round((verifiedChunks / totalChunks) * 10000) / 100 : 0;
 		const downloadedSize = totalChunks > 0 && verifiedChunks > 0 ? formatSize(Math.round((f.size * verifiedChunks) / totalChunks)) : '0 B';
 		return {
-			id: i,
+			id: nextId++,
 			name: f.path,
+			type: 'file' as DownloadFileType,
 			progress,
 			size: formatSize(f.size),
 			rawSize: f.size,
@@ -60,6 +66,13 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 			downloadedSize,
 		};
 	});
+	for (const d of detail.directories) {
+		files.push({ id: nextId++, name: d.path, type: 'directory', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0 });
+	}
+	for (const l of detail.links) {
+		files.push({ id: nextId++, name: l.path, type: 'link', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0, linkTarget: l.target });
+	}
+	files.sort((a, b) => a.name.localeCompare(b.name));
 	const progress = detail.totalChunks > 0 ? Math.round((detail.verifiedChunks / detail.totalChunks) * 10000) / 100 : 0;
 	const downloadedSize = detail.totalSize > 0 && detail.verifiedChunks > 0 ? formatSize(Math.round((detail.totalSize * detail.verifiedChunks) / detail.totalChunks)) : '0 B';
 	return {
@@ -183,7 +196,8 @@ export async function initDownloads(): Promise<void> {
 					list.map(d => {
 						if (d.id !== data.lishID) return d;
 						const status: DownloadStatus = 'idling';
-						return { ...d, status };
+						const progress = d.totalChunks === 0 ? 100 : d.progress;
+						return { ...d, status, progress };
 					})
 				);
 				return;
@@ -219,7 +233,7 @@ export function resetVerifyState(lishID: string): void {
 	downloads.update(list =>
 		list.map(d => {
 			if (d.id !== lishID) return d;
-			const files = d.files.map(f => ({ ...f, verifiedChunks: 0, progress: 0, downloadedSize: '0 B' }));
+			const files = d.files.map(f => (f.type !== 'file' ? f : { ...f, verifiedChunks: 0, progress: 0, downloadedSize: '0 B' }));
 			return { ...d, verifiedChunks: 0, progress: 0, status: 'pending-verification' as DownloadStatus, files, downloadedSize: '0 B' };
 		})
 	);
