@@ -351,6 +351,10 @@ export function getAllVectorClocks(db: Database, networkID: string): VectorClock
 	).all(networkID);
 }
 
+export function clearVectorClocks(db: Database, networkID: string): void {
+	db.run('DELETE FROM catalog_clocks WHERE network_id = ?', [networkID]);
+}
+
 export function getEntryCount(db: Database, networkID: string): number {
 	const row = db.query<{ c: number }, [string]>('SELECT COUNT(*) as c FROM catalog_entries WHERE network_id = ?').get(networkID);
 	return row?.c ?? 0;

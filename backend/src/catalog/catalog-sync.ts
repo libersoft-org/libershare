@@ -6,6 +6,7 @@ import {
 	getDeltaEntries,
 	getDeltaTombstones,
 	getAllVectorClocks,
+	clearVectorClocks,
 	getCatalogACL,
 	getEntryCount,
 	getTombstoneCount,
@@ -89,6 +90,10 @@ export async function applySyncResponse(db: Database, networkID: string, respons
 	};
 	aclOps.sort(byHLC);
 	dataOps.sort(byHLC);
+
+	// Bilateral sync: clear vector clocks before applying so historical ops aren't rejected as replays.
+	// The vector clock is an anti-replay mechanism for live GossipSub, not for catch-up sync.
+	clearVectorClocks(db, networkID);
 
 	let applied = 0;
 	const rejections: string[] = [];
