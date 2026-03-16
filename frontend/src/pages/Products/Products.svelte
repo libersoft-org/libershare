@@ -204,7 +204,7 @@
 			{:else if items.length === 0}
 				<div class="empty-center">{searchQuery ? 'No results found' : 'Catalog is empty — use Publish to add entries'}</div>
 			{:else}
-				<ProductsList areaID={listAreaID} position={listPosition} {title} {items} {onBack} />
+				<ProductsList areaID={listAreaID} position={listPosition} {title} {items} networkID={activeNetworkID} {onBack} />
 			{/if}
 		</div>
 

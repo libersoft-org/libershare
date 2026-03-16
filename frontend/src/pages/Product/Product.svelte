@@ -5,10 +5,12 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { t } from '../../scripts/language.ts';
 	import { formatSize, parseTags } from '../../scripts/catalog.ts';
+	import { api } from '../../scripts/api.ts';
 	import Icon from '../../components/Icon/Icon.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Row from '../../components/Row/Row.svelte';
+	import Alert from '../../components/Alert/Alert.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -20,11 +22,28 @@
 		fileCount?: number;
 		tags?: string | null;
 		contentType?: string | null;
+		networkID?: string;
+		lishID?: string;
 		onBack?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, itemTitle = 'Item', itemId = 1, description, totalSize, fileCount, tags, contentType, onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, itemTitle = 'Item', itemId = 1, description, totalSize, fileCount, tags, contentType, networkID, lishID, onBack }: Props = $props();
 	let parsedTags = $derived(parseTags(tags ?? null));
 	let sizeLabel = $derived(totalSize ? formatSize(totalSize) : null);
+	let downloadStatus = $state<'idle' | 'starting' | 'started' | 'error'>('idle');
+	let downloadError = $state('');
+
+	async function startDownload(): Promise<void> {
+		if (!networkID || !lishID) { downloadError = 'Missing network or LISH ID'; return; }
+		downloadStatus = 'starting';
+		downloadError = '';
+		try {
+			await api.transfer.download(networkID, lishID);
+			downloadStatus = 'started';
+		} catch (e: any) {
+			downloadError = e.message || 'Download failed';
+			downloadStatus = 'error';
+		}
+	}
 
 	function getContentIcon(): string {
 		if (!contentType) return '/img/file.svg';
@@ -250,6 +269,13 @@
 			</div>
 		{/if}
 
+		{#if downloadError}
+			<Alert type="error" message={downloadError} />
+		{/if}
+		{#if downloadStatus === 'started'}
+			<Alert type="info" message="Download started — check Downloads page for progress" />
+		{/if}
+
 		<div class="section-title">{$t('library.product.downloads')}:</div>
 		<Row selected={navHandle.controller.isYSelected(1)}>
 			<div class="file-info">
@@ -257,7 +283,7 @@
 				<div class="file-size">{sizeLabel ?? 'Unknown size'} · {fileCount ?? 1} {(fileCount ?? 1) === 1 ? 'file' : 'files'}</div>
 			</div>
 			<div class="file-actions">
-				<Button icon="/img/download.svg" label={$t('library.product.download')} position={[0, 1]} width="auto" />
+				<Button icon="/img/download.svg" label={downloadStatus === 'starting' ? '...' : $t('library.product.download')} position={[0, 1]} onConfirm={startDownload} disabled={downloadStatus === 'starting' || downloadStatus === 'started'} width="auto" />
 				{#if contentType?.startsWith('video/') || contentType?.startsWith('audio/')}
 					<Button icon="/img/play.svg" label={$t('library.product.play')} position={[1, 1]} width="auto" />
 				{/if}

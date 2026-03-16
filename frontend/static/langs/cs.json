@@ -64,6 +64,12 @@
 	},
 	"library": {
 		"title": "Online knihovna",
+		"categories": {
+			"all": "Vše",
+			"movies": "Filmy",
+			"software": "Software",
+			"video": "Videa"
+		},
 		"product": {
 			"downloads": "Ke stažení",
 			"download": "Stáhnout",
