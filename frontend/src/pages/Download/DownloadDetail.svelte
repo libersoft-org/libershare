@@ -7,6 +7,8 @@
 	import { downloads, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID } from '../../scripts/downloads.ts';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
+	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBackHandler } from '../../scripts/focus.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import Header from '../../components/Table/TableHeader.svelte';
@@ -18,6 +20,7 @@
 	import Alert from '../../components/Alert/Alert.svelte';
 	import DownloadDetailDelete from './DownloadDetailDelete.svelte';
 	import DownloadLISHExport from './DownloadLISHExport.svelte';
+	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -54,10 +57,41 @@
 	let deleteError = $state('');
 	// Export state
 	let showExport = $state(false);
+	// File browser state
+	let showFileBrowser = $state(false);
+	let removeFileBrowserBackHandler: (() => void) | null = null;
+
+	let unregisterToolbar: (() => void) | null = null;
+	let unregisterInfo: (() => void) | null = null;
+	let unregisterList: (() => void) | null = null;
+
+	function registerDetailAreas(): void {
+		unregisterToolbar = useArea(toolbarAreaID, toolbarHandlers, position);
+		unregisterInfo = useArea(infoAreaID, infoHandlers, position);
+		unregisterList = useArea(listAreaID, listHandlers, position);
+		activateArea(toolbarAreaID);
+	}
+
+	function unregisterDetailAreas(): void {
+		unregisterToolbar?.();
+		unregisterInfo?.();
+		unregisterList?.();
+		unregisterToolbar = null;
+		unregisterInfo = null;
+		unregisterList = null;
+	}
 
 	function handleExportBack(): void {
 		showExport = false;
-		activateArea(toolbarAreaID);
+		registerDetailAreas();
+	}
+
+	function handleFileBrowserBack(): void {
+		removeFileBrowserBackHandler?.();
+		removeFileBrowserBackHandler = null;
+		popBreadcrumb();
+		showFileBrowser = false;
+		registerDetailAreas();
 	}
 	function scrollToSelected(): void {
 		scrollToElement(itemElements, selectedFileIndex);
@@ -84,10 +118,20 @@
 			api.lishs.stopVerify(download.id).catch(err => console.error('Stop verification failed:', err));
 			return;
 		}
+		if (actionId === 'open-folder' && download?.directory) {
+			pushBreadcrumb($t('downloads.targetFolder'));
+			unregisterDetailAreas();
+			showFileBrowser = true;
+			removeFileBrowserBackHandler = pushBackHandler(handleFileBrowserBack);
+			return;
+		}
 		const result = handleDownloadToolbarAction(actionId);
 		if (result.needsBack) handleBack();
 		if (result.needsDelete) showDeleteDialog = true;
-		if (result.needsExport) showExport = true;
+		if (result.needsExport) {
+			unregisterDetailAreas();
+			showExport = true;
+		}
 		if (result.needsVerify && download) {
 			resetVerifyState(download.id);
 			api.lishs.verify(download.id).catch(err => console.error('Verification failed:', err));
@@ -210,15 +254,11 @@
 
 	onMount(() => {
 		setCurrentDetailLISHID(lishID);
-		const unregisterToolbar = useArea(toolbarAreaID, toolbarHandlers, position);
-		const unregisterInfo = useArea(infoAreaID, infoHandlers, position);
-		const unregisterList = useArea(listAreaID, listHandlers, position);
-		activateArea(toolbarAreaID);
+		registerDetailAreas();
 		return () => {
 			setCurrentDetailLISHID(null);
-			unregisterToolbar();
-			unregisterInfo();
-			unregisterList();
+			unregisterDetailAreas();
+			removeFileBrowserBackHandler?.();
 		};
 	});
 </script>
@@ -297,7 +337,9 @@
 	}
 </style>
 
-{#if showExport && download}
+{#if showFileBrowser && download?.directory}
+	<FileBrowser {areaID} {position} initialPath={download.directory} onBack={handleFileBrowserBack} />
+{:else if showExport && download}
 	<DownloadLISHExport {areaID} {position} lish={{ id: download.id, name: download.name }} onBack={handleExportBack} />
 {:else}
 	<div class="detail">

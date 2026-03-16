@@ -17,6 +17,7 @@ const confirmDialogStore = writable<ConfirmDialogState>({ visible: false, action
 // Global navigation store - set by createNavigation, used by components
 let globalNavigate: ((id: string, label?: string, props?: Record<string, any>) => void) | null = null;
 let globalNavigateBack: (() => void) | null = null;
+let globalNavigateToAbsolutePath: ((pathIds: string[], props?: Record<string, any>) => void) | null = null;
 // Internal function to set menu breadcrumb (clears component items)
 function setMenuBreadcrumb(items: string[]): void {
 	breadcrumbStore.set(items.map(label => ({ label, source: 'menu' as const })));
@@ -90,6 +91,10 @@ export function navigateTo(id: string, label?: string, props?: Record<string, an
 
 export function navigateBack(): void {
 	if (globalNavigateBack) globalNavigateBack();
+}
+
+export function navigateToAbsolutePath(pathIds: string[], props?: Record<string, any>): void {
+	if (globalNavigateToAbsolutePath) globalNavigateToAbsolutePath(pathIds, props);
 }
 
 // Helper to find menu item by path of IDs
@@ -200,9 +205,16 @@ export function createNavigation() {
 		resetBreadcrumb();
 	}
 
+	function navigateToAbsolute(pathIds: string[], props?: Record<string, any>): void {
+		dynamicProps.set(props ?? {});
+		pathIDs.set(pathIds);
+		scrollContentToTop();
+	}
+
 	// Set global navigate function so components can use navigateTo()
 	globalNavigate = navigate;
 	globalNavigateBack = navigateBack;
+	globalNavigateToAbsolutePath = navigateToAbsolute;
 
 	return {
 		path: pathIDs,
