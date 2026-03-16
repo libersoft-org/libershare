@@ -66,17 +66,21 @@ export function buildSyncResponse(db: Database, networkID: string, sinceHlcWall:
 export async function applySyncResponse(db: Database, networkID: string, response: SyncResponse): Promise<number> {
 	// Decode all operations first
 	const ops: SignedCatalogOp[] = [];
+	let decodeErrors = 0;
 	for (const opBytes of response.operations) {
 		try {
-			ops.push(decode(Buffer.from(opBytes)) as SignedCatalogOp);
-		} catch {
-			// Skip malformed
+			const buf = opBytes instanceof Uint8Array ? opBytes : new Uint8Array(Object.values(opBytes as any));
+			ops.push(decode(Buffer.from(buf)) as SignedCatalogOp);
+		} catch (err) {
+			decodeErrors++;
+			console.warn(`[CatalogSync] Failed to decode op: ${(err as Error).message}, type=${typeof opBytes}, isUint8Array=${opBytes instanceof Uint8Array}`);
 		}
 	}
+	if (decodeErrors > 0) console.warn(`[CatalogSync] ${decodeErrors}/${response.operations.length} ops failed to decode`);
 
 	// Power-events-first: ACL operations before data operations (Matrix pattern)
-	const aclOps = ops.filter(op => op.payload.type === 'acl_grant' || op.payload.type === 'acl_revoke');
-	const dataOps = ops.filter(op => op.payload.type !== 'acl_grant' && op.payload.type !== 'acl_revoke');
+	const aclOps = ops.filter(op => op.payload?.type === 'acl_grant' || op.payload?.type === 'acl_revoke');
+	const dataOps = ops.filter(op => op.payload?.type !== 'acl_grant' && op.payload?.type !== 'acl_revoke');
 
 	// Sort each group by HLC (wallTime ASC, logical ASC)
 	const byHLC = (a: SignedCatalogOp, b: SignedCatalogOp): number => {
@@ -87,11 +91,14 @@ export async function applySyncResponse(db: Database, networkID: string, respons
 	dataOps.sort(byHLC);
 
 	let applied = 0;
+	const rejections: string[] = [];
 	// Apply ACL first, then data
 	for (const op of [...aclOps, ...dataOps]) {
 		const result = await handleRemoteOp(db, networkID, op);
 		if (result.valid) applied++;
+		else rejections.push(`${op.payload?.type}:${(result as { reason: string }).reason}`);
 	}
+	if (rejections.length > 0) console.warn(`[CatalogSync] Rejections: ${rejections.join(', ')}`);
 	return applied;
 }
 
