@@ -39,6 +39,16 @@ export function validateFields(op: SignedCatalogOp): ValidationResult {
 	if (typeof data['contentType'] === 'string' && Buffer.byteLength(data['contentType']) > FIELD_LIMITS.contentType) {
 		return { valid: false, reason: 'FIELD_TOO_LARGE_CONTENT_TYPE' };
 	}
+	// Numeric fields must be non-negative
+	if (typeof data['totalSize'] === 'number' && data['totalSize'] < 0) {
+		return { valid: false, reason: 'INVALID_TOTAL_SIZE' };
+	}
+	if (typeof data['chunkSize'] === 'number' && data['chunkSize'] < 0) {
+		return { valid: false, reason: 'INVALID_CHUNK_SIZE' };
+	}
+	if (typeof data['fileCount'] === 'number' && data['fileCount'] < 0) {
+		return { valid: false, reason: 'INVALID_FILE_COUNT' };
+	}
 	if (Array.isArray(data['tags'])) {
 		if (data['tags'].length > FIELD_LIMITS.tags) {
 			return { valid: false, reason: 'TOO_MANY_TAGS' };
