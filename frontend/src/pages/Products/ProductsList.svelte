@@ -104,7 +104,7 @@
 </style>
 
 {#if selectedItem}
-	<Product {areaID} category={title} itemTitle={selectedItem.title} itemId={selectedItem.id} onBack={closeDetail} />
+	<Product {areaID} category={title} itemTitle={selectedItem.title} itemID={selectedItem.id} onBack={closeDetail} />
 {:else}
 	<div class="items">
 		{#each items as item, index (item.id)}

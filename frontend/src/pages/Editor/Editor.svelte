@@ -68,8 +68,8 @@
 		}
 	}
 
-	function handleToolbarAction(actionId: string): void {
-		switch (actionId) {
+	function handleToolbarAction(actionID: string): void {
+		switch (actionID) {
 			case 'save':
 				handleSave();
 				break;

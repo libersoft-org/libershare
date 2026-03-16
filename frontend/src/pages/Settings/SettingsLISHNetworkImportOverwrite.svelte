@@ -3,7 +3,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { type LISHNetworkDefinition } from '@shared';
-	import { networkExists, addNetworkIfNotExists, getNetworkById, updateNetwork } from '../../scripts/lishNetwork.ts';
+	import { networkExists, addNetworkIfNotExists, getNetworkByID as getNetworkByID, updateNetwork } from '../../scripts/lishNetwork.ts';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	interface Props {
 		networks: LISHNetworkDefinition[];
@@ -29,7 +29,7 @@
 
 	async function confirmOverwrite(): Promise<void> {
 		if (currentOverwriteNetwork) {
-			const existing = await getNetworkById(currentOverwriteNetwork.networkID);
+			const existing = await getNetworkByID(currentOverwriteNetwork.networkID);
 			if (existing) await updateNetwork({ ...currentOverwriteNetwork, enabled: existing.enabled });
 			overwriteQueue = overwriteQueue.slice(1);
 		}

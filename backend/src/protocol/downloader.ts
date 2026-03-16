@@ -9,7 +9,7 @@ import { type HaveChunks, LISH_PROTOCOL, LISHClient } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 
-type NodeId = string;
+type NodeID = string;
 interface PubsubMessage {
 	type: 'want' | 'have';
 	lishID: LISHid;
@@ -20,7 +20,7 @@ export interface WantMessage extends PubsubMessage {
 export interface HaveMessage extends PubsubMessage {
 	type: 'have';
 	lishID: LISHid;
-	peerID: NodeId;
+	peerID: NodeID;
 	multiaddrs: Multiaddr[];
 	chunks: HaveChunks;
 }
@@ -36,7 +36,7 @@ export class Downloader {
 	private state: State = 'added';
 	private workMutex = new Mutex();
 	private missingChunks: MissingChunk[] = [];
-	private peers: Map<NodeId, LISHClient> = new Map();
+	private peers: Map<NodeID, LISHClient> = new Map();
 	private callForPeersInterval: NodeJS.Timeout | undefined;
 
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkID: string) {
@@ -172,7 +172,7 @@ export class Downloader {
 	}
 
 	private async connectToPeer(data: HaveMessage): Promise<void> {
-		const peerID: NodeId = data.peerID;
+		const peerID: NodeID = data.peerID;
 		// Convert from JSON strings back to Multiaddr instances
 		const multiaddrs: Multiaddr[] = data.multiaddrs.map(ma => multiaddr(ma.toString()));
 		try {

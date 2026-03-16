@@ -8,7 +8,7 @@ export async function getNetworks(): Promise<LISHNetworkConfig[]> {
 	return api.lishnets.list();
 }
 
-export async function getNetworkById(networkID: string): Promise<LISHNetworkConfig | undefined> {
+export async function getNetworkByID(networkID: string): Promise<LISHNetworkConfig | undefined> {
 	return api.lishnets.get(networkID);
 }
 

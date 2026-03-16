@@ -10,10 +10,10 @@
 		position?: Position;
 		category?: string;
 		itemTitle?: string;
-		itemId?: number;
+		itemID?: number;
 		onBack?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, itemTitle = 'Item', itemId = 1, onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, itemTitle = 'Item', itemID: itemID = 1, onBack }: Props = $props();
 	let files = $derived([
 		{ id: 1, name: `${itemTitle} - 240p`, size: '218.32 MB' },
 		{ id: 2, name: `${itemTitle} - 480p`, size: '780.12 MB' },
@@ -110,7 +110,7 @@
 <div class="detail">
 	<div class="content">
 		<div class="image" class:selected={imageSelected} bind:this={imageElement}>
-			<img src="https://picsum.photos/seed/{itemId}/800/450" alt={itemTitle} />
+			<img src="https://picsum.photos/seed/{itemID}/800/450" alt={itemTitle} />
 		</div>
 		<div class="files">
 			<div class="title">{$t('library.product.downloads')}:</div>

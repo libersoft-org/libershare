@@ -1,8 +1,10 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 import { type ILISHDetail } from '@shared';
 import { api } from './api.ts';
 import { formatSize } from './utils.ts';
 import { navigateBack } from './navigation.ts';
+import { addNotification } from './notifications.ts';
+import { tt } from './language.ts';
 
 export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification';
 
@@ -48,14 +50,14 @@ export interface DownloadData {
  * Convert a backend ILISHDetail to frontend DownloadData.
  */
 function detailToDownload(detail: ILISHDetail): DownloadData {
-	let nextId = 0;
+	let nextID = 0;
 	const files: DownloadFileData[] = detail.files.map(f => {
 		const totalChunks = f.totalChunks > 0 ? f.totalChunks : Math.ceil(f.size / detail.chunkSize);
 		const verifiedChunks = f.verifiedChunks ?? 0;
 		const progress = totalChunks > 0 ? Math.round((verifiedChunks / totalChunks) * 10000) / 100 : 0;
 		const downloadedSize = totalChunks > 0 && verifiedChunks > 0 ? formatSize(Math.round((f.size * verifiedChunks) / totalChunks)) : '0 B';
 		return {
-			id: nextId++,
+			id: nextID++,
 			name: f.path,
 			type: 'file' as DownloadFileType,
 			progress,
@@ -67,10 +69,10 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 		};
 	});
 	for (const d of detail.directories) {
-		files.push({ id: nextId++, name: d.path, type: 'directory', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0 });
+		files.push({ id: nextID++, name: d.path, type: 'directory', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0 });
 	}
 	for (const l of detail.links) {
-		files.push({ id: nextId++, name: l.path, type: 'link', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0, linkTarget: l.target });
+		files.push({ id: nextID++, name: l.path, type: 'link', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0, linkTarget: l.target });
 	}
 	files.sort((a, b) => a.name.localeCompare(b.name));
 	const progress = detail.totalChunks > 0 ? Math.round((detail.verifiedChunks / detail.totalChunks) * 10000) / 100 : 0;
@@ -192,6 +194,8 @@ export async function initDownloads(): Promise<void> {
 			}
 			if (data.done) {
 				// Verification finished — recalculate status from final chunk counts
+				const lish = get(downloads).find(d => d.id === data.lishID);
+				if (lish) addNotification(tt('downloads.verifyDone', { name: lish.name }));
 				downloads.update(list =>
 					list.map(d => {
 						if (d.id !== data.lishID) return d;
@@ -263,8 +267,8 @@ export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
  * Handle toolbar action for download detail
  * @returns true if action was handled internally, false if needs UI handling (e.g., onBack)
  */
-export function handleDownloadToolbarAction(actionId: DownloadToolbarActionID): { handled: boolean; needsBack?: boolean; needsDelete?: boolean; needsExport?: boolean; needsVerify?: boolean } {
-	switch (actionId) {
+export function handleDownloadToolbarAction(actionID: DownloadToolbarActionID): { handled: boolean; needsBack?: boolean; needsDelete?: boolean; needsExport?: boolean; needsVerify?: boolean } {
+	switch (actionID) {
 		case 'back':
 			return { handled: false, needsBack: true };
 		case 'open-directory':

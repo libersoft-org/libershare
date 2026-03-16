@@ -38,6 +38,7 @@ export interface SettingsData {
 		autoStartOnBoot: boolean;
 		showInTray: boolean;
 		minimizeToTray: boolean;
+		notificationTimeout: number;
 	};
 	export: {
 		minifyJSON: boolean;
@@ -97,6 +98,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		autoStartOnBoot: true,
 		showInTray: true,
 		minimizeToTray: true,
+		notificationTimeout: 5,
 	},
 	export: {
 		minifyJSON: false,

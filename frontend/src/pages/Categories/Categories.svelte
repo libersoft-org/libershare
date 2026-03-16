@@ -11,12 +11,12 @@
 		title: string;
 		items: Array<{ id: string; label: string; icon?: string; selected?: boolean; iconPosition?: 'left' | 'top'; iconSize?: string }>;
 		orientation?: 'horizontal' | 'vertical';
-		selectedId?: string;
+		selectedID?: string;
 		buttonWidth?: string;
 		onselect?: (id: string) => void;
 		onBack?: () => void;
 	}
-	let { areaID, position, title, items, orientation = 'horizontal', selectedId, buttonWidth, onselect, onBack }: Props = $props();
+	let { areaID, position, title, items, orientation = 'horizontal', selectedID: selectedID, buttonWidth, onselect, onBack }: Props = $props();
 	let searchAreaID = $derived(`${areaID}-search`);
 	let menuAreaID = $derived(`${areaID}-menu`);
 	// Calculate sub-area positions
@@ -63,6 +63,6 @@
 <div class="categories">
 	<SearchBar bind:this={searchBar} selected={searchNavHandle.controller.isSelected([0, 0])} />
 	<div class="content">
-		<Menu areaID={menuAreaID} position={menuPosition} {title} {items} {orientation} {selectedId} {buttonWidth} {onselect} {onBack} />
+		<Menu areaID={menuAreaID} position={menuPosition} {title} {items} {orientation} {selectedID} {buttonWidth} {onselect} {onBack} />
 	</div>
 </div>

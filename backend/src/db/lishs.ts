@@ -108,8 +108,8 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 					 VALUES (?, ?, ?, ?, ?, ?)`,
 					[internalID, file.path, file.size, file.permissions ?? null, file.modified ?? null, file.created ?? null]
 				);
-				const fileId = Number(fileResult.lastInsertRowid);
-				for (const checksum of file.checksums) db.run('INSERT INTO lishs_chunks (id_lishs_files, checksum, have) VALUES (?, ?, ?)', [fileId, checksum, haveChunks.has(checksum) ? 1 : 0]);
+				const fileID = Number(fileResult.lastInsertRowid);
+				for (const checksum of file.checksums) db.run('INSERT INTO lishs_chunks (id_lishs_files, checksum, have) VALUES (?, ?, ?)', [fileID, checksum, haveChunks.has(checksum) ? 1 : 0]);
 			}
 		}
 

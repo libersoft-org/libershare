@@ -12,8 +12,9 @@
 	import { cursorSize, cursorSizes, footerVisible, loadSettings } from '../scripts/settings.ts';
 	import { connected, apiURL } from '../scripts/ws-client.ts';
 	import { initDownloads } from '../scripts/downloads.ts';
-	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedId, navigate, onBack: onBack } = createNavigation();
+	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedID: selectedID, navigate, onBack: onBack } = createNavigation();
 	import Debug from '../components/Debug/Debug.svelte';
+	import NotificationContainer from '../components/Notification/NotificationContainer.svelte';
 	import Header from '../pages/Header/Header.svelte';
 	import NavigationBreadcrumb from '../components/Breadcrumb/NavigationBreadcrumb.svelte';
 	import Menu from '../components/Menu/Menu.svelte';
@@ -126,9 +127,9 @@
 				<ConfirmDialog title={dialogConfig.title ?? ''} message={dialogConfig.message ?? ''} confirmLabel={dialogConfig.confirmLabel} cancelLabel={dialogConfig.cancelLabel} position={LAYOUT.content} onConfirm={handleConfirm} onBack={handleCancel} />
 			{:else if $currentComponent}
 				{@const Component = $currentComponent.component}
-				<Component areaID="content" title={$currentComponent.label ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', icon: i.icon, iconPosition: i.iconPosition, iconSize: i.iconSize, noColorFilter: i.noColorFilter, selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} position={LAYOUT.content} onselect={navigate} {...$currentComponent.props} {onBack} />
+				<Component areaID="content" title={$currentComponent.label ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', icon: i.icon, iconPosition: i.iconPosition, iconSize: i.iconSize, noColorFilter: i.noColorFilter, selected: i.selected?.() }))} orientation={$currentOrientation} selectedID={$selectedID} position={LAYOUT.content} onselect={navigate} {...$currentComponent.props} {onBack} />
 			{:else}
-				<Menu areaID="content" title={$currentTitle ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', icon: i.icon, iconPosition: i.iconPosition, iconSize: i.iconSize, noColorFilter: i.noColorFilter, selected: i.selected?.() }))} orientation={$currentOrientation} selectedId={$selectedId} position={LAYOUT.content} buttonWidth="25vh" onselect={navigate} {onBack} />
+				<Menu areaID="content" title={$currentTitle ?? ''} items={$currentItems.map(i => ({ id: i.id, label: i.label ?? '', icon: i.icon, iconPosition: i.iconPosition, iconSize: i.iconSize, noColorFilter: i.noColorFilter, selected: i.selected?.() }))} orientation={$currentOrientation} selectedID={$selectedID} position={LAYOUT.content} buttonWidth="25vh" onselect={navigate} {onBack} />
 			{/if}
 		</div>
 		{#if $footerVisible}
@@ -136,4 +137,5 @@
 		{/if}
 	</div>
 	<Debug />
+	<NotificationContainer />
 {/if}

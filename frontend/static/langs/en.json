@@ -108,6 +108,7 @@
 		"verifyAllConfirm": "Do you really want to verify the integrity of all LISHs? This action can take a very long time.",
 		"stopVerify": "Stop verification",
 		"stopVerifyAll": "Stop all verifications",
+		"verifyDone": "Verification of \"{name}\" completed",
 		"moveData": "Move data",
 		"deleteDialog": {
 			"message": "What do you want to delete?",
@@ -181,7 +182,8 @@
 			"showInTray": "Show in system tray",
 			"minimizeToTray": "Minimize to system tray",
 			"defaultMinifyJSON": "Minify JSON (default)",
-			"defaultCompress": "Compress (default)"
+			"defaultCompress": "Compress (default)",
+			"notificationTimeout": "Notification timeout (in seconds, 0 = unlimited)"
 		},
 		"download": {
 			"directoryDownload": "Finished download directory",

@@ -3,9 +3,10 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea, type NavPos } from '../../scripts/navArea.svelte.ts';
-	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJSON, defaultCompress, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJSON, setDefaultCompress } from '../../scripts/settings.ts';
+	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJSON, defaultCompress, notificationTimeout, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJSON, setDefaultCompress, setNotificationTimeout } from '../../scripts/settings.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
+	import Input from '../../components/Input/Input.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	interface Props {
 		areaID: string;
@@ -19,6 +20,7 @@
 	let trayMinimize = $state($minimizeToTray);
 	let minifyJSON = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
+	let timeout = $state($notificationTimeout.toString());
 
 	function toggleAutoStart(): void {
 		autoStart = !autoStart;
@@ -47,13 +49,16 @@
 		setMinimizeToTray(trayMinimize);
 		setDefaultMinifyJSON(minifyJSON);
 		setDefaultCompress(compress);
+		setNotificationTimeout(parseInt(timeout) || 0);
+		timeout = $notificationTimeout.toString();
 		onBack?.();
 	}
 
 	// Reactive positions accounting for hidden minimizeToTray row
 	let minifyPos = $derived<NavPos>([0, trayVisible ? 3 : 2]);
 	let compressPos = $derived<NavPos>([0, trayVisible ? 4 : 3]);
-	let buttonsY = $derived(trayVisible ? 5 : 4);
+	let timeoutPos = $derived<NavPos>([0, trayVisible ? 5 : 4]);
+	let buttonsY = $derived(trayVisible ? 6 : 5);
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
@@ -87,6 +92,7 @@
 		{/if}
 		<SwitchRow label={$t('settings.system.defaultMinifyJSON') + ':'} checked={minifyJSON} position={minifyPos} onToggle={toggleMinifyJSON} />
 		<SwitchRow label={$t('settings.system.defaultCompress') + ':'} checked={compress} position={compressPos} onToggle={toggleCompress} />
+		<Input bind:value={timeout} label={$t('settings.system.notificationTimeout')} type="number" position={timeoutPos} flex />
 	</div>
 	<ButtonBar justify="center">
 		<Button icon="/img/save.svg" label={$t('common.save')} position={[0, buttonsY]} onConfirm={saveSettings} />

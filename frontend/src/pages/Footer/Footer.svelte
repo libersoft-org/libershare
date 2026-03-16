@@ -170,7 +170,7 @@
 	}
 </style>
 
-<div class="footer" class:left={$footerPosition === 'left'} class:center={$footerPosition === 'center'} class:right={$footerPosition === 'right'}>
+<div class="footer" data-footer class:left={$footerPosition === 'left'} class:center={$footerPosition === 'center'} class:right={$footerPosition === 'right'}>
 	<div class="items" class:right={$footerPosition === 'right'}>
 		{#each displayWidgets as widget, i}
 			{#if i > 0}<Separator />{/if}

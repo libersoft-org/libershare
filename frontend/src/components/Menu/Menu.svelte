@@ -9,18 +9,18 @@
 		title: string;
 		items: Array<{ id: string; label: string; icon?: string | undefined; selected?: boolean | undefined; iconPosition?: 'left' | 'top' | undefined; iconSize?: string | undefined; noColorFilter?: boolean | undefined }>;
 		orientation?: 'horizontal' | 'vertical' | undefined;
-		selectedId?: string | undefined;
+		selectedID?: string | undefined;
 		buttonWidth?: string | undefined;
 		position: Position;
 		onselect?: ((id: string) => void) | undefined;
 		onBack?: (() => void) | undefined;
 	}
-	let { areaID, title, items, orientation = 'horizontal', selectedId, buttonWidth, position, onselect, onBack }: Props = $props();
+	let { areaID, title, items, orientation = 'horizontal', selectedID: selectedID, buttonWidth, position, onselect, onBack }: Props = $props();
 	let initialIndex = $derived(
-		selectedId
+		selectedID
 			? Math.max(
 					0,
-					items.findIndex(i => i.id === selectedId)
+					items.findIndex(i => i.id === selectedID)
 				)
 			: 0
 	);
@@ -43,7 +43,7 @@
 <div class="menu">
 	<MenuTitle {title} />
 	<MenuBar>
-		{#key `${title}-${selectedId}-${orientation}`}
+		{#key `${title}-${selectedID}-${orientation}`}
 			<ButtonsGroup {areaID} {position} {initialIndex} {orientation} {onBack}>
 				{#each items as item (item.id)}
 					{@const showCheckAsIcon = item.selected && !item.icon}

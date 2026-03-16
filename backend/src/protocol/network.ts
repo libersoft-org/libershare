@@ -3,8 +3,8 @@ import { KEEP_ALIVE } from '@libp2p/interface';
 import { SqliteDatastore } from './datastore.ts';
 import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { type Libp2p } from 'libp2p';
-import { type PeerId, type PrivateKey, type PeerInfo, type Stream } from '@libp2p/interface';
-import { peerIdFromString } from '@libp2p/peer-id';
+import { type PeerId as PeerID, type PrivateKey, type PeerInfo, type Stream } from '@libp2p/interface';
+import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
 import { join } from 'path';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
@@ -39,7 +39,7 @@ export class Network {
 	private pingInterval: NodeJS.Timeout | null = null;
 	private statusInterval: NodeJS.Timeout | null = null;
 	private readonly enablePink: boolean;
-	private bootstrapPeerIds: Set<string> = new Set();
+	private bootstrapPeerIDs: Set<string> = new Set();
 	private bootstrapMultiaddrs: any[] = [];
 
 	// Topic handlers: topic -> Set of handler functions
@@ -150,14 +150,19 @@ export class Network {
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
 
 		// Build libp2p config via extracted helper
-		const { config, port, bootstrapPeerIds, bootstrapMultiaddrs } = buildLibp2pConfig({
+		const {
+			config,
+			port,
+			bootstrapPeerIDs: bootstrapPeerIDs,
+			bootstrapMultiaddrs,
+		} = buildLibp2pConfig({
 			privateKey,
 			datastore: this.datastore,
 			allSettings,
 			bootstrapPeers,
-			myPeerId: privateKey.publicKey.toString(),
+			myPeerID: privateKey.publicKey.toString(),
 		});
-		this.bootstrapPeerIds = bootstrapPeerIds;
+		this.bootstrapPeerIDs = bootstrapPeerIDs;
 		this.bootstrapMultiaddrs = bootstrapMultiaddrs;
 
 		console.log('Creating libp2p node...');
@@ -248,7 +253,7 @@ export class Network {
 			console.log('   Remote addresses:', remoteAddrs.join(', '));
 			console.log('   Total connected peers:', this.node!.getPeers().length);
 
-			if (this.bootstrapPeerIds.has(peerID)) {
+			if (this.bootstrapPeerIDs.has(peerID)) {
 				const connectionMultiaddrs = connections.map(c => c.remoteAddr);
 				await this.node!.peerStore.merge(evt.detail, {
 					multiaddrs: connectionMultiaddrs,
@@ -347,23 +352,23 @@ export class Network {
 			console.error('Network not started - cannot add bootstrap peers');
 			return;
 		}
-		const myPeerId = this.node.peerId.toString();
+		const myPeerID = this.node.peerId.toString();
 		for (const peer of peers) {
 			// Skip our own address or already-known bootstrap peers
-			if (peer.includes(myPeerId)) continue;
+			if (peer.includes(myPeerID)) continue;
 			try {
 				const ma = Multiaddr(peer);
 				const peerID = ma.getPeerId();
-				if (peerID && this.bootstrapPeerIds.has(peerID)) continue;
+				if (peerID && this.bootstrapPeerIDs.has(peerID)) continue;
 				if (peerID) {
-					this.bootstrapPeerIds.add(peerID);
+					this.bootstrapPeerIDs.add(peerID);
 					this.bootstrapMultiaddrs.push(ma);
 				}
 				console.log('Adding bootstrap peer:', peer);
 				try {
 					await this.node.dial(ma);
 					if (peerID) {
-						await this.node.peerStore.merge(peerIdFromString(peerID), {
+						await this.node.peerStore.merge(peerIDFromString(peerID), {
 							multiaddrs: [ma],
 							tags: { [KEEP_ALIVE]: { value: 1 } },
 						});
@@ -604,11 +609,11 @@ export class Network {
 	}
 
 	async cliFindPeer(peerID: string): Promise<void> {
-		const id = peerIdFromString(peerID);
+		const id = peerIDFromString(peerID);
 		await this.findPeer(id);
 	}
 
-	async findPeer(peerID: PeerId): Promise<void> {
+	async findPeer(peerID: PeerID): Promise<void> {
 		console.log('Finding peer:');
 		console.log('Closest peers:');
 		for await (const peer of this.node!.peerRouting.getClosestPeers(peerID.toMultihash().bytes)) console.log(peer.id, peer.multiaddrs);

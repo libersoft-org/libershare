@@ -105,27 +105,27 @@
 		onBack?.();
 	}
 
-	function handleToolbarAction(actionId: DownloadToolbarActionID): void {
-		if (actionId === 'toggle-download') {
+	function handleToolbarAction(actionID: DownloadToolbarActionID): void {
+		if (actionID === 'toggle-download') {
 			downloadPaused = !downloadPaused;
 			return;
 		}
-		if (actionId === 'toggle-upload') {
+		if (actionID === 'toggle-upload') {
 			uploadPaused = !uploadPaused;
 			return;
 		}
-		if (actionId === 'stop-verify' && download) {
+		if (actionID === 'stop-verify' && download) {
 			api.lishs.stopVerify(download.id).catch(err => console.error('Stop verification failed:', err));
 			return;
 		}
-		if (actionId === 'open-directory' && download?.directory) {
+		if (actionID === 'open-directory' && download?.directory) {
 			pushBreadcrumb($t('downloads.targetDirectory'));
 			unregisterDetailAreas();
 			showFileBrowser = true;
 			removeFileBrowserBackHandler = pushBackHandler(handleFileBrowserBack);
 			return;
 		}
-		const result = handleDownloadToolbarAction(actionId);
+		const result = handleDownloadToolbarAction(actionID);
 		if (result.needsBack) handleBack();
 		if (result.needsDelete) showDeleteDialog = true;
 		if (result.needsExport) {

@@ -384,10 +384,10 @@
 		onSaveFileNameChange?.(value);
 	}
 
-	function handleAction(actionId: string): void {
+	function handleAction(actionID: string): void {
 		const item = items[selectedIndex];
 		if (!item || item.type !== 'file') return;
-		switch (actionId) {
+		switch (actionID) {
 			case 'select':
 				onSelect?.(item.path);
 				break;
@@ -410,8 +410,8 @@
 		activateArea(listAreaID);
 	}
 
-	function handleDirectoryAction(actionId: string): void {
-		switch (actionId) {
+	function handleDirectoryAction(actionID: string): void {
+		switch (actionID) {
 			case 'select':
 				onSelect?.(currentPath);
 				break;
@@ -435,8 +435,8 @@
 		selectedFilterIndex = 0;
 		// Find current filter in the list to pre-select it
 		if (showAllFiles) {
-			const allIdx = filterActions.findIndex(a => a.id === '*');
-			if (allIdx >= 0) selectedFilterIndex = allIdx;
+			const allIDx = filterActions.findIndex(a => a.id === '*');
+			if (allIDx >= 0) selectedFilterIndex = allIDx;
 		} else if (fileFilter && fileFilter.length > 0) selectedFilterIndex = 0; // Select first filter option
 		unregisterFilter = useArea(`${areaID}-filter`, filterAreaHandlers, actionsPosition);
 		activateArea(`${areaID}-filter`);
@@ -451,20 +451,20 @@
 		activateArea(`${areaID}-directory-actions`);
 	}
 
-	function handleFilterAction(actionId: string): void {
-		if (actionId === 'back') {
+	function handleFilterAction(actionID: string): void {
+		if (actionID === 'back') {
 			closeFilterPanel();
 			return;
 		}
-		if (actionId === 'custom') {
+		if (actionID === 'custom') {
 			openCustomFilterDialog();
 			return;
 		}
 		// Set the filter
-		if (actionId === '*') {
+		if (actionID === '*') {
 			showAllFiles = true;
 			customFilter = null;
-		} else if (actionId === 'filter') {
+		} else if (actionID === 'filter') {
 			showAllFiles = false;
 			customFilter = null;
 		}

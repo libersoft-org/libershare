@@ -108,6 +108,7 @@
 		"verifyAllConfirm": "Opravdu chcete ověřit integritu všech LISHů? Tato akce může trvat velmi dlouhou dobu.",
 		"stopVerify": "Zastavit ověřování",
 		"stopVerifyAll": "Zastavit všechna ověřování",
+		"verifyDone": "Ověření \"{name}\" dokončeno",
 		"moveData": "Přesunout data",
 		"deleteDialog": {
 			"message": "Co chcete smazat?",
@@ -181,7 +182,8 @@
 			"showInTray": "Zobrazit v oznamovací oblasti",
 			"minimizeToTray": "Minimalizovat do oznamovací oblasti",
 			"defaultMinifyJSON": "Minifikovat JSON (výchozí hodnota)",
-			"defaultCompress": "Komprimovat (výchozí hodnota)"
+			"defaultCompress": "Komprimovat (výchozí hodnota)",
+			"notificationTimeout": "Časový limit notifikací (ve vteřinách, 0 = neomezeno)"
 		},
 		"download": {
 			"directoryDownload": "Adresář pro dokončená stahování",
