@@ -1,5 +1,10 @@
 import { type CatalogManager } from '../catalog/catalog-manager.ts';
+import { type Networks } from '../lishnet/lishnets.ts';
+import { type DataServer } from '../lish/data-server.ts';
+import { Downloader } from '../protocol/downloader.ts';
+import { type IStoredLISH, type HashAlgorithm, CodedError, ErrorCodes } from '@shared';
 import { Utils } from '../utils.ts';
+import { join } from 'path';
 import type { CatalogEntryRow, CatalogACLRow } from '../db/catalog.ts';
 
 const assert = Utils.assertParams;
@@ -25,10 +30,19 @@ export interface CatalogHandlers {
 	grantRole: (p: { networkID: string; delegatee: string; role: 'admin' | 'moderator' }) => Promise<void>;
 	revokeRole: (p: { networkID: string; delegatee: string; role: 'admin' | 'moderator' }) => Promise<void>;
 	getSyncStatus: (p: { networkID: string }) => { entryCount: number; tombstoneCount: number; lastSyncAt: string | null };
-	startDownload: (p: { networkID: string; lishID: string }) => StartDownloadResult;
+	startDownload: (p: { networkID: string; lishID: string }, client: any) => Promise<StartDownloadResult>;
 }
 
-export function initCatalogHandlers(catalogManager: CatalogManager): CatalogHandlers {
+type EmitFn = (client: any, event: string, data: any) => void;
+
+export interface CatalogHandlerDeps {
+	networks: Networks;
+	dataServer: DataServer;
+	dataDir: string;
+	emit: EmitFn;
+}
+
+export function initCatalogHandlers(catalogManager: CatalogManager, deps?: CatalogHandlerDeps): CatalogHandlers {
 	return {
 		list(p) {
 			assert(p, ['networkID']);
@@ -75,20 +89,54 @@ export function initCatalogHandlers(catalogManager: CatalogManager): CatalogHand
 			assert(p, ['networkID']);
 			return catalogManager.getSyncStatus(p.networkID);
 		},
-		startDownload(p): StartDownloadResult {
+		async startDownload(p, client): Promise<StartDownloadResult> {
 			assert(p, ['networkID', 'lishID']);
 			const entry = catalogManager.get(p.networkID, p.lishID);
 			if (!entry) {
 				return { status: 'not_available', message: 'Entry not found in catalog' };
 			}
-			// Check if LISH exists locally (can be downloaded from this node's storage)
-			// For now, catalog entries are remote metadata — the actual .lish manifest
-			// needs to be fetched from the publisher peer via P2P before download can start.
-			// This is a placeholder until manifest-fetch-from-peer is implemented.
-			return {
-				status: 'not_available',
-				message: `"${entry.name}" is available in the catalog but the LISH manifest has not been downloaded yet. In a future version, clicking Download will fetch the manifest from the publisher and start the P2P download automatically.`,
+			if (!deps) {
+				return { status: 'not_available', message: 'Download infrastructure not available' };
+			}
+
+			// Build a stub LISH manifest from catalog entry metadata.
+			// The downloader will broadcast "want" on GossipSub and peers with the actual
+			// chunks will respond with "have" — the manifest only needs id, name, chunkSize, checksumAlgo.
+			const stubManifest: IStoredLISH = {
+				id: entry.lish_id,
+				name: entry.name ?? entry.lish_id,
+				description: entry.description ?? undefined,
+				created: entry.published_at ?? new Date().toISOString(),
+				chunkSize: entry.chunk_size,
+				checksumAlgo: (entry.checksum_algo as HashAlgorithm) ?? 'sha256',
 			};
+
+			try {
+				const network = deps.networks.getRunningNetwork();
+				const downloadDir = join(deps.dataDir, 'downloads', Date.now().toString());
+				const downloader = new Downloader(downloadDir, network, deps.dataServer, p.networkID);
+				await downloader.initFromManifest(stubManifest);
+
+				// Start async download — events will be emitted on progress
+				downloader
+					.download()
+					.then(() => deps.emit(client, 'transfer.download:complete', { downloadDir, lishID: entry.lish_id, name: entry.name }))
+					.catch(err => {
+						if (err instanceof CodedError) deps.emit(client, 'transfer.download:error', { error: err.code, errorDetail: err.detail, lishID: entry.lish_id });
+						else deps.emit(client, 'transfer.download:error', { error: ErrorCodes.DOWNLOAD_ERROR, errorDetail: err.message, lishID: entry.lish_id });
+					});
+
+				return {
+					status: 'downloading',
+					message: `Download started for "${entry.name}". Looking for peers with the file...`,
+					downloadDir,
+				};
+			} catch (err: any) {
+				return {
+					status: 'not_available',
+					message: `Cannot start download: ${err.message}`,
+				};
+			}
 		},
 	};
 }

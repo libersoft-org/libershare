@@ -62,6 +62,20 @@ export class Downloader {
 		this.state = 'initialized';
 	}
 
+	async initFromManifest(lish: IStoredLISH): Promise<void> {
+		this.state = 'initializing';
+		this.lish = lish;
+		this.lishID = this.lish.id as LISHid;
+		console.log(`Loading LISH from catalog: ${this.lish.name} (id: ${this.lishID})`);
+		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
+		console.log(`Found ${this.missingChunks.length} chunks to download`);
+		const topic = lishTopic(this.networkID);
+		await this.network.subscribe(topic, async data => {
+			await this.handlePubsubMessage(topic, data);
+		});
+		this.state = 'initialized';
+	}
+
 	// Main download loop
 	async download(): Promise<void> {
 		console.log('Starting download...');

@@ -61,7 +61,12 @@ export class APIServer {
 		const _fs = initFsHandlers();
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
-		const _catalog = catalogManager ? initCatalogHandlers(catalogManager) : null;
+		const _catalog = catalogManager ? initCatalogHandlers(catalogManager, {
+			networks: this.networks,
+			dataServer: this.dataServer,
+			dataDir: this.dataDir,
+			emit: emitTo,
+		}) : null;
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
