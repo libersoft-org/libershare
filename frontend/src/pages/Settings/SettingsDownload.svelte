@@ -42,10 +42,10 @@
 		browsingFor = type;
 		navHandle.pause();
 		const labels = {
-			storage: $t('settings.download.folderDownload'),
-			temp: $t('settings.download.folderTemp'),
-			lish: $t('settings.download.folderLISH'),
-			lishnet: $t('settings.download.folderLISHnet'),
+			storage: $t('settings.download.directoryDownload'),
+			temp: $t('settings.download.directoryTemp'),
+			lish: $t('settings.download.directoryLISH'),
+			lishnet: $t('settings.download.directoryLISHnet'),
 		};
 		pushBreadcrumb(labels[type]);
 		removeBackHandler = pushBackHandler(handleBrowseBack);
@@ -208,23 +208,23 @@
 		<div class="container">
 			<!-- Storage paths -->
 			<div class="row">
-				<Input bind:value={storagePathValue} label={$t('settings.download.folderDownload')} position={[0, 0]} flex />
-				<Button icon="/img/folder.svg" position={[1, 0]} onConfirm={() => openBrowse('storage')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Input bind:value={storagePathValue} label={$t('settings.download.directoryDownload')} position={[0, 0]} flex />
+				<Button icon="/img/directory.svg" position={[1, 0]} onConfirm={() => openBrowse('storage')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 0]} onConfirm={resetStoragePath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row">
-				<Input bind:value={tempPathValue} label={$t('settings.download.folderTemp')} position={[0, 1]} flex />
-				<Button icon="/img/folder.svg" position={[1, 1]} onConfirm={() => openBrowse('temp')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Input bind:value={tempPathValue} label={$t('settings.download.directoryTemp')} position={[0, 1]} flex />
+				<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={() => openBrowse('temp')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 1]} onConfirm={resetTempPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row">
-				<Input bind:value={lishPathValue} label={$t('settings.download.folderLISH')} position={[0, 2]} flex />
-				<Button icon="/img/folder.svg" position={[1, 2]} onConfirm={() => openBrowse('lish')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Input bind:value={lishPathValue} label={$t('settings.download.directoryLISH')} position={[0, 2]} flex />
+				<Button icon="/img/directory.svg" position={[1, 2]} onConfirm={() => openBrowse('lish')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 2]} onConfirm={resetLISHPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row">
-				<Input bind:value={lishnetPathValue} label={$t('settings.download.folderLISHnet')} position={[0, 3]} flex />
-				<Button icon="/img/folder.svg" position={[1, 3]} onConfirm={() => openBrowse('lishnet')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Input bind:value={lishnetPathValue} label={$t('settings.download.directoryLISHnet')} position={[0, 3]} flex />
+				<Button icon="/img/directory.svg" position={[1, 3]} onConfirm={() => openBrowse('lishnet')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 3]} onConfirm={resetLISHnetPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row">

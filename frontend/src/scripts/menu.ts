@@ -110,7 +110,7 @@ export const menuStructure = derived(
 							{
 								id: 'import-lish-file',
 								label: tt('common.fromFile'),
-								icon: '/img/folder.svg',
+								icon: '/img/directory.svg',
 								component: DownloadLISHImportFile,
 							},
 							{
@@ -159,7 +159,7 @@ export const menuStructure = derived(
 			{
 				id: 'localStorage',
 				label: tt('localStorage.title'),
-				icon: '/img/folder.svg',
+				icon: '/img/directory.svg',
 				component: Storage,
 			},
 			{
@@ -194,7 +194,7 @@ export const menuStructure = derived(
 									{
 										id: 'import-lishnet-file',
 										label: tt('common.fromFile'),
-										icon: '/img/folder.svg',
+										icon: '/img/directory.svg',
 										component: LISHNetworkImportFile,
 									},
 									{

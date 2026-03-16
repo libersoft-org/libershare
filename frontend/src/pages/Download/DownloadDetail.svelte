@@ -118,8 +118,8 @@
 			api.lishs.stopVerify(download.id).catch(err => console.error('Stop verification failed:', err));
 			return;
 		}
-		if (actionId === 'open-folder' && download?.directory) {
-			pushBreadcrumb($t('downloads.targetFolder'));
+		if (actionId === 'open-directory' && download?.directory) {
+			pushBreadcrumb($t('downloads.targetDirectory'));
 			unregisterDetailAreas();
 			showFileBrowser = true;
 			removeFileBrowserBackHandler = pushBackHandler(handleFileBrowserBack);
@@ -364,7 +364,7 @@
 							<Cell align="right">{download.id}</Cell>
 						</TableRow>
 						<TableRow odd>
-							<Cell>{$t('downloads.targetFolder')}:</Cell>
+							<Cell>{$t('downloads.targetDirectory')}:</Cell>
 							<Cell align="right">{download.directory ?? '-'}</Cell>
 						</TableRow>
 						<TableRow>

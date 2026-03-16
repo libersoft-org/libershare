@@ -15,12 +15,12 @@ export interface FsEntry {
 }
 
 /**
- * Split a path into folder and file name components
+ * Split a path into directory and file name components
  * Handles both forward slashes and backslashes
  */
-export function splitPath(path: string, defaultFolder: string = ''): { folder: string; fileName: string | undefined } {
+export function splitPath(path: string, defaultDirectory: string = ''): { directory: string; fileName: string | undefined } {
 	const trimmed = path.trim();
-	if (!trimmed) return { folder: defaultFolder, fileName: undefined };
+	if (!trimmed) return { directory: defaultDirectory, fileName: undefined };
 	// Find last separator (try both / and \)
 	const lastSlash = trimmed.lastIndexOf('/');
 	const lastBackslash = trimmed.lastIndexOf('\\');
@@ -28,22 +28,22 @@ export function splitPath(path: string, defaultFolder: string = ''): { folder: s
 	const sep = lastBackslash > lastSlash ? '\\' : '/';
 	if (lastSep >= 0) {
 		return {
-			folder: trimmed.substring(0, lastSep) || sep,
+			directory: trimmed.substring(0, lastSep) || sep,
 			fileName: trimmed.substring(lastSep + 1) || undefined,
 		};
 	}
-	// No separator - treat whole path as file name if it looks like a file, otherwise folder
-	return { folder: defaultFolder, fileName: trimmed };
+	// No separator - treat whole path as file name if it looks like a file, otherwise directory
+	return { directory: defaultDirectory, fileName: trimmed };
 }
 
 /**
- * Join folder path with file name
+ * Join directory path with file name
  */
-export function joinPath(folder: string, fileName: string): string {
-	const sep = folder.includes('\\') ? '\\' : '/';
-	// Remove trailing separator from folder if present
-	const cleanFolder = folder.endsWith(sep) ? folder.slice(0, -1) : folder;
-	return cleanFolder + sep + fileName;
+export function joinPath(directory: string, fileName: string): string {
+	const sep = directory.includes('\\') ? '\\' : '/';
+	// Remove trailing separator from directory if present
+	const cleanDirectory = directory.endsWith(sep) ? directory.slice(0, -1) : directory;
+	return cleanDirectory + sep + fileName;
 }
 
 /**
@@ -91,7 +91,7 @@ export function transformFsEntry(entry: FsEntry, index: number): StorageItemData
 		id: String(index + 1),
 		name: entry.name,
 		path: entry.path,
-		type: entry.type === 'directory' ? 'folder' : entry.type,
+		type: entry.type === 'directory' ? 'directory' : entry.type,
 		size: entry.size,
 		modified: formatDate(entry.modified),
 		hidden: entry.hidden,
@@ -102,7 +102,7 @@ export function transformFsEntry(entry: FsEntry, index: number): StorageItemData
  * Filter options for loadDirectory
  */
 export interface LoadDirectoryOptions {
-	foldersOnly?: boolean | undefined;
+	directoriesOnly?: boolean | undefined;
 	filesOnly?: boolean | undefined;
 	fileFilter?: string[] | undefined;
 }
@@ -121,23 +121,23 @@ export interface LoadDirectoryResult {
  * Load directory contents from API
  */
 export async function loadDirectoryFromAPI(path: string | undefined, separator: string, options: LoadDirectoryOptions = {}): Promise<LoadDirectoryResult> {
-	const { foldersOnly = false, filesOnly = false, fileFilter } = options;
+	const { directoriesOnly: directoriesOnly = false, filesOnly = false, fileFilter } = options;
 	const result = await api.fs.list(path);
 	const currentPath = result.path;
 	const parentPath = getParentPath(currentPath, separator);
 	let entries: StorageItemData[] = result.entries.map((entry: FsEntry, index: number) => transformFsEntry(entry, index));
 	// Filter entries based on mode
-	if (foldersOnly) entries = entries.filter(e => e.type === 'folder' || e.type === 'drive');
+	if (directoriesOnly) entries = entries.filter(e => e.type === 'directory' || e.type === 'drive');
 	else if (filesOnly)
-		entries = entries.filter(e => e.type === 'folder' || e.type === 'drive' || (e.type === 'file' && filePassesFilter(e.name, fileFilter))); // Keep folders for navigation, but filter files by extension
-	else if (fileFilter && fileFilter.length > 0 && !fileFilter.includes('*')) entries = entries.filter(e => e.type === 'folder' || e.type === 'drive' || (e.type === 'file' && filePassesFilter(e.name, fileFilter))); // Filter files by extension but keep folders
+		entries = entries.filter(e => e.type === 'directory' || e.type === 'drive' || (e.type === 'file' && filePassesFilter(e.name, fileFilter))); // Keep directories for navigation, but filter files by extension
+	else if (fileFilter && fileFilter.length > 0 && !fileFilter.includes('*')) entries = entries.filter(e => e.type === 'directory' || e.type === 'drive' || (e.type === 'file' && filePassesFilter(e.name, fileFilter))); // Filter files by extension but keep directories
 	// Add ".." entry if we have a parent
 	if (parentPath !== null) {
 		entries.unshift({
 			id: '0',
 			name: '..',
 			path: parentPath || '',
-			type: 'folder',
+			type: 'directory',
 		});
 	}
 
@@ -157,7 +157,7 @@ export function createParentEntry(parentPath: string): StorageItemData {
 		id: '0',
 		name: '..',
 		path: parentPath || '',
-		type: 'folder',
+		type: 'directory',
 	};
 }
 
@@ -190,7 +190,7 @@ export interface FileBrowserAction {
 export function getFileActions(t: (key: string) => string, selectFileButton?: boolean): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	if (selectFileButton) actions.push({ id: 'select', label: t('fileBrowser.selectFile'), icon: '/img/check.svg' });
-	actions.push({ id: 'open', label: t('fileBrowser.openFile'), icon: '/img/folder.svg' });
+	actions.push({ id: 'open', label: t('fileBrowser.openFile'), icon: '/img/directory.svg' });
 	actions.push({ id: 'edit', label: t('fileBrowser.editFile'), icon: '/img/edit.svg' });
 	actions.push({ id: 'rename', label: t('fileBrowser.renameFile'), icon: '/img/edit.svg' });
 	actions.push({ id: 'delete', label: t('fileBrowser.deleteFile'), icon: '/img/del.svg' });
@@ -199,15 +199,15 @@ export function getFileActions(t: (key: string) => string, selectFileButton?: bo
 }
 
 /**
- * Build folder toolbar actions based on mode
+ * Build directory toolbar actions based on mode
  */
-export function buildFolderActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], fileFilterName?: string, selectFolderButton?: boolean, customFilter?: string, currentPath?: string): FileBrowserAction[] {
+export function buildDirectoryActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], fileFilterName?: string, selectDirectoryButton?: boolean, customFilter?: string, currentPath?: string): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	const isDriveList = currentPath === '' || currentPath === undefined;
 	if (!filesOnly && !isDriveList) {
-		if (selectFolderButton) actions.push({ id: 'select', label: t('fileBrowser.selectFolder'), icon: '/img/check.svg' });
-		actions.push({ id: 'new', label: t('fileBrowser.newFolder'), icon: '/img/plus.svg' });
-		actions.push({ id: 'delete', label: t('fileBrowser.deleteFolder'), icon: '/img/del.svg' });
+		if (selectDirectoryButton) actions.push({ id: 'select', label: t('fileBrowser.selectDirectory'), icon: '/img/check.svg' });
+		actions.push({ id: 'new', label: t('fileBrowser.newDirectory'), icon: '/img/plus.svg' });
+		actions.push({ id: 'delete', label: t('fileBrowser.deleteDirectory'), icon: '/img/del.svg' });
 	}
 	if (!isDriveList) actions.push({ id: 'createFile', label: t('fileBrowser.createFile'), icon: '/img/plus.svg' });
 	// Filter button always visible, shows current filter state
@@ -262,7 +262,7 @@ export function parsePathToBreadcrumbs(path: string, separator: string): PathBre
 			items.push({ id: String(i + 1), name: parts[i]!, path: currentPath });
 		}
 	} else {
-		// Windows: start with drive list, then drive, then folders
+		// Windows: start with drive list, then drive, then directories
 		items.push({ id: '0', name: 'Drives', path: '', icon: '/img/storage.svg' });
 		let currentPath = '';
 		for (let i = 0; i < parts.length; i++) {
@@ -281,7 +281,7 @@ export function parsePathToBreadcrumbs(path: string, separator: string): PathBre
 }
 
 // ============================================================================
-// File/Folder CRUD Operations
+// File/Directory CRUD Operations
 // ============================================================================
 
 export interface FileOperationResult {
@@ -290,9 +290,9 @@ export interface FileOperationResult {
 }
 
 /**
- * Delete a file or folder
+ * Delete a file or directory
  */
-export async function deleteFileOrFolder(path: string): Promise<FileOperationResult> {
+export async function deleteFileOrDirectory(path: string): Promise<FileOperationResult> {
 	try {
 		await api.fs.delete(path);
 		return { success: true };
@@ -302,14 +302,14 @@ export async function deleteFileOrFolder(path: string): Promise<FileOperationRes
 }
 
 /**
- * Create a new folder
+ * Create a new directory
  */
-export async function createFolder(path: string): Promise<FileOperationResult> {
+export async function createDirectory(path: string): Promise<FileOperationResult> {
 	try {
 		await api.fs.mkdir(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: withDetail(tt('fileBrowser.createFolderFailed'), translateError(e)) };
+		return { success: false, error: withDetail(tt('fileBrowser.createDirectoryFailed'), translateError(e)) };
 	}
 }
 

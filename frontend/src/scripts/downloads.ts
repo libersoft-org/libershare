@@ -241,7 +241,7 @@ export function resetVerifyState(lishID: string): void {
 // Table columns definition
 export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 10vw 10vw 8vw 8vw 8vw 8vw 8vw';
 // Toolbar action IDs for download detail view
-export type DownloadToolbarActionID = 'back' | 'open-folder' | 'toggle-download' | 'toggle-upload' | 'verify' | 'stop-verify' | 'export' | 'move' | 'delete';
+export type DownloadToolbarActionID = 'back' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'verify' | 'stop-verify' | 'export' | 'move' | 'delete';
 export interface DownloadToolbarAction {
 	id: DownloadToolbarActionID;
 	icon: string | ((downloadPaused: boolean, uploadPaused: boolean) => string);
@@ -249,7 +249,7 @@ export interface DownloadToolbarAction {
 }
 export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
 	{ id: 'back', icon: '/img/back.svg', getLabel: t => t('common.back') },
-	{ id: 'open-folder', icon: '/img/folder.svg', getLabel: t => t('common.openFolder') },
+	{ id: 'open-directory', icon: '/img/directory.svg', getLabel: t => t('common.openDirectory') },
 	{ id: 'toggle-download', icon: dp => (dp ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, dp) => (dp ? t('downloads.startDownload') : t('downloads.pauseDownload')) },
 	{ id: 'toggle-upload', icon: (_dp, up) => (up ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, _dp, up) => (up ? t('downloads.startUpload') : t('downloads.pauseUpload')) },
 	{ id: 'verify', icon: '/img/check.svg', getLabel: t => t('downloads.verify') },
@@ -267,8 +267,8 @@ export function handleDownloadToolbarAction(actionId: DownloadToolbarActionID): 
 	switch (actionId) {
 		case 'back':
 			return { handled: false, needsBack: true };
-		case 'open-folder':
-			// TODO: Implement open folder in file browser
+		case 'open-directory':
+			// TODO: Implement open directory in file browser
 			return { handled: true };
 		case 'toggle-download':
 			// TODO: Implement toggle pause/resume download
