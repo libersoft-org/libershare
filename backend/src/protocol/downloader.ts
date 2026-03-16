@@ -204,9 +204,46 @@ export class Downloader {
 	}
 
 	private async callForPeers() {
+		// 1. GossipSub broadcast (may not reach all peers reliably)
 		const msg: PubsubMessage = { type: 'want', lishID: this.lishID };
 		await this.network.broadcast(lishTopic(this.networkID), msg);
+		// 2. Direct probe: try every peer on the topic via LISH protocol stream
+		await this.probeTopicPeers();
 		this.setupCallForPeersInterval();
+	}
+
+	private async probeTopicPeers(): Promise<void> {
+		const topicPeers = this.network.getTopicPeers(this.networkID);
+		for (const peerID of topicPeers) {
+			if (this.peers.has(peerID)) continue;
+			try {
+				console.log(`[Probe] Trying direct connection to peer ${peerID.slice(0, 20)}...`);
+				const stream = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
+				const client = new LISHClient(stream);
+				// Ask if peer has this LISH via manifest request
+				const manifest = await client.requestManifest(this.lishID);
+				if (manifest) {
+					console.log(`[Probe] ✓ Peer ${peerID.slice(0, 20)} has the file!`);
+					this.peers.set(peerID, client);
+					// If we needed manifest, import it now
+					if (this.needsManifest && manifest.files && manifest.files.length > 0) {
+						this.lish = { ...manifest, directory: this.downloadDir };
+						this.dataServer.add(this.lish);
+						this.onManifestImported?.(this.lishID);
+						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
+						this.needsManifest = false;
+						this.state = 'preparing';
+						console.log(`[Probe] ✓ Got manifest: ${manifest.files.length} files, ${this.missingChunks.length} chunks to download`);
+					}
+					this.doWork().then(() => {});
+					return; // Found a peer, start downloading
+				} else {
+					await client.close();
+				}
+			} catch (err) {
+				console.log(`[Probe] ✗ Peer ${peerID.slice(0, 20)}: ${(err as Error).message}`);
+			}
+		}
 	}
 
 	private setupCallForPeersInterval() {
