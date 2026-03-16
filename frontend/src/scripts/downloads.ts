@@ -250,8 +250,8 @@ export interface DownloadToolbarAction {
 export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
 	{ id: 'back', icon: '/img/back.svg', getLabel: t => t('common.back') },
 	{ id: 'open-directory', icon: '/img/directory.svg', getLabel: t => t('common.openDirectory') },
-	{ id: 'toggle-download', icon: dp => (dp ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, dp) => (dp ? t('downloads.startDownload') : t('downloads.pauseDownload')) },
-	{ id: 'toggle-upload', icon: (_dp, up) => (up ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, _dp, up) => (up ? t('downloads.startUpload') : t('downloads.pauseUpload')) },
+	{ id: 'toggle-download', icon: dp => (dp ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, dp) => (dp ? t('downloads.enableDownload') : t('downloads.disableDownload')) },
+	{ id: 'toggle-upload', icon: (_dp, up) => (up ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, _dp, up) => (up ? t('downloads.enableUpload') : t('downloads.disableUpload')) },
 	{ id: 'verify', icon: '/img/check.svg', getLabel: t => t('downloads.verify') },
 	{ id: 'stop-verify', icon: '/img/cross.svg', getLabel: t => t('downloads.stopVerify') },
 	{ id: 'export', icon: '/img/upload.svg', getLabel: t => t('common.export') },
