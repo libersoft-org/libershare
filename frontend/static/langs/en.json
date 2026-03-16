@@ -108,7 +108,8 @@
 		"verifyAllConfirm": "Do you really want to verify the integrity of all LISHs? This action can take a very long time.",
 		"stopVerify": "Stop verification",
 		"stopVerifyAll": "Stop all verifications",
-		"verifyDone": "Verification of \"{name}\" completed",
+		"verifyDone": "Verification of LISH \"{name}\" completed",
+		"lishAdded": "LISH \"{name}\" added",
 		"moveData": "Move data",
 		"deleteDialog": {
 			"message": "What do you want to delete?",

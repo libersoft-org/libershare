@@ -157,6 +157,7 @@ export async function initDownloads(): Promise<void> {
 					updated[idx] = entry;
 					return updated;
 				}
+				addNotification(tt('downloads.lishAdded', { name: detail.name ?? detail.id }));
 				return [entry, ...list];
 			});
 		});
