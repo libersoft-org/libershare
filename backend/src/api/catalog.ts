@@ -117,7 +117,17 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 				const downloader = new Downloader(downloadDir, network, deps.dataServer, p.networkID);
 				await downloader.initFromManifest(stubManifest);
 
-				// Start async download — events will be emitted on progress
+				// Emit progress events to frontend
+				downloader.setProgressCallback(info => {
+					deps.emit(client, 'transfer.download:progress', {
+						lishID: entry.lish_id,
+						downloadedChunks: info.downloadedChunks,
+						totalChunks: info.totalChunks,
+						peers: info.peers,
+					});
+				});
+
+				// Start async download
 				downloader
 					.download()
 					.then(() => deps.emit(client, 'transfer.download:complete', { downloadDir, lishID: entry.lish_id, name: entry.name }))

@@ -41,6 +41,11 @@ export class Downloader {
 	private needsManifest = false;
 	private downloadResolve?: () => void;
 	private downloadReject?: (err: Error) => void;
+	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number }) => void;
+
+	setProgressCallback(cb: (info: { downloadedChunks: number; totalChunks: number; peers: number }) => void): void {
+		this.onProgress = cb;
+	}
 
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkID: string) {
 		this.downloadDir = downloadDir;
@@ -175,11 +180,11 @@ export class Downloader {
 					if (data) {
 						// Write chunk to file at correct offset
 						await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
-						// Mark as downloaded
 						this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 						downloadedCount++;
 						downloaded = true;
 						console.log(`✓ Downloaded chunk ${downloadedCount}/${missingChunks.length}`);
+						this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: missingChunks.length, peers: this.peers.size });
 						break;
 					}
 				}
