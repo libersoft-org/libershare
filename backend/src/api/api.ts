@@ -66,6 +66,7 @@ export class APIServer {
 			dataServer: this.dataServer,
 			dataDir: this.dataDir,
 			emit: emitTo,
+			broadcast: broadcastFn,
 		}) : null;
 		this.handlers = {
 			// Events

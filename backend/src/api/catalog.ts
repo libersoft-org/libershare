@@ -35,11 +35,14 @@ export interface CatalogHandlers {
 
 type EmitFn = (client: any, event: string, data: any) => void;
 
+type BroadcastFn = (event: string, data: any) => void;
+
 export interface CatalogHandlerDeps {
 	networks: Networks;
 	dataServer: DataServer;
 	dataDir: string;
 	emit: EmitFn;
+	broadcast: BroadcastFn;
 }
 
 export function initCatalogHandlers(catalogManager: CatalogManager, deps?: CatalogHandlerDeps): CatalogHandlers {
@@ -117,15 +120,15 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 				const downloader = new Downloader(downloadDir, network, deps.dataServer, p.networkID);
 				await downloader.initFromManifest(stubManifest);
 
-				// Notify frontend when manifest is imported (LISH appears in downloads)
+				// Notify ALL clients when manifest is imported (LISH appears in downloads)
 				downloader.setManifestImportedCallback(lishID => {
 					const detail = deps.dataServer.getDetail(lishID);
-					if (detail) deps.emit(client, 'lishs:add', detail);
+					if (detail) deps.broadcast('lishs:add', detail);
 				});
 
-				// Emit progress events to frontend
+				// Broadcast progress to ALL connected clients
 				downloader.setProgressCallback(info => {
-					deps.emit(client, 'transfer.download:progress', {
+					deps.broadcast('transfer.download:progress', {
 						lishID: entry.lish_id,
 						downloadedChunks: info.downloadedChunks,
 						totalChunks: info.totalChunks,
@@ -134,13 +137,13 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 					});
 				});
 
-				// Start async download
+				// Start async download — broadcast completion/error to ALL clients
 				downloader
 					.download()
-					.then(() => deps.emit(client, 'transfer.download:complete', { downloadDir, lishID: entry.lish_id, name: entry.name }))
+					.then(() => deps.broadcast('transfer.download:complete', { downloadDir, lishID: entry.lish_id, name: entry.name }))
 					.catch(err => {
-						if (err instanceof CodedError) deps.emit(client, 'transfer.download:error', { error: err.code, errorDetail: err.detail, lishID: entry.lish_id });
-						else deps.emit(client, 'transfer.download:error', { error: ErrorCodes.DOWNLOAD_ERROR, errorDetail: err.message, lishID: entry.lish_id });
+						if (err instanceof CodedError) deps.broadcast('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID: entry.lish_id });
+						else deps.broadcast('transfer.download:error', { error: ErrorCodes.DOWNLOAD_ERROR, errorDetail: err.message, lishID: entry.lish_id });
 					});
 
 				return {
