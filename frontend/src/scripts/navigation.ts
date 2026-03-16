@@ -203,6 +203,9 @@ export function createNavigation() {
 	// Set global navigate function so components can use navigateTo()
 	globalNavigate = navigate;
 	globalNavigateBack = navigateBack;
+	// Expose for E2E testing
+	(window as any).__navigateTo = navigateTo;
+	(window as any).__navigateBack = navigateBack;
 
 	return {
 		path: pathIDs,

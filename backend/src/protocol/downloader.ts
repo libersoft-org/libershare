@@ -42,9 +42,14 @@ export class Downloader {
 	private downloadResolve?: () => void;
 	private downloadReject?: (err: Error) => void;
 	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number }) => void;
+	private onManifestImported?: (lishID: string) => void;
 
 	setProgressCallback(cb: (info: { downloadedChunks: number; totalChunks: number; peers: number }) => void): void {
 		this.onProgress = cb;
+	}
+
+	setManifestImportedCallback(cb: (lishID: string) => void): void {
+		this.onManifestImported = cb;
 	}
 
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkID: string) {
@@ -130,6 +135,7 @@ export class Downloader {
 						this.lish = { ...manifest, directory: this.downloadDir };
 						// Import into dataServer so getMissingChunks works
 						this.dataServer.add(this.lish);
+						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 						this.needsManifest = false;
 						console.log(`Found ${this.missingChunks.length} chunks to download`);

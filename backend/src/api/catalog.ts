@@ -117,6 +117,12 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 				const downloader = new Downloader(downloadDir, network, deps.dataServer, p.networkID);
 				await downloader.initFromManifest(stubManifest);
 
+				// Notify frontend when manifest is imported (LISH appears in downloads)
+				downloader.setManifestImportedCallback(lishID => {
+					const detail = deps.dataServer.getDetail(lishID);
+					if (detail) deps.emit(client, 'lishs:add', detail);
+				});
+
 				// Emit progress events to frontend
 				downloader.setProgressCallback(info => {
 					deps.emit(client, 'transfer.download:progress', {
