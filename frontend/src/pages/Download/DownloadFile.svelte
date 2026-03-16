@@ -40,7 +40,11 @@
 <TableRow {selected} {odd} {position} bind:el>
 	<TableCell><span class="name"><Icon img={typeIcon} size="1.6vh" padding="0" colorVariable={iconColor} />{name}</span></TableCell>
 	<TableCell align="center">{sizeDisplay}</TableCell>
-	<TableCell
-		>{#if isFile}<ProgressBar {progress} {animated} />{:else}-{/if}</TableCell
-	>
+	<TableCell align="center">
+		{#if isFile}
+			<ProgressBar {progress} {animated} />
+		{:else}
+			<div>-</div>
+		{/if}
+	</TableCell>
 </TableRow>
