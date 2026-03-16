@@ -6,6 +6,7 @@ import { audioEnabled, setAudioEnabled, cursorSize, setCursorSize, type CursorSi
 import { footerPosition, setFooterPosition } from './settings.ts';
 import { type FooterPosition } from './footerWidgets.ts';
 import Items from '../pages/Products/Products.svelte';
+import Categories from '../pages/Categories/Categories.svelte';
 import Storage from '../pages/Storage/Storage.svelte';
 import Download from '../pages/Download/Download.svelte';
 import DownloadLISHCreate from '../pages/Download/DownloadLISHCreate.svelte';
@@ -53,7 +54,48 @@ export const menuStructure = derived(
 				id: 'library',
 				label: tt('library.title'),
 				icon: '/img/online.svg',
-				component: Items,
+				component: Categories,
+				submenu: [
+					{
+						id: 'all',
+						label: tt('library.categories.all'),
+						iconPosition: 'left',
+						iconSize: '2vh',
+						component: Items,
+					},
+					{
+						id: 'movie',
+						label: tt('library.categories.movies'),
+						iconPosition: 'left',
+						iconSize: '2vh',
+						component: Items,
+						props: { category: 'movie' },
+					},
+					{
+						id: 'software',
+						label: tt('library.categories.software'),
+						iconPosition: 'left',
+						iconSize: '2vh',
+						component: Items,
+						props: { category: 'software' },
+					},
+					{
+						id: 'video',
+						label: tt('library.categories.video'),
+						iconPosition: 'left',
+						iconSize: '2vh',
+						component: Items,
+						props: { category: 'video' },
+					},
+					{
+						id: 'back',
+						label: tt('common.back'),
+						icon: '/img/back.svg',
+						iconPosition: 'left',
+						iconSize: '2vh',
+						action: 'back' as const,
+					},
+				],
 			},
 			{
 				id: 'downloads',

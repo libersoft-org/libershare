@@ -14,16 +14,17 @@
 	import ProductsList from './ProductsList.svelte';
 	import CatalogPublishPanel from './CatalogPublishPanel.svelte';
 	import CatalogACLPanel from './CatalogACLPanel.svelte';
-	import { listCatalogEntries, searchCatalog, subscribeCatalogEvents, getCatalogAccess, type CatalogEntryResponse, type CatalogACLResponse } from '../../scripts/catalog.ts';
+	import { listCatalogEntries, searchCatalog, subscribeCatalogEvents, getCatalogAccess, parseTags, type CatalogEntryResponse, type CatalogACLResponse } from '../../scripts/catalog.ts';
 	import { api } from '../../scripts/api.ts';
 
 	interface Props {
 		areaID: string;
 		position: Position;
 		title?: string;
+		category?: string;
 		onBack?: () => void;
 	}
-	let { areaID, position, title = 'Library', onBack }: Props = $props();
+	let { areaID, position, title = 'Library', category, onBack }: Props = $props();
 
 	let activeNetworkID = $state('');
 	let networkName = $state('');
@@ -35,7 +36,15 @@
 	let currentView = $state<'catalog' | 'publish' | 'acl'>('catalog');
 	let removeBackHandler: (() => void) | null = null;
 
-	let items = $derived(entries.map(e => ({
+	let filteredEntries = $derived(category
+		? entries.filter(e => {
+			const tags = parseTags(e.tags ?? null);
+			return tags.includes(category);
+		})
+		: entries
+	);
+
+	let items = $derived(filteredEntries.map(e => ({
 		id: e.lish_id,
 		title: e.name || e.lish_id,
 		description: e.description,
@@ -184,7 +193,7 @@
 					<Button icon="/img/settings.svg" label="Permissions" position={[1, 0]} onConfirm={openACLPanel} width="auto" />
 				</ButtonBar>
 				{#if networkName}
-					<span class="status-text">{networkName} — {entries.length} entries</span>
+					<span class="status-text">{networkName} — {items.length} entries{category ? ` (${category})` : ''}</span>
 				{/if}
 			</div>
 

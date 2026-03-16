@@ -11,10 +11,11 @@
 		isAPressed?: boolean;
 		el?: HTMLElement | undefined;
 	}
-	let { title = '', totalSize, fileCount, tags, contentType, isGamepadHovered = false, isAPressed = false, el = $bindable() }: Props = $props();
+	let { title = '', totalSize, fileCount, tags, contentType, description, isGamepadHovered = false, isAPressed = false, el = $bindable() }: Props = $props();
 	void el;
 	let parsedTags = $derived(parseTags(tags ?? null));
 	let sizeLabel = $derived(totalSize ? formatSize(totalSize) : '');
+	let shortDesc = $derived(description ? (description.length > 80 ? description.slice(0, 80) + '...' : description) : '');
 </script>
 
 <style>
@@ -27,7 +28,8 @@
 		border: 0.5vh solid var(--secondary-soft-background);
 		border-radius: 2vh;
 		overflow: hidden;
-		aspect-ratio: 16 / 9;
+		aspect-ratio: 4 / 3;
+		min-height: 20vh;
 		box-sizing: border-box;
 		transition: all 0.3s linear;
 	}
@@ -44,10 +46,19 @@
 	.content {
 		display: flex;
 		flex-direction: column;
-		gap: 0.3vh;
-		padding: 1vh;
+		gap: 0.5vh;
+		padding: 1.2vh;
 		background-color: var(--secondary-hard-background);
 		opacity: 0.9;
+	}
+
+	.description {
+		font-size: 1.3vh;
+		color: var(--secondary-foreground);
+		opacity: 0.5;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.title {
@@ -86,6 +97,9 @@
 <div bind:this={el} class="item" class:hover={isGamepadHovered} class:pressed={isAPressed}>
 	<div class="content">
 		<div class="title">{title}</div>
+		{#if shortDesc}
+			<div class="description">{shortDesc}</div>
+		{/if}
 		{#if sizeLabel || fileCount}
 			<div class="meta">
 				{#if sizeLabel}<span>{sizeLabel}</span>{/if}

@@ -64,6 +64,12 @@
 	},
 	"library": {
 		"title": "Online library",
+		"categories": {
+			"all": "All",
+			"movies": "Movies",
+			"software": "Software",
+			"video": "Video"
+		},
 		"product": {
 			"downloads": "Downloads",
 			"download": "Download",
