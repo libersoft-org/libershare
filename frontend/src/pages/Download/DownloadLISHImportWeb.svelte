@@ -117,14 +117,14 @@
 {#if parsedLISHs}
 	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} onDone={handleOverwriteDone} />
 {:else if browsingDownloadPath}
-	<FileBrowser {areaID} {position} initialPath={downloadPath} foldersOnly showPath selectFolderButton onSelect={handleDownloadPathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={downloadPath} directoriesOnly showPath selectDirectoryButton onSelect={handleDownloadPathSelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="import">
 		<div class="container">
 			<Input bind:value={url} label={$t('lish.import.url')} placeholder="https://..." position={[0, 0]} flex />
 			<div class="row">
 				<Input bind:value={downloadPath} label={$t('lish.import.downloadPath')} position={[0, 1]} flex />
-				<Button icon="/img/folder.svg" position={[1, 1]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<SwitchRow label={$t('lish.import.autoStartSharing')} checked={autoStart} position={[0, 2]} onToggle={() => (autoStart = !autoStart)} />
 			{#if errorMessage}

@@ -25,6 +25,8 @@
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let showVerifyAllDialog = $state(false);
 	let search = $state('');
+	let allDownloadPaused = $state(true);
+	let allUploadPaused = $state(true);
 	let anyVerifying = $derived($downloads.some(d => d.status === 'verifying' || d.status === 'pending-verification'));
 	let filteredDownloads = $derived(
 		search.trim()
@@ -78,9 +80,11 @@
 		<Button icon="/img/plus.svg" label={$t('downloads.createLISH')} position={[0, 0]} onConfirm={() => navigateTo('create-lish')} />
 		<Button icon="/img/download.svg" label={$t('common.import')} position={[1, 0]} onConfirm={() => navigateTo('import-lish')} />
 		<Button icon="/img/upload.svg" label={$t('common.exportAll')} position={[2, 0]} onConfirm={() => navigateTo('export-all-lish')} />
-		<Button icon="/img/check.svg" label={$t('downloads.verifyAll')} position={[3, 0]} onConfirm={() => (showVerifyAllDialog = true)} />
+		<Button icon={allDownloadPaused ? '/img/play.svg' : '/img/pause.svg'} label={allDownloadPaused ? $t('downloads.enableDownloadAll') : $t('downloads.disableDownloadAll')} position={[3, 0]} onConfirm={() => (allDownloadPaused = !allDownloadPaused)} />
+		<Button icon={allUploadPaused ? '/img/play.svg' : '/img/pause.svg'} label={allUploadPaused ? $t('downloads.enableUploadAll') : $t('downloads.disableUploadAll')} position={[4, 0]} onConfirm={() => (allUploadPaused = !allUploadPaused)} />
+		<Button icon="/img/check.svg" label={$t('downloads.verifyAll')} position={[5, 0]} onConfirm={() => (showVerifyAllDialog = true)} />
 		{#if anyVerifying}
-			<Button icon="/img/cross.svg" label={$t('downloads.stopVerifyAll')} position={[4, 0]} onConfirm={() => api.lishs.stopVerifyAll()} />
+			<Button icon="/img/cross.svg" label={$t('downloads.stopVerifyAll')} position={[6, 0]} onConfirm={() => api.lishs.stopVerifyAll()} />
 		{/if}
 	</ButtonBar>
 	<Input bind:value={search} placeholder={$t('common.search') + ' ...'} fontSize="2vh" position={[0, 1]} />

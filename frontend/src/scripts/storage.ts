@@ -1,4 +1,4 @@
-export type StorageItemType = 'folder' | 'file' | 'drive';
+export type StorageItemType = 'directory' | 'file' | 'drive';
 
 export interface StorageItemData {
 	id: string;
@@ -10,11 +10,9 @@ export interface StorageItemData {
 	hidden?: boolean | undefined;
 }
 
-/**
- * Get icon path for storage item type
- */
+// Get icon path for storage item type
 export function getStorageIcon(type: StorageItemType): string {
 	if (type === 'drive') return '/img/storage.svg';
-	if (type === 'folder') return '/img/folder.svg';
+	if (type === 'directory') return '/img/directory.svg';
 	return '/img/file.svg';
 }

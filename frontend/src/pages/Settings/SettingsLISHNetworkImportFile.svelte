@@ -108,7 +108,7 @@
 		<div class="container">
 			<div class="row">
 				<Input bind:value={filePath} label={$t('settings.lishNetworkImport.filePath')} position={[0, 0]} flex />
-				<Button icon="/img/folder.svg" position={[1, 0]} onConfirm={openFilePathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Button icon="/img/directory.svg" position={[1, 0]} onConfirm={openFilePathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />

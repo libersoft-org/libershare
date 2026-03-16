@@ -84,7 +84,7 @@
 	let showOverwriteConfirm = $state(false);
 	let pendingCreateParams = $state<Record<string, any>>({});
 	let createParams = $state<Record<string, any>>({});
-	let browseFolder = $state('');
+	let browseDirectory = $state('');
 	let browseFile = $state<string | undefined>(undefined);
 	let lishFileName = $state(''); // File name input in LISH file browse dialog
 	// Form state
@@ -104,11 +104,11 @@
 		if (!lishFileManuallyEdited) {
 			const sanitized = newName ? sanitizeFilename(newName) : '';
 			if (sanitized) {
-				const { folder } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
-				lishFile = joinPath(folder, sanitized + (compress ? '.lish.gz' : '.lish'));
+				const { directory } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
+				lishFile = joinPath(directory, sanitized + (compress ? '.lish.gz' : '.lish'));
 			} else {
-				const { folder } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
-				lishFile = folder;
+				const { directory } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
+				lishFile = directory;
 			}
 		}
 	}
@@ -237,8 +237,8 @@
 	}
 
 	function openInputPathBrowse(): void {
-		const { folder, fileName } = splitPath(dataPath.trim(), $storagePath);
-		browseFolder = folder;
+		const { directory, fileName } = splitPath(dataPath.trim(), $storagePath);
+		browseDirectory = directory;
 		browseFile = fileName;
 		browsingInputPath = true;
 		navHandle.pause();
@@ -252,8 +252,8 @@
 	}
 
 	function openOutputPathBrowse(): void {
-		const { folder, fileName } = splitPath(lishFile.trim() || $storageLISHPath, $storageLISHPath);
-		browseFolder = folder;
+		const { directory, fileName } = splitPath(lishFile.trim() || $storageLISHPath, $storageLISHPath);
+		browseDirectory = directory;
 		lishFileName = fileName || '';
 		browsingLISHFile = true;
 		navHandle.pause();
@@ -261,9 +261,9 @@
 		removeBackHandler = pushBackHandler(handleOutputBrowseBack);
 	}
 
-	function handleOutputPathSelect(folderPath: string): void {
+	function handleOutputPathSelect(directoryPath: string): void {
 		const fileName = lishFileName.trim() || 'output.lish';
-		lishFile = joinPath(folderPath, fileName);
+		lishFile = joinPath(directoryPath, fileName);
 		lishFileManuallyEdited = true;
 		handleOutputBrowseBack();
 	}
@@ -332,9 +332,9 @@
 </style>
 
 {#if browsingInputPath}
-	<FileBrowser {areaID} {position} initialPath={browseFolder} initialFile={browseFile} showPath selectFolderButton selectFileButton onSelect={handleInputPathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={browseDirectory} initialFile={browseFile} showPath selectDirectoryButton selectFileButton onSelect={handleInputPathSelect} onBack={handleBrowseBack} />
 {:else if browsingLISHFile}
-	<FileBrowser {areaID} {position} initialPath={browseFolder} showPath foldersOnly selectFolderButton saveFileName={lishFileName} onSaveFileNameChange={v => (lishFileName = v)} onSelect={handleOutputPathSelect} onBack={handleOutputBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton saveFileName={lishFileName} onSaveFileNameChange={v => (lishFileName = v)} onSelect={handleOutputPathSelect} onBack={handleOutputBrowseBack} />
 {:else if creating}
 	<DownloadLISHProgress {areaID} {position} params={createParams} onBack={handleProgressNavBack} onComplete={() => (progressDone = true)} />
 {:else}
@@ -347,7 +347,7 @@
 			<!-- Data Path (required) -->
 			<div class="row">
 				<Input bind:value={dataPath} label={$t('lish.create.dataPath')} position={[0, 2]} flex />
-				<Button icon="/img/folder.svg" position={[1, 2]} onConfirm={openInputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Button icon="/img/directory.svg" position={[1, 2]} onConfirm={openInputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<!-- Save to File Switch -->
 			<SwitchRow label={$t('lish.create.saveToFile') + ':'} checked={saveToFile} position={[0, 3]} onConfirm={() => (saveToFile = !saveToFile)} />
@@ -355,7 +355,7 @@
 				<!-- LISH File Path (optional) -->
 				<div class="row">
 					<Input bind:value={lishFile} label={`${$t('lish.create.lishFile')} (${$t('common.optional')})`} position={[0, 4]} flex onchange={() => (lishFileManuallyEdited = true)} />
-					<Button icon="/img/folder.svg" position={[1, 4]} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+					<Button icon="/img/directory.svg" position={[1, 4]} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
 			{/if}
 			<!-- Add to Sharing Switch -->

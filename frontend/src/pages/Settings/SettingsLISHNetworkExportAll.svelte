@@ -25,8 +25,8 @@
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 	let removeBackHandler: (() => void) | null = null;
 	let saving = $state(false);
-	let browsingFolder = $state(false);
-	let browseFolder = $state('');
+	let browsingDirectory = $state(false);
+	let browseDirectory = $state('');
 	let minifyJSONState = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
 	let errorMessage = $state('');
@@ -55,18 +55,18 @@
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
 
-	function openFolderBrowse(): void {
-		const { folder } = splitPath(filePath.trim(), $storageLISHnetPath);
-		browseFolder = folder;
-		browsingFolder = true;
+	function openDirectoryBrowse(): void {
+		const { directory } = splitPath(filePath.trim(), $storageLISHnetPath);
+		browseDirectory = directory;
+		browsingDirectory = true;
 		navHandle.pause();
-		pushBreadcrumb($t('common.openFolder'));
+		pushBreadcrumb($t('common.openDirectory'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
-	function handleFolderSelect(folderPath: string): void {
+	function handleDirectorySelect(directoryPath: string): void {
 		const { fileName } = splitPath(filePath.trim(), $storageLISHnetPath);
-		filePath = joinPath(folderPath, fileName || generateFileName());
+		filePath = joinPath(directoryPath, fileName || generateFileName());
 		handleBrowseBack();
 	}
 
@@ -76,7 +76,7 @@
 			removeBackHandler = null;
 		}
 		popBreadcrumb();
-		browsingFolder = false;
+		browsingDirectory = false;
 		await tick();
 		navHandle.resume();
 		activateArea(areaID);
@@ -149,14 +149,14 @@
 	}
 </style>
 
-{#if browsingFolder}
-	<FileBrowser {areaID} {position} initialPath={browseFolder} showPath foldersOnly selectFolderButton onSelect={handleFolderSelect} onBack={handleBrowseBack} />
+{#if browsingDirectory}
+	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton onSelect={handleDirectorySelect} onBack={handleBrowseBack} />
 {:else}
 	<div class="export-all">
 		<div class="container">
 			<div class="row">
 				<Input bind:value={filePath} label={$t('common.file')} position={[0, 0]} flex />
-				<Button icon="/img/folder.svg" position={[1, 0]} onConfirm={openFolderBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Button icon="/img/directory.svg" position={[1, 0]} onConfirm={openDirectoryBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<SwitchRow label={$t('settings.lishNetwork.minifyJSON')} checked={minifyJSONState} position={[0, 1]} onToggle={() => (minifyJSONState = !minifyJSONState)} />
 			<SwitchRow label={$t('settings.lishNetwork.compress')} checked={compress} position={[0, 2]} onToggle={handleCompressToggle} />

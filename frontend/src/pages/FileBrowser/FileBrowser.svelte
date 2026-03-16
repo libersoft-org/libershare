@@ -6,7 +6,7 @@
 	import { t, withDetail, translateError } from '../../scripts/language.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
-	import { getParentPath, loadDirectoryFromAPI, createParentEntry, isAtRoot, getCurrentDirName, buildFolderActions, buildFilterActions, deleteFileOrFolder, createFolder, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
+	import { getParentPath, loadDirectoryFromAPI, createParentEntry, isAtRoot, getCurrentDirName, buildDirectoryActions, buildFilterActions, deleteFileOrDirectory, createDirectory, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
 	import { type StorageItemData } from '../../scripts/storage.ts';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -26,12 +26,12 @@
 		position: Position;
 		initialPath?: string | undefined;
 		initialFile?: string | undefined; // File name to select in the initial directory
-		foldersOnly?: boolean | undefined;
+		directoriesOnly?: boolean | undefined;
 		filesOnly?: boolean | undefined;
 		fileFilter?: string[] | undefined; // Array of extensions like ['.lish', '.json'] or ['*'] for all
 		fileFilterName?: string | undefined; // Display name for the filter (e.g. 'LISH files')
 		showPath?: boolean | undefined;
-		selectFolderButton?: boolean | undefined;
+		selectDirectoryButton?: boolean | undefined;
 		selectFileButton?: boolean | undefined;
 		saveFileName?: string | undefined; // If provided, shows a filename input for "save as" mode
 		saveContent?: string | undefined; // Content to save - if provided, FileBrowser handles the save operation
@@ -45,7 +45,7 @@
 		specialFileTypes?: { extensions: string[]; onOpen: (path: string) => void }[] | undefined;
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, position, initialPath = '', initialFile, foldersOnly = false, filesOnly = false, fileFilter, fileFilterName, showPath = true, selectFolderButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, specialFileTypes }: Props = $props();
+	let { areaID, position, initialPath = '', initialFile, directoriesOnly = false, filesOnly = false, fileFilter, fileFilterName, showPath = true, selectDirectoryButton: selectDirectoryButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, specialFileTypes }: Props = $props();
 
 	// File filter state
 	let showAllFiles = $state(false);
@@ -53,7 +53,7 @@
 	let activeFilter = $derived(customFilter ? [customFilter] : showAllFiles ? ['*'] : fileFilter);
 	// Calculate sub-area positions based on base position
 	let pathBreadcrumbPosition = $derived({ x: position.x + CONTENT_OFFSETS.pathBreadcrumb.x, y: position.y + CONTENT_OFFSETS.pathBreadcrumb.y });
-	let folderActionsPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
+	let directoryActionsPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
 	let listPosition = $derived({ x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y });
 	let actionsPosition = $derived({ x: position.x + CONTENT_OFFSETS.side.x, y: position.y + CONTENT_OFFSETS.side.y });
 	let listAreaID = $derived(`${areaID}-list`);
@@ -73,7 +73,7 @@
 	let error = $state<string | null>(null);
 	let separator = $state('/');
 	let showDeleteConfirm = $state(false);
-	let showNewFolderDialogState = $state(false);
+	let showNewDirectoryDialogState = $state(false);
 	let showCreateFileDialogState = $state(false);
 	let showDeleteFileConfirm = $state(false);
 	let showRenameFileDialogState = $state(false);
@@ -88,7 +88,7 @@
 	let pendingSavePath = $state('');
 	let saveErrorMessage = $state('');
 	const LARGE_FILE_THRESHOLD = 1024 * 1024; // 1 MB
-	let unregisterFolderActions: (() => void) | null = null;
+	let unregisterDirectoryActions: (() => void) | null = null;
 	let unregisterList: (() => void) | null = null;
 	let unregisterActions: (() => void) | null = null;
 	let unregisterFilter: (() => void) | null = null;
@@ -102,10 +102,10 @@
 	let saveFileNameActive = $derived($activeArea === `${areaID}-save-filename`);
 	let saveFileNameColumn = $state(0); // 0 = input, 1 = button
 	let selectedItem = $derived(items[selectedIndex]);
-	// Folder toolbar actions
-	let folderActions = $derived(buildFolderActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectFolderButton, customFilter ?? undefined, currentPath));
-	let selectedFolderActionIndex = $state(0);
-	let folderActionsActive = $derived($activeArea === `${areaID}-folder-actions`);
+	// Directory toolbar actions
+	let directoryActions = $derived(buildDirectoryActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectDirectoryButton, customFilter ?? undefined, currentPath));
+	let selectedDirectoryActionIndex = $state(0);
+	let directoryActionsActive = $derived($activeArea === `${areaID}-directory-actions`);
 	// Filter panel actions
 	let filterActions = $derived(buildFilterActions($t, fileFilter, fileFilterName, customFilter ?? undefined));
 	let showCustomFilterDialog = $state(false);
@@ -119,7 +119,7 @@
 			parentPath = getParentPath(path, separator);
 		}
 		try {
-			const options: LoadDirectoryOptions = { foldersOnly, filesOnly, fileFilter: activeFilter };
+			const options: LoadDirectoryOptions = { directoriesOnly: directoriesOnly, filesOnly, fileFilter: activeFilter };
 			const result = await loadDirectoryFromAPI(path, separator, options);
 			currentPath = result.path;
 			parentPath = result.parentPath;
@@ -147,8 +147,8 @@
 	}
 
 	async function navigateInto(item: StorageItemData): Promise<void> {
-		if (item.type === 'folder' || item.type === 'drive') {
-			// If navigating to "..", select the folder we came from
+		if (item.type === 'directory' || item.type === 'drive') {
+			// If navigating to "..", select the directory we came from
 			if (item.name === '..') {
 				const currentName = getCurrentDirName(currentPath, separator);
 				await loadDirectory(item.path, currentName);
@@ -178,12 +178,12 @@
 				scrollToSelected();
 				return true;
 			}
-			// At top of list - go to save filename input if in save mode, or folder actions
+			// At top of list - go to save filename input if in save mode, or directory actions
 			if (error) {
 				if (showPath) activateArea(`${areaID}-path`);
 				else return false;
 			} else if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
-			else activateArea(`${areaID}-folder-actions`);
+			else activateArea(`${areaID}-directory-actions`);
 			return true;
 		},
 		down() {
@@ -205,8 +205,8 @@
 		confirmDown() {},
 		confirmUp() {
 			const item = items[selectedIndex];
-			if (item && (item.type === 'folder' || item.type === 'drive'))
-				navigateInto(item); // Folders/drives - navigate into them
+			if (item && (item.type === 'directory' || item.type === 'drive'))
+				navigateInto(item); // Directories/drives - navigate into them
 			else if (item?.type === 'file') {
 				if (saveFileName !== undefined) {
 					// In save mode, selecting a file sets the filename and triggers save (with overwrite check)
@@ -224,7 +224,7 @@
 		},
 	};
 
-	const folderActionsAreaHandlers = {
+	const directoryActionsAreaHandlers = {
 		up() {
 			// Go to path breadcrumb if available
 			if (showPath) {
@@ -241,23 +241,23 @@
 			return true;
 		},
 		left() {
-			if (selectedFolderActionIndex > 0) {
-				selectedFolderActionIndex--;
+			if (selectedDirectoryActionIndex > 0) {
+				selectedDirectoryActionIndex--;
 				return true;
 			}
 			return false;
 		},
 		right() {
-			if (selectedFolderActionIndex < folderActions.length - 1) {
-				selectedFolderActionIndex++;
+			if (selectedDirectoryActionIndex < directoryActions.length - 1) {
+				selectedDirectoryActionIndex++;
 				return true;
 			}
 			return false;
 		},
 		confirmDown() {},
 		confirmUp() {
-			const action = folderActions[selectedFolderActionIndex];
-			if (action) handleFolderAction(action.id);
+			const action = directoryActions[selectedDirectoryActionIndex];
+			if (action) handleDirectoryAction(action.id);
 		},
 		confirmCancel() {},
 		back() {
@@ -336,9 +336,9 @@
 
 	const saveFileNameAreaHandlers = {
 		up() {
-			// Go back to folder actions
+			// Go back to directory actions
 			saveFileNameInput?.blur();
-			activateArea(`${areaID}-folder-actions`);
+			activateArea(`${areaID}-directory-actions`);
 			return true;
 		},
 		down() {
@@ -410,13 +410,13 @@
 		activateArea(listAreaID);
 	}
 
-	function handleFolderAction(actionId: string): void {
+	function handleDirectoryAction(actionId: string): void {
 		switch (actionId) {
 			case 'select':
 				onSelect?.(currentPath);
 				break;
 			case 'new':
-				showNewFolderDialog();
+				showNewDirectoryDialog();
 				break;
 			case 'delete':
 				showDeleteConfirmDialog();
@@ -448,7 +448,7 @@
 			unregisterFilter();
 			unregisterFilter = null;
 		}
-		activateArea(`${areaID}-folder-actions`);
+		activateArea(`${areaID}-directory-actions`);
 	}
 
 	function handleFilterAction(actionId: string): void {
@@ -500,9 +500,9 @@
 	function showDeleteConfirmDialog(): void {
 		showDeleteConfirm = true;
 		// Unregister areas so dialog can take over
-		if (unregisterFolderActions) {
-			unregisterFolderActions();
-			unregisterFolderActions = null;
+		if (unregisterDirectoryActions) {
+			unregisterDirectoryActions();
+			unregisterDirectoryActions = null;
 		}
 		if (unregisterList) {
 			unregisterList();
@@ -515,32 +515,32 @@
 		pushBreadcrumb($t('common.delete'));
 	}
 
-	async function confirmDeleteFolder(): Promise<void> {
-		const result = await deleteFileOrFolder(currentPath);
+	async function confirmDeleteDirectory(): Promise<void> {
+		const result = await deleteFileOrDirectory(currentPath);
 		if (result.success) {
 			if (parentPath !== null) await loadDirectory(parentPath); // Navigate to parent after deletion
-		} else error = withDetail($t('fileBrowser.deleteFolderFailed'), result.error);
-		cancelDeleteFolder();
+		} else error = withDetail($t('fileBrowser.deleteDirectoryFailed'), result.error);
+		cancelDeleteDirectory();
 	}
 
-	async function cancelDeleteFolder(): Promise<void> {
+	async function cancelDeleteDirectory(): Promise<void> {
 		showDeleteConfirm = false;
 		popBreadcrumb();
 		await tick();
 		// Re-register all areas
-		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
-		activateArea(`${areaID}-folder-actions`);
+		activateArea(`${areaID}-directory-actions`);
 	}
 
-	function showNewFolderDialog(): void {
-		showNewFolderDialogState = true;
+	function showNewDirectoryDialog(): void {
+		showNewDirectoryDialogState = true;
 		dialogError = undefined;
 		// Unregister areas so dialog can take over
-		if (unregisterFolderActions) {
-			unregisterFolderActions();
-			unregisterFolderActions = null;
+		if (unregisterDirectoryActions) {
+			unregisterDirectoryActions();
+			unregisterDirectoryActions = null;
 		}
 		if (unregisterList) {
 			unregisterList();
@@ -550,43 +550,43 @@
 			unregisterActions();
 			unregisterActions = null;
 		}
-		pushBreadcrumb($t('fileBrowser.newFolder'));
+		pushBreadcrumb($t('fileBrowser.newDirectory'));
 	}
 
-	async function confirmNewFolder(folderName: string): Promise<void> {
-		if (!folderName) {
-			dialogError = $t('fileBrowser.folderNameRequired');
+	async function confirmNewDirectory(directoryName: string): Promise<void> {
+		if (!directoryName) {
+			dialogError = $t('fileBrowser.directoryNameRequired');
 			return;
 		}
-		const newPath = joinPathWithSeparator(currentPath, folderName, separator);
-		const result = await createFolder(newPath);
+		const newPath = joinPathWithSeparator(currentPath, directoryName, separator);
+		const result = await createDirectory(newPath);
 		if (result.success) {
-			// Reload directory and select the new folder
-			await loadDirectory(currentPath, folderName);
-			cancelNewFolder(true); // Pass true to indicate success - focus on list
-		} else dialogError = withDetail($t('fileBrowser.createFolderFailed'), result.error);
+			// Reload directory and select the new directory
+			await loadDirectory(currentPath, directoryName);
+			cancelNewDirectory(true); // Pass true to indicate success - focus on list
+		} else dialogError = withDetail($t('fileBrowser.createDirectoryFailed'), result.error);
 	}
 
-	async function cancelNewFolder(focusList = false): Promise<void> {
-		showNewFolderDialogState = false;
+	async function cancelNewDirectory(focusList = false): Promise<void> {
+		showNewDirectoryDialogState = false;
 		popBreadcrumb();
 		await tick();
 		// Re-register all areas
-		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
-		// Focus on list if folder was created successfully, otherwise on toolbar
+		// Focus on list if directory was created successfully, otherwise on toolbar
 		if (focusList) activateArea(listAreaID);
-		else activateArea(`${areaID}-folder-actions`);
+		else activateArea(`${areaID}-directory-actions`);
 	}
 
 	function showCreateFileDialog(): void {
 		showCreateFileDialogState = true;
 		dialogError = undefined;
 		// Unregister areas so dialog can take over
-		if (unregisterFolderActions) {
-			unregisterFolderActions();
-			unregisterFolderActions = null;
+		if (unregisterDirectoryActions) {
+			unregisterDirectoryActions();
+			unregisterDirectoryActions = null;
 		}
 		if (unregisterList) {
 			unregisterList();
@@ -618,11 +618,11 @@
 		popBreadcrumb();
 		await tick();
 		// Re-register all areas
-		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		if (focusList) activateArea(listAreaID);
-		else activateArea(`${areaID}-folder-actions`);
+		else activateArea(`${areaID}-directory-actions`);
 	}
 
 	async function handleOpenFile(item: StorageItemData): Promise<void> {
@@ -650,9 +650,9 @@
 		showDeleteFileConfirm = true;
 		showActions = false;
 		// Unregister areas so dialog can take over
-		if (unregisterFolderActions) {
-			unregisterFolderActions();
-			unregisterFolderActions = null;
+		if (unregisterDirectoryActions) {
+			unregisterDirectoryActions();
+			unregisterDirectoryActions = null;
 		}
 		if (unregisterList) {
 			unregisterList();
@@ -667,7 +667,7 @@
 
 	async function confirmDeleteFile(): Promise<void> {
 		if (!fileToDelete) return;
-		const result = await deleteFileOrFolder(fileToDelete.path);
+		const result = await deleteFileOrDirectory(fileToDelete.path);
 		if (result.success) {
 			// Reload directory
 			await loadDirectory(currentPath);
@@ -681,7 +681,7 @@
 		popBreadcrumb();
 		await tick();
 		// Re-register all areas
-		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(listAreaID);
@@ -692,9 +692,9 @@
 		showRenameFileDialogState = true;
 		showActions = false;
 		// Unregister areas so dialog can take over
-		if (unregisterFolderActions) {
-			unregisterFolderActions();
-			unregisterFolderActions = null;
+		if (unregisterDirectoryActions) {
+			unregisterDirectoryActions();
+			unregisterDirectoryActions = null;
 		}
 		if (unregisterList) {
 			unregisterList();
@@ -723,7 +723,7 @@
 		popBreadcrumb();
 		await tick();
 		// Re-register all areas
-		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(listAreaID);
@@ -736,9 +736,9 @@
 			pendingEditFile = item;
 			showActions = false;
 			// Unregister areas so dialog can take over
-			if (unregisterFolderActions) {
-				unregisterFolderActions();
-				unregisterFolderActions = null;
+			if (unregisterDirectoryActions) {
+				unregisterDirectoryActions();
+				unregisterDirectoryActions = null;
 			}
 			if (unregisterList) {
 				unregisterList();
@@ -759,9 +759,9 @@
 		showEditorState = true;
 		showActions = false;
 		// Unregister areas so editor can take over
-		if (unregisterFolderActions) {
-			unregisterFolderActions();
-			unregisterFolderActions = null;
+		if (unregisterDirectoryActions) {
+			unregisterDirectoryActions();
+			unregisterDirectoryActions = null;
 		}
 		if (unregisterList) {
 			unregisterList();
@@ -788,7 +788,7 @@
 		popBreadcrumb();
 		await tick();
 		// Re-register all areas
-		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(listAreaID);
@@ -799,7 +799,7 @@
 		fileToEdit = null;
 		await tick();
 		// Re-register all areas
-		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(listAreaID);
@@ -867,7 +867,7 @@
 			fileToEdit = null;
 			await tick();
 			// Re-register all areas
-			unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
+			unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
 			unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 			unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		}
@@ -884,8 +884,8 @@
 
 	onMount(() => {
 		// Register sub-areas with positions relative to content area
-		unregisterFolderActions = useArea(`${areaID}-folder-actions`, folderActionsAreaHandlers, folderActionsPosition);
-		if (saveFileName !== undefined) unregisterSaveFileName = useArea(`${areaID}-save-filename`, saveFileNameAreaHandlers, folderActionsPosition);
+		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
+		if (saveFileName !== undefined) unregisterSaveFileName = useArea(`${areaID}-save-filename`, saveFileNameAreaHandlers, directoryActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(`${areaID}-list`);
@@ -903,7 +903,7 @@
 			}
 		})();
 		return () => {
-			if (unregisterFolderActions) unregisterFolderActions();
+			if (unregisterDirectoryActions) unregisterDirectoryActions();
 			if (unregisterSaveFileName) unregisterSaveFileName();
 			if (unregisterList) unregisterList();
 			if (unregisterActions) unregisterActions();
@@ -963,7 +963,7 @@
 		min-width: 20vh;
 	}
 
-	.folder-actions {
+	.directory-actions {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 1vh;
@@ -983,7 +983,7 @@
 
 <div class="browser">
 	{#if showPath}
-		<PathBreadcrumb areaID="{areaID}-path" position={pathBreadcrumbPosition} path={showEditorState && fileToEdit ? fileToEdit.path : currentPath} {separator} onNavigate={handleBreadcrumbNavigate} onDown={() => (showEditorState ? `${areaID}-editor-toolbar` : error ? `${areaID}-list` : `${areaID}-folder-actions`)} />
+		<PathBreadcrumb areaID="{areaID}-path" position={pathBreadcrumbPosition} path={showEditorState && fileToEdit ? fileToEdit.path : currentPath} {separator} onNavigate={handleBreadcrumbNavigate} onDown={() => (showEditorState ? `${areaID}-editor-toolbar` : error ? `${areaID}-list` : `${areaID}-directory-actions`)} />
 	{/if}
 	{#if showEditorState && fileToEdit}
 		<Editor areaID="{areaID}-editor" filePath={fileToEdit.path} fileName={fileToEdit.name} {position} onBack={closeEditor} onUp={() => activateArea(`${areaID}-path`)} />
@@ -992,9 +992,9 @@
 			{#if error}
 				<Alert type="error" message={error} />
 			{:else}
-				<div class="folder-actions">
-					{#each folderActions as action, index (action.id)}
-						<Button label={action.label} icon={action.icon} selected={folderActionsActive && selectedFolderActionIndex === index} onConfirm={() => handleFolderAction(action.id)} />
+				<div class="directory-actions">
+					{#each directoryActions as action, index (action.id)}
+						<Button label={action.label} icon={action.icon} selected={directoryActionsActive && selectedDirectoryActionIndex === index} onConfirm={() => handleDirectoryAction(action.id)} />
 					{/each}
 				</div>
 			{/if}
@@ -1051,13 +1051,13 @@
 	{/if}
 </div>
 {#if showDeleteConfirm}
-	<ConfirmDialog title={$t('fileBrowser.deleteFolder')} message={$t('fileBrowser.confirmDeleteFolder', { path: currentPath })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteFolder} onBack={cancelDeleteFolder} />
+	<ConfirmDialog title={$t('fileBrowser.deleteDirectory')} message={$t('fileBrowser.confirmDeleteDirectory', { path: currentPath })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteDirectory} onBack={cancelDeleteDirectory} />
 {/if}
 {#if showDeleteFileConfirm && fileToDelete}
 	<ConfirmDialog title={$t('fileBrowser.deleteFile')} message={$t('fileBrowser.confirmDeleteFile', { name: fileToDelete.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteFile} onBack={cancelDeleteFile} />
 {/if}
-{#if showNewFolderDialogState}
-	<InputDialog title={$t('fileBrowser.newFolder')} label={$t('fileBrowser.folderName')} placeholder={$t('fileBrowser.enterFolderName')} confirmLabel={$t('common.create')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmNewFolder} onBack={cancelNewFolder} />
+{#if showNewDirectoryDialogState}
+	<InputDialog title={$t('fileBrowser.newDirectory')} label={$t('fileBrowser.directoryName')} placeholder={$t('fileBrowser.enterDirectoryName')} confirmLabel={$t('common.create')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmNewDirectory} onBack={cancelNewDirectory} />
 {/if}
 {#if showCreateFileDialogState}
 	<InputDialog title={$t('fileBrowser.createFile')} label={$t('common.fileName')} placeholder={$t('fileBrowser.enterFileName')} confirmLabel={$t('common.create')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmCreateFile} onBack={cancelCreateFile} />
