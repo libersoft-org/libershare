@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 import { type ILISHDetail } from '@shared';
 import { api } from './api.ts';
 import { formatSize } from './utils.ts';
@@ -221,11 +221,33 @@ export async function initDownloads(): Promise<void> {
 				})
 			);
 		});
+
+		// transfer.download:complete — catalog download finished
+		api.on('transfer.download:complete', (data: { downloadDir: string; lishID: string; name?: string }) => {
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, status: 'idling' as DownloadStatus, progress: 100, downloadedSize: d.size, directory: data.downloadDir };
+				})
+			);
+		});
+
+		// transfer.download:error — catalog download failed
+		api.on('transfer.download:error', (data: { error: string; errorDetail?: string; lishID: string }) => {
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, status: 'idling' as DownloadStatus };
+				})
+			);
+		});
 	}
 	// Subscribe on every connect (backend has fresh subscribedEvents after reconnect)
 	api.subscribe('lishs:add');
 	api.subscribe('lishs:remove');
 	api.subscribe('lishs:verify');
+	api.subscribe('transfer.download:complete');
+	api.subscribe('transfer.download:error');
 }
 
 /** Reset verify state for a LISH in the downloads store (set all to 0, status to pending-verification). */
@@ -238,6 +260,34 @@ export function resetVerifyState(lishID: string): void {
 		})
 	);
 }
+/**
+ * Add a catalog entry to the downloads store as an active "downloading" entry.
+ * Called when catalog.startDownload returns status 'downloading'.
+ */
+export function addCatalogDownload(entry: { lishID: string; name: string; totalSize?: number; fileCount?: number; downloadDir?: string }): void {
+	const existing = get(downloads);
+	if (existing.some(d => d.id === entry.lishID)) return; // already tracked
+	const dl: DownloadData = {
+		id: entry.lishID,
+		name: entry.name,
+		directory: entry.downloadDir,
+		progress: 0,
+		size: entry.totalSize ? formatSize(entry.totalSize) : '?',
+		rawTotalSize: entry.totalSize ?? 0,
+		downloadedSize: '0 B',
+		status: 'downloading',
+		downloadPeers: 0,
+		uploadPeers: 0,
+		downloadSpeed: '-',
+		uploadSpeed: '-',
+		files: [],
+		verifiedChunks: 0,
+		totalChunks: 0,
+		chunkSize: 0,
+	};
+	downloads.update(list => [dl, ...list]);
+}
+
 // Table columns definition
 export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 10vw 10vw 8vw 8vw 8vw 8vw 8vw';
 // Toolbar action IDs for download detail view

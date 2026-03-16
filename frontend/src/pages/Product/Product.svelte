@@ -6,6 +6,8 @@
 	import { t } from '../../scripts/language.ts';
 	import { formatSize, parseTags } from '../../scripts/catalog.ts';
 	import { api } from '../../scripts/api.ts';
+	import { addCatalogDownload } from '../../scripts/downloads.ts';
+	import { navigateTo } from '../../scripts/navigation.ts';
 	import Icon from '../../components/Icon/Icon.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -40,6 +42,10 @@
 			const result = await api.catalog.startDownload(networkID, lishID);
 			downloadStatus = result.status === 'downloading' ? 'downloading' : 'not_available';
 			downloadMessage = result.message;
+			if (result.status === 'downloading') {
+				addCatalogDownload({ lishID, name: itemTitle, totalSize, fileCount, downloadDir: result.downloadDir });
+				setTimeout(() => navigateTo('downloads', 'Downloads'), 1500);
+			}
 		} catch (e: any) {
 			downloadMessage = e.message || 'Download failed';
 			downloadStatus = 'error';
