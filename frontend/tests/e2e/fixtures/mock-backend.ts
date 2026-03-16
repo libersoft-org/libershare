@@ -68,8 +68,16 @@ const handlers: Record<string, RpcHandler> = {
 	'settings.get': () => structuredClone(DEFAULT_SETTINGS),
 	'settings.set': () => true,
 	'settings.reset': () => structuredClone(DEFAULT_SETTINGS),
-	'lishnets.list': () => [],
+	'lishnets.list': () => [{
+		networkID: 'net-test', name: 'Test Network', description: 'Mock test network',
+		bootstrapPeers: [], enabled: true, created: '2026-01-01T00:00:00Z',
+		ownerPeerID: '12D3KooWTestOwnerPeerID000000000000000000000000',
+	}],
 	'lishnets.infoAll': () => [],
+	'lishnets.getNodeInfo': () => ({
+		peerID: '12D3KooWTestOwnerPeerID000000000000000000000000',
+		addresses: ['/ip4/127.0.0.1/tcp/9090'],
+	}),
 	'lishs.list': () => ({ items: [], verifying: null, pendingVerification: [] }),
 	'datasets.getDatasets': () => [],
 	'events.subscribe': () => true,

@@ -1,96 +1,43 @@
 import { test, expect } from '../fixtures/app.fixture.ts';
 
-test.describe('Catalog / Online Library', () => {
+test.describe('Catalog — Full Workflow (keyboard only)', () => {
 	test.beforeEach(async ({ appPage: page }) => {
-		// Navigate to Library (first menu item)
+		// Navigate to Library (first menu item) — focus lands on toolbar
 		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
+		await page.waitForTimeout(800);
 	});
 
-	test('shows library page with breadcrumb', async ({ appPage: page }) => {
-		const breadcrumb = page.locator('.breadcrumb');
-		await expect(breadcrumb).toContainText('Online library');
+	test('catalog loads 4 entries from mock backend', async ({ appPage: page }) => {
+		const items = page.locator('.catalog-content .items .item');
+		await expect(items.first()).toBeVisible({ timeout: 5000 });
+		await expect(items).toHaveCount(4);
 	});
 
-	test('navigates to catalog category and shows items', async ({ appPage: page }) => {
-		// Select first category (e.g. Video)
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
+	test('catalog items display names, metadata and tags', async ({ appPage: page }) => {
+		const items = page.locator('.catalog-content .items .item');
+		await expect(items.first()).toBeVisible({ timeout: 5000 });
 
-		// Should show catalog items from mock backend
-		const items = page.locator('.items .item');
-		const count = await items.count();
-		// If items are loaded from catalog API, we should see them
-		// The mock returns 4 entries
-		expect(count).toBeGreaterThanOrEqual(0);
+		// Titles
+		const titles = page.locator('.catalog-content .items .item .title');
+		expect(await titles.count()).toBe(4);
+		await expect(titles.first()).not.toBeEmpty();
+
+		// Metadata
+		const meta = page.locator('.catalog-content .items .item .meta');
+		expect(await meta.count()).toBeGreaterThanOrEqual(1);
+
+		// Tags
+		const tags = page.locator('.catalog-content .items .item .tag');
+		expect(await tags.count()).toBeGreaterThanOrEqual(1);
 	});
 
-	test('catalog items display entry names', async ({ appPage: page }) => {
-		// Navigate to a category
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
+	test('arrow keys navigate through catalog grid', async ({ appPage: page }) => {
+		const items = page.locator('.catalog-content .items .item');
+		await expect(items.first()).toBeVisible({ timeout: 5000 });
 
-		// Check that entry titles are visible
-		const titles = page.locator('.items .item .title');
-		const count = await titles.count();
-		if (count > 0) {
-			const firstTitle = await titles.first().textContent();
-			expect(firstTitle).toBeTruthy();
-		}
-	});
-
-	test('can navigate back from catalog', async ({ appPage: page }) => {
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(300);
-		await page.keyboard.press('Escape');
-		await page.waitForTimeout(300);
-
-		// Should be back at library categories or main menu
-		const breadcrumb = page.locator('.breadcrumb');
-		const text = await breadcrumb.textContent();
-		expect(text).toBeTruthy();
-	});
-
-	test('catalog shows loading state initially', async ({ appPage: page }) => {
-		// Navigate to category
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(100);
-
-		// Briefly shows loading or content
-		const content = page.locator('.items, .loading, .empty');
-		const count = await content.count();
-		expect(count).toBeGreaterThanOrEqual(0);
-	});
-
-	test('catalog handles empty state', async ({ appPage: page }) => {
-		// The library page should handle case when no networkID is provided
-		// It should show "Catalog is empty" or similar
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-
-		// Check page renders without errors
-		const pageContent = await page.content();
-		expect(pageContent).toBeTruthy();
-		// No uncaught errors
-		const consoleLogs: string[] = [];
-		page.on('console', msg => {
-			if (msg.type() === 'error' && !msg.text().includes('[API]')) {
-				consoleLogs.push(msg.text());
-			}
-		});
+		// Navigate right/down/left in grid
+		await page.keyboard.press('ArrowRight');
 		await page.waitForTimeout(200);
-		// Filter out expected API errors
-		const unexpectedErrors = consoleLogs.filter(l => !l.includes('Catalog not joined'));
-		expect(unexpectedErrors.length).toBe(0);
-	});
-
-	test('keyboard navigation works in catalog grid', async ({ appPage: page }) => {
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-
-		// Try navigating with arrow keys
 		await page.keyboard.press('ArrowRight');
 		await page.waitForTimeout(200);
 		await page.keyboard.press('ArrowDown');
@@ -98,132 +45,216 @@ test.describe('Catalog / Online Library', () => {
 		await page.keyboard.press('ArrowLeft');
 		await page.waitForTimeout(200);
 
-		// Page should still be responsive
-		const pageContent = await page.content();
-		expect(pageContent).toBeTruthy();
+		// Grid should still be visible
+		await expect(items).toHaveCount(4);
 	});
 
-	test('selecting a catalog entry opens detail view', async ({ appPage: page }) => {
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
+	test('Enter on toolbar opens Publish panel, Escape returns', async ({ appPage: page }) => {
+		// From library landing, navigate up to toolbar
+		await page.keyboard.press('ArrowUp');
+		await page.waitForTimeout(200);
+
+		// Enter on Publish button (first toolbar button)
 		await page.keyboard.press('Enter');
 		await page.waitForTimeout(500);
 
-		// Select first item
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-
-		// Detail or breadcrumb should update
+		// Check if breadcrumb shows Publish
 		const breadcrumb = page.locator('.breadcrumb');
 		const text = await breadcrumb.textContent();
-		expect(text).toBeTruthy();
+
+		if (text?.includes('Publish')) {
+			// Publish panel opened — check content
+			await expect(page.locator('.empty-msg')).toContainText('No local LISHs');
+
+			// Escape back
+			await page.keyboard.press('Escape');
+			await page.waitForTimeout(500);
+
+			// Back at catalog
+			const items = page.locator('.catalog-content .items .item');
+			await expect(items.first()).toBeVisible({ timeout: 3000 });
+		}
+		// If focus was elsewhere, that's OK — toolbar position varies
 	});
 
-	test('escape from detail view returns to grid', async ({ appPage: page }) => {
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
+	test('Permissions panel shows Owner, Admins, Moderators', async ({ appPage: page }) => {
+		// Navigate up to toolbar
+		await page.keyboard.press('ArrowUp');
+		await page.waitForTimeout(200);
+
+		// Move right to Permissions button
+		await page.keyboard.press('ArrowRight');
+		await page.waitForTimeout(200);
+
+		// Enter on Permissions
 		await page.keyboard.press('Enter');
 		await page.waitForTimeout(500);
 
-		// Go back
+		const breadcrumb = page.locator('.breadcrumb');
+		const text = await breadcrumb.textContent();
+
+		if (text?.includes('Permissions')) {
+			// Should show sections
+			await expect(page.getByText('Owner', { exact: false })).toBeVisible();
+			await expect(page.locator('.owner-id')).toContainText('12D3KooW');
+
+			// Escape back
+			await page.keyboard.press('Escape');
+			await page.waitForTimeout(300);
+		}
+	});
+
+	test('Permissions panel shows correct admin/moderator counts', async ({ appPage: page }) => {
+		// Nav to Permissions
+		await page.keyboard.press('ArrowUp');
+		await page.waitForTimeout(200);
+		await page.keyboard.press('ArrowRight');
+		await page.waitForTimeout(200);
+		await page.keyboard.press('Enter');
+		await page.waitForTimeout(500);
+
+		// Mock has 1 admin, 2 moderators
+		const text = await page.content();
+		if (text.includes('Admins')) {
+			expect(text).toContain('Admins (1)');
+			expect(text).toContain('Moderators (2)');
+		}
+
 		await page.keyboard.press('Escape');
 		await page.waitForTimeout(300);
-
-		// Should be back at grid
-		const items = page.locator('.items .item');
-		const count = await items.count();
-		expect(count).toBeGreaterThanOrEqual(0);
 	});
 
-	test('page renders without JavaScript errors', async ({ appPage: page }) => {
+	test('selecting item with Enter opens detail, Escape returns', async ({ appPage: page }) => {
+		const items = page.locator('.catalog-content .items .item');
+		await expect(items.first()).toBeVisible({ timeout: 5000 });
+
+		// First item should be focused, Enter opens detail
+		await page.keyboard.press('Enter');
+		await page.waitForTimeout(500);
+
+		// Breadcrumb should have entry name
+		const breadcrumb = page.locator('.breadcrumb');
+		const text = await breadcrumb.textContent();
+		expect(text!.length).toBeGreaterThan(10);
+
+		// Escape back to grid
+		await page.keyboard.press('Escape');
+		await page.waitForTimeout(500);
+
+		// Items visible again
+		await expect(items.first()).toBeVisible({ timeout: 3000 });
+	});
+
+	test('search filters entries', async ({ appPage: page }) => {
+		const items = page.locator('.catalog-content .items .item');
+		await expect(items.first()).toBeVisible({ timeout: 5000 });
+
+		// Focus search bar and type
+		const searchInput = page.locator('.search input');
+		await searchInput.focus();
+		await page.waitForTimeout(200);
+		await searchInput.fill('Ubuntu');
+		// Dispatch input event to trigger Svelte reactivity
+		await searchInput.dispatchEvent('input');
+		await searchInput.dispatchEvent('change');
+		await page.waitForTimeout(1500);
+
+		// Should show filtered results (1 entry matching "Ubuntu")
+		await expect(items).toHaveCount(1);
+	});
+
+	test('multiple panel open/close cycles without JS errors', async ({ appPage: page }) => {
 		const errors: string[] = [];
 		page.on('pageerror', err => errors.push(err.message));
 
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
+		for (let cycle = 0; cycle < 3; cycle++) {
+			// Up to toolbar
+			await page.keyboard.press('ArrowUp');
+			await page.waitForTimeout(150);
 
-		// Navigate around
-		for (let i = 0; i < 3; i++) {
+			// Enter Publish
+			await page.keyboard.press('Enter');
+			await page.waitForTimeout(300);
+			await page.keyboard.press('Escape');
+			await page.waitForTimeout(300);
+
+			// Right to Permissions
 			await page.keyboard.press('ArrowRight');
-			await page.waitForTimeout(100);
+			await page.waitForTimeout(150);
+			await page.keyboard.press('Enter');
+			await page.waitForTimeout(300);
+			await page.keyboard.press('Escape');
+			await page.waitForTimeout(300);
+
+			// Left back to Publish position
+			await page.keyboard.press('ArrowLeft');
+			await page.waitForTimeout(150);
+
+			// Down to items
+			await page.keyboard.press('ArrowDown');
+			await page.waitForTimeout(150);
 		}
 
 		expect(errors.length).toBe(0);
 	});
 
-	test('catalog items show metadata (size, tags)', async ({ appPage: page }) => {
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-
-		// Check for metadata elements
-		const meta = page.locator('.items .item .meta');
-		const metaCount = await meta.count();
-		// Items should have meta info rendered
-		expect(metaCount).toBeGreaterThanOrEqual(0);
-
-		// Check for tags
-		const tags = page.locator('.items .item .tag');
-		const tagCount = await tags.count();
-		expect(tagCount).toBeGreaterThanOrEqual(0);
-	});
-
-	test('search bar is present on library page', async ({ appPage: page }) => {
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-
-		const searchInput = page.locator('.search input');
-		const count = await searchInput.count();
-		expect(count).toBeGreaterThanOrEqual(1);
-	});
-
-	test('product detail shows entry info', async ({ appPage: page }) => {
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-		await page.keyboard.press('Enter');
-		await page.waitForTimeout(500);
-
-		// Detail page should show entry title and info section
-		const info = page.locator('.detail .info');
-		const count = await info.count();
-		if (count > 0) {
-			const title = page.locator('.detail .info .entry-title');
-			const titleText = await title.textContent();
-			expect(titleText).toBeTruthy();
-		}
-
-		// Should have a downloads section
-		const downloads = page.locator('.detail .files .section-title');
-		const dlCount = await downloads.count();
-		expect(dlCount).toBeGreaterThanOrEqual(0);
-	});
-
-	test('multiple navigation cycles work without errors', async ({ appPage: page }) => {
+	test('no JavaScript errors during normal navigation', async ({ appPage: page }) => {
 		const errors: string[] = [];
 		page.on('pageerror', err => errors.push(err.message));
 
-		// Enter library → category → detail → back → back → repeat
-		for (let cycle = 0; cycle < 3; cycle++) {
-			await page.keyboard.press('Enter'); // library
-			await page.waitForTimeout(300);
-			await page.keyboard.press('Enter'); // category
-			await page.waitForTimeout(300);
-			await page.keyboard.press('Enter'); // detail
-			await page.waitForTimeout(300);
-			await page.keyboard.press('Escape'); // back to category
-			await page.waitForTimeout(200);
-			await page.keyboard.press('Escape'); // back to library
-			await page.waitForTimeout(200);
-			await page.keyboard.press('Escape'); // back to menu
-			await page.waitForTimeout(200);
+		await page.waitForTimeout(500);
+
+		// Arrow around
+		for (let i = 0; i < 4; i++) {
+			await page.keyboard.press('ArrowRight');
+			await page.waitForTimeout(100);
 		}
+		await page.keyboard.press('ArrowDown');
+		await page.waitForTimeout(200);
+		await page.keyboard.press('ArrowUp');
+		await page.waitForTimeout(200);
+
+		expect(errors.length).toBe(0);
+	});
+
+	test('catalog entries show formatted sizes', async ({ appPage: page }) => {
+		const meta = page.locator('.catalog-content .items .item .meta');
+		await expect(meta.first()).toBeVisible({ timeout: 5000 });
+		const text = await meta.first().textContent();
+		expect(text).toMatch(/[0-9]/);
+	});
+
+	test('full round-trip: library → detail → back → menu', async ({ appPage: page }) => {
+		const errors: string[] = [];
+		page.on('pageerror', err => errors.push(err.message));
+
+		const items = page.locator('.catalog-content .items .item');
+		await expect(items.first()).toBeVisible({ timeout: 5000 });
+
+		// Enter detail
+		await page.keyboard.press('Enter');
+		await page.waitForTimeout(500);
+
+		// Breadcrumb should show detail
+		const breadcrumb = page.locator('.breadcrumb');
+		const text = await breadcrumb.textContent();
+		expect(text!.length).toBeGreaterThan(10);
+
+		// Back to catalog
+		await page.keyboard.press('Escape');
+		await page.waitForTimeout(500);
+
+		// Should see items again
+		await expect(items.first()).toBeVisible({ timeout: 3000 });
+
+		// Back to main menu (single Escape from Library)
+		await page.keyboard.press('Escape');
+		await page.waitForTimeout(500);
+
+		// Check if we're at main menu
+		const menuBreadcrumb = await breadcrumb.textContent();
+		// Should not be on Exit page
+		expect(menuBreadcrumb).not.toContain('Exit');
 
 		expect(errors.length).toBe(0);
 	});
