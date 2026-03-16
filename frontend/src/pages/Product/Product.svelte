@@ -5,7 +5,10 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { t } from '../../scripts/language.ts';
 	import { formatSize, parseTags } from '../../scripts/catalog.ts';
-	import ProductFile from './ProductFile.svelte';
+	import Icon from '../../components/Icon/Icon.svelte';
+	import Button from '../../components/Buttons/Button.svelte';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
+	import Row from '../../components/Row/Row.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -22,16 +25,33 @@
 	let { areaID, position = CONTENT_POSITIONS.main, itemTitle = 'Item', itemId = 1, description, totalSize, fileCount, tags, contentType, onBack }: Props = $props();
 	let parsedTags = $derived(parseTags(tags ?? null));
 	let sizeLabel = $derived(totalSize ? formatSize(totalSize) : null);
-	let imageElement: HTMLElement;
+
+	function getContentIcon(): string {
+		if (!contentType) return '/img/file.svg';
+		if (contentType.startsWith('video/')) return '/img/play.svg';
+		if (contentType.startsWith('audio/')) return '/img/play.svg';
+		if (contentType.startsWith('image/')) return '/img/file.svg';
+		if (contentType.includes('iso') || contentType.includes('disk')) return '/img/storage.svg';
+		if (contentType.includes('msdownload') || contentType.includes('executable')) return '/img/settings.svg';
+		return '/img/file.svg';
+	}
+
+	function getContentCategory(): string {
+		if (!contentType) return 'File';
+		if (contentType.startsWith('video/')) return 'Video';
+		if (contentType.startsWith('audio/')) return 'Audio';
+		if (contentType.startsWith('image/')) return 'Image';
+		if (contentType.includes('iso')) return 'Disk Image';
+		if (contentType.includes('msdownload')) return 'Software';
+		return 'File';
+	}
+
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack, initialPosition: [0, 0] }));
-	let imageSelected = $derived(navHandle.controller.isSelected([0, 0]));
 
 	onMount(() => {
 		return navHandle.controller.register({
 			pos: [0, 0],
-			get el() {
-				return imageElement;
-			},
+			el: undefined,
 		});
 	});
 </script>
@@ -41,43 +61,40 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		overflow-y: auto;
+		flex: 1;
+		padding: 2vh;
 	}
 
-	.detail .content {
+	.content {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
 		gap: 2vh;
 		width: 1200px;
-		max-width: calc(94vw);
-		padding: 2vh;
-		margin: 2vh;
-		border-radius: 2vh;
-		box-sizing: border-box;
-		background-color: var(--secondary-background);
-		box-shadow: 0 0 2vh var(--secondary-background);
+		max-width: 100%;
 	}
 
-	.detail .content .header-area {
+	.hero {
 		width: 100%;
-		aspect-ratio: 16 / 9;
+		aspect-ratio: 21 / 9;
 		border-radius: 2vh;
 		overflow: hidden;
 		border: 0.4vh solid var(--secondary-softer-background);
 		box-sizing: border-box;
-		transition: all 0.2s linear;
 		display: flex;
+		flex-direction: column;
 		align-items: center;
 		justify-content: center;
+		gap: 1vh;
 		background-color: var(--secondary-soft-background);
 	}
 
-	.detail .content .header-area.selected {
-		border-color: var(--primary-foreground);
+	.hero .icon-area {
+		opacity: 0.4;
 	}
 
-	.header-area .placeholder {
-		font-size: 6vh;
+	.hero .type-label {
+		font-size: 2.5vh;
 		color: var(--secondary-foreground);
 		opacity: 0.3;
 	}
@@ -86,38 +103,51 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1.5vh;
-		width: 100%;
 	}
 
-	.info .entry-title {
+	.entry-title {
 		font-size: 3vh;
 		font-weight: bold;
-		color: var(--secondary-foreground);
+		color: var(--primary-foreground);
 	}
 
-	.info .entry-description {
+	.entry-description {
 		font-size: 2vh;
 		color: var(--secondary-foreground);
 		opacity: 0.8;
-		line-height: 1.5;
+		line-height: 1.6;
+		white-space: pre-wrap;
 	}
 
-	.info .meta-row {
+	.meta-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(20vh, 1fr));
+		gap: 1vh;
+	}
+
+	.meta-card {
 		display: flex;
-		gap: 2vh;
-		flex-wrap: wrap;
-		font-size: 1.8vh;
-		color: var(--secondary-foreground);
-		opacity: 0.7;
-	}
-
-	.meta-row .meta-item {
-		padding: 0.5vh 1vh;
+		flex-direction: column;
+		gap: 0.3vh;
+		padding: 1.5vh;
 		background-color: var(--secondary-soft-background);
 		border-radius: 1vh;
 	}
 
-	.info .tags-row {
+	.meta-card .meta-label {
+		font-size: 1.4vh;
+		color: var(--disabled-foreground);
+		text-transform: uppercase;
+		letter-spacing: 0.1vh;
+	}
+
+	.meta-card .meta-value {
+		font-size: 2vh;
+		font-weight: bold;
+		color: var(--secondary-foreground);
+	}
+
+	.tags-row {
 		display: flex;
 		gap: 0.8vh;
 		flex-wrap: wrap;
@@ -131,61 +161,107 @@
 		color: var(--primary-foreground);
 	}
 
-	.detail .content .files {
-		display: flex;
-		flex-direction: column;
-		gap: 2vh;
-		width: 100%;
+	.section-title {
+		font-size: 2.5vh;
+		font-weight: bold;
+		color: var(--secondary-foreground);
+		padding: 1vh 0;
 	}
 
-	.detail .content .files .section-title {
+	.file-info {
 		display: flex;
-		align-items: center;
-		font-size: 3vh;
+		flex-direction: column;
+		gap: 0.5vh;
+	}
+
+	.file-name {
+		font-size: 2vh;
 		font-weight: bold;
-		padding: 2vh;
-		border-radius: 2vh;
-		background-color: var(--secondary-soft-background);
-		border: 0.4vh solid var(--secondary-softer-background);
 		color: var(--secondary-foreground);
 	}
 
+	.file-size {
+		font-size: 1.6vh;
+		color: var(--disabled-foreground);
+	}
+
+	.file-actions {
+		display: flex;
+		gap: 2vh;
+	}
+
 	@media (max-width: 1199px) {
-		.detail .content {
-			max-width: calc(100vw);
-			margin: 0;
-			border-radius: 0;
-			box-shadow: none;
+		.content {
+			max-width: 100vw;
 		}
 	}
 </style>
 
 <div class="detail">
 	<div class="content">
-		<div class="header-area" class:selected={imageSelected} bind:this={imageElement}>
-			<span class="placeholder">{contentType ?? 'file'}</span>
+		<ButtonBar>
+			<Button icon="/img/back.svg" label="Back" position={[0, 0]} onConfirm={onBack} width="auto" />
+		</ButtonBar>
+
+		<div class="hero">
+			<div class="icon-area">
+				<Icon img={getContentIcon()} size="10vh" />
+			</div>
+			<span class="type-label">{getContentCategory()}</span>
 		</div>
+
 		<div class="info">
 			<div class="entry-title">{itemTitle}</div>
 			{#if description}
 				<div class="entry-description">{description}</div>
 			{/if}
-			<div class="meta-row">
-				{#if sizeLabel}<span class="meta-item">{sizeLabel}</span>{/if}
-				{#if fileCount}<span class="meta-item">{fileCount} {fileCount === 1 ? 'file' : 'files'}</span>{/if}
-				{#if contentType}<span class="meta-item">{contentType}</span>{/if}
-			</div>
-			{#if parsedTags.length > 0}
-				<div class="tags-row">
-					{#each parsedTags as tag}
-						<span class="tag">#{tag}</span>
-					{/each}
+		</div>
+
+		<div class="meta-grid">
+			{#if sizeLabel}
+				<div class="meta-card">
+					<span class="meta-label">Size</span>
+					<span class="meta-value">{sizeLabel}</span>
 				</div>
 			{/if}
+			{#if fileCount}
+				<div class="meta-card">
+					<span class="meta-label">Files</span>
+					<span class="meta-value">{fileCount}</span>
+				</div>
+			{/if}
+			{#if contentType}
+				<div class="meta-card">
+					<span class="meta-label">Type</span>
+					<span class="meta-value">{contentType}</span>
+				</div>
+			{/if}
+			<div class="meta-card">
+				<span class="meta-label">Category</span>
+				<span class="meta-value">{getContentCategory()}</span>
+			</div>
 		</div>
-		<div class="files">
-			<div class="section-title">{$t('library.product.downloads')}:</div>
-			<ProductFile name={itemTitle} size={sizeLabel ?? 'Unknown'} rowY={1} />
-		</div>
+
+		{#if parsedTags.length > 0}
+			<div class="tags-row">
+				{#each parsedTags as tag}
+					<span class="tag">#{tag}</span>
+				{/each}
+			</div>
+		{/if}
+
+		<div class="section-title">{$t('library.product.downloads')}:</div>
+		<Row selected={navHandle.controller.isYSelected(1)}>
+			<div class="file-info">
+				<div class="file-name">{itemTitle}</div>
+				<div class="file-size">{sizeLabel ?? 'Unknown size'} · {fileCount ?? 1} {(fileCount ?? 1) === 1 ? 'file' : 'files'}</div>
+			</div>
+			<div class="file-actions">
+				<Button icon="/img/download.svg" label={$t('library.product.download')} position={[0, 1]} width="auto" />
+				{#if contentType?.startsWith('video/') || contentType?.startsWith('audio/')}
+					<Button icon="/img/play.svg" label={$t('library.product.play')} position={[1, 1]} width="auto" />
+				{/if}
+			</div>
+		</Row>
 	</div>
 </div>

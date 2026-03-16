@@ -149,13 +149,17 @@
 		padding: 1vh;
 	}
 
-	.status-bar {
+	.toolbar-row {
 		display: flex;
 		align-items: center;
-		gap: 1vh;
-		padding: 0.5vh 2vh;
+		gap: 2vh;
+		padding: 0 1vh;
+	}
+
+	.status-text {
 		font-size: 1.6vh;
 		color: var(--disabled-foreground);
+		white-space: nowrap;
 	}
 
 	.loading-center, .empty-center {
@@ -173,16 +177,17 @@
 	<SearchBar bind:this={searchBar} bind:value={searchQuery} selected={searchNavHandle.controller.isSelected([0, 0])} onchange={() => loadEntries()} />
 
 	{#if currentView === 'catalog'}
-		<ButtonBar>
-			<Button icon="/img/plus.svg" label="Publish" position={[0, 0]} onConfirm={openPublishPanel} />
-			<Button icon="/img/settings.svg" label="Permissions" position={[1, 0]} onConfirm={openACLPanel} />
-		</ButtonBar>
-
-		{#if networkName}
-			<div class="status-bar">{networkName} — {entries.length} entries</div>
-		{/if}
-
 		<div class="catalog-content">
+			<div class="toolbar-row">
+				<ButtonBar>
+					<Button icon="/img/plus.svg" label="Publish" position={[0, 0]} onConfirm={openPublishPanel} width="auto" />
+					<Button icon="/img/settings.svg" label="Permissions" position={[1, 0]} onConfirm={openACLPanel} width="auto" />
+				</ButtonBar>
+				{#if networkName}
+					<span class="status-text">{networkName} — {entries.length} entries</span>
+				{/if}
+			</div>
+
 			{#if loading}
 				<div class="loading-center"><Spinner size="6vh" /></div>
 			{:else if error}

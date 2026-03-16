@@ -30,8 +30,8 @@ test.describe('Library (Online Library)', () => {
 	});
 
 	test('shows network name in status bar', async ({ appPage: page }) => {
-		await expect(page.locator('.status-bar')).toContainText('Test Network');
-		await expect(page.locator('.status-bar')).toContainText('4 entries');
+		await expect(page.locator('.status-text')).toContainText('Test Network');
+		await expect(page.locator('.status-text')).toContainText('4 entries');
 	});
 
 	test('navigate back to main menu via Escape', async ({ appPage: page }) => {
