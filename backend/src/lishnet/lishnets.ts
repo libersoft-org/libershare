@@ -68,8 +68,10 @@ export class Networks {
 			console.log(`✓ Joined lishnet: ${net.name} (${net.networkID})`);
 			// Join catalog if network has ownerPeerID (graceful — errors never block)
 			if (this.catalogManager && net.ownerPeerID) {
-				try { this.catalogManager.join(net.networkID, net.ownerPeerID); }
-				catch (err) { console.warn(`[Catalog] Failed to join catalog for ${net.networkID}:`, (err as Error).message); }
+				try {
+					this.catalogManager.join(net.networkID, net.ownerPeerID);
+					await this.registerCatalogHandler(net.networkID);
+				} catch (err) { console.warn(`[Catalog] Failed to join catalog for ${net.networkID}:`, (err as Error).message); }
 			}
 		}
 	}
@@ -115,23 +117,24 @@ export class Networks {
 		if (this.catalogManager && net?.ownerPeerID) {
 			try {
 				this.catalogManager.join(id, net.ownerPeerID);
-
-				// Register GossipSub handler for catalog_op messages
-				await this.network.subscribe(`lish/${id}`, async (msg: Record<string, any>) => {
-					if (msg['type'] === 'catalog_op' && this.catalogManager) {
-						// Unknown version — IGNORE (don't penalize newer peers)
-						if (msg['version'] !== undefined && msg['version'] !== 1) return;
-						try {
-							await this.catalogManager.applyRemoteOp(id, msg as any);
-						} catch (err) {
-							console.warn(`[Catalog] Error applying remote op for ${id}:`, (err as Error).message);
-						}
-					}
-				});
+				await this.registerCatalogHandler(id);
 			} catch (err) {
 				console.warn(`[Catalog] Failed to join catalog for ${id}:`, (err as Error).message);
 			}
 		}
+	}
+
+	private async registerCatalogHandler(networkID: string): Promise<void> {
+		await this.network.subscribe(`lish/${networkID}`, async (msg: Record<string, any>) => {
+			if (msg['type'] === 'catalog_op' && this.catalogManager) {
+				if (msg['version'] !== undefined && msg['version'] !== 1) return;
+				try {
+					await this.catalogManager.applyRemoteOp(networkID, msg as any);
+				} catch (err) {
+					console.warn(`[Catalog] Error applying remote op for ${networkID}:`, (err as Error).message);
+				}
+			}
+		});
 	}
 
 	/**
