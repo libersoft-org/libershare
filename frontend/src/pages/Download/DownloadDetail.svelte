@@ -48,8 +48,6 @@
 			if (action.id === 'verify' && !isVerifying && !isDownloading) return true;
 			if (action.id === 'stop-verify' && isVerifying) return true;
 			if (action.id === 'verify' || action.id === 'stop-verify') return false;
-			// Hide upload toggle during active download
-			if (action.id === 'toggle-upload' && isDownloading) return false;
 			return true;
 		}).map(action => ({
 			id: action.id,
