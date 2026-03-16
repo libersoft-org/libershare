@@ -24,7 +24,7 @@ export interface HaveMessage extends PubsubMessage {
 	multiaddrs: Multiaddr[];
 	chunks: HaveChunks;
 }
-type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'downloading' | 'downloaded';
+type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'awaiting-manifest' | 'downloading' | 'downloaded';
 
 export class Downloader {
 	private lish!: IStoredLISH;
@@ -38,6 +38,7 @@ export class Downloader {
 	private missingChunks: MissingChunk[] = [];
 	private peers: Map<NodeId, LISHClient> = new Map();
 	private callForPeersInterval: NodeJS.Timeout | undefined;
+	private needsManifest = false;
 
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkID: string) {
 		this.downloadDir = downloadDir;
@@ -67,8 +68,17 @@ export class Downloader {
 		this.lish = lish;
 		this.lishID = this.lish.id as LISHid;
 		console.log(`Loading LISH from catalog: ${this.lish.name} (id: ${this.lishID})`);
-		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
-		console.log(`Found ${this.missingChunks.length} chunks to download`);
+		// Check if we already have the full manifest in DB
+		const existingChunks = this.dataServer.getMissingChunks(this.lishID);
+		if (existingChunks.length > 0 || this.dataServer.isCompleteLISH(lish)) {
+			// We have the manifest — proceed normally
+			this.missingChunks = existingChunks;
+			console.log(`Found ${this.missingChunks.length} chunks to download`);
+		} else {
+			// Stub manifest — need to fetch full manifest from a peer first
+			this.needsManifest = true;
+			console.log(`Stub manifest — will request full manifest from peer`);
+		}
 		const topic = lishTopic(this.networkID);
 		await this.network.subscribe(topic, async data => {
 			await this.handlePubsubMessage(topic, data);
@@ -80,16 +90,50 @@ export class Downloader {
 	async download(): Promise<void> {
 		console.log('Starting download...');
 		if (this.state !== 'initialized') throw new CodedError(ErrorCodes.DOWNLOADER_NOT_INITIALIZED);
-		this.state = 'preparing';
-		await this.doWork();
+		if (this.needsManifest) {
+			this.state = 'awaiting-manifest';
+			// Need peers first to get manifest — start peer discovery
+			await this.callForPeers();
+		} else {
+			this.state = 'preparing';
+			await this.doWork();
+		}
 	}
 
 	async doWork(): Promise<void> {
 		await this.workMutex.runExclusive(async () => {
+			// Phase 1: fetch manifest from a peer if needed
+			if (this.state === 'awaiting-manifest') {
+				if (this.peers.size === 0) {
+					console.log('Waiting for peers to provide manifest...');
+					return;
+				}
+				// Try to get manifest from a connected peer
+				for (const [peerID, client] of this.peers) {
+					console.log(`Requesting manifest from peer ...${peerID}`);
+					const manifest = await client.requestManifest(this.lishID);
+					if (manifest && manifest.files && manifest.files.length > 0) {
+						console.log(`✓ Got manifest from peer: ${manifest.files.length} files`);
+						this.lish = { ...manifest, directory: this.downloadDir };
+						// Import into dataServer so getMissingChunks works
+						this.dataServer.add(this.lish);
+						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
+						this.needsManifest = false;
+						console.log(`Found ${this.missingChunks.length} chunks to download`);
+						this.state = 'preparing';
+						break;
+					} else {
+						console.log(`✗ Peer ...${peerID} did not have manifest`);
+					}
+				}
+				if (this.needsManifest) return; // still waiting
+			}
+			// Phase 2: create directory structure
 			if (this.state === 'preparing') {
 				await this.createDirectoryStructure();
 				this.state = 'downloading';
 			}
+			// Phase 3: download chunks
 			if (this.state === 'downloading') {
 				if (this.missingChunks.length === 0) {
 					console.log('✓ All chunks downloaded!');
@@ -153,7 +197,7 @@ export class Downloader {
 				this.callForPeersInterval = undefined;
 				return;
 			}
-			if (this.state !== 'downloading') return;
+			if (this.state !== 'downloading' && this.state !== 'awaiting-manifest') return;
 			if (this.peers.size === 0) {
 				console.log('No seeders available');
 				await this.callForPeers();

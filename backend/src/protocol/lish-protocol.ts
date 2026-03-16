@@ -5,12 +5,21 @@ import { type LISHid, type ChunkID } from '@shared';
 import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
 export const LISH_PROTOCOL = '/lish/1.0.0';
-export interface LISHRequest {
+export type LISHRequest = LISHChunkRequest | LISHManifestRequest;
+export interface LISHChunkRequest {
+	type?: 'chunk';
 	lishID: LISHid;
 	chunkID: ChunkID;
 }
+export interface LISHManifestRequest {
+	type: 'manifest';
+	lishID: LISHid;
+}
 export interface LISHResponse {
 	data: number[] | null;
+}
+export interface LISHManifestResponse {
+	manifest: import('@shared').IStoredLISH | null;
 }
 export type HaveChunks = 'all' | ChunkID[];
 
@@ -23,6 +32,23 @@ export class LISHClient {
 	constructor(stream: Stream) {
 		this.stream = stream;
 		this.decoder = decode(stream);
+	}
+
+	// Request full LISH manifest from peer
+	async requestManifest(lishID: LISHid): Promise<import('@shared').IStoredLISH | null> {
+		try {
+			const request: LISHManifestRequest = { type: 'manifest', lishID };
+			const requestData = new TextEncoder().encode(JSON.stringify(request));
+			await sendLengthPrefixed(this.stream, requestData);
+			const responseMsg = await this.decoder.next();
+			if (responseMsg.done || !responseMsg.value) return null;
+			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
+			const response: LISHManifestResponse = JSON.parse(new TextDecoder().decode(responseData));
+			return response.manifest;
+		} catch (error) {
+			console.error('Error requesting manifest:', error);
+			return null;
+		}
 	}
 
 	// Request a single chunk (can be called multiple times on same stream)
@@ -77,20 +103,32 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 		const decoder = decode(stream);
 		// Handle multiple requests on the same stream
 		for await (const msg of decoder) {
-			// Convert to Uint8Array if needed
 			const data = msg instanceof Uint8ArrayList ? msg.subarray() : msg;
 			const request: LISHRequest = JSON.parse(new TextDecoder().decode(data));
-			console.log(`Received lish request: ${request.lishID.slice(0, 8)}... chunk ${request.chunkID.slice(0, 8)}...`);
-			// Get the chunk
-			const chunkData = await dataServer.getChunk(request.lishID, request.chunkID);
-			// Write the response
-			const response: LISHResponse = {
-				data: chunkData ? Array.from(chunkData) : null,
-			};
-			const responseData = new TextEncoder().encode(JSON.stringify(response));
-			// Send response with length prefix
-			await sendLengthPrefixed(stream, responseData);
-			console.log(`Responded with ${chunkData ? chunkData.length : 0} bytes`);
+
+			if (request.type === 'manifest') {
+				// Manifest request — return full LISH data (without directory path and chunks)
+				console.log(`Received manifest request for ${request.lishID.slice(0, 8)}...`);
+				const lish = dataServer.get(request.lishID as LISHid);
+				let manifest: import('@shared').IStoredLISH | null = null;
+				if (lish) {
+					const { directory, chunks, ...exportData } = lish;
+					manifest = exportData as import('@shared').IStoredLISH;
+				}
+				const response: LISHManifestResponse = { manifest };
+				const responseData = new TextEncoder().encode(JSON.stringify(response));
+				await sendLengthPrefixed(stream, responseData);
+				console.log(`Responded with manifest: ${manifest ? 'found' : 'not found'}`);
+			} else {
+				// Chunk request (default)
+				const chunkReq = request as LISHChunkRequest;
+				console.log(`Received lish request: ${chunkReq.lishID.slice(0, 8)}... chunk ${chunkReq.chunkID.slice(0, 8)}...`);
+				const chunkData = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
+				const response: LISHResponse = { data: chunkData ? Array.from(chunkData) : null };
+				const responseData = new TextEncoder().encode(JSON.stringify(response));
+				await sendLengthPrefixed(stream, responseData);
+				console.log(`Responded with ${chunkData ? chunkData.length : 0} bytes`);
+			}
 		}
 		// Stream closed by remote, close our end
 		await stream.close();

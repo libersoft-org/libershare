@@ -264,13 +264,12 @@ export function resetVerifyState(lishID: string): void {
  * Add a catalog entry to the downloads store as an active "downloading" entry.
  * Called when catalog.startDownload returns status 'downloading'.
  */
-export function addCatalogDownload(entry: { lishID: string; name: string; totalSize?: number; fileCount?: number; downloadDir?: string }): void {
+export function addCatalogDownload(entry: { lishID: string; name: string; totalSize?: number; fileCount?: number }): void {
 	const existing = get(downloads);
 	if (existing.some(d => d.id === entry.lishID)) return; // already tracked
 	const dl: DownloadData = {
 		id: entry.lishID,
 		name: entry.name,
-		directory: entry.downloadDir,
 		progress: 0,
 		size: entry.totalSize ? formatSize(entry.totalSize) : '?',
 		rawTotalSize: entry.totalSize ?? 0,

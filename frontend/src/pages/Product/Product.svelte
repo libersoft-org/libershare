@@ -43,7 +43,7 @@
 			downloadStatus = result.status === 'downloading' ? 'downloading' : 'not_available';
 			downloadMessage = result.message;
 			if (result.status === 'downloading') {
-				addCatalogDownload({ lishID, name: itemTitle, totalSize, fileCount, downloadDir: result.downloadDir });
+				addCatalogDownload({ lishID, name: itemTitle, totalSize, fileCount });
 				setTimeout(() => navigateTo('downloads', 'Downloads'), 1500);
 			}
 		} catch (e: any) {
