@@ -4,7 +4,7 @@ import { api } from './api.ts';
 import { formatSize } from './utils.ts';
 import { navigateBack } from './navigation.ts';
 
-export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification';
+export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'searching';
 
 // ============================================================================
 // Download Data Types
@@ -320,7 +320,7 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 		size: entry.totalSize ? formatSize(entry.totalSize) : '?',
 		rawTotalSize: entry.totalSize ?? 0,
 		downloadedSize: '0 B',
-		status: 'downloading',
+		status: 'searching',
 		downloadPeers: 0,
 		uploadPeers: 0,
 		downloadSpeed: '-',

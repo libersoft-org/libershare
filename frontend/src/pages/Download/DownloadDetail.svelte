@@ -40,7 +40,7 @@
 	let infoElement: HTMLElement | null = $state(null);
 	// Toolbar actions - adapt to current download state
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
-	let isDownloading = $derived(download?.status === 'downloading');
+	let isDownloading = $derived(download?.status === 'downloading' || download?.status === 'searching');
 	let downloadPaused = $derived(!isDownloading);
 	let uploadPaused = $state(true);
 	let toolbarActions = $derived(
