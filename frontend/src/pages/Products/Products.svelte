@@ -64,6 +64,14 @@
 		onBack,
 	}));
 
+	// Fallback nav area for loading/empty states — ensures ESC works even without ProductsList
+	const fallbackNavHandle = createNavArea(() => ({
+		areaID: `${areaID}-fallback`,
+		position: listPosition,
+		onBack,
+		activate: items.length === 0,
+	}));
+
 	onMount(() => {
 		loadEntries();
 		const unsubNav = searchNavHandle.controller.register(
