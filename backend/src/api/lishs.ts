@@ -4,7 +4,7 @@ import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, re
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
-import { join } from 'path';
+import { join, dirname } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 type BroadcastFn = (event: string, data: any) => void;
@@ -212,7 +212,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		}
 		// 3. Save to data-server if requested
 		if (addToSharing) {
-			lish.directory = dataPath;
+			lish.directory = dataPathStat.isFile() ? dirname(dataPath) : dataPath;
 			dataServer.add(lish);
 			console.log(`✓ Dataset imported: ${lish.id}`);
 			broadcast('lishs:add', dataServer.getDetail(lish.id));

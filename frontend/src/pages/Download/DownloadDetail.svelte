@@ -143,13 +143,18 @@
 		activateArea(toolbarAreaID);
 	}
 
-	function handleDeleteResult(deleteLISH: boolean, success: boolean): void {
+	async function handleDeleteResult(deleteLISH: boolean, success: boolean): Promise<void> {
 		showDeleteDialog = false;
 		if (success && deleteLISH) {
 			handleBack();
 			return;
 		}
 		if (!success) deleteError = $t('downloads.deleteFailed');
+		if (success && !deleteLISH) {
+			if (isVerifying) await api.lishs.stopVerify(lishID).catch(err => console.error('Stop verification failed:', err));
+			resetVerifyState(lishID);
+			api.lishs.verify(lishID).catch(err => console.error('Verification failed:', err));
+		}
 		activateArea(toolbarAreaID);
 	}
 
