@@ -27,6 +27,30 @@
 	let search = $state('');
 	let allDownloadPaused = $state(true);
 	let allUploadPaused = $state(true);
+
+	function toggleAllDownloads(): void {
+		if (allDownloadPaused) {
+			// Resume all — call resumeDownload for each non-downloading entry
+			for (const d of $downloads) {
+				if (d.status !== 'downloading' && d.status !== 'searching') {
+					api.call('catalog.resumeDownload', { lishID: d.id });
+				}
+			}
+		} else {
+			// Pause all — call pauseDownload for each downloading entry
+			for (const d of $downloads) {
+				if (d.status === 'downloading' || d.status === 'searching') {
+					api.call('catalog.pauseDownload', { lishID: d.id });
+				}
+			}
+		}
+		allDownloadPaused = !allDownloadPaused;
+	}
+
+	function toggleAllUploads(): void {
+		// TODO: Backend upload pause/resume API not yet implemented
+		allUploadPaused = !allUploadPaused;
+	}
 	let anyVerifying = $derived($downloads.some(d => d.status === 'verifying' || d.status === 'pending-verification'));
 	let filteredDownloads = $derived(
 		search.trim()
@@ -80,8 +104,8 @@
 		<Button icon="/img/plus.svg" label={$t('downloads.createLISH')} position={[0, 0]} onConfirm={() => navigateTo('create-lish')} />
 		<Button icon="/img/download.svg" label={$t('common.import')} position={[1, 0]} onConfirm={() => navigateTo('import-lish')} />
 		<Button icon="/img/upload.svg" label={$t('common.exportAll')} position={[2, 0]} onConfirm={() => navigateTo('export-all-lish')} />
-		<Button icon={allDownloadPaused ? '/img/play.svg' : '/img/pause.svg'} label={allDownloadPaused ? $t('downloads.enableDownloadAll') : $t('downloads.disableDownloadAll')} position={[3, 0]} onConfirm={() => (allDownloadPaused = !allDownloadPaused)} />
-		<Button icon={allUploadPaused ? '/img/play.svg' : '/img/pause.svg'} label={allUploadPaused ? $t('downloads.enableUploadAll') : $t('downloads.disableUploadAll')} position={[4, 0]} onConfirm={() => (allUploadPaused = !allUploadPaused)} />
+		<Button icon={allDownloadPaused ? '/img/play.svg' : '/img/pause.svg'} label={allDownloadPaused ? $t('downloads.enableDownloadAll') : $t('downloads.disableDownloadAll')} position={[3, 0]} onConfirm={toggleAllDownloads} />
+		<Button icon={allUploadPaused ? '/img/play.svg' : '/img/pause.svg'} label={allUploadPaused ? $t('downloads.enableUploadAll') : $t('downloads.disableUploadAll')} position={[4, 0]} onConfirm={toggleAllUploads} />
 		<Button icon="/img/check.svg" label={$t('downloads.verifyAll')} position={[5, 0]} onConfirm={() => (showVerifyAllDialog = true)} />
 		{#if anyVerifying}
 			<Button icon="/img/cross.svg" label={$t('downloads.stopVerifyAll')} position={[6, 0]} onConfirm={() => api.lishs.stopVerifyAll()} />
