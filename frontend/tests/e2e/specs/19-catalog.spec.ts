@@ -95,7 +95,7 @@ test.describe('Catalog — Full Workflow (keyboard only)', () => {
 
 		if (text?.includes('Permissions')) {
 			// Should show sections
-			await expect(page.getByText('Owner', { exact: false })).toBeVisible();
+			await expect(page.locator('.section-title', { hasText: 'Owner' })).toBeVisible();
 			await expect(page.locator('.owner-id')).toContainText('12D3KooW');
 
 			// Escape back
