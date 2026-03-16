@@ -212,7 +212,9 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		}
 		// 3. Save to data-server if requested
 		if (addToSharing) {
-			lish.directory = dataPath;
+			// For single files, directory must be parent dir (not the file itself)
+			const pathStat = await stat(dataPath);
+			lish.directory = pathStat.isDirectory() ? dataPath : join(dataPath, '..');
 			dataServer.add(lish);
 			console.log(`✓ Dataset imported: ${lish.id}`);
 			broadcast('lishs:add', dataServer.getDetail(lish.id));

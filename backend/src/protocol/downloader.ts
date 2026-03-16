@@ -39,6 +39,8 @@ export class Downloader {
 	private peers: Map<NodeId, LISHClient> = new Map();
 	private callForPeersInterval: NodeJS.Timeout | undefined;
 	private needsManifest = false;
+	private downloadResolve?: () => void;
+	private downloadReject?: (err: Error) => void;
 
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkID: string) {
 		this.downloadDir = downloadDir;
@@ -86,17 +88,23 @@ export class Downloader {
 		this.state = 'initialized';
 	}
 
-	// Main download loop
+	// Main download loop — returns only when fully downloaded (or throws on error)
 	async download(): Promise<void> {
 		console.log('Starting download...');
 		if (this.state !== 'initialized') throw new CodedError(ErrorCodes.DOWNLOADER_NOT_INITIALIZED);
 		if (this.needsManifest) {
 			this.state = 'awaiting-manifest';
-			// Need peers first to get manifest — start peer discovery
 			await this.callForPeers();
 		} else {
 			this.state = 'preparing';
 			await this.doWork();
+		}
+		// Wait until state reaches 'downloaded' — doWork is called from peer handler
+		if (this.state !== 'downloaded') {
+			await new Promise<void>((resolve, reject) => {
+				this.downloadResolve = resolve;
+				this.downloadReject = reject;
+			});
 		}
 	}
 
@@ -138,6 +146,7 @@ export class Downloader {
 				if (this.missingChunks.length === 0) {
 					console.log('✓ All chunks downloaded!');
 					this.state = 'downloaded';
+					this.downloadResolve?.();
 					return;
 				}
 				if (this.peers.size === 0) {
