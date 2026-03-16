@@ -23,6 +23,8 @@ vite.config.js.timestamp-*
 **/cert.pem
 **/key.pem
 **/*.orig
+data-*/
+.node-*/
 
 # Editor/IDE local configs
 .[a-z]*/
