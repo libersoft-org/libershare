@@ -23,3 +23,15 @@ vite.config.js.timestamp-*
 **/cert.pem
 **/key.pem
 **/*.orig
+
+# Editor/IDE local configs
+.[a-z]*/
+!.git/
+!.github/
+/[A-Z]*.md
+!/README.md
+
+# Test artifacts
+**/test-results/
+**/.playwright-real-data/
+**/playwright-report/

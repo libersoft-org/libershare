@@ -15,15 +15,15 @@ import { Database } from 'bun:sqlite';
 import { mkdtemp, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { generateKeyPair } from '@libp2p/crypto/keys';
+// import { generateKeyPair } from '@libp2p/crypto/keys';
 import { Network } from '../../protocol/network.ts';
 import { DataServer } from '../../lish/data-server.ts';
 import { Settings } from '../../settings.ts';
 import { openDatabase } from '../../db/database.ts';
 import { CatalogManager } from '../catalog-manager.ts';
-import { signCatalogOp, verifyCatalogOp, type SignedCatalogOp } from '../catalog-signer.ts';
+import { signCatalogOp, type SignedCatalogOp } from '../catalog-signer.ts';
 import { handleRemoteOp } from '../catalog-validator.ts';
-import { getCatalogEntry, listCatalogEntries, updateCatalogACL, getEntryCount, isTombstoned } from '../../db/catalog.ts';
+import { getCatalogEntry, updateCatalogACL, getEntryCount, isTombstoned } from '../../db/catalog.ts';
 import type { HLC } from '../catalog-hlc.ts';
 
 interface TestNode {
