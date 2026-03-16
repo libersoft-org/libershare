@@ -41,10 +41,12 @@ export class Downloader {
 	private needsManifest = false;
 	private downloadResolve?: () => void;
 	private downloadReject?: (err: Error) => void;
-	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number }) => void;
+	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => void;
 	private onManifestImported?: (lishID: string) => void;
+	private downloadStartTime = 0;
+	private downloadedBytes = 0;
 
-	setProgressCallback(cb: (info: { downloadedChunks: number; totalChunks: number; peers: number }) => void): void {
+	setProgressCallback(cb: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => void): void {
 		this.onProgress = cb;
 	}
 
@@ -176,6 +178,8 @@ export class Downloader {
 	private async downloadChunks(): Promise<void> {
 		let downloadedCount = 0;
 		let missingChunks = this.dataServer.getMissingChunks(this.lishID);
+		this.downloadStartTime = Date.now();
+		this.downloadedBytes = 0;
 		try {
 			// Download loop - reuse the open streams
 			for (const chunk of missingChunks) {
@@ -188,9 +192,12 @@ export class Downloader {
 						await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 						this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 						downloadedCount++;
+						this.downloadedBytes += data.length;
 						downloaded = true;
+						const elapsed = (Date.now() - this.downloadStartTime) / 1000;
+						const bytesPerSecond = elapsed > 0 ? Math.round(this.downloadedBytes / elapsed) : 0;
 						console.log(`✓ Downloaded chunk ${downloadedCount}/${missingChunks.length}`);
-						this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: missingChunks.length, peers: this.peers.size });
+						this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: missingChunks.length, peers: this.peers.size, bytesPerSecond });
 						break;
 					}
 				}

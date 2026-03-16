@@ -130,6 +130,7 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 						downloadedChunks: info.downloadedChunks,
 						totalChunks: info.totalChunks,
 						peers: info.peers,
+						bytesPerSecond: info.bytesPerSecond,
 					});
 				});
 

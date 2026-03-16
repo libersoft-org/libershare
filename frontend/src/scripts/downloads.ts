@@ -238,14 +238,15 @@ export async function initDownloads(): Promise<void> {
 		});
 
 		// transfer.download:progress — catalog download chunk progress
-		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number }) => {
+		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number }) => {
 			activeDownloads.set(data.lishID, Date.now());
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
 					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
 					const downloadedSize = d.rawTotalSize > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
-					return { ...d, status: 'downloading' as DownloadStatus, progress, downloadedSize, downloadPeers: data.peers, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks };
+					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : d.downloadSpeed;
+					return { ...d, status: 'downloading' as DownloadStatus, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks };
 				})
 			);
 		});
