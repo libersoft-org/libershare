@@ -269,6 +269,12 @@ export class CatalogManager {
 		return result.valid;
 	}
 
+	emitSyncComplete(networkID: string, newEntries: number): void {
+		const net = this.joined.get(networkID);
+		if (net) net.lastSyncAt = new Date().toISOString();
+		this.emitEventFn?.('catalog:sync', { networkID, newEntries, phase: 'complete' });
+	}
+
 	gcTombstones(networkID: string, days: number = 30): number {
 		return deleteTombstonesOlderThan(this.db, networkID, days);
 	}
