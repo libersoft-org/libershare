@@ -6,6 +6,7 @@
 	import SearchBar from '../../components/Search/SearchBar.svelte';
 	import ProductsList from './ProductsList.svelte';
 	import { listCatalogEntries, searchCatalog, subscribeCatalogEvents, type CatalogEntryResponse } from '../../scripts/catalog.ts';
+	import { api } from '../../scripts/api.ts';
 	interface Props {
 		areaID: string;
 		position: Position;
@@ -15,6 +16,8 @@
 		onBack?: () => void;
 	}
 	let { areaID, position, title = 'Library', networkID, onBack }: Props = $props();
+	let activeNetworkID = $state(networkID ?? '');
+	let networkName = $state('');
 	let searchAreaID = $derived(`${areaID}-search`);
 	let listAreaID = $derived(`${areaID}-list`);
 	let searchPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
@@ -36,18 +39,30 @@
 	})));
 
 	async function loadEntries(): Promise<void> {
-		if (!networkID) {
+		// Auto-detect network if not specified
+		if (!activeNetworkID) {
+			try {
+				const networks = await api.lishnets.list();
+				const enabled = networks.filter(n => n.enabled);
+				if (enabled.length > 0) {
+					activeNetworkID = enabled[0]!.networkID;
+					networkName = enabled[0]!.name;
+				}
+			} catch {}
+		}
+		if (!activeNetworkID) {
 			entries = [];
 			loading = false;
+			error = 'No network joined. Enable a LISH network in Settings first.';
 			return;
 		}
 		loading = true;
 		error = null;
 		try {
 			if (searchQuery.trim()) {
-				entries = await searchCatalog(networkID, searchQuery);
+				entries = await searchCatalog(activeNetworkID, searchQuery);
 			} else {
-				entries = await listCatalogEntries(networkID);
+				entries = await listCatalogEntries(activeNetworkID);
 			}
 		} catch (err: any) {
 			error = err.message;
