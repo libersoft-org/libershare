@@ -106,6 +106,8 @@ export const downloads = writable<DownloadData[]>([]);
 export const downloadsLoading = writable<boolean>(true);
 // Track which LISHs are actively downloading (by lishID → last progress timestamp)
 const activeDownloads = new Map<string, number>();
+// Track explicitly paused downloads (prevents progress events from overriding paused state)
+const pausedDownloads = new Set<string>();
 
 export function setCurrentDetailLISHID(lishID: string | null): void {
 	currentDetailLISHID = lishID;
@@ -239,6 +241,8 @@ export async function initDownloads(): Promise<void> {
 
 		// transfer.download:progress — catalog download chunk progress
 		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number }) => {
+			// Ignore progress for explicitly paused downloads (prevents race condition)
+			if (pausedDownloads.has(data.lishID)) return;
 			activeDownloads.set(data.lishID, Date.now());
 			downloads.update(list =>
 				list.map(d => {
@@ -253,18 +257,21 @@ export async function initDownloads(): Promise<void> {
 
 		// transfer.download:paused
 		api.on('transfer.download:paused', (data: { lishID: string }) => {
+			pausedDownloads.add(data.lishID);
 			activeDownloads.delete(data.lishID);
 			downloads.update(list => list.map(d => d.id !== data.lishID ? d : { ...d, status: 'idling' as DownloadStatus, downloadSpeed: '0 B/s' }));
 		});
 
 		// transfer.download:resumed
 		api.on('transfer.download:resumed', (data: { lishID: string }) => {
+			pausedDownloads.delete(data.lishID);
 			activeDownloads.set(data.lishID, Date.now());
 			downloads.update(list => list.map(d => d.id !== data.lishID ? d : { ...d, status: 'downloading' as DownloadStatus }));
 		});
 
 		// transfer.download:complete — catalog download finished
 		api.on('transfer.download:complete', (data: { downloadDir: string; lishID: string; name?: string }) => {
+			pausedDownloads.delete(data.lishID);
 			activeDownloads.delete(data.lishID);
 			downloads.update(list =>
 				list.map(d => {
