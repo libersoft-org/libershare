@@ -151,6 +151,15 @@ export async function initDownloads(): Promise<void> {
 				const idx = list.findIndex(d => d.id === detail.id);
 				const entry = detailToDownload(detail);
 				if (idx >= 0) {
+					const existing = list[idx]!;
+					// Preserve active download state (don't overwrite downloading status)
+					if (existing.status === 'downloading') {
+						entry.status = existing.status;
+						entry.downloadPeers = existing.downloadPeers;
+						entry.downloadSpeed = existing.downloadSpeed;
+						entry.progress = existing.progress;
+						entry.downloadedSize = existing.downloadedSize;
+					}
 					const updated = [...list];
 					updated[idx] = entry;
 					return updated;
