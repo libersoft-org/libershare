@@ -104,6 +104,8 @@ let currentDetailLISHID: string | null = null;
 
 export const downloads = writable<DownloadData[]>([]);
 export const downloadsLoading = writable<boolean>(true);
+// Track which LISHs are actively downloading (by lishID → last progress timestamp)
+const activeDownloads = new Map<string, number>();
 
 export function setCurrentDetailLISHID(lishID: string | null): void {
 	currentDetailLISHID = lishID;
@@ -150,20 +152,24 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => {
 				const idx = list.findIndex(d => d.id === detail.id);
 				const entry = detailToDownload(detail);
+				// If actively downloading (progress event within last 30s), preserve download state
+				const lastProgress = activeDownloads.get(detail.id);
+				const isActive = lastProgress && (Date.now() - lastProgress) < 30_000;
 				if (idx >= 0) {
 					const existing = list[idx]!;
-					// Preserve active download state (don't overwrite downloading status)
-					if (existing.status === 'downloading') {
-						entry.status = existing.status;
+					if (isActive || existing.status === 'downloading') {
+						entry.status = 'downloading';
 						entry.downloadPeers = existing.downloadPeers;
 						entry.downloadSpeed = existing.downloadSpeed;
-						entry.progress = existing.progress;
+						entry.progress = existing.progress > entry.progress ? existing.progress : entry.progress;
 						entry.downloadedSize = existing.downloadedSize;
 					}
 					const updated = [...list];
 					updated[idx] = entry;
 					return updated;
 				}
+				// New entry — if active download, set status
+				if (isActive) entry.status = 'downloading';
 				return [entry, ...list];
 			});
 		});
@@ -233,6 +239,7 @@ export async function initDownloads(): Promise<void> {
 
 		// transfer.download:progress — catalog download chunk progress
 		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number }) => {
+			activeDownloads.set(data.lishID, Date.now());
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
@@ -245,6 +252,7 @@ export async function initDownloads(): Promise<void> {
 
 		// transfer.download:complete — catalog download finished
 		api.on('transfer.download:complete', (data: { downloadDir: string; lishID: string; name?: string }) => {
+			activeDownloads.delete(data.lishID);
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
@@ -287,6 +295,7 @@ export function resetVerifyState(lishID: string): void {
  * Called when catalog.startDownload returns status 'downloading'.
  */
 export function addCatalogDownload(entry: { lishID: string; name: string; totalSize?: number; fileCount?: number }): void {
+	activeDownloads.set(entry.lishID, Date.now());
 	const existing = get(downloads);
 	if (existing.some(d => d.id === entry.lishID)) return; // already tracked
 	const dl: DownloadData = {
