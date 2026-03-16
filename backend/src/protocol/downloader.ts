@@ -225,28 +225,32 @@ export class Downloader {
 			if (this.peers.has(peerID)) continue;
 			try {
 				console.log(`[Probe] Trying direct connection to peer ${peerID.slice(0, 20)}...`);
-				const stream = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
-				const client = new LISHClient(stream);
-				// Ask if peer has this LISH via manifest request
-				const manifest = await client.requestManifest(this.lishID);
-				if (manifest) {
-					console.log(`[Probe] ✓ Peer ${peerID.slice(0, 20)} has the file!`);
-					this.peers.set(peerID, client);
-					// If we needed manifest, import it now
-					if (this.needsManifest && manifest.files && manifest.files.length > 0) {
-						this.lish = { ...manifest, directory: this.downloadDir };
-						this.dataServer.add(this.lish);
-						this.onManifestImported?.(this.lishID);
-						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
-						this.needsManifest = false;
-						this.state = 'preparing';
-						console.log(`[Probe] ✓ Got manifest: ${manifest.files.length} files, ${this.missingChunks.length} chunks to download`);
-					}
-					this.doWork().then(() => {});
-					return; // Found a peer, start downloading
-				} else {
-					await client.close();
+				// Stream 1: manifest probe (will be closed after)
+				const probeStream = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
+				const probeClient = new LISHClient(probeStream);
+				const manifest = await probeClient.requestManifest(this.lishID);
+				await probeClient.close();
+
+				if (!manifest) continue;
+
+				console.log(`[Probe] ✓ Peer ${peerID.slice(0, 20)} has the file!`);
+				// If we needed manifest, import it now
+				if (this.needsManifest && manifest.files && manifest.files.length > 0) {
+					this.lish = { ...manifest, directory: this.downloadDir };
+					this.dataServer.add(this.lish);
+					this.onManifestImported?.(this.lishID);
+					this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
+					this.needsManifest = false;
+					this.state = 'preparing';
+					console.log(`[Probe] ✓ Got manifest: ${manifest.files.length} files, ${this.missingChunks.length} chunks to download`);
 				}
+
+				// Stream 2: fresh stream for chunk download (separate from manifest probe)
+				const dlStream = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
+				this.peers.set(peerID, new LISHClient(dlStream));
+
+				this.doWork().then(() => {});
+				return; // Found a peer, start downloading
 			} catch (err) {
 				console.log(`[Probe] ✗ Peer ${peerID.slice(0, 20)}: ${(err as Error).message}`);
 			}
