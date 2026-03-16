@@ -50,10 +50,7 @@
 		--badge-bg: var(--status-pending-verification-bg);
 	}
 
-	.badge.searching {
-		--badge-fg: var(--status-searching-fg, #f0ad4e);
-		--badge-bg: var(--status-searching-bg, #3d2e10);
-	}
+
 </style>
 
-<div class="badge" class:idling={status === 'idling'} class:downloading={status === 'downloading'} class:uploading={status === 'uploading'} class:downloading-uploading={status === 'downloading-uploading'} class:verifying={status === 'verifying'} class:pending-verification={status === 'pending-verification'} class:searching={status === 'searching'}>{label}</div>
+<div class="badge" class:idling={status === 'idling'} class:downloading={status === 'downloading'} class:uploading={status === 'uploading'} class:downloading-uploading={status === 'downloading-uploading'} class:verifying={status === 'verifying'} class:pending-verification={status === 'pending-verification'}>{label}</div>

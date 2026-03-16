@@ -94,8 +94,7 @@
 			"downloading-uploading": "Stahuji a odesílám",
 			"idling": "Nečinný",
 			"verifying": "Ověřuje se",
-			"pending-verification": "Čeká na ověření",
-			"searching": "Hledání peerů"
+			"pending-verification": "Čeká na ověření"
 		},
 		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",

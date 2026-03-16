@@ -32,14 +32,14 @@
 		if (allDownloadPaused) {
 			// Resume all — call resumeDownload for each non-downloading entry
 			for (const d of $downloads) {
-				if (d.status !== 'downloading' && d.status !== 'searching') {
+				if (d.status !== 'downloading') {
 					api.call('catalog.resumeDownload', { lishID: d.id });
 				}
 			}
 		} else {
 			// Pause all — call pauseDownload for each downloading entry
 			for (const d of $downloads) {
-				if (d.status === 'downloading' || d.status === 'searching') {
+				if (d.status === 'downloading') {
 					api.call('catalog.pauseDownload', { lishID: d.id });
 				}
 			}

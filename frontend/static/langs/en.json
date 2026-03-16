@@ -94,8 +94,7 @@
 			"downloading-uploading": "Downloading and uploading",
 			"idling": "Idling",
 			"verifying": "Verifying",
-			"pending-verification": "Pending verification",
-			"searching": "Searching for peers"
+			"pending-verification": "Pending verification"
 		},
 		"createLISH": "Create LISH",
 		"errorInvalidFormat": "Invalid LISH format",
