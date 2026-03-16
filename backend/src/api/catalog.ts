@@ -31,6 +31,8 @@ export interface CatalogHandlers {
 	revokeRole: (p: { networkID: string; delegatee: string; role: 'admin' | 'moderator' }) => Promise<void>;
 	getSyncStatus: (p: { networkID: string }) => { entryCount: number; tombstoneCount: number; lastSyncAt: string | null };
 	startDownload: (p: { networkID: string; lishID: string }, client: any) => Promise<StartDownloadResult>;
+	pauseDownload: (p: { lishID: string }) => { success: boolean };
+	resumeDownload: (p: { lishID: string }) => { success: boolean };
 }
 
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -44,6 +46,9 @@ export interface CatalogHandlerDeps {
 	emit: EmitFn;
 	broadcast: BroadcastFn;
 }
+
+// Track active downloaders for pause/resume
+const activeDownloaders = new Map<string, Downloader>();
 
 export function initCatalogHandlers(catalogManager: CatalogManager, deps?: CatalogHandlerDeps): CatalogHandlers {
 	return {
@@ -137,11 +142,18 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 					});
 				});
 
+				// Track downloader for pause/resume
+				activeDownloaders.set(entry.lish_id, downloader);
+
 				// Start async download — broadcast completion/error to ALL clients
 				downloader
 					.download()
-					.then(() => deps.broadcast('transfer.download:complete', { downloadDir, lishID: entry.lish_id, name: entry.name }))
+					.then(() => {
+						activeDownloaders.delete(entry.lish_id);
+						deps.broadcast('transfer.download:complete', { downloadDir, lishID: entry.lish_id, name: entry.name });
+					})
 					.catch(err => {
+						activeDownloaders.delete(entry.lish_id);
 						if (err instanceof CodedError) deps.broadcast('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID: entry.lish_id });
 						else deps.broadcast('transfer.download:error', { error: ErrorCodes.DOWNLOAD_ERROR, errorDetail: err.message, lishID: entry.lish_id });
 					});
@@ -157,6 +169,22 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 					message: `Cannot start download: ${err.message}`,
 				};
 			}
+		},
+		pauseDownload(p) {
+			assert(p, ['lishID']);
+			const dl = activeDownloaders.get(p.lishID);
+			if (!dl) return { success: false };
+			dl.pause();
+			deps?.broadcast('transfer.download:paused', { lishID: p.lishID });
+			return { success: true };
+		},
+		resumeDownload(p) {
+			assert(p, ['lishID']);
+			const dl = activeDownloaders.get(p.lishID);
+			if (!dl) return { success: false };
+			dl.resume();
+			deps?.broadcast('transfer.download:resumed', { lishID: p.lishID });
+			return { success: true };
 		},
 	};
 }

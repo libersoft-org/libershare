@@ -151,6 +151,8 @@ export class APIServer {
 				'catalog.revokeRole': _catalog.revokeRole,
 				'catalog.getSyncStatus': _catalog.getSyncStatus,
 				'catalog.startDownload': _catalog.startDownload,
+				'catalog.pauseDownload': _catalog.pauseDownload,
+				'catalog.resumeDownload': _catalog.resumeDownload,
 			} : {}),
 		};
 	}

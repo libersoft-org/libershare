@@ -80,8 +80,12 @@
 	}
 
 	function handleToolbarAction(actionId: DownloadToolbarActionID): void {
-		if (actionId === 'toggle-download') {
-			downloadPaused = !downloadPaused;
+		if (actionId === 'toggle-download' && download) {
+			if (isDownloading) {
+				api.call('catalog.pauseDownload', { lishID: download.id });
+			} else {
+				api.call('catalog.resumeDownload', { lishID: download.id });
+			}
 			return;
 		}
 		if (actionId === 'toggle-upload') {

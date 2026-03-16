@@ -251,6 +251,18 @@ export async function initDownloads(): Promise<void> {
 			);
 		});
 
+		// transfer.download:paused
+		api.on('transfer.download:paused', (data: { lishID: string }) => {
+			activeDownloads.delete(data.lishID);
+			downloads.update(list => list.map(d => d.id !== data.lishID ? d : { ...d, status: 'idling' as DownloadStatus, downloadSpeed: '0 B/s' }));
+		});
+
+		// transfer.download:resumed
+		api.on('transfer.download:resumed', (data: { lishID: string }) => {
+			activeDownloads.set(data.lishID, Date.now());
+			downloads.update(list => list.map(d => d.id !== data.lishID ? d : { ...d, status: 'downloading' as DownloadStatus }));
+		});
+
 		// transfer.download:complete — catalog download finished
 		api.on('transfer.download:complete', (data: { downloadDir: string; lishID: string; name?: string }) => {
 			activeDownloads.delete(data.lishID);
@@ -277,6 +289,8 @@ export async function initDownloads(): Promise<void> {
 	api.subscribe('lishs:remove');
 	api.subscribe('lishs:verify');
 	api.subscribe('transfer.download:progress');
+	api.subscribe('transfer.download:paused');
+	api.subscribe('transfer.download:resumed');
 	api.subscribe('transfer.download:complete');
 	api.subscribe('transfer.download:error');
 }

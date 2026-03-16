@@ -39,6 +39,8 @@ export class Downloader {
 	private peers: Map<NodeId, LISHClient> = new Map();
 	private callForPeersInterval: NodeJS.Timeout | undefined;
 	private needsManifest = false;
+	private paused = false;
+	private pauseResolve?: () => void;
 	private downloadResolve?: () => void;
 	private downloadReject?: (err: Error) => void;
 	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => void;
@@ -52,6 +54,29 @@ export class Downloader {
 
 	setManifestImportedCallback(cb: (lishID: string) => void): void {
 		this.onManifestImported = cb;
+	}
+
+	pause(): void {
+		this.paused = true;
+		console.log(`[Downloader] Paused: ${this.lishID}`);
+	}
+
+	resume(): void {
+		this.paused = false;
+		console.log(`[Downloader] Resumed: ${this.lishID}`);
+		this.pauseResolve?.();
+		this.pauseResolve = undefined;
+		// Re-trigger doWork in case it was waiting
+		if (this.state === 'downloading') this.doWork().then(() => {});
+	}
+
+	isPaused(): boolean { return this.paused; }
+
+	getLishID(): string { return this.lishID; }
+
+	private async waitIfPaused(): Promise<void> {
+		if (!this.paused) return;
+		await new Promise<void>(resolve => { this.pauseResolve = resolve; });
 	}
 
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkID: string) {
@@ -183,6 +208,7 @@ export class Downloader {
 		try {
 			// Download loop - reuse the open streams
 			for (const chunk of missingChunks) {
+				await this.waitIfPaused();
 				let downloaded = false;
 				// Try each peer client until one succeeds
 				for (const [, client] of this.peers) {
