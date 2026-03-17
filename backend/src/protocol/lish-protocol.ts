@@ -105,11 +105,24 @@ export function setMaxUploadSpeed(kbPerSec: number): void { uploadMaxBytesPerSec
 
 type BroadcastFn = (event: string, data: any) => void;
 let broadcastFn: BroadcastFn | null = null;
-// Per-LISH upload tracking: lishID → { chunks served, start time, bytes }
-const activeUploads = new Map<string, { chunks: number; startTime: number; bytes: number; peers: number }>();
+// Per-LISH upload tracking
+const activeUploads = new Map<string, { chunks: number; startTime: number; bytes: number; peers: number; speedSamples: { time: number; bytes: number }[] }>();
+// Per-LISH active stream count
+const activeStreamCount = new Map<string, number>();
 
 export function setUploadBroadcast(fn: BroadcastFn): void { broadcastFn = fn; }
-export function getActiveUploads(): Map<string, { chunks: number; startTime: number; bytes: number; peers: number }> { return activeUploads; }
+export function getActiveUploads(): Map<string, { chunks: number; startTime: number; bytes: number; peers: number; speedSamples: { time: number; bytes: number }[] }> { return activeUploads; }
+
+/** Reset all module-level upload state. For use in tests only. */
+export function resetUploadState(): void {
+	activeUploads.clear();
+	activeStreamCount.clear();
+	pausedUploads.clear();
+	uploadMaxBytesPerSec = 0;
+	uploadStartTime = 0;
+	uploadedBytes = 0;
+	broadcastFn = null;
+}
 
 // Per-LISH upload pause: paused LISHs won't serve chunks
 const pausedUploads = new Set<string>();
@@ -119,6 +132,7 @@ export function isUploadPaused(lishID: string): boolean { return pausedUploads.h
 export function getPausedUploads(): Set<string> { return pausedUploads; }
 
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer): Promise<void> {
+	const servedLishIDs = new Set<string>();
 	try {
 		// Wrap the stream with length-prefixed decoder for multiple messages
 		const decoder = decode(stream);
@@ -143,17 +157,21 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 			} else {
 				// Chunk request (default)
 				const chunkReq = request as LISHChunkRequest;
-				// Refuse to serve if upload is paused for this LISH
+				// Refuse to serve if upload is paused — close the stream so peer disconnects immediately
 				if (pausedUploads.has(chunkReq.lishID)) {
-					const response: LISHResponse = { data: null };
-					await sendLengthPrefixed(stream, new TextEncoder().encode(JSON.stringify(response)));
-					continue;
+					console.log(`Upload paused for ${chunkReq.lishID.slice(0, 8)}, closing stream`);
+					stream.abort(new Error('UPLOAD_PAUSED'));
+					return;
 				}
 				const chunkData = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
 				const response: LISHResponse = { data: chunkData ? Array.from(chunkData) : null };
 				const responseData = new TextEncoder().encode(JSON.stringify(response));
 				await sendLengthPrefixed(stream, responseData);
 				if (chunkData) {
+					if (!servedLishIDs.has(chunkReq.lishID)) {
+						servedLishIDs.add(chunkReq.lishID);
+						activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
+					}
 					// Upload speed limit
 					if (uploadMaxBytesPerSec > 0) {
 						if (uploadStartTime === 0) uploadStartTime = Date.now();
@@ -163,14 +181,19 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 						const waitMs = Math.max(0, (expectedTime - elapsed) * 1000);
 						if (waitMs > 10) await new Promise(r => setTimeout(r, waitMs));
 					}
-					// Upload progress tracking
+					// Upload progress tracking (rolling 10s speed window)
 					if (broadcastFn) {
 						let info = activeUploads.get(chunkReq.lishID);
-						if (!info) { info = { chunks: 0, startTime: Date.now(), bytes: 0, peers: 1 }; activeUploads.set(chunkReq.lishID, info); }
+						if (!info) { info = { chunks: 0, startTime: Date.now(), bytes: 0, peers: 0, speedSamples: [] }; activeUploads.set(chunkReq.lishID, info); }
 						info.chunks++;
 						info.bytes += chunkData.length;
-						const elapsed = (Date.now() - info.startTime) / 1000;
-						const bytesPerSecond = elapsed > 0 ? Math.round(info.bytes / elapsed) : 0;
+						info.peers = activeStreamCount.get(chunkReq.lishID) ?? 1;
+						const now = Date.now();
+						info.speedSamples.push({ time: now, bytes: chunkData.length });
+						info.speedSamples = info.speedSamples.filter(s => s.time > now - 10000);
+						const windowBytes = info.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
+						const windowSec = info.speedSamples.length > 1 ? (now - info.speedSamples[0]!.time) / 1000 : (now - info.startTime) / 1000;
+						const bytesPerSecond = windowSec > 0.1 ? Math.round(windowBytes / windowSec) : 0;
 						broadcastFn('transfer.upload:progress', { lishID: chunkReq.lishID, uploadedChunks: info.chunks, bytesPerSecond, peers: info.peers });
 					}
 				}
@@ -181,6 +204,20 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 	} catch (error) {
 		console.error('Error handling lish protocol:', error);
 		stream.abort(error instanceof Error ? error : new Error(String(error)));
+	} finally {
+		// Decrement stream count per LISH; only clean up when last stream closes
+		for (const lishID of servedLishIDs) {
+			const count = (activeStreamCount.get(lishID) ?? 1) - 1;
+			if (count <= 0) {
+				activeStreamCount.delete(lishID);
+				activeUploads.delete(lishID);
+				broadcastFn?.('transfer.upload:stopped', { lishID });
+			} else {
+				activeStreamCount.set(lishID, count);
+				const info = activeUploads.get(lishID);
+				if (info) info.peers = count;
+			}
+		}
 	}
 }
 

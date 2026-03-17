@@ -11,7 +11,7 @@ type BroadcastFn = (event: string, data: any) => void;
 
 interface ActiveTransfer {
 	lishID: string;
-	type: 'downloading' | 'uploading';
+	type: 'downloading' | 'uploading' | 'upload-paused';
 	peers: number;
 	bytesPerSecond: number;
 }
@@ -103,15 +103,29 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	function getActiveTransfers(): ActiveTransfer[] {
 		const transfers: ActiveTransfer[] = [];
+		const paused = getPausedUploads();
 		// Active downloads
 		for (const [lishID] of activeDownloaders) {
 			transfers.push({ lishID, type: 'downloading', peers: 0, bytesPerSecond: 0 });
 		}
 		// Active uploads
 		for (const [lishID, info] of getActiveUploads()) {
-			const elapsed = (Date.now() - info.startTime) / 1000;
-			const bytesPerSecond = elapsed > 0 ? Math.round(info.bytes / elapsed) : 0;
-			transfers.push({ lishID, type: 'uploading', peers: info.peers, bytesPerSecond });
+			if (paused.has(lishID)) {
+				transfers.push({ lishID, type: 'upload-paused', peers: 0, bytesPerSecond: 0 });
+			} else {
+				const now = Date.now();
+				const samples = info.speedSamples.filter(s => s.time > now - 10000);
+				const windowBytes = samples.reduce((sum, s) => sum + s.bytes, 0);
+				const windowSec = samples.length > 1 ? (now - samples[0]!.time) / 1000 : (now - info.startTime) / 1000;
+				const bytesPerSecond = windowSec > 0.1 ? Math.round(windowBytes / windowSec) : 0;
+				transfers.push({ lishID, type: 'uploading', peers: info.peers, bytesPerSecond });
+			}
+		}
+		// Paused uploads that were never active (no entry in activeUploads)
+		for (const lishID of paused) {
+			if (!getActiveUploads().has(lishID)) {
+				transfers.push({ lishID, type: 'upload-paused', peers: 0, bytesPerSecond: 0 });
+			}
 		}
 		return transfers;
 	}

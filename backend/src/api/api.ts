@@ -263,6 +263,12 @@ export class APIServer {
 				sent++;
 			}
 		}
-		// console.log(`[API] broadcast '${event}' to ${sent}/${this.clients.size} clients`, JSON.stringify(data));
+		if (event.startsWith('transfer.')) {
+			const d = data as any;
+			const extra = d.peers !== undefined ? ` peers=${d.peers}` : '';
+			const speed = d.bytesPerSecond !== undefined ? ` speed=${Math.round(d.bytesPerSecond/1024)}KB/s` : '';
+			const chunks = d.downloadedChunks !== undefined ? ` ${d.downloadedChunks}/${d.totalChunks}` : '';
+			console.log(`[TRANSFER] ${event}${chunks}${extra}${speed} → ${sent}/${this.clients.size} clients`);
+		}
 	}
 }
