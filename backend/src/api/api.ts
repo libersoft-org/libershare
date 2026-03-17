@@ -59,7 +59,7 @@ export class APIServer {
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn);
-		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
+		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn);
 		const hasSubscribers = (event: string): boolean => {
 			for (const client of this.clients) {
 				if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) return true;
@@ -124,6 +124,11 @@ export class APIServer {
 			'lishs.move': _lishs.move,
 			// Transfer
 			'transfer.download': _transfer.download,
+			'transfer.pauseDownload': _transfer.pauseDownload,
+			'transfer.resumeDownload': _transfer.resumeDownload,
+			'transfer.pauseUpload': _transfer.pauseUpload,
+			'transfer.resumeUpload': _transfer.resumeUpload,
+			'transfer.getActiveTransfers': _transfer.getActiveTransfers,
 			// Datasets
 			'datasets.getDatasets': _datasets.getDatasets,
 			'datasets.getDataset': _datasets.getDataset,
@@ -246,6 +251,8 @@ export class APIServer {
 	private emit(client: ClientSocket, event: string, data: any): void {
 		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) client.send(JSON.stringify({ event, data }));
 	}
+
+	broadcastEvent(event: string, data: any): void { this.broadcast(event, data); }
 
 	private broadcast(event: string, data: any): void {
 		const msg = JSON.stringify({ event, data });
