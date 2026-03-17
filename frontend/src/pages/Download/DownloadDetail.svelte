@@ -42,12 +42,19 @@
 	let selectedFileIndex = $state(0);
 	let itemElements: HTMLElement[] = $state([]);
 	let infoElement: HTMLElement | null = $state(null);
-	// Toolbar actions - use config from downloads.ts
-	let downloadPaused = $state(true);
-	let uploadPaused = $state(true);
+	// Toolbar actions - adapt to current download state
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
+	let isDownloading = $derived(download?.status === 'downloading' || download?.status === 'downloading-uploading');
+	let isUploading = $derived(download?.status === 'uploading' || download?.status === 'downloading-uploading');
+	let downloadPaused = $derived(!isDownloading);
+	let uploadPaused = $derived(!isUploading);
 	let toolbarActions = $derived(
-		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => (action.id === 'verify' && !isVerifying) || (action.id === 'stop-verify' && isVerifying) || (action.id !== 'verify' && action.id !== 'stop-verify')).map(action => ({
+		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => {
+			if (action.id === 'verify' && !isVerifying && !isDownloading) return true;
+			if (action.id === 'stop-verify' && isVerifying) return true;
+			if (action.id === 'verify' || action.id === 'stop-verify') return false;
+			return true;
+		}).map(action => ({
 			id: action.id,
 			label: action.getLabel($t, downloadPaused, uploadPaused),
 			icon: typeof action.icon === 'function' ? action.icon(downloadPaused, uploadPaused) : action.icon,
@@ -115,12 +122,20 @@
 	}
 
 	function handleToolbarAction(actionID: DownloadToolbarActionID): void {
-		if (actionID === 'toggle-download') {
-			downloadPaused = !downloadPaused;
+		if (actionID === 'toggle-download' && download) {
+			if (isDownloading) {
+				api.call('transfer.pauseDownload', { lishID: download.id });
+			} else {
+				api.call('transfer.resumeDownload', { lishID: download.id });
+			}
 			return;
 		}
-		if (actionID === 'toggle-upload') {
-			uploadPaused = !uploadPaused;
+		if (actionID === 'toggle-upload' && download) {
+			if (isUploading) {
+				api.call('transfer.pauseUpload', { lishID: download.id });
+			} else {
+				api.call('transfer.resumeUpload', { lishID: download.id });
+			}
 			return;
 		}
 		if (actionID === 'stop-verify' && download) {

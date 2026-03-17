@@ -388,9 +388,9 @@ export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID
 	const files = db.query<{ id: number; path: string }, [number]>('SELECT id, path FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
 
 	for (const file of files) {
-		const chunks = db.query<{ checksum: string }, [number]>('SELECT checksum FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(file.id);
+		const chunks = db.query<{ checksum: string; have: number }, [number]>('SELECT checksum, have FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(file.id);
 		const chunkIndex = chunks.findIndex(c => c.checksum === chunkID);
-		if (chunkIndex !== -1) return { filePath: file.path, chunkIndex };
+		if (chunkIndex !== -1 && chunks[chunkIndex]!.have) return { filePath: file.path, chunkIndex };
 	}
 	return null;
 }
