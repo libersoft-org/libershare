@@ -5,12 +5,21 @@ import { type LISHid, type ChunkID } from '@shared';
 import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
 export const LISH_PROTOCOL = '/lish/1.0.0';
-export interface LISHRequest {
+export type LISHRequest = LISHChunkRequest | LISHManifestRequest;
+export interface LISHChunkRequest {
+	type?: 'chunk';
 	lishID: LISHid;
 	chunkID: ChunkID;
 }
+export interface LISHManifestRequest {
+	type: 'manifest';
+	lishID: LISHid;
+}
 export interface LISHResponse {
 	data: number[] | null;
+}
+export interface LISHManifestResponse {
+	manifest: import('@shared').IStoredLISH | null;
 }
 export type HaveChunks = 'all' | ChunkID[];
 
@@ -23,6 +32,23 @@ export class LISHClient {
 	constructor(stream: Stream) {
 		this.stream = stream;
 		this.decoder = decode(stream);
+	}
+
+	// Request full LISH manifest from peer
+	async requestManifest(lishID: LISHid): Promise<import('@shared').IStoredLISH | null> {
+		try {
+			const request: LISHManifestRequest = { type: 'manifest', lishID };
+			const requestData = new TextEncoder().encode(JSON.stringify(request));
+			await sendLengthPrefixed(this.stream, requestData);
+			const responseMsg = await this.decoder.next();
+			if (responseMsg.done || !responseMsg.value) return null;
+			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
+			const response: LISHManifestResponse = JSON.parse(new TextDecoder().decode(responseData));
+			return response.manifest;
+		} catch (error) {
+			console.error('Error requesting manifest:', error);
+			return null;
+		}
 	}
 
 	// Request a single chunk (can be called multiple times on same stream)
@@ -71,26 +97,84 @@ export class LISHClient {
 	}
 }
 
+let uploadMaxBytesPerSec = 0;
+let uploadStartTime = 0;
+let uploadedBytes = 0;
+
+export function setMaxUploadSpeed(kbPerSec: number): void { uploadMaxBytesPerSec = Math.max(0, kbPerSec) * 1024; }
+
+type BroadcastFn = (event: string, data: any) => void;
+let broadcastFn: BroadcastFn | null = null;
+// Per-LISH upload tracking: lishID → { chunks served, start time, bytes }
+const activeUploads = new Map<string, { chunks: number; startTime: number; bytes: number; peers: number }>();
+
+export function setUploadBroadcast(fn: BroadcastFn): void { broadcastFn = fn; }
+export function getActiveUploads(): Map<string, { chunks: number; startTime: number; bytes: number; peers: number }> { return activeUploads; }
+
+// Per-LISH upload pause: paused LISHs won't serve chunks
+const pausedUploads = new Set<string>();
+export function pauseUpload(lishID: string): void { pausedUploads.add(lishID); broadcastFn?.('transfer.upload:paused', { lishID }); }
+export function resumeUpload(lishID: string): void { pausedUploads.delete(lishID); broadcastFn?.('transfer.upload:resumed', { lishID }); }
+export function isUploadPaused(lishID: string): boolean { return pausedUploads.has(lishID); }
+export function getPausedUploads(): Set<string> { return pausedUploads; }
+
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer): Promise<void> {
 	try {
 		// Wrap the stream with length-prefixed decoder for multiple messages
 		const decoder = decode(stream);
 		// Handle multiple requests on the same stream
 		for await (const msg of decoder) {
-			// Convert to Uint8Array if needed
 			const data = msg instanceof Uint8ArrayList ? msg.subarray() : msg;
 			const request: LISHRequest = JSON.parse(new TextDecoder().decode(data));
-			console.log(`Received lish request: ${request.lishID.slice(0, 8)}... chunk ${request.chunkID.slice(0, 8)}...`);
-			// Get the chunk
-			const chunkData = await dataServer.getChunk(request.lishID, request.chunkID);
-			// Write the response
-			const response: LISHResponse = {
-				data: chunkData ? Array.from(chunkData) : null,
-			};
-			const responseData = new TextEncoder().encode(JSON.stringify(response));
-			// Send response with length prefix
-			await sendLengthPrefixed(stream, responseData);
-			console.log(`Responded with ${chunkData ? chunkData.length : 0} bytes`);
+
+			if (request.type === 'manifest') {
+				// Manifest request — return full LISH data (without directory path and chunks)
+				console.log(`Received manifest request for ${request.lishID.slice(0, 8)}...`);
+				const lish = dataServer.get(request.lishID as LISHid);
+				let manifest: import('@shared').IStoredLISH | null = null;
+				if (lish) {
+					const { directory, chunks, ...exportData } = lish;
+					manifest = exportData as import('@shared').IStoredLISH;
+				}
+				const response: LISHManifestResponse = { manifest };
+				const responseData = new TextEncoder().encode(JSON.stringify(response));
+				await sendLengthPrefixed(stream, responseData);
+				console.log(`Responded with manifest: ${manifest ? 'found' : 'not found'}`);
+			} else {
+				// Chunk request (default)
+				const chunkReq = request as LISHChunkRequest;
+				// Refuse to serve if upload is paused for this LISH
+				if (pausedUploads.has(chunkReq.lishID)) {
+					const response: LISHResponse = { data: null };
+					await sendLengthPrefixed(stream, new TextEncoder().encode(JSON.stringify(response)));
+					continue;
+				}
+				const chunkData = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
+				const response: LISHResponse = { data: chunkData ? Array.from(chunkData) : null };
+				const responseData = new TextEncoder().encode(JSON.stringify(response));
+				await sendLengthPrefixed(stream, responseData);
+				if (chunkData) {
+					// Upload speed limit
+					if (uploadMaxBytesPerSec > 0) {
+						if (uploadStartTime === 0) uploadStartTime = Date.now();
+						uploadedBytes += chunkData.length;
+						const elapsed = (Date.now() - uploadStartTime) / 1000;
+						const expectedTime = uploadedBytes / uploadMaxBytesPerSec;
+						const waitMs = Math.max(0, (expectedTime - elapsed) * 1000);
+						if (waitMs > 10) await new Promise(r => setTimeout(r, waitMs));
+					}
+					// Upload progress tracking
+					if (broadcastFn) {
+						let info = activeUploads.get(chunkReq.lishID);
+						if (!info) { info = { chunks: 0, startTime: Date.now(), bytes: 0, peers: 1 }; activeUploads.set(chunkReq.lishID, info); }
+						info.chunks++;
+						info.bytes += chunkData.length;
+						const elapsed = (Date.now() - info.startTime) / 1000;
+						const bytesPerSecond = elapsed > 0 ? Math.round(info.bytes / elapsed) : 0;
+						broadcastFn('transfer.upload:progress', { lishID: chunkReq.lishID, uploadedChunks: info.chunks, bytesPerSecond, peers: info.peers });
+					}
+				}
+			}
 		}
 		// Stream closed by remote, close our end
 		await stream.close();

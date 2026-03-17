@@ -543,6 +543,15 @@ export class Network {
 		return stream;
 	}
 
+	async dialProtocolByPeerId(peerID: string, protocol: string): Promise<Stream> {
+		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		const { peerIdFromString } = await import('@libp2p/peer-id');
+		const pid = peerIdFromString(peerID);
+		const connection = await this.node.dial(pid);
+		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
+		return stream;
+	}
+
 	/**
 	 * Get node info (peerID, addresses).
 	 */

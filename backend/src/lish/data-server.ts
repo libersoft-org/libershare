@@ -74,6 +74,11 @@ export class DataServer {
 		return dbGetMissingChunks(this.db, lishID);
 	}
 
+	getAllChunkCount(lishID: LISHid): number {
+		const row = this.db.query<{ c: number }, [number]>('SELECT COUNT(*) as c FROM lishs_chunks WHERE id_lishs_files IN (SELECT id FROM lishs_files WHERE id_lishs = (SELECT id FROM lishs WHERE lish_id = ?))').get(lishID as any);
+		return row?.c ?? 0;
+	}
+
 	// Verification operations
 
 	getVerificationProgress(lishID: LISHid): VerificationProgress {
