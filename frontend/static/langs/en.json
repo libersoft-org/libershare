@@ -240,6 +240,8 @@
 			"errorPortInUse": "Failed to start LISH network: port {detail} is likely already in use",
 			"networkAdded": "LISH network \"{name}\" was added",
 			"networkUpdated": "LISH network \"{name}\" was updated",
+			"networkConnected": "LISH network \"{name}\" connected",
+			"networkDisconnected": "LISH network \"{name}\" disconnected",
 			"networkDeleted": "LISH network \"{name}\" was deleted",
 			"networkExported": "LISH network \"{name}\" was exported",
 			"allNetworksExported": "All LISH networks were exported"

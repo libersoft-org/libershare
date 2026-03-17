@@ -12,6 +12,7 @@
 	import { cursorSize, cursorSizes, footerVisible, loadSettings } from '../scripts/settings.ts';
 	import { connected, apiURL } from '../scripts/ws-client.ts';
 	import { initDownloads } from '../scripts/downloads.ts';
+	import { initNetworkEvents } from '../scripts/networks.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedID: selectedID, navigate, onBack: onBack } = createNavigation();
 	import Debug from '../components/Debug/Debug.svelte';
 	import NotificationContainer from '../components/Notification/NotificationContainer.svelte';
@@ -69,6 +70,7 @@
 		try {
 			await loadSettings(); //	Load settings immediately on connect to ensure they're available for the rest of the initialization
 			await initDownloads(); // Load download list and subscribe to verify/list events
+			await initNetworkEvents(); // Subscribe to LISH network join/leave events
 			play('welcome'); //	Play welcome sound on connect
 		} catch (error) {
 			console.error('[App] Backend initialization error:', error);

@@ -54,7 +54,7 @@ export class APIServer {
 		const broadcastFn = (event: string, data: any) => this.broadcast(event, data);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _settings = initSettingsHandlers(this.settings);
-		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer);
+		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn);

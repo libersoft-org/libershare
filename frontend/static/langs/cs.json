@@ -240,6 +240,8 @@
 			"errorPortInUse": "Nepodařilo se spustit síť LISH: port {detail} je pravděpodobně již obsazen",
 			"networkAdded": "Síť LISH \"{name}\" byla přidána",
 			"networkUpdated": "Síť LISH \"{name}\" byla upravena",
+			"networkConnected": "Síť LISH \"{name}\" připojena",
+			"networkDisconnected": "Síť LISH \"{name}\" odpojena",
 			"networkDeleted": "Síť LISH \"{name}\" byla smazána",
 			"networkExported": "Síť LISH \"{name}\" byla exportována",
 			"allNetworksExported": "Všechny sítě LISH byly exportovány"
