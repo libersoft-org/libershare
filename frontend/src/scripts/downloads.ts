@@ -154,13 +154,14 @@ export async function initDownloads(): Promise<void> {
 
 	// Apply active transfer states (upload/download) immediately
 	try {
-		const transfers = await api.call('transfer.getActiveTransfers', {}) as { lishID: string; type: 'downloading' | 'uploading'; peers: number; bytesPerSecond: number }[];
+		const transfers = await api.call('transfer.getActiveTransfers', {}) as { lishID: string; type: 'downloading' | 'uploading' | 'upload-paused'; peers: number; bytesPerSecond: number }[];
 		if (transfers?.length) {
 			downloads.update(list => list.map(d => {
 				const t = transfers.find(t => t.lishID === d.id);
 				if (!t) return d;
 				if (t.type === 'uploading') return { ...d, status: 'uploading' as DownloadStatus, uploadPeers: t.peers, uploadSpeed: formatSize(t.bytesPerSecond) + '/s' };
 				if (t.type === 'downloading') return { ...d, status: 'downloading' as DownloadStatus };
+				// upload-paused: don't change status, just note it's paused (UI toggle reflects this)
 				return d;
 			}));
 		}
@@ -318,14 +319,16 @@ export async function initDownloads(): Promise<void> {
 		// transfer.download:progress
 		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number }) => {
 			if (pausedDownloads.has(data.lishID)) return;
-			activeDownloads.set(data.lishID, Date.now());
+			const isActive = data.peers > 0;
+			if (isActive) activeDownloads.set(data.lishID, Date.now());
+			else activeDownloads.delete(data.lishID);
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
 					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
 					const downloadedSize = d.rawTotalSize > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
-					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : d.downloadSpeed;
-					const status = computeStatus(true, activeUploadLishs.has(data.lishID));
+					const downloadSpeed = isActive && data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : '0 B/s';
+					const status = computeStatus(isActive, activeUploadLishs.has(data.lishID));
 					return { ...d, status, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks };
 				})
 			);
@@ -373,7 +376,8 @@ export async function initDownloads(): Promise<void> {
 			}));
 		});
 
-		// transfer.upload:progress
+		// transfer.upload:progress — with stale timeout
+		const uploadTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 		api.on('transfer.upload:progress', (data: { lishID: string; uploadedChunks: number; bytesPerSecond: number; peers: number }) => {
 			activeUploadLishs.add(data.lishID);
 			downloads.update(list =>
@@ -385,6 +389,17 @@ export async function initDownloads(): Promise<void> {
 					return { ...d, status, uploadPeers: data.peers, uploadSpeed };
 				})
 			);
+			// Reset stale timer — if no progress in 15s, clear upload state
+			const prev = uploadTimeouts.get(data.lishID);
+			if (prev) clearTimeout(prev);
+			uploadTimeouts.set(data.lishID, setTimeout(() => {
+				activeUploadLishs.delete(data.lishID);
+				uploadTimeouts.delete(data.lishID);
+				downloads.update(list => list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, uploadSpeed: '0 B/s', uploadPeers: 0, status: computeStatus(activeDownloads.has(data.lishID), false) };
+				}));
+			}, 15000));
 		});
 
 		// transfer.upload:paused
@@ -406,6 +421,16 @@ export async function initDownloads(): Promise<void> {
 				return { ...d, status };
 			}));
 		});
+
+		// transfer.upload:stopped — peer disconnected, upload stream ended (NOT user action)
+		// Only reset speed/peers, do NOT change upload enabled state
+		api.on('transfer.upload:stopped', (data: { lishID: string }) => {
+			activeUploadLishs.delete(data.lishID);
+			downloads.update(list => list.map(d => {
+				if (d.id !== data.lishID) return d;
+				return { ...d, uploadSpeed: '0 B/s', uploadPeers: 0 };
+			}));
+		});
 	}
 	// Subscribe on every connect (backend has fresh subscribedEvents after reconnect)
 	api.subscribe('lishs:add');
@@ -422,6 +447,7 @@ export async function initDownloads(): Promise<void> {
 	api.subscribe('transfer.upload:progress');
 	api.subscribe('transfer.upload:paused');
 	api.subscribe('transfer.upload:resumed');
+	api.subscribe('transfer.upload:stopped');
 }
 
 /** Reset verify state for a LISH in the downloads store (set all to 0, status to pending-verification). */
