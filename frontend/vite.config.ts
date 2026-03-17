@@ -48,6 +48,8 @@ function countryFlags(): Plugin {
 }
 
 export default defineConfig({
+	cacheDir: path.resolve(process.cwd(), '.vite-cache'),
+	envDir: process.cwd(),
 	plugins: [sveltekit(), countryFlags()],
 	define: {
 		__BUILD_DATE__: JSON.stringify(getBuildDate()),
@@ -65,6 +67,9 @@ export default defineConfig({
 		allowedHosts: true,
 		host: true,
 		port: 6003,
+		fs: {
+			allow: [__dirname, path.resolve(__dirname, '..')],
+		},
 		watch: {
 			usePolling: true,
 		},

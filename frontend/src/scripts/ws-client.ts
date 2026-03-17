@@ -4,8 +4,13 @@ import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
 
 function getAPIURL(): string {
-	// When running inside Tauri, the backend port is passed via initialization script
-	if (typeof window !== 'undefined' && (window as any).__BACKEND_PORT__) return `ws://localhost:${(window as any).__BACKEND_PORT__}`;
+	if (typeof window !== 'undefined') {
+		// URL param override for multi-node dev testing (e.g. ?backend=ws://localhost:1159)
+		const param = new URLSearchParams(window.location.search).get('backend');
+		if (param) return param;
+		// When running inside Tauri, the backend port is passed via initialization script
+		if ((window as any).__BACKEND_PORT__) return `ws://localhost:${(window as any).__BACKEND_PORT__}`;
+	}
 	return import.meta.env['VITE_BACKEND_URL'] || DEFAULT_API_URL;
 }
 
