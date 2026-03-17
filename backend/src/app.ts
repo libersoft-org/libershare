@@ -57,6 +57,13 @@ const dataServer = new DataServer(db);
 const networks = new Networks(db, dataDir, dataServer, settings, enablePink);
 networks.init();
 
+// Apply speed limits from settings
+import { Downloader } from './protocol/downloader.ts';
+import { setMaxUploadSpeed, setUploadBroadcast } from './protocol/lish-protocol.ts';
+const networkSettings = settings.get().network;
+Downloader.setMaxDownloadSpeed(networkSettings.maxDownloadSpeed);
+setMaxUploadSpeed(networkSettings.maxUploadSpeed);
+
 const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 	host: apiHost,
 	port: apiPort,
@@ -64,6 +71,9 @@ const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 	keyFile: apiKeyFile,
 	certFile: apiCertFile,
 });
+
+// Wire upload progress broadcast (after apiServer is created)
+setUploadBroadcast((event, data) => apiServer.broadcastEvent(event, data));
 
 async function shutdown(): Promise<void> {
 	console.log('Shutting down...');
