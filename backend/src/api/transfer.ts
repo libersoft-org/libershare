@@ -117,8 +117,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		const transfers: ActiveTransfer[] = [];
 		const enabled = getEnabledUploads();
 		// Active downloads
-		for (const [lishID] of activeDownloaders) {
-			transfers.push({ lishID, type: 'downloading', peers: 0, bytesPerSecond: 0 });
+		for (const [lishID, dl] of activeDownloaders) {
+			transfers.push({ lishID, type: 'downloading', peers: dl.getPeerCount?.() ?? 0, bytesPerSecond: 0 });
 		}
 		// Active uploads
 		for (const [lishID, info] of getActiveUploads()) {

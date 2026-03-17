@@ -39,8 +39,14 @@ export class LISHClient {
 		try {
 			const request: LISHManifestRequest = { type: 'manifest', lishID };
 			const requestData = new TextEncoder().encode(JSON.stringify(request));
-			await sendLengthPrefixed(this.stream, requestData);
-			const responseMsg = await this.decoder.next();
+			await Promise.race([
+				sendLengthPrefixed(this.stream, requestData),
+				rejectAfterTimeout(15000, 'manifest-send'),
+			]);
+			const responseMsg = await Promise.race([
+				this.decoder.next(),
+				rejectAfterTimeout(30000, 'manifest-receive'),
+			]) as IteratorResult<Uint8Array | Uint8ArrayList>;
 			if (responseMsg.done || !responseMsg.value) return null;
 			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
 			const response: LISHManifestResponse = JSON.parse(new TextDecoder().decode(responseData));
@@ -54,19 +60,27 @@ export class LISHClient {
 	// Request a single chunk (can be called multiple times on same stream)
 	async requestChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | null> {
 		try {
-			console.log(`[Client] Stream status before request: read=${this.stream.status}, write=${this.stream.writeStatus}`);
+			// Bail early if stream is already closed/aborted
+			if (this.stream.status !== 'open') {
+				console.log(`[Client] Stream not open (status=${this.stream.status}), aborting request`);
+				throw new Error(`Stream not open: ${this.stream.status}`);
+			}
 			// Create the request
 			const request: LISHRequest = {
 				lishID,
 				chunkID,
 			};
-			// Send the request
+			// Send the request (with timeout)
 			const requestData = new TextEncoder().encode(JSON.stringify(request));
-			await sendLengthPrefixed(this.stream, requestData);
-			console.log(`[Client] Stream status after send: read=${this.stream.status}, write=${this.stream.writeStatus}`);
-			// Read the response
-			const responseMsg = await this.decoder.next();
-			console.log(`[Client] Stream status after receive: read=${this.stream.status}, write=${this.stream.writeStatus}`);
+			await Promise.race([
+				sendLengthPrefixed(this.stream, requestData),
+				rejectAfterTimeout(15000, 'send'),
+			]);
+			// Read the response (with timeout — prevents hanging on dead/aborted streams)
+			const responseMsg = await Promise.race([
+				this.decoder.next(),
+				rejectAfterTimeout(30000, 'receive'),
+			]) as IteratorResult<Uint8Array | Uint8ArrayList>;
 			if (responseMsg.done) {
 				console.log('Stream closed before receiving response');
 				return null;
@@ -132,6 +146,7 @@ export function initUploadState(enabledLishs: Set<string>, persistFn: (lishID: s
 	uploadEnabled.clear();
 	for (const id of enabledLishs) uploadEnabled.add(id);
 	persistUploadState = persistFn;
+	console.log(`[Upload] Initialized: ${uploadEnabled.size} LISHs enabled`, [...uploadEnabled].map(id => id.slice(0, 8)));
 }
 export function pauseUpload(lishID: string): void { uploadEnabled.delete(lishID); persistUploadState?.(lishID, false); broadcastFn?.('transfer.upload:paused', { lishID }); }
 export function resumeUpload(lishID: string): void { uploadEnabled.add(lishID); persistUploadState?.(lishID, true); broadcastFn?.('transfer.upload:resumed', { lishID }); }
@@ -227,6 +242,11 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 			}
 		}
 	}
+}
+
+// Helper: reject after timeout (prevents hanging on dead streams)
+function rejectAfterTimeout(ms: number, label: string): Promise<never> {
+	return new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout: ${label} took >${ms}ms`)), ms));
 }
 
 // Helper to send a length-prefixed message

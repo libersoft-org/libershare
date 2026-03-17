@@ -37,10 +37,13 @@ export class Downloader {
 	private workMutex = new Mutex();
 	private missingChunks: MissingChunk[] = [];
 	private peers: Map<NodeID, LISHClient> = new Map();
+	private lastServingPeerCount = 0;
 	private failedPeers = new Set<NodeID>(); // peers that failed — don't re-probe until next cycle
 	private callForPeersInterval: NodeJS.Timeout | undefined;
 	private needsManifest = false;
 	private paused = false;
+	private lastExhaustedTime = 0;
+	private downloadActive = false; // true while downloadChunks is running inside workMutex
 	private pauseResolve?: () => void;
 	private downloadResolve?: () => void;
 	private downloadReject?: (err: Error) => void;
@@ -51,6 +54,7 @@ export class Downloader {
 	private speedSamples: { time: number; bytes: number }[] = [];
 
 	getLISHID(): string { return this.lishID; }
+	getPeerCount(): number { return this.lastServingPeerCount; }
 
 	setProgressCallback(cb: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => void): void {
 		this.onProgress = cb;
@@ -67,6 +71,7 @@ export class Downloader {
 
 	resume(): void {
 		this.paused = false;
+		this.lastExhaustedTime = 0; // allow immediate retry on resume
 		console.log(`[Downloader] Resumed: ${this.lishID}`);
 		this.pauseResolve?.();
 		this.pauseResolve = undefined;
@@ -152,6 +157,10 @@ export class Downloader {
 	}
 
 	async doWork(): Promise<void> {
+		// Throttle: don't re-enter within 10s of last exhausted cycle
+		if (this.lastExhaustedTime > 0 && Date.now() - this.lastExhaustedTime < 10000) return;
+		// Skip if downloadChunks is already running — new peers get picked up dynamically
+		if (this.workMutex.isLocked()) return;
 		await this.workMutex.runExclusive(async () => {
 			// Phase 1: fetch manifest from a peer if needed
 			if (this.state === 'awaiting-manifest') {
@@ -194,13 +203,20 @@ export class Downloader {
 					return;
 				}
 				if (this.peers.size === 0) {
-					console.log('Need to find peers');
+					console.log('Searching for peers...');
+					this.failedPeers.clear();
 					await this.callForPeers();
-					return;
+					if (this.peers.size === 0) {
+						console.log('No peers available, retrying in 10s');
+						this.lastExhaustedTime = Date.now();
+						setTimeout(() => { if (this.state === 'downloading' && !this.paused) this.doWork().catch(() => {}); }, 10000);
+						return;
+					}
 				}
 				if (this.peers.size !== 0) {
 					console.log(`Found ${this.peers.size} peers with the file`);
-					await this.downloadChunks();
+					this.downloadActive = true;
+					try { await this.downloadChunks(); } finally { this.downloadActive = false; }
 					// After downloadChunks, check if complete
 					const remaining = this.dataServer.getMissingChunks(this.lishID);
 					if (remaining.length === 0) {
@@ -209,11 +225,13 @@ export class Downloader {
 						this.downloadResolve?.();
 						return;
 					}
-					// Not complete — peers exhausted, re-probe after delay
+					// Not complete — peers exhausted, wait before retry
 					console.log(`${remaining.length} chunks still missing, will re-probe peers in 10s`);
 					this.peers.clear();
-					this.failedPeers.clear(); // allow re-probe of previously failed peers
-					setTimeout(() => { if (this.state === 'downloading') this.doWork().catch(() => {}); }, 10000);
+					this.failedPeers.clear();
+					this.lastExhaustedTime = Date.now();
+					setTimeout(() => { if (this.state === 'downloading' && !this.paused) this.doWork().catch(() => {}); }, 10000);
+					return;
 				}
 			}
 		});
@@ -243,8 +261,22 @@ export class Downloader {
 		let queueIdx = 0;
 		const lock = new Mutex();
 		const activePeerLoops = new Set<string>();
+		// Track all peerLoop promises so we can await dynamically spawned ones
+		const peerLoopPromises = new Map<string, Promise<void>>();
 
 		const servingPeers = new Set<string>(); // peers that actually served at least 1 chunk
+
+		// Spawn peerLoop for any peers not yet running — safe to call repeatedly
+		const spawnNewPeerLoops = (): void => {
+			for (const [pid, cli] of this.peers) {
+				if (!activePeerLoops.has(pid)) {
+					console.log(`[DL] New peer ${pid.slice(0, 12)} joined download`);
+					const p = peerLoop(pid, cli).catch(() => {});
+					peerLoopPromises.set(pid, p);
+				}
+			}
+		};
+
 		const peerLoop = async (peerID: string, client: LISHClient): Promise<void> => {
 			activePeerLoops.add(peerID);
 			let skippedChunks = 0;
@@ -259,21 +291,24 @@ export class Downloader {
 				const result = await this.downloadChunk(client, chunk.chunkID);
 				if (result === 'error') {
 					// Stream error — peer is dead, remove and exit loop
-					console.log(`✗ Peer ${peerID.slice(0, 12)} stream error, removing peer`);
+					console.log(`[DL] Peer ${peerID.slice(0, 12)} stream error, removing peer`);
 					this.peers.delete(peerID);
 					this.failedPeers.add(peerID);
 					servingPeers.delete(peerID);
 					await client.close().catch(() => {});
 					await lock.runExclusive(() => { queue.push(chunk!); });
+					// Spawn loops for any newly discovered peers before exiting
+					spawnNewPeerLoops();
 					break;
 				}
 				if (result === 'not_available') {
 					// Peer doesn't have this chunk — requeue and try next
 					await lock.runExclusive(() => { queue.push(chunk!); });
 					skippedChunks++;
+					// Spawn new peers discovered during download
+					spawnNewPeerLoops();
 					if (skippedChunks > missingChunks.length) {
-						// Exhausted all chunks this peer could serve
-						console.log(`✗ Peer ${peerID.slice(0, 12)} has no more chunks we need`);
+						console.log(`[DL] Peer ${peerID.slice(0, 12)} has no more chunks we need`);
 						servingPeers.delete(peerID);
 						break;
 					}
@@ -298,7 +333,8 @@ export class Downloader {
 					? (now - this.speedSamples[0]!.time) / 1000
 					: elapsed;
 				const bytesPerSecond = windowSec > 0.1 ? Math.round(windowBytes / windowSec) : 0;
-				console.log(`✓ Downloaded chunk ${downloadedCount}/${totalChunks} (peer ${peerID.slice(0, 12)}, serving=${servingPeers.size})`);
+				this.lastServingPeerCount = servingPeers.size;
+				console.log(`[DL] Downloaded chunk ${downloadedCount}/${totalChunks} (peer ${peerID.slice(0, 12)}, serving=${servingPeers.size})`);
 				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond });
 				if (Downloader.maxBytesPerSec > 0) {
 					const elapsed2 = (Date.now() - this.downloadStartTime) / 1000;
@@ -307,12 +343,7 @@ export class Downloader {
 					if (waitMs > 10) await new Promise(r => setTimeout(r, waitMs));
 				}
 				// Check for newly discovered peers and spawn loops for them
-				for (const [newPeerID, newClient] of this.peers) {
-					if (!activePeerLoops.has(newPeerID)) {
-						console.log(`🔗 New peer ${newPeerID.slice(0, 12)} joined download`);
-						peerLoop(newPeerID, newClient).catch(() => {});
-					}
-				}
+				spawnNewPeerLoops();
 			}
 			activePeerLoops.delete(peerID);
 		};
@@ -320,17 +351,28 @@ export class Downloader {
 		try {
 			const initialPeers = [...this.peers.entries()];
 			console.log(`Starting parallel download from ${initialPeers.length} peer(s), ${totalChunks} chunks`);
-			await Promise.all(initialPeers.map(([peerID, client]) => peerLoop(peerID, client)));
+			// Start initial peer loops
+			for (const [peerID, client] of initialPeers) {
+				const p = peerLoop(peerID, client).catch(() => {});
+				peerLoopPromises.set(peerID, p);
+			}
+			// Wait until all peer loops (including dynamically spawned ones) settle
+			while (peerLoopPromises.size > 0) {
+				const current = [...peerLoopPromises.entries()];
+				await Promise.all(current.map(([, p]) => p));
+				// Remove settled ones
+				for (const [id] of current) peerLoopPromises.delete(id);
+				// Loop back to check if new loops were spawned while we waited
+			}
 			if (downloadedCount >= totalChunks) {
-				console.log(`✓ Download complete! Downloaded ${downloadedCount}/${totalChunks} chunks`);
+				console.log(`[DL] Download complete! ${downloadedCount}/${totalChunks} chunks`);
 			} else {
-				console.log(`⚠ All peers exhausted. Downloaded ${downloadedCount}/${totalChunks} chunks. Will retry when peers reconnect.`);
-				// Send progress with 0 peers so frontend updates counters
-				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: 0, bytesPerSecond: 0 });
+				console.log(`[DL] All peers exhausted. ${downloadedCount}/${totalChunks} chunks. Will retry when peers reconnect.`);
 			}
 		} finally {
 			for (const [, client] of this.peers) await client.close();
 			this.peers.clear();
+			this.lastServingPeerCount = 0;
 		}
 	}
 
@@ -373,9 +415,14 @@ export class Downloader {
 				// Stream 2: fresh stream for chunk download (separate from manifest probe)
 				const dlStream = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
 				this.peers.set(peerID, new LISHClient(dlStream));
+				this.lastExhaustedTime = 0; // allow immediate doWork re-entry
 
-				this.doWork().then(() => {});
-				return; // Found a peer, start downloading
+				// If downloadChunks is already running, the new peer will be picked up
+				// dynamically via the peerLoop spawning logic — don't call doWork (would deadlock on workMutex)
+				if (!this.downloadActive) {
+					this.doWork().then(() => {});
+				}
+				return; // Found a peer
 			} catch (err) {
 				console.log(`[Probe] ✗ Peer ${peerID.slice(0, 20)}: ${(err as Error).message}`);
 			}
@@ -391,11 +438,19 @@ export class Downloader {
 				return;
 			}
 			if (this.state !== 'downloading' && this.state !== 'awaiting-manifest') return;
-			if (this.peers.size === 0) {
-				console.log('No seeders available');
-				await this.callForPeers();
+			// Always probe for new peers — even if already downloading from some
+			const before = this.peers.size;
+			console.log(`[Periodic probe] Looking for new peers (current: ${before})`);
+			this.failedPeers.clear();
+			this.lastExhaustedTime = 0;
+			await this.probeTopicPeers();
+			if (this.peers.size > before) {
+				console.log(`[Periodic probe] Found ${this.peers.size - before} new peer(s)`);
+				// Only call doWork if downloadChunks is not running — otherwise new peers
+				// are picked up dynamically inside downloadChunks via peerLoop spawning
+				if (!this.downloadActive) this.doWork().catch(() => {});
 			}
-		}, 60000);
+		}, 15000);
 	}
 
 	private async handlePubsubMessage(topic: string, data: Record<string, any>): Promise<void> {
@@ -406,17 +461,20 @@ export class Downloader {
 
 		console.debug(data); // with peerID etc.
 		if (data['type'] == 'have' && data['lishID'] == this.lishID) {
-			if (data['chunks'] === 'all' /* || this.peerHasAnyMissingChunks(data.chunks)*/) {
+			if (data['chunks']) {
 				if (this.peers.has(data['peerID'])) console.log(`Already connected to peer ...${data['peerID']}`);
 				else {
 					console.log(`Peer ...${data['peerID']} has the file, connecting...`);
 					try {
 						await this.connectToPeer(data as HaveMessage);
 					} catch (error) {
-						console.log(`✗ Failed to connect to peer ...${data['peerID']}:`, error instanceof Error ? error.message : error);
+						console.log(`[Pubsub] Failed to connect to peer ...${data['peerID']}:`, error instanceof Error ? error.message : error);
 						return;
 					}
-					this.doWork().then(() => {});
+					this.lastExhaustedTime = 0;
+					// Only call doWork if downloadChunks is not running — otherwise the new peer
+					// is picked up dynamically via peerLoop spawning
+					if (!this.downloadActive) this.doWork().then(() => {});
 				}
 			}
 		}
