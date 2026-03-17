@@ -118,6 +118,7 @@ export function resetUploadState(): void {
 	activeUploads.clear();
 	activeStreamCount.clear();
 	pausedUploads.clear();
+	enabledUploads.clear();
 	uploadMaxBytesPerSec = 0;
 	uploadStartTime = 0;
 	uploadedBytes = 0;
@@ -126,10 +127,13 @@ export function resetUploadState(): void {
 
 // Per-LISH upload pause: paused LISHs won't serve chunks
 const pausedUploads = new Set<string>();
-export function pauseUpload(lishID: string): void { pausedUploads.add(lishID); broadcastFn?.('transfer.upload:paused', { lishID }); }
-export function resumeUpload(lishID: string): void { pausedUploads.delete(lishID); broadcastFn?.('transfer.upload:resumed', { lishID }); }
+// Explicitly enabled uploads (user clicked "enable upload") — survives F5
+const enabledUploads = new Set<string>();
+export function pauseUpload(lishID: string): void { pausedUploads.add(lishID); enabledUploads.delete(lishID); broadcastFn?.('transfer.upload:paused', { lishID }); }
+export function resumeUpload(lishID: string): void { pausedUploads.delete(lishID); enabledUploads.add(lishID); broadcastFn?.('transfer.upload:resumed', { lishID }); }
 export function isUploadPaused(lishID: string): boolean { return pausedUploads.has(lishID); }
 export function getPausedUploads(): Set<string> { return pausedUploads; }
+export function getEnabledUploads(): Set<string> { return enabledUploads; }
 
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer): Promise<void> {
 	const servedLishIDs = new Set<string>();

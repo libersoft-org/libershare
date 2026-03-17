@@ -152,16 +152,16 @@ export async function initDownloads(): Promise<void> {
 		downloadsLoading.set(false);
 	}
 
-	// Apply active transfer states (upload/download) immediately
+	// Restore transfer states after F5/reconnect
 	try {
-		const transfers = await api.call('transfer.getActiveTransfers', {}) as { lishID: string; type: 'downloading' | 'uploading' | 'upload-paused'; peers: number; bytesPerSecond: number }[];
+		const transfers = await api.call('transfer.getActiveTransfers', {}) as { lishID: string; type: 'downloading' | 'uploading' | 'upload-paused' | 'upload-enabled'; peers: number; bytesPerSecond: number }[];
 		if (transfers?.length) {
 			downloads.update(list => list.map(d => {
 				const t = transfers.find(t => t.lishID === d.id);
 				if (!t) return d;
 				if (t.type === 'uploading') return { ...d, status: 'uploading' as DownloadStatus, uploadPeers: t.peers, uploadSpeed: formatSize(t.bytesPerSecond) + '/s' };
+				if (t.type === 'upload-enabled') return { ...d, status: 'uploading' as DownloadStatus };
 				if (t.type === 'downloading') return { ...d, status: 'downloading' as DownloadStatus };
-				// upload-paused: don't change status, just note it's paused (UI toggle reflects this)
 				return d;
 			}));
 		}

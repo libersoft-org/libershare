@@ -2,7 +2,7 @@ import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
-import { getActiveUploads, pauseUpload, resumeUpload, getPausedUploads } from '../protocol/lish-protocol.ts';
+import { getActiveUploads, pauseUpload, resumeUpload, getPausedUploads, getEnabledUploads } from '../protocol/lish-protocol.ts';
 import { join } from 'path';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -125,6 +125,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		for (const lishID of paused) {
 			if (!getActiveUploads().has(lishID)) {
 				transfers.push({ lishID, type: 'upload-paused', peers: 0, bytesPerSecond: 0 });
+			}
+		}
+		// Explicitly enabled uploads (user clicked "enable") that aren't actively uploading
+		const reported = new Set(transfers.map(t => t.lishID));
+		for (const lishID of getEnabledUploads()) {
+			if (!reported.has(lishID) && !paused.has(lishID)) {
+				transfers.push({ lishID, type: 'upload-enabled' as any, peers: 0, bytesPerSecond: 0 });
 			}
 		}
 		return transfers;
