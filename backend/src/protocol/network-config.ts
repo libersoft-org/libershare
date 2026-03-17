@@ -132,7 +132,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			console.log('  -', peer);
 			try {
 				const ma = Multiaddr(peer);
-				const peerID = ma.getPeerId();
+				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
 				if (peerID) {
 					bootstrapPeerIDs.add(peerID);
 					bootstrapMultiaddrs.push(ma);

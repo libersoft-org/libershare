@@ -358,7 +358,7 @@ export class Network {
 			if (peer.includes(myPeerID)) continue;
 			try {
 				const ma = Multiaddr(peer);
-				const peerID = ma.getPeerId();
+				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
 				if (peerID && this.bootstrapPeerIDs.has(peerID)) continue;
 				if (peerID) {
 					this.bootstrapPeerIDs.add(peerID);

@@ -110,9 +110,25 @@
 		color: var(--primary-foreground);
 	}
 
-	.network-description {
+	.network-id {
 		font-size: 2vh;
-		color: var(--disabled-foreground);
+		font-family: 'Ubuntu Mono';
+		color: var(--secondary-foreground);
+		word-break: break-all;
+		padding: 1vh;
+		background-color: var(--secondary-soft-background);
+		border: 0.2vh solid var(--secondary-softer-background);
+		border-radius: 1vh;
+		text-align: center;
+	}
+
+	.network-description {
+		padding: 2vh;
+		font-size: 2vh;
+		background-color: var(--secondary-soft-background);
+		color: var(--secondary-foreground);
+		border: 0.2vh solid var(--secondary-softer-background);
+		border-radius: 1vh;
 	}
 
 	.back {
@@ -143,6 +159,7 @@
 						<div class="network">
 							<div class="network-info">
 								<div class="network-name">{network.name}</div>
+								<div class="network-id">{network.networkID}</div>
 								{#if network.description}
 									<div class="network-description">
 										{#each network.description.split('\n') as line, li}{#if li > 0}<br />{/if}{line}{/each}
