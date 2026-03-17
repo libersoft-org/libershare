@@ -32,7 +32,6 @@
 		loading = true;
 		error = '';
 		publicNetworks = [];
-
 		const result = await fetchPublicNetworks(url);
 		if (result.error) error = result.error;
 		else {

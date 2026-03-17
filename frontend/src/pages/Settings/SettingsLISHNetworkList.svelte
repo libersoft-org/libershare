@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { t, translateError } from '../../scripts/language.ts';
+	import { t, translateError, tt } from '../../scripts/language.ts';
+	import { addNotification } from '../../scripts/notifications.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -197,7 +198,9 @@
 	async function confirmDeleteNetwork(): Promise<void> {
 		if (deletingNetwork) {
 			await deleteNetworkFromAPI(deletingNetwork.networkID);
+			const deletedName = deletingNetwork.name;
 			networks = networks.filter(n => n.networkID !== deletingNetwork!.networkID);
+			addNotification(tt('settings.lishNetwork.networkDeleted', { name: deletedName }));
 			deletingNetwork = null;
 			showDeleteConfirm = false;
 			popBreadcrumb();

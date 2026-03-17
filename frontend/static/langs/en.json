@@ -117,7 +117,12 @@
 			"lishAndData": "Delete LISH and data",
 			"dataOnly": "Delete data only"
 		},
-		"deleteFailed": "Failed to delete"
+		"deleteFailed": "Failed to delete",
+		"lishDeleted": "LISH \"{name}\" was deleted",
+		"dataDeleted": "Data for LISH \"{name}\" were deleted",
+		"lishAndDataDeleted": "LISH \"{name}\" including its data on storage was deleted",
+		"lishExported": "LISH \"{name}\" was exported",
+		"allLishsExported": "All LISHs were exported"
 	},
 	"lish": {
 		"create": {
@@ -225,14 +230,19 @@
 			"connectedPeers": "Peers: {count}",
 			"minifyJSON": "Minify JSON",
 			"compress": "Compress",
-			"errorNotFound": "Network not found: {detail}",
-			"errorNoNetworks": "No networks to export",
-			"errorNotJoined": "Network not joined",
-			"errorNotRunning": "Network not running",
-			"errorInvalid": "Invalid network: missing network ID or name",
-			"errorNoValidNetworks": "No valid networks found",
-			"errorNotStarted": "Network not started",
-			"errorPortInUse": "Failed to start network: port {detail} is likely already in use"
+			"errorNotFound": "LISH network not found: {detail}",
+			"errorNoNetworks": "No LISH networks to export",
+			"errorNotJoined": "LISH network not joined",
+			"errorNotRunning": "LISH network not running",
+			"errorInvalid": "Invalid LISH network: missing network ID or name",
+			"errorNoValidNetworks": "No valid LISH networks found",
+			"errorNotStarted": "LISH network not started",
+			"errorPortInUse": "Failed to start LISH network: port {detail} is likely already in use",
+			"networkAdded": "LISH network \"{name}\" was added",
+			"networkUpdated": "LISH network \"{name}\" was updated",
+			"networkDeleted": "LISH network \"{name}\" was deleted",
+			"networkExported": "LISH network \"{name}\" was exported",
+			"allNetworksExported": "All LISH networks were exported"
 		},
 		"lishNetworkImport": {
 			"fromJSON": "From LISHNET JSON",
@@ -285,6 +295,7 @@
 		"openFile": "Open file",
 		"editFile": "Edit file",
 		"renameFile": "Rename file",
+		"renameDirectory": "Rename directory",
 		"createFile": "Create file",
 		"deleteFile": "Delete file",
 		"directoryName": "Directory name",
@@ -307,7 +318,14 @@
 		"openFileFailed": "Failed to open file",
 		"deleteFileFailed": "Failed to delete file",
 		"renameFileFailed": "Failed to rename file",
-		"initializeFailed": "Failed to initialize file browser"
+		"initializeFailed": "Failed to initialize file browser",
+		"directoryCreated": "Directory \"{name}\" was created",
+		"directoryDeleted": "Directory \"{name}\" was deleted",
+		"directoryRenamed": "Directory was renamed to \"{name}\"",
+		"fileCreated": "File \"{name}\" was created",
+		"fileDeleted": "File \"{name}\" was deleted",
+		"fileRenamed": "File was renamed to \"{name}\"",
+		"fileSaved": "File \"{name}\" was saved"
 	},
 	"about": {
 		"title": "About",

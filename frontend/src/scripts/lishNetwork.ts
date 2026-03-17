@@ -1,6 +1,7 @@
 import { api } from './api.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
-import { translateError } from './language.ts';
+import { translateError, tt } from './language.ts';
+import { addNotification } from './notifications.ts';
 
 // Storage Operations (async, using backend API)
 
@@ -13,11 +14,15 @@ export async function getNetworkByID(networkID: string): Promise<LISHNetworkConf
 }
 
 export async function addNetwork(network: LISHNetworkConfig): Promise<boolean> {
-	return api.lishnets.add(network);
+	const added = await api.lishnets.add(network);
+	if (added) notifyNetworkAdded(network.name);
+	return added;
 }
 
 export async function updateNetwork(network: LISHNetworkConfig): Promise<boolean> {
-	return api.lishnets.update(network);
+	const updated = await api.lishnets.update(network);
+	if (updated) addNotification(tt('settings.lishNetwork.networkUpdated', { name: network.name }));
+	return updated;
 }
 
 export async function deleteNetwork(networkID: string): Promise<boolean> {
@@ -29,7 +34,13 @@ export async function networkExists(networkID: string): Promise<boolean> {
 }
 
 export async function addNetworkIfNotExists(network: LISHNetworkDefinition): Promise<boolean> {
-	return api.lishnets.addIfNotExists(network);
+	const added = await api.lishnets.addIfNotExists(network);
+	if (added) notifyNetworkAdded(network.name);
+	return added;
+}
+
+function notifyNetworkAdded(name: string): void {
+	addNotification(tt('settings.lishNetwork.networkAdded', { name }));
 }
 
 export async function getExistingNetworkIDs(): Promise<Set<string>> {

@@ -4,6 +4,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { t, withDetail, translateError } from '../../scripts/language.ts';
+	import { addNotification } from '../../scripts/notifications.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
 	import { getParentPath, loadDirectoryFromAPI, createParentEntry, isAtRoot, getCurrentDirName, buildDirectoryActions, buildFilterActions, deleteFileOrDirectory, createDirectory, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
@@ -76,12 +77,12 @@
 	let showNewDirectoryDialogState = $state(false);
 	let showCreateFileDialogState = $state(false);
 	let showDeleteFileConfirm = $state(false);
-	let showRenameFileDialogState = $state(false);
+	let showRenameDialogState = $state(false);
 	let showEditorState = $state(false);
 	let showLargeFileWarning = $state(false);
 	let dialogError = $state<string | undefined>(undefined);
 	let fileToDelete = $state<StorageItemData | null>(null);
-	let fileToRename = $state<StorageItemData | null>(null);
+	let itemToRename = $state<StorageItemData | null>(null);
 	let fileToEdit = $state<StorageItemData | null>(null);
 	let pendingEditFile = $state<StorageItemData | null>(null);
 	let showOverwriteConfirmState = $state(false);
@@ -398,7 +399,7 @@
 				showEditor(item);
 				return;
 			case 'rename':
-				showRenameFileDialog(item);
+				showRenameDialog(item);
 				return; // Don't close actions panel yet
 			case 'delete':
 				showDeleteFileConfirmDialog(item);
@@ -417,6 +418,9 @@
 				break;
 			case 'new':
 				showNewDirectoryDialog();
+				break;
+			case 'rename':
+				showRenameDirectoryDialog();
 				break;
 			case 'delete':
 				showDeleteConfirmDialog();
@@ -516,8 +520,10 @@
 	}
 
 	async function confirmDeleteDirectory(): Promise<void> {
+		const dirName = getCurrentDirName(currentPath, separator);
 		const result = await deleteFileOrDirectory(currentPath);
 		if (result.success) {
+			if (dirName) addNotification($t('fileBrowser.directoryDeleted', { name: dirName }));
 			if (parentPath !== null) await loadDirectory(parentPath); // Navigate to parent after deletion
 		} else error = withDetail($t('fileBrowser.deleteDirectoryFailed'), result.error);
 		cancelDeleteDirectory();
@@ -561,6 +567,7 @@
 		const newPath = joinPathWithSeparator(currentPath, directoryName, separator);
 		const result = await createDirectory(newPath);
 		if (result.success) {
+			addNotification($t('fileBrowser.directoryCreated', { name: directoryName }));
 			// Reload directory and select the new directory
 			await loadDirectory(currentPath, directoryName);
 			cancelNewDirectory(true); // Pass true to indicate success - focus on list
@@ -607,6 +614,7 @@
 		const filePath = joinPathWithSeparator(currentPath, fileName, separator);
 		const result = await api.fs.writeText(filePath, '');
 		if (result.success) {
+			addNotification($t('fileBrowser.fileCreated', { name: fileName }));
 			// Reload directory and select the new file
 			await loadDirectory(currentPath, fileName);
 			cancelCreateFile(true);
@@ -669,6 +677,7 @@
 		if (!fileToDelete) return;
 		const result = await deleteFileOrDirectory(fileToDelete.path);
 		if (result.success) {
+			addNotification($t('fileBrowser.fileDeleted', { name: fileToDelete.name }));
 			// Reload directory
 			await loadDirectory(currentPath);
 		} else error = withDetail($t('fileBrowser.deleteFileFailed'), result.error);
@@ -687,9 +696,15 @@
 		activateArea(listAreaID);
 	}
 
-	function showRenameFileDialog(item: StorageItemData): void {
-		fileToRename = item;
-		showRenameFileDialogState = true;
+	function showRenameDirectoryDialog(): void {
+		const dirName = getCurrentDirName(currentPath, separator);
+		if (!dirName) return;
+		showRenameDialog({ id: 'current-dir', name: dirName, path: currentPath, type: 'directory' });
+	}
+
+	function showRenameDialog(item: StorageItemData): void {
+		itemToRename = item;
+		showRenameDialogState = true;
 		showActions = false;
 		// Unregister areas so dialog can take over
 		if (unregisterDirectoryActions) {
@@ -704,22 +719,32 @@
 			unregisterActions();
 			unregisterActions = null;
 		}
-		pushBreadcrumb($t('fileBrowser.renameFile'));
+		const breadcrumb = item.type === 'directory' ? $t('fileBrowser.renameDirectory') : $t('fileBrowser.renameFile');
+		pushBreadcrumb(breadcrumb);
 	}
 
-	async function confirmRenameFile(newName: string): Promise<void> {
-		if (!fileToRename) return;
-		const result = await renameFile(fileToRename.path, newName);
+	async function confirmRename(newName: string): Promise<void> {
+		if (!itemToRename) return;
+		const isCurrentDir = itemToRename.id === 'current-dir';
+		const result = await renameFile(itemToRename.path, newName);
 		if (result.success) {
-			// Reload directory and select the renamed file
-			await loadDirectory(currentPath, newName);
+			const key = itemToRename.type === 'directory' ? 'fileBrowser.directoryRenamed' : 'fileBrowser.fileRenamed';
+			addNotification($t(key, { name: newName }));
+			if (isCurrentDir) {
+				// Current directory was renamed - stay inside the renamed directory
+				const parentPath = getParentPath(currentPath, separator);
+				const newPath = joinPathWithSeparator(parentPath ?? '', newName, separator);
+				await loadDirectory(newPath);
+			} else {
+				await loadDirectory(currentPath, newName);
+			}
 		} else error = withDetail($t('fileBrowser.renameFileFailed'), result.error);
-		cancelRenameFile();
+		cancelRename();
 	}
 
-	async function cancelRenameFile(): Promise<void> {
-		showRenameFileDialogState = false;
-		fileToRename = null;
+	async function cancelRename(): Promise<void> {
+		showRenameDialogState = false;
+		itemToRename = null;
 		popBreadcrumb();
 		await tick();
 		// Re-register all areas
@@ -1062,8 +1087,9 @@
 {#if showCreateFileDialogState}
 	<InputDialog title={$t('fileBrowser.createFile')} label={$t('common.fileName')} placeholder={$t('fileBrowser.enterFileName')} confirmLabel={$t('common.create')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmCreateFile} onBack={cancelCreateFile} />
 {/if}
-{#if showRenameFileDialogState && fileToRename}
-	<InputDialog title={$t('fileBrowser.renameFile')} label={$t('common.fileName')} placeholder={$t('fileBrowser.enterFileName')} initialValue={fileToRename.name} confirmLabel={$t('common.ok')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmRenameFile} onBack={cancelRenameFile} />
+{#if showRenameDialogState && itemToRename}
+	{@const isDir = itemToRename.type === 'directory'}
+	<InputDialog title={isDir ? $t('fileBrowser.renameDirectory') : $t('fileBrowser.renameFile')} label={isDir ? $t('fileBrowser.directoryName') : $t('common.fileName')} placeholder={isDir ? $t('fileBrowser.enterDirectoryName') : $t('fileBrowser.enterFileName')} initialValue={itemToRename.name} confirmLabel={$t('common.ok')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmRename} onBack={cancelRename} />
 {/if}
 {#if showLargeFileWarning && pendingEditFile}
 	<ConfirmDialog title={$t('fileBrowser.largeFileWarning')} message={$t('fileBrowser.largeFileWarningMessage', { name: pendingEditFile.name, size: formatSize(pendingEditFile.size) })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmLargeFileEdit} onBack={cancelLargeFileEdit} />

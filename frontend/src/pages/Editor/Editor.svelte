@@ -5,6 +5,7 @@
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { api } from '../../scripts/api.ts';
 	import { t, translateError } from '../../scripts/language.ts';
+	import { addNotification } from '../../scripts/notifications.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
@@ -17,7 +18,7 @@
 		onBack: () => void;
 		onUp?: () => void;
 	}
-	let { areaID, filePath, position, onBack, onUp }: Props = $props();
+	let { areaID, filePath, fileName, position, onBack, onUp }: Props = $props();
 	// Calculate sub-area positions
 	let toolbarPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
 	let editorPosition = $derived({ x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y });
@@ -59,8 +60,10 @@
 		error = null;
 		try {
 			const result = await api.fs.writeText(filePath, content);
-			if (result.success) originalContent = content;
-			else error = 'Failed to save file';
+			if (result.success) {
+				originalContent = content;
+				addNotification($t('fileBrowser.fileSaved', { name: fileName }));
+			} else error = 'Failed to save file';
 		} catch (e) {
 			error = translateError(e);
 		} finally {
