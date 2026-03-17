@@ -18,9 +18,15 @@ export function initLISHsTables(db: Database): void {
 			added           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			chunk_size      INTEGER NOT NULL,
 			checksum_algo   TEXT NOT NULL,
-			directory       TEXT
+			directory       TEXT,
+			upload_enabled  BOOL NOT NULL DEFAULT FALSE,
+			download_enabled BOOL NOT NULL DEFAULT FALSE
 		)
 	`);
+
+	// Migration: add columns to existing databases
+	try { db.run('ALTER TABLE lishs ADD COLUMN upload_enabled BOOL NOT NULL DEFAULT FALSE'); } catch { /* already exists */ }
+	try { db.run('ALTER TABLE lishs ADD COLUMN download_enabled BOOL NOT NULL DEFAULT FALSE'); } catch { /* already exists */ }
 
 	db.run(`
 		CREATE TABLE IF NOT EXISTS lishs_files (
@@ -582,4 +588,26 @@ function getHaveChunksList(db: Database, internalID: number): string[] {
 		)
 		.all(internalID)
 		.map(r => r.checksum);
+}
+
+// -- Upload enabled persistence --
+
+export function setUploadEnabled(db: Database, lishID: LISHid, enabled: boolean): void {
+	db.run('UPDATE lishs SET upload_enabled = ? WHERE lish_id = ?', [enabled ? 1 : 0, lishID]);
+}
+
+export function setDownloadEnabled(db: Database, lishID: LISHid, enabled: boolean): void {
+	db.run('UPDATE lishs SET download_enabled = ? WHERE lish_id = ?', [enabled ? 1 : 0, lishID]);
+}
+
+export function getUploadEnabledLishs(db: Database): Set<string> {
+	return new Set(
+		db.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE upload_enabled = TRUE').all().map(r => r.lish_id)
+	);
+}
+
+export function getDownloadEnabledLishs(db: Database): Set<string> {
+	return new Set(
+		db.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE download_enabled = TRUE').all().map(r => r.lish_id)
+	);
 }

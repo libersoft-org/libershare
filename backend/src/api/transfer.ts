@@ -2,7 +2,7 @@ import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
-import { getActiveUploads, pauseUpload, resumeUpload, getPausedUploads, getEnabledUploads } from '../protocol/lish-protocol.ts';
+import { getActiveUploads, pauseUpload, resumeUpload, getEnabledUploads, isUploadPaused } from '../protocol/lish-protocol.ts';
 import { join } from 'path';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -11,7 +11,7 @@ type BroadcastFn = (event: string, data: any) => void;
 
 interface ActiveTransfer {
 	lishID: string;
-	type: 'downloading' | 'uploading' | 'upload-paused';
+	type: 'downloading' | 'uploading' | 'upload-paused' | 'upload-enabled' | 'download-enabled';
 	peers: number;
 	bytesPerSecond: number;
 }
@@ -23,6 +23,15 @@ interface TransferHandlers {
 	pauseUpload: (p: { lishID: string }) => { success: boolean };
 	resumeUpload: (p: { lishID: string }) => { success: boolean };
 	getActiveTransfers: () => ActiveTransfer[];
+}
+
+type PersistDownloadFn = (lishID: string, enabled: boolean) => void;
+let downloadEnabledLishs = new Set<string>();
+let persistDownloadEnabled: PersistDownloadFn | null = null;
+
+export function initDownloadState(enabled: Set<string>, persistFn: PersistDownloadFn): void {
+	downloadEnabledLishs = enabled;
+	persistDownloadEnabled = persistFn;
 }
 
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn): TransferHandlers {
@@ -59,9 +68,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	function pauseDownload(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
+		downloadEnabledLishs.delete(p.lishID);
+		persistDownloadEnabled?.(p.lishID, false);
 		const dl = activeDownloaders.get(p.lishID);
-		if (!dl) return { success: false };
-		dl.pause();
+		if (dl) dl.pause();
 		const send = broadcast ?? (() => {});
 		send('transfer.download:paused', { lishID: p.lishID });
 		return { success: true };
@@ -69,6 +79,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	async function resumeDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
+		downloadEnabledLishs.add(p.lishID);
+		persistDownloadEnabled?.(p.lishID, true);
 		const dl = activeDownloaders.get(p.lishID);
 		if (dl) {
 			dl.resume();
@@ -103,14 +115,14 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	function getActiveTransfers(): ActiveTransfer[] {
 		const transfers: ActiveTransfer[] = [];
-		const paused = getPausedUploads();
+		const enabled = getEnabledUploads();
 		// Active downloads
 		for (const [lishID] of activeDownloaders) {
 			transfers.push({ lishID, type: 'downloading', peers: 0, bytesPerSecond: 0 });
 		}
 		// Active uploads
 		for (const [lishID, info] of getActiveUploads()) {
-			if (paused.has(lishID)) {
+			if (!enabled.has(lishID)) {
 				transfers.push({ lishID, type: 'upload-paused', peers: 0, bytesPerSecond: 0 });
 			} else {
 				const now = Date.now();
@@ -121,17 +133,17 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				transfers.push({ lishID, type: 'uploading', peers: info.peers, bytesPerSecond });
 			}
 		}
-		// Paused uploads that were never active (no entry in activeUploads)
-		for (const lishID of paused) {
-			if (!getActiveUploads().has(lishID)) {
-				transfers.push({ lishID, type: 'upload-paused', peers: 0, bytesPerSecond: 0 });
+		// Enabled uploads not actively uploading
+		const reported = new Set(transfers.map(t => t.lishID));
+		for (const lishID of enabled) {
+			if (!reported.has(lishID)) {
+				transfers.push({ lishID, type: 'upload-enabled', peers: 0, bytesPerSecond: 0 });
 			}
 		}
-		// Explicitly enabled uploads (user clicked "enable") that aren't actively uploading
-		const reported = new Set(transfers.map(t => t.lishID));
-		for (const lishID of getEnabledUploads()) {
-			if (!reported.has(lishID) && !paused.has(lishID)) {
-				transfers.push({ lishID, type: 'upload-enabled' as any, peers: 0, bytesPerSecond: 0 });
+		// Enabled downloads not actively downloading
+		for (const lishID of downloadEnabledLishs) {
+			if (!reported.has(lishID) && !activeDownloaders.has(lishID)) {
+				transfers.push({ lishID, type: 'download-enabled', peers: 0, bytesPerSecond: 0 });
 			}
 		}
 		return transfers;
@@ -148,6 +160,16 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		resumeUpload(p.lishID);
 		return { success: true };
 	}
+
+	// Auto-resume downloads that were enabled before restart
+	setTimeout(() => {
+		for (const lishID of downloadEnabledLishs) {
+			if (!activeDownloaders.has(lishID)) {
+				console.log(`[Auto-resume] Resuming download for ${lishID.slice(0, 8)}...`);
+				resumeDownload({ lishID }).catch(() => {});
+			}
+		}
+	}, 3000);
 
 	return { download, pauseDownload, resumeDownload, pauseUpload: pauseUploadHandler, resumeUpload: resumeUploadHandler, getActiveTransfers };
 }

@@ -59,10 +59,14 @@ networks.init();
 
 // Apply speed limits from settings
 import { Downloader } from './protocol/downloader.ts';
-import { setMaxUploadSpeed, setUploadBroadcast } from './protocol/lish-protocol.ts';
+import { setMaxUploadSpeed, setUploadBroadcast, initUploadState } from './protocol/lish-protocol.ts';
+import { getUploadEnabledLishs, setUploadEnabled, getDownloadEnabledLishs, setDownloadEnabled } from './db/lishs.ts';
+import { initDownloadState } from './api/transfer.ts';
 const networkSettings = settings.get().network;
 Downloader.setMaxDownloadSpeed(networkSettings.maxDownloadSpeed);
 setMaxUploadSpeed(networkSettings.maxUploadSpeed);
+initUploadState(getUploadEnabledLishs(db), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
+initDownloadState(getDownloadEnabledLishs(db), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
 
 const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 	host: apiHost,

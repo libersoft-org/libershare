@@ -154,15 +154,16 @@ export async function initDownloads(): Promise<void> {
 
 	// Restore transfer states after F5/reconnect
 	try {
-		const transfers = await api.call('transfer.getActiveTransfers', {}) as { lishID: string; type: 'downloading' | 'uploading' | 'upload-paused' | 'upload-enabled'; peers: number; bytesPerSecond: number }[];
+		const transfers = await api.call('transfer.getActiveTransfers', {}) as { lishID: string; type: string; peers: number; bytesPerSecond: number }[];
 		if (transfers?.length) {
 			downloads.update(list => list.map(d => {
-				const t = transfers.find(t => t.lishID === d.id);
-				if (!t) return d;
-				if (t.type === 'uploading') return { ...d, status: 'uploading' as DownloadStatus, uploadPeers: t.peers, uploadSpeed: formatSize(t.bytesPerSecond) + '/s' };
-				if (t.type === 'upload-enabled') return { ...d, status: 'uploading' as DownloadStatus };
-				if (t.type === 'downloading') return { ...d, status: 'downloading' as DownloadStatus };
-				return d;
+				const types = new Set(transfers.filter(t => t.lishID === d.id).map(t => t.type));
+				const t = transfers.find(t => t.lishID === d.id && t.type === 'uploading');
+				const isDown = types.has('downloading') || types.has('download-enabled');
+				const isUp = types.has('uploading') || types.has('upload-enabled');
+				const status: DownloadStatus = isDown && isUp ? 'downloading-uploading' : isDown ? 'downloading' : isUp ? 'uploading' : d.status;
+				if (t) return { ...d, status, uploadPeers: t.peers, uploadSpeed: formatSize(t.bytesPerSecond) + '/s' };
+				return { ...d, status };
 			}));
 		}
 	} catch { /* transfer API may not exist on older backends */ }

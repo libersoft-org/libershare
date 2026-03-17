@@ -117,23 +117,27 @@ export function getActiveUploads(): Map<string, { chunks: number; startTime: num
 export function resetUploadState(): void {
 	activeUploads.clear();
 	activeStreamCount.clear();
-	pausedUploads.clear();
-	enabledUploads.clear();
+	uploadEnabled.clear();
 	uploadMaxBytesPerSec = 0;
 	uploadStartTime = 0;
 	uploadedBytes = 0;
 	broadcastFn = null;
 }
 
-// Per-LISH upload pause: paused LISHs won't serve chunks
-const pausedUploads = new Set<string>();
-// Explicitly enabled uploads (user clicked "enable upload") — survives F5
-const enabledUploads = new Set<string>();
-export function pauseUpload(lishID: string): void { pausedUploads.add(lishID); enabledUploads.delete(lishID); broadcastFn?.('transfer.upload:paused', { lishID }); }
-export function resumeUpload(lishID: string): void { pausedUploads.delete(lishID); enabledUploads.add(lishID); broadcastFn?.('transfer.upload:resumed', { lishID }); }
-export function isUploadPaused(lishID: string): boolean { return pausedUploads.has(lishID); }
-export function getPausedUploads(): Set<string> { return pausedUploads; }
-export function getEnabledUploads(): Set<string> { return enabledUploads; }
+// Per-LISH upload enabled/paused — persisted to DB, default=paused
+const uploadEnabled = new Set<string>();
+let persistUploadState: ((lishID: string, enabled: boolean) => void) | null = null;
+
+export function initUploadState(enabledLishs: Set<string>, persistFn: (lishID: string, enabled: boolean) => void): void {
+	uploadEnabled.clear();
+	for (const id of enabledLishs) uploadEnabled.add(id);
+	persistUploadState = persistFn;
+}
+export function pauseUpload(lishID: string): void { uploadEnabled.delete(lishID); persistUploadState?.(lishID, false); broadcastFn?.('transfer.upload:paused', { lishID }); }
+export function resumeUpload(lishID: string): void { uploadEnabled.add(lishID); persistUploadState?.(lishID, true); broadcastFn?.('transfer.upload:resumed', { lishID }); }
+export function isUploadPaused(lishID: string): boolean { return !uploadEnabled.has(lishID); }
+export function isUploadEnabled(lishID: string): boolean { return uploadEnabled.has(lishID); }
+export function getEnabledUploads(): Set<string> { return uploadEnabled; }
 
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer): Promise<void> {
 	const servedLishIDs = new Set<string>();
@@ -162,7 +166,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 				// Chunk request (default)
 				const chunkReq = request as LISHChunkRequest;
 				// Refuse to serve if upload is paused — close the stream so peer disconnects immediately
-				if (pausedUploads.has(chunkReq.lishID)) {
+				if (!uploadEnabled.has(chunkReq.lishID)) {
 					console.log(`Upload paused for ${chunkReq.lishID.slice(0, 8)}, closing stream`);
 					stream.abort(new Error('UPLOAD_PAUSED'));
 					return;

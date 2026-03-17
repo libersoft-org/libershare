@@ -48,8 +48,10 @@
 	let isUploading = $derived(download?.status === 'uploading' || download?.status === 'downloading-uploading');
 	let downloadPaused = $derived(!isDownloading);
 	let uploadPaused = $derived(!isUploading);
+	let isComplete = $derived(download?.progress === 100);
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => {
+			if (action.id === 'toggle-download' && isComplete) return false;
 			if (action.id === 'verify' && !isVerifying && !isDownloading) return true;
 			if (action.id === 'stop-verify' && isVerifying) return true;
 			if (action.id === 'verify' || action.id === 'stop-verify') return false;
