@@ -604,7 +604,11 @@ describe('Downloader — download behavior with mocked peers', () => {
 		expect(priv(downloader)['lastExhaustedTime']).toBe(0);
 	});
 
-	it('pause/resume cycle works correctly', () => {
+	it('pause/resume cycle works correctly', async () => {
+		const lish = createTestLISH();
+		ds.completeLishs.add(lish.id);
+		await downloader.initFromManifest(lish);
+
 		expect(downloader.isPaused()).toBe(false);
 
 		downloader.pause();

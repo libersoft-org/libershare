@@ -136,10 +136,12 @@ describe('Downloader – static speed limit', () => {
 describe('Downloader – pause / resume state', () => {
 	let downloader: Downloader;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
+		ds.missingChunks = [];
 		downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
+		await downloader.initFromManifest(makeLISH());
 	});
 
 	it('isPaused returns false initially', () => {
@@ -295,7 +297,7 @@ describe('Downloader – waitIfPaused with multiple concurrent waiters', () => {
 });
 
 describe('Downloader – getLISHID', () => {
-	it('getLISHID and getLishID return the same lishID after init', async () => {
+	it('getLISHID returns lishID after init', async () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
 		ds.missingChunks = [];
@@ -308,7 +310,6 @@ describe('Downloader – getLISHID', () => {
 		await downloader.initFromManifest(lish);
 
 		expect(downloader.getLISHID()).toBe('test-lish-id-0001');
-		expect(downloader.getLishID()).toBe('test-lish-id-0001');
 	});
 });
 
