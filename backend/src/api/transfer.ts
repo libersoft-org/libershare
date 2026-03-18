@@ -43,7 +43,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		const downloadDir = join(dataDir, 'downloads', Date.now().toString());
 		const downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
 		await downloader.init(p.lishPath);
-		const lishID = downloader.getLISHID?.() ?? p.lishPath;
+		const lishID = downloader.getLISHID();
 		activeDownloaders.set(lishID, downloader);
 
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));

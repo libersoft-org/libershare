@@ -83,8 +83,6 @@ export class Downloader {
 
 	isPaused(): boolean { return this.paused; }
 
-	getLishID(): string { return this.lishID; }
-
 	private async waitIfPaused(): Promise<void> {
 		if (!this.paused) return;
 		await new Promise<void>(resolve => { this.pauseResolve = resolve; });
@@ -320,7 +318,7 @@ export class Downloader {
 				const bytesPerSecond = windowSec > 0.1 ? Math.round(windowBytes / windowSec) : 0;
 				this.lastServingPeerCount = servingPeers.size;
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
-					console.log(`[DL] ${downloadedCount}/${totalChunks} chunks, ${servingPeers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
+					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${servingPeers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
 				}
 				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond });
 				await downloadLimiter.throttle(data.length);
