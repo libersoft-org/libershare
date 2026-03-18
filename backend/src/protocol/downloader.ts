@@ -1,5 +1,5 @@
 import { mkdir, open } from 'fs/promises';
-import { join, dirname } from 'path';
+import { dirname, resolve, sep } from 'path';
 import { type IStoredLISH, type LISHid, type ChunkID, CodedError, ErrorCodes } from '@shared';
 import { type Network } from './network.ts';
 import { lishTopic } from './constants.ts';
@@ -435,16 +435,21 @@ export class Downloader {
 		console.log(`[DL] Peer ${peerID.slice(0, 12)} connected via pubsub (total: ${this.peers.size})`);
 	}
 
-	// Create directory structure and initialize files
+	private safePath(relativePath: string): string {
+		const resolved = resolve(this.downloadDir, relativePath);
+		if (!resolved.startsWith(resolve(this.downloadDir) + sep)) throw new Error(`Path traversal blocked: ${relativePath}`);
+		return resolved;
+	}
+
 	private async createDirectoryStructure(): Promise<void> {
 		if (this.lish.directories) {
 			for (const dir of this.lish.directories) {
-				await mkdir(join(this.downloadDir, dir.path), { recursive: true });
+				await mkdir(this.safePath(dir.path), { recursive: true });
 			}
 		}
 		if (this.lish.files) {
 			for (const file of this.lish.files) {
-				const filePath = join(this.downloadDir, file.path);
+				const filePath = this.safePath(file.path);
 				await mkdir(dirname(filePath), { recursive: true });
 				if (!(await Bun.file(filePath).exists())) {
 					const fd = await open(filePath, 'w');

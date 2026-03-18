@@ -1,5 +1,5 @@
 import { open } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 import { type Database } from 'bun:sqlite';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder, CodedError, ErrorCodes } from '@shared';
 import { type MissingChunk, type VerificationProgress, type FileVerificationProgress, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, updateLISHDirectory as dbUpdateLISHDirectory, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, findChunkLocation, getVerificationProgress as dbGetVerificationProgress, getFileVerificationProgress as dbGetFileVerificationProgress, markChunkVerified as dbMarkChunkVerified, markChunkFailed as dbMarkChunkFailed, resetVerification as dbResetVerification, isVerified as dbIsVerified, getFilesForVerification as dbGetFilesForVerification } from '../db/lishs.ts';
@@ -145,7 +145,8 @@ export class DataServer {
 	public async writeChunk(downloadDir: string, lish: ILISH, fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
 		if (!lish.files || fileIndex >= lish.files.length) throw new CodedError(ErrorCodes.INVALID_FILE_INDEX, String(fileIndex));
 		const file = lish.files[fileIndex]!;
-		const filePath = join(downloadDir, file.path);
+		const filePath = resolve(downloadDir, file.path);
+		if (!filePath.startsWith(resolve(downloadDir) + sep)) throw new CodedError(ErrorCodes.INVALID_FILE_INDEX, `Path traversal: ${file.path}`);
 		const offset = chunkIndex * lish.chunkSize;
 		const fd = await open(filePath, 'r+');
 		await fd.write(data, 0, data.length, offset);
