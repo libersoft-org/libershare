@@ -4,6 +4,7 @@ import { type Stream } from '@libp2p/interface';
 import { type LISHid, type ChunkID } from '@shared';
 import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
+import { uploadLimiter } from './speed-limiter.ts';
 export const LISH_PROTOCOL = '/lish/1.0.0';
 export type LISHRequest = LISHChunkRequest | LISHManifestRequest;
 export interface LISHChunkRequest {
@@ -102,11 +103,7 @@ export class LISHClient {
 	}
 }
 
-let uploadMaxBytesPerSec = 0;
-let uploadStartTime = 0;
-let uploadedBytes = 0;
-
-export function setMaxUploadSpeed(kbPerSec: number): void { uploadMaxBytesPerSec = Math.max(0, kbPerSec) * 1024; }
+export function setMaxUploadSpeed(kbPerSec: number): void { uploadLimiter.setLimit(kbPerSec); }
 
 type BroadcastFn = (event: string, data: any) => void;
 let broadcastFn: BroadcastFn | null = null;
@@ -123,9 +120,8 @@ export function resetUploadState(): void {
 	activeUploads.clear();
 	activeStreamCount.clear();
 	uploadEnabled.clear();
-	uploadMaxBytesPerSec = 0;
-	uploadStartTime = 0;
-	uploadedBytes = 0;
+	uploadLimiter.setLimit(0);
+	uploadLimiter.reset();
 	broadcastFn = null;
 }
 
@@ -181,15 +177,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 						servedLishIDs.add(chunkReq.lishID);
 						activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
 					}
-					// Upload speed limit
-					if (uploadMaxBytesPerSec > 0) {
-						if (uploadStartTime === 0) uploadStartTime = Date.now();
-						uploadedBytes += chunkData.length;
-						const elapsed = (Date.now() - uploadStartTime) / 1000;
-						const expectedTime = uploadedBytes / uploadMaxBytesPerSec;
-						const waitMs = Math.max(0, (expectedTime - elapsed) * 1000);
-						if (waitMs > 10) await new Promise(r => setTimeout(r, waitMs));
-					}
+					await uploadLimiter.throttle(chunkData.length);
 					// Upload progress tracking (rolling 10s speed window)
 					if (broadcastFn) {
 						let info = activeUploads.get(chunkReq.lishID);

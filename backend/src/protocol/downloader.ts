@@ -2,6 +2,7 @@ import { mkdir, open } from 'fs/promises';
 import { dirname, resolve, sep } from 'path';
 import { type IStoredLISH, type LISHid, type ChunkID, CodedError, ErrorCodes } from '@shared';
 import { type Network } from './network.ts';
+import { downloadLimiter } from './speed-limiter.ts';
 import { lishTopic } from './constants.ts';
 import { Utils } from '../utils.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
@@ -50,8 +51,6 @@ export class Downloader {
 	private downloadReject: ((err: Error) => void) | undefined;
 	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => void;
 	private onManifestImported?: (lishID: string) => void;
-	private downloadStartTime = 0;
-	private downloadedBytes = 0;
 	private speedSamples: { time: number; bytes: number }[] = [];
 
 	getLISHID(): string { return this.lishID; }
@@ -219,17 +218,12 @@ export class Downloader {
 		});
 	}
 
-	// Max download speed in bytes/sec (0 = unlimited). Set via setMaxDownloadSpeed().
-	private static maxBytesPerSec = 0;
-
-	static setMaxDownloadSpeed(kbPerSec: number): void { Downloader.maxBytesPerSec = Math.max(0, kbPerSec) * 1024; }
+	static setMaxDownloadSpeed(kbPerSec: number): void { downloadLimiter.setLimit(kbPerSec); }
 
 	private async downloadChunks(): Promise<void> {
 		const missingChunks = this.dataServer.getMissingChunks(this.lishID);
 		const allChunks = this.dataServer.getAllChunkCount(this.lishID);
 		const totalChunks = allChunks > 0 ? allChunks : missingChunks.length;
-		this.downloadStartTime = Date.now();
-		this.downloadedBytes = 0;
 		let downloadedCount = totalChunks - missingChunks.length;
 
 		if (this.peers.size === 0) return;
@@ -315,29 +309,21 @@ export class Downloader {
 				await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 				this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 				downloadedCount++;
-				this.downloadedBytes += data.length;
 				// Rolling speed average (~10 second window)
 				const now = Date.now();
 				this.speedSamples.push({ time: now, bytes: data.length });
-				const cutoff = now - 10000;
-				this.speedSamples = this.speedSamples.filter(s => s.time > cutoff);
+				this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
 				const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-				const elapsed = (now - this.downloadStartTime) / 1000;
 				const windowSec = this.speedSamples.length > 1
 					? (now - this.speedSamples[0]!.time) / 1000
-					: elapsed;
+					: 1;
 				const bytesPerSecond = windowSec > 0.1 ? Math.round(windowBytes / windowSec) : 0;
 				this.lastServingPeerCount = servingPeers.size;
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
 					console.log(`[DL] ${downloadedCount}/${totalChunks} chunks, ${servingPeers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
 				}
 				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond });
-				if (Downloader.maxBytesPerSec > 0) {
-					const elapsed2 = (Date.now() - this.downloadStartTime) / 1000;
-					const expectedTime = this.downloadedBytes / Downloader.maxBytesPerSec;
-					const waitMs = Math.max(0, (expectedTime - elapsed2) * 1000);
-					if (waitMs > 10) await new Promise(r => setTimeout(r, waitMs));
-				}
+				await downloadLimiter.throttle(data.length);
 				// Check for newly discovered peers and spawn loops for them
 				spawnNewPeerLoops();
 			}
