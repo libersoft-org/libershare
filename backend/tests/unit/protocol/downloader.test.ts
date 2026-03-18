@@ -168,7 +168,133 @@ describe('Downloader – pause / resume state', () => {
 	});
 });
 
-describe('Downloader – getLISHID / getLishID', () => {
+// ---------------------------------------------------------------------------
+// waitIfPaused — multi-peerLoop race condition (H2)
+// ---------------------------------------------------------------------------
+
+describe('Downloader – waitIfPaused with multiple concurrent waiters', () => {
+	it('resume unblocks ALL waiting callers, not just the last one', async () => {
+		const net = new MockNetwork();
+		const ds = new MockDataServer();
+		ds.missingChunks = [];
+		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
+		const lish = makeLISH();
+		await dl.initFromManifest(lish);
+
+		const waitIfPaused = (priv(dl) as any).waitIfPaused.bind(dl);
+
+		dl.pause();
+
+		// Simulate 3 peerLoops calling waitIfPaused concurrently
+		const unblocked = [false, false, false];
+		const waiters = [
+			waitIfPaused().then(() => { unblocked[0] = true; }),
+			waitIfPaused().then(() => { unblocked[1] = true; }),
+			waitIfPaused().then(() => { unblocked[2] = true; }),
+		];
+
+		// Give event loop a tick — all should still be blocked
+		await new Promise(r => setTimeout(r, 50));
+		expect(unblocked).toEqual([false, false, false]);
+
+		// Resume — should unblock ALL three
+		dl.resume();
+		await Promise.all(waiters);
+
+		expect(unblocked).toEqual([true, true, true]);
+	});
+
+	it('resume unblocks 2 waiters when 2 peerLoops are paused', async () => {
+		const net = new MockNetwork();
+		const ds = new MockDataServer();
+		ds.missingChunks = [];
+		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
+		await dl.initFromManifest(makeLISH());
+
+		const waitIfPaused = (priv(dl) as any).waitIfPaused.bind(dl);
+		dl.pause();
+
+		let countUnblocked = 0;
+		const w1 = waitIfPaused().then(() => countUnblocked++);
+		const w2 = waitIfPaused().then(() => countUnblocked++);
+
+		await new Promise(r => setTimeout(r, 20));
+		expect(countUnblocked).toBe(0);
+
+		dl.resume();
+		await Promise.all([w1, w2]);
+		expect(countUnblocked).toBe(2);
+	});
+
+	it('waitIfPaused returns immediately when not paused', async () => {
+		const net = new MockNetwork();
+		const ds = new MockDataServer();
+		ds.missingChunks = [];
+		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
+		await dl.initFromManifest(makeLISH());
+
+		const waitIfPaused = (priv(dl) as any).waitIfPaused.bind(dl);
+		const start = Date.now();
+		await waitIfPaused();
+		expect(Date.now() - start).toBeLessThan(20);
+	});
+
+	it('pause/resume/pause/resume cycle works for multiple waiters', async () => {
+		const net = new MockNetwork();
+		const ds = new MockDataServer();
+		ds.missingChunks = [];
+		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
+		await dl.initFromManifest(makeLISH());
+
+		const waitIfPaused = (priv(dl) as any).waitIfPaused.bind(dl);
+
+		// Cycle 1
+		dl.pause();
+		let c1 = 0;
+		const w1a = waitIfPaused().then(() => c1++);
+		const w1b = waitIfPaused().then(() => c1++);
+		await new Promise(r => setTimeout(r, 20));
+		dl.resume();
+		await Promise.all([w1a, w1b]);
+		expect(c1).toBe(2);
+
+		// Cycle 2 — fresh pause, new waiters
+		dl.pause();
+		let c2 = 0;
+		const w2a = waitIfPaused().then(() => c2++);
+		const w2b = waitIfPaused().then(() => c2++);
+		const w2c = waitIfPaused().then(() => c2++);
+		await new Promise(r => setTimeout(r, 20));
+		dl.resume();
+		await Promise.all([w2a, w2b, w2c]);
+		expect(c2).toBe(3);
+	});
+
+	it('resolvers array is cleared after resume', async () => {
+		const net = new MockNetwork();
+		const ds = new MockDataServer();
+		ds.missingChunks = [];
+		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
+		await dl.initFromManifest(makeLISH());
+
+		const waitIfPaused = (priv(dl) as any).waitIfPaused.bind(dl);
+
+		dl.pause();
+		const w = waitIfPaused();
+		await new Promise(r => setTimeout(r, 10));
+
+		// Before resume: 1 resolver
+		expect(((priv(dl) as any).pauseResolvers as unknown[]).length).toBe(1);
+
+		dl.resume();
+		await w;
+
+		// After resume: cleared (new array)
+		expect(((priv(dl) as any).pauseResolvers as unknown[]).length).toBe(0);
+	});
+});
+
+describe('Downloader – getLISHID', () => {
 	it('getLISHID and getLishID return the same lishID after init', async () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();

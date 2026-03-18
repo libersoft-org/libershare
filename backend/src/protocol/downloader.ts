@@ -46,7 +46,7 @@ export class Downloader {
 	private paused = false;
 	private lastExhaustedTime = 0;
 	private downloadActive = false; // true while downloadChunks is running inside workMutex
-	private pauseResolve: (() => void) | undefined;
+	private pauseResolvers: (() => void)[] = [];
 	private downloadResolve: (() => void) | undefined;
 	private downloadReject: ((err: Error) => void) | undefined;
 	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => void;
@@ -73,8 +73,8 @@ export class Downloader {
 		this.paused = false;
 		this.lastExhaustedTime = 0; // allow immediate retry on resume
 		console.log(`[DL] Resumed ${this.lishID.slice(0, 8)}`);
-		this.pauseResolve?.();
-		this.pauseResolve = undefined;
+		for (const resolve of this.pauseResolvers) resolve();
+		this.pauseResolvers = [];
 		// Probe for new peers on resume (may find peers that joined while paused)
 		this.probeTopicPeers().catch(() => {});
 		// Re-trigger doWork in case it was waiting
@@ -85,7 +85,7 @@ export class Downloader {
 
 	private async waitIfPaused(): Promise<void> {
 		if (!this.paused) return;
-		await new Promise<void>(resolve => { this.pauseResolve = resolve; });
+		await new Promise<void>(resolve => { this.pauseResolvers.push(resolve); });
 	}
 
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkID: string) {
