@@ -62,7 +62,6 @@ export class LISHClient {
 		try {
 			// Bail early if stream is already closed/aborted
 			if (this.stream.status !== 'open') {
-				console.log(`[Client] Stream not open (status=${this.stream.status}), aborting request`);
 				throw new Error(`Stream not open: ${this.stream.status}`);
 			}
 			// Create the request
@@ -81,15 +80,7 @@ export class LISHClient {
 				this.decoder.next(),
 				rejectAfterTimeout(30000, 'receive'),
 			]) as IteratorResult<Uint8Array | Uint8ArrayList>;
-			if (responseMsg.done) {
-				console.log('Stream closed before receiving response');
-				return null;
-			}
-			// Convert to Uint8Array if needed
-			if (!responseMsg.value) {
-				console.log('Response has no data');
-				return null;
-			}
+			if (responseMsg.done || !responseMsg.value) return null;
 			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
 			const response: LISHResponse = JSON.parse(new TextDecoder().decode(responseData));
 			// Convert number array back to Uint8Array
@@ -146,7 +137,7 @@ export function initUploadState(enabledLishs: Set<string>, persistFn: (lishID: s
 	uploadEnabled.clear();
 	for (const id of enabledLishs) uploadEnabled.add(id);
 	persistUploadState = persistFn;
-	console.log(`[Upload] Initialized: ${uploadEnabled.size} LISHs enabled`, [...uploadEnabled].map(id => id.slice(0, 8)));
+	console.log(`[Upload] ${uploadEnabled.size} LISHs enabled`);
 }
 export function pauseUpload(lishID: string): void { uploadEnabled.delete(lishID); persistUploadState?.(lishID, false); broadcastFn?.('transfer.upload:paused', { lishID }); }
 export function resumeUpload(lishID: string): void { uploadEnabled.add(lishID); persistUploadState?.(lishID, true); broadcastFn?.('transfer.upload:resumed', { lishID }); }
@@ -165,8 +156,6 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 			const request: LISHRequest = JSON.parse(new TextDecoder().decode(data));
 
 			if (request.type === 'manifest') {
-				// Manifest request — return full LISH data (without directory path and chunks)
-				console.log(`Received manifest request for ${request.lishID.slice(0, 8)}...`);
 				const lish = dataServer.get(request.lishID as LISHid);
 				let manifest: import('@shared').IStoredLISH | null = null;
 				if (lish) {
@@ -176,13 +165,10 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 				const response: LISHManifestResponse = { manifest };
 				const responseData = new TextEncoder().encode(JSON.stringify(response));
 				await sendLengthPrefixed(stream, responseData);
-				console.log(`Responded with manifest: ${manifest ? 'found' : 'not found'}`);
 			} else {
 				// Chunk request (default)
 				const chunkReq = request as LISHChunkRequest;
-				// Refuse to serve if upload is paused — close the stream so peer disconnects immediately
 				if (!uploadEnabled.has(chunkReq.lishID)) {
-					console.log(`Upload paused for ${chunkReq.lishID.slice(0, 8)}, closing stream`);
 					stream.abort(new Error('UPLOAD_PAUSED'));
 					return;
 				}
