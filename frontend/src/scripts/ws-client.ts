@@ -6,8 +6,10 @@ import { tt } from './language.ts';
 function getAPIURL(): string {
 	if (typeof window !== 'undefined') {
 		// URL param override for multi-node dev testing (e.g. ?backend=ws://localhost:1159)
-		const param = new URLSearchParams(window.location.search).get('backend');
-		if (param) return param;
+		if (import.meta.env.DEV) {
+			const param = new URLSearchParams(window.location.search).get('backend');
+			if (param) return param;
+		}
 		// When running inside Tauri, the backend port is passed via initialization script
 		if ((window as any).__BACKEND_PORT__) return `ws://localhost:${(window as any).__BACKEND_PORT__}`;
 	}
