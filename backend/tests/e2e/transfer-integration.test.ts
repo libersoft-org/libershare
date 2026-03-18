@@ -15,9 +15,9 @@ import {
 } from '../../src/db/lishs.ts';
 import {
 	initUploadState,
-	pauseUpload,
-	resumeUpload,
-	isUploadPaused,
+	disableUpload,
+	enableUpload,
+	isUploadDisabled,
 	isUploadEnabled,
 	getEnabledUploads,
 	getActiveUploads,
@@ -211,11 +211,11 @@ describe('Upload state persistence', () => {
 		// Verify module state matches DB
 		expect(isUploadEnabled(TEST_LISH_ID)).toBe(true);
 		expect(isUploadEnabled(TEST_LISH_ID_2)).toBe(false);
-		expect(isUploadPaused(TEST_LISH_ID)).toBe(false);
-		expect(isUploadPaused(TEST_LISH_ID_2)).toBe(true);
+		expect(isUploadDisabled(TEST_LISH_ID)).toBe(false);
+		expect(isUploadDisabled(TEST_LISH_ID_2)).toBe(true);
 
 		// Now pause via module — should persist to DB
-		pauseUpload(TEST_LISH_ID);
+		disableUpload(TEST_LISH_ID);
 		const dbEnabledAfter = getUploadEnabledLishs(db);
 		expect(dbEnabledAfter.has(TEST_LISH_ID)).toBe(false);
 	});
@@ -312,7 +312,7 @@ describe('Transfer API — getActiveTransfers', () => {
 		expect(transfers).toEqual([]);
 	});
 
-	it('shows upload-enabled after resumeUpload', () => {
+	it('shows upload-enabled after enableUpload', () => {
 		addLISH(db, createTestLISH());
 		const networks = new MockNetworks();
 		const dataServer = new DataServer(db);
@@ -322,7 +322,7 @@ describe('Transfer API — getActiveTransfers', () => {
 		initDownloadState(new Set(), () => {});
 		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', emit);
 
-		handlers.resumeUpload({ lishID: TEST_LISH_ID });
+		handlers.enableUpload({ lishID: TEST_LISH_ID });
 
 		const transfers = handlers.getActiveTransfers();
 		const uploadEntry = transfers.find(t => t.lishID === TEST_LISH_ID);
@@ -330,7 +330,7 @@ describe('Transfer API — getActiveTransfers', () => {
 		expect(uploadEntry!.type).toBe('upload-enabled');
 	});
 
-	it('upload-enabled disappears from getActiveTransfers after pauseUpload', () => {
+	it('upload-enabled disappears from getActiveTransfers after disableUpload', () => {
 		addLISH(db, createTestLISH());
 		const networks = new MockNetworks();
 		const dataServer = new DataServer(db);
@@ -340,8 +340,8 @@ describe('Transfer API — getActiveTransfers', () => {
 		initDownloadState(new Set(), () => {});
 		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', emit);
 
-		handlers.resumeUpload({ lishID: TEST_LISH_ID });
-		handlers.pauseUpload({ lishID: TEST_LISH_ID });
+		handlers.enableUpload({ lishID: TEST_LISH_ID });
+		handlers.disableUpload({ lishID: TEST_LISH_ID });
 
 		const transfers = handlers.getActiveTransfers();
 		const uploadEntry = transfers.find(t => t.lishID === TEST_LISH_ID && t.type === 'upload-enabled');
@@ -364,7 +364,7 @@ describe('Transfer API — getActiveTransfers', () => {
 		expect(dlEntry).toBeDefined();
 	});
 
-	it('pauseDownload removes from getActiveTransfers download-enabled list', () => {
+	it('disableDownload removes from getActiveTransfers download-enabled list', () => {
 		addLISH(db, createTestLISH());
 		const networks = new MockNetworks();
 		const dataServer = new DataServer(db);
@@ -375,7 +375,7 @@ describe('Transfer API — getActiveTransfers', () => {
 		initDownloadState(dlEnabled, (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
 		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', emit);
 
-		handlers.pauseDownload({ lishID: TEST_LISH_ID });
+		handlers.disableDownload({ lishID: TEST_LISH_ID });
 
 		const transfers = handlers.getActiveTransfers();
 		const dlEntry = transfers.find(t => t.lishID === TEST_LISH_ID);
@@ -395,9 +395,9 @@ describe('Upload pause/resume affects protocol state', () => {
 		db = createDB();
 	});
 
-	it('isUploadPaused returns true for unknown LISH (default paused)', () => {
+	it('isUploadDisabled returns true for unknown LISH (default paused)', () => {
 		initUploadState(new Set(), () => {});
-		expect(isUploadPaused('unknown-lish')).toBe(true);
+		expect(isUploadDisabled('unknown-lish')).toBe(true);
 	});
 
 	it('initUploadState loads provided set correctly', () => {
@@ -405,21 +405,21 @@ describe('Upload pause/resume affects protocol state', () => {
 		const enabledSet = new Set([TEST_LISH_ID]);
 		initUploadState(enabledSet, () => {});
 
-		expect(isUploadPaused(TEST_LISH_ID)).toBe(false);
+		expect(isUploadDisabled(TEST_LISH_ID)).toBe(false);
 		expect(isUploadEnabled(TEST_LISH_ID)).toBe(true);
 	});
 
-	it('pause sets isUploadPaused=true, resume sets it back to false', () => {
+	it('pause sets isUploadDisabled=true, resume sets it back to false', () => {
 		initUploadState(new Set([TEST_LISH_ID]), () => {});
 
-		expect(isUploadPaused(TEST_LISH_ID)).toBe(false);
+		expect(isUploadDisabled(TEST_LISH_ID)).toBe(false);
 
-		pauseUpload(TEST_LISH_ID);
-		expect(isUploadPaused(TEST_LISH_ID)).toBe(true);
+		disableUpload(TEST_LISH_ID);
+		expect(isUploadDisabled(TEST_LISH_ID)).toBe(true);
 		expect(isUploadEnabled(TEST_LISH_ID)).toBe(false);
 
-		resumeUpload(TEST_LISH_ID);
-		expect(isUploadPaused(TEST_LISH_ID)).toBe(false);
+		enableUpload(TEST_LISH_ID);
+		expect(isUploadDisabled(TEST_LISH_ID)).toBe(false);
 		expect(isUploadEnabled(TEST_LISH_ID)).toBe(true);
 	});
 
@@ -431,7 +431,7 @@ describe('Upload pause/resume affects protocol state', () => {
 			(lishID, enabled) => setUploadEnabled(db, lishID, enabled),
 		);
 
-		pauseUpload(TEST_LISH_ID);
+		disableUpload(TEST_LISH_ID);
 
 		// Verify DB was updated
 		const dbEnabled = getUploadEnabledLishs(db);
@@ -445,7 +445,7 @@ describe('Upload pause/resume affects protocol state', () => {
 			(lishID, enabled) => setUploadEnabled(db, lishID, enabled),
 		);
 
-		resumeUpload(TEST_LISH_ID);
+		enableUpload(TEST_LISH_ID);
 
 		const dbEnabled = getUploadEnabledLishs(db);
 		expect(dbEnabled.has(TEST_LISH_ID)).toBe(true);
@@ -457,34 +457,34 @@ describe('Upload pause/resume affects protocol state', () => {
 		const enabled = getEnabledUploads();
 		expect(enabled.has(TEST_LISH_ID)).toBe(true);
 
-		pauseUpload(TEST_LISH_ID);
+		disableUpload(TEST_LISH_ID);
 		expect(enabled.has(TEST_LISH_ID)).toBe(false);
 
-		resumeUpload(TEST_LISH_ID);
+		enableUpload(TEST_LISH_ID);
 		expect(enabled.has(TEST_LISH_ID)).toBe(true);
 	});
 
-	it('pause broadcasts transfer.upload:paused event', () => {
+	it('pause broadcasts transfer.upload:disabled event', () => {
 		const events: Array<{ event: string; data: unknown }> = [];
 		setUploadBroadcast((event, data) => events.push({ event, data }));
 		initUploadState(new Set([TEST_LISH_ID]), () => {});
 
-		pauseUpload(TEST_LISH_ID);
+		disableUpload(TEST_LISH_ID);
 
 		expect(events.length).toBe(1);
-		expect(events[0]!.event).toBe('transfer.upload:paused');
+		expect(events[0]!.event).toBe('transfer.upload:disabled');
 		expect((events[0]!.data as { lishID: string }).lishID).toBe(TEST_LISH_ID);
 	});
 
-	it('resume broadcasts transfer.upload:resumed event', () => {
+	it('resume broadcasts transfer.upload:enabled event', () => {
 		const events: Array<{ event: string; data: unknown }> = [];
 		setUploadBroadcast((event, data) => events.push({ event, data }));
 		initUploadState(new Set<string>(), () => {});
 
-		resumeUpload(TEST_LISH_ID);
+		enableUpload(TEST_LISH_ID);
 
 		expect(events.length).toBe(1);
-		expect(events[0]!.event).toBe('transfer.upload:resumed');
+		expect(events[0]!.event).toBe('transfer.upload:enabled');
 		expect((events[0]!.data as { lishID: string }).lishID).toBe(TEST_LISH_ID);
 	});
 });
@@ -656,7 +656,7 @@ describe('State after restart', () => {
 		db = createDB();
 	});
 
-	it('upload_enabled persists to DB after pauseUpload/resumeUpload cycle', () => {
+	it('upload_enabled persists to DB after disableUpload/enableUpload cycle', () => {
 		addLISH(db, createTestLISH());
 
 		// Wire up with persist function
@@ -666,15 +666,15 @@ describe('State after restart', () => {
 		);
 
 		// Resume (enable upload)
-		resumeUpload(TEST_LISH_ID);
+		enableUpload(TEST_LISH_ID);
 		expect(getUploadEnabledLishs(db).has(TEST_LISH_ID)).toBe(true);
 
 		// Pause (disable upload)
-		pauseUpload(TEST_LISH_ID);
+		disableUpload(TEST_LISH_ID);
 		expect(getUploadEnabledLishs(db).has(TEST_LISH_ID)).toBe(false);
 
 		// Resume again
-		resumeUpload(TEST_LISH_ID);
+		enableUpload(TEST_LISH_ID);
 		expect(getUploadEnabledLishs(db).has(TEST_LISH_ID)).toBe(true);
 	});
 
@@ -692,12 +692,12 @@ describe('State after restart', () => {
 		initUploadState(enabledFromDB, (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 
 		expect(isUploadEnabled(TEST_LISH_ID)).toBe(true);
-		expect(isUploadPaused(TEST_LISH_ID)).toBe(false);
+		expect(isUploadDisabled(TEST_LISH_ID)).toBe(false);
 		expect(isUploadEnabled(TEST_LISH_ID_2)).toBe(false);
-		expect(isUploadPaused(TEST_LISH_ID_2)).toBe(true);
+		expect(isUploadDisabled(TEST_LISH_ID_2)).toBe(true);
 	});
 
-	it('download_enabled persists to DB through transfer handler pauseDownload/resumeDownload', () => {
+	it('download_enabled persists to DB through transfer handler disableDownload/enableDownload', () => {
 		addLISH(db, createTestLISH());
 
 		const persistCalls: Array<{ lishID: string; enabled: boolean }> = [];
@@ -714,8 +714,8 @@ describe('State after restart', () => {
 		const emit = (): void => {};
 		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', emit);
 
-		// pauseDownload should persist enabled=false
-		handlers.pauseDownload({ lishID: TEST_LISH_ID });
+		// disableDownload should persist enabled=false
+		handlers.disableDownload({ lishID: TEST_LISH_ID });
 		expect(persistCalls.some(c => c.lishID === TEST_LISH_ID && !c.enabled)).toBe(true);
 
 		// Verify DB state
@@ -731,14 +731,14 @@ describe('State after restart', () => {
 			new Set<string>(),
 			(lishID, enabled) => setUploadEnabled(db, lishID, enabled),
 		);
-		resumeUpload(TEST_LISH_ID);
-		resumeUpload(TEST_LISH_ID_2);
+		enableUpload(TEST_LISH_ID);
+		enableUpload(TEST_LISH_ID_2);
 
 		// Verify both in DB
 		expect(getUploadEnabledLishs(db).size).toBe(2);
 
 		// Step 2: Pause one
-		pauseUpload(TEST_LISH_ID_2);
+		disableUpload(TEST_LISH_ID_2);
 		expect(getUploadEnabledLishs(db).size).toBe(1);
 
 		// Step 3: Simulate restart — clear module, reload from DB
@@ -843,10 +843,10 @@ describe('DataServer + DB chunk integration', () => {
 });
 
 // ============================================================================
-// Test: Transfer handlers pauseUpload/resumeUpload integration
+// Test: Transfer handlers disableUpload/enableUpload integration
 // ============================================================================
 
-describe('Transfer handlers — pauseUpload/resumeUpload integration', () => {
+describe('Transfer handlers — disableUpload/enableUpload integration', () => {
 	let db: Database;
 
 	beforeEach(() => {
@@ -854,7 +854,7 @@ describe('Transfer handlers — pauseUpload/resumeUpload integration', () => {
 		db = createDB();
 	});
 
-	it('handler.pauseUpload calls protocol pauseUpload and persists', () => {
+	it('handler.disableUpload calls protocol disableUpload and persists', () => {
 		addLISH(db, createTestLISH());
 		initUploadState(
 			new Set([TEST_LISH_ID]),
@@ -865,13 +865,13 @@ describe('Transfer handlers — pauseUpload/resumeUpload integration', () => {
 		const dataServer = new DataServer(db);
 		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', () => {});
 
-		const result = handlers.pauseUpload({ lishID: TEST_LISH_ID });
+		const result = handlers.disableUpload({ lishID: TEST_LISH_ID });
 		expect(result.success).toBe(true);
-		expect(isUploadPaused(TEST_LISH_ID)).toBe(true);
+		expect(isUploadDisabled(TEST_LISH_ID)).toBe(true);
 		expect(getUploadEnabledLishs(db).has(TEST_LISH_ID)).toBe(false);
 	});
 
-	it('handler.resumeUpload calls protocol resumeUpload and persists', () => {
+	it('handler.enableUpload calls protocol enableUpload and persists', () => {
 		addLISH(db, createTestLISH());
 		initUploadState(
 			new Set<string>(),
@@ -882,7 +882,7 @@ describe('Transfer handlers — pauseUpload/resumeUpload integration', () => {
 		const dataServer = new DataServer(db);
 		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', () => {});
 
-		const result = handlers.resumeUpload({ lishID: TEST_LISH_ID });
+		const result = handlers.enableUpload({ lishID: TEST_LISH_ID });
 		expect(result.success).toBe(true);
 		expect(isUploadEnabled(TEST_LISH_ID)).toBe(true);
 		expect(getUploadEnabledLishs(db).has(TEST_LISH_ID)).toBe(true);
@@ -1007,9 +1007,9 @@ describe('resetUploadState — full cleanup', () => {
 
 	it('after reset, all LISHs report as paused', () => {
 		initUploadState(new Set(['lish-was-enabled']), () => {});
-		expect(isUploadPaused('lish-was-enabled')).toBe(false);
+		expect(isUploadDisabled('lish-was-enabled')).toBe(false);
 
 		resetUploadState();
-		expect(isUploadPaused('lish-was-enabled')).toBe(true);
+		expect(isUploadDisabled('lish-was-enabled')).toBe(true);
 	});
 });

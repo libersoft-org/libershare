@@ -2,7 +2,7 @@ import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
-import { getActiveUploads, pauseUpload, resumeUpload, getEnabledUploads, isUploadPaused } from '../protocol/lish-protocol.ts';
+import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, isUploadDisabled } from '../protocol/lish-protocol.ts';
 import { join } from 'path';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -11,17 +11,17 @@ type BroadcastFn = (event: string, data: any) => void;
 
 interface ActiveTransfer {
 	lishID: string;
-	type: 'downloading' | 'uploading' | 'upload-paused' | 'upload-enabled' | 'download-enabled';
+	type: 'downloading' | 'uploading' | 'upload-disabled' | 'upload-enabled' | 'download-enabled';
 	peers: number;
 	bytesPerSecond: number;
 }
 
 interface TransferHandlers {
 	download: (p: { networkID: string; lishPath: string }, client: any) => Promise<DownloadResponse>;
-	pauseDownload: (p: { lishID: string }) => { success: boolean };
-	resumeDownload: (p: { lishID: string }, client?: any) => Promise<{ success: boolean }>;
-	pauseUpload: (p: { lishID: string }) => { success: boolean };
-	resumeUpload: (p: { lishID: string }) => { success: boolean };
+	disableDownload: (p: { lishID: string }) => { success: boolean };
+	enableDownload: (p: { lishID: string }, client?: any) => Promise<{ success: boolean }>;
+	disableUpload: (p: { lishID: string }) => { success: boolean };
+	enableUpload: (p: { lishID: string }) => { success: boolean };
 	getActiveTransfers: () => ActiveTransfer[];
 }
 
@@ -66,18 +66,18 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return { downloadDir };
 	}
 
-	function pauseDownload(p: { lishID: string }): { success: boolean } {
+	function disableDownload(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
 		downloadEnabledLishs.delete(p.lishID);
 		persistDownloadEnabled?.(p.lishID, false);
 		const dl = activeDownloaders.get(p.lishID);
 		if (dl) dl.pause();
 		const send = broadcast ?? (() => {});
-		send('transfer.download:paused', { lishID: p.lishID });
+		send('transfer.download:disabled', { lishID: p.lishID });
 		return { success: true };
 	}
 
-	async function resumeDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
+	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
 		downloadEnabledLishs.add(p.lishID);
 		persistDownloadEnabled?.(p.lishID, true);
@@ -85,7 +85,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		if (dl) {
 			dl.resume();
 			const send = broadcast ?? (() => {});
-			send('transfer.download:resumed', { lishID: p.lishID });
+			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
 		}
 		// No active downloader — start a new download if LISH exists in dataServer
@@ -108,7 +108,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			downloader.download()
 				.then(() => { activeDownloaders.delete(p.lishID); send('transfer.download:complete', { downloadDir, lishID: p.lishID }); })
 				.catch(err => { activeDownloaders.delete(p.lishID); send('transfer.download:error', { error: err.message, lishID: p.lishID }); });
-			send('transfer.download:resumed', { lishID: p.lishID });
+			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
 		} catch { return { success: false }; }
 	}
@@ -123,7 +123,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		// Active uploads
 		for (const [lishID, info] of getActiveUploads()) {
 			if (!enabled.has(lishID)) {
-				transfers.push({ lishID, type: 'upload-paused', peers: 0, bytesPerSecond: 0 });
+				transfers.push({ lishID, type: 'upload-disabled', peers: 0, bytesPerSecond: 0 });
 			} else {
 				const now = Date.now();
 				const samples = info.speedSamples.filter(s => s.time > now - 10000);
@@ -149,15 +149,15 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return transfers;
 	}
 
-	function pauseUploadHandler(p: { lishID: string }): { success: boolean } {
+	function disableUploadHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
-		pauseUpload(p.lishID);
+		disableUpload(p.lishID);
 		return { success: true };
 	}
 
-	function resumeUploadHandler(p: { lishID: string }): { success: boolean } {
+	function enableUploadHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
-		resumeUpload(p.lishID);
+		enableUpload(p.lishID);
 		return { success: true };
 	}
 
@@ -166,10 +166,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		for (const lishID of downloadEnabledLishs) {
 			if (!activeDownloaders.has(lishID)) {
 				console.log(`[Auto-resume] Resuming download for ${lishID.slice(0, 8)}...`);
-				resumeDownload({ lishID }).catch(() => {});
+				enableDownload({ lishID }).catch(() => {});
 			}
 		}
 	}, 3000);
 
-	return { download, pauseDownload, resumeDownload, pauseUpload: pauseUploadHandler, resumeUpload: resumeUploadHandler, getActiveTransfers };
+	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers };
 }

@@ -126,17 +126,17 @@
 	function handleToolbarAction(actionID: DownloadToolbarActionID): void {
 		if (actionID === 'toggle-download' && download) {
 			if (isDownloading) {
-				api.call('transfer.pauseDownload', { lishID: download.id });
+				api.call('transfer.disableDownload', { lishID: download.id });
 			} else {
-				api.call('transfer.resumeDownload', { lishID: download.id });
+				api.call('transfer.enableDownload', { lishID: download.id });
 			}
 			return;
 		}
 		if (actionID === 'toggle-upload' && download) {
 			if (isUploading) {
-				api.call('transfer.pauseUpload', { lishID: download.id });
+				api.call('transfer.disableUpload', { lishID: download.id });
 			} else {
-				api.call('transfer.resumeUpload', { lishID: download.id });
+				api.call('transfer.enableUpload', { lishID: download.id });
 			}
 			return;
 		}

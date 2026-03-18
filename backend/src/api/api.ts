@@ -124,10 +124,10 @@ export class APIServer {
 			'lishs.move': _lishs.move,
 			// Transfer
 			'transfer.download': _transfer.download,
-			'transfer.pauseDownload': _transfer.pauseDownload,
-			'transfer.resumeDownload': _transfer.resumeDownload,
-			'transfer.pauseUpload': _transfer.pauseUpload,
-			'transfer.resumeUpload': _transfer.resumeUpload,
+			'transfer.disableDownload': _transfer.disableDownload,
+			'transfer.enableDownload': _transfer.enableDownload,
+			'transfer.disableUpload': _transfer.disableUpload,
+			'transfer.enableUpload': _transfer.enableUpload,
 			'transfer.getActiveTransfers': _transfer.getActiveTransfers,
 			// Datasets
 			'datasets.getDatasets': _datasets.getDatasets,

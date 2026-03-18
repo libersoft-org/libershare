@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import {
-	pauseUpload,
-	resumeUpload,
-	isUploadPaused,
+	disableUpload,
+	enableUpload,
+	isUploadDisabled,
 	getEnabledUploads,
 	getActiveUploads,
 	setUploadBroadcast,
@@ -40,38 +40,38 @@ describe('lish-protocol – upload state', () => {
 		resetUploadState();
 	});
 
-	// ---- pauseUpload / resumeUpload / isUploadPaused ----------------------
+	// ---- disableUpload / enableUpload / isUploadDisabled ----------------------
 
-	it('pauseUpload adds lishID to pausedUploads', () => {
-		pauseUpload('lish-abc');
-		expect(isUploadPaused('lish-abc')).toBe(true);
+	it('disableUpload adds lishID to pausedUploads', () => {
+		disableUpload('lish-abc');
+		expect(isUploadDisabled('lish-abc')).toBe(true);
 	});
 
-	it('pauseUpload does not affect other lishIDs', () => {
-		resumeUpload('lish-xyz'); // enable first
-		pauseUpload('lish-abc');
-		expect(isUploadPaused('lish-xyz')).toBe(false);
+	it('disableUpload does not affect other lishIDs', () => {
+		enableUpload('lish-xyz'); // enable first
+		disableUpload('lish-abc');
+		expect(isUploadDisabled('lish-xyz')).toBe(false);
 	});
 
-	it('resumeUpload removes lishID from pausedUploads', () => {
-		pauseUpload('lish-abc');
-		resumeUpload('lish-abc');
-		expect(isUploadPaused('lish-abc')).toBe(false);
+	it('enableUpload removes lishID from pausedUploads', () => {
+		disableUpload('lish-abc');
+		enableUpload('lish-abc');
+		expect(isUploadDisabled('lish-abc')).toBe(false);
 	});
 
-	it('resumeUpload on non-paused lishID is a no-op', () => {
-		resumeUpload('lish-never-paused');
-		expect(isUploadPaused('lish-never-paused')).toBe(false);
+	it('enableUpload on non-paused lishID is a no-op', () => {
+		enableUpload('lish-never-paused');
+		expect(isUploadDisabled('lish-never-paused')).toBe(false);
 	});
 
 	it('can pause multiple lishIDs independently', () => {
-		pauseUpload('lish-1');
-		pauseUpload('lish-2');
-		expect(isUploadPaused('lish-1')).toBe(true);
-		expect(isUploadPaused('lish-2')).toBe(true);
-		resumeUpload('lish-1');
-		expect(isUploadPaused('lish-1')).toBe(false);
-		expect(isUploadPaused('lish-2')).toBe(true);
+		disableUpload('lish-1');
+		disableUpload('lish-2');
+		expect(isUploadDisabled('lish-1')).toBe(true);
+		expect(isUploadDisabled('lish-2')).toBe(true);
+		enableUpload('lish-1');
+		expect(isUploadDisabled('lish-1')).toBe(false);
+		expect(isUploadDisabled('lish-2')).toBe(true);
 	});
 
 	// ---- getEnabledUploads ------------------------------------------------
@@ -81,46 +81,46 @@ describe('lish-protocol – upload state', () => {
 		expect(set.size).toBe(0);
 	});
 
-	it('resumeUpload adds to enabledUploads, pauseUpload removes', () => {
-		resumeUpload('lish-live');
+	it('enableUpload adds to enabledUploads, disableUpload removes', () => {
+		enableUpload('lish-live');
 		const set = getEnabledUploads();
 		expect(set.has('lish-live')).toBe(true);
-		pauseUpload('lish-live');
+		disableUpload('lish-live');
 		expect(set.has('lish-live')).toBe(false);
 	});
 
 	// ---- broadcast events on pause / resume -------------------------------
 
-	it('pauseUpload broadcasts upload:paused event with lishID', () => {
+	it('disableUpload broadcasts upload:disabled event with lishID', () => {
 		const events: Array<{ event: string; data: unknown }> = [];
 		setUploadBroadcast((event, data) => events.push({ event, data }));
 
-		pauseUpload('lish-broadcast');
+		disableUpload('lish-broadcast');
 
 		expect(events).toHaveLength(1);
-		expect(events[0]!.event).toBe('transfer.upload:paused');
+		expect(events[0]!.event).toBe('transfer.upload:disabled');
 		expect((events[0]!.data as { lishID: string }).lishID).toBe('lish-broadcast');
 	});
 
-	it('resumeUpload broadcasts upload:resumed event with lishID', () => {
+	it('enableUpload broadcasts upload:enabled event with lishID', () => {
 		const events: Array<{ event: string; data: unknown }> = [];
 		setUploadBroadcast((event, data) => events.push({ event, data }));
 
-		pauseUpload('lish-broadcast');
+		disableUpload('lish-broadcast');
 		events.length = 0; // clear pause event
 
-		resumeUpload('lish-broadcast');
+		enableUpload('lish-broadcast');
 
 		expect(events).toHaveLength(1);
-		expect(events[0]!.event).toBe('transfer.upload:resumed');
+		expect(events[0]!.event).toBe('transfer.upload:enabled');
 		expect((events[0]!.data as { lishID: string }).lishID).toBe('lish-broadcast');
 	});
 
 	it('pause/resume do not broadcast when no broadcastFn is set', () => {
 		// No broadcastFn — must not throw
 		expect(() => {
-			pauseUpload('lish-no-fn');
-			resumeUpload('lish-no-fn');
+			disableUpload('lish-no-fn');
+			enableUpload('lish-no-fn');
 		}).not.toThrow();
 	});
 
@@ -146,10 +146,10 @@ describe('lish-protocol – upload state', () => {
 	});
 
 	it('resetUploadState clears enabled uploads (all become paused)', () => {
-		resumeUpload('lish-will-reset');
-		expect(isUploadPaused('lish-will-reset')).toBe(false);
+		enableUpload('lish-will-reset');
+		expect(isUploadDisabled('lish-will-reset')).toBe(false);
 		resetUploadState();
-		expect(isUploadPaused('lish-will-reset')).toBe(true); // no longer enabled = paused
+		expect(isUploadDisabled('lish-will-reset')).toBe(true); // no longer enabled = paused
 	});
 
 	// ---- speed rolling window calculation (unit math) --------------------
@@ -246,7 +246,7 @@ describe('lish-protocol – upload state', () => {
 		setUploadBroadcast(event => calls1.push(event));
 		setUploadBroadcast(event => calls2.push(event));
 
-		pauseUpload('lish-fn-replace');
+		disableUpload('lish-fn-replace');
 
 		expect(calls1).toHaveLength(0);
 		expect(calls2).toHaveLength(1);

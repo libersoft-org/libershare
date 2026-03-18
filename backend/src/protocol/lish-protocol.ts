@@ -134,9 +134,9 @@ export function initUploadState(enabledLishs: Set<string>, persistFn: (lishID: s
 	persistUploadState = persistFn;
 	console.log(`[Upload] ${uploadEnabled.size} LISHs enabled`);
 }
-export function pauseUpload(lishID: string): void { uploadEnabled.delete(lishID); persistUploadState?.(lishID, false); broadcastFn?.('transfer.upload:paused', { lishID }); }
-export function resumeUpload(lishID: string): void { uploadEnabled.add(lishID); persistUploadState?.(lishID, true); broadcastFn?.('transfer.upload:resumed', { lishID }); }
-export function isUploadPaused(lishID: string): boolean { return !uploadEnabled.has(lishID); }
+export function disableUpload(lishID: string): void { uploadEnabled.delete(lishID); persistUploadState?.(lishID, false); broadcastFn?.('transfer.upload:disabled', { lishID }); }
+export function enableUpload(lishID: string): void { uploadEnabled.add(lishID); persistUploadState?.(lishID, true); broadcastFn?.('transfer.upload:enabled', { lishID }); }
+export function isUploadDisabled(lishID: string): boolean { return !uploadEnabled.has(lishID); }
 export function isUploadEnabled(lishID: string): boolean { return uploadEnabled.has(lishID); }
 export function getEnabledUploads(): Set<string> { return uploadEnabled; }
 

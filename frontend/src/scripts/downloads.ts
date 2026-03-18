@@ -110,8 +110,8 @@ export const downloads = writable<DownloadData[]>([]);
 export const downloadsLoading = writable<boolean>(true);
 // Track which LISHs are actively downloading (by lishID → last progress timestamp)
 const activeDownloads = new Map<string, number>();
-// Track explicitly paused downloads (prevents progress events from overriding paused state)
-const pausedDownloads = new Set<string>();
+// Track explicitly disabled downloads (prevents progress events from overriding disabled state)
+const disabledDownloads = new Set<string>();
 
 export function setCurrentDetailLISHID(lishID: string | null): void {
 	currentDetailLISHID = lishID;
@@ -325,7 +325,7 @@ export async function initDownloads(): Promise<void> {
 		// transfer.download:progress — with stale timeout to reset peers/speed
 		const downloadStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number }) => {
-			if (pausedDownloads.has(data.lishID)) return;
+			if (disabledDownloads.has(data.lishID)) return;
 			activeDownloads.set(data.lishID, Date.now());
 			downloads.update(list =>
 				list.map(d => {
@@ -349,9 +349,9 @@ export async function initDownloads(): Promise<void> {
 			}, 10000));
 		});
 
-		// transfer.download:paused
-		api.on('transfer.download:paused', (data: { lishID: string }) => {
-			pausedDownloads.add(data.lishID);
+		// transfer.download:disabled
+		api.on('transfer.download:disabled', (data: { lishID: string }) => {
+			disabledDownloads.add(data.lishID);
 			activeDownloads.delete(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
@@ -360,9 +360,9 @@ export async function initDownloads(): Promise<void> {
 			}));
 		});
 
-		// transfer.download:resumed
-		api.on('transfer.download:resumed', (data: { lishID: string }) => {
-			pausedDownloads.delete(data.lishID);
+		// transfer.download:enabled
+		api.on('transfer.download:enabled', (data: { lishID: string }) => {
+			disabledDownloads.delete(data.lishID);
 			activeDownloads.set(data.lishID, Date.now());
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
@@ -373,7 +373,7 @@ export async function initDownloads(): Promise<void> {
 
 		// transfer.download:complete
 		api.on('transfer.download:complete', (data: { downloadDir: string; lishID: string; name?: string }) => {
-			pausedDownloads.delete(data.lishID);
+			disabledDownloads.delete(data.lishID);
 			activeDownloads.delete(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
@@ -417,8 +417,8 @@ export async function initDownloads(): Promise<void> {
 			}, 15000));
 		});
 
-		// transfer.upload:paused
-		api.on('transfer.upload:paused', (data: { lishID: string }) => {
+		// transfer.upload:disabled
+		api.on('transfer.upload:disabled', (data: { lishID: string }) => {
 			activeUploadLishs.delete(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
@@ -427,8 +427,8 @@ export async function initDownloads(): Promise<void> {
 			}));
 		});
 
-		// transfer.upload:resumed
-		api.on('transfer.upload:resumed', (data: { lishID: string }) => {
+		// transfer.upload:enabled
+		api.on('transfer.upload:enabled', (data: { lishID: string }) => {
 			activeUploadLishs.add(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
@@ -455,13 +455,13 @@ export async function initDownloads(): Promise<void> {
 	api.subscribe('lishs:move:status');
 	api.subscribe('lishs:move:progress');
 	api.subscribe('transfer.download:progress');
-	api.subscribe('transfer.download:paused');
-	api.subscribe('transfer.download:resumed');
+	api.subscribe('transfer.download:disabled');
+	api.subscribe('transfer.download:enabled');
 	api.subscribe('transfer.download:complete');
 	api.subscribe('transfer.download:error');
 	api.subscribe('transfer.upload:progress');
-	api.subscribe('transfer.upload:paused');
-	api.subscribe('transfer.upload:resumed');
+	api.subscribe('transfer.upload:disabled');
+	api.subscribe('transfer.upload:enabled');
 	api.subscribe('transfer.upload:stopped');
 }
 
