@@ -892,3 +892,85 @@ describe('Downloader – chunk integrity verification', () => {
 		expect(elapsed).toBeLessThan(100); // sha256 of 1MB should be <100ms
 	});
 });
+
+// ---------------------------------------------------------------------------
+// All LISH-supported hash algorithms (per LISH_DATA_FORMAT.md)
+// ---------------------------------------------------------------------------
+
+describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
+	const LISH_ALGOS = [
+		'sha256', 'sha384', 'sha512', 'sha512-256',
+		'sha3-256', 'sha3-384', 'sha3-512',
+		'blake2b256', 'blake2b512', 'blake2s256',
+	] as const;
+
+	function hashWith(algo: string, data: Uint8Array): string {
+		const h = new Bun.CryptoHasher(algo as any);
+		h.update(data);
+		return h.digest('hex');
+	}
+
+	function verifyChunk(data: Uint8Array, expectedChunkID: string, algo: string): { valid: boolean; actualHash: string } {
+		const h = new Bun.CryptoHasher(algo as any);
+		h.update(data);
+		const actualHash = h.digest('hex');
+		return { valid: actualHash === expectedChunkID, actualHash };
+	}
+
+	const testData = new Uint8Array(4096);
+	for (let i = 0; i < testData.length; i++) testData[i] = (i * 7 + 13) % 256;
+
+	for (const algo of LISH_ALGOS) {
+		it(`${algo}: accepts correct hash`, () => {
+			const expected = hashWith(algo, testData);
+			const result = verifyChunk(testData, expected, algo);
+			expect(result.valid).toBe(true);
+		});
+
+		it(`${algo}: rejects wrong data`, () => {
+			const expected = hashWith(algo, testData);
+			const bad = new Uint8Array(testData);
+			bad[0] ^= 0xFF; // flip first byte
+			const result = verifyChunk(bad, expected, algo);
+			expect(result.valid).toBe(false);
+		});
+
+		it(`${algo}: rejects hash from different algo`, () => {
+			// Use sha256 hash but verify with this algo (unless it IS sha256)
+			const wrongHash = hashWith('sha256', testData);
+			if (algo === 'sha256') return; // skip — same algo
+			const result = verifyChunk(testData, wrongHash, algo);
+			// sha512-256 and sha256 produce same-length hashes but different values
+			expect(result.valid).toBe(false);
+		});
+
+		it(`${algo}: produces correct hash length`, () => {
+			const hash = hashWith(algo, testData);
+			const expectedLengths: Record<string, number> = {
+				'sha256': 64, 'sha384': 96, 'sha512': 128, 'sha512-256': 64,
+				'sha3-256': 64, 'sha3-384': 96, 'sha3-512': 128,
+				'blake2b256': 64, 'blake2b512': 128, 'blake2s256': 64,
+			};
+			expect(hash.length).toBe(expectedLengths[algo]);
+		});
+	}
+
+	// Cross-algo collision test: same data, different algos → different hashes
+	it('all algos produce unique hashes for same data', () => {
+		const hashes = LISH_ALGOS.map(algo => hashWith(algo, testData));
+		const unique = new Set(hashes);
+		expect(unique.size).toBe(LISH_ALGOS.length);
+	});
+
+	// Verify 1MB chunk performance for all algos
+	it('all algos hash 1MB chunk under 200ms each', () => {
+		const bigData = new Uint8Array(1024 * 1024);
+		for (let i = 0; i < bigData.length; i++) bigData[i] = i % 256;
+		for (const algo of LISH_ALGOS) {
+			const start = Date.now();
+			hashWith(algo, bigData);
+			const elapsed = Date.now() - start;
+			expect(elapsed).toBeLessThan(200);
+		}
+	});
+});
