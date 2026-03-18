@@ -17,7 +17,7 @@ export interface LISHManifestRequest {
 	lishID: LISHid;
 }
 export interface LISHResponse {
-	data: number[] | null;
+	data: string | null; // base64-encoded binary chunk data (per LISH protocol spec)
 }
 export interface LISHManifestResponse {
 	manifest: import('@shared').IStoredLISH | null;
@@ -84,8 +84,7 @@ export class LISHClient {
 			if (responseMsg.done || !responseMsg.value) return null;
 			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
 			const response: LISHResponse = JSON.parse(new TextDecoder().decode(responseData));
-			// Convert number array back to Uint8Array
-			if (response.data) return new Uint8Array(response.data);
+			if (response.data) return new Uint8Array(Buffer.from(response.data, 'base64'));
 			return null;
 		} catch (error) {
 			console.error('Error requesting chunk:', error);
@@ -169,7 +168,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 					return;
 				}
 				const chunkData = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
-				const response: LISHResponse = { data: chunkData ? Array.from(chunkData) : null };
+				const response: LISHResponse = { data: chunkData ? Buffer.from(chunkData).toString('base64') : null };
 				const responseData = new TextEncoder().encode(JSON.stringify(response));
 				await sendLengthPrefixed(stream, responseData);
 				if (chunkData) {
