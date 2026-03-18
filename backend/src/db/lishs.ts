@@ -92,13 +92,20 @@ export function lishExists(db: Database, lishID: LISHid): boolean {
 
 export function addLISH(db: Database, lish: IStoredLISH): void {
 	const tx = db.transaction(() => {
-		// Insert main record
-		const result = db.run(
-			`INSERT OR REPLACE INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		// Upsert main record — preserves upload_enabled/download_enabled on conflict
+		db.run(
+			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(lish_id) DO UPDATE SET
+			   name = excluded.name,
+			   description = excluded.description,
+			   created = excluded.created,
+			   chunk_size = excluded.chunk_size,
+			   checksum_algo = excluded.checksum_algo,
+			   directory = excluded.directory`,
 			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null]
 		);
-		const internalID = Number(result.lastInsertRowid);
+		const internalID = getInternalID(db, lish.id as LISHid)!;
 
 		// Delete existing child records (for upsert)
 		db.run('DELETE FROM lishs_files WHERE id_lishs = ?', [internalID]);
