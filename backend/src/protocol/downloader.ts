@@ -39,6 +39,7 @@ export class Downloader {
 	private peers: Map<NodeID, LISHClient> = new Map();
 	private lastServingPeerCount = 0;
 	private failedPeers = new Set<NodeID>(); // peers that failed — don't re-probe until next cycle
+	private static readonly MAX_CORRUPT_CHUNKS = 3; // max corrupted chunks before banning peer
 	private callForPeersInterval: NodeJS.Timeout | undefined;
 	private needsManifest = false;
 	private paused = false;
@@ -242,6 +243,7 @@ export class Downloader {
 		const peerLoopPromises = new Map<string, Promise<void>>();
 
 		const servingPeers = new Set<string>(); // peers that actually served at least 1 chunk
+		const corruptCount = new Map<string, number>(); // per-peer corruption counter
 
 		const spawnNewPeerLoops = (): void => {
 			for (const [pid, cli] of this.peers) {
@@ -286,10 +288,30 @@ export class Downloader {
 					}
 					continue;
 				}
-				// Success — write chunk
+				// Verify chunk integrity before writing
+				const data = result.data;
+				const hasher = new Bun.CryptoHasher(this.lish.checksumAlgo as any);
+				hasher.update(data);
+				const actualHash = hasher.digest('hex');
+				if (actualHash !== chunk.chunkID) {
+					const count = (corruptCount.get(peerID) ?? 0) + 1;
+					corruptCount.set(peerID, count);
+					console.log(`[DL] Corrupt chunk from ${peerID.slice(0, 12)}: expected ${chunk.chunkID.slice(0, 12)}, got ${actualHash.slice(0, 12)} (${count}/${Downloader.MAX_CORRUPT_CHUNKS})`);
+					await lock.runExclusive(() => { queue.push(chunk!); });
+					if (count >= Downloader.MAX_CORRUPT_CHUNKS) {
+						console.log(`[DL] Peer ${peerID.slice(0, 12)} banned: ${count} corrupt chunks`);
+						this.peers.delete(peerID);
+						this.failedPeers.add(peerID);
+						servingPeers.delete(peerID);
+						await client.close().catch(() => {});
+						spawnNewPeerLoops();
+						break;
+					}
+					continue;
+				}
+				// Integrity OK — write chunk
 				skippedChunks = 0;
 				servingPeers.add(peerID);
-				const data = result.data;
 				await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 				this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 				downloadedCount++;
