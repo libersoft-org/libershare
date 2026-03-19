@@ -108,7 +108,8 @@
 				lishFile = joinPath(directory, sanitized + (compress ? '.lish.gz' : '.lish'));
 			} else {
 				const { directory } = splitPath(lishFile || $storageLISHPath, $storageLISHPath);
-				lishFile = directory;
+				const sep = directory.includes('\\') ? '\\' : '/';
+				lishFile = directory.endsWith(sep) ? directory : directory + sep;
 			}
 		}
 	}
