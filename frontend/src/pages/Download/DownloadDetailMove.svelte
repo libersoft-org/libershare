@@ -16,7 +16,7 @@
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
-	import DownloadMoveProgress from './DownloadMoveProgress.svelte';
+	import DownloadDetailMoveProgress from './DownloadDetailMoveProgress.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -124,7 +124,7 @@
 {#if browsingDirectory}
 	<FileBrowser {areaID} {position} initialPath={newDirectory || lish.directory || ''} showPath directoriesOnly selectDirectoryButton onSelect={handleDirectorySelect} onBack={handleBrowseBack} />
 {:else if moving}
-	<DownloadMoveProgress {areaID} {position} params={{ lishID: lish.id, newDirectory: newDirectory.trim(), moveData, createSubdirectory }} onBack={handleProgressNavBack} onComplete={handleMoveComplete} />
+	<DownloadDetailMoveProgress {areaID} {position} params={{ lishID: lish.id, newDirectory: newDirectory.trim(), moveData, createSubdirectory }} onBack={handleProgressNavBack} onComplete={handleMoveComplete} />
 {:else}
 	<div class="move">
 		<div class="container">

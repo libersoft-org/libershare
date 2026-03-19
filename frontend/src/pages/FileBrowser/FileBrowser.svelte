@@ -817,6 +817,8 @@
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(listAreaID);
+		await tick();
+		scrollToSelected();
 	}
 
 	async function closeEditor(): Promise<void> {
@@ -828,6 +830,8 @@
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(listAreaID);
+		await tick();
+		scrollToSelected();
 	}
 
 	// Save file with content - handles exists check and overwrite dialog
