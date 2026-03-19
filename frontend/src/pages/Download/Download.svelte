@@ -3,7 +3,7 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
-	import { downloads, downloadsLoading, DOWNLOAD_TABLE_COLUMNS } from '../../scripts/downloads.ts';
+	import { downloads, downloadsLoading, DOWNLOAD_TABLE_COLUMNS, type DownloadStatus } from '../../scripts/downloads.ts';
 	import { api } from '../../scripts/api.ts';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -30,10 +30,12 @@
 	let allDownloadDisabled = $derived(!anyDownloading);
 	let allUploadDisabled = $derived(!anyUploading);
 
+	const busyStatuses: DownloadStatus[] = ['moving', 'verifying', 'pending-verification'];
+
 	function toggleAllDownloads(): void {
 		if (allDownloadDisabled) {
 			for (const d of $downloads) {
-				if (d.status !== 'downloading' && d.status !== 'downloading-uploading') {
+				if (d.status !== 'downloading' && d.status !== 'downloading-uploading' && !busyStatuses.includes(d.status)) {
 					api.call('transfer.enableDownload', { lishID: d.id });
 				}
 			}
@@ -49,7 +51,9 @@
 	function toggleAllUploads(): void {
 		if (allUploadDisabled) {
 			for (const d of $downloads) {
-				api.call('transfer.enableUpload', { lishID: d.id });
+				if (!busyStatuses.includes(d.status)) {
+					api.call('transfer.enableUpload', { lishID: d.id });
+				}
 			}
 		} else {
 			for (const d of $downloads) {

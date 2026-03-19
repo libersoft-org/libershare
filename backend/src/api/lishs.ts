@@ -3,6 +3,7 @@ import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, resetVerification, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
+import { setBusy, clearBusy } from './busy.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
@@ -329,8 +330,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const lishID = verificationQueue.shift()!;
 		const ac = new AbortController();
 		currentVerification = { lishID, ac };
+		setBusy(lishID, 'verifying');
 		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, started: true });
 		runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
+			clearBusy(lishID);
 			if (currentVerification?.ac === ac) {
 				if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
 				currentVerification = null;
@@ -374,6 +377,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 
 	async function stopVerify(p: { lishID: string }): Promise<SuccessResponse> {
 		assert(p, ['lishID']);
+		clearBusy(p.lishID);
 		// Stop if currently running
 		if (currentVerification?.lishID === p.lishID) currentVerification.ac.abort();
 		// Remove from queue if pending
@@ -386,13 +390,13 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function stopVerifyAll(): Promise<SuccessResponse> {
-		// Abort current verification
 		if (currentVerification) {
+			clearBusy(currentVerification.lishID);
 			currentVerification.ac.abort();
 		}
-		// Clear the queue and broadcast done for each
 		while (verificationQueue.length > 0) {
 			const lishID = verificationQueue.shift()!;
+			clearBusy(lishID);
 			broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
 		}
 		return { success: true };
@@ -426,7 +430,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, done: true });
 		}
 		movingLISHs.add(p.lishID);
-		// Broadcast moving status to all clients
+		setBusy(p.lishID, 'moving');
 		broadcast('lishs:move:status', { lishID: p.lishID, moving: true });
 		try {
 			if (p.moveData && lish.directory) {
@@ -517,6 +521,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			return { success: true };
 		} finally {
 			movingLISHs.delete(p.lishID);
+			clearBusy(p.lishID);
 			broadcast('lishs:move:status', { lishID: p.lishID, moving: false });
 		}
 	}

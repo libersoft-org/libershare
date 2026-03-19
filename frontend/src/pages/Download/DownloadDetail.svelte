@@ -44,6 +44,8 @@
 	let infoElement: HTMLElement | null = $state(null);
 	// Toolbar actions - adapt to current download state
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
+	let isMoving = $derived(download?.status === 'moving');
+	let isBusy = $derived(isVerifying || isMoving);
 	let isDownloading = $derived(download?.status === 'downloading' || download?.status === 'downloading-uploading');
 	let isUploading = $derived(download?.status === 'uploading' || download?.status === 'downloading-uploading');
 	let downloadPaused = $derived(!isDownloading);
@@ -51,8 +53,10 @@
 	let isComplete = $derived(download?.progress === 100);
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => {
-			if (action.id === 'toggle-download' && isComplete) return false;
-			if (action.id === 'verify' && !isVerifying && !isDownloading) return true;
+			if (action.id === 'toggle-download' && (isComplete || isBusy)) return false;
+			if (action.id === 'toggle-upload' && isBusy) return false;
+			if (action.id === 'move' && isBusy) return false;
+			if (action.id === 'verify' && !isVerifying && !isDownloading && !isMoving) return true;
 			if (action.id === 'stop-verify' && isVerifying) return true;
 			if (action.id === 'verify' || action.id === 'stop-verify') return false;
 			return true;

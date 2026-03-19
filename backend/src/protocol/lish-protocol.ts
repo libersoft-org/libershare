@@ -5,6 +5,7 @@ import { type LISHid, type ChunkID } from '@shared';
 import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
 import { uploadLimiter } from './speed-limiter.ts';
+import { isBusy } from '../api/busy.ts';
 export const LISH_PROTOCOL = '/lish/1.0.0';
 export type LISHRequest = LISHChunkRequest | LISHManifestRequest;
 export interface LISHChunkRequest {
@@ -163,8 +164,8 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 			} else {
 				// Chunk request (default)
 				const chunkReq = request as LISHChunkRequest;
-				if (!uploadEnabled.has(chunkReq.lishID)) {
-					stream.abort(new Error('UPLOAD_PAUSED'));
+				if (!uploadEnabled.has(chunkReq.lishID) || isBusy(chunkReq.lishID)) {
+					stream.abort(new Error('UPLOAD_BLOCKED'));
 					return;
 				}
 				const chunkData = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);

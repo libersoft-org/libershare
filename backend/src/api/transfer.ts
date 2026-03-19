@@ -4,6 +4,7 @@ import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
 import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, isUploadDisabled } from '../protocol/lish-protocol.ts';
 import { join } from 'path';
+import { isBusy, getBusyReason } from './busy.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -79,6 +80,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
+		if (isBusy(p.lishID)) return { success: false };
 		downloadEnabledLishs.add(p.lishID);
 		persistDownloadEnabled?.(p.lishID, true);
 		const dl = activeDownloaders.get(p.lishID);
@@ -157,6 +159,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	function enableUploadHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
+		if (isBusy(p.lishID)) return { success: false };
 		enableUpload(p.lishID);
 		return { success: true };
 	}
@@ -164,7 +167,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	// Auto-resume downloads that were enabled before restart
 	setTimeout(() => {
 		for (const lishID of downloadEnabledLishs) {
-			if (!activeDownloaders.has(lishID)) {
+			if (!activeDownloaders.has(lishID) && !isBusy(lishID)) {
 				console.log(`[Auto-resume] Resuming download for ${lishID.slice(0, 8)}...`);
 				enableDownload({ lishID }).catch(() => {});
 			}
