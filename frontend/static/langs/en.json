@@ -60,7 +60,10 @@
 		"errorParseError": "Invalid request format",
 		"errorMethodRequired": "Method is required",
 		"errorUnknownMethod": "Unknown method: {detail}",
-		"errorInternal": "Internal error: {detail}"
+		"errorInternal": "Internal error: {detail}",
+		"gamepadConnected": "Gamepad connected: {name}",
+		"gamepadDisconnected": "Gamepad disconnected: {name}",
+		"websocketError": "Connection error"
 	},
 	"library": {
 		"title": "Online library",

@@ -60,7 +60,10 @@
 		"errorParseError": "Neplatný formát požadavku",
 		"errorMethodRequired": "Metoda je povinná",
 		"errorUnknownMethod": "Neznámá metoda: {detail}",
-		"errorInternal": "Interní chyba: {detail}"
+		"errorInternal": "Interní chyba: {detail}",
+		"gamepadConnected": "Gamepad připojen: {name}",
+		"gamepadDisconnected": "Gamepad odpojen: {name}",
+		"websocketError": "Chyba spojení"
 	},
 	"library": {
 		"title": "Online knihovna",

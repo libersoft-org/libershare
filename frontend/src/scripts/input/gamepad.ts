@@ -1,5 +1,7 @@
 import { get } from 'svelte/store';
 import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone, increaseVolume, decreaseVolume } from '../settings.ts';
+import { addNotification } from '../notifications.ts';
+import { tt } from '../language.ts';
 type GamepadCallback = () => void;
 let globalGamepadManager: GamepadManager | null = null;
 
@@ -51,13 +53,13 @@ export class GamepadManager {
 	}
 
 	private handleConnect(e: GamepadEvent): void {
-		console.log('Gamepad connected:', e.gamepad.id);
+		addNotification(tt('common.gamepadConnected', { name: e.gamepad.id }));
 		this.isConnected = true;
 		if (this.started) this.startPolling();
 	}
 
 	private handleDisconnect(e: GamepadEvent): void {
-		console.log('Gamepad disconnected:', e.gamepad.id);
+		addNotification(tt('common.gamepadDisconnected', { name: e.gamepad.id }));
 		this.isConnected = false;
 		this.stopPolling();
 	}
