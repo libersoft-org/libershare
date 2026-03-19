@@ -61,7 +61,7 @@
 	</TableCell>
 	<TableCell align="center" desktopOnly>{truncateID(id)}</TableCell>
 	<TableCell align="center" desktopOnly>{sizeDisplay}</TableCell>
-	<TableCell desktopOnly><ProgressBar {progress} animated={status === 'downloading'} /></TableCell>
+	<TableCell desktopOnly><ProgressBar {progress} animated={status === 'downloading' || status === 'moving'} /></TableCell>
 	<TableCell align="center" desktopOnly><Badge label={$t('downloads.statuses.' + status)} {status} /></TableCell>
 	<TableCell align="center" desktopOnly>{downloadPeers}</TableCell>
 	<TableCell align="center" desktopOnly>{uploadPeers}</TableCell>

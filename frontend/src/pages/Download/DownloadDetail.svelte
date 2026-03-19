@@ -394,7 +394,7 @@
 						</TableRow>
 						<TableRow odd>
 							<Cell>{$t('common.progress')}:</Cell>
-							<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading'} /></span></Cell>
+							<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading' || download.status === 'moving'} /></span></Cell>
 						</TableRow>
 						<TableRow>
 							<Cell>{$t('common.status')}:</Cell>
@@ -428,7 +428,7 @@
 						</Header>
 						<div class="items">
 							{#each download.files as file, index (file.id)}
-								<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} odd={index % 2 === 0} animated={download.status === 'downloading' && file.progress < 100} />
+								<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} odd={index % 2 === 0} animated={(download.status === 'downloading' || download.status === 'moving') && file.progress < 100} />
 							{/each}
 						</div>
 					</Table>

@@ -259,8 +259,8 @@ class LISHsAPI {
 		this.client = client;
 	}
 
-	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] }> {
-		return this.client.call<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] }>('lishs.list', { sortBy, sortOrder });
+	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[] }> {
+		return this.client.call<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[] }>('lishs.list', { sortBy, sortOrder });
 	}
 
 	get(lishID: string): Promise<ILISHDetail | null> {

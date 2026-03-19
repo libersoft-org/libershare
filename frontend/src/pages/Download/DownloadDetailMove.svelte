@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
-	import { t, translateError, tt } from '../../scripts/language.ts';
-	import { addNotification } from '../../scripts/notifications.ts';
+	import { t } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -17,6 +16,7 @@
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
+	import DownloadMoveProgress from './DownloadMoveProgress.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -58,31 +58,41 @@
 		activateArea(areaID);
 	}
 
-	async function handleMove(): Promise<void> {
+	function handleMove(): void {
 		errorMessage = '';
 		if (!newDirectory.trim()) {
 			errorMessage = $t('common.errorFilePathRequired');
 			return;
 		}
+		openProgressPage();
+	}
+
+	function openProgressPage(): void {
 		moving = true;
 		setMovingStatus(lish.id, true);
-		try {
-			const result = await api.lishs.move(lish.id, newDirectory.trim(), moveData, createSubdirectory);
-			if (result.success) {
-				addNotification(tt('downloads.moveSuccess', { name: lish.name || lish.id }));
-				// Trigger verification after successful move
-				resetVerifyState(lish.id);
-				api.lishs.verify(lish.id).catch(err => console.error('Verification after move failed:', err));
-				onBack?.();
-				return;
-			}
-			errorMessage = $t('downloads.moveFailed');
-		} catch (e: any) {
-			errorMessage = translateError(e);
-		} finally {
-			moving = false;
-			setMovingStatus(lish.id, false);
+		navHandle.pause();
+		pushBreadcrumb($t('downloads.moveProgress.title'));
+		removeBackHandler = pushBackHandler(handleProgressNavBack);
+	}
+
+	function handleMoveComplete(): void {
+		// Start verification immediately after successful move
+		resetVerifyState(lish.id);
+		api.lishs.verify(lish.id).catch(err => console.error('Verification after move failed:', err));
+	}
+
+	function handleProgressNavBack(): void {
+		handleProgressClose();
+	}
+
+	function handleProgressClose(): void {
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
 		}
+		popBreadcrumb();
+		moving = false;
+		onBack?.();
 	}
 </script>
 
@@ -113,6 +123,8 @@
 
 {#if browsingDirectory}
 	<FileBrowser {areaID} {position} initialPath={newDirectory || lish.directory || ''} showPath directoriesOnly selectDirectoryButton onSelect={handleDirectorySelect} onBack={handleBrowseBack} />
+{:else if moving}
+	<DownloadMoveProgress {areaID} {position} params={{ lishID: lish.id, newDirectory: newDirectory.trim(), moveData, createSubdirectory }} onBack={handleProgressNavBack} onComplete={handleMoveComplete} />
 {:else}
 	<div class="move">
 		<div class="container">

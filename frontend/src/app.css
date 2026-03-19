@@ -28,6 +28,8 @@
 	--status-verifying-bg: #420;
 	--status-pending-verification-fg: #fe0;
 	--status-pending-verification-bg: #750;
+	--status-moving-fg: #c6f;
+	--status-moving-bg: #306;
 }
 
 html,

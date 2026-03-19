@@ -3,7 +3,8 @@ import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, resetVerification, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
-import { mkdir, readdir, stat, access, unlink, rmdir, cp } from 'fs/promises';
+import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
+import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -121,11 +122,12 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	// Track current creation so it can be aborted
 	let currentCreation: AbortController | null = null;
 
-	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] } {
+	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[] } {
 		return {
 			items: dataServer.listSummaries(p?.sortBy, p?.sortOrder),
 			verifying: currentVerification?.lishID ?? null,
 			pendingVerification: [...verificationQueue],
+			moving: [...movingLISHs],
 		};
 	}
 
@@ -311,6 +313,9 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	let currentVerification: { lishID: string; ac: AbortController } | null = null;
 	const verificationQueue: string[] = [];
 
+	// Track LISHs currently being moved
+	const movingLISHs = new Set<string>();
+
 	function enqueueVerification(lishID: string): void {
 		if (currentVerification?.lishID === lishID) return;
 		if (verificationQueue.includes(lishID)) return;
@@ -326,7 +331,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		currentVerification = { lishID, ac };
 		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, started: true });
 		runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
-			if (currentVerification?.lishID === lishID) {
+			if (currentVerification?.ac === ac) {
 				if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
 				currentVerification = null;
 			}
@@ -410,36 +415,110 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			const subDirName = sanitizeFilename(lish.name || lish.id) || lish.id;
 			newDir = join(newDir, subDirName);
 		}
-		if (p.moveData && lish.directory) {
-			const oldDir = lish.directory;
-			// Create target directory
-			await mkdir(newDir, { recursive: true });
-			// Copy files listed in the LISH
-			for (const file of lish.files ?? []) {
-				const srcPath = join(oldDir, file.path);
-				const dstPath = join(newDir, file.path);
-				await mkdir(dirname(dstPath), { recursive: true });
-				await cp(srcPath, dstPath);
-			}
-			// Create directories listed in the LISH
-			for (const dir of lish.directories ?? []) {
-				await mkdir(join(newDir, dir.path), { recursive: true });
-			}
-			// Copy symlinks
-			for (const link of lish.links ?? []) {
-				const srcPath = join(oldDir, link.path);
-				const dstPath = join(newDir, link.path);
-				await mkdir(dirname(dstPath), { recursive: true });
-				await cp(srcPath, dstPath);
-			}
-			// Delete old data
-			await deleteLISHData(lish);
+		// Stop verification if running for this LISH
+		if (currentVerification?.lishID === p.lishID) {
+			currentVerification.ac.abort();
+			currentVerification = null;
 		}
-		// Update directory in DB
-		dataServer.updateDirectory(p.lishID, newDir);
-		console.log(`✓ LISH moved: ${p.lishID} → ${newDir}`);
-		broadcast('lishs:move', { lishID: p.lishID, directory: newDir });
-		return { success: true };
+		const qIdx = verificationQueue.indexOf(p.lishID);
+		if (qIdx >= 0) {
+			verificationQueue.splice(qIdx, 1);
+			broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, done: true });
+		}
+		movingLISHs.add(p.lishID);
+		// Broadcast moving status to all clients
+		broadcast('lishs:move:status', { lishID: p.lishID, moving: true });
+		try {
+			if (p.moveData && lish.directory) {
+				const oldDir = lish.directory;
+				const allFiles = lish.files ?? [];
+				const allLinks = lish.links ?? [];
+				const totalFiles = allFiles.length + allLinks.length;
+				const totalBytes = allFiles.reduce((s, f) => s + (f.size ?? 0), 0);
+				let completedFiles = 0;
+				let completedBytes = 0;
+				// Broadcast file list to all clients
+				broadcast('lishs:move:progress', {
+					lishID: p.lishID,
+					type: 'file-list',
+					totalFiles,
+					completedFiles: 0,
+					totalBytes,
+					completedBytes: 0,
+					files: allFiles.map(f => ({ path: f.path, size: f.size ?? 0 })),
+				});
+				// Create target directory
+				await mkdir(newDir, { recursive: true });
+				// Copy files with streaming progress
+				const PROGRESS_INTERVAL = 512 * 1024; // Report every 512KB
+				for (const file of allFiles) {
+					const srcPath = join(oldDir, file.path);
+					const dstPath = join(newDir, file.path);
+					await mkdir(dirname(dstPath), { recursive: true });
+					const fileSize = file.size ?? 0;
+					let fileBytes = 0;
+					let lastReported = 0;
+					await new Promise<void>((resolve, reject) => {
+						const rs = createReadStream(srcPath);
+						const ws = createWriteStream(dstPath);
+						rs.on('data', (chunk: Buffer) => {
+							fileBytes += chunk.length;
+							if (fileBytes - lastReported >= PROGRESS_INTERVAL) {
+								lastReported = fileBytes;
+								broadcast('lishs:move:progress', {
+									lishID: p.lishID,
+									type: 'chunk',
+									path: file.path,
+									totalFiles,
+									completedFiles,
+									totalBytes,
+									completedBytes: completedBytes + fileBytes,
+									fileBytes,
+									fileSize,
+								});
+							}
+						});
+						rs.on('error', reject);
+						ws.on('error', reject);
+						ws.on('finish', resolve);
+						rs.pipe(ws);
+					});
+					completedFiles++;
+					completedBytes += fileSize;
+					broadcast('lishs:move:progress', { lishID: p.lishID, type: 'file', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes });
+				}
+				// Create directories listed in the LISH
+				for (const dir of lish.directories ?? []) {
+					await mkdir(join(newDir, dir.path), { recursive: true });
+				}
+				// Copy symlinks (small, no streaming needed)
+				for (const link of allLinks) {
+					const srcPath = join(oldDir, link.path);
+					const dstPath = join(newDir, link.path);
+					await mkdir(dirname(dstPath), { recursive: true });
+					await new Promise<void>((resolve, reject) => {
+						const rs = createReadStream(srcPath);
+						const ws = createWriteStream(dstPath);
+						rs.on('error', reject);
+						ws.on('error', reject);
+						ws.on('finish', resolve);
+						rs.pipe(ws);
+					});
+					completedFiles++;
+					broadcast('lishs:move:progress', { lishID: p.lishID, type: 'file', path: link.path, totalFiles, completedFiles, totalBytes, completedBytes });
+				}
+				// Delete old data
+				await deleteLISHData(lish);
+			}
+			// Update directory in DB
+			dataServer.updateDirectory(p.lishID, newDir);
+			console.log(`✓ LISH moved: ${p.lishID} → ${newDir}`);
+			broadcast('lishs:move', { lishID: p.lishID, directory: newDir });
+			return { success: true };
+		} finally {
+			movingLISHs.delete(p.lishID);
+			broadcast('lishs:move:status', { lishID: p.lishID, moving: false });
+		}
 	}
 
 	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move };

@@ -118,6 +118,12 @@
 		"newDirectory": "Nový adresář",
 		"moveFailed": "Přesun se nezdařil",
 		"moveSuccess": "Data LISHe \"{name}\" byla přesunuta",
+		"moveProgress": {
+			"title": "Přesouvání",
+			"moving": "Přesouvání dat...",
+			"done": "Data byla úspěšně přesunuta",
+			"filesMoved": "Přesunutých souborů"
+		},
 		"deleteDialog": {
 			"message": "Co chcete smazat?",
 			"lishOnly": "Smazat pouze LISH",

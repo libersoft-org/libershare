@@ -118,6 +118,12 @@
 		"newDirectory": "New directory",
 		"moveFailed": "Move failed",
 		"moveSuccess": "LISH \"{name}\" data was moved",
+		"moveProgress": {
+			"title": "Moving",
+			"moving": "Moving data...",
+			"done": "Data moved successfully",
+			"filesMoved": "Files moved"
+		},
 		"deleteDialog": {
 			"message": "What do you want to delete?",
 			"lishOnly": "Delete LISH only",

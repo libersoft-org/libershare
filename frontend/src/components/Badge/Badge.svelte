@@ -49,6 +49,11 @@
 		--badge-fg: var(--status-pending-verification-fg);
 		--badge-bg: var(--status-pending-verification-bg);
 	}
+
+	.badge.moving {
+		--badge-fg: var(--status-moving-fg);
+		--badge-bg: var(--status-moving-bg);
+	}
 </style>
 
-<div class="badge" class:idling={status === 'idling'} class:downloading={status === 'downloading'} class:uploading={status === 'uploading'} class:downloading-uploading={status === 'downloading-uploading'} class:verifying={status === 'verifying'} class:pending-verification={status === 'pending-verification'}>{label}</div>
+<div class="badge" class:idling={status === 'idling'} class:downloading={status === 'downloading'} class:uploading={status === 'uploading'} class:downloading-uploading={status === 'downloading-uploading'} class:verifying={status === 'verifying'} class:pending-verification={status === 'pending-verification'} class:moving={status === 'moving'}>{label}</div>
