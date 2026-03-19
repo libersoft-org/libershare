@@ -10,7 +10,6 @@ function getAPIURL(): string {
 }
 
 export const apiURL = getAPIURL();
-console.log('[API] Backend URL:', apiURL);
 export const connected = writable(false);
 
 export const wsClient = new WsClient(apiURL, (state: { connected: boolean }) => {
