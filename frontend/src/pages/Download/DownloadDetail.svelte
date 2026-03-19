@@ -90,6 +90,7 @@
 	}
 
 	function handleMoveBack(): void {
+		popBreadcrumb();
 		showMove = false;
 		registerDetailAreas();
 	}
@@ -141,6 +142,7 @@
 			showExport = true;
 		}
 		if (result.needsMove) {
+			pushBreadcrumb($t('downloads.moveData'));
 			unregisterDetailAreas();
 			showMove = true;
 		}
