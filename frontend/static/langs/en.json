@@ -88,7 +88,8 @@
 			"downloading-uploading": "Downloading and uploading",
 			"idling": "Idling",
 			"verifying": "Verifying",
-			"pending-verification": "Pending verification"
+			"pending-verification": "Pending verification",
+			"moving": "Moving"
 		},
 		"createLISH": "Create LISH",
 		"errorInvalidFormat": "Invalid LISH format",
@@ -111,6 +112,12 @@
 		"verifyDone": "Verification of LISH \"{name}\" completed",
 		"lishAdded": "LISH \"{name}\" added",
 		"moveData": "Move data",
+		"moveDataFromOriginal": "Move data from original directory",
+		"createSubdirectory": "Create a subdirectory with LISH name in target directory",
+		"move": "Move",
+		"newDirectory": "New directory",
+		"moveFailed": "Move failed",
+		"moveSuccess": "LISH \"{name}\" data was moved",
 		"deleteDialog": {
 			"message": "What do you want to delete?",
 			"lishOnly": "Delete LISH only",

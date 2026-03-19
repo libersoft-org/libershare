@@ -6,7 +6,7 @@ import { navigateBack } from './navigation.ts';
 import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
 
-export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification';
+export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'moving';
 
 // ============================================================================
 // Download Data Types
@@ -226,11 +226,22 @@ export async function initDownloads(): Promise<void> {
 				})
 			);
 		});
+
+		// lishs:move — LISH data moved (broadcast from backend)
+		api.on('lishs:move', (data: { lishID: string; directory: string }) => {
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, directory: data.directory };
+				})
+			);
+		});
 	}
 	// Subscribe on every connect (backend has fresh subscribedEvents after reconnect)
 	api.subscribe('lishs:add');
 	api.subscribe('lishs:remove');
 	api.subscribe('lishs:verify');
+	api.subscribe('lishs:move');
 }
 
 /** Reset verify state for a LISH in the downloads store (set all to 0, status to pending-verification). */
@@ -268,7 +279,7 @@ export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
  * Handle toolbar action for download detail
  * @returns true if action was handled internally, false if needs UI handling (e.g., onBack)
  */
-export function handleDownloadToolbarAction(actionID: DownloadToolbarActionID): { handled: boolean; needsBack?: boolean; needsDelete?: boolean; needsExport?: boolean; needsVerify?: boolean } {
+export function handleDownloadToolbarAction(actionID: DownloadToolbarActionID): { handled: boolean; needsBack?: boolean; needsDelete?: boolean; needsExport?: boolean; needsVerify?: boolean; needsMove?: boolean } {
 	switch (actionID) {
 		case 'back':
 			return { handled: false, needsBack: true };
@@ -288,8 +299,7 @@ export function handleDownloadToolbarAction(actionID: DownloadToolbarActionID): 
 		case 'export':
 			return { handled: false, needsExport: true };
 		case 'move':
-			// TODO: Implement move data
-			return { handled: true };
+			return { handled: false, needsMove: true };
 		case 'delete':
 			return { handled: false, needsDelete: true };
 		default:
@@ -312,4 +322,14 @@ export async function deleteDownload(lishID: string, deleteLISH: boolean, delete
 		console.error('Failed to delete LISH:', err);
 		return false;
 	}
+}
+
+// Update the directory for a LISH in the downloads store.
+export function updateDownloadDirectory(lishID: string, newDirectory: string): void {
+	downloads.update(list => list.map(d => (d.id === lishID ? { ...d, directory: newDirectory } : d)));
+}
+
+// Set the moving status for a LISH in the downloads store.
+export function setMovingStatus(lishID: string, moving: boolean): void {
+	downloads.update(list => list.map(d => (d.id === lishID ? { ...d, status: moving ? ('moving' as DownloadStatus) : ('idling' as DownloadStatus) } : d)));
 }

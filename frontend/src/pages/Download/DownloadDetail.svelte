@@ -20,6 +20,7 @@
 	import Alert from '../../components/Alert/Alert.svelte';
 	import DownloadDetailDelete from './DownloadDetailDelete.svelte';
 	import DownloadLISHExport from './DownloadLISHExport.svelte';
+	import DownloadDetailMove from './DownloadDetailMove.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	interface Props {
 		areaID: string;
@@ -57,6 +58,8 @@
 	let deleteError = $state('');
 	// Export state
 	let showExport = $state(false);
+	// Move state
+	let showMove = $state(false);
 	// File browser state
 	let showFileBrowser = $state(false);
 	let removeFileBrowserBackHandler: (() => void) | null = null;
@@ -83,6 +86,11 @@
 
 	function handleExportBack(): void {
 		showExport = false;
+		registerDetailAreas();
+	}
+
+	function handleMoveBack(): void {
+		showMove = false;
 		registerDetailAreas();
 	}
 
@@ -131,6 +139,10 @@
 		if (result.needsExport) {
 			unregisterDetailAreas();
 			showExport = true;
+		}
+		if (result.needsMove) {
+			unregisterDetailAreas();
+			showMove = true;
 		}
 		if (result.needsVerify && download) {
 			resetVerifyState(download.id);
@@ -346,6 +358,8 @@
 	<FileBrowser {areaID} {position} initialPath={download.directory} onBack={handleFileBrowserBack} />
 {:else if showExport && download}
 	<DownloadLISHExport {areaID} {position} lish={{ id: download.id, name: download.name }} onBack={handleExportBack} />
+{:else if showMove && download}
+	<DownloadDetailMove {areaID} {position} lish={{ id: download.id, name: download.name, directory: download.directory }} onBack={handleMoveBack} />
 {:else}
 	<div class="detail">
 		<div class="toolbar">

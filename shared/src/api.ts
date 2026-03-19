@@ -342,6 +342,10 @@ class LISHsAPI {
 	stopCreate(): Promise<SuccessResponse> {
 		return this.client.call<SuccessResponse>('lishs.stopCreate');
 	}
+
+	move(lishID: string, newDirectory: string, moveData: boolean, createSubdirectory?: boolean): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.move', { lishID, newDirectory, moveData, createSubdirectory });
+	}
 }
 
 class TransferAPI {

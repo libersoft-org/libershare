@@ -112,6 +112,7 @@ export class APIServer {
 			'lishs.stopVerify': _lishs.stopVerify,
 			'lishs.stopVerifyAll': _lishs.stopVerifyAll,
 			'lishs.stopCreate': _lishs.stopCreate,
+			'lishs.move': _lishs.move,
 			// Transfer
 			'transfer.download': _transfer.download,
 			// Datasets

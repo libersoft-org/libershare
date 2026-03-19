@@ -88,7 +88,8 @@
 			"downloading-uploading": "Stahuji a odesílám",
 			"idling": "Nečinný",
 			"verifying": "Ověřuje se",
-			"pending-verification": "Čeká na ověření"
+			"pending-verification": "Čeká na ověření",
+			"moving": "Přesouvá se"
 		},
 		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",
@@ -111,6 +112,12 @@
 		"verifyDone": "Ověření LISHe \"{name}\" dokončeno",
 		"lishAdded": "LISH \"{name}\" přidán",
 		"moveData": "Přesunout data",
+		"moveDataFromOriginal": "Přesunout data z původního adresáře",
+		"createSubdirectory": "V cílovém adresáři vytvořit podadresář s názvem LISHe",
+		"move": "Přesunout",
+		"newDirectory": "Nový adresář",
+		"moveFailed": "Přesun se nezdařil",
+		"moveSuccess": "Data LISHe \"{name}\" byla přesunuta",
 		"deleteDialog": {
 			"message": "Co chcete smazat?",
 			"lishOnly": "Smazat pouze LISH",

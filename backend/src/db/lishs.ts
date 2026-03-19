@@ -143,6 +143,11 @@ export function deleteLISH(db: Database, lishID: LISHid): boolean {
 	return result.changes > 0;
 }
 
+export function updateLISHDirectory(db: Database, lishID: LISHid, directory: string): boolean {
+	const result = db.run('UPDATE lishs SET directory = ? WHERE lish_id = ?', [directory, lishID]);
+	return result.changes > 0;
+}
+
 export function getLISH(db: Database, lishID: LISHid): IStoredLISH | null {
 	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;

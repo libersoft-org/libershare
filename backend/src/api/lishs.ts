@@ -3,7 +3,7 @@ import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, resetVerification, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
-import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
+import { mkdir, readdir, stat, access, unlink, rmdir, cp } from 'fs/promises';
 import { join, dirname } from 'path';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -49,6 +49,12 @@ interface ExportAllToFileParams {
 	compress?: boolean;
 	compressionAlgorithm?: CompressionAlgorithm;
 }
+interface MoveParams {
+	lishID: string;
+	newDirectory: string;
+	moveData: boolean;
+	createSubdirectory?: boolean;
+}
 interface LISHsHandlers {
 	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] };
 	get: (p: { lishID: string }) => ILISHDetail | null;
@@ -68,6 +74,7 @@ interface LISHsHandlers {
 	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
 	stopVerifyAll: () => Promise<SuccessResponse>;
 	stopCreate: () => Promise<SuccessResponse>;
+	move: (p: MoveParams) => Promise<SuccessResponse>;
 }
 
 /**
@@ -394,5 +401,46 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return { success: true };
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate };
+	async function move(p: MoveParams): Promise<SuccessResponse> {
+		assert(p, ['lishID', 'newDirectory']);
+		const lish = dataServer.get(p.lishID);
+		if (!lish) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, p.lishID);
+		let newDir = Utils.expandHome(p.newDirectory);
+		if (p.createSubdirectory !== false) {
+			const subDirName = sanitizeFilename(lish.name || lish.id) || lish.id;
+			newDir = join(newDir, subDirName);
+		}
+		if (p.moveData && lish.directory) {
+			const oldDir = lish.directory;
+			// Create target directory
+			await mkdir(newDir, { recursive: true });
+			// Copy files listed in the LISH
+			for (const file of lish.files ?? []) {
+				const srcPath = join(oldDir, file.path);
+				const dstPath = join(newDir, file.path);
+				await mkdir(dirname(dstPath), { recursive: true });
+				await cp(srcPath, dstPath);
+			}
+			// Create directories listed in the LISH
+			for (const dir of lish.directories ?? []) {
+				await mkdir(join(newDir, dir.path), { recursive: true });
+			}
+			// Copy symlinks
+			for (const link of lish.links ?? []) {
+				const srcPath = join(oldDir, link.path);
+				const dstPath = join(newDir, link.path);
+				await mkdir(dirname(dstPath), { recursive: true });
+				await cp(srcPath, dstPath);
+			}
+			// Delete old data
+			await deleteLISHData(lish);
+		}
+		// Update directory in DB
+		dataServer.updateDirectory(p.lishID, newDir);
+		console.log(`✓ LISH moved: ${p.lishID} → ${newDir}`);
+		broadcast('lishs:move', { lishID: p.lishID, directory: newDir });
+		return { success: true };
+	}
+
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move };
 }
