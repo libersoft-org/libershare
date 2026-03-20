@@ -11,6 +11,8 @@
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
 	import { gamepadConnected } from '../../scripts/input/gamepad.ts';
+	import { ramInfo } from '../../scripts/systemStats.ts';
+	import { formatSize } from '../../scripts/utils.ts';
 
 	type Widget = {
 		id: FooterWidget;
@@ -72,8 +74,8 @@
 				return {
 					topIcon: 'img/ram.svg',
 					topIconAlt: $t('settings.footerWidgets.ram'),
-					topLabel: '12.1 / 32 GB',
-					progress: 32,
+					topLabel: `${formatSize($ramInfo.used)} / ${formatSize($ramInfo.total)}`,
+					progress: $ramInfo.total > 0 ? ($ramInfo.used / $ramInfo.total) * 100 : 0,
 				};
 			},
 		},

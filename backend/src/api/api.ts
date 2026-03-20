@@ -10,6 +10,7 @@ import { initFsHandlers } from './fs.ts';
 import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
+import { initSystemHandlers } from './system.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
 }
@@ -59,6 +60,14 @@ export class APIServer {
 		const _fs = initFsHandlers();
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
+		const hasSubscribers = (event: string): boolean => {
+			for (const client of this.clients) {
+				if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) return true;
+			}
+			return false;
+		};
+		const _system = initSystemHandlers(broadcastFn, hasSubscribers);
+		_system.startRAMPolling();
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
@@ -130,6 +139,8 @@ export class APIServer {
 			'fs.exists': _fs.exists,
 			'fs.writeText': _fs.writeText,
 			'fs.writeCompressed': _fs.writeCompressed,
+			// System
+			'system.ram': _system.ram,
 		};
 	}
 

@@ -129,3 +129,9 @@ export interface ILISHNetwork {
 	bootstrapPeers: string[];
 	created?: string;
 }
+
+// System metrics
+export interface SystemRAMInfo {
+	used: number;
+	total: number;
+}
