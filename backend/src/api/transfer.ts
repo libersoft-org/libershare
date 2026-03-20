@@ -112,7 +112,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				.catch(err => { activeDownloaders.delete(p.lishID); send('transfer.download:error', { error: err.message, lishID: p.lishID }); });
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
-		} catch { return { success: false }; }
+		} catch (err) {
+			console.error(`[Transfer] Failed to enable download for ${p.lishID}:`, err);
+			return { success: false };
+		}
 	}
 
 	function getActiveTransfers(): ActiveTransfer[] {
