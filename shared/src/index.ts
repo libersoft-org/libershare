@@ -135,3 +135,12 @@ export interface SystemRAMInfo {
 	used: number;
 	total: number;
 }
+
+export interface SystemStorageInfo {
+	used: number;
+	total: number;
+}
+
+export interface SystemCPUInfo {
+	usage: number;
+}

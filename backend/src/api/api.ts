@@ -66,8 +66,8 @@ export class APIServer {
 			}
 			return false;
 		};
-		const _system = initSystemHandlers(broadcastFn, hasSubscribers);
-		_system.startRAMPolling();
+		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers);
+		_system.startPolling();
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
@@ -141,6 +141,8 @@ export class APIServer {
 			'fs.writeCompressed': _fs.writeCompressed,
 			// System
 			'system.ram': _system.ram,
+			'system.storage': _system.storage,
+			'system.cpu': _system.cpu,
 		};
 	}
 

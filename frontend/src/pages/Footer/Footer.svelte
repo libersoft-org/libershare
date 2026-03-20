@@ -11,7 +11,7 @@
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
 	import { gamepadConnected } from '../../scripts/input/gamepad.ts';
-	import { ramInfo } from '../../scripts/systemStats.ts';
+	import { ramInfo, storageInfo, cpuInfo } from '../../scripts/systemStats.ts';
 	import { formatSize } from '../../scripts/utils.ts';
 
 	type Widget = {
@@ -63,7 +63,7 @@
 				return {
 					topIcon: 'img/cpu.svg',
 					topIconAlt: $t('settings.footerWidgets.cpu'),
-					progress: 12,
+					progress: $cpuInfo.usage,
 				};
 			},
 		},
@@ -86,8 +86,8 @@
 				return {
 					topIcon: 'img/storage.svg',
 					topIconAlt: $t('settings.footerWidgets.storage'),
-					topLabel: '0.88 / 2 TB',
-					progress: 44.1,
+					topLabel: `${formatSize($storageInfo.used)} / ${formatSize($storageInfo.total)}`,
+					progress: $storageInfo.total > 0 ? ($storageInfo.used / $storageInfo.total) * 100 : 0,
 				};
 			},
 		},
