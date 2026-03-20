@@ -4,12 +4,11 @@
 	interface Props {
 		children: Snippet;
 		selected?: boolean;
-		odd?: boolean;
 		el?: HTMLElement | undefined;
 		position?: NavPos | undefined;
 		onConfirm?: (() => void) | undefined;
 	}
-	let { children, selected = false, odd = false, el = $bindable(), position, onConfirm }: Props = $props();
+	let { children, selected = false, el = $bindable(), position, onConfirm }: Props = $props();
 
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 
@@ -43,14 +42,6 @@
 		border-bottom: none;
 	}
 
-	.row.odd {
-		background-color: var(--secondary-soft-background);
-	}
-
-	.row.even {
-		background-color: var(--secondary-softer-background);
-	}
-
 	.row.selected {
 		background-color: var(--primary-foreground);
 		color: var(--primary-background);
@@ -63,6 +54,6 @@
 	}
 </style>
 
-<div bind:this={el} class="row" class:odd class:even={!odd} class:selected={isSelected}>
+<div bind:this={el} class="row" class:selected={isSelected}>
 	{@render children()}
 </div>

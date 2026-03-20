@@ -106,7 +106,7 @@
 				</Header>
 				<div class="items">
 					{#each filteredDownloads as download, index (download.id)}
-						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} position={[0, index + 2]} onConfirm={() => openDetail(download)} isLast={index === filteredDownloads.length - 1} odd={index % 2 === 0} />
+						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} position={[0, index + 2]} onConfirm={() => openDetail(download)} isLast={index === filteredDownloads.length - 1} />
 					{/each}
 				</div>
 			</Table>

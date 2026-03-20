@@ -325,6 +325,12 @@
 		width: 15vh;
 	}
 
+	.info .description {
+		white-space: pre-line;
+		text-align: left;
+		display: inline-block;
+	}
+
 	.container {
 		flex: 1;
 		border: 0.4vh solid var(--secondary-softer-background);
@@ -376,15 +382,21 @@
 			<div class="content">
 				<div class="info" class:selected={infoActive} bind:this={infoElement}>
 					<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
-						<TableRow odd>
-							<Cell>{$t('common.name')}:</Cell>
-							<Cell align="right">{download.name}</Cell>
-						</TableRow>
 						<TableRow>
 							<Cell>{$t('downloads.id')}:</Cell>
 							<Cell align="right">{download.id}</Cell>
 						</TableRow>
-						<TableRow odd>
+						<TableRow>
+							<Cell>{$t('common.name')}:</Cell>
+							<Cell align="right">{download.name}</Cell>
+						</TableRow>
+						{#if download.description}
+							<TableRow>
+								<Cell>{$t('common.description')}:</Cell>
+								<Cell align="right" wrap><span class="description">{download.description}</span></Cell>
+							</TableRow>
+						{/if}
+						<TableRow>
 							<Cell>{$t('downloads.targetDirectory')}:</Cell>
 							<Cell align="right">{download.directory ?? '-'}</Cell>
 						</TableRow>
@@ -392,7 +404,7 @@
 							<Cell>{$t('common.size')}:</Cell>
 							<Cell align="right">{download.downloadedSize ? `${download.downloadedSize} / ${download.size}` : download.size}</Cell>
 						</TableRow>
-						<TableRow odd>
+						<TableRow>
 							<Cell>{$t('common.progress')}:</Cell>
 							<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving'} /></span></Cell>
 						</TableRow>
@@ -400,7 +412,7 @@
 							<Cell>{$t('common.status')}:</Cell>
 							<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} status={download.status} /></Cell>
 						</TableRow>
-						<TableRow odd>
+						<TableRow>
 							<Cell>{$t('downloads.downloadingFrom')}:</Cell>
 							<Cell align="right">{download.downloadPeers}</Cell>
 						</TableRow>
@@ -408,7 +420,7 @@
 							<Cell>{$t('downloads.uploadingTo')}:</Cell>
 							<Cell align="right">{download.uploadPeers}</Cell>
 						</TableRow>
-						<TableRow odd>
+						<TableRow>
 							<Cell>{$t('downloads.downloadSpeed')}:</Cell>
 							<Cell align="right">{download.downloadSpeed}</Cell>
 						</TableRow>
@@ -428,7 +440,7 @@
 						</Header>
 						<div class="items">
 							{#each download.files as file, index (file.id)}
-								<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} odd={index % 2 === 0} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving') && file.progress < 100} />
+								<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving') && file.progress < 100} />
 							{/each}
 						</div>
 					</Table>

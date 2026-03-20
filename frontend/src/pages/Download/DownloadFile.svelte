@@ -12,12 +12,11 @@
 		size: string;
 		downloadedSize?: string | undefined;
 		selected?: boolean | undefined;
-		odd?: boolean | undefined;
 		animated?: boolean | undefined;
 		el?: HTMLElement | undefined;
 		position?: NavPos | undefined;
 	}
-	let { name, type = 'file', progress, size, downloadedSize, selected = false, odd = false, animated = false, el = $bindable(), position }: Props = $props();
+	let { name, type = 'file', progress, size, downloadedSize, selected = false, animated = false, el = $bindable(), position }: Props = $props();
 	// Show "downloaded / total" format when downloading (progress < 100 and downloadedSize is provided)
 	let sizeDisplay = $derived(downloadedSize ? `${downloadedSize} / ${size}` : size);
 	let isFile = $derived(type === 'file');
@@ -37,7 +36,7 @@
 	}
 </style>
 
-<TableRow {selected} {odd} {position} bind:el>
+<TableRow {selected} {position} bind:el>
 	<TableCell><span class="name"><Icon img={typeIcon} size="1.6vh" padding="0" colorVariable={iconColor} />{name}</span></TableCell>
 	<TableCell align="center">{sizeDisplay}</TableCell>
 	<TableCell align="center">

@@ -424,7 +424,7 @@
 						{#if showAddresses && globalNodeInfo.addresses.length > 0}
 							<Table columns="auto 1fr">
 								{#each globalNodeInfo.addresses as address, i}
-									<TableRow odd={i % 2 === 0}>
+									<TableRow>
 										<TableCell><span class="address-index">{i + 1}.</span></TableCell>
 										<TableCell wrap><span class="address-value">{address}</span></TableCell>
 									</TableRow>
