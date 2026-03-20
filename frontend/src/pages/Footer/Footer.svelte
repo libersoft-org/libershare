@@ -5,14 +5,16 @@
 	import { type FooterWidget, getVolumeIcon } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
 	import LISHStatus from './FooterLISHStatus.svelte';
+	import Gamepad from './FooterGamepad.svelte';
 	import Connection from './FooterConnection.svelte';
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
+	import { gamepadConnected } from '../../scripts/input/gamepad.ts';
 
 	type Widget = {
 		id: FooterWidget;
-		component: typeof Item | typeof Bar | typeof Clock | typeof LISHStatus | typeof Connection;
+		component: typeof Item | typeof Bar | typeof Clock | typeof LISHStatus | typeof Gamepad | typeof Connection;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		props?: () => Record<string, any>;
 	};
@@ -95,6 +97,15 @@
 					networkName: 'Main Network',
 					lishConnected: false,
 					vpnConnected: null,
+				};
+			},
+		},
+		{
+			id: 'gamepad',
+			component: Gamepad,
+			props() {
+				return {
+					connected: $gamepadConnected,
 				};
 			},
 		},

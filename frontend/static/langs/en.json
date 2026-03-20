@@ -286,6 +286,7 @@
 		},
 		"footerWidgets": {
 			"lishStatus": "LISH network status",
+			"gamepad": "Gamepad",
 			"connection": "Connection",
 			"connectionEthernet": "Ethernet",
 			"connectionWifi": "WiFi",

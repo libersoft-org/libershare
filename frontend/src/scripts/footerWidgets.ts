@@ -1,8 +1,8 @@
 // Footer position type
 export type FooterPosition = 'left' | 'center' | 'right';
 // Footer widget definitions
-export type FooterWidget = 'version' | 'download' | 'upload' | 'cpu' | 'ram' | 'storage' | 'lishStatus' | 'connection' | 'volume' | 'clock';
-export const footerWidgets: FooterWidget[] = ['version', 'download', 'upload', 'cpu', 'ram', 'storage', 'lishStatus', 'connection', 'volume', 'clock'];
+export type FooterWidget = 'version' | 'download' | 'upload' | 'cpu' | 'ram' | 'storage' | 'lishStatus' | 'gamepad' | 'connection' | 'volume' | 'clock';
+export const footerWidgets: FooterWidget[] = ['version', 'download', 'upload', 'cpu', 'ram', 'storage', 'lishStatus', 'gamepad', 'connection', 'volume', 'clock'];
 export const defaultWidgetVisibility: Record<FooterWidget, boolean> = {
 	version: false,
 	download: true,
@@ -11,6 +11,7 @@ export const defaultWidgetVisibility: Record<FooterWidget, boolean> = {
 	ram: false,
 	storage: false,
 	lishStatus: true,
+	gamepad: false,
 	connection: true,
 	volume: true,
 	clock: true,
@@ -28,6 +29,7 @@ export function getWidgetLabel(widget: FooterWidget, t: (key: string) => string)
 		ram: t('settings.footerWidgets.ram'),
 		storage: t('settings.footerWidgets.storage'),
 		lishStatus: t('settings.footerWidgets.lishStatus'),
+		gamepad: t('settings.footerWidgets.gamepad'),
 		connection: t('settings.footerWidgets.connection'),
 		volume: t('settings.footerWidgets.volume'),
 		clock: t('settings.footerWidgets.clock'),
@@ -72,7 +74,7 @@ export function getBarColor(barIndex: number, activeBars: number): string {
  */
 export interface FooterWidgetConfig {
 	id: FooterWidget;
-	componentType: 'item' | 'bar' | 'clock' | 'lishStatus' | 'connection';
+	componentType: 'item' | 'bar' | 'clock' | 'lishStatus' | 'gamepad' | 'connection';
 }
 
 export const FOOTER_WIDGET_CONFIGS: FooterWidgetConfig[] = [
@@ -83,6 +85,7 @@ export const FOOTER_WIDGET_CONFIGS: FooterWidgetConfig[] = [
 	{ id: 'ram', componentType: 'bar' },
 	{ id: 'storage', componentType: 'bar' },
 	{ id: 'lishStatus', componentType: 'lishStatus' },
+	{ id: 'gamepad', componentType: 'gamepad' },
 	{ id: 'connection', componentType: 'connection' },
 	{ id: 'volume', componentType: 'item' },
 	{ id: 'clock', componentType: 'clock' },

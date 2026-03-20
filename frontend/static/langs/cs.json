@@ -286,6 +286,7 @@
 		},
 		"footerWidgets": {
 			"lishStatus": "Stav LISH sítě",
+			"gamepad": "Ovladač",
 			"connection": "Připojení",
 			"connectionEthernet": "Ethernet",
 			"connectionWifi": "WiFi",

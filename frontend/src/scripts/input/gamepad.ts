@@ -1,9 +1,10 @@
-import { get } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone, increaseVolume, decreaseVolume } from '../settings.ts';
 import { addNotification } from '../notifications.ts';
 import { tt } from '../language.ts';
 type GamepadCallback = () => void;
 let globalGamepadManager: GamepadManager | null = null;
+export const gamepadConnected = writable(false);
 
 export class GamepadManager {
 	private animationID: number | null = null;
@@ -40,6 +41,7 @@ export class GamepadManager {
 		const gamepads = navigator.getGamepads();
 		if (gamepads[0]) {
 			this.isConnected = true;
+			gamepadConnected.set(true);
 			this.startPolling();
 		}
 	}
@@ -55,12 +57,14 @@ export class GamepadManager {
 	private handleConnect(e: GamepadEvent): void {
 		addNotification(tt('common.gamepadConnected', { name: e.gamepad.id }));
 		this.isConnected = true;
+		gamepadConnected.set(true);
 		if (this.started) this.startPolling();
 	}
 
 	private handleDisconnect(e: GamepadEvent): void {
 		addNotification(tt('common.gamepadDisconnected', { name: e.gamepad.id }));
 		this.isConnected = false;
+		gamepadConnected.set(false);
 		this.stopPolling();
 	}
 
@@ -98,6 +102,7 @@ export class GamepadManager {
 		if (!gamepad) {
 			// Gamepad disappeared unexpectedly
 			this.isConnected = false;
+			gamepadConnected.set(false);
 			this.animationID = null;
 			return;
 		}
