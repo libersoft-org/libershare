@@ -32,7 +32,7 @@ export class Downloader {
 	private readonly dataServer: DataServer;
 	private network: Network;
 	private readonly downloadDir: string;
-	private readonly networkID: string;
+	private readonly networkIDs: string[];
 	private lishID!: LISHid;
 	private state: State = 'added';
 	private workMutex = new Mutex();
@@ -88,11 +88,11 @@ export class Downloader {
 		await new Promise<void>(resolve => { this.pauseResolvers.push(resolve); });
 	}
 
-	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkID: string) {
+	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkIDs: string | string[]) {
 		this.downloadDir = downloadDir;
 		this.network = network;
 		this.dataServer = dataServer;
-		this.networkID = networkID;
+		this.networkIDs = Array.isArray(networkIDs) ? networkIDs : [networkIDs];
 	}
 
 	async init(lishPath: string): Promise<void> {
@@ -103,10 +103,12 @@ export class Downloader {
 		this.lishID = this.lish.id as LISHid;
 		console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), ${this.dataServer.getMissingChunks(this.lishID).length} chunks to download`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
-		const topic = lishTopic(this.networkID);
-		await this.network.subscribe(topic, async data => {
-			await this.handlePubsubMessage(topic, data);
-		});
+		for (const nid of this.networkIDs) {
+			const topic = lishTopic(nid);
+			await this.network.subscribe(topic, async data => {
+				await this.handlePubsubMessage(topic, data);
+			});
+		}
 		this.state = 'initialized';
 	}
 
@@ -123,10 +125,12 @@ export class Downloader {
 			this.needsManifest = true;
 			console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), awaiting manifest from peer`);
 		}
-		const topic = lishTopic(this.networkID);
-		await this.network.subscribe(topic, async data => {
-			await this.handlePubsubMessage(topic, data);
-		});
+		for (const nid of this.networkIDs) {
+			const topic = lishTopic(nid);
+			await this.network.subscribe(topic, async data => {
+				await this.handlePubsubMessage(topic, data);
+			});
+		}
 		this.state = 'initialized';
 	}
 
@@ -355,16 +359,21 @@ export class Downloader {
 	}
 
 	private async callForPeers() {
-		// 1. GossipSub broadcast (may not reach all peers reliably)
+		// 1. GossipSub broadcast on ALL joined networks
 		const msg: PubsubMessage = { type: 'want', lishID: this.lishID };
-		await this.network.broadcast(lishTopic(this.networkID), msg);
-		// 2. Direct probe: try every peer on the topic via LISH protocol stream
+		for (const nid of this.networkIDs) {
+			await this.network.broadcast(lishTopic(nid), msg).catch(() => {});
+		}
+		// 2. Direct probe: try every peer on all topics via LISH protocol stream
 		await this.probeTopicPeers();
 		this.setupCallForPeersInterval();
 	}
 
 	private async probeTopicPeers(): Promise<void> {
-		const topicPeers = this.network.getTopicPeers(this.networkID);
+		const topicPeers = new Set<string>();
+		for (const nid of this.networkIDs) {
+			for (const p of this.network.getTopicPeers(nid)) topicPeers.add(p);
+		}
 		let foundNew = false;
 		for (const peerID of topicPeers) {
 			if (this.peers.has(peerID)) continue;
@@ -419,7 +428,7 @@ export class Downloader {
 	}
 
 	private async handlePubsubMessage(topic: string, data: Record<string, any>): Promise<void> {
-		if (topic !== lishTopic(this.networkID)) return;
+		if (!this.networkIDs.some(nid => topic === lishTopic(nid))) return;
 		if (data['type'] === 'have' && data['lishID'] === this.lishID && data['chunks']) {
 			if (this.peers.has(data['peerID'])) return;
 			try {

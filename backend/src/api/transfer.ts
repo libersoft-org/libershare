@@ -97,10 +97,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		if (missing.length === 0) return { success: false }; // already complete
 		try {
 			const network = networks.getRunningNetwork();
-			const networkID = networks.getFirstJoinedNetworkID?.() ?? '';
-			if (!networkID) return { success: false };
+			const joinedNetworks = networks.getEnabled().map(n => n.networkID);
+			if (joinedNetworks.length === 0) return { success: false };
 			const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
-			const downloader = new Downloader(downloadDir, network, dataServer, networkID);
+			// Try all joined networks — peers may be on any of them
+			const downloader = new Downloader(downloadDir, network, dataServer, joinedNetworks);
 			await downloader.initFromManifest(lish);
 			activeDownloaders.set(p.lishID, downloader);
 			const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
