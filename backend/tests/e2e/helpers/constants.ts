@@ -1,0 +1,10 @@
+export const NODE1_API_PORT = 11581;
+export const NODE2_API_PORT = 11582;
+export const NODE3_API_PORT = 11583;
+export const NODE1_P2P_PORT = 19090;
+export const NODE2_P2P_PORT = 19091;
+export const NODE3_P2P_PORT = 19092;
+export const TEST_DATA_PREFIX = '.test-node';
+export const EVENT_TIMEOUT = 30_000;
+export const PEER_DISCOVERY_TIMEOUT = 20_000;
+export const LISH_ID = '001c0ff5-bb23-4f62-97c2-c47870e32a45';

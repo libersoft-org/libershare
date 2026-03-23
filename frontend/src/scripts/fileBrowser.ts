@@ -207,6 +207,7 @@ export function buildDirectoryActions(t: (key: string) => string, filesOnly: boo
 	if (!filesOnly && !isDriveList) {
 		if (selectDirectoryButton) actions.push({ id: 'select', label: t('fileBrowser.selectDirectory'), icon: '/img/check.svg' });
 		actions.push({ id: 'new', label: t('fileBrowser.newDirectory'), icon: '/img/plus.svg' });
+		actions.push({ id: 'rename', label: t('fileBrowser.renameDirectory'), icon: '/img/edit.svg' });
 		actions.push({ id: 'delete', label: t('fileBrowser.deleteDirectory'), icon: '/img/del.svg' });
 	}
 	if (!isDriveList) actions.push({ id: 'createFile', label: t('fileBrowser.createFile'), icon: '/img/plus.svg' });

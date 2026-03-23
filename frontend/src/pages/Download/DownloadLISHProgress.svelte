@@ -199,7 +199,7 @@
 					<TableCell align="center">{$t('common.progress')}</TableCell>
 				</TableHeader>
 				{#each allFiles as file, i}
-					<TableRow odd={i % 2 === 0} position={[0, i + 1]}>
+					<TableRow position={[0, i + 1]}>
 						<TableCell wrap>{file.path}</TableCell>
 						<TableCell align="right">{formatBytes(file.size)}</TableCell>
 						<TableCell align="center">

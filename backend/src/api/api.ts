@@ -12,6 +12,7 @@ import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
 import { initCatalogHandlers } from './catalog.ts';
 import { type CatalogManager } from '../catalog/catalog-manager.ts';
+import { initSystemHandlers } from './system.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
 }
@@ -56,11 +57,11 @@ export class APIServer {
 		const broadcastFn = (event: string, data: any) => this.broadcast(event, data);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _settings = initSettingsHandlers(this.settings);
-		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer);
+		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn);
-		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
+		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn);
 		const _catalog = catalogManager ? initCatalogHandlers(catalogManager, {
 			networks: this.networks,
 			dataServer: this.dataServer,
@@ -68,6 +69,14 @@ export class APIServer {
 			emit: emitTo,
 			broadcast: broadcastFn,
 		}) : null;
+		const hasSubscribers = (event: string): boolean => {
+			for (const client of this.clients) {
+				if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) return true;
+			}
+			return false;
+		};
+		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers);
+		_system.startPolling();
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
@@ -121,8 +130,14 @@ export class APIServer {
 			'lishs.stopVerify': _lishs.stopVerify,
 			'lishs.stopVerifyAll': _lishs.stopVerifyAll,
 			'lishs.stopCreate': _lishs.stopCreate,
+			'lishs.move': _lishs.move,
 			// Transfer
 			'transfer.download': _transfer.download,
+			'transfer.disableDownload': _transfer.disableDownload,
+			'transfer.enableDownload': _transfer.enableDownload,
+			'transfer.disableUpload': _transfer.disableUpload,
+			'transfer.enableUpload': _transfer.enableUpload,
+			'transfer.getActiveTransfers': _transfer.getActiveTransfers,
 			// Datasets
 			'datasets.getDatasets': _datasets.getDatasets,
 			'datasets.getDataset': _datasets.getDataset,
@@ -154,6 +169,10 @@ export class APIServer {
 				'catalog.pauseDownload': _catalog.pauseDownload,
 				'catalog.resumeDownload': _catalog.resumeDownload,
 			} : {}),
+			// System
+			'system.ram': _system.ram,
+			'system.storage': _system.storage,
+			'system.cpu': _system.cpu,
 		};
 	}
 
@@ -258,9 +277,7 @@ export class APIServer {
 		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) client.send(JSON.stringify({ event, data }));
 	}
 
-	broadcastEvent(event: string, data: any): void {
-		this.broadcast(event, data);
-	}
+	broadcastEvent(event: string, data: any): void { this.broadcast(event, data); }
 
 	private broadcast(event: string, data: any): void {
 		const msg = JSON.stringify({ event, data });
@@ -271,6 +288,12 @@ export class APIServer {
 				sent++;
 			}
 		}
-		// console.log(`[API] broadcast '${event}' to ${sent}/${this.clients.size} clients`, JSON.stringify(data));
+		if (event.startsWith('transfer.')) {
+			const d = data as any;
+			const extra = d.peers !== undefined ? ` peers=${d.peers}` : '';
+			const speed = d.bytesPerSecond !== undefined ? ` speed=${Math.round(d.bytesPerSecond/1024)}KB/s` : '';
+			const chunks = d.downloadedChunks !== undefined ? ` ${d.downloadedChunks}/${d.totalChunks}` : '';
+			console.log(`[TRANSFER] ${event}${chunks}${extra}${speed} → ${sent}/${this.clients.size} clients`);
+		}
 	}
 }

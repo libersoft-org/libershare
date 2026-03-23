@@ -261,6 +261,10 @@ export class Networks {
 		return this.joinedNetworks.has(id);
 	}
 
+	getFirstJoinedNetworkID(): string | undefined {
+		return this.joinedNetworks.values().next().value;
+	}
+
 	/**
 	 * Get peers for a specific lishnet (topic subscribers).
 	 */

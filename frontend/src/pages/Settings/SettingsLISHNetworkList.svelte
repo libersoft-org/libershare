@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { t, translateError } from '../../scripts/language.ts';
+	import { t, translateError, tt } from '../../scripts/language.ts';
+	import { addNotification } from '../../scripts/notifications.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -197,7 +198,9 @@
 	async function confirmDeleteNetwork(): Promise<void> {
 		if (deletingNetwork) {
 			await deleteNetworkFromAPI(deletingNetwork.networkID);
+			const deletedName = deletingNetwork.name;
 			networks = networks.filter(n => n.networkID !== deletingNetwork!.networkID);
+			addNotification(tt('settings.lishNetwork.networkDeleted', { name: deletedName }));
 			deletingNetwork = null;
 			showDeleteConfirm = false;
 			popBreadcrumb();
@@ -353,9 +356,25 @@
 		white-space: nowrap;
 	}
 
+	.network .network-id {
+		font-size: 2vh;
+		font-family: 'Ubuntu Mono';
+		color: var(--secondary-foreground);
+		word-break: break-all;
+		padding: 1vh;
+		background-color: var(--secondary-soft-background);
+		border: 0.2vh solid var(--secondary-softer-background);
+		border-radius: 1vh;
+		text-align: center;
+	}
+
 	.network .description {
-		font-size: 1.6vh;
-		color: var(--disabled-foreground);
+		padding: 2vh;
+		font-size: 2vh;
+		background-color: var(--secondary-soft-background);
+		color: var(--secondary-foreground);
+		border: 0.2vh solid var(--secondary-softer-background);
+		border-radius: 1vh;
 	}
 
 	.network .buttons {
@@ -405,7 +424,7 @@
 						{#if showAddresses && globalNodeInfo.addresses.length > 0}
 							<Table columns="auto 1fr">
 								{#each globalNodeInfo.addresses as address, i}
-									<TableRow odd={i % 2 === 0}>
+									<TableRow>
 										<TableCell><span class="address-index">{i + 1}.</span></TableCell>
 										<TableCell wrap><span class="address-value">{address}</span></TableCell>
 									</TableRow>
@@ -428,6 +447,7 @@
 									<div class="peer-count">{$t('settings.lishNetwork.connectedPeers', { count: String($peerCounts[network.networkID]!) })}</div>
 								{/if}
 							</div>
+							<div class="network-id">{network.networkID}</div>
 							{#if network.description}
 								<div class="description">
 									{#each network.description.split('\n') as line, li}{#if li > 0}<br />{/if}{line}{/each}

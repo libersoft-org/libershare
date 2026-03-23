@@ -18,9 +18,15 @@ export function initLISHsTables(db: Database): void {
 			added           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			chunk_size      INTEGER NOT NULL,
 			checksum_algo   TEXT NOT NULL,
-			directory       TEXT
+			directory       TEXT,
+			upload_enabled  BOOL NOT NULL DEFAULT FALSE,
+			download_enabled BOOL NOT NULL DEFAULT FALSE
 		)
 	`);
+
+	// Migration: add columns to existing databases
+	try { db.run('ALTER TABLE lishs ADD COLUMN upload_enabled BOOL NOT NULL DEFAULT FALSE'); } catch { /* already exists */ }
+	try { db.run('ALTER TABLE lishs ADD COLUMN download_enabled BOOL NOT NULL DEFAULT FALSE'); } catch { /* already exists */ }
 
 	db.run(`
 		CREATE TABLE IF NOT EXISTS lishs_files (
@@ -86,13 +92,20 @@ export function lishExists(db: Database, lishID: LISHid): boolean {
 
 export function addLISH(db: Database, lish: IStoredLISH): void {
 	const tx = db.transaction(() => {
-		// Insert main record
-		const result = db.run(
-			`INSERT OR REPLACE INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		// Upsert main record — preserves upload_enabled/download_enabled on conflict
+		db.run(
+			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(lish_id) DO UPDATE SET
+			   name = excluded.name,
+			   description = excluded.description,
+			   created = excluded.created,
+			   chunk_size = excluded.chunk_size,
+			   checksum_algo = excluded.checksum_algo,
+			   directory = excluded.directory`,
 			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null]
 		);
-		const internalID = Number(result.lastInsertRowid);
+		const internalID = getInternalID(db, lish.id as LISHid)!;
 
 		// Delete existing child records (for upsert)
 		db.run('DELETE FROM lishs_files WHERE id_lishs = ?', [internalID]);
@@ -108,8 +121,8 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 					 VALUES (?, ?, ?, ?, ?, ?)`,
 					[internalID, file.path, file.size, file.permissions ?? null, file.modified ?? null, file.created ?? null]
 				);
-				const fileId = Number(fileResult.lastInsertRowid);
-				for (const checksum of file.checksums) db.run('INSERT INTO lishs_chunks (id_lishs_files, checksum, have) VALUES (?, ?, ?)', [fileId, checksum, haveChunks.has(checksum) ? 1 : 0]);
+				const fileID = Number(fileResult.lastInsertRowid);
+				for (const checksum of file.checksums) db.run('INSERT INTO lishs_chunks (id_lishs_files, checksum, have) VALUES (?, ?, ?)', [fileID, checksum, haveChunks.has(checksum) ? 1 : 0]);
 			}
 		}
 
@@ -140,6 +153,11 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 
 export function deleteLISH(db: Database, lishID: LISHid): boolean {
 	const result = db.run('DELETE FROM lishs WHERE lish_id = ?', [lishID]);
+	return result.changes > 0;
+}
+
+export function updateLISHDirectory(db: Database, lishID: LISHid, directory: string): boolean {
+	const result = db.run('UPDATE lishs SET directory = ? WHERE lish_id = ?', [directory, lishID]);
 	return result.changes > 0;
 }
 
@@ -383,9 +401,9 @@ export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID
 	const files = db.query<{ id: number; path: string }, [number]>('SELECT id, path FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
 
 	for (const file of files) {
-		const chunks = db.query<{ checksum: string }, [number]>('SELECT checksum FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(file.id);
+		const chunks = db.query<{ checksum: string; have: number }, [number]>('SELECT checksum, have FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(file.id);
 		const chunkIndex = chunks.findIndex(c => c.checksum === chunkID);
-		if (chunkIndex !== -1) return { filePath: file.path, chunkIndex };
+		if (chunkIndex !== -1 && chunks[chunkIndex]!.have) return { filePath: file.path, chunkIndex };
 	}
 	return null;
 }
@@ -577,4 +595,26 @@ function getHaveChunksList(db: Database, internalID: number): string[] {
 		)
 		.all(internalID)
 		.map(r => r.checksum);
+}
+
+// -- Upload enabled persistence --
+
+export function setUploadEnabled(db: Database, lishID: LISHid, enabled: boolean): void {
+	db.run('UPDATE lishs SET upload_enabled = ? WHERE lish_id = ?', [enabled ? 1 : 0, lishID]);
+}
+
+export function setDownloadEnabled(db: Database, lishID: LISHid, enabled: boolean): void {
+	db.run('UPDATE lishs SET download_enabled = ? WHERE lish_id = ?', [enabled ? 1 : 0, lishID]);
+}
+
+export function getUploadEnabledLishs(db: Database): Set<string> {
+	return new Set(
+		db.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE upload_enabled = TRUE').all().map(r => r.lish_id)
+	);
+}
+
+export function getDownloadEnabledLishs(db: Database): Set<string> {
+	return new Set(
+		db.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE download_enabled = TRUE').all().map(r => r.lish_id)
+	);
 }

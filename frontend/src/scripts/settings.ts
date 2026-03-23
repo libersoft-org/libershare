@@ -38,6 +38,7 @@ export const autoStartSharing = writable(true);
 export const autoStartOnBoot = writable(true);
 export const showInTray = writable(true);
 export const minimizeToTray = writable(true);
+export const notificationTimeout = writable(5);
 export const defaultMinifyJSON = writable(false);
 export const defaultCompress = writable(false);
 export const defaultCompressionAlgorithm = writable('gzip');
@@ -96,6 +97,7 @@ export async function loadSettings(): Promise<void> {
 		autoStartOnBoot.set(settings.system.autoStartOnBoot);
 		showInTray.set(settings.system.showInTray);
 		minimizeToTray.set(settings.system.minimizeToTray);
+		notificationTimeout.set(settings.system.notificationTimeout);
 
 		// Export
 		defaultMinifyJSON.set(settings.export.minifyJSON);
@@ -210,6 +212,10 @@ export function setShowInTray(enabled: boolean): void {
 
 export function setMinimizeToTray(enabled: boolean): void {
 	updateSetting(minimizeToTray, 'system.minimizeToTray', enabled);
+}
+
+export function setNotificationTimeout(seconds: number): void {
+	updateSetting(notificationTimeout, 'system.notificationTimeout', Math.max(0, seconds));
 }
 
 export function setDefaultMinifyJSON(enabled: boolean): void {

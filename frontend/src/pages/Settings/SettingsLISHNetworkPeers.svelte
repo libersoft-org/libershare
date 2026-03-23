@@ -103,7 +103,7 @@
 					<TableCell>{$t('settings.lishNetwork.connections')}</TableCell>
 				</TableHeader>
 				{#each filteredPeers as peer, i}
-					<TableRow position={[0, i + 2]} odd={i % 2 !== 0}>
+					<TableRow position={[0, i + 2]}>
 						<TableCell desktopOnly>{i + 1}</TableCell>
 						<TableCell wrap><span class="peer-id">{peer.peerID}</span></TableCell>
 						<TableCell>

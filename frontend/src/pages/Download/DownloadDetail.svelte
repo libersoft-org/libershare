@@ -20,6 +20,7 @@
 	import Alert from '../../components/Alert/Alert.svelte';
 	import DownloadDetailDelete from './DownloadDetailDelete.svelte';
 	import DownloadLISHExport from './DownloadLISHExport.svelte';
+	import DownloadDetailMove from './DownloadDetailMove.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	interface Props {
 		areaID: string;
@@ -43,12 +44,19 @@
 	let infoElement: HTMLElement | null = $state(null);
 	// Toolbar actions - adapt to current download state
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
-	let isDownloading = $derived(download?.status === 'downloading');
+	let isMoving = $derived(download?.status === 'moving');
+	let isBusy = $derived(isVerifying || isMoving);
+	let isDownloading = $derived(download?.status === 'downloading' || download?.status === 'downloading-uploading');
+	let isUploading = $derived(download?.status === 'uploading' || download?.status === 'downloading-uploading');
 	let downloadPaused = $derived(!isDownloading);
-	let uploadPaused = $state(true);
+	let uploadPaused = $derived(!isUploading);
+	let isComplete = $derived(download?.progress === 100);
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => {
-			if (action.id === 'verify' && !isVerifying && !isDownloading) return true;
+			if (action.id === 'toggle-download' && (isComplete || isBusy)) return false;
+			if (action.id === 'toggle-upload' && isBusy) return false;
+			if (action.id === 'move' && isBusy) return false;
+			if (action.id === 'verify' && !isVerifying && !isDownloading && !isMoving) return true;
 			if (action.id === 'stop-verify' && isVerifying) return true;
 			if (action.id === 'verify' || action.id === 'stop-verify') return false;
 			return true;
@@ -63,6 +71,8 @@
 	let deleteError = $state('');
 	// Export state
 	let showExport = $state(false);
+	// Move state
+	let showMove = $state(false);
 	// File browser state
 	let showFileBrowser = $state(false);
 	let removeFileBrowserBackHandler: (() => void) | null = null;
@@ -92,6 +102,12 @@
 		registerDetailAreas();
 	}
 
+	function handleMoveBack(): void {
+		popBreadcrumb();
+		showMove = false;
+		registerDetailAreas();
+	}
+
 	function handleFileBrowserBack(): void {
 		removeFileBrowserBackHandler?.();
 		removeFileBrowserBackHandler = null;
@@ -111,36 +127,45 @@
 		onBack?.();
 	}
 
-	function handleToolbarAction(actionId: DownloadToolbarActionID): void {
-		if (actionId === 'toggle-download' && download) {
+	function handleToolbarAction(actionID: DownloadToolbarActionID): void {
+		if (actionID === 'toggle-download' && download) {
 			if (isDownloading) {
-				api.call('catalog.pauseDownload', { lishID: download.id });
+				api.call('transfer.disableDownload', { lishID: download.id });
 			} else {
-				api.call('catalog.resumeDownload', { lishID: download.id });
+				api.call('transfer.enableDownload', { lishID: download.id });
 			}
 			return;
 		}
-		if (actionId === 'toggle-upload') {
-			uploadPaused = !uploadPaused;
+		if (actionID === 'toggle-upload' && download) {
+			if (isUploading) {
+				api.call('transfer.disableUpload', { lishID: download.id });
+			} else {
+				api.call('transfer.enableUpload', { lishID: download.id });
+			}
 			return;
 		}
-		if (actionId === 'stop-verify' && download) {
+		if (actionID === 'stop-verify' && download) {
 			api.lishs.stopVerify(download.id).catch(err => console.error('Stop verification failed:', err));
 			return;
 		}
-		if (actionId === 'open-directory' && download?.directory) {
+		if (actionID === 'open-directory' && download?.directory) {
 			pushBreadcrumb($t('downloads.targetDirectory'));
 			unregisterDetailAreas();
 			showFileBrowser = true;
 			removeFileBrowserBackHandler = pushBackHandler(handleFileBrowserBack);
 			return;
 		}
-		const result = handleDownloadToolbarAction(actionId);
+		const result = handleDownloadToolbarAction(actionID);
 		if (result.needsBack) handleBack();
 		if (result.needsDelete) showDeleteDialog = true;
 		if (result.needsExport) {
 			unregisterDetailAreas();
 			showExport = true;
+		}
+		if (result.needsMove) {
+			pushBreadcrumb($t('downloads.moveData'));
+			unregisterDetailAreas();
+			showMove = true;
 		}
 		if (result.needsVerify && download) {
 			resetVerifyState(download.id);
@@ -153,13 +178,18 @@
 		activateArea(toolbarAreaID);
 	}
 
-	function handleDeleteResult(deleteLISH: boolean, success: boolean): void {
+	async function handleDeleteResult(deleteLISH: boolean, success: boolean): Promise<void> {
 		showDeleteDialog = false;
 		if (success && deleteLISH) {
 			handleBack();
 			return;
 		}
 		if (!success) deleteError = $t('downloads.deleteFailed');
+		if (success && !deleteLISH) {
+			if (isVerifying) await api.lishs.stopVerify(lishID).catch(err => console.error('Stop verification failed:', err));
+			resetVerifyState(lishID);
+			api.lishs.verify(lishID).catch(err => console.error('Verification failed:', err));
+		}
 		activateArea(toolbarAreaID);
 	}
 
@@ -316,6 +346,12 @@
 		width: 15vh;
 	}
 
+	.info .description {
+		white-space: pre-line;
+		text-align: left;
+		display: inline-block;
+	}
+
 	.container {
 		flex: 1;
 		border: 0.4vh solid var(--secondary-softer-background);
@@ -351,6 +387,8 @@
 	<FileBrowser {areaID} {position} initialPath={download.directory} onBack={handleFileBrowserBack} />
 {:else if showExport && download}
 	<DownloadLISHExport {areaID} {position} lish={{ id: download.id, name: download.name }} onBack={handleExportBack} />
+{:else if showMove && download}
+	<DownloadDetailMove {areaID} {position} lish={{ id: download.id, name: download.name, directory: download.directory }} onBack={handleMoveBack} />
 {:else}
 	<div class="detail">
 		<div class="toolbar">
@@ -365,15 +403,21 @@
 			<div class="content">
 				<div class="info" class:selected={infoActive} bind:this={infoElement}>
 					<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
-						<TableRow odd>
-							<Cell>{$t('common.name')}:</Cell>
-							<Cell align="right">{download.name}</Cell>
-						</TableRow>
 						<TableRow>
 							<Cell>{$t('downloads.id')}:</Cell>
 							<Cell align="right">{download.id}</Cell>
 						</TableRow>
-						<TableRow odd>
+						<TableRow>
+							<Cell>{$t('common.name')}:</Cell>
+							<Cell align="right">{download.name}</Cell>
+						</TableRow>
+						{#if download.description}
+							<TableRow>
+								<Cell>{$t('common.description')}:</Cell>
+								<Cell align="right" wrap><span class="description">{download.description}</span></Cell>
+							</TableRow>
+						{/if}
+						<TableRow>
 							<Cell>{$t('downloads.targetDirectory')}:</Cell>
 							<Cell align="right">{download.directory ?? '-'}</Cell>
 						</TableRow>
@@ -381,15 +425,15 @@
 							<Cell>{$t('common.size')}:</Cell>
 							<Cell align="right">{download.downloadedSize ? `${download.downloadedSize} / ${download.size}` : download.size}</Cell>
 						</TableRow>
-						<TableRow odd>
+						<TableRow>
 							<Cell>{$t('common.progress')}:</Cell>
-							<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading'} /></span></Cell>
+							<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving'} /></span></Cell>
 						</TableRow>
 						<TableRow>
 							<Cell>{$t('common.status')}:</Cell>
 							<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} status={download.status} /></Cell>
 						</TableRow>
-						<TableRow odd>
+						<TableRow>
 							<Cell>{$t('downloads.downloadingFrom')}:</Cell>
 							<Cell align="right">{download.downloadPeers}</Cell>
 						</TableRow>
@@ -397,7 +441,7 @@
 							<Cell>{$t('downloads.uploadingTo')}:</Cell>
 							<Cell align="right">{download.uploadPeers}</Cell>
 						</TableRow>
-						<TableRow odd>
+						<TableRow>
 							<Cell>{$t('downloads.downloadSpeed')}:</Cell>
 							<Cell align="right">{download.downloadSpeed}</Cell>
 						</TableRow>
@@ -417,7 +461,7 @@
 						</Header>
 						<div class="items">
 							{#each download.files as file, index (file.id)}
-								<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} odd={index % 2 === 0} animated={download.status === 'downloading' && file.progress < 100} />
+								<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving') && file.progress < 100} />
 							{/each}
 						</div>
 					</Table>

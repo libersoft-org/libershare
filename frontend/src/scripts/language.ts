@@ -31,8 +31,8 @@ export const t = derived(translations, $translations => {
 });
 
 // Initialize and update translations when language changes
-currentLanguage.subscribe(async langId => {
-	const data = await loadLanguage(langId);
+currentLanguage.subscribe(async langID => {
+	const data = await loadLanguage(langID);
 	translations.set(data);
 });
 
@@ -46,15 +46,15 @@ function initLanguage(): void {
 }
 
 // Load language file
-async function loadLanguage(langId: string): Promise<any> {
-	if (langCache[langId]) return langCache[langId];
+async function loadLanguage(langID: string): Promise<any> {
+	if (langCache[langID]) return langCache[langID];
 	try {
-		const response = await fetch(`/langs/${langId}.json`);
+		const response = await fetch(`/langs/${langID}.json`);
 		const data = await response.json();
-		langCache[langId] = data;
+		langCache[langID] = data;
 		return data;
 	} catch (error) {
-		console.error(`Failed to load language ${langId}:`, error);
+		console.error(`Failed to load language ${langID}:`, error);
 		return {};
 	}
 }
@@ -69,9 +69,9 @@ export function getLanguage(id: string): Language | undefined {
 }
 
 // Get flag URL for a language
-export function getFlagURL(langId: string): string {
-	const lang = getLanguage(langId);
-	const flagCode = lang?.flag ?? langId;
+export function getFlagURL(langID: string): string {
+	const lang = getLanguage(langID);
+	const flagCode = lang?.flag ?? langID;
 	return `/flags/${flagCode}.svg`;
 }
 

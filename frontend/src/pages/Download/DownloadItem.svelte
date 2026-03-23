@@ -23,9 +23,8 @@
 		onConfirm?: (() => void) | undefined;
 		selected?: boolean | undefined;
 		isLast?: boolean | undefined;
-		odd?: boolean | undefined;
 	}
-	let { name, id, progress, size, downloadedSize, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, position, onConfirm, selected = false, odd = false }: Props = $props();
+	let { name, id, progress, size, downloadedSize, status, downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, position, onConfirm, selected = false }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let rowEl = $state<HTMLElement | undefined>(undefined);
 	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : selected);
@@ -55,13 +54,13 @@
 	}
 </style>
 
-<TableRow bind:el={rowEl} selected={isSelected} {odd}>
+<TableRow bind:el={rowEl} selected={isSelected}>
 	<TableCell>
 		<div class="name">{name}</div>
 	</TableCell>
 	<TableCell align="center" desktopOnly>{truncateID(id)}</TableCell>
 	<TableCell align="center" desktopOnly>{sizeDisplay}</TableCell>
-	<TableCell desktopOnly><ProgressBar {progress} animated={status === 'downloading'} /></TableCell>
+	<TableCell desktopOnly><ProgressBar {progress} animated={status === 'downloading' || status === 'downloading-uploading' || status === 'verifying' || status === 'moving'} /></TableCell>
 	<TableCell align="center" desktopOnly><Badge label={$t('downloads.statuses.' + status)} {status} /></TableCell>
 	<TableCell align="center" desktopOnly>{downloadPeers}</TableCell>
 	<TableCell align="center" desktopOnly>{uploadPeers}</TableCell>

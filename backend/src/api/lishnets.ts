@@ -30,7 +30,7 @@ interface LISHnetsHandlers {
 	infoAll: () => NetworkInfo[];
 }
 
-export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer): LISHnetsHandlers {
+export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void): LISHnetsHandlers {
 	function list(): LISHNetworkConfig[] {
 		return networks.list();
 	}
@@ -108,7 +108,13 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer)
 	}
 	async function setEnabled(p: { networkID: string; enabled: boolean }): Promise<SuccessResponse> {
 		assert(p, ['networkID', 'enabled']);
-		return { success: await networks.setEnabled(p.networkID, p.enabled) };
+		const net = networks.get(p.networkID);
+		const success = await networks.setEnabled(p.networkID, p.enabled);
+		if (success && net) {
+			const event = p.enabled ? 'lishnets:joined' : 'lishnets:left';
+			broadcast(event, { networkID: p.networkID, name: net.name });
+		}
+		return { success };
 	}
 	async function connect(p: { multiaddr: string }): Promise<SuccessResponse> {
 		assert(p, ['multiaddr']);

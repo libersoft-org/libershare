@@ -18,6 +18,7 @@ export class WsClient {
 	private connectPromise: Promise<void> | null = null;
 	private apiURL: string;
 	private onStateChange: (state: State) => void;
+	onError?: (error: any) => void;
 
 	constructor(apiURL: string, onStateChange: (state: State) => void) {
 		this.apiURL = apiURL;
@@ -43,7 +44,7 @@ export class WsClient {
 				this.scheduleReconnect();
 			};
 			this.ws.onerror = err => {
-				console.log('[API] WebSocket error', err);
+				this.onError?.(err);
 				if (!this.connected) {
 					this.connectPromise = null;
 					reject(new Error('WebSocket connection failed'));

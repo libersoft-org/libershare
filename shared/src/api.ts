@@ -261,8 +261,8 @@ class LISHsAPI {
 		this.client = client;
 	}
 
-	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] }> {
-		return this.client.call<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] }>('lishs.list', { sortBy, sortOrder });
+	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[] }> {
+		return this.client.call<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[] }>('lishs.list', { sortBy, sortOrder });
 	}
 
 	get(lishID: string): Promise<ILISHDetail | null> {
@@ -343,6 +343,10 @@ class LISHsAPI {
 
 	stopCreate(): Promise<SuccessResponse> {
 		return this.client.call<SuccessResponse>('lishs.stopCreate');
+	}
+
+	move(lishID: string, newDirectory: string, moveData: boolean, createSubdirectory?: boolean): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.move', { lishID, newDirectory, moveData, createSubdirectory });
 	}
 }
 

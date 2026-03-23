@@ -19,8 +19,8 @@
 		onBack,
 		onDown,
 		onActivate() {
-			const lastIdx = Math.max(0, items.length - 2);
-			navHandle.controller.select([lastIdx, 0]);
+			const lastIDx = Math.max(0, items.length - 2);
+			navHandle.controller.select([lastIDx, 0]);
 		},
 	}));
 
@@ -43,8 +43,8 @@
 		}
 		setup(selectableIndex);
 		return {
-			update(newIdx: number) {
-				setup(newIdx);
+			update(newIDx: number) {
+				setup(newIDx);
 			},
 			destroy() {
 				cleanup?.();

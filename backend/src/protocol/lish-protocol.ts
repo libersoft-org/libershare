@@ -4,6 +4,8 @@ import { type Stream } from '@libp2p/interface';
 import { type LISHid, type ChunkID } from '@shared';
 import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
+import { uploadLimiter } from './speed-limiter.ts';
+import { isBusy } from '../api/busy.ts';
 export const LISH_PROTOCOL = '/lish/1.0.0';
 export type LISHRequest = LISHChunkRequest | LISHManifestRequest;
 export interface LISHChunkRequest {
@@ -16,7 +18,7 @@ export interface LISHManifestRequest {
 	lishID: LISHid;
 }
 export interface LISHResponse {
-	data: number[] | null;
+	data: string | null; // base64-encoded binary chunk data (per LISH protocol spec)
 }
 export interface LISHManifestResponse {
 	manifest: import('@shared').IStoredLISH | null;
@@ -39,8 +41,14 @@ export class LISHClient {
 		try {
 			const request: LISHManifestRequest = { type: 'manifest', lishID };
 			const requestData = new TextEncoder().encode(JSON.stringify(request));
-			await sendLengthPrefixed(this.stream, requestData);
-			const responseMsg = await this.decoder.next();
+			await Promise.race([
+				sendLengthPrefixed(this.stream, requestData),
+				rejectAfterTimeout(15000, 'manifest-send'),
+			]);
+			const responseMsg = await Promise.race([
+				this.decoder.next(),
+				rejectAfterTimeout(30000, 'manifest-receive'),
+			]) as IteratorResult<Uint8Array | Uint8ArrayList>;
 			if (responseMsg.done || !responseMsg.value) return null;
 			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
 			const response: LISHManifestResponse = JSON.parse(new TextDecoder().decode(responseData));
@@ -54,32 +62,30 @@ export class LISHClient {
 	// Request a single chunk (can be called multiple times on same stream)
 	async requestChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | null> {
 		try {
-			console.log(`[Client] Stream status before request: read=${this.stream.status}, write=${this.stream.writeStatus}`);
+			// Bail early if stream is already closed/aborted
+			if (this.stream.status !== 'open') {
+				throw new Error(`Stream not open: ${this.stream.status}`);
+			}
 			// Create the request
 			const request: LISHRequest = {
 				lishID,
 				chunkID,
 			};
-			// Send the request
+			// Send the request (with timeout)
 			const requestData = new TextEncoder().encode(JSON.stringify(request));
-			await sendLengthPrefixed(this.stream, requestData);
-			console.log(`[Client] Stream status after send: read=${this.stream.status}, write=${this.stream.writeStatus}`);
-			// Read the response
-			const responseMsg = await this.decoder.next();
-			console.log(`[Client] Stream status after receive: read=${this.stream.status}, write=${this.stream.writeStatus}`);
-			if (responseMsg.done) {
-				console.log('Stream closed before receiving response');
-				return null;
-			}
-			// Convert to Uint8Array if needed
-			if (!responseMsg.value) {
-				console.log('Response has no data');
-				return null;
-			}
+			await Promise.race([
+				sendLengthPrefixed(this.stream, requestData),
+				rejectAfterTimeout(15000, 'send'),
+			]);
+			// Read the response (with timeout — prevents hanging on dead/aborted streams)
+			const responseMsg = await Promise.race([
+				this.decoder.next(),
+				rejectAfterTimeout(30000, 'receive'),
+			]) as IteratorResult<Uint8Array | Uint8ArrayList>;
+			if (responseMsg.done || !responseMsg.value) return null;
 			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
 			const response: LISHResponse = JSON.parse(new TextDecoder().decode(responseData));
-			// Convert number array back to Uint8Array
-			if (response.data) return new Uint8Array(response.data);
+			if (response.data) return new Uint8Array(Buffer.from(response.data, 'base64'));
 			return null;
 		} catch (error) {
 			console.error('Error requesting chunk:', error);
@@ -97,7 +103,46 @@ export class LISHClient {
 	}
 }
 
+export function setMaxUploadSpeed(kbPerSec: number): void { uploadLimiter.setLimit(kbPerSec); }
+
+type BroadcastFn = (event: string, data: any) => void;
+let broadcastFn: BroadcastFn | null = null;
+// Per-LISH upload tracking
+const activeUploads = new Map<string, { chunks: number; startTime: number; bytes: number; peers: number; speedSamples: { time: number; bytes: number }[] }>();
+// Per-LISH active stream count
+const activeStreamCount = new Map<string, number>();
+
+export function setUploadBroadcast(fn: BroadcastFn): void { broadcastFn = fn; }
+export function getActiveUploads(): Map<string, { chunks: number; startTime: number; bytes: number; peers: number; speedSamples: { time: number; bytes: number }[] }> { return activeUploads; }
+
+/** Reset all module-level upload state. For use in tests only. */
+export function resetUploadState(): void {
+	activeUploads.clear();
+	activeStreamCount.clear();
+	uploadEnabled.clear();
+	uploadLimiter.setLimit(0);
+	uploadLimiter.reset();
+	broadcastFn = null;
+}
+
+// Per-LISH upload enabled/paused — persisted to DB, default=paused
+const uploadEnabled = new Set<string>();
+let persistUploadState: ((lishID: string, enabled: boolean) => void) | null = null;
+
+export function initUploadState(enabledLishs: Set<string>, persistFn: (lishID: string, enabled: boolean) => void): void {
+	uploadEnabled.clear();
+	for (const id of enabledLishs) uploadEnabled.add(id);
+	persistUploadState = persistFn;
+	console.log(`[Upload] ${uploadEnabled.size} LISHs enabled`);
+}
+export function disableUpload(lishID: string): void { uploadEnabled.delete(lishID); persistUploadState?.(lishID, false); broadcastFn?.('transfer.upload:disabled', { lishID }); }
+export function enableUpload(lishID: string): void { uploadEnabled.add(lishID); persistUploadState?.(lishID, true); broadcastFn?.('transfer.upload:enabled', { lishID }); }
+export function isUploadDisabled(lishID: string): boolean { return !uploadEnabled.has(lishID); }
+export function isUploadEnabled(lishID: string): boolean { return uploadEnabled.has(lishID); }
+export function getEnabledUploads(): Set<string> { return uploadEnabled; }
+
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer): Promise<void> {
+	const servedLishIDs = new Set<string>();
 	try {
 		// Wrap the stream with length-prefixed decoder for multiple messages
 		const decoder = decode(stream);
@@ -107,8 +152,6 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 			const request: LISHRequest = JSON.parse(new TextDecoder().decode(data));
 
 			if (request.type === 'manifest') {
-				// Manifest request — return full LISH data (without directory path and chunks)
-				console.log(`Received manifest request for ${request.lishID.slice(0, 8)}...`);
 				const lish = dataServer.get(request.lishID as LISHid);
 				let manifest: import('@shared').IStoredLISH | null = null;
 				if (lish) {
@@ -118,16 +161,39 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 				const response: LISHManifestResponse = { manifest };
 				const responseData = new TextEncoder().encode(JSON.stringify(response));
 				await sendLengthPrefixed(stream, responseData);
-				console.log(`Responded with manifest: ${manifest ? 'found' : 'not found'}`);
 			} else {
 				// Chunk request (default)
 				const chunkReq = request as LISHChunkRequest;
-				console.log(`Received lish request: ${chunkReq.lishID.slice(0, 8)}... chunk ${chunkReq.chunkID.slice(0, 8)}...`);
+				if (!uploadEnabled.has(chunkReq.lishID) || isBusy(chunkReq.lishID)) {
+					stream.abort(new Error('UPLOAD_BLOCKED'));
+					return;
+				}
 				const chunkData = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
-				const response: LISHResponse = { data: chunkData ? Array.from(chunkData) : null };
+				const response: LISHResponse = { data: chunkData ? Buffer.from(chunkData).toString('base64') : null };
 				const responseData = new TextEncoder().encode(JSON.stringify(response));
 				await sendLengthPrefixed(stream, responseData);
-				console.log(`Responded with ${chunkData ? chunkData.length : 0} bytes`);
+				if (chunkData) {
+					if (!servedLishIDs.has(chunkReq.lishID)) {
+						servedLishIDs.add(chunkReq.lishID);
+						activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
+					}
+					await uploadLimiter.throttle(chunkData.length);
+					// Upload progress tracking (rolling 10s speed window)
+					if (broadcastFn) {
+						let info = activeUploads.get(chunkReq.lishID);
+						if (!info) { info = { chunks: 0, startTime: Date.now(), bytes: 0, peers: 0, speedSamples: [] }; activeUploads.set(chunkReq.lishID, info); }
+						info.chunks++;
+						info.bytes += chunkData.length;
+						info.peers = activeStreamCount.get(chunkReq.lishID) ?? 1;
+						const now = Date.now();
+						info.speedSamples.push({ time: now, bytes: chunkData.length });
+						info.speedSamples = info.speedSamples.filter(s => s.time > now - 10000);
+						const windowBytes = info.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
+						const windowSec = info.speedSamples.length > 1 ? (now - info.speedSamples[0]!.time) / 1000 : (now - info.startTime) / 1000;
+						const bytesPerSecond = windowSec > 0.1 ? Math.round(windowBytes / windowSec) : 0;
+						broadcastFn('transfer.upload:progress', { lishID: chunkReq.lishID, uploadedChunks: info.chunks, bytesPerSecond, peers: info.peers });
+					}
+				}
 			}
 		}
 		// Stream closed by remote, close our end
@@ -135,7 +201,26 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 	} catch (error) {
 		console.error('Error handling lish protocol:', error);
 		stream.abort(error instanceof Error ? error : new Error(String(error)));
+	} finally {
+		// Decrement stream count per LISH; only clean up when last stream closes
+		for (const lishID of servedLishIDs) {
+			const count = (activeStreamCount.get(lishID) ?? 1) - 1;
+			if (count <= 0) {
+				activeStreamCount.delete(lishID);
+				activeUploads.delete(lishID);
+				broadcastFn?.('transfer.upload:stopped', { lishID });
+			} else {
+				activeStreamCount.set(lishID, count);
+				const info = activeUploads.get(lishID);
+				if (info) info.peers = count;
+			}
+		}
 	}
+}
+
+// Helper: reject after timeout (prevents hanging on dead streams)
+function rejectAfterTimeout(ms: number, label: string): Promise<never> {
+	return new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout: ${label} took >${ms}ms`)), ms));
 }
 
 // Helper to send a length-prefixed message

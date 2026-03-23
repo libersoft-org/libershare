@@ -60,7 +60,10 @@
 		"errorParseError": "Neplatný formát požadavku",
 		"errorMethodRequired": "Metoda je povinná",
 		"errorUnknownMethod": "Neznámá metoda: {detail}",
-		"errorInternal": "Interní chyba: {detail}"
+		"errorInternal": "Interní chyba: {detail}",
+		"gamepadConnected": "Gamepad připojen: {name}",
+		"gamepadDisconnected": "Gamepad odpojen: {name}",
+		"websocketError": "Chyba spojení"
 	},
 	"library": {
 		"title": "Online knihovna",
@@ -94,7 +97,8 @@
 			"downloading-uploading": "Stahuji a odesílám",
 			"idling": "Nečinný",
 			"verifying": "Ověřuje se",
-			"pending-verification": "Čeká na ověření"
+			"pending-verification": "Čeká na ověření",
+			"moving": "Přesouvá se"
 		},
 		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",
@@ -114,14 +118,33 @@
 		"verifyAllConfirm": "Opravdu chcete ověřit integritu všech LISHů? Tato akce může trvat velmi dlouhou dobu.",
 		"stopVerify": "Zastavit ověřování",
 		"stopVerifyAll": "Zastavit všechna ověřování",
+		"verifyDone": "Ověření LISHe \"{name}\" dokončeno",
+		"lishAdded": "LISH \"{name}\" přidán",
 		"moveData": "Přesunout data",
+		"moveDataFromOriginal": "Přesunout data z původního adresáře",
+		"createSubdirectory": "V cílovém adresáři vytvořit podadresář s názvem LISHe",
+		"move": "Přesunout",
+		"newDirectory": "Nový adresář",
+		"moveFailed": "Přesun se nezdařil",
+		"moveSuccess": "Data LISHe \"{name}\" byla přesunuta",
+		"moveProgress": {
+			"title": "Přesouvání",
+			"moving": "Přesouvání dat...",
+			"done": "Data byla úspěšně přesunuta",
+			"filesMoved": "Přesunutých souborů"
+		},
 		"deleteDialog": {
 			"message": "Co chcete smazat?",
 			"lishOnly": "Smazat pouze LISH",
 			"lishAndData": "Smazat LISH i data",
 			"dataOnly": "Smazat pouze data"
 		},
-		"deleteFailed": "Smazání se nezdařilo"
+		"deleteFailed": "Smazání se nezdařilo",
+		"lishDeleted": "LISH \"{name}\" byl smazán",
+		"dataDeleted": "Data pro LISH \"{name}\" byla smazána",
+		"lishAndDataDeleted": "LISH \"{name}\" včetně jeho dat na úložišti byl smazán",
+		"lishExported": "LISH \"{name}\" byl exportován",
+		"allLishsExported": "Všechny LISHe byly exportovány"
 	},
 	"lish": {
 		"create": {
@@ -187,7 +210,8 @@
 			"showInTray": "Zobrazit v oznamovací oblasti",
 			"minimizeToTray": "Minimalizovat do oznamovací oblasti",
 			"defaultMinifyJSON": "Minifikovat JSON (výchozí hodnota)",
-			"defaultCompress": "Komprimovat (výchozí hodnota)"
+			"defaultCompress": "Komprimovat (výchozí hodnota)",
+			"notificationTimeout": "Časový limit notifikací (ve vteřinách, 0 = neomezeno)"
 		},
 		"download": {
 			"directoryDownload": "Adresář pro dokončená stahování",
@@ -197,8 +221,8 @@
 			"incomingPort": "Síťový port pro příchozí spojení",
 			"maxDownloadConnections": "Maximální počet spojení pro stahování",
 			"maxUploadConnections": "Maximální počet spojení pro odesílání",
-			"maxDownloadSpeed": "Maximální rychlost stahování (0 = neomezeno)",
-			"maxUploadSpeed": "Maximální rychlost odesílání (0 = neomezeno)",
+			"maxDownloadSpeed": "Maximální rychlost stahování v KB/s (0 = neomezeno)",
+			"maxUploadSpeed": "Maximální rychlost odesílání v KB/s (0 = neomezeno)",
 			"allowRelay": "Zapnout předávací server (přeposílat data pro ostatní účastníky)",
 			"maxRelayReservations": "Maximální počet spojení k předávacímu serveru (0 = neomezeno)",
 			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH (výchozí hodnota)"
@@ -228,14 +252,21 @@
 			"connectedPeers": "Účastníků: {count}",
 			"minifyJSON": "Minifikovat JSON",
 			"compress": "Komprimovat",
-			"errorNotFound": "Síť nebyla nalezena: {detail}",
-			"errorNoNetworks": "Žádné sítě k exportu",
-			"errorNotJoined": "Síť není připojena",
-			"errorNotRunning": "Síť neběží",
-			"errorInvalid": "Neplatná síť: chybí ID sítě nebo název",
-			"errorNoValidNetworks": "Nebyly nalezeny žádné platné sítě",
-			"errorNotStarted": "Síť nebyla spuštěna",
-			"errorPortInUse": "Nepodařilo se spustit síť: port {detail} je pravděpodobně již obsazen"
+			"errorNotFound": "Síť LISH nebyla nalezena: {detail}",
+			"errorNoNetworks": "Žádné sítě LISH k exportu",
+			"errorNotJoined": "Síť LISH není připojena",
+			"errorNotRunning": "Síť LISH neběží",
+			"errorInvalid": "Neplatná síť LISH: chybí ID sítě nebo název",
+			"errorNoValidNetworks": "Nebyly nalezeny žádné platné sítě LISH",
+			"errorNotStarted": "Síť LISH nebyla spuštěna",
+			"errorPortInUse": "Nepodařilo se spustit síť LISH: port {detail} je pravděpodobně již obsazen",
+			"networkAdded": "Síť LISH \"{name}\" byla přidána",
+			"networkUpdated": "Síť LISH \"{name}\" byla upravena",
+			"networkConnected": "Síť LISH \"{name}\" připojena",
+			"networkDisconnected": "Síť LISH \"{name}\" odpojena",
+			"networkDeleted": "Síť LISH \"{name}\" byla smazána",
+			"networkExported": "Síť LISH \"{name}\" byla exportována",
+			"allNetworksExported": "Všechny sítě LISH byly exportovány"
 		},
 		"lishNetworkImport": {
 			"fromJSON": "Z LISHNET JSON",
@@ -261,6 +292,7 @@
 		},
 		"footerWidgets": {
 			"lishStatus": "Stav LISH sítě",
+			"gamepad": "Ovladač",
 			"connection": "Připojení",
 			"connectionEthernet": "Ethernet",
 			"connectionWifi": "WiFi",
@@ -288,6 +320,7 @@
 		"openFile": "Otevřít soubor",
 		"editFile": "Upravit soubor",
 		"renameFile": "Přejmenovat soubor",
+		"renameDirectory": "Přejmenovat adresář",
 		"createFile": "Vytvořit soubor",
 		"deleteFile": "Smazat soubor",
 		"directoryName": "Název adresáře",
@@ -310,7 +343,14 @@
 		"openFileFailed": "Nepodařilo se otevřít soubor",
 		"deleteFileFailed": "Nepodařilo se smazat soubor",
 		"renameFileFailed": "Nepodařilo se přejmenovat soubor",
-		"initializeFailed": "Nepodařilo se inicializovat prohlížeč souborů"
+		"initializeFailed": "Nepodařilo se inicializovat prohlížeč souborů",
+		"directoryCreated": "Adresář \"{name}\" byl vytvořen",
+		"directoryDeleted": "Adresář \"{name}\" byl smazán",
+		"directoryRenamed": "Adresář byl přejmenován na \"{name}\"",
+		"fileCreated": "Soubor \"{name}\" byl vytvořen",
+		"fileDeleted": "Soubor \"{name}\" byl smazán",
+		"fileRenamed": "Soubor byl přejmenován na \"{name}\"",
+		"fileSaved": "Soubor \"{name}\" byl uložen"
 	},
 	"about": {
 		"title": "O aplikaci",

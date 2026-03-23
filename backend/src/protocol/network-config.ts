@@ -22,18 +22,18 @@ export interface BuildConfigParams {
 	datastore: any;
 	allSettings: SettingsData;
 	bootstrapPeers: string[];
-	myPeerId: string;
+	myPeerID: string;
 }
 export interface BuildConfigResult {
 	config: any;
 	port: number;
-	bootstrapPeerIds: Set<string>;
+	bootstrapPeerIDs: Set<string>;
 	bootstrapMultiaddrs: any[];
 }
 
 export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult {
-	const { privateKey, datastore, allSettings, bootstrapPeers, myPeerId } = params;
-	const bootstrapPeerIds = new Set<string>();
+	const { privateKey, datastore, allSettings, bootstrapPeers, myPeerID: myPeerID } = params;
+	const bootstrapPeerIDs = new Set<string>();
 	const bootstrapMultiaddrs: any[] = [];
 	// Build transports array
 	const transports: any[] = [tcp()];
@@ -135,7 +135,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	config.services.autonat = autoNAT();
 	console.log('✓ AutoNAT enabled');
 	// Deduplicate bootstrap peers and filter out our own peer ID
-	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => !p.includes(myPeerId));
+	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => !p.includes(myPeerID));
 	if (uniqueBootstrapPeers.length > 0) {
 		console.log('Configuring bootstrap peers:');
 		const validBootstrapPeers: string[] = [];
@@ -143,9 +143,9 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			console.log('  -', peer);
 			try {
 				const ma = Multiaddr(peer);
-				const peerID = ma.getPeerId();
+				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
 				if (peerID) {
-					bootstrapPeerIds.add(peerID);
+					bootstrapPeerIDs.add(peerID);
 					bootstrapMultiaddrs.push(ma);
 				}
 				validBootstrapPeers.push(peer);
@@ -164,5 +164,5 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			];
 		}
 	} else console.log('No bootstrap peers configured. Node will start in standalone mode.');
-	return { config, port, bootstrapPeerIds, bootstrapMultiaddrs };
+	return { config, port, bootstrapPeerIDs: bootstrapPeerIDs, bootstrapMultiaddrs };
 }

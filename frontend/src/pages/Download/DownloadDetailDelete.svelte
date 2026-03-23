@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { t } from '../../scripts/language.ts';
+	import { t, tt } from '../../scripts/language.ts';
 	import { deleteDownload, setCurrentDetailLISHID } from '../../scripts/downloads.ts';
+	import { addNotification } from '../../scripts/notifications.ts';
 	import Dialog from '../../components/Dialog/Dialog.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
-
 	interface Props {
 		lishID: string;
 		lishName?: string | undefined;
@@ -16,14 +16,12 @@
 		onBack: () => void;
 	}
 	let { lishID, lishName, position, onResult, onBack }: Props = $props();
-
 	const options = [
 		{ label: $t('common.cancel'), icon: '/img/back.svg', deleteLISH: false, deleteData: false },
 		{ label: $t('downloads.deleteDialog.lishOnly'), icon: '/img/del.svg', deleteLISH: true, deleteData: false },
 		{ label: $t('downloads.deleteDialog.lishAndData'), icon: '/img/del.svg', deleteLISH: true, deleteData: true },
 		{ label: $t('downloads.deleteDialog.dataOnly'), icon: '/img/del.svg', deleteLISH: false, deleteData: true },
 	];
-
 	let deleting = $state(false);
 
 	async function handleConfirm(index: number): Promise<void> {
@@ -34,9 +32,15 @@
 			return;
 		}
 		deleting = true;
+		const name = lishName || lishID;
 		if (option.deleteLISH) setCurrentDetailLISHID(null);
 		const success = await deleteDownload(lishID, option.deleteLISH, option.deleteData);
 		deleting = false;
+		if (success) {
+			if (option.deleteLISH && option.deleteData) addNotification(tt('downloads.lishAndDataDeleted', { name }));
+			else if (option.deleteLISH) addNotification(tt('downloads.lishDeleted', { name }));
+			else addNotification(tt('downloads.dataDeleted', { name }));
+		}
 		onResult(option.deleteLISH, success);
 	}
 

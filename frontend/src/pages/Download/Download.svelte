@@ -3,7 +3,7 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
-	import { downloads, downloadsLoading, DOWNLOAD_TABLE_COLUMNS } from '../../scripts/downloads.ts';
+	import { downloads, downloadsLoading, DOWNLOAD_TABLE_COLUMNS, type DownloadStatus } from '../../scripts/downloads.ts';
 	import { api } from '../../scripts/api.ts';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -25,31 +25,43 @@
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let showVerifyAllDialog = $state(false);
 	let search = $state('');
-	let allDownloadPaused = $state(true);
-	let allUploadPaused = $state(true);
+	let anyDownloading = $derived($downloads.some(d => d.status === 'downloading' || d.status === 'downloading-uploading'));
+	let anyUploading = $derived($downloads.some(d => d.status === 'uploading' || d.status === 'downloading-uploading'));
+	let allDownloadDisabled = $derived(!anyDownloading);
+	let allUploadDisabled = $derived(!anyUploading);
+
+	const busyStatuses: DownloadStatus[] = ['moving', 'verifying', 'pending-verification'];
 
 	function toggleAllDownloads(): void {
-		if (allDownloadPaused) {
-			// Resume all — call resumeDownload for each non-downloading entry
+		if (allDownloadDisabled) {
 			for (const d of $downloads) {
-				if (d.status !== 'downloading') {
-					api.call('catalog.resumeDownload', { lishID: d.id });
+				if (d.status !== 'downloading' && d.status !== 'downloading-uploading' && !busyStatuses.includes(d.status)) {
+					api.call('transfer.enableDownload', { lishID: d.id });
 				}
 			}
 		} else {
-			// Pause all — call pauseDownload for each downloading entry
 			for (const d of $downloads) {
-				if (d.status === 'downloading') {
-					api.call('catalog.pauseDownload', { lishID: d.id });
+				if (d.status === 'downloading' || d.status === 'downloading-uploading') {
+					api.call('transfer.disableDownload', { lishID: d.id });
 				}
 			}
 		}
-		allDownloadPaused = !allDownloadPaused;
 	}
 
 	function toggleAllUploads(): void {
-		// TODO: Backend upload pause/resume API not yet implemented
-		allUploadPaused = !allUploadPaused;
+		if (allUploadDisabled) {
+			for (const d of $downloads) {
+				if (!busyStatuses.includes(d.status)) {
+					api.call('transfer.enableUpload', { lishID: d.id });
+				}
+			}
+		} else {
+			for (const d of $downloads) {
+				if (d.status === 'uploading' || d.status === 'downloading-uploading') {
+					api.call('transfer.disableUpload', { lishID: d.id });
+				}
+			}
+		}
 	}
 	let anyVerifying = $derived($downloads.some(d => d.status === 'verifying' || d.status === 'pending-verification'));
 	let filteredDownloads = $derived(
@@ -104,8 +116,8 @@
 		<Button icon="/img/plus.svg" label={$t('downloads.createLISH')} position={[0, 0]} onConfirm={() => navigateTo('create-lish')} />
 		<Button icon="/img/download.svg" label={$t('common.import')} position={[1, 0]} onConfirm={() => navigateTo('import-lish')} />
 		<Button icon="/img/upload.svg" label={$t('common.exportAll')} position={[2, 0]} onConfirm={() => navigateTo('export-all-lish')} />
-		<Button icon={allDownloadPaused ? '/img/play.svg' : '/img/pause.svg'} label={allDownloadPaused ? $t('downloads.enableDownloadAll') : $t('downloads.disableDownloadAll')} position={[3, 0]} onConfirm={toggleAllDownloads} />
-		<Button icon={allUploadPaused ? '/img/play.svg' : '/img/pause.svg'} label={allUploadPaused ? $t('downloads.enableUploadAll') : $t('downloads.disableUploadAll')} position={[4, 0]} onConfirm={toggleAllUploads} />
+		<Button icon={allDownloadDisabled ? '/img/play.svg' : '/img/pause.svg'} label={allDownloadDisabled ? $t('downloads.enableDownloadAll') : $t('downloads.disableDownloadAll')} position={[3, 0]} onConfirm={toggleAllDownloads} />
+		<Button icon={allUploadDisabled ? '/img/play.svg' : '/img/pause.svg'} label={allUploadDisabled ? $t('downloads.enableUploadAll') : $t('downloads.disableUploadAll')} position={[4, 0]} onConfirm={toggleAllUploads} />
 		<Button icon="/img/check.svg" label={$t('downloads.verifyAll')} position={[5, 0]} onConfirm={() => (showVerifyAllDialog = true)} />
 		{#if anyVerifying}
 			<Button icon="/img/cross.svg" label={$t('downloads.stopVerifyAll')} position={[6, 0]} onConfirm={() => api.lishs.stopVerifyAll()} />
@@ -130,7 +142,7 @@
 				</Header>
 				<div class="items">
 					{#each filteredDownloads as download, index (download.id)}
-						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} position={[0, index + 2]} onConfirm={() => openDetail(download)} isLast={index === filteredDownloads.length - 1} odd={index % 2 === 0} />
+						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} position={[0, index + 2]} onConfirm={() => openDetail(download)} isLast={index === filteredDownloads.length - 1} />
 					{/each}
 				</div>
 			</Table>

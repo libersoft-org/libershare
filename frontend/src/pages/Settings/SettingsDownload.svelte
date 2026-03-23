@@ -240,11 +240,11 @@
 				<Button icon="/img/restart.svg" position={[1, 6]} onConfirm={resetUploadConnections} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row">
-				<Input bind:value={downloadSpeed} label={$t('settings.download.maxDownloadSpeed')} type="number" position={[0, 7]} flex />
+				<Input bind:value={downloadSpeed} label={$t('settings.download.maxDownloadSpeed')} type="number" min={0} position={[0, 7]} flex />
 				<Button icon="/img/restart.svg" position={[1, 7]} onConfirm={resetDownloadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row">
-				<Input bind:value={uploadSpeed} label={$t('settings.download.maxUploadSpeed')} type="number" position={[0, 8]} flex />
+				<Input bind:value={uploadSpeed} label={$t('settings.download.maxUploadSpeed')} type="number" min={0} position={[0, 8]} flex />
 				<Button icon="/img/restart.svg" position={[1, 8]} onConfirm={resetUploadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<SwitchRow label={$t('settings.download.allowRelay') + ':'} checked={relay} position={[0, 9]} onToggle={toggleAllowRelay} />

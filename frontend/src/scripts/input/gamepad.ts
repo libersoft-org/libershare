@@ -1,10 +1,13 @@
-import { get } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone, increaseVolume, decreaseVolume } from '../settings.ts';
+import { addNotification } from '../notifications.ts';
+import { tt } from '../language.ts';
 type GamepadCallback = () => void;
 let globalGamepadManager: GamepadManager | null = null;
+export const gamepadConnected = writable(false);
 
 export class GamepadManager {
-	private animationId: number | null = null;
+	private animationID: number | null = null;
 	private deadzone: number;
 	private callbacks: Map<string, GamepadCallback> = new Map();
 	// Repeat tracking
@@ -38,6 +41,7 @@ export class GamepadManager {
 		const gamepads = navigator.getGamepads();
 		if (gamepads[0]) {
 			this.isConnected = true;
+			gamepadConnected.set(true);
 			this.startPolling();
 		}
 	}
@@ -51,26 +55,28 @@ export class GamepadManager {
 	}
 
 	private handleConnect(e: GamepadEvent): void {
-		console.log('Gamepad connected:', e.gamepad.id);
+		addNotification(tt('common.gamepadConnected', { name: e.gamepad.id }));
 		this.isConnected = true;
+		gamepadConnected.set(true);
 		if (this.started) this.startPolling();
 	}
 
 	private handleDisconnect(e: GamepadEvent): void {
-		console.log('Gamepad disconnected:', e.gamepad.id);
+		addNotification(tt('common.gamepadDisconnected', { name: e.gamepad.id }));
 		this.isConnected = false;
+		gamepadConnected.set(false);
 		this.stopPolling();
 	}
 
 	private startPolling(): void {
-		if (this.animationId !== null) return;
+		if (this.animationID !== null) return;
 		this.poll();
 	}
 
 	private stopPolling(): void {
-		if (this.animationId !== null) {
-			cancelAnimationFrame(this.animationId);
-			this.animationId = null;
+		if (this.animationID !== null) {
+			cancelAnimationFrame(this.animationID);
+			this.animationID = null;
 		}
 		this.firstInputTime = 0;
 		this.lastInputTime = 0;
@@ -96,7 +102,8 @@ export class GamepadManager {
 		if (!gamepad) {
 			// Gamepad disappeared unexpectedly
 			this.isConnected = false;
-			this.animationId = null;
+			gamepadConnected.set(false);
+			this.animationID = null;
 			return;
 		}
 		const buttons = gamepad.buttons.map(b => b.pressed);
@@ -109,7 +116,7 @@ export class GamepadManager {
 		this.handleDirections(buttons, leftStickX, leftStickY, now);
 		// Volume handling (Y = decrease, X = increase) with repeat
 		this.handleVolume(buttons, now);
-		this.animationId = requestAnimationFrame(this.poll);
+		this.animationID = requestAnimationFrame(this.poll);
 	};
 
 	private handleButtons(buttons: boolean[]): void {

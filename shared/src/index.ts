@@ -131,3 +131,18 @@ export interface ILISHNetwork {
 	created?: string;
 	ownerPeerID?: string | undefined;
 }
+
+// System metrics
+export interface SystemRAMInfo {
+	used: number;
+	total: number;
+}
+
+export interface SystemStorageInfo {
+	used: number;
+	total: number;
+}
+
+export interface SystemCPUInfo {
+	usage: number;
+}

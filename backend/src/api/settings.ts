@@ -1,4 +1,6 @@
 import { type Settings, type SettingsData } from '../settings.ts';
+import { Downloader } from '../protocol/downloader.ts';
+import { setMaxUploadSpeed } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
@@ -16,9 +18,18 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		return settings.get(p.path);
 	}
 
+	function applySpeedLimits(): void {
+		const net = settings.get().network;
+		Downloader.setMaxDownloadSpeed(net.maxDownloadSpeed);
+		setMaxUploadSpeed(net.maxUploadSpeed);
+	}
+
 	async function set(p: { path: string; value: any }): Promise<boolean> {
 		assert(p, ['path', 'value']);
 		await settings.set(p.path, p.value);
+		if (p.path.startsWith('network.maxDownloadSpeed') || p.path.startsWith('network.maxUploadSpeed')) {
+			applySpeedLimits();
+		}
 		return true;
 	}
 

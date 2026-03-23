@@ -5,14 +5,18 @@
 	import { type FooterWidget, getVolumeIcon } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
 	import LISHStatus from './FooterLISHStatus.svelte';
+	import Gamepad from './FooterGamepad.svelte';
 	import Connection from './FooterConnection.svelte';
 	import Separator from './FooterSeparator.svelte';
 	import Bar from './FooterBar.svelte';
 	import Clock from './FooterClock.svelte';
+	import { gamepadConnected } from '../../scripts/input/gamepad.ts';
+	import { ramInfo, storageInfo, cpuInfo } from '../../scripts/systemStats.ts';
+	import { formatSize } from '../../scripts/utils.ts';
 
 	type Widget = {
 		id: FooterWidget;
-		component: typeof Item | typeof Bar | typeof Clock | typeof LISHStatus | typeof Connection;
+		component: typeof Item | typeof Bar | typeof Clock | typeof LISHStatus | typeof Gamepad | typeof Connection;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		props?: () => Record<string, any>;
 	};
@@ -59,7 +63,7 @@
 				return {
 					topIcon: 'img/cpu.svg',
 					topIconAlt: $t('settings.footerWidgets.cpu'),
-					progress: 12,
+					progress: $cpuInfo.usage,
 				};
 			},
 		},
@@ -70,8 +74,8 @@
 				return {
 					topIcon: 'img/ram.svg',
 					topIconAlt: $t('settings.footerWidgets.ram'),
-					topLabel: '12.1 / 32 GB',
-					progress: 32,
+					topLabel: `${formatSize($ramInfo.used)} / ${formatSize($ramInfo.total)}`,
+					progress: $ramInfo.total > 0 ? ($ramInfo.used / $ramInfo.total) * 100 : 0,
 				};
 			},
 		},
@@ -82,8 +86,8 @@
 				return {
 					topIcon: 'img/storage.svg',
 					topIconAlt: $t('settings.footerWidgets.storage'),
-					topLabel: '0.88 / 2 TB',
-					progress: 44.1,
+					topLabel: `${formatSize($storageInfo.used)} / ${formatSize($storageInfo.total)}`,
+					progress: $storageInfo.total > 0 ? ($storageInfo.used / $storageInfo.total) * 100 : 0,
 				};
 			},
 		},
@@ -95,6 +99,15 @@
 					networkName: 'Main Network',
 					lishConnected: false,
 					vpnConnected: null,
+				};
+			},
+		},
+		{
+			id: 'gamepad',
+			component: Gamepad,
+			props() {
+				return {
+					connected: $gamepadConnected,
 				};
 			},
 		},
@@ -170,7 +183,7 @@
 	}
 </style>
 
-<div class="footer" class:left={$footerPosition === 'left'} class:center={$footerPosition === 'center'} class:right={$footerPosition === 'right'}>
+<div class="footer" data-footer class:left={$footerPosition === 'left'} class:center={$footerPosition === 'center'} class:right={$footerPosition === 'right'}>
 	<div class="items" class:right={$footerPosition === 'right'}>
 		{#each displayWidgets as widget, i}
 			{#if i > 0}<Separator />{/if}

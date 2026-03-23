@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { t, translateError } from '../../scripts/language.ts';
+	import { t, translateError, tt } from '../../scripts/language.ts';
+	import { addNotification } from '../../scripts/notifications.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -102,6 +103,7 @@
 		try {
 			const result = await api.lishnets.exportAllToFile(filePath.trim(), minifyJSONState, compress);
 			if (result.success) {
+				addNotification(tt('settings.lishNetwork.allNetworksExported'));
 				onBack?.();
 				return;
 			} else errorMessage = 'Save failed';
