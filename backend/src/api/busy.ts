@@ -3,7 +3,7 @@
  * While busy, upload and download MUST be blocked.
  */
 
-export type BusyReason = 'moving' | 'verifying';
+export type BusyReason = 'moving' | 'verifying' | 'deleting';
 
 const busyLishs = new Map<string, BusyReason>();
 

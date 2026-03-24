@@ -42,11 +42,30 @@ export function setActiveDownloadersRef(ref: Map<string, any>): void { _activeDo
 export function forceDisableDownload(lishID: string): void {
 	downloadEnabledLishs.delete(lishID);
 	persistDownloadEnabled?.(lishID, false);
-	// Stop and remove active downloader so enableDownload creates a fresh one
+	pauseActiveDownloader(lishID);
+}
+
+/** Pause and remove active downloader WITHOUT changing DB flags. */
+export function pauseActiveDownloader(lishID: string): void {
 	const dl = _activeDownloaders?.get(lishID);
 	if (dl) {
 		dl.pause();
 		_activeDownloaders!.delete(lishID);
+	}
+}
+
+/** Remove in-memory download state without DB persist (for LISH deletion). */
+export function removeDownloadState(lishID: string): void {
+	downloadEnabledLishs.delete(lishID);
+	pauseActiveDownloader(lishID);
+}
+
+/** Resume download for a LISH if it was enabled. Called after busy state clears (e.g. after data deletion). */
+let _enableDownloadFn: ((p: { lishID: string }) => Promise<{ success: boolean }>) | null = null;
+export function setEnableDownloadFn(fn: (p: { lishID: string }) => Promise<{ success: boolean }>): void { _enableDownloadFn = fn; }
+export function resumeDownloadIfEnabled(lishID: string): void {
+	if (downloadEnabledLishs.has(lishID) && _enableDownloadFn) {
+		_enableDownloadFn({ lishID }).catch(() => {});
 	}
 }
 
@@ -134,6 +153,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			return { success: false };
 		}
 	}
+
+	// Register enableDownload for module-level resumeDownloadIfEnabled
+	setEnableDownloadFn(enableDownload);
 
 	function getActiveTransfers(): ActiveTransfer[] {
 		const transfers: ActiveTransfer[] = [];

@@ -4,8 +4,8 @@ import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, re
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { setBusy, clearBusy } from './busy.ts';
-import { getEnabledUploads, disableUpload, isUploadEnabled } from '../protocol/lish-protocol.ts';
-import { getDownloadEnabledLishs, isDownloadEnabled, forceDisableDownload } from './transfer.ts';
+import { getEnabledUploads, isUploadEnabled, removeUploadState } from '../protocol/lish-protocol.ts';
+import { getDownloadEnabledLishs, isDownloadEnabled, pauseActiveDownloader, removeDownloadState, resumeDownloadIfEnabled } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
@@ -239,25 +239,29 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['lishID']);
 		const lish = dataServer.get(p.lishID);
 		if (!lish) return false;
-		// Delete LISH data files selectively
-		if (p.deleteData && lish.directory) {
-			// Disable upload/download BEFORE deleting — broadcasts events to clients
-			if (isUploadEnabled(p.lishID)) disableUpload(p.lishID);
-			if (isDownloadEnabled(p.lishID)) {
-				forceDisableDownload(p.lishID);
-				broadcast('transfer.download:disabled', { lishID: p.lishID });
-			}
-			await deleteLISHData(lish);
-			dataServer.resetVerification(p.lishID);
-		}
-		// Delete LISH from storage if requested
 		if (p.deleteLISH) {
+			// Full deletion — stop transfers, clean up in-memory state, delete DB row
+			removeUploadState(p.lishID);
+			removeDownloadState(p.lishID);
+			if (p.deleteData && lish.directory) {
+				await deleteLISHData(lish);
+			}
 			const deleted = dataServer.delete(p.lishID);
 			if (deleted) {
 				console.log(`✓ LISH deleted: ${p.lishID}`);
 				broadcast('lishs:remove', { lishID: p.lishID });
 			}
 			return deleted;
+		}
+		// Delete only data — use busy to temporarily block, verify, then restore original state
+		if (p.deleteData && lish.directory) {
+			setBusy(p.lishID, 'deleting');
+			pauseActiveDownloader(p.lishID);
+			await deleteLISHData(lish);
+			dataServer.resetVerification(p.lishID);
+			clearBusy(p.lishID);
+			// Verify first, then resume download (verification sets busy → enableDownload would fail if called now)
+			startVerificationThenResume(p.lishID);
 		}
 		return true;
 	}
@@ -326,6 +330,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	// Verification queue — only one verification runs at a time
 	let currentVerification: { lishID: string; ac: AbortController } | null = null;
 	const verificationQueue: string[] = [];
+	const postVerifyCallbacks = new Map<string, () => void>();
 
 	// Track LISHs currently being moved
 	const movingLISHs = new Set<string>();
@@ -351,11 +356,18 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
 				currentVerification = null;
 			}
+			const cb = postVerifyCallbacks.get(lishID);
+			if (cb) { postVerifyCallbacks.delete(lishID); cb(); }
 			processVerificationQueue();
 		});
 	}
 
 	function startVerification(lishID: string): void {
+		enqueueVerification(lishID);
+	}
+
+	function startVerificationThenResume(lishID: string): void {
+		postVerifyCallbacks.set(lishID, () => resumeDownloadIfEnabled(lishID));
 		enqueueVerification(lishID);
 	}
 

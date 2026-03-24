@@ -393,7 +393,7 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				const status = computeStatus(false, activeUploadLishs.has(data.lishID));
-				return { ...d, status, downloadEnabled: false, downloadSpeed: '0 B/s' };
+				return { ...d, status, downloadEnabled: false, downloadSpeed: '0 B/s', downloadPeers: 0 };
 			}));
 		});
 
@@ -480,7 +480,8 @@ export async function initDownloads(): Promise<void> {
 			activeUploadLishs.delete(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				return { ...d, uploadSpeed: '0 B/s', uploadPeers: 0 };
+				const status = computeStatus(activeDownloads.has(data.lishID), false);
+				return { ...d, uploadSpeed: '0 B/s', uploadPeers: 0, status };
 			}));
 		});
 	}

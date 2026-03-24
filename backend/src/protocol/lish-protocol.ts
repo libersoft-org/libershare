@@ -145,6 +145,8 @@ export function enableUpload(lishID: string): void { uploadEnabled.add(lishID); 
 export function isUploadDisabled(lishID: string): boolean { return !uploadEnabled.has(lishID); }
 export function isUploadEnabled(lishID: string): boolean { return uploadEnabled.has(lishID); }
 export function getEnabledUploads(): Set<string> { return uploadEnabled; }
+/** Remove in-memory upload state without DB persist (for LISH deletion). */
+export function removeUploadState(lishID: string): void { uploadEnabled.delete(lishID); broadcastFn?.('transfer.upload:disabled', { lishID }); }
 
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer): Promise<void> {
 	const servedLishIDs = new Set<string>();
