@@ -85,7 +85,12 @@ export class LISHClient {
 			if (responseMsg.done || !responseMsg.value) return null;
 			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
 			const response: LISHResponse = JSON.parse(new TextDecoder().decode(responseData));
-			if (response.data) return new Uint8Array(Buffer.from(response.data, 'base64'));
+			if (response.data) {
+				// Support both base64 (our branch) and number[] (main branch) formats
+				if (typeof response.data === 'string') return new Uint8Array(Buffer.from(response.data, 'base64'));
+				if (Array.isArray(response.data)) return new Uint8Array(response.data);
+				return null;
+			}
 			return null;
 		} catch (error) {
 			console.error('Error requesting chunk:', error);

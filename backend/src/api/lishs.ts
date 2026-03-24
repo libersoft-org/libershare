@@ -236,7 +236,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const lish = dataServer.get(p.lishID);
 		if (!lish) return false;
 		// Delete LISH data files selectively
-		if (p.deleteData && lish.directory) await deleteLISHData(lish);
+		if (p.deleteData && lish.directory) {
+			await deleteLISHData(lish);
+			dataServer.resetVerification(p.lishID);
+		}
 		// Delete LISH from storage if requested
 		if (p.deleteLISH) {
 			const deleted = dataServer.delete(p.lishID);
