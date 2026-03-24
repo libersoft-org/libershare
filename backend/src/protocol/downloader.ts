@@ -52,6 +52,7 @@ export class Downloader {
 	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => void;
 	private onManifestImported?: (lishID: string) => void;
 	private speedSamples: { time: number; bytes: number }[] = [];
+	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
 
 	getLISHID(): string { return this.lishID; }
 	getPeerCount(): number { return this.lastServingPeerCount; }
@@ -155,9 +156,15 @@ export class Downloader {
 
 	async doWork(): Promise<void> {
 		// Throttle: don't re-enter within 10s of last exhausted cycle
-		if (this.lastExhaustedTime > 0 && Date.now() - this.lastExhaustedTime < 10000) return;
+		if (this.lastExhaustedTime > 0 && Date.now() - this.lastExhaustedTime < 10000) {
+			console.debug(`[DL-DBG] doWork throttled (${Math.round((Date.now() - this.lastExhaustedTime) / 1000)}s since exhaust)`);
+			return;
+		}
 		// Skip if downloadChunks is already running — new peers get picked up dynamically
-		if (this.workMutex.isLocked()) return;
+		if (this.workMutex.isLocked()) {
+			console.debug(`[DL-DBG] doWork skipped — workMutex locked (downloadChunks running)`);
+			return;
+		}
 		await this.workMutex.runExclusive(async () => {
 			// Phase 1: fetch manifest from a peer if needed
 			if (this.state === 'awaiting-manifest') {
@@ -191,9 +198,11 @@ export class Downloader {
 					return;
 				}
 				if (this.peers.size === 0) {
+					console.debug(`[DL-DBG] No peers, calling for peers (failedPeers: ${this.failedPeers.size})`);
 					this.failedPeers.clear();
 					await this.callForPeers();
 					if (this.peers.size === 0) {
+						console.debug(`[DL-DBG] Still no peers after callForPeers, scheduling retry in 10s`);
 						this.lastExhaustedTime = Date.now();
 						setTimeout(() => { if (this.state === 'downloading' && !this.paused) this.doWork().catch(() => {}); }, 10000);
 						return;
@@ -228,6 +237,7 @@ export class Downloader {
 		const totalChunks = allChunks > 0 ? allChunks : missingChunks.length;
 		let downloadedCount = totalChunks - missingChunks.length;
 		console.log(`[DL] downloadChunks: ${missingChunks.length} missing, ${totalChunks} total, ${this.peers.size} peers`);
+		this.notAvailableLoggedPeers.clear();
 
 		if (this.peers.size === 0) return;
 
@@ -241,6 +251,7 @@ export class Downloader {
 
 		const servingPeers = new Set<string>(); // peers that actually served at least 1 chunk
 		const corruptCount = new Map<string, number>(); // per-peer corruption counter
+		let globalNotAvailable = 0; // consecutive not_available across all peers — reset on any success
 
 		const spawnNewPeerLoops = (): void => {
 			for (const [pid, cli] of this.peers) {
@@ -263,7 +274,7 @@ export class Downloader {
 				});
 				if (!chunk) break;
 
-				const result = await this.downloadChunk(client, chunk.chunkID);
+				const result = await this.downloadChunk(client, chunk.chunkID, peerID);
 				if (result === 'error') {
 					console.log(`[DL] Peer ${peerID.slice(0, 12)} disconnected`);
 					this.peers.delete(peerID);
@@ -276,13 +287,16 @@ export class Downloader {
 					break;
 				}
 				if (result === 'not_available') {
-					await lock.runExclusive(() => { queue.push(chunk!); });
 					skippedChunks++;
-					spawnNewPeerLoops();
-					if (skippedChunks > missingChunks.length) {
+					globalNotAvailable++;
+					if (skippedChunks % 100 === 0) console.debug(`[DL-DBG] Peer ${peerID.slice(0, 12)} skipped ${skippedChunks} chunks (not_available, global: ${globalNotAvailable}/${queue.length})`);
+					await lock.runExclusive(() => { queue.push(chunk!); });
+					if (globalNotAvailable > queue.length) {
+						console.debug(`[DL-DBG] Peer ${peerID.slice(0, 12)} breaking: global exhaustion (${globalNotAvailable}>${queue.length})`);
 						servingPeers.delete(peerID);
 						break;
 					}
+					spawnNewPeerLoops();
 					continue;
 				}
 				// Verify chunk integrity before writing
@@ -308,6 +322,7 @@ export class Downloader {
 				}
 				// Integrity OK — write chunk
 				skippedChunks = 0;
+				globalNotAvailable = 0;
 				servingPeers.add(peerID);
 				await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 				this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
@@ -350,6 +365,7 @@ export class Downloader {
 				for (const [id] of current) peerLoopPromises.delete(id);
 				// Loop back to check if new loops were spawned while we waited
 			}
+			console.debug(`[DL-DBG] downloadChunks finished: ${downloadedCount}/${totalChunks} downloaded, ${activePeerLoops.size} active loops remaining`);
 			if (downloadedCount < totalChunks) {
 				console.log(`[DL] Peers exhausted at ${downloadedCount}/${totalChunks}, will retry`);
 			}
@@ -361,6 +377,7 @@ export class Downloader {
 	}
 
 	private async callForPeers() {
+		console.debug(`[DL-DBG] callForPeers: broadcasting want for ${this.lishID.slice(0, 8)} on ${this.networkIDs.length} networks, current peers: ${this.peers.size}`);
 		// 1. GossipSub broadcast on ALL joined networks
 		const msg: PubsubMessage = { type: 'want', lishID: this.lishID };
 		for (const nid of this.networkIDs) {
@@ -368,6 +385,7 @@ export class Downloader {
 		}
 		// 2. Direct probe: try every peer on all topics via LISH protocol stream
 		await this.probeTopicPeers();
+		console.debug(`[DL-DBG] callForPeers done: ${this.peers.size} peers found`);
 		this.setupCallForPeersInterval();
 	}
 
@@ -376,10 +394,11 @@ export class Downloader {
 		for (const nid of this.networkIDs) {
 			for (const p of this.network.getTopicPeers(nid)) topicPeers.add(p);
 		}
+		console.debug(`[DL-DBG] probeTopicPeers: ${topicPeers.size} topic peers, ${this.peers.size} connected, ${this.failedPeers.size} failed`);
 		let foundNew = false;
 		for (const peerID of topicPeers) {
-			if (this.peers.has(peerID)) continue;
-			if (this.failedPeers.has(peerID)) continue;
+			if (this.peers.has(peerID)) { console.debug(`[DL-DBG] probe skip ${peerID.slice(0, 12)}: already connected`); continue; }
+			if (this.failedPeers.has(peerID)) { console.debug(`[DL-DBG] probe skip ${peerID.slice(0, 12)}: in failedPeers`); continue; }
 			try {
 				const probeStream = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
 				const probeClient = new LISHClient(probeStream);
@@ -432,6 +451,9 @@ export class Downloader {
 	private async handlePubsubMessage(topic: string, data: Record<string, any>): Promise<void> {
 		if (!this.networkIDs.some(nid => topic === lishTopic(nid))) return;
 		if (data['type'] === 'have' && data['lishID'] === this.lishID && data['chunks']) {
+			if (this.downloadActive) {
+				console.debug(`[DL-DBG] Have message from ${(data['peerID'] as string)?.slice(0, 12)} arrived while downloadActive`);
+			}
 			if (this.peers.has(data['peerID'])) return;
 			try {
 				await this.connectToPeer(data as HaveMessage);
@@ -485,13 +507,18 @@ export class Downloader {
 	}
 
 	// Download a single chunk from a peer using an existing client
-	private async downloadChunk(client: LISHClient, chunkID: ChunkID): Promise<{ data: Uint8Array } | 'not_available' | 'error'> {
+	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string): Promise<{ data: Uint8Array } | 'not_available' | 'error'> {
 		try {
 			const data = await client.requestChunk(this.lishID, chunkID);
-			if (!data) console.log(`[DL-DBG] null response for ${chunkID.slice(0, 12)} from ${this.lishID.slice(0, 8)}`);
+			if (!data) {
+				if (peerID && !this.notAvailableLoggedPeers.has(peerID)) {
+					this.notAvailableLoggedPeers.add(peerID);
+					console.debug(`[DL-DBG] First not_available from peer ${peerID.slice(0, 12)} for chunk ${chunkID.slice(0, 12)}`);
+				}
+			}
 			return data ? { data } : 'not_available';
 		} catch (err) {
-			console.log(`[DL-DBG] error for ${chunkID.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);
+			console.debug(`[DL-DBG] error for ${chunkID.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);
 			return 'error';
 		}
 	}

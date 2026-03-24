@@ -484,7 +484,8 @@ export class Network {
 
 	private async handleWant(data: WantMessage, networkID: string): Promise<void> {
 		console.log('Handling want message for lishID:', data.lishID, 'on network:', networkID);
-		if (!isUploadEnabled(data.lishID) || isBusy(data.lishID)) return;
+		if (!isUploadEnabled(data.lishID)) { console.debug(`[NET-DBG] want ignored: upload disabled for ${data.lishID.slice(0, 8)}`); return; }
+		if (isBusy(data.lishID)) { console.debug(`[NET-DBG] want ignored: busy for ${data.lishID.slice(0, 8)}`); return; }
 		const lish = this.dataServer.get(data.lishID);
 		if (!lish) return;
 		const haveChunks = this.dataServer.getHaveChunks(data.lishID);
