@@ -170,8 +170,11 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 				// Chunk request (default)
 				const chunkReq = request as LISHChunkRequest;
 				if (!uploadEnabled.has(chunkReq.lishID) || isBusy(chunkReq.lishID)) {
-					stream.abort(new Error('UPLOAD_BLOCKED'));
-					return;
+					// Send null response — peer sees 'not_available' and moves on
+					const blockedResponse: LISHResponse = { data: null };
+					const blockedData = new TextEncoder().encode(JSON.stringify(blockedResponse));
+					await sendLengthPrefixed(stream, blockedData);
+					continue;
 				}
 				const chunkData = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
 				const response: LISHResponse = { data: chunkData ? Buffer.from(chunkData).toString('base64') : null };

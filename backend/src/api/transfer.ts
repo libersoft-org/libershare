@@ -36,9 +36,23 @@ export function initDownloadState(enabled: Set<string>, persistFn: PersistDownlo
 }
 
 export function getDownloadEnabledLishs(): Set<string> { return downloadEnabledLishs; }
+export function isDownloadEnabled(lishID: string): boolean { return downloadEnabledLishs.has(lishID); }
+let _activeDownloaders: Map<string, any> | null = null;
+export function setActiveDownloadersRef(ref: Map<string, any>): void { _activeDownloaders = ref; }
+export function forceDisableDownload(lishID: string): void {
+	downloadEnabledLishs.delete(lishID);
+	persistDownloadEnabled?.(lishID, false);
+	// Stop and remove active downloader so enableDownload creates a fresh one
+	const dl = _activeDownloaders?.get(lishID);
+	if (dl) {
+		dl.pause();
+		_activeDownloaders!.delete(lishID);
+	}
+}
 
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn): TransferHandlers {
 	const activeDownloaders = new Map<string, Downloader>();
+	setActiveDownloadersRef(activeDownloaders);
 
 	async function download(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
 		assert(p, ['networkID', 'lishPath']);

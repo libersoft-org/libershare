@@ -227,6 +227,7 @@ export class Downloader {
 		const allChunks = this.dataServer.getAllChunkCount(this.lishID);
 		const totalChunks = allChunks > 0 ? allChunks : missingChunks.length;
 		let downloadedCount = totalChunks - missingChunks.length;
+		console.log(`[DL] downloadChunks: ${missingChunks.length} missing, ${totalChunks} total, ${this.peers.size} peers`);
 
 		if (this.peers.size === 0) return;
 
@@ -245,7 +246,7 @@ export class Downloader {
 			for (const [pid, cli] of this.peers) {
 				if (!activePeerLoops.has(pid)) {
 					console.log(`[DL] Peer ${pid.slice(0, 12)} joined (total: ${this.peers.size})`);
-					const p = peerLoop(pid, cli).catch(() => {});
+					const p = peerLoop(pid, cli).catch(err => { console.error(`[DL] Peer loop ${pid.slice(0, 12)} error:`, err); });
 					peerLoopPromises.set(pid, p);
 				}
 			}
@@ -487,8 +488,10 @@ export class Downloader {
 	private async downloadChunk(client: LISHClient, chunkID: ChunkID): Promise<{ data: Uint8Array } | 'not_available' | 'error'> {
 		try {
 			const data = await client.requestChunk(this.lishID, chunkID);
+			if (!data) console.log(`[DL-DBG] null response for ${chunkID.slice(0, 12)} from ${this.lishID.slice(0, 8)}`);
 			return data ? { data } : 'not_available';
-		} catch {
+		} catch (err) {
+			console.log(`[DL-DBG] error for ${chunkID.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);
 			return 'error';
 		}
 	}

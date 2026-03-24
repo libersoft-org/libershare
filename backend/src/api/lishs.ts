@@ -4,8 +4,8 @@ import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, re
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { setBusy, clearBusy } from './busy.ts';
-import { getEnabledUploads } from '../protocol/lish-protocol.ts';
-import { getDownloadEnabledLishs } from './transfer.ts';
+import { getEnabledUploads, disableUpload, isUploadEnabled } from '../protocol/lish-protocol.ts';
+import { getDownloadEnabledLishs, isDownloadEnabled, forceDisableDownload } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
@@ -241,6 +241,12 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		if (!lish) return false;
 		// Delete LISH data files selectively
 		if (p.deleteData && lish.directory) {
+			// Disable upload/download BEFORE deleting — broadcasts events to clients
+			if (isUploadEnabled(p.lishID)) disableUpload(p.lishID);
+			if (isDownloadEnabled(p.lishID)) {
+				forceDisableDownload(p.lishID);
+				broadcast('transfer.download:disabled', { lishID: p.lishID });
+			}
 			await deleteLISHData(lish);
 			dataServer.resetVerification(p.lishID);
 		}
