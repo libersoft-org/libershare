@@ -135,13 +135,14 @@
 					<Cell align="center" desktopOnly>{$t('common.size')}</Cell>
 					<Cell align="center" desktopOnly>{$t('common.progress')}</Cell>
 					<Cell align="center" desktopOnly>{$t('common.status')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.transferred')}</Cell>
 					<Cell align="center" desktopOnly>{$t('downloads.mode')}</Cell>
 					<Cell align="center" desktopOnly>{$t('downloads.peers')}</Cell>
 					<Cell align="center" desktopOnly>{$t('downloads.speed')}</Cell>
 				</Header>
 				<div class="items">
 					{#each filteredDownloads as download, index (download.id)}
-						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} enabledMode={computeEnabledMode(download.downloadEnabled, download.uploadEnabled)} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} position={[0, index + 2]} onConfirm={() => openDetail(download)} isLast={index === filteredDownloads.length - 1} />
+						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} enabledMode={computeEnabledMode(download.downloadEnabled, download.uploadEnabled)} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} totalUploadedBytes={download.totalUploadedBytes} totalDownloadedBytes={download.totalDownloadedBytes} position={[0, index + 2]} onConfirm={() => openDetail(download)} isLast={index === filteredDownloads.length - 1} />
 					{/each}
 				</div>
 			</Table>

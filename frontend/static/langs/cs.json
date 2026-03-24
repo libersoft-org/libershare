@@ -85,6 +85,9 @@
 		"uploadingTo": "Odesílání k",
 		"peers": "Spojení",
 		"speed": "Rychlost",
+		"transferred": "Přeneseno",
+		"uploaded": "Odesláno",
+		"downloaded": "Staženo",
 		"downloadSpeed": "Rychlost stahování",
 		"uploadSpeed": "Rychlost odesílání",
 		"statuses": {

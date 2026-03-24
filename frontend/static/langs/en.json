@@ -85,6 +85,9 @@
 		"uploadingTo": "Uploading to",
 		"peers": "Peers",
 		"speed": "Speed",
+		"transferred": "Transferred",
+		"uploaded": "Uploaded",
+		"downloaded": "Downloaded",
 		"downloadSpeed": "Download speed",
 		"uploadSpeed": "Upload speed",
 		"statuses": {

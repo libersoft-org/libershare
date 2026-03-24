@@ -310,6 +310,7 @@ export class Downloader {
 				servingPeers.add(peerID);
 				await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 				this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
+				this.dataServer.incrementDownloadedBytes(this.lishID, data.length);
 				downloadedCount++;
 				// Rolling speed average (~10 second window)
 				const now = Date.now();

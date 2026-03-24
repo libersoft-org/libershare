@@ -6,7 +6,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { downloads, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
 	import ModeBadge from '../../components/Badge/ModeBadge.svelte';
-	import { scrollToElement } from '../../scripts/utils.ts';
+	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
@@ -454,6 +454,14 @@
 						<TableRow>
 							<Cell>{$t('downloads.uploadSpeed')}:</Cell>
 							<Cell align="right">{download.uploadSpeed}</Cell>
+						</TableRow>
+						<TableRow>
+							<Cell>{$t('downloads.downloaded')}:</Cell>
+							<Cell align="right">{formatSize(download.totalDownloadedBytes)}</Cell>
+						</TableRow>
+						<TableRow>
+							<Cell>{$t('downloads.uploaded')}:</Cell>
+							<Cell align="right">{formatSize(download.totalUploadedBytes)}</Cell>
 						</TableRow>
 					</Table>
 				</div>

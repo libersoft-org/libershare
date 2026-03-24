@@ -55,6 +55,8 @@ export interface DownloadData {
 	verifiedChunks: number;
 	totalChunks: number;
 	chunkSize: number;
+	totalUploadedBytes: number;
+	totalDownloadedBytes: number;
 }
 
 /**
@@ -108,6 +110,8 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 		verifiedChunks: detail.verifiedChunks,
 		totalChunks: detail.totalChunks,
 		chunkSize: detail.chunkSize,
+		totalUploadedBytes: detail.totalUploadedBytes ?? 0,
+		totalDownloadedBytes: detail.totalDownloadedBytes ?? 0,
 	};
 }
 
@@ -132,6 +136,9 @@ export const downloadsLoading = writable<boolean>(true);
 const activeDownloads = new Map<string, number>();
 // Track explicitly disabled downloads (prevents progress events from overriding disabled state)
 const disabledDownloads = new Set<string>();
+// Last known chunk counts for session delta calculation
+const lastDownloadedChunks = new Map<string, number>();
+const lastUploadedChunks = new Map<string, number>();
 
 export function setCurrentDetailLISHID(lishID: string | null): void {
 	currentDetailLISHID = lishID;
@@ -171,7 +178,7 @@ export async function initDownloads(): Promise<void> {
 					if (moving.includes(d.id)) entry.status = 'moving';
 					else if (d.id === verifying) entry.status = 'verifying';
 					else if (pendingVerification.includes(d.id)) entry.status = 'pending-verification';
-					return entry;
+				return entry;
 				})
 		);
 	} catch (err) {
@@ -351,15 +358,19 @@ export async function initDownloads(): Promise<void> {
 			if (disabledDownloads.has(data.lishID)) return;
 			activeDownloads.set(data.lishID, Date.now());
 			const hasPeers = data.peers > 0;
+			// Calculate delta chunks since last event for cumulative byte tracking
+			const prevChunks = lastDownloadedChunks.get(data.lishID) ?? data.downloadedChunks;
+			const deltaChunks = Math.max(0, data.downloadedChunks - prevChunks);
+			lastDownloadedChunks.set(data.lishID, data.downloadedChunks);
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
 					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
 					const downloadedSize = d.rawTotalSize > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
 					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : d.downloadSpeed;
-					// Status reflects actual activity: only 'downloading' when peers connected
 					const status = computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
-					return { ...d, status, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks };
+					const totalDownloadedBytes = d.totalDownloadedBytes + (deltaChunks > 0 && d.chunkSize > 0 ? deltaChunks * d.chunkSize : 0);
+					return { ...d, status, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks, totalDownloadedBytes };
 				})
 			);
 			// Reset stale timer — if no progress in 10s, clear speed/peers
@@ -419,13 +430,17 @@ export async function initDownloads(): Promise<void> {
 		const uploadTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 		api.on('transfer.upload:progress', (data: { lishID: string; uploadedChunks: number; bytesPerSecond: number; peers: number }) => {
 			activeUploadLishs.add(data.lishID);
+			const prevUlChunks = lastUploadedChunks.get(data.lishID) ?? data.uploadedChunks;
+			const deltaUlChunks = Math.max(0, data.uploadedChunks - prevUlChunks);
+			lastUploadedChunks.set(data.lishID, data.uploadedChunks);
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
 					const uploadSpeed = formatSize(data.bytesPerSecond) + '/s';
 					const isDown = d.status === 'downloading' || d.status === 'downloading-uploading' || activeDownloads.has(data.lishID);
 					const status = computeStatus(isDown, true);
-					return { ...d, status, uploadPeers: data.peers, uploadSpeed };
+					const totalUploadedBytes = d.totalUploadedBytes + (deltaUlChunks > 0 && d.chunkSize > 0 ? deltaUlChunks * d.chunkSize : 0);
+					return { ...d, status, uploadPeers: data.peers, uploadSpeed, totalUploadedBytes };
 				})
 			);
 			// Reset stale timer — if no progress in 15s, clear upload state
@@ -523,12 +538,14 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 		verifiedChunks: 0,
 		totalChunks: 0,
 		chunkSize: 0,
+		totalUploadedBytes: 0,
+		totalDownloadedBytes: 0,
 	};
 	downloads.update(list => [dl, ...list]);
 }
 
 // Table columns definition
-export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 10vw 10vw 8vw 4vw 6vw 10vw';
+export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 9vw 9vw 8vw 13vw 3vw 5vw 11vw';
 // Toolbar action IDs for download detail view
 export type DownloadToolbarActionID = 'back' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'verify' | 'stop-verify' | 'export' | 'move' | 'delete';
 export interface DownloadToolbarAction {

@@ -62,6 +62,8 @@ export interface ILISHSummary {
 	directoryCount: number;
 	verifiedChunks: number;
 	totalChunks: number;
+	totalUploadedBytes: number;
+	totalDownloadedBytes: number;
 }
 
 // Detail for the download detail view (files without checksums, no chunks)
@@ -91,4 +93,6 @@ export interface ILISHDetail {
 	links: ILinkEntry[];
 	verifiedChunks: number;
 	totalChunks: number;
+	totalUploadedBytes: number;
+	totalDownloadedBytes: number;
 }

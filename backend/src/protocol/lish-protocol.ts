@@ -182,6 +182,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 						servedLishIDs.add(chunkReq.lishID);
 						activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
 					}
+					dataServer.incrementUploadedBytes(chunkReq.lishID as import('@shared').LISHid, chunkData.length);
 					await uploadLimiter.throttle(chunkData.length);
 					// Upload progress tracking (rolling 10s speed window)
 					if (broadcastFn) {
