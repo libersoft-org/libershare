@@ -4,6 +4,8 @@ import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, re
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { setBusy, clearBusy } from './busy.ts';
+import { getEnabledUploads } from '../protocol/lish-protocol.ts';
+import { getDownloadEnabledLishs } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
@@ -123,12 +125,14 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	// Track current creation so it can be aborted
 	let currentCreation: AbortController | null = null;
 
-	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[] } {
+	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[]; uploadEnabled: string[]; downloadEnabled: string[] } {
 		return {
 			items: dataServer.listSummaries(p?.sortBy, p?.sortOrder),
 			verifying: currentVerification?.lishID ?? null,
 			pendingVerification: [...verificationQueue],
 			moving: [...movingLISHs],
+			uploadEnabled: [...getEnabledUploads()],
+			downloadEnabled: [...getDownloadEnabledLishs()],
 		};
 	}
 

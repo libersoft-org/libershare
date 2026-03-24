@@ -83,6 +83,8 @@
 		"targetDirectory": "Target directory",
 		"downloadingFrom": "Downloading from",
 		"uploadingTo": "Uploading to",
+		"peers": "Peers",
+		"speed": "Speed",
 		"downloadSpeed": "Download speed",
 		"uploadSpeed": "Upload speed",
 		"statuses": {
@@ -94,6 +96,13 @@
 			"pending-verification": "Pending verification",
 			"moving": "Moving"
 		},
+		"modes": {
+			"disabled": "Disabled",
+			"download": "↓ Download",
+			"upload": "↑ Upload",
+			"both": "↕ Both"
+		},
+		"mode": "Mode",
 		"createLISH": "Create LISH",
 		"errorInvalidFormat": "Invalid LISH format",
 		"emptyList": "No LISH to export found",

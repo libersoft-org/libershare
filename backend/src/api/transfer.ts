@@ -35,6 +35,8 @@ export function initDownloadState(enabled: Set<string>, persistFn: PersistDownlo
 	persistDownloadEnabled = persistFn;
 }
 
+export function getDownloadEnabledLishs(): Set<string> { return downloadEnabledLishs; }
+
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn): TransferHandlers {
 	const activeDownloaders = new Map<string, Downloader>();
 

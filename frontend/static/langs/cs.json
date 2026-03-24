@@ -83,6 +83,8 @@
 		"targetDirectory": "Cílový adresář",
 		"downloadingFrom": "Stahování od",
 		"uploadingTo": "Odesílání k",
+		"peers": "Spojení",
+		"speed": "Rychlost",
 		"downloadSpeed": "Rychlost stahování",
 		"uploadSpeed": "Rychlost odesílání",
 		"statuses": {
@@ -94,6 +96,13 @@
 			"pending-verification": "Čeká na ověření",
 			"moving": "Přesouvá se"
 		},
+		"modes": {
+			"disabled": "Vypnuto",
+			"download": "↓ Stahování",
+			"upload": "↑ Odesílání",
+			"both": "↕ Oboje"
+		},
+		"mode": "Režim",
 		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",

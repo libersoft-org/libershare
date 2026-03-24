@@ -7,6 +7,14 @@ import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
 
 export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'moving';
+export type EnabledMode = 'disabled' | 'download' | 'upload' | 'both';
+
+export function computeEnabledMode(downloadEnabled: boolean, uploadEnabled: boolean): EnabledMode {
+	if (downloadEnabled && uploadEnabled) return 'both';
+	if (downloadEnabled) return 'download';
+	if (uploadEnabled) return 'upload';
+	return 'disabled';
+}
 
 // ============================================================================
 // Download Data Types
@@ -37,6 +45,8 @@ export interface DownloadData {
 	rawTotalSize: number;
 	downloadedSize?: string;
 	status: DownloadStatus;
+	downloadEnabled: boolean;
+	uploadEnabled: boolean;
 	downloadPeers: number;
 	uploadPeers: number;
 	downloadSpeed: string;
@@ -88,6 +98,8 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 		rawTotalSize: detail.totalSize,
 		downloadedSize,
 		status: 'idling',
+		downloadEnabled: false,
+		uploadEnabled: false,
 		downloadPeers: 0,
 		uploadPeers: 0,
 		downloadSpeed: '0 B/s',
@@ -102,6 +114,14 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 // ============================================================================
 // Stores
 // ============================================================================
+
+// Helper: compute combined status from download/upload activity flags
+function computeStatus(isDown: boolean, isUp: boolean): DownloadStatus {
+	if (isDown && isUp) return 'downloading-uploading';
+	if (isDown) return 'downloading';
+	if (isUp) return 'uploading';
+	return 'idling';
+}
 
 let handlersRegistered = false;
 let currentDetailLISHID: string | null = null;
@@ -128,17 +148,26 @@ export async function initDownloads(): Promise<void> {
 	let verifying: string | null = null;
 	let pendingVerification: string[] = [];
 	let moving: string[] = [];
+	let ulEnabled: string[] = [];
+	let dlEnabled: string[] = [];
 	try {
-		const { items: summaries, verifying: v, pendingVerification: pv, moving: mv } = await api.lishs.list(undefined, 'desc');
+		const { items: summaries, verifying: v, pendingVerification: pv, moving: mv, uploadEnabled: ue, downloadEnabled: de } = await api.lishs.list(undefined, 'desc');
 		verifying = v;
 		pendingVerification = pv;
 		moving = mv;
+		ulEnabled = ue ?? [];
+		dlEnabled = de ?? [];
+		const ulSet = new Set(ulEnabled);
+		const dlSet = new Set(dlEnabled);
 		const details = await Promise.all(summaries.map(s => api.lishs.get(s.id)));
 		downloads.set(
 			details
 				.filter((d): d is ILISHDetail => d !== null)
 				.map(d => {
 					const entry = detailToDownload(d);
+					entry.uploadEnabled = ulSet.has(d.id);
+					const isComplete = d.totalChunks > 0 && d.verifiedChunks >= d.totalChunks;
+					entry.downloadEnabled = isComplete ? false : dlSet.has(d.id);
 					if (moving.includes(d.id)) entry.status = 'moving';
 					else if (d.id === verifying) entry.status = 'verifying';
 					else if (pendingVerification.includes(d.id)) entry.status = 'pending-verification';
@@ -153,19 +182,21 @@ export async function initDownloads(): Promise<void> {
 	}
 
 	// Restore transfer states after F5/reconnect
+	// Status = actual activity (peers > 0 only), enabled flags already set from lishs.list()
 	try {
 		const transfers = await api.call('transfer.getActiveTransfers', {}) as { lishID: string; type: string; peers: number; bytesPerSecond: number }[];
 		if (transfers?.length) {
 			downloads.update(list => list.map(d => {
 				const mine = transfers.filter(t => t.lishID === d.id);
-				const types = new Set(mine.map(t => t.type));
 				const ul = mine.find(t => t.type === 'uploading');
 				const dl = mine.find(t => t.type === 'downloading');
-				const isDown = types.has('downloading') || types.has('download-enabled');
-				const isUp = types.has('uploading') || types.has('upload-enabled');
-				const status: DownloadStatus = isDown && isUp ? 'downloading-uploading' : isDown ? 'downloading' : isUp ? 'uploading' : d.status;
+				// Only show as active when peers are actually connected
+				const isActiveDown = !!dl && dl.peers > 0;
+				const isActiveUp = !!ul && ul.peers > 0;
+				const status: DownloadStatus = computeStatus(isActiveDown, isActiveUp);
 				return {
-					...d, status,
+					...d,
+					...(status !== 'idling' ? { status } : {}),
 					...(dl ? { downloadPeers: dl.peers, downloadSpeed: dl.bytesPerSecond ? formatSize(dl.bytesPerSecond) + '/s' : d.downloadSpeed } : {}),
 					...(ul ? { uploadPeers: ul.peers, uploadSpeed: formatSize(ul.bytesPerSecond) + '/s' } : {}),
 				};
@@ -311,14 +342,6 @@ export async function initDownloads(): Promise<void> {
 			);
 		});
 
-		// Helper: compute combined status from download/upload flags
-		function computeStatus(isDown: boolean, isUp: boolean): DownloadStatus {
-			if (isDown && isUp) return 'downloading-uploading';
-			if (isDown) return 'downloading';
-			if (isUp) return 'uploading';
-			return 'idling';
-		}
-
 		// Track which LISHs are uploading (set by upload:progress, cleared by timeout)
 		const activeUploadLishs = new Set<string>();
 
@@ -327,13 +350,15 @@ export async function initDownloads(): Promise<void> {
 		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number }) => {
 			if (disabledDownloads.has(data.lishID)) return;
 			activeDownloads.set(data.lishID, Date.now());
+			const hasPeers = data.peers > 0;
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
 					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
 					const downloadedSize = d.rawTotalSize > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
 					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : d.downloadSpeed;
-					const status = computeStatus(true, activeUploadLishs.has(data.lishID));
+					// Status reflects actual activity: only 'downloading' when peers connected
+					const status = computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
 					return { ...d, status, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks };
 				})
 			);
@@ -344,7 +369,8 @@ export async function initDownloads(): Promise<void> {
 				downloadStaleTimeouts.delete(data.lishID);
 				downloads.update(list => list.map(d => {
 					if (d.id !== data.lishID) return d;
-					return { ...d, downloadPeers: 0, downloadSpeed: '0 B/s' };
+					const status = computeStatus(false, activeUploadLishs.has(data.lishID));
+					return { ...d, downloadPeers: 0, downloadSpeed: '0 B/s', status };
 				}));
 			}, 10000));
 		});
@@ -356,18 +382,16 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				const status = computeStatus(false, activeUploadLishs.has(data.lishID));
-				return { ...d, status, downloadSpeed: '0 B/s' };
+				return { ...d, status, downloadEnabled: false, downloadSpeed: '0 B/s' };
 			}));
 		});
 
-		// transfer.download:enabled
+		// transfer.download:enabled — only set flag, don't change status (wait for progress with peers)
 		api.on('transfer.download:enabled', (data: { lishID: string }) => {
 			disabledDownloads.delete(data.lishID);
-			activeDownloads.set(data.lishID, Date.now());
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				const status = computeStatus(true, activeUploadLishs.has(data.lishID));
-				return { ...d, status };
+				return { ...d, downloadEnabled: true };
 			}));
 		});
 
@@ -378,7 +402,7 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				const status = computeStatus(false, activeUploadLishs.has(data.lishID));
-				return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir };
+				return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir, downloadEnabled: false };
 			}));
 		});
 
@@ -423,17 +447,15 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				const status = computeStatus(activeDownloads.has(data.lishID), false);
-				return { ...d, status, uploadSpeed: '0 B/s', uploadPeers: 0 };
+				return { ...d, status, uploadEnabled: false, uploadSpeed: '0 B/s', uploadPeers: 0 };
 			}));
 		});
 
-		// transfer.upload:enabled
+		// transfer.upload:enabled — only set flag, don't change status (wait for upload:progress with peers)
 		api.on('transfer.upload:enabled', (data: { lishID: string }) => {
-			activeUploadLishs.add(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				const status = computeStatus(activeDownloads.has(data.lishID), true);
-				return { ...d, status };
+				return { ...d, uploadEnabled: true };
 			}));
 		});
 
@@ -491,6 +513,8 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 		rawTotalSize: entry.totalSize ?? 0,
 		downloadedSize: '0 B',
 		status: 'downloading',
+		downloadEnabled: true,
+		uploadEnabled: false,
 		downloadPeers: 0,
 		uploadPeers: 0,
 		downloadSpeed: '-',
@@ -504,7 +528,7 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 }
 
 // Table columns definition
-export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 10vw 10vw 8vw 8vw 8vw 8vw 8vw';
+export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 10vw 10vw 8vw 4vw 6vw 10vw';
 // Toolbar action IDs for download detail view
 export type DownloadToolbarActionID = 'back' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'verify' | 'stop-verify' | 'export' | 'move' | 'delete';
 export interface DownloadToolbarAction {

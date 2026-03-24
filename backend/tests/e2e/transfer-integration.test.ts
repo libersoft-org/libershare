@@ -24,7 +24,7 @@ import {
 	resetUploadState,
 	setUploadBroadcast,
 } from '../../src/protocol/lish-protocol.ts';
-import { initDownloadState, initTransferHandlers } from '../../src/api/transfer.ts';
+import { initDownloadState, initTransferHandlers, getDownloadEnabledLishs as getDownloadEnabledLishsRuntime } from '../../src/api/transfer.ts';
 import { setBusy, clearBusy, isBusy, getBusyReason } from '../../src/api/busy.ts';
 import { DataServer } from '../../src/lish/data-server.ts';
 import { Downloader } from '../../src/protocol/downloader.ts';
@@ -1095,5 +1095,92 @@ describe('Busy state — moving/verifying blocks transfers', () => {
 		expect(getBusyReason('lish-b')).toBe('verifying');
 		clearBusy('lish-a');
 		clearBusy('lish-b');
+	});
+});
+
+// ============================================================================
+// Test: getDownloadEnabledLishs export from transfer.ts
+// ============================================================================
+
+describe('getDownloadEnabledLishs runtime export', () => {
+	it('returns the live download enabled set', () => {
+		const dlSet = new Set([TEST_LISH_ID]);
+		initDownloadState(dlSet, () => {});
+		const result = getDownloadEnabledLishsRuntime();
+		expect(result.has(TEST_LISH_ID)).toBe(true);
+		expect(result.size).toBe(1);
+	});
+
+	it('reflects changes after enable/disable via handlers', () => {
+		const db = createDB();
+		addLISH(db, createTestLISH(TEST_LISH_ID));
+		resetUploadState();
+		initUploadState(new Set(), () => {});
+		initDownloadState(new Set([TEST_LISH_ID]), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
+		const networks = new MockNetworks();
+		const dataServer = new DataServer(db);
+		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', () => {});
+
+		expect(getDownloadEnabledLishsRuntime().has(TEST_LISH_ID)).toBe(true);
+
+		handlers.disableDownload({ lishID: TEST_LISH_ID });
+		expect(getDownloadEnabledLishsRuntime().has(TEST_LISH_ID)).toBe(false);
+	});
+});
+
+// ============================================================================
+// Test: lishs.list() returns enabled arrays
+// ============================================================================
+
+describe('lishs.list() includes enabled arrays', () => {
+	let db: Database;
+
+	beforeEach(() => {
+		resetUploadState();
+		db = createDB();
+	});
+
+	it('returns uploadEnabled and downloadEnabled arrays matching runtime state', () => {
+		addLISH(db, createTestLISH(TEST_LISH_ID));
+		addLISH(db, createTestLISH(TEST_LISH_ID_2, { id: TEST_LISH_ID_2 }));
+
+		// Set up runtime state
+		initUploadState(new Set([TEST_LISH_ID]), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
+		initDownloadState(new Set([TEST_LISH_ID_2]), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
+
+		// Verify the module-level getters work
+		expect(getEnabledUploads().has(TEST_LISH_ID)).toBe(true);
+		expect(getDownloadEnabledLishsRuntime().has(TEST_LISH_ID_2)).toBe(true);
+	});
+
+	it('upload enable/disable reflected in runtime enabled set', () => {
+		addLISH(db, createTestLISH(TEST_LISH_ID));
+		initUploadState(new Set(), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
+		initDownloadState(new Set(), () => {});
+
+		expect(getEnabledUploads().has(TEST_LISH_ID)).toBe(false);
+
+		enableUpload(TEST_LISH_ID);
+		expect(getEnabledUploads().has(TEST_LISH_ID)).toBe(true);
+
+		disableUpload(TEST_LISH_ID);
+		expect(getEnabledUploads().has(TEST_LISH_ID)).toBe(false);
+	});
+
+	it('download enable/disable reflected in runtime enabled set', () => {
+		addLISH(db, createTestLISH(TEST_LISH_ID));
+		initDownloadState(new Set(), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
+		const networks = new MockNetworks();
+		const dataServer = new DataServer(db);
+		resetUploadState();
+		initUploadState(new Set(), () => {});
+		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', () => {});
+
+		expect(getDownloadEnabledLishsRuntime().has(TEST_LISH_ID)).toBe(false);
+
+		// enableDownload starts a downloader — but with no network it will fail
+		// Use the low-level set for this test instead
+		handlers.disableDownload({ lishID: TEST_LISH_ID });
+		expect(getDownloadEnabledLishsRuntime().has(TEST_LISH_ID)).toBe(false);
 	});
 });

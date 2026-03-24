@@ -4,7 +4,8 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { downloads, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID } from '../../scripts/downloads.ts';
+	import { downloads, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
+	import ModeBadge from '../../components/Badge/ModeBadge.svelte';
 	import { scrollToElement } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
@@ -46,10 +47,11 @@
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
 	let isMoving = $derived(download?.status === 'moving');
 	let isBusy = $derived(isVerifying || isMoving);
-	let isDownloading = $derived(download?.status === 'downloading' || download?.status === 'downloading-uploading');
-	let isUploading = $derived(download?.status === 'uploading' || download?.status === 'downloading-uploading');
+	let isDownloading = $derived(download?.downloadEnabled ?? false);
+	let isUploading = $derived(download?.uploadEnabled ?? false);
 	let downloadPaused = $derived(!isDownloading);
 	let uploadPaused = $derived(!isUploading);
+	let enabledMode = $derived(download ? computeEnabledMode(download.downloadEnabled, download.uploadEnabled) : 'disabled' as const);
 	let isComplete = $derived(download?.progress === 100);
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => {
@@ -432,6 +434,10 @@
 						<TableRow>
 							<Cell>{$t('common.status')}:</Cell>
 							<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} status={download.status} /></Cell>
+						</TableRow>
+						<TableRow>
+							<Cell>{$t('downloads.mode')}:</Cell>
+							<Cell align="right"><ModeBadge mode={enabledMode} size="3vh" /></Cell>
 						</TableRow>
 						<TableRow>
 							<Cell>{$t('downloads.downloadingFrom')}:</Cell>
