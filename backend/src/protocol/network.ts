@@ -9,6 +9,7 @@ import { join } from 'path';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLISHProtocol, isUploadEnabled } from './lish-protocol.ts';
+import { isBusy } from '../api/busy.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { PINK_TOPIC, PONK_TOPIC, createPinkMessage, createPonkMessage } from './pink-ponk.ts';
 import { type HaveMessage, type WantMessage } from './downloader.ts';
@@ -483,7 +484,7 @@ export class Network {
 
 	private async handleWant(data: WantMessage, networkID: string): Promise<void> {
 		console.log('Handling want message for lishID:', data.lishID, 'on network:', networkID);
-		if (!isUploadEnabled(data.lishID)) return;
+		if (!isUploadEnabled(data.lishID) || isBusy(data.lishID)) return;
 		const lish = this.dataServer.get(data.lishID);
 		if (!lish) return;
 		const haveChunks = this.dataServer.getHaveChunks(data.lishID);

@@ -240,9 +240,14 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const lish = dataServer.get(p.lishID);
 		if (!lish) return false;
 		if (p.deleteLISH) {
-			// Full deletion — stop transfers, clean up in-memory state, delete DB row
+			// Full deletion — stop transfers, stop verification, clean up, delete DB row
 			removeUploadState(p.lishID);
 			removeDownloadState(p.lishID);
+			// Stop any running/queued verification for this LISH
+			if (currentVerification?.lishID === p.lishID) currentVerification.ac.abort();
+			const qIdx = verificationQueue.indexOf(p.lishID);
+			if (qIdx >= 0) verificationQueue.splice(qIdx, 1);
+			clearBusy(p.lishID);
 			if (p.deleteData && lish.directory) {
 				await deleteLISHData(lish);
 			}
@@ -260,8 +265,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			await deleteLISHData(lish);
 			dataServer.resetVerification(p.lishID);
 			clearBusy(p.lishID);
-			// Verify first, then resume download (verification sets busy → enableDownload would fail if called now)
-			startVerificationThenResume(p.lishID);
+			startVerification(p.lishID);
 		}
 		return true;
 	}
@@ -330,7 +334,6 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	// Verification queue — only one verification runs at a time
 	let currentVerification: { lishID: string; ac: AbortController } | null = null;
 	const verificationQueue: string[] = [];
-	const postVerifyCallbacks = new Map<string, () => void>();
 
 	// Track LISHs currently being moved
 	const movingLISHs = new Set<string>();
@@ -351,23 +354,19 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		setBusy(lishID, 'verifying');
 		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, started: true });
 		runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
-			clearBusy(lishID);
-			if (currentVerification?.ac === ac) {
+			const isOwner = currentVerification?.ac === ac;
+			if (isOwner) {
+				clearBusy(lishID);
 				if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
 				currentVerification = null;
 			}
-			const cb = postVerifyCallbacks.get(lishID);
-			if (cb) { postVerifyCallbacks.delete(lishID); cb(); }
+			// Resume download if enabled — no-op if download not enabled or LISH deleted
+			if (isOwner && !ac.signal.aborted) resumeDownloadIfEnabled(lishID);
 			processVerificationQueue();
 		});
 	}
 
 	function startVerification(lishID: string): void {
-		enqueueVerification(lishID);
-	}
-
-	function startVerificationThenResume(lishID: string): void {
-		postVerifyCallbacks.set(lishID, () => resumeDownloadIfEnabled(lishID));
 		enqueueVerification(lishID);
 	}
 
