@@ -406,10 +406,10 @@ export async function initDownloads(): Promise<void> {
 					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : (data.peers === 0 ? '0 B/s' : d.downloadSpeed);
 					const status = isStatusLocked(d.status) ? d.status : (d.status === 'allocating' && !hasPeers) ? 'allocating' as DownloadStatus : computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
 					const totalDownloadedBytes = d.totalDownloadedBytes + (deltaChunks > 0 && d.chunkSize > 0 ? deltaChunks * d.chunkSize : 0);
-					// Reset per-file progress when transitioning from allocating to downloading
-					let files = (d.status === 'allocating' && status !== 'allocating') ? d.files.map(f => f.type !== 'file' ? f : { ...f, progress: 0, downloadedSize: '0 B' }) : d.files;
+					// Fix stale allocation progress: any file with progress>0 but verifiedChunks=0 was from allocation display
+					let files = d.files.map(f => (f.type === 'file' && f.progress > 0 && f.verifiedChunks === 0) ? { ...f, progress: 0, downloadedSize: '0 B' } : f);
 					if (data.filePath && data.fileDownloadedChunks != null) {
-						files = d.files.map(f => {
+						files = files.map(f => {
 							if (f.name !== data.filePath) return f;
 							const fVerified = data.fileDownloadedChunks!;
 							const fileProgress = f.totalChunks > 0 ? Math.round((fVerified / f.totalChunks) * 10000) / 100 : 0;
