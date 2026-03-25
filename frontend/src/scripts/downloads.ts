@@ -362,7 +362,7 @@ export async function initDownloads(): Promise<void> {
 
 		// transfer.download:progress — with stale timeout to reset peers/speed
 		const downloadStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number; filePath?: string; fileDownloadedChunks?: number }) => {
+		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number }) => {
 			// Allocating signal — always process (even if disabled — clears stale disabled state)
 			if (data.filePath === '__allocating__') {
 				disabledDownloads.delete(data.lishID);
@@ -371,10 +371,23 @@ export async function initDownloads(): Promise<void> {
 				if (prevTimer) { clearTimeout(prevTimer); downloadStaleTimeouts.delete(data.lishID); }
 				downloads.update(list => list.map(d => {
 					if (d.id !== data.lishID) return d;
-					// Allow allocating updates when already allocating, but not when verifying/moving
 					if (d.status !== 'allocating' && isStatusLocked(d.status)) return d;
-					const allocProgress = data.fileDownloadedChunks ?? 0; // percentage 0-100
-					return { ...d, status: 'allocating' as DownloadStatus, progress: allocProgress };
+					const allocProgress = data.fileDownloadedChunks ?? 0;
+					// Update per-file allocation progress
+					let files = d.files;
+					if (data.allocatingFile) {
+						let pastCurrent = false;
+						files = d.files.map(f => {
+							if (f.type !== 'file') return f;
+							if (f.name === data.allocatingFile) {
+								pastCurrent = true;
+								return { ...f, progress: data.allocatingFileProgress ?? 0 };
+							}
+							if (!pastCurrent) return { ...f, progress: 100 }; // already allocated
+							return { ...f, progress: 0 }; // not yet allocated
+						});
+					}
+					return { ...d, status: 'allocating' as DownloadStatus, progress: allocProgress, files };
 				}));
 				return;
 			}

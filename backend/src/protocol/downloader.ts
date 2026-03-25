@@ -59,7 +59,7 @@ export class Downloader {
 	getLISHID(): string { return this.lishID; }
 	getPeerCount(): number { return this.lastServingPeerCount; }
 
-	setProgressCallback(cb: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number; filePath?: string; fileDownloadedChunks?: number }) => void): void {
+	setProgressCallback(cb: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number }) => void): void {
 		this.onProgress = cb;
 	}
 
@@ -551,6 +551,11 @@ export class Downloader {
 			const totalBytes = this.lish.files.reduce((sum, f) => sum + f.size, 0);
 			let totalWritten = 0;
 			let nextProgressAt = 100 * 1024 * 1024; // emit every ~100MB
+			const emitAllocProgress = (currentFile: string, fileWritten: number, fileSize: number) => {
+				const pct = totalBytes > 0 ? Math.round((totalWritten / totalBytes) * 100) : 0;
+				const filePct = fileSize > 0 ? Math.round((fileWritten / fileSize) * 100) : 100;
+				this.onProgress?.({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: pct, allocatingFile: currentFile, allocatingFileProgress: filePct });
+			};
 			for (const file of this.lish.files) {
 				if (this.destroyed) return;
 				const filePath = this.safePath(file.path);
@@ -560,16 +565,17 @@ export class Downloader {
 					try {
 						const zeroChunk = new Uint8Array(1024 * 1024);
 						let remaining = file.size;
+						let fileWritten = 0;
 						while (remaining > 0) {
 							if (this.destroyed) return;
 							const writeSize = Math.min(remaining, zeroChunk.length);
 							await fd.write(zeroChunk.subarray(0, writeSize));
 							remaining -= writeSize;
 							totalWritten += writeSize;
+							fileWritten += writeSize;
 							if (totalWritten >= nextProgressAt || remaining === 0) {
 								nextProgressAt = totalWritten + 100 * 1024 * 1024;
-								const pct = totalBytes > 0 ? Math.round((totalWritten / totalBytes) * 100) : 0;
-								this.onProgress?.({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: pct });
+								emitAllocProgress(file.path, fileWritten, file.size);
 								await new Promise(r => setTimeout(r, 0));
 							}
 						}
