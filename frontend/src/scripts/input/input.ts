@@ -1,7 +1,7 @@
 import { getKeyboardManager } from './keyboard.ts';
 import { getGamepadManager } from './gamepad.ts';
 import { getMouseManager } from './mouse.ts';
-import { emit, debugAreas } from '../areas.ts';
+import { emit, emitTypedChar, debugAreas } from '../areas.ts';
 
 class InputManager {
 	private keyboardStarted = false;
@@ -34,6 +34,7 @@ class InputManager {
 		keyboard.on('confirmDown', () => emit('confirmDown'));
 		keyboard.on('confirmUp', () => emit('confirmUp'));
 		keyboard.on('back', () => emit('back'));
+		keyboard.onTypedChar(char => emitTypedChar(char));
 		keyboard.on('debug', () => debugAreas.update(v => !v));
 		keyboard.on('reload', () => window.location.reload());
 		keyboard.start();

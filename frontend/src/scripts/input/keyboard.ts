@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import { inputInitialDelay, inputRepeatDelay, increaseVolume, decreaseVolume } from '../settings.ts';
-type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'pageUp' | 'pageDown' | 'home' | 'end' | 'confirmDown' | 'confirmUp' | 'back' | 'debug' | 'reload';
+type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'pageUp' | 'pageDown' | 'home' | 'end' | 'typedChar' | 'confirmDown' | 'confirmUp' | 'back' | 'debug' | 'reload';
 type KeyboardCallback = () => void;
 const ARROW_KEYS: Record<string, KeyboardAction> = {
 	ArrowUp: 'up',
@@ -39,6 +39,7 @@ class KeyboardManager {
 	private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 	private keyupHandler: ((e: KeyboardEvent) => void) | null = null;
 	private callbacks: Map<string, KeyboardCallback> = new Map();
+	private typedCharCallback: ((char: string) => void) | null = null;
 	private heldKey: string | null = null;
 	private repeatTimer: ReturnType<typeof setTimeout> | null = null;
 	private repeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -133,6 +134,11 @@ class KeyboardManager {
 				this.emit('reload');
 				return;
 			}
+			// Printable character — type-ahead search
+			if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+				this.typedCharCallback?.(e.key);
+				return;
+			}
 		};
 
 		this.keyupHandler = (e: KeyboardEvent) => {
@@ -165,6 +171,10 @@ class KeyboardManager {
 
 	on(action: string, callback: KeyboardCallback): void {
 		this.callbacks.set(action, callback);
+	}
+
+	onTypedChar(callback: (char: string) => void): void {
+		this.typedCharCallback = callback;
 	}
 
 	off(action: string): void {

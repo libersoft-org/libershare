@@ -71,6 +71,20 @@
 	let parentPath = $state<string | null>(null);
 	let items = $state<StorageItemData[]>([]);
 	let loading = $state(true);
+	// Type-ahead search
+	let typeAheadBuffer = $state('');
+	let typeAheadTimeout: ReturnType<typeof setTimeout> | null = null;
+	function handleTypedChar(char: string): void {
+		if (typeAheadTimeout) clearTimeout(typeAheadTimeout);
+		typeAheadBuffer += char.toLowerCase();
+		typeAheadTimeout = setTimeout(() => { typeAheadBuffer = ''; }, 800);
+		const idx = items.findIndex(i => i.name !== '..' && i.name.toLowerCase().startsWith(typeAheadBuffer));
+		if (idx >= 0) {
+			selectedIndex = idx;
+			showActions = false;
+			scrollToSelected();
+		}
+	}
 	let error = $state<string | null>(null);
 	let separator = $state('/');
 	let showDeleteConfirm = $state(false);
@@ -226,6 +240,9 @@
 			selectedIndex = items.length - 1;
 			showActions = false;
 			scrollToSelected();
+		},
+		typedChar(char: string) {
+			handleTypedChar(char);
 		},
 		left() {
 			return false;
@@ -986,6 +1003,7 @@
 		margin: 2vh;
 		flex: 1;
 		min-height: 0;
+		position: relative;
 	}
 
 	.table-row {
@@ -1013,6 +1031,22 @@
 
 	.items .loading {
 		margin: 2vh;
+	}
+
+	.type-ahead-hint {
+		position: absolute;
+		bottom: 1vh;
+		left: 50%;
+		transform: translateX(-50%);
+		background: rgba(0, 0, 0, 0.85);
+		color: #ffd700;
+		padding: 0.5vh 2vh;
+		border-radius: 0.5vh;
+		font-size: 2vh;
+		font-family: monospace;
+		pointer-events: none;
+		z-index: 10;
+		border: 1px solid #ffd700;
 	}
 
 	.actions {
@@ -1090,6 +1124,9 @@
 							{/if}
 						</div>
 					</Table>
+				{#if typeAheadBuffer}
+					<div class="type-ahead-hint">{typeAheadBuffer}</div>
+				{/if}
 				</div>
 				{#if showActions && selectedItem?.type === 'file'}
 					<div class="actions">

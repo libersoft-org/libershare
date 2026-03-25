@@ -13,6 +13,7 @@ export type AreaHandlers = {
 	pageDown?: () => void;
 	home?: () => void;
 	end?: () => void;
+	typedChar?: (char: string) => void;
 	confirmDown?: () => void;
 	confirmUp?: () => void;
 	confirmCancel?: () => void;
@@ -178,4 +179,11 @@ export function emit(action: InputAction): void {
 		// Only play move sound if we actually moved somewhere
 		if (navigated) play('move');
 	} else play('move');
+}
+
+export function emitTypedChar(char: string): void {
+	const current = get(activeArea);
+	if (!current) return;
+	const handlers = areaHandlers.get(current);
+	handlers?.typedChar?.(char);
 }
