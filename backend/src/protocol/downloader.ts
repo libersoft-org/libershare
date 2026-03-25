@@ -228,6 +228,8 @@ export class Downloader {
 					console.debug(`[DL-DBG] No peers, calling for peers (failedPeers: ${this.failedPeers.size})`);
 					this.failedPeers.clear();
 					await this.callForPeers();
+					// Wait briefly for have responses via GossipSub before giving up
+					if (this.peers.size === 0) await new Promise(r => setTimeout(r, 2000));
 					if (this.peers.size === 0) {
 						console.debug(`[DL-DBG] Still no peers after callForPeers, scheduling retry in 10s`);
 						this.lastExhaustedTime = Date.now();
