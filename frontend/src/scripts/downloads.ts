@@ -416,7 +416,7 @@ export async function initDownloads(): Promise<void> {
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
 					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
-					const downloadedSize = d.rawTotalSize > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
+					const downloadedSize = d.rawTotalSize > 0 && data.totalChunks > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
 					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : (data.peers === 0 ? '0 B/s' : d.downloadSpeed);
 					const status = isStatusLocked(d.status) ? d.status : (d.status === 'allocating' && !hasPeers) ? 'allocating' as DownloadStatus : computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
 					const totalDownloadedBytes = d.totalDownloadedBytes + (deltaChunks > 0 && d.chunkSize > 0 ? deltaChunks * d.chunkSize : 0);
@@ -455,7 +455,7 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
-				return { ...d, status, downloadEnabled: false, downloadSpeed: '0 B/s', downloadPeers: 0 };
+				return { ...d, status, downloadEnabled: false, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, downloadPeers: 0 };
 			}));
 		});
 
