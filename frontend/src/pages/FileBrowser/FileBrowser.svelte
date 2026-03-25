@@ -171,15 +171,16 @@
 		activateArea(`${areaID}-actions`);
 	}
 
+	const PAGE_SIZE = 10;
+
 	const areaHandlers = {
 		up() {
 			if (selectedIndex > 0) {
 				selectedIndex--;
-				showActions = false; // Hide actions when selection changes
+				showActions = false;
 				scrollToSelected();
 				return true;
 			}
-			// At top of list - go to save filename input if in save mode, or directory actions
 			if (error) {
 				if (showPath) activateArea(`${areaID}-path`);
 				else return false;
@@ -190,12 +191,36 @@
 		down() {
 			if (selectedIndex < items.length - 1) {
 				selectedIndex++;
-				showActions = false; // Hide actions when selection changes
+				showActions = false;
 				scrollToSelected();
 				return true;
 			}
 			if (onDownAtEnd) return onDownAtEnd();
-			return false; // Allow navigation to other areas
+			return false;
+		},
+		pageUp() {
+			if (items.length === 0) return;
+			selectedIndex = Math.max(0, selectedIndex - PAGE_SIZE);
+			showActions = false;
+			scrollToSelected();
+		},
+		pageDown() {
+			if (items.length === 0) return;
+			selectedIndex = Math.min(items.length - 1, selectedIndex + PAGE_SIZE);
+			showActions = false;
+			scrollToSelected();
+		},
+		home() {
+			if (items.length === 0) return;
+			selectedIndex = 0;
+			showActions = false;
+			scrollToSelected();
+		},
+		end() {
+			if (items.length === 0) return;
+			selectedIndex = items.length - 1;
+			showActions = false;
+			scrollToSelected();
 		},
 		left() {
 			return false;

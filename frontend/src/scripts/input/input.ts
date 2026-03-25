@@ -27,6 +27,10 @@ class InputManager {
 		keyboard.on('down', () => emit('down'));
 		keyboard.on('left', () => emit('left'));
 		keyboard.on('right', () => emit('right'));
+		keyboard.on('pageUp', () => emit('pageUp'));
+		keyboard.on('pageDown', () => emit('pageDown'));
+		keyboard.on('home', () => emit('home'));
+		keyboard.on('end', () => emit('end'));
 		keyboard.on('confirmDown', () => emit('confirmDown'));
 		keyboard.on('confirmUp', () => emit('confirmUp'));
 		keyboard.on('back', () => emit('back'));

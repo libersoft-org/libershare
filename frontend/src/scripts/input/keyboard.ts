@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import { inputInitialDelay, inputRepeatDelay, increaseVolume, decreaseVolume } from '../settings.ts';
-type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'confirmUp' | 'back' | 'debug' | 'reload';
+type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'pageUp' | 'pageDown' | 'home' | 'end' | 'confirmDown' | 'confirmUp' | 'back' | 'debug' | 'reload';
 type KeyboardCallback = () => void;
 const ARROW_KEYS: Record<string, KeyboardAction> = {
 	ArrowUp: 'up',
@@ -82,6 +82,27 @@ class KeyboardManager {
 			if (volumeAction) {
 				e.preventDefault();
 				setupRepeat(e.key, volumeAction);
+				return;
+			}
+			// Page up/down (single press, no repeat)
+			if (e.key === 'PageUp') {
+				e.preventDefault();
+				this.emit('pageUp');
+				return;
+			}
+			if (e.key === 'PageDown') {
+				e.preventDefault();
+				this.emit('pageDown');
+				return;
+			}
+			if (e.key === 'Home') {
+				e.preventDefault();
+				this.emit('home');
+				return;
+			}
+			if (e.key === 'End') {
+				e.preventDefault();
+				this.emit('end');
 				return;
 			}
 			// Confirm keys (with keyup)

@@ -3,12 +3,16 @@ import { play } from './audio.ts';
 import { type Position } from './navigationLayout.ts';
 // Types
 export type Direction = 'up' | 'down' | 'left' | 'right';
-export type InputAction = Direction | 'confirmDown' | 'confirmUp' | 'confirmCancel' | 'back';
+export type InputAction = Direction | 'pageUp' | 'pageDown' | 'home' | 'end' | 'confirmDown' | 'confirmUp' | 'confirmCancel' | 'back';
 export type AreaHandlers = {
 	up?: () => boolean;
 	down?: () => boolean;
 	left?: () => boolean;
 	right?: () => boolean;
+	pageUp?: () => void;
+	pageDown?: () => void;
+	home?: () => void;
+	end?: () => void;
 	confirmDown?: () => void;
 	confirmUp?: () => void;
 	confirmCancel?: () => void;
@@ -145,6 +149,10 @@ export function emit(action: InputAction): void {
 	if (action === 'confirmCancel') {
 		confirmActive = false;
 		handlers.confirmCancel?.();
+		return;
+	}
+	if (action === 'pageUp' || action === 'pageDown' || action === 'home' || action === 'end') {
+		handlers[action]?.();
 		return;
 	}
 	if (action === 'back') {
