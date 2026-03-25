@@ -163,13 +163,16 @@ export class Downloader {
 
 	// Main download loop — returns only when fully downloaded (or throws on error)
 	async download(): Promise<void> {
+		console.debug(`[DL-DBG] download() called, state=${this.state}, destroyed=${this.destroyed}, disabled=${this.disabled}`);
 		if (this.state !== 'initialized') throw new CodedError(ErrorCodes.DOWNLOADER_NOT_INITIALIZED);
 		if (this.needsManifest) {
 			this.state = 'awaiting-manifest';
 			await this.callForPeers();
 		} else {
 			this.state = 'preparing';
+			console.debug(`[DL-DBG] download() calling doWork, state=${this.state}`);
 			await this.doWork();
+			console.debug(`[DL-DBG] download() doWork returned, state=${this.state}, peers=${this.peers.size}`);
 		}
 		// Wait until state reaches 'downloaded' — doWork is called from peer handler
 		if (this.state !== 'downloaded') {
