@@ -216,8 +216,11 @@ export class Downloader {
 			}
 			// Phase 2: create directory structure (can be slow for large files due to preallocation)
 			if (this.state === 'preparing') {
-				this.onProgress?.({ downloadedChunks: 0, totalChunks: 0, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
+				const totalChunksForProgress = this.dataServer.getAllChunkCount(this.lishID) || this.missingChunks.length;
+				const downloadedForProgress = totalChunksForProgress - this.missingChunks.length;
+				this.onProgress?.({ downloadedChunks: downloadedForProgress, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
 				await this.createDirectoryStructure();
+				this.onProgress?.({ downloadedChunks: downloadedForProgress, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0 });
 				this.state = 'downloading';
 			}
 			// Phase 3: download chunks

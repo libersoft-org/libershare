@@ -97,7 +97,8 @@
 			"idling": "Nečinný",
 			"verifying": "Ověřuje se",
 			"pending-verification": "Čeká na ověření",
-			"moving": "Přesouvá se"
+			"moving": "Přesouvá se",
+			"allocating": "Připravuje se"
 		},
 		"modes": {
 			"disabled": "Vypnuto",

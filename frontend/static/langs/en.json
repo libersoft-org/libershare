@@ -97,7 +97,8 @@
 			"idling": "Idling",
 			"verifying": "Verifying",
 			"pending-verification": "Pending verification",
-			"moving": "Moving"
+			"moving": "Moving",
+			"allocating": "Allocating"
 		},
 		"modes": {
 			"disabled": "Disabled",

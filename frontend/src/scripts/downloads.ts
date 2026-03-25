@@ -6,7 +6,7 @@ import { navigateBack } from './navigation.ts';
 import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
 
-export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'moving';
+export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'moving' | 'allocating';
 export type EnabledMode = 'disabled' | 'download' | 'upload' | 'both';
 
 export function computeEnabledMode(downloadEnabled: boolean, uploadEnabled: boolean): EnabledMode {
@@ -354,8 +354,13 @@ export async function initDownloads(): Promise<void> {
 
 		// transfer.download:progress — with stale timeout to reset peers/speed
 		const downloadStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number }) => {
+		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number; filePath?: string; fileDownloadedChunks?: number }) => {
 			if (disabledDownloads.has(data.lishID)) return;
+			// Allocating signal — show allocating status without updating progress
+			if (data.filePath === '__allocating__') {
+				downloads.update(list => list.map(d => d.id !== data.lishID ? d : { ...d, status: 'allocating' as DownloadStatus }));
+				return;
+			}
 			activeDownloads.set(data.lishID, Date.now());
 			const hasPeers = data.peers > 0;
 			// Calculate delta chunks since last event for cumulative byte tracking
@@ -370,7 +375,18 @@ export async function initDownloads(): Promise<void> {
 					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : d.downloadSpeed;
 					const status = computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
 					const totalDownloadedBytes = d.totalDownloadedBytes + (deltaChunks > 0 && d.chunkSize > 0 ? deltaChunks * d.chunkSize : 0);
-					return { ...d, status, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks, totalDownloadedBytes };
+					// Update per-file progress if filePath provided
+					let files = d.files;
+					if (data.filePath && data.fileDownloadedChunks != null) {
+						files = d.files.map(f => {
+							if (f.name !== data.filePath) return f;
+							const fVerified = data.fileDownloadedChunks!;
+							const fileProgress = f.totalChunks > 0 ? Math.round((fVerified / f.totalChunks) * 10000) / 100 : 0;
+							const fDownloadedSize = f.totalChunks > 0 ? formatSize(Math.round((f.rawSize * fVerified) / f.totalChunks)) : '0 B';
+							return { ...f, verifiedChunks: fVerified, progress: fileProgress, downloadedSize: fDownloadedSize };
+						});
+					}
+					return { ...d, status, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks, totalDownloadedBytes, files };
 				})
 			);
 			// Reset stale timer — if no progress in 10s, clear speed/peers
@@ -413,7 +429,8 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				const status = computeStatus(false, activeUploadLishs.has(data.lishID));
-				return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir, downloadEnabled: false };
+				const files = d.files.map(f => f.type !== 'file' ? f : { ...f, verifiedChunks: f.totalChunks, progress: 100, downloadedSize: formatSize(f.rawSize) });
+				return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir, downloadEnabled: false, files };
 			}));
 		});
 
