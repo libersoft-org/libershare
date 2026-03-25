@@ -91,11 +91,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		downloader
 			.download()
 			.then(() => {
-				activeDownloaders.delete(lishID);
+				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
 				send('transfer.download:complete', { downloadDir, lishID });
 			})
 			.catch(err => {
-				activeDownloaders.delete(lishID);
+				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
 				if (err instanceof CodedError) send('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID });
 				else send('transfer.download:error', { error: ErrorCodes.DOWNLOAD_ERROR, errorDetail: err.message, lishID });
 			});
@@ -147,9 +147,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				send('transfer.download:progress', { lishID: p.lishID, ...info });
 			});
 			downloader.download()
-				.then(() => { activeDownloaders.delete(p.lishID); send('transfer.download:complete', { downloadDir, lishID: p.lishID }); })
+				.then(() => { if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID); send('transfer.download:complete', { downloadDir, lishID: p.lishID }); })
 				.catch(err => {
-					activeDownloaders.delete(p.lishID);
+					if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID);
 					if (err?.message !== 'Download cancelled') send('transfer.download:error', { error: err.message, lishID: p.lishID });
 				});
 			send('transfer.download:enabled', { lishID: p.lishID });
