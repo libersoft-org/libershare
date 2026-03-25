@@ -101,6 +101,9 @@ export class Downloader {
 		this.pubsubHandlers = [];
 		for (const [, client] of this.peers) await client.close().catch(() => {});
 		this.peers.clear();
+		// Notify frontend to reset peers/speed immediately
+		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
+		this.onProgress?.({ downloadedChunks: 0, totalChunks: total, peers: 0, bytesPerSecond: 0 });
 		this.downloadReject?.(new Error('Download cancelled'));
 		this.downloadResolve = undefined;
 		this.downloadReject = undefined;
