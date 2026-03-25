@@ -4,8 +4,8 @@ import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, re
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { setBusy, clearBusy } from './busy.ts';
-import { getEnabledUploads, isUploadEnabled, removeUploadState } from '../protocol/lish-protocol.ts';
-import { getDownloadEnabledLishs, isDownloadEnabled, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, triggerEnableDownload } from './transfer.ts';
+import { getEnabledUploads, isUploadEnabled, removeUploadState, enableUpload } from '../protocol/lish-protocol.ts';
+import { getDownloadEnabledLishs, isDownloadEnabled, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, triggerEnableDownload, markDownloadEnabled } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
@@ -294,9 +294,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		dataServer.add(storedLISH);
 		console.log(`✓ LISH imported: ${lish.id}`);
 		broadcast('lishs:add', dataServer.getDetail(lish.id));
-		startVerification(lish.id);
+		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
+		// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
 		if (enableSharing) enableUpload(lish.id);
-		if (enableDownloading) triggerEnableDownload(lish.id);
+		if (enableDownloading) markDownloadEnabled(lish.id);
+		startVerification(lish.id);
 		return { lishID: lish.id, directory };
 	}
 

@@ -37,6 +37,7 @@ export function initDownloadState(enabled: Set<string>, persistFn: PersistDownlo
 
 export function getDownloadEnabledLishs(): Set<string> { return downloadEnabledLishs; }
 export function isDownloadEnabled(lishID: string): boolean { return downloadEnabledLishs.has(lishID); }
+export function markDownloadEnabled(lishID: string): void { downloadEnabledLishs.add(lishID); persistDownloadEnabled?.(lishID, true); }
 let _activeDownloaders: Map<string, any> | null = null;
 export function setActiveDownloadersRef(ref: Map<string, any>): void { _activeDownloaders = ref; }
 export async function forceDisableDownload(lishID: string): Promise<void> {
