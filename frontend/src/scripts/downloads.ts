@@ -119,6 +119,11 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 // Stores
 // ============================================================================
 
+// Statuses that should not be overridden by transfer events
+function isStatusLocked(status: DownloadStatus): boolean {
+	return status === 'verifying' || status === 'pending-verification' || status === 'moving';
+}
+
 // Helper: compute combined status from download/upload activity flags
 function computeStatus(isDown: boolean, isUp: boolean): DownloadStatus {
 	if (isDown && isUp) return 'downloading-uploading';
@@ -253,13 +258,15 @@ export async function initDownloads(): Promise<void> {
 		api.on('lishs:verify', (data: { lishID: string; filePath: string; verifiedChunks: number; done?: boolean; reset?: boolean; queued?: boolean; started?: boolean }) => {
 			// console.log('[downloads] lishs:verify received:', data.filePath, 'verified:', data.verifiedChunks, 'done:', data.done);
 			if (data.reset) {
+				const dl = get(downloads).find(d => d.id === data.lishID);
+				if (dl && (dl.status === 'downloading' || dl.status === 'downloading-uploading')) return;
 				resetVerifyState(data.lishID);
 				return;
 			}
 			if (data.queued) {
 				downloads.update(list =>
 					list.map(d => {
-						if (d.id !== data.lishID || d.status === 'moving') return d;
+						if (d.id !== data.lishID || d.status === 'moving' || d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating') return d;
 						return { ...d, status: 'pending-verification' as DownloadStatus };
 					})
 				);
@@ -268,20 +275,21 @@ export async function initDownloads(): Promise<void> {
 			if (data.started) {
 				downloads.update(list =>
 					list.map(d => {
-						if (d.id !== data.lishID || d.status === 'moving') return d;
+						if (d.id !== data.lishID || d.status === 'moving' || d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating') return d;
 						return { ...d, status: 'verifying' as DownloadStatus };
 					})
 				);
 				return;
 			}
 			if (data.done) {
-				// Verification finished — recalculate status from final chunk counts
 				const lish = get(downloads).find(d => d.id === data.lishID);
-				if (lish && lish.status !== 'moving') addNotification(tt('downloads.verifyDone', { name: lish.name }));
+				if (lish && lish.status !== 'moving' && lish.status !== 'downloading' && lish.status !== 'downloading-uploading' && lish.status !== 'allocating') {
+					addNotification(tt('downloads.verifyDone', { name: lish.name }));
+				}
 				downloads.update(list =>
 					list.map(d => {
 						if (d.id !== data.lishID) return d;
-						if (d.status === 'moving') return d; // Don't overwrite moving status
+						if (d.status === 'moving' || d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating') return d;
 						const status: DownloadStatus = 'idling';
 						const progress = d.totalChunks === 0 ? 100 : d.progress;
 						return { ...d, status, progress };
@@ -291,7 +299,7 @@ export async function initDownloads(): Promise<void> {
 			}
 			downloads.update(list =>
 				list.map(d => {
-					if (d.id !== data.lishID || d.status === 'moving') return d;
+					if (d.id !== data.lishID || d.status === 'moving' || d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating') return d;
 					let overallVerified = 0;
 					const files = d.files.map(f => {
 						const fVerified = f.name === data.filePath ? data.verifiedChunks : f.verifiedChunks;
@@ -355,10 +363,13 @@ export async function initDownloads(): Promise<void> {
 		// transfer.download:progress — with stale timeout to reset peers/speed
 		const downloadStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number; filePath?: string; fileDownloadedChunks?: number }) => {
-			if (disabledDownloads.has(data.lishID)) return;
-			// Allocating signal — show allocating status without updating progress
+		// Allocating signal — always process (even if disabled — clears stale disabled state)
 			if (data.filePath === '__allocating__') {
-				downloads.update(list => list.map(d => d.id !== data.lishID ? d : { ...d, status: 'allocating' as DownloadStatus }));
+				disabledDownloads.delete(data.lishID);
+				downloads.update(list => list.map(d => {
+					if (d.id !== data.lishID || isStatusLocked(d.status)) return d;
+					return { ...d, status: 'allocating' as DownloadStatus };
+				}));
 				return;
 			}
 			if (data.peers > 0) activeDownloads.set(data.lishID, Date.now());
@@ -374,7 +385,7 @@ export async function initDownloads(): Promise<void> {
 					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
 					const downloadedSize = d.rawTotalSize > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
 					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : (data.peers === 0 ? '0 B/s' : d.downloadSpeed);
-					const status = computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
+					const status = isStatusLocked(d.status) ? d.status : computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
 					const totalDownloadedBytes = d.totalDownloadedBytes + (deltaChunks > 0 && d.chunkSize > 0 ? deltaChunks * d.chunkSize : 0);
 					// Update per-file progress if filePath provided
 					let files = d.files;
@@ -397,7 +408,7 @@ export async function initDownloads(): Promise<void> {
 				downloadStaleTimeouts.delete(data.lishID);
 				downloads.update(list => list.map(d => {
 					if (d.id !== data.lishID) return d;
-					const status = computeStatus(false, activeUploadLishs.has(data.lishID));
+					const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
 					return { ...d, downloadPeers: 0, downloadSpeed: '0 B/s', status };
 				}));
 			}, 10000));
@@ -409,7 +420,7 @@ export async function initDownloads(): Promise<void> {
 			activeDownloads.delete(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				const status = computeStatus(false, activeUploadLishs.has(data.lishID));
+				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
 				return { ...d, status, downloadEnabled: false, downloadSpeed: '0 B/s', downloadPeers: 0 };
 			}));
 		});
@@ -429,7 +440,7 @@ export async function initDownloads(): Promise<void> {
 			activeDownloads.delete(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				const status = computeStatus(false, activeUploadLishs.has(data.lishID));
+				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
 				const files = d.files.map(f => f.type !== 'file' ? f : { ...f, verifiedChunks: f.totalChunks, progress: 100, downloadedSize: formatSize(f.rawSize) });
 				return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir, downloadEnabled: false, files };
 			}));
@@ -439,7 +450,7 @@ export async function initDownloads(): Promise<void> {
 		api.on('transfer.download:error', (data: { error: string; errorDetail?: string; lishID: string }) => {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				const status = computeStatus(false, activeUploadLishs.has(data.lishID));
+				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
 				return { ...d, status };
 			}));
 		});
@@ -456,7 +467,7 @@ export async function initDownloads(): Promise<void> {
 					if (d.id !== data.lishID) return d;
 					const uploadSpeed = formatSize(data.bytesPerSecond) + '/s';
 					const isDown = d.status === 'downloading' || d.status === 'downloading-uploading' || activeDownloads.has(data.lishID);
-					const status = computeStatus(isDown, true);
+					const status = isStatusLocked(d.status) ? d.status : computeStatus(isDown, true);
 					const totalUploadedBytes = d.totalUploadedBytes + (deltaUlChunks > 0 && d.chunkSize > 0 ? deltaUlChunks * d.chunkSize : 0);
 					return { ...d, status, uploadPeers: data.peers, uploadSpeed, totalUploadedBytes };
 				})
@@ -469,7 +480,7 @@ export async function initDownloads(): Promise<void> {
 				uploadTimeouts.delete(data.lishID);
 				downloads.update(list => list.map(d => {
 					if (d.id !== data.lishID) return d;
-					return { ...d, uploadSpeed: '0 B/s', uploadPeers: 0, status: computeStatus(activeDownloads.has(data.lishID), false) };
+					return { ...d, uploadSpeed: '0 B/s', uploadPeers: 0, status: isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false) };
 				}));
 			}, 15000));
 		});
@@ -479,7 +490,7 @@ export async function initDownloads(): Promise<void> {
 			activeUploadLishs.delete(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				const status = computeStatus(activeDownloads.has(data.lishID), false);
+				const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
 				return { ...d, status, uploadEnabled: false, uploadSpeed: '0 B/s', uploadPeers: 0 };
 			}));
 		});
@@ -498,7 +509,7 @@ export async function initDownloads(): Promise<void> {
 			activeUploadLishs.delete(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				const status = computeStatus(activeDownloads.has(data.lishID), false);
+				const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
 				return { ...d, uploadSpeed: '0 B/s', uploadPeers: 0, status };
 			}));
 		});
@@ -521,11 +532,12 @@ export async function initDownloads(): Promise<void> {
 	api.subscribe('transfer.upload:stopped');
 }
 
-/** Reset verify state for a LISH in the downloads store (set all to 0, status to pending-verification). */
+/** Reset verify state for a LISH in the downloads store (set all to 0, status to pending-verification). Skips if actively downloading. */
 export function resetVerifyState(lishID: string): void {
 	downloads.update(list =>
 		list.map(d => {
 			if (d.id !== lishID) return d;
+			if (d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'uploading') return d;
 			const files = d.files.map(f => (f.type !== 'file' ? f : { ...f, verifiedChunks: 0, progress: 0, downloadedSize: '0 B' }));
 			return { ...d, verifiedChunks: 0, progress: 0, status: 'pending-verification' as DownloadStatus, files, downloadedSize: '0 B' };
 		})

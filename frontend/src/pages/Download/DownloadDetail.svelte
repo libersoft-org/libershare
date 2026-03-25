@@ -187,11 +187,7 @@
 			return;
 		}
 		if (!success) deleteError = $t('downloads.deleteFailed');
-		if (success && !deleteLISH) {
-			if (isVerifying) await api.lishs.stopVerify(lishID).catch(err => console.error('Stop verification failed:', err));
-			resetVerifyState(lishID);
-			api.lishs.verify(lishID).catch(err => console.error('Verification failed:', err));
-		}
+		// Backend already handles verification after data-only delete (startVerification in del())
 		activateArea(toolbarAreaID);
 	}
 
