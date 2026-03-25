@@ -593,30 +593,30 @@ describe('Downloader — download behavior with mocked peers', () => {
 		expect(peers.size).toBe(0);
 	});
 
-	it('lastExhaustedTime resets to 0 on resume, allowing immediate retry', async () => {
+	it('lastExhaustedTime resets to 0 on enable, allowing immediate retry', async () => {
 		const lish = createTestLISH();
 		ds.completeLishs.add(lish.id);
 		ds.storedLishs.set(lish.id, lish);
 		await downloader.initFromManifest(lish);
 
 		(priv(downloader) as Record<string, number>)['lastExhaustedTime'] = Date.now();
-		downloader.resume();
+		downloader.enable();
 
 		expect(priv(downloader)['lastExhaustedTime']).toBe(0);
 	});
 
-	it('pause/resume cycle works correctly', async () => {
+	it('disable/enable cycle works correctly', async () => {
 		const lish = createTestLISH();
 		ds.completeLishs.add(lish.id);
 		await downloader.initFromManifest(lish);
 
-		expect(downloader.isPaused()).toBe(false);
+		expect(downloader.isDisabled()).toBe(false);
 
-		downloader.pause();
-		expect(downloader.isPaused()).toBe(true);
+		downloader.disable();
+		expect(downloader.isDisabled()).toBe(true);
 
-		downloader.resume();
-		expect(downloader.isPaused()).toBe(false);
+		downloader.enable();
+		expect(downloader.isDisabled()).toBe(false);
 	});
 
 	it('progress callback receives correct shape', () => {
