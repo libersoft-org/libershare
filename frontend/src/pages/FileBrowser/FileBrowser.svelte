@@ -149,6 +149,8 @@
 				const idx = result.items.findIndex(e => e.name === selectName);
 				selectedIndex = idx >= 0 ? idx : 0;
 			} else selectedIndex = 0;
+			// Scroll to selection after DOM updates (needed when returning to parent dir)
+			tick().then(() => scrollToSelected());
 		} catch (e: any) {
 			error = withDetail($t('fileBrowser.loadDirectoryFailed'), translateError(e));
 			// Even on error, provide ".." entry to navigate up if we have a parent path
@@ -1039,14 +1041,14 @@
 		left: 50%;
 		transform: translateX(-50%);
 		background: rgba(0, 0, 0, 0.85);
-		color: #ffd700;
+		color: var(--primary-foreground);
 		padding: 0.5vh 2vh;
 		border-radius: 0.5vh;
 		font-size: 2vh;
 		font-family: monospace;
 		pointer-events: none;
 		z-index: 10;
-		border: 1px solid #ffd700;
+		border: 1px solid var(--primary-foreground);
 	}
 
 	.actions {
