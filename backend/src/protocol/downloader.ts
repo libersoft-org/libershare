@@ -85,7 +85,7 @@ export class Downloader {
 		for (const resolve of this.enableResolvers) resolve();
 		this.enableResolvers = [];
 		this.setupCallForPeersInterval();
-		this.probeTopicPeers().catch(() => {});
+		// Don't probe here — use callForPeers (broadcast want) to avoid stale streams
 		if (this.state === 'downloading') this.doWork().then(() => {});
 	}
 
