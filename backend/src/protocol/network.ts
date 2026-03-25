@@ -411,6 +411,11 @@ export class Network {
 	/**
 	 * Unsubscribe from a lishnet topic.
 	 */
+	unsubscribeHandler(topic: string, handler: TopicHandler): void {
+		const handlers = this.topicHandlers.get(topic);
+		if (handlers) handlers.delete(handler);
+	}
+
 	unsubscribeTopic(networkID: string): void {
 		if (!this.pubsub) return;
 		const topic = lishTopic(networkID);

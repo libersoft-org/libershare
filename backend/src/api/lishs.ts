@@ -5,7 +5,7 @@ import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { setBusy, clearBusy } from './busy.ts';
 import { getEnabledUploads, isUploadEnabled, removeUploadState } from '../protocol/lish-protocol.ts';
-import { getDownloadEnabledLishs, isDownloadEnabled, pauseActiveDownloader, removeDownloadState, resumeDownloadIfEnabled } from './transfer.ts';
+import { getDownloadEnabledLishs, isDownloadEnabled, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
@@ -261,7 +261,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// Delete only data — use busy to temporarily block, verify, then restore original state
 		if (p.deleteData && lish.directory) {
 			setBusy(p.lishID, 'deleting');
-			pauseActiveDownloader(p.lishID);
+			await destroyActiveDownloader(p.lishID);
 			await deleteLISHData(lish);
 			dataServer.resetVerification(p.lishID);
 			clearBusy(p.lishID);
@@ -361,7 +361,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				currentVerification = null;
 			}
 			// Resume download if enabled — no-op if download not enabled or LISH deleted
-			if (isOwner && !ac.signal.aborted) resumeDownloadIfEnabled(lishID);
+			if (isOwner && !ac.signal.aborted) restartDownloadIfEnabled(lishID);
 			processVerificationQueue();
 		});
 	}

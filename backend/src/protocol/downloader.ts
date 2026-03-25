@@ -43,12 +43,14 @@ export class Downloader {
 	private static readonly MAX_CORRUPT_CHUNKS = 3; // max corrupted chunks before banning peer
 	private callForPeersInterval: NodeJS.Timeout | undefined;
 	private needsManifest = false;
-	private paused = false;
+	private disabled = false;
+	private destroyed = false;
 	private lastExhaustedTime = 0;
 	private downloadActive = false; // true while downloadChunks is running inside workMutex
-	private pauseResolvers: (() => void)[] = [];
+	private enableResolvers: (() => void)[] = [];
 	private downloadResolve: (() => void) | undefined;
 	private downloadReject: ((err: Error) => void) | undefined;
+	private pubsubHandlers: { topic: string; handler: (data: Record<string, any>) => void }[] = [];
 	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => void;
 	private onManifestImported?: (lishID: string) => void;
 	private speedSamples: { time: number; bytes: number }[] = [];
@@ -65,28 +67,60 @@ export class Downloader {
 		this.onManifestImported = cb;
 	}
 
-	pause(): void {
-		this.paused = true;
-		console.log(`[DL] Paused ${this.lishID.slice(0, 8)}`);
+	disable(): void {
+		this.disabled = true;
+		if (this.callForPeersInterval) { clearInterval(this.callForPeersInterval); this.callForPeersInterval = undefined; }
+		for (const [, client] of this.peers) client.close().catch(() => {});
+		this.peers.clear();
+		this.lastServingPeerCount = 0;
+		for (const resolve of this.enableResolvers) resolve();
+		this.enableResolvers = [];
+		console.log(`[DL] Disabled ${this.lishID.slice(0, 8)}`);
 	}
 
-	resume(): void {
-		this.paused = false;
-		this.lastExhaustedTime = 0; // allow immediate retry on resume
-		console.log(`[DL] Resumed ${this.lishID.slice(0, 8)}`);
-		for (const resolve of this.pauseResolvers) resolve();
-		this.pauseResolvers = [];
-		// Probe for new peers on resume (may find peers that joined while paused)
+	enable(): void {
+		this.disabled = false;
+		this.lastExhaustedTime = 0;
+		console.log(`[DL] Enabled ${this.lishID.slice(0, 8)}`);
+		for (const resolve of this.enableResolvers) resolve();
+		this.enableResolvers = [];
+		this.setupCallForPeersInterval();
 		this.probeTopicPeers().catch(() => {});
-		// Re-trigger doWork in case it was waiting
 		if (this.state === 'downloading') this.doWork().then(() => {});
 	}
 
-	isPaused(): boolean { return this.paused; }
+	isDisabled(): boolean { return this.disabled; }
 
-	private async waitIfPaused(): Promise<void> {
-		if (!this.paused) return;
-		await new Promise<void>(resolve => { this.pauseResolvers.push(resolve); });
+	async destroy(): Promise<void> {
+		this.disabled = true;
+		this.destroyed = true;
+		if (this.callForPeersInterval) { clearInterval(this.callForPeersInterval); this.callForPeersInterval = undefined; }
+		for (const { topic, handler } of this.pubsubHandlers) this.network.unsubscribeHandler(topic, handler);
+		this.pubsubHandlers = [];
+		for (const [, client] of this.peers) await client.close().catch(() => {});
+		this.peers.clear();
+		this.downloadReject?.(new Error('Download cancelled'));
+		this.downloadResolve = undefined;
+		this.downloadReject = undefined;
+		for (const resolve of this.enableResolvers) resolve();
+		this.enableResolvers = [];
+		this.onProgress = undefined;
+		this.onManifestImported = undefined;
+		console.log(`[DL] Destroyed ${this.lishID.slice(0, 8)}`);
+	}
+
+	private async waitIfDisabled(): Promise<void> {
+		if (!this.disabled) return;
+		await new Promise<void>(resolve => { this.enableResolvers.push(resolve); });
+	}
+
+	private subscribePubsub(): void {
+		for (const nid of this.networkIDs) {
+			const topic = lishTopic(nid);
+			const handler = async (data: Record<string, any>) => { await this.handlePubsubMessage(topic, data); };
+			this.pubsubHandlers.push({ topic, handler });
+			this.network.subscribe(topic, handler);
+		}
 	}
 
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkIDs: string | string[]) {
@@ -104,12 +138,7 @@ export class Downloader {
 		this.lishID = this.lish.id as LISHid;
 		console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), ${this.dataServer.getMissingChunks(this.lishID).length} chunks to download`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
-		for (const nid of this.networkIDs) {
-			const topic = lishTopic(nid);
-			await this.network.subscribe(topic, async data => {
-				await this.handlePubsubMessage(topic, data);
-			});
-		}
+		this.subscribePubsub();
 		this.state = 'initialized';
 	}
 
@@ -126,12 +155,7 @@ export class Downloader {
 			this.needsManifest = true;
 			console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), awaiting manifest from peer`);
 		}
-		for (const nid of this.networkIDs) {
-			const topic = lishTopic(nid);
-			await this.network.subscribe(topic, async data => {
-				await this.handlePubsubMessage(topic, data);
-			});
-		}
+		this.subscribePubsub();
 		this.state = 'initialized';
 	}
 
@@ -155,6 +179,7 @@ export class Downloader {
 	}
 
 	async doWork(): Promise<void> {
+		if (this.destroyed) return;
 		// Throttle: don't re-enter within 10s of last exhausted cycle
 		if (this.lastExhaustedTime > 0 && Date.now() - this.lastExhaustedTime < 10000) {
 			console.debug(`[DL-DBG] doWork throttled (${Math.round((Date.now() - this.lastExhaustedTime) / 1000)}s since exhaust)`);
@@ -204,7 +229,7 @@ export class Downloader {
 					if (this.peers.size === 0) {
 						console.debug(`[DL-DBG] Still no peers after callForPeers, scheduling retry in 10s`);
 						this.lastExhaustedTime = Date.now();
-						setTimeout(() => { if (this.state === 'downloading' && !this.paused) this.doWork().catch(() => {}); }, 10000);
+						setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(() => {}); }, 10000);
 						return;
 					}
 				}
@@ -222,7 +247,7 @@ export class Downloader {
 					this.peers.clear();
 					this.failedPeers.clear();
 					this.lastExhaustedTime = Date.now();
-					setTimeout(() => { if (this.state === 'downloading' && !this.paused) this.doWork().catch(() => {}); }, 10000);
+					setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(() => {}); }, 10000);
 					return;
 				}
 			}
@@ -267,7 +292,7 @@ export class Downloader {
 			activePeerLoops.add(peerID);
 			let skippedChunks = 0;
 			while (true) {
-				await this.waitIfPaused();
+				await this.waitIfDisabled();
 				let chunk: MissingChunk | undefined;
 				await lock.runExclusive(() => {
 					if (queueIdx < queue.length) chunk = queue[queueIdx++];
@@ -378,13 +403,12 @@ export class Downloader {
 
 	private async callForPeers() {
 		console.debug(`[DL-DBG] callForPeers: broadcasting want for ${this.lishID.slice(0, 8)} on ${this.networkIDs.length} networks, current peers: ${this.peers.size}`);
-		// 1. GossipSub broadcast on ALL joined networks
+		// GossipSub broadcast — peers respond with have+multiaddrs via handlePubsubMessage → connectToPeer
 		const msg: PubsubMessage = { type: 'want', lishID: this.lishID };
 		for (const nid of this.networkIDs) {
 			await this.network.broadcast(lishTopic(nid), msg).catch(() => {});
 		}
-		// 2. Direct probe: try every peer on all topics via LISH protocol stream
-		await this.probeTopicPeers();
+		// probeTopicPeers runs only via 15s interval (setupCallForPeersInterval), not here — avoids stale stream issues
 		console.debug(`[DL-DBG] callForPeers done: ${this.peers.size} peers found`);
 		this.setupCallForPeersInterval();
 	}
@@ -449,6 +473,7 @@ export class Downloader {
 	}
 
 	private async handlePubsubMessage(topic: string, data: Record<string, any>): Promise<void> {
+		if (this.destroyed) return;
 		if (!this.networkIDs.some(nid => topic === lishTopic(nid))) return;
 		if (data['type'] === 'have' && data['lishID'] === this.lishID && data['chunks']) {
 			if (this.downloadActive) {
