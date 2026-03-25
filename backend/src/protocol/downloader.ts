@@ -51,7 +51,7 @@ export class Downloader {
 	private downloadResolve: (() => void) | undefined;
 	private downloadReject: ((err: Error) => void) | undefined;
 	private pubsubHandlers: { topic: string; handler: (data: Record<string, any>) => void }[] = [];
-	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => void;
+	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number; filePath?: string; fileDownloadedChunks?: number }) => void;
 	private onManifestImported?: (lishID: string) => void;
 	private speedSamples: { time: number; bytes: number }[] = [];
 	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
@@ -59,7 +59,7 @@ export class Downloader {
 	getLISHID(): string { return this.lishID; }
 	getPeerCount(): number { return this.lastServingPeerCount; }
 
-	setProgressCallback(cb: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => void): void {
+	setProgressCallback(cb: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number; filePath?: string; fileDownloadedChunks?: number }) => void): void {
 		this.onProgress = cb;
 	}
 
@@ -214,8 +214,9 @@ export class Downloader {
 				}
 				if (this.needsManifest) return;
 			}
-			// Phase 2: create directory structure
+			// Phase 2: create directory structure (can be slow for large files due to preallocation)
 			if (this.state === 'preparing') {
+				this.onProgress?.({ downloadedChunks: 0, totalChunks: 0, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
 				await this.createDirectoryStructure();
 				this.state = 'downloading';
 			}
@@ -284,6 +285,7 @@ export class Downloader {
 		const servingPeers = new Set<string>(); // peers that actually served at least 1 chunk
 		const corruptCount = new Map<string, number>(); // per-peer corruption counter
 		let globalNotAvailable = 0; // consecutive not_available across all peers — reset on any success
+		const fileDownloadedChunks = new Map<number, number>(); // fileIndex -> downloaded chunk count
 
 		const spawnNewPeerLoops = (): void => {
 			for (const [pid, cli] of this.peers) {
@@ -373,7 +375,10 @@ export class Downloader {
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
 					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${servingPeers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
 				}
-				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond });
+				const fIdx = chunk.fileIndex;
+				fileDownloadedChunks.set(fIdx, (fileDownloadedChunks.get(fIdx) ?? 0) + 1);
+				const filePath = this.lish.files?.[fIdx]?.path;
+				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond, filePath, fileDownloadedChunks: fileDownloadedChunks.get(fIdx) });
 				await downloadLimiter.throttle(data.length);
 				// Check for newly discovered peers and spawn loops for them
 				spawnNewPeerLoops();
