@@ -94,6 +94,7 @@ export class Downloader {
 	isDisabled(): boolean { return this.disabled; }
 
 	async destroy(): Promise<void> {
+		console.debug(`[DL-DBG] destroy() called: ${this.lishID.slice(0, 8)}, state=${this.state}, peers=${this.peers.size}, onProgress=${!!this.onProgress}`);
 		this.disabled = true;
 		this.destroyed = true;
 		if (this.callForPeersInterval) { clearInterval(this.callForPeersInterval); this.callForPeersInterval = undefined; }
@@ -217,15 +218,19 @@ export class Downloader {
 				}
 				if (this.needsManifest) return;
 			}
-			// Phase 2: create directory structure (can be slow for large files due to preallocation)
+			// Phase 2: create directory structure
 			if (this.state === 'preparing') {
 				const totalChunksForProgress = this.dataServer.getAllChunkCount(this.lishID) || this.missingChunks.length;
 				const downloadedForProgress = totalChunksForProgress - this.missingChunks.length;
-				// Only show allocating for fresh downloads (no chunks yet) — partial downloads already have files
+				console.debug(`[DL-DBG] Phase 2: preparing ${this.lishID.slice(0, 8)}, downloaded=${downloadedForProgress}/${totalChunksForProgress}, missing=${this.missingChunks.length}, onProgress=${!!this.onProgress}`);
 				if (downloadedForProgress === 0) {
+					console.debug(`[DL-DBG] Sending __allocating__ signal for ${this.lishID.slice(0, 8)}`);
 					this.onProgress?.({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
+				} else {
+					console.debug(`[DL-DBG] Skipping __allocating__ for ${this.lishID.slice(0, 8)} (already has ${downloadedForProgress} chunks)`);
 				}
 				await this.createDirectoryStructure();
+				console.debug(`[DL-DBG] Phase 2 done: ${this.lishID.slice(0, 8)}, sending reset progress`);
 				this.onProgress?.({ downloadedChunks: downloadedForProgress, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0 });
 				this.state = 'downloading';
 			}
@@ -529,11 +534,14 @@ export class Downloader {
 	}
 
 	private async createDirectoryStructure(): Promise<void> {
+		const startTime = Date.now();
 		if (this.lish.directories) {
 			for (const dir of this.lish.directories) {
 				await mkdir(this.safePath(dir.path), { recursive: true });
 			}
 		}
+		let createdFiles = 0;
+		let skippedFiles = 0;
 		if (this.lish.files) {
 			for (const file of this.lish.files) {
 				const filePath = this.safePath(file.path);
@@ -542,10 +550,14 @@ export class Downloader {
 					const fd = await open(filePath, 'w');
 					await fd.truncate(file.size);
 					await fd.close();
+					createdFiles++;
+					console.debug(`[DL-DBG] Created file: ${file.path} (${file.size} bytes, truncate)`);
+				} else {
+					skippedFiles++;
 				}
 			}
 		}
-		console.log(`[DL] Directory structure created: ${this.lish.files?.length ?? 0} files in ${this.downloadDir}`);
+		console.log(`[DL] Directory structure created: ${this.lish.files?.length ?? 0} files in ${this.downloadDir} (created=${createdFiles}, skipped=${skippedFiles}, ${Date.now() - startTime}ms)`);
 	}
 
 	// Download a single chunk from a peer using an existing client
