@@ -96,7 +96,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			})
 			.catch(err => {
 				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
-				if (err?.message === 'Download cancelled') return;
+				if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) return;
 				if (err instanceof CodedError) send('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID });
 				else send('transfer.download:error', { error: ErrorCodes.DOWNLOAD_ERROR, errorDetail: err.message, lishID });
 			});
@@ -151,7 +151,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				.then(() => { if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID); send('transfer.download:complete', { downloadDir, lishID: p.lishID }); })
 				.catch(err => {
 					if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID);
-					if (err?.message !== 'Download cancelled') send('transfer.download:error', { error: err.message, lishID: p.lishID });
+					if (!(err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED)) send('transfer.download:error', { error: err.message, lishID: p.lishID });
 				});
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };

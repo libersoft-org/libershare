@@ -222,7 +222,7 @@ export async function initDownloads(): Promise<void> {
 				const status: DownloadStatus = computeStatus(isActiveDown, isActiveUp);
 				return {
 					...d,
-					...(status !== 'idling' ? { status } : {}),
+					...(status !== 'idling' && !isStatusLocked(d.status) ? { status } : {}),
 					...(dl ? { downloadPeers: dl.peers, downloadSpeed: dl.bytesPerSecond ? formatSize(dl.bytesPerSecond) + '/s' : d.downloadSpeed, rawDownloadSpeed: dl.bytesPerSecond ?? 0 } : {}),
 					...(ul ? { uploadPeers: ul.peers, uploadSpeed: formatSize(ul.bytesPerSecond) + '/s', rawUploadSpeed: ul.bytesPerSecond ?? 0 } : {}),
 				};

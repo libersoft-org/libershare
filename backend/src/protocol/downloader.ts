@@ -87,7 +87,7 @@ export class Downloader {
 		this.setupCallForPeersInterval();
 		if (this.state === 'downloading' || this.state === 'awaiting-manifest') {
 			this.callForPeers().catch(() => {});
-			this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); });
+			this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
 		}
 	}
 
@@ -105,7 +105,7 @@ export class Downloader {
 		// Notify frontend to reset peers/speed immediately
 		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
 		this.onProgress?.({ downloadedChunks: 0, totalChunks: total, peers: 0, bytesPerSecond: 0 });
-		this.downloadReject?.(new Error('Download cancelled'));
+		this.downloadReject?.(new CodedError(ErrorCodes.DOWNLOAD_CANCELLED));
 		this.downloadResolve = undefined;
 		this.downloadReject = undefined;
 		for (const resolve of this.enableResolvers) resolve();
@@ -117,9 +117,9 @@ export class Downloader {
 
 	private async waitIfDisabled(): Promise<void> {
 		if (!this.disabled) return;
-		if (this.destroyed) throw new Error('Download cancelled');
+		if (this.destroyed) throw new CodedError(ErrorCodes.DOWNLOAD_CANCELLED);
 		await new Promise<void>(resolve => { this.enableResolvers.push(resolve); });
-		if (this.destroyed) throw new Error('Download cancelled');
+		if (this.destroyed) throw new CodedError(ErrorCodes.DOWNLOAD_CANCELLED);
 	}
 
 	private subscribePubsub(): void {
@@ -254,7 +254,7 @@ export class Downloader {
 					if (this.peers.size === 0) {
 						console.debug(`[DL-DBG] Still no peers after callForPeers, scheduling retry in 10s`);
 						this.lastExhaustedTime = Date.now();
-						setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); }); }, 10000);
+						setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); }); }, 10000);
 						return;
 					}
 				}
@@ -272,7 +272,7 @@ export class Downloader {
 					this.peers.clear();
 					this.failedPeers.clear();
 					this.lastExhaustedTime = Date.now();
-					setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); }); }, 10000);
+					setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); }); }, 10000);
 					return;
 				}
 			}
@@ -484,7 +484,7 @@ export class Downloader {
 			}
 		}
 		if (foundNew && !this.downloadActive) {
-			this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); });
+			this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
 		}
 	}
 
@@ -501,12 +501,13 @@ export class Downloader {
 			this.failedPeers.clear();
 			this.lastExhaustedTime = 0;
 			await this.probeTopicPeers();
-			if (!this.downloadActive && this.peers.size > before) this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); });
+			if (!this.downloadActive && this.peers.size > before) this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
 		}, 15000);
 	}
 
 	private async handlePubsubMessage(topic: string, data: Record<string, any>): Promise<void> {
 		if (this.destroyed) return;
+		if (this.disabled) return;
 		if (!this.networkIDs.some(nid => topic === lishTopic(nid))) return;
 		if (data['type'] === 'have' && data['lishID'] === this.lishID && data['chunks']) {
 			if (this.downloadActive) {
@@ -519,7 +520,7 @@ export class Downloader {
 				return;
 			}
 			this.lastExhaustedTime = 0;
-			if (!this.downloadActive) this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); });
+			if (!this.downloadActive) this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
 		}
 	}
 
