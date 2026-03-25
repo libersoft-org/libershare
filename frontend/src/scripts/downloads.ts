@@ -1,4 +1,4 @@
-import { writable, get } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { type ILISHDetail } from '@shared';
 import { api } from './api.ts';
 import { formatSize } from './utils.ts';
@@ -50,7 +50,9 @@ export interface DownloadData {
 	downloadPeers: number;
 	uploadPeers: number;
 	downloadSpeed: string;
+	rawDownloadSpeed: number;
 	uploadSpeed: string;
+	rawUploadSpeed: number;
 	files: DownloadFileData[];
 	verifiedChunks: number;
 	totalChunks: number;
@@ -105,7 +107,9 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 		downloadPeers: 0,
 		uploadPeers: 0,
 		downloadSpeed: '0 B/s',
+		rawDownloadSpeed: 0,
 		uploadSpeed: '0 B/s',
+		rawUploadSpeed: 0,
 		files,
 		verifiedChunks: detail.verifiedChunks,
 		totalChunks: detail.totalChunks,
@@ -137,6 +141,16 @@ let currentDetailLISHID: string | null = null;
 
 export const downloads = writable<DownloadData[]>([]);
 export const downloadsLoading = writable<boolean>(true);
+export const transferStats = derived(downloads, $dl => {
+	let dlPeers = 0, ulPeers = 0, dlSpeed = 0, ulSpeed = 0;
+	for (const d of $dl) {
+		dlPeers += d.downloadPeers;
+		ulPeers += d.uploadPeers;
+		dlSpeed += d.rawDownloadSpeed;
+		ulSpeed += d.rawUploadSpeed;
+	}
+	return { downloadPeers: dlPeers, uploadPeers: ulPeers, downloadSpeed: dlSpeed, uploadSpeed: ulSpeed };
+});
 // Track which LISHs are actively downloading (by lishID → last progress timestamp)
 const activeDownloads = new Map<string, number>();
 // Track explicitly disabled downloads (prevents progress events from overriding disabled state)
@@ -209,8 +223,8 @@ export async function initDownloads(): Promise<void> {
 				return {
 					...d,
 					...(status !== 'idling' ? { status } : {}),
-					...(dl ? { downloadPeers: dl.peers, downloadSpeed: dl.bytesPerSecond ? formatSize(dl.bytesPerSecond) + '/s' : d.downloadSpeed } : {}),
-					...(ul ? { uploadPeers: ul.peers, uploadSpeed: formatSize(ul.bytesPerSecond) + '/s' } : {}),
+					...(dl ? { downloadPeers: dl.peers, downloadSpeed: dl.bytesPerSecond ? formatSize(dl.bytesPerSecond) + '/s' : d.downloadSpeed, rawDownloadSpeed: dl.bytesPerSecond ?? 0 } : {}),
+					...(ul ? { uploadPeers: ul.peers, uploadSpeed: formatSize(ul.bytesPerSecond) + '/s', rawUploadSpeed: ul.bytesPerSecond ?? 0 } : {}),
 				};
 			}));
 		}
@@ -417,7 +431,8 @@ export async function initDownloads(): Promise<void> {
 							return { ...f, verifiedChunks: fVerified, progress: fileProgress, downloadedSize: fDownloadedSize };
 						});
 					}
-					return { ...d, status, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks, totalDownloadedBytes, files };
+					const rawDownloadSpeed = data.bytesPerSecond ?? 0;
+					return { ...d, status, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, rawDownloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks, totalDownloadedBytes, files };
 				})
 			);
 			// Reset stale timer — if no progress in 10s, clear speed/peers
@@ -428,7 +443,7 @@ export async function initDownloads(): Promise<void> {
 				downloads.update(list => list.map(d => {
 					if (d.id !== data.lishID) return d;
 					const status = isStatusLocked(d.status) ? d.status : (d.status === 'allocating') ? 'allocating' as DownloadStatus : computeStatus(false, activeUploadLishs.has(data.lishID));
-					return { ...d, downloadPeers: 0, downloadSpeed: '0 B/s', status };
+					return { ...d, downloadPeers: 0, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, status };
 				}));
 			}, 10000));
 		});
@@ -488,7 +503,7 @@ export async function initDownloads(): Promise<void> {
 					const isDown = d.status === 'downloading' || d.status === 'downloading-uploading' || activeDownloads.has(data.lishID);
 					const status = isStatusLocked(d.status) ? d.status : computeStatus(isDown, true);
 					const totalUploadedBytes = d.totalUploadedBytes + (deltaUlChunks > 0 && d.chunkSize > 0 ? deltaUlChunks * d.chunkSize : 0);
-					return { ...d, status, uploadPeers: data.peers, uploadSpeed, totalUploadedBytes };
+					return { ...d, status, uploadPeers: data.peers, uploadSpeed, rawUploadSpeed: data.bytesPerSecond, totalUploadedBytes };
 				})
 			);
 			// Reset stale timer — if no progress in 15s, clear upload state
@@ -499,7 +514,7 @@ export async function initDownloads(): Promise<void> {
 				uploadTimeouts.delete(data.lishID);
 				downloads.update(list => list.map(d => {
 					if (d.id !== data.lishID) return d;
-					return { ...d, uploadSpeed: '0 B/s', uploadPeers: 0, status: isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false) };
+					return { ...d, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0, status: isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false) };
 				}));
 			}, 15000));
 		});
@@ -510,7 +525,7 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
-				return { ...d, status, uploadEnabled: false, uploadSpeed: '0 B/s', uploadPeers: 0 };
+				return { ...d, status, uploadEnabled: false, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0 };
 			}));
 		});
 
@@ -529,7 +544,7 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
-				return { ...d, uploadSpeed: '0 B/s', uploadPeers: 0, status };
+				return { ...d, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0, status };
 			}));
 		});
 	}
@@ -583,7 +598,9 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 		downloadPeers: 0,
 		uploadPeers: 0,
 		downloadSpeed: '-',
+		rawDownloadSpeed: 0,
 		uploadSpeed: '-',
+		rawUploadSpeed: 0,
 		files: [],
 		verifiedChunks: 0,
 		totalChunks: 0,
