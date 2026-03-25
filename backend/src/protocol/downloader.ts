@@ -87,7 +87,7 @@ export class Downloader {
 		this.setupCallForPeersInterval();
 		if (this.state === 'downloading' || this.state === 'awaiting-manifest') {
 			this.callForPeers().catch(() => {});
-			this.doWork().catch(() => {});
+			this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); });
 		}
 	}
 
@@ -117,7 +117,9 @@ export class Downloader {
 
 	private async waitIfDisabled(): Promise<void> {
 		if (!this.disabled) return;
+		if (this.destroyed) throw new Error('Download cancelled');
 		await new Promise<void>(resolve => { this.enableResolvers.push(resolve); });
+		if (this.destroyed) throw new Error('Download cancelled');
 	}
 
 	private subscribePubsub(): void {
@@ -251,7 +253,7 @@ export class Downloader {
 					if (this.peers.size === 0) {
 						console.debug(`[DL-DBG] Still no peers after callForPeers, scheduling retry in 10s`);
 						this.lastExhaustedTime = Date.now();
-						setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(() => {}); }, 10000);
+						setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); }); }, 10000);
 						return;
 					}
 				}
@@ -269,7 +271,7 @@ export class Downloader {
 					this.peers.clear();
 					this.failedPeers.clear();
 					this.lastExhaustedTime = Date.now();
-					setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(() => {}); }, 10000);
+					setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); }); }, 10000);
 					return;
 				}
 			}
@@ -315,6 +317,7 @@ export class Downloader {
 			activePeerLoops.add(peerID);
 			let skippedChunks = 0;
 			while (true) {
+				if (this.destroyed) break;
 				await this.waitIfDisabled();
 				let chunk: MissingChunk | undefined;
 				await lock.runExclusive(() => {
@@ -442,6 +445,7 @@ export class Downloader {
 	}
 
 	private async probeTopicPeers(): Promise<void> {
+		if (this.destroyed) return;
 		const topicPeers = new Set<string>();
 		for (const nid of this.networkIDs) {
 			for (const p of this.network.getTopicPeers(nid)) topicPeers.add(p);
@@ -479,7 +483,7 @@ export class Downloader {
 			}
 		}
 		if (foundNew && !this.downloadActive) {
-			this.doWork().then(() => {});
+			this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); });
 		}
 	}
 
@@ -496,7 +500,7 @@ export class Downloader {
 			this.failedPeers.clear();
 			this.lastExhaustedTime = 0;
 			await this.probeTopicPeers();
-			if (!this.downloadActive && this.peers.size > before) this.doWork().catch(() => {});
+			if (!this.downloadActive && this.peers.size > before) this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); });
 		}, 15000);
 	}
 
@@ -514,7 +518,7 @@ export class Downloader {
 				return;
 			}
 			this.lastExhaustedTime = 0;
-			if (!this.downloadActive) this.doWork().then(() => {});
+			if (!this.downloadActive) this.doWork().catch(e => { if (e?.message !== 'Download cancelled') console.error('[DL] doWork error:', e); });
 		}
 	}
 
