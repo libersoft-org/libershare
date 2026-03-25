@@ -361,7 +361,8 @@ export async function initDownloads(): Promise<void> {
 				downloads.update(list => list.map(d => d.id !== data.lishID ? d : { ...d, status: 'allocating' as DownloadStatus }));
 				return;
 			}
-			activeDownloads.set(data.lishID, Date.now());
+			if (data.peers > 0) activeDownloads.set(data.lishID, Date.now());
+			else activeDownloads.delete(data.lishID);
 			const hasPeers = data.peers > 0;
 			// Calculate delta chunks since last event for cumulative byte tracking
 			const prevChunks = lastDownloadedChunks.get(data.lishID) ?? data.downloadedChunks;

@@ -416,9 +416,11 @@ export class Downloader {
 				console.log(`[DL] Peers exhausted at ${downloadedCount}/${totalChunks}, will retry`);
 			}
 		} finally {
-			for (const [, client] of this.peers) await client.close();
+			for (const [, client] of this.peers) await client.close().catch(() => {});
 			this.peers.clear();
 			this.lastServingPeerCount = 0;
+			// Reset frontend peers/speed immediately when all peer loops finish
+			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: 0, bytesPerSecond: 0 });
 		}
 	}
 

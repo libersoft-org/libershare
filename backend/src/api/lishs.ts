@@ -242,7 +242,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		if (p.deleteLISH) {
 			// Full deletion — stop transfers, stop verification, clean up, delete DB row
 			removeUploadState(p.lishID);
-			removeDownloadState(p.lishID);
+			await removeDownloadState(p.lishID);
 			// Stop any running/queued verification for this LISH
 			if (currentVerification?.lishID === p.lishID) currentVerification.ac.abort();
 			const qIdx = verificationQueue.indexOf(p.lishID);
