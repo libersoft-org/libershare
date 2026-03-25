@@ -330,6 +330,7 @@
 		"filterPattern": "Filtr",
 		"enterFilterPattern": "Zadejte filtr (např. *.txt, *.jpg)",
 		"loadDirectoryFailed": "Nepodařilo se načíst adresář",
+		"permissionDenied": "Přístup odepřen — nelze otevřít tento adresář",
 		"deleteFailed": "Nepodařilo se smazat",
 		"deleteDirectoryFailed": "Nepodařilo se smazat adresář",
 		"createDirectoryFailed": "Nepodařilo se vytvořit adresář",

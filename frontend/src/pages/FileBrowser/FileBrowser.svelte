@@ -122,6 +122,11 @@
 		try {
 			const options: LoadDirectoryOptions = { directoriesOnly: directoriesOnly, filesOnly, fileFilter: activeFilter };
 			const result = await loadDirectoryFromAPI(path, separator, options);
+			if (result.permissionDenied) {
+				addNotification($t('fileBrowser.permissionDenied'));
+				if (parentPath !== null) await loadDirectory(parentPath);
+				return;
+			}
 			currentPath = result.path;
 			parentPath = result.parentPath;
 			items = result.items;
