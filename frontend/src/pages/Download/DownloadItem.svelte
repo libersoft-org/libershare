@@ -72,7 +72,7 @@
 	</TableCell>
 	<TableCell align="center" desktopOnly>{truncateID(id)}</TableCell>
 	<TableCell align="center" desktopOnly>{sizeDisplay}</TableCell>
-	<TableCell desktopOnly><ProgressBar {progress} animated={status === 'downloading' || status === 'downloading-uploading' || status === 'verifying' || status === 'moving'} /></TableCell>
+	<TableCell desktopOnly><ProgressBar {progress} animated={status === 'downloading' || status === 'downloading-uploading' || status === 'verifying' || status === 'moving' || status === 'allocating'} /></TableCell>
 	<TableCell align="center" desktopOnly><Badge label={$t('downloads.statuses.' + status)} {status} /></TableCell>
 	<TableCell align="center" desktopOnly><span class="peers">{#if totalDownloadedBytes || totalUploadedBytes}<span class="dl">↓{formatSize(totalDownloadedBytes)}</span> <span class="ul">↑{formatSize(totalUploadedBytes)}</span>{:else}—{/if}</span></TableCell>
 	<TableCell align="center" desktopOnly><ModeBadge mode={enabledMode} /></TableCell>

@@ -231,7 +231,8 @@ export class Downloader {
 				} else {
 					console.debug(`[DL-DBG] Skipping __allocating__ for ${this.lishID.slice(0, 8)} (already has ${downloadedForProgress} chunks)`);
 				}
-				await this.createDirectoryStructure();
+				await this.createDirectoryStructure(totalChunksForProgress);
+				if (this.destroyed) return;
 				console.debug(`[DL-DBG] Phase 2 done: ${this.lishID.slice(0, 8)}, sending reset progress`);
 				this.onProgress?.({ downloadedChunks: downloadedForProgress, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0 });
 				this.state = 'downloading';
@@ -537,7 +538,7 @@ export class Downloader {
 		return resolved;
 	}
 
-	private async createDirectoryStructure(): Promise<void> {
+	private async createDirectoryStructure(totalChunksForProgress: number): Promise<void> {
 		const startTime = Date.now();
 		if (this.lish.directories) {
 			for (const dir of this.lish.directories) {
@@ -547,16 +548,38 @@ export class Downloader {
 		let createdFiles = 0;
 		let skippedFiles = 0;
 		if (this.lish.files) {
+			const totalBytes = this.lish.files.reduce((sum, f) => sum + f.size, 0);
+			let totalWritten = 0;
+			let nextProgressAt = 100 * 1024 * 1024; // emit every ~100MB
 			for (const file of this.lish.files) {
+				if (this.destroyed) return;
 				const filePath = this.safePath(file.path);
 				await mkdir(dirname(filePath), { recursive: true });
 				if (!(await Bun.file(filePath).exists())) {
 					const fd = await open(filePath, 'w');
-					await fd.truncate(file.size);
-					await fd.close();
+					try {
+						const zeroChunk = new Uint8Array(1024 * 1024);
+						let remaining = file.size;
+						while (remaining > 0) {
+							if (this.destroyed) return;
+							const writeSize = Math.min(remaining, zeroChunk.length);
+							await fd.write(zeroChunk.subarray(0, writeSize));
+							remaining -= writeSize;
+							totalWritten += writeSize;
+							if (totalWritten >= nextProgressAt || remaining === 0) {
+								nextProgressAt = totalWritten + 100 * 1024 * 1024;
+								const pct = totalBytes > 0 ? Math.round((totalWritten / totalBytes) * 100) : 0;
+								this.onProgress?.({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: pct });
+								await new Promise(r => setTimeout(r, 0));
+							}
+						}
+					} finally {
+						await fd.close();
+					}
 					createdFiles++;
-					console.debug(`[DL-DBG] Created file: ${file.path} (${file.size} bytes, truncate)`);
+					console.debug(`[DL-DBG] Created file: ${file.path} (${file.size} bytes, zero-fill)`);
 				} else {
+					totalWritten += file.size;
 					skippedFiles++;
 				}
 			}

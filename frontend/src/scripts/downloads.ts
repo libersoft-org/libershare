@@ -363,12 +363,18 @@ export async function initDownloads(): Promise<void> {
 		// transfer.download:progress — with stale timeout to reset peers/speed
 		const downloadStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number; filePath?: string; fileDownloadedChunks?: number }) => {
-		// Allocating signal — always process (even if disabled — clears stale disabled state)
+			// Allocating signal — always process (even if disabled — clears stale disabled state)
 			if (data.filePath === '__allocating__') {
 				disabledDownloads.delete(data.lishID);
+				// Clear stale timeout — allocation can take minutes on Docker overlay2
+				const prevTimer = downloadStaleTimeouts.get(data.lishID);
+				if (prevTimer) { clearTimeout(prevTimer); downloadStaleTimeouts.delete(data.lishID); }
 				downloads.update(list => list.map(d => {
-					if (d.id !== data.lishID || isStatusLocked(d.status)) return d;
-					return { ...d, status: 'allocating' as DownloadStatus };
+					if (d.id !== data.lishID) return d;
+					// Allow allocating updates when already allocating, but not when verifying/moving
+					if (d.status !== 'allocating' && isStatusLocked(d.status)) return d;
+					const allocProgress = data.fileDownloadedChunks ?? 0; // percentage 0-100
+					return { ...d, status: 'allocating' as DownloadStatus, progress: allocProgress };
 				}));
 				return;
 			}
@@ -385,7 +391,7 @@ export async function initDownloads(): Promise<void> {
 					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
 					const downloadedSize = d.rawTotalSize > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
 					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : (data.peers === 0 ? '0 B/s' : d.downloadSpeed);
-					const status = isStatusLocked(d.status) ? d.status : computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
+					const status = isStatusLocked(d.status) ? d.status : (d.status === 'allocating' && !hasPeers) ? 'allocating' as DownloadStatus : computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
 					const totalDownloadedBytes = d.totalDownloadedBytes + (deltaChunks > 0 && d.chunkSize > 0 ? deltaChunks * d.chunkSize : 0);
 					// Update per-file progress if filePath provided
 					let files = d.files;
@@ -408,7 +414,7 @@ export async function initDownloads(): Promise<void> {
 				downloadStaleTimeouts.delete(data.lishID);
 				downloads.update(list => list.map(d => {
 					if (d.id !== data.lishID) return d;
-					const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
+					const status = isStatusLocked(d.status) ? d.status : (d.status === 'allocating') ? 'allocating' as DownloadStatus : computeStatus(false, activeUploadLishs.has(data.lishID));
 					return { ...d, downloadPeers: 0, downloadSpeed: '0 B/s', status };
 				}));
 			}, 10000));
@@ -537,7 +543,7 @@ export function resetVerifyState(lishID: string): void {
 	downloads.update(list =>
 		list.map(d => {
 			if (d.id !== lishID) return d;
-			if (d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'uploading') return d;
+			if (d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'uploading' || d.status === 'allocating') return d;
 			const files = d.files.map(f => (f.type !== 'file' ? f : { ...f, verifiedChunks: 0, progress: 0, downloadedSize: '0 B' }));
 			return { ...d, verifiedChunks: 0, progress: 0, status: 'pending-verification' as DownloadStatus, files, downloadedSize: '0 B' };
 		})
