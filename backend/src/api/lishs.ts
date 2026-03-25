@@ -264,7 +264,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			await destroyActiveDownloader(p.lishID);
 			await deleteLISHData(lish);
 			dataServer.resetVerification(p.lishID);
-			clearBusy(p.lishID);
+			// Transition directly from 'deleting' to 'verifying' — no busy gap
+			setBusy(p.lishID, 'verifying');
 			startVerification(p.lishID);
 		}
 		return true;
