@@ -540,13 +540,7 @@ export class Downloader {
 				await mkdir(dirname(filePath), { recursive: true });
 				if (!(await Bun.file(filePath).exists())) {
 					const fd = await open(filePath, 'w');
-					const zeroChunk = new Uint8Array(1024 * 1024);
-					let remaining = file.size;
-					while (remaining > 0) {
-						const writeSize = Math.min(remaining, zeroChunk.length);
-						await fd.write(zeroChunk.slice(0, writeSize));
-						remaining -= writeSize;
-					}
+					await fd.truncate(file.size);
 					await fd.close();
 				}
 			}

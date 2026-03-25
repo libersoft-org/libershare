@@ -96,6 +96,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			})
 			.catch(err => {
 				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
+				if (err?.message === 'Download cancelled') return;
 				if (err instanceof CodedError) send('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID });
 				else send('transfer.download:error', { error: ErrorCodes.DOWNLOAD_ERROR, errorDetail: err.message, lishID });
 			});
