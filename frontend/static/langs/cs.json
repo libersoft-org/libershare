@@ -188,6 +188,7 @@
 			"downloadPathRequired": "Adresář pro stažení je povinný",
 			"jsonRequired": "LISH JSON je povinný",
 			"autoStartSharing": "Automaticky spustit sdílení po přidání",
+			"autoStartDownloading": "Automaticky spustit stahování po přidání",
 			"confirmOverwrite": "Následující LISH již existuje:\n\nJméno: {name}\nID: {id}\n\nChcete jej přepsat?"
 		},
 		"export": {
@@ -232,7 +233,8 @@
 			"maxUploadSpeed": "Maximální rychlost odesílání v KB/s (0 = neomezeno)",
 			"allowRelay": "Zapnout předávací server (přeposílat data pro ostatní účastníky)",
 			"maxRelayReservations": "Maximální počet spojení k předávacímu serveru (0 = neomezeno)",
-			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH (výchozí hodnota)"
+			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH (výchozí hodnota)",
+			"autoStartDownloadingDefault": "Automaticky spustit stahování po přidání LISH (výchozí hodnota)"
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",

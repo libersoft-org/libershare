@@ -69,6 +69,13 @@ export function restartDownloadIfEnabled(lishID: string): void {
 	}
 }
 
+/** Enable downloading for a LISH from outside the transfer module (e.g. after import). */
+export function triggerEnableDownload(lishID: string): void {
+	if (_enableDownloadFn) {
+		_enableDownloadFn({ lishID }).catch(() => {});
+	}
+}
+
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn): TransferHandlers {
 	const activeDownloaders = new Map<string, Downloader>();
 	setActiveDownloadersRef(activeDownloaders);

@@ -5,7 +5,7 @@ import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { setBusy, clearBusy } from './busy.ts';
 import { getEnabledUploads, isUploadEnabled, removeUploadState } from '../protocol/lish-protocol.ts';
-import { getDownloadEnabledLishs, isDownloadEnabled, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled } from './transfer.ts';
+import { getDownloadEnabledLishs, isDownloadEnabled, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, triggerEnableDownload } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
@@ -18,6 +18,7 @@ interface CreateLISHParams {
 	dataPath: string;
 	lishFile?: string;
 	addToSharing?: boolean;
+	addToDownloading?: boolean;
 	chunkSize?: number;
 	algorithm?: string;
 	threads?: number;
@@ -29,16 +30,22 @@ interface ImportFromFileParams {
 	filePath: string;
 	downloadPath: string;
 	overwrite?: boolean;
+	enableSharing?: boolean;
+	enableDownloading?: boolean;
 }
 interface ImportFromJSONParams {
 	json: string;
 	downloadPath: string;
 	overwrite?: boolean;
+	enableSharing?: boolean;
+	enableDownloading?: boolean;
 }
 interface ImportFromURLParams {
 	url: string;
 	downloadPath: string;
 	overwrite?: boolean;
+	enableSharing?: boolean;
+	enableDownloading?: boolean;
 }
 interface ExportToFileParams {
 	lishID: string;
@@ -171,6 +178,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	async function create(p: CreateLISHParams, client: any): Promise<CreateLISHResponse> {
 		assert(p, ['dataPath']);
 		const addToSharing = p.addToSharing ?? false;
+		const addToDownloading = p.addToDownloading ?? false;
 		const algorithm = p.algorithm ?? DEFAULT_ALGO;
 		const chunkSize = p.chunkSize ?? DEFAULT_CHUNK_SIZE;
 		const threads = p.threads ?? 0; // 0 = all CPU threads
@@ -231,6 +239,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			console.log(`✓ Dataset imported: ${lish.id}`);
 			broadcast('lishs:add', dataServer.getDetail(lish.id));
 			startVerification(lish.id);
+			if (addToDownloading) triggerEnableDownload(lish.id);
 		}
 		return { lishID: lish.id, lishFile: resultLISHFile };
 	}
@@ -271,7 +280,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return true;
 	}
 
-	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean): Promise<ImportLISHResponse> {
+	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
 		const existing = dataServer.get(lish.id);
 		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
 		if (existing) dataServer.delete(lish.id);
@@ -286,6 +295,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		console.log(`✓ LISH imported: ${lish.id}`);
 		broadcast('lishs:add', dataServer.getDetail(lish.id));
 		startVerification(lish.id);
+		if (enableSharing) enableUpload(lish.id);
+		if (enableDownloading) triggerEnableDownload(lish.id);
 		return { lishID: lish.id, directory };
 	}
 
@@ -294,7 +305,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
 		let lastResponse!: ImportLISHResponse;
 		for (const lish of lishs) {
-			lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+			lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
 		}
 		return lastResponse;
 	}
@@ -303,7 +314,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['json', 'downloadPath']);
 		const lishs = parseLISHFromJSON(p.json);
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
 		return lastResponse;
 	}
 
@@ -312,7 +323,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const content = await Utils.fetchURL(p.url);
 		const lishs = parseLISHFromJSON(content);
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
 		return lastResponse;
 	}
 

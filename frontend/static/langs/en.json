@@ -188,6 +188,7 @@
 			"downloadPathRequired": "Download directory is required",
 			"jsonRequired": "LISH JSON is required",
 			"autoStartSharing": "Automatically start sharing after adding",
+			"autoStartDownloading": "Automatically start downloading after adding",
 			"confirmOverwrite": "The following LISH already exists:\n\nName: {name}\nID: {id}\n\nDo you want to overwrite it?"
 		},
 		"export": {
@@ -232,7 +233,8 @@
 			"maxUploadSpeed": "Maximum upload speed in KB/s (0 = unlimited)",
 			"allowRelay": "Enable relay server (relay data for other peers)",
 			"maxRelayReservations": "Maximum number of connections to relay server (0 = unlimited)",
-			"autoStartSharingDefault": "Automatically start sharing after adding a LISH (default value)"
+			"autoStartSharingDefault": "Automatically start sharing after adding a LISH (default value)",
+			"autoStartDownloadingDefault": "Automatically start downloading after adding a LISH (default value)"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",
