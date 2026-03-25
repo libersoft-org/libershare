@@ -58,7 +58,10 @@ export function getParentPath(path: string, separator: string): string | null {
 		return separator === '/' ? '/' : '';
 	}
 	const parent = parts.slice(0, -1).join(separator);
-	return separator === '/' ? '/' + parent : parent;
+	if (separator === '/') return '/' + parent;
+	// Windows: ensure drive root has trailing backslash (C: → C:\)
+	if (/^[A-Z]:$/i.test(parent)) return parent + '\\';
+	return parent;
 }
 
 /**

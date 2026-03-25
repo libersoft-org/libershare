@@ -47,6 +47,8 @@ export function initFsHandlers(): FsHandlers {
 			if (isWindows) return { path: '', entries: await getWindowsDrives() };
 			else path = '/';
 		}
+		// Windows: bare drive letter (e.g. "C:") needs trailing backslash for readdir
+		if (isWindows && /^[A-Z]:$/i.test(path)) path += '\\';
 		const entries: any[] = [];
 		const dirents = await readdir(path, { withFileTypes: true });
 		for (const dirent of dirents) {
