@@ -192,8 +192,7 @@ export async function initDownloads(): Promise<void> {
 				.map(d => {
 					const entry = detailToDownload(d);
 					entry.uploadEnabled = ulSet.has(d.id);
-					const isComplete = d.totalChunks > 0 && d.verifiedChunks >= d.totalChunks;
-					entry.downloadEnabled = isComplete ? false : dlSet.has(d.id);
+					entry.downloadEnabled = dlSet.has(d.id);
 					if (moving.includes(d.id)) entry.status = 'moving';
 					else if (d.id === verifying) entry.status = 'verifying';
 					else if (pendingVerification.includes(d.id)) entry.status = 'pending-verification';
@@ -476,7 +475,7 @@ export async function initDownloads(): Promise<void> {
 				if (d.id !== data.lishID) return d;
 				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
 				const files = d.files.map(f => f.type !== 'file' ? f : { ...f, verifiedChunks: f.totalChunks, progress: 100, downloadedSize: formatSize(f.rawSize) });
-				return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir, downloadEnabled: false, files };
+				return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir, files };
 			}));
 		});
 

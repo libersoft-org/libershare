@@ -53,10 +53,9 @@
 	let downloadPaused = $derived(!isDownloading);
 	let uploadPaused = $derived(!isUploading);
 	let enabledMode = $derived(download ? computeEnabledMode(download.downloadEnabled, download.uploadEnabled) : 'disabled' as const);
-	let isComplete = $derived(download?.progress === 100);
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => {
-			if (action.id === 'toggle-download' && (isComplete || isBusy)) return false;
+			if (action.id === 'toggle-download' && isBusy) return false;
 			if (action.id === 'toggle-upload' && isBusy) return false;
 			if (action.id === 'move' && isBusy) return false;
 			if (action.id === 'verify' && !isVerifying && !isDownloading && !isMoving) return true;
