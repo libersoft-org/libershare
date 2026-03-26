@@ -302,7 +302,15 @@ export class Downloader {
 		const servingPeers = new Set<string>(); // peers that actually served at least 1 chunk
 		const corruptCount = new Map<string, number>(); // per-peer corruption counter
 		let globalNotAvailable = 0; // consecutive not_available across all peers — reset on any success
-		const fileDownloadedChunks = new Map<number, number>(); // fileIndex -> downloaded chunk count
+		// Pre-populate per-file downloaded chunk counts from DB
+		const fileDownloadedChunks = new Map<number, number>();
+		const fileVP = this.dataServer.getFileVerificationProgress(this.lishID);
+		if (this.lish.files) {
+			for (let i = 0; i < this.lish.files.length; i++) {
+				const vp = fileVP.find(f => f.filePath === this.lish.files![i]!.path);
+				if (vp) fileDownloadedChunks.set(i, vp.verifiedChunks);
+			}
+		}
 
 		const spawnNewPeerLoops = (): void => {
 			for (const [pid, cli] of this.peers) {
