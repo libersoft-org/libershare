@@ -51,7 +51,7 @@ export class Downloader {
 	private downloadResolve: (() => void) | undefined;
 	private downloadReject: ((err: Error) => void) | undefined;
 	private pubsubHandlers: { topic: string; handler: (data: Record<string, any>) => void }[] = [];
-	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number; filePath?: string; fileDownloadedChunks?: number }) => void;
+	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number }) => void;
 	private onManifestImported?: (lishID: string) => void;
 	private speedSamples: { time: number; bytes: number }[] = [];
 	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
@@ -110,8 +110,8 @@ export class Downloader {
 		this.downloadReject = undefined;
 		for (const resolve of this.enableResolvers) resolve();
 		this.enableResolvers = [];
-		this.onProgress = undefined;
-		this.onManifestImported = undefined;
+		delete this.onProgress;
+		delete this.onManifestImported;
 		console.log(`[DL] Destroyed ${this.lishID.slice(0, 8)}`);
 	}
 
@@ -180,8 +180,8 @@ export class Downloader {
 			await this.doWork();
 			console.debug(`[DL-DBG] download() doWork returned, state=${this.state}, peers=${this.peers.size}`);
 		}
-		// Wait until state reaches 'downloaded' — doWork is called from peer handler
-		if (this.state !== 'downloaded') {
+		// Wait until state reaches 'downloaded' — doWork may change state asynchronously
+		if ((this.state as State) !== 'downloaded') {
 			await new Promise<void>((resolve, reject) => {
 				this.downloadResolve = resolve;
 				this.downloadReject = reject;
@@ -404,7 +404,8 @@ export class Downloader {
 				const fIdx = chunk.fileIndex;
 				fileDownloadedChunks.set(fIdx, (fileDownloadedChunks.get(fIdx) ?? 0) + 1);
 				const filePath = this.lish.files?.[fIdx]?.path;
-				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond, filePath, fileDownloadedChunks: fileDownloadedChunks.get(fIdx) });
+				const fileChunks = fileDownloadedChunks.get(fIdx);
+				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond, ...(filePath != null ? { filePath } : {}), ...(fileChunks != null ? { fileDownloadedChunks: fileChunks } : {}) });
 				await downloadLimiter.throttle(data.length);
 				// Check for newly discovered peers and spawn loops for them
 				spawnNewPeerLoops();

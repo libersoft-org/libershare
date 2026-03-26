@@ -4,8 +4,8 @@ import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, re
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { setBusy, clearBusy } from './busy.ts';
-import { getEnabledUploads, isUploadEnabled, removeUploadState, enableUpload } from '../protocol/lish-protocol.ts';
-import { getDownloadEnabledLishs, isDownloadEnabled, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, triggerEnableDownload, markDownloadEnabled } from './transfer.ts';
+import { getEnabledUploads, removeUploadState, enableUpload } from '../protocol/lish-protocol.ts';
+import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, triggerEnableDownload, markDownloadEnabled } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
@@ -503,7 +503,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 					await new Promise<void>((resolve, reject) => {
 						const rs = createReadStream(srcPath);
 						const ws = createWriteStream(dstPath);
-						rs.on('data', (chunk: Buffer) => {
+						rs.on('data', (chunk: string | Buffer) => {
 							fileBytes += chunk.length;
 							if (fileBytes - lastReported >= PROGRESS_INTERVAL) {
 								lastReported = fileBytes;
