@@ -248,7 +248,7 @@ export async function initDownloads(): Promise<void> {
 						entry.downloadPeers = existing.downloadPeers;
 						entry.downloadSpeed = existing.downloadSpeed;
 						entry.progress = existing.progress > entry.progress ? existing.progress : entry.progress;
-						entry.downloadedSize = existing.downloadedSize;
+						if (existing.downloadedSize !== undefined) entry.downloadedSize = existing.downloadedSize;
 					}
 					const updated = [...list];
 					updated[idx] = entry;
