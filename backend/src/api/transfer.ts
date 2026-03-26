@@ -141,7 +141,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		const lish = dataServer.get(p.lishID);
 		if (!lish) return { success: false };
 		const missing = dataServer.getMissingChunks(p.lishID);
-		if (missing.length === 0) return { success: false }; // already complete
+		if (missing.length === 0) {
+			const send = broadcast ?? (() => {});
+			send('transfer.download:enabled', { lishID: p.lishID });
+			return { success: true };
+		}
 		pendingDownloads.add(p.lishID);
 		try {
 			const network = networks.getRunningNetwork();
