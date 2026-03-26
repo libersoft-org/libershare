@@ -220,19 +220,20 @@ export class Downloader {
 				}
 				if (this.needsManifest) return;
 			}
-			// Phase 2: create directory structure
+			// Phase 2: create directory structure (skip if already has downloaded chunks — files already allocated)
 			if (this.state === 'preparing') {
 				const totalChunksForProgress = this.dataServer.getAllChunkCount(this.lishID) || this.missingChunks.length;
 				const downloadedForProgress = totalChunksForProgress - this.missingChunks.length;
 				console.debug(`[DL-DBG] Phase 2: preparing ${this.lishID.slice(0, 8)}, downloaded=${downloadedForProgress}/${totalChunksForProgress}, missing=${this.missingChunks.length}, onProgress=${!!this.onProgress}`);
-				if (downloadedForProgress === 0) {
-					console.debug(`[DL-DBG] Sending __allocating__ signal for ${this.lishID.slice(0, 8)}`);
+				const needsAllocation = await this.needsFileAllocation();
+				if (needsAllocation) {
+					console.debug(`[DL-DBG] Allocating files for ${this.lishID.slice(0, 8)}`);
 					this.onProgress?.({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
+					await this.createDirectoryStructure(totalChunksForProgress);
+					if (this.destroyed) return;
 				} else {
-					console.debug(`[DL-DBG] Skipping __allocating__ for ${this.lishID.slice(0, 8)} (already has ${downloadedForProgress} chunks)`);
+					console.debug(`[DL-DBG] Skipping allocation for ${this.lishID.slice(0, 8)} (files exist with correct sizes)`);
 				}
-				await this.createDirectoryStructure(totalChunksForProgress);
-				if (this.destroyed) return;
 				console.debug(`[DL-DBG] Phase 2 done: ${this.lishID.slice(0, 8)}, sending reset progress`);
 				this.onProgress?.({ downloadedChunks: downloadedForProgress, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0 });
 				this.state = 'downloading';
@@ -546,6 +547,16 @@ export class Downloader {
 		const resolved = resolve(this.downloadDir, relativePath);
 		if (!resolved.startsWith(resolve(this.downloadDir) + sep)) throw new Error(`Path traversal blocked: ${relativePath}`);
 		return resolved;
+	}
+
+	private async needsFileAllocation(): Promise<boolean> {
+		if (!this.lish.files) return false;
+		for (const file of this.lish.files) {
+			const filePath = this.safePath(file.path);
+			const f = Bun.file(filePath);
+			if (!(await f.exists()) || f.size !== file.size) return true;
+		}
+		return false;
 	}
 
 	private async createDirectoryStructure(totalChunksForProgress: number): Promise<void> {
