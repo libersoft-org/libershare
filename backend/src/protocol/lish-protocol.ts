@@ -85,7 +85,12 @@ export class LISHClient {
 			if (responseMsg.done || !responseMsg.value) return null;
 			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
 			const response: LISHResponse = JSON.parse(new TextDecoder().decode(responseData));
-			if (response.data) return new Uint8Array(Buffer.from(response.data, 'base64'));
+			if (response.data) {
+				// Support both base64 (our branch) and number[] (main branch) formats
+				if (typeof response.data === 'string') return new Uint8Array(Buffer.from(response.data, 'base64'));
+				if (Array.isArray(response.data)) return new Uint8Array(response.data);
+				return null;
+			}
 			return null;
 		} catch (error) {
 			console.error('Error requesting chunk:', error);
@@ -140,6 +145,8 @@ export function enableUpload(lishID: string): void { uploadEnabled.add(lishID); 
 export function isUploadDisabled(lishID: string): boolean { return !uploadEnabled.has(lishID); }
 export function isUploadEnabled(lishID: string): boolean { return uploadEnabled.has(lishID); }
 export function getEnabledUploads(): Set<string> { return uploadEnabled; }
+/** Remove in-memory upload state without DB persist (for LISH deletion). */
+export function removeUploadState(lishID: string): void { uploadEnabled.delete(lishID); broadcastFn?.('transfer.upload:disabled', { lishID }); }
 
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer): Promise<void> {
 	const servedLishIDs = new Set<string>();
@@ -165,8 +172,11 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 				// Chunk request (default)
 				const chunkReq = request as LISHChunkRequest;
 				if (!uploadEnabled.has(chunkReq.lishID) || isBusy(chunkReq.lishID)) {
-					stream.abort(new Error('UPLOAD_BLOCKED'));
-					return;
+					// Send null response — peer sees 'not_available' and moves on
+					const blockedResponse: LISHResponse = { data: null };
+					const blockedData = new TextEncoder().encode(JSON.stringify(blockedResponse));
+					await sendLengthPrefixed(stream, blockedData);
+					continue;
 				}
 				const chunkData = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
 				const response: LISHResponse = { data: chunkData ? Buffer.from(chunkData).toString('base64') : null };
@@ -177,6 +187,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 						servedLishIDs.add(chunkReq.lishID);
 						activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
 					}
+					dataServer.incrementUploadedBytes(chunkReq.lishID as import('@shared').LISHid, chunkData.length);
 					await uploadLimiter.throttle(chunkData.length);
 					// Upload progress tracking (rolling 10s speed window)
 					if (broadcastFn) {

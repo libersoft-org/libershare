@@ -2,6 +2,7 @@ import os from 'os';
 import { statfs } from 'fs/promises';
 import type { SystemRAMInfo, SystemStorageInfo, SystemCPUInfo } from '@shared';
 import type { Settings } from '../settings.ts';
+import { Utils } from '../utils.ts';
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
 const POLL_INTERVAL_MS = 5000;
@@ -51,7 +52,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	prevCpuTimes = sampleCpuTimes();
 
 	async function getStorageInfo(): Promise<SystemStorageInfo> {
-		const downloadPath = settings.get('storage.downloadPath');
+		const downloadPath = Utils.expandHome(settings.get('storage.downloadPath'));
 		const stats = await statfs(downloadPath);
 		const total = stats.blocks * stats.bsize;
 		const free = stats.bavail * stats.bsize;

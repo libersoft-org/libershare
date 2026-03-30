@@ -4,8 +4,9 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { downloads, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID } from '../../scripts/downloads.ts';
-	import { scrollToElement } from '../../scripts/utils.ts';
+	import { downloads, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
+	import ModeBadge from '../../components/Badge/ModeBadge.svelte';
+	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
@@ -45,15 +46,16 @@
 	// Toolbar actions - adapt to current download state
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
 	let isMoving = $derived(download?.status === 'moving');
-	let isBusy = $derived(isVerifying || isMoving);
-	let isDownloading = $derived(download?.status === 'downloading' || download?.status === 'downloading-uploading');
-	let isUploading = $derived(download?.status === 'uploading' || download?.status === 'downloading-uploading');
+	let isAllocating = $derived(download?.status === 'allocating');
+	let isBusy = $derived(isVerifying || isMoving || isAllocating);
+	let isDownloading = $derived(download?.downloadEnabled ?? false);
+	let isUploading = $derived(download?.uploadEnabled ?? false);
 	let downloadPaused = $derived(!isDownloading);
 	let uploadPaused = $derived(!isUploading);
-	let isComplete = $derived(download?.progress === 100);
+	let enabledMode = $derived(download ? computeEnabledMode(download.downloadEnabled, download.uploadEnabled) : 'disabled' as const);
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => {
-			if (action.id === 'toggle-download' && (isComplete || isBusy)) return false;
+			if (action.id === 'toggle-download' && isBusy) return false;
 			if (action.id === 'toggle-upload' && isBusy) return false;
 			if (action.id === 'move' && isBusy) return false;
 			if (action.id === 'verify' && !isVerifying && !isDownloading && !isMoving) return true;
@@ -185,11 +187,7 @@
 			return;
 		}
 		if (!success) deleteError = $t('downloads.deleteFailed');
-		if (success && !deleteLISH) {
-			if (isVerifying) await api.lishs.stopVerify(lishID).catch(err => console.error('Stop verification failed:', err));
-			resetVerifyState(lishID);
-			api.lishs.verify(lishID).catch(err => console.error('Verification failed:', err));
-		}
+		// Backend already handles verification after data-only delete (startVerification in del())
 		activateArea(toolbarAreaID);
 	}
 
@@ -427,11 +425,15 @@
 						</TableRow>
 						<TableRow>
 							<Cell>{$t('common.progress')}:</Cell>
-							<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving'} /></span></Cell>
+							<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating'} /></span></Cell>
 						</TableRow>
 						<TableRow>
 							<Cell>{$t('common.status')}:</Cell>
 							<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} status={download.status} /></Cell>
+						</TableRow>
+						<TableRow>
+							<Cell>{$t('downloads.mode')}:</Cell>
+							<Cell align="right"><ModeBadge mode={enabledMode} size="3vh" /></Cell>
 						</TableRow>
 						<TableRow>
 							<Cell>{$t('downloads.downloadingFrom')}:</Cell>
@@ -449,6 +451,14 @@
 							<Cell>{$t('downloads.uploadSpeed')}:</Cell>
 							<Cell align="right">{download.uploadSpeed}</Cell>
 						</TableRow>
+						<TableRow>
+							<Cell>{$t('downloads.downloaded')}:</Cell>
+							<Cell align="right">{formatSize(download.totalDownloadedBytes)}</Cell>
+						</TableRow>
+						<TableRow>
+							<Cell>{$t('downloads.uploaded')}:</Cell>
+							<Cell align="right">{formatSize(download.totalUploadedBytes)}</Cell>
+						</TableRow>
 					</Table>
 				</div>
 				<!-- Files table -->
@@ -461,7 +471,7 @@
 						</Header>
 						<div class="items">
 							{#each download.files as file, index (file.id)}
-								<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving') && file.progress < 100} />
+								<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
 							{/each}
 						</div>
 					</Table>

@@ -35,6 +35,7 @@ const errorCodes = [
 
 	// Downloader
 	'DOWNLOADER_NOT_INITIALIZED',
+	'DOWNLOAD_CANCELLED',
 
 	// Utils
 	'INVALID_JSON',

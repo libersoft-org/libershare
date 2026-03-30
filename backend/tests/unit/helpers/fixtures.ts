@@ -1,48 +1,46 @@
 import { Database } from 'bun:sqlite';
-import type { LISHid, ChunkID, IStoredLISH } from '@shared';
+import type { IStoredLISH, LISHid, ChunkID } from '@shared';
 import { initLISHsTables, addLISH } from '../../../src/db/lishs.ts';
 
-export const TEST_LISH_ID: LISHid = 'test-lish-abc123';
-export const TEST_LISH_ID_2: LISHid = 'test-lish-def456';
+export const TEST_LISH_ID = 'sha256:0001aabbccdd000000000000000000000000000000000000000000000000' as LISHid;
+export const TEST_LISH_ID_2 = 'sha256:0002aabbccdd000000000000000000000000000000000000000000000000' as LISHid;
 
-/**
- * Three chunk IDs spread across two files:
- *   file[0] "docs/readme.txt"  → chunk[0], chunk[1]
- *   file[1] "data/archive.bin" → chunk[2]
- */
 export const TEST_CHUNK_IDS: [ChunkID, ChunkID, ChunkID] = [
-	'sha256:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222cc',
-	'sha256:bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222cccc3333dd',
-	'sha256:cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222cccc3333dddd4444ee',
+	'sha256:aaaa000000000000000000000000000000000000000000000000000000000001' as ChunkID,
+	'sha256:aaaa000000000000000000000000000000000000000000000000000000000002' as ChunkID,
+	'sha256:aaaa000000000000000000000000000000000000000000000000000000000003' as ChunkID,
 ];
 
-/** Create a minimal IStoredLISH with two files and three chunks. */
-export function createTestLISH(overrides?: Partial<IStoredLISH>): IStoredLISH {
-	const [c0, c1, c2] = TEST_CHUNK_IDS;
+/** Default test LISH: 2 files with 3 chunks total. */
+function defaultTestLISH(): IStoredLISH {
 	return {
 		id: TEST_LISH_ID,
 		name: 'Test LISH',
 		description: 'A test dataset',
-		created: '2024-01-01T00:00:00Z',
+		created: '2025-01-01T00:00:00.000Z',
 		chunkSize: 1048576,
 		checksumAlgo: 'sha256',
 		files: [
-			{
-				path: 'docs/readme.txt',
-				size: 2097152,
-				checksums: [c0, c1],
-			},
-			{
-				path: 'data/archive.bin',
-				size: 1048576,
-				checksums: [c2],
-			},
+			{ path: 'docs/readme.txt', size: 2097152, checksums: [TEST_CHUNK_IDS[0], TEST_CHUNK_IDS[1]] },
+			{ path: 'data/archive.bin', size: 1048576, checksums: [TEST_CHUNK_IDS[2]] },
 		],
-		...overrides,
 	};
 }
 
-/** Open an in-memory SQLite database with the LISH schema initialised. */
+/**
+ * Create a test IStoredLISH by merging defaults with the provided overrides.
+ * Accepts either an overrides object (with required id) or a plain LISHid string.
+ */
+export function createTestLISH(overrides?: (Partial<IStoredLISH> & { id: LISHid }) | LISHid): IStoredLISH {
+	const base = defaultTestLISH();
+	if (!overrides) return base;
+	if (typeof overrides === 'string') {
+		return { ...base, id: overrides };
+	}
+	return { ...base, ...overrides };
+}
+
+/** Create an in-memory SQLite database with the LISH schema initialized. */
 export function createTestDB(): Database {
 	const db = new Database(':memory:');
 	db.run('PRAGMA foreign_keys = ON');
@@ -50,7 +48,7 @@ export function createTestDB(): Database {
 	return db;
 }
 
-/** Insert a LISH into db. Defaults to createTestLISH() with no chunks downloaded. */
+/** Insert TEST_LISH_ID with 2 files and 3 chunks into the database. */
 export function populateTestDB(db: Database, lish?: IStoredLISH): void {
-	addLISH(db, lish ?? createTestLISH());
+	addLISH(db, lish ?? defaultTestLISH());
 }

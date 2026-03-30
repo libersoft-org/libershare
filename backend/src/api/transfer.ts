@@ -2,9 +2,9 @@ import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
-import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, isUploadDisabled } from '../protocol/lish-protocol.ts';
+import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads } from '../protocol/lish-protocol.ts';
 import { join } from 'path';
-import { isBusy, getBusyReason } from './busy.ts';
+import { isBusy } from './busy.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -35,8 +35,51 @@ export function initDownloadState(enabled: Set<string>, persistFn: PersistDownlo
 	persistDownloadEnabled = persistFn;
 }
 
+export function getDownloadEnabledLishs(): Set<string> { return downloadEnabledLishs; }
+export function isDownloadEnabled(lishID: string): boolean { return downloadEnabledLishs.has(lishID); }
+export function markDownloadEnabled(lishID: string): void { downloadEnabledLishs.add(lishID); persistDownloadEnabled?.(lishID, true); }
+let _activeDownloaders: Map<string, any> | null = null;
+export function setActiveDownloadersRef(ref: Map<string, any>): void { _activeDownloaders = ref; }
+export async function forceDisableDownload(lishID: string): Promise<void> {
+	downloadEnabledLishs.delete(lishID);
+	persistDownloadEnabled?.(lishID, false);
+	await destroyActiveDownloader(lishID);
+}
+
+/** Destroy and remove active downloader WITHOUT changing DB flags. */
+export async function destroyActiveDownloader(lishID: string): Promise<void> {
+	const dl = _activeDownloaders?.get(lishID);
+	if (dl) {
+		await dl.destroy();
+		_activeDownloaders!.delete(lishID);
+	}
+}
+
+/** Remove in-memory download state without DB persist (for LISH deletion). */
+export async function removeDownloadState(lishID: string): Promise<void> {
+	downloadEnabledLishs.delete(lishID);
+	await destroyActiveDownloader(lishID);
+}
+
+/** Restart download for a LISH if it was enabled. Called after busy state clears. */
+let _enableDownloadFn: ((p: { lishID: string }) => Promise<{ success: boolean }>) | null = null;
+export function setEnableDownloadFn(fn: (p: { lishID: string }) => Promise<{ success: boolean }>): void { _enableDownloadFn = fn; }
+export function restartDownloadIfEnabled(lishID: string): void {
+	if (downloadEnabledLishs.has(lishID) && _enableDownloadFn) {
+		_enableDownloadFn({ lishID }).catch(() => {});
+	}
+}
+
+/** Enable downloading for a LISH from outside the transfer module (e.g. after import). */
+export function triggerEnableDownload(lishID: string): void {
+	if (_enableDownloadFn) {
+		_enableDownloadFn({ lishID }).catch(() => {});
+	}
+}
+
 export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn): TransferHandlers {
 	const activeDownloaders = new Map<string, Downloader>();
+	setActiveDownloadersRef(activeDownloaders);
 
 	async function download(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
 		assert(p, ['networkID', 'lishPath']);
@@ -56,11 +99,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		downloader
 			.download()
 			.then(() => {
-				activeDownloaders.delete(lishID);
+				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
 				send('transfer.download:complete', { downloadDir, lishID });
 			})
 			.catch(err => {
-				activeDownloaders.delete(lishID);
+				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
+				if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) return;
 				if (err instanceof CodedError) send('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID });
 				else send('transfer.download:error', { error: ErrorCodes.DOWNLOAD_ERROR, errorDetail: err.message, lishID });
 			});
@@ -72,20 +116,23 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		downloadEnabledLishs.delete(p.lishID);
 		persistDownloadEnabled?.(p.lishID, false);
 		const dl = activeDownloaders.get(p.lishID);
-		if (dl) dl.pause();
+		if (dl) dl.disable();
 		const send = broadcast ?? (() => {});
 		send('transfer.download:disabled', { lishID: p.lishID });
 		return { success: true };
 	}
 
+	const pendingDownloads = new Set<string>();
+
 	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
 		if (isBusy(p.lishID)) return { success: false };
+		if (pendingDownloads.has(p.lishID)) return { success: true };
 		downloadEnabledLishs.add(p.lishID);
 		persistDownloadEnabled?.(p.lishID, true);
 		const dl = activeDownloaders.get(p.lishID);
 		if (dl) {
-			dl.resume();
+			dl.enable();
 			const send = broadcast ?? (() => {});
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
@@ -94,13 +141,18 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		const lish = dataServer.get(p.lishID);
 		if (!lish) return { success: false };
 		const missing = dataServer.getMissingChunks(p.lishID);
-		if (missing.length === 0) return { success: false }; // already complete
+		if (missing.length === 0) {
+			const send = broadcast ?? (() => {});
+			send('transfer.download:enabled', { lishID: p.lishID });
+			return { success: true };
+		}
+		pendingDownloads.add(p.lishID);
 		try {
 			const network = networks.getRunningNetwork();
-			const networkID = networks.getFirstJoinedNetworkID?.() ?? '';
-			if (!networkID) return { success: false };
+			const joinedNetworks = networks.getEnabled().map(n => n.networkID);
+			if (joinedNetworks.length === 0) return { success: false };
 			const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
-			const downloader = new Downloader(downloadDir, network, dataServer, networkID);
+			const downloader = new Downloader(downloadDir, network, dataServer, joinedNetworks);
 			await downloader.initFromManifest(lish);
 			activeDownloaders.set(p.lishID, downloader);
 			const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
@@ -108,15 +160,23 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				send('transfer.download:progress', { lishID: p.lishID, ...info });
 			});
 			downloader.download()
-				.then(() => { activeDownloaders.delete(p.lishID); send('transfer.download:complete', { downloadDir, lishID: p.lishID }); })
-				.catch(err => { activeDownloaders.delete(p.lishID); send('transfer.download:error', { error: err.message, lishID: p.lishID }); });
+				.then(() => { if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID); send('transfer.download:complete', { downloadDir, lishID: p.lishID }); })
+				.catch(err => {
+					if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID);
+					if (!(err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED)) send('transfer.download:error', { error: err.message, lishID: p.lishID });
+				});
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
 		} catch (err) {
 			console.error(`[Transfer] Failed to enable download for ${p.lishID}:`, err);
 			return { success: false };
+		} finally {
+			pendingDownloads.delete(p.lishID);
 		}
 	}
+
+	// Register enableDownload for module-level restartDownloadIfEnabled
+	setEnableDownloadFn(enableDownload);
 
 	function getActiveTransfers(): ActiveTransfer[] {
 		const transfers: ActiveTransfer[] = [];

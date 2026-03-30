@@ -3,7 +3,7 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
-	import { downloads, downloadsLoading, DOWNLOAD_TABLE_COLUMNS, type DownloadStatus } from '../../scripts/downloads.ts';
+	import { downloads, downloadsLoading, DOWNLOAD_TABLE_COLUMNS, type DownloadStatus, computeEnabledMode } from '../../scripts/downloads.ts';
 	import { api } from '../../scripts/api.ts';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -25,23 +25,23 @@
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
 	let showVerifyAllDialog = $state(false);
 	let search = $state('');
-	let anyDownloading = $derived($downloads.some(d => d.status === 'downloading' || d.status === 'downloading-uploading'));
-	let anyUploading = $derived($downloads.some(d => d.status === 'uploading' || d.status === 'downloading-uploading'));
-	let allDownloadDisabled = $derived(!anyDownloading);
-	let allUploadDisabled = $derived(!anyUploading);
+	let anyDownloadEnabled = $derived($downloads.some(d => d.downloadEnabled));
+	let anyUploadEnabled = $derived($downloads.some(d => d.uploadEnabled));
+	let allDownloadDisabled = $derived(!anyDownloadEnabled);
+	let allUploadDisabled = $derived(!anyUploadEnabled);
 
 	const busyStatuses: DownloadStatus[] = ['moving', 'verifying', 'pending-verification'];
 
 	function toggleAllDownloads(): void {
 		if (allDownloadDisabled) {
 			for (const d of $downloads) {
-				if (d.status !== 'downloading' && d.status !== 'downloading-uploading' && !busyStatuses.includes(d.status)) {
+				if (!d.downloadEnabled && !busyStatuses.includes(d.status)) {
 					api.call('transfer.enableDownload', { lishID: d.id });
 				}
 			}
 		} else {
 			for (const d of $downloads) {
-				if (d.status === 'downloading' || d.status === 'downloading-uploading') {
+				if (d.downloadEnabled) {
 					api.call('transfer.disableDownload', { lishID: d.id });
 				}
 			}
@@ -51,13 +51,13 @@
 	function toggleAllUploads(): void {
 		if (allUploadDisabled) {
 			for (const d of $downloads) {
-				if (!busyStatuses.includes(d.status)) {
+				if (!d.uploadEnabled && !busyStatuses.includes(d.status)) {
 					api.call('transfer.enableUpload', { lishID: d.id });
 				}
 			}
 		} else {
 			for (const d of $downloads) {
-				if (d.status === 'uploading' || d.status === 'downloading-uploading') {
+				if (d.uploadEnabled) {
 					api.call('transfer.disableUpload', { lishID: d.id });
 				}
 			}
@@ -135,14 +135,14 @@
 					<Cell align="center" desktopOnly>{$t('common.size')}</Cell>
 					<Cell align="center" desktopOnly>{$t('common.progress')}</Cell>
 					<Cell align="center" desktopOnly>{$t('common.status')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.downloadingFrom')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.uploadingTo')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.downloadSpeed')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.uploadSpeed')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.transferred')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.mode')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.peers')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.speed')}</Cell>
 				</Header>
 				<div class="items">
 					{#each filteredDownloads as download, index (download.id)}
-						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} position={[0, index + 2]} onConfirm={() => openDetail(download)} isLast={index === filteredDownloads.length - 1} />
+						<DownloadItem name={download.name} id={download.id} progress={download.progress} size={download.size} downloadedSize={download.downloadedSize} status={download.status} enabledMode={computeEnabledMode(download.downloadEnabled, download.uploadEnabled)} downloadPeers={download.downloadPeers} uploadPeers={download.uploadPeers} downloadSpeed={download.downloadSpeed} uploadSpeed={download.uploadSpeed} totalUploadedBytes={download.totalUploadedBytes} totalDownloadedBytes={download.totalDownloadedBytes} position={[0, index + 2]} onConfirm={() => openDetail(download)} isLast={index === filteredDownloads.length - 1} />
 					{/each}
 				</div>
 			</Table>

@@ -4,6 +4,8 @@ import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, re
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { setBusy, clearBusy } from './busy.ts';
+import { getEnabledUploads, removeUploadState, enableUpload } from '../protocol/lish-protocol.ts';
+import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, triggerEnableDownload, markDownloadEnabled } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
@@ -16,6 +18,7 @@ interface CreateLISHParams {
 	dataPath: string;
 	lishFile?: string;
 	addToSharing?: boolean;
+	addToDownloading?: boolean;
 	chunkSize?: number;
 	algorithm?: string;
 	threads?: number;
@@ -27,16 +30,22 @@ interface ImportFromFileParams {
 	filePath: string;
 	downloadPath: string;
 	overwrite?: boolean;
+	enableSharing?: boolean;
+	enableDownloading?: boolean;
 }
 interface ImportFromJSONParams {
 	json: string;
 	downloadPath: string;
 	overwrite?: boolean;
+	enableSharing?: boolean;
+	enableDownloading?: boolean;
 }
 interface ImportFromURLParams {
 	url: string;
 	downloadPath: string;
 	overwrite?: boolean;
+	enableSharing?: boolean;
+	enableDownloading?: boolean;
 }
 interface ExportToFileParams {
 	lishID: string;
@@ -123,12 +132,14 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	// Track current creation so it can be aborted
 	let currentCreation: AbortController | null = null;
 
-	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[] } {
+	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[]; uploadEnabled: string[]; downloadEnabled: string[] } {
 		return {
 			items: dataServer.listSummaries(p?.sortBy, p?.sortOrder),
 			verifying: currentVerification?.lishID ?? null,
 			pendingVerification: [...verificationQueue],
 			moving: [...movingLISHs],
+			uploadEnabled: [...getEnabledUploads()],
+			downloadEnabled: [...getDownloadEnabledLishs()],
 		};
 	}
 
@@ -167,6 +178,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	async function create(p: CreateLISHParams, client: any): Promise<CreateLISHResponse> {
 		assert(p, ['dataPath']);
 		const addToSharing = p.addToSharing ?? false;
+		const addToDownloading = p.addToDownloading ?? false;
 		const algorithm = p.algorithm ?? DEFAULT_ALGO;
 		const chunkSize = p.chunkSize ?? DEFAULT_CHUNK_SIZE;
 		const threads = p.threads ?? 0; // 0 = all CPU threads
@@ -227,6 +239,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			console.log(`✓ Dataset imported: ${lish.id}`);
 			broadcast('lishs:add', dataServer.getDetail(lish.id));
 			startVerification(lish.id);
+			if (addToDownloading) triggerEnableDownload(lish.id);
 		}
 		return { lishID: lish.id, lishFile: resultLISHFile };
 	}
@@ -235,10 +248,18 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['lishID']);
 		const lish = dataServer.get(p.lishID);
 		if (!lish) return false;
-		// Delete LISH data files selectively
-		if (p.deleteData && lish.directory) await deleteLISHData(lish);
-		// Delete LISH from storage if requested
 		if (p.deleteLISH) {
+			// Full deletion — stop transfers, stop verification, clean up, delete DB row
+			removeUploadState(p.lishID);
+			await removeDownloadState(p.lishID);
+			// Stop any running/queued verification for this LISH
+			if (currentVerification?.lishID === p.lishID) currentVerification.ac.abort();
+			const qIdx = verificationQueue.indexOf(p.lishID);
+			if (qIdx >= 0) verificationQueue.splice(qIdx, 1);
+			clearBusy(p.lishID);
+			if (p.deleteData && lish.directory) {
+				await deleteLISHData(lish);
+			}
 			const deleted = dataServer.delete(p.lishID);
 			if (deleted) {
 				console.log(`✓ LISH deleted: ${p.lishID}`);
@@ -246,10 +267,20 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			}
 			return deleted;
 		}
+		// Delete only data — use busy to temporarily block, verify, then restore original state
+		if (p.deleteData && lish.directory) {
+			setBusy(p.lishID, 'deleting');
+			await destroyActiveDownloader(p.lishID);
+			await deleteLISHData(lish);
+			dataServer.resetVerification(p.lishID);
+			// Transition directly from 'deleting' to 'verifying' — no busy gap
+			setBusy(p.lishID, 'verifying');
+			startVerification(p.lishID);
+		}
 		return true;
 	}
 
-	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean): Promise<ImportLISHResponse> {
+	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
 		const existing = dataServer.get(lish.id);
 		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
 		if (existing) dataServer.delete(lish.id);
@@ -263,6 +294,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		dataServer.add(storedLISH);
 		console.log(`✓ LISH imported: ${lish.id}`);
 		broadcast('lishs:add', dataServer.getDetail(lish.id));
+		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
+		// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
+		if (enableSharing) enableUpload(lish.id);
+		if (enableDownloading) markDownloadEnabled(lish.id);
 		startVerification(lish.id);
 		return { lishID: lish.id, directory };
 	}
@@ -272,7 +307,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
 		let lastResponse!: ImportLISHResponse;
 		for (const lish of lishs) {
-			lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+			lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
 		}
 		return lastResponse;
 	}
@@ -281,7 +316,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['json', 'downloadPath']);
 		const lishs = parseLISHFromJSON(p.json);
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
 		return lastResponse;
 	}
 
@@ -290,7 +325,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const content = await Utils.fetchURL(p.url);
 		const lishs = parseLISHFromJSON(content);
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
 		return lastResponse;
 	}
 
@@ -333,11 +368,14 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		setBusy(lishID, 'verifying');
 		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, started: true });
 		runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal).finally(() => {
-			clearBusy(lishID);
-			if (currentVerification?.ac === ac) {
+			const isOwner = currentVerification?.ac === ac;
+			if (isOwner) {
+				clearBusy(lishID);
 				if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
 				currentVerification = null;
 			}
+			// Resume download if enabled — no-op if download not enabled or LISH deleted
+			if (isOwner && !ac.signal.aborted) restartDownloadIfEnabled(lishID);
 			processVerificationQueue();
 		});
 	}
@@ -465,7 +503,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 					await new Promise<void>((resolve, reject) => {
 						const rs = createReadStream(srcPath);
 						const ws = createWriteStream(dstPath);
-						rs.on('data', (chunk: Buffer) => {
+						rs.on('data', (chunk: string | Buffer) => {
 							fileBytes += chunk.length;
 							if (fileBytes - lastReported >= PROGRESS_INTERVAL) {
 								lastReported = fileBytes;

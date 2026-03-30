@@ -133,7 +133,7 @@ describe('Downloader – static speed limit', () => {
 	});
 });
 
-describe('Downloader – pause / resume state', () => {
+describe('Downloader – disable / enable state', () => {
 	let downloader: Downloader;
 
 	beforeEach(async () => {
@@ -144,37 +144,37 @@ describe('Downloader – pause / resume state', () => {
 		await downloader.initFromManifest(makeLISH());
 	});
 
-	it('isPaused returns false initially', () => {
-		expect(downloader.isPaused()).toBe(false);
+	it('isDisabled returns false initially', () => {
+		expect(downloader.isDisabled()).toBe(false);
 	});
 
-	it('pause() sets isPaused to true', () => {
-		downloader.pause();
-		expect(downloader.isPaused()).toBe(true);
+	it('disable() sets isDisabled to true', () => {
+		downloader.disable();
+		expect(downloader.isDisabled()).toBe(true);
 	});
 
-	it('resume() after pause sets isPaused to false', () => {
-		downloader.pause();
-		downloader.resume();
-		expect(downloader.isPaused()).toBe(false);
+	it('enable() after disable sets isDisabled to false', () => {
+		downloader.disable();
+		downloader.enable();
+		expect(downloader.isDisabled()).toBe(false);
 	});
 
-	it('resume() without prior pause does not throw', () => {
-		expect(() => downloader.resume()).not.toThrow();
+	it('enable() without prior disable does not throw', () => {
+		expect(() => downloader.enable()).not.toThrow();
 	});
 
-	it('multiple pause calls keep isPaused true', () => {
-		downloader.pause();
-		downloader.pause();
-		expect(downloader.isPaused()).toBe(true);
+	it('multiple disable calls keep isDisabled true', () => {
+		downloader.disable();
+		downloader.disable();
+		expect(downloader.isDisabled()).toBe(true);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// waitIfPaused — multi-peerLoop race condition (H2)
+// waitIfDisabled — multi-peerLoop race condition (H2)
 // ---------------------------------------------------------------------------
 
-describe('Downloader – waitIfPaused with multiple concurrent waiters', () => {
+describe('Downloader – waitIfDisabled with multiple concurrent waiters', () => {
 	it('resume unblocks ALL waiting callers, not just the last one', async () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
@@ -183,16 +183,16 @@ describe('Downloader – waitIfPaused with multiple concurrent waiters', () => {
 		const lish = makeLISH();
 		await dl.initFromManifest(lish);
 
-		const waitIfPaused = (priv(dl) as any).waitIfPaused.bind(dl);
+		const waitIfDisabled = (priv(dl) as any).waitIfDisabled.bind(dl);
 
-		dl.pause();
+		dl.disable();
 
-		// Simulate 3 peerLoops calling waitIfPaused concurrently
+		// Simulate 3 peerLoops calling waitIfDisabled concurrently
 		const unblocked = [false, false, false];
 		const waiters = [
-			waitIfPaused().then(() => { unblocked[0] = true; }),
-			waitIfPaused().then(() => { unblocked[1] = true; }),
-			waitIfPaused().then(() => { unblocked[2] = true; }),
+			waitIfDisabled().then(() => { unblocked[0] = true; }),
+			waitIfDisabled().then(() => { unblocked[1] = true; }),
+			waitIfDisabled().then(() => { unblocked[2] = true; }),
 		];
 
 		// Give event loop a tick — all should still be blocked
@@ -200,7 +200,7 @@ describe('Downloader – waitIfPaused with multiple concurrent waiters', () => {
 		expect(unblocked).toEqual([false, false, false]);
 
 		// Resume — should unblock ALL three
-		dl.resume();
+		dl.enable();
 		await Promise.all(waiters);
 
 		expect(unblocked).toEqual([true, true, true]);
@@ -213,31 +213,31 @@ describe('Downloader – waitIfPaused with multiple concurrent waiters', () => {
 		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 		await dl.initFromManifest(makeLISH());
 
-		const waitIfPaused = (priv(dl) as any).waitIfPaused.bind(dl);
-		dl.pause();
+		const waitIfDisabled = (priv(dl) as any).waitIfDisabled.bind(dl);
+		dl.disable();
 
 		let countUnblocked = 0;
-		const w1 = waitIfPaused().then(() => countUnblocked++);
-		const w2 = waitIfPaused().then(() => countUnblocked++);
+		const w1 = waitIfDisabled().then(() => countUnblocked++);
+		const w2 = waitIfDisabled().then(() => countUnblocked++);
 
 		await new Promise(r => setTimeout(r, 20));
 		expect(countUnblocked).toBe(0);
 
-		dl.resume();
+		dl.enable();
 		await Promise.all([w1, w2]);
 		expect(countUnblocked).toBe(2);
 	});
 
-	it('waitIfPaused returns immediately when not paused', async () => {
+	it('waitIfDisabled returns immediately when not paused', async () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
 		ds.missingChunks = [];
 		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 		await dl.initFromManifest(makeLISH());
 
-		const waitIfPaused = (priv(dl) as any).waitIfPaused.bind(dl);
+		const waitIfDisabled = (priv(dl) as any).waitIfDisabled.bind(dl);
 		const start = Date.now();
-		await waitIfPaused();
+		await waitIfDisabled();
 		expect(Date.now() - start).toBeLessThan(20);
 	});
 
@@ -248,26 +248,26 @@ describe('Downloader – waitIfPaused with multiple concurrent waiters', () => {
 		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 		await dl.initFromManifest(makeLISH());
 
-		const waitIfPaused = (priv(dl) as any).waitIfPaused.bind(dl);
+		const waitIfDisabled = (priv(dl) as any).waitIfDisabled.bind(dl);
 
 		// Cycle 1
-		dl.pause();
+		dl.disable();
 		let c1 = 0;
-		const w1a = waitIfPaused().then(() => c1++);
-		const w1b = waitIfPaused().then(() => c1++);
+		const w1a = waitIfDisabled().then(() => c1++);
+		const w1b = waitIfDisabled().then(() => c1++);
 		await new Promise(r => setTimeout(r, 20));
-		dl.resume();
+		dl.enable();
 		await Promise.all([w1a, w1b]);
 		expect(c1).toBe(2);
 
 		// Cycle 2 — fresh pause, new waiters
-		dl.pause();
+		dl.disable();
 		let c2 = 0;
-		const w2a = waitIfPaused().then(() => c2++);
-		const w2b = waitIfPaused().then(() => c2++);
-		const w2c = waitIfPaused().then(() => c2++);
+		const w2a = waitIfDisabled().then(() => c2++);
+		const w2b = waitIfDisabled().then(() => c2++);
+		const w2c = waitIfDisabled().then(() => c2++);
 		await new Promise(r => setTimeout(r, 20));
-		dl.resume();
+		dl.enable();
 		await Promise.all([w2a, w2b, w2c]);
 		expect(c2).toBe(3);
 	});
@@ -279,20 +279,20 @@ describe('Downloader – waitIfPaused with multiple concurrent waiters', () => {
 		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 		await dl.initFromManifest(makeLISH());
 
-		const waitIfPaused = (priv(dl) as any).waitIfPaused.bind(dl);
+		const waitIfDisabled = (priv(dl) as any).waitIfDisabled.bind(dl);
 
-		dl.pause();
-		const w = waitIfPaused();
+		dl.disable();
+		const w = waitIfDisabled();
 		await new Promise(r => setTimeout(r, 10));
 
 		// Before resume: 1 resolver
-		expect(((priv(dl) as any).pauseResolvers as unknown[]).length).toBe(1);
+		expect(((priv(dl) as any).enableResolvers as unknown[]).length).toBe(1);
 
-		dl.resume();
+		dl.enable();
 		await w;
 
 		// After resume: cleared (new array)
-		expect(((priv(dl) as any).pauseResolvers as unknown[]).length).toBe(0);
+		expect(((priv(dl) as any).enableResolvers as unknown[]).length).toBe(0);
 	});
 });
 
