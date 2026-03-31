@@ -157,7 +157,10 @@ export class DataServer {
 		if (!filePath.startsWith(resolve(downloadDir) + sep)) throw new CodedError(ErrorCodes.INVALID_FILE_INDEX, `Path traversal: ${file.path}`);
 		const offset = chunkIndex * lish.chunkSize;
 		const fd = await open(filePath, 'r+');
-		await fd.write(data, 0, data.length, offset);
-		await fd.close();
+		try {
+			await fd.write(data, 0, data.length, offset);
+		} finally {
+			await fd.close();
+		}
 	}
 }
