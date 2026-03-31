@@ -427,30 +427,38 @@ export function resetVerification(dataServer: DataServer, lishID: string): void 
  */
 export async function runVerification(dataServer: DataServer, lishID: string, onProgress: (progress: VerifyFileProgress) => void, signal?: AbortSignal): Promise<void> {
 	const meta = dataServer.get(lishID);
-	if (!meta || !meta.directory) return;
+	if (!meta || !meta.directory) { console.debug(`[Verify] SKIP ${lishID.slice(0, 8)}: no meta or directory`); return; }
 	const files = dataServer.getFilesForVerification(lishID);
-	if (!files) return;
+	if (!files) { console.debug(`[Verify] SKIP ${lishID.slice(0, 8)}: getFilesForVerification returned null`); return; }
+	const totalChunks = files.reduce((sum, f) => sum + f.checksums.length, 0);
+	console.log(`[Verify] START ${lishID.slice(0, 8)}: ${files.length} files, ${totalChunks} chunks, dir=${meta.directory}`);
+	const verifyStart = Date.now();
+	let totalVerified = 0;
+	let totalFailed = 0;
+	let totalMissing = 0;
+	let totalBytes = 0;
 	for (const fileEntry of files) {
-		if (signal?.aborted) return;
-		if (!dataServer.get(lishID)) return;
+		if (signal?.aborted) { console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`); return; }
+		if (!dataServer.get(lishID)) { console.debug(`[Verify] LISH DELETED ${lishID.slice(0, 8)}`); return; }
 		const filePath = join(meta.directory, fileEntry.path);
 		let fileVerified = 0;
+		let fileFailed = 0;
+		const fileStart = Date.now();
 		const file = Bun.file(filePath);
 		const fileExists = await file.exists();
 		if (!fileExists) {
-			// console.log(`[Verify] MISSING ${fileEntry.path} — file does not exist on disk (${fileEntry.checksums.length} chunks skipped)`);
+			console.log(`[Verify] MISSING ${fileEntry.path} (${fileEntry.checksums.length} chunks) at ${filePath}`);
+			totalMissing += fileEntry.checksums.length;
 			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: 0 });
 			continue;
 		}
 		for (let chunkIndex = 0; chunkIndex < fileEntry.checksums.length; chunkIndex++) {
-			if (signal?.aborted) return;
+			if (signal?.aborted) { console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)}`); return; }
 			const expectedChecksum = fileEntry.checksums[chunkIndex]!;
 			const offset = chunkIndex * meta.chunkSize;
-			// File is smaller than this chunk's offset — data is missing
 			if (offset >= file.size) {
-				if (chunkIndex === 0 || offset === chunkIndex * meta.chunkSize) {
-					// console.log(`[Verify] SHORT ${fileEntry.path} chunk ${chunkIndex}: file size ${file.size} < offset ${offset} — file is smaller than expected`);
-				}
+				console.debug(`[Verify] SHORT ${fileEntry.path} chunk ${chunkIndex}: file ${file.size}B < offset ${offset}`);
+				fileFailed++;
 				onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
 				continue;
 			}
@@ -459,20 +467,30 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 				if (actualChecksum === expectedChecksum) {
 					dataServer.markChunkVerified(lishID, fileEntry.fileInternalID, chunkIndex);
 					fileVerified++;
-					// console.log(`[Verify] PASS ${fileEntry.path} chunk ${chunkIndex}: db=${expectedChecksum.slice(0, 16)}… disk=${actualChecksum.slice(0, 16)}…`);
+					totalBytes += Math.min(meta.chunkSize, file.size - offset);
 				} else {
 					dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
-					// console.log(`[Verify] FAIL ${fileEntry.path} chunk ${chunkIndex}: db=${expectedChecksum.slice(0, 16)}… disk=${actualChecksum.slice(0, 16)}…`);
+					fileFailed++;
+					console.debug(`[Verify] FAIL ${fileEntry.path} chunk ${chunkIndex}: expected=${expectedChecksum.slice(0, 12)} got=${actualChecksum.slice(0, 12)}`);
 				}
 			} catch (err: any) {
 				dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
-				// console.log(`[Verify] ERROR ${fileEntry.path} chunk ${chunkIndex}: ${err.message}`);
+				fileFailed++;
+				console.debug(`[Verify] ERROR ${fileEntry.path} chunk ${chunkIndex}: ${err.message}`);
 			}
 			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
 		}
-		// console.log(`[Verify] ${fileEntry.path}: ${fileVerified}/${fileEntry.checksums.length} PASS`);
+		totalVerified += fileVerified;
+		totalFailed += fileFailed;
+		const fileElapsed = Date.now() - fileStart;
+		const fileSizeMB = (file.size / 1024 / 1024).toFixed(1);
+		const fileMBs = fileElapsed > 0 ? (file.size / 1024 / 1024 / (fileElapsed / 1000)).toFixed(0) : '∞';
+		console.log(`[Verify] FILE ${fileEntry.path}: ${fileVerified}/${fileEntry.checksums.length} pass, ${fileFailed} fail (${fileSizeMB}MB in ${fileElapsed}ms, ${fileMBs}MB/s)`);
 	}
 
+	const elapsed = Date.now() - verifyStart;
+	const totalMB = (totalBytes / 1024 / 1024).toFixed(1);
+	const throughput = elapsed > 0 ? (totalBytes / 1024 / 1024 / (elapsed / 1000)).toFixed(0) : '∞';
+	console.log(`[Verify] DONE ${lishID.slice(0, 8)}: ${totalVerified} pass, ${totalFailed} fail, ${totalMissing} missing (${totalMB}MB in ${(elapsed / 1000).toFixed(1)}s, ${throughput}MB/s)`);
 	onProgress({ lishID, filePath: '', verifiedChunks: 0, done: true });
-	return;
 }
