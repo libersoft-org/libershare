@@ -41,6 +41,8 @@ export class WsClient {
 				this.onStateChange({ connected: false });
 				this.connectPromise = null;
 				this.ws = null;
+				for (const [, pending] of this.pendingRequests) pending.reject(new Error('WebSocket disconnected'));
+				this.pendingRequests.clear();
 				this.scheduleReconnect();
 			};
 			this.ws.onerror = err => {
