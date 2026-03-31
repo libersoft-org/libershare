@@ -265,6 +265,10 @@ export async function initDownloads(): Promise<void> {
 		api.on('lishs:remove', (data: { lishID: string }) => {
 			if (currentDetailLISHID === data.lishID) navigateBack();
 			downloads.update(list => list.filter(d => d.id !== data.lishID));
+			activeDownloads.delete(data.lishID);
+			disabledDownloads.delete(data.lishID);
+			lastDownloadedChunks.delete(data.lishID);
+			lastUploadedChunks.delete(data.lishID);
 		});
 
 		// lishs:verify — verification progress (broadcast from backend)
