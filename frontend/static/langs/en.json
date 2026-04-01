@@ -127,6 +127,7 @@
 		"stopVerifyAll": "Stop all verifications",
 		"verifyDone": "Verification of LISH \"{name}\" completed",
 		"lishAdded": "LISH \"{name}\" added",
+		"downloadComplete": "Download of LISH \"{name}\" completed",
 		"moveData": "Move data",
 		"moveDataFromOriginal": "Move data from original directory",
 		"createSubdirectory": "Create a subdirectory with LISH name in target directory",

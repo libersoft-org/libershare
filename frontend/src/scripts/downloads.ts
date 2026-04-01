@@ -475,6 +475,8 @@ export async function initDownloads(): Promise<void> {
 		api.on('transfer.download:complete', (data: { downloadDir: string; lishID: string; name?: string }) => {
 			disabledDownloads.delete(data.lishID);
 			activeDownloads.delete(data.lishID);
+			const lish = get(downloads).find(d => d.id === data.lishID);
+			if (lish) addNotification(tt('downloads.downloadComplete', { name: lish.name }));
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));

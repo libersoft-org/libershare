@@ -127,6 +127,7 @@
 		"stopVerifyAll": "Zastavit všechna ověřování",
 		"verifyDone": "Ověření LISHe \"{name}\" dokončeno",
 		"lishAdded": "LISH \"{name}\" přidán",
+		"downloadComplete": "Stahování LISHe \"{name}\" dokončeno",
 		"moveData": "Přesunout data",
 		"moveDataFromOriginal": "Přesunout data z původního adresáře",
 		"createSubdirectory": "V cílovém adresáři vytvořit podadresář s názvem LISHe",
