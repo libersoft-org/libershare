@@ -32,34 +32,33 @@
 	}
 
 	.notification.success {
-		border-color: #2a5a2a;
-		background: linear-gradient(135deg, var(--secondary-background) 0%, #1a2e1a 100%);
+		border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
+		background: linear-gradient(135deg, var(--secondary-background) 0%, color-mix(in srgb, var(--color-success) 15%, var(--secondary-background)) 100%);
 	}
-	.notification.success:hover { border-color: #4caf50; }
+	.notification.success:hover { border-color: var(--color-success); }
 
 	.notification.error {
-		border-color: #5a2a2a;
-		background: linear-gradient(135deg, var(--secondary-background) 0%, #2e1a1a 100%);
+		border-color: color-mix(in srgb, var(--color-error) 40%, transparent);
+		background: linear-gradient(135deg, var(--secondary-background) 0%, color-mix(in srgb, var(--color-error) 15%, var(--secondary-background)) 100%);
 	}
-	.notification.error:hover { border-color: #f44336; }
+	.notification.error:hover { border-color: var(--color-error); }
 
 	.notification.warning {
-		border-color: #5a4a2a;
-		background: linear-gradient(135deg, var(--secondary-background) 0%, #2e261a 100%);
+		border-color: color-mix(in srgb, var(--color-warning) 40%, transparent);
+		background: linear-gradient(135deg, var(--secondary-background) 0%, color-mix(in srgb, var(--color-warning) 15%, var(--secondary-background)) 100%);
 	}
-	.notification.warning:hover { border-color: #ff9800; }
+	.notification.warning:hover { border-color: var(--color-warning); }
 
 	.type-indicator {
 		width: 0.8vh;
-		min-height: 100%;
 		border-radius: 0.4vh;
 		flex-shrink: 0;
 		align-self: stretch;
 	}
 	.type-indicator.info { background: var(--primary-foreground); }
-	.type-indicator.success { background: #4caf50; }
-	.type-indicator.error { background: #f44336; }
-	.type-indicator.warning { background: #ff9800; }
+	.type-indicator.success { background: var(--color-success); }
+	.type-indicator.error { background: var(--color-error); }
+	.type-indicator.warning { background: var(--color-warning); }
 
 	.text {
 		flex: 1;
