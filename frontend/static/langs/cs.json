@@ -186,6 +186,10 @@
 		},
 		"import": {
 			"fromJSON": "Z LISH JSON",
+			"uploadFromLocal": "Nahrát z lokálního počítače",
+			"localFile": "Lokální soubor",
+			"noFileSelected": "Žádný soubor nevybrán",
+			"uploadRequired": "Vyberte soubor k nahrání",
 			"filePath": "LISH soubor",
 			"url": "URL adresa LISH souboru",
 			"placeholder": "Vložte LISH JSON zde...",

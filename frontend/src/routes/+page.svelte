@@ -14,6 +14,7 @@
 	import { initDownloads } from '../scripts/downloads.ts';
 	import { initSystemStats } from '../scripts/systemStats.ts';
 	import { initNetworkEvents } from '../scripts/networks.ts';
+	import { detectLocalFilesystem } from '../scripts/localFilesystem.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedID: selectedID, navigate, onBack: onBack } = createNavigation();
 	import Debug from '../components/Debug/Debug.svelte';
 	import NotificationContainer from '../components/Notification/NotificationContainer.svelte';
@@ -73,6 +74,7 @@
 			await initDownloads(); // Load download list and subscribe to verify/list events
 			await initNetworkEvents(); // Subscribe to LISH network join/leave events
 			initSystemStats(); // Subscribe to system stats (RAM, etc.)
+			detectLocalFilesystem(); // Detect if browser and backend share filesystem
 			play('welcome'); //	Play welcome sound on connect
 		} catch (error) {
 			console.error('[App] Backend initialization error:', error);

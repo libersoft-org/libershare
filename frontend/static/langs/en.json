@@ -186,6 +186,10 @@
 		},
 		"import": {
 			"fromJSON": "From LISH JSON",
+			"uploadFromLocal": "Upload from local computer",
+			"localFile": "Local file",
+			"noFileSelected": "No file selected",
+			"uploadRequired": "Please select a file to upload",
 			"filePath": "LISH file",
 			"url": "URL address of LISH file",
 			"placeholder": "Paste LISH JSON here...",
