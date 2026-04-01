@@ -41,7 +41,8 @@ export class Downloader {
 	private lastServingPeerCount = 0;
 	private failedPeers = new Set<NodeID>(); // peers that failed — don't re-probe until next cycle
 	private static readonly MAX_CORRUPT_CHUNKS = 3; // max corrupted chunks before banning peer
-	private callForPeersInterval: NodeJS.Timeout | undefined;
+	private callForPeersInterval: ReturnType<typeof setInterval> | undefined;
+	private retryTimer: ReturnType<typeof setTimeout> | undefined;
 	private needsManifest = false;
 	private disabled = false;
 	private destroyed = false;
@@ -67,8 +68,22 @@ export class Downloader {
 		this.onManifestImported = cb;
 	}
 
+	private scheduleRetry(): void {
+		if (this.retryTimer) clearTimeout(this.retryTimer);
+		this.retryTimer = setTimeout(() => {
+			this.retryTimer = undefined;
+			if (this.state === 'downloading' && !this.disabled)
+				this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
+		}, 10000);
+	}
+
+	private clearRetryTimer(): void {
+		if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = undefined; }
+	}
+
 	disable(): void {
 		this.disabled = true;
+		this.clearRetryTimer();
 		if (this.callForPeersInterval) { clearInterval(this.callForPeersInterval); this.callForPeersInterval = undefined; }
 		for (const [, client] of this.peers) client.close().catch(() => {});
 		this.peers.clear();
@@ -97,6 +112,7 @@ export class Downloader {
 		console.debug(`[DL-DBG] destroy() called: ${this.lishID.slice(0, 8)}, state=${this.state}, peers=${this.peers.size}, onProgress=${!!this.onProgress}`);
 		this.disabled = true;
 		this.destroyed = true;
+		this.clearRetryTimer();
 		if (this.callForPeersInterval) { clearInterval(this.callForPeersInterval); this.callForPeersInterval = undefined; }
 		for (const { topic, handler } of this.pubsubHandlers) this.network.unsubscribeHandler(topic, handler);
 		this.pubsubHandlers = [];
@@ -255,7 +271,7 @@ export class Downloader {
 					if (this.peers.size === 0) {
 						console.debug(`[DL-DBG] Still no peers after callForPeers, scheduling retry in 10s`);
 						this.lastExhaustedTime = Date.now();
-						setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); }); }, 10000);
+						this.scheduleRetry();
 						return;
 					}
 				}
@@ -273,7 +289,7 @@ export class Downloader {
 					this.peers.clear();
 					this.failedPeers.clear();
 					this.lastExhaustedTime = Date.now();
-					setTimeout(() => { if (this.state === 'downloading' && !this.disabled) this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); }); }, 10000);
+					this.scheduleRetry();
 					return;
 				}
 			}
