@@ -5,6 +5,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { Utils } from '../utils.ts';
 import { type FsInfo, type FsEntry, type FsListResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
+import { isContainer } from '../container.ts';
 const assert = Utils.assertParams;
 const isWindows = platform() === 'win32';
 const execAsync = promisify(exec);
@@ -16,7 +17,7 @@ async function getWindowsDrives(): Promise<FsEntry[]> {
 }
 
 interface FsHandlers {
-	info: () => Promise<FsInfo>;
+	info: (p: any, client?: any) => Promise<FsInfo>;
 	list: (p: { path?: string }) => Promise<FsListResult>;
 	readText: (p: { path: string }) => Promise<{ content: string }>;
 	readCompressed: (p: { path: string; algorithm?: CompressionAlgorithm }) => Promise<{ content: string }>;
@@ -30,14 +31,17 @@ interface FsHandlers {
 }
 
 export function initFsHandlers(): FsHandlers {
-	async function info(): Promise<FsInfo> {
+	async function info(_p: any, client?: any): Promise<FsInfo> {
 		const plat = platform();
 		const roots = isWindows ? (await getWindowsDrives()).map(d => d.path) : ['/'];
+		const isLocal = client?.data?.isLocalClient ?? false;
+		const inContainer = await isContainer();
 		return {
 			platform: plat === 'win32' ? 'windows' : plat === 'darwin' ? 'darwin' : 'linux',
 			separator: sep,
 			home: homedir(),
 			roots,
+			localFilesystem: isLocal && !inContainer,
 		};
 	}
 

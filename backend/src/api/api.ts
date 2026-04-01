@@ -11,8 +11,10 @@ import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
 import { initSystemHandlers } from './system.ts';
+import { getLocalAddresses } from '../container.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
+	isLocalClient: boolean;
 }
 type ClientSocket = ServerWebSocket<ClientData>;
 interface Request {
@@ -34,6 +36,7 @@ export class APIServer {
 	private readonly settings: Settings;
 	private readonly host: string;
 	private readonly port: number;
+	private readonly localAddresses: Set<string>;
 	private readonly secure: boolean;
 	private readonly keyFile?: string | undefined;
 	private readonly certFile?: string | undefined;
@@ -51,6 +54,7 @@ export class APIServer {
 		this.secure = options.secure;
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
+		this.localAddresses = getLocalAddresses();
 		const emitTo = (client: ClientSocket, event: string, data: any) => this.emit(client, event, data);
 		const broadcastFn = (event: string, data: any) => this.broadcast(event, data);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
@@ -158,8 +162,9 @@ export class APIServer {
 			hostname: this.host,
 			fetch(req, server): Response | undefined {
 				console.log(`[API] Incoming request: ${req.method} ${req.url}`);
+				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
-					data: { subscribedEvents: new Set<string>() },
+					data: { subscribedEvents: new Set<string>(), isLocalClient: self.localAddresses.has(clientIP) },
 				});
 				if (upgraded) return undefined;
 				return new Response('Expected WebSocket', { status: 400 });
