@@ -65,7 +65,9 @@
 		"gamepadDisconnected": "Gamepad disconnected: {name}",
 		"websocketError": "Connection error",
 		"backendDisconnected": "Backend disconnected",
-		"reconnected": "Reconnected to backend"
+		"reconnected": "Reconnected to backend",
+		"internetOffline": "Internet connection lost",
+		"internetOnline": "Internet connection restored"
 	},
 	"library": {
 		"title": "Online library",

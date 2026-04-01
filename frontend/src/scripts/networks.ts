@@ -15,10 +15,15 @@ export async function initNetworkEvents(): Promise<void> {
 		handlersRegistered = true;
 		api.on('lishnets:joined', (data: { networkID: string; name: string }) => addNotification(tt('settings.lishNetwork.networkConnected', { name: data.name }), 'success'));
 		api.on('lishnets:left', (data: { networkID: string; name: string }) => addNotification(tt('settings.lishNetwork.networkDisconnected', { name: data.name }), 'warning'));
+		api.on('internet:status', (data: { online: boolean }) => {
+			if (data.online) addNotification(tt('common.internetOnline'), 'success');
+			else addNotification(tt('common.internetOffline'), 'error');
+		});
 	}
 	// Subscribe on every connect (backend has fresh subscribedEvents after reconnect)
 	api.subscribe('lishnets:joined');
 	api.subscribe('lishnets:left');
+	api.subscribe('internet:status');
 }
 
 // Subscribe to peer count updates from backend. Call when entering the LISH Network settings page.

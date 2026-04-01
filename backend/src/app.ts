@@ -86,8 +86,13 @@ const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 // Wire upload progress broadcast (after apiServer is created)
 setUploadBroadcast((event, data) => apiServer.broadcastEvent(event, data));
 
+// Periodic internet connectivity check
+import { startConnectivityCheck } from './connectivity.ts';
+const stopConnectivityCheck = startConnectivityCheck((event, data) => apiServer.broadcastEvent(event, data));
+
 async function shutdown(): Promise<void> {
 	console.log('Shutting down...');
+	stopConnectivityCheck();
 	apiServer.stop();
 	await networks.stopAllNetworks();
 	process.exit(0);

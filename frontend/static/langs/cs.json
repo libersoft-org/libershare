@@ -65,7 +65,9 @@
 		"gamepadDisconnected": "Gamepad odpojen: {name}",
 		"websocketError": "Chyba spojení",
 		"backendDisconnected": "Backend odpojen",
-		"reconnected": "Znovu připojeno k backendu"
+		"reconnected": "Znovu připojeno k backendu",
+		"internetOffline": "Připojení k internetu ztraceno",
+		"internetOnline": "Připojení k internetu obnoveno"
 	},
 	"library": {
 		"title": "Online knihovna",
