@@ -343,7 +343,7 @@ export class Downloader {
 			activePeerLoops.add(peerID);
 			let skippedChunks = 0;
 			while (true) {
-				if (this.destroyed) break;
+				if (this.destroyed || this.disabled) break;
 				await this.waitIfDisabled();
 				let chunk: MissingChunk | undefined;
 				await lock.runExclusive(() => {
@@ -368,6 +368,7 @@ export class Downloader {
 					globalNotAvailable++;
 					if (skippedChunks % 100 === 0) console.debug(`[DL-DBG] Peer ${peerID.slice(0, 12)} skipped ${skippedChunks} chunks (not_available, global: ${globalNotAvailable}/${queue.length})`);
 					await lock.runExclusive(() => { queue.push(chunk!); });
+					if (this.disabled || this.destroyed) break;
 					if (globalNotAvailable > queue.length) {
 						console.debug(`[DL-DBG] Peer ${peerID.slice(0, 12)} breaking: global exhaustion (${globalNotAvailable}>${queue.length})`);
 						servingPeers.delete(peerID);
@@ -638,6 +639,7 @@ export class Downloader {
 
 	// Download a single chunk from a peer using an existing client
 	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string): Promise<{ data: Uint8Array } | 'not_available' | 'error'> {
+		if (this.disabled || this.destroyed) return 'error';
 		try {
 			const data = await client.requestChunk(this.lishID, chunkID);
 			if (!data) {
