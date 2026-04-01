@@ -41,10 +41,7 @@ export class LISHClient {
 		try {
 			const request: LISHManifestRequest = { type: 'manifest', lishID };
 			const requestData = new TextEncoder().encode(JSON.stringify(request));
-			await Promise.race([
-				sendLengthPrefixed(this.stream, requestData),
-				rejectAfterTimeout(15000, 'manifest-send'),
-			]);
+			sendLengthPrefixed(this.stream, requestData);
 			const responseMsg = await Promise.race([
 				this.decoder.next(),
 				rejectAfterTimeout(30000, 'manifest-receive'),
@@ -71,12 +68,9 @@ export class LISHClient {
 				lishID,
 				chunkID,
 			};
-			// Send the request (with timeout)
+			// Send the request
 			const requestData = new TextEncoder().encode(JSON.stringify(request));
-			await Promise.race([
-				sendLengthPrefixed(this.stream, requestData),
-				rejectAfterTimeout(15000, 'send'),
-			]);
+			sendLengthPrefixed(this.stream, requestData);
 			// Read the response (with timeout — prevents hanging on dead/aborted streams)
 			const responseMsg = await Promise.race([
 				this.decoder.next(),
@@ -167,7 +161,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 				}
 				const response: LISHManifestResponse = { manifest };
 				const responseData = new TextEncoder().encode(JSON.stringify(response));
-				await sendLengthPrefixed(stream, responseData);
+				sendLengthPrefixed(stream, responseData);
 			} else {
 				// Chunk request (default)
 				const chunkReq = request as LISHChunkRequest;
@@ -175,13 +169,13 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 					// Send null response — peer sees 'not_available' and moves on
 					const blockedResponse: LISHResponse = { data: null };
 					const blockedData = new TextEncoder().encode(JSON.stringify(blockedResponse));
-					await sendLengthPrefixed(stream, blockedData);
+					sendLengthPrefixed(stream, blockedData);
 					continue;
 				}
 				const chunkData = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
 				const response: LISHResponse = { data: chunkData ? Buffer.from(chunkData).toString('base64') : null };
 				const responseData = new TextEncoder().encode(JSON.stringify(response));
-				await sendLengthPrefixed(stream, responseData);
+				sendLengthPrefixed(stream, responseData);
 				if (chunkData) {
 					if (!servedLishIDs.has(chunkReq.lishID)) {
 						servedLishIDs.add(chunkReq.lishID);
@@ -234,10 +228,7 @@ function rejectAfterTimeout(ms: number, label: string): Promise<never> {
 	return new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout: ${label} took >${ms}ms`)), ms));
 }
 
-// Helper to send a length-prefixed message
-async function sendLengthPrefixed(stream: Stream, data: Uint8Array): Promise<void> {
-	// Encode the message with length prefix - returns AsyncGenerator<Uint8Array>
-	const encoded = lpEncode([data]);
-	// Send all chunks from the encoder
-	for await (const chunk of encoded) stream.send(chunk);
+// Helper to send a length-prefixed message (single atomic send — no inter-chunk race window)
+function sendLengthPrefixed(stream: Stream, data: Uint8Array): void {
+	stream.send(lpEncode.single(data));
 }
