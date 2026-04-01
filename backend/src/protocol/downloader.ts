@@ -480,13 +480,16 @@ export class Downloader {
 		console.debug(`[DL-DBG] probeTopicPeers: ${topicPeers.size} topic peers, ${this.peers.size} connected, ${this.failedPeers.size} failed`);
 		let foundNew = false;
 		for (const peerID of topicPeers) {
+			if (this.destroyed) return;
 			if (this.peers.has(peerID)) { console.debug(`[DL-DBG] probe skip ${peerID.slice(0, 12)}: already connected`); continue; }
 			if (this.failedPeers.has(peerID)) { console.debug(`[DL-DBG] probe skip ${peerID.slice(0, 12)}: in failedPeers`); continue; }
 			try {
 				const probeStream = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
+				if (this.destroyed) { probeStream.abort(new Error('downloader destroyed')); return; }
 				const probeClient = new LISHClient(probeStream);
 				const manifest = await probeClient.requestManifest(this.lishID);
 				await probeClient.close();
+				if (this.destroyed) return;
 
 				if (!manifest) continue;
 
@@ -501,6 +504,7 @@ export class Downloader {
 				}
 
 				const dlStream = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
+				if (this.destroyed) { dlStream.abort(new Error('downloader destroyed')); return; }
 				this.peers.set(peerID, new LISHClient(dlStream));
 				this.lastExhaustedTime = 0;
 				foundNew = true;
@@ -509,7 +513,7 @@ export class Downloader {
 				// peer unreachable — skip silently
 			}
 		}
-		if (foundNew && !this.downloadActive) {
+		if (foundNew && !this.downloadActive && !this.destroyed) {
 			this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
 		}
 	}
@@ -517,6 +521,7 @@ export class Downloader {
 	private setupCallForPeersInterval() {
 		if (this.callForPeersInterval) return;
 		this.callForPeersInterval = setInterval(async () => {
+			if (this.destroyed) { clearInterval(this.callForPeersInterval); this.callForPeersInterval = undefined; return; }
 			if (this.state === 'downloaded') {
 				clearInterval(this.callForPeersInterval);
 				this.callForPeersInterval = undefined;
@@ -527,7 +532,7 @@ export class Downloader {
 			this.failedPeers.clear();
 			this.lastExhaustedTime = 0;
 			await this.probeTopicPeers();
-			if (!this.downloadActive && this.peers.size > before) this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
+			if (!this.downloadActive && !this.destroyed && this.peers.size > before) this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
 		}, 15000);
 	}
 
@@ -546,7 +551,7 @@ export class Downloader {
 				return;
 			}
 			this.lastExhaustedTime = 0;
-			if (!this.downloadActive) this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
+			if (!this.downloadActive && !this.destroyed) this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
 		}
 	}
 
@@ -554,6 +559,7 @@ export class Downloader {
 		const peerID: NodeID = data.peerID;
 		const multiaddrs: Multiaddr[] = data.multiaddrs.map(ma => multiaddr(ma.toString()));
 		const stream = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL);
+		if (this.destroyed) { stream.abort(new Error('downloader destroyed')); return; }
 		if (this.peers.has(data.peerID)) throw new Error(`Already connected to peer: ${peerID}`);
 		this.peers.set(peerID, new LISHClient(stream));
 		console.log(`[DL] Peer ${peerID.slice(0, 12)} connected via pubsub (total: ${this.peers.size})`);
