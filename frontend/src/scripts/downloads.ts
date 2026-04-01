@@ -487,6 +487,8 @@ export async function initDownloads(): Promise<void> {
 
 		// transfer.download:error
 		api.on('transfer.download:error', (data: { error: string; errorDetail?: string; lishID: string }) => {
+			const lish = get(downloads).find(d => d.id === data.lishID);
+			if (lish) addNotification(tt('downloads.downloadError', { name: lish.name, error: data.errorDetail || data.error }), 'error');
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
