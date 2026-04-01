@@ -200,7 +200,7 @@
 			await deleteNetworkFromAPI(deletingNetwork.networkID);
 			const deletedName = deletingNetwork.name;
 			networks = networks.filter(n => n.networkID !== deletingNetwork!.networkID);
-			addNotification(tt('settings.lishNetwork.networkDeleted', { name: deletedName }));
+			addNotification(tt('settings.lishNetwork.networkDeleted', { name: deletedName }), 'warning');
 			deletingNetwork = null;
 			showDeleteConfirm = false;
 			popBreadcrumb();

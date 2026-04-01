@@ -37,9 +37,9 @@
 		const success = await deleteDownload(lishID, option.deleteLISH, option.deleteData);
 		deleting = false;
 		if (success) {
-			if (option.deleteLISH && option.deleteData) addNotification(tt('downloads.lishAndDataDeleted', { name }));
-			else if (option.deleteLISH) addNotification(tt('downloads.lishDeleted', { name }));
-			else addNotification(tt('downloads.dataDeleted', { name }));
+			if (option.deleteLISH && option.deleteData) addNotification(tt('downloads.lishAndDataDeleted', { name }), 'warning');
+			else if (option.deleteLISH) addNotification(tt('downloads.lishDeleted', { name }), 'warning');
+			else addNotification(tt('downloads.dataDeleted', { name }), 'warning');
 		}
 		onResult(option.deleteLISH, success);
 	}

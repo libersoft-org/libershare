@@ -31,7 +31,7 @@
 {#if $notifications.length > 0}
 	<div class="container" style="bottom: {bottomOffset}">
 		{#each $notifications as notification (notification.id)}
-			<Notification id={notification.id} text={notification.text} />
+			<Notification id={notification.id} text={notification.text} type={notification.type} />
 		{/each}
 	</div>
 {/if}

@@ -256,7 +256,7 @@ export async function initDownloads(): Promise<void> {
 				}
 				// New entry — if active download, set status
 				if (isActive) entry.status = 'downloading';
-				addNotification(tt('downloads.lishAdded', { name: detail.name ?? detail.id }));
+				addNotification(tt('downloads.lishAdded', { name: detail.name ?? detail.id }), 'info');
 				return [entry, ...list];
 			});
 		});
@@ -301,7 +301,7 @@ export async function initDownloads(): Promise<void> {
 			if (data.done) {
 				const lish = get(downloads).find(d => d.id === data.lishID);
 				if (lish && lish.status !== 'moving' && lish.status !== 'downloading' && lish.status !== 'downloading-uploading' && lish.status !== 'allocating') {
-					addNotification(tt('downloads.verifyDone', { name: lish.name }));
+					addNotification(tt('downloads.verifyDone', { name: lish.name }), 'success');
 				}
 				downloads.update(list =>
 					list.map(d => {
@@ -337,7 +337,7 @@ export async function initDownloads(): Promise<void> {
 		// lishs:move — LISH data moved (broadcast from backend)
 		api.on('lishs:move', (data: { lishID: string; directory: string }) => {
 			const lish = get(downloads).find(d => d.id === data.lishID);
-			if (lish) addNotification(tt('downloads.moveSuccess', { name: lish.name }));
+			if (lish) addNotification(tt('downloads.moveSuccess', { name: lish.name }), 'success');
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
@@ -476,7 +476,7 @@ export async function initDownloads(): Promise<void> {
 			disabledDownloads.delete(data.lishID);
 			activeDownloads.delete(data.lishID);
 			const lish = get(downloads).find(d => d.id === data.lishID);
-			if (lish) addNotification(tt('downloads.downloadComplete', { name: lish.name }));
+			if (lish) addNotification(tt('downloads.downloadComplete', { name: lish.name }), 'success');
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));

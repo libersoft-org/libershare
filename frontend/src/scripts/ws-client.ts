@@ -22,4 +22,4 @@ export const connected = writable(false);
 export const wsClient = new WsClient(apiURL, (state: { connected: boolean }) => {
 	connected.set(state.connected);
 });
-wsClient.onError = () => addNotification(tt('common.websocketError'));
+wsClient.onError = () => addNotification(tt('common.websocketError'), 'error');

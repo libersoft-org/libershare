@@ -109,7 +109,7 @@
 		try {
 			const result = await api.lishs.exportToFile(lish.id, filePath.trim(), minifyJSONState, compress);
 			if (result.success) {
-				addNotification(tt('downloads.lishExported', { name: lish.name || lish.id }));
+				addNotification(tt('downloads.lishExported', { name: lish.name || lish.id }), 'success');
 				onBack?.();
 				return;
 			} else errorMessage = 'Save failed';

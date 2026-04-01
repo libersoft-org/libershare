@@ -103,7 +103,7 @@
 		try {
 			const result = await api.lishs.exportAllToFile(filePath.trim(), minifyJSONState, compress);
 			if (result.success) {
-				addNotification(tt('downloads.allLishsExported'));
+				addNotification(tt('downloads.allLishsExported'), 'success');
 				onBack?.();
 				return;
 			} else errorMessage = 'Save failed';
