@@ -448,17 +448,20 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 		const fileExists = await file.exists();
 		if (!fileExists) {
 			console.log(`[Verify] MISSING ${fileEntry.path} (${fileEntry.checksums.length} chunks) at ${filePath}`);
+			for (let i = 0; i < fileEntry.checksums.length; i++) dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, i);
 			totalMissing += fileEntry.checksums.length;
 			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: 0 });
 			continue;
 		}
+		let fileShort = 0;
 		for (let chunkIndex = 0; chunkIndex < fileEntry.checksums.length; chunkIndex++) {
-			if (signal?.aborted) { console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)}`); return; }
+			if (signal?.aborted) { console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`); return; }
 			const expectedChecksum = fileEntry.checksums[chunkIndex]!;
 			const offset = chunkIndex * meta.chunkSize;
 			if (offset >= file.size) {
-				console.debug(`[Verify] SHORT ${fileEntry.path} chunk ${chunkIndex}: file ${file.size}B < offset ${offset}`);
+				dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
 				fileFailed++;
+				fileShort++;
 				onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
 				continue;
 			}
@@ -471,15 +474,14 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 				} else {
 					dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
 					fileFailed++;
-					console.debug(`[Verify] FAIL ${fileEntry.path} chunk ${chunkIndex}: expected=${expectedChecksum.slice(0, 12)} got=${actualChecksum.slice(0, 12)}`);
 				}
 			} catch (err: any) {
 				dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
 				fileFailed++;
-				console.debug(`[Verify] ERROR ${fileEntry.path} chunk ${chunkIndex}: ${err.message}`);
 			}
 			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
 		}
+		if (fileShort > 0) console.debug(`[Verify] SHORT ${fileEntry.path}: ${fileShort} chunks past EOF`);
 		totalVerified += fileVerified;
 		totalFailed += fileFailed;
 		const fileElapsed = Date.now() - fileStart;

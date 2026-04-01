@@ -275,9 +275,6 @@ export async function initDownloads(): Promise<void> {
 		api.on('lishs:verify', (data: { lishID: string; filePath: string; verifiedChunks: number; done?: boolean; reset?: boolean; queued?: boolean; started?: boolean }) => {
 			// console.log('[downloads] lishs:verify received:', data.filePath, 'verified:', data.verifiedChunks, 'done:', data.done);
 			if (data.reset) {
-				const dl = get(downloads).find(d => d.id === data.lishID);
-				if (dl && (dl.status === 'downloading' || dl.status === 'downloading-uploading')) return;
-				resetVerifyState(data.lishID);
 				return;
 			}
 			if (data.queued) {

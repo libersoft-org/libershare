@@ -394,8 +394,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// Remove from queue if pending
 		const qIDx = verificationQueue.indexOf(p.lishID);
 		if (qIDx >= 0) verificationQueue.splice(qIDx, 1);
-		resetVerification(dataServer, p.lishID);
-		broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, reset: true });
+		broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, started: true });
 		enqueueVerification(p.lishID);
 		return { success: true };
 	}
@@ -406,8 +405,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			// Skip if already verifying or already in queue
 			if (currentVerification?.lishID === lish.id) continue;
 			if (verificationQueue.includes(lish.id)) continue;
-			resetVerification(dataServer, lish.id);
-			broadcast('lishs:verify', { lishID: lish.id, filePath: '', verifiedChunks: 0, reset: true });
+			broadcast('lishs:verify', { lishID: lish.id, filePath: '', verifiedChunks: 0, started: true });
 			enqueueVerification(lish.id);
 		}
 		return { success: true };
