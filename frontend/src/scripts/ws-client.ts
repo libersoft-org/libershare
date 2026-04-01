@@ -19,7 +19,11 @@ function getAPIURL(): string {
 export const apiURL = getAPIURL();
 export const connected = writable(false);
 
+let wasConnected = false;
 export const wsClient = new WsClient(apiURL, (state: { connected: boolean }) => {
 	connected.set(state.connected);
+	if (state.connected && wasConnected) addNotification(tt('common.reconnected'), 'success');
+	if (!state.connected && wasConnected) addNotification(tt('common.backendDisconnected'), 'warning');
+	wasConnected = true;
 });
 wsClient.onError = () => addNotification(tt('common.websocketError'), 'error');

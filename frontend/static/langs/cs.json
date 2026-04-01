@@ -63,7 +63,9 @@
 		"errorInternal": "Interní chyba: {detail}",
 		"gamepadConnected": "Gamepad připojen: {name}",
 		"gamepadDisconnected": "Gamepad odpojen: {name}",
-		"websocketError": "Chyba spojení"
+		"websocketError": "Chyba spojení",
+		"backendDisconnected": "Backend odpojen",
+		"reconnected": "Znovu připojeno k backendu"
 	},
 	"library": {
 		"title": "Online knihovna",

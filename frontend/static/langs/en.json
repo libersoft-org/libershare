@@ -63,7 +63,9 @@
 		"errorInternal": "Internal error: {detail}",
 		"gamepadConnected": "Gamepad connected: {name}",
 		"gamepadDisconnected": "Gamepad disconnected: {name}",
-		"websocketError": "Connection error"
+		"websocketError": "Connection error",
+		"backendDisconnected": "Backend disconnected",
+		"reconnected": "Reconnected to backend"
 	},
 	"library": {
 		"title": "Online library",

@@ -133,6 +133,7 @@ describe('notification type mapping', () => {
 			addNotification('File created', 'success'),
 			addNotification('Directory created', 'success'),
 			addNotification('Network exported', 'success'),
+			addNotification('Reconnected to backend', 'success'),
 		];
 		expect(completions.every(n => n.type === 'success')).toBe(true);
 	});
@@ -144,6 +145,7 @@ describe('notification type mapping', () => {
 			addNotification('File deleted', 'warning'),
 			addNotification('Network disconnected', 'warning'),
 			addNotification('Gamepad disconnected', 'warning'),
+			addNotification('Backend disconnected', 'warning'),
 		];
 		expect(warnings.every(n => n.type === 'warning')).toBe(true);
 	});
@@ -152,6 +154,7 @@ describe('notification type mapping', () => {
 		reset();
 		const errors = [
 			addNotification('WebSocket error', 'error'),
+			addNotification('Download failed', 'error'),
 		];
 		expect(errors.every(n => n.type === 'error')).toBe(true);
 	});
