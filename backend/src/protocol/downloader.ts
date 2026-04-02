@@ -1,4 +1,4 @@
-import { mkdir, open } from 'fs/promises';
+import { access, mkdir, open, constants } from 'fs/promises';
 import { dirname, resolve, sep } from 'path';
 import { type IStoredLISH, type LISHid, type ChunkID, CodedError, ErrorCodes } from '@shared';
 import { type Network } from './network.ts';
@@ -25,7 +25,7 @@ export interface HaveMessage extends PubsubMessage {
 	multiaddrs: Multiaddr[];
 	chunks: HaveChunks;
 }
-type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'awaiting-manifest' | 'downloading' | 'downloaded';
+type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'awaiting-manifest' | 'downloading' | 'downloaded' | 'error';
 
 export class Downloader {
 	private lish!: IStoredLISH;
@@ -56,8 +56,14 @@ export class Downloader {
 	private onManifestImported?: (lishID: string) => void;
 	private speedSamples: { time: number; bytes: number }[] = [];
 	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
+	private errorCode?: string;
+	private errorDetail?: string;
 
 	getLISHID(): string { return this.lishID; }
+	getError(): { code: string; detail?: string } | null {
+		if (this.state !== 'error') return null;
+		return { code: this.errorCode!, detail: this.errorDetail };
+	}
 	getPeerCount(): number { return this.lastServingPeerCount; }
 
 	setProgressCallback(cb: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number }) => void): void {
@@ -66,6 +72,22 @@ export class Downloader {
 
 	setManifestImportedCallback(cb: (lishID: string) => void): void {
 		this.onManifestImported = cb;
+	}
+
+	private setError(code: string, detail?: string): void {
+		this.state = 'error';
+		this.errorCode = code;
+		this.errorDetail = detail;
+		this.clearRetryTimer();
+		if (this.callForPeersInterval) { clearInterval(this.callForPeersInterval); this.callForPeersInterval = undefined; }
+		for (const [, client] of this.peers) client.close().catch(() => {});
+		this.peers.clear();
+		this.lastServingPeerCount = 0;
+		this.onProgress?.({ downloadedChunks: 0, totalChunks: this.dataServer.getAllChunkCount(this.lishID) || 0, peers: 0, bytesPerSecond: 0 });
+		this.downloadReject?.(new CodedError(code as any, detail));
+		this.downloadResolve = undefined;
+		this.downloadReject = undefined;
+		console.error(`[DL] Error ${this.lishID.slice(0, 8)}: ${code}${detail ? ` — ${detail}` : ''}`);
 	}
 
 	private scheduleRetry(): void {
@@ -238,6 +260,14 @@ export class Downloader {
 			}
 			// Phase 2: create directory structure (skip if already has downloaded chunks — files already allocated)
 			if (this.state === 'preparing') {
+				// Validate download directory is accessible before creating structure
+				try {
+					await access(dirname(this.downloadDir), constants.R_OK | constants.W_OK);
+				} catch (err: any) {
+					const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.DIRECTORY_MISSING;
+					this.setError(code, this.downloadDir);
+					return;
+				}
 				const totalChunksForProgress = this.dataServer.getAllChunkCount(this.lishID) || this.missingChunks.length;
 				const downloadedForProgress = totalChunksForProgress - this.missingChunks.length;
 				console.debug(`[DL-DBG] Phase 2: preparing ${this.lishID.slice(0, 8)}, downloaded=${downloadedForProgress}/${totalChunksForProgress}, missing=${this.missingChunks.length}, onProgress=${!!this.onProgress}`);
@@ -402,7 +432,15 @@ export class Downloader {
 				skippedChunks = 0;
 				globalNotAvailable = 0;
 				servingPeers.add(peerID);
-				await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
+				try {
+					await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
+				} catch (err: any) {
+					if (err.code === 'ENOENT') this.setError(ErrorCodes.DIRECTORY_MISSING, this.downloadDir);
+					else if (err.code === 'ENOSPC') this.setError(ErrorCodes.DISK_FULL, this.downloadDir);
+					else if (err.code === 'EACCES' || err.code === 'EPERM') this.setError(ErrorCodes.DIRECTORY_ACCESS_DENIED, this.downloadDir);
+					else this.setError(ErrorCodes.DOWNLOAD_ERROR, err.message);
+					break;
+				}
 				this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 				this.dataServer.incrementDownloadedBytes(this.lishID, data.length);
 				downloadedCount++;
