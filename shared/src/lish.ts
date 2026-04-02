@@ -64,6 +64,8 @@ export interface ILISHSummary {
 	totalChunks: number;
 	totalUploadedBytes: number;
 	totalDownloadedBytes: number;
+	errorCode?: string | undefined;
+	errorDetail?: string | undefined;
 }
 
 // Detail for the download detail view (files without checksums, no chunks)
