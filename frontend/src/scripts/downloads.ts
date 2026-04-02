@@ -543,11 +543,11 @@ export async function initDownloads(): Promise<void> {
 			}));
 		});
 
-		// transfer.upload:enabled — only set flag, don't change status (wait for upload:progress with peers)
+		// transfer.upload:enabled — set flag and clear error state if present
 		api.on('transfer.upload:enabled', (data: { lishID: string }) => {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				return { ...d, uploadEnabled: true };
+				return { ...d, uploadEnabled: true, ...(d.status === 'error' ? { status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined } : {}) };
 			}));
 		});
 

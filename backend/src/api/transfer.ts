@@ -249,6 +249,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	function enableUploadHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
 		if (isBusy(p.lishID)) return { success: false };
+		dataServer.clearError(p.lishID);
 		enableUpload(p.lishID);
 		return { success: true };
 	}

@@ -1,7 +1,7 @@
 import { decode } from 'it-length-prefixed';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { type Stream } from '@libp2p/interface';
-import { type LISHid, type ChunkID } from '@shared';
+import { type LISHid, type ChunkID, ErrorCodes } from '@shared';
 import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
 import { uploadLimiter } from './speed-limiter.ts';
@@ -185,8 +185,8 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 					if (count >= IO_ERROR_THRESHOLD && uploadEnabled.has(chunkReq.lishID)) {
 						console.error(`[Upload] ${chunkReq.lishID.slice(0, 8)}: ${count} consecutive I/O errors — auto-disabling upload`);
 						disableUpload(chunkReq.lishID);
-						dataServer.setError(chunkReq.lishID as import('@shared').LISHid, 'DIRECTORY_MISSING', `Upload I/O error`);
-						broadcastFn?.('transfer.upload:error', { lishID: chunkReq.lishID, error: 'DIRECTORY_MISSING', errorDetail: 'Upload source directory not accessible' });
+						dataServer.setError(chunkReq.lishID as LISHid, ErrorCodes.DIRECTORY_MISSING, `Upload I/O error`);
+						broadcastFn?.('transfer.upload:error', { lishID: chunkReq.lishID, error: ErrorCodes.DIRECTORY_MISSING, errorDetail: 'Upload source directory not accessible' });
 					}
 					continue;
 				}
