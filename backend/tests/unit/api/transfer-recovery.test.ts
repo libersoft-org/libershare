@@ -13,7 +13,7 @@ describe('ErrorRecovery', () => {
 		broadcastCalls = [];
 		recoverShouldSucceed = false;
 		recovery = new ErrorRecovery({
-			attemptRecover: async (lishID) => {
+			attemptRecover: async (lishID, _dlEnabled, _ulEnabled) => {
 				attemptCalls.push({ lishID });
 				return recoverShouldSucceed;
 			},
@@ -119,7 +119,7 @@ describe('ErrorRecovery', () => {
 
 	it('stops recovery when LISH has no directory', async () => {
 		const noDir = new ErrorRecovery({
-			attemptRecover: async () => true,
+			attemptRecover: async (_id, _dl, _ul) => true,
 			broadcast: () => {},
 			getLISH: () => ({ id: 'x' } as any), // no directory field
 			checkAccess: async () => {},
@@ -134,7 +134,7 @@ describe('ErrorRecovery', () => {
 	it('stops recovery when LISH is deleted', async () => {
 		let lishExists = true;
 		const rec = new ErrorRecovery({
-			attemptRecover: async () => true,
+			attemptRecover: async (_id, _dl, _ul) => true,
 			broadcast: () => {},
 			getLISH: () => lishExists ? { directory: '/tmp', id: 'x' } as any : null,
 			checkAccess: async () => {},

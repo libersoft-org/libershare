@@ -104,6 +104,8 @@ const errorCodeKeys: Record<string, string> = {
 	PATH_ACCESS_DENIED: 'lish.errorPathAccessDenied',
 	INVALID_FILE_INDEX: 'lish.errorInvalidFileIndex',
 	IO_NOT_FOUND: 'lish.errorIONotFound',
+	DISK_FULL: 'lish.errorDiskFull',
+	DIRECTORY_ACCESS_DENIED: 'lish.errorDirectoryAccessDenied',
 	DOWNLOADER_NOT_INITIALIZED: 'lish.errorDownloaderNotInitialized',
 	DOWNLOAD_ERROR: 'lish.errorDownload',
 	// Network → settings.lishNetwork

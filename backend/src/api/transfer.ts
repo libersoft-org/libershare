@@ -64,6 +64,11 @@ export async function removeDownloadState(lishID: string): Promise<void> {
 	await destroyActiveDownloader(lishID);
 }
 
+/** Stop error recovery for a LISH (call when LISH is deleted). */
+let _stopRecoveryFn: ((lishID: string) => void) | null = null;
+export function setStopRecoveryFn(fn: (lishID: string) => void): void { _stopRecoveryFn = fn; }
+export function stopRecoveryForLISH(lishID: string): void { _stopRecoveryFn?.(lishID); }
+
 /** Restart download for a LISH if it was enabled. Called after busy state clears. */
 let _enableDownloadFn: ((p: { lishID: string }) => Promise<{ success: boolean }>) | null = null;
 export function setEnableDownloadFn(fn: (p: { lishID: string }) => Promise<{ success: boolean }>): void { _enableDownloadFn = fn; }
@@ -86,15 +91,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	// Error recovery: auto-retry when IO conditions clear
 	const recovery = new ErrorRecovery({
-		attemptRecover: async (lishID) => {
-			const entry = recovery.getState(lishID);
-			if (!entry) return false;
+		attemptRecover: async (lishID, downloadWasEnabled, uploadWasEnabled) => {
 			let ok = true;
-			if (entry.downloadWasEnabled) {
+			if (downloadWasEnabled) {
 				const result = await enableDownload({ lishID });
 				if (!result.success) ok = false;
 			}
-			if (entry.uploadWasEnabled) enableUploadHandler({ lishID });
+			if (uploadWasEnabled) enableUploadHandler({ lishID });
 			return ok;
 		},
 		broadcast: (event, data) => { broadcast?.(event, data); },
@@ -247,6 +250,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	// Register enableDownload for module-level restartDownloadIfEnabled
 	setEnableDownloadFn(enableDownload);
+	setStopRecoveryFn((lishID) => recovery.stop(lishID));
 
 	function getActiveTransfers(): ActiveTransfer[] {
 		const transfers: ActiveTransfer[] = [];

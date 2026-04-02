@@ -222,6 +222,8 @@
 		"errorPathAccessDenied": "Nelze přistoupit k cestě: {detail}",
 		"errorInvalidFileIndex": "Neplatný index souboru: {detail}",
 		"errorIONotFound": "Soubor nebo adresář nenalezen: {detail}",
+		"errorDiskFull": "Disk plný: {detail}",
+		"errorDirectoryAccessDenied": "Přístup zamítnut: {detail}",
 		"errorDownloaderNotInitialized": "Stahovač nebyl inicializován",
 		"errorDownload": "Stahování selhalo: {detail}"
 	},

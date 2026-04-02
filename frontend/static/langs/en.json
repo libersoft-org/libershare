@@ -222,6 +222,8 @@
 		"errorPathAccessDenied": "Cannot access path: {detail}",
 		"errorInvalidFileIndex": "Invalid file index: {detail}",
 		"errorIONotFound": "File or directory not found: {detail}",
+		"errorDiskFull": "Disk full: {detail}",
+		"errorDirectoryAccessDenied": "Access denied: {detail}",
 		"errorDownloaderNotInitialized": "Downloader not initialized",
 		"errorDownload": "Download failed: {detail}"
 	},

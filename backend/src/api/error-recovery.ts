@@ -12,7 +12,7 @@ export interface RecoveryState {
 }
 
 interface RecoveryDeps {
-	attemptRecover: (lishID: string) => Promise<boolean>;
+	attemptRecover: (lishID: string, downloadWasEnabled: boolean, uploadWasEnabled: boolean) => Promise<boolean>;
 	broadcast: (event: string, data: any) => void;
 	getLISH: (lishID: string) => { directory?: string; id: string } | null;
 	checkAccess: (path: string) => Promise<void>;
@@ -75,10 +75,6 @@ export class ErrorRecovery {
 		return this.entries.get(lishID);
 	}
 
-	getAll(): Map<string, RecoveryState> {
-		return this.entries;
-	}
-
 	private schedule(lishID: string, delay: number): void {
 		const entry = this.entries.get(lishID);
 		if (!entry) return;
@@ -121,12 +117,12 @@ export class ErrorRecovery {
 		console.log(`[Recovery] ${lishID.slice(0, 8)}: directory accessible, attempting recovery (attempt ${entry.retryCount})`);
 		this.deps.broadcast('transfer.recovery:attempting', { lishID, retryCount: entry.retryCount });
 
+		// Save state before stopping (stop deletes the entry)
+		const { downloadWasEnabled, uploadWasEnabled } = entry;
 		// Stop recovery BEFORE calling enableDownload to prevent re-entrancy
-		// (enableDownload may fail and call recovery.start again — the guard would block it,
-		// but stopping cleanly first is cleaner)
 		this.stop(lishID);
 
-		const success = await this.deps.attemptRecover(lishID);
+		const success = await this.deps.attemptRecover(lishID, downloadWasEnabled, uploadWasEnabled);
 		if (success) {
 			console.log(`[Recovery] ${lishID.slice(0, 8)}: recovered successfully`);
 			this.deps.broadcast('transfer.recovery:recovered', { lishID });

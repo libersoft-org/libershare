@@ -5,7 +5,7 @@ import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { setBusy, clearBusy } from './busy.ts';
 import { getEnabledUploads, removeUploadState, enableUpload } from '../protocol/lish-protocol.ts';
-import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, triggerEnableDownload, markDownloadEnabled } from './transfer.ts';
+import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, triggerEnableDownload, markDownloadEnabled, stopRecoveryForLISH } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
@@ -249,7 +249,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const lish = dataServer.get(p.lishID);
 		if (!lish) return false;
 		if (p.deleteLISH) {
-			// Full deletion — stop transfers, stop verification, clean up, delete DB row
+			// Full deletion — stop transfers, stop verification, stop recovery, clean up, delete DB row
+			stopRecoveryForLISH(p.lishID);
 			removeUploadState(p.lishID);
 			await removeDownloadState(p.lishID);
 			// Stop any running/queued verification for this LISH
