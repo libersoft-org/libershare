@@ -29,6 +29,8 @@ export function initLISHsTables(db: Database): void {
 	try { db.run('ALTER TABLE lishs ADD COLUMN download_enabled BOOL NOT NULL DEFAULT FALSE'); } catch { /* already exists */ }
 	try { db.run('ALTER TABLE lishs ADD COLUMN total_uploaded_bytes INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
 	try { db.run('ALTER TABLE lishs ADD COLUMN total_downloaded_bytes INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
+	try { db.run('ALTER TABLE lishs ADD COLUMN error_code TEXT DEFAULT NULL'); } catch { /* already exists */ }
+	try { db.run('ALTER TABLE lishs ADD COLUMN error_detail TEXT DEFAULT NULL'); } catch { /* already exists */ }
 
 	db.run(`
 		CREATE TABLE IF NOT EXISTS lishs_files (
@@ -213,6 +215,8 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 				total_chunks: number;
 				total_uploaded_bytes: number;
 				total_downloaded_bytes: number;
+				error_code: string | null;
+				error_detail: string | null;
 			},
 			[]
 		>(
@@ -228,7 +232,9 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 			COALESCE(v.verified_chunks, 0) AS verified_chunks,
 			COALESCE(v.total_chunks, 0)    AS total_chunks,
 			l.total_uploaded_bytes,
-			l.total_downloaded_bytes
+			l.total_downloaded_bytes,
+			l.error_code,
+			l.error_detail
 		FROM lishs l
 		LEFT JOIN (
 			SELECT id_lishs, SUM(size) AS total_size, COUNT(*) AS file_count
@@ -263,6 +269,8 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 		totalChunks: r.total_chunks,
 		totalUploadedBytes: r.total_uploaded_bytes,
 		totalDownloadedBytes: r.total_downloaded_bytes,
+		errorCode: r.error_code ?? undefined,
+		errorDetail: r.error_detail ?? undefined,
 	}));
 }
 
@@ -644,4 +652,12 @@ export function getTransferStats(db: Database, lishID: LISHid): { uploadedBytes:
 		'SELECT total_uploaded_bytes, total_downloaded_bytes FROM lishs WHERE lish_id = ?'
 	).get(lishID);
 	return { uploadedBytes: row?.total_uploaded_bytes ?? 0, downloadedBytes: row?.total_downloaded_bytes ?? 0 };
+}
+
+export function setLISHError(db: Database, lishID: LISHid, errorCode: string, errorDetail?: string): void {
+	db.run('UPDATE lishs SET error_code = ?, error_detail = ? WHERE lish_id = ?', [errorCode, errorDetail ?? null, lishID]);
+}
+
+export function clearLISHError(db: Database, lishID: LISHid): void {
+	db.run('UPDATE lishs SET error_code = NULL, error_detail = NULL WHERE lish_id = ?', [lishID]);
 }
