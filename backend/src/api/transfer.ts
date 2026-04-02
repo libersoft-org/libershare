@@ -138,7 +138,17 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		persistDownloadEnabled?.(p.lishID, true);
 		const dl = activeDownloaders.get(p.lishID);
 		if (dl) {
-			dl.enable();
+			await dl.enable();
+			if (dl.getError()) {
+				const err = dl.getError()!;
+				const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
+				dataServer.setError(p.lishID, err.code, err.detail);
+				downloadEnabledLishs.delete(p.lishID);
+				persistDownloadEnabled?.(p.lishID, false);
+				if (activeDownloaders.get(p.lishID) === dl) activeDownloaders.delete(p.lishID);
+				send('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID: p.lishID });
+				return { success: false };
+			}
 			const send = broadcast ?? (() => {});
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };

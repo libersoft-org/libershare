@@ -122,7 +122,15 @@ export class Downloader {
 		console.log(`[DL] Disabled ${this.lishID.slice(0, 8)}`);
 	}
 
-	enable(): void {
+	async enable(): Promise<void> {
+		// Validate download directory before resuming
+		try {
+			await access(dirname(this.downloadDir), constants.R_OK | constants.W_OK);
+		} catch (err: any) {
+			const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.DIRECTORY_MISSING;
+			this.setError(code, this.downloadDir);
+			return;
+		}
 		this.disabled = false;
 		this.lastExhaustedTime = 0;
 		console.log(`[DL] Enabled ${this.lishID.slice(0, 8)}`);

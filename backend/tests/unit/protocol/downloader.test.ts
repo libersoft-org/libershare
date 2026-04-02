@@ -153,9 +153,9 @@ describe('Downloader – disable / enable state', () => {
 		expect(downloader.isDisabled()).toBe(true);
 	});
 
-	it('enable() after disable sets isDisabled to false', () => {
+	it('enable() after disable sets isDisabled to false', async () => {
 		downloader.disable();
-		downloader.enable();
+		await downloader.enable();
 		expect(downloader.isDisabled()).toBe(false);
 	});
 
