@@ -30,6 +30,8 @@
 	--status-pending-verification-bg: #750;
 	--status-moving-fg: #c6f;
 	--status-moving-bg: #306;
+	--status-error-fg: #f44;
+	--status-error-bg: #400;
 	--mode-disabled-fg: #c33;
 	--mode-disabled-bg: #222;
 	--mode-download-fg: #0c0;

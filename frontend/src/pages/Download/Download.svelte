@@ -30,7 +30,7 @@
 	let allDownloadDisabled = $derived(!anyDownloadEnabled);
 	let allUploadDisabled = $derived(!anyUploadEnabled);
 
-	const busyStatuses: DownloadStatus[] = ['moving', 'verifying', 'pending-verification'];
+	const busyStatuses: DownloadStatus[] = ['moving', 'verifying', 'pending-verification', 'error'];
 
 	function toggleAllDownloads(): void {
 		if (allDownloadDisabled) {

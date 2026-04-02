@@ -397,6 +397,9 @@
 		{#if deleteError}
 			<Alert type="error" message={deleteError} />
 		{/if}
+		{#if download?.status === 'error' && download.errorMessage}
+			<Alert type="error" message={download.errorMessage} />
+		{/if}
 		{#if download}
 			<div class="content">
 				<div class="info" class:selected={infoActive} bind:this={infoElement}>
