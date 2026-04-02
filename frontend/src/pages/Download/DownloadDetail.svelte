@@ -397,8 +397,8 @@
 		{#if deleteError}
 			<Alert type="error" message={deleteError} />
 		{/if}
-		{#if download?.status === 'error' && download.errorMessage}
-			<Alert type="error" message={download.errorMessage} />
+		{#if download?.status === 'error' && (download.errorCode || download.errorMessage)}
+			<Alert type="error" message={`${$t('downloads.statuses.error')}: ${download.errorCode ?? ''}${download.errorMessage && download.errorMessage !== download.errorCode ? ' — ' + download.errorMessage : ''}`} />
 		{/if}
 		{#if download}
 			<div class="content">
