@@ -551,6 +551,17 @@ export async function initDownloads(): Promise<void> {
 			}));
 		});
 
+		// transfer.upload:error — I/O error during upload (e.g. source directory missing)
+		api.on('transfer.upload:error', (data: { lishID: string; error: string; errorDetail?: string }) => {
+			const lish = get(downloads).find(d => d.id === data.lishID);
+			if (lish) addNotification(tt('downloads.downloadError', { name: lish.name, error: data.errorDetail || data.error }), 'error');
+			activeUploadLishs.delete(data.lishID);
+			downloads.update(list => list.map(d => {
+				if (d.id !== data.lishID) return d;
+				return { ...d, status: 'error' as DownloadStatus, uploadEnabled: false, uploadPeers: 0, uploadSpeed: '0 B/s', rawUploadSpeed: 0, errorCode: data.error, errorMessage: data.errorDetail || data.error };
+			}));
+		});
+
 		// transfer.upload:stopped — peer disconnected, upload stream ended (NOT user action)
 		// Only reset speed/peers, do NOT change upload enabled state
 		api.on('transfer.upload:stopped', (data: { lishID: string }) => {
@@ -578,6 +589,7 @@ export async function initDownloads(): Promise<void> {
 	api.subscribe('transfer.upload:disabled');
 	api.subscribe('transfer.upload:enabled');
 	api.subscribe('transfer.upload:stopped');
+	api.subscribe('transfer.upload:error');
 }
 
 /** Reset verify state for a LISH in the downloads store (set all to 0, status to pending-verification). Skips if actively downloading. */
