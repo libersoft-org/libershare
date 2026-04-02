@@ -159,8 +159,8 @@ describe('Downloader – disable / enable state', () => {
 		expect(downloader.isDisabled()).toBe(false);
 	});
 
-	it('enable() without prior disable does not throw', () => {
-		expect(() => downloader.enable()).not.toThrow();
+	it('enable() without prior disable does not throw', async () => {
+		await expect(downloader.enable()).resolves.toBeUndefined();
 	});
 
 	it('multiple disable calls keep isDisabled true', () => {
@@ -200,7 +200,7 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		expect(unblocked).toEqual([false, false, false]);
 
 		// Resume — should unblock ALL three
-		dl.enable();
+		await dl.enable();
 		await Promise.all(waiters);
 
 		expect(unblocked).toEqual([true, true, true]);
@@ -223,7 +223,7 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		await new Promise(r => setTimeout(r, 20));
 		expect(countUnblocked).toBe(0);
 
-		dl.enable();
+		await dl.enable();
 		await Promise.all([w1, w2]);
 		expect(countUnblocked).toBe(2);
 	});
@@ -256,7 +256,7 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		const w1a = waitIfDisabled().then(() => c1++);
 		const w1b = waitIfDisabled().then(() => c1++);
 		await new Promise(r => setTimeout(r, 20));
-		dl.enable();
+		await dl.enable();
 		await Promise.all([w1a, w1b]);
 		expect(c1).toBe(2);
 
@@ -267,7 +267,7 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		const w2b = waitIfDisabled().then(() => c2++);
 		const w2c = waitIfDisabled().then(() => c2++);
 		await new Promise(r => setTimeout(r, 20));
-		dl.enable();
+		await dl.enable();
 		await Promise.all([w2a, w2b, w2c]);
 		expect(c2).toBe(3);
 	});

@@ -134,12 +134,15 @@ export class Downloader {
 			return;
 		}
 		this.disabled = false;
+		if (this.state === 'error') this.state = this.missingChunks.length > 0 ? 'downloading' : 'preparing';
+		this.errorCode = undefined;
+		this.errorDetail = undefined;
 		this.lastExhaustedTime = 0;
 		console.log(`[DL] Enabled ${this.lishID.slice(0, 8)}`);
 		for (const resolve of this.enableResolvers) resolve();
 		this.enableResolvers = [];
 		this.setupCallForPeersInterval();
-		if (this.state === 'downloading' || this.state === 'awaiting-manifest') {
+		if (this.state === 'downloading' || this.state === 'awaiting-manifest' || this.state === 'preparing') {
 			this.callForPeers().catch(() => {});
 			this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
 		}
