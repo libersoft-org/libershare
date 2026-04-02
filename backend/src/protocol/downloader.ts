@@ -76,17 +76,24 @@ export class Downloader {
 
 	private setError(code: string, detail?: string): void {
 		this.state = 'error';
+		this.disabled = true;
 		this.errorCode = code;
 		this.errorDetail = detail;
 		this.clearRetryTimer();
 		if (this.callForPeersInterval) { clearInterval(this.callForPeersInterval); this.callForPeersInterval = undefined; }
+		for (const { topic, handler } of this.pubsubHandlers) this.network.unsubscribeHandler(topic, handler);
+		this.pubsubHandlers = [];
 		for (const [, client] of this.peers) client.close().catch(() => {});
 		this.peers.clear();
 		this.lastServingPeerCount = 0;
-		this.onProgress?.({ downloadedChunks: 0, totalChunks: this.dataServer.getAllChunkCount(this.lishID) || 0, peers: 0, bytesPerSecond: 0 });
+		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
+		const missing = this.dataServer.getMissingChunks(this.lishID).length;
+		this.onProgress?.({ downloadedChunks: total - missing, totalChunks: total, peers: 0, bytesPerSecond: 0 });
 		this.downloadReject?.(new CodedError(code as any, detail));
 		this.downloadResolve = undefined;
 		this.downloadReject = undefined;
+		for (const resolve of this.enableResolvers) resolve();
+		this.enableResolvers = [];
 		console.error(`[DL] Error ${this.lishID.slice(0, 8)}: ${code}${detail ? ` — ${detail}` : ''}`);
 	}
 
