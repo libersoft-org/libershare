@@ -168,10 +168,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			const joinedNetworks = networks.getEnabled().map(n => n.networkID);
 			if (joinedNetworks.length === 0) return { success: false };
 			const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
-			// Pre-validate download directory
+			// Pre-validate download directory (check dir itself for resume, parent for fresh)
 			if (lish.directory) {
+				const hasChunks = dataServer.getAllChunkCount(p.lishID) > dataServer.getMissingChunks(p.lishID).length;
+				const checkPath = hasChunks ? downloadDir : dirname(downloadDir);
 				try {
-					await access(dirname(downloadDir), constants.R_OK | constants.W_OK);
+					await access(checkPath, constants.R_OK | constants.W_OK);
 				} catch (err: any) {
 					const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.DIRECTORY_MISSING;
 					const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));

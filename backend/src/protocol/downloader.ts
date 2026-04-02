@@ -124,8 +124,10 @@ export class Downloader {
 
 	async enable(): Promise<void> {
 		// Validate download directory before resuming
+		const hasChunks = this.dataServer.getAllChunkCount(this.lishID) > this.dataServer.getMissingChunks(this.lishID).length;
+		const checkPath = hasChunks ? this.downloadDir : dirname(this.downloadDir);
 		try {
-			await access(dirname(this.downloadDir), constants.R_OK | constants.W_OK);
+			await access(checkPath, constants.R_OK | constants.W_OK);
 		} catch (err: any) {
 			const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.DIRECTORY_MISSING;
 			this.setError(code, this.downloadDir);
@@ -275,9 +277,12 @@ export class Downloader {
 			}
 			// Phase 2: create directory structure (skip if already has downloaded chunks — files already allocated)
 			if (this.state === 'preparing') {
-				// Validate download directory is accessible before creating structure
+				// Validate download directory: if resuming (some chunks exist), check the dir itself;
+				// for fresh downloads, check parent (dir will be created by mkdir)
+				const hasDownloadedChunks = this.dataServer.getAllChunkCount(this.lishID) > this.dataServer.getMissingChunks(this.lishID).length;
+				const checkPath = hasDownloadedChunks ? this.downloadDir : dirname(this.downloadDir);
 				try {
-					await access(dirname(this.downloadDir), constants.R_OK | constants.W_OK);
+					await access(checkPath, constants.R_OK | constants.W_OK);
 				} catch (err: any) {
 					const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.DIRECTORY_MISSING;
 					this.setError(code, this.downloadDir);
