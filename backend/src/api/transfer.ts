@@ -162,12 +162,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			if (lish.directory) {
 				try {
 					await access(dirname(downloadDir), constants.R_OK | constants.W_OK);
-				} catch {
+				} catch (err: any) {
+					const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.DIRECTORY_MISSING;
 					const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
-					dataServer.setError(p.lishID, ErrorCodes.DIRECTORY_MISSING, downloadDir);
+					dataServer.setError(p.lishID, code, downloadDir);
 					downloadEnabledLishs.delete(p.lishID);
 					persistDownloadEnabled?.(p.lishID, false);
-					send('transfer.download:error', { error: ErrorCodes.DIRECTORY_MISSING, errorDetail: downloadDir, lishID: p.lishID });
+					send('transfer.download:error', { error: code, errorDetail: downloadDir, lishID: p.lishID });
 					return { success: false };
 				}
 			}
