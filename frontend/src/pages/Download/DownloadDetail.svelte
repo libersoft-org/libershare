@@ -398,7 +398,12 @@
 			<Alert type="error" message={deleteError} />
 		{/if}
 		{#if download?.status === 'error' && (download.errorCode || download.errorMessage)}
-			<Alert type="error" message={`${$t('downloads.statuses.error')}: ${download.errorCode ?? ''}${download.errorMessage && download.errorMessage !== download.errorCode ? ' — ' + download.errorMessage : ''}`} />
+			{@const recoveryText = download.recoveryNextAt === 0
+				? $t('downloads.recoveryAttempting')
+				: download.recoveryNextAt
+					? $t('downloads.recoveryScheduled', { seconds: String(Math.max(1, Math.ceil((download.recoveryNextAt - Date.now()) / 1000))) })
+					: ''}
+			<Alert type="error" message={`${$t('downloads.statuses.error')}: ${download.errorCode ?? ''}${download.errorMessage && download.errorMessage !== download.errorCode ? ' — ' + download.errorMessage : ''}${recoveryText ? ' · ' + recoveryText : ''}`} />
 		{/if}
 		{#if download}
 			<div class="content">

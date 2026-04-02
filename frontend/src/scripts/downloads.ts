@@ -61,6 +61,8 @@ export interface DownloadData {
 	totalDownloadedBytes: number;
 	errorCode?: string | undefined;
 	errorMessage?: string | undefined;
+	recoveryRetryCount?: number | undefined;
+	recoveryNextAt?: number | undefined;
 }
 
 /**
@@ -474,7 +476,7 @@ export async function initDownloads(): Promise<void> {
 			disabledDownloads.delete(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				return { ...d, downloadEnabled: true, ...(d.status === 'error' ? { status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined } : {}) };
+				return { ...d, downloadEnabled: true, ...(d.status === 'error' ? { status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined } : {}), recoveryRetryCount: undefined, recoveryNextAt: undefined };
 			}));
 		});
 
@@ -548,7 +550,7 @@ export async function initDownloads(): Promise<void> {
 		api.on('transfer.upload:enabled', (data: { lishID: string }) => {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				return { ...d, uploadEnabled: true, ...(d.status === 'error' ? { status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined } : {}) };
+				return { ...d, uploadEnabled: true, ...(d.status === 'error' ? { status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined } : {}), recoveryRetryCount: undefined, recoveryNextAt: undefined };
 			}));
 		});
 
@@ -560,6 +562,32 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
 				return { ...d, status: 'error' as DownloadStatus, uploadEnabled: false, uploadPeers: 0, uploadSpeed: '0 B/s', rawUploadSpeed: 0, errorCode: data.error, errorMessage: data.errorDetail || data.error };
+			}));
+		});
+
+		// transfer.recovery:scheduled — recovery timer started/rescheduled
+		api.on('transfer.recovery:scheduled', (data: { lishID: string; delayMs: number; retryCount: number }) => {
+			downloads.update(list => list.map(d => {
+				if (d.id !== data.lishID) return d;
+				return { ...d, recoveryRetryCount: data.retryCount, recoveryNextAt: Date.now() + data.delayMs };
+			}));
+		});
+
+		// transfer.recovery:attempting — recovery attempt in progress
+		api.on('transfer.recovery:attempting', (data: { lishID: string }) => {
+			downloads.update(list => list.map(d => {
+				if (d.id !== data.lishID) return d;
+				return { ...d, recoveryNextAt: 0 };
+			}));
+		});
+
+		// transfer.recovery:recovered — recovery succeeded
+		api.on('transfer.recovery:recovered', (data: { lishID: string }) => {
+			const lish = get(downloads).find(d => d.id === data.lishID);
+			if (lish) addNotification(tt('downloads.recoverySuccess', { name: lish.name }), 'success');
+			downloads.update(list => list.map(d => {
+				if (d.id !== data.lishID) return d;
+				return { ...d, recoveryRetryCount: undefined, recoveryNextAt: undefined };
 			}));
 		});
 
@@ -591,6 +619,9 @@ export async function initDownloads(): Promise<void> {
 	api.subscribe('transfer.upload:enabled');
 	api.subscribe('transfer.upload:stopped');
 	api.subscribe('transfer.upload:error');
+	api.subscribe('transfer.recovery:scheduled');
+	api.subscribe('transfer.recovery:attempting');
+	api.subscribe('transfer.recovery:recovered');
 }
 
 /** Reset verify state for a LISH in the downloads store (set all to 0, status to pending-verification). Skips if actively downloading. */

@@ -7,7 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, allowRelay, maxRelayReservations, autoStartSharing, autoStartDownloading, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, setAutoStartDownloading, settingsDefaults } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, allowRelay, maxRelayReservations, autoStartSharing, autoStartDownloading, autoErrorRecovery, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, settingsDefaults } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -37,6 +37,7 @@
 	let relayReservations = $state($maxRelayReservations.toString());
 	let autoStart = $state($autoStartSharing);
 	let autoStartDl = $state($autoStartDownloading);
+	let autoRecovery = $state($autoErrorRecovery);
 
 	// Browse functions
 	function openBrowse(type: 'storage' | 'temp' | 'lish' | 'lishnet'): void {
@@ -135,6 +136,11 @@
 	function toggleAutoStartDl(): void {
 		autoStartDl = !autoStartDl;
 		setAutoStartDownloading(autoStartDl);
+	}
+
+	function toggleAutoRecovery(): void {
+		autoRecovery = !autoRecovery;
+		setAutoErrorRecovery(autoRecovery);
 	}
 
 	// Reset functions
@@ -260,10 +266,11 @@
 			</div>
 			<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} position={[0, 11]} onToggle={toggleAutoStart} />
 			<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 12]} onToggle={toggleAutoStartDl} />
+			<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 13]} onToggle={toggleAutoRecovery} />
 		</div>
 		<ButtonBar justify="center">
-			<Button icon="/img/save.svg" label={$t('common.save')} position={[0, 13]} onConfirm={handleSave} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 13]} onConfirm={onBack} />
+			<Button icon="/img/save.svg" label={$t('common.save')} position={[0, 14]} onConfirm={handleSave} />
+			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 14]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

@@ -6,6 +6,8 @@ import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads } from
 import { join, dirname } from 'path';
 import { access, constants } from 'fs/promises';
 import { isBusy } from './busy.ts';
+import { ErrorRecovery } from './error-recovery.ts';
+import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -78,9 +80,32 @@ export function triggerEnableDownload(lishID: string): void {
 	}
 }
 
-export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn): TransferHandlers {
+export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn, settings?: Settings): TransferHandlers {
 	const activeDownloaders = new Map<string, Downloader>();
 	setActiveDownloadersRef(activeDownloaders);
+
+	// Error recovery: auto-retry when IO conditions clear
+	const recovery = new ErrorRecovery({
+		attemptRecover: async (lishID) => {
+			const entry = recovery.getState(lishID);
+			if (!entry) return false;
+			let ok = true;
+			if (entry.downloadWasEnabled) {
+				const result = await enableDownload({ lishID });
+				if (!result.success) ok = false;
+			}
+			if (entry.uploadWasEnabled) enableUploadHandler({ lishID });
+			return ok;
+		},
+		broadcast: (event, data) => { broadcast?.(event, data); },
+		getLISH: (lishID) => dataServer.get(lishID) ?? undefined as any,
+		checkAccess: async (path) => { await access(path, constants.R_OK | constants.W_OK); },
+	});
+
+	function startRecoveryIfEnabled(lishID: string, errorCode: string, prev: { downloadEnabled: boolean; uploadEnabled: boolean }): void {
+		if (settings?.get('network.autoErrorRecovery') === false) return;
+		recovery.start(lishID, errorCode, prev);
+	}
 
 	async function download(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
 		assert(p, ['networkID', 'lishPath']);
@@ -112,12 +137,14 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				downloadEnabledLishs.delete(lishID);
 				persistDownloadEnabled?.(lishID, false);
 				send('transfer.download:error', { error: code, errorDetail: detail, lishID });
+				startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
 			});
 		return { downloadDir };
 	}
 
 	function disableDownload(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
+		recovery.stop(p.lishID);
 		downloadEnabledLishs.delete(p.lishID);
 		persistDownloadEnabled?.(p.lishID, false);
 		const dl = activeDownloaders.get(p.lishID);
@@ -147,9 +174,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				persistDownloadEnabled?.(p.lishID, false);
 				if (activeDownloaders.get(p.lishID) === dl) activeDownloaders.delete(p.lishID);
 				send('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID: p.lishID });
+				startRecoveryIfEnabled(p.lishID, err.code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
 				return { success: false };
 			}
 			const send = broadcast ?? (() => {});
+			recovery.stop(p.lishID);
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
 		}
@@ -181,6 +210,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					downloadEnabledLishs.delete(p.lishID);
 					persistDownloadEnabled?.(p.lishID, false);
 					send('transfer.download:error', { error: code, errorDetail: downloadDir, lishID: p.lishID });
+					startRecoveryIfEnabled(p.lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
 					return { success: false };
 				}
 			}
@@ -202,7 +232,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					downloadEnabledLishs.delete(p.lishID);
 					persistDownloadEnabled?.(p.lishID, false);
 					send('transfer.download:error', { error: code, errorDetail: detail, lishID: p.lishID });
+					startRecoveryIfEnabled(p.lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
 				});
+			recovery.stop(p.lishID);
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
 		} catch (err) {
@@ -254,6 +286,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	function disableUploadHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
+		recovery.stop(p.lishID);
 		disableUpload(p.lishID);
 		return { success: true };
 	}
@@ -261,9 +294,24 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	function enableUploadHandler(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
 		if (isBusy(p.lishID)) return { success: false };
+		recovery.stop(p.lishID);
 		dataServer.clearError(p.lishID);
 		enableUpload(p.lishID);
 		return { success: true };
+	}
+
+	// Intercept upload error broadcasts to start recovery
+	const _origBroadcast = broadcast;
+	if (_origBroadcast) {
+		broadcast = (event: string, data: any) => {
+			_origBroadcast(event, data);
+			if (event === 'transfer.upload:error' && data?.lishID && data?.error) {
+				startRecoveryIfEnabled(data.lishID, data.error, {
+					downloadEnabled: downloadEnabledLishs.has(data.lishID),
+					uploadEnabled: true,
+				});
+			}
+		};
 	}
 
 	// Auto-resume downloads that were enabled before restart (skip errored)
