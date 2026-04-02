@@ -3,7 +3,8 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
 import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads } from '../protocol/lish-protocol.ts';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { access, constants } from 'fs/promises';
 import { isBusy } from './busy.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -105,8 +106,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			.catch(err => {
 				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
 				if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) return;
-				if (err instanceof CodedError) send('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID });
-				else send('transfer.download:error', { error: ErrorCodes.DOWNLOAD_ERROR, errorDetail: err.message, lishID });
+				const code = err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR;
+				const detail = err instanceof CodedError ? err.detail : err.message;
+				dataServer.setError(lishID, code, detail);
+				downloadEnabledLishs.delete(lishID);
+				persistDownloadEnabled?.(lishID, false);
+				send('transfer.download:error', { error: code, errorDetail: detail, lishID });
 			});
 		return { downloadDir };
 	}
@@ -128,6 +133,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['lishID']);
 		if (isBusy(p.lishID)) return { success: false };
 		if (pendingDownloads.has(p.lishID)) return { success: true };
+		dataServer.clearError(p.lishID);
 		downloadEnabledLishs.add(p.lishID);
 		persistDownloadEnabled?.(p.lishID, true);
 		const dl = activeDownloaders.get(p.lishID);
@@ -152,6 +158,19 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			const joinedNetworks = networks.getEnabled().map(n => n.networkID);
 			if (joinedNetworks.length === 0) return { success: false };
 			const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
+			// Pre-validate download directory
+			if (lish.directory) {
+				try {
+					await access(dirname(downloadDir), constants.R_OK | constants.W_OK);
+				} catch {
+					const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
+					dataServer.setError(p.lishID, ErrorCodes.DIRECTORY_MISSING, downloadDir);
+					downloadEnabledLishs.delete(p.lishID);
+					persistDownloadEnabled?.(p.lishID, false);
+					send('transfer.download:error', { error: ErrorCodes.DIRECTORY_MISSING, errorDetail: downloadDir, lishID: p.lishID });
+					return { success: false };
+				}
+			}
 			const downloader = new Downloader(downloadDir, network, dataServer, joinedNetworks);
 			await downloader.initFromManifest(lish);
 			activeDownloaders.set(p.lishID, downloader);
@@ -163,7 +182,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				.then(() => { if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID); send('transfer.download:complete', { downloadDir, lishID: p.lishID }); })
 				.catch(err => {
 					if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID);
-					if (!(err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED)) send('transfer.download:error', { error: err.message, lishID: p.lishID });
+					if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) return;
+					const code = err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR;
+					const detail = err instanceof CodedError ? err.detail : err.message;
+					dataServer.setError(p.lishID, code, detail);
+					downloadEnabledLishs.delete(p.lishID);
+					persistDownloadEnabled?.(p.lishID, false);
+					send('transfer.download:error', { error: code, errorDetail: detail, lishID: p.lishID });
 				});
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
@@ -227,12 +252,14 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return { success: true };
 	}
 
-	// Auto-resume downloads that were enabled before restart
+	// Auto-resume downloads that were enabled before restart (skip errored)
 	setTimeout(() => {
 		for (const lishID of downloadEnabledLishs) {
 			if (!activeDownloaders.has(lishID) && !isBusy(lishID)) {
 				console.log(`[Auto-resume] Resuming download for ${lishID.slice(0, 8)}...`);
-				enableDownload({ lishID }).catch(() => {});
+				enableDownload({ lishID }).catch(err => {
+					console.error(`[Auto-resume] Failed for ${lishID.slice(0, 8)}:`, err.message);
+				});
 			}
 		}
 	}, 3000);
