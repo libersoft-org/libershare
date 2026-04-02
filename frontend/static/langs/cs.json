@@ -134,6 +134,9 @@
 		"lishAdded": "LISH \"{name}\" přidán",
 		"downloadComplete": "Stahování LISHe \"{name}\" dokončeno",
 		"downloadError": "Stahování LISHe \"{name}\" selhalo: {error}",
+		"recoveryAttempting": "Probíhá automatická obnova...",
+		"recoverySuccess": "LISH \"{name}\" se automaticky obnovil",
+		"recoveryScheduled": "Automatický pokus za {seconds}s",
 		"moveData": "Přesunout data",
 		"moveDataFromOriginal": "Přesunout data z původního adresáře",
 		"createSubdirectory": "V cílovém adresáři vytvořit podadresář s názvem LISHe",
@@ -218,6 +221,7 @@
 		"errorUnexpectedArray": "Očekáván jeden LISH objekt, obdrženo pole",
 		"errorPathAccessDenied": "Nelze přistoupit k cestě: {detail}",
 		"errorInvalidFileIndex": "Neplatný index souboru: {detail}",
+		"errorIONotFound": "Soubor nebo adresář nenalezen: {detail}",
 		"errorDownloaderNotInitialized": "Stahovač nebyl inicializován",
 		"errorDownload": "Stahování selhalo: {detail}"
 	},
@@ -245,7 +249,8 @@
 			"allowRelay": "Zapnout předávací server (přeposílat data pro ostatní účastníky)",
 			"maxRelayReservations": "Maximální počet spojení k předávacímu serveru (0 = neomezeno)",
 			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH (výchozí hodnota)",
-			"autoStartDownloadingDefault": "Automaticky spustit stahování po přidání LISH (výchozí hodnota)"
+			"autoStartDownloadingDefault": "Automaticky spustit stahování po přidání LISH (výchozí hodnota)",
+			"autoErrorRecovery": "Automatická obnova po chybě"
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",

@@ -129,7 +129,7 @@ export class Downloader {
 		try {
 			await access(checkPath, constants.R_OK | constants.W_OK);
 		} catch (err: any) {
-			const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.DIRECTORY_MISSING;
+			const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.IO_NOT_FOUND;
 			this.setError(code, this.downloadDir);
 			return;
 		}
@@ -287,7 +287,7 @@ export class Downloader {
 				try {
 					await access(checkPath, constants.R_OK | constants.W_OK);
 				} catch (err: any) {
-					const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.DIRECTORY_MISSING;
+					const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.IO_NOT_FOUND;
 					this.setError(code, this.downloadDir);
 					return;
 				}
@@ -458,7 +458,7 @@ export class Downloader {
 				try {
 					await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 				} catch (err: any) {
-					if (err.code === 'ENOENT') this.setError(ErrorCodes.DIRECTORY_MISSING, this.downloadDir);
+					if (err.code === 'ENOENT') this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
 					else if (err.code === 'ENOSPC') this.setError(ErrorCodes.DISK_FULL, this.downloadDir);
 					else if (err.code === 'EACCES' || err.code === 'EPERM') this.setError(ErrorCodes.DIRECTORY_ACCESS_DENIED, this.downloadDir);
 					else this.setError(ErrorCodes.DOWNLOAD_ERROR, err.message);

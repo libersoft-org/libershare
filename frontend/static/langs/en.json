@@ -134,6 +134,9 @@
 		"lishAdded": "LISH \"{name}\" added",
 		"downloadComplete": "Download of LISH \"{name}\" completed",
 		"downloadError": "Download of LISH \"{name}\" failed: {error}",
+		"recoveryAttempting": "Attempting automatic recovery...",
+		"recoverySuccess": "LISH \"{name}\" recovered automatically",
+		"recoveryScheduled": "Automatic retry in {seconds}s",
 		"moveData": "Move data",
 		"moveDataFromOriginal": "Move data from original directory",
 		"createSubdirectory": "Create a subdirectory with LISH name in target directory",
@@ -218,6 +221,7 @@
 		"errorUnexpectedArray": "Expected a single LISH object, got an array",
 		"errorPathAccessDenied": "Cannot access path: {detail}",
 		"errorInvalidFileIndex": "Invalid file index: {detail}",
+		"errorIONotFound": "File or directory not found: {detail}",
 		"errorDownloaderNotInitialized": "Downloader not initialized",
 		"errorDownload": "Download failed: {detail}"
 	},
@@ -245,7 +249,8 @@
 			"allowRelay": "Enable relay server (relay data for other peers)",
 			"maxRelayReservations": "Maximum number of connections to relay server (0 = unlimited)",
 			"autoStartSharingDefault": "Automatically start sharing after adding a LISH (default value)",
-			"autoStartDownloadingDefault": "Automatically start downloading after adding a LISH (default value)"
+			"autoStartDownloadingDefault": "Automatically start downloading after adding a LISH (default value)",
+			"autoErrorRecovery": "Automatic error recovery"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",
