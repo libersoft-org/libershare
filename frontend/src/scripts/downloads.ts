@@ -309,15 +309,31 @@ export async function initDownloads(): Promise<void> {
 				if (lish && lish.status !== 'moving' && lish.status !== 'downloading' && lish.status !== 'downloading-uploading' && lish.status !== 'allocating') {
 					addNotification(tt('downloads.verifyDone', { name: lish.name }), 'success');
 				}
-				downloads.update(list =>
-					list.map(d => {
-						if (d.id !== data.lishID) return d;
-						if (d.status === 'moving' || d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating') return d;
-						const status: DownloadStatus = 'idling';
-						const progress = d.totalChunks === 0 ? 100 : d.progress;
-						return { ...d, status, progress };
-					})
-				);
+				// Refresh detail from backend to restore correct download progress (verification overwrites progress/verifiedChunks)
+				api.lishs.get(data.lishID).then(detail => {
+					if (!detail) return;
+					downloads.update(list =>
+						list.map(d => {
+							if (d.id !== data.lishID) return d;
+							if (d.status === 'moving' || d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating') return d;
+							const verifiedChunks = detail.verifiedChunks;
+							const totalChunks = detail.totalChunks;
+							const progress = totalChunks > 0 ? Math.round((verifiedChunks / totalChunks) * 10000) / 100 : (d.totalChunks === 0 ? 100 : 0);
+							const downloadedSize = detail.totalSize > 0 && totalChunks > 0 ? formatSize(Math.round((detail.totalSize * verifiedChunks) / totalChunks)) : '0 B';
+							const files = d.files.map(f => {
+								if (f.type !== 'file') return f;
+								const df = detail.files.find(df => df.path === f.name);
+								if (!df) return f;
+								const fVerified = df.verifiedChunks ?? 0;
+								const fTotal = df.totalChunks > 0 ? df.totalChunks : f.totalChunks;
+								const fProgress = fTotal > 0 ? Math.round((fVerified / fTotal) * 10000) / 100 : 0;
+								const fDownloadedSize = fTotal > 0 ? formatSize(Math.round((f.rawSize * fVerified) / fTotal)) : '0 B';
+								return { ...f, verifiedChunks: fVerified, progress: fProgress, downloadedSize: fDownloadedSize };
+							});
+							return { ...d, status: 'idling' as DownloadStatus, verifiedChunks, totalChunks, progress, downloadedSize, files };
+						})
+					);
+				});
 				return;
 			}
 			downloads.update(list =>
