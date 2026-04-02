@@ -317,7 +317,9 @@ export class Network {
 		this.statusInterval = setInterval(async () => {
 			const connectedPeers = this.node!.getPeers();
 			const allPeers = await this.node!.peerStore.all();
-			console.log(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in peer store, topics: ${this.pubsub!.getTopics().join(', ')}`);
+			console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in peer store, topics: ${this.pubsub!.getTopics().join(', ')}`);
+			// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
+			this.checkPeerCounts();
 			if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && this.bootstrapMultiaddrs.length > 0) {
 				console.log('   ⚠️  No connections - dialing bootstrap peers directly...');
 				for (const ma of this.bootstrapMultiaddrs) {
@@ -406,6 +408,10 @@ export class Network {
 		if (!this.topicHandlers.has(topic)) this.topicHandlers.set(topic, new Set());
 		this.topicHandlers.get(topic)!.add(handler);
 		console.log(`✓ Subscribed to lishnet topic: ${topic}`);
+		// GossipSub mesh needs time to rebuild after subscribe — schedule delayed peer count checks
+		setTimeout(() => this.schedulePeerCountCheck(), 2000);
+		setTimeout(() => this.schedulePeerCountCheck(), 5000);
+		setTimeout(() => this.schedulePeerCountCheck(), 15000);
 	}
 
 	/**
@@ -422,6 +428,7 @@ export class Network {
 		this.pubsub.unsubscribe(topic);
 		this.topicHandlers.delete(topic);
 		console.log(`✓ Unsubscribed from lishnet topic: ${topic}`);
+		this.schedulePeerCountCheck();
 	}
 
 	/**
