@@ -129,7 +129,7 @@ export class DataServer {
 
 	// Chunk I/O
 
-	public async getChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | null> {
+	public async getChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | null | 'io_error'> {
 		const meta = getLISHMeta(this.db, lishID);
 		if (!meta) {
 			console.log(`LISH not found: ${lishID}`);
@@ -154,9 +154,9 @@ export class DataServer {
 			const arrayBuffer = await slice.arrayBuffer();
 			console.log(`read chunk ${chunkID.slice(0, 8)}... from ${location.filePath} (index ${location.chunkIndex})`);
 			return new Uint8Array(arrayBuffer);
-		} catch (error) {
-			console.log(`Error reading chunk from ${dataFilePath}:`, error);
-			return null;
+		} catch (error: any) {
+			console.error(`Error reading chunk from ${dataFilePath}:`, error.code ?? error.message);
+			return 'io_error';
 		}
 	}
 

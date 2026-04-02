@@ -142,8 +142,11 @@ export function getEnabledUploads(): Set<string> { return uploadEnabled; }
 /** Remove in-memory upload state without DB persist (for LISH deletion). */
 export function removeUploadState(lishID: string): void { uploadEnabled.delete(lishID); broadcastFn?.('transfer.upload:disabled', { lishID }); }
 
+const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload
+
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer): Promise<void> {
 	const servedLishIDs = new Set<string>();
+	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
 	try {
 		// Wrap the stream with length-prefixed decoder for multiple messages
 		const decoder = decode(stream);
@@ -172,11 +175,27 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 					sendLengthPrefixed(stream, blockedData);
 					continue;
 				}
-				const chunkData = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
+				const chunkResult = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
+				if (chunkResult === 'io_error') {
+					// Track consecutive I/O errors per LISH
+					const count = (ioErrorCounts.get(chunkReq.lishID) ?? 0) + 1;
+					ioErrorCounts.set(chunkReq.lishID, count);
+					const nullResponse: LISHResponse = { data: null };
+					sendLengthPrefixed(stream, new TextEncoder().encode(JSON.stringify(nullResponse)));
+					if (count >= IO_ERROR_THRESHOLD && uploadEnabled.has(chunkReq.lishID)) {
+						console.error(`[Upload] ${chunkReq.lishID.slice(0, 8)}: ${count} consecutive I/O errors — auto-disabling upload`);
+						disableUpload(chunkReq.lishID);
+						dataServer.setError(chunkReq.lishID as import('@shared').LISHid, 'DIRECTORY_MISSING', `Upload I/O error`);
+						broadcastFn?.('transfer.upload:error', { lishID: chunkReq.lishID, error: 'DIRECTORY_MISSING', errorDetail: 'Upload source directory not accessible' });
+					}
+					continue;
+				}
+				const chunkData = chunkResult;
 				const response: LISHResponse = { data: chunkData ? Buffer.from(chunkData).toString('base64') : null };
 				const responseData = new TextEncoder().encode(JSON.stringify(response));
 				sendLengthPrefixed(stream, responseData);
 				if (chunkData) {
+					ioErrorCounts.delete(chunkReq.lishID); // reset on success
 					if (!servedLishIDs.has(chunkReq.lishID)) {
 						servedLishIDs.add(chunkReq.lishID);
 						activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
