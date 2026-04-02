@@ -102,7 +102,8 @@
 			"verifying": "Verifying",
 			"pending-verification": "Pending verification",
 			"moving": "Moving",
-			"allocating": "Allocating"
+			"allocating": "Allocating",
+			"error": "Error"
 		},
 		"modes": {
 			"disabled": "Disabled",
