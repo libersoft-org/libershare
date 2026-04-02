@@ -6,7 +6,7 @@ import { navigateBack } from './navigation.ts';
 import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
 
-export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'moving' | 'allocating';
+export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'moving' | 'allocating' | 'error';
 export type EnabledMode = 'disabled' | 'download' | 'upload' | 'both';
 
 export function computeEnabledMode(downloadEnabled: boolean, uploadEnabled: boolean): EnabledMode {
@@ -59,6 +59,8 @@ export interface DownloadData {
 	chunkSize: number;
 	totalUploadedBytes: number;
 	totalDownloadedBytes: number;
+	errorCode?: string | undefined;
+	errorMessage?: string | undefined;
 }
 
 /**
@@ -125,7 +127,7 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 
 // Statuses that should not be overridden by transfer events
 function isStatusLocked(status: DownloadStatus): boolean {
-	return status === 'verifying' || status === 'pending-verification' || status === 'moving';
+	return status === 'verifying' || status === 'pending-verification' || status === 'moving' || status === 'error';
 }
 
 // Helper: compute combined status from download/upload activity flags
@@ -185,6 +187,7 @@ export async function initDownloads(): Promise<void> {
 		dlEnabled = de ?? [];
 		const ulSet = new Set(ulEnabled);
 		const dlSet = new Set(dlEnabled);
+		const summaryMap = new Map(summaries.map(s => [s.id, s]));
 		const details = await Promise.all(summaries.map(s => api.lishs.get(s.id)));
 		downloads.set(
 			details
@@ -196,6 +199,12 @@ export async function initDownloads(): Promise<void> {
 					if (moving.includes(d.id)) entry.status = 'moving';
 					else if (d.id === verifying) entry.status = 'verifying';
 					else if (pendingVerification.includes(d.id)) entry.status = 'pending-verification';
+					const summary = summaryMap.get(d.id);
+					if (summary?.errorCode) {
+						entry.status = 'error';
+						entry.errorCode = summary.errorCode;
+						entry.errorMessage = summary.errorDetail;
+					}
 				return entry;
 				})
 		);
@@ -459,12 +468,12 @@ export async function initDownloads(): Promise<void> {
 			}));
 		});
 
-		// transfer.download:enabled — only set flag, don't change status (wait for progress with peers)
+		// transfer.download:enabled — set flag and clear error state if present
 		api.on('transfer.download:enabled', (data: { lishID: string }) => {
 			disabledDownloads.delete(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				return { ...d, downloadEnabled: true };
+				return { ...d, downloadEnabled: true, ...(d.status === 'error' ? { status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined } : {}) };
 			}));
 		});
 
@@ -486,10 +495,11 @@ export async function initDownloads(): Promise<void> {
 		api.on('transfer.download:error', (data: { error: string; errorDetail?: string; lishID: string }) => {
 			const lish = get(downloads).find(d => d.id === data.lishID);
 			if (lish) addNotification(tt('downloads.downloadError', { name: lish.name, error: data.errorDetail || data.error }), 'error');
+			disabledDownloads.add(data.lishID);
+			activeDownloads.delete(data.lishID);
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
-				return { ...d, status };
+				return { ...d, status: 'error' as DownloadStatus, downloadEnabled: false, downloadPeers: 0, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, errorCode: data.error, errorMessage: data.errorDetail || data.error };
 			}));
 		});
 
@@ -577,10 +587,18 @@ export function resetVerifyState(lishID: string): void {
 			if (d.id !== lishID) return d;
 			if (d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'uploading' || d.status === 'allocating') return d;
 			const files = d.files.map(f => (f.type !== 'file' ? f : { ...f, verifiedChunks: 0, progress: 0, downloadedSize: '0 B' }));
-			return { ...d, verifiedChunks: 0, progress: 0, status: 'pending-verification' as DownloadStatus, files, downloadedSize: '0 B' };
+			return { ...d, verifiedChunks: 0, progress: 0, status: 'pending-verification' as DownloadStatus, files, downloadedSize: '0 B', errorCode: undefined, errorMessage: undefined };
 		})
 	);
 }
+/** Clear error state for a LISH (called when user acknowledges error or retries). */
+export function clearError(lishID: string): void {
+	downloads.update(list => list.map(d => {
+		if (d.id !== lishID || d.status !== 'error') return d;
+		return { ...d, status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined };
+	}));
+}
+
 /**
  * Add a catalog entry to the downloads store as an active "downloading" entry.
  * Called when catalog.startDownload returns status 'downloading'.
