@@ -606,7 +606,8 @@ export async function initDownloads(): Promise<void> {
 		api.on('transfer.download:resumed', (data: { lishID: string }) => {
 			downloads.update(list => list.map(d => {
 				if (d.id !== data.lishID) return d;
-				return { ...d, status: 'downloading' as DownloadStatus, retryErrorCode: undefined, retryCount: undefined, retryMaxRetries: undefined };
+				const status = d.downloadEnabled ? 'downloading' as DownloadStatus : 'idling' as DownloadStatus;
+				return { ...d, status, retryErrorCode: undefined, retryCount: undefined, retryMaxRetries: undefined };
 			}));
 		});
 

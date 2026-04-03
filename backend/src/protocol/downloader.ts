@@ -162,6 +162,8 @@ export class Downloader {
 		this.errorCode = undefined;
 		this.errorDetail = undefined;
 		this.lastExhaustedTime = 0;
+		this.fileReallocAttempts.clear();
+		this.writeRetryCount = 0;
 		console.log(`[DL] Enabled ${this.lishID.slice(0, 8)}`);
 		for (const resolve of this.enableResolvers) resolve();
 		this.enableResolvers = [];
@@ -513,12 +515,21 @@ export class Downloader {
 								this.fileReallocInProgress.delete(chunk.fileIndex);
 							}
 							this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: affectedFile.path, retryCount: attempts, maxRetries: Downloader.MAX_FILE_REALLOC, resolved: true });
+							continue; // chunk already in fileChunks, don't push again
+						} else {
+							// Another peer is re-allocating — re-queue and wait
+							await lock.runExclusive(() => { queue.push(chunk!); });
+							continue;
 						}
-						await lock.runExclusive(() => { queue.push(chunk!); });
-						continue;
 					} else if (err.code === 'ENOSPC' || err.code === 'EACCES' || err.code === 'EPERM') {
 						// Disk full or permission denied — inline retry with pause
 						const code = err.code === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
+						if (this.writePaused) {
+							// Another peer already handling the write error — just wait and re-queue
+							await this.waitIfWritePaused();
+							await lock.runExclusive(() => { queue.push(chunk!); });
+							continue;
+						}
 						this.writeRetryCount++;
 						if (this.writeRetryCount > Downloader.MAX_WRITE_RETRIES) {
 							console.log(`[DL] Write retry limit (${Downloader.MAX_WRITE_RETRIES}) exceeded for ${this.lishID.slice(0, 8)}`);
