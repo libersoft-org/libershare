@@ -492,13 +492,13 @@ export class Downloader {
 						const attempts = (this.fileReallocAttempts.get(chunk.fileIndex) ?? 0) + 1;
 						this.fileReallocAttempts.set(chunk.fileIndex, attempts);
 						if (attempts > Downloader.MAX_FILE_REALLOC) {
-							console.log(`[DL] File ${affectedFile.path} re-allocation limit (${Downloader.MAX_FILE_REALLOC}) exceeded`);
+							console.error(`[DL] File ${affectedFile.path} re-allocation limit (${Downloader.MAX_FILE_REALLOC}) exceeded`);
 							this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
 							break;
 						}
 						if (!this.fileReallocInProgress.has(chunk.fileIndex)) {
 							this.fileReallocInProgress.add(chunk.fileIndex);
-							console.log(`[DL] File deleted: ${affectedFile.path}, re-allocating (attempt ${attempts}/${Downloader.MAX_FILE_REALLOC})`);
+							console.warn(`[DL] File deleted: ${affectedFile.path}, re-allocating (attempt ${attempts}/${Downloader.MAX_FILE_REALLOC})`);
 							this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: affectedFile.path, retryCount: attempts, maxRetries: Downloader.MAX_FILE_REALLOC });
 							try {
 								await this.allocateSingleFile(chunk.fileIndex);
@@ -532,11 +532,11 @@ export class Downloader {
 						}
 						this.writeRetryCount++;
 						if (this.writeRetryCount > Downloader.MAX_WRITE_RETRIES) {
-							console.log(`[DL] Write retry limit (${Downloader.MAX_WRITE_RETRIES}) exceeded for ${this.lishID.slice(0, 8)}`);
+							console.error(`[DL] Write retry limit (${Downloader.MAX_WRITE_RETRIES}) exceeded for ${this.lishID.slice(0, 8)}`);
 							this.setError(code, this.downloadDir);
 							break;
 						}
-						console.log(`[DL] Write failed (${err.code}), pausing ${Downloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${Downloader.MAX_WRITE_RETRIES})`);
+						console.warn(`[DL] Write failed (${err.code}), pausing ${Downloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${Downloader.MAX_WRITE_RETRIES})`);
 						this.onRetry?.({ errorCode: code, errorDetail: this.downloadDir, retryCount: this.writeRetryCount, maxRetries: Downloader.MAX_WRITE_RETRIES });
 						this.writePaused = true;
 						await new Promise<void>(resolve => {

@@ -91,7 +91,7 @@ export class ErrorRecovery {
 
 		const lish = this.deps.getLISH(lishID);
 		if (!lish || !lish.directory) {
-			console.log(`[Recovery] ${lishID.slice(0, 8)}: LISH deleted or no directory, stopping recovery`);
+			console.debug(`[Recovery] ${lishID.slice(0, 8)}: LISH deleted or no directory, stopping recovery`);
 			this.stop(lishID);
 			return;
 		}
@@ -107,14 +107,14 @@ export class ErrorRecovery {
 		try {
 			await this.deps.checkAccess(lish.directory);
 		} catch {
-			console.log(`[Recovery] ${lishID.slice(0, 8)}: still inaccessible (attempt ${entry.retryCount}), retry in 60s`);
+			console.warn(`[Recovery] ${lishID.slice(0, 8)}: still inaccessible (attempt ${entry.retryCount}), retry in 60s`);
 			this.deps.broadcast('transfer.recovery:scheduled', { lishID, delayMs: SLOW_DELAY, retryCount: entry.retryCount });
 			this.schedule(lishID, SLOW_DELAY);
 			return;
 		}
 
 		// Directory accessible — attempt re-enable
-		console.log(`[Recovery] ${lishID.slice(0, 8)}: directory accessible, attempting recovery (attempt ${entry.retryCount})`);
+		console.debug(`[Recovery] ${lishID.slice(0, 8)}: directory accessible, attempting recovery (attempt ${entry.retryCount})`);
 		this.deps.broadcast('transfer.recovery:attempting', { lishID, retryCount: entry.retryCount });
 
 		// Save state before stopping (stop deletes the entry)
@@ -127,7 +127,7 @@ export class ErrorRecovery {
 			console.log(`[Recovery] ${lishID.slice(0, 8)}: recovered successfully`);
 			this.deps.broadcast('transfer.recovery:recovered', { lishID });
 		} else {
-			console.log(`[Recovery] ${lishID.slice(0, 8)}: re-enable failed (attempt will restart via error handler)`);
+			console.warn(`[Recovery] ${lishID.slice(0, 8)}: re-enable failed (attempt will restart via error handler)`);
 			// Don't reschedule here — the failed enableDownload/enableUpload call will
 			// trigger a new error which will call recovery.start() again
 		}
