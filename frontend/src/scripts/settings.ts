@@ -95,7 +95,7 @@ export async function loadSettings(): Promise<void> {
 		maxRelayReservations.set(settings.network.maxRelayReservations);
 		autoStartSharing.set(settings.network.autoStartSharing);
 		autoStartDownloading.set(settings.network.autoStartDownloading);
-		autoErrorRecovery.set(settings.network.autoErrorRecovery);
+		autoErrorRecovery.set(settings.network.autoErrorRecovery ?? true);
 
 		// System
 		autoStartOnBoot.set(settings.system.autoStartOnBoot);
