@@ -491,6 +491,20 @@ export function resetVerification(db: Database, lishID: LISHid): void {
 	);
 }
 
+/** Reset have=FALSE for all chunks of a specific file (by internal file ID). Returns count of reset chunks. */
+export function resetFileChunks(db: Database, fileInternalID: number): number {
+	const result = db.run('UPDATE lishs_chunks SET have = FALSE WHERE id_lishs_files = ?', [fileInternalID]);
+	return result.changes;
+}
+
+/** Get internal DB file ID by LISH ID and file index (positional order). */
+export function getFileInternalID(db: Database, lishID: LISHid, fileIndex: number): number | null {
+	const internalID = getInternalID(db, lishID);
+	if (internalID === null) return null;
+	const files = db.query<{ id: number }, [number]>('SELECT id FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
+	return files[fileIndex]?.id ?? null;
+}
+
 export function isVerified(db: Database, lishID: LISHid): boolean {
 	const internalID = getInternalID(db, lishID);
 	if (internalID === null) return false;

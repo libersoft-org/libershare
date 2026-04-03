@@ -698,6 +698,30 @@ export class Downloader {
 		console.log(`[DL] Directory structure created: ${this.lish.files?.length ?? 0} files in ${this.downloadDir} (created=${createdFiles}, skipped=${skippedFiles}, ${Date.now() - startTime}ms)`);
 	}
 
+	/** Re-allocate a single file (create dirs + zero-fill). Used when a file is deleted mid-download. */
+	private async allocateSingleFile(fileIndex: number): Promise<void> {
+		const file = this.lish.files?.[fileIndex];
+		if (!file) return;
+		const filePath = this.safePath(file.path);
+		await mkdir(dirname(filePath), { recursive: true });
+		const f = Bun.file(filePath);
+		if (!(await f.exists()) || f.size !== file.size) {
+			const fd = await open(filePath, 'w');
+			try {
+				const zeroChunk = new Uint8Array(Math.min(1024 * 1024, file.size));
+				let remaining = file.size;
+				while (remaining > 0) {
+					const writeSize = Math.min(remaining, zeroChunk.length);
+					await fd.write(zeroChunk.subarray(0, writeSize));
+					remaining -= writeSize;
+				}
+			} finally {
+				await fd.close();
+			}
+			console.log(`[DL] Re-allocated file: ${file.path} (${file.size} bytes)`);
+		}
+	}
+
 	// Download a single chunk from a peer using an existing client
 	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string): Promise<{ data: Uint8Array } | 'not_available' | 'error'> {
 		if (this.disabled || this.destroyed) return 'error';
