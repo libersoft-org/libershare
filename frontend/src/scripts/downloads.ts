@@ -6,7 +6,7 @@ import { navigateBack } from './navigation.ts';
 import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
 
-export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'moving' | 'allocating' | 'error';
+export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'moving' | 'allocating' | 'error' | 'retrying';
 export type EnabledMode = 'disabled' | 'download' | 'upload' | 'both';
 
 export function computeEnabledMode(downloadEnabled: boolean, uploadEnabled: boolean): EnabledMode {
@@ -63,6 +63,9 @@ export interface DownloadData {
 	errorMessage?: string | undefined;
 	recoveryRetryCount?: number | undefined;
 	recoveryNextAt?: number | undefined;
+	retryErrorCode?: string | undefined;
+	retryCount?: number | undefined;
+	retryMaxRetries?: number | undefined;
 }
 
 /**
@@ -129,7 +132,7 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 
 // Statuses that should not be overridden by transfer events
 function isStatusLocked(status: DownloadStatus): boolean {
-	return status === 'verifying' || status === 'pending-verification' || status === 'moving' || status === 'error';
+	return status === 'verifying' || status === 'pending-verification' || status === 'moving' || status === 'error' || status === 'retrying';
 }
 
 // Helper: compute combined status from download/upload activity flags
@@ -591,6 +594,22 @@ export async function initDownloads(): Promise<void> {
 			}));
 		});
 
+		// transfer.download:retrying — inline write retry in progress
+		api.on('transfer.download:retrying', (data: { lishID: string; errorCode: string; errorDetail?: string; retryCount: number; maxRetries: number }) => {
+			downloads.update(list => list.map(d => {
+				if (d.id !== data.lishID) return d;
+				return { ...d, status: 'retrying' as DownloadStatus, retryErrorCode: data.errorCode, retryCount: data.retryCount, retryMaxRetries: data.maxRetries };
+			}));
+		});
+
+		// transfer.download:resumed — inline retry succeeded, back to downloading
+		api.on('transfer.download:resumed', (data: { lishID: string }) => {
+			downloads.update(list => list.map(d => {
+				if (d.id !== data.lishID) return d;
+				return { ...d, status: 'downloading' as DownloadStatus, retryErrorCode: undefined, retryCount: undefined, retryMaxRetries: undefined };
+			}));
+		});
+
 		// transfer.upload:stopped — peer disconnected, upload stream ended (NOT user action)
 		// Only reset speed/peers, do NOT change upload enabled state
 		api.on('transfer.upload:stopped', (data: { lishID: string }) => {
@@ -622,6 +641,8 @@ export async function initDownloads(): Promise<void> {
 	api.subscribe('transfer.recovery:scheduled');
 	api.subscribe('transfer.recovery:attempting');
 	api.subscribe('transfer.recovery:recovered');
+	api.subscribe('transfer.download:retrying');
+	api.subscribe('transfer.download:resumed');
 }
 
 /** Reset verify state for a LISH in the downloads store (set all to 0, status to pending-verification). Skips if actively downloading. */

@@ -103,7 +103,8 @@
 			"pending-verification": "Čeká na ověření",
 			"moving": "Přesouvá se",
 			"allocating": "Připravuje se",
-			"error": "Chyba"
+			"error": "Chyba",
+			"retrying": "Opakuji"
 		},
 		"modes": {
 			"disabled": "Vypnuto",

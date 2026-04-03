@@ -124,6 +124,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		downloader.setProgressCallback?.((info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => {
 			send('transfer.download:progress', { lishID, ...info });
 		});
+		downloader.setRetryCallback?.((info) => {
+			if (info.resolved) send('transfer.download:resumed', { lishID });
+			else send('transfer.download:retrying', { lishID, ...info });
+		});
 
 		downloader
 			.download()
@@ -223,6 +227,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
 			downloader.setProgressCallback?.((info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => {
 				send('transfer.download:progress', { lishID: p.lishID, ...info });
+			});
+			downloader.setRetryCallback?.((info) => {
+				if (info.resolved) send('transfer.download:resumed', { lishID: p.lishID });
+				else send('transfer.download:retrying', { lishID: p.lishID, ...info });
 			});
 			downloader.download()
 				.then(() => { if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID); send('transfer.download:complete', { downloadDir, lishID: p.lishID }); })

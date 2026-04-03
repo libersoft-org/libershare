@@ -397,6 +397,9 @@
 		{#if deleteError}
 			<Alert type="error" message={deleteError} />
 		{/if}
+		{#if download?.status === 'retrying' && download.retryErrorCode}
+			<Alert type="warning" message={`${$t('downloads.statuses.retrying')}: ${download.retryErrorCode}${download.retryCount ? ` (${download.retryCount}/${download.retryMaxRetries ?? '?'})` : ''}`} />
+		{/if}
 		{#if download?.status === 'error' && (download.errorCode || download.errorMessage)}
 			{@const recoveryText = download.recoveryNextAt === 0
 				? $t('downloads.recoveryAttempting')
