@@ -58,6 +58,15 @@ export class Downloader {
 	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
 	private errorCode?: string;
 	private errorDetail?: string;
+	private onRetry?: (info: { errorCode: string; errorDetail?: string; retryCount: number; maxRetries: number; resolved?: boolean }) => void;
+	private fileReallocAttempts = new Map<number, number>();
+	private static readonly MAX_FILE_REALLOC = 3;
+	private fileReallocInProgress = new Set<number>();
+	private writePaused = false;
+	private writePauseResolvers: Array<() => void> = [];
+	private writeRetryCount = 0;
+	private static readonly MAX_WRITE_RETRIES = 5;
+	private static readonly WRITE_RETRY_DELAY = 60_000;
 
 	getLISHID(): string { return this.lishID; }
 	getError(): { code: string; detail?: string } | null {
@@ -72,6 +81,21 @@ export class Downloader {
 
 	setManifestImportedCallback(cb: (lishID: string) => void): void {
 		this.onManifestImported = cb;
+	}
+
+	setRetryCallback(cb: (info: { errorCode: string; errorDetail?: string; retryCount: number; maxRetries: number; resolved?: boolean }) => void): void {
+		this.onRetry = cb;
+	}
+
+	private async waitIfWritePaused(): Promise<void> {
+		if (!this.writePaused) return;
+		await new Promise<void>(resolve => { this.writePauseResolvers.push(resolve); });
+	}
+
+	private resumeWriters(): void {
+		this.writePaused = false;
+		for (const resolve of this.writePauseResolvers) resolve();
+		this.writePauseResolvers = [];
 	}
 
 	private setError(code: string, detail?: string): void {
@@ -398,6 +422,7 @@ export class Downloader {
 			while (true) {
 				if (this.destroyed || this.disabled) break;
 				await this.waitIfDisabled();
+				await this.waitIfWritePaused();
 				let chunk: MissingChunk | undefined;
 				await lock.runExclusive(() => {
 					if (queueIdx < queue.length) chunk = queue[queueIdx++];
@@ -458,15 +483,77 @@ export class Downloader {
 				try {
 					await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 				} catch (err: any) {
-					if (err.code === 'ENOENT') this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
-					else if (err.code === 'ENOSPC') this.setError(ErrorCodes.DISK_FULL, this.downloadDir);
-					else if (err.code === 'EACCES' || err.code === 'EPERM') this.setError(ErrorCodes.DIRECTORY_ACCESS_DENIED, this.downloadDir);
-					else this.setError(ErrorCodes.DOWNLOAD_ERROR, err.message);
-					break;
+					if (err.code === 'ENOENT') {
+						// File deleted — inline recovery: re-allocate + reset chunks
+						const affectedFile = this.lish.files?.[chunk.fileIndex];
+						if (!affectedFile) { this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir); break; }
+						const attempts = (this.fileReallocAttempts.get(chunk.fileIndex) ?? 0) + 1;
+						this.fileReallocAttempts.set(chunk.fileIndex, attempts);
+						if (attempts > Downloader.MAX_FILE_REALLOC) {
+							console.log(`[DL] File ${affectedFile.path} re-allocation limit (${Downloader.MAX_FILE_REALLOC}) exceeded`);
+							this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
+							break;
+						}
+						if (!this.fileReallocInProgress.has(chunk.fileIndex)) {
+							this.fileReallocInProgress.add(chunk.fileIndex);
+							console.log(`[DL] File deleted: ${affectedFile.path}, re-allocating (attempt ${attempts}/${Downloader.MAX_FILE_REALLOC})`);
+							this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: affectedFile.path, retryCount: attempts, maxRetries: Downloader.MAX_FILE_REALLOC });
+							try {
+								await this.allocateSingleFile(chunk.fileIndex);
+								const resetCount = this.dataServer.resetFileChunks(this.lishID, chunk.fileIndex);
+								console.log(`[DL] Re-allocated ${affectedFile.path}, reset ${resetCount} chunks`);
+								const fileChunks = this.dataServer.getMissingChunks(this.lishID).filter(c => c.fileIndex === chunk.fileIndex);
+								await lock.runExclusive(() => { for (const fc of fileChunks) queue.push(fc); });
+								downloadedCount = Math.max(0, downloadedCount - resetCount);
+							} catch (allocErr: any) {
+								console.error(`[DL] Re-allocation failed for ${affectedFile.path}: ${allocErr.message}`);
+								this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
+								break;
+							} finally {
+								this.fileReallocInProgress.delete(chunk.fileIndex);
+							}
+							this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: affectedFile.path, retryCount: attempts, maxRetries: Downloader.MAX_FILE_REALLOC, resolved: true });
+						}
+						await lock.runExclusive(() => { queue.push(chunk!); });
+						continue;
+					} else if (err.code === 'ENOSPC' || err.code === 'EACCES' || err.code === 'EPERM') {
+						// Disk full or permission denied — inline retry with pause
+						const code = err.code === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
+						this.writeRetryCount++;
+						if (this.writeRetryCount > Downloader.MAX_WRITE_RETRIES) {
+							console.log(`[DL] Write retry limit (${Downloader.MAX_WRITE_RETRIES}) exceeded for ${this.lishID.slice(0, 8)}`);
+							this.setError(code, this.downloadDir);
+							break;
+						}
+						console.log(`[DL] Write failed (${err.code}), pausing ${Downloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${Downloader.MAX_WRITE_RETRIES})`);
+						this.onRetry?.({ errorCode: code, errorDetail: this.downloadDir, retryCount: this.writeRetryCount, maxRetries: Downloader.MAX_WRITE_RETRIES });
+						this.writePaused = true;
+						await new Promise<void>(resolve => {
+							const timer = setTimeout(resolve, Downloader.WRITE_RETRY_DELAY);
+							const check = setInterval(() => { if (this.destroyed || this.disabled) { clearTimeout(timer); clearInterval(check); resolve(); } }, 1000);
+							setTimeout(() => clearInterval(check), Downloader.WRITE_RETRY_DELAY + 100);
+						});
+						if (this.destroyed || this.disabled) break;
+						try {
+							await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
+							console.log(`[DL] Write retry succeeded for ${this.lishID.slice(0, 8)}`);
+							this.writeRetryCount = 0;
+							this.resumeWriters();
+							this.onRetry?.({ errorCode: code, errorDetail: this.downloadDir, retryCount: 0, maxRetries: Downloader.MAX_WRITE_RETRIES, resolved: true });
+						} catch {
+							this.resumeWriters();
+							await lock.runExclusive(() => { queue.push(chunk!); });
+							continue;
+						}
+					} else {
+						this.setError(ErrorCodes.DOWNLOAD_ERROR, err.message);
+						break;
+					}
 				}
 				this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 				this.dataServer.incrementDownloadedBytes(this.lishID, data.length);
 				downloadedCount++;
+				if (this.writeRetryCount > 0) this.writeRetryCount = 0;
 				// Rolling speed average (~10 second window)
 				const now = Date.now();
 				this.speedSamples.push({ time: now, bytes: data.length });
