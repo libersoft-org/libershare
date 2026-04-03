@@ -62,8 +62,33 @@ class MockDataServer {
 		this.missingChunks = this.missingChunks.filter(c => c.chunkID !== chunkID);
 	}
 
+	writeChunkError: Error | null = null;
+	writeChunkErrorCount = 0; // how many more times to throw before succeeding
 	async writeChunk(_dir: string, _lish: IStoredLISH, fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
+		if (this.writeChunkError && this.writeChunkErrorCount > 0) {
+			this.writeChunkErrorCount--;
+			throw this.writeChunkError;
+		}
 		this.writtenChunks.push({ fileIndex, chunkIndex, data });
+	}
+
+	incrementDownloadedBytes(_lishID: LISHid, _bytes: number): void { /* no-op for tests */ }
+
+	resetFileChunks(_lishID: LISHid, fileIndex: number): number {
+		// Re-add all chunks for this fileIndex to missingChunks
+		const lish = [...this.storedLishs.values()][0];
+		if (!lish?.files?.[fileIndex]) return 0;
+		const file = lish.files[fileIndex]!;
+		let resetCount = 0;
+		for (let i = 0; i < file.checksums.length; i++) {
+			const chunkID = file.checksums[i]! as ChunkID;
+			if (this.downloadedChunks.has(chunkID)) {
+				this.downloadedChunks.delete(chunkID);
+				this.missingChunks.push({ chunkID, fileIndex, chunkIndex: i });
+				resetCount++;
+			}
+		}
+		return resetCount;
 	}
 
 	add(lish: IStoredLISH): void {
@@ -1099,5 +1124,135 @@ describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
 			const elapsed = Date.now() - start;
 			expect(elapsed).toBeLessThan(200);
 		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Inline retry tests
+// ---------------------------------------------------------------------------
+
+describe('Downloader — inline ENOENT recovery', () => {
+	let dataServer: MockDataServer;
+	let network: MockNetwork;
+	let downloader: Downloader;
+
+	beforeEach(() => {
+		dataServer = new MockDataServer();
+		network = new MockNetwork();
+		downloader = new Downloader('/tmp/test', network as any, dataServer as any, ['net1']);
+	});
+
+	afterEach(() => {
+		downloader.destroy().catch(() => {});
+	});
+
+	it('retryCallback is set and callable', () => {
+		const calls: any[] = [];
+		downloader.setRetryCallback((info) => calls.push(info));
+		expect(calls.length).toBe(0);
+	});
+
+	it('has fileReallocAttempts and writeRetryCount fields', () => {
+		const p = priv(downloader);
+		expect(p.fileReallocAttempts).toBeInstanceOf(Map);
+		expect(p.writeRetryCount).toBe(0);
+	});
+
+	it('MAX_FILE_REALLOC is 3', () => {
+		expect((Downloader as any).MAX_FILE_REALLOC).toBe(3);
+	});
+
+	it('MAX_WRITE_RETRIES is 5', () => {
+		expect((Downloader as any).MAX_WRITE_RETRIES).toBe(5);
+	});
+
+	it('enable() resets fileReallocAttempts and writeRetryCount', async () => {
+		const lish = makeLISH();
+		dataServer.add(lish);
+		dataServer.allChunkCount = 1;
+		dataServer.missingChunks = [makeMissingChunk('abc123' as ChunkID)];
+		await downloader.initFromManifest(lish);
+		const p = priv(downloader);
+		(p.fileReallocAttempts as Map<number, number>).set(0, 2);
+		(p as any).writeRetryCount = 3;
+		await downloader.enable();
+		expect((p.fileReallocAttempts as Map<number, number>).size).toBe(0);
+		expect(p.writeRetryCount).toBe(0);
+	});
+
+	it('writeChunkError in mock triggers error for testing', async () => {
+		dataServer.writeChunkError = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		dataServer.writeChunkErrorCount = 1;
+		await expect(dataServer.writeChunk('/tmp', makeLISH(), 0, 0, new Uint8Array(10))).rejects.toThrow('ENOENT');
+		// Second call succeeds
+		await expect(dataServer.writeChunk('/tmp', makeLISH(), 0, 0, new Uint8Array(10))).resolves.toBeUndefined();
+	});
+
+	it('resetFileChunks mock correctly resets downloaded chunks for a file', () => {
+		const lish = makeLISH({
+			files: [
+				{ path: 'a.bin', size: 1024, checksums: ['chunk-a1' as string, 'chunk-a2' as string] },
+				{ path: 'b.bin', size: 1024, checksums: ['chunk-b1' as string] },
+			],
+		});
+		dataServer.add(lish);
+		dataServer.downloadedChunks.add('chunk-a1' as ChunkID);
+		dataServer.downloadedChunks.add('chunk-a2' as ChunkID);
+		dataServer.downloadedChunks.add('chunk-b1' as ChunkID);
+		const resetCount = dataServer.resetFileChunks(lish.id, 0);
+		expect(resetCount).toBe(2);
+		expect(dataServer.downloadedChunks.has('chunk-a1' as ChunkID)).toBe(false);
+		expect(dataServer.downloadedChunks.has('chunk-a2' as ChunkID)).toBe(false);
+		expect(dataServer.downloadedChunks.has('chunk-b1' as ChunkID)).toBe(true);
+	});
+
+	it('resetFileChunks returns 0 for file with no downloaded chunks', () => {
+		const lish = makeLISH();
+		dataServer.add(lish);
+		const resetCount = dataServer.resetFileChunks(lish.id, 0);
+		expect(resetCount).toBe(0);
+	});
+});
+
+describe('Downloader — inline ENOSPC retry', () => {
+	let dataServer: MockDataServer;
+	let network: MockNetwork;
+	let downloader: Downloader;
+
+	beforeEach(() => {
+		dataServer = new MockDataServer();
+		network = new MockNetwork();
+		downloader = new Downloader('/tmp/test', network as any, dataServer as any, ['net1']);
+	});
+
+	afterEach(() => {
+		downloader.destroy().catch(() => {});
+	});
+
+	it('WRITE_RETRY_DELAY is 60000ms', () => {
+		expect((Downloader as any).WRITE_RETRY_DELAY).toBe(60000);
+	});
+
+	it('writePaused starts as false', () => {
+		expect(priv(downloader).writePaused).toBe(false);
+	});
+
+	it('waitIfWritePaused resolves immediately when not paused', async () => {
+		const p = priv(downloader) as any;
+		await expect(p.waitIfWritePaused.call(downloader)).resolves.toBeUndefined();
+	});
+
+	it('resumeWriters resolves all pending waiters', async () => {
+		const p = priv(downloader) as any;
+		p.writePaused = true;
+		const promises = [
+			p.waitIfWritePaused.call(downloader),
+			p.waitIfWritePaused.call(downloader),
+		];
+		expect(p.writePauseResolvers.length).toBe(2);
+		p.resumeWriters.call(downloader);
+		await Promise.all(promises);
+		expect(p.writePaused).toBe(false);
+		expect(p.writePauseResolvers.length).toBe(0);
 	});
 });
