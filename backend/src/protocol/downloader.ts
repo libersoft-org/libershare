@@ -536,7 +536,7 @@ export class Downloader {
 							this.setError(code, this.downloadDir);
 							break;
 						}
-						console.warn(`[DL] Write failed (${err.code}), pausing ${Downloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${Downloader.MAX_WRITE_RETRIES})`);
+						console.warn(`[DL] ${this.lishID.slice(0, 8)}: write failed (${err.code}), pausing ${Downloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${Downloader.MAX_WRITE_RETRIES})`);
 						this.onRetry?.({ errorCode: code, errorDetail: this.downloadDir, retryCount: this.writeRetryCount, maxRetries: Downloader.MAX_WRITE_RETRIES });
 						this.writePaused = true;
 						await new Promise<void>(resolve => {
@@ -551,7 +551,8 @@ export class Downloader {
 							this.writeRetryCount = 0;
 							this.resumeWriters();
 							this.onRetry?.({ errorCode: code, errorDetail: this.downloadDir, retryCount: 0, maxRetries: Downloader.MAX_WRITE_RETRIES, resolved: true });
-						} catch {
+						} catch (retryErr: any) {
+							console.warn(`[DL] ${this.lishID.slice(0, 8)}: write retry still failed (attempt ${this.writeRetryCount}/${Downloader.MAX_WRITE_RETRIES}): ${retryErr.code ?? retryErr.message}`);
 							this.resumeWriters();
 							await lock.runExclusive(() => { queue.push(chunk!); });
 							continue;

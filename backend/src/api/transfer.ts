@@ -212,6 +212,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					await access(checkPath, constants.R_OK | constants.W_OK);
 				} catch (err: any) {
 					const code = err.code === 'EACCES' || err.code === 'EPERM' ? ErrorCodes.DIRECTORY_ACCESS_DENIED : ErrorCodes.IO_NOT_FOUND;
+					console.warn(`[Transfer] ${p.lishID.slice(0, 8)}: download dir inaccessible (${code}): ${downloadDir}`);
 					const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
 					dataServer.setError(p.lishID, code, downloadDir);
 					downloadEnabledLishs.delete(p.lishID);

@@ -56,6 +56,7 @@ export class ErrorRecovery {
 			scheduledAt: Date.now(),
 		};
 		this.entries.set(lishID, entry);
+		console.debug(`[Recovery] ${lishID.slice(0, 8)}: scheduling recovery for ${errorCode}, delay ${delay / 1000}s`);
 		this.deps.broadcast('transfer.recovery:scheduled', { lishID, delayMs: delay, retryCount: 0 });
 		this.schedule(lishID, delay);
 	}
@@ -65,6 +66,7 @@ export class ErrorRecovery {
 		if (!entry) return;
 		if (entry.timer) clearTimeout(entry.timer);
 		this.entries.delete(lishID);
+		console.debug(`[Recovery] ${lishID.slice(0, 8)}: recovery stopped`);
 	}
 
 	stopAll(): void {
@@ -107,7 +109,7 @@ export class ErrorRecovery {
 		try {
 			await this.deps.checkAccess(lish.directory);
 		} catch {
-			console.warn(`[Recovery] ${lishID.slice(0, 8)}: still inaccessible (attempt ${entry.retryCount}), retry in 60s`);
+			console.warn(`[Recovery] ${lishID.slice(0, 8)}: still inaccessible (attempt ${entry.retryCount}), retry in ${SLOW_DELAY / 1000}s`);
 			this.deps.broadcast('transfer.recovery:scheduled', { lishID, delayMs: SLOW_DELAY, retryCount: entry.retryCount });
 			this.schedule(lishID, SLOW_DELAY);
 			return;
