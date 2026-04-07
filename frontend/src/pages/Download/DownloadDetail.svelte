@@ -427,6 +427,16 @@
 		color: var(--secondary-foreground);
 		cursor: none;
 		font-family: inherit;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.8vh;
+	}
+
+	.tab-icon {
+		width: 1.8vh;
+		height: 1.8vh;
+		flex-shrink: 0;
 	}
 
 	.tab.active {
@@ -455,35 +465,99 @@
 		opacity: 0.6;
 	}
 
-	.stale-peer {
+	.peer-list {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.peer-card {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4vh;
+		padding: 1.2vh 2vh;
+		border-bottom: 0.1vh solid var(--secondary-softer-background);
+		border-left: 0.3vh solid transparent;
+		transition: border-color 0.15s, background-color 0.15s;
+	}
+
+	.peer-card:last-child {
+		border-bottom: none;
+	}
+
+	.peer-card:not(.stale-peer) {
+		border-left-color: var(--mode-download-fg, #0c0);
+	}
+
+	.peer-card.stale-peer {
 		opacity: 0.4;
 	}
 
-	.peer-id {
-		font-family: monospace;
-		font-size: 1.3vh;
+	.peer-card.selected {
+		background-color: var(--primary-foreground);
+		color: var(--primary-background);
+		border-left-color: var(--primary-background);
 	}
 
-	.conn-type {
+	.peer-row-1 {
+		display: flex;
+		align-items: center;
+		gap: 1.2vh;
+		flex-wrap: wrap;
+	}
+
+	.peer-row-2 {
+		display: flex;
+		align-items: center;
+		gap: 1.5vh;
+		padding-left: 0.5vh;
+		flex-wrap: wrap;
+	}
+
+	.peer-id {
+		font-family: 'Courier New', Consolas, monospace;
+		font-size: 1.4vh;
+		letter-spacing: 0.05vh;
+		opacity: 0.9;
+	}
+
+	.conn-badge {
+		display: inline-block;
+		text-align: center;
+		padding: 0.3vh 0.8vh;
+		border-radius: 0.5vh;
 		font-size: 1.2vh;
 		font-weight: bold;
-		text-transform: uppercase;
+		white-space: nowrap;
 	}
 
 	.conn-direct {
 		color: var(--mode-download-fg, #0c0);
+		background-color: var(--mode-download-bg, #142);
+		border: 0.2vh solid var(--mode-download-fg, #0c0);
 	}
 
 	.conn-relay {
 		color: var(--mode-upload-fg, #28f);
+		background-color: var(--mode-upload-bg, #134);
+		border: 0.2vh solid var(--mode-upload-fg, #28f);
 	}
 
-	.peer-speeds, .peer-totals {
+	.peer-speeds {
 		display: inline-flex;
-		gap: 0.8vh;
-		font-family: monospace;
+		gap: 1vh;
+		font-family: 'Courier New', Consolas, monospace;
 		font-size: 1.3vh;
 		white-space: nowrap;
+		margin-left: auto;
+	}
+
+	.peer-totals {
+		display: inline-flex;
+		gap: 1vh;
+		font-family: 'Courier New', Consolas, monospace;
+		font-size: 1.3vh;
+		white-space: nowrap;
+		opacity: 0.7;
 	}
 
 	.speed-dl, .total-dl {
@@ -495,19 +569,35 @@
 	}
 
 	.speed-idle {
-		opacity: 0.4;
+		opacity: 0.35;
 	}
 
 	.speed-dl, .speed-ul {
 		font-weight: bold;
 	}
 
+	.peer-card.selected .speed-dl,
+	.peer-card.selected .speed-ul,
+	.peer-card.selected .total-dl,
+	.peer-card.selected .total-ul,
+	.peer-card.selected .peer-file {
+		color: var(--primary-background);
+	}
+
+	.peer-card.selected .conn-badge {
+		background-color: transparent;
+		border-color: var(--primary-background);
+		color: var(--primary-background);
+	}
+
 	.peer-file {
 		font-size: 1.2vh;
-		opacity: 0.7;
+		opacity: 0.5;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		min-width: 0;
+		flex: 1;
 	}
 
 	@media (max-width: 1199px) {
@@ -622,8 +712,26 @@
 				<!-- Tab header + content -->
 				<div class="container">
 					<div class="tab-header">
-						<button class="tab" class:active={activeTab === 'files'} class:selected={tabActive && selectedTabIndex === 0}>{$t('downloads.tabs.files')}</button>
-						<button class="tab" class:active={activeTab === 'peers'} class:selected={tabActive && selectedTabIndex === 1}>{$t('downloads.tabs.peers')}</button>
+						<button class="tab" class:active={activeTab === 'files'} class:selected={tabActive && selectedTabIndex === 0}>
+							<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+								<polyline points="14 2 14 8 20 8"/>
+								<line x1="16" y1="13" x2="8" y2="13"/>
+								<line x1="16" y1="17" x2="8" y2="17"/>
+								<polyline points="10 9 9 9 8 9"/>
+							</svg>
+							{$t('downloads.tabs.files')}
+						</button>
+						<button class="tab" class:active={activeTab === 'peers'} class:selected={tabActive && selectedTabIndex === 1}>
+							<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<circle cx="18" cy="5" r="3"/>
+								<circle cx="6" cy="12" r="3"/>
+								<circle cx="18" cy="19" r="3"/>
+								<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+								<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+							</svg>
+							{$t('downloads.tabs.peers')}
+						</button>
 					</div>
 					{#if activeTab === 'files'}
 						<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
@@ -642,36 +750,29 @@
 						{#if currentPeers.length === 0}
 							<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
 						{:else}
-							<Table columns="14vh 8vh 12vh 12vh 1fr" columnsMobile="14vh 8vh 12vh 12vh" noBorder>
-								<Header fontSize="1.4vh">
-									<Cell>{$t('downloads.peerList.id')}</Cell>
-									<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
-									<Cell align="right">{$t('downloads.peerList.speed')}</Cell>
-									<Cell align="right">{$t('downloads.peerList.transferred')}</Cell>
-									<Cell>{$t('downloads.peerList.currentFile')}</Cell>
-								</Header>
-								<div class="items">
-									{#each currentPeers as peer, index (peer.peerID)}
-										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index}>
-											<Cell><span class="peer-id" class:stale-peer={peer.stale}>{peer.peerID}</span></Cell>
-											<Cell align="center"><span class="conn-type" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'}>{peer.connectionType}</span></Cell>
-											<Cell align="right">
-												<span class="peer-speeds" class:stale-peer={peer.stale}>
-													<span class="speed-dl">↓{formatSize(peer.downloadSpeed || 0)}/s</span>
-													<span class="speed-ul">↑{formatSize(peer.uploadSpeed || 0)}/s</span>
-												</span>
-											</Cell>
-											<Cell align="right">
-												<span class="peer-totals" class:stale-peer={peer.stale}>
-													<span class="total-dl">↓{formatSize(peer.totalDownloaded || 0)}</span>
-													<span class="total-ul">↑{formatSize(peer.totalUploaded || 0)}</span>
-												</span>
-											</Cell>
-											<Cell><span class="peer-file" class:stale-peer={peer.stale}>{peer.currentFile ?? '—'}</span></Cell>
-										</TableRow>
-									{/each}
-								</div>
-							</Table>
+							<div class="items peer-list">
+								{#each currentPeers as peer, index (peer.peerID)}
+									<div bind:this={peerElements[index]} class="peer-card" class:selected={peerListActive && selectedPeerIndex === index} class:stale-peer={peer.stale}>
+										<div class="peer-row-1">
+											<span class="peer-id">{peer.peerID}</span>
+											<span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'}>{peer.connectionType}</span>
+											<span class="peer-speeds">
+												<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>↓{formatSize(peer.downloadSpeed || 0)}/s</span>
+												<span class="speed-ul" class:speed-idle={!peer.uploadSpeed}>↑{formatSize(peer.uploadSpeed || 0)}/s</span>
+											</span>
+										</div>
+										<div class="peer-row-2">
+											<span class="peer-totals">
+												<span class="total-dl">↓{formatSize(peer.totalDownloaded || 0)}</span>
+												<span class="total-ul">↑{formatSize(peer.totalUploaded || 0)}</span>
+											</span>
+											{#if peer.currentFile}
+												<span class="peer-file">{peer.currentFile}</span>
+											{/if}
+										</div>
+									</div>
+								{/each}
+							</div>
 						{/if}
 					{/if}
 				</div>
