@@ -105,6 +105,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				Dlazy: 3,
 				heartbeatInterval: 1000,
 				fanoutTTL: 60000,
+				runOnLimitedConnection: true,
 			}),
 			dht: kadDHT({
 				clientMode: false,
