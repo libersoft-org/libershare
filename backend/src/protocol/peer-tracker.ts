@@ -33,6 +33,8 @@ const PRUNE_THRESHOLD = 30_000; // 30s — peer removed entirely
 
 // Per-peer per-direction entries
 const entries = new Map<string, PeerEntry>();
+// Cumulative bytes per key — survives prune/unregister cycles
+const cumulativeBytes = new Map<string, number>();
 
 // Subscription management: which clients want peers for which lishIDs
 type ClientRef = any;
@@ -52,7 +54,7 @@ function key(lishID: string, peerID: string, direction: 'download' | 'upload'): 
 export function registerDownloadPeer(lishID: string, peerID: string, connectionType: ConnectionType): void {
 	const k = key(lishID, peerID, 'download');
 	if (entries.has(k)) return;
-	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: 0, lastActivity: Date.now() });
+	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now() });
 	trace(`[PEERS] register download ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
@@ -68,7 +70,7 @@ export function unregisterDownloadPeer(lishID: string, peerID: string): void {
 export function registerUploadPeer(lishID: string, peerID: string, connectionType: ConnectionType): void {
 	const k = key(lishID, peerID, 'upload');
 	if (entries.has(k)) return;
-	entries.set(k, { peerID, lishID, direction: 'upload', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: 0, lastActivity: Date.now() });
+	entries.set(k, { peerID, lishID, direction: 'upload', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now() });
 	trace(`[PEERS] register upload ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
@@ -99,6 +101,7 @@ export function recordDownloadBytes(lishID: string, peerID: string, bytes: numbe
 	const now = Date.now();
 	entry.speedSamples.push({ time: now, bytes });
 	entry.totalBytes += bytes;
+	cumulativeBytes.set(k, entry.totalBytes);
 	entry.lastActivity = now;
 	if (currentFile !== undefined) entry.currentFile = currentFile;
 }
@@ -110,6 +113,7 @@ export function recordUploadBytes(lishID: string, peerID: string, bytes: number)
 	const now = Date.now();
 	entry.speedSamples.push({ time: now, bytes });
 	entry.totalBytes += bytes;
+	cumulativeBytes.set(k, entry.totalBytes);
 	entry.lastActivity = now;
 }
 

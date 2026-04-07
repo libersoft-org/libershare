@@ -467,7 +467,7 @@
 
 	.peer-id {
 		font-family: 'Courier New', Consolas, monospace;
-		font-size: 1.3vh;
+		font-size: 1.5vh;
 	}
 
 	.conn-badge {
@@ -497,7 +497,7 @@
 		flex-direction: column;
 		gap: 0.2vh;
 		font-family: 'Courier New', Consolas, monospace;
-		font-size: 1.3vh;
+		font-size: 1.5vh;
 		white-space: nowrap;
 	}
 
@@ -518,7 +518,7 @@
 	}
 
 	.peer-file {
-		font-size: 1.2vh;
+		font-size: 1.4vh;
 		opacity: 0.7;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -526,10 +526,10 @@
 	}
 
 	.peer-ago {
-		font-size: 1.1vh;
+		font-size: 1.4vh;
+		font-family: 'Courier New', Consolas, monospace;
 		color: var(--secondary-foreground);
 		opacity: 0.6;
-		margin-left: 0.5vh;
 	}
 
 	@media (max-width: 1199px) {
