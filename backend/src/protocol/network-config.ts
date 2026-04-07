@@ -119,9 +119,13 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		const maxReservationsRaw = allSettings.network?.maxRelayReservations ?? 0;
 		const maxReservations = maxReservationsRaw === 0 ? Infinity : maxReservationsRaw;
 		config.services.relay = circuitRelayServer({
-			reservations: { maxReservations },
+			reservations: {
+				maxReservations,
+				defaultDataLimit: BigInt(1024 * 1024 * 1024), // 1GB (default: 128KB — kills file transfers)
+				defaultDurationLimit: 30 * 60 * 1000, // 30 min (default: 2 min)
+			},
 		});
-		console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservationsRaw === 0 ? 'unlimited' : maxReservationsRaw})`);
+		console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservationsRaw === 0 ? 'unlimited' : maxReservationsRaw}, dataLimit: 1GB, duration: 30min)`);
 	}
 	// Add autonat + dcutr for NAT traversal
 	config.services.autonat = autoNAT();

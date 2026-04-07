@@ -645,6 +645,7 @@ export class Downloader {
 			if (this.peers.has(peerID)) { console.debug(`[DL-DBG] probe skip ${peerID.slice(0, 12)}: already connected`); continue; }
 			if (this.failedPeers.has(peerID)) { console.debug(`[DL-DBG] probe skip ${peerID.slice(0, 12)}: in failedPeers`); continue; }
 			try {
+				console.debug(`[DL-DBG] probeTopicPeers: probing ${peerID.slice(0, 12)}`);
 				const probeStream = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
 				if (this.destroyed) { probeStream.abort(new Error('downloader destroyed')); return; }
 				const probeClient = new LISHClient(probeStream);
@@ -652,7 +653,7 @@ export class Downloader {
 				await probeClient.close();
 				if (this.destroyed) return;
 
-				if (!manifest) continue;
+				if (!manifest) { console.debug(`[DL-DBG] probeTopicPeers: ${peerID.slice(0, 12)} returned null manifest`); continue; }
 
 				if (this.needsManifest && manifest.files && manifest.files.length > 0) {
 					this.lish = { ...manifest, directory: this.downloadDir };
@@ -669,9 +670,9 @@ export class Downloader {
 				this.peers.set(peerID, new LISHClient(dlStream));
 				this.lastExhaustedTime = 0;
 				foundNew = true;
-				console.log(`[DL] Found peer ${peerID.slice(0, 12)} (total: ${this.peers.size})`);
-			} catch {
-				// peer unreachable — skip silently
+				console.debug(`[DL-DBG] probeTopicPeers: ${peerID.slice(0, 12)} connected, stream=${dlStream.id}, status=${dlStream.status}, total=${this.peers.size}`);
+			} catch (err: any) {
+				console.debug(`[DL-DBG] probeTopicPeers: ${peerID.slice(0, 12)} unreachable: ${err.message?.slice(0, 80)}`);
 			}
 		}
 		if (foundNew && !this.downloadActive && !this.destroyed) {
@@ -702,13 +703,15 @@ export class Downloader {
 		if (this.disabled) return;
 		if (!this.networkIDs.some(nid => topic === lishTopic(nid))) return;
 		if (data['type'] === 'have' && data['lishID'] === this.lishID && data['chunks']) {
-			if (this.downloadActive) {
-				console.debug(`[DL-DBG] Have message from ${(data['peerID'] as string)?.slice(0, 12)} arrived while downloadActive`);
-			}
+			const chunks = data['chunks'] === 'all' ? 'ALL' : `${(data['chunks'] as any[])?.length ?? 0}`;
+			const addrs = (data['multiaddrs'] as any[])?.map(a => a?.toString?.() ?? String(a)) ?? [];
+			const addrTypes = addrs.map(a => a.includes('/p2p-circuit') ? `RELAY:${a}` : `DIRECT:${a}`);
+			console.debug(`[DL-DBG] HAVE received: peer=${(data['peerID'] as string)?.slice(0, 12)}, chunks=${chunks}, addrs=[${addrTypes.join(', ')}], downloadActive=${this.downloadActive}, alreadyConnected=${this.peers.has(data['peerID'])}`);
 			if (this.peers.has(data['peerID'])) return;
 			try {
 				await this.connectToPeer(data as HaveMessage);
-			} catch {
+			} catch (err: any) {
+				console.debug(`[DL-DBG] connectToPeer failed for ${(data['peerID'] as string)?.slice(0, 12)}: ${err.message?.slice(0, 100)}`);
 				return;
 			}
 			this.lastExhaustedTime = 0;
@@ -719,11 +722,12 @@ export class Downloader {
 	private async connectToPeer(data: HaveMessage): Promise<void> {
 		const peerID: NodeID = data.peerID;
 		const multiaddrs: Multiaddr[] = data.multiaddrs.map(ma => multiaddr(ma.toString()));
+		console.debug(`[DL-DBG] connectToPeer: dialing ${peerID.slice(0, 12)} via ${multiaddrs.length} addrs`);
 		const stream = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL);
 		if (this.destroyed) { stream.abort(new Error('downloader destroyed')); return; }
 		if (this.peers.has(data.peerID)) throw new Error(`Already connected to peer: ${peerID}`);
 		this.peers.set(peerID, new LISHClient(stream));
-		console.log(`[DL] Peer ${peerID.slice(0, 12)} connected via pubsub (total: ${this.peers.size})`);
+		console.debug(`[DL-DBG] connectToPeer: ${peerID.slice(0, 12)} connected, stream=${stream.id}, status=${stream.status}, total peers=${this.peers.size}`);
 	}
 
 	private safePath(relativePath: string): string {
@@ -834,7 +838,8 @@ export class Downloader {
 			}
 			return data ? { data } : 'not_available';
 		} catch (err) {
-			console.debug(`[DL-DBG] error for ${chunkID.slice(0, 12)}: ${err instanceof Error ? err.message : String(err)}`);
+			const msg = err instanceof Error ? err.message : String(err);
+			console.debug(`[DL-DBG] downloadChunk error: peer=${peerID?.slice(0, 12)}, chunk=${chunkID.slice(0, 12)}, err=${msg.slice(0, 120)}`);
 			return 'error';
 		}
 	}

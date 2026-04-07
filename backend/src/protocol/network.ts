@@ -251,9 +251,15 @@ export class Network {
 			const peerID = evt.detail.toString();
 			const connections = this.node!.getConnections(evt.detail);
 			const remoteAddrs = connections.map(c => c.remoteAddr.toString());
-			console.debug('✅ New peer connected:', peerID);
-			console.debug('   Remote addresses:', remoteAddrs.join(', '));
-			console.debug('   Total connected peers:', this.node!.getPeers().length);
+			const connTypes = connections.map(c => {
+				const addr = c.remoteAddr.toString();
+				const isRelay = addr.includes('/p2p-circuit');
+				const limited = (c as any).limits != null;
+				return `${addr} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}${c.direction}]`;
+			});
+			console.debug(`✅ Peer connected: ${peerID.slice(0, 16)}`);
+			console.debug(`   Connections (${connections.length}): ${connTypes.join(' | ')}`);
+			console.debug(`   Total connected: ${this.node!.getPeers().length}`);
 
 			if (this.bootstrapPeerIDs.has(peerID)) {
 				const connectionMultiaddrs = connections.map(c => c.remoteAddr);
@@ -267,16 +273,32 @@ export class Network {
 		});
 
 		this.node!.addEventListener('peer:disconnect', evt => {
-			console.debug('❌ Lost connection with peer:', evt.detail.toString());
-			console.debug('   Total connected peers:', this.node!.getPeers().length);
+			const peerID = evt.detail.toString();
+			console.debug(`❌ Peer disconnected: ${peerID.slice(0, 16)}, remaining: ${this.node!.getPeers().length}`);
 			this.schedulePeerCountCheck();
 		});
 
 		this.node!.addEventListener('relay:created-reservation' as any, (evt: any) => {
-			console.debug('🔄 Relay reservation created with:', evt.detail.relay.toString());
+			console.debug('🔄 Relay reservation created with:', evt.detail?.relay?.toString?.() ?? 'unknown');
 		});
 		this.node!.addEventListener('relay:removed' as any, (evt: any) => {
-			console.debug('⚠️  Relay removed:', evt.detail.relay.toString());
+			console.debug('⚠️  Relay removed:', evt.detail?.relay?.toString?.() ?? 'unknown');
+		});
+
+		// DCUtR hole punch events
+		this.node!.addEventListener('dcutr:success' as any, (evt: any) => {
+			console.debug(`🔓 DCUtR hole punch SUCCESS: ${evt.detail?.remotePeer?.toString?.()?.slice(0, 16) ?? 'unknown'}`);
+		});
+		this.node!.addEventListener('dcutr:error' as any, (evt: any) => {
+			console.debug(`🔓 DCUtR hole punch FAILED: ${evt.detail?.remotePeer?.toString?.()?.slice(0, 16) ?? 'unknown'} — ${evt.detail?.error?.message ?? 'unknown error'}`);
+		});
+
+		// Connection close/abort events for relay debugging
+		this.node!.addEventListener('connection:close' as any, (evt: any) => {
+			const conn = evt.detail;
+			if (conn?.remoteAddr?.toString?.()?.includes('/p2p-circuit')) {
+				console.debug(`🔌 Relay connection closed: ${conn.remotePeer?.toString?.()?.slice(0, 16)} addr=${conn.remoteAddr?.toString()}`);
+			}
 		});
 	}
 
@@ -318,20 +340,40 @@ export class Network {
 		this.statusInterval = setInterval(async () => {
 			const connectedPeers = this.node!.getPeers();
 			const allPeers = await this.node!.peerStore.all();
-			console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in peer store, topics: ${this.pubsub!.getTopics().join(', ')}`);
+			// Detailed connection info per peer
+			const peerDetails = connectedPeers.map(p => {
+				const conns = this.node!.getConnections(p);
+				const types = conns.map(c => {
+					const isRelay = c.remoteAddr.toString().includes('/p2p-circuit');
+					const limited = (c as any).limits != null;
+					return `${isRelay ? 'R' : 'D'}${limited ? 'L' : ''}`;
+				});
+				return `${p.toString().slice(0, 12)}[${types.join(',')}]`;
+			});
+			console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${this.pubsub!.getTopics().join(', ')}`);
+			console.debug(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
 			// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 			this.checkPeerCounts();
 			// Dial known peers not currently connected (maintains relay connections to NATed peers)
 			const connectedSet = new Set(connectedPeers.map(p => p.toString()));
+			let redialAttempts = 0;
+			let redialSuccess = 0;
 			for (const peer of allPeers) {
 				const pid = peer.id.toString();
 				if (connectedSet.has(pid)) continue;
 				if (this.bootstrapPeerIDs.has(pid)) continue; // bootstrap handled separately
+				redialAttempts++;
 				try {
 					await this.node!.dial(peer.id, { signal: AbortSignal.timeout(5000) });
-					console.debug(`   ✓ Re-connected to peer ${pid.slice(0, 16)}`);
-				} catch { /* silent */ }
+					const conns = this.node!.getConnections(peer.id);
+					const connType = conns.map(c => c.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT').join(',');
+					console.debug(`   ✓ Re-dialed ${pid.slice(0, 16)} [${connType}]`);
+					redialSuccess++;
+				} catch (err: any) {
+					console.debug(`   ✗ Re-dial ${pid.slice(0, 16)} failed: ${err.message?.slice(0, 80)}`);
+				}
 			}
+			if (redialAttempts > 0) console.debug(`   Re-dial: ${redialSuccess}/${redialAttempts} succeeded`);
 			if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && this.bootstrapMultiaddrs.length > 0) {
 				console.log('   ⚠️  No connections - dialing bootstrap peers directly...');
 				for (const ma of this.bootstrapMultiaddrs) {
@@ -523,12 +565,14 @@ export class Network {
 			console.debug('No chunks available for lishID:', data.lishID);
 			return;
 		}
-		console.debug('LISH found, sending Have');
+		const myAddrs = this.node!.getMultiaddrs();
+		const addrTypes = myAddrs.map(a => { const s = a.toString(); return s.includes('/p2p-circuit') ? `RELAY:${s}` : `DIRECT:${s}`; });
+		console.debug(`[NET-DBG] handleWant: responding HAVE for ${data.lishID.slice(0, 8)}, chunks=${haveChunks === 'all' ? 'ALL' : haveChunks.size}, addrs=[${addrTypes.join(', ')}]`);
 		const haveMessage: HaveMessage = {
 			type: 'have',
 			lishID: lish.id,
 			chunks: haveChunks === 'all' ? 'all' : Array.from(haveChunks),
-			multiaddrs: this.node!.getMultiaddrs(),
+			multiaddrs: myAddrs,
 			peerID: this.node!.peerId.toString(),
 		};
 		await this.broadcast(lishTopic(networkID), haveMessage);
@@ -571,17 +615,27 @@ export class Network {
 
 	async dialProtocol(multiaddrs: any[], protocol: string): Promise<Stream> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		console.debug(`[NET-DBG] dialProtocol: ${protocol} to ${multiaddrs.map(m => m.toString()).join(', ')}`);
 		const connection = await this.node.dial(multiaddrs);
+		const isRelay = connection.remoteAddr.toString().includes('/p2p-circuit');
+		const limited = (connection as any).limits != null;
+		console.debug(`[NET-DBG] dialProtocol connected: ${connection.remotePeer.toString().slice(0, 16)} via ${connection.remoteAddr.toString()} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}]`);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
+		console.debug(`[NET-DBG] dialProtocol stream opened: id=${stream.id}, status=${stream.status}`);
 		return stream;
 	}
 
 	async dialProtocolByPeerId(peerID: string, protocol: string): Promise<Stream> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		console.debug(`[NET-DBG] dialProtocolByPeerId: ${protocol} to ${peerID.slice(0, 16)}`);
 		const { peerIdFromString } = await import('@libp2p/peer-id');
 		const pid = peerIdFromString(peerID);
 		const connection = await this.node.dial(pid);
+		const isRelay = connection.remoteAddr.toString().includes('/p2p-circuit');
+		const limited = (connection as any).limits != null;
+		console.debug(`[NET-DBG] dialProtocolByPeerId connected: ${peerID.slice(0, 16)} via ${connection.remoteAddr.toString()} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}]`);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
+		console.debug(`[NET-DBG] dialProtocolByPeerId stream opened: id=${stream.id}, status=${stream.status}`);
 		return stream;
 	}
 
