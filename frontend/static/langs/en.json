@@ -94,10 +94,7 @@
 		},
 		"peerList": {
 			"searching": "Searching for peers...",
-			"id": "Peer ID",
-			"connection": "Connection",
-			"downloadSpeed": "↓ Speed",
-			"uploadSpeed": "↑ Speed",
+			"id": "Peer",
 			"currentFile": "File"
 		},
 		"speed": "Speed",

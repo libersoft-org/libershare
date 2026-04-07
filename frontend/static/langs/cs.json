@@ -94,10 +94,7 @@
 		},
 		"peerList": {
 			"searching": "Hledám spojení...",
-			"id": "Peer ID",
-			"connection": "Spojení",
-			"downloadSpeed": "↓ Rychlost",
-			"uploadSpeed": "↑ Rychlost",
+			"id": "Peer",
 			"currentFile": "Soubor"
 		},
 		"speed": "Rychlost",
