@@ -9,6 +9,7 @@ import { isBusy } from './busy.ts';
 import { ErrorRecovery } from './error-recovery.ts';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
+import { setPeerEmit, startPeerEmitter, subscribePeers, unsubscribePeers, unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 type BroadcastFn = (event: string, data: any) => void;
@@ -27,6 +28,8 @@ interface TransferHandlers {
 	disableUpload: (p: { lishID: string }) => { success: boolean };
 	enableUpload: (p: { lishID: string }) => { success: boolean };
 	getActiveTransfers: () => ActiveTransfer[];
+	subscribePeers: (p: { lishID: string }, client: any) => boolean;
+	unsubscribePeers: (p: { lishID: string }, client: any) => boolean;
 }
 
 type PersistDownloadFn = (lishID: string, enabled: boolean) => void;
@@ -355,5 +358,23 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		}
 	}, 3000);
 
-	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers };
+	// Wire peer-tracker emitter
+	if (emit) {
+		setPeerEmit(emit);
+		startPeerEmitter();
+	}
+
+	function subscribePeersHandler(p: { lishID: string }, client: any): boolean {
+		assert(p, { lishID: 'string' });
+		subscribePeers(client, p.lishID);
+		return true;
+	}
+
+	function unsubscribePeersHandler(p: { lishID: string }, client: any): boolean {
+		assert(p, { lishID: 'string' });
+		unsubscribePeers(client, p.lishID);
+		return true;
+	}
+
+	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler };
 }

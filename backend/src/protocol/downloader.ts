@@ -10,6 +10,7 @@ import { type HaveChunks, LISH_PROTOCOL, LISHClient } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { trace } from '../logger.ts';
+import { registerDownloadPeer, unregisterDownloadPeer, recordDownloadBytes, unregisterAllPeersForLISH } from './peer-tracker.ts';
 
 type NodeID = string;
 interface PubsubMessage {
@@ -110,6 +111,7 @@ export class Downloader {
 		this.pubsubHandlers = [];
 		for (const [, client] of this.peers) client.close().catch(() => {});
 		this.peers.clear();
+		unregisterAllPeersForLISH(this.lishID);
 		this.lastServingPeerCount = 0;
 		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
 		const missing = this.dataServer.getMissingChunks(this.lishID).length;
@@ -141,6 +143,7 @@ export class Downloader {
 		if (this.callForPeersInterval) { clearInterval(this.callForPeersInterval); this.callForPeersInterval = undefined; }
 		for (const [, client] of this.peers) client.close().catch(() => {});
 		this.peers.clear();
+		unregisterAllPeersForLISH(this.lishID);
 		this.lastServingPeerCount = 0;
 		for (const resolve of this.enableResolvers) resolve();
 		this.enableResolvers = [];
@@ -187,6 +190,7 @@ export class Downloader {
 		this.pubsubHandlers = [];
 		for (const [, client] of this.peers) await client.close().catch(() => {});
 		this.peers.clear();
+		unregisterAllPeersForLISH(this.lishID);
 		// Notify frontend to reset peers/speed immediately
 		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
 		this.onProgress?.({ downloadedChunks: 0, totalChunks: total, peers: 0, bytesPerSecond: 0 });
@@ -367,6 +371,7 @@ export class Downloader {
 					}
 					console.log(`[DL] ${remaining.length} chunks missing, retrying in 10s`);
 					this.peers.clear();
+					unregisterAllPeersForLISH(this.lishID);
 					this.failedPeers.clear();
 					this.lastExhaustedTime = Date.now();
 					this.scheduleRetry();
@@ -438,6 +443,7 @@ export class Downloader {
 					this.peers.delete(peerID);
 					this.failedPeers.add(peerID);
 					servingPeers.delete(peerID);
+					unregisterDownloadPeer(this.lishID, peerID);
 					await client.close().catch(() => {});
 					await lock.runExclusive(() => { queue.push(chunk!); });
 					// Spawn loops for any newly discovered peers before exiting
@@ -473,6 +479,7 @@ export class Downloader {
 						this.peers.delete(peerID);
 						this.failedPeers.add(peerID);
 						servingPeers.delete(peerID);
+						unregisterDownloadPeer(this.lishID, peerID);
 						await client.close().catch(() => {});
 						spawnNewPeerLoops();
 						break;
@@ -565,6 +572,7 @@ export class Downloader {
 				}
 				this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 				this.dataServer.incrementDownloadedBytes(this.lishID, data.length);
+				recordDownloadBytes(this.lishID, peerID, data.length, this.lish.files?.[chunk.fileIndex]?.path);
 				downloadedCount++;
 				if (this.writeRetryCount > 0) this.writeRetryCount = 0;
 				// Rolling speed average (~10 second window)
@@ -615,6 +623,7 @@ export class Downloader {
 		} finally {
 			for (const [, client] of this.peers) await client.close().catch(() => {});
 			this.peers.clear();
+			unregisterAllPeersForLISH(this.lishID);
 			this.lastServingPeerCount = 0;
 			// Reset frontend peers/speed immediately when all peer loops finish
 			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: 0, bytesPerSecond: 0 });
@@ -647,7 +656,7 @@ export class Downloader {
 			if (this.failedPeers.has(peerID)) { trace(`[DL] probe skip ${peerID.slice(0, 12)}: failed`); continue; }
 			try {
 				trace(`[DL] probing ${peerID.slice(0, 12)}`);
-				const probeStream = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
+				const { stream: probeStream } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
 				if (this.destroyed) { probeStream.abort(new Error('downloader destroyed')); return; }
 				const probeClient = new LISHClient(probeStream);
 				const manifest = await probeClient.requestManifest(this.lishID);
@@ -666,12 +675,13 @@ export class Downloader {
 					console.log(`[DL] Got manifest from ${peerID.slice(0, 12)}: ${manifest.files.length} files, ${this.missingChunks.length} chunks`);
 				}
 
-				const dlStream = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
+				const { stream: dlStream, connectionType } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
 				if (this.destroyed) { dlStream.abort(new Error('downloader destroyed')); return; }
 				this.peers.set(peerID, new LISHClient(dlStream));
+				registerDownloadPeer(this.lishID, peerID, connectionType);
 				this.lastExhaustedTime = 0;
 				foundNew = true;
-				console.debug(`[DL] probe: ${peerID.slice(0, 12)} connected (total: ${this.peers.size})`);
+				console.debug(`[DL] probe: ${peerID.slice(0, 12)} connected [${connectionType}] (total: ${this.peers.size})`);
 			} catch (err: any) {
 				trace(`[DL] probe ${peerID.slice(0, 12)} unreachable: ${err.message?.slice(0, 80)}`);
 			}
@@ -724,11 +734,12 @@ export class Downloader {
 		const peerID: NodeID = data.peerID;
 		const multiaddrs: Multiaddr[] = data.multiaddrs.map(ma => multiaddr(ma.toString()));
 		trace(`[DL] dialing ${peerID.slice(0, 12)} via ${multiaddrs.length} addrs`);
-		const stream = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL);
+		const { stream, connectionType } = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL);
 		if (this.destroyed) { stream.abort(new Error('downloader destroyed')); return; }
 		if (this.peers.has(data.peerID)) throw new Error(`Already connected to peer: ${peerID}`);
 		this.peers.set(peerID, new LISHClient(stream));
-		console.debug(`[DL] peer ${peerID.slice(0, 12)} connected (total: ${this.peers.size})`);
+		registerDownloadPeer(this.lishID, peerID, connectionType);
+		console.debug(`[DL] peer ${peerID.slice(0, 12)} connected [${connectionType}] (total: ${this.peers.size})`);
 	}
 
 	private safePath(relativePath: string): string {

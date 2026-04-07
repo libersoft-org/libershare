@@ -3,6 +3,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type Settings } from '../settings.ts';
 import { CodedError, ErrorCodes } from '@shared';
+import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
 import { initDatasetsHandlers } from './datasets.ts';
@@ -133,6 +134,8 @@ export class APIServer {
 			'transfer.disableUpload': _transfer.disableUpload,
 			'transfer.enableUpload': _transfer.enableUpload,
 			'transfer.getActiveTransfers': _transfer.getActiveTransfers,
+			'transfer.subscribePeers': _transfer.subscribePeers,
+			'transfer.unsubscribePeers': _transfer.unsubscribePeers,
 			// Datasets
 			'datasets.getDatasets': _datasets.getDatasets,
 			'datasets.getDataset': _datasets.getDataset,
@@ -176,6 +179,7 @@ export class APIServer {
 				},
 				close(ws): void {
 					self.clients.delete(ws);
+					unsubscribeAllPeers(ws);
 					console.log(`[API] Client disconnected (${self.clients.size} total)`);
 				},
 				async message(ws, message): Promise<void> {

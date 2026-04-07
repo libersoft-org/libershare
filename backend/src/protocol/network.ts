@@ -203,8 +203,10 @@ export class Network {
 		// Register lish protocol handler
 		await this.node.handle(
 			LISH_PROTOCOL,
-			async stream => {
-				await handleLISHProtocol(stream, this.dataServer);
+			async ({ stream, connection }: any) => {
+				const remotePeerID = connection.remotePeer.toString();
+				const connType: 'DIRECT' | 'RELAY' = connection.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT';
+				await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType);
 			},
 			{ runOnLimitedConnection: true }
 		);
@@ -610,30 +612,32 @@ export class Network {
 		console.debug('→ Connected to:', multiaddr);
 	}
 
-	async dialProtocol(multiaddrs: any[], protocol: string): Promise<Stream> {
+	async dialProtocol(multiaddrs: any[], protocol: string): Promise<{ stream: Stream; connectionType: 'DIRECT' | 'RELAY' }> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
 		trace(`[NET] dial ${protocol} to ${multiaddrs.map(m => m.toString()).join(', ')}`);
 		const connection = await this.node.dial(multiaddrs);
 		const isRelay = connection.remoteAddr.toString().includes('/p2p-circuit');
+		const connectionType: 'DIRECT' | 'RELAY' = isRelay ? 'RELAY' : 'DIRECT';
 		const limited = (connection as any).limits != null;
-		console.debug(`[NET] dial connected: ${connection.remotePeer.toString().slice(0, 16)} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}]`);
+		console.debug(`[NET] dial connected: ${connection.remotePeer.toString().slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}]`);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
 		trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
-		return stream;
+		return { stream, connectionType };
 	}
 
-	async dialProtocolByPeerId(peerID: string, protocol: string): Promise<Stream> {
+	async dialProtocolByPeerId(peerID: string, protocol: string): Promise<{ stream: Stream; connectionType: 'DIRECT' | 'RELAY' }> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
 		trace(`[NET] dial ${protocol} to ${peerID.slice(0, 16)}`);
 		const { peerIdFromString } = await import('@libp2p/peer-id');
 		const pid = peerIdFromString(peerID);
 		const connection = await this.node.dial(pid);
 		const isRelay = connection.remoteAddr.toString().includes('/p2p-circuit');
+		const connectionType: 'DIRECT' | 'RELAY' = isRelay ? 'RELAY' : 'DIRECT';
 		const limited = (connection as any).limits != null;
-		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}]`);
+		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}]`);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
 		trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
-		return stream;
+		return { stream, connectionType };
 	}
 
 	/**

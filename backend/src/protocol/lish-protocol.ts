@@ -7,6 +7,7 @@ import { Uint8ArrayList } from 'uint8arraylist';
 import { uploadLimiter } from './speed-limiter.ts';
 import { isBusy } from '../api/busy.ts';
 import { trace } from '../logger.ts';
+import { registerUploadPeer, unregisterUploadPeer, recordUploadBytes, type ConnectionType } from './peer-tracker.ts';
 export const LISH_PROTOCOL = '/lish/1.0.0';
 export type LISHRequest = LISHChunkRequest | LISHManifestRequest;
 export interface LISHChunkRequest {
@@ -146,11 +147,12 @@ export function removeUploadState(lishID: string): void { uploadEnabled.delete(l
 
 const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload
 
-export async function handleLISHProtocol(stream: Stream, dataServer: DataServer): Promise<void> {
+export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType): Promise<void> {
 	const servedLishIDs = new Set<string>();
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
-	const remotePeer = (stream as any).stat?.remotePeer?.toString?.()?.slice(0, 12) ?? 'unknown';
-	const isLimited = (stream as any).stat?.direction === 'inbound' && stream.id?.includes?.('circuit');
+	const remotePeer = remotePeerID?.slice(0, 12) ?? 'unknown';
+	const fullRemotePeer = remotePeerID ?? 'unknown';
+	const connType: ConnectionType = connectionType ?? 'DIRECT';
 	trace(`[PROTO] stream open from ${remotePeer}, id=${stream.id}`);
 	let requestCount = 0;
 	try {
@@ -208,7 +210,9 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 					if (!servedLishIDs.has(chunkReq.lishID)) {
 						servedLishIDs.add(chunkReq.lishID);
 						activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
+						registerUploadPeer(chunkReq.lishID, fullRemotePeer, connType);
 					}
+					recordUploadBytes(chunkReq.lishID, fullRemotePeer, chunkData.length);
 					dataServer.incrementUploadedBytes(chunkReq.lishID as import('@shared').LISHid, chunkData.length);
 					await uploadLimiter.throttle(chunkData.length);
 					// Upload progress tracking (rolling 10s speed window)
@@ -236,8 +240,9 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 		stream.abort(error instanceof Error ? error : new Error(String(error)));
 	} finally {
 		trace(`[PROTO] stream closed for ${remotePeer}, served ${requestCount} reqs, lishIDs: ${[...servedLishIDs].map(id => id.slice(0, 8)).join(',')}`);
-		// Decrement stream count per LISH; only clean up when last stream closes
+		// Unregister upload peer + decrement stream count per LISH
 		for (const lishID of servedLishIDs) {
+			unregisterUploadPeer(lishID, fullRemotePeer);
 			const count = (activeStreamCount.get(lishID) ?? 1) - 1;
 			if (count <= 0) {
 				activeStreamCount.delete(lishID);
