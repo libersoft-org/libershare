@@ -4,11 +4,12 @@
 	interface Props {
 		children: Snippet;
 		selected?: boolean;
+		dimmed?: boolean;
 		el?: HTMLElement | undefined;
 		position?: NavPos | undefined;
 		onConfirm?: (() => void) | undefined;
 	}
-	let { children, selected = false, el = $bindable(), position, onConfirm }: Props = $props();
+	let { children, selected = false, dimmed = false, el = $bindable(), position, onConfirm }: Props = $props();
 
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 
@@ -47,6 +48,10 @@
 		color: var(--primary-background);
 	}
 
+	.row.dimmed {
+		opacity: 0.4;
+	}
+
 	@media (max-width: 1199px) {
 		.row {
 			grid-template-columns: var(--table-columns-mobile);
@@ -54,6 +59,6 @@
 	}
 </style>
 
-<div bind:this={el} class="row" class:selected={isSelected}>
+<div bind:this={el} class="row" class:selected={isSelected} class:dimmed>
 	{@render children()}
 </div>

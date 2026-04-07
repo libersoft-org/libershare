@@ -519,12 +519,16 @@
 
 	.peer-file {
 		font-size: 1.2vh;
-		opacity: 0.5;
+		opacity: 0.7;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		min-width: 0;
-		flex: 1;
+	}
+
+	.peer-stale-ago {
+		font-size: 1.2vh;
+		color: var(--secondary-foreground);
+		font-style: italic;
 	}
 
 	@media (max-width: 1199px) {
@@ -677,7 +681,7 @@
 						{#if currentPeers.length === 0}
 							<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
 						{:else}
-							<Table columns="auto auto 1fr 1fr 2fr" columnsMobile="auto auto 1fr 1fr" noBorder>
+							<Table columns="14vh 9vh 1fr 1fr 2fr" columnsMobile="14vh 9vh 1fr 1fr" noBorder>
 								<Header fontSize="1.3vh">
 									<Cell>{$t('downloads.peerList.id')}</Cell>
 									<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
@@ -687,22 +691,23 @@
 								</Header>
 								<div class="items">
 									{#each currentPeers as peer, index (peer.peerID)}
-										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index}>
-											<Cell><span class="peer-id" class:stale-peer={peer.stale}>{peer.peerID}</span></Cell>
+										{@const staleSec = peer.stale ? Math.round((now - peer.lastActivity) / 1000) : 0}
+										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index} dimmed={peer.stale}>
+											<Cell><span class="peer-id">{peer.peerID}</span></Cell>
 											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'}>{peer.connectionType}</span></Cell>
 											<Cell align="right">
-												<span class="peer-metric" class:stale-peer={peer.stale}>
+												<span class="peer-metric">
 													<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>↓ {formatSize(peer.downloadSpeed || 0)}/s</span>
 													<span class="speed-ul" class:speed-idle={!peer.uploadSpeed}>↑ {formatSize(peer.uploadSpeed || 0)}/s</span>
 												</span>
 											</Cell>
 											<Cell align="right">
-												<span class="peer-metric" class:stale-peer={peer.stale}>
+												<span class="peer-metric">
 													<span class="total-dl">↓ {formatSize(peer.totalDownloaded || 0)}</span>
 													<span class="total-ul">↑ {formatSize(peer.totalUploaded || 0)}</span>
 												</span>
 											</Cell>
-											<Cell><span class="peer-file" class:stale-peer={peer.stale}>{peer.currentFile ?? ''}</span></Cell>
+											<Cell>{#if peer.stale}<span class="peer-stale-ago">před {staleSec}s</span>{:else}<span class="peer-file">{peer.currentFile ?? ''}</span>{/if}</Cell>
 										</TableRow>
 									{/each}
 								</div>

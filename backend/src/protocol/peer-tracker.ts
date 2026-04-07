@@ -11,6 +11,7 @@ export interface PeerDetail {
 	totalUploaded: number;
 	currentFile?: string;
 	connectedAt: number;
+	lastActivity: number;
 	stale: boolean;
 }
 
@@ -27,8 +28,8 @@ interface PeerEntry {
 }
 
 const SPEED_WINDOW = 10_000; // 10s rolling window
-const STALE_THRESHOLD = 30_000; // 30s — peer shown dimmed
-const PRUNE_THRESHOLD = 60_000; // 60s — peer removed entirely
+const STALE_THRESHOLD = 10_000; // 10s — peer shown dimmed
+const PRUNE_THRESHOLD = 30_000; // 30s — peer removed entirely
 
 // Per-peer per-direction entries
 const entries = new Map<string, PeerEntry>();
@@ -58,7 +59,6 @@ export function registerDownloadPeer(lishID: string, peerID: string, connectionT
 export function unregisterDownloadPeer(lishID: string, peerID: string): void {
 	const k = key(lishID, peerID, 'download');
 	if (!entries.has(k)) return;
-	// Mark as stale instead of deleting — will be pruned after PRUNE_THRESHOLD
 	const entry = entries.get(k)!;
 	entry.speedSamples = [];
 	entry.lastActivity = Date.now();
@@ -171,6 +171,7 @@ function emitPeerDetails(): void {
 
 	for (const entry of entries.values()) {
 		if (!subscribedLishIDs.has(entry.lishID)) continue;
+		if (entry.peerID === 'unknown') continue;
 
 		if (!byLish.has(entry.lishID)) byLish.set(entry.lishID, new Map());
 		const peerMap = byLish.get(entry.lishID)!;
@@ -182,7 +183,6 @@ function emitPeerDetails(): void {
 
 		const existing = peerMap.get(entry.peerID);
 		if (existing) {
-			// Merge: combine download + upload into one row
 			if (entry.direction === 'download') {
 				existing.downloadSpeed = speed;
 				existing.totalDownloaded = entry.totalBytes;
@@ -191,8 +191,9 @@ function emitPeerDetails(): void {
 				existing.uploadSpeed = speed;
 				existing.totalUploaded = entry.totalBytes;
 			}
-			existing.stale = existing.stale && isStale; // stale only if BOTH directions stale
+			existing.stale = existing.stale && isStale;
 			if (entry.connectedAt < existing.connectedAt) existing.connectedAt = entry.connectedAt;
+			if (entry.lastActivity > existing.lastActivity) existing.lastActivity = entry.lastActivity;
 		} else {
 			peerMap.set(entry.peerID, {
 				peerID: entry.peerID.slice(0, 12),
@@ -203,6 +204,7 @@ function emitPeerDetails(): void {
 				totalUploaded: entry.direction === 'upload' ? entry.totalBytes : 0,
 				currentFile: entry.currentFile,
 				connectedAt: entry.connectedAt,
+				lastActivity: entry.lastActivity,
 				stale: isStale,
 			});
 		}

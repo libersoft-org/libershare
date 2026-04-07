@@ -44,6 +44,7 @@ export interface PeerDetail {
 	totalUploaded: number;
 	currentFile?: string;
 	connectedAt: number;
+	lastActivity: number;
 	stale: boolean;
 }
 
