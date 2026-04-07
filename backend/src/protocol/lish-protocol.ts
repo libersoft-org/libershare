@@ -202,17 +202,18 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					continue;
 				}
 				const chunkData = chunkResult;
+				// Register upload peer on first chunk request for this LISH, regardless of chunk availability.
+				// This ensures peers appear in the tracker even if the first requested chunk is missing.
+				if (!servedLishIDs.has(chunkReq.lishID)) {
+					servedLishIDs.add(chunkReq.lishID);
+					activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
+					if (remotePeerID) registerUploadPeer(chunkReq.lishID, fullRemotePeer, connType);
+				}
 				const response: LISHResponse = { data: chunkData ? Buffer.from(chunkData).toString('base64') : null };
 				const responseData = new TextEncoder().encode(JSON.stringify(response));
 				sendLengthPrefixed(stream, responseData);
 				if (chunkData) {
 					ioErrorCounts.delete(chunkReq.lishID); // reset on success
-					if (!servedLishIDs.has(chunkReq.lishID)) {
-						servedLishIDs.add(chunkReq.lishID);
-						activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
-						trace(`[PEERS] registerUpload remotePeerID=${remotePeerID ? remotePeer : 'NONE'} lish=${chunkReq.lishID.slice(0,8)}`);
-						if (remotePeerID) registerUploadPeer(chunkReq.lishID, fullRemotePeer, connType);
-					}
 					if (remotePeerID) recordUploadBytes(chunkReq.lishID, fullRemotePeer, chunkData.length);
 					dataServer.incrementUploadedBytes(chunkReq.lishID as import('@shared').LISHid, chunkData.length);
 					await uploadLimiter.throttle(chunkData.length);
