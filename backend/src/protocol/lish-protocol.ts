@@ -33,7 +33,7 @@ export class LISHClient {
 	public haveChunks!: HaveChunks;
 	constructor(stream: Stream) {
 		this.stream = stream;
-		this.decoder = decode(stream);
+		this.decoder = decode(stream, { maxDataLength: 16 * 1024 * 1024 });
 	}
 
 	// Request full LISH manifest from peer
@@ -153,11 +153,13 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 	let requestCount = 0;
 	try {
 		// Wrap the stream with length-prefixed decoder for multiple messages
-		const decoder = decode(stream);
+		// Default maxDataLength is 4MB — use 16MB to handle large manifest responses on shared streams
+		const decoder = decode(stream, { maxDataLength: 16 * 1024 * 1024 });
 		// Handle multiple requests on the same stream
 		for await (const msg of decoder) {
 			requestCount++;
 			const data = msg instanceof Uint8ArrayList ? msg.subarray() : msg;
+			console.debug(`[PROTO-DBG] request #${requestCount} from ${remotePeer}: ${data.byteLength} bytes`);
 			const request: LISHRequest = JSON.parse(new TextDecoder().decode(data));
 
 			if (request.type === 'manifest') {
