@@ -365,13 +365,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	}
 
 	function subscribePeersHandler(p: { lishID: string }, client: any): boolean {
-		assert(p, { lishID: 'string' });
+		assert(p, ['lishID']);
 		subscribePeers(client, p.lishID);
 		return true;
 	}
 
 	function unsubscribePeersHandler(p: { lishID: string }, client: any): boolean {
-		assert(p, { lishID: 'string' });
+		assert(p, ['lishID']);
 		unsubscribePeers(client, p.lishID);
 		return true;
 	}
