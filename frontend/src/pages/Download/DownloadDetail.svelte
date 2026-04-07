@@ -69,6 +69,7 @@
 		}))
 	);
 	// Delete dialog state
+	let now = $state(Date.now());
 	let showDeleteDialog = $state(false);
 	let deleteError = $state('');
 	// Export state
@@ -293,7 +294,9 @@
 	onMount(() => {
 		setCurrentDetailLISHID(lishID);
 		registerDetailAreas();
+		const clockInterval = setInterval(() => { now = Date.now(); }, 1000);
 		return () => {
+			clearInterval(clockInterval);
 			setCurrentDetailLISHID(null);
 			unregisterDetailAreas();
 			removeFileBrowserBackHandler?.();
@@ -404,7 +407,7 @@
 			{@const recoveryText = download.recoveryNextAt === 0
 				? $t('downloads.recoveryAttempting')
 				: download.recoveryNextAt
-					? $t('downloads.recoveryScheduled', { seconds: String(Math.max(1, Math.ceil((download.recoveryNextAt - Date.now()) / 1000))) })
+					? $t('downloads.recoveryScheduled', { seconds: String(Math.max(1, Math.ceil((download.recoveryNextAt - now) / 1000))) })
 					: ''}
 			<Alert type="error" message={`${$t('downloads.statuses.error')}: ${download.errorCode ?? ''}${download.errorMessage && download.errorMessage !== download.errorCode ? ' — ' + download.errorMessage : ''}${recoveryText ? ' · ' + recoveryText : ''}`} />
 		{/if}
