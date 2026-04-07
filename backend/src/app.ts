@@ -26,6 +26,7 @@ let apiPort = 0;
 let apiSecure = false;
 let apiKeyFile: string | undefined;
 let apiCertFile: string | undefined;
+let logFile: string | undefined;
 
 for (let i = 0; i < args.length; i++) {
 	if (args[i] === '--datadir' && i + 1 < args.length) {
@@ -48,10 +49,13 @@ for (let i = 0; i < args.length; i++) {
 	} else if (args[i] === '--pubkey' && i + 1 < args.length) {
 		apiCertFile = args[i + 1];
 		i++;
+	} else if (args[i] === '--logfile' && i + 1 < args.length) {
+		logFile = args[i + 1]!;
+		i++;
 	}
 }
 
-setupLogger(logLevel);
+setupLogger(logLevel, logFile ?? join(dataDir, 'libershare.log'));
 const header = `${productName} v${productVersion}`;
 console.log('='.repeat(header.length));
 console.log(header);

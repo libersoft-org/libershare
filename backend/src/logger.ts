@@ -1,4 +1,6 @@
 import { createConsola, LogLevels, type ConsolaReporter, type LogObject } from 'consola';
+import { appendFileSync, mkdirSync } from 'fs';
+import { dirname } from 'path';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 const levelMap: Record<LogLevel, number> = {
 	debug: LogLevels.debug,
@@ -45,10 +47,26 @@ function createPreciseReporter(): ConsolaReporter {
 	};
 }
 
-export function setupLogger(level: LogLevel = 'info'): ReturnType<typeof createConsola> {
+function createFileReporter(filePath: string): ConsolaReporter {
+	try { mkdirSync(dirname(filePath), { recursive: true }); } catch {}
+	return {
+		log(logObj: LogObject): void {
+			const timestamp = formatTimestamp(logObj.date);
+			const levelName = levelNames[logObj.level] || 'INFO';
+			const prefix = LOG_PREFIX ? `[${LOG_PREFIX}] ` : '';
+			const args = logObj.args.map(arg => (typeof arg === 'object' ? JSON.stringify(arg) : arg)).join(' ');
+			const line = `${prefix}[${timestamp}] [${levelName}] ${args}\n`;
+			try { appendFileSync(filePath, line); } catch {}
+		},
+	};
+}
+
+export function setupLogger(level: LogLevel = 'info', logFile?: string): ReturnType<typeof createConsola> {
+	const reporters: ConsolaReporter[] = [createPreciseReporter()];
+	if (logFile) reporters.push(createFileReporter(logFile));
 	const consola = createConsola({
 		level: levelMap[level],
-		reporters: [createPreciseReporter()],
+		reporters,
 	});
 	consola.wrapConsole();
 	return consola;

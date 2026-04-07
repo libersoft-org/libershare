@@ -320,6 +320,17 @@ export class Network {
 			console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in peer store, topics: ${this.pubsub!.getTopics().join(', ')}`);
 			// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 			this.checkPeerCounts();
+			// Dial known peers not currently connected (maintains relay connections to NATed peers)
+			const connectedSet = new Set(connectedPeers.map(p => p.toString()));
+			for (const peer of allPeers) {
+				const pid = peer.id.toString();
+				if (connectedSet.has(pid)) continue;
+				if (this.bootstrapPeerIDs.has(pid)) continue; // bootstrap handled separately
+				try {
+					await this.node!.dial(peer.id, { signal: AbortSignal.timeout(5000) });
+					console.debug(`   ✓ Re-connected to peer ${pid.slice(0, 16)}`);
+				} catch { /* silent */ }
+			}
 			if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && this.bootstrapMultiaddrs.length > 0) {
 				console.log('   ⚠️  No connections - dialing bootstrap peers directly...');
 				for (const ma of this.bootstrapMultiaddrs) {
