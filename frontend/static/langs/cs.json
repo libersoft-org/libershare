@@ -90,10 +90,10 @@
 		"peers": "Spojení",
 		"tabs": {
 			"files": "Soubory",
-			"peers": "Peery"
+			"peers": "Spojení"
 		},
 		"peerList": {
-			"searching": "Hledám peery...",
+			"searching": "Hledám spojení...",
 			"id": "Peer ID",
 			"connection": "Spojení",
 			"downloadSpeed": "↓ Rychlost",
