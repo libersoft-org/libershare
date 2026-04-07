@@ -88,6 +88,18 @@
 		"downloadingFrom": "Downloading from",
 		"uploadingTo": "Uploading to",
 		"peers": "Peers",
+		"tabs": {
+			"files": "Files",
+			"peers": "Peers"
+		},
+		"peerList": {
+			"searching": "Searching for peers...",
+			"id": "Peer ID",
+			"connection": "Connection",
+			"downloadSpeed": "↓ Speed",
+			"uploadSpeed": "↑ Speed",
+			"currentFile": "File"
+		},
 		"speed": "Speed",
 		"transferred": "Transferred",
 		"uploaded": "Uploaded",

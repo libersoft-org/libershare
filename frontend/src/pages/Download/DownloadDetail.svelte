@@ -4,7 +4,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { downloads, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
+	import { downloads, peerDetails, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
 	import ModeBadge from '../../components/Badge/ModeBadge.svelte';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
@@ -35,14 +35,24 @@
 	// Toolbar state
 	let toolbarAreaID = $derived(`${areaID}-toolbar`);
 	let infoAreaID = $derived(`${areaID}-info`);
+	let tabAreaID = $derived(`${areaID}-tabs`);
 	let listAreaID = $derived(`${areaID}-list`);
+	let peerListAreaID = $derived(`${areaID}-peerlist`);
 	let toolbarActive = $derived($activeArea === toolbarAreaID);
 	let infoActive = $derived($activeArea === infoAreaID);
+	let tabActive = $derived($activeArea === tabAreaID);
 	let listActive = $derived($activeArea === listAreaID);
+	let peerListActive = $derived($activeArea === peerListAreaID);
 	let selectedToolbarIndex = $state(0);
 	let selectedFileIndex = $state(0);
+	let selectedTabIndex = $state(0); // 0=files, 1=peers
+	let activeTab = $state<'files' | 'peers'>('files');
+	let selectedPeerIndex = $state(0);
+	let peerElements: HTMLElement[] = $state([]);
 	let itemElements: HTMLElement[] = $state([]);
 	let infoElement: HTMLElement | null = $state(null);
+	// Per-peer data for this LISH
+	let currentPeers = $derived(($peerDetails.get(lishID) ?? []).sort((a, b) => a.connectedAt - b.connectedAt));
 	// Toolbar actions - adapt to current download state
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
 	let isMoving = $derived(download?.status === 'moving');
@@ -82,22 +92,30 @@
 
 	let unregisterToolbar: (() => void) | null = null;
 	let unregisterInfo: (() => void) | null = null;
+	let unregisterTab: (() => void) | null = null;
 	let unregisterList: (() => void) | null = null;
+	let unregisterPeerList: (() => void) | null = null;
 
 	function registerDetailAreas(): void {
 		unregisterToolbar = useArea(toolbarAreaID, toolbarHandlers, position);
 		unregisterInfo = useArea(infoAreaID, infoHandlers, position);
+		unregisterTab = useArea(tabAreaID, tabHandlers, position);
 		unregisterList = useArea(listAreaID, listHandlers, position);
+		unregisterPeerList = useArea(peerListAreaID, peerListHandlers, position);
 		activateArea(toolbarAreaID);
 	}
 
 	function unregisterDetailAreas(): void {
 		unregisterToolbar?.();
 		unregisterInfo?.();
+		unregisterTab?.();
 		unregisterList?.();
+		unregisterPeerList?.();
 		unregisterToolbar = null;
 		unregisterInfo = null;
+		unregisterTab = null;
 		unregisterList = null;
+		unregisterPeerList = null;
 	}
 
 	function handleExportBack(): void {
@@ -235,12 +253,8 @@
 			return true;
 		},
 		down() {
-			if (download && download.files.length > 0) {
-				activateArea(listAreaID);
-				scrollToSelected();
-				return true;
-			}
-			return false;
+			activateArea(tabAreaID);
+			return true;
 		},
 		left() {
 			return false;
@@ -263,8 +277,7 @@
 				scrollToSelected();
 				return true;
 			}
-			activateArea(infoAreaID);
-			scrollToInfo();
+			activateArea(tabAreaID);
 			return true;
 		},
 		down() {
@@ -291,13 +304,49 @@
 		},
 	};
 
+	const tabHandlers = {
+		up() { activateArea(toolbarAreaID); return true; },
+		down() {
+			if (activeTab === 'files' && download && download.files.length > 0) { activateArea(listAreaID); scrollToSelected(); return true; }
+			if (activeTab === 'peers' && currentPeers.length > 0) { activateArea(peerListAreaID); return true; }
+			return false;
+		},
+		left() { if (selectedTabIndex > 0) { selectedTabIndex--; activeTab = 'files'; return true; } return false; },
+		right() { if (selectedTabIndex < 1) { selectedTabIndex++; activeTab = 'peers'; return true; } return false; },
+		confirmDown() {},
+		confirmUp() { activeTab = selectedTabIndex === 0 ? 'files' : 'peers'; },
+		confirmCancel() {},
+		back() { handleBack(); },
+	};
+
+	const peerListHandlers = {
+		up() {
+			if (selectedPeerIndex > 0) { selectedPeerIndex--; scrollToElement(peerElements, selectedPeerIndex); return true; }
+			activateArea(tabAreaID);
+			return true;
+		},
+		down() {
+			if (selectedPeerIndex < currentPeers.length - 1) { selectedPeerIndex++; scrollToElement(peerElements, selectedPeerIndex); return true; }
+			return false;
+		},
+		left() { return false; },
+		right() { return false; },
+		confirmDown() {},
+		confirmUp() {},
+		confirmCancel() {},
+		back() { handleBack(); },
+	};
+
 	onMount(() => {
 		setCurrentDetailLISHID(lishID);
 		registerDetailAreas();
+		// Subscribe to per-peer details for this LISH
+		api.call('transfer.subscribePeers', { lishID });
 		const clockInterval = setInterval(() => { now = Date.now(); }, 1000);
 		return () => {
 			clearInterval(clockInterval);
 			setCurrentDetailLISHID(null);
+			api.call('transfer.unsubscribePeers', { lishID });
 			unregisterDetailAreas();
 			removeFileBrowserBackHandler?.();
 		};
@@ -358,12 +407,56 @@
 		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
 		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.tab-header {
+		display: flex;
+		gap: 0;
+		border-bottom: 0.2vh solid var(--secondary-softer-background);
+		flex-shrink: 0;
+	}
+
+	.tab {
+		flex: 1;
+		padding: 1vh 2vh;
+		font-size: 1.4vh;
+		background: transparent;
+		border: none;
+		color: var(--secondary-foreground);
+		cursor: none;
+		font-family: inherit;
+	}
+
+	.tab.active {
+		color: var(--primary-foreground);
+		border-bottom: 0.3vh solid var(--primary-foreground);
+	}
+
+	.tab.selected {
+		background: var(--primary-foreground);
+		color: var(--primary-background);
 	}
 
 	.items {
 		flex: 1;
 		overflow-y: auto;
 		font-size: 1.4vh;
+	}
+
+	.empty-peers {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		height: 100%;
+		font-size: 1.6vh;
+		color: var(--secondary-foreground);
+		opacity: 0.6;
+	}
+
+	.stale-peer {
+		opacity: 0.4;
 	}
 
 	@media (max-width: 1199px) {
@@ -475,20 +568,51 @@
 						</TableRow>
 					</Table>
 				</div>
-				<!-- Files table -->
+				<!-- Tab header + content -->
 				<div class="container">
-					<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
-						<Header fontSize="1.4vh">
-							<Cell>{$t('common.name')}</Cell>
-							<Cell align="center">{$t('common.size')}</Cell>
-							<Cell align="center">{$t('common.progress')}</Cell>
-						</Header>
-						<div class="items">
-							{#each download.files as file, index (file.id)}
-								<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
-							{/each}
-						</div>
-					</Table>
+					<div class="tab-header">
+						<button class="tab" class:active={activeTab === 'files'} class:selected={tabActive && selectedTabIndex === 0}>{$t('downloads.tabs.files')}</button>
+						<button class="tab" class:active={activeTab === 'peers'} class:selected={tabActive && selectedTabIndex === 1}>{$t('downloads.tabs.peers')}</button>
+					</div>
+					{#if activeTab === 'files'}
+						<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
+							<Header fontSize="1.4vh">
+								<Cell>{$t('common.name')}</Cell>
+								<Cell align="center">{$t('common.size')}</Cell>
+								<Cell align="center">{$t('common.progress')}</Cell>
+							</Header>
+							<div class="items">
+								{#each download.files as file, index (file.id)}
+									<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
+								{/each}
+							</div>
+						</Table>
+					{:else}
+						{#if currentPeers.length === 0}
+							<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
+						{:else}
+							<Table columns="12vh 8vh 10vh 10vh 1fr" columnsMobile="10vh 8vh 10vh 10vh" noBorder>
+								<Header fontSize="1.4vh">
+									<Cell>{$t('downloads.peerList.id')}</Cell>
+									<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
+									<Cell align="center">{$t('downloads.peerList.downloadSpeed')}</Cell>
+									<Cell align="center">{$t('downloads.peerList.uploadSpeed')}</Cell>
+									<Cell>{$t('downloads.peerList.currentFile')}</Cell>
+								</Header>
+								<div class="items">
+									{#each currentPeers as peer, index (peer.peerID)}
+										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index}>
+											<Cell><span class:stale-peer={peer.stale}>{peer.peerID}</span></Cell>
+											<Cell align="center"><Badge label={peer.connectionType} status={peer.connectionType === 'DIRECT' ? 'idling' : 'downloading'} /></Cell>
+											<Cell align="center"><span class:stale-peer={peer.stale}>{peer.downloadSpeed ? formatSize(peer.downloadSpeed) + '/s' : '—'}</span></Cell>
+											<Cell align="center"><span class:stale-peer={peer.stale}>{peer.uploadSpeed ? formatSize(peer.uploadSpeed) + '/s' : '—'}</span></Cell>
+											<Cell><span class:stale-peer={peer.stale}>{peer.currentFile ?? '—'}</span></Cell>
+										</TableRow>
+									{/each}
+								</div>
+							</Table>
+						{/if}
+					{/if}
 				</div>
 			</div>
 		{/if}

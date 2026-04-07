@@ -88,6 +88,18 @@
 		"downloadingFrom": "Stahování od",
 		"uploadingTo": "Odesílání k",
 		"peers": "Spojení",
+		"tabs": {
+			"files": "Soubory",
+			"peers": "Peery"
+		},
+		"peerList": {
+			"searching": "Hledám peery...",
+			"id": "Peer ID",
+			"connection": "Spojení",
+			"downloadSpeed": "↓ Rychlost",
+			"uploadSpeed": "↑ Rychlost",
+			"currentFile": "Soubor"
+		},
 		"speed": "Rychlost",
 		"transferred": "Přeneseno",
 		"uploaded": "Odesláno",

@@ -35,6 +35,16 @@ export interface DownloadFileData {
 	linkTarget?: string;
 }
 
+export interface PeerDetail {
+	peerID: string;
+	connectionType: 'DIRECT' | 'RELAY';
+	downloadSpeed: number;
+	uploadSpeed: number;
+	currentFile?: string;
+	connectedAt: number;
+	stale: boolean;
+}
+
 export interface DownloadData {
 	id: string;
 	name: string;
@@ -148,6 +158,7 @@ let currentDetailLISHID: string | null = null;
 
 export const downloads = writable<DownloadData[]>([]);
 export const downloadsLoading = writable<boolean>(true);
+export const peerDetails = writable<Map<string, PeerDetail[]>>(new Map());
 export const transferStats = derived(downloads, $dl => {
 	let dlPeers = 0, ulPeers = 0, dlSpeed = 0, ulSpeed = 0;
 	for (const d of $dl) {
@@ -460,6 +471,7 @@ export async function initDownloads(): Promise<void> {
 					const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
 					return { ...d, downloadPeers: 0, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, status };
 				}));
+				peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
 			}, 10000));
 		});
 
@@ -472,6 +484,7 @@ export async function initDownloads(): Promise<void> {
 				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
 				return { ...d, status, downloadEnabled: false, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, downloadPeers: 0 };
 			}));
+			peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
 		});
 
 		// transfer.download:enabled — set flag and clear error state if present
@@ -495,6 +508,7 @@ export async function initDownloads(): Promise<void> {
 				const files = d.files.map(f => f.type !== 'file' ? f : { ...f, verifiedChunks: f.totalChunks, progress: 100, downloadedSize: formatSize(f.rawSize) });
 				return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir, files };
 			}));
+			peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
 		});
 
 		// transfer.download:error
@@ -507,6 +521,7 @@ export async function initDownloads(): Promise<void> {
 				if (d.id !== data.lishID) return d;
 				return { ...d, status: 'error' as DownloadStatus, downloadEnabled: false, downloadPeers: 0, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, errorCode: data.error, errorMessage: data.errorDetail || data.error };
 			}));
+			peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
 		});
 
 		// transfer.upload:progress — with stale timeout
@@ -536,6 +551,7 @@ export async function initDownloads(): Promise<void> {
 					if (d.id !== data.lishID) return d;
 					return { ...d, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0, status: isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false) };
 				}));
+				peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
 			}, 15000));
 		});
 
@@ -547,6 +563,7 @@ export async function initDownloads(): Promise<void> {
 				const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
 				return { ...d, status, uploadEnabled: false, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0 };
 			}));
+			peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
 		});
 
 		// transfer.upload:enabled — set flag and clear error state if present
@@ -566,6 +583,7 @@ export async function initDownloads(): Promise<void> {
 				if (d.id !== data.lishID) return d;
 				return { ...d, status: 'error' as DownloadStatus, uploadEnabled: false, uploadPeers: 0, uploadSpeed: '0 B/s', rawUploadSpeed: 0, errorCode: data.error, errorMessage: data.errorDetail || data.error };
 			}));
+			peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
 		});
 
 		// transfer.recovery:scheduled — recovery timer started/rescheduled
@@ -625,7 +643,20 @@ export async function initDownloads(): Promise<void> {
 					const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
 					return { ...d, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0, status };
 				}));
+				peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
 			}, 20000));
+		});
+
+		// transfer.peers — per-peer details (1s interval, on-demand via subscribePeers)
+		const peerStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+		api.on('transfer.peers', (data: { lishID: string; peers: PeerDetail[] }) => {
+			peerDetails.update(map => { const m = new Map(map); m.set(data.lishID, data.peers); return m; });
+			const prev = peerStaleTimeouts.get(data.lishID);
+			if (prev) clearTimeout(prev);
+			peerStaleTimeouts.set(data.lishID, setTimeout(() => {
+				peerStaleTimeouts.delete(data.lishID);
+				peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
+			}, 5000));
 		});
 	}
 	// Subscribe on every connect (backend has fresh subscribedEvents after reconnect)
@@ -650,6 +681,7 @@ export async function initDownloads(): Promise<void> {
 	api.subscribe('transfer.recovery:recovered');
 	api.subscribe('transfer.download:retrying');
 	api.subscribe('transfer.download:resumed');
+	api.subscribe('transfer.peers');
 }
 
 /** Reset verify state for a LISH in the downloads store (set all to 0, status to pending-verification). Skips if actively downloading. */
