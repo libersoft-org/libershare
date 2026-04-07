@@ -6,6 +6,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
 import { uploadLimiter } from './speed-limiter.ts';
 import { isBusy } from '../api/busy.ts';
+import { trace } from '../logger.ts';
 export const LISH_PROTOCOL = '/lish/1.0.0';
 export type LISHRequest = LISHChunkRequest | LISHManifestRequest;
 export interface LISHChunkRequest {
@@ -150,7 +151,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
 	const remotePeer = (stream as any).stat?.remotePeer?.toString?.()?.slice(0, 12) ?? 'unknown';
 	const isLimited = (stream as any).stat?.direction === 'inbound' && stream.id?.includes?.('circuit');
-	console.debug(`[PROTO-DBG] handleLISHProtocol: new stream from ${remotePeer}, id=${stream.id}, status=${stream.status}`);
+	trace(`[PROTO] stream open from ${remotePeer}, id=${stream.id}`);
 	let requestCount = 0;
 	try {
 		// Wrap the stream with length-prefixed decoder for multiple messages
@@ -160,7 +161,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 		for await (const msg of decoder) {
 			requestCount++;
 			const data = msg instanceof Uint8ArrayList ? msg.subarray() : msg;
-			console.debug(`[PROTO-DBG] request #${requestCount} from ${remotePeer}: ${data.byteLength} bytes`);
+			trace(`[PROTO] #${requestCount} from ${remotePeer}: ${data.byteLength}B`);
 			const request: LISHRequest = JSON.parse(new TextDecoder().decode(data));
 
 			if (request.type === 'manifest') {
@@ -231,10 +232,10 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 		// Stream closed by remote, close our end
 		await stream.close();
 	} catch (error: any) {
-		console.debug(`[PROTO-DBG] handleLISHProtocol: stream error from ${remotePeer} after ${requestCount} requests: ${error.message?.slice(0, 120) ?? error}`);
+		console.debug(`[PROTO] stream error from ${remotePeer} after ${requestCount} reqs: ${error.message?.slice(0, 120) ?? error}`);
 		stream.abort(error instanceof Error ? error : new Error(String(error)));
 	} finally {
-		console.debug(`[PROTO-DBG] handleLISHProtocol: stream closed for ${remotePeer}, served ${requestCount} requests, lishIDs: ${[...servedLishIDs].map(id => id.slice(0, 8)).join(',')}`);
+		trace(`[PROTO] stream closed for ${remotePeer}, served ${requestCount} reqs, lishIDs: ${[...servedLishIDs].map(id => id.slice(0, 8)).join(',')}`);
 		// Decrement stream count per LISH; only clean up when last stream closes
 		for (const lishID of servedLishIDs) {
 			const count = (activeStreamCount.get(lishID) ?? 1) - 1;

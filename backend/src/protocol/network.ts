@@ -7,6 +7,7 @@ import { type PeerId as PeerID, type PrivateKey, type PeerInfo, type Stream } fr
 import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { trace } from '../logger.ts';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLISHProtocol, isUploadEnabled } from './lish-protocol.ts';
@@ -216,12 +217,12 @@ export class Network {
 		}
 
 		this.pubsub.addEventListener('gossipsub:graft', (evt: any) => {
-			console.debug('🌿 GRAFT:', evt.detail.peerID, 'joined', evt.detail.topic);
+			trace(`[NET] GRAFT: ${evt.detail.peerID} joined ${evt.detail.topic}`);
 			this.schedulePeerCountCheck();
 		});
 
 		this.pubsub.addEventListener('gossipsub:prune', (evt: any) => {
-			console.debug('✂️  PRUNE:', evt.detail.peerID, 'left', evt.detail.topic);
+			trace(`[NET] PRUNE: ${evt.detail.peerID} left ${evt.detail.topic}`);
 			this.schedulePeerCountCheck();
 		});
 
@@ -243,14 +244,12 @@ export class Network {
 		this.node!.addEventListener('peer:discovery', async evt => {
 			const peerID = evt.detail.id.toString();
 			const multiaddrs = evt.detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
-			console.debug('🔍 Discovered peer:', peerID);
-			console.debug('   Multiaddrs:', multiaddrs.join(', ') || '(empty!)');
+			trace(`[NET] Discovered peer: ${peerID}, addrs: ${multiaddrs.join(', ') || '(empty)'}`);
 		});
 
 		this.node!.addEventListener('peer:connect', async evt => {
 			const peerID = evt.detail.toString();
 			const connections = this.node!.getConnections(evt.detail);
-			const remoteAddrs = connections.map(c => c.remoteAddr.toString());
 			const connTypes = connections.map(c => {
 				const addr = c.remoteAddr.toString();
 				const isRelay = addr.includes('/p2p-circuit');
@@ -287,17 +286,17 @@ export class Network {
 
 		// DCUtR hole punch events
 		this.node!.addEventListener('dcutr:success' as any, (evt: any) => {
-			console.debug(`🔓 DCUtR hole punch SUCCESS: ${evt.detail?.remotePeer?.toString?.()?.slice(0, 16) ?? 'unknown'}`);
+			console.log(`[NET] DCUtR hole punch SUCCESS: ${evt.detail?.remotePeer?.toString?.()?.slice(0, 16) ?? 'unknown'}`);
 		});
 		this.node!.addEventListener('dcutr:error' as any, (evt: any) => {
-			console.debug(`🔓 DCUtR hole punch FAILED: ${evt.detail?.remotePeer?.toString?.()?.slice(0, 16) ?? 'unknown'} — ${evt.detail?.error?.message ?? 'unknown error'}`);
+			console.debug(`[NET] DCUtR hole punch FAILED: ${evt.detail?.remotePeer?.toString?.()?.slice(0, 16) ?? 'unknown'} — ${evt.detail?.error?.message ?? 'unknown error'}`);
 		});
 
 		// Connection close/abort events for relay debugging
 		this.node!.addEventListener('connection:close' as any, (evt: any) => {
 			const conn = evt.detail;
 			if (conn?.remoteAddr?.toString?.()?.includes('/p2p-circuit')) {
-				console.debug(`🔌 Relay connection closed: ${conn.remotePeer?.toString?.()?.slice(0, 16)} addr=${conn.remoteAddr?.toString()}`);
+				trace(`[NET] Relay connection closed: ${conn.remotePeer?.toString?.()?.slice(0, 16)} addr=${conn.remoteAddr?.toString()}`);
 			}
 		});
 	}
@@ -367,10 +366,10 @@ export class Network {
 					await this.node!.dial(peer.id, { signal: AbortSignal.timeout(5000) });
 					const conns = this.node!.getConnections(peer.id);
 					const connType = conns.map(c => c.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT').join(',');
-					console.debug(`   ✓ Re-dialed ${pid.slice(0, 16)} [${connType}]`);
+					trace(`   ✓ Re-dialed ${pid.slice(0, 16)} [${connType}]`);
 					redialSuccess++;
 				} catch (err: any) {
-					console.debug(`   ✗ Re-dial ${pid.slice(0, 16)} failed: ${err.message?.slice(0, 80)}`);
+					trace(`   ✗ Re-dial ${pid.slice(0, 16)} failed: ${err.message?.slice(0, 80)}`);
 				}
 			}
 			if (redialAttempts > 0) console.debug(`   Re-dial: ${redialSuccess}/${redialAttempts} succeeded`);
@@ -386,7 +385,7 @@ export class Network {
 					}
 				}
 			}
-		}, 10000);
+		}, 30000);
 	}
 
 	// =========================================================================
@@ -456,7 +455,7 @@ export class Network {
 		this.pubsub.subscribe(topic);
 		// Register the Want handler for this network
 		const handler: TopicHandler = data => {
-			console.debug(`Received pubsub message on topic ${topic}:`, data['type']);
+			trace(`[NET] pubsub ${topic}: ${data['type']}`);
 			if (data['type'] === 'want') this.handleWant(data as WantMessage, networkID);
 		};
 		if (!this.topicHandlers.has(topic)) this.topicHandlers.set(topic, new Set());
@@ -529,7 +528,7 @@ export class Network {
 		try {
 			await this.pubsub.publish(PINK_TOPIC, data);
 		} catch (error) {
-			console.debug('Error sending pink:', error);
+			trace('[NET] pink send error:', error);
 		}
 	}
 
@@ -540,7 +539,7 @@ export class Network {
 		try {
 			await this.pubsub.publish(PONK_TOPIC, data);
 		} catch (error) {
-			console.debug(`Ponk reply attempted (no peers connected)`);
+			trace('[NET] ponk reply attempted (no peers)');
 		}
 	}
 
@@ -549,9 +548,8 @@ export class Network {
 	// =========================================================================
 
 	private async handleWant(data: WantMessage, networkID: string): Promise<void> {
-		console.debug('Handling want message for lishID:', data.lishID, 'on network:', networkID);
-		if (!isUploadEnabled(data.lishID)) { console.debug(`[NET-DBG] want ignored: upload disabled for ${data.lishID.slice(0, 8)}`); return; }
-		if (isBusy(data.lishID)) { console.debug(`[NET-DBG] want ignored: busy for ${data.lishID.slice(0, 8)}`); return; }
+		if (!isUploadEnabled(data.lishID)) { trace(`[NET] want ignored: upload disabled for ${data.lishID.slice(0, 8)}`); return; }
+		if (isBusy(data.lishID)) { trace(`[NET] want ignored: busy for ${data.lishID.slice(0, 8)}`); return; }
 		const lish = this.dataServer.get(data.lishID);
 		if (!lish) return;
 		// Verify data directory exists on disk — prevents false-positive "have"
@@ -562,12 +560,11 @@ export class Network {
 		}
 		const haveChunks = this.dataServer.getHaveChunks(data.lishID);
 		if (haveChunks !== 'all' && haveChunks.size === 0) {
-			console.debug('No chunks available for lishID:', data.lishID);
+			trace(`[NET] no chunks for ${data.lishID.slice(0, 8)}`);
 			return;
 		}
 		const myAddrs = this.node!.getMultiaddrs();
-		const addrTypes = myAddrs.map(a => { const s = a.toString(); return s.includes('/p2p-circuit') ? `RELAY:${s}` : `DIRECT:${s}`; });
-		console.debug(`[NET-DBG] handleWant: responding HAVE for ${data.lishID.slice(0, 8)}, chunks=${haveChunks === 'all' ? 'ALL' : haveChunks.size}, addrs=[${addrTypes.join(', ')}]`);
+		console.debug(`[NET] responding HAVE for ${data.lishID.slice(0, 8)}, chunks=${haveChunks === 'all' ? 'ALL' : haveChunks.size}`);
 		const haveMessage: HaveMessage = {
 			type: 'have',
 			lishID: lish.id,
@@ -587,7 +584,7 @@ export class Network {
 			console.error('Network not started');
 			return;
 		}
-		console.debug(`Broadcasting to topic ${topic}:`, data['type']);
+		trace(`[NET] broadcast ${topic}: ${data['type']}`);
 		const encoded = new TextEncoder().encode(JSON.stringify(data));
 		await this.pubsub.publish(topic, encoded);
 	}
@@ -615,27 +612,27 @@ export class Network {
 
 	async dialProtocol(multiaddrs: any[], protocol: string): Promise<Stream> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		console.debug(`[NET-DBG] dialProtocol: ${protocol} to ${multiaddrs.map(m => m.toString()).join(', ')}`);
+		trace(`[NET] dial ${protocol} to ${multiaddrs.map(m => m.toString()).join(', ')}`);
 		const connection = await this.node.dial(multiaddrs);
 		const isRelay = connection.remoteAddr.toString().includes('/p2p-circuit');
 		const limited = (connection as any).limits != null;
-		console.debug(`[NET-DBG] dialProtocol connected: ${connection.remotePeer.toString().slice(0, 16)} via ${connection.remoteAddr.toString()} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}]`);
+		console.debug(`[NET] dial connected: ${connection.remotePeer.toString().slice(0, 16)} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}]`);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
-		console.debug(`[NET-DBG] dialProtocol stream opened: id=${stream.id}, status=${stream.status}`);
+		trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
 		return stream;
 	}
 
 	async dialProtocolByPeerId(peerID: string, protocol: string): Promise<Stream> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		console.debug(`[NET-DBG] dialProtocolByPeerId: ${protocol} to ${peerID.slice(0, 16)}`);
+		trace(`[NET] dial ${protocol} to ${peerID.slice(0, 16)}`);
 		const { peerIdFromString } = await import('@libp2p/peer-id');
 		const pid = peerIdFromString(peerID);
 		const connection = await this.node.dial(pid);
 		const isRelay = connection.remoteAddr.toString().includes('/p2p-circuit');
 		const limited = (connection as any).limits != null;
-		console.debug(`[NET-DBG] dialProtocolByPeerId connected: ${peerID.slice(0, 16)} via ${connection.remoteAddr.toString()} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}]`);
+		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}]`);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
-		console.debug(`[NET-DBG] dialProtocolByPeerId stream opened: id=${stream.id}, status=${stream.status}`);
+		trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
 		return stream;
 	}
 

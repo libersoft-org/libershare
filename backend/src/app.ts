@@ -20,7 +20,7 @@ let dataDir = isCompiledBinary ? join(dirname(process.execPath), 'data') : './da
 if (isCompiledBinary) setWorkerUrl(new URL('./lish/checksum-worker.js', import.meta.url).href);
 
 let enablePink = false;
-let logLevel: LogLevel = 'debug';
+let logLevel: LogLevel = isCompiledBinary ? 'info' : 'debug';
 let apiHost = 'localhost';
 let apiPort = 0;
 let apiSecure = false;

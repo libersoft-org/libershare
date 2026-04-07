@@ -149,7 +149,7 @@ export class DataServer {
 
 		const location = findChunkLocation(this.db, lishID, chunkID);
 		if (!location) {
-			console.warn(`Chunk not found in any file: ${chunkID.slice(0, 8)}...`);
+			console.debug(`Chunk not found in any file: ${chunkID.slice(0, 8)}...`);
 			return null;
 		}
 
