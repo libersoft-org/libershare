@@ -204,11 +204,25 @@ export class Network {
 		await this.node.handle(
 			LISH_PROTOCOL,
 			async (data: any) => {
-				// libp2p handle() passes IncomingStreamData: { stream, connection } as single object
 				const stream = data.stream ?? data;
 				const connection = data.connection;
-				const remotePeerID = connection?.remotePeer?.toString?.();
-				const connType: 'DIRECT' | 'RELAY' = connection?.remoteAddr?.toString?.()?.includes('/p2p-circuit') ? 'RELAY' : 'DIRECT';
+				let remotePeerID = connection?.remotePeer?.toString?.();
+				let connType: 'DIRECT' | 'RELAY' = 'DIRECT';
+				if (!remotePeerID && this.node) {
+					// YamuxStream lacks connection context. Find owner via Connection.streams
+					for (const peer of this.node.getPeers()) {
+						for (const conn of this.node.getConnections(peer)) {
+							try {
+								if (conn.streams.some((s: any) => s.id === stream.id)) {
+									remotePeerID = peer.toString();
+									connType = conn.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT';
+								}
+							} catch {}
+						}
+						if (remotePeerID) break;
+					}
+				}
+				if (connection?.remoteAddr) connType = connection.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT';
 				await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType);
 			},
 			{ runOnLimitedConnection: true }
