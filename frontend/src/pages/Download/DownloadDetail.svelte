@@ -525,10 +525,11 @@
 		white-space: nowrap;
 	}
 
-	.peer-stale-ago {
-		font-size: 1.2vh;
+	.peer-ago {
+		font-size: 1.1vh;
 		color: var(--secondary-foreground);
-		font-style: italic;
+		opacity: 0.6;
+		margin-left: 0.5vh;
 	}
 
 	@media (max-width: 1199px) {
@@ -691,9 +692,9 @@
 								</Header>
 								<div class="items">
 									{#each currentPeers as peer, index (peer.peerID)}
-										{@const staleSec = peer.stale ? Math.round((now - peer.lastActivity) / 1000) : 0}
+										{@const ageSec = peer.lastActivity ? Math.max(0, Math.round((now - peer.lastActivity) / 1000)) : 0}
 										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index} dimmed={peer.stale}>
-											<Cell><span class="peer-id">{peer.peerID}</span></Cell>
+											<Cell><span class="peer-id">{peer.peerID} <span class="peer-ago">{ageSec}s</span></span></Cell>
 											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'}>{peer.connectionType}</span></Cell>
 											<Cell align="right">
 												<span class="peer-metric">
@@ -707,7 +708,7 @@
 													<span class="total-ul">↑ {formatSize(peer.totalUploaded || 0)}</span>
 												</span>
 											</Cell>
-											<Cell>{#if peer.stale}<span class="peer-stale-ago">před {staleSec}s</span>{:else}<span class="peer-file">{peer.currentFile ?? ''}</span>{/if}</Cell>
+											<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
 										</TableRow>
 									{/each}
 								</div>

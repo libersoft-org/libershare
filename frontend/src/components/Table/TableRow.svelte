@@ -49,7 +49,7 @@
 	}
 
 	.row.dimmed {
-		opacity: 0.4;
+		opacity: 0.55;
 	}
 
 	@media (max-width: 1199px) {
