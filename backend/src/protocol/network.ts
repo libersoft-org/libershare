@@ -209,17 +209,21 @@ export class Network {
 				let remotePeerID = connection?.remotePeer?.toString?.();
 				let connType: 'DIRECT' | 'RELAY' = 'DIRECT';
 				if (!remotePeerID && this.node) {
-					// YamuxStream lacks connection context. Find owner via Connection.streams
-					for (const peer of this.node.getPeers()) {
-						for (const conn of this.node.getConnections(peer)) {
-							try {
-								if (conn.streams.some((s: any) => s.id === stream.id)) {
-									remotePeerID = peer.toString();
-									connType = conn.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT';
-								}
-							} catch {}
+					// YamuxStream lacks connection context. Find owner via Connection.streams.
+					// Retry with delay — stream may not be in conn.streams immediately.
+					for (let attempt = 0; attempt < 3 && !remotePeerID; attempt++) {
+						if (attempt > 0) await new Promise(r => setTimeout(r, 50));
+						for (const peer of this.node.getPeers()) {
+							for (const conn of this.node.getConnections(peer)) {
+								try {
+									if (conn.streams.some((s: any) => s.id === stream.id)) {
+										remotePeerID = peer.toString();
+										connType = conn.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT';
+									}
+								} catch {}
+							}
+							if (remotePeerID) break;
 						}
-						if (remotePeerID) break;
 					}
 				}
 				if (connection?.remoteAddr) connType = connection.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT';

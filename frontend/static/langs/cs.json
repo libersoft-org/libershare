@@ -98,7 +98,8 @@
 			"currentFile": "Aktuální soubor",
 			"transferred": "Přeneseno",
 			"speed": "Rychlost",
-			"connection": "Typ"
+			"connection": "Typ",
+			"activity": "Naposledy"
 		},
 		"speed": "Rychlost",
 		"transferred": "Přeneseno",

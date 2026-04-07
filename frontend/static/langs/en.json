@@ -98,7 +98,8 @@
 			"currentFile": "Current file",
 			"transferred": "Transferred",
 			"speed": "Speed",
-			"connection": "Type"
+			"connection": "Type",
+			"activity": "Last seen"
 		},
 		"speed": "Speed",
 		"transferred": "Transferred",

@@ -682,19 +682,20 @@
 						{#if currentPeers.length === 0}
 							<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
 						{:else}
-							<Table columns="14vh 9vh 1fr 1fr 2fr" columnsMobile="14vh 9vh 1fr 1fr" noBorder>
+							<Table columns="14vh 8vh 1fr 1fr 9vh 2fr" columnsMobile="14vh 8vh 1fr 1fr 9vh" noBorder>
 								<Header fontSize="1.3vh">
 									<Cell>{$t('downloads.peerList.id')}</Cell>
 									<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
 									<Cell align="right">{$t('downloads.peerList.speed')}</Cell>
 									<Cell align="right">{$t('downloads.peerList.transferred')}</Cell>
+									<Cell align="right">{$t('downloads.peerList.activity')}</Cell>
 									<Cell>{$t('downloads.peerList.currentFile')}</Cell>
 								</Header>
 								<div class="items">
 									{#each currentPeers as peer, index (peer.peerID)}
 										{@const ageSec = peer.lastActivity ? Math.max(0, Math.round((now - peer.lastActivity) / 1000)) : 0}
 										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index} dimmed={peer.stale}>
-											<Cell><span class="peer-id">{peer.peerID} <span class="peer-ago">{ageSec}s</span></span></Cell>
+											<Cell><span class="peer-id">{peer.peerID}</span></Cell>
 											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'}>{peer.connectionType}</span></Cell>
 											<Cell align="right">
 												<span class="peer-metric">
@@ -708,6 +709,7 @@
 													<span class="total-ul">↑ {formatSize(peer.totalUploaded || 0)}</span>
 												</span>
 											</Cell>
+											<Cell align="right"><span class="peer-ago">{ageSec}s</span></Cell>
 											<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
 										</TableRow>
 									{/each}

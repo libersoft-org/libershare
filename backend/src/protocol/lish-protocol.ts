@@ -210,9 +210,10 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					if (!servedLishIDs.has(chunkReq.lishID)) {
 						servedLishIDs.add(chunkReq.lishID);
 						activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
-						registerUploadPeer(chunkReq.lishID, fullRemotePeer, connType);
+						trace(`[PEERS] registerUpload remotePeerID=${remotePeerID ? remotePeer : 'NONE'} lish=${chunkReq.lishID.slice(0,8)}`);
+						if (remotePeerID) registerUploadPeer(chunkReq.lishID, fullRemotePeer, connType);
 					}
-					recordUploadBytes(chunkReq.lishID, fullRemotePeer, chunkData.length);
+					if (remotePeerID) recordUploadBytes(chunkReq.lishID, fullRemotePeer, chunkData.length);
 					dataServer.incrementUploadedBytes(chunkReq.lishID as import('@shared').LISHid, chunkData.length);
 					await uploadLimiter.throttle(chunkData.length);
 					// Upload progress tracking (rolling 10s speed window)

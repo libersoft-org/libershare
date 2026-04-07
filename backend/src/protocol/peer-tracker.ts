@@ -171,7 +171,6 @@ function emitPeerDetails(): void {
 
 	for (const entry of entries.values()) {
 		if (!subscribedLishIDs.has(entry.lishID)) continue;
-		if (entry.peerID === 'unknown') continue;
 
 		if (!byLish.has(entry.lishID)) byLish.set(entry.lishID, new Map());
 		const peerMap = byLish.get(entry.lishID)!;
