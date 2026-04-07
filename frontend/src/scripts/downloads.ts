@@ -612,14 +612,20 @@ export async function initDownloads(): Promise<void> {
 		});
 
 		// transfer.upload:stopped — peer disconnected, upload stream ended (NOT user action)
-		// Only reset speed/peers, do NOT change upload enabled state
+		// Debounce: downloader closes stream between batches and reopens ~10s later.
+		// Only reset to idling if no upload:progress arrives within 20s.
 		api.on('transfer.upload:stopped', (data: { lishID: string }) => {
-			activeUploadLishs.delete(data.lishID);
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
-				return { ...d, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0, status };
-			}));
+			const prev = uploadTimeouts.get(data.lishID);
+			if (prev) clearTimeout(prev);
+			uploadTimeouts.set(data.lishID, setTimeout(() => {
+				activeUploadLishs.delete(data.lishID);
+				uploadTimeouts.delete(data.lishID);
+				downloads.update(list => list.map(d => {
+					if (d.id !== data.lishID) return d;
+					const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
+					return { ...d, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0, status };
+				}));
+			}, 20000));
 		});
 	}
 	// Subscribe on every connect (backend has fresh subscribedEvents after reconnect)
