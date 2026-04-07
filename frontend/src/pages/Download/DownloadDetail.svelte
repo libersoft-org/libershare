@@ -464,21 +464,18 @@
 		font-size: 1.3vh;
 	}
 
-	.conn-badge {
+	.conn-type {
 		font-size: 1.2vh;
-		padding: 0.2vh 0.6vh;
-		border-radius: 0.5vh;
 		font-weight: bold;
+		text-transform: uppercase;
 	}
 
 	.conn-direct {
 		color: var(--mode-download-fg, #0c0);
-		border: 0.15vh solid var(--mode-download-fg, #0c0);
 	}
 
 	.conn-relay {
 		color: var(--mode-upload-fg, #28f);
-		border: 0.15vh solid var(--mode-upload-fg, #28f);
 	}
 
 	.peer-speeds, .peer-totals {
@@ -657,19 +654,17 @@
 									{#each currentPeers as peer, index (peer.peerID)}
 										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index}>
 											<Cell><span class="peer-id" class:stale-peer={peer.stale}>{peer.peerID}</span></Cell>
-											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'}>{peer.connectionType}</span></Cell>
+											<Cell align="center"><span class="conn-type" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'}>{peer.connectionType}</span></Cell>
 											<Cell align="right">
 												<span class="peer-speeds" class:stale-peer={peer.stale}>
-													{#if peer.downloadSpeed}<span class="speed-dl">↓{formatSize(peer.downloadSpeed)}/s</span>{/if}
-													{#if peer.uploadSpeed}<span class="speed-ul">↑{formatSize(peer.uploadSpeed)}/s</span>{/if}
-													{#if !peer.downloadSpeed && !peer.uploadSpeed}<span class="speed-idle">—</span>{/if}
+													<span class="speed-dl">↓{formatSize(peer.downloadSpeed || 0)}/s</span>
+													<span class="speed-ul">↑{formatSize(peer.uploadSpeed || 0)}/s</span>
 												</span>
 											</Cell>
 											<Cell align="right">
 												<span class="peer-totals" class:stale-peer={peer.stale}>
-													{#if peer.totalDownloaded}<span class="total-dl">↓{formatSize(peer.totalDownloaded)}</span>{/if}
-													{#if peer.totalUploaded}<span class="total-ul">↑{formatSize(peer.totalUploaded)}</span>{/if}
-													{#if !peer.totalDownloaded && !peer.totalUploaded}—{/if}
+													<span class="total-dl">↓{formatSize(peer.totalDownloaded || 0)}</span>
+													<span class="total-ul">↑{formatSize(peer.totalUploaded || 0)}</span>
 												</span>
 											</Cell>
 											<Cell><span class="peer-file" class:stale-peer={peer.stale}>{peer.currentFile ?? '—'}</span></Cell>
