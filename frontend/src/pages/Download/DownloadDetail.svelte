@@ -465,59 +465,9 @@
 		opacity: 0.6;
 	}
 
-	.peer-list {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.peer-card {
-		display: flex;
-		flex-direction: column;
-		gap: 0.4vh;
-		padding: 1.2vh 2vh;
-		border-bottom: 0.1vh solid var(--secondary-softer-background);
-		border-left: 0.3vh solid transparent;
-		transition: border-color 0.15s, background-color 0.15s;
-	}
-
-	.peer-card:last-child {
-		border-bottom: none;
-	}
-
-	.peer-card:not(.stale-peer) {
-		border-left-color: var(--mode-download-fg, #0c0);
-	}
-
-	.peer-card.stale-peer {
-		opacity: 0.4;
-	}
-
-	.peer-card.selected {
-		background-color: var(--primary-foreground);
-		color: var(--primary-background);
-		border-left-color: var(--primary-background);
-	}
-
-	.peer-row-1 {
-		display: flex;
-		align-items: center;
-		gap: 1.2vh;
-		flex-wrap: wrap;
-	}
-
-	.peer-row-2 {
-		display: flex;
-		align-items: center;
-		gap: 1.5vh;
-		padding-left: 0.5vh;
-		flex-wrap: wrap;
-	}
-
 	.peer-id {
 		font-family: 'Courier New', Consolas, monospace;
-		font-size: 1.4vh;
-		letter-spacing: 0.05vh;
-		opacity: 0.9;
+		font-size: 1.3vh;
 	}
 
 	.conn-badge {
@@ -542,22 +492,13 @@
 		border: 0.2vh solid var(--mode-upload-fg, #28f);
 	}
 
-	.peer-speeds {
-		display: inline-flex;
-		gap: 1vh;
+	.peer-metric {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2vh;
 		font-family: 'Courier New', Consolas, monospace;
 		font-size: 1.3vh;
 		white-space: nowrap;
-		margin-left: auto;
-	}
-
-	.peer-totals {
-		display: inline-flex;
-		gap: 1vh;
-		font-family: 'Courier New', Consolas, monospace;
-		font-size: 1.3vh;
-		white-space: nowrap;
-		opacity: 0.7;
 	}
 
 	.speed-dl, .total-dl {
@@ -574,20 +515,6 @@
 
 	.speed-dl, .speed-ul {
 		font-weight: bold;
-	}
-
-	.peer-card.selected .speed-dl,
-	.peer-card.selected .speed-ul,
-	.peer-card.selected .total-dl,
-	.peer-card.selected .total-ul,
-	.peer-card.selected .peer-file {
-		color: var(--primary-background);
-	}
-
-	.peer-card.selected .conn-badge {
-		background-color: transparent;
-		border-color: var(--primary-background);
-		color: var(--primary-background);
 	}
 
 	.peer-file {
@@ -750,29 +677,36 @@
 						{#if currentPeers.length === 0}
 							<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
 						{:else}
-							<div class="items peer-list">
-								{#each currentPeers as peer, index (peer.peerID)}
-									<div bind:this={peerElements[index]} class="peer-card" class:selected={peerListActive && selectedPeerIndex === index} class:stale-peer={peer.stale}>
-										<div class="peer-row-1">
-											<span class="peer-id">{peer.peerID}</span>
-											<span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'}>{peer.connectionType}</span>
-											<span class="peer-speeds">
-												<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>↓{formatSize(peer.downloadSpeed || 0)}/s</span>
-												<span class="speed-ul" class:speed-idle={!peer.uploadSpeed}>↑{formatSize(peer.uploadSpeed || 0)}/s</span>
-											</span>
-										</div>
-										<div class="peer-row-2">
-											<span class="peer-totals">
-												<span class="total-dl">↓{formatSize(peer.totalDownloaded || 0)}</span>
-												<span class="total-ul">↑{formatSize(peer.totalUploaded || 0)}</span>
-											</span>
-											{#if peer.currentFile}
-												<span class="peer-file">{peer.currentFile}</span>
-											{/if}
-										</div>
-									</div>
-								{/each}
-							</div>
+							<Table columns="auto auto 1fr 1fr 2fr" columnsMobile="auto auto 1fr 1fr" noBorder>
+								<Header fontSize="1.3vh">
+									<Cell>{$t('downloads.peerList.id')}</Cell>
+									<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
+									<Cell align="right">{$t('downloads.peerList.speed')}</Cell>
+									<Cell align="right">{$t('downloads.peerList.transferred')}</Cell>
+									<Cell>{$t('downloads.peerList.currentFile')}</Cell>
+								</Header>
+								<div class="items">
+									{#each currentPeers as peer, index (peer.peerID)}
+										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index}>
+											<Cell><span class="peer-id" class:stale-peer={peer.stale}>{peer.peerID}</span></Cell>
+											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'}>{peer.connectionType}</span></Cell>
+											<Cell align="right">
+												<span class="peer-metric" class:stale-peer={peer.stale}>
+													<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>↓ {formatSize(peer.downloadSpeed || 0)}/s</span>
+													<span class="speed-ul" class:speed-idle={!peer.uploadSpeed}>↑ {formatSize(peer.uploadSpeed || 0)}/s</span>
+												</span>
+											</Cell>
+											<Cell align="right">
+												<span class="peer-metric" class:stale-peer={peer.stale}>
+													<span class="total-dl">↓ {formatSize(peer.totalDownloaded || 0)}</span>
+													<span class="total-ul">↑ {formatSize(peer.totalUploaded || 0)}</span>
+												</span>
+											</Cell>
+											<Cell><span class="peer-file" class:stale-peer={peer.stale}>{peer.currentFile ?? ''}</span></Cell>
+										</TableRow>
+									{/each}
+								</div>
+							</Table>
 						{/if}
 					{/if}
 				</div>
