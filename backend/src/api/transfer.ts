@@ -97,7 +97,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				const result = await enableDownload({ lishID });
 				if (!result.success) ok = false;
 			}
-			if (uploadWasEnabled) enableUploadHandler({ lishID });
+			if (uploadWasEnabled && ok) enableUploadHandler({ lishID });
 			return ok;
 		},
 		broadcast: (event, data) => { broadcast?.(event, data); },
@@ -191,7 +191,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		}
 		// No active downloader — start a new download if LISH exists in dataServer
 		const lish = dataServer.get(p.lishID);
-		if (!lish) return { success: false };
+		if (!lish) {
+			downloadEnabledLishs.delete(p.lishID);
+			persistDownloadEnabled?.(p.lishID, false);
+			return { success: false };
+		}
 		const missing = dataServer.getMissingChunks(p.lishID);
 		if (missing.length === 0) {
 			const send = broadcast ?? (() => {});
@@ -202,7 +206,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		try {
 			const network = networks.getRunningNetwork();
 			const joinedNetworks = networks.getEnabled().map(n => n.networkID);
-			if (joinedNetworks.length === 0) return { success: false };
+			if (joinedNetworks.length === 0) {
+				downloadEnabledLishs.delete(p.lishID);
+				persistDownloadEnabled?.(p.lishID, false);
+				return { success: false };
+			}
 			const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
 			// Pre-validate download directory (check dir itself for resume, parent for fresh)
 			if (lish.directory) {
@@ -249,8 +257,16 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			recovery.stop(p.lishID);
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
-		} catch (err) {
-			console.error(`[Transfer] Failed to enable download for ${p.lishID}:`, err);
+		} catch (err: any) {
+			const code = err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR;
+			const detail = err instanceof CodedError ? err.detail : err.message;
+			console.error(`[Transfer] ${p.lishID.slice(0, 8)}: enableDownload failed (${code}): ${detail}`);
+			dataServer.setError(p.lishID, code, detail);
+			downloadEnabledLishs.delete(p.lishID);
+			persistDownloadEnabled?.(p.lishID, false);
+			const send = broadcast ?? (() => {});
+			send('transfer.download:error', { error: code, errorDetail: detail, lishID: p.lishID });
+			startRecoveryIfEnabled(p.lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
 			return { success: false };
 		} finally {
 			pendingDownloads.delete(p.lishID);
