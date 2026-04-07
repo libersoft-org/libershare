@@ -203,9 +203,12 @@ export class Network {
 		// Register lish protocol handler
 		await this.node.handle(
 			LISH_PROTOCOL,
-			async ({ stream, connection }: any) => {
-				const remotePeerID = connection.remotePeer.toString();
-				const connType: 'DIRECT' | 'RELAY' = connection.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT';
+			async (data: any) => {
+				// libp2p handle() passes IncomingStreamData: { stream, connection } as single object
+				const stream = data.stream ?? data;
+				const connection = data.connection;
+				const remotePeerID = connection?.remotePeer?.toString?.();
+				const connType: 'DIRECT' | 'RELAY' = connection?.remoteAddr?.toString?.()?.includes('/p2p-circuit') ? 'RELAY' : 'DIRECT';
 				await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType);
 			},
 			{ runOnLimitedConnection: true }
