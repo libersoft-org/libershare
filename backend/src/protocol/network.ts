@@ -6,6 +6,7 @@ import { type Libp2p } from 'libp2p';
 import { type PeerId as PeerID, type PrivateKey, type PeerInfo, type Stream } from '@libp2p/interface';
 import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
 import { join } from 'path';
+import { existsSync } from 'fs';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLISHProtocol, isUploadEnabled } from './lish-protocol.ts';
@@ -511,6 +512,12 @@ export class Network {
 		if (isBusy(data.lishID)) { console.debug(`[NET-DBG] want ignored: busy for ${data.lishID.slice(0, 8)}`); return; }
 		const lish = this.dataServer.get(data.lishID);
 		if (!lish) return;
+		// Verify data directory exists on disk — prevents false-positive "have"
+		// when DB says have=TRUE but files were lost (e.g. Docker rebuild without volume)
+		if (!lish.directory || !existsSync(lish.directory)) {
+			console.warn(`[NET] want ignored: data directory missing for ${data.lishID.slice(0, 8)} (${lish.directory ?? 'no dir'})`);
+			return;
+		}
 		const haveChunks = this.dataServer.getHaveChunks(data.lishID);
 		if (haveChunks !== 'all' && haveChunks.size === 0) {
 			console.debug('No chunks available for lishID:', data.lishID);
