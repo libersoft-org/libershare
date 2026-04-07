@@ -153,13 +153,18 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer)
 	let requestCount = 0;
 	try {
 		// Wrap the stream with length-prefixed decoder for multiple messages
-		// Default maxDataLength is 4MB — use 16MB to handle large manifest responses on shared streams
-		const decoder = decode(stream, { maxDataLength: 16 * 1024 * 1024 });
+		// Use maxDataLength=Infinity to avoid framing errors — the real requests are tiny (<200 bytes)
+		// but yamux multiplexing can cause varint misinterpretation
+		const decoder = decode(stream, { maxDataLength: Infinity });
 		// Handle multiple requests on the same stream
 		for await (const msg of decoder) {
 			requestCount++;
 			const data = msg instanceof Uint8ArrayList ? msg.subarray() : msg;
-			console.debug(`[PROTO-DBG] request #${requestCount} from ${remotePeer}: ${data.byteLength} bytes`);
+			console.debug(`[PROTO-DBG] request #${requestCount} from ${remotePeer}: ${data.byteLength} bytes, first50=${new TextDecoder().decode(data.slice(0, 50))}`);
+			if (data.byteLength > 10_000_000) {
+				console.error(`[PROTO-DBG] SUSPICIOUS request: ${data.byteLength} bytes from ${remotePeer} — skipping`);
+				continue;
+			}
 			const request: LISHRequest = JSON.parse(new TextDecoder().decode(data));
 
 			if (request.type === 'manifest') {
