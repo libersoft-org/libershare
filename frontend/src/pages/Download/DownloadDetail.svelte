@@ -481,14 +481,36 @@
 		border: 0.15vh solid var(--mode-upload-fg, #28f);
 	}
 
-	.peer-speed {
-		font-weight: bold;
+	.peer-speeds, .peer-totals {
+		display: inline-flex;
+		gap: 0.8vh;
+		font-family: monospace;
+		font-size: 1.3vh;
 		white-space: nowrap;
+	}
+
+	.speed-dl, .total-dl {
+		color: var(--mode-download-fg, #0c0);
+	}
+
+	.speed-ul, .total-ul {
+		color: var(--mode-upload-fg, #28f);
+	}
+
+	.speed-idle {
+		opacity: 0.4;
+	}
+
+	.speed-dl, .speed-ul {
+		font-weight: bold;
 	}
 
 	.peer-file {
 		font-size: 1.2vh;
 		opacity: 0.7;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	@media (max-width: 1199px) {
@@ -623,22 +645,34 @@
 						{#if currentPeers.length === 0}
 							<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
 						{:else}
-							<Table columns="1fr 9vh 9vh 1fr" columnsMobile="1fr 9vh 9vh" noBorder>
+							<Table columns="14vh 8vh 12vh 12vh 1fr" columnsMobile="14vh 8vh 12vh 12vh" noBorder>
 								<Header fontSize="1.4vh">
 									<Cell>{$t('downloads.peerList.id')}</Cell>
-									<Cell align="center">{$t('downloads.peers')}</Cell>
-									<Cell align="center">{$t('downloads.speed')}</Cell>
+									<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
+									<Cell align="right">{$t('downloads.peerList.speed')}</Cell>
+									<Cell align="right">{$t('downloads.peerList.transferred')}</Cell>
 									<Cell>{$t('downloads.peerList.currentFile')}</Cell>
 								</Header>
 								<div class="items">
 									{#each currentPeers as peer, index (peer.peerID)}
-										{@const totalSpeed = (peer.downloadSpeed || 0) + (peer.uploadSpeed || 0)}
-										{@const direction = peer.downloadSpeed && peer.uploadSpeed ? '↓↑' : peer.downloadSpeed ? '↓' : peer.uploadSpeed ? '↑' : ''}
 										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index}>
 											<Cell><span class="peer-id" class:stale-peer={peer.stale}>{peer.peerID}</span></Cell>
 											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'}>{peer.connectionType}</span></Cell>
-											<Cell align="center"><span class="peer-speed" class:stale-peer={peer.stale}>{totalSpeed ? direction + ' ' + formatSize(totalSpeed) + '/s' : '—'}</span></Cell>
-											<Cell><span class:stale-peer={peer.stale} class="peer-file">{peer.currentFile ?? '—'}</span></Cell>
+											<Cell align="right">
+												<span class="peer-speeds" class:stale-peer={peer.stale}>
+													{#if peer.downloadSpeed}<span class="speed-dl">↓{formatSize(peer.downloadSpeed)}/s</span>{/if}
+													{#if peer.uploadSpeed}<span class="speed-ul">↑{formatSize(peer.uploadSpeed)}/s</span>{/if}
+													{#if !peer.downloadSpeed && !peer.uploadSpeed}<span class="speed-idle">—</span>{/if}
+												</span>
+											</Cell>
+											<Cell align="right">
+												<span class="peer-totals" class:stale-peer={peer.stale}>
+													{#if peer.totalDownloaded}<span class="total-dl">↓{formatSize(peer.totalDownloaded)}</span>{/if}
+													{#if peer.totalUploaded}<span class="total-ul">↑{formatSize(peer.totalUploaded)}</span>{/if}
+													{#if !peer.totalDownloaded && !peer.totalUploaded}—{/if}
+												</span>
+											</Cell>
+											<Cell><span class="peer-file" class:stale-peer={peer.stale}>{peer.currentFile ?? '—'}</span></Cell>
 										</TableRow>
 									{/each}
 								</div>

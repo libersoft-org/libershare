@@ -40,6 +40,8 @@ export interface PeerDetail {
 	connectionType: 'DIRECT' | 'RELAY';
 	downloadSpeed: number;
 	uploadSpeed: number;
+	totalDownloaded: number;
+	totalUploaded: number;
 	currentFile?: string;
 	connectedAt: number;
 	stale: boolean;

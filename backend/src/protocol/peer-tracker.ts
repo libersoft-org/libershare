@@ -7,6 +7,8 @@ export interface PeerDetail {
 	connectionType: ConnectionType;
 	downloadSpeed: number;
 	uploadSpeed: number;
+	totalDownloaded: number;
+	totalUploaded: number;
 	currentFile?: string;
 	connectedAt: number;
 	stale: boolean;
@@ -19,6 +21,7 @@ interface PeerEntry {
 	connectionType: ConnectionType;
 	connectedAt: number;
 	speedSamples: { time: number; bytes: number }[];
+	totalBytes: number;
 	currentFile?: string;
 	lastActivity: number;
 }
@@ -48,7 +51,7 @@ function key(lishID: string, peerID: string, direction: 'download' | 'upload'): 
 export function registerDownloadPeer(lishID: string, peerID: string, connectionType: ConnectionType): void {
 	const k = key(lishID, peerID, 'download');
 	if (entries.has(k)) return;
-	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], lastActivity: Date.now() });
+	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: 0, lastActivity: Date.now() });
 	trace(`[PEERS] register download ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
@@ -65,7 +68,7 @@ export function unregisterDownloadPeer(lishID: string, peerID: string): void {
 export function registerUploadPeer(lishID: string, peerID: string, connectionType: ConnectionType): void {
 	const k = key(lishID, peerID, 'upload');
 	if (entries.has(k)) return;
-	entries.set(k, { peerID, lishID, direction: 'upload', connectionType, connectedAt: Date.now(), speedSamples: [], lastActivity: Date.now() });
+	entries.set(k, { peerID, lishID, direction: 'upload', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: 0, lastActivity: Date.now() });
 	trace(`[PEERS] register upload ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
@@ -95,6 +98,7 @@ export function recordDownloadBytes(lishID: string, peerID: string, bytes: numbe
 	if (!entry) return;
 	const now = Date.now();
 	entry.speedSamples.push({ time: now, bytes });
+	entry.totalBytes += bytes;
 	entry.lastActivity = now;
 	if (currentFile !== undefined) entry.currentFile = currentFile;
 }
@@ -105,6 +109,7 @@ export function recordUploadBytes(lishID: string, peerID: string, bytes: number)
 	if (!entry) return;
 	const now = Date.now();
 	entry.speedSamples.push({ time: now, bytes });
+	entry.totalBytes += bytes;
 	entry.lastActivity = now;
 }
 
@@ -180,9 +185,11 @@ function emitPeerDetails(): void {
 			// Merge: combine download + upload into one row
 			if (entry.direction === 'download') {
 				existing.downloadSpeed = speed;
+				existing.totalDownloaded = entry.totalBytes;
 				if (entry.currentFile) existing.currentFile = entry.currentFile;
 			} else {
 				existing.uploadSpeed = speed;
+				existing.totalUploaded = entry.totalBytes;
 			}
 			existing.stale = existing.stale && isStale; // stale only if BOTH directions stale
 			if (entry.connectedAt < existing.connectedAt) existing.connectedAt = entry.connectedAt;
@@ -192,6 +199,8 @@ function emitPeerDetails(): void {
 				connectionType: entry.connectionType,
 				downloadSpeed: entry.direction === 'download' ? speed : 0,
 				uploadSpeed: entry.direction === 'upload' ? speed : 0,
+				totalDownloaded: entry.direction === 'download' ? entry.totalBytes : 0,
+				totalUploaded: entry.direction === 'upload' ? entry.totalBytes : 0,
 				currentFile: entry.currentFile,
 				connectedAt: entry.connectedAt,
 				stale: isStale,

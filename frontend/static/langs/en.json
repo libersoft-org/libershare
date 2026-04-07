@@ -95,7 +95,10 @@
 		"peerList": {
 			"searching": "Searching for peers...",
 			"id": "Peer",
-			"currentFile": "File"
+			"currentFile": "File",
+			"transferred": "Transferred",
+			"speed": "Speed",
+			"connection": "Type"
 		},
 		"speed": "Speed",
 		"transferred": "Transferred",

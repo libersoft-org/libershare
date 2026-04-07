@@ -95,7 +95,10 @@
 		"peerList": {
 			"searching": "Hledám spojení...",
 			"id": "Peer",
-			"currentFile": "Soubor"
+			"currentFile": "Soubor",
+			"transferred": "Přeneseno",
+			"speed": "Rychlost",
+			"connection": "Typ"
 		},
 		"speed": "Rychlost",
 		"transferred": "Přeneseno",
