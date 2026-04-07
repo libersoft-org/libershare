@@ -13,6 +13,7 @@ import { ping } from '@libp2p/ping';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { autoNAT } from '@libp2p/autonat';
+import { dcutr } from '@libp2p/dcutr';
 import { networkInterfaces } from 'os';
 import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
@@ -121,9 +122,10 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		});
 		console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservationsRaw === 0 ? 'unlimited' : maxReservationsRaw})`);
 	}
-	// Add autonat service
+	// Add autonat + dcutr for NAT traversal
 	config.services.autonat = autoNAT();
-	console.log('✓ AutoNAT enabled');
+	config.services.dcutr = dcutr();
+	console.log('✓ AutoNAT + DCUtR enabled');
 	// Deduplicate bootstrap peers and filter out our own peer ID
 	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => !p.includes(myPeerID));
 	if (uniqueBootstrapPeers.length > 0) {
