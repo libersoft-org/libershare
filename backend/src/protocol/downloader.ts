@@ -718,6 +718,8 @@ export class Downloader {
 			const before = this.peers.size;
 			this.failedPeers.clear();
 			this.lastExhaustedTime = 0;
+			// Broadcast want so all peers (including probe-only) respond with have + chunk availability
+			await this.callForPeers().catch(() => {});
 			await this.probeTopicPeers();
 			if (!this.downloadActive && !this.destroyed && this.peers.size > before) this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
 		}, 15000);
