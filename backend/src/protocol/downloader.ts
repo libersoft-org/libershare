@@ -598,7 +598,7 @@ export class Downloader {
 				fileDownloadedChunks.set(fIdx, (fileDownloadedChunks.get(fIdx) ?? 0) + 1);
 				const filePath = this.lish.files?.[fIdx]?.path;
 				const fileChunks = fileDownloadedChunks.get(fIdx);
-				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond, ...(filePath != null ? { filePath } : {}), ...(fileChunks != null ? { fileDownloadedChunks: fileChunks } : {}) });
+				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond, ...(filePath != null ? { filePath } : {}), ...(fileChunks != null ? { fileDownloadedChunks: fileChunks } : {}) });
 				// Check for newly discovered peers and spawn loops for them
 				spawnNewPeerLoops();
 			}
@@ -614,7 +614,7 @@ export class Downloader {
 				this.emaSpeed *= Math.exp(-decayDt / 5); // 5s time constant
 				this.lastDecayTime = now;
 			}
-			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond: Math.round(this.emaSpeed) });
+			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond: Math.round(this.emaSpeed) });
 		}, 1000);
 
 		try {
