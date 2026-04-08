@@ -118,7 +118,7 @@
 			"moving": "Moving",
 			"allocating": "Allocating",
 			"error": "Error",
-			"retrying": "Retrying"
+			"retrying": "Error"
 		},
 		"modes": {
 			"disabled": "Disabled",

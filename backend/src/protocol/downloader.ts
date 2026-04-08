@@ -68,6 +68,7 @@ export class Downloader {
 	private static readonly MAX_FILE_REALLOC = 3;
 	private fileReallocInProgress = new Set<number>();
 	private writePaused = false;
+	private progressPaused = false;
 	private writePauseResolvers: Array<() => void> = [];
 	private writeRetryCount = 0;
 	private static readonly MAX_WRITE_RETRIES = 5;
@@ -552,13 +553,13 @@ export class Downloader {
 							this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
 							break;
 						}
-						// Mark recovery in progress and pause all peer writes
+						// Mark recovery in progress, pause all peer writes AND progress emissions
 						this.fileReallocInProgress.add(-1);
 						this.writePaused = true;
+						this.progressPaused = true;
 						console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${Downloader.MAX_FILE_REALLOC})`);
 						this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: this.downloadDir, retryCount: globalAttempts, maxRetries: Downloader.MAX_FILE_REALLOC });
-						// Emit verifying state so FE shows "Ověřuji" during the 10s pause + recovery
-						this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
+						// FE shows "Opakuji" (retrying) badge during the 10s pause — no progress override
 						// 10s delay — let the user finish deleting files before we scan
 						await new Promise<void>(resolve => {
 							const timer = setTimeout(resolve, 10_000);
@@ -611,10 +612,18 @@ export class Downloader {
 								const { runVerification } = await import('../lish/lish.ts');
 								const ac = new AbortController();
 								let lastVerified = 0;
+								let lastVerifyEmit = 0;
 								await runVerification(this.dataServer, this.lishID, (progress) => {
 									lastVerified = progress.verifiedChunks ?? 0;
-									this.onProgress?.({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
+									// Throttle FE updates to 1×/s — runVerification calls back per-chunk
+									const now = Date.now();
+									if (now - lastVerifyEmit >= 1000) {
+										lastVerifyEmit = now;
+										this.onProgress?.({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
+									}
 								}, ac.signal);
+								// Final verify progress emit
+								this.onProgress?.({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
 								console.log(`[DL] Verification done: ${lastVerified}/${totalChunks} chunks valid`);
 							}
 
@@ -635,6 +644,7 @@ export class Downloader {
 							break;
 						} finally {
 							this.fileReallocInProgress.delete(-1);
+							this.progressPaused = false;
 							this.resumeWriters();
 						}
 						this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: this.downloadDir, retryCount: globalAttempts, maxRetries: Downloader.MAX_FILE_REALLOC, resolved: true });
@@ -709,6 +719,7 @@ export class Downloader {
 
 		// 1s periodic progress emitter — sliding window speed with actual elapsed denominator
 		const progressInterval = setInterval(() => {
+			if (this.progressPaused) return; // suppress during ENOENT/write recovery
 			const now = Date.now();
 			this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
 			const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);

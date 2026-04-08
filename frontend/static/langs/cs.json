@@ -118,7 +118,7 @@
 			"moving": "Přesouvá se",
 			"allocating": "Připravuje se",
 			"error": "Chyba",
-			"retrying": "Opakuji"
+			"retrying": "Chyba"
 		},
 		"modes": {
 			"disabled": "Vypnuto",
