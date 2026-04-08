@@ -53,42 +53,39 @@ function key(lishID: string, peerID: string, direction: 'download' | 'upload'): 
 
 export function registerDownloadPeer(lishID: string, peerID: string, connectionType: ConnectionType): void {
 	const k = key(lishID, peerID, 'download');
-	if (entries.has(k)) return;
+	const existing = entries.get(k);
+	if (existing) { existing.connectionType = connectionType; return; }
 	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now() });
 	trace(`[PEERS] register download ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
 export function unregisterDownloadPeer(lishID: string, peerID: string): void {
 	const k = key(lishID, peerID, 'download');
-	if (!entries.has(k)) return;
-	const entry = entries.get(k)!;
+	const entry = entries.get(k);
+	if (!entry) return;
 	entry.speedSamples = [];
-	entry.lastActivity = Date.now();
 	trace(`[PEERS] unregister download ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
 export function registerUploadPeer(lishID: string, peerID: string, connectionType: ConnectionType): void {
 	const k = key(lishID, peerID, 'upload');
-	if (entries.has(k)) return;
+	const existing = entries.get(k);
+	if (existing) { existing.connectionType = connectionType; return; }
 	entries.set(k, { peerID, lishID, direction: 'upload', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now() });
 	trace(`[PEERS] register upload ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
 export function unregisterUploadPeer(lishID: string, peerID: string): void {
 	const k = key(lishID, peerID, 'upload');
-	if (!entries.has(k)) return;
-	const entry = entries.get(k)!;
+	const entry = entries.get(k);
+	if (!entry) return;
 	entry.speedSamples = [];
-	entry.lastActivity = Date.now();
 	trace(`[PEERS] unregister upload ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
 export function unregisterAllPeersForLISH(lishID: string): void {
-	for (const [k, entry] of entries) {
-		if (entry.lishID === lishID) {
-			entry.speedSamples = [];
-			entry.lastActivity = Date.now();
-		}
+	for (const [, entry] of entries) {
+		if (entry.lishID === lishID) entry.speedSamples = [];
 	}
 }
 
@@ -157,9 +154,9 @@ function emitPeerDetails(): void {
 
 	const now = Date.now();
 
-	// Prune old entries
+	// Prune old entries and their cumulative bytes
 	for (const [k, entry] of entries) {
-		if (now - entry.lastActivity > PRUNE_THRESHOLD) entries.delete(k);
+		if (now - entry.lastActivity > PRUNE_THRESHOLD) { entries.delete(k); cumulativeBytes.delete(k); }
 		else entry.speedSamples = entry.speedSamples.filter(s => s.time > now - SPEED_WINDOW);
 	}
 
@@ -179,22 +176,9 @@ function emitPeerDetails(): void {
 		if (!byLish.has(entry.lishID)) byLish.set(entry.lishID, new Map());
 		const peerMap = byLish.get(entry.lishID)!;
 
+		// Speed = total bytes in 10s window / 10 (fixed window, no burst spikes)
 		const windowBytes = entry.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-		// Speed calculation:
-		// - 0 samples: speed = 0
-		// - 1 sample, fresh (<2s): speed = 0 (need more data to calculate meaningful rate)
-		// - 1 sample, old (>=2s): speed = bytes/elapsed (decays naturally)
-		// - 2+ samples: speed = bytes / time span
-		let speed: number;
-		if (entry.speedSamples.length >= 2) {
-			const windowSec = (now - entry.speedSamples[0]!.time) / 1000;
-			speed = windowSec > 0.1 ? Math.round(windowBytes / windowSec) : 0;
-		} else if (entry.speedSamples.length === 1) {
-			const elapsed = (now - entry.speedSamples[0]!.time) / 1000;
-			speed = elapsed >= 2 ? Math.round(windowBytes / elapsed) : 0;
-		} else {
-			speed = 0;
-		}
+		const speed = entry.speedSamples.length > 0 ? Math.round(windowBytes / (SPEED_WINDOW / 1000)) : 0;
 		const isStale = now - entry.lastActivity > STALE_THRESHOLD;
 
 		const existing = peerMap.get(entry.peerID);
