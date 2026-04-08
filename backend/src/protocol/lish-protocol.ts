@@ -133,7 +133,8 @@ let persistUploadState: ((lishID: string, enabled: boolean) => void) | null = nu
 // Recovery hooks — set by transfer.ts to trigger download recovery on upload I/O errors
 let startRecoveryFn: ((lishID: string, errorCode: string, prev: { downloadEnabled: boolean; uploadEnabled: boolean }) => void) | null = null;
 let isDownloadEnabled: ((lishID: string) => boolean) | null = null;
-export function setUploadRecoveryHooks(recoveryFn: typeof startRecoveryFn, downloadEnabledFn: typeof isDownloadEnabled): void { startRecoveryFn = recoveryFn; isDownloadEnabled = downloadEnabledFn; }
+let triggerVerifyFn: ((lishID: string) => void) | null = null;
+export function setUploadRecoveryHooks(recoveryFn: typeof startRecoveryFn, downloadEnabledFn: typeof isDownloadEnabled, verifyFn?: typeof triggerVerifyFn): void { startRecoveryFn = recoveryFn; isDownloadEnabled = downloadEnabledFn; triggerVerifyFn = verifyFn ?? null; }
 
 export function initUploadState(enabledLishs: Set<string>, persistFn: (lishID: string, enabled: boolean) => void): void {
 	uploadEnabled.clear();
@@ -203,8 +204,10 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 						disableUpload(chunkReq.lishID);
 						dataServer.setError(chunkReq.lishID as LISHid, ErrorCodes.IO_NOT_FOUND, `Upload I/O error`);
 						broadcastFn?.('transfer.upload:error', { lishID: chunkReq.lishID, error: ErrorCodes.IO_NOT_FOUND, errorDetail: 'Upload source directory not accessible' });
-						// Trigger recovery for download too — files may be missing on disk
+						// Trigger recovery — includes download re-enable if was enabled, or just verify if not
 						if (startRecoveryFn) startRecoveryFn(chunkReq.lishID, ErrorCodes.IO_NOT_FOUND, { downloadEnabled: wasDownloadEnabled, uploadEnabled: true });
+						// Always trigger verification to update DB state (even without download)
+						if (triggerVerifyFn) triggerVerifyFn(chunkReq.lishID);
 					}
 					continue;
 				}

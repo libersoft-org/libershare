@@ -563,5 +563,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		}
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move, startVerification };
 }

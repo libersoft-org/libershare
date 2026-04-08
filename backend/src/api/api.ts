@@ -64,7 +64,7 @@ export class APIServer {
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn);
-		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings);
+		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification);
 		const hasSubscribers = (event: string): boolean => {
 			for (const client of this.clients) {
 				if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) return true;

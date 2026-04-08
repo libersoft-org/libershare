@@ -88,7 +88,7 @@ export function triggerEnableDownload(lishID: string): void {
 	}
 }
 
-export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn, settings?: Settings): TransferHandlers {
+export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn, settings?: Settings, triggerVerification?: (lishID: string) => void): TransferHandlers {
 	const activeDownloaders = new Map<string, Downloader>();
 	setActiveDownloadersRef(activeDownloaders);
 
@@ -175,22 +175,30 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		persistDownloadEnabled?.(p.lishID, true);
 		const dl = activeDownloaders.get(p.lishID);
 		if (dl) {
-			await dl.enable();
+			// If downloader is in error state, destroy it and create a fresh one
 			if (dl.getError()) {
-				const err = dl.getError()!;
-				const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
-				dataServer.setError(p.lishID, err.code, err.detail);
-				downloadEnabledLishs.delete(p.lishID);
-				persistDownloadEnabled?.(p.lishID, false);
-				if (activeDownloaders.get(p.lishID) === dl) activeDownloaders.delete(p.lishID);
-				send('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID: p.lishID });
-				startRecoveryIfEnabled(p.lishID, err.code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
-				return { success: false };
+				console.debug(`[Transfer] ${p.lishID.slice(0, 8)}: destroying error-state downloader, will create fresh`);
+				dl.destroy();
+				activeDownloaders.delete(p.lishID);
+				// Fall through to create new downloader below
+			} else {
+				await dl.enable();
+				if (dl.getError()) {
+					const err = dl.getError()!;
+					const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
+					dataServer.setError(p.lishID, err.code, err.detail);
+					downloadEnabledLishs.delete(p.lishID);
+					persistDownloadEnabled?.(p.lishID, false);
+					if (activeDownloaders.get(p.lishID) === dl) activeDownloaders.delete(p.lishID);
+					send('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID: p.lishID });
+					startRecoveryIfEnabled(p.lishID, err.code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
+					return { success: false };
+				}
+				const send = broadcast ?? (() => {});
+				recovery.stop(p.lishID);
+				send('transfer.download:enabled', { lishID: p.lishID });
+				return { success: true };
 			}
-			const send = broadcast ?? (() => {});
-			recovery.stop(p.lishID);
-			send('transfer.download:enabled', { lishID: p.lishID });
-			return { success: true };
 		}
 		// No active downloader — start a new download if LISH exists in dataServer
 		const lish = dataServer.get(p.lishID);
@@ -303,6 +311,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	setUploadRecoveryHooks(
 		(lishID, errorCode, prev) => startRecoveryIfEnabled(lishID, errorCode, prev),
 		(lishID) => downloadEnabledLishs.has(lishID),
+		triggerVerification,
 	);
 
 	function getActiveTransfers(): ActiveTransfer[] {
