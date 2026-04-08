@@ -573,9 +573,6 @@ export class Downloader {
 							console.log(`[DL] Recovery: reset ALL chunks, verify ALL files`);
 							// Step 1: Reset ALL chunks for entire LISH
 							this.dataServer.resetVerification(this.lishID);
-							// Reset FE per-file progress to 0
-							trace(`[DL] emitting resetFiles to FE`);
-							this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, resetFiles: true } as any);
 							console.log(`[DL] All chunks reset to have=FALSE`);
 
 							// Step 2: Re-allocate missing files with progress
@@ -641,7 +638,8 @@ export class Downloader {
 								queue.length = queueIdx;
 								for (const mc of allMissing) queue.push(mc);
 							});
-							this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: this.peers.size, bytesPerSecond: 0 });
+							// Send resetFiles AFTER verify so FE gets accurate per-file state
+							this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: this.peers.size, bytesPerSecond: 0, resetFiles: true } as any);
 							console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
 						} catch (allocErr: any) {
 							console.error(`[DL] File recovery failed: ${allocErr.message}`);
