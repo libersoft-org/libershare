@@ -567,37 +567,68 @@ export class Downloader {
 						});
 						if (this.destroyed || this.disabled) break;
 						try {
-							console.log(`[DL] Recovery: verifying ALL files after 10s pause`);
-							// Verify all files — find which are missing/wrong size
+							console.log(`[DL] Recovery: reset ALL chunks, verify ALL files`);
+							// Step 1: Reset ALL chunks for entire LISH
+							this.dataServer.resetVerification(this.lishID);
+							console.log(`[DL] All chunks reset to have=FALSE`);
+
+							// Step 2: Re-allocate missing files with progress
 							const missingFiles = await this.getMissingFileIndexes();
-							if (missingFiles.length === 0) {
-								console.warn(`[DL] No missing files found after ENOENT — transient error, retrying chunk`);
-								await lock.runExclusive(() => { queue.push(chunk!); });
-							} else {
-								console.log(`[DL] ${missingFiles.length} files missing, re-allocating and resetting chunks`);
-								let totalReset = 0;
+							if (missingFiles.length > 0) {
+								const totalMissingBytes = missingFiles.reduce((sum, fi) => sum + (this.lish.files?.[fi]?.size ?? 0), 0);
+								console.log(`[DL] ${missingFiles.length} files missing (${Math.round(totalMissingBytes / 1024 / 1024)}MB), allocating`);
+								this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: 0 });
+								let allocatedBytes = 0;
 								for (const fi of missingFiles) {
 									const file = this.lish.files?.[fi];
-									if (!file) continue;
-									await this.allocateSingleFile(fi);
-									const resetCount = this.dataServer.resetFileChunks(this.lishID, fi);
-									totalReset += resetCount;
-									console.log(`[DL] Re-allocated ${file.path}, reset ${resetCount} chunks`);
-									// Reset per-file progress counter
-									fileDownloadedChunks.delete(fi);
+									if (!file || this.destroyed) break;
+									const filePath = this.safePath(file.path);
+									await mkdir(dirname(filePath), { recursive: true });
+									const fd = await open(filePath, 'w');
+									try {
+										const zeroChunk = new Uint8Array(1024 * 1024);
+										let remaining = file.size;
+										while (remaining > 0) {
+											if (this.destroyed) break;
+											const writeSize = Math.min(remaining, zeroChunk.length);
+											await fd.write(zeroChunk.subarray(0, writeSize));
+											remaining -= writeSize;
+											allocatedBytes += writeSize;
+											if (allocatedBytes % (50 * 1024 * 1024) < 1024 * 1024) {
+												const pct = totalMissingBytes > 0 ? Math.round((allocatedBytes / totalMissingBytes) * 100) : 0;
+												this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: pct, allocatingFile: file.path, allocatingFileProgress: Math.round(((file.size - remaining) / file.size) * 100) });
+											}
+										}
+									} finally { await fd.close(); }
+									console.log(`[DL] Allocated ${file.path} (${Math.round(file.size / 1024 / 1024)}MB)`);
 								}
-								// Rebuild queue from DB (accurate, no duplicates)
-								const allMissing = this.dataServer.getMissingChunks(this.lishID);
-								await lock.runExclusive(() => {
-									queue.length = queueIdx; // truncate processed portion, keep unprocessed
-									for (const mc of allMissing) queue.push(mc);
-								});
-								downloadedCount = Math.max(0, downloadedCount - totalReset);
-								// Emit updated progress immediately
-								const total = this.dataServer.getAllChunkCount(this.lishID) || totalChunks;
-								this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: total, peers: this.peers.size, bytesPerSecond: 0, filePath: '__recovering__' });
-								console.log(`[DL] Recovery complete: ${missingFiles.length} files re-allocated, ${totalReset} chunks reset, progress=${downloadedCount}/${total}`);
 							}
+
+							// Step 3: Full verification of ALL existing files (checksum every chunk)
+							if (this.lish.files && !this.destroyed) {
+								console.log(`[DL] Verifying ALL file checksums...`);
+								this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
+								const { runVerification } = await import('../lish/lish.ts');
+								const ac = new AbortController();
+								let lastVerified = 0;
+								await runVerification(this.dataServer, this.lishID, (progress) => {
+									lastVerified = progress.verifiedChunks ?? 0;
+									this.onProgress?.({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
+								}, ac.signal);
+								console.log(`[DL] Verification done: ${lastVerified}/${totalChunks} chunks valid`);
+							}
+
+							// Step 4: Rebuild queue from verified state
+							const allMissing = this.dataServer.getMissingChunks(this.lishID);
+							const allTotal = this.dataServer.getAllChunkCount(this.lishID) || totalChunks;
+							downloadedCount = allTotal - allMissing.length;
+							fileDownloadedChunks.clear();
+							await lock.runExclusive(() => {
+								queue.length = queueIdx;
+								for (const mc of allMissing) queue.push(mc);
+							});
+							this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: this.peers.size, bytesPerSecond: 0 });
+							console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
 						} catch (allocErr: any) {
 							console.error(`[DL] File recovery failed: ${allocErr.message}`);
 							this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
