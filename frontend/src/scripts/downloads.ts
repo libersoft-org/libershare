@@ -406,15 +406,24 @@ export async function initDownloads(): Promise<void> {
 
 		// transfer.download:progress — with stale timeout to reset peers/speed
 		const downloadStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+		// Guards per-file progress updates while a resetFiles refresh is in-flight
+		const resetFilesInFlight = new Set<string>();
 		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number; resetFiles?: boolean }) => {
-			// Reset files signal — chunks were reset, zero out all per-file progress
+			// Reset files signal — chunks were reset, zero out all per-file progress and refresh from backend
 			if ((data as any).resetFiles) {
 				lastDownloadedChunks.set(data.lishID, 0);
-				downloads.update(list => list.map(d => {
-					if (d.id !== data.lishID) return d;
-					const files = d.files.map(f => f.type === 'file' ? { ...f, progress: 0, verifiedChunks: 0, downloadedSize: '0 B' } : f);
-					return { ...d, progress: 0, downloadedSize: '0 B', verifiedChunks: 0, files };
-				}));
+				resetFilesInFlight.add(data.lishID);
+				// Refresh full detail from backend — guaranteed accurate per-file state
+				api.lishs.get(data.lishID).then((detail: any) => {
+					if (!detail) return;
+					const fresh = detailToDownload(detail);
+					downloads.update(list => list.map(d => {
+						if (d.id !== data.lishID) return d;
+						return { ...d, ...fresh, downloadEnabled: d.downloadEnabled, uploadEnabled: d.uploadEnabled };
+					}));
+				}).finally(() => {
+					resetFilesInFlight.delete(data.lishID);
+				});
 				return;
 			}
 			// Allocating signal — always process (even if disabled — clears stale disabled state)
@@ -427,9 +436,9 @@ export async function initDownloads(): Promise<void> {
 					if (d.id !== data.lishID) return d;
 					if (d.status !== 'allocating' && d.status !== 'retrying' && isStatusLocked(d.status)) return d;
 					const allocProgress = data.fileDownloadedChunks ?? 0;
-					// Update per-file allocation progress
+					// Update per-file allocation progress — skip if resetFiles refresh is still in-flight
 					let files = d.files;
-					if (data.allocatingFile) {
+					if (data.allocatingFile && !resetFilesInFlight.has(data.lishID)) {
 						let pastCurrent = false;
 						files = d.files.map(f => {
 							if (f.type !== 'file') return f;
