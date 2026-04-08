@@ -578,12 +578,13 @@ export class Downloader {
 				recordDownloadBytes(this.lishID, peerID, data.length, this.lish.files?.[chunk.fileIndex]?.path);
 				downloadedCount++;
 				if (this.writeRetryCount > 0) this.writeRetryCount = 0;
-				// Rolling speed average (fixed 10s window — total bytes in window / 10)
+				// Rolling speed average (10s window, min 5s divisor to prevent burst spikes)
 				const now = Date.now();
 				this.speedSamples.push({ time: now, bytes: data.length });
 				this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
 				const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-				const bytesPerSecond = Math.round(windowBytes / 10);
+				const span = this.speedSamples.length > 1 ? (now - this.speedSamples[0]!.time) / 1000 : 0;
+				const bytesPerSecond = Math.round(windowBytes / Math.max(span, 5));
 				this.lastServingPeerCount = servingPeers.size;
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
 					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${servingPeers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);

@@ -183,9 +183,10 @@ function emitPeerDetails(): void {
 		if (!byLish.has(entry.lishID)) byLish.set(entry.lishID, new Map());
 		const peerMap = byLish.get(entry.lishID)!;
 
-		// Speed = total bytes in 10s window / 10 (fixed window, no burst spikes)
+		// Speed = bytes in 10s window / max(span, 5s) — smooth decay, no burst spikes
 		const windowBytes = entry.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-		const speed = entry.speedSamples.length > 0 ? Math.round(windowBytes / (SPEED_WINDOW / 1000)) : 0;
+		const span = entry.speedSamples.length > 1 ? (now - entry.speedSamples[0]!.time) / 1000 : 0;
+		const speed = entry.speedSamples.length > 0 ? Math.round(windowBytes / Math.max(span, 5)) : 0;
 		const isStale = now - entry.lastActivity > STALE_THRESHOLD;
 
 		const existing = peerMap.get(entry.peerID);

@@ -228,7 +228,8 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 						info.speedSamples.push({ time: now, bytes: chunkData.length });
 						info.speedSamples = info.speedSamples.filter(s => s.time > now - 10000);
 						const windowBytes = info.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-						const bytesPerSecond = Math.round(windowBytes / 10);
+						const span = info.speedSamples.length > 1 ? (now - info.speedSamples[0]!.time) / 1000 : 0;
+						const bytesPerSecond = Math.round(windowBytes / Math.max(span, 5));
 						broadcastFn('transfer.upload:progress', { lishID: chunkReq.lishID, uploadedChunks: info.chunks, bytesPerSecond, peers: info.peers });
 					}
 				}
