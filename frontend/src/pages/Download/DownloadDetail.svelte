@@ -554,6 +554,10 @@
 			flex-shrink: 0;
 		}
 	}
+
+	.alert-container {
+		padding: 1vh 2vh;
+	}
 </style>
 
 {#if showFileBrowser && download?.directory}
@@ -570,10 +574,10 @@
 			{/each}
 		</div>
 		{#if deleteError}
-			<Alert type="error" message={deleteError} />
+			<div class="alert-container"><Alert type="error" message={deleteError} /></div>
 		{/if}
 		{#if download?.status === 'retrying' && download.retryErrorCode}
-			<Alert type="warning" message={`${$t('downloads.statuses.retrying')}: ${download.retryErrorCode}${download.retryCount ? ` (${download.retryCount}/${download.retryMaxRetries ?? '?'})` : ''}`} />
+			<div class="alert-container"><Alert type="warning" message={`${$t('downloads.statuses.retrying')}: ${download.retryErrorCode}${download.retryCount ? ` (${download.retryCount}/${download.retryMaxRetries ?? '?'})` : ''}`} /></div>
 		{/if}
 		{#if download?.status === 'error' && (download.errorCode || download.errorMessage)}
 			{@const recoveryText = download.recoveryNextAt === 0
@@ -581,7 +585,7 @@
 				: download.recoveryNextAt
 					? $t('downloads.recoveryScheduled', { seconds: String(Math.max(1, Math.ceil((download.recoveryNextAt - now) / 1000))) })
 					: ''}
-			<Alert type="error" message={`${$t('downloads.statuses.error')}: ${download.errorCode ?? ''}${download.errorMessage && download.errorMessage !== download.errorCode ? ' — ' + download.errorMessage : ''}${recoveryText ? ' · ' + recoveryText : ''}`} />
+			<div class="alert-container"><Alert type="error" message={`${$t('downloads.statuses.error')}: ${download.errorCode ?? ''}${download.errorMessage && download.errorMessage !== download.errorCode ? ' — ' + download.errorMessage : ''}${recoveryText ? ' · ' + recoveryText : ''}`} /></div>
 		{/if}
 		{#if download}
 			<div class="content">
