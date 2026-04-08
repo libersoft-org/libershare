@@ -217,22 +217,23 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					if (remotePeerID) recordUploadBytes(chunkReq.lishID, fullRemotePeer, chunkData.length);
 					dataServer.incrementUploadedBytes(chunkReq.lishID as import('@shared').LISHid, chunkData.length);
 					await uploadLimiter.throttle(chunkData.length);
-					// Upload progress tracking (EMA speed)
+					// Upload progress tracking (sliding window speed, 1s polling)
 					if (broadcastFn) {
 						let info = activeUploads.get(chunkReq.lishID);
-						if (!info) { info = { chunks: 0, startTime: Date.now(), bytes: 0, peers: 0, speedSamples: [], emaSpeed: 0, lastEmaUpdate: Date.now() }; activeUploads.set(chunkReq.lishID, info); }
+						if (!info) { info = { chunks: 0, startTime: Date.now(), bytes: 0, peers: 0, speedSamples: [] }; activeUploads.set(chunkReq.lishID, info); }
 						info.chunks++;
 						info.bytes += chunkData.length;
 						info.peers = activeStreamCount.get(chunkReq.lishID) ?? 1;
 						const now = Date.now();
 						info.speedSamples.push({ time: now, bytes: chunkData.length });
-						info.speedSamples = info.speedSamples.filter(s => s.time > now - 10000);
-						const dt = Math.max((now - info.lastEmaUpdate) / 1000, 0.1);
-						const instantSpeed = chunkData.length / dt;
-						const alpha = Math.min(0.4, dt / 5);
-						info.emaSpeed = info.emaSpeed * (1 - alpha) + instantSpeed * alpha;
-						info.lastEmaUpdate = now;
-						broadcastFn('transfer.upload:progress', { lishID: chunkReq.lishID, uploadedChunks: info.chunks, bytesPerSecond: Math.round(info.emaSpeed), peers: info.peers });
+						// Prune samples older than 5s
+						const cutoff = now - 5000;
+						let pruneIdx = 0;
+						while (pruneIdx < info.speedSamples.length && info.speedSamples[pruneIdx]!.time <= cutoff) pruneIdx++;
+						if (pruneIdx > 0) info.speedSamples.splice(0, pruneIdx);
+						const windowBytes = info.speedSamples.reduce((sum: number, s: any) => sum + s.bytes, 0);
+						const bytesPerSecond = Math.round(windowBytes / 5);
+						broadcastFn('transfer.upload:progress', { lishID: chunkReq.lishID, uploadedChunks: info.chunks, bytesPerSecond, peers: info.peers });
 					}
 				}
 			}

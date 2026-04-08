@@ -293,7 +293,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				transfers.push({ lishID, type: 'upload-disabled', peers: 0, bytesPerSecond: 0 });
 			} else {
 				const now = Date.now();
-				const bytesPerSecond = Math.round(info.emaSpeed ?? 0);
+				const cutoff = now - 5000;
+				let pruneIdx = 0;
+				while (pruneIdx < info.speedSamples.length && info.speedSamples[pruneIdx]!.time <= cutoff) pruneIdx++;
+				if (pruneIdx > 0) info.speedSamples.splice(0, pruneIdx);
+				const windowBytes = info.speedSamples.reduce((sum: number, s: any) => sum + s.bytes, 0);
+				const bytesPerSecond = Math.round(windowBytes / 5);
 				transfers.push({ lishID, type: 'uploading', peers: info.peers, bytesPerSecond });
 			}
 		}

@@ -16,6 +16,13 @@ export interface PeerDetail {
 	havePercent?: number;
 }
 
+interface SpeedSample {
+	time: number;
+	bytes: number;
+}
+
+const SPEED_WINDOW = 5000; // 5s sliding window
+
 interface PeerEntry {
 	peerID: string;
 	lishID: string;
@@ -25,12 +32,8 @@ interface PeerEntry {
 	totalBytes: number;
 	currentFile?: string;
 	lastActivity: number;
-	/** Exponential moving average of speed (bytes/s). Updated by recordBytes, decayed by emitter. */
-	emaSpeed: number;
-	/** Last time recordBytes updated the EMA (used for instantSpeed dt calculation). */
-	lastEmaUpdate: number;
-	/** Last time the emitter decayed the EMA (separate from lastEmaUpdate to avoid corrupting dt). */
-	lastDecayTime: number;
+	/** Per-peer sliding window speed samples (same algorithm as global). */
+	speedSamples: SpeedSample[];
 	/** Percentage of LISH chunks this peer has (from have message). */
 	havePercent?: number;
 }
@@ -59,7 +62,26 @@ function key(lishID: string, peerID: string, direction: 'download' | 'upload'): 
 function createEntry(peerID: string, lishID: string, direction: 'download' | 'upload', connectionType: ConnectionType, havePercent?: number): PeerEntry {
 	const k = key(lishID, peerID, direction);
 	const now = Date.now();
-	return { peerID, lishID, direction, connectionType, connectedAt: now, totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: now, emaSpeed: 0, lastEmaUpdate: now, lastDecayTime: now, havePercent };
+	return { peerID, lishID, direction, connectionType, connectedAt: now, totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: now, speedSamples: [], havePercent };
+}
+
+/** Compute speed from sliding window: sum(bytes in last 5s) / 5. */
+function computeSpeed(samples: SpeedSample[], now: number): number {
+	const cutoff = now - SPEED_WINDOW;
+	let total = 0;
+	for (let i = samples.length - 1; i >= 0; i--) {
+		if (samples[i]!.time <= cutoff) break;
+		total += samples[i]!.bytes;
+	}
+	return Math.round(total / (SPEED_WINDOW / 1000));
+}
+
+/** Prune expired samples from the window. */
+function pruneSamples(samples: SpeedSample[], now: number): void {
+	const cutoff = now - SPEED_WINDOW;
+	let i = 0;
+	while (i < samples.length && samples[i]!.time <= cutoff) i++;
+	if (i > 0) samples.splice(0, i);
 }
 
 // --- Public API: registration ---
@@ -126,13 +148,7 @@ export function recordDownloadBytes(lishID: string, peerID: string, bytes: numbe
 	entry.totalBytes += bytes;
 	cumulativeBytes.set(k, entry.totalBytes);
 	entry.lastActivity = now;
-	// EMA: instantaneous speed from this chunk, blended with history.
-	// Uses lastEmaUpdate (not lastDecayTime) for accurate inter-chunk dt.
-	const dt = Math.max((now - entry.lastEmaUpdate) / 1000, 0.1);
-	const instantSpeed = bytes / dt;
-	const alpha = Math.min(0.4, dt / 5); // 5s time constant (matches decay)
-	entry.emaSpeed = entry.emaSpeed * (1 - alpha) + instantSpeed * alpha;
-	entry.lastEmaUpdate = now;
+	entry.speedSamples.push({ time: now, bytes });
 	if (currentFile !== undefined) entry.currentFile = currentFile;
 }
 
@@ -147,11 +163,7 @@ export function recordUploadBytes(lishID: string, peerID: string, bytes: number)
 	entry.totalBytes += bytes;
 	cumulativeBytes.set(k, entry.totalBytes);
 	entry.lastActivity = now;
-	const dt = Math.max((now - entry.lastEmaUpdate) / 1000, 0.1);
-	const instantSpeed = bytes / dt;
-	const alpha = Math.min(0.4, dt / 5);
-	entry.emaSpeed = entry.emaSpeed * (1 - alpha) + instantSpeed * alpha;
-	entry.lastEmaUpdate = now;
+	entry.speedSamples.push({ time: now, bytes });
 }
 
 // --- Public API: subscription management ---
@@ -215,14 +227,9 @@ function emitPeerDetails(): void {
 		if (!byLish.has(entry.lishID)) byLish.set(entry.lishID, new Map());
 		const peerMap = byLish.get(entry.lishID)!;
 
-		// Decay EMA towards zero when no data arrives (1s tick).
-		// Uses lastDecayTime (not lastEmaUpdate) to avoid corrupting dt in recordBytes.
-		const decayDt = (now - entry.lastDecayTime) / 1000;
-		if (decayDt > 0.5) {
-			entry.emaSpeed *= Math.exp(-decayDt / 5); // 5s time constant
-			entry.lastDecayTime = now;
-		}
-		const speed = Math.round(entry.emaSpeed);
+		// Prune expired samples and compute speed from sliding window
+		pruneSamples(entry.speedSamples, now);
+		const speed = computeSpeed(entry.speedSamples, now);
 		const isStale = now - entry.lastActivity > STALE_THRESHOLD;
 
 		const existing = peerMap.get(entry.peerID);
