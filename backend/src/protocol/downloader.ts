@@ -429,8 +429,6 @@ export class Downloader {
 		const peerLoop = async (peerID: string, client: LISHClient): Promise<void> => {
 			activePeerLoops.add(peerID);
 			let skippedChunks = 0;
-			let peerServed = 0;
-			let peerNotAvailable = 0;
 			while (true) {
 				if (this.destroyed || this.disabled) break;
 				await this.waitIfDisabled();
@@ -461,7 +459,6 @@ export class Downloader {
 				if (result === 'not_available') {
 					skippedChunks++;
 					globalNotAvailable++;
-					peerNotAvailable++;
 					if (skippedChunks % 500 === 0) trace(`[DL] Peer ${peerID.slice(0, 12)} skipped ${skippedChunks} chunks (not_available, global: ${globalNotAvailable}/${queue.length})`);
 					await lock.runExclusive(() => { queue.push(chunk!); });
 					if (this.disabled || this.destroyed) break;
@@ -498,13 +495,7 @@ export class Downloader {
 				// Integrity OK — write chunk
 				skippedChunks = 0;
 				globalNotAvailable = 0;
-				peerServed++;
 				servingPeers.add(peerID);
-				// Update estimated availability from served/notAvailable ratio
-				if ((peerServed + peerNotAvailable) >= 5) {
-					const hp = Math.round((peerServed / (peerServed + peerNotAvailable)) * 100);
-					updatePeerHavePercent(this.lishID, peerID, hp);
-				}
 				try {
 					await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 				} catch (err: any) {
