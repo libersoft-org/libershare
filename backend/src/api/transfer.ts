@@ -221,10 +221,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					// Files missing on disk — reset ALL chunks and start fresh download
 					console.warn(`[Transfer] ${p.lishID.slice(0, 8)}: DB says complete but files missing on disk, resetting for re-download`);
 					dataServer.resetVerification(p.lishID);
-					// Reset FE per-file progress — send progress with reset flag
-					const send2 = broadcast ?? (() => {});
-					send2('transfer.download:progress', { lishID: p.lishID, downloadedChunks: 0, totalChunks: dataServer.getAllChunkCount(p.lishID), peers: 0, bytesPerSecond: 0, resetFiles: true });
-					// Fall through to start download
+					// Fall through to start download — verify in ENOENT recovery will set accurate per-file state
 				} else {
 					const send = broadcast ?? (() => {});
 					send('transfer.download:enabled', { lishID: p.lishID });
@@ -269,7 +266,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			activeDownloaders.set(p.lishID, downloader);
 			const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
 			downloader.setProgressCallback?.((info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => {
-				if ((info as any).resetFiles) console.debug(`[Transfer] resetFiles event for ${p.lishID.slice(0, 8)}`);
 				send('transfer.download:progress', { lishID: p.lishID, ...info });
 			});
 			downloader.setRetryCallback?.((info) => {

@@ -570,12 +570,9 @@ export class Downloader {
 						});
 						if (this.destroyed || this.disabled) break;
 						try {
-							console.log(`[DL] Recovery: reset ALL chunks, verify ALL files`);
-							// Step 1: Reset ALL chunks for entire LISH
-							this.dataServer.resetVerification(this.lishID);
-							console.log(`[DL] All chunks reset to have=FALSE`);
+							console.log(`[DL] Recovery: verifying all files`);
 
-							// Step 2: Re-allocate missing files with progress
+							// Step 2: Find and re-allocate missing files with progress
 							const missingFiles = await this.getMissingFileIndexes();
 							if (missingFiles.length > 0) {
 								const totalMissingBytes = missingFiles.reduce((sum, fi) => sum + (this.lish.files?.[fi]?.size ?? 0), 0);
@@ -610,7 +607,7 @@ export class Downloader {
 								}
 							}
 
-							// Step 3: Full verification of ALL existing files (checksum every chunk)
+							// Step 3: Full verification of ALL files — checksum every chunk
 							if (this.lish.files && !this.destroyed) {
 								console.log(`[DL] Verifying ALL file checksums...`);
 								this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
@@ -620,14 +617,12 @@ export class Downloader {
 								let lastVerifyEmit = 0;
 								await runVerification(this.dataServer, this.lishID, (progress) => {
 									lastVerified = progress.verifiedChunks ?? 0;
-									// Throttle FE updates to 1×/s — runVerification calls back per-chunk
 									const now = Date.now();
 									if (now - lastVerifyEmit >= 1000) {
 										lastVerifyEmit = now;
 										this.onProgress?.({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
 									}
 								}, ac.signal);
-								// Final verify progress emit
 								this.onProgress?.({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
 								console.log(`[DL] Verification done: ${lastVerified}/${totalChunks} chunks valid`);
 							}
@@ -641,8 +636,7 @@ export class Downloader {
 								queue.length = queueIdx;
 								for (const mc of allMissing) queue.push(mc);
 							});
-							// Send resetFiles AFTER verify so FE gets accurate per-file state
-							this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: this.peers.size, bytesPerSecond: 0, resetFiles: true } as any);
+							this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: this.peers.size, bytesPerSecond: 0 });
 							console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
 						} catch (allocErr: any) {
 							console.error(`[DL] File recovery failed: ${allocErr.message}`);
