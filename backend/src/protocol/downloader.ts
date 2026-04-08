@@ -623,12 +623,14 @@ export class Downloader {
 				recordDownloadBytes(this.lishID, peerID, data.length, this.lish.files?.[chunk.fileIndex]?.path);
 				downloadedCount++;
 				if (this.writeRetryCount > 0) this.writeRetryCount = 0;
-				// Sliding window speed — bytes in last 5s / 5
+				// Sliding window speed — actual elapsed time denominator (no chunk-size quantization)
 				const now = Date.now();
 				this.speedSamples.push({ time: now, bytes: data.length });
-				this.speedSamples = this.speedSamples.filter(s => s.time > now - 5000);
+				this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
 				const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-				this.currentSpeed = windowBytes / 5; // fixed 5s denominator — no overestimate
+				const oldestTime = this.speedSamples.length > 0 ? this.speedSamples[0]!.time : now;
+				const elapsed = Math.max((now - oldestTime) / 1000, 1);
+				this.currentSpeed = windowBytes / elapsed;
 				const bytesPerSecond = Math.round(this.currentSpeed);
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
 					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${this.peers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
@@ -643,12 +645,14 @@ export class Downloader {
 			activePeerLoops.delete(peerID);
 		};
 
-		// 1s periodic progress emitter — sliding window speed
+		// 1s periodic progress emitter — sliding window speed with actual elapsed denominator
 		const progressInterval = setInterval(() => {
 			const now = Date.now();
-			this.speedSamples = this.speedSamples.filter(s => s.time > now - 5000);
+			this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
 			const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-			const bytesPerSecond = Math.round(windowBytes / 5);
+			const oldestTime = this.speedSamples.length > 0 ? this.speedSamples[0]!.time : now;
+			const elapsed = Math.max((now - oldestTime) / 1000, 1);
+			const bytesPerSecond = Math.round(windowBytes / elapsed);
 			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond, ...(lastFilePath != null ? { filePath: lastFilePath } : {}), ...(lastFileChunks != null ? { fileDownloadedChunks: lastFileChunks } : {}) });
 		}, 1000);
 

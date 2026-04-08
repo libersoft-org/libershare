@@ -21,7 +21,7 @@ interface SpeedSample {
 	bytes: number;
 }
 
-const SPEED_WINDOW = 5000; // 5s sliding window
+const SPEED_WINDOW = 10_000; // 10s max window for speed samples
 
 interface PeerEntry {
 	peerID: string;
@@ -65,15 +65,25 @@ function createEntry(peerID: string, lishID: string, direction: 'download' | 'up
 	return { peerID, lishID, direction, connectionType, connectedAt: now, totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: now, speedSamples: [], havePercent };
 }
 
-/** Compute speed from sliding window: sum(bytes in last 5s) / 5. */
+/**
+ * Compute speed from sliding window using actual elapsed time (not fixed denominator).
+ * Avoids chunk-size quantization: divides by time since oldest sample, not fixed window.
+ * For N chunks in T seconds: speed = N*chunkSize / T (accurate, not staircase).
+ */
 function computeSpeed(samples: SpeedSample[], now: number): number {
+	if (samples.length === 0) return 0;
 	const cutoff = now - SPEED_WINDOW;
 	let total = 0;
+	let oldestTime = now;
 	for (let i = samples.length - 1; i >= 0; i--) {
 		if (samples[i]!.time <= cutoff) break;
 		total += samples[i]!.bytes;
+		oldestTime = samples[i]!.time;
 	}
-	return Math.round(total / (SPEED_WINDOW / 1000));
+	if (total === 0) return 0;
+	// Elapsed = time from oldest sample to now, minimum 1s to avoid division spikes
+	const elapsed = Math.max((now - oldestTime) / 1000, 1);
+	return Math.round(total / elapsed);
 }
 
 /** Prune expired samples from the window. */
