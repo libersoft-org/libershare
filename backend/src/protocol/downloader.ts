@@ -58,8 +58,6 @@ export class Downloader {
 	private onManifestImported?: (lishID: string) => void;
 	private speedSamples: { time: number; bytes: number }[] = [];
 	private emaSpeed = 0;
-	private lastEmaUpdate = Date.now();
-	private lastDecayTime = Date.now();
 	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
 	private errorCode?: string;
 	private errorDetail?: string;
@@ -592,13 +590,14 @@ export class Downloader {
 				recordDownloadBytes(this.lishID, peerID, data.length, this.lish.files?.[chunk.fileIndex]?.path);
 				downloadedCount++;
 				if (this.writeRetryCount > 0) this.writeRetryCount = 0;
-				// EMA speed — smooth, no burst spikes
+				// Sliding window speed — accurate across multiple concurrent peers
 				const now = Date.now();
-				const dt = Math.max((now - this.lastEmaUpdate) / 1000, 0.1);
-				const instantSpeed = data.length / dt;
-				const alpha = Math.min(0.4, dt / 5);
-				this.emaSpeed = this.emaSpeed * (1 - alpha) + instantSpeed * alpha;
-				this.lastEmaUpdate = now;
+				this.speedSamples.push({ time: now, bytes: data.length });
+				const windowStart = now - 5000; // 5s window
+				this.speedSamples = this.speedSamples.filter(s => s.time > windowStart);
+				const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
+				const windowSpan = Math.max((now - this.speedSamples[0]!.time) / 1000, 1); // at least 1s
+				this.emaSpeed = windowBytes / windowSpan;
 				const bytesPerSecond = Math.round(this.emaSpeed);
 				this.lastServingPeerCount = servingPeers.size;
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
@@ -615,16 +614,15 @@ export class Downloader {
 			activePeerLoops.delete(peerID);
 		};
 
-		// 1s periodic progress emitter — EMA decay between chunks.
-		// Uses lastDecayTime (not lastEmaUpdate) to avoid corrupting dt in download path.
+		// 1s periodic progress emitter — sliding window speed
 		const progressInterval = setInterval(() => {
 			const now = Date.now();
-			const decayDt = (now - this.lastDecayTime) / 1000;
-			if (decayDt > 0.5) {
-				this.emaSpeed *= Math.exp(-decayDt / 5); // 5s time constant
-				this.lastDecayTime = now;
-			}
-			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond: Math.round(this.emaSpeed) });
+			const windowStart = now - 5000;
+			this.speedSamples = this.speedSamples.filter(s => s.time > windowStart);
+			const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
+			const windowSpan = this.speedSamples.length > 0 ? Math.max((now - this.speedSamples[0]!.time) / 1000, 1) : 1;
+			const bytesPerSecond = this.speedSamples.length > 0 ? Math.round(windowBytes / windowSpan) : 0;
+			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond });
 		}, 1000);
 
 		try {
