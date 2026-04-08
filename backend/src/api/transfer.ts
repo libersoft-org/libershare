@@ -221,6 +221,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					// Files missing on disk — reset ALL chunks and start fresh download
 					console.warn(`[Transfer] ${p.lishID.slice(0, 8)}: DB says complete but files missing on disk, resetting for re-download`);
 					dataServer.resetVerification(p.lishID);
+					// Trigger FE refresh — lishs:verify done causes FE to re-fetch detail from backend
+					const send2 = broadcast ?? (() => {});
+					send2('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, done: true });
 					// Fall through to start download
 				} else {
 					const send = broadcast ?? (() => {});
