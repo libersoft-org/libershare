@@ -798,7 +798,11 @@ export class Downloader {
 		for (const file of this.lish.files) {
 			const filePath = this.safePath(file.path);
 			const f = Bun.file(filePath);
-			if (!(await f.exists()) || f.size !== file.size) return true;
+			const exists = await f.exists();
+			if (!exists || f.size !== file.size) {
+				trace(`[DL] needsAlloc: ${file.path} exists=${exists} size=${f.size} expected=${file.size}`);
+				return true;
+			}
 		}
 		return false;
 	}
