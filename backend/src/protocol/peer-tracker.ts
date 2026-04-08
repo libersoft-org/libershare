@@ -13,6 +13,7 @@ export interface PeerDetail {
 	connectedAt: number;
 	lastActivity: number;
 	stale: boolean;
+	havePercent?: number;
 }
 
 interface PeerEntry {
@@ -28,6 +29,8 @@ interface PeerEntry {
 	/** Exponential moving average of speed (bytes/s). Decays every emitter tick. */
 	emaSpeed: number;
 	lastEmaUpdate: number;
+	/** Percentage of LISH chunks this peer has (from have message). */
+	havePercent?: number;
 }
 
 const SPEED_WINDOW = 10_000; // 10s rolling window
@@ -54,11 +57,11 @@ function key(lishID: string, peerID: string, direction: 'download' | 'upload'): 
 
 // --- Public API: registration ---
 
-export function registerDownloadPeer(lishID: string, peerID: string, connectionType: ConnectionType): void {
+export function registerDownloadPeer(lishID: string, peerID: string, connectionType: ConnectionType, havePercent?: number): void {
 	const k = key(lishID, peerID, 'download');
 	const existing = entries.get(k);
-	if (existing) { existing.connectionType = connectionType; return; }
-	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now() });
+	if (existing) { existing.connectionType = connectionType; if (havePercent !== undefined) existing.havePercent = havePercent; return; }
+	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now(), havePercent });
 	trace(`[PEERS] register download ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
@@ -239,6 +242,7 @@ function emitPeerDetails(): void {
 				connectedAt: entry.connectedAt,
 				lastActivity: entry.lastActivity,
 				stale: isStale,
+				havePercent: entry.havePercent,
 			});
 		}
 	}

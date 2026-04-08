@@ -99,6 +99,7 @@
 			"transferred": "Přeneseno",
 			"speed": "Rychlost",
 			"connection": "Typ",
+			"availability": "Dost.",
 			"activity": "Naposledy"
 		},
 		"speed": "Rychlost",

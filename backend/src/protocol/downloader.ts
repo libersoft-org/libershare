@@ -752,8 +752,10 @@ export class Downloader {
 		if (this.destroyed) { stream.abort(new Error('downloader destroyed')); return; }
 		if (this.peers.has(data.peerID)) throw new Error(`Already connected to peer: ${peerID}`);
 		this.peers.set(peerID, new LISHClient(stream));
-		registerDownloadPeer(this.lishID, peerID, connectionType);
-		console.debug(`[DL] peer ${peerID.slice(0, 12)} connected [${connectionType}] (total: ${this.peers.size})`);
+		const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;
+		const havePercent = data.chunks === 'all' ? 100 : Math.round((data.chunks.length / totalChunks) * 100);
+		registerDownloadPeer(this.lishID, peerID, connectionType, havePercent);
+		console.debug(`[DL] peer ${peerID.slice(0, 12)} connected [${connectionType}] have=${havePercent}% (total: ${this.peers.size})`);
 	}
 
 	private safePath(relativePath: string): string {

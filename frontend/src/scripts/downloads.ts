@@ -46,6 +46,7 @@ export interface PeerDetail {
 	connectedAt: number;
 	lastActivity: number;
 	stale: boolean;
+	havePercent?: number;
 }
 
 export interface DownloadData {

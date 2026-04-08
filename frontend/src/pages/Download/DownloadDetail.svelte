@@ -688,10 +688,11 @@
 						{#if currentPeers.length === 0}
 							<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
 						{:else}
-							<Table columns="14vh 8vh 1fr 1fr 9vh 2fr" columnsMobile="14vh 8vh 1fr 1fr 9vh" noBorder>
+							<Table columns="14vh 8vh 6vh 1fr 1fr 9vh 2fr" columnsMobile="14vh 8vh 6vh 1fr 1fr 9vh" noBorder>
 								<Header fontSize="1.3vh">
 									<Cell>{$t('downloads.peerList.id')}</Cell>
 									<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
+									<Cell align="center">{$t('downloads.peerList.availability')}</Cell>
 									<Cell align="right">{$t('downloads.peerList.speed')}</Cell>
 									<Cell align="right">{$t('downloads.peerList.transferred')}</Cell>
 									<Cell align="right">{$t('downloads.peerList.activity')}</Cell>
@@ -703,6 +704,7 @@
 										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index} dimmed={peer.stale}>
 											<Cell><span class="peer-id">{peer.peerID}</span></Cell>
 											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
+											<Cell align="center"><span class="peer-ago">{peer.havePercent != null ? `${peer.havePercent}%` : '—'}</span></Cell>
 											<Cell align="right">
 												<span class="peer-metric">
 													<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>↓ {formatSize(peer.downloadSpeed || 0)}/s</span>

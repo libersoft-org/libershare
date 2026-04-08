@@ -99,6 +99,7 @@
 			"transferred": "Transferred",
 			"speed": "Speed",
 			"connection": "Type",
+			"availability": "Avail",
 			"activity": "Last seen"
 		},
 		"speed": "Speed",
