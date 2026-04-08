@@ -859,8 +859,9 @@ export class Downloader {
 			const chunks = data['chunks'] === 'all' ? 'ALL' : `${(data['chunks'] as any[])?.length ?? 0}`;
 			const addrs = (data['multiaddrs'] as any[])?.map(a => a?.toString?.() ?? String(a)) ?? [];
 			const addrTypes = addrs.map(a => a.includes('/p2p-circuit') ? 'RELAY' : 'DIRECT');
-			// Peer sent have → it has data now, remove from blacklists
-			if (this.noDataPeers.delete(data['peerID'])) console.debug(`[DL] ${(data['peerID'] as string)?.slice(0, 12)} removed from noDataPeers (sent have)`);
+			// Peer sent have → it has data now, remove from blacklists (but not if recently failed — avoids reconnect cycle)
+			if (this.failedPeers.has(data['peerID'])) { trace(`[DL] HAVE from ${(data['peerID'] as string)?.slice(0, 12)} kept in noDataPeers (recently failed)`); }
+			else if (this.noDataPeers.delete(data['peerID'])) console.debug(`[DL] ${(data['peerID'] as string)?.slice(0, 12)} removed from noDataPeers (sent have)`);
 			console.debug(`[DL] HAVE from ${(data['peerID'] as string)?.slice(0, 12)}: ${chunks} chunks [${addrTypes.join(',')}], active=${this.downloadActive}`);
 			if (this.peers.has(data['peerID'])) {
 				// Update availability for already-connected peer
