@@ -310,7 +310,7 @@ export class Network {
 		this.node!.addEventListener('dcutr:success' as any, (evt: any) => {
 			const peer = evt.detail?.remotePeer?.toString?.();
 			if (peer) this.dcutrPeers.add(peer);
-			console.log(`[NET] DCUtR hole punch SUCCESS: ${peer?.slice(0, 16) ?? 'unknown'}`);
+			console.log(`[NET] DCUtR hole punch SUCCESS: ${peer?.slice(0, 16) ?? 'unknown'}, dcutrPeers=[${[...this.dcutrPeers].map(p => p.slice(0, 12)).join(',')}]`);
 		});
 		this.node!.addEventListener('dcutr:error' as any, (evt: any) => {
 			console.debug(`[NET] DCUtR hole punch FAILED: ${evt.detail?.remotePeer?.toString?.()?.slice(0, 16) ?? 'unknown'} — ${evt.detail?.error?.message ?? 'unknown error'}`);
@@ -640,8 +640,10 @@ export class Network {
 	 * relay and direct connections (which can happen during normal discovery).
 	 */
 	private classifyConnection(peerID: string, isRelay: boolean): 'DIRECT' | 'RELAY' | 'DCUtR' {
-		if (this.dcutrPeers.has(peerID) && !isRelay) return 'DCUtR';
-		return isRelay ? 'RELAY' : 'DIRECT';
+		const isDcutr = this.dcutrPeers.has(peerID);
+		const result = isDcutr && !isRelay ? 'DCUtR' : (isRelay ? 'RELAY' : 'DIRECT');
+		trace(`[NET] classify ${peerID.slice(0, 12)}: relay=${isRelay} dcutrSet=${isDcutr} → ${result}`);
+		return result;
 	}
 
 	async dialProtocol(multiaddrs: any[], protocol: string): Promise<{ stream: Stream; connectionType: 'DIRECT' | 'RELAY' | 'DCUtR' }> {
