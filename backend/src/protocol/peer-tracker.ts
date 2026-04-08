@@ -31,7 +31,7 @@ interface PeerEntry {
 }
 
 const SPEED_WINDOW = 10_000; // 10s rolling window
-const STALE_THRESHOLD = 10_000; // 10s — peer shown dimmed
+const STALE_THRESHOLD = 20_000; // 20s — peer shown dimmed
 const PRUNE_THRESHOLD = 30_000; // 30s — peer removed entirely
 
 // Per-peer per-direction entries
