@@ -32,7 +32,7 @@ assert(downloaderSrc.includes('files missing on disk'), 'Has warning log for mis
 
 // ─── H1: writePaused during ENOENT realloc ───────────────────────────────
 console.log('\n── H1: writePaused during ENOENT realloc ──');
-assert(downloaderSrc.includes('Pause all peer writes to prevent concurrent'), 'Comment explains writePaused purpose');
+assert(downloaderSrc.includes('pausing all transfers') || downloaderSrc.includes('Pause all peer writes'), 'Comment explains writePaused purpose');
 assert(downloaderSrc.includes('this.writePaused = true') && downloaderSrc.includes('this.resumeWriters()'), 'writePaused set and resumed around realloc');
 
 // ─── H2: Manifest import protected by workMutex ─────────────────────────

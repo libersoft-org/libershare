@@ -538,45 +538,76 @@ export class Downloader {
 					await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 				} catch (err: any) {
 					if (err.code === 'ENOENT') {
-						// File deleted — inline recovery: re-allocate + reset chunks
-						const affectedFile = this.lish.files?.[chunk.fileIndex];
-						if (!affectedFile) { this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir); break; }
-						const attempts = (this.fileReallocAttempts.get(chunk.fileIndex) ?? 0) + 1;
-						this.fileReallocAttempts.set(chunk.fileIndex, attempts);
-						if (attempts > Downloader.MAX_FILE_REALLOC) {
-							console.error(`[DL] File ${affectedFile.path} re-allocation limit (${Downloader.MAX_FILE_REALLOC}) exceeded`);
-							this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
-							break;
-						}
-						if (!this.fileReallocInProgress.has(chunk.fileIndex)) {
-							this.fileReallocInProgress.add(chunk.fileIndex);
-							// Pause all peer writes to prevent concurrent writes racing with zero-fill + reset
-							this.writePaused = true;
-							console.warn(`[DL] File deleted: ${affectedFile.path}, re-allocating (attempt ${attempts}/${Downloader.MAX_FILE_REALLOC})`);
-							this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: affectedFile.path, retryCount: attempts, maxRetries: Downloader.MAX_FILE_REALLOC });
-							try {
-								await this.allocateSingleFile(chunk.fileIndex);
-								const resetCount = this.dataServer.resetFileChunks(this.lishID, chunk.fileIndex);
-								console.log(`[DL] Re-allocated ${affectedFile.path}, reset ${resetCount} chunks`);
-								const fileChunks = this.dataServer.getMissingChunks(this.lishID).filter(c => c.fileIndex === chunk.fileIndex);
-								await lock.runExclusive(() => { for (const fc of fileChunks) queue.push(fc); });
-								downloadedCount = Math.max(0, downloadedCount - resetCount);
-							} catch (allocErr: any) {
-								console.error(`[DL] Re-allocation failed for ${affectedFile.path}: ${allocErr.message}`);
-								this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
-								break;
-							} finally {
-								this.fileReallocInProgress.delete(chunk.fileIndex);
-								this.resumeWriters();
-							}
-							this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: affectedFile.path, retryCount: attempts, maxRetries: Downloader.MAX_FILE_REALLOC, resolved: true });
-							continue; // chunk already in fileChunks, don't push again
-						} else {
-							// Another peer is re-allocating — wait for pause to clear, then re-queue
+						// File deleted — pause ALL peers, verify ALL files, re-allocate missing, reset chunks, resume
+						if (this.fileReallocInProgress.size > 0) {
+							// Another peer is already handling recovery — wait and re-queue
 							await this.waitIfWritePaused();
 							await lock.runExclusive(() => { queue.push(chunk!); });
 							continue;
 						}
+						const globalAttempts = (this.fileReallocAttempts.get(-1) ?? 0) + 1;
+						this.fileReallocAttempts.set(-1, globalAttempts);
+						if (globalAttempts > Downloader.MAX_FILE_REALLOC) {
+							console.error(`[DL] Global file recovery limit (${Downloader.MAX_FILE_REALLOC}) exceeded`);
+							this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
+							break;
+						}
+						// Mark recovery in progress and pause all peer writes
+						this.fileReallocInProgress.add(-1);
+						this.writePaused = true;
+						console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${Downloader.MAX_FILE_REALLOC})`);
+						this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: this.downloadDir, retryCount: globalAttempts, maxRetries: Downloader.MAX_FILE_REALLOC });
+						// Emit paused state immediately so FE shows "recovering"
+						this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond: 0, filePath: '__recovering__' });
+						// 10s delay — let the user finish deleting files before we scan
+						await new Promise<void>(resolve => {
+							const timer = setTimeout(resolve, 10_000);
+							const check = setInterval(() => { if (this.destroyed || this.disabled) { clearTimeout(timer); clearInterval(check); resolve(); } }, 1000);
+							setTimeout(() => clearInterval(check), 10_100);
+						});
+						if (this.destroyed || this.disabled) break;
+						try {
+							console.log(`[DL] Recovery: verifying ALL files after 10s pause`);
+							// Verify all files — find which are missing/wrong size
+							const missingFiles = await this.getMissingFileIndexes();
+							if (missingFiles.length === 0) {
+								console.warn(`[DL] No missing files found after ENOENT — transient error, retrying chunk`);
+								await lock.runExclusive(() => { queue.push(chunk!); });
+							} else {
+								console.log(`[DL] ${missingFiles.length} files missing, re-allocating and resetting chunks`);
+								let totalReset = 0;
+								for (const fi of missingFiles) {
+									const file = this.lish.files?.[fi];
+									if (!file) continue;
+									await this.allocateSingleFile(fi);
+									const resetCount = this.dataServer.resetFileChunks(this.lishID, fi);
+									totalReset += resetCount;
+									console.log(`[DL] Re-allocated ${file.path}, reset ${resetCount} chunks`);
+									// Reset per-file progress counter
+									fileDownloadedChunks.delete(fi);
+								}
+								// Rebuild queue from DB (accurate, no duplicates)
+								const allMissing = this.dataServer.getMissingChunks(this.lishID);
+								await lock.runExclusive(() => {
+									queue.length = queueIdx; // truncate processed portion, keep unprocessed
+									for (const mc of allMissing) queue.push(mc);
+								});
+								downloadedCount = Math.max(0, downloadedCount - totalReset);
+								// Emit updated progress immediately
+								const total = this.dataServer.getAllChunkCount(this.lishID) || totalChunks;
+								this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: total, peers: this.peers.size, bytesPerSecond: 0, filePath: '__recovering__' });
+								console.log(`[DL] Recovery complete: ${missingFiles.length} files re-allocated, ${totalReset} chunks reset, progress=${downloadedCount}/${total}`);
+							}
+						} catch (allocErr: any) {
+							console.error(`[DL] File recovery failed: ${allocErr.message}`);
+							this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
+							break;
+						} finally {
+							this.fileReallocInProgress.delete(-1);
+							this.resumeWriters();
+						}
+						this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: this.downloadDir, retryCount: globalAttempts, maxRetries: Downloader.MAX_FILE_REALLOC, resolved: true });
+						continue;
 					} else if (err.code === 'ENOSPC' || err.code === 'EACCES' || err.code === 'EPERM') {
 						// Disk full or permission denied — inline retry with pause
 						const code = err.code === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
