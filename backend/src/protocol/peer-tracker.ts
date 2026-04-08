@@ -180,18 +180,22 @@ function emitPeerDetails(): void {
 		const peerMap = byLish.get(entry.lishID)!;
 
 		const windowBytes = entry.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-		// For single sample: use elapsed time since that sample (decays naturally)
-		// For multiple samples: use time span between first and last
-		let windowSec: number;
-		if (entry.speedSamples.length > 1) {
-			windowSec = (now - entry.speedSamples[0]!.time) / 1000;
+		// Speed calculation:
+		// - 0 samples: speed = 0
+		// - 1 sample, fresh (<2s): speed = 0 (need more data to calculate meaningful rate)
+		// - 1 sample, old (>=2s): speed = bytes/elapsed (decays naturally)
+		// - 2+ samples: speed = bytes / time span
+		let speed: number;
+		if (entry.speedSamples.length >= 2) {
+			const windowSec = (now - entry.speedSamples[0]!.time) / 1000;
+			speed = windowSec > 0.1 ? Math.round(windowBytes / windowSec) : 0;
 		} else if (entry.speedSamples.length === 1) {
-			windowSec = Math.max(1, (now - entry.speedSamples[0]!.time) / 1000);
+			const elapsed = (now - entry.speedSamples[0]!.time) / 1000;
+			speed = elapsed >= 2 ? Math.round(windowBytes / elapsed) : 0;
 		} else {
-			windowSec = 1;
+			speed = 0;
 		}
-		const speed = windowSec > 0.1 ? Math.round(windowBytes / windowSec) : 0;
-		const isStale = now - entry.lastActivity > STALE_THRESHOLD || entry.speedSamples.length === 0;
+		const isStale = now - entry.lastActivity > STALE_THRESHOLD;
 
 		const existing = peerMap.get(entry.peerID);
 		if (existing) {
