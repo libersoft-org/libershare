@@ -8,15 +8,25 @@
 	import { getGridColumnsCount } from '../../scripts/products.ts';
 	import ProductsItem from './ProductsItem.svelte';
 	import Product from '../Product/Product.svelte';
+	interface CatalogItem {
+		id: string;
+		title: string;
+		description?: string | null;
+		totalSize?: number;
+		fileCount?: number;
+		tags?: string | null;
+		contentType?: string | null;
+	}
 	interface Props {
 		areaID: string;
 		position: Position;
 		title: string;
-		items: { id: number; title: string }[];
+		items: CatalogItem[];
+		networkID?: string;
 		onBack?: (() => void) | undefined;
 	}
-	let { areaID, position, title, items, onBack }: Props = $props();
-	let selectedItem = $state<{ id: number; title: string } | null>(null);
+	let { areaID, position, title, items, networkID, onBack }: Props = $props();
+	let selectedItem = $state<CatalogItem | null>(null);
 	let itemElements: HTMLElement[] = $state([]);
 	let removeBackHandler: (() => void) | null = null;
 
@@ -80,35 +90,35 @@
 
 	@media (min-width: 768px) {
 		.items {
-			grid-template-columns: repeat(3, 1fr);
+			grid-template-columns: repeat(2, 1fr);
 		}
 	}
 
 	@media (min-width: 1000px) {
 		.items {
-			grid-template-columns: repeat(4, 1fr);
+			grid-template-columns: repeat(3, 1fr);
 		}
 	}
 
 	@media (min-width: 1200px) {
 		.items {
-			grid-template-columns: repeat(5, 1fr);
+			grid-template-columns: repeat(4, 1fr);
 		}
 	}
 
 	@media (min-width: 1400px) {
 		.items {
-			grid-template-columns: repeat(6, 1fr);
+			grid-template-columns: repeat(5, 1fr);
 		}
 	}
 </style>
 
 {#if selectedItem}
-	<Product {areaID} category={title} itemTitle={selectedItem.title} itemID={selectedItem.id} onBack={closeDetail} />
+	<Product {areaID} category={title} itemTitle={selectedItem.title} itemId={typeof selectedItem.id === 'string' ? 0 : selectedItem.id} description={selectedItem.description} totalSize={selectedItem.totalSize} fileCount={selectedItem.fileCount} tags={selectedItem.tags} contentType={selectedItem.contentType} {networkID} lishID={selectedItem.id} onBack={closeDetail} />
 {:else}
 	<div class="items">
 		{#each items as item, index (item.id)}
-			<ProductsItem bind:el={itemElements[index]} title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={navHandle.controller.isSelected(getItemPos(index))} isAPressed={navHandle.controller.isPressed(getItemPos(index))} />
+			<ProductsItem bind:el={itemElements[index]} title={item.title} description={item.description} totalSize={item.totalSize} fileCount={item.fileCount} tags={item.tags} contentType={item.contentType} isGamepadHovered={navHandle.controller.isSelected(getItemPos(index))} isAPressed={navHandle.controller.isPressed(getItemPos(index))} />
 		{/each}
 	</div>
 {/if}

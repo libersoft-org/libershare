@@ -6,7 +6,7 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb, navigateBack } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, autoStartSharing } from '../../scripts/settings.ts';
+	import { storagePath, autoStartSharing, autoStartDownloading } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { isCompressed } from '@shared';
 	import { type ILISH } from '@shared';
@@ -31,6 +31,7 @@
 	let lishJSON = $state('');
 	let downloadPath = $state($storagePath);
 	let autoStart = $state($autoStartSharing);
+	let autoStartDl = $state($autoStartDownloading);
 	let errorMessage = $state('');
 	let browsingDownloadPath = $state(false);
 	let parsedLISHs = $state<ILISH[] | null>(null);
@@ -138,7 +139,7 @@
 </style>
 
 {#if parsedLISHs}
-	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} onDone={handleOverwriteDone} />
+	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} enableSharing={autoStart} enableDownloading={autoStartDl} onDone={handleOverwriteDone} />
 {:else if browsingDownloadPath}
 	<FileBrowser {areaID} {position} initialPath={downloadPath} directoriesOnly showPath selectDirectoryButton onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
 {:else}
@@ -150,13 +151,14 @@
 				<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<SwitchRow label={$t('lish.import.autoStartSharing')} checked={autoStart} position={[0, 2]} onToggle={() => (autoStart = !autoStart)} />
+			<SwitchRow label={$t('lish.import.autoStartDownloading')} checked={autoStartDl} position={[0, 3]} onToggle={() => (autoStartDl = !autoStartDl)} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
 		<ButtonBar justify="center">
-			<Button icon="/img/download.svg" label={$t('common.import')} position={[0, 3]} onConfirm={handleImport} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 3]} onConfirm={onBack} />
+			<Button icon="/img/download.svg" label={$t('common.import')} position={[0, 4]} onConfirm={handleImport} />
+			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 4]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

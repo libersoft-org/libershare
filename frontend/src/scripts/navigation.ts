@@ -215,6 +215,9 @@ export function createNavigation() {
 	globalNavigate = navigate;
 	globalNavigateBack = navigateBack;
 	globalNavigateToAbsolutePath = navigateToAbsolute;
+	// Expose for E2E testing
+	(window as any).__navigateTo = navigateTo;
+	(window as any).__navigateBack = navigateBack;
 
 	return {
 		path: pathIDs,

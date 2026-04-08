@@ -6,12 +6,20 @@ import { DataServer } from './lish/data-server.ts';
 import { openDatabase } from './db/database.ts';
 import { APIServer } from './api/api.ts';
 import { Settings } from './settings.ts';
+import { CatalogManager } from './catalog/catalog-manager.ts';
+import { setWorkerUrl } from './lish/lish.ts';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
 // Default dataDir: next to binary if compiled, otherwise ./data (relative to CWD)
 const isCompiledBinary = process.execPath !== Bun.which('bun');
 let dataDir = isCompiledBinary ? join(dirname(process.execPath), 'data') : './data';
+
+// In compiled binaries, import.meta.url is always the binary path (/$bunfs/root/<binary>),
+// so the worker is at ./lish/checksum-worker.js relative to it.
+// In dev mode the default in lish.ts (./checksum-worker.ts relative to lish.ts) is correct.
+if (isCompiledBinary) setWorkerUrl(new URL('./lish/checksum-worker.js', import.meta.url).href);
+
 let enablePink = false;
 let logLevel: LogLevel = 'debug';
 let apiHost = 'localhost';
@@ -57,13 +65,45 @@ const dataServer = new DataServer(db);
 const networks = new Networks(db, dataDir, dataServer, settings, enablePink);
 networks.init();
 
+const catalogManager = new CatalogManager({
+	db,
+	getPrivateKey: () => networks.getRunningNetwork().getPrivateKey() as any,
+	getLocalPeerID: () => {
+		try { return networks.getRunningNetwork().getNodeInfo()?.peerID ?? 'local'; } catch { return 'local'; }
+	},
+	broadcast: (networkID, op) => {
+		try {
+			const net = networks.getRunningNetwork();
+			net.broadcast(`lish/${networkID}`, { type: 'catalog_op', ...op });
+		} catch { /* network not running — skip broadcast */ }
+	},
+	emitEvent: (event, data) => {
+		try { apiServer.broadcastEvent(event, data); } catch { /* server not started */ }
+	},
+});
+networks.setCatalogManager(catalogManager);
+
+// Apply speed limits from settings
+import { Downloader } from './protocol/downloader.ts';
+import { setMaxUploadSpeed, setUploadBroadcast, initUploadState } from './protocol/lish-protocol.ts';
+import { getUploadEnabledLishs, setUploadEnabled, getDownloadEnabledLishs, setDownloadEnabled } from './db/lishs.ts';
+import { initDownloadState } from './api/transfer.ts';
+const networkSettings = settings.get().network;
+Downloader.setMaxDownloadSpeed(networkSettings.maxDownloadSpeed);
+setMaxUploadSpeed(networkSettings.maxUploadSpeed);
+initUploadState(getUploadEnabledLishs(db), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
+initDownloadState(getDownloadEnabledLishs(db), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
+
 const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 	host: apiHost,
 	port: apiPort,
 	secure: apiSecure,
 	keyFile: apiKeyFile,
 	certFile: apiCertFile,
-});
+}, catalogManager);
+
+// Wire upload progress broadcast (after apiServer is created)
+setUploadBroadcast((event, data) => apiServer.broadcastEvent(event, data));
 
 async function shutdown(): Promise<void> {
 	console.log('Shutting down...');

@@ -23,6 +23,12 @@ export function initLISHnetsTables(db: Database): void {
 	`);
 
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishnets_peers_id_lishnets ON lishnets_peers(id_lishnets)');
+
+	// Migration: add owner_peer_id column if missing
+	const cols = db.query<{ name: string }, []>("PRAGMA table_info(lishnets)").all();
+	if (!cols.some(c => c.name === 'owner_peer_id')) {
+		db.run('ALTER TABLE lishnets ADD COLUMN owner_peer_id TEXT');
+	}
 }
 
 // -- Internal helpers --
@@ -46,11 +52,12 @@ interface LISHnetRow {
 	description: string | null;
 	enabled: number;
 	created: string | null;
+	owner_peer_id: string | null;
 }
 
 function buildConfig(db: Database, row: LISHnetRow): LISHNetworkConfig {
 	const peers = getBootstrapPeers(db, row.id);
-	return {
+	const config: LISHNetworkConfig = {
 		networkID: row.lishnet_id,
 		name: row.name,
 		description: row.description ?? '',
@@ -58,6 +65,8 @@ function buildConfig(db: Database, row: LISHnetRow): LISHNetworkConfig {
 		enabled: row.enabled === 1,
 		created: row.created ?? '',
 	};
+	if (row.owner_peer_id) config.ownerPeerID = row.owner_peer_id;
+	return config;
 }
 
 // -- Public API --
@@ -68,18 +77,18 @@ export function lishnetExists(db: Database, networkID: string): boolean {
 }
 
 export function getLISHnet(db: Database, networkID: string): LISHNetworkConfig | undefined {
-	const row = db.query<LISHnetRow, [string]>('SELECT id, lishnet_id, name, description, enabled, created FROM lishnets WHERE lishnet_id = ?').get(networkID);
+	const row = db.query<LISHnetRow, [string]>('SELECT id, lishnet_id, name, description, enabled, created, owner_peer_id FROM lishnets WHERE lishnet_id = ?').get(networkID);
 	if (!row) return undefined;
 	return buildConfig(db, row);
 }
 
 export function listLISHnets(db: Database): LISHNetworkConfig[] {
-	const rows = db.query<LISHnetRow, []>('SELECT id, lishnet_id, name, description, enabled, created FROM lishnets ORDER BY added ASC').all();
+	const rows = db.query<LISHnetRow, []>('SELECT id, lishnet_id, name, description, enabled, created, owner_peer_id FROM lishnets ORDER BY added ASC').all();
 	return rows.map(r => buildConfig(db, r));
 }
 
 export function listEnabledLISHnets(db: Database): LISHNetworkConfig[] {
-	const rows = db.query<LISHnetRow, []>('SELECT id, lishnet_id, name, description, enabled, created FROM lishnets WHERE enabled = TRUE ORDER BY added ASC').all();
+	const rows = db.query<LISHnetRow, []>('SELECT id, lishnet_id, name, description, enabled, created, owner_peer_id FROM lishnets WHERE enabled = TRUE ORDER BY added ASC').all();
 	return rows.map(r => buildConfig(db, r));
 }
 
@@ -89,9 +98,9 @@ export function addLISHnet(db: Database, network: LISHNetworkConfig): boolean {
 
 	const tx = db.transaction(() => {
 		const result = db.run(
-			`INSERT INTO lishnets (lishnet_id, name, description, enabled, created)
-			 VALUES (?, ?, ?, ?, ?)`,
-			[networkID, network.name, network.description || null, network.enabled ? 1 : 0, network.created || null]
+			`INSERT INTO lishnets (lishnet_id, name, description, enabled, created, owner_peer_id)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			[networkID, network.name, network.description || null, network.enabled ? 1 : 0, network.created || null, network.ownerPeerID || null]
 		);
 		const internalID = Number(result.lastInsertRowid);
 
@@ -107,9 +116,9 @@ export function updateLISHnet(db: Database, network: LISHNetworkConfig): boolean
 
 	const tx = db.transaction(() => {
 		db.run(
-			`UPDATE lishnets SET name = ?, description = ?, enabled = ?, created = ?
+			`UPDATE lishnets SET name = ?, description = ?, enabled = ?, created = ?, owner_peer_id = ?
 			 WHERE id = ?`,
-			[network.name, network.description || null, network.enabled ? 1 : 0, network.created || null, internalID]
+			[network.name, network.description || null, network.enabled ? 1 : 0, network.created || null, network.ownerPeerID || null, internalID]
 		);
 
 		// Replace peers
@@ -158,9 +167,9 @@ export function replaceLISHnets(db: Database, networks: LISHNetworkConfig[]): vo
 		db.run('DELETE FROM lishnets');
 		for (const network of networks) {
 			const result = db.run(
-				`INSERT INTO lishnets (lishnet_id, name, description, enabled, created)
-				 VALUES (?, ?, ?, ?, ?)`,
-				[network.networkID, network.name, network.description || null, network.enabled ? 1 : 0, network.created || null]
+				`INSERT INTO lishnets (lishnet_id, name, description, enabled, created, owner_peer_id)
+				 VALUES (?, ?, ?, ?, ?, ?)`,
+				[network.networkID, network.name, network.description || null, network.enabled ? 1 : 0, network.created || null, network.ownerPeerID || null]
 			);
 			const internalID = Number(result.lastInsertRowid);
 			for (const peer of network.bootstrapPeers) db.run('INSERT INTO lishnets_peers (id_lishnets, address) VALUES (?, ?)', [internalID, peer]);

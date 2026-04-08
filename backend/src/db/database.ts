@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { join } from 'path';
 import { initLISHsTables } from './lishs.ts';
 import { initLISHnetsTables } from './lishnets.ts';
+import { initCatalogTables } from './catalog.ts';
 const DB_FILENAME = 'libershare.db';
 let db: Database;
 
@@ -13,6 +14,7 @@ export function openDatabase(dataDir: string): Database {
 	console.log(`[DB] ${dbPath}`);
 	initLISHsTables(db);
 	initLISHnetsTables(db);
+	initCatalogTables(db);
 	return db;
 }
 

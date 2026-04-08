@@ -7,6 +7,16 @@ import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from './data-server.ts';
 
+// Worker URL for checksum-worker. Default works in dev mode (import.meta.url is the actual file URL).
+// In compiled binaries, import.meta.url is always the binary path, so app.ts must call setWorkerUrl()
+// with new URL('./lish/checksum-worker.js', import.meta.url).href before any LISH creation.
+let _workerUrl: string = new URL('./checksum-worker.ts', import.meta.url).href;
+
+/** Override the checksum worker URL. Must be called from the main entrypoint (app.ts) in compiled mode. */
+export function setWorkerUrl(url: string): void {
+	_workerUrl = url;
+}
+
 // Helper to normalize paths to forward slashes
 function normalizePath(p: string): string {
 	return p.replace(/\\/g, '/');
@@ -66,7 +76,7 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 	const workerCount = Math.min(cpuCount, totalChunks);
 	// Create workers
 	const workers: Worker[] = [];
-	for (let i = 0; i < workerCount; i++) workers.push(new Worker(new URL('./checksum-worker.ts', import.meta.url).href));
+	for (let i = 0; i < workerCount; i++) workers.push(new Worker(_workerUrl));
 	let completedChunks = 0;
 	const results: string[] = new Array(totalChunks);
 	let nextChunk = 0;

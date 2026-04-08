@@ -97,7 +97,7 @@
 		await api.subscribe('lishs.create:progress');
 
 		try {
-			const result = await api.lishs.create(params['dataPath'], params['lishFile'], params['addToSharing'], params['name'], params['description'], params['algorithm'], params['chunkSize'], params['threads'], params['minifyJSON'], params['compress']);
+			const result = await api.lishs.create(params['dataPath'], params['lishFile'], params['addToSharing'], params['addToDownloading'], params['name'], params['description'], params['algorithm'], params['chunkSize'], params['threads'], params['minifyJSON'], params['compress']);
 			resultLISHID = result.lishID;
 			resultLISHFile = result.lishFile || '';
 			status = 'done';

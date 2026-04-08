@@ -30,6 +30,14 @@
 	--status-pending-verification-bg: #750;
 	--status-moving-fg: #c6f;
 	--status-moving-bg: #306;
+	--mode-disabled-fg: #c33;
+	--mode-disabled-bg: #222;
+	--mode-download-fg: #0c0;
+	--mode-download-bg: #142;
+	--mode-upload-fg: #28f;
+	--mode-upload-bg: #134;
+	--mode-both-fg: #c8f;
+	--mode-both-bg: #214;
 }
 
 html,

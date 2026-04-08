@@ -67,6 +67,12 @@
 	},
 	"library": {
 		"title": "Online knihovna",
+		"categories": {
+			"all": "Vše",
+			"movies": "Filmy",
+			"software": "Software",
+			"video": "Videa"
+		},
 		"product": {
 			"downloads": "Ke stažení",
 			"download": "Stáhnout",
@@ -83,6 +89,11 @@
 		"targetDirectory": "Cílový adresář",
 		"downloadingFrom": "Stahování od",
 		"uploadingTo": "Odesílání k",
+		"peers": "Spojení",
+		"speed": "Rychlost",
+		"transferred": "Přeneseno",
+		"uploaded": "Odesláno",
+		"downloaded": "Staženo",
 		"downloadSpeed": "Rychlost stahování",
 		"uploadSpeed": "Rychlost odesílání",
 		"statuses": {
@@ -92,8 +103,16 @@
 			"idling": "Nečinný",
 			"verifying": "Ověřuje se",
 			"pending-verification": "Čeká na ověření",
-			"moving": "Přesouvá se"
+			"moving": "Přesouvá se",
+			"allocating": "Připravuje se"
 		},
+		"modes": {
+			"disabled": "Vypnuto",
+			"download": "↓ Stahování",
+			"upload": "↑ Odesílání",
+			"both": "↕ Oboje"
+		},
+		"mode": "Režim",
 		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",
@@ -175,6 +194,7 @@
 			"downloadPathRequired": "Adresář pro stažení je povinný",
 			"jsonRequired": "LISH JSON je povinný",
 			"autoStartSharing": "Automaticky spustit sdílení po přidání",
+			"autoStartDownloading": "Automaticky spustit stahování po přidání",
 			"confirmOverwrite": "Následující LISH již existuje:\n\nJméno: {name}\nID: {id}\n\nChcete jej přepsat?"
 		},
 		"export": {
@@ -215,11 +235,12 @@
 			"incomingPort": "Síťový port pro příchozí spojení",
 			"maxDownloadConnections": "Maximální počet spojení pro stahování",
 			"maxUploadConnections": "Maximální počet spojení pro odesílání",
-			"maxDownloadSpeed": "Maximální rychlost stahování (0 = neomezeno)",
-			"maxUploadSpeed": "Maximální rychlost odesílání (0 = neomezeno)",
+			"maxDownloadSpeed": "Maximální rychlost stahování v KB/s (0 = neomezeno)",
+			"maxUploadSpeed": "Maximální rychlost odesílání v KB/s (0 = neomezeno)",
 			"allowRelay": "Zapnout předávací server (přeposílat data pro ostatní účastníky)",
 			"maxRelayReservations": "Maximální počet spojení k předávacímu serveru (0 = neomezeno)",
-			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH (výchozí hodnota)"
+			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH (výchozí hodnota)",
+			"autoStartDownloadingDefault": "Automaticky spustit stahování po přidání LISH (výchozí hodnota)"
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",

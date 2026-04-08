@@ -97,12 +97,23 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				emitSelf: false,
 				allowPublishToZeroTopicPeers: true,
 				floodPublish: true,
-				D: 2,
-				Dlo: 1,
-				Dhi: 3,
-				Dlazy: 2,
+				D: 6,
+				Dlo: 4,
+				Dhi: 12,
+				Dlazy: 6,
 				heartbeatInterval: 1000,
 				fanoutTTL: 60000,
+				scoreParams: {
+					// P4: Invalid messages penalty — penalizes peers sending invalid catalog ops
+					appSpecificWeight: 1,
+					IPColocationFactorWeight: -1,      // P6: penalize multiple peers from same IP
+					IPColocationFactorThreshold: 3,    // allow up to 3 peers per IP before penalty
+				},
+				scoreThresholds: {
+					gossipThreshold: -10,    // below this, no gossip from peer
+					publishThreshold: -50,   // below this, no publish from peer
+					graylistThreshold: -80,  // below this, peer is graylisted
+				},
 			}),
 			dht: kadDHT({
 				clientMode: false,

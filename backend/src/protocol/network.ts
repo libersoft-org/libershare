@@ -8,7 +8,8 @@ import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
 import { join } from 'path';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
+import { LISH_PROTOCOL, handleLISHProtocol, isUploadEnabled } from './lish-protocol.ts';
+import { isBusy } from '../api/busy.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { PINK_TOPIC, PONK_TOPIC, createPinkMessage, createPonkMessage } from './pink-ponk.ts';
 import { type HaveMessage, type WantMessage } from './downloader.ts';
@@ -22,7 +23,7 @@ interface PubsubEvent {
 	data: Uint8Array;
 }
 /** Handler for parsed pubsub topic messages. */
-type TopicHandler = (data: Record<string, any>) => void;
+type TopicHandler = (data: Record<string, any>) => void | Promise<void>;
 const PRIVATE_KEY_PATH = '/local/privatekey';
 const AUTODIAL_WORKAROUND = true;
 
@@ -34,6 +35,7 @@ export class Network {
 	private node: Libp2p | null = null;
 	private pubsub: PubSub | null = null;
 	private datastore: SqliteDatastore | null = null;
+	private privateKey: PrivateKey | null = null;
 	private readonly dataServer: DataServer;
 	private readonly dataDir: string;
 	private pingInterval: NodeJS.Timeout | null = null;
@@ -148,6 +150,7 @@ export class Network {
 		console.log('✓ Datastore opened at:', datastorePath);
 
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
+		this.privateKey = privateKey;
 
 		// Build libp2p config via extracted helper
 		const {
@@ -214,12 +217,12 @@ export class Network {
 		}
 
 		this.pubsub.addEventListener('gossipsub:graft', (evt: any) => {
-			console.log('🌿 GRAFT:', evt.detail.peerID, 'joined', evt.detail.topic);
+			console.debug('🌿 GRAFT:', evt.detail.peerID, 'joined', evt.detail.topic);
 			this.schedulePeerCountCheck();
 		});
 
 		this.pubsub.addEventListener('gossipsub:prune', (evt: any) => {
-			console.log('✂️  PRUNE:', evt.detail.peerID, 'left', evt.detail.topic);
+			console.debug('✂️  PRUNE:', evt.detail.peerID, 'left', evt.detail.topic);
 			this.schedulePeerCountCheck();
 		});
 
@@ -241,17 +244,17 @@ export class Network {
 		this.node!.addEventListener('peer:discovery', async evt => {
 			const peerID = evt.detail.id.toString();
 			const multiaddrs = evt.detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
-			console.log('🔍 Discovered peer:', peerID);
-			console.log('   Multiaddrs:', multiaddrs.join(', ') || '(empty!)');
+			console.debug('🔍 Discovered peer:', peerID);
+			console.debug('   Multiaddrs:', multiaddrs.join(', ') || '(empty!)');
 		});
 
 		this.node!.addEventListener('peer:connect', async evt => {
 			const peerID = evt.detail.toString();
 			const connections = this.node!.getConnections(evt.detail);
 			const remoteAddrs = connections.map(c => c.remoteAddr.toString());
-			console.log('✅ New peer connected:', peerID);
-			console.log('   Remote addresses:', remoteAddrs.join(', '));
-			console.log('   Total connected peers:', this.node!.getPeers().length);
+			console.debug('✅ New peer connected:', peerID);
+			console.debug('   Remote addresses:', remoteAddrs.join(', '));
+			console.debug('   Total connected peers:', this.node!.getPeers().length);
 
 			if (this.bootstrapPeerIDs.has(peerID)) {
 				const connectionMultiaddrs = connections.map(c => c.remoteAddr);
@@ -259,22 +262,22 @@ export class Network {
 					multiaddrs: connectionMultiaddrs,
 					tags: { [KEEP_ALIVE]: { value: 1 } },
 				});
-				console.log('   Tagged as KEEP_ALIVE (bootstrap peer)');
+				console.debug('   Tagged as KEEP_ALIVE (bootstrap peer)');
 			}
 			this.schedulePeerCountCheck();
 		});
 
 		this.node!.addEventListener('peer:disconnect', evt => {
-			console.log('❌ Lost connection with peer:', evt.detail.toString());
-			console.log('   Total connected peers:', this.node!.getPeers().length);
+			console.debug('❌ Lost connection with peer:', evt.detail.toString());
+			console.debug('   Total connected peers:', this.node!.getPeers().length);
 			this.schedulePeerCountCheck();
 		});
 
 		this.node!.addEventListener('relay:created-reservation' as any, (evt: any) => {
-			console.log('🔄 Relay reservation created with:', evt.detail.relay.toString());
+			console.debug('🔄 Relay reservation created with:', evt.detail.relay.toString());
 		});
 		this.node!.addEventListener('relay:removed' as any, (evt: any) => {
-			console.log('⚠️  Relay removed:', evt.detail.relay.toString());
+			console.debug('⚠️  Relay removed:', evt.detail.relay.toString());
 		});
 	}
 
@@ -364,7 +367,7 @@ export class Network {
 					this.bootstrapPeerIDs.add(peerID);
 					this.bootstrapMultiaddrs.push(ma);
 				}
-				console.log('Adding bootstrap peer:', peer);
+				console.debug('Adding bootstrap peer:', peer);
 				try {
 					await this.node.dial(ma);
 					if (peerID) {
@@ -399,7 +402,7 @@ export class Network {
 		this.pubsub.subscribe(topic);
 		// Register the Want handler for this network
 		const handler: TopicHandler = data => {
-			console.log(`Received pubsub message on topic ${topic}:`, data['type']);
+			console.debug(`Received pubsub message on topic ${topic}:`, data['type']);
 			if (data['type'] === 'want') this.handleWant(data as WantMessage, networkID);
 		};
 		if (!this.topicHandlers.has(topic)) this.topicHandlers.set(topic, new Set());
@@ -410,6 +413,11 @@ export class Network {
 	/**
 	 * Unsubscribe from a lishnet topic.
 	 */
+	unsubscribeHandler(topic: string, handler: TopicHandler): void {
+		const handlers = this.topicHandlers.get(topic);
+		if (handlers) handlers.delete(handler);
+	}
+
 	unsubscribeTopic(networkID: string): void {
 		if (!this.pubsub) return;
 		const topic = lishTopic(networkID);
@@ -435,7 +443,7 @@ export class Network {
 	// Pink/Ponk (debug)
 	// =========================================================================
 
-	private handleMessage(msgEvent: PubsubEvent): void {
+	private async handleMessage(msgEvent: PubsubEvent): Promise<void> {
 		try {
 			const topic = msgEvent.topic;
 			const data = new TextDecoder().decode(msgEvent.data);
@@ -449,7 +457,7 @@ export class Network {
 
 			// Dispatch to registered topic handlers
 			const handlers = this.topicHandlers.get(topic);
-			if (handlers) for (const handler of handlers) handler(message);
+			if (handlers) for (const handler of handlers) await handler(message);
 		} catch (error) {
 			console.error('Error in handleMessage:', error);
 		}
@@ -462,7 +470,7 @@ export class Network {
 		try {
 			await this.pubsub.publish(PINK_TOPIC, data);
 		} catch (error) {
-			console.log('Error sending pink:', error);
+			console.debug('Error sending pink:', error);
 		}
 	}
 
@@ -473,7 +481,7 @@ export class Network {
 		try {
 			await this.pubsub.publish(PONK_TOPIC, data);
 		} catch (error) {
-			console.log(`Ponk reply attempted (no peers connected)`);
+			console.debug(`Ponk reply attempted (no peers connected)`);
 		}
 	}
 
@@ -482,15 +490,17 @@ export class Network {
 	// =========================================================================
 
 	private async handleWant(data: WantMessage, networkID: string): Promise<void> {
-		console.log('Handling want message for lishID:', data.lishID, 'on network:', networkID);
+		console.debug('Handling want message for lishID:', data.lishID, 'on network:', networkID);
+		if (!isUploadEnabled(data.lishID)) { console.debug(`[NET-DBG] want ignored: upload disabled for ${data.lishID.slice(0, 8)}`); return; }
+		if (isBusy(data.lishID)) { console.debug(`[NET-DBG] want ignored: busy for ${data.lishID.slice(0, 8)}`); return; }
 		const lish = this.dataServer.get(data.lishID);
 		if (!lish) return;
 		const haveChunks = this.dataServer.getHaveChunks(data.lishID);
 		if (haveChunks !== 'all' && haveChunks.size === 0) {
-			console.log('No chunks available for lishID:', data.lishID);
+			console.debug('No chunks available for lishID:', data.lishID);
 			return;
 		}
-		console.log('LISH found, sending Have');
+		console.debug('LISH found, sending Have');
 		const haveMessage: HaveMessage = {
 			type: 'have',
 			lishID: lish.id,
@@ -510,7 +520,7 @@ export class Network {
 			console.error('Network not started');
 			return;
 		}
-		console.log(`Broadcasting to topic ${topic}:`, data['type']);
+		console.debug(`Broadcasting to topic ${topic}:`, data['type']);
 		const encoded = new TextEncoder().encode(JSON.stringify(data));
 		await this.pubsub.publish(topic, encoded);
 	}
@@ -526,14 +536,14 @@ export class Network {
 		this.pubsub.subscribe(topic);
 		if (!this.topicHandlers.has(topic)) this.topicHandlers.set(topic, new Set());
 		this.topicHandlers.get(topic)!.add(handler);
-		console.log(`Subscribed to topic: ${topic}`);
+		console.debug(`Subscribed to topic: ${topic}`);
 	}
 
 	async connectToPeer(multiaddr: string): Promise<void> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
 		const ma = Multiaddr(multiaddr);
 		await this.node.dial(ma);
-		console.log('→ Connected to:', multiaddr);
+		console.debug('→ Connected to:', multiaddr);
 	}
 
 	async dialProtocol(multiaddrs: any[], protocol: string): Promise<Stream> {
@@ -620,5 +630,38 @@ export class Network {
 		const peer: PeerInfo = await this.node!.peerRouting.findPeer(peerID);
 		console.log('Found it, multiaddrs are:');
 		peer.multiaddrs.forEach(ma => console.log(ma.toString()));
+	}
+
+	// --- Catalog extensions ---
+
+	getPrivateKey(): PrivateKey {
+		if (!this.privateKey) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		return this.privateKey;
+	}
+
+	async registerStreamHandler(protocol: string, handler: (stream: Stream) => Promise<void>): Promise<void> {
+		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		await this.node.handle(protocol, async (stream) => handler(stream), { runOnLimitedConnection: true });
+	}
+
+	async dialProtocolByPeerId(peerIDString: string, protocol: string): Promise<Stream> {
+		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		const peerId = peerIDFromString(peerIDString);
+		const connection = await this.node.dial(peerId);
+		return connection.newStream(protocol, { runOnLimitedConnection: true });
+	}
+
+	registerTopicValidator(topic: string, validator: (peerID: any, msg: any) => Promise<'accept' | 'reject' | 'ignore'>): void {
+		if (!this.pubsub) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		const pubsub = this.pubsub as any;
+		if (typeof pubsub.topicValidators?.set === 'function') {
+			pubsub.topicValidators.set(topic, async (peerID: any, msg: any) => {
+				const result = await validator(peerID, msg);
+				// Map string results to gossipsub TopicValidatorResult enum values
+				if (result === 'reject') return 'reject';
+				if (result === 'ignore') return 'ignore';
+				return 'accept';
+			});
+		}
 	}
 }

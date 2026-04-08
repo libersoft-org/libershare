@@ -57,24 +57,35 @@ export const menuStructure = derived(
 				component: Categories,
 				submenu: [
 					{
-						id: 'video',
-						label: 'Video',
+						id: 'all',
+						label: tt('library.categories.all'),
 						iconPosition: 'left',
 						iconSize: '2vh',
 						component: Items,
-						props: {
-							category: 'video',
-						},
+					},
+					{
+						id: 'movie',
+						label: tt('library.categories.movies'),
+						iconPosition: 'left',
+						iconSize: '2vh',
+						component: Items,
+						props: { category: 'movie' },
 					},
 					{
 						id: 'software',
-						label: 'Software',
+						label: tt('library.categories.software'),
 						iconPosition: 'left',
 						iconSize: '2vh',
 						component: Items,
-						props: {
-							category: 'software',
-						},
+						props: { category: 'software' },
+					},
+					{
+						id: 'video',
+						label: tt('library.categories.video'),
+						iconPosition: 'left',
+						iconSize: '2vh',
+						component: Items,
+						props: { category: 'video' },
 					},
 					{
 						id: 'back',

@@ -7,6 +7,7 @@ app/core
 **/*.crt
 **/*.key
 frontend/.svelte-kit/
+frontend/.vite-cache/
 backend/data
 .secret_git
 bun.lockb
@@ -23,3 +24,17 @@ vite.config.js.timestamp-*
 **/cert.pem
 **/key.pem
 **/*.orig
+data-*/
+.node-*/
+
+# Editor/IDE local configs
+.[a-z]*/
+!.git/
+!.github/
+/[A-Z]*.md
+!/README.md
+
+# Test artifacts
+**/test-results/
+**/.playwright-real-data/
+**/playwright-report/
