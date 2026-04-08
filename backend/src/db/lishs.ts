@@ -78,6 +78,7 @@ export function initLISHsTables(db: Database): void {
 
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_files_id_lishs ON lishs_files(id_lishs)');
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_chunks_id_lishs_files ON lishs_chunks(id_lishs_files)');
+	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_chunks_checksum ON lishs_chunks(checksum)');
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_directories_id_lishs ON lishs_directories(id_lishs)');
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_links_id_lishs ON lishs_links(id_lishs)');
 }
@@ -111,13 +112,9 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 		);
 		const internalID = getInternalID(db, lish.id as LISHid)!;
 
-		// Delete existing child records (for upsert)
-		db.run('DELETE FROM lishs_files WHERE id_lishs = ?', [internalID]);
-		db.run('DELETE FROM lishs_directories WHERE id_lishs = ?', [internalID]);
-		db.run('DELETE FROM lishs_links WHERE id_lishs = ?', [internalID]);
-
-		// Insert files + chunks
+		// Replace child records only when replacement data is provided (prevents wiping download progress)
 		if (lish.files) {
+			db.run('DELETE FROM lishs_files WHERE id_lishs = ?', [internalID]);
 			const haveChunks = new Set(lish.chunks ?? []);
 			for (const file of lish.files) {
 				const fileResult = db.run(
@@ -130,8 +127,8 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 			}
 		}
 
-		// Insert directories
 		if (lish.directories) {
+			db.run('DELETE FROM lishs_directories WHERE id_lishs = ?', [internalID]);
 			for (const dir of lish.directories) {
 				db.run(
 					`INSERT INTO lishs_directories (id_lishs, path, permissions, modified, created)
@@ -141,8 +138,8 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 			}
 		}
 
-		// Insert links
 		if (lish.links) {
+			db.run('DELETE FROM lishs_links WHERE id_lishs = ?', [internalID]);
 			for (const link of lish.links) {
 				db.run(
 					`INSERT INTO lishs_links (id_lishs, path, target, hardlink, modified, created)
@@ -348,12 +345,14 @@ export function isComplete(db: Database, lishID: LISHid): boolean {
 	const internalID = getInternalID(db, lishID);
 	if (internalID === null) return false;
 	const row = db
-		.query<{ missing: number }, [number]>(
-			`SELECT COUNT(*) as missing FROM lishs_chunks c
+		.query<{ total: number; missing: number }, [number]>(
+			`SELECT COUNT(*) as total, SUM(CASE WHEN c.have = FALSE THEN 1 ELSE 0 END) as missing FROM lishs_chunks c
 		 JOIN lishs_files f ON f.id = c.id_lishs_files
-		 WHERE f.id_lishs = ? AND c.have = FALSE`
+		 WHERE f.id_lishs = ?`
 		)
 		.get(internalID);
+	// 0 total chunks = not complete (prevents vacuous truth for LISHs with no files in DB)
+	if ((row?.total ?? 0) === 0) return false;
 	return (row?.missing ?? 1) === 0;
 }
 

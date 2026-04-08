@@ -21,11 +21,14 @@ interface RecoveryDeps {
 /** Only these error codes trigger auto-recovery (IO-related, may self-resolve). */
 const RECOVERABLE_CODES = new Set([ErrorCodes.IO_NOT_FOUND, ErrorCodes.DISK_FULL, ErrorCodes.DIRECTORY_ACCESS_DENIED]);
 
-const FAST_DELAY = 7_000;   // IO_NOT_FOUND: 7 seconds
-const SLOW_DELAY = 60_000;  // Other errors: 60 seconds
+const FAST_DELAY = 7_000;   // IO_NOT_FOUND: 7 seconds (base)
+const SLOW_DELAY = 60_000;  // Other errors: 60 seconds (base)
+const MAX_DELAY = 300_000;  // Cap: 5 minutes
+const MAX_RECOVERY_ATTEMPTS = 5;
 
-function getDelay(errorCode: string): number {
-	return errorCode === ErrorCodes.IO_NOT_FOUND ? FAST_DELAY : SLOW_DELAY;
+function getDelay(errorCode: string, retryCount: number): number {
+	const base = errorCode === ErrorCodes.IO_NOT_FOUND ? FAST_DELAY : SLOW_DELAY;
+	return Math.min(base * Math.pow(2, retryCount), MAX_DELAY);
 }
 
 export class ErrorRecovery {
@@ -45,7 +48,7 @@ export class ErrorRecovery {
 		if (!RECOVERABLE_CODES.has(errorCode as any)) return;
 		// Re-entrancy guard: if recovery already active, don't restart (retryCount would reset)
 		if (this.entries.has(lishID)) return;
-		const delay = getDelay(errorCode);
+		const delay = getDelay(errorCode, 0);
 		const entry: RecoveryState = {
 			downloadWasEnabled: prev.downloadEnabled,
 			uploadWasEnabled: prev.uploadEnabled,
@@ -91,6 +94,14 @@ export class ErrorRecovery {
 		entry.retryCount++;
 		entry.timer = null;
 
+		// Max retries: stop permanently after exhausting attempts
+		if (entry.retryCount > MAX_RECOVERY_ATTEMPTS) {
+			console.error(`[Recovery] ${lishID.slice(0, 8)}: max recovery attempts (${MAX_RECOVERY_ATTEMPTS}) exceeded for ${entry.errorCode}, giving up`);
+			this.deps.broadcast('transfer.recovery:exhausted', { lishID, errorCode: entry.errorCode, attempts: entry.retryCount - 1 });
+			this.stop(lishID);
+			return;
+		}
+
 		const lish = this.deps.getLISH(lishID);
 		if (!lish || !lish.directory) {
 			console.debug(`[Recovery] ${lishID.slice(0, 8)}: LISH deleted or no directory, stopping recovery`);
@@ -109,14 +120,15 @@ export class ErrorRecovery {
 		try {
 			await this.deps.checkAccess(lish.directory);
 		} catch {
-			console.warn(`[Recovery] ${lishID.slice(0, 8)}: still inaccessible (attempt ${entry.retryCount}), retry in ${SLOW_DELAY / 1000}s`);
-			this.deps.broadcast('transfer.recovery:scheduled', { lishID, delayMs: SLOW_DELAY, retryCount: entry.retryCount });
-			this.schedule(lishID, SLOW_DELAY);
+			const nextDelay = getDelay(entry.errorCode, entry.retryCount);
+			console.warn(`[Recovery] ${lishID.slice(0, 8)}: still inaccessible (attempt ${entry.retryCount}/${MAX_RECOVERY_ATTEMPTS}), retry in ${Math.round(nextDelay / 1000)}s`);
+			this.deps.broadcast('transfer.recovery:scheduled', { lishID, delayMs: nextDelay, retryCount: entry.retryCount });
+			this.schedule(lishID, nextDelay);
 			return;
 		}
 
 		// Directory accessible — attempt re-enable
-		console.debug(`[Recovery] ${lishID.slice(0, 8)}: directory accessible, attempting recovery (attempt ${entry.retryCount})`);
+		console.debug(`[Recovery] ${lishID.slice(0, 8)}: directory accessible, attempting recovery (attempt ${entry.retryCount}/${MAX_RECOVERY_ATTEMPTS})`);
 		this.deps.broadcast('transfer.recovery:attempting', { lishID, retryCount: entry.retryCount });
 
 		// Save state before stopping (stop deletes the entry)
@@ -130,8 +142,6 @@ export class ErrorRecovery {
 			this.deps.broadcast('transfer.recovery:recovered', { lishID });
 		} else {
 			console.warn(`[Recovery] ${lishID.slice(0, 8)}: re-enable failed (attempt will restart via error handler)`);
-			// Don't reschedule here — the failed enableDownload/enableUpload call will
-			// trigger a new error which will call recovery.start() again
 		}
 	}
 }

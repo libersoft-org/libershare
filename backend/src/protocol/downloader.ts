@@ -346,9 +346,16 @@ export class Downloader {
 			// Phase 3: download chunks
 			if (this.state === 'downloading') {
 				if (this.missingChunks.length === 0) {
-					console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
-					this.state = 'downloaded';
-					this.downloadResolve?.();
+					if (await this.verifyFilesExist()) {
+						console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
+						this.state = 'downloaded';
+						this.downloadResolve?.();
+						return;
+					}
+					// Files missing on disk despite DB saying complete — re-fetch manifest
+					console.warn(`[DL] ${this.lishID.slice(0, 8)}: chunks complete in DB but files missing on disk, requesting manifest`);
+					this.needsManifest = true;
+					this.state = 'awaiting-manifest';
 					return;
 				}
 				if (this.peers.size === 0) {
@@ -369,9 +376,15 @@ export class Downloader {
 					try { await this.downloadChunks(); } finally { this.downloadActive = false; }
 					const remaining = this.dataServer.getMissingChunks(this.lishID);
 					if (remaining.length === 0) {
-						console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
-						this.state = 'downloaded';
-						this.downloadResolve?.();
+						if (await this.verifyFilesExist()) {
+							console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
+							this.state = 'downloaded';
+							this.downloadResolve?.();
+							return;
+						}
+						console.warn(`[DL] ${this.lishID.slice(0, 8)}: chunks complete in DB but files missing on disk, requesting manifest`);
+						this.needsManifest = true;
+						this.state = 'awaiting-manifest';
 						return;
 					}
 					console.log(`[DL] ${remaining.length} chunks missing, retrying in 10s`);
@@ -406,7 +419,6 @@ export class Downloader {
 		// Track all peerLoop promises so we can await dynamically spawned ones
 		const peerLoopPromises = new Map<string, Promise<void>>();
 
-		const servingPeers = new Set<string>(); // peers that actually served at least 1 chunk
 		let lastFilePath: string | undefined;
 		let lastFileChunks: number | undefined;
 		const corruptCount = new Map<string, number>(); // per-peer corruption counter
@@ -441,7 +453,11 @@ export class Downloader {
 				await this.waitIfWritePaused();
 				let chunk: MissingChunk | undefined;
 				await lock.runExclusive(() => {
-					if (queueIdx < queue.length) chunk = queue[queueIdx++];
+					while (queueIdx < queue.length) {
+						const candidate = queue[queueIdx++];
+						// Skip chunks already downloaded (dedup re-queued entries)
+						if (!this.dataServer.isChunkDownloaded(this.lishID, candidate!.chunkID)) { chunk = candidate; break; }
+					}
 				});
 				if (!chunk) break;
 
@@ -454,7 +470,6 @@ export class Downloader {
 					console.log(`[DL] Peer ${peerID.slice(0, 12)} disconnected`);
 					this.peers.delete(peerID);
 					this.failedPeers.add(peerID);
-					servingPeers.delete(peerID);
 					unregisterDownloadPeer(this.lishID, peerID);
 					await client.close().catch(() => {});
 					await lock.runExclusive(() => { queue.push(chunk!); });
@@ -499,7 +514,7 @@ export class Downloader {
 						console.log(`[DL] Peer ${peerID.slice(0, 12)} banned: ${count} corrupt chunks`);
 						this.peers.delete(peerID);
 						this.failedPeers.add(peerID);
-						servingPeers.delete(peerID);
+
 						unregisterDownloadPeer(this.lishID, peerID);
 						await client.close().catch(() => {});
 						spawnNewPeerLoops();
@@ -511,7 +526,7 @@ export class Downloader {
 				skippedChunks = 0;
 				consecutiveNotAvailable = 0;
 				globalNotAvailable = 0;
-				servingPeers.add(peerID);
+
 				try {
 					await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 				} catch (err: any) {
@@ -528,6 +543,8 @@ export class Downloader {
 						}
 						if (!this.fileReallocInProgress.has(chunk.fileIndex)) {
 							this.fileReallocInProgress.add(chunk.fileIndex);
+							// Pause all peer writes to prevent concurrent writes racing with zero-fill + reset
+							this.writePaused = true;
 							console.warn(`[DL] File deleted: ${affectedFile.path}, re-allocating (attempt ${attempts}/${Downloader.MAX_FILE_REALLOC})`);
 							this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: affectedFile.path, retryCount: attempts, maxRetries: Downloader.MAX_FILE_REALLOC });
 							try {
@@ -539,15 +556,18 @@ export class Downloader {
 								downloadedCount = Math.max(0, downloadedCount - resetCount);
 							} catch (allocErr: any) {
 								console.error(`[DL] Re-allocation failed for ${affectedFile.path}: ${allocErr.message}`);
+								this.resumeWriters();
 								this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
 								break;
 							} finally {
 								this.fileReallocInProgress.delete(chunk.fileIndex);
 							}
+							this.resumeWriters();
 							this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: affectedFile.path, retryCount: attempts, maxRetries: Downloader.MAX_FILE_REALLOC, resolved: true });
 							continue; // chunk already in fileChunks, don't push again
 						} else {
-							// Another peer is re-allocating — re-queue and wait
+							// Another peer is re-allocating — wait for pause to clear, then re-queue
+							await this.waitIfWritePaused();
 							await lock.runExclusive(() => { queue.push(chunk!); });
 							continue;
 						}
@@ -692,13 +712,17 @@ export class Downloader {
 				if (!manifest) { console.debug(`[DL] probe ${peerID.slice(0, 12)}: null manifest`); this.noDataPeers.add(peerID); continue; }
 
 				if (this.needsManifest && manifest.files && manifest.files.length > 0) {
-					this.lish = { ...manifest, directory: this.downloadDir };
-					this.dataServer.add(this.lish);
-					this.onManifestImported?.(this.lishID);
-					this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
-					this.needsManifest = false;
-					this.state = 'preparing';
-					console.log(`[DL] Got manifest from ${peerID.slice(0, 12)}: ${manifest.files.length} files, ${this.missingChunks.length} chunks`);
+					// Protect manifest import with workMutex to prevent race with doWork()
+					await this.workMutex.runExclusive(async () => {
+						if (!this.needsManifest) return; // double-check after acquiring lock
+						this.lish = { ...manifest, directory: this.downloadDir };
+						this.dataServer.add(this.lish);
+						this.onManifestImported?.(this.lishID);
+						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
+						this.needsManifest = false;
+						this.state = 'preparing';
+						console.log(`[DL] Got manifest from ${peerID.slice(0, 12)}: ${manifest.files.length} files, ${this.missingChunks.length} chunks`);
+					});
 				}
 
 				const { stream: dlStream, connectionType } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
@@ -787,6 +811,19 @@ export class Downloader {
 		console.debug(`[DL] peer ${peerID.slice(0, 12)} connected [${connectionType}] have=${havePercent}% (total: ${this.peers.size})`);
 	}
 
+	private async verifyFilesExist(): Promise<boolean> {
+		if (!this.lish.files || this.lish.files.length === 0) return false;
+		for (const file of this.lish.files) {
+			const filePath = this.safePath(file.path);
+			const f = Bun.file(filePath);
+			if (!(await f.exists()) || f.size !== file.size) {
+				trace(`[DL] verifyFilesExist: ${file.path} missing or wrong size (exists=${await f.exists()}, size=${f.size}, expected=${file.size})`);
+				return false;
+			}
+		}
+		return true;
+	}
+
 	private safePath(relativePath: string): string {
 		const resolved = resolve(this.downloadDir, relativePath);
 		if (!resolved.startsWith(resolve(this.downloadDir) + sep)) throw new Error(`Path traversal blocked: ${relativePath}`);
@@ -794,7 +831,15 @@ export class Downloader {
 	}
 
 	private async needsFileAllocation(): Promise<boolean> {
-		if (!this.lish.files) return false;
+		if (!this.lish.files || this.lish.files.length === 0) {
+			// No file metadata — if DB also has no chunks, we need a manifest re-fetch
+			if (this.dataServer.getAllChunkCount(this.lishID) === 0) {
+				console.warn(`[DL] ${this.lishID.slice(0, 8)}: no files in manifest or DB, requesting manifest from peers`);
+				this.needsManifest = true;
+				this.state = 'awaiting-manifest';
+			}
+			return false;
+		}
 		for (const file of this.lish.files) {
 			const filePath = this.safePath(file.path);
 			const f = Bun.file(filePath);

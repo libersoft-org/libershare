@@ -200,7 +200,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			return { success: false };
 		}
 		const missing = dataServer.getMissingChunks(p.lishID);
-		if (missing.length === 0) {
+		if (missing.length === 0 && dataServer.getAllChunkCount(p.lishID) > 0) {
 			const send = broadcast ?? (() => {});
 			send('transfer.download:enabled', { lishID: p.lishID });
 			return { success: true };
