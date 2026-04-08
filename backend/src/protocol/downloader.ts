@@ -437,6 +437,8 @@ export class Downloader {
 				});
 				if (!chunk) break;
 
+				// Throttle BEFORE downloading — ensures bandwidth is reserved before network transfer
+				await downloadLimiter.throttle(this.lish.chunkSize);
 				const result = await this.downloadChunk(client, chunk.chunkID, peerID);
 				if (result === 'error') {
 					console.log(`[DL] Peer ${peerID.slice(0, 12)} disconnected`);
@@ -593,7 +595,6 @@ export class Downloader {
 				const filePath = this.lish.files?.[fIdx]?.path;
 				const fileChunks = fileDownloadedChunks.get(fIdx);
 				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond, ...(filePath != null ? { filePath } : {}), ...(fileChunks != null ? { fileDownloadedChunks: fileChunks } : {}) });
-				await downloadLimiter.throttle(data.length);
 				// Check for newly discovered peers and spawn loops for them
 				spawnNewPeerLoops();
 			}
