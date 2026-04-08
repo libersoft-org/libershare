@@ -42,6 +42,8 @@ export class Downloader {
 	private peers: Map<NodeID, LISHClient> = new Map();
 	private lastServingPeerCount = 0;
 	private failedPeers = new Set<NodeID>(); // peers that failed — don't re-probe until next cycle
+	private noDataPeers = new Set<NodeID>(); // peers with null manifest or upload disabled — re-checked every 5 min
+	private noDataCycleCount = 0;
 	private static readonly MAX_CORRUPT_CHUNKS = 3; // max corrupted chunks before banning peer
 	private callForPeersInterval: ReturnType<typeof setInterval> | undefined;
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -57,7 +59,7 @@ export class Downloader {
 	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number }) => void;
 	private onManifestImported?: (lishID: string) => void;
 	private speedSamples: { time: number; bytes: number }[] = [];
-	private emaSpeed = 0;
+	private currentSpeed = 0;
 	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
 	private errorCode?: string;
 	private errorDetail?: string;
@@ -169,6 +171,8 @@ export class Downloader {
 		this.lastExhaustedTime = 0;
 		this.fileReallocAttempts.clear();
 		this.writeRetryCount = 0;
+		this.noDataPeers.clear();
+		this.noDataCycleCount = 0;
 		console.log(`[DL] Enabled ${this.lishID.slice(0, 8)}`);
 		for (const resolve of this.enableResolvers) resolve();
 		this.enableResolvers = [];
@@ -465,11 +469,11 @@ export class Downloader {
 					if (skippedChunks % 500 === 0) trace(`[DL] Peer ${peerID.slice(0, 12)} skipped ${skippedChunks} chunks (not_available, consecutive: ${consecutiveNotAvailable}, global: ${globalNotAvailable}/${queue.length})`);
 					await lock.runExclusive(() => { queue.push(chunk!); });
 					if (this.disabled || this.destroyed) break;
-					// Per-peer: disconnect if peer has nothing useful (50 consecutive not_available without a single served chunk)
-					if (consecutiveNotAvailable >= 50) {
+					// Per-peer: disconnect if peer has nothing useful (10 consecutive not_available)
+					if (consecutiveNotAvailable >= 10) {
 						console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped: ${consecutiveNotAvailable} consecutive not_available`);
 						this.peers.delete(peerID);
-						this.failedPeers.add(peerID);
+						this.noDataPeers.add(peerID);
 						unregisterDownloadPeer(this.lishID, peerID);
 						await client.close().catch(() => {});
 						break;
@@ -505,6 +509,7 @@ export class Downloader {
 				}
 				// Integrity OK — write chunk
 				skippedChunks = 0;
+				consecutiveNotAvailable = 0;
 				globalNotAvailable = 0;
 				servingPeers.add(peerID);
 				try {
@@ -592,15 +597,13 @@ export class Downloader {
 				recordDownloadBytes(this.lishID, peerID, data.length, this.lish.files?.[chunk.fileIndex]?.path);
 				downloadedCount++;
 				if (this.writeRetryCount > 0) this.writeRetryCount = 0;
-				// Sliding window speed — accurate across multiple concurrent peers
+				// Sliding window speed — bytes in last 5s / 5
 				const now = Date.now();
 				this.speedSamples.push({ time: now, bytes: data.length });
-				const windowStart = now - 5000; // 5s window
-				this.speedSamples = this.speedSamples.filter(s => s.time > windowStart);
+				this.speedSamples = this.speedSamples.filter(s => s.time > now - 5000);
 				const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-				const windowSpan = Math.max((now - this.speedSamples[0]!.time) / 1000, 1); // at least 1s
-				this.emaSpeed = windowBytes / windowSpan;
-				const bytesPerSecond = Math.round(this.emaSpeed);
+				this.currentSpeed = windowBytes / 5; // fixed 5s denominator — no overestimate
+				const bytesPerSecond = Math.round(this.currentSpeed);
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
 					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${this.peers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
 				}
@@ -617,11 +620,9 @@ export class Downloader {
 		// 1s periodic progress emitter — sliding window speed
 		const progressInterval = setInterval(() => {
 			const now = Date.now();
-			const windowStart = now - 5000;
-			this.speedSamples = this.speedSamples.filter(s => s.time > windowStart);
+			this.speedSamples = this.speedSamples.filter(s => s.time > now - 5000);
 			const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-			const windowSpan = this.speedSamples.length > 0 ? Math.max((now - this.speedSamples[0]!.time) / 1000, 1) : 1;
-			const bytesPerSecond = this.speedSamples.length > 0 ? Math.round(windowBytes / windowSpan) : 0;
+			const bytesPerSecond = Math.round(windowBytes / 5);
 			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond, ...(lastFilePath != null ? { filePath: lastFilePath } : {}), ...(lastFileChunks != null ? { fileDownloadedChunks: lastFileChunks } : {}) });
 		}, 1000);
 
@@ -678,6 +679,7 @@ export class Downloader {
 			if (this.destroyed) return;
 			if (this.peers.has(peerID)) { trace(`[DL] probe skip ${peerID.slice(0, 12)}: connected`); continue; }
 			if (this.failedPeers.has(peerID)) { trace(`[DL] probe skip ${peerID.slice(0, 12)}: failed`); continue; }
+			if (this.noDataPeers.has(peerID)) { trace(`[DL] probe skip ${peerID.slice(0, 12)}: no data`); continue; }
 			try {
 				trace(`[DL] probing ${peerID.slice(0, 12)}`);
 				const { stream: probeStream } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
@@ -687,7 +689,7 @@ export class Downloader {
 				await probeClient.close();
 				if (this.destroyed) return;
 
-				if (!manifest) { console.debug(`[DL] probe ${peerID.slice(0, 12)}: null manifest`); continue; }
+				if (!manifest) { console.debug(`[DL] probe ${peerID.slice(0, 12)}: null manifest`); this.noDataPeers.add(peerID); continue; }
 
 				if (this.needsManifest && manifest.files && manifest.files.length > 0) {
 					this.lish = { ...manifest, directory: this.downloadDir };
@@ -704,21 +706,7 @@ export class Downloader {
 				// Guard: peer may have connected via handlePubsubMessage during our dial
 				if (this.peers.has(peerID)) { await new LISHClient(dlStream).close().catch(() => {}); trace(`[DL] probe ${peerID.slice(0, 12)}: already connected, closing duplicate`); continue; }
 
-				// Test chunk: verify peer can actually serve data (not just have manifest with upload disabled)
-				const dlClient = new LISHClient(dlStream);
-				const testChunkID = this.missingChunks[0]?.chunkID;
-				if (testChunkID) {
-					const testData = await dlClient.requestChunk(this.lishID, testChunkID);
-					if (!testData) {
-						console.debug(`[DL] probe ${peerID.slice(0, 12)}: cannot serve chunks (upload disabled?)`);
-						await dlClient.close().catch(() => {});
-						this.failedPeers.add(peerID);
-						continue;
-					}
-					trace(`[DL] probe ${peerID.slice(0, 12)}: test chunk OK`);
-				}
-
-				this.peers.set(peerID, dlClient);
+				this.peers.set(peerID, new LISHClient(dlStream));
 				registerDownloadPeer(this.lishID, peerID, connectionType);
 				this.lastExhaustedTime = 0;
 				foundNew = true;
@@ -744,6 +732,8 @@ export class Downloader {
 			if (this.state !== 'downloading' && this.state !== 'awaiting-manifest') return;
 			const before = this.peers.size;
 			this.failedPeers.clear();
+			this.noDataCycleCount++;
+			if (this.noDataCycleCount >= 20) { this.noDataPeers.clear(); this.noDataCycleCount = 0; } // re-check every ~5 min
 			this.lastExhaustedTime = 0;
 			// Broadcast want so all peers (including probe-only) respond with have + chunk availability
 			await this.callForPeers().catch(() => {});
@@ -760,6 +750,8 @@ export class Downloader {
 			const chunks = data['chunks'] === 'all' ? 'ALL' : `${(data['chunks'] as any[])?.length ?? 0}`;
 			const addrs = (data['multiaddrs'] as any[])?.map(a => a?.toString?.() ?? String(a)) ?? [];
 			const addrTypes = addrs.map(a => a.includes('/p2p-circuit') ? 'RELAY' : 'DIRECT');
+			// Peer sent have → it has data now, remove from blacklists
+			if (this.noDataPeers.delete(data['peerID'])) console.debug(`[DL] ${(data['peerID'] as string)?.slice(0, 12)} removed from noDataPeers (sent have)`);
 			console.debug(`[DL] HAVE from ${(data['peerID'] as string)?.slice(0, 12)}: ${chunks} chunks [${addrTypes.join(',')}], active=${this.downloadActive}`);
 			if (this.peers.has(data['peerID'])) {
 				// Update availability for already-connected peer
@@ -768,6 +760,8 @@ export class Downloader {
 				updatePeerHavePercent(this.lishID, data['peerID'], hp);
 				return;
 			}
+			// Don't reconnect peers recently dropped for not_available
+			if (this.failedPeers.has(data['peerID'])) { trace(`[DL] HAVE from ${(data['peerID'] as string)?.slice(0, 12)} ignored: in failedPeers`); return; }
 			try {
 				await this.connectToPeer(data as HaveMessage);
 			} catch (err: any) {
