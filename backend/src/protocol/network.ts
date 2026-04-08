@@ -208,6 +208,7 @@ export class Network {
 				const stream = data.stream ?? data;
 				const connection = data.connection;
 				let remotePeerID = connection?.remotePeer?.toString?.();
+				let isRelay = connection?.remoteAddr?.toString?.()?.includes('/p2p-circuit') ?? false;
 				if (!remotePeerID && this.node) {
 					for (let attempt = 0; attempt < 3 && !remotePeerID; attempt++) {
 						if (attempt > 0) await new Promise(r => setTimeout(r, 50));
@@ -216,6 +217,7 @@ export class Network {
 								try {
 									if (conn.streams.some((s: any) => s.id === stream.id)) {
 										remotePeerID = peer.toString();
+										isRelay = conn.remoteAddr.toString().includes('/p2p-circuit');
 									}
 								} catch {}
 							}
@@ -223,7 +225,7 @@ export class Network {
 						}
 					}
 				}
-				const connType = remotePeerID ? this.getConnectionType(remotePeerID) : 'DIRECT';
+				const connType = remotePeerID ? this.classifyConnection(remotePeerID, isRelay) : 'DIRECT';
 				await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType);
 			},
 			{ runOnLimitedConnection: true }
@@ -633,28 +635,13 @@ export class Network {
 	}
 
 	/**
-	 * Determine connection type for a peer by inspecting ALL connections.
-	 * - dcutrPeers set (from dcutr:success event) → DCUtR
-	 * - Has both relay AND direct connections simultaneously → DCUtR (upgrade happened)
-	 * - Only direct connections → DIRECT (LAN/VPN)
-	 * - Only relay connections → RELAY
+	 * Determine connection type from a specific connection + dcutrPeers set.
+	 * Only dcutr:success event marks a peer as DCUtR — not the presence of both
+	 * relay and direct connections (which can happen during normal discovery).
 	 */
-	getConnectionType(peerID: string): 'DIRECT' | 'RELAY' | 'DCUtR' {
-		if (this.dcutrPeers.has(peerID)) return 'DCUtR';
-		if (!this.node) return 'DIRECT';
-		try {
-			const pid = peerIDFromString(peerID);
-			const conns = this.node.getConnections(pid);
-			let hasDirect = false;
-			let hasRelay = false;
-			for (const c of conns) {
-				if (c.remoteAddr.toString().includes('/p2p-circuit')) hasRelay = true;
-				else hasDirect = true;
-			}
-			if (hasDirect && hasRelay) return 'DCUtR';
-			if (hasRelay && !hasDirect) return 'RELAY';
-		} catch {}
-		return 'DIRECT';
+	private classifyConnection(peerID: string, isRelay: boolean): 'DIRECT' | 'RELAY' | 'DCUtR' {
+		if (this.dcutrPeers.has(peerID) && !isRelay) return 'DCUtR';
+		return isRelay ? 'RELAY' : 'DIRECT';
 	}
 
 	async dialProtocol(multiaddrs: any[], protocol: string): Promise<{ stream: Stream; connectionType: 'DIRECT' | 'RELAY' | 'DCUtR' }> {
@@ -662,9 +649,10 @@ export class Network {
 		trace(`[NET] dial ${protocol} to ${multiaddrs.map(m => m.toString()).join(', ')}`);
 		const connection = await this.node.dial(multiaddrs);
 		const peerID = connection.remotePeer.toString();
-		const connectionType = this.getConnectionType(peerID);
+		const isRelay = connection.remoteAddr.toString().includes('/p2p-circuit');
+		const connectionType = this.classifyConnection(peerID, isRelay);
 		const limited = (connection as any).limits != null;
-		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}]`);
+		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}] addr=${connection.remoteAddr.toString().slice(0, 60)}`);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
 		trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
 		return { stream, connectionType };
@@ -676,9 +664,10 @@ export class Network {
 		const { peerIdFromString } = await import('@libp2p/peer-id');
 		const pid = peerIdFromString(peerID);
 		const connection = await this.node.dial(pid);
-		const connectionType = this.getConnectionType(peerID);
+		const isRelay = connection.remoteAddr.toString().includes('/p2p-circuit');
+		const connectionType = this.classifyConnection(peerID, isRelay);
 		const limited = (connection as any).limits != null;
-		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}]`);
+		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}] addr=${connection.remoteAddr.toString().slice(0, 60)}`);
 		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
 		trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
 		return { stream, connectionType };
