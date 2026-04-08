@@ -600,6 +600,16 @@ export class Downloader {
 			activePeerLoops.delete(peerID);
 		};
 
+		// 1s periodic progress emitter — updates speed/peers between chunk downloads
+		const progressInterval = setInterval(() => {
+			const now = Date.now();
+			this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
+			const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
+			const span = this.speedSamples.length > 1 ? (now - this.speedSamples[0]!.time) / 1000 : 0;
+			const bytesPerSecond = Math.round(windowBytes / Math.max(span, 5));
+			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond });
+		}, 1000);
+
 		try {
 			const initialPeers = [...this.peers.entries()];
 			console.log(`[DL] Starting: ${totalChunks} chunks from ${initialPeers.length} peer(s)`);
@@ -612,15 +622,14 @@ export class Downloader {
 			while (peerLoopPromises.size > 0) {
 				const current = [...peerLoopPromises.entries()];
 				await Promise.all(current.map(([, p]) => p));
-				// Remove settled ones
 				for (const [id] of current) peerLoopPromises.delete(id);
-				// Loop back to check if new loops were spawned while we waited
 			}
 			console.debug(`[DL] downloadChunks done: ${downloadedCount}/${totalChunks}`);
 			if (downloadedCount < totalChunks) {
 				console.log(`[DL] Peers exhausted at ${downloadedCount}/${totalChunks}, will retry`);
 			}
 		} finally {
+			clearInterval(progressInterval);
 			for (const [, client] of this.peers) await client.close().catch(() => {});
 			this.peers.clear();
 			unregisterAllPeersForLISH(this.lishID);
