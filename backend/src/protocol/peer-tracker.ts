@@ -98,6 +98,12 @@ export function unregisterAllPeersForLISH(lishID: string): void {
 // --- Public API: recording bytes ---
 
 /** Keep peer alive during throttle waits (prevents stale/prune while peer is throttled). */
+export function updatePeerHavePercent(lishID: string, peerID: string, havePercent: number): void {
+	const k = key(lishID, peerID, 'download');
+	const entry = entries.get(k);
+	if (entry) entry.havePercent = havePercent;
+}
+
 export function touchPeer(lishID: string, peerID: string, direction: 'download' | 'upload'): void {
 	const k = key(lishID, peerID, direction);
 	const entry = entries.get(k);

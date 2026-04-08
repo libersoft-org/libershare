@@ -10,7 +10,7 @@ import { type HaveChunks, LISH_PROTOCOL, LISHClient } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { trace } from '../logger.ts';
-import { registerDownloadPeer, unregisterDownloadPeer, recordDownloadBytes, unregisterAllPeersForLISH, touchPeer } from './peer-tracker.ts';
+import { registerDownloadPeer, unregisterDownloadPeer, recordDownloadBytes, unregisterAllPeersForLISH, touchPeer, updatePeerHavePercent } from './peer-tracker.ts';
 
 type NodeID = string;
 interface PubsubMessage {
@@ -732,7 +732,13 @@ export class Downloader {
 			const addrs = (data['multiaddrs'] as any[])?.map(a => a?.toString?.() ?? String(a)) ?? [];
 			const addrTypes = addrs.map(a => a.includes('/p2p-circuit') ? 'RELAY' : 'DIRECT');
 			console.debug(`[DL] HAVE from ${(data['peerID'] as string)?.slice(0, 12)}: ${chunks} chunks [${addrTypes.join(',')}], active=${this.downloadActive}`);
-			if (this.peers.has(data['peerID'])) return;
+			if (this.peers.has(data['peerID'])) {
+				// Update availability for already-connected peer
+				const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;
+				const hp = data['chunks'] === 'all' ? 100 : Math.round(((data['chunks'] as any[])?.length ?? 0) / totalChunks * 100);
+				updatePeerHavePercent(this.lishID, data['peerID'], hp);
+				return;
+			}
 			try {
 				await this.connectToPeer(data as HaveMessage);
 			} catch (err: any) {
