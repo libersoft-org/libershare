@@ -298,9 +298,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				while (pruneIdx < info.speedSamples.length && info.speedSamples[pruneIdx]!.time <= cutoff) pruneIdx++;
 				if (pruneIdx > 0) info.speedSamples.splice(0, pruneIdx);
 				const windowBytes = info.speedSamples.reduce((sum: number, s: any) => sum + s.bytes, 0);
-				const oldestTime = info.speedSamples.length > 0 ? info.speedSamples[0]!.time : now;
+				const oldestTime = info.speedSamples.length > 1 ? info.speedSamples[0]!.time : now;
 				const elapsed = (now - oldestTime) / 1000;
-				const bytesPerSecond = elapsed >= 1 ? Math.round(windowBytes / elapsed) : 0;
+				const bytesPerSecond = elapsed >= 0.5 ? Math.round(windowBytes / elapsed) : 0;
 				transfers.push({ lishID, type: 'uploading', peers: info.peers, bytesPerSecond });
 			}
 		}

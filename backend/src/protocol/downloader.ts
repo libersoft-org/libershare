@@ -702,9 +702,9 @@ export class Downloader {
 				this.speedSamples.push({ time: now, bytes: data.length });
 				this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
 				const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-				const oldestTime = this.speedSamples.length > 0 ? this.speedSamples[0]!.time : now;
+				const oldestTime = this.speedSamples.length > 1 ? this.speedSamples[0]!.time : now;
 				const elapsed = (now - oldestTime) / 1000;
-				this.currentSpeed = elapsed >= 1 ? windowBytes / elapsed : 0;
+				this.currentSpeed = elapsed >= 0.5 ? windowBytes / elapsed : 0;
 				const bytesPerSecond = Math.round(this.currentSpeed);
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
 					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${this.peers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
@@ -725,9 +725,9 @@ export class Downloader {
 			const now = Date.now();
 			this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
 			const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-			const oldestTime = this.speedSamples.length > 0 ? this.speedSamples[0]!.time : now;
+			const oldestTime = this.speedSamples.length > 1 ? this.speedSamples[0]!.time : now;
 			const elapsed = (now - oldestTime) / 1000;
-			const bytesPerSecond = elapsed >= 1 ? Math.round(windowBytes / elapsed) : 0;
+			const bytesPerSecond = elapsed >= 0.5 ? Math.round(windowBytes / elapsed) : 0;
 			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond, ...(lastFilePath != null ? { filePath: lastFilePath } : {}), ...(lastFileChunks != null ? { fileDownloadedChunks: lastFileChunks } : {}) });
 		}, 1000);
 

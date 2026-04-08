@@ -71,18 +71,20 @@ function createEntry(peerID: string, lishID: string, direction: 'download' | 'up
  * For N chunks in T seconds: speed = N*chunkSize / T (accurate, not staircase).
  */
 function computeSpeed(samples: SpeedSample[], now: number): number {
-	if (samples.length === 0) return 0;
+	if (samples.length < 2) return 0; // need ≥2 samples for meaningful speed
 	const cutoff = now - SPEED_WINDOW;
 	let total = 0;
 	let oldestTime = now;
+	let count = 0;
 	for (let i = samples.length - 1; i >= 0; i--) {
 		if (samples[i]!.time <= cutoff) break;
 		total += samples[i]!.bytes;
 		oldestTime = samples[i]!.time;
+		count++;
 	}
-	if (total === 0) return 0;
+	if (count < 2 || total === 0) return 0;
 	const elapsed = (now - oldestTime) / 1000;
-	if (elapsed < 1) return 0; // not enough observation time — avoid initial spike
+	if (elapsed < 0.5) return 0;
 	return Math.round(total / elapsed);
 }
 
