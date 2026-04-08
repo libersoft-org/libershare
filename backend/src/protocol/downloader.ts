@@ -403,6 +403,8 @@ export class Downloader {
 		const peerLoopPromises = new Map<string, Promise<void>>();
 
 		const servingPeers = new Set<string>(); // peers that actually served at least 1 chunk
+		let lastFilePath: string | undefined;
+		let lastFileChunks: number | undefined;
 		const corruptCount = new Map<string, number>(); // per-peer corruption counter
 		let globalNotAvailable = 0; // consecutive not_available across all peers — reset on any success
 		// Pre-populate per-file downloaded chunk counts from DB
@@ -599,15 +601,13 @@ export class Downloader {
 				const windowSpan = Math.max((now - this.speedSamples[0]!.time) / 1000, 1); // at least 1s
 				this.emaSpeed = windowBytes / windowSpan;
 				const bytesPerSecond = Math.round(this.emaSpeed);
-				this.lastServingPeerCount = servingPeers.size;
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
-					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${servingPeers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
+					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${this.peers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
 				}
 				const fIdx = chunk.fileIndex;
 				fileDownloadedChunks.set(fIdx, (fileDownloadedChunks.get(fIdx) ?? 0) + 1);
-				const filePath = this.lish.files?.[fIdx]?.path;
-				const fileChunks = fileDownloadedChunks.get(fIdx);
-				this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond, ...(filePath != null ? { filePath } : {}), ...(fileChunks != null ? { fileDownloadedChunks: fileChunks } : {}) });
+				lastFilePath = this.lish.files?.[fIdx]?.path;
+				lastFileChunks = fileDownloadedChunks.get(fIdx);
 				// Check for newly discovered peers and spawn loops for them
 				spawnNewPeerLoops();
 			}
@@ -622,7 +622,7 @@ export class Downloader {
 			const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
 			const windowSpan = this.speedSamples.length > 0 ? Math.max((now - this.speedSamples[0]!.time) / 1000, 1) : 1;
 			const bytesPerSecond = this.speedSamples.length > 0 ? Math.round(windowBytes / windowSpan) : 0;
-			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond });
+			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond, ...(lastFilePath != null ? { filePath: lastFilePath } : {}), ...(lastFileChunks != null ? { fileDownloadedChunks: lastFileChunks } : {}) });
 		}, 1000);
 
 		try {
