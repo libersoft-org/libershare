@@ -24,11 +24,11 @@ assert(downloaderSrc.includes('this.lish.files.length === 0'), 'needsFileAllocat
 assert(downloaderSrc.includes('this.needsManifest = true') && downloaderSrc.includes('awaiting-manifest'), 'Sets needsManifest and state when files missing');
 assert(downloaderSrc.includes('no files in manifest or DB'), 'Has appropriate log message');
 
-// ─── H4: verifyFilesExist before completion ──────────────────────────────
-console.log('\n── H4: verifyFilesExist before completion ──');
-assert(downloaderSrc.includes('verifyFilesExist'), 'verifyFilesExist method exists');
-assert(downloaderSrc.includes('await this.verifyFilesExist()'), 'verifyFilesExist called before download complete');
-assert(downloaderSrc.includes('chunks complete in DB but files missing'), 'Has warning log for missing files at completion');
+// ─── H4: getMissingFileIndexes before completion ─────────────────────────
+console.log('\n── H4: getMissingFileIndexes before completion ──');
+assert(downloaderSrc.includes('getMissingFileIndexes'), 'getMissingFileIndexes method exists');
+assert(downloaderSrc.includes('await this.getMissingFileIndexes()'), 'getMissingFileIndexes called before download complete');
+assert(downloaderSrc.includes('files missing on disk'), 'Has warning log for missing files at completion');
 
 // ─── H1: writePaused during ENOENT realloc ───────────────────────────────
 console.log('\n── H1: writePaused during ENOENT realloc ──');

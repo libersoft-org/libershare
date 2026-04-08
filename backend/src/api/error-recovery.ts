@@ -33,6 +33,7 @@ function getDelay(errorCode: string, retryCount: number): number {
 
 export class ErrorRecovery {
 	private readonly entries = new Map<string, RecoveryState>();
+	private readonly cumulativeRetries = new Map<string, number>(); // persists across stop/restart cycles
 	private readonly deps: RecoveryDeps;
 
 	constructor(deps: RecoveryDeps) {
@@ -48,19 +49,26 @@ export class ErrorRecovery {
 		if (!RECOVERABLE_CODES.has(errorCode as any)) return;
 		// Re-entrancy guard: if recovery already active, don't restart (retryCount would reset)
 		if (this.entries.has(lishID)) return;
-		const delay = getDelay(errorCode, 0);
+		// Check cumulative retry limit (persists across stop/restart cycles)
+		const cumulative = this.cumulativeRetries.get(lishID) ?? 0;
+		if (cumulative >= MAX_RECOVERY_ATTEMPTS) {
+			console.error(`[Recovery] ${lishID.slice(0, 8)}: cumulative retry limit (${MAX_RECOVERY_ATTEMPTS}) reached, not scheduling`);
+			this.deps.broadcast('transfer.recovery:exhausted', { lishID, errorCode, attempts: cumulative });
+			return;
+		}
+		const delay = getDelay(errorCode, cumulative);
 		const entry: RecoveryState = {
 			downloadWasEnabled: prev.downloadEnabled,
 			uploadWasEnabled: prev.uploadEnabled,
 			errorCode,
-			retryCount: 0,
+			retryCount: cumulative,
 			nextRetryDelay: delay,
 			timer: null,
 			scheduledAt: Date.now(),
 		};
 		this.entries.set(lishID, entry);
-		console.debug(`[Recovery] ${lishID.slice(0, 8)}: scheduling recovery for ${errorCode}, delay ${delay / 1000}s`);
-		this.deps.broadcast('transfer.recovery:scheduled', { lishID, delayMs: delay, retryCount: 0 });
+		console.debug(`[Recovery] ${lishID.slice(0, 8)}: scheduling recovery for ${errorCode}, delay ${Math.round(delay / 1000)}s (attempt ${cumulative + 1}/${MAX_RECOVERY_ATTEMPTS})`);
+		this.deps.broadcast('transfer.recovery:scheduled', { lishID, delayMs: delay, retryCount: cumulative });
 		this.schedule(lishID, delay);
 	}
 
@@ -92,12 +100,13 @@ export class ErrorRecovery {
 		const entry = this.entries.get(lishID);
 		if (!entry) return;
 		entry.retryCount++;
+		this.cumulativeRetries.set(lishID, entry.retryCount);
 		entry.timer = null;
 
 		// Max retries: stop permanently after exhausting attempts
-		if (entry.retryCount > MAX_RECOVERY_ATTEMPTS) {
+		if (entry.retryCount >= MAX_RECOVERY_ATTEMPTS) {
 			console.error(`[Recovery] ${lishID.slice(0, 8)}: max recovery attempts (${MAX_RECOVERY_ATTEMPTS}) exceeded for ${entry.errorCode}, giving up`);
-			this.deps.broadcast('transfer.recovery:exhausted', { lishID, errorCode: entry.errorCode, attempts: entry.retryCount - 1 });
+			this.deps.broadcast('transfer.recovery:exhausted', { lishID, errorCode: entry.errorCode, attempts: entry.retryCount });
 			this.stop(lishID);
 			return;
 		}
@@ -138,6 +147,7 @@ export class ErrorRecovery {
 
 		const success = await this.deps.attemptRecover(lishID, downloadWasEnabled, uploadWasEnabled);
 		if (success) {
+			this.cumulativeRetries.delete(lishID);
 			console.log(`[Recovery] ${lishID.slice(0, 8)}: recovered successfully`);
 			this.deps.broadcast('transfer.recovery:recovered', { lishID });
 		} else {

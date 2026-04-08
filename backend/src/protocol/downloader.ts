@@ -346,17 +346,21 @@ export class Downloader {
 			// Phase 3: download chunks
 			if (this.state === 'downloading') {
 				if (this.missingChunks.length === 0) {
-					if (await this.verifyFilesExist()) {
+					const missingFileIndexes = await this.getMissingFileIndexes();
+					if (missingFileIndexes.length === 0) {
 						console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
 						this.state = 'downloaded';
 						this.downloadResolve?.();
 						return;
 					}
-					// Files missing on disk despite DB saying complete — re-fetch manifest
-					console.warn(`[DL] ${this.lishID.slice(0, 8)}: chunks complete in DB but files missing on disk, requesting manifest`);
-					this.needsManifest = true;
-					this.state = 'awaiting-manifest';
-					return;
+					// Reset only the missing files' chunks (surgical, not full manifest re-fetch)
+					console.warn(`[DL] ${this.lishID.slice(0, 8)}: ${missingFileIndexes.length} files missing on disk, resetting their chunks`);
+					for (const fi of missingFileIndexes) {
+						await this.allocateSingleFile(fi);
+						this.dataServer.resetFileChunks(this.lishID, fi);
+					}
+					this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
+					// Continue downloading the reset chunks
 				}
 				if (this.peers.size === 0) {
 					console.debug(`[DL] no peers, calling for peers (failed: ${this.failedPeers.size})`);
@@ -376,16 +380,19 @@ export class Downloader {
 					try { await this.downloadChunks(); } finally { this.downloadActive = false; }
 					const remaining = this.dataServer.getMissingChunks(this.lishID);
 					if (remaining.length === 0) {
-						if (await this.verifyFilesExist()) {
+						const missingFiles = await this.getMissingFileIndexes();
+						if (missingFiles.length === 0) {
 							console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
 							this.state = 'downloaded';
 							this.downloadResolve?.();
 							return;
 						}
-						console.warn(`[DL] ${this.lishID.slice(0, 8)}: chunks complete in DB but files missing on disk, requesting manifest`);
-						this.needsManifest = true;
-						this.state = 'awaiting-manifest';
-						return;
+						console.warn(`[DL] ${this.lishID.slice(0, 8)}: ${missingFiles.length} files missing on disk after downloadChunks, resetting`);
+						for (const fi of missingFiles) {
+							await this.allocateSingleFile(fi);
+							this.dataServer.resetFileChunks(this.lishID, fi);
+						}
+						// Fall through to retry with reset chunks
 					}
 					console.log(`[DL] ${remaining.length} chunks missing, retrying in 10s`);
 					this.peers.clear();
@@ -556,13 +563,12 @@ export class Downloader {
 								downloadedCount = Math.max(0, downloadedCount - resetCount);
 							} catch (allocErr: any) {
 								console.error(`[DL] Re-allocation failed for ${affectedFile.path}: ${allocErr.message}`);
-								this.resumeWriters();
 								this.setError(ErrorCodes.IO_NOT_FOUND, this.downloadDir);
 								break;
 							} finally {
 								this.fileReallocInProgress.delete(chunk.fileIndex);
+								this.resumeWriters();
 							}
-							this.resumeWriters();
 							this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: affectedFile.path, retryCount: attempts, maxRetries: Downloader.MAX_FILE_REALLOC, resolved: true });
 							continue; // chunk already in fileChunks, don't push again
 						} else {
@@ -811,17 +817,20 @@ export class Downloader {
 		console.debug(`[DL] peer ${peerID.slice(0, 12)} connected [${connectionType}] have=${havePercent}% (total: ${this.peers.size})`);
 	}
 
-	private async verifyFilesExist(): Promise<boolean> {
-		if (!this.lish.files || this.lish.files.length === 0) return false;
-		for (const file of this.lish.files) {
+	private async getMissingFileIndexes(): Promise<number[]> {
+		if (!this.lish.files || this.lish.files.length === 0) return [];
+		const missing: number[] = [];
+		for (let i = 0; i < this.lish.files.length; i++) {
+			const file = this.lish.files[i]!;
 			const filePath = this.safePath(file.path);
 			const f = Bun.file(filePath);
-			if (!(await f.exists()) || f.size !== file.size) {
-				trace(`[DL] verifyFilesExist: ${file.path} missing or wrong size (exists=${await f.exists()}, size=${f.size}, expected=${file.size})`);
-				return false;
+			const exists = await f.exists();
+			if (!exists || f.size !== file.size) {
+				trace(`[DL] getMissingFileIndexes: ${file.path} exists=${exists} size=${f.size} expected=${file.size}`);
+				missing.push(i);
 			}
 		}
-		return true;
+		return missing;
 	}
 
 	private safePath(relativePath: string): string {

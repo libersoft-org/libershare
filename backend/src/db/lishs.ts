@@ -508,12 +508,13 @@ export function isVerified(db: Database, lishID: LISHid): boolean {
 	const internalID = getInternalID(db, lishID);
 	if (internalID === null) return false;
 	const row = db
-		.query<{ unverified: number }, [number]>(
-			`SELECT COUNT(*) as unverified FROM lishs_chunks c
+		.query<{ total: number; unverified: number }, [number]>(
+			`SELECT COUNT(*) as total, SUM(CASE WHEN c.have = FALSE THEN 1 ELSE 0 END) as unverified FROM lishs_chunks c
 		 JOIN lishs_files f ON f.id = c.id_lishs_files
-		 WHERE f.id_lishs = ? AND c.have = FALSE`
+		 WHERE f.id_lishs = ?`
 		)
 		.get(internalID);
+	if ((row?.total ?? 0) === 0) return false;
 	return (row?.unverified ?? 1) === 0;
 }
 
