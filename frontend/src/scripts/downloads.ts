@@ -435,6 +435,18 @@ export async function initDownloads(): Promise<void> {
 				}));
 				return;
 			}
+			// Verifying signal (file deletion recovery — backend verifies all checksums)
+			if (data.filePath === '__verifying__') {
+				disabledDownloads.delete(data.lishID);
+				const prevTimer = downloadStaleTimeouts.get(data.lishID);
+				if (prevTimer) { clearTimeout(prevTimer); downloadStaleTimeouts.delete(data.lishID); }
+				downloads.update(list => list.map(d => {
+					if (d.id !== data.lishID) return d;
+					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
+					return { ...d, status: 'verifying' as DownloadStatus, progress };
+				}));
+				return;
+			}
 			if (data.peers > 0) activeDownloads.set(data.lishID, Date.now());
 			else activeDownloads.delete(data.lishID);
 			const hasPeers = data.peers > 0;

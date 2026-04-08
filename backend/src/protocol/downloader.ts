@@ -557,8 +557,8 @@ export class Downloader {
 						this.writePaused = true;
 						console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${Downloader.MAX_FILE_REALLOC})`);
 						this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: this.downloadDir, retryCount: globalAttempts, maxRetries: Downloader.MAX_FILE_REALLOC });
-						// Emit paused state immediately so FE shows "recovering"
-						this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond: 0, filePath: '__recovering__' });
+						// Emit verifying state so FE shows "Ověřuji" during the 10s pause + recovery
+						this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
 						// 10s delay — let the user finish deleting files before we scan
 						await new Promise<void>(resolve => {
 							const timer = setTimeout(resolve, 10_000);
