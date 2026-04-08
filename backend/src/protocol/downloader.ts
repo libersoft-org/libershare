@@ -603,6 +603,9 @@ export class Downloader {
 											}
 										}
 									} finally { await fd.close(); }
+									// Emit 100% for completed file
+									const donePct = totalMissingBytes > 0 ? Math.round((allocatedBytes / totalMissingBytes) * 100) : 100;
+									this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: donePct, allocatingFile: file.path, allocatingFileProgress: 100 });
 									console.log(`[DL] Allocated ${file.path} (${Math.round(file.size / 1024 / 1024)}MB)`);
 								}
 							}

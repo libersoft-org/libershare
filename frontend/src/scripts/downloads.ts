@@ -409,21 +409,19 @@ export async function initDownloads(): Promise<void> {
 		// Guards per-file progress updates while a resetFiles refresh is in-flight
 		const resetFilesInFlight = new Set<string>();
 		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number; resetFiles?: boolean }) => {
-			// Reset files signal — chunks were reset, zero out all per-file progress and refresh from backend
+			// Reset files signal — chunks were reset, zero out all per-file progress synchronously
 			if ((data as any).resetFiles) {
 				lastDownloadedChunks.set(data.lishID, 0);
 				resetFilesInFlight.add(data.lishID);
-				// Refresh full detail from backend — guaranteed accurate per-file state
-				api.lishs.get(data.lishID).then((detail: any) => {
-					if (!detail) return;
-					const fresh = detailToDownload(detail);
-					downloads.update(list => list.map(d => {
-						if (d.id !== data.lishID) return d;
-						return { ...d, ...fresh, downloadEnabled: d.downloadEnabled, uploadEnabled: d.uploadEnabled };
-					}));
-				}).finally(() => {
-					resetFilesInFlight.delete(data.lishID);
-				});
+				downloads.update(list => list.map(d => {
+					if (d.id !== data.lishID) return d;
+					const files = d.files.map(f => f.type === 'file' ? { ...f, progress: 0, verifiedChunks: 0, downloadedSize: '0 B' } : f);
+					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
+					const downloadedSize = d.rawTotalSize > 0 && data.totalChunks > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '0 B';
+					return { ...d, progress, downloadedSize, verifiedChunks: data.downloadedChunks, totalChunks: data.totalChunks, files };
+				}));
+				// Clear guard after 5s — enough time for allocating events to pass
+				setTimeout(() => resetFilesInFlight.delete(data.lishID), 5000);
 				return;
 			}
 			// Allocating signal — always process (even if disabled — clears stale disabled state)
