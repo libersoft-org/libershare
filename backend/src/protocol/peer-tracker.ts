@@ -180,7 +180,16 @@ function emitPeerDetails(): void {
 		const peerMap = byLish.get(entry.lishID)!;
 
 		const windowBytes = entry.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-		const windowSec = entry.speedSamples.length > 1 ? (now - entry.speedSamples[0]!.time) / 1000 : 1;
+		// For single sample: use elapsed time since that sample (decays naturally)
+		// For multiple samples: use time span between first and last
+		let windowSec: number;
+		if (entry.speedSamples.length > 1) {
+			windowSec = (now - entry.speedSamples[0]!.time) / 1000;
+		} else if (entry.speedSamples.length === 1) {
+			windowSec = Math.max(1, (now - entry.speedSamples[0]!.time) / 1000);
+		} else {
+			windowSec = 1;
+		}
 		const speed = windowSec > 0.1 ? Math.round(windowBytes / windowSec) : 0;
 		const isStale = now - entry.lastActivity > STALE_THRESHOLD || entry.speedSamples.length === 0;
 
