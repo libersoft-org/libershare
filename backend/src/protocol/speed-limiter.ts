@@ -45,7 +45,7 @@ export class SpeedLimiter {
 	}
 
 	async throttle(bytes: number): Promise<void> {
-		if (this.maxBytesPerSec <= 0) return;
+		if (this.maxBytesPerSec <= 0 || bytes <= 0) return;
 
 		const now = Date.now();
 

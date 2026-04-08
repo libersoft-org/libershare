@@ -59,6 +59,7 @@ export class Downloader {
 	private speedSamples: { time: number; bytes: number }[] = [];
 	private emaSpeed = 0;
 	private lastEmaUpdate = Date.now();
+	private lastDecayTime = Date.now();
 	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
 	private errorCode?: string;
 	private errorDetail?: string;
@@ -604,13 +605,14 @@ export class Downloader {
 			activePeerLoops.delete(peerID);
 		};
 
-		// 1s periodic progress emitter — EMA decay between chunks
+		// 1s periodic progress emitter — EMA decay between chunks.
+		// Uses lastDecayTime (not lastEmaUpdate) to avoid corrupting dt in download path.
 		const progressInterval = setInterval(() => {
 			const now = Date.now();
-			const dt = (now - this.lastEmaUpdate) / 1000;
-			if (dt > 0.5) {
-				this.emaSpeed *= Math.exp(-dt / 5); // 5s half-life decay
-				this.lastEmaUpdate = now;
+			const decayDt = (now - this.lastDecayTime) / 1000;
+			if (decayDt > 0.5) {
+				this.emaSpeed *= Math.exp(-decayDt / 5); // 5s time constant
+				this.lastDecayTime = now;
 			}
 			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond: Math.round(this.emaSpeed) });
 		}, 1000);
@@ -691,6 +693,8 @@ export class Downloader {
 
 				const { stream: dlStream, connectionType } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
 				if (this.destroyed) { dlStream.abort(new Error('downloader destroyed')); return; }
+				// Guard: peer may have connected via handlePubsubMessage during our dial
+				if (this.peers.has(peerID)) { await new LISHClient(dlStream).close().catch(() => {}); trace(`[DL] probe ${peerID.slice(0, 12)}: already connected, closing duplicate`); continue; }
 				this.peers.set(peerID, new LISHClient(dlStream));
 				registerDownloadPeer(this.lishID, peerID, connectionType);
 				this.lastExhaustedTime = 0;
