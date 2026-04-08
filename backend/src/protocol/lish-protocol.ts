@@ -130,6 +130,10 @@ export function resetUploadState(): void {
 // Per-LISH upload enabled/paused — persisted to DB, default=paused
 const uploadEnabled = new Set<string>();
 let persistUploadState: ((lishID: string, enabled: boolean) => void) | null = null;
+// Recovery hooks — set by transfer.ts to trigger download recovery on upload I/O errors
+let startRecoveryFn: ((lishID: string, errorCode: string, prev: { downloadEnabled: boolean; uploadEnabled: boolean }) => void) | null = null;
+let isDownloadEnabled: ((lishID: string) => boolean) | null = null;
+export function setUploadRecoveryHooks(recoveryFn: typeof startRecoveryFn, downloadEnabledFn: typeof isDownloadEnabled): void { startRecoveryFn = recoveryFn; isDownloadEnabled = downloadEnabledFn; }
 
 export function initUploadState(enabledLishs: Set<string>, persistFn: (lishID: string, enabled: boolean) => void): void {
 	uploadEnabled.clear();
@@ -195,9 +199,12 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					sendLengthPrefixed(stream, new TextEncoder().encode(JSON.stringify(nullResponse)));
 					if (count >= IO_ERROR_THRESHOLD && uploadEnabled.has(chunkReq.lishID)) {
 						console.error(`[Upload] ${chunkReq.lishID.slice(0, 8)}: ${count} consecutive I/O errors — auto-disabling upload`);
+						const wasDownloadEnabled = isDownloadEnabled?.(chunkReq.lishID) ?? false;
 						disableUpload(chunkReq.lishID);
 						dataServer.setError(chunkReq.lishID as LISHid, ErrorCodes.IO_NOT_FOUND, `Upload I/O error`);
 						broadcastFn?.('transfer.upload:error', { lishID: chunkReq.lishID, error: ErrorCodes.IO_NOT_FOUND, errorDetail: 'Upload source directory not accessible' });
+						// Trigger recovery for download too — files may be missing on disk
+						if (startRecoveryFn) startRecoveryFn(chunkReq.lishID, ErrorCodes.IO_NOT_FOUND, { downloadEnabled: wasDownloadEnabled, uploadEnabled: true });
 					}
 					continue;
 				}

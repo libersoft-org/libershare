@@ -2,7 +2,7 @@ import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
-import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads } from '../protocol/lish-protocol.ts';
+import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, setUploadRecoveryHooks } from '../protocol/lish-protocol.ts';
 import { join, dirname } from 'path';
 import { access, constants } from 'fs/promises';
 import { isBusy } from './busy.ts';
@@ -201,9 +201,29 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		}
 		const missing = dataServer.getMissingChunks(p.lishID);
 		if (missing.length === 0 && dataServer.getAllChunkCount(p.lishID) > 0) {
-			const send = broadcast ?? (() => {});
-			send('transfer.download:enabled', { lishID: p.lishID });
-			return { success: true };
+			// DB says complete — but verify files actually exist on disk
+			if (lish.files && lish.directory) {
+				let diskOk = true;
+				for (const file of lish.files) {
+					const filePath = join(lish.directory, file.path);
+					const f = Bun.file(filePath);
+					if (!(await f.exists()) || f.size !== file.size) { diskOk = false; break; }
+				}
+				if (!diskOk) {
+					// Files missing on disk — reset ALL chunks and start fresh download
+					console.warn(`[Transfer] ${p.lishID.slice(0, 8)}: DB says complete but files missing on disk, resetting for re-download`);
+					dataServer.resetVerification(p.lishID);
+					// Fall through to start download
+				} else {
+					const send = broadcast ?? (() => {});
+					send('transfer.download:enabled', { lishID: p.lishID });
+					return { success: true };
+				}
+			} else {
+				const send = broadcast ?? (() => {});
+				send('transfer.download:enabled', { lishID: p.lishID });
+				return { success: true };
+			}
 		}
 		pendingDownloads.add(p.lishID);
 		try {
@@ -279,6 +299,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	// Register enableDownload for module-level restartDownloadIfEnabled
 	setEnableDownloadFn(enableDownload);
 	setStopRecoveryFn((lishID) => recovery.stop(lishID));
+	// Hook upload I/O errors into download recovery
+	setUploadRecoveryHooks(
+		(lishID, errorCode, prev) => startRecoveryIfEnabled(lishID, errorCode, prev),
+		(lishID) => downloadEnabledLishs.has(lishID),
+	);
 
 	function getActiveTransfers(): ActiveTransfer[] {
 		const transfers: ActiveTransfer[] = [];
