@@ -91,6 +91,13 @@ export function unregisterAllPeersForLISH(lishID: string): void {
 
 // --- Public API: recording bytes ---
 
+/** Keep peer alive during throttle waits (prevents stale/prune while peer is throttled). */
+export function touchPeer(lishID: string, peerID: string, direction: 'download' | 'upload'): void {
+	const k = key(lishID, peerID, direction);
+	const entry = entries.get(k);
+	if (entry) entry.lastActivity = Date.now();
+}
+
 export function recordDownloadBytes(lishID: string, peerID: string, bytes: number, currentFile?: string): void {
 	const k = key(lishID, peerID, 'download');
 	const entry = entries.get(k);

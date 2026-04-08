@@ -10,7 +10,7 @@ import { type HaveChunks, LISH_PROTOCOL, LISHClient } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { trace } from '../logger.ts';
-import { registerDownloadPeer, unregisterDownloadPeer, recordDownloadBytes, unregisterAllPeersForLISH } from './peer-tracker.ts';
+import { registerDownloadPeer, unregisterDownloadPeer, recordDownloadBytes, unregisterAllPeersForLISH, touchPeer } from './peer-tracker.ts';
 
 type NodeID = string;
 interface PubsubMessage {
@@ -438,6 +438,7 @@ export class Downloader {
 				if (!chunk) break;
 
 				// Throttle BEFORE downloading — ensures bandwidth is reserved before network transfer
+				touchPeer(this.lishID, peerID, 'download');
 				await downloadLimiter.throttle(this.lish.chunkSize);
 				const result = await this.downloadChunk(client, chunk.chunkID, peerID);
 				if (result === 'error') {
