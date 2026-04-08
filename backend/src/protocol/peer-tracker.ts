@@ -25,6 +25,9 @@ interface PeerEntry {
 	totalBytes: number;
 	currentFile?: string;
 	lastActivity: number;
+	/** Exponential moving average of speed (bytes/s). Decays every emitter tick. */
+	emaSpeed: number;
+	lastEmaUpdate: number;
 }
 
 const SPEED_WINDOW = 10_000; // 10s rolling window
@@ -55,7 +58,7 @@ export function registerDownloadPeer(lishID: string, peerID: string, connectionT
 	const k = key(lishID, peerID, 'download');
 	const existing = entries.get(k);
 	if (existing) { existing.connectionType = connectionType; return; }
-	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now() });
+	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now() });
 	trace(`[PEERS] register download ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
@@ -71,7 +74,7 @@ export function registerUploadPeer(lishID: string, peerID: string, connectionTyp
 	const k = key(lishID, peerID, 'upload');
 	const existing = entries.get(k);
 	if (existing) { existing.connectionType = connectionType; return; }
-	entries.set(k, { peerID, lishID, direction: 'upload', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now() });
+	entries.set(k, { peerID, lishID, direction: 'upload', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now() });
 	trace(`[PEERS] register upload ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
@@ -107,6 +110,12 @@ export function recordDownloadBytes(lishID: string, peerID: string, bytes: numbe
 	entry.totalBytes += bytes;
 	cumulativeBytes.set(k, entry.totalBytes);
 	entry.lastActivity = now;
+	// EMA: instantaneous speed from this chunk, blended with history
+	const dt = Math.max((now - entry.lastEmaUpdate) / 1000, 0.1);
+	const instantSpeed = bytes / dt;
+	const alpha = Math.min(0.5, dt / 3); // adapt smoothing to time gap
+	entry.emaSpeed = entry.emaSpeed * (1 - alpha) + instantSpeed * alpha;
+	entry.lastEmaUpdate = now;
 	if (currentFile !== undefined) entry.currentFile = currentFile;
 }
 
@@ -119,6 +128,11 @@ export function recordUploadBytes(lishID: string, peerID: string, bytes: number)
 	entry.totalBytes += bytes;
 	cumulativeBytes.set(k, entry.totalBytes);
 	entry.lastActivity = now;
+	const dt = Math.max((now - entry.lastEmaUpdate) / 1000, 0.1);
+	const instantSpeed = bytes / dt;
+	const alpha = Math.min(0.5, dt / 3);
+	entry.emaSpeed = entry.emaSpeed * (1 - alpha) + instantSpeed * alpha;
+	entry.lastEmaUpdate = now;
 }
 
 // --- Public API: subscription management ---
@@ -183,9 +197,14 @@ function emitPeerDetails(): void {
 		if (!byLish.has(entry.lishID)) byLish.set(entry.lishID, new Map());
 		const peerMap = byLish.get(entry.lishID)!;
 
-		// Per-peer speed = bytes in window / window duration (always 10s for stable values)
-		const windowBytes = entry.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-		const speed = Math.round(windowBytes / (SPEED_WINDOW / 1000));
+		// Decay EMA towards zero when no data arrives (1s tick)
+		const dt = (now - entry.lastEmaUpdate) / 1000;
+		if (dt > 0.5) {
+			const decay = Math.exp(-dt / 3); // 3s half-life
+			entry.emaSpeed *= decay;
+			entry.lastEmaUpdate = now;
+		}
+		const speed = Math.round(entry.emaSpeed);
 		const isStale = now - entry.lastActivity > STALE_THRESHOLD;
 
 		const existing = peerMap.get(entry.peerID);
