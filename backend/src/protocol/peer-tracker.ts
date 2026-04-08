@@ -26,9 +26,12 @@ interface PeerEntry {
 	totalBytes: number;
 	currentFile?: string;
 	lastActivity: number;
-	/** Exponential moving average of speed (bytes/s). Decays every emitter tick. */
+	/** Exponential moving average of speed (bytes/s). Updated by recordBytes, decayed by emitter. */
 	emaSpeed: number;
+	/** Last time recordBytes updated the EMA (used for instantSpeed dt calculation). */
 	lastEmaUpdate: number;
+	/** Last time the emitter decayed the EMA (separate from lastEmaUpdate to avoid corrupting dt). */
+	lastDecayTime: number;
 	/** Percentage of LISH chunks this peer has (from have message). */
 	havePercent?: number;
 }
@@ -61,7 +64,7 @@ export function registerDownloadPeer(lishID: string, peerID: string, connectionT
 	const k = key(lishID, peerID, 'download');
 	const existing = entries.get(k);
 	if (existing) { existing.connectionType = connectionType; if (havePercent !== undefined) existing.havePercent = havePercent; return; }
-	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now(), havePercent });
+	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now(), lastDecayTime: Date.now(), havePercent });
 	trace(`[PEERS] register download ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
@@ -77,7 +80,7 @@ export function registerUploadPeer(lishID: string, peerID: string, connectionTyp
 	const k = key(lishID, peerID, 'upload');
 	const existing = entries.get(k);
 	if (existing) { existing.connectionType = connectionType; return; }
-	entries.set(k, { peerID, lishID, direction: 'upload', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now() });
+	entries.set(k, { peerID, lishID, direction: 'upload', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now(), lastDecayTime: Date.now() });
 	trace(`[PEERS] register upload ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
@@ -115,7 +118,7 @@ export function recordDownloadBytes(lishID: string, peerID: string, bytes: numbe
 	let entry = entries.get(k);
 	if (!entry) {
 		// Re-register if pruned while peer was throttled
-		entries.set(k, { peerID, lishID, direction: 'download', connectionType: 'DIRECT', connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now() });
+		entries.set(k, { peerID, lishID, direction: 'download', connectionType: 'DIRECT', connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now(), lastDecayTime: Date.now() });
 		entry = entries.get(k)!;
 	}
 	const now = Date.now();
@@ -123,10 +126,11 @@ export function recordDownloadBytes(lishID: string, peerID: string, bytes: numbe
 	entry.totalBytes += bytes;
 	cumulativeBytes.set(k, entry.totalBytes);
 	entry.lastActivity = now;
-	// EMA: instantaneous speed from this chunk, blended with history
+	// EMA: instantaneous speed from this chunk, blended with history.
+	// Uses lastEmaUpdate (not lastDecayTime) for accurate inter-chunk dt.
 	const dt = Math.max((now - entry.lastEmaUpdate) / 1000, 0.1);
 	const instantSpeed = bytes / dt;
-	const alpha = Math.min(0.5, dt / 3); // adapt smoothing to time gap
+	const alpha = Math.min(0.4, dt / 5); // 5s time constant (matches decay)
 	entry.emaSpeed = entry.emaSpeed * (1 - alpha) + instantSpeed * alpha;
 	entry.lastEmaUpdate = now;
 	if (currentFile !== undefined) entry.currentFile = currentFile;
@@ -136,7 +140,7 @@ export function recordUploadBytes(lishID: string, peerID: string, bytes: number)
 	const k = key(lishID, peerID, 'upload');
 	let entry = entries.get(k);
 	if (!entry) {
-		entries.set(k, { peerID, lishID, direction: 'upload', connectionType: 'DIRECT', connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now() });
+		entries.set(k, { peerID, lishID, direction: 'upload', connectionType: 'DIRECT', connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now(), lastDecayTime: Date.now() });
 		entry = entries.get(k)!;
 	}
 	const now = Date.now();
@@ -146,7 +150,7 @@ export function recordUploadBytes(lishID: string, peerID: string, bytes: number)
 	entry.lastActivity = now;
 	const dt = Math.max((now - entry.lastEmaUpdate) / 1000, 0.1);
 	const instantSpeed = bytes / dt;
-	const alpha = Math.min(0.5, dt / 3);
+	const alpha = Math.min(0.4, dt / 5);
 	entry.emaSpeed = entry.emaSpeed * (1 - alpha) + instantSpeed * alpha;
 	entry.lastEmaUpdate = now;
 }
@@ -213,12 +217,12 @@ function emitPeerDetails(): void {
 		if (!byLish.has(entry.lishID)) byLish.set(entry.lishID, new Map());
 		const peerMap = byLish.get(entry.lishID)!;
 
-		// Decay EMA towards zero when no data arrives (1s tick)
-		const dt = (now - entry.lastEmaUpdate) / 1000;
-		if (dt > 0.5) {
-			const decay = Math.exp(-dt / 3); // 3s half-life
-			entry.emaSpeed *= decay;
-			entry.lastEmaUpdate = now;
+		// Decay EMA towards zero when no data arrives (1s tick).
+		// Uses lastDecayTime (not lastEmaUpdate) to avoid corrupting dt in recordBytes.
+		const decayDt = (now - entry.lastDecayTime) / 1000;
+		if (decayDt > 0.5) {
+			entry.emaSpeed *= Math.exp(-decayDt / 5); // 5s time constant (matches downloader)
+			entry.lastDecayTime = now;
 		}
 		const speed = Math.round(entry.emaSpeed);
 		const isStale = now - entry.lastActivity > STALE_THRESHOLD;
@@ -233,6 +237,7 @@ function emitPeerDetails(): void {
 				existing.uploadSpeed = speed;
 				existing.totalUploaded = entry.totalBytes;
 			}
+			if (entry.havePercent !== undefined) existing.havePercent = entry.havePercent;
 			existing.stale = existing.stale && isStale;
 			if (entry.connectedAt < existing.connectedAt) existing.connectedAt = entry.connectedAt;
 			if (entry.lastActivity > existing.lastActivity) existing.lastActivity = entry.lastActivity;
