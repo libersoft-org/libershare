@@ -430,6 +430,7 @@ export class Downloader {
 		const peerLoop = async (peerID: string, client: LISHClient): Promise<void> => {
 			activePeerLoops.add(peerID);
 			let skippedChunks = 0;
+			let consecutiveNotAvailable = 0;
 			while (true) {
 				if (this.destroyed || this.disabled) break;
 				await this.waitIfDisabled();
@@ -460,12 +461,21 @@ export class Downloader {
 				if (result === 'not_available') {
 					skippedChunks++;
 					globalNotAvailable++;
-					if (skippedChunks % 500 === 0) trace(`[DL] Peer ${peerID.slice(0, 12)} skipped ${skippedChunks} chunks (not_available, global: ${globalNotAvailable}/${queue.length})`);
+					consecutiveNotAvailable++;
+					if (skippedChunks % 500 === 0) trace(`[DL] Peer ${peerID.slice(0, 12)} skipped ${skippedChunks} chunks (not_available, consecutive: ${consecutiveNotAvailable}, global: ${globalNotAvailable}/${queue.length})`);
 					await lock.runExclusive(() => { queue.push(chunk!); });
 					if (this.disabled || this.destroyed) break;
+					// Per-peer: disconnect if peer has nothing useful (50 consecutive not_available without a single served chunk)
+					if (consecutiveNotAvailable >= 50) {
+						console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped: ${consecutiveNotAvailable} consecutive not_available`);
+						this.peers.delete(peerID);
+						this.failedPeers.add(peerID);
+						unregisterDownloadPeer(this.lishID, peerID);
+						await client.close().catch(() => {});
+						break;
+					}
 					if (globalNotAvailable > queue.length) {
 						console.debug(`[DL] Peer ${peerID.slice(0, 12)} exhausted (${globalNotAvailable} not_available)`);
-						servingPeers.delete(peerID);
 						break;
 					}
 					spawnNewPeerLoops();
@@ -695,7 +705,22 @@ export class Downloader {
 				if (this.destroyed) { dlStream.abort(new Error('downloader destroyed')); return; }
 				// Guard: peer may have connected via handlePubsubMessage during our dial
 				if (this.peers.has(peerID)) { await new LISHClient(dlStream).close().catch(() => {}); trace(`[DL] probe ${peerID.slice(0, 12)}: already connected, closing duplicate`); continue; }
-				this.peers.set(peerID, new LISHClient(dlStream));
+
+				// Test chunk: verify peer can actually serve data (not just have manifest with upload disabled)
+				const dlClient = new LISHClient(dlStream);
+				const testChunkID = this.missingChunks[0]?.chunkID;
+				if (testChunkID) {
+					const testData = await dlClient.requestChunk(this.lishID, testChunkID);
+					if (!testData) {
+						console.debug(`[DL] probe ${peerID.slice(0, 12)}: cannot serve chunks (upload disabled?)`);
+						await dlClient.close().catch(() => {});
+						this.failedPeers.add(peerID);
+						continue;
+					}
+					trace(`[DL] probe ${peerID.slice(0, 12)}: test chunk OK`);
+				}
+
+				this.peers.set(peerID, dlClient);
 				registerDownloadPeer(this.lishID, peerID, connectionType);
 				this.lastExhaustedTime = 0;
 				foundNew = true;
