@@ -103,8 +103,12 @@ export function touchPeer(lishID: string, peerID: string, direction: 'download' 
 
 export function recordDownloadBytes(lishID: string, peerID: string, bytes: number, currentFile?: string): void {
 	const k = key(lishID, peerID, 'download');
-	const entry = entries.get(k);
-	if (!entry) return;
+	let entry = entries.get(k);
+	if (!entry) {
+		// Re-register if pruned while peer was throttled
+		entries.set(k, { peerID, lishID, direction: 'download', connectionType: 'DIRECT', connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now() });
+		entry = entries.get(k)!;
+	}
 	const now = Date.now();
 	entry.speedSamples.push({ time: now, bytes });
 	entry.totalBytes += bytes;
@@ -121,8 +125,11 @@ export function recordDownloadBytes(lishID: string, peerID: string, bytes: numbe
 
 export function recordUploadBytes(lishID: string, peerID: string, bytes: number): void {
 	const k = key(lishID, peerID, 'upload');
-	const entry = entries.get(k);
-	if (!entry) return;
+	let entry = entries.get(k);
+	if (!entry) {
+		entries.set(k, { peerID, lishID, direction: 'upload', connectionType: 'DIRECT', connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now() });
+		entry = entries.get(k)!;
+	}
 	const now = Date.now();
 	entry.speedSamples.push({ time: now, bytes });
 	entry.totalBytes += bytes;

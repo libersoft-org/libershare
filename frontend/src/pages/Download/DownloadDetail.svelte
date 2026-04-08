@@ -623,7 +623,7 @@
 						</TableRow>
 						<TableRow>
 							<Cell>{$t('downloads.downloadingFrom')}:</Cell>
-							<Cell align="right">{currentPeers.length || download.downloadPeers}</Cell>
+							<Cell align="right">{download.downloadPeers}</Cell>
 						</TableRow>
 						<TableRow>
 							<Cell>{$t('downloads.uploadingTo')}:</Cell>
