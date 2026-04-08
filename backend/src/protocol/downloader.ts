@@ -573,6 +573,8 @@ export class Downloader {
 							console.log(`[DL] Recovery: reset ALL chunks, verify ALL files`);
 							// Step 1: Reset ALL chunks for entire LISH
 							this.dataServer.resetVerification(this.lishID);
+							// Reset FE per-file progress to 0
+							this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, resetFiles: true } as any);
 							console.log(`[DL] All chunks reset to have=FALSE`);
 
 							// Step 2: Re-allocate missing files with progress

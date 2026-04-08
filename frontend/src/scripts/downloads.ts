@@ -425,7 +425,7 @@ export async function initDownloads(): Promise<void> {
 				if (prevTimer) { clearTimeout(prevTimer); downloadStaleTimeouts.delete(data.lishID); }
 				downloads.update(list => list.map(d => {
 					if (d.id !== data.lishID) return d;
-					if (d.status !== 'allocating' && isStatusLocked(d.status)) return d;
+					if (d.status !== 'allocating' && d.status !== 'retrying' && isStatusLocked(d.status)) return d;
 					const allocProgress = data.fileDownloadedChunks ?? 0;
 					// Update per-file allocation progress
 					let files = d.files;
