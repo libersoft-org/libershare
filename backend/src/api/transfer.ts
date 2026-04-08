@@ -293,10 +293,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				transfers.push({ lishID, type: 'upload-disabled', peers: 0, bytesPerSecond: 0 });
 			} else {
 				const now = Date.now();
-				const samples = info.speedSamples.filter(s => s.time > now - 10000);
-				const windowBytes = samples.reduce((sum, s) => sum + s.bytes, 0);
-				const span = samples.length > 1 ? (now - samples[0]!.time) / 1000 : 0;
-				const bytesPerSecond = Math.round(windowBytes / Math.max(span, 5));
+				const bytesPerSecond = Math.round(info.emaSpeed ?? 0);
 				transfers.push({ lishID, type: 'uploading', peers: info.peers, bytesPerSecond });
 			}
 		}

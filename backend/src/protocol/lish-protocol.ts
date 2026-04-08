@@ -217,20 +217,22 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					if (remotePeerID) recordUploadBytes(chunkReq.lishID, fullRemotePeer, chunkData.length);
 					dataServer.incrementUploadedBytes(chunkReq.lishID as import('@shared').LISHid, chunkData.length);
 					await uploadLimiter.throttle(chunkData.length);
-					// Upload progress tracking (rolling 10s speed window)
+					// Upload progress tracking (EMA speed)
 					if (broadcastFn) {
 						let info = activeUploads.get(chunkReq.lishID);
-						if (!info) { info = { chunks: 0, startTime: Date.now(), bytes: 0, peers: 0, speedSamples: [] }; activeUploads.set(chunkReq.lishID, info); }
+						if (!info) { info = { chunks: 0, startTime: Date.now(), bytes: 0, peers: 0, speedSamples: [], emaSpeed: 0, lastEmaUpdate: Date.now() }; activeUploads.set(chunkReq.lishID, info); }
 						info.chunks++;
 						info.bytes += chunkData.length;
 						info.peers = activeStreamCount.get(chunkReq.lishID) ?? 1;
 						const now = Date.now();
 						info.speedSamples.push({ time: now, bytes: chunkData.length });
 						info.speedSamples = info.speedSamples.filter(s => s.time > now - 10000);
-						const windowBytes = info.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-						const span = info.speedSamples.length > 1 ? (now - info.speedSamples[0]!.time) / 1000 : 0;
-						const bytesPerSecond = Math.round(windowBytes / Math.max(span, 5));
-						broadcastFn('transfer.upload:progress', { lishID: chunkReq.lishID, uploadedChunks: info.chunks, bytesPerSecond, peers: info.peers });
+						const dt = Math.max((now - info.lastEmaUpdate) / 1000, 0.1);
+						const instantSpeed = chunkData.length / dt;
+						const alpha = Math.min(0.4, dt / 5);
+						info.emaSpeed = info.emaSpeed * (1 - alpha) + instantSpeed * alpha;
+						info.lastEmaUpdate = now;
+						broadcastFn('transfer.upload:progress', { lishID: chunkReq.lishID, uploadedChunks: info.chunks, bytesPerSecond: Math.round(info.emaSpeed), peers: info.peers });
 					}
 				}
 			}

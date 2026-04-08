@@ -57,6 +57,8 @@ export class Downloader {
 	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number }) => void;
 	private onManifestImported?: (lishID: string) => void;
 	private speedSamples: { time: number; bytes: number }[] = [];
+	private emaSpeed = 0;
+	private lastEmaUpdate = Date.now();
 	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
 	private errorCode?: string;
 	private errorDetail?: string;
@@ -579,13 +581,14 @@ export class Downloader {
 				recordDownloadBytes(this.lishID, peerID, data.length, this.lish.files?.[chunk.fileIndex]?.path);
 				downloadedCount++;
 				if (this.writeRetryCount > 0) this.writeRetryCount = 0;
-				// Rolling speed average (10s window, min 5s divisor to prevent burst spikes)
+				// EMA speed — smooth, no burst spikes
 				const now = Date.now();
-				this.speedSamples.push({ time: now, bytes: data.length });
-				this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
-				const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-				const span = this.speedSamples.length > 1 ? (now - this.speedSamples[0]!.time) / 1000 : 0;
-				const bytesPerSecond = Math.round(windowBytes / Math.max(span, 5));
+				const dt = Math.max((now - this.lastEmaUpdate) / 1000, 0.1);
+				const instantSpeed = data.length / dt;
+				const alpha = Math.min(0.4, dt / 5);
+				this.emaSpeed = this.emaSpeed * (1 - alpha) + instantSpeed * alpha;
+				this.lastEmaUpdate = now;
+				const bytesPerSecond = Math.round(this.emaSpeed);
 				this.lastServingPeerCount = servingPeers.size;
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
 					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${servingPeers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
@@ -601,14 +604,15 @@ export class Downloader {
 			activePeerLoops.delete(peerID);
 		};
 
-		// 1s periodic progress emitter — updates speed/peers between chunk downloads
+		// 1s periodic progress emitter — EMA decay between chunks
 		const progressInterval = setInterval(() => {
 			const now = Date.now();
-			this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
-			const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-			const span = this.speedSamples.length > 1 ? (now - this.speedSamples[0]!.time) / 1000 : 0;
-			const bytesPerSecond = Math.round(windowBytes / Math.max(span, 5));
-			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond });
+			const dt = (now - this.lastEmaUpdate) / 1000;
+			if (dt > 0.5) {
+				this.emaSpeed *= Math.exp(-dt / 5); // 5s half-life decay
+				this.lastEmaUpdate = now;
+			}
+			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: servingPeers.size, bytesPerSecond: Math.round(this.emaSpeed) });
 		}, 1000);
 
 		try {
