@@ -406,7 +406,17 @@ export async function initDownloads(): Promise<void> {
 
 		// transfer.download:progress — with stale timeout to reset peers/speed
 		const downloadStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number }) => {
+		api.on('transfer.download:progress', (data: { lishID: string; downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond?: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number; resetFiles?: boolean }) => {
+			// Reset files signal — chunks were reset, zero out all per-file progress
+			if ((data as any).resetFiles) {
+				lastDownloadedChunks.set(data.lishID, 0);
+				downloads.update(list => list.map(d => {
+					if (d.id !== data.lishID) return d;
+					const files = d.files.map(f => f.type === 'file' ? { ...f, progress: 0, verifiedChunks: 0, downloadedSize: '0 B' } : f);
+					return { ...d, progress: 0, downloadedSize: '0 B', verifiedChunks: 0, files };
+				}));
+				return;
+			}
 			// Allocating signal — always process (even if disabled — clears stale disabled state)
 			if (data.filePath === '__allocating__') {
 				disabledDownloads.delete(data.lishID);
