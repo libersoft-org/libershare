@@ -631,7 +631,15 @@ export class Downloader {
 							const allMissing = this.dataServer.getMissingChunks(this.lishID);
 							const allTotal = this.dataServer.getAllChunkCount(this.lishID) || totalChunks;
 							downloadedCount = allTotal - allMissing.length;
+							// Re-initialize per-file counters from verified DB state
 							fileDownloadedChunks.clear();
+							const postRecoveryVP = this.dataServer.getFileVerificationProgress(this.lishID);
+							if (this.lish.files) {
+								for (let i = 0; i < this.lish.files.length; i++) {
+									const vp = postRecoveryVP.find(f => f.filePath === this.lish.files![i]!.path);
+									if (vp && vp.verifiedChunks > 0) fileDownloadedChunks.set(i, vp.verifiedChunks);
+								}
+							}
 							await lock.runExclusive(() => {
 								queue.length = queueIdx;
 								for (const mc of allMissing) queue.push(mc);
