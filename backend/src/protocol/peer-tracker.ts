@@ -81,8 +81,8 @@ function computeSpeed(samples: SpeedSample[], now: number): number {
 		oldestTime = samples[i]!.time;
 	}
 	if (total === 0) return 0;
-	// Elapsed = time from oldest sample to now, minimum 1s to avoid division spikes
-	const elapsed = Math.max((now - oldestTime) / 1000, 1);
+	const elapsed = (now - oldestTime) / 1000;
+	if (elapsed < 1) return 0; // not enough observation time — avoid initial spike
 	return Math.round(total / elapsed);
 }
 
