@@ -22,7 +22,6 @@ interface PeerEntry {
 	direction: 'download' | 'upload';
 	connectionType: ConnectionType;
 	connectedAt: number;
-	speedSamples: { time: number; bytes: number }[];
 	totalBytes: number;
 	currentFile?: string;
 	lastActivity: number;
@@ -36,7 +35,6 @@ interface PeerEntry {
 	havePercent?: number;
 }
 
-const SPEED_WINDOW = 10_000; // 10s rolling window
 const STALE_THRESHOLD = 20_000; // 20s — peer shown dimmed
 const PRUNE_THRESHOLD = 30_000; // 30s — peer removed entirely
 
@@ -58,21 +56,26 @@ function key(lishID: string, peerID: string, direction: 'download' | 'upload'): 
 	return `${lishID}:${peerID}:${direction}`;
 }
 
+function createEntry(peerID: string, lishID: string, direction: 'download' | 'upload', connectionType: ConnectionType, havePercent?: number): PeerEntry {
+	const k = key(lishID, peerID, direction);
+	const now = Date.now();
+	return { peerID, lishID, direction, connectionType, connectedAt: now, totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: now, emaSpeed: 0, lastEmaUpdate: now, lastDecayTime: now, havePercent };
+}
+
 // --- Public API: registration ---
 
 export function registerDownloadPeer(lishID: string, peerID: string, connectionType: ConnectionType, havePercent?: number): void {
 	const k = key(lishID, peerID, 'download');
 	const existing = entries.get(k);
 	if (existing) { existing.connectionType = connectionType; if (havePercent !== undefined) existing.havePercent = havePercent; return; }
-	entries.set(k, { peerID, lishID, direction: 'download', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now(), lastDecayTime: Date.now(), havePercent });
+	entries.set(k, createEntry(peerID, lishID, 'download', connectionType, havePercent));
 	trace(`[PEERS] register download ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
 export function unregisterDownloadPeer(lishID: string, peerID: string): void {
 	const k = key(lishID, peerID, 'download');
-	const entry = entries.get(k);
-	if (!entry) return;
-	entry.speedSamples = [];
+	if (!entries.has(k)) return;
+	entries.delete(k);
 	trace(`[PEERS] unregister download ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
@@ -80,27 +83,25 @@ export function registerUploadPeer(lishID: string, peerID: string, connectionTyp
 	const k = key(lishID, peerID, 'upload');
 	const existing = entries.get(k);
 	if (existing) { existing.connectionType = connectionType; return; }
-	entries.set(k, { peerID, lishID, direction: 'upload', connectionType, connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now(), lastDecayTime: Date.now() });
+	entries.set(k, createEntry(peerID, lishID, 'upload', connectionType));
 	trace(`[PEERS] register upload ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
 export function unregisterUploadPeer(lishID: string, peerID: string): void {
 	const k = key(lishID, peerID, 'upload');
-	const entry = entries.get(k);
-	if (!entry) return;
-	entry.speedSamples = [];
+	if (!entries.has(k)) return;
+	entries.delete(k);
 	trace(`[PEERS] unregister upload ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
 
 export function unregisterAllPeersForLISH(lishID: string): void {
-	for (const [, entry] of entries) {
-		if (entry.lishID === lishID) entry.speedSamples = [];
+	for (const [k, entry] of entries) {
+		if (entry.lishID === lishID) entries.delete(k);
 	}
 }
 
 // --- Public API: recording bytes ---
 
-/** Keep peer alive during throttle waits (prevents stale/prune while peer is throttled). */
 export function updatePeerHavePercent(lishID: string, peerID: string, havePercent: number): void {
 	const k = key(lishID, peerID, 'download');
 	const entry = entries.get(k);
@@ -118,11 +119,10 @@ export function recordDownloadBytes(lishID: string, peerID: string, bytes: numbe
 	let entry = entries.get(k);
 	if (!entry) {
 		// Re-register if pruned while peer was throttled
-		entries.set(k, { peerID, lishID, direction: 'download', connectionType: 'DIRECT', connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now(), lastDecayTime: Date.now() });
+		entries.set(k, createEntry(peerID, lishID, 'download', 'DIRECT'));
 		entry = entries.get(k)!;
 	}
 	const now = Date.now();
-	entry.speedSamples.push({ time: now, bytes });
 	entry.totalBytes += bytes;
 	cumulativeBytes.set(k, entry.totalBytes);
 	entry.lastActivity = now;
@@ -140,11 +140,10 @@ export function recordUploadBytes(lishID: string, peerID: string, bytes: number)
 	const k = key(lishID, peerID, 'upload');
 	let entry = entries.get(k);
 	if (!entry) {
-		entries.set(k, { peerID, lishID, direction: 'upload', connectionType: 'DIRECT', connectedAt: Date.now(), speedSamples: [], totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: Date.now(), emaSpeed: 0, lastEmaUpdate: Date.now(), lastDecayTime: Date.now() });
+		entries.set(k, createEntry(peerID, lishID, 'upload', 'DIRECT'));
 		entry = entries.get(k)!;
 	}
 	const now = Date.now();
-	entry.speedSamples.push({ time: now, bytes });
 	entry.totalBytes += bytes;
 	cumulativeBytes.set(k, entry.totalBytes);
 	entry.lastActivity = now;
@@ -195,10 +194,9 @@ function emitPeerDetails(): void {
 
 	const now = Date.now();
 
-	// Prune old entries and their cumulative bytes
+	// Prune old entries (cumulative bytes survive for future re-registration)
 	for (const [k, entry] of entries) {
 		if (now - entry.lastActivity > PRUNE_THRESHOLD) { entries.delete(k); cumulativeBytes.delete(k); }
-		else entry.speedSamples = entry.speedSamples.filter(s => s.time > now - SPEED_WINDOW);
 	}
 
 	// Collect subscribed lishIDs across all clients
@@ -221,7 +219,7 @@ function emitPeerDetails(): void {
 		// Uses lastDecayTime (not lastEmaUpdate) to avoid corrupting dt in recordBytes.
 		const decayDt = (now - entry.lastDecayTime) / 1000;
 		if (decayDt > 0.5) {
-			entry.emaSpeed *= Math.exp(-decayDt / 5); // 5s time constant (matches downloader)
+			entry.emaSpeed *= Math.exp(-decayDt / 5); // 5s time constant
 			entry.lastDecayTime = now;
 		}
 		const speed = Math.round(entry.emaSpeed);
@@ -238,6 +236,10 @@ function emitPeerDetails(): void {
 				existing.totalUploaded = entry.totalBytes;
 			}
 			if (entry.havePercent !== undefined) existing.havePercent = entry.havePercent;
+			// Prefer DCUtR > RELAY > DIRECT for display
+			if (entry.connectionType === 'DCUtR' || (entry.connectionType === 'RELAY' && existing.connectionType === 'DIRECT')) {
+				existing.connectionType = entry.connectionType;
+			}
 			existing.stale = existing.stale && isStale;
 			if (entry.connectedAt < existing.connectedAt) existing.connectedAt = entry.connectedAt;
 			if (entry.lastActivity > existing.lastActivity) existing.lastActivity = entry.lastActivity;
