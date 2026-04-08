@@ -663,7 +663,7 @@ export class Downloader {
 				await probeClient.close();
 				if (this.destroyed) return;
 
-				if (!manifest) { trace(`[DL] probe ${peerID.slice(0, 12)}: null manifest`); continue; }
+				if (!manifest) { console.debug(`[DL] probe ${peerID.slice(0, 12)}: null manifest`); continue; }
 
 				if (this.needsManifest && manifest.files && manifest.files.length > 0) {
 					this.lish = { ...manifest, directory: this.downloadDir };
@@ -683,7 +683,7 @@ export class Downloader {
 				foundNew = true;
 				console.debug(`[DL] probe: ${peerID.slice(0, 12)} connected [${connectionType}] (total: ${this.peers.size})`);
 			} catch (err: any) {
-				trace(`[DL] probe ${peerID.slice(0, 12)} unreachable: ${err.message?.slice(0, 80)}`);
+				console.debug(`[DL] probe ${peerID.slice(0, 12)} unreachable: ${err.message?.slice(0, 80)}`);
 			}
 		}
 		if (foundNew && !this.downloadActive && !this.destroyed) {

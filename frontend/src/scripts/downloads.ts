@@ -37,7 +37,7 @@ export interface DownloadFileData {
 
 export interface PeerDetail {
 	peerID: string;
-	connectionType: 'DIRECT' | 'RELAY';
+	connectionType: 'DIRECT' | 'RELAY' | 'DCUtR';
 	downloadSpeed: number;
 	uploadSpeed: number;
 	totalDownloaded: number;

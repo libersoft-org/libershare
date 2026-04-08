@@ -492,6 +492,12 @@
 		border: 0.2vh solid var(--mode-upload-fg, #28f);
 	}
 
+	.conn-dcutr {
+		color: #c8f;
+		background-color: #214;
+		border: 0.2vh solid #c8f;
+	}
+
 	.peer-metric {
 		display: flex;
 		flex-direction: column;
@@ -696,7 +702,7 @@
 										{@const ageSec = peer.lastActivity ? Math.max(0, Math.round((now - peer.lastActivity) / 1000)) : 0}
 										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index} dimmed={peer.stale}>
 											<Cell><span class="peer-id">{peer.peerID}</span></Cell>
-											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'}>{peer.connectionType}</span></Cell>
+											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
 											<Cell align="right">
 												<span class="peer-metric">
 													<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>↓ {formatSize(peer.downloadSpeed || 0)}/s</span>

@@ -1,6 +1,6 @@
 import { trace } from '../logger.ts';
 
-export type ConnectionType = 'DIRECT' | 'RELAY';
+export type ConnectionType = 'DIRECT' | 'RELAY' | 'DCUtR';
 
 export interface PeerDetail {
 	peerID: string;
