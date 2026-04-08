@@ -557,6 +557,8 @@ export class Downloader {
 						this.fileReallocInProgress.add(-1);
 						this.writePaused = true;
 						this.progressPaused = true;
+						lastFilePath = undefined;
+						lastFileChunks = undefined;
 						console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${Downloader.MAX_FILE_REALLOC})`);
 						this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: this.downloadDir, retryCount: globalAttempts, maxRetries: Downloader.MAX_FILE_REALLOC });
 						// FE shows "Opakuji" (retrying) badge during the 10s pause — no progress override

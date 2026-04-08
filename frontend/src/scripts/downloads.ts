@@ -146,7 +146,7 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 
 // Statuses that should not be overridden by transfer events
 function isStatusLocked(status: DownloadStatus): boolean {
-	return status === 'verifying' || status === 'pending-verification' || status === 'moving' || status === 'error' || status === 'retrying';
+	return status === 'verifying' || status === 'pending-verification' || status === 'moving' || status === 'allocating' || status === 'error' || status === 'retrying';
 }
 
 // Helper: compute combined status from download/upload activity flags
@@ -457,13 +457,14 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
+					// Skip ALL updates when status is locked (recovery/verify/allocating in progress)
+					if (isStatusLocked(d.status)) return d;
 					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
 					const downloadedSize = d.rawTotalSize > 0 && data.totalChunks > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
 					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : (data.peers === 0 ? '0 B/s' : d.downloadSpeed);
-					const status = isStatusLocked(d.status) ? d.status : computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
+					const status = computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
 					const totalDownloadedBytes = d.totalDownloadedBytes + (deltaChunks > 0 && d.chunkSize > 0 ? deltaChunks * d.chunkSize : 0);
-					// Fix stale allocation progress: any file with progress>0 but verifiedChunks=0 was from allocation display
-					let files = d.files.map(f => (f.type === 'file' && f.progress > 0 && f.verifiedChunks === 0) ? { ...f, progress: 0, downloadedSize: '0 B' } : f);
+					let files = d.files;
 					if (data.filePath && data.fileDownloadedChunks != null) {
 						files = files.map(f => {
 							if (f.name !== data.filePath) return f;
