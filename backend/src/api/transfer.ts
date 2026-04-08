@@ -269,6 +269,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			activeDownloaders.set(p.lishID, downloader);
 			const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
 			downloader.setProgressCallback?.((info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => {
+				if ((info as any).resetFiles) console.debug(`[Transfer] resetFiles event for ${p.lishID.slice(0, 8)}`);
 				send('transfer.download:progress', { lishID: p.lishID, ...info });
 			});
 			downloader.setRetryCallback?.((info) => {

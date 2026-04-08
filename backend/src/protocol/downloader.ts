@@ -574,6 +574,7 @@ export class Downloader {
 							// Step 1: Reset ALL chunks for entire LISH
 							this.dataServer.resetVerification(this.lishID);
 							// Reset FE per-file progress to 0
+							trace(`[DL] emitting resetFiles to FE`);
 							this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, resetFiles: true } as any);
 							console.log(`[DL] All chunks reset to have=FALSE`);
 
