@@ -457,8 +457,9 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
-					// Skip ALL updates when status is locked (recovery/verify/allocating in progress)
-					if (isStatusLocked(d.status)) return d;
+					// Skip updates when status is locked — except allocating→downloading transition
+					// (allocating ends when backend sends normal progress without __allocating__ filePath)
+					if (isStatusLocked(d.status) && !(d.status === 'allocating' && data.filePath !== '__allocating__')) return d;
 					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
 					const downloadedSize = d.rawTotalSize > 0 && data.totalChunks > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
 					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : (data.peers === 0 ? '0 B/s' : d.downloadSpeed);
