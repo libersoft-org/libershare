@@ -401,7 +401,7 @@ export class Network {
 				console.log('   ⚠️  No connections - dialing bootstrap peers directly...');
 				for (const ma of this.bootstrapMultiaddrs) {
 					try {
-						await this.node!.dial(ma);
+						await this.node!.dial(ma, { signal: AbortSignal.timeout(10000) });
 						console.log(`   ✓ Connected`);
 						break;
 					} catch (err: any) {
