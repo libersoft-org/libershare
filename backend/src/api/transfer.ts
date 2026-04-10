@@ -9,7 +9,7 @@ import { isBusy } from './busy.ts';
 import { ErrorRecovery } from './error-recovery.ts';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
-import { setPeerEmit, startPeerEmitter, subscribePeers, unsubscribePeers, unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
+import { setPeerEmit, startPeerEmitter, subscribePeers, unsubscribePeers, unsubscribeAllPeers, getDebugSnapshot } from '../protocol/peer-tracker.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 type BroadcastFn = (event: string, data: any) => void;
@@ -30,6 +30,7 @@ interface TransferHandlers {
 	getActiveTransfers: () => ActiveTransfer[];
 	subscribePeers: (p: { lishID: string }, client: any) => boolean;
 	unsubscribePeers: (p: { lishID: string }, client: any) => boolean;
+	debugPeers: (p: { lishID?: string }) => ReturnType<typeof getDebugSnapshot>;
 }
 
 type PersistDownloadFn = (lishID: string, enabled: boolean) => void;
@@ -414,5 +415,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return true;
 	}
 
-	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler };
+	function debugPeersHandler(p: { lishID?: string }): ReturnType<typeof getDebugSnapshot> {
+		return getDebugSnapshot(p?.lishID);
+	}
+
+	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler };
 }

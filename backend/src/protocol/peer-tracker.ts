@@ -21,7 +21,7 @@ interface SpeedSample {
 	bytes: number;
 }
 
-const SPEED_WINDOW = 10_000; // 10s max window for speed samples
+const SPEED_WINDOW = 30_000; // 30s — per-peer chunk interval is 5-18s, need ≥2 samples in window
 
 interface PeerEntry {
 	peerID: string;
@@ -38,8 +38,8 @@ interface PeerEntry {
 	havePercent?: number;
 }
 
-const STALE_THRESHOLD = 20_000; // 20s — peer shown dimmed
-const PRUNE_THRESHOLD = 30_000; // 30s — peer removed entirely
+const STALE_THRESHOLD = 30_000; // 30s — peer shown dimmed
+const PRUNE_THRESHOLD = 60_000; // 60s — peer removed entirely
 
 // Per-peer per-direction entries
 const entries = new Map<string, PeerEntry>();
@@ -71,7 +71,7 @@ function createEntry(peerID: string, lishID: string, direction: 'download' | 'up
  * For N chunks in T seconds: speed = N*chunkSize / T (accurate, not staircase).
  */
 function computeSpeed(samples: SpeedSample[], now: number): number {
-	if (samples.length < 2) return 0; // need ≥2 samples for meaningful speed
+	if (samples.length === 0) return 0;
 	const cutoff = now - SPEED_WINDOW;
 	let total = 0;
 	let oldestTime = now;
@@ -82,8 +82,9 @@ function computeSpeed(samples: SpeedSample[], now: number): number {
 		oldestTime = samples[i]!.time;
 		count++;
 	}
-	if (count < 2 || total === 0) return 0;
-	const elapsed = (now - oldestTime) / 1000;
+	if (count === 0 || total === 0) return 0;
+	// For single sample: use time from sample to now as denominator
+	const elapsed = count === 1 ? (now - oldestTime) / 1000 : (now - oldestTime) / 1000;
 	if (elapsed < 0.5) return 0;
 	return Math.round(total / elapsed);
 }
@@ -131,6 +132,10 @@ export function unregisterUploadPeer(lishID: string, peerID: string): void {
 export function unregisterAllPeersForLISH(lishID: string): void {
 	for (const [k, entry] of entries) {
 		if (entry.lishID === lishID) entries.delete(k);
+	}
+	// Clear cumulative bytes for this LISH — prevents leak and wrong totals if LISH is re-added
+	for (const k of cumulativeBytes.keys()) {
+		if (k.startsWith(`${lishID}:`)) cumulativeBytes.delete(k);
 	}
 }
 
@@ -196,6 +201,53 @@ export function unsubscribeAllPeers(client: ClientRef): void {
 	subscriptions.delete(client);
 }
 
+// --- Debug API: snapshot of internal state ---
+
+export interface PeerTrackerDebugEntry {
+	key: string;
+	peerID: string;
+	lishID: string;
+	direction: 'download' | 'upload';
+	connectionType: ConnectionType;
+	connectedAt: number;
+	lastActivity: number;
+	totalBytes: number;
+	cumulativeBytes: number;
+	sampleCount: number;
+	sampleWindowMs: number;
+	sampleBytesSum: number;
+	computedSpeed: number;
+	ageSinceLastActivityMs: number;
+}
+
+export function getDebugSnapshot(lishID?: string): { now: number; entries: PeerTrackerDebugEntry[]; cumulativeKeys: string[] } {
+	const now = Date.now();
+	const out: PeerTrackerDebugEntry[] = [];
+	for (const [k, entry] of entries) {
+		if (lishID && entry.lishID !== lishID) continue;
+		const sampleBytesSum = entry.speedSamples.reduce((s, x) => s + x.bytes, 0);
+		const windowMs = entry.speedSamples.length >= 2 ? (entry.speedSamples[entry.speedSamples.length - 1]!.time - entry.speedSamples[0]!.time) : 0;
+		const computedSpeed = computeSpeed(entry.speedSamples, now);
+		out.push({
+			key: k,
+			peerID: entry.peerID,
+			lishID: entry.lishID,
+			direction: entry.direction,
+			connectionType: entry.connectionType,
+			connectedAt: entry.connectedAt,
+			lastActivity: entry.lastActivity,
+			totalBytes: entry.totalBytes,
+			cumulativeBytes: cumulativeBytes.get(k) ?? 0,
+			sampleCount: entry.speedSamples.length,
+			sampleWindowMs: windowMs,
+			sampleBytesSum,
+			computedSpeed,
+			ageSinceLastActivityMs: now - entry.lastActivity,
+		});
+	}
+	return { now, entries: out, cumulativeKeys: Array.from(cumulativeBytes.keys()).filter(k => !lishID || k.startsWith(`${lishID}:`)) };
+}
+
 // --- Emitter setup ---
 
 export function setPeerEmit(fn: EmitFn): void {
@@ -220,7 +272,7 @@ function emitPeerDetails(): void {
 
 	// Prune old entries (cumulative bytes survive for future re-registration)
 	for (const [k, entry] of entries) {
-		if (now - entry.lastActivity > PRUNE_THRESHOLD) { entries.delete(k); cumulativeBytes.delete(k); }
+		if (now - entry.lastActivity > PRUNE_THRESHOLD) entries.delete(k);
 	}
 
 	// Collect subscribed lishIDs across all clients

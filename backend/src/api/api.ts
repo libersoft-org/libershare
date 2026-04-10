@@ -136,6 +136,7 @@ export class APIServer {
 			'transfer.getActiveTransfers': _transfer.getActiveTransfers,
 			'transfer.subscribePeers': _transfer.subscribePeers,
 			'transfer.unsubscribePeers': _transfer.unsubscribePeers,
+			'transfer.debugPeers': _transfer.debugPeers,
 			// Datasets
 			'datasets.getDatasets': _datasets.getDatasets,
 			'datasets.getDataset': _datasets.getDataset,

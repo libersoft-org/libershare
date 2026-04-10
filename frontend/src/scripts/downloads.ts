@@ -329,14 +329,19 @@ export async function initDownloads(): Promise<void> {
 				if (lish && lish.status !== 'moving' && lish.status !== 'downloading' && lish.status !== 'downloading-uploading' && lish.status !== 'allocating') {
 					addNotification(tt('downloads.verifyDone', { name: lish.name }), 'success');
 				}
-				// Refresh from backend to restore correct download progress (verification overwrites progress values)
+				// Refresh from backend to restore correct per-file progress after verify.
+				// Always apply fresh per-file state — a new downloader may have already started
+				// (restartDownloadIfEnabled runs after verify done) and set status=downloading,
+				// but only updates the currently-downloading file. Other files would otherwise
+				// keep stale progress=100 from the prior transfer.download:complete event.
 				api.lishs.get(data.lishID).then(detail => {
 					if (!detail) return;
 					const fresh = detailToDownload(detail);
 					downloads.update(list => list.map(d => {
 						if (d.id !== data.lishID) return d;
-						if (d.status === 'moving' || d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating') return d;
-						return { ...d, ...fresh, status: 'idling' as DownloadStatus, downloadEnabled: d.downloadEnabled, uploadEnabled: d.uploadEnabled };
+						if (d.status === 'moving') return d;
+						// Preserve live transfer status + live fields; overwrite per-file state + totals
+						return { ...d, files: fresh.files, progress: fresh.progress, downloadedSize: fresh.downloadedSize, verifiedChunks: fresh.verifiedChunks, totalChunks: fresh.totalChunks, status: (d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating') ? d.status : 'idling' as DownloadStatus };
 					}));
 				});
 				return;
