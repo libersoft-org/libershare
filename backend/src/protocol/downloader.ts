@@ -700,7 +700,7 @@ export class Downloader {
 				}
 				this.dataServer.markChunkDownloaded(this.lishID, chunk.chunkID);
 				this.dataServer.incrementDownloadedBytes(this.lishID, data.length);
-				recordDownloadBytes(this.lishID, peerID, data.length, this.lish.files?.[chunk.fileIndex]?.path);
+				recordDownloadBytes(this.lishID, peerID, data.length, this.lish.files?.[chunk.fileIndex]?.path, chunk.chunkID);
 				downloadedCount++;
 				if (this.writeRetryCount > 0) this.writeRetryCount = 0;
 				// Sliding window speed — actual elapsed time denominator (no chunk-size quantization)

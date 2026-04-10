@@ -692,7 +692,7 @@
 						{#if currentPeers.length === 0}
 							<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
 						{:else}
-							<Table columns="14vh 8vh 6vh 1fr 1fr 9vh 2fr" columnsMobile="14vh 8vh 6vh 1fr 1fr 9vh" noBorder>
+							<Table columns="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" columnsMobile="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" noBorder>
 								<Header fontSize="1.3vh">
 									<Cell>{$t('downloads.peerList.id')}</Cell>
 									<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
@@ -701,6 +701,7 @@
 									<Cell align="right">{$t('downloads.peerList.transferred')}</Cell>
 									<Cell align="right">{$t('downloads.peerList.activity')}</Cell>
 									<Cell>{$t('downloads.peerList.currentFile')}</Cell>
+									<Cell>Chunk</Cell>
 								</Header>
 								<div class="items">
 									{#each currentPeers as peer, index (peer.peerID)}
@@ -723,6 +724,7 @@
 											</Cell>
 											<Cell align="right"><span class="peer-ago">{ageSec}s</span></Cell>
 											<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
+												<Cell><span class="peer-file">{peer.currentChunk ? peer.currentChunk.slice(0, 8) : ''}</span></Cell>
 										</TableRow>
 									{/each}
 								</div>

@@ -93,6 +93,11 @@ export class DataServer {
 		return dbGetVerificationProgress(this.db, lishID);
 	}
 
+	findChunkFile(lishID: LISHid, chunkID: import('@shared').ChunkID): string | undefined {
+		const loc = findChunkLocation(this.db, lishID, chunkID);
+		return loc?.filePath;
+	}
+
 	getFileVerificationProgress(lishID: LISHid): FileVerificationProgress[] {
 		return dbGetFileVerificationProgress(this.db, lishID);
 	}
