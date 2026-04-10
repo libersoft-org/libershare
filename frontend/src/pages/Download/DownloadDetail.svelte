@@ -52,7 +52,7 @@
 	let itemElements: HTMLElement[] = $state([]);
 	let infoElement: HTMLElement | null = $state(null);
 	// Per-peer data for this LISH
-	let currentPeers = $derived(($peerDetails.get(lishID) ?? []).sort((a, b) => a.connectedAt - b.connectedAt));
+	let currentPeers = $derived(($peerDetails.get(lishID) ?? []).sort((a, b) => a.peerID.localeCompare(b.peerID)));
 	// Toolbar actions - adapt to current download state
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
 	let isMoving = $derived(download?.status === 'moving');
@@ -654,7 +654,7 @@
 				<!-- Tab header + content -->
 				<div class="container">
 					<div class="tab-header">
-						<button class="tab" class:active={activeTab === 'files'} class:selected={tabActive && selectedTabIndex === 0}>
+						<button class="tab" class:active={activeTab === 'files'} class:selected={tabActive && selectedTabIndex === 0} onclick={() => { selectedTabIndex = 0; activeTab = 'files'; }}>
 							<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
 								<polyline points="14 2 14 8 20 8"/>
@@ -664,7 +664,7 @@
 							</svg>
 							{$t('downloads.tabs.files')}
 						</button>
-						<button class="tab" class:active={activeTab === 'peers'} class:selected={tabActive && selectedTabIndex === 1}>
+						<button class="tab" class:active={activeTab === 'peers'} class:selected={tabActive && selectedTabIndex === 1} onclick={() => { selectedTabIndex = 1; activeTab = 'peers'; }}>
 							<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 								<circle cx="18" cy="5" r="3"/>
 								<circle cx="6" cy="12" r="3"/>

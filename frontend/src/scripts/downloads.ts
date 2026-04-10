@@ -678,7 +678,6 @@ export async function initDownloads(): Promise<void> {
 		// transfer.peers — per-peer details (1s interval, on-demand via subscribePeers)
 		const peerStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 		api.on('transfer.peers', (data: { lishID: string; peers: PeerDetail[] }) => {
-			if (disabledDownloads.has(data.lishID)) return;
 			// Only update if we have peers — don't flash empty list
 			if (data.peers.length > 0) {
 				peerDetails.update(map => { const m = new Map(map); m.set(data.lishID, data.peers); return m; });
