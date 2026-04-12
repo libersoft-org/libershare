@@ -311,6 +311,7 @@ function emitPeerDetails(): void {
 			} else {
 				existing.uploadSpeed = speed;
 				existing.totalUploaded = entry.totalBytes;
+				if (entry.currentFile) existing.currentFile = entry.currentFile;
 				if (entry.currentChunk) existing.currentChunk = entry.currentChunk;
 			}
 			if (entry.havePercent !== undefined) existing.havePercent = entry.havePercent;
