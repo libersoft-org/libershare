@@ -62,7 +62,7 @@
 			const result = await api.fs.writeText(filePath, content);
 			if (result.success) {
 				originalContent = content;
-				addNotification($t('fileBrowser.fileSaved', { name: fileName }));
+				addNotification($t('fileBrowser.fileSaved', { name: fileName }), 'success');
 			} else error = 'Failed to save file';
 		} catch (e) {
 			error = translateError(e);

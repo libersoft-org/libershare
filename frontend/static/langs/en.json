@@ -63,7 +63,11 @@
 		"errorInternal": "Internal error: {detail}",
 		"gamepadConnected": "Gamepad connected: {name}",
 		"gamepadDisconnected": "Gamepad disconnected: {name}",
-		"websocketError": "Connection error"
+		"websocketError": "Connection error",
+		"backendDisconnected": "Backend disconnected",
+		"reconnected": "Reconnected to backend",
+		"internetOffline": "Internet connection lost",
+		"internetOnline": "Internet connection restored"
 	},
 	"library": {
 		"title": "Online library",
@@ -83,6 +87,25 @@
 		"targetDirectory": "Target directory",
 		"downloadingFrom": "Downloading from",
 		"uploadingTo": "Uploading to",
+		"peers": "Peers",
+		"tabs": {
+			"files": "Files",
+			"peers": "Peers"
+		},
+		"peerList": {
+			"searching": "Searching for peers...",
+			"id": "Peer",
+			"currentFile": "Current file",
+			"transferred": "Transferred",
+			"speed": "Speed",
+			"connection": "Type",
+			"availability": "Avail",
+			"activity": "Last seen"
+		},
+		"speed": "Speed",
+		"transferred": "Transferred",
+		"uploaded": "Uploaded",
+		"downloaded": "Downloaded",
 		"downloadSpeed": "Download speed",
 		"uploadSpeed": "Upload speed",
 		"statuses": {
@@ -92,8 +115,18 @@
 			"idling": "Idling",
 			"verifying": "Verifying",
 			"pending-verification": "Pending verification",
-			"moving": "Moving"
+			"moving": "Moving",
+			"allocating": "Allocating",
+			"error": "Error",
+			"retrying": "Error"
 		},
+		"modes": {
+			"disabled": "Disabled",
+			"download": "↓ Download",
+			"upload": "↑ Upload",
+			"both": "↕ Both"
+		},
+		"mode": "Mode",
 		"createLISH": "Create LISH",
 		"errorInvalidFormat": "Invalid LISH format",
 		"emptyList": "No LISH to export found",
@@ -114,6 +147,11 @@
 		"stopVerifyAll": "Stop all verifications",
 		"verifyDone": "Verification of LISH \"{name}\" completed",
 		"lishAdded": "LISH \"{name}\" added",
+		"downloadComplete": "Download of LISH \"{name}\" completed",
+		"downloadError": "Download of LISH \"{name}\" failed: {error}",
+		"recoveryAttempting": "Attempting automatic recovery...",
+		"recoverySuccess": "LISH \"{name}\" recovered automatically",
+		"recoveryScheduled": "Automatic retry in {seconds}s",
 		"moveData": "Move data",
 		"moveDataFromOriginal": "Move data from original directory",
 		"createSubdirectory": "Create a subdirectory with LISH name in target directory",
@@ -167,6 +205,10 @@
 		},
 		"import": {
 			"fromJSON": "From LISH JSON",
+			"uploadFromLocal": "Upload from local computer",
+			"localFile": "Local file",
+			"noFileSelected": "No file selected",
+			"uploadRequired": "Please select a file to upload",
 			"filePath": "LISH file",
 			"url": "URL address of LISH file",
 			"placeholder": "Paste LISH JSON here...",
@@ -175,6 +217,7 @@
 			"downloadPathRequired": "Download directory is required",
 			"jsonRequired": "LISH JSON is required",
 			"autoStartSharing": "Automatically start sharing after adding",
+			"autoStartDownloading": "Automatically start downloading after adding",
 			"confirmOverwrite": "The following LISH already exists:\n\nName: {name}\nID: {id}\n\nDo you want to overwrite it?"
 		},
 		"export": {
@@ -193,6 +236,9 @@
 		"errorUnexpectedArray": "Expected a single LISH object, got an array",
 		"errorPathAccessDenied": "Cannot access path: {detail}",
 		"errorInvalidFileIndex": "Invalid file index: {detail}",
+		"errorIONotFound": "File or directory not found: {detail}",
+		"errorDiskFull": "Disk full: {detail}",
+		"errorDirectoryAccessDenied": "Access denied: {detail}",
 		"errorDownloaderNotInitialized": "Downloader not initialized",
 		"errorDownload": "Download failed: {detail}"
 	},
@@ -215,11 +261,13 @@
 			"incomingPort": "Network port for incoming connections",
 			"maxDownloadConnections": "Maximum download connections",
 			"maxUploadConnections": "Maximum upload connections",
-			"maxDownloadSpeed": "Maximum download speed (0 = unlimited)",
-			"maxUploadSpeed": "Maximum upload speed (0 = unlimited)",
+			"maxDownloadSpeed": "Maximum download speed in KB/s (0 = unlimited)",
+			"maxUploadSpeed": "Maximum upload speed in KB/s (0 = unlimited)",
 			"allowRelay": "Enable relay server (relay data for other peers)",
 			"maxRelayReservations": "Maximum number of connections to relay server (0 = unlimited)",
-			"autoStartSharingDefault": "Automatically start sharing after adding a LISH (default value)"
+			"autoStartSharingDefault": "Automatically start sharing after adding a LISH (default value)",
+			"autoStartDownloadingDefault": "Automatically start downloading after adding a LISH (default value)",
+			"autoErrorRecovery": "Automatic error recovery"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",

@@ -55,14 +55,14 @@ export class GamepadManager {
 	}
 
 	private handleConnect(e: GamepadEvent): void {
-		addNotification(tt('common.gamepadConnected', { name: e.gamepad.id }));
+		addNotification(tt('common.gamepadConnected', { name: e.gamepad.id }), 'success');
 		this.isConnected = true;
 		gamepadConnected.set(true);
 		if (this.started) this.startPolling();
 	}
 
 	private handleDisconnect(e: GamepadEvent): void {
-		addNotification(tt('common.gamepadDisconnected', { name: e.gamepad.id }));
+		addNotification(tt('common.gamepadDisconnected', { name: e.gamepad.id }), 'warning');
 		this.isConnected = false;
 		gamepadConnected.set(false);
 		this.stopPolling();

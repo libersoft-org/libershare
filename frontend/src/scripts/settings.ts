@@ -35,6 +35,8 @@ export const maxUploadSpeed = writable(0);
 export const allowRelay = writable(true);
 export const maxRelayReservations = writable(0);
 export const autoStartSharing = writable(true);
+export const autoStartDownloading = writable(true);
+export const autoErrorRecovery = writable(true);
 export const autoStartOnBoot = writable(true);
 export const showInTray = writable(true);
 export const minimizeToTray = writable(true);
@@ -92,6 +94,8 @@ export async function loadSettings(): Promise<void> {
 		allowRelay.set(settings.network.allowRelay);
 		maxRelayReservations.set(settings.network.maxRelayReservations);
 		autoStartSharing.set(settings.network.autoStartSharing);
+		autoStartDownloading.set(settings.network.autoStartDownloading);
+		autoErrorRecovery.set(settings.network.autoErrorRecovery ?? true);
 
 		// System
 		autoStartOnBoot.set(settings.system.autoStartOnBoot);
@@ -198,6 +202,14 @@ export function setMaxRelayReservations(value: number): void {
 
 export function setAutoStartSharing(enabled: boolean): void {
 	updateSetting(autoStartSharing, 'network.autoStartSharing', enabled);
+}
+
+export function setAutoStartDownloading(enabled: boolean): void {
+	updateSetting(autoStartDownloading, 'network.autoStartDownloading', enabled);
+}
+
+export function setAutoErrorRecovery(enabled: boolean): void {
+	updateSetting(autoErrorRecovery, 'network.autoErrorRecovery', enabled);
 }
 
 export function setAutoStartOnBoot(enabled: boolean): void {

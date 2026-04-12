@@ -16,6 +16,7 @@
 		"@libp2p/bootstrap": "^12.0.14",
 		"@libp2p/circuit-relay-v2": "^4.1.6",
 		"@libp2p/crypto": "^5.1.12",
+		"@libp2p/dcutr": "^3.0.14",
 		"@libp2p/identify": "^4.0.13",
 		"@libp2p/interface": "^3.0.2",
 		"@libp2p/kad-dht": "^16.1.6",
@@ -35,6 +36,9 @@
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",
+		"test": "bun test tests/unit/",
+		"test:e2e": "bun test tests/e2e/ --timeout 300000",
+		"test:all": "bun test tests/unit/ && bun test tests/e2e/ --timeout 300000",
 		"postinstall": "cd node_modules/@chainsafe/libp2p-gossipsub && bun install && bun run build"
 	}
 }

@@ -86,6 +86,7 @@ export interface FsInfo {
 	separator: string;
 	home: string;
 	roots: string[];
+	localFilesystem: boolean;
 }
 
 export interface FsEntry {

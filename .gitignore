@@ -7,7 +7,9 @@ app/core
 **/*.crt
 **/*.key
 frontend/.svelte-kit/
+frontend/.vite-cache/
 backend/data
+data/
 .secret_git
 bun.lockb
 bun.lockb.txt
@@ -23,3 +25,24 @@ vite.config.js.timestamp-*
 **/cert.pem
 **/key.pem
 **/*.orig
+
+# Editor/IDE local configs
+.[a-z]*/
+!.git/
+!.github/
+!.vs/
+
+# Large binary files
+**/*.iso
+**/*.mkv
+**/*.avi
+**/*.mp4
+
+# Runtime artifacts
+backend.log
+*.stackdump
+*.bun-build
+nul/
+
+# Temp screenshots
+*.png

@@ -196,7 +196,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	await api.subscribe('lishs.create:progress');
 
 	try {
-		const result = await api.lishs.create(inputPath, lishFile, addToSharing, name, description, algo, chunkSize, threads, minifyJSON, compress);
+		const result = await api.lishs.create(inputPath, lishFile, addToSharing, undefined, name, description, algo, chunkSize, threads, minifyJSON, compress);
 		if (lastProgress) process.stdout.write('\n');
 
 		const endTime = Date.now();

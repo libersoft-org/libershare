@@ -3,6 +3,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type Settings } from '../settings.ts';
 import { CodedError, ErrorCodes } from '@shared';
+import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
 import { initDatasetsHandlers } from './datasets.ts';
@@ -11,8 +12,10 @@ import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
 import { initSystemHandlers } from './system.ts';
+import { getLocalAddresses } from '../container.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
+	isLocalClient: boolean;
 }
 type ClientSocket = ServerWebSocket<ClientData>;
 interface Request {
@@ -34,6 +37,7 @@ export class APIServer {
 	private readonly settings: Settings;
 	private readonly host: string;
 	private readonly port: number;
+	private readonly localAddresses: Set<string>;
 	private readonly secure: boolean;
 	private readonly keyFile?: string | undefined;
 	private readonly certFile?: string | undefined;
@@ -51,6 +55,7 @@ export class APIServer {
 		this.secure = options.secure;
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
+		this.localAddresses = getLocalAddresses();
 		const emitTo = (client: ClientSocket, event: string, data: any) => this.emit(client, event, data);
 		const broadcastFn = (event: string, data: any) => this.broadcast(event, data);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
@@ -59,7 +64,7 @@ export class APIServer {
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn);
-		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo);
+		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification);
 		const hasSubscribers = (event: string): boolean => {
 			for (const client of this.clients) {
 				if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) return true;
@@ -124,6 +129,14 @@ export class APIServer {
 			'lishs.move': _lishs.move,
 			// Transfer
 			'transfer.download': _transfer.download,
+			'transfer.disableDownload': _transfer.disableDownload,
+			'transfer.enableDownload': _transfer.enableDownload,
+			'transfer.disableUpload': _transfer.disableUpload,
+			'transfer.enableUpload': _transfer.enableUpload,
+			'transfer.getActiveTransfers': _transfer.getActiveTransfers,
+			'transfer.subscribePeers': _transfer.subscribePeers,
+			'transfer.unsubscribePeers': _transfer.unsubscribePeers,
+			'transfer.debugPeers': _transfer.debugPeers,
 			// Datasets
 			'datasets.getDatasets': _datasets.getDatasets,
 			'datasets.getDataset': _datasets.getDataset,
@@ -153,8 +166,9 @@ export class APIServer {
 			hostname: this.host,
 			fetch(req, server): Response | undefined {
 				console.log(`[API] Incoming request: ${req.method} ${req.url}`);
+				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
-					data: { subscribedEvents: new Set<string>() },
+					data: { subscribedEvents: new Set<string>(), isLocalClient: self.localAddresses.has(clientIP) },
 				});
 				if (upgraded) return undefined;
 				return new Response('Expected WebSocket', { status: 400 });
@@ -166,6 +180,7 @@ export class APIServer {
 				},
 				close(ws): void {
 					self.clients.delete(ws);
+					unsubscribeAllPeers(ws);
 					console.log(`[API] Client disconnected (${self.clients.size} total)`);
 				},
 				async message(ws, message): Promise<void> {
@@ -247,6 +262,8 @@ export class APIServer {
 		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) client.send(JSON.stringify({ event, data }));
 	}
 
+	broadcastEvent(event: string, data: any): void { this.broadcast(event, data); }
+
 	private broadcast(event: string, data: any): void {
 		const msg = JSON.stringify({ event, data });
 		let sent = 0;
@@ -256,6 +273,12 @@ export class APIServer {
 				sent++;
 			}
 		}
-		// console.log(`[API] broadcast '${event}' to ${sent}/${this.clients.size} clients`, JSON.stringify(data));
+		if (event.startsWith('transfer.')) {
+			const d = data as any;
+			const extra = d.peers !== undefined ? ` peers=${d.peers}` : '';
+			const speed = d.bytesPerSecond !== undefined ? ` speed=${Math.round(d.bytesPerSecond/1024)}KB/s` : '';
+			const chunks = d.downloadedChunks !== undefined ? ` ${d.downloadedChunks}/${d.totalChunks}` : '';
+			console.log(`[TRANSFER] ${event}${chunks}${extra}${speed} → ${sent}/${this.clients.size} clients`);
+		}
 	}
 }

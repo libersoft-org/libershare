@@ -9,9 +9,11 @@
 		lishs: ILISH[];
 		downloadPath: string;
 		position: Position;
+		enableSharing?: boolean | undefined;
+		enableDownloading?: boolean | undefined;
 		onDone: () => void;
 	}
-	let { lishs, downloadPath, position, onDone }: Props = $props();
+	let { lishs, downloadPath, position, enableSharing, enableDownloading, onDone }: Props = $props();
 	let overwriteQueue = $state<ILISH[]>([]);
 	let newLISHs = $state<ILISH[]>([]);
 	let currentOverwriteLISH = $derived(overwriteQueue.length > 0 ? overwriteQueue[0] : null);
@@ -31,7 +33,7 @@
 
 	async function confirmOverwrite(): Promise<void> {
 		if (currentOverwriteLISH) {
-			await api.lishs.importFromJSON(JSON.stringify(currentOverwriteLISH), downloadPath, true);
+			await api.lishs.importFromJSON(JSON.stringify(currentOverwriteLISH), downloadPath, true, enableSharing, enableDownloading);
 			overwriteQueue = overwriteQueue.slice(1);
 		}
 		if (overwriteQueue.length === 0) await finishImport();
@@ -44,7 +46,7 @@
 
 	async function finishImport(): Promise<void> {
 		for (const lish of newLISHs) {
-			await api.lishs.importFromJSON(JSON.stringify(lish), downloadPath);
+			await api.lishs.importFromJSON(JSON.stringify(lish), downloadPath, undefined, enableSharing, enableDownloading);
 		}
 		newLISHs = [];
 		onDone();

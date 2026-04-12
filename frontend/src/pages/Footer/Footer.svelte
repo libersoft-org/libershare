@@ -13,6 +13,7 @@
 	import { gamepadConnected } from '../../scripts/input/gamepad.ts';
 	import { ramInfo, storageInfo, cpuInfo } from '../../scripts/systemStats.ts';
 	import { formatSize } from '../../scripts/utils.ts';
+	import { transferStats } from '../../scripts/downloads.ts';
 
 	type Widget = {
 		id: FooterWidget;
@@ -39,8 +40,8 @@
 				return {
 					topIcon: 'img/download.svg',
 					topIconAlt: $t('common.download'),
-					topLabel: '- 12',
-					bottomLabel: '13.2 MB/s',
+					topLabel: `${$transferStats.downloadPeers}`,
+					bottomLabel: formatSize($transferStats.downloadSpeed) + '/s',
 				};
 			},
 		},
@@ -51,8 +52,8 @@
 				return {
 					topIcon: 'img/upload.svg',
 					topIconAlt: $t('common.upload'),
-					topLabel: '- 5',
-					bottomLabel: '3.2 MB/s',
+					topLabel: `${$transferStats.uploadPeers}`,
+					bottomLabel: formatSize($transferStats.uploadSpeed) + '/s',
 				};
 			},
 		},

@@ -523,7 +523,7 @@
 		const dirName = getCurrentDirName(currentPath, separator);
 		const result = await deleteFileOrDirectory(currentPath);
 		if (result.success) {
-			if (dirName) addNotification($t('fileBrowser.directoryDeleted', { name: dirName }));
+			if (dirName) addNotification($t('fileBrowser.directoryDeleted', { name: dirName }), 'warning');
 			if (parentPath !== null) await loadDirectory(parentPath); // Navigate to parent after deletion
 		} else error = withDetail($t('fileBrowser.deleteDirectoryFailed'), result.error);
 		cancelDeleteDirectory();
@@ -567,7 +567,7 @@
 		const newPath = joinPathWithSeparator(currentPath, directoryName, separator);
 		const result = await createDirectory(newPath);
 		if (result.success) {
-			addNotification($t('fileBrowser.directoryCreated', { name: directoryName }));
+			addNotification($t('fileBrowser.directoryCreated', { name: directoryName }), 'success');
 			// Reload directory and select the new directory
 			await loadDirectory(currentPath, directoryName);
 			cancelNewDirectory(true); // Pass true to indicate success - focus on list
@@ -614,7 +614,7 @@
 		const filePath = joinPathWithSeparator(currentPath, fileName, separator);
 		const result = await api.fs.writeText(filePath, '');
 		if (result.success) {
-			addNotification($t('fileBrowser.fileCreated', { name: fileName }));
+			addNotification($t('fileBrowser.fileCreated', { name: fileName }), 'success');
 			// Reload directory and select the new file
 			await loadDirectory(currentPath, fileName);
 			cancelCreateFile(true);
@@ -677,7 +677,7 @@
 		if (!fileToDelete) return;
 		const result = await deleteFileOrDirectory(fileToDelete.path);
 		if (result.success) {
-			addNotification($t('fileBrowser.fileDeleted', { name: fileToDelete.name }));
+			addNotification($t('fileBrowser.fileDeleted', { name: fileToDelete.name }), 'warning');
 			// Reload directory
 			await loadDirectory(currentPath);
 		} else error = withDetail($t('fileBrowser.deleteFileFailed'), result.error);
@@ -729,7 +729,7 @@
 		const result = await renameFile(itemToRename.path, newName);
 		if (result.success) {
 			const key = itemToRename.type === 'directory' ? 'fileBrowser.directoryRenamed' : 'fileBrowser.fileRenamed';
-			addNotification($t(key, { name: newName }));
+			addNotification($t(key, { name: newName }), 'success');
 			if (isCurrentDir) {
 				// Current directory was renamed - stay inside the renamed directory
 				const parentPath = getParentPath(currentPath, separator);

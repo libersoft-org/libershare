@@ -259,8 +259,8 @@ class LISHsAPI {
 		this.client = client;
 	}
 
-	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[] }> {
-		return this.client.call<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[] }>('lishs.list', { sortBy, sortOrder });
+	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[]; uploadEnabled: string[]; downloadEnabled: string[] }> {
+		return this.client.call<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[]; uploadEnabled: string[]; downloadEnabled: string[] }>('lishs.list', { sortBy, sortOrder });
 	}
 
 	get(lishID: string): Promise<ILISHDetail | null> {
@@ -279,13 +279,14 @@ class LISHsAPI {
 		return this.client.call<IStoredLISH[]>('lishs.backup');
 	}
 
-	create(dataPath: string, lishFile?: string, addToSharing?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<CreateLISHResponse> {
+	create(dataPath: string, lishFile?: string, addToSharing?: boolean, addToDownloading?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<CreateLISHResponse> {
 		return this.client.call<CreateLISHResponse>('lishs.create', {
 			name,
 			description,
 			dataPath,
 			lishFile,
 			addToSharing,
+			addToDownloading,
 			chunkSize,
 			algorithm,
 			threads,
@@ -299,16 +300,16 @@ class LISHsAPI {
 		return this.client.call<boolean>('lishs.delete', { lishID, deleteLISH: deleteLISH, deleteData });
 	}
 
-	importFromFile(filePath: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromFile', { filePath, downloadPath, overwrite });
+	importFromFile(filePath: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromFile', { filePath, downloadPath, overwrite, enableSharing, enableDownloading });
 	}
 
-	importFromJSON(json: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromJSON', { json, downloadPath, overwrite });
+	importFromJSON(json: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromJSON', { json, downloadPath, overwrite, enableSharing, enableDownloading });
 	}
 
-	importFromURL(url: string, downloadPath: string, overwrite?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromURL', { url, downloadPath, overwrite });
+	importFromURL(url: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromURL', { url, downloadPath, overwrite, enableSharing, enableDownloading });
 	}
 
 	parseFromFile(filePath: string): Promise<ILISH[]> {

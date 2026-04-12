@@ -63,7 +63,11 @@
 		"errorInternal": "Interní chyba: {detail}",
 		"gamepadConnected": "Gamepad připojen: {name}",
 		"gamepadDisconnected": "Gamepad odpojen: {name}",
-		"websocketError": "Chyba spojení"
+		"websocketError": "Chyba spojení",
+		"backendDisconnected": "Backend odpojen",
+		"reconnected": "Znovu připojeno k backendu",
+		"internetOffline": "Připojení k internetu ztraceno",
+		"internetOnline": "Připojení k internetu obnoveno"
 	},
 	"library": {
 		"title": "Online knihovna",
@@ -83,6 +87,25 @@
 		"targetDirectory": "Cílový adresář",
 		"downloadingFrom": "Stahování od",
 		"uploadingTo": "Odesílání k",
+		"peers": "Spojení",
+		"tabs": {
+			"files": "Soubory",
+			"peers": "Spojení"
+		},
+		"peerList": {
+			"searching": "Hledám spojení...",
+			"id": "Peer",
+			"currentFile": "Aktuální soubor",
+			"transferred": "Přeneseno",
+			"speed": "Rychlost",
+			"connection": "Typ",
+			"availability": "Dost.",
+			"activity": "Naposledy"
+		},
+		"speed": "Rychlost",
+		"transferred": "Přeneseno",
+		"uploaded": "Odesláno",
+		"downloaded": "Staženo",
 		"downloadSpeed": "Rychlost stahování",
 		"uploadSpeed": "Rychlost odesílání",
 		"statuses": {
@@ -92,8 +115,18 @@
 			"idling": "Nečinný",
 			"verifying": "Ověřuje se",
 			"pending-verification": "Čeká na ověření",
-			"moving": "Přesouvá se"
+			"moving": "Přesouvá se",
+			"allocating": "Připravuje se",
+			"error": "Chyba",
+			"retrying": "Chyba"
 		},
+		"modes": {
+			"disabled": "Vypnuto",
+			"download": "↓ Stahování",
+			"upload": "↑ Odesílání",
+			"both": "↕ Oboje"
+		},
+		"mode": "Režim",
 		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",
@@ -114,6 +147,11 @@
 		"stopVerifyAll": "Zastavit všechna ověřování",
 		"verifyDone": "Ověření LISHe \"{name}\" dokončeno",
 		"lishAdded": "LISH \"{name}\" přidán",
+		"downloadComplete": "Stahování LISHe \"{name}\" dokončeno",
+		"downloadError": "Stahování LISHe \"{name}\" selhalo: {error}",
+		"recoveryAttempting": "Probíhá automatická obnova...",
+		"recoverySuccess": "LISH \"{name}\" se automaticky obnovil",
+		"recoveryScheduled": "Automatický pokus za {seconds}s",
 		"moveData": "Přesunout data",
 		"moveDataFromOriginal": "Přesunout data z původního adresáře",
 		"createSubdirectory": "V cílovém adresáři vytvořit podadresář s názvem LISHe",
@@ -167,6 +205,10 @@
 		},
 		"import": {
 			"fromJSON": "Z LISH JSON",
+			"uploadFromLocal": "Nahrát z lokálního počítače",
+			"localFile": "Lokální soubor",
+			"noFileSelected": "Žádný soubor nevybrán",
+			"uploadRequired": "Vyberte soubor k nahrání",
 			"filePath": "LISH soubor",
 			"url": "URL adresa LISH souboru",
 			"placeholder": "Vložte LISH JSON zde...",
@@ -175,6 +217,7 @@
 			"downloadPathRequired": "Adresář pro stažení je povinný",
 			"jsonRequired": "LISH JSON je povinný",
 			"autoStartSharing": "Automaticky spustit sdílení po přidání",
+			"autoStartDownloading": "Automaticky spustit stahování po přidání",
 			"confirmOverwrite": "Následující LISH již existuje:\n\nJméno: {name}\nID: {id}\n\nChcete jej přepsat?"
 		},
 		"export": {
@@ -193,6 +236,9 @@
 		"errorUnexpectedArray": "Očekáván jeden LISH objekt, obdrženo pole",
 		"errorPathAccessDenied": "Nelze přistoupit k cestě: {detail}",
 		"errorInvalidFileIndex": "Neplatný index souboru: {detail}",
+		"errorIONotFound": "Soubor nebo adresář nenalezen: {detail}",
+		"errorDiskFull": "Disk plný: {detail}",
+		"errorDirectoryAccessDenied": "Přístup zamítnut: {detail}",
 		"errorDownloaderNotInitialized": "Stahovač nebyl inicializován",
 		"errorDownload": "Stahování selhalo: {detail}"
 	},
@@ -215,11 +261,13 @@
 			"incomingPort": "Síťový port pro příchozí spojení",
 			"maxDownloadConnections": "Maximální počet spojení pro stahování",
 			"maxUploadConnections": "Maximální počet spojení pro odesílání",
-			"maxDownloadSpeed": "Maximální rychlost stahování (0 = neomezeno)",
-			"maxUploadSpeed": "Maximální rychlost odesílání (0 = neomezeno)",
+			"maxDownloadSpeed": "Maximální rychlost stahování v KB/s (0 = neomezeno)",
+			"maxUploadSpeed": "Maximální rychlost odesílání v KB/s (0 = neomezeno)",
 			"allowRelay": "Zapnout předávací server (přeposílat data pro ostatní účastníky)",
 			"maxRelayReservations": "Maximální počet spojení k předávacímu serveru (0 = neomezeno)",
-			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH (výchozí hodnota)"
+			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH (výchozí hodnota)",
+			"autoStartDownloadingDefault": "Automaticky spustit stahování po přidání LISH (výchozí hodnota)",
+			"autoErrorRecovery": "Automatická obnova po chybě"
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",

@@ -35,6 +35,10 @@ const errorCodes = [
 
 	// Downloader
 	'DOWNLOADER_NOT_INITIALIZED',
+	'DOWNLOAD_CANCELLED',
+	'IO_NOT_FOUND',
+	'DIRECTORY_ACCESS_DENIED',
+	'DISK_FULL',
 
 	// Utils
 	'INVALID_JSON',

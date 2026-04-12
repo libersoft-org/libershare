@@ -109,7 +109,7 @@
 		try {
 			const result = await api.lishnets.exportToFile(network.id, filePath.trim(), minifyJSONState, compress);
 			if (result.success) {
-				addNotification(tt('settings.lishNetwork.networkExported', { name: network.name || network.id }));
+				addNotification(tt('settings.lishNetwork.networkExported', { name: network.name || network.id }), 'success');
 				onBack?.();
 				return;
 			} else errorMessage = 'Save failed';
