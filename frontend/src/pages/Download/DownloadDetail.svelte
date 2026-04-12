@@ -52,7 +52,7 @@
 	let itemElements: HTMLElement[] = $state([]);
 	let infoElement: HTMLElement | null = $state(null);
 	// Per-peer data for this LISH
-	let currentPeers = $derived(($peerDetails.get(lishID) ?? []).sort((a, b) => a.peerID.localeCompare(b.peerID)));
+	let currentPeers = $derived([...($peerDetails.get(lishID) ?? [])].sort((a, b) => a.peerID.localeCompare(b.peerID)));
 	let peerSnapshotLoaded = $derived($peerSnapshotReceived.get(lishID) === true);
 	// Toolbar actions - adapt to current download state
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
