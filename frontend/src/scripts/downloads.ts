@@ -164,6 +164,7 @@ let currentDetailLISHID: string | null = null;
 export const downloads = writable<DownloadData[]>([]);
 export const downloadsLoading = writable<boolean>(true);
 export const peerDetails = writable<Map<string, PeerDetail[]>>(new Map());
+export const peerSnapshotReceived = writable<Map<string, boolean>>(new Map());
 export const transferStats = derived(downloads, $dl => {
 	let dlPeers = 0, ulPeers = 0, dlSpeed = 0, ulSpeed = 0;
 	for (const d of $dl) {
@@ -297,6 +298,7 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => list.filter(d => d.id !== data.lishID));
 			activeDownloads.delete(data.lishID);
 			disabledDownloads.delete(data.lishID);
+			peerSnapshotReceived.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
 			lastDownloadedChunks.delete(data.lishID);
 			lastUploadedChunks.delete(data.lishID);
 		});
@@ -678,6 +680,7 @@ export async function initDownloads(): Promise<void> {
 		// transfer.peers — per-peer details (1s interval, on-demand via subscribePeers)
 		const peerStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 		api.on('transfer.peers', (data: { lishID: string; peers: PeerDetail[] }) => {
+			peerSnapshotReceived.update(map => { const m = new Map(map); m.set(data.lishID, true); return m; });
 			peerDetails.update(map => { const m = new Map(map); m.set(data.lishID, data.peers); return m; });
 			const prev = peerStaleTimeouts.get(data.lishID);
 			if (prev) clearTimeout(prev);

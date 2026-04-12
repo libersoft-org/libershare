@@ -4,7 +4,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { downloads, peerDetails, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
+	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
 	import ModeBadge from '../../components/Badge/ModeBadge.svelte';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
@@ -53,6 +53,7 @@
 	let infoElement: HTMLElement | null = $state(null);
 	// Per-peer data for this LISH
 	let currentPeers = $derived(($peerDetails.get(lishID) ?? []).sort((a, b) => a.peerID.localeCompare(b.peerID)));
+	let peerSnapshotLoaded = $derived($peerSnapshotReceived.get(lishID) === true);
 	// Toolbar actions - adapt to current download state
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
 	let isMoving = $derived(download?.status === 'moving');
@@ -689,8 +690,10 @@
 							</div>
 						</Table>
 					{:else}
-						{#if currentPeers.length === 0}
+						{#if !peerSnapshotLoaded}
 							<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
+						{:else if currentPeers.length === 0}
+							<div class="empty-peers">Žádní peeri</div>
 						{:else}
 							<Table columns="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" columnsMobile="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" noBorder>
 								<Header fontSize="1.3vh">
