@@ -51,8 +51,16 @@ export function initFsHandlers(): FsHandlers {
 			if (isWindows) return { path: '', entries: await getWindowsDrives() };
 			else path = '/';
 		}
+		// Windows: bare drive letter (e.g. "C:") needs trailing backslash for readdir
+		if (isWindows && /^[A-Z]:$/i.test(path)) path += '\\';
 		const entries: any[] = [];
-		const dirents = await readdir(path, { withFileTypes: true });
+		let dirents;
+		try {
+			dirents = await readdir(path, { withFileTypes: true });
+		} catch (err: any) {
+			if (err?.code === 'EPERM' || err?.code === 'EACCES') return { path, entries: [], error: `Permission denied: ${path}` };
+			throw err;
+		}
 		for (const dirent of dirents) {
 			const entryPath = join(path, dirent.name);
 			const entry: any = {

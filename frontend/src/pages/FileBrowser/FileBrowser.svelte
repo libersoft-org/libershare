@@ -71,6 +71,20 @@
 	let parentPath = $state<string | null>(null);
 	let items = $state<StorageItemData[]>([]);
 	let loading = $state(true);
+	// Type-ahead search
+	let typeAheadBuffer = $state('');
+	let typeAheadTimeout: ReturnType<typeof setTimeout> | null = null;
+	function handleTypedChar(char: string): void {
+		if (typeAheadTimeout) clearTimeout(typeAheadTimeout);
+		typeAheadBuffer += char.toLowerCase();
+		typeAheadTimeout = setTimeout(() => { typeAheadBuffer = ''; }, 800);
+		const idx = items.findIndex(i => i.name !== '..' && i.name.toLowerCase().startsWith(typeAheadBuffer));
+		if (idx >= 0) {
+			selectedIndex = idx;
+			showActions = false;
+			scrollToSelected();
+		}
+	}
 	let error = $state<string | null>(null);
 	let separator = $state('/');
 	let showDeleteConfirm = $state(false);
@@ -122,6 +136,11 @@
 		try {
 			const options: LoadDirectoryOptions = { directoriesOnly: directoriesOnly, filesOnly, fileFilter: activeFilter };
 			const result = await loadDirectoryFromAPI(path, separator, options);
+			if (result.permissionDenied) {
+				addNotification($t('fileBrowser.permissionDenied'));
+				if (parentPath !== null) await loadDirectory(parentPath);
+				return;
+			}
 			currentPath = result.path;
 			parentPath = result.parentPath;
 			items = result.items;
@@ -130,6 +149,8 @@
 				const idx = result.items.findIndex(e => e.name === selectName);
 				selectedIndex = idx >= 0 ? idx : 0;
 			} else selectedIndex = 0;
+			// Scroll to selection after DOM updates (needed when returning to parent dir)
+			tick().then(() => scrollToSelected());
 		} catch (e: any) {
 			error = withDetail($t('fileBrowser.loadDirectoryFailed'), translateError(e));
 			// Even on error, provide ".." entry to navigate up if we have a parent path
@@ -171,15 +192,16 @@
 		activateArea(`${areaID}-actions`);
 	}
 
+	const PAGE_SIZE = 10;
+
 	const areaHandlers = {
 		up() {
 			if (selectedIndex > 0) {
 				selectedIndex--;
-				showActions = false; // Hide actions when selection changes
+				showActions = false;
 				scrollToSelected();
 				return true;
 			}
-			// At top of list - go to save filename input if in save mode, or directory actions
 			if (error) {
 				if (showPath) activateArea(`${areaID}-path`);
 				else return false;
@@ -190,12 +212,39 @@
 		down() {
 			if (selectedIndex < items.length - 1) {
 				selectedIndex++;
-				showActions = false; // Hide actions when selection changes
+				showActions = false;
 				scrollToSelected();
 				return true;
 			}
 			if (onDownAtEnd) return onDownAtEnd();
-			return false; // Allow navigation to other areas
+			return false;
+		},
+		pageUp() {
+			if (items.length === 0) return;
+			selectedIndex = Math.max(0, selectedIndex - PAGE_SIZE);
+			showActions = false;
+			scrollToSelected();
+		},
+		pageDown() {
+			if (items.length === 0) return;
+			selectedIndex = Math.min(items.length - 1, selectedIndex + PAGE_SIZE);
+			showActions = false;
+			scrollToSelected();
+		},
+		home() {
+			if (items.length === 0) return;
+			selectedIndex = 0;
+			showActions = false;
+			scrollToSelected();
+		},
+		end() {
+			if (items.length === 0) return;
+			selectedIndex = items.length - 1;
+			showActions = false;
+			scrollToSelected();
+		},
+		typedChar(char: string) {
+			handleTypedChar(char);
 		},
 		left() {
 			return false;
@@ -956,6 +1005,7 @@
 		margin: 2vh;
 		flex: 1;
 		min-height: 0;
+		position: relative;
 	}
 
 	.table-row {
@@ -983,6 +1033,22 @@
 
 	.items .loading {
 		margin: 2vh;
+	}
+
+	.type-ahead-hint {
+		position: absolute;
+		bottom: 1vh;
+		left: 50%;
+		transform: translateX(-50%);
+		background: rgba(0, 0, 0, 0.85);
+		color: var(--primary-foreground);
+		padding: 0.5vh 2vh;
+		border-radius: 0.5vh;
+		font-size: 2vh;
+		font-family: monospace;
+		pointer-events: none;
+		z-index: 10;
+		border: 1px solid var(--primary-foreground);
 	}
 
 	.actions {
@@ -1060,6 +1126,9 @@
 							{/if}
 						</div>
 					</Table>
+				{#if typeAheadBuffer}
+					<div class="type-ahead-hint">{typeAheadBuffer}</div>
+				{/if}
 				</div>
 				{#if showActions && selectedItem?.type === 'file'}
 					<div class="actions">

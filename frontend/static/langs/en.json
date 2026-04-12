@@ -378,6 +378,7 @@
 		"filterPattern": "Filter",
 		"enterFilterPattern": "Enter filter (e.g. *.txt, *.jpg)",
 		"loadDirectoryFailed": "Failed to load directory",
+		"permissionDenied": "Permission denied — cannot access this directory",
 		"deleteFailed": "Failed to delete",
 		"deleteDirectoryFailed": "Failed to delete directory",
 		"createDirectoryFailed": "Failed to create directory",

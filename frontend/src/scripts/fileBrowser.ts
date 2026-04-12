@@ -58,7 +58,10 @@ export function getParentPath(path: string, separator: string): string | null {
 		return separator === '/' ? '/' : '';
 	}
 	const parent = parts.slice(0, -1).join(separator);
-	return separator === '/' ? '/' + parent : parent;
+	if (separator === '/') return '/' + parent;
+	// Windows: ensure drive root has trailing backslash (C: → C:\)
+	if (/^[A-Z]:$/i.test(parent)) return parent + '\\';
+	return parent;
 }
 
 /**
@@ -115,6 +118,7 @@ export interface LoadDirectoryResult {
 	parentPath: string | null;
 	items: StorageItemData[];
 	separator: string;
+	permissionDenied?: boolean;
 }
 
 /**
@@ -123,6 +127,11 @@ export interface LoadDirectoryResult {
 export async function loadDirectoryFromAPI(path: string | undefined, separator: string, options: LoadDirectoryOptions = {}): Promise<LoadDirectoryResult> {
 	const { directoriesOnly: directoriesOnly = false, filesOnly = false, fileFilter } = options;
 	const result = await api.fs.list(path);
+	if (result.error) {
+		const currentPath = result.path;
+		const parentPath = getParentPath(currentPath, separator);
+		return { path: currentPath, parentPath, items: [], separator, permissionDenied: true };
+	}
 	const currentPath = result.path;
 	const parentPath = getParentPath(currentPath, separator);
 	let entries: StorageItemData[] = result.entries.map((entry: FsEntry, index: number) => transformFsEntry(entry, index));

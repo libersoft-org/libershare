@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import { inputInitialDelay, inputRepeatDelay, increaseVolume, decreaseVolume } from '../settings.ts';
-type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'confirmDown' | 'confirmUp' | 'back' | 'debug' | 'reload';
+type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'pageUp' | 'pageDown' | 'home' | 'end' | 'typedChar' | 'confirmDown' | 'confirmUp' | 'back' | 'debug' | 'reload';
 type KeyboardCallback = () => void;
 const ARROW_KEYS: Record<string, KeyboardAction> = {
 	ArrowUp: 'up',
@@ -39,6 +39,7 @@ class KeyboardManager {
 	private keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 	private keyupHandler: ((e: KeyboardEvent) => void) | null = null;
 	private callbacks: Map<string, KeyboardCallback> = new Map();
+	private typedCharCallback: ((char: string) => void) | null = null;
 	private heldKey: string | null = null;
 	private repeatTimer: ReturnType<typeof setTimeout> | null = null;
 	private repeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -84,6 +85,27 @@ class KeyboardManager {
 				setupRepeat(e.key, volumeAction);
 				return;
 			}
+			// Page up/down (single press, no repeat)
+			if (e.key === 'PageUp') {
+				e.preventDefault();
+				this.emit('pageUp');
+				return;
+			}
+			if (e.key === 'PageDown') {
+				e.preventDefault();
+				this.emit('pageDown');
+				return;
+			}
+			if (e.key === 'Home') {
+				e.preventDefault();
+				this.emit('home');
+				return;
+			}
+			if (e.key === 'End') {
+				e.preventDefault();
+				this.emit('end');
+				return;
+			}
 			// Confirm keys (with keyup)
 			if (CONFIRM_KEYS.includes(e.key)) {
 				e.preventDefault();
@@ -110,6 +132,11 @@ class KeyboardManager {
 			if (e.key === 'F3') {
 				e.preventDefault();
 				this.emit('reload');
+				return;
+			}
+			// Printable character — type-ahead search
+			if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+				this.typedCharCallback?.(e.key);
 				return;
 			}
 		};
@@ -144,6 +171,10 @@ class KeyboardManager {
 
 	on(action: string, callback: KeyboardCallback): void {
 		this.callbacks.set(action, callback);
+	}
+
+	onTypedChar(callback: (char: string) => void): void {
+		this.typedCharCallback = callback;
 	}
 
 	off(action: string): void {
