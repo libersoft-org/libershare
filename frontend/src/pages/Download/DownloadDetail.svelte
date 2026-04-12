@@ -710,7 +710,7 @@
 									{#each currentPeers as peer, index (peer.peerID)}
 										{@const ageSec = peer.lastActivity ? Math.max(0, Math.round((now - peer.lastActivity) / 1000)) : 0}
 										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index} dimmed={peer.stale}>
-											<Cell><span class="peer-id">{peer.peerID}</span></Cell>
+											<Cell><span class="peer-id">{peer.peerID.slice(0, 12)}</span></Cell>
 											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
 											<Cell align="center"><span class="peer-ago">{peer.havePercent != null ? `${peer.havePercent}%` : '—'}</span></Cell>
 											<Cell align="right">

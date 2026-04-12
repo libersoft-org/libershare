@@ -323,7 +323,7 @@ function emitPeerDetails(): void {
 			if (entry.lastActivity > existing.lastActivity) existing.lastActivity = entry.lastActivity;
 		} else {
 			peerMap.set(entry.peerID, {
-				peerID: entry.peerID.slice(0, 12),
+				peerID: entry.peerID,
 				connectionType: entry.connectionType,
 				downloadSpeed: entry.direction === 'download' ? speed : 0,
 				uploadSpeed: entry.direction === 'upload' ? speed : 0,
