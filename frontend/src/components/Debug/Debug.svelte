@@ -28,7 +28,7 @@
 		border: 2px solid #444;
 		border-radius: 8px;
 		z-index: 99999;
-		font-family: 'Consolas', 'Monaco', monospace;
+		font-family: var(--font-mono);
 		font-size: 11px;
 		color: #fff;
 		max-width: 90vw;

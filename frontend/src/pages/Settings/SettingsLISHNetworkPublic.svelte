@@ -112,7 +112,7 @@
 
 	.network-id {
 		font-size: 2vh;
-		font-family: 'Ubuntu Mono';
+		font-family: var(--font-mono);
 		color: var(--secondary-foreground);
 		word-break: break-all;
 		padding: 1vh;

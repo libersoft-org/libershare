@@ -167,7 +167,7 @@
 
 	.done-info .lish-id {
 		color: var(--primary-foreground);
-		font-family: monospace;
+		font-family: var(--font-mono);
 		word-break: break-all;
 	}
 </style>

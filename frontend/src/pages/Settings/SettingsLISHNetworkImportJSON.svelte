@@ -94,7 +94,7 @@
 {:else}
 	<div class="import">
 		<div class="container">
-			<Input bind:value={networkJSON} multiline rows={15} fontSize="2vh" fontFamily="'Ubuntu Mono'" position={[0, 0]} placeholder={'{"networkID": "...", "name": "...", ...}'} />
+			<Input bind:value={networkJSON} multiline rows={15} fontSize="2vh" fontFamily="var(--font-mono)" position={[0, 0]} placeholder={'{"networkID": "...", "name": "...", ...}'} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}

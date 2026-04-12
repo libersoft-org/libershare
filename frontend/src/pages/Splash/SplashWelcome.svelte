@@ -37,7 +37,7 @@
 	}
 
 	.url {
-		font-family: 'Ubuntu Mono';
+		font-family: var(--font-mono);
 		font-size: 2.4vh;
 		color: var(--disabled-foreground);
 	}

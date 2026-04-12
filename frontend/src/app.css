@@ -40,6 +40,8 @@
 	--mode-upload-bg: #134;
 	--mode-both-fg: #c8f;
 	--mode-both-bg: #214;
+	--font: 'Ubuntu', sans-serif;
+	--font-mono: 'Ubuntu Mono', monospace;
 }
 
 html,
@@ -50,7 +52,7 @@ body {
 }
 
 body {
-	font-family: 'Ubuntu', sans-serif;
+	font-family: var(--font);
 	background-color: #111;
 	cursor: none;
 }

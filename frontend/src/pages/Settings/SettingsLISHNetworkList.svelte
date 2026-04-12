@@ -304,7 +304,7 @@
 	}
 
 	.node-info .peer-id .value {
-		font-family: monospace;
+		font-family: var(--font-mono);
 		color: var(--primary-foreground);
 	}
 
@@ -316,13 +316,13 @@
 
 	.node-info .address-index {
 		font-size: 1.5vh;
-		font-family: monospace;
+		font-family: var(--font-mono);
 		color: var(--disabled-foreground);
 	}
 
 	.node-info .address-value {
 		font-size: 1.5vh;
-		font-family: monospace;
+		font-family: var(--font-mono);
 		color: var(--disabled-foreground);
 		word-break: break-all;
 	}
@@ -358,7 +358,7 @@
 
 	.network .network-id {
 		font-size: 2vh;
-		font-family: 'Ubuntu Mono';
+		font-family: var(--font-mono);
 		color: var(--secondary-foreground);
 		word-break: break-all;
 		padding: 1vh;

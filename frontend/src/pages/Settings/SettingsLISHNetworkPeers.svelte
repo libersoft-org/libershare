@@ -68,7 +68,7 @@
 	}
 
 	.peer-id {
-		font-family: monospace;
+		font-family: var(--font-mono);
 		font-size: 1.8vh;
 		word-break: break-all;
 		white-space: normal;

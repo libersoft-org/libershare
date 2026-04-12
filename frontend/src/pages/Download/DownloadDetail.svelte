@@ -467,7 +467,7 @@
 	}
 
 	.peer-id {
-		font-family: 'Courier New', Consolas, monospace;
+		font-family: var(--font-mono);
 		font-size: 1.5vh;
 	}
 
@@ -503,7 +503,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.2vh;
-		font-family: 'Courier New', Consolas, monospace;
+		font-family: var(--font-mono);
 		font-size: 1.5vh;
 		white-space: nowrap;
 	}
@@ -534,7 +534,7 @@
 
 	.peer-ago {
 		font-size: 1.4vh;
-		font-family: 'Courier New', Consolas, monospace;
+		font-family: var(--font-mono);
 		color: var(--secondary-foreground);
 		opacity: 0.6;
 	}

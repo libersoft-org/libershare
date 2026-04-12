@@ -1045,7 +1045,7 @@
 		padding: 0.5vh 2vh;
 		border-radius: 0.5vh;
 		font-size: 2vh;
-		font-family: monospace;
+		font-family: var(--font-mono);
 		pointer-events: none;
 		z-index: 10;
 		border: 1px solid var(--primary-foreground);
