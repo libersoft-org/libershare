@@ -518,7 +518,6 @@ export async function initDownloads(): Promise<void> {
 				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
 				return { ...d, status, downloadEnabled: false, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, downloadPeers: 0 };
 			}));
-			peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
 		});
 
 		// transfer.download:enabled — set flag and clear error state if present
