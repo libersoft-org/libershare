@@ -344,7 +344,15 @@ export async function initDownloads(): Promise<void> {
 						if (d.id !== data.lishID) return d;
 						if (d.status === 'moving') return d;
 						// Preserve live transfer status + live fields; overwrite per-file state + totals
-						return { ...d, files: fresh.files, progress: fresh.progress, downloadedSize: fresh.downloadedSize, verifiedChunks: fresh.verifiedChunks, totalChunks: fresh.totalChunks, status: (d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating') ? d.status : 'idling' as DownloadStatus };
+						return {
+							...d,
+							files: fresh.files,
+							progress: fresh.progress,
+							...(fresh.downloadedSize !== undefined ? { downloadedSize: fresh.downloadedSize } : {}),
+							verifiedChunks: fresh.verifiedChunks,
+							totalChunks: fresh.totalChunks,
+							status: (d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating') ? d.status : 'idling' as DownloadStatus,
+						};
 					}));
 				});
 				return;
