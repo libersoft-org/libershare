@@ -61,7 +61,6 @@
 	let isBusy = $derived(isVerifying || isMoving || isAllocating);
 	let isDownloading = $derived(download?.downloadEnabled ?? false);
 	let isUploading = $derived(download?.uploadEnabled ?? false);
-	let isActivelyDownloading = $derived(download?.status === 'downloading' || download?.status === 'downloading-uploading' || download?.status === 'allocating');
 	let downloadPaused = $derived(!isDownloading);
 	let uploadPaused = $derived(!isUploading);
 	let enabledMode = $derived(download ? computeEnabledMode(download.downloadEnabled, download.uploadEnabled) : 'disabled' as const);
@@ -70,7 +69,7 @@
 			if (action.id === 'toggle-download') return true;
 			if (action.id === 'toggle-upload') return true;
 			if (action.id === 'move' && isBusy) return false;
-			if (action.id === 'verify' && !isVerifying && !isActivelyDownloading && !isMoving) return true;
+			if (action.id === 'verify' && !isVerifying && !isMoving && !isAllocating) return true;
 			if (action.id === 'stop-verify' && isVerifying) return true;
 			if (action.id === 'verify' || action.id === 'stop-verify') return false;
 			return true;
