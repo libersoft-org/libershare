@@ -165,10 +165,32 @@ function isTransientError(err: any): boolean {
 	return TRANSIENT_ERRORS.has(name);
 }
 
+// Rate-limiter for the highest-frequency transient error coming from gossipsub
+// internals (StreamStateError: "Cannot write to a stream that is closed").
+// This is a known issue in @chainsafe/libp2p-gossipsub where sendRpc does not
+// catch sync throws from rawStream.send() on closed streams. Logging each one
+// produces ~5000 warn/hour of pure noise. We keep an occasional summary so the
+// condition is still observable.
+const transientLogState = new Map<string, { count: number; lastLogAt: number }>();
+const TRANSIENT_LOG_INTERVAL_MS = 60_000;
+function logTransientRateLimited(kind: 'error' | 'rejection', name: string, message: string): void {
+	const key = `${kind}:${name}`;
+	const state = transientLogState.get(key) ?? { count: 0, lastLogAt: 0 };
+	state.count++;
+	const now = Date.now();
+	if (now - state.lastLogAt >= TRANSIENT_LOG_INTERVAL_MS) {
+		const suppressed = state.count > 1 ? ` (×${state.count} in last ${Math.round((now - state.lastLogAt) / 1000)}s)` : '';
+		console.warn(`[WARN] Suppressed transient libp2p ${kind} (${name})${suppressed}: ${message}`);
+		state.count = 0;
+		state.lastLogAt = now;
+	}
+	transientLogState.set(key, state);
+}
+
 process.on('uncaughtException', err => {
 	if (isTransientError(err)) {
 		const name = (err as any)?.constructor?.name || err.name || '';
-		console.warn(`[WARN] Suppressed transient libp2p error (${name}): ${err.message}`);
+		logTransientRateLimited('error', name, err.message);
 		return;
 	}
 	console.error('[FATAL] Uncaught exception:', err);
@@ -178,7 +200,7 @@ process.on('uncaughtException', err => {
 process.on('unhandledRejection', (reason: any) => {
 	if (isTransientError(reason)) {
 		const name = reason?.constructor?.name || reason?.name || '';
-		console.warn(`[WARN] Suppressed transient libp2p rejection (${name}): ${reason?.message}`);
+		logTransientRateLimited('rejection', name, reason?.message ?? '');
 		return;
 	}
 	console.error('[FATAL] Unhandled rejection:', reason);

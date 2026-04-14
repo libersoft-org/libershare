@@ -296,6 +296,8 @@ export class Network {
 		this.node!.addEventListener('peer:disconnect', evt => {
 			const peerID = evt.detail.toString();
 			console.debug(`❌ Peer disconnected: ${peerID.slice(0, 16)}, remaining: ${this.node!.getPeers().length}`);
+			// Fix C: clear per-peer state on disconnect to prevent unbounded growth
+			this.dcutrPeers.delete(peerID);
 			this.schedulePeerCountCheck();
 		});
 
@@ -727,6 +729,11 @@ export class Network {
 			this.statusInterval = null;
 		}
 		this.topicHandlers.clear();
+		// Fix C: clear accumulated per-peer/bootstrap state on stop
+		this.dcutrPeers.clear();
+		this.bootstrapPeerIDs.clear();
+		this.bootstrapMultiaddrs = [];
+		this._lastPeerCounts.clear();
 		if (this.node) {
 			await this.node.stop();
 			console.log('Network stopped');

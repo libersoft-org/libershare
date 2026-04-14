@@ -73,6 +73,10 @@ export class Downloader {
 	private writeRetryCount = 0;
 	private static readonly MAX_WRITE_RETRIES = 5;
 	private static readonly WRITE_RETRY_DELAY = 60_000;
+	// Fix D: exponential backoff for no-peers retry
+	private noPeersRetryCount = 0;
+	private static readonly BASE_NO_PEERS_RETRY_MS = 10_000;
+	private static readonly MAX_NO_PEERS_RETRY_MS = 300_000;
 
 	getLISHID(): string { return this.lishID; }
 	getError(): { code: string; detail?: string } | null {
@@ -130,11 +134,26 @@ export class Downloader {
 
 	private scheduleRetry(): void {
 		if (this.retryTimer) clearTimeout(this.retryTimer);
+		// Fix D: exponential backoff — 10s, 20s, 40s, 80s, ... capped at 5 min
+		const delay = Math.min(
+			Downloader.BASE_NO_PEERS_RETRY_MS * Math.pow(2, this.noPeersRetryCount),
+			Downloader.MAX_NO_PEERS_RETRY_MS
+		);
+		this.noPeersRetryCount++;
+		console.log(`[DL] ${this.lishID.slice(0, 8)}: retry scheduled in ${Math.round(delay / 1000)}s (attempt ${this.noPeersRetryCount})`);
 		this.retryTimer = setTimeout(() => {
 			this.retryTimer = undefined;
 			if (this.state === 'downloading' && !this.disabled)
 				this.doWork().catch(e => { if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e); });
-		}, 10000);
+		}, delay);
+	}
+
+	/** Fix D: reset exponential backoff counter on successful peer connection */
+	private resetRetryBackoff(): void {
+		if (this.noPeersRetryCount > 0) {
+			console.log(`[DL] ${this.lishID.slice(0, 8)}: retry backoff reset (was ${this.noPeersRetryCount})`);
+			this.noPeersRetryCount = 0;
+		}
 	}
 
 	private clearRetryTimer(): void {
@@ -377,6 +396,7 @@ export class Downloader {
 					}
 				}
 				if (this.peers.size !== 0) {
+					this.resetRetryBackoff();
 					this.downloadActive = true;
 					try { await this.downloadChunks(); } finally { this.downloadActive = false; }
 					const remaining = this.dataServer.getMissingChunks(this.lishID);
