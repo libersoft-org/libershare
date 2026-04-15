@@ -335,7 +335,6 @@ describe('Speed calculation', () => {
 
 		if (speeds.length >= 3) {
 			// Speed should not be constant — rolling window produces variation
-			const min = Math.min(...speeds);
 			const max = Math.max(...speeds);
 			// Allow some variation (at least 10% difference between min and max)
 			// This is a soft check — on very stable connections it might be nearly constant

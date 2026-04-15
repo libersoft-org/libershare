@@ -1,4 +1,4 @@
-import { WsClient } from '../../../shared/src/client.ts';
+import { WsClient } from '@shared/client.ts';
 
 export class TestClient {
 	private client: WsClient;
@@ -6,7 +6,7 @@ export class TestClient {
 	private connected = false;
 
 	constructor(url: string) {
-		this.client = new WsClient(url, state => {
+		this.client = new WsClient(url, (state: { connected: boolean }) => {
 			this.connected = state.connected;
 		});
 		this.client.on('*', (msg: { event: string; data: any }) => {

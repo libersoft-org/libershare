@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import type { LISHid, ChunkID, IStoredLISH } from '@shared';
-import { initLISHsTables, addLISH, setUploadEnabled, setDownloadEnabled, getUploadEnabledLishs, getDownloadEnabledLishs, getMissingChunks, markChunkDownloaded, isComplete, getLISH } from '../../src/db/lishs.ts';
+import { initLISHsTables, addLISH, setUploadEnabled, setDownloadEnabled, getUploadEnabledLishs, getDownloadEnabledLishs } from '../../src/db/lishs.ts';
 import { initUploadState, disableUpload, enableUpload, isUploadDisabled, isUploadEnabled, getEnabledUploads, getActiveUploads, resetUploadState, setUploadBroadcast } from '../../src/protocol/lish-protocol.ts';
 import { initDownloadState, initTransferHandlers, getDownloadEnabledLishs as getDownloadEnabledLishsRuntime } from '../../src/api/transfer.ts';
 import { setBusy, clearBusy, isBusy, getBusyReason } from '../../src/api/busy.ts';
@@ -587,7 +587,7 @@ describe('Downloader — download behavior with mocked peers', () => {
 		(priv(downloader) as Record<string, string>)['state'] = 'downloading';
 
 		// doWork should return immediately without attempting download
-		await downloader['doWork' as never]();
+		await (downloader as any)['doWork']();
 
 		// peers should still be empty (no work was done)
 		const peers = priv(downloader)['peers'] as Map<string, unknown>;

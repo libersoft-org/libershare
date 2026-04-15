@@ -8,6 +8,7 @@
  * Run: bun run backend/tests/ws-recovery-test.ts [ws-url]
  * Default URL: ws://192.168.2.9:1158
  */
+export {};
 
 const WS_URL = process.argv[2] || 'ws://192.168.2.9:1158';
 
@@ -61,7 +62,7 @@ async function subscribe(ws: WebSocket, event: string): Promise<void> {
 	await call(ws, 'events.subscribe', { event });
 }
 
-function waitForEvent(eventName: string, timeout = 5000): Promise<any> {
+export function waitForEvent(eventName: string, timeout = 5000): Promise<any> {
 	return new Promise((resolve, reject) => {
 		const start = Date.now();
 		const check = setInterval(() => {

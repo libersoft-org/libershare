@@ -9,7 +9,7 @@ import { isBusy } from './busy.ts';
 import { ErrorRecovery } from './error-recovery.ts';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
-import { setPeerEmit, startPeerEmitter, subscribePeers, unsubscribePeers, unsubscribeAllPeers, getDebugSnapshot } from '../protocol/peer-tracker.ts';
+import { setPeerEmit, startPeerEmitter, subscribePeers, unsubscribePeers, getDebugSnapshot } from '../protocol/peer-tracker.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 type BroadcastFn = (event: string, data: any) => void;

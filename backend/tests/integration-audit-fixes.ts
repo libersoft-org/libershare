@@ -3,6 +3,7 @@
  * Requires backend running on localhost:1158.
  * Usage: bun run backend/tests/integration-audit-fixes.ts
  */
+export {};
 
 let passed = 0;
 let failed = 0;

@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect } from 'bun:test';
 
 // ============================================================================
 // Integration tests — verify real connectivity endpoints respond as expected
@@ -204,7 +204,6 @@ describe('connectivity check — initial state', () => {
 
 describe('connectivity check — concurrent guard', () => {
 	it('rejects concurrent processResult calls', async () => {
-		const events: any[] = [];
 		// Create checker with a slow broadcast to simulate concurrency
 		let running = false;
 		const checker = {

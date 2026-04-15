@@ -64,7 +64,9 @@ function key(lishID: string, peerID: string, direction: 'download' | 'upload'): 
 function createEntry(peerID: string, lishID: string, direction: 'download' | 'upload', connectionType: ConnectionType, havePercent?: number): PeerEntry {
 	const k = key(lishID, peerID, direction);
 	const now = Date.now();
-	return { peerID, lishID, direction, connectionType, connectedAt: now, totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: now, speedSamples: [], havePercent };
+	const entry: PeerEntry = { peerID, lishID, direction, connectionType, connectedAt: now, totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: now, speedSamples: [] };
+	if (havePercent !== undefined) entry.havePercent = havePercent;
+	return entry;
 }
 
 /**
@@ -333,20 +335,21 @@ function emitPeerDetails(): void {
 			if (entry.connectedAt < existing.connectedAt) existing.connectedAt = entry.connectedAt;
 			if (entry.lastActivity > existing.lastActivity) existing.lastActivity = entry.lastActivity;
 		} else {
-			peerMap.set(entry.peerID, {
+			const detail: PeerDetail = {
 				peerID: entry.peerID,
 				connectionType: entry.connectionType,
 				downloadSpeed: entry.direction === 'download' ? speed : 0,
 				uploadSpeed: entry.direction === 'upload' ? speed : 0,
 				totalDownloaded: entry.direction === 'download' ? entry.totalBytes : 0,
 				totalUploaded: entry.direction === 'upload' ? entry.totalBytes : 0,
-				currentFile: entry.currentFile,
-				currentChunk: entry.currentChunk,
 				connectedAt: entry.connectedAt,
 				lastActivity: entry.lastActivity,
 				stale: isStale,
-				havePercent: entry.havePercent,
-			});
+			};
+			if (entry.currentFile !== undefined) detail.currentFile = entry.currentFile;
+			if (entry.currentChunk !== undefined) detail.currentChunk = entry.currentChunk;
+			if (entry.havePercent !== undefined) detail.havePercent = entry.havePercent;
+			peerMap.set(entry.peerID, detail);
 		}
 	}
 

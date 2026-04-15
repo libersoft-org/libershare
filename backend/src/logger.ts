@@ -103,5 +103,5 @@ export function setupLogger(level: LogLevel = 'info', logFile?: string): ReturnT
 
 /** Trace-level log without stack trace (unlike console.trace which adds stack in consola). */
 export function trace(...args: any[]): void {
-	_consola?.trace(...args);
+	_consola?.trace(...(args as [any, ...any[]]));
 }

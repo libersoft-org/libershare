@@ -18,7 +18,7 @@ function assert(condition: boolean, name: string): void {
 }
 
 const downloaderSrc = readFileSync('backend/src/protocol/downloader.ts', 'utf-8');
-const dataSrcSrc = readFileSync('backend/src/lish/data-server.ts', 'utf-8');
+readFileSync('backend/src/lish/data-server.ts', 'utf-8');
 const recoverySrc = readFileSync('backend/src/api/error-recovery.ts', 'utf-8');
 const lishsDbSrc = readFileSync('backend/src/db/lishs.ts', 'utf-8');
 const transferSrc = readFileSync('backend/src/api/transfer.ts', 'utf-8');

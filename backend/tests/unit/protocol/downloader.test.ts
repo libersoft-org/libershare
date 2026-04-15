@@ -809,7 +809,7 @@ describe('Downloader – path traversal protection', () => {
 	});
 
 	it('allows . (current dir)', () => {
-		const dl = makeDownloader();
+		makeDownloader();
 		// resolve(downloadDir, '.') = downloadDir — but startsWith(downloadDir + sep) fails
 		// because it equals downloadDir exactly, without trailing sep
 		// This is an edge case — '.' as a file path is unusual but harmless
@@ -1093,7 +1093,7 @@ describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
 		it(`${algo}: rejects wrong data`, () => {
 			const expected = hashWith(algo, testData);
 			const bad = new Uint8Array(testData);
-			bad[0] ^= 0xff; // flip first byte
+			bad[0] = bad[0]! ^ 0xff; // flip first byte
 			const result = verifyChunk(bad, expected, algo);
 			expect(result.valid).toBe(false);
 		});
@@ -1121,7 +1121,7 @@ describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
 				blake2b512: 128,
 				blake2s256: 64,
 			};
-			expect(hash.length).toBe(expectedLengths[algo]);
+			expect(hash.length).toBe(expectedLengths[algo]!);
 		});
 	}
 
@@ -1172,8 +1172,8 @@ describe('Downloader — inline ENOENT recovery', () => {
 
 	it('has fileReallocAttempts and writeRetryCount fields', () => {
 		const p = priv(downloader);
-		expect(p.fileReallocAttempts).toBeInstanceOf(Map);
-		expect(p.writeRetryCount).toBe(0);
+		expect(p['fileReallocAttempts']).toBeInstanceOf(Map);
+		expect(p['writeRetryCount']).toBe(0);
 	});
 
 	it('MAX_FILE_REALLOC is 3', () => {
@@ -1191,11 +1191,11 @@ describe('Downloader — inline ENOENT recovery', () => {
 		dataServer.missingChunks = [makeMissingChunk('abc123' as ChunkID)];
 		await downloader.initFromManifest(lish);
 		const p = priv(downloader);
-		(p.fileReallocAttempts as Map<number, number>).set(0, 2);
+		(p['fileReallocAttempts'] as Map<number, number>).set(0, 2);
 		(p as any).writeRetryCount = 3;
 		await downloader.enable();
-		expect((p.fileReallocAttempts as Map<number, number>).size).toBe(0);
-		expect(p.writeRetryCount).toBe(0);
+		expect((p['fileReallocAttempts'] as Map<number, number>).size).toBe(0);
+		expect(p['writeRetryCount']).toBe(0);
 	});
 
 	it('writeChunkError in mock triggers error for testing', async () => {
@@ -1252,7 +1252,7 @@ describe('Downloader — inline ENOSPC retry', () => {
 	});
 
 	it('writePaused starts as false', () => {
-		expect(priv(downloader).writePaused).toBe(false);
+		expect(priv(downloader)['writePaused']).toBe(false);
 	});
 
 	it('waitIfWritePaused resolves immediately when not paused', async () => {

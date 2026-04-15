@@ -5,6 +5,7 @@
  *
  * Run: bun run backend/tests/ws-recovery-full-test.ts [ws-url]
  */
+export {};
 
 const WS_URL = process.argv[2] || 'ws://192.168.2.9:1158';
 

@@ -61,8 +61,8 @@ export class Downloader {
 	private speedSamples: { time: number; bytes: number }[] = [];
 	private currentSpeed = 0;
 	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
-	private errorCode?: string;
-	private errorDetail?: string;
+	private errorCode: string | undefined;
+	private errorDetail: string | undefined;
 	private onRetry?: (info: { errorCode: string; errorDetail?: string; retryCount: number; maxRetries: number; resolved?: boolean }) => void;
 	private fileReallocAttempts = new Map<number, number>();
 	private static readonly MAX_FILE_REALLOC = 3;
@@ -79,7 +79,9 @@ export class Downloader {
 	}
 	getError(): { code: string; detail?: string } | null {
 		if (this.state !== 'error') return null;
-		return { code: this.errorCode!, detail: this.errorDetail };
+		const err: { code: string; detail?: string } = { code: this.errorCode! };
+		if (this.errorDetail !== undefined) err.detail = this.errorDetail;
+		return err;
 	}
 	getPeerCount(): number {
 		return this.lastServingPeerCount;
@@ -898,7 +900,7 @@ export class Downloader {
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 						this.needsManifest = false;
 						this.state = 'preparing';
-						console.log(`[DL] Got manifest from ${peerID.slice(0, 12)}: ${manifest.files.length} files, ${this.missingChunks.length} chunks`);
+						console.log(`[DL] Got manifest from ${peerID.slice(0, 12)}: ${manifest.files?.length ?? 0} files, ${this.missingChunks.length} chunks`);
 					});
 				}
 

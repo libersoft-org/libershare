@@ -68,7 +68,7 @@ describe('addNotification', () => {
 		reset();
 		addNotification('hello');
 		expect(store).toHaveLength(1);
-		expect(store[0].text).toBe('hello');
+		expect(store[0]!.text).toBe('hello');
 	});
 
 	it('assigns incrementing IDs', () => {
