@@ -117,6 +117,7 @@ const errorCodeKeys: Record<string, string> = {
 	NO_VALID_NETWORKS: 'settings.lishNetwork.errorNoValidNetworks',
 	NETWORK_NOT_STARTED: 'settings.lishNetwork.errorNotStarted',
 	NETWORK_PORT_IN_USE: 'settings.lishNetwork.errorPortInUse',
+	PEER_UNREACHABLE: 'peers.errorUnreachable',
 	// Server → common
 	PARSE_ERROR: 'common.errorParseError',
 	METHOD_REQUIRED: 'common.errorMethodRequired',

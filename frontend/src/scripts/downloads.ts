@@ -166,7 +166,10 @@ export const downloadsLoading = writable<boolean>(true);
 export const peerDetails = writable<Map<string, PeerDetail[]>>(new Map());
 export const peerSnapshotReceived = writable<Map<string, boolean>>(new Map());
 export const transferStats = derived(downloads, $dl => {
-	let dlPeers = 0, ulPeers = 0, dlSpeed = 0, ulSpeed = 0;
+	let dlPeers = 0,
+		ulPeers = 0,
+		dlSpeed = 0,
+		ulSpeed = 0;
 	for (const d of $dl) {
 		dlPeers += d.downloadPeers;
 		ulPeers += d.uploadPeers;
@@ -227,7 +230,7 @@ export async function initDownloads(): Promise<void> {
 						entry.errorCode = summary.errorCode;
 						entry.errorMessage = summary.errorDetail;
 					}
-				return entry;
+					return entry;
 				})
 		);
 	} catch (err) {
@@ -240,25 +243,29 @@ export async function initDownloads(): Promise<void> {
 	// Restore transfer states after F5/reconnect
 	// Status = actual activity (peers > 0 only), enabled flags already set from lishs.list()
 	try {
-		const transfers = await api.call('transfer.getActiveTransfers', {}) as { lishID: string; type: string; peers: number; bytesPerSecond: number }[];
+		const transfers = (await api.call('transfer.getActiveTransfers', {})) as { lishID: string; type: string; peers: number; bytesPerSecond: number }[];
 		if (transfers?.length) {
-			downloads.update(list => list.map(d => {
-				const mine = transfers.filter(t => t.lishID === d.id);
-				const ul = mine.find(t => t.type === 'uploading');
-				const dl = mine.find(t => t.type === 'downloading');
-				// Only show as active when peers are actually connected
-				const isActiveDown = !!dl && dl.peers > 0;
-				const isActiveUp = !!ul && ul.peers > 0;
-				const status: DownloadStatus = computeStatus(isActiveDown, isActiveUp);
-				return {
-					...d,
-					...(status !== 'idling' && !isStatusLocked(d.status) ? { status } : {}),
-					...(dl ? { downloadPeers: dl.peers, downloadSpeed: dl.bytesPerSecond ? formatSize(dl.bytesPerSecond) + '/s' : d.downloadSpeed, rawDownloadSpeed: dl.bytesPerSecond ?? 0 } : {}),
-					...(ul ? { uploadPeers: ul.peers, uploadSpeed: formatSize(ul.bytesPerSecond) + '/s', rawUploadSpeed: ul.bytesPerSecond ?? 0 } : {}),
-				};
-			}));
+			downloads.update(list =>
+				list.map(d => {
+					const mine = transfers.filter(t => t.lishID === d.id);
+					const ul = mine.find(t => t.type === 'uploading');
+					const dl = mine.find(t => t.type === 'downloading');
+					// Only show as active when peers are actually connected
+					const isActiveDown = !!dl && dl.peers > 0;
+					const isActiveUp = !!ul && ul.peers > 0;
+					const status: DownloadStatus = computeStatus(isActiveDown, isActiveUp);
+					return {
+						...d,
+						...(status !== 'idling' && !isStatusLocked(d.status) ? { status } : {}),
+						...(dl ? { downloadPeers: dl.peers, downloadSpeed: dl.bytesPerSecond ? formatSize(dl.bytesPerSecond) + '/s' : d.downloadSpeed, rawDownloadSpeed: dl.bytesPerSecond ?? 0 } : {}),
+						...(ul ? { uploadPeers: ul.peers, uploadSpeed: formatSize(ul.bytesPerSecond) + '/s', rawUploadSpeed: ul.bytesPerSecond ?? 0 } : {}),
+					};
+				})
+			);
 		}
-	} catch { /* transfer API may not exist on older backends */ }
+	} catch {
+		/* transfer API may not exist on older backends */
+	}
 
 	// Register event handlers only once (they persist across reconnects)
 	if (!handlersRegistered) {
@@ -271,7 +278,7 @@ export async function initDownloads(): Promise<void> {
 				const entry = detailToDownload(detail);
 				// If actively downloading (progress event within last 30s), preserve download state
 				const lastProgress = activeDownloads.get(detail.id);
-				const isActive = lastProgress && (Date.now() - lastProgress) < 30_000;
+				const isActive = lastProgress && Date.now() - lastProgress < 30_000;
 				if (idx >= 0) {
 					const existing = list[idx]!;
 					if (isActive || existing.status === 'downloading') {
@@ -298,7 +305,11 @@ export async function initDownloads(): Promise<void> {
 			downloads.update(list => list.filter(d => d.id !== data.lishID));
 			activeDownloads.delete(data.lishID);
 			disabledDownloads.delete(data.lishID);
-			peerSnapshotReceived.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
+			peerSnapshotReceived.update(map => {
+				const m = new Map(map);
+				m.delete(data.lishID);
+				return m;
+			});
 			lastDownloadedChunks.delete(data.lishID);
 			lastUploadedChunks.delete(data.lishID);
 		});
@@ -340,20 +351,22 @@ export async function initDownloads(): Promise<void> {
 				api.lishs.get(data.lishID).then(detail => {
 					if (!detail) return;
 					const fresh = detailToDownload(detail);
-					downloads.update(list => list.map(d => {
-						if (d.id !== data.lishID) return d;
-						if (d.status === 'moving') return d;
-						// Preserve live transfer status + live fields; overwrite per-file state + totals
-						return {
-							...d,
-							files: fresh.files,
-							progress: fresh.progress,
-							...(fresh.downloadedSize !== undefined ? { downloadedSize: fresh.downloadedSize } : {}),
-							verifiedChunks: fresh.verifiedChunks,
-							totalChunks: fresh.totalChunks,
-							status: (d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating') ? d.status : 'idling' as DownloadStatus,
-						};
-					}));
+					downloads.update(list =>
+						list.map(d => {
+							if (d.id !== data.lishID) return d;
+							if (d.status === 'moving') return d;
+							// Preserve live transfer status + live fields; overwrite per-file state + totals
+							return {
+								...d,
+								files: fresh.files,
+								progress: fresh.progress,
+								...(fresh.downloadedSize !== undefined ? { downloadedSize: fresh.downloadedSize } : {}),
+								verifiedChunks: fresh.verifiedChunks,
+								totalChunks: fresh.totalChunks,
+								status: d.status === 'downloading' || d.status === 'downloading-uploading' || d.status === 'allocating' ? d.status : ('idling' as DownloadStatus),
+							};
+						})
+					);
 				});
 				return;
 			}
@@ -428,39 +441,49 @@ export async function initDownloads(): Promise<void> {
 				disabledDownloads.delete(data.lishID);
 				// Clear stale timeout — allocation can take minutes on Docker overlay2
 				const prevTimer = downloadStaleTimeouts.get(data.lishID);
-				if (prevTimer) { clearTimeout(prevTimer); downloadStaleTimeouts.delete(data.lishID); }
-				downloads.update(list => list.map(d => {
-					if (d.id !== data.lishID) return d;
-					if (d.status !== 'allocating' && d.status !== 'retrying' && isStatusLocked(d.status)) return d;
-					const allocProgress = data.fileDownloadedChunks ?? 0;
-					// Update per-file allocation progress — skip if resetFiles refresh is still in-flight
-					let files = d.files;
-					if (data.allocatingFile) {
-						let pastCurrent = false;
-						files = d.files.map(f => {
-							if (f.type !== 'file') return f;
-							if (f.name === data.allocatingFile) {
-								pastCurrent = true;
-								return { ...f, progress: data.allocatingFileProgress ?? 0 };
-							}
-							if (!pastCurrent) return { ...f, progress: 100 }; // already allocated
-							return { ...f, progress: 0 }; // not yet allocated
-						});
-					}
-					return { ...d, status: 'allocating' as DownloadStatus, progress: allocProgress, files };
-				}));
+				if (prevTimer) {
+					clearTimeout(prevTimer);
+					downloadStaleTimeouts.delete(data.lishID);
+				}
+				downloads.update(list =>
+					list.map(d => {
+						if (d.id !== data.lishID) return d;
+						if (d.status !== 'allocating' && d.status !== 'retrying' && isStatusLocked(d.status)) return d;
+						const allocProgress = data.fileDownloadedChunks ?? 0;
+						// Update per-file allocation progress — skip if resetFiles refresh is still in-flight
+						let files = d.files;
+						if (data.allocatingFile) {
+							let pastCurrent = false;
+							files = d.files.map(f => {
+								if (f.type !== 'file') return f;
+								if (f.name === data.allocatingFile) {
+									pastCurrent = true;
+									return { ...f, progress: data.allocatingFileProgress ?? 0 };
+								}
+								if (!pastCurrent) return { ...f, progress: 100 }; // already allocated
+								return { ...f, progress: 0 }; // not yet allocated
+							});
+						}
+						return { ...d, status: 'allocating' as DownloadStatus, progress: allocProgress, files };
+					})
+				);
 				return;
 			}
 			// Verifying signal (file deletion recovery — backend verifies all checksums)
 			if (data.filePath === '__verifying__') {
 				disabledDownloads.delete(data.lishID);
 				const prevTimer = downloadStaleTimeouts.get(data.lishID);
-				if (prevTimer) { clearTimeout(prevTimer); downloadStaleTimeouts.delete(data.lishID); }
-				downloads.update(list => list.map(d => {
-					if (d.id !== data.lishID) return d;
-					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
-					return { ...d, status: 'verifying' as DownloadStatus, progress };
-				}));
+				if (prevTimer) {
+					clearTimeout(prevTimer);
+					downloadStaleTimeouts.delete(data.lishID);
+				}
+				downloads.update(list =>
+					list.map(d => {
+						if (d.id !== data.lishID) return d;
+						const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
+						return { ...d, status: 'verifying' as DownloadStatus, progress };
+					})
+				);
 				return;
 			}
 			if (data.peers > 0) activeDownloads.set(data.lishID, Date.now());
@@ -478,7 +501,7 @@ export async function initDownloads(): Promise<void> {
 					if (isStatusLocked(d.status) && !(d.status === 'allocating' && data.filePath !== '__allocating__')) return d;
 					const progress = data.totalChunks > 0 ? Math.round((data.downloadedChunks / data.totalChunks) * 10000) / 100 : 0;
 					const downloadedSize = d.rawTotalSize > 0 && data.totalChunks > 0 ? formatSize(Math.round((d.rawTotalSize * data.downloadedChunks) / data.totalChunks)) : '?';
-					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : (data.peers === 0 ? '0 B/s' : d.downloadSpeed);
+					const downloadSpeed = data.bytesPerSecond ? formatSize(data.bytesPerSecond) + '/s' : data.peers === 0 ? '0 B/s' : d.downloadSpeed;
 					const status = computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
 					const totalDownloadedBytes = d.totalDownloadedBytes + (deltaChunks > 0 && d.chunkSize > 0 ? deltaChunks * d.chunkSize : 0);
 					let files = d.files;
@@ -498,35 +521,48 @@ export async function initDownloads(): Promise<void> {
 			// Reset stale timer — if no progress in 10s, clear speed/peers
 			const prev = downloadStaleTimeouts.get(data.lishID);
 			if (prev) clearTimeout(prev);
-			downloadStaleTimeouts.set(data.lishID, setTimeout(() => {
-				downloadStaleTimeouts.delete(data.lishID);
-				downloads.update(list => list.map(d => {
-					if (d.id !== data.lishID) return d;
-					const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
-					return { ...d, downloadPeers: 0, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, status };
-				}));
-				peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
-			}, 10000));
+			downloadStaleTimeouts.set(
+				data.lishID,
+				setTimeout(() => {
+					downloadStaleTimeouts.delete(data.lishID);
+					downloads.update(list =>
+						list.map(d => {
+							if (d.id !== data.lishID) return d;
+							const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
+							return { ...d, downloadPeers: 0, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, status };
+						})
+					);
+					peerDetails.update(map => {
+						const m = new Map(map);
+						m.delete(data.lishID);
+						return m;
+					});
+				}, 10000)
+			);
 		});
 
 		// transfer.download:disabled
 		api.on('transfer.download:disabled', (data: { lishID: string }) => {
 			disabledDownloads.add(data.lishID);
 			activeDownloads.delete(data.lishID);
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
-				return { ...d, status, downloadEnabled: false, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, downloadPeers: 0 };
-			}));
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
+					return { ...d, status, downloadEnabled: false, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, downloadPeers: 0 };
+				})
+			);
 		});
 
 		// transfer.download:enabled — set flag and clear error state if present
 		api.on('transfer.download:enabled', (data: { lishID: string }) => {
 			disabledDownloads.delete(data.lishID);
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				return { ...d, downloadEnabled: true, ...(d.status === 'error' ? { status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined } : {}), recoveryRetryCount: undefined, recoveryNextAt: undefined };
-			}));
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, downloadEnabled: true, ...(d.status === 'error' ? { status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined } : {}), recoveryRetryCount: undefined, recoveryNextAt: undefined };
+				})
+			);
 		});
 
 		// transfer.download:complete
@@ -535,13 +571,19 @@ export async function initDownloads(): Promise<void> {
 			activeDownloads.delete(data.lishID);
 			const lish = get(downloads).find(d => d.id === data.lishID);
 			if (lish) addNotification(tt('downloads.downloadComplete', { name: lish.name }), 'success');
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
-				const files = d.files.map(f => f.type !== 'file' ? f : { ...f, verifiedChunks: f.totalChunks, progress: 100, downloadedSize: formatSize(f.rawSize) });
-				return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir, files };
-			}));
-			peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					const status = isStatusLocked(d.status) ? d.status : computeStatus(false, activeUploadLishs.has(data.lishID));
+					const files = d.files.map(f => (f.type !== 'file' ? f : { ...f, verifiedChunks: f.totalChunks, progress: 100, downloadedSize: formatSize(f.rawSize) }));
+					return { ...d, status, progress: 100, downloadedSize: d.size, directory: data.downloadDir, files };
+				})
+			);
+			peerDetails.update(map => {
+				const m = new Map(map);
+				m.delete(data.lishID);
+				return m;
+			});
 		});
 
 		// transfer.download:error
@@ -550,11 +592,17 @@ export async function initDownloads(): Promise<void> {
 			if (lish) addNotification(tt('downloads.downloadError', { name: lish.name, error: data.errorDetail || data.error }), 'error');
 			disabledDownloads.add(data.lishID);
 			activeDownloads.delete(data.lishID);
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				return { ...d, status: 'error' as DownloadStatus, downloadEnabled: false, downloadPeers: 0, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, errorCode: data.error, errorMessage: data.errorDetail || data.error };
-			}));
-			peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, status: 'error' as DownloadStatus, downloadEnabled: false, downloadPeers: 0, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, errorCode: data.error, errorMessage: data.errorDetail || data.error };
+				})
+			);
+			peerDetails.update(map => {
+				const m = new Map(map);
+				m.delete(data.lishID);
+				return m;
+			});
 		});
 
 		// transfer.upload:progress — with stale timeout
@@ -577,34 +625,51 @@ export async function initDownloads(): Promise<void> {
 			// Reset stale timer — if no progress in 15s, clear upload state
 			const prev = uploadTimeouts.get(data.lishID);
 			if (prev) clearTimeout(prev);
-			uploadTimeouts.set(data.lishID, setTimeout(() => {
-				activeUploadLishs.delete(data.lishID);
-				uploadTimeouts.delete(data.lishID);
-				downloads.update(list => list.map(d => {
-					if (d.id !== data.lishID) return d;
-					return { ...d, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0, status: isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false) };
-				}));
-				peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
-			}, 15000));
+			uploadTimeouts.set(
+				data.lishID,
+				setTimeout(() => {
+					activeUploadLishs.delete(data.lishID);
+					uploadTimeouts.delete(data.lishID);
+					downloads.update(list =>
+						list.map(d => {
+							if (d.id !== data.lishID) return d;
+							return { ...d, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0, status: isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false) };
+						})
+					);
+					peerDetails.update(map => {
+						const m = new Map(map);
+						m.delete(data.lishID);
+						return m;
+					});
+				}, 15000)
+			);
 		});
 
 		// transfer.upload:disabled
 		api.on('transfer.upload:disabled', (data: { lishID: string }) => {
 			activeUploadLishs.delete(data.lishID);
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
-				return { ...d, status, uploadEnabled: false, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0 };
-			}));
-			peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
+					return { ...d, status, uploadEnabled: false, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0 };
+				})
+			);
+			peerDetails.update(map => {
+				const m = new Map(map);
+				m.delete(data.lishID);
+				return m;
+			});
 		});
 
 		// transfer.upload:enabled — set flag and clear error state if present
 		api.on('transfer.upload:enabled', (data: { lishID: string }) => {
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				return { ...d, uploadEnabled: true, ...(d.status === 'error' ? { status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined } : {}), recoveryRetryCount: undefined, recoveryNextAt: undefined };
-			}));
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, uploadEnabled: true, ...(d.status === 'error' ? { status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined } : {}), recoveryRetryCount: undefined, recoveryNextAt: undefined };
+				})
+			);
 		});
 
 		// transfer.upload:error — I/O error during upload (e.g. source directory missing)
@@ -612,45 +677,59 @@ export async function initDownloads(): Promise<void> {
 			const lish = get(downloads).find(d => d.id === data.lishID);
 			if (lish) addNotification(tt('downloads.downloadError', { name: lish.name, error: data.errorDetail || data.error }), 'error');
 			activeUploadLishs.delete(data.lishID);
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				return { ...d, status: 'error' as DownloadStatus, uploadEnabled: false, uploadPeers: 0, uploadSpeed: '0 B/s', rawUploadSpeed: 0, errorCode: data.error, errorMessage: data.errorDetail || data.error };
-			}));
-			peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, status: 'error' as DownloadStatus, uploadEnabled: false, uploadPeers: 0, uploadSpeed: '0 B/s', rawUploadSpeed: 0, errorCode: data.error, errorMessage: data.errorDetail || data.error };
+				})
+			);
+			peerDetails.update(map => {
+				const m = new Map(map);
+				m.delete(data.lishID);
+				return m;
+			});
 		});
 
 		// transfer.recovery:scheduled — recovery timer started/rescheduled
 		api.on('transfer.recovery:scheduled', (data: { lishID: string; delayMs: number; retryCount: number }) => {
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				return { ...d, recoveryRetryCount: data.retryCount, recoveryNextAt: Date.now() + data.delayMs };
-			}));
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, recoveryRetryCount: data.retryCount, recoveryNextAt: Date.now() + data.delayMs };
+				})
+			);
 		});
 
 		// transfer.recovery:attempting — recovery attempt in progress
 		api.on('transfer.recovery:attempting', (data: { lishID: string }) => {
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				return { ...d, recoveryNextAt: 0 };
-			}));
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, recoveryNextAt: 0 };
+				})
+			);
 		});
 
 		// transfer.recovery:recovered — recovery succeeded
 		api.on('transfer.recovery:recovered', (data: { lishID: string }) => {
 			const lish = get(downloads).find(d => d.id === data.lishID);
 			if (lish) addNotification(tt('downloads.recoverySuccess', { name: lish.name }), 'success');
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				return { ...d, recoveryRetryCount: undefined, recoveryNextAt: undefined };
-			}));
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, recoveryRetryCount: undefined, recoveryNextAt: undefined };
+				})
+			);
 		});
 
 		// transfer.download:retrying — inline write retry in progress
 		api.on('transfer.download:retrying', (data: { lishID: string; errorCode: string; errorDetail?: string; retryCount: number; maxRetries: number }) => {
-			downloads.update(list => list.map(d => {
-				if (d.id !== data.lishID) return d;
-				return { ...d, status: 'retrying' as DownloadStatus, retryErrorCode: data.errorCode, retryCount: data.retryCount, retryMaxRetries: data.maxRetries };
-			}));
+			downloads.update(list =>
+				list.map(d => {
+					if (d.id !== data.lishID) return d;
+					return { ...d, status: 'retrying' as DownloadStatus, retryErrorCode: data.errorCode, retryCount: data.retryCount, retryMaxRetries: data.maxRetries };
+				})
+			);
 		});
 
 		// transfer.download:resumed — inline retry succeeded, back to downloading
@@ -659,10 +738,12 @@ export async function initDownloads(): Promise<void> {
 			api.lishs.get(data.lishID).then((detail: any) => {
 				if (!detail) return;
 				const fresh = detailToDownload(detail);
-				downloads.update(list => list.map(d => {
-					if (d.id !== data.lishID) return d;
-					return { ...d, ...fresh, status: d.downloadEnabled ? 'downloading' as DownloadStatus : 'idling' as DownloadStatus, retryErrorCode: undefined, retryCount: undefined, retryMaxRetries: undefined, downloadEnabled: d.downloadEnabled, uploadEnabled: d.uploadEnabled };
-				}));
+				downloads.update(list =>
+					list.map(d => {
+						if (d.id !== data.lishID) return d;
+						return { ...d, ...fresh, status: d.downloadEnabled ? ('downloading' as DownloadStatus) : ('idling' as DownloadStatus), retryErrorCode: undefined, retryCount: undefined, retryMaxRetries: undefined, downloadEnabled: d.downloadEnabled, uploadEnabled: d.uploadEnabled };
+					})
+				);
 			});
 		});
 
@@ -672,29 +753,53 @@ export async function initDownloads(): Promise<void> {
 		api.on('transfer.upload:stopped', (data: { lishID: string }) => {
 			const prev = uploadTimeouts.get(data.lishID);
 			if (prev) clearTimeout(prev);
-			uploadTimeouts.set(data.lishID, setTimeout(() => {
-				activeUploadLishs.delete(data.lishID);
-				uploadTimeouts.delete(data.lishID);
-				downloads.update(list => list.map(d => {
-					if (d.id !== data.lishID) return d;
-					const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
-					return { ...d, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0, status };
-				}));
-				peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
-			}, 20000));
+			uploadTimeouts.set(
+				data.lishID,
+				setTimeout(() => {
+					activeUploadLishs.delete(data.lishID);
+					uploadTimeouts.delete(data.lishID);
+					downloads.update(list =>
+						list.map(d => {
+							if (d.id !== data.lishID) return d;
+							const status = isStatusLocked(d.status) ? d.status : computeStatus(activeDownloads.has(data.lishID), false);
+							return { ...d, uploadSpeed: '0 B/s', rawUploadSpeed: 0, uploadPeers: 0, status };
+						})
+					);
+					peerDetails.update(map => {
+						const m = new Map(map);
+						m.delete(data.lishID);
+						return m;
+					});
+				}, 20000)
+			);
 		});
 
 		// transfer.peers — per-peer details (1s interval, on-demand via subscribePeers)
 		const peerStaleTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 		api.on('transfer.peers', (data: { lishID: string; peers: PeerDetail[] }) => {
-			peerSnapshotReceived.update(map => { const m = new Map(map); m.set(data.lishID, true); return m; });
-			peerDetails.update(map => { const m = new Map(map); m.set(data.lishID, data.peers); return m; });
+			peerSnapshotReceived.update(map => {
+				const m = new Map(map);
+				m.set(data.lishID, true);
+				return m;
+			});
+			peerDetails.update(map => {
+				const m = new Map(map);
+				m.set(data.lishID, data.peers);
+				return m;
+			});
 			const prev = peerStaleTimeouts.get(data.lishID);
 			if (prev) clearTimeout(prev);
-			peerStaleTimeouts.set(data.lishID, setTimeout(() => {
-				peerStaleTimeouts.delete(data.lishID);
-				peerDetails.update(map => { const m = new Map(map); m.delete(data.lishID); return m; });
-			}, 30000));
+			peerStaleTimeouts.set(
+				data.lishID,
+				setTimeout(() => {
+					peerStaleTimeouts.delete(data.lishID);
+					peerDetails.update(map => {
+						const m = new Map(map);
+						m.delete(data.lishID);
+						return m;
+					});
+				}, 30000)
+			);
 		});
 	}
 	// Subscribe on every connect (backend has fresh subscribedEvents after reconnect)
@@ -735,10 +840,12 @@ export function resetVerifyState(lishID: string): void {
 }
 /** Clear error state for a LISH (called when user acknowledges error or retries). */
 export function clearError(lishID: string): void {
-	downloads.update(list => list.map(d => {
-		if (d.id !== lishID || d.status !== 'error') return d;
-		return { ...d, status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined };
-	}));
+	downloads.update(list =>
+		list.map(d => {
+			if (d.id !== lishID || d.status !== 'error') return d;
+			return { ...d, status: 'idling' as DownloadStatus, errorCode: undefined, errorMessage: undefined };
+		})
+	);
 }
 
 /**

@@ -8,8 +8,13 @@ let passed = 0;
 let failed = 0;
 
 function assert(condition: boolean, name: string): void {
-	if (condition) { passed++; console.log(`  ✓ ${name}`); }
-	else { failed++; console.error(`  ✗ ${name}`); }
+	if (condition) {
+		passed++;
+		console.log(`  ✓ ${name}`);
+	} else {
+		failed++;
+		console.error(`  ✗ ${name}`);
+	}
 }
 
 const downloaderSrc = readFileSync('backend/src/protocol/downloader.ts', 'utf-8');
@@ -60,14 +65,14 @@ assert(recoverySrc.includes('max recovery attempts'), 'Log message for exhaustio
 // ─── C1: isComplete fix ─────────────────────────────────────────────────
 console.log('\n── C1: isComplete structure ──');
 assert(lishsDbSrc.includes('total: number; missing: number'), 'isComplete queries both total and missing');
-assert(lishsDbSrc.includes("row?.total ?? 0) === 0) return false"), 'Returns false when total = 0');
+assert(lishsDbSrc.includes('row?.total ?? 0) === 0) return false'), 'Returns false when total = 0');
 
 // ─── C2: addLISH conditional DELETE ──────────────────────────────────────
 console.log('\n── C2: addLISH conditional DELETE ──');
 // Verify DELETE is INSIDE if(lish.files) block, not before it
 const addLISHCode = lishsDbSrc.slice(lishsDbSrc.indexOf('export function addLISH'), lishsDbSrc.indexOf('export function deleteLISH'));
-const filesDeleteIdx = addLISHCode.indexOf("DELETE FROM lishs_files");
-const filesIfIdx = addLISHCode.indexOf("if (lish.files)");
+const filesDeleteIdx = addLISHCode.indexOf('DELETE FROM lishs_files');
+const filesIfIdx = addLISHCode.indexOf('if (lish.files)');
 assert(filesIfIdx < filesDeleteIdx, 'DELETE FROM lishs_files is AFTER if (lish.files) check');
 
 // ─── enableDownload check ────────────────────────────────────────────────

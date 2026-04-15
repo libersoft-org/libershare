@@ -8,8 +8,13 @@ let passed = 0;
 let failed = 0;
 
 function assert(condition: boolean, name: string): void {
-	if (condition) { passed++; console.log(`  ✓ ${name}`); }
-	else { failed++; console.error(`  ✗ ${name}`); }
+	if (condition) {
+		passed++;
+		console.log(`  ✓ ${name}`);
+	} else {
+		failed++;
+		console.error(`  ✗ ${name}`);
+	}
 }
 
 async function rpc(ws: WebSocket, method: string, params: any = {}): Promise<any> {
@@ -34,7 +39,7 @@ async function waitOpen(ws: WebSocket): Promise<void> {
 	if (ws.readyState === WebSocket.OPEN) return;
 	return new Promise((resolve, reject) => {
 		ws.addEventListener('open', () => resolve());
-		ws.addEventListener('error', (e) => reject(e));
+		ws.addEventListener('error', e => reject(e));
 	});
 }
 

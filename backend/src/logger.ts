@@ -58,14 +58,20 @@ function rotateLogFile(filePath: string): void {
 		const size = statSync(filePath).size;
 		if (size < MAX_LOG_SIZE) return;
 		for (let i = MAX_LOG_FILES - 1; i >= 1; i--) {
-			try { renameSync(`${filePath}.${i}`, `${filePath}.${i + 1}`); } catch {}
+			try {
+				renameSync(`${filePath}.${i}`, `${filePath}.${i + 1}`);
+			} catch {}
 		}
-		try { renameSync(filePath, `${filePath}.1`); } catch {}
+		try {
+			renameSync(filePath, `${filePath}.1`);
+		} catch {}
 	} catch {}
 }
 
 function createFileReporter(filePath: string): ConsolaReporter {
-	try { mkdirSync(dirname(filePath), { recursive: true }); } catch {}
+	try {
+		mkdirSync(dirname(filePath), { recursive: true });
+	} catch {}
 	let writeCount = 0;
 	return {
 		log(logObj: LogObject): void {
@@ -74,7 +80,9 @@ function createFileReporter(filePath: string): ConsolaReporter {
 			const prefix = LOG_PREFIX ? `[${LOG_PREFIX}] ` : '';
 			const args = logObj.args.map(arg => (typeof arg === 'object' ? JSON.stringify(arg) : arg)).join(' ');
 			const line = `${prefix}[${timestamp}] [${levelName}] ${args}\n`;
-			try { appendFileSync(filePath, line); } catch {}
+			try {
+				appendFileSync(filePath, line);
+			} catch {}
 			if (++writeCount % 1000 === 0) rotateLogFile(filePath);
 		},
 	};

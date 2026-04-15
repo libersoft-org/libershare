@@ -126,44 +126,25 @@ describe('removeNotification', () => {
 describe('notification type mapping', () => {
 	it('success notifications include completions and creations', () => {
 		reset();
-		const completions = [
-			addNotification('Download complete', 'success'),
-			addNotification('Verify done', 'success'),
-			addNotification('Move success', 'success'),
-			addNotification('File created', 'success'),
-			addNotification('Directory created', 'success'),
-			addNotification('Network exported', 'success'),
-			addNotification('Reconnected to backend', 'success'),
-		];
+		const completions = [addNotification('Download complete', 'success'), addNotification('Verify done', 'success'), addNotification('Move success', 'success'), addNotification('File created', 'success'), addNotification('Directory created', 'success'), addNotification('Network exported', 'success'), addNotification('Reconnected to backend', 'success')];
 		expect(completions.every(n => n.type === 'success')).toBe(true);
 	});
 
 	it('warning notifications include deletions and disconnections', () => {
 		reset();
-		const warnings = [
-			addNotification('LISH deleted', 'warning'),
-			addNotification('File deleted', 'warning'),
-			addNotification('Network disconnected', 'warning'),
-			addNotification('Gamepad disconnected', 'warning'),
-			addNotification('Backend disconnected', 'warning'),
-		];
+		const warnings = [addNotification('LISH deleted', 'warning'), addNotification('File deleted', 'warning'), addNotification('Network disconnected', 'warning'), addNotification('Gamepad disconnected', 'warning'), addNotification('Backend disconnected', 'warning')];
 		expect(warnings.every(n => n.type === 'warning')).toBe(true);
 	});
 
 	it('error notifications include failures', () => {
 		reset();
-		const errors = [
-			addNotification('WebSocket error', 'error'),
-			addNotification('Download failed', 'error'),
-		];
+		const errors = [addNotification('WebSocket error', 'error'), addNotification('Download failed', 'error')];
 		expect(errors.every(n => n.type === 'error')).toBe(true);
 	});
 
 	it('info notifications include neutral events', () => {
 		reset();
-		const infos = [
-			addNotification('LISH added', 'info'),
-		];
+		const infos = [addNotification('LISH added', 'info')];
 		expect(infos.every(n => n.type === 'info')).toBe(true);
 	});
 });

@@ -6,7 +6,9 @@ export class TestClient {
 	private connected = false;
 
 	constructor(url: string) {
-		this.client = new WsClient(url, (state) => { this.connected = state.connected; });
+		this.client = new WsClient(url, state => {
+			this.connected = state.connected;
+		});
 		this.client.on('*', (msg: { event: string; data: any }) => {
 			this.eventHistory.push({ event: msg.event, data: msg.data, time: Date.now() });
 		});
@@ -27,11 +29,7 @@ export class TestClient {
 	}
 
 	subscribeAll(): void {
-		const events = [
-			'transfer.download:progress', 'transfer.download:disabled', 'transfer.download:enabled',
-			'transfer.download:complete', 'transfer.download:error',
-			'transfer.upload:progress', 'transfer.upload:disabled', 'transfer.upload:enabled', 'transfer.upload:stopped',
-		];
+		const events = ['transfer.download:progress', 'transfer.download:disabled', 'transfer.download:enabled', 'transfer.download:complete', 'transfer.download:error', 'transfer.upload:progress', 'transfer.upload:disabled', 'transfer.upload:enabled', 'transfer.upload:stopped'];
 		for (const e of events) this.subscribe(e);
 	}
 
@@ -64,7 +62,9 @@ export class TestClient {
 		return this.eventHistory.filter(e => e.event === eventName);
 	}
 
-	clearHistory(): void { this.eventHistory = []; }
+	clearHistory(): void {
+		this.eventHistory = [];
+	}
 
 	destroy(): void {
 		(this.client as any).ws?.close();

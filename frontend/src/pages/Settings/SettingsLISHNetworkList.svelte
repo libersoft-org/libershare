@@ -24,7 +24,6 @@
 	import LISHNetworkExport from './SettingsLISHNetworkExport.svelte';
 	import LISHNetworkExportAll from './SettingsLISHNetworkExportAll.svelte';
 	import LISHNetworkPublic from './SettingsLISHNetworkPublic.svelte';
-	import LISHNetworkPeers from './SettingsLISHNetworkPeers.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -37,12 +36,11 @@
 	let showExportAll = $state(false);
 	let showPublic = $state(false);
 	let showDeleteConfirm = $state(false);
-	let showPeers = $state(false);
 	let showAddresses = $state(false);
 	let editingNetwork = $state<LISHNetworkConfig | null>(null);
 	let exportingNetwork = $state<LISHNetworkConfig | null>(null);
 	let deletingNetwork = $state<LISHNetworkConfig | null>(null);
-	let peersNetwork = $state<LISHNetworkConfig | null>(null);
+
 	// Networks loaded from backend
 	let networks = $state<LISHNetworkConfig[]>([]);
 	let globalNodeInfo = $state<NetworkNodeInfo | null>(null);
@@ -136,27 +134,6 @@
 		navHandle.controller.select([0, newY]);
 		// Save new order to backend
 		await api.lishnets.replace(networks);
-	}
-
-	function openPeers(network: LISHNetworkConfig): void {
-		peersNetwork = network;
-		showPeers = true;
-		navHandle.pause();
-		pushBreadcrumb(`${network.name} - ${$t('settings.lishNetwork.peerList')}`);
-		removeBackHandler = pushBackHandler(handlePeersBack);
-	}
-
-	async function handlePeersBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showPeers = false;
-		peersNetwork = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
 	}
 
 	function openExport(network: LISHNetworkConfig): void {
@@ -393,8 +370,6 @@
 	<LISHNetworkExportAll {areaID} {position} onBack={handleExportAllBack} />
 {:else if showPublic}
 	<LISHNetworkPublic {areaID} {position} onBack={handlePublicBack} />
-{:else if showPeers && peersNetwork}
-	<LISHNetworkPeers {areaID} {position} network={peersNetwork} onBack={handlePeersBack} />
 {:else if showDeleteConfirm && deletingNetwork}
 	<ConfirmDialog title={$t('common.delete')} message={$t('settings.lishNetwork.confirmDelete', { name: deletingNetwork.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
 {:else}
@@ -458,15 +433,14 @@
 							{/if}
 							<div class="buttons">
 								<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} position={[0, rowY]} onConfirm={() => connectNetwork(network)} />
-								<Button icon="/img/online.svg" label={$t('settings.lishNetwork.peerList')} position={[1, rowY]} onConfirm={() => openPeers(network)} />
-								<Button icon="/img/export.svg" label={$t('common.export')} position={[2, rowY]} onConfirm={() => openExport(network)} />
-								<Button icon="/img/edit.svg" label={$t('common.edit')} position={[3, rowY]} onConfirm={() => openEditNetwork(network)} />
-								<Button icon="/img/del.svg" label={$t('common.delete')} position={[4, rowY]} onConfirm={() => deleteNetwork(network)} />
+								<Button icon="/img/export.svg" label={$t('common.export')} position={[1, rowY]} onConfirm={() => openExport(network)} />
+								<Button icon="/img/edit.svg" label={$t('common.edit')} position={[2, rowY]} onConfirm={() => openEditNetwork(network)} />
+								<Button icon="/img/del.svg" label={$t('common.delete')} position={[3, rowY]} onConfirm={() => deleteNetwork(network)} />
 								{#if i > 0}
-									<Button icon="/img/up.svg" position={[5, rowY]} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
+									<Button icon="/img/up.svg" position={[4, rowY]} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
 								{/if}
 								{#if i < networks.length - 1}
-									<Button icon="/img/down.svg" position={[6, rowY]} onConfirm={() => moveNetwork(i, false)} padding="1vh" fontSize="4vh" width="auto" />
+									<Button icon="/img/down.svg" position={[5, rowY]} onConfirm={() => moveNetwork(i, false)} padding="1vh" fontSize="4vh" width="auto" />
 								{/if}
 							</div>
 						</div>

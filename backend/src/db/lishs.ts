@@ -25,12 +25,36 @@ export function initLISHsTables(db: Database): void {
 	`);
 
 	// Migration: add columns to existing databases
-	try { db.run('ALTER TABLE lishs ADD COLUMN upload_enabled BOOL NOT NULL DEFAULT FALSE'); } catch { /* already exists */ }
-	try { db.run('ALTER TABLE lishs ADD COLUMN download_enabled BOOL NOT NULL DEFAULT FALSE'); } catch { /* already exists */ }
-	try { db.run('ALTER TABLE lishs ADD COLUMN total_uploaded_bytes INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
-	try { db.run('ALTER TABLE lishs ADD COLUMN total_downloaded_bytes INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
-	try { db.run('ALTER TABLE lishs ADD COLUMN error_code TEXT DEFAULT NULL'); } catch { /* already exists */ }
-	try { db.run('ALTER TABLE lishs ADD COLUMN error_detail TEXT DEFAULT NULL'); } catch { /* already exists */ }
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN upload_enabled BOOL NOT NULL DEFAULT FALSE');
+	} catch {
+		/* already exists */
+	}
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN download_enabled BOOL NOT NULL DEFAULT FALSE');
+	} catch {
+		/* already exists */
+	}
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN total_uploaded_bytes INTEGER NOT NULL DEFAULT 0');
+	} catch {
+		/* already exists */
+	}
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN total_downloaded_bytes INTEGER NOT NULL DEFAULT 0');
+	} catch {
+		/* already exists */
+	}
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN error_code TEXT DEFAULT NULL');
+	} catch {
+		/* already exists */
+	}
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN error_detail TEXT DEFAULT NULL');
+	} catch {
+		/* already exists */
+	}
 
 	db.run(`
 		CREATE TABLE IF NOT EXISTS lishs_files (
@@ -641,13 +665,19 @@ export function setDownloadEnabled(db: Database, lishID: LISHid, enabled: boolea
 
 export function getUploadEnabledLishs(db: Database): Set<string> {
 	return new Set(
-		db.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE upload_enabled = TRUE').all().map(r => r.lish_id)
+		db
+			.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE upload_enabled = TRUE')
+			.all()
+			.map(r => r.lish_id)
 	);
 }
 
 export function getDownloadEnabledLishs(db: Database): Set<string> {
 	return new Set(
-		db.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE download_enabled = TRUE').all().map(r => r.lish_id)
+		db
+			.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE download_enabled = TRUE')
+			.all()
+			.map(r => r.lish_id)
 	);
 }
 
@@ -662,9 +692,7 @@ export function incrementDownloadedBytes(db: Database, lishID: LISHid, bytes: nu
 }
 
 export function getTransferStats(db: Database, lishID: LISHid): { uploadedBytes: number; downloadedBytes: number } {
-	const row = db.query<{ total_uploaded_bytes: number; total_downloaded_bytes: number }, [string]>(
-		'SELECT total_uploaded_bytes, total_downloaded_bytes FROM lishs WHERE lish_id = ?'
-	).get(lishID);
+	const row = db.query<{ total_uploaded_bytes: number; total_downloaded_bytes: number }, [string]>('SELECT total_uploaded_bytes, total_downloaded_bytes FROM lishs WHERE lish_id = ?').get(lishID);
 	return { uploadedBytes: row?.total_uploaded_bytes ?? 0, downloadedBytes: row?.total_downloaded_bytes ?? 0 };
 }
 

@@ -63,7 +63,7 @@
 	let isUploading = $derived(download?.uploadEnabled ?? false);
 	let downloadPaused = $derived(!isDownloading);
 	let uploadPaused = $derived(!isUploading);
-	let enabledMode = $derived(download ? computeEnabledMode(download.downloadEnabled, download.uploadEnabled) : 'disabled' as const);
+	let enabledMode = $derived(download ? computeEnabledMode(download.downloadEnabled, download.uploadEnabled) : ('disabled' as const));
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => {
 			if (action.id === 'toggle-download') return true;
@@ -306,36 +306,78 @@
 	};
 
 	const tabHandlers = {
-		up() { activateArea(toolbarAreaID); return true; },
+		up() {
+			activateArea(toolbarAreaID);
+			return true;
+		},
 		down() {
-			if (activeTab === 'files' && download && download.files.length > 0) { activateArea(listAreaID); scrollToSelected(); return true; }
-			if (activeTab === 'peers' && currentPeers.length > 0) { activateArea(peerListAreaID); return true; }
+			if (activeTab === 'files' && download && download.files.length > 0) {
+				activateArea(listAreaID);
+				scrollToSelected();
+				return true;
+			}
+			if (activeTab === 'peers' && currentPeers.length > 0) {
+				activateArea(peerListAreaID);
+				return true;
+			}
 			return false;
 		},
-		left() { if (selectedTabIndex > 0) { selectedTabIndex--; activeTab = 'files'; return true; } return false; },
-		right() { if (selectedTabIndex < 1) { selectedTabIndex++; activeTab = 'peers'; return true; } return false; },
+		left() {
+			if (selectedTabIndex > 0) {
+				selectedTabIndex--;
+				activeTab = 'files';
+				return true;
+			}
+			return false;
+		},
+		right() {
+			if (selectedTabIndex < 1) {
+				selectedTabIndex++;
+				activeTab = 'peers';
+				return true;
+			}
+			return false;
+		},
 		confirmDown() {},
-		confirmUp() { activeTab = selectedTabIndex === 0 ? 'files' : 'peers'; },
+		confirmUp() {
+			activeTab = selectedTabIndex === 0 ? 'files' : 'peers';
+		},
 		confirmCancel() {},
-		back() { handleBack(); },
+		back() {
+			handleBack();
+		},
 	};
 
 	const peerListHandlers = {
 		up() {
-			if (selectedPeerIndex > 0) { selectedPeerIndex--; scrollToElement(peerElements, selectedPeerIndex); return true; }
+			if (selectedPeerIndex > 0) {
+				selectedPeerIndex--;
+				scrollToElement(peerElements, selectedPeerIndex);
+				return true;
+			}
 			activateArea(tabAreaID);
 			return true;
 		},
 		down() {
-			if (selectedPeerIndex < currentPeers.length - 1) { selectedPeerIndex++; scrollToElement(peerElements, selectedPeerIndex); return true; }
+			if (selectedPeerIndex < currentPeers.length - 1) {
+				selectedPeerIndex++;
+				scrollToElement(peerElements, selectedPeerIndex);
+				return true;
+			}
 			return false;
 		},
-		left() { return false; },
-		right() { return false; },
+		left() {
+			return false;
+		},
+		right() {
+			return false;
+		},
 		confirmDown() {},
 		confirmUp() {},
 		confirmCancel() {},
-		back() { handleBack(); },
+		back() {
+			handleBack();
+		},
 	};
 
 	onMount(() => {
@@ -343,7 +385,9 @@
 		registerDetailAreas();
 		// Subscribe to per-peer details for this LISH
 		api.call('transfer.subscribePeers', { lishID });
-		const clockInterval = setInterval(() => { now = Date.now(); }, 1000);
+		const clockInterval = setInterval(() => {
+			now = Date.now();
+		}, 1000);
 		return () => {
 			clearInterval(clockInterval);
 			setCurrentDetailLISHID(null);
@@ -508,11 +552,13 @@
 		white-space: nowrap;
 	}
 
-	.speed-dl, .total-dl {
+	.speed-dl,
+	.total-dl {
 		color: var(--mode-download-fg, #0c0);
 	}
 
-	.speed-ul, .total-ul {
+	.speed-ul,
+	.total-ul {
 		color: var(--mode-upload-fg, #28f);
 	}
 
@@ -520,7 +566,8 @@
 		opacity: 0.35;
 	}
 
-	.speed-dl, .speed-ul {
+	.speed-dl,
+	.speed-ul {
 		font-weight: bold;
 	}
 
@@ -581,11 +628,7 @@
 			<div class="alert-container"><Alert type="warning" message={`${$t('downloads.statuses.retrying')}: ${download.retryErrorCode}${download.retryCount ? ` (${download.retryCount}/${download.retryMaxRetries ?? '?'})` : ''}`} /></div>
 		{/if}
 		{#if download?.status === 'error' && (download.errorCode || download.errorMessage)}
-			{@const recoveryText = download.recoveryNextAt === 0
-				? $t('downloads.recoveryAttempting')
-				: download.recoveryNextAt
-					? $t('downloads.recoveryScheduled', { seconds: String(Math.max(1, Math.ceil((download.recoveryNextAt - now) / 1000))) })
-					: ''}
+			{@const recoveryText = download.recoveryNextAt === 0 ? $t('downloads.recoveryAttempting') : download.recoveryNextAt ? $t('downloads.recoveryScheduled', { seconds: String(Math.max(1, Math.ceil((download.recoveryNextAt - now) / 1000))) }) : ''}
 			<div class="alert-container"><Alert type="error" message={`${$t('downloads.statuses.error')}: ${download.errorCode ?? ''}${download.errorMessage && download.errorMessage !== download.errorCode ? ' — ' + download.errorMessage : ''}${recoveryText ? ' · ' + recoveryText : ''}`} /></div>
 		{/if}
 		{#if download}
@@ -657,21 +700,21 @@
 					<div class="tab-header">
 						<button class="tab" class:active={activeTab === 'files'} class:selected={tabActive && selectedTabIndex === 0}>
 							<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-								<polyline points="14 2 14 8 20 8"/>
-								<line x1="16" y1="13" x2="8" y2="13"/>
-								<line x1="16" y1="17" x2="8" y2="17"/>
-								<polyline points="10 9 9 9 8 9"/>
+								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+								<polyline points="14 2 14 8 20 8" />
+								<line x1="16" y1="13" x2="8" y2="13" />
+								<line x1="16" y1="17" x2="8" y2="17" />
+								<polyline points="10 9 9 9 8 9" />
 							</svg>
 							{$t('downloads.tabs.files')}
 						</button>
 						<button class="tab" class:active={activeTab === 'peers'} class:selected={tabActive && selectedTabIndex === 1}>
 							<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<circle cx="18" cy="5" r="3"/>
-								<circle cx="6" cy="12" r="3"/>
-								<circle cx="18" cy="19" r="3"/>
-								<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
-								<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+								<circle cx="18" cy="5" r="3" />
+								<circle cx="6" cy="12" r="3" />
+								<circle cx="18" cy="19" r="3" />
+								<line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+								<line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
 							</svg>
 							{$t('downloads.tabs.peers')}
 						</button>
@@ -689,50 +732,48 @@
 								{/each}
 							</div>
 						</Table>
+					{:else if !peerSnapshotLoaded}
+						<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
+					{:else if currentPeers.length === 0}
+						<div class="empty-peers">Žádní peeri</div>
 					{:else}
-						{#if !peerSnapshotLoaded}
-							<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
-						{:else if currentPeers.length === 0}
-							<div class="empty-peers">Žádní peeri</div>
-						{:else}
-							<Table columns="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" columnsMobile="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" noBorder>
-								<Header fontSize="1.3vh">
-									<Cell>{$t('downloads.peerList.id')}</Cell>
-									<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
-									<Cell align="center">{$t('downloads.peerList.availability')}</Cell>
-									<Cell align="right">{$t('downloads.peerList.speed')}</Cell>
-									<Cell align="right">{$t('downloads.peerList.transferred')}</Cell>
-									<Cell align="right">{$t('downloads.peerList.activity')}</Cell>
-									<Cell>{$t('downloads.peerList.currentFile')}</Cell>
-									<Cell>Chunk</Cell>
-								</Header>
-								<div class="items">
-									{#each currentPeers as peer, index (peer.peerID)}
-										{@const ageSec = peer.lastActivity ? Math.max(0, Math.round((now - peer.lastActivity) / 1000)) : 0}
-										<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index} dimmed={peer.stale}>
-											<Cell><span class="peer-id">{peer.peerID.slice(0, 12)}</span></Cell>
-											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
-											<Cell align="center"><span class="peer-ago">{peer.havePercent != null ? `${peer.havePercent}%` : '—'}</span></Cell>
-											<Cell align="right">
-												<span class="peer-metric">
-													<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>↓ {formatSize(peer.downloadSpeed || 0)}/s</span>
-													<span class="speed-ul" class:speed-idle={!peer.uploadSpeed}>↑ {formatSize(peer.uploadSpeed || 0)}/s</span>
-												</span>
-											</Cell>
-											<Cell align="right">
-												<span class="peer-metric">
-													<span class="total-dl">↓ {formatSize(peer.totalDownloaded || 0)}</span>
-													<span class="total-ul">↑ {formatSize(peer.totalUploaded || 0)}</span>
-												</span>
-											</Cell>
-											<Cell align="right"><span class="peer-ago">{ageSec}s</span></Cell>
-											<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
-												<Cell><span class="peer-file">{peer.currentChunk ? peer.currentChunk.slice(0, 8) : ''}</span></Cell>
-										</TableRow>
-									{/each}
-								</div>
-							</Table>
-						{/if}
+						<Table columns="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" columnsMobile="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" noBorder>
+							<Header fontSize="1.3vh">
+								<Cell>{$t('downloads.peerList.id')}</Cell>
+								<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
+								<Cell align="center">{$t('downloads.peerList.availability')}</Cell>
+								<Cell align="right">{$t('downloads.peerList.speed')}</Cell>
+								<Cell align="right">{$t('downloads.peerList.transferred')}</Cell>
+								<Cell align="right">{$t('downloads.peerList.activity')}</Cell>
+								<Cell>{$t('downloads.peerList.currentFile')}</Cell>
+								<Cell>Chunk</Cell>
+							</Header>
+							<div class="items">
+								{#each currentPeers as peer, index (peer.peerID)}
+									{@const ageSec = peer.lastActivity ? Math.max(0, Math.round((now - peer.lastActivity) / 1000)) : 0}
+									<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index} dimmed={peer.stale}>
+										<Cell><span class="peer-id">{peer.peerID.slice(0, 12)}</span></Cell>
+										<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
+										<Cell align="center"><span class="peer-ago">{peer.havePercent != null ? `${peer.havePercent}%` : '—'}</span></Cell>
+										<Cell align="right">
+											<span class="peer-metric">
+												<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>↓ {formatSize(peer.downloadSpeed || 0)}/s</span>
+												<span class="speed-ul" class:speed-idle={!peer.uploadSpeed}>↑ {formatSize(peer.uploadSpeed || 0)}/s</span>
+											</span>
+										</Cell>
+										<Cell align="right">
+											<span class="peer-metric">
+												<span class="total-dl">↓ {formatSize(peer.totalDownloaded || 0)}</span>
+												<span class="total-ul">↑ {formatSize(peer.totalUploaded || 0)}</span>
+											</span>
+										</Cell>
+										<Cell align="right"><span class="peer-ago">{ageSec}s</span></Cell>
+										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
+										<Cell><span class="peer-file">{peer.currentChunk ? peer.currentChunk.slice(0, 8) : ''}</span></Cell>
+									</TableRow>
+								{/each}
+							</div>
+						</Table>
 					{/if}
 				</div>
 			</div>

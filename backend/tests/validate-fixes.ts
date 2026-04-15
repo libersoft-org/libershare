@@ -13,8 +13,13 @@ let passed = 0;
 let failed = 0;
 
 function assert(condition: boolean, name: string): void {
-	if (condition) { passed++; console.log(`  ✓ ${name}`); }
-	else { failed++; console.error(`  ✗ ${name}`); }
+	if (condition) {
+		passed++;
+		console.log(`  ✓ ${name}`);
+	} else {
+		failed++;
+		console.error(`  ✗ ${name}`);
+	}
 }
 
 function createDB(): Database {
@@ -35,9 +40,7 @@ function makeLISH(overrides: Partial<IStoredLISH> = {}): IStoredLISH {
 		created: '2025-01-01',
 		chunkSize: 1048576,
 		checksumAlgo: 'sha256',
-		files: [
-			{ path: 'file.txt', size: 2097152, checksums: [CHUNK_A, CHUNK_B] },
-		],
+		files: [{ path: 'file.txt', size: 2097152, checksums: [CHUNK_A, CHUNK_B] }],
 		...overrides,
 	};
 }
@@ -87,9 +90,12 @@ console.log('\n── C2b: addLISH() replaces files when new files provided ─�
 	markChunkDownloaded(db, LISH_ID, CHUNK_A);
 
 	const newChunk = 'sha256:chunk_new' as ChunkID;
-	addLISH(db, makeLISH({
-		files: [{ path: 'new.txt', size: 1024, checksums: [newChunk] }],
-	}));
+	addLISH(
+		db,
+		makeLISH({
+			files: [{ path: 'new.txt', size: 1024, checksums: [newChunk] }],
+		})
+	);
 
 	const lish = getLISH(db, LISH_ID);
 	assert(lish?.files?.length === 1, 'Files replaced with new ones');
@@ -102,8 +108,7 @@ console.log('\n── C1+C2 combined: LISH with wiped files not falsely complete
 {
 	const db = createDB();
 	// Simulate: LISH exists with main record but lishs_files was lost somehow
-	db.run(`INSERT INTO lishs (lish_id, name, chunk_size, checksum_algo) VALUES (?, ?, ?, ?)`,
-		[LISH_ID, 'Orphan', 1024, 'sha256']);
+	db.run(`INSERT INTO lishs (lish_id, name, chunk_size, checksum_algo) VALUES (?, ?, ?, ?)`, [LISH_ID, 'Orphan', 1024, 'sha256']);
 	assert(!isComplete(db, LISH_ID), 'Orphan LISH (no files) NOT complete');
 	assert(getMissingChunks(db, LISH_ID).length === 0, 'getMissingChunks returns [] for orphan');
 }
@@ -116,10 +121,17 @@ console.log('\n── C3: ErrorRecovery backoff + max retries ──');
 	const broadcasts: Array<{ event: string; data: any }> = [];
 
 	const recovery = new ErrorRecovery({
-		attemptRecover: async () => { attemptCount++; return false; },
-		broadcast: (event, data) => { broadcasts.push({ event, data }); },
-		getLISH: () => ({ directory: '/tmp/test', id: 'x' } as any),
-		checkAccess: async () => { if (accessShouldFail) throw new Error('ENOENT'); },
+		attemptRecover: async () => {
+			attemptCount++;
+			return false;
+		},
+		broadcast: (event, data) => {
+			broadcasts.push({ event, data });
+		},
+		getLISH: () => ({ directory: '/tmp/test', id: 'x' }) as any,
+		checkAccess: async () => {
+			if (accessShouldFail) throw new Error('ENOENT');
+		},
 	});
 
 	recovery.start('lish1', ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: false });

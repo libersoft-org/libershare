@@ -9,7 +9,10 @@ function isTauri(): boolean {
 }
 
 export async function detectLocalFilesystem(): Promise<void> {
-	if (isTauri()) { localFilesystem.set(true); return; }
+	if (isTauri()) {
+		localFilesystem.set(true);
+		return;
+	}
 	try {
 		const info = await api.fs.info();
 		localFilesystem.set(info.localFilesystem);

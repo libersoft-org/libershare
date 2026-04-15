@@ -427,9 +427,15 @@ export function resetVerification(dataServer: DataServer, lishID: string): void 
  */
 export async function runVerification(dataServer: DataServer, lishID: string, onProgress: (progress: VerifyFileProgress) => void, signal?: AbortSignal): Promise<void> {
 	const meta = dataServer.get(lishID);
-	if (!meta || !meta.directory) { console.debug(`[Verify] SKIP ${lishID.slice(0, 8)}: no meta or directory`); return; }
+	if (!meta || !meta.directory) {
+		console.debug(`[Verify] SKIP ${lishID.slice(0, 8)}: no meta or directory`);
+		return;
+	}
 	const files = dataServer.getFilesForVerification(lishID);
-	if (!files) { console.debug(`[Verify] SKIP ${lishID.slice(0, 8)}: getFilesForVerification returned null`); return; }
+	if (!files) {
+		console.debug(`[Verify] SKIP ${lishID.slice(0, 8)}: getFilesForVerification returned null`);
+		return;
+	}
 	const totalChunks = files.reduce((sum, f) => sum + f.checksums.length, 0);
 	console.log(`[Verify] START ${lishID.slice(0, 8)}: ${files.length} files, ${totalChunks} chunks, dir=${meta.directory}`);
 	const verifyStart = Date.now();
@@ -438,8 +444,14 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 	let totalMissing = 0;
 	let totalBytes = 0;
 	for (const fileEntry of files) {
-		if (signal?.aborted) { console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`); return; }
-		if (!dataServer.get(lishID)) { console.debug(`[Verify] LISH DELETED ${lishID.slice(0, 8)}`); return; }
+		if (signal?.aborted) {
+			console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
+			return;
+		}
+		if (!dataServer.get(lishID)) {
+			console.debug(`[Verify] LISH DELETED ${lishID.slice(0, 8)}`);
+			return;
+		}
 		const filePath = join(meta.directory, fileEntry.path);
 		let fileVerified = 0;
 		let fileFailed = 0;
@@ -455,7 +467,10 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 		}
 		let fileShort = 0;
 		for (let chunkIndex = 0; chunkIndex < fileEntry.checksums.length; chunkIndex++) {
-			if (signal?.aborted) { console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`); return; }
+			if (signal?.aborted) {
+				console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
+				return;
+			}
 			const expectedChecksum = fileEntry.checksums[chunkIndex]!;
 			const offset = chunkIndex * meta.chunkSize;
 			if (offset >= file.size) {

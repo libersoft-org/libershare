@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -236,8 +236,20 @@ class LISHnetsAPI {
 		return this.client.call<string[]>('lishnets.getAddresses', { networkID });
 	}
 
-	getPeers(networkID: string): Promise<PeerConnectionInfo[]> {
-		return this.client.call<PeerConnectionInfo[]>('lishnets.getPeers', { networkID });
+	getPeers(networkID?: string): Promise<PeerListEntry[]> {
+		return this.client.call<PeerListEntry[]>('lishnets.getPeers', { networkID });
+	}
+
+	getPeerLishs(peerID: string, networkID: string): Promise<{ lishs: PeerLishEntry[] | null }> {
+		return this.client.call<{ lishs: PeerLishEntry[] | null }>('lishnets.getPeerLishs', { peerID, networkID });
+	}
+
+	getPeerLish(lishID: string, peerID: string, networkID: string): Promise<IPeerLishDetail | null> {
+		return this.client.call<IPeerLishDetail | null>('lishnets.getPeerLish', { lishID, peerID, networkID });
+	}
+
+	addPeerLish(lishID: string, peerID: string, networkID: string): Promise<{ lishID: string }> {
+		return this.client.call<{ lishID: string }>('lishnets.addPeerLish', { lishID, peerID, networkID });
 	}
 
 	getNodeInfo(): Promise<NetworkNodeInfo> {

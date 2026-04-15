@@ -1,41 +1,8 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import type { LISHid } from '@shared';
-import {
-	addLISH,
-	deleteLISH,
-	lishExists,
-	getLISH,
-	getLISHMeta,
-	getLISHDetail,
-	listLISHSummaries,
-	listAllStoredLISHs,
-	isChunkDownloaded,
-	markChunkDownloaded,
-	isComplete,
-	getHaveChunks,
-	getMissingChunks,
-	findChunkLocation,
-	getVerificationProgress,
-	getFileVerificationProgress,
-	setUploadEnabled,
-	setDownloadEnabled,
-	getUploadEnabledLishs,
-	getDownloadEnabledLishs,
-	getFilesForVerification,
-	markChunkVerified,
-	markChunkFailed,
-	resetVerification,
-	isVerified,
-} from '../../../src/db/lishs.ts';
-import {
-	TEST_LISH_ID,
-	TEST_LISH_ID_2,
-	TEST_CHUNK_IDS,
-	createTestLISH,
-	createTestDB,
-	populateTestDB,
-} from '../helpers/fixtures.ts';
+import { addLISH, deleteLISH, lishExists, getLISH, getLISHMeta, getLISHDetail, listLISHSummaries, listAllStoredLISHs, isChunkDownloaded, markChunkDownloaded, isComplete, getHaveChunks, getMissingChunks, findChunkLocation, getVerificationProgress, getFileVerificationProgress, setUploadEnabled, setDownloadEnabled, getUploadEnabledLishs, getDownloadEnabledLishs, getFilesForVerification, markChunkVerified, markChunkFailed, resetVerification, isVerified } from '../../../src/db/lishs.ts';
+import { TEST_LISH_ID, TEST_LISH_ID_2, TEST_CHUNK_IDS, createTestLISH, createTestDB, populateTestDB } from '../helpers/fixtures.ts';
 
 // ---------------------------------------------------------------------------
 // Test setup — fresh in-memory DB for every test

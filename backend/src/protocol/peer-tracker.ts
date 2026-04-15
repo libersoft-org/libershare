@@ -104,7 +104,11 @@ function pruneSamples(samples: SpeedSample[], now: number): void {
 export function registerDownloadPeer(lishID: string, peerID: string, connectionType: ConnectionType, havePercent?: number): void {
 	const k = key(lishID, peerID, 'download');
 	const existing = entries.get(k);
-	if (existing) { existing.connectionType = connectionType; if (havePercent !== undefined) existing.havePercent = havePercent; return; }
+	if (existing) {
+		existing.connectionType = connectionType;
+		if (havePercent !== undefined) existing.havePercent = havePercent;
+		return;
+	}
 	entries.set(k, createEntry(peerID, lishID, 'download', connectionType, havePercent));
 	trace(`[PEERS] register download ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
@@ -119,7 +123,10 @@ export function unregisterDownloadPeer(lishID: string, peerID: string): void {
 export function registerUploadPeer(lishID: string, peerID: string, connectionType: ConnectionType): void {
 	const k = key(lishID, peerID, 'upload');
 	const existing = entries.get(k);
-	if (existing) { existing.connectionType = connectionType; return; }
+	if (existing) {
+		existing.connectionType = connectionType;
+		return;
+	}
 	entries.set(k, createEntry(peerID, lishID, 'upload', connectionType));
 	trace(`[PEERS] register upload ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
@@ -231,7 +238,7 @@ export function getDebugSnapshot(lishID?: string): { now: number; entries: PeerT
 	for (const [k, entry] of entries) {
 		if (lishID && entry.lishID !== lishID) continue;
 		const sampleBytesSum = entry.speedSamples.reduce((s, x) => s + x.bytes, 0);
-		const windowMs = entry.speedSamples.length >= 2 ? (entry.speedSamples[entry.speedSamples.length - 1]!.time - entry.speedSamples[0]!.time) : 0;
+		const windowMs = entry.speedSamples.length >= 2 ? entry.speedSamples[entry.speedSamples.length - 1]!.time - entry.speedSamples[0]!.time : 0;
 		const computedSpeed = computeSpeed(entry.speedSamples, now);
 		out.push({
 			key: k,
@@ -265,7 +272,10 @@ export function startPeerEmitter(): void {
 }
 
 export function stopPeerEmitter(): void {
-	if (emitInterval) { clearInterval(emitInterval); emitInterval = null; }
+	if (emitInterval) {
+		clearInterval(emitInterval);
+		emitInterval = null;
+	}
 }
 
 // --- Internal: emit aggregated peer details ---

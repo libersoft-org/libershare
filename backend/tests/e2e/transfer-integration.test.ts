@@ -1,29 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import type { LISHid, ChunkID, IStoredLISH } from '@shared';
-import {
-	initLISHsTables,
-	addLISH,
-	setUploadEnabled,
-	setDownloadEnabled,
-	getUploadEnabledLishs,
-	getDownloadEnabledLishs,
-	getMissingChunks,
-	markChunkDownloaded,
-	isComplete,
-	getLISH,
-} from '../../src/db/lishs.ts';
-import {
-	initUploadState,
-	disableUpload,
-	enableUpload,
-	isUploadDisabled,
-	isUploadEnabled,
-	getEnabledUploads,
-	getActiveUploads,
-	resetUploadState,
-	setUploadBroadcast,
-} from '../../src/protocol/lish-protocol.ts';
+import { initLISHsTables, addLISH, setUploadEnabled, setDownloadEnabled, getUploadEnabledLishs, getDownloadEnabledLishs, getMissingChunks, markChunkDownloaded, isComplete, getLISH } from '../../src/db/lishs.ts';
+import { initUploadState, disableUpload, enableUpload, isUploadDisabled, isUploadEnabled, getEnabledUploads, getActiveUploads, resetUploadState, setUploadBroadcast } from '../../src/protocol/lish-protocol.ts';
 import { initDownloadState, initTransferHandlers, getDownloadEnabledLishs as getDownloadEnabledLishsRuntime } from '../../src/api/transfer.ts';
 import { setBusy, clearBusy, isBusy, getBusyReason } from '../../src/api/busy.ts';
 import { DataServer } from '../../src/lish/data-server.ts';
@@ -70,8 +49,12 @@ class MockNetworks {
 	private _runningNetwork: unknown = null;
 	private _firstJoinedNetworkID = '';
 
-	setRunningNetwork(net: unknown): void { this._runningNetwork = net; }
-	setFirstJoinedNetworkID(id: string): void { this._firstJoinedNetworkID = id; }
+	setRunningNetwork(net: unknown): void {
+		this._runningNetwork = net;
+	}
+	setFirstJoinedNetworkID(id: string): void {
+		this._firstJoinedNetworkID = id;
+	}
 
 	getRunningNetwork(): unknown {
 		if (!this._runningNetwork) throw new Error('No running network');
@@ -92,9 +75,15 @@ class MockDataServerForDownloader {
 	storedLishs = new Map<string, IStoredLISH>();
 	completeLishs = new Set<string>();
 
-	getMissingChunks(_lishID: LISHid): MissingChunk[] { return [...this.missingChunks]; }
-	getAllChunkCount(_lishID: LISHid): number { return this.allChunkCount; }
-	isChunkDownloaded(_lishID: LISHid, chunkID: ChunkID): boolean { return this.downloadedChunks.has(chunkID); }
+	getMissingChunks(_lishID: LISHid): MissingChunk[] {
+		return [...this.missingChunks];
+	}
+	getAllChunkCount(_lishID: LISHid): number {
+		return this.allChunkCount;
+	}
+	isChunkDownloaded(_lishID: LISHid, chunkID: ChunkID): boolean {
+		return this.downloadedChunks.has(chunkID);
+	}
 	markChunkDownloaded(_lishID: LISHid, chunkID: ChunkID): void {
 		this.downloadedChunks.add(chunkID);
 		this.missingChunks = this.missingChunks.filter(c => c.chunkID !== chunkID);
@@ -102,9 +91,15 @@ class MockDataServerForDownloader {
 	async writeChunk(_dir: string, _lish: IStoredLISH, fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
 		this.writtenChunks.push({ fileIndex, chunkIndex, data });
 	}
-	add(lish: IStoredLISH): void { this.storedLishs.set(lish.id, lish); }
-	get(lishID: LISHid): IStoredLISH | null { return this.storedLishs.get(lishID) ?? null; }
-	isCompleteLISH(lish: IStoredLISH): boolean { return this.completeLishs.has(lish.id); }
+	add(lish: IStoredLISH): void {
+		this.storedLishs.set(lish.id, lish);
+	}
+	get(lishID: LISHid): IStoredLISH | null {
+		return this.storedLishs.get(lishID) ?? null;
+	}
+	isCompleteLISH(lish: IStoredLISH): boolean {
+		return this.completeLishs.has(lish.id);
+	}
 }
 
 // Mock network for Downloader
@@ -120,7 +115,9 @@ class MockNetwork {
 	async broadcast(topic: string, data: Record<string, unknown>): Promise<void> {
 		this.broadcastMessages.push({ topic, data });
 	}
-	getTopicPeers(_networkID: string): string[] { return [...this.topicPeers]; }
+	getTopicPeers(_networkID: string): string[] {
+		return [...this.topicPeers];
+	}
 	async dialProtocolByPeerId(peerID: string, _protocol: string): Promise<unknown> {
 		const result = this.dialResults.get(peerID);
 		if (!result) throw new Error(`No dial result for ${peerID}`);
@@ -140,8 +137,12 @@ class MockLISHClient {
 		if (this.requestChunkResult instanceof Error) throw this.requestChunkResult;
 		return this.requestChunkResult;
 	}
-	async requestManifest(_lishID: LISHid): Promise<IStoredLISH | null> { return this.requestManifestResult; }
-	async close(): Promise<void> { this.closeCalled = true; }
+	async requestManifest(_lishID: LISHid): Promise<IStoredLISH | null> {
+		return this.requestManifestResult;
+	}
+	async close(): Promise<void> {
+		this.closeCalled = true;
+	}
 }
 
 function priv(obj: unknown): Record<string, unknown> {
@@ -427,10 +428,7 @@ describe('Upload pause/resume affects protocol state', () => {
 	it('pause persists to DB via persistFn', () => {
 		addLISH(db, createTestLISH());
 		setUploadEnabled(db, TEST_LISH_ID, true);
-		initUploadState(
-			getUploadEnabledLishs(db),
-			(lishID, enabled) => setUploadEnabled(db, lishID, enabled),
-		);
+		initUploadState(getUploadEnabledLishs(db), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 
 		disableUpload(TEST_LISH_ID);
 
@@ -441,10 +439,7 @@ describe('Upload pause/resume affects protocol state', () => {
 
 	it('resume persists to DB via persistFn', () => {
 		addLISH(db, createTestLISH());
-		initUploadState(
-			new Set<string>(),
-			(lishID, enabled) => setUploadEnabled(db, lishID, enabled),
-		);
+		initUploadState(new Set<string>(), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 
 		enableUpload(TEST_LISH_ID);
 
@@ -521,9 +516,11 @@ describe('Downloader — download behavior with mocked peers', () => {
 		const chunkData = new Uint8Array(512).fill(0x42);
 		client.requestChunkResult = chunkData;
 
-		const result = await (downloader as never as {
-			downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
-		}).downloadChunk(client, CHUNK_A);
+		const result = await (
+			downloader as never as {
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+			}
+		).downloadChunk(client, CHUNK_A);
 
 		expect(result).not.toBe('not_available');
 		expect(result).not.toBe('error');
@@ -539,9 +536,11 @@ describe('Downloader — download behavior with mocked peers', () => {
 		const client = new MockLISHClient();
 		client.requestChunkResult = null;
 
-		const result = await (downloader as never as {
-			downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
-		}).downloadChunk(client, CHUNK_A);
+		const result = await (
+			downloader as never as {
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+			}
+		).downloadChunk(client, CHUNK_A);
 
 		expect(result).toBe('not_available');
 	});
@@ -555,9 +554,11 @@ describe('Downloader — download behavior with mocked peers', () => {
 		const client = new MockLISHClient();
 		client.requestChunkResult = new Error('stream reset');
 
-		const result = await (downloader as never as {
-			downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
-		}).downloadChunk(client, CHUNK_A);
+		const result = await (
+			downloader as never as {
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+			}
+		).downloadChunk(client, CHUNK_A);
 
 		expect(result).toBe('error');
 	});
@@ -621,9 +622,11 @@ describe('Downloader — download behavior with mocked peers', () => {
 
 	it('progress callback receives correct shape', () => {
 		let received: unknown = null;
-		downloader.setProgressCallback(info => { received = info; });
+		downloader.setProgressCallback(info => {
+			received = info;
+		});
 
-		const cb = priv(downloader)['onProgress'] as ((info: unknown) => void);
+		const cb = priv(downloader)['onProgress'] as (info: unknown) => void;
 		cb({ downloadedChunks: 5, totalChunks: 10, peers: 2, bytesPerSecond: 100000 });
 
 		expect(received).toEqual({
@@ -636,9 +639,11 @@ describe('Downloader — download behavior with mocked peers', () => {
 
 	it('manifest imported callback fires correctly', () => {
 		let receivedID = '';
-		downloader.setManifestImportedCallback(id => { receivedID = id; });
+		downloader.setManifestImportedCallback(id => {
+			receivedID = id;
+		});
 
-		const cb = priv(downloader)['onManifestImported'] as ((id: string) => void);
+		const cb = priv(downloader)['onManifestImported'] as (id: string) => void;
 		cb('lish-manifest-xyz');
 
 		expect(receivedID).toBe('lish-manifest-xyz');
@@ -661,10 +666,7 @@ describe('State after restart', () => {
 		addLISH(db, createTestLISH());
 
 		// Wire up with persist function
-		initUploadState(
-			new Set<string>(),
-			(lishID, enabled) => setUploadEnabled(db, lishID, enabled),
-		);
+		initUploadState(new Set<string>(), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 
 		// Resume (enable upload)
 		enableUpload(TEST_LISH_ID);
@@ -702,13 +704,10 @@ describe('State after restart', () => {
 		addLISH(db, createTestLISH());
 
 		const persistCalls: Array<{ lishID: string; enabled: boolean }> = [];
-		initDownloadState(
-			new Set<string>(),
-			(lishID, enabled) => {
-				persistCalls.push({ lishID, enabled });
-				setDownloadEnabled(db, lishID, enabled);
-			},
-		);
+		initDownloadState(new Set<string>(), (lishID, enabled) => {
+			persistCalls.push({ lishID, enabled });
+			setDownloadEnabled(db, lishID, enabled);
+		});
 
 		const networks = new MockNetworks();
 		const dataServer = new DataServer(db);
@@ -728,10 +727,7 @@ describe('State after restart', () => {
 		addLISH(db, createTestLISH(TEST_LISH_ID_2, { id: TEST_LISH_ID_2 }));
 
 		// Step 1: Wire up and enable
-		initUploadState(
-			new Set<string>(),
-			(lishID, enabled) => setUploadEnabled(db, lishID, enabled),
-		);
+		initUploadState(new Set<string>(), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 		enableUpload(TEST_LISH_ID);
 		enableUpload(TEST_LISH_ID_2);
 
@@ -857,10 +853,7 @@ describe('Transfer handlers — disableUpload/enableUpload integration', () => {
 
 	it('handler.disableUpload calls protocol disableUpload and persists', () => {
 		addLISH(db, createTestLISH());
-		initUploadState(
-			new Set([TEST_LISH_ID]),
-			(lishID, enabled) => setUploadEnabled(db, lishID, enabled),
-		);
+		initUploadState(new Set([TEST_LISH_ID]), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 
 		const networks = new MockNetworks();
 		const dataServer = new DataServer(db);
@@ -874,10 +867,7 @@ describe('Transfer handlers — disableUpload/enableUpload integration', () => {
 
 	it('handler.enableUpload calls protocol enableUpload and persists', () => {
 		addLISH(db, createTestLISH());
-		initUploadState(
-			new Set<string>(),
-			(lishID, enabled) => setUploadEnabled(db, lishID, enabled),
-		);
+		initUploadState(new Set<string>(), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 
 		const networks = new MockNetworks();
 		const dataServer = new DataServer(db);
@@ -891,10 +881,7 @@ describe('Transfer handlers — disableUpload/enableUpload integration', () => {
 
 	it('activeUploads entries appear in getActiveTransfers', () => {
 		addLISH(db, createTestLISH());
-		initUploadState(
-			new Set([TEST_LISH_ID]),
-			(lishID, enabled) => setUploadEnabled(db, lishID, enabled),
-		);
+		initUploadState(new Set([TEST_LISH_ID]), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 
 		// Seed an active upload entry
 		const uploads = getActiveUploads();
@@ -1217,7 +1204,9 @@ describe('enableDownload failure rollback (N2)', () => {
 		// Do NOT set running network — getRunningNetwork() will throw
 		const dataServer = new DataServer(db);
 		const broadcastEvents: Array<{ event: string; data: any }> = [];
-		const broadcastFn = (event: string, data: any): void => { broadcastEvents.push({ event, data }); };
+		const broadcastFn = (event: string, data: any): void => {
+			broadcastEvents.push({ event, data });
+		};
 		initUploadState(new Set(), () => {});
 		initDownloadState(new Set(), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
 		const handlers = initTransferHandlers(networks as never, dataServer, '/tmp/data', () => {}, broadcastFn);

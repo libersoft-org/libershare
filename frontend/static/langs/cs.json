@@ -77,6 +77,36 @@
 			"play": "Přehrát"
 		}
 	},
+	"peers": {
+		"title": "Účastníci v síti",
+		"searchPlaceholder": "Hledat podle ID účastníka ...",
+		"allNetworks": "Všechny sítě",
+		"peerID": "ID účastníka",
+		"network": "Síť",
+		"connections": "Připojení",
+		"direct": "{count} přímé",
+		"relayed": "{count} přes předávače",
+		"noPeers": "Žádní připojení účastníci.",
+		"peerDeclined": "Účastník odmítl sdílet svůj seznam nebo neodpověděl.",
+		"noSharedLishs": "Tento účastník nesdílí žádné LISHe.",
+		"lish": "LISH",
+		"actions": "Akce",
+		"addToDownloads": "Přidat ke stahování",
+		"details": "Podrobnosti",
+		"unnamed": "(bez názvu)",
+		"lishAdded": "LISH \"{name}\" přidán ke stahování",
+		"lishName": "Název",
+		"lishID": "LISH ID",
+		"description": "Popis",
+		"totalSize": "Celková velikost",
+		"files": "Soubory",
+		"directories": "Adresáře",
+		"created": "Vytvořeno",
+		"chunkSize": "Velikost chunku",
+		"checksumAlgo": "Algoritmus kontrolního součtu",
+		"fileStructure": "Struktura souborů",
+		"errorUnreachable": "Peer je nedostupný"
+	},
 	"localStorage": {
 		"title": "Místní úložiště",
 		"modified": "Změněno"

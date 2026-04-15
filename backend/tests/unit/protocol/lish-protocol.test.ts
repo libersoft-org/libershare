@@ -1,15 +1,5 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
-import {
-	disableUpload,
-	enableUpload,
-	isUploadDisabled,
-	getEnabledUploads,
-	getActiveUploads,
-	setUploadBroadcast,
-	setMaxUploadSpeed,
-	resetUploadState,
-	type LISHResponse,
-} from '../../../src/protocol/lish-protocol.ts';
+import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, type LISHResponse } from '../../../src/protocol/lish-protocol.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -284,7 +274,6 @@ describe('lish-protocol – upload state', () => {
 // ---------------------------------------------------------------------------
 
 describe('lish-protocol – base64 chunk encoding', () => {
-
 	// --- LISHResponse type conformance ---
 
 	it('LISHResponse.data is string|null (base64), not number[]', () => {
@@ -316,7 +305,7 @@ describe('lish-protocol – base64 chunk encoding', () => {
 	});
 
 	it('roundtrip: small chunk (3 bytes)', () => {
-		const original = new Uint8Array([0xDE, 0xAD, 0xBE]);
+		const original = new Uint8Array([0xde, 0xad, 0xbe]);
 		const b64 = Buffer.from(original).toString('base64');
 		const decoded = new Uint8Array(Buffer.from(b64, 'base64'));
 		expect(decoded).toEqual(original);

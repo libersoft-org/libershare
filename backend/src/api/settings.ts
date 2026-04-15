@@ -1,6 +1,6 @@
 import { type Settings, type SettingsData } from '../settings.ts';
 import { Downloader } from '../protocol/downloader.ts';
-import { setMaxUploadSpeed } from '../protocol/lish-protocol.ts';
+import { setMaxUploadSpeed, setAllowPeerList } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
 
@@ -27,9 +27,8 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 	async function set(p: { path: string; value: any }): Promise<boolean> {
 		assert(p, ['path', 'value']);
 		await settings.set(p.path, p.value);
-		if (p.path.startsWith('network.maxDownloadSpeed') || p.path.startsWith('network.maxUploadSpeed')) {
-			applySpeedLimits();
-		}
+		if (p.path.startsWith('network.maxDownloadSpeed') || p.path.startsWith('network.maxUploadSpeed')) applySpeedLimits();
+		if (p.path === 'network.allowPeerList') setAllowPeerList(!!p.value);
 		return true;
 	}
 

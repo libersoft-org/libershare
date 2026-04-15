@@ -389,7 +389,7 @@ export class Network {
 				try {
 					await this.node!.dial(peer.id, { signal: AbortSignal.timeout(5000) });
 					const conns = this.node!.getConnections(peer.id);
-					const connType = conns.map(c => c.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT').join(',');
+					const connType = conns.map(c => (c.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT')).join(',');
 					trace(`   ✓ Re-dialed ${pid.slice(0, 16)} [${connType}]`);
 					redialSuccess++;
 				} catch (err: any) {
@@ -572,8 +572,14 @@ export class Network {
 	// =========================================================================
 
 	private async handleWant(data: WantMessage, networkID: string): Promise<void> {
-		if (!isUploadEnabled(data.lishID)) { trace(`[NET] want ignored: upload disabled for ${data.lishID.slice(0, 8)}`); return; }
-		if (isBusy(data.lishID)) { trace(`[NET] want ignored: busy for ${data.lishID.slice(0, 8)}`); return; }
+		if (!isUploadEnabled(data.lishID)) {
+			trace(`[NET] want ignored: upload disabled for ${data.lishID.slice(0, 8)}`);
+			return;
+		}
+		if (isBusy(data.lishID)) {
+			trace(`[NET] want ignored: busy for ${data.lishID.slice(0, 8)}`);
+			return;
+		}
 		const lish = this.dataServer.get(data.lishID);
 		if (!lish) return;
 		// Verify data directory exists on disk — prevents false-positive "have"
@@ -641,7 +647,7 @@ export class Network {
 	 */
 	private classifyConnection(peerID: string, isRelay: boolean): 'DIRECT' | 'RELAY' | 'DCUtR' {
 		const isDcutr = this.dcutrPeers.has(peerID);
-		const result = isDcutr && !isRelay ? 'DCUtR' : (isRelay ? 'RELAY' : 'DIRECT');
+		const result = isDcutr && !isRelay ? 'DCUtR' : isRelay ? 'RELAY' : 'DIRECT';
 		trace(`[NET] classify ${peerID.slice(0, 12)}: relay=${isRelay} dcutrSet=${isDcutr} → ${result}`);
 		return result;
 	}

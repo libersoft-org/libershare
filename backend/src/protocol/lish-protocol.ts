@@ -9,7 +9,7 @@ import { isBusy } from '../api/busy.ts';
 import { trace } from '../logger.ts';
 import { registerUploadPeer, unregisterUploadPeer, recordUploadBytes, type ConnectionType } from './peer-tracker.ts';
 export const LISH_PROTOCOL = '/lish/1.0.0';
-export type LISHRequest = LISHChunkRequest | LISHManifestRequest;
+export type LISHRequest = LISHChunkRequest | LISHManifestRequest | LISHListRequest;
 export interface LISHChunkRequest {
 	type?: 'chunk';
 	lishID: LISHid;
@@ -19,13 +19,25 @@ export interface LISHManifestRequest {
 	type: 'manifest';
 	lishID: LISHid;
 }
+export interface LISHListRequest {
+	type: 'list';
+}
 export interface LISHResponse {
 	data: string | null; // base64-encoded binary chunk data (per LISH protocol spec)
 }
 export interface LISHManifestResponse {
 	manifest: import('@shared').IStoredLISH | null;
 }
+export interface LISHListResponse {
+	type: 'list-result';
+	lishs: Array<{ id: string; name?: string }> | null;
+}
 export type HaveChunks = 'all' | ChunkID[];
+
+// Allow peer list setting — controlled by settings
+let allowPeerList = false;
+export function setAllowPeerList(value: boolean): void { allowPeerList = value; }
+export function getAllowPeerList(): boolean { return allowPeerList; }
 
 // Client-side stream wrapper that can send multiple requests
 export class LISHClient {
@@ -55,6 +67,26 @@ export class LISHClient {
 			return response.manifest;
 		} catch (error) {
 			console.error('Error requesting manifest:', error);
+			return null;
+		}
+	}
+
+	// Request list of shared LISHs from peer
+	async requestList(): Promise<Array<{ id: string; name?: string }> | null> {
+		try {
+			const request: LISHListRequest = { type: 'list' };
+			const requestData = new TextEncoder().encode(JSON.stringify(request));
+			sendLengthPrefixed(this.stream, requestData);
+			const responseMsg = await Promise.race([
+				this.decoder.next(),
+				rejectAfterTimeout(15000, 'list-receive'),
+			]) as IteratorResult<Uint8Array | Uint8ArrayList>;
+			if (responseMsg.done || !responseMsg.value) return null;
+			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
+			const response: LISHListResponse = JSON.parse(new TextDecoder().decode(responseData));
+			return response.lishs;
+		} catch (error) {
+			console.error('Error requesting list:', error);
 			return null;
 		}
 	}
@@ -171,12 +203,32 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			trace(`[PROTO] #${requestCount} from ${remotePeer}: ${data.byteLength}B`);
 			const request: LISHRequest = JSON.parse(new TextDecoder().decode(data));
 
-			if (request.type === 'manifest') {
-				const lish = dataServer.get(request.lishID as LISHid);
+			if (request.type === 'list') {
+				// Return list of all shared (upload_enabled) LISHs — id and name only
+				const allowList = getAllowPeerList();
+				let response: LISHListResponse;
+				if (!allowList) {
+					response = { type: 'list-result', lishs: null };
+				} else {
+					const allLishs = dataServer.list();
+					const shared = allLishs.filter(l => uploadEnabled.has(l.id));
+					response = { type: 'list-result', lishs: shared.map(l => {
+						const entry: { id: string; name?: string } = { id: l.id };
+						if (l.name !== undefined) entry.name = l.name;
+						return entry;
+					}) };
+				}
+				const responseData = new TextEncoder().encode(JSON.stringify(response));
+				sendLengthPrefixed(stream, responseData);
+			} else if (request.type === 'manifest') {
+				// Only return manifest for LISHs with upload enabled
 				let manifest: import('@shared').IStoredLISH | null = null;
-				if (lish) {
-					const { directory, chunks, ...exportData } = lish;
-					manifest = exportData as import('@shared').IStoredLISH;
+				if (uploadEnabled.has(request.lishID)) {
+					const lish = dataServer.get(request.lishID as LISHid);
+					if (lish) {
+						const { directory, chunks, ...exportData } = lish;
+						manifest = exportData as import('@shared').IStoredLISH;
+					}
 				}
 				const response: LISHManifestResponse = { manifest };
 				const responseData = new TextEncoder().encode(JSON.stringify(response));

@@ -33,6 +33,9 @@ const errorCodes = [
 	'NETWORK_NOT_STARTED',
 	'NETWORK_PORT_IN_USE',
 
+	// Peers
+	'PEER_UNREACHABLE',
+
 	// Downloader
 	'DOWNLOADER_NOT_INITIALIZED',
 	'DOWNLOAD_CANCELLED',

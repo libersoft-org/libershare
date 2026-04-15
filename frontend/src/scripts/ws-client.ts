@@ -24,7 +24,10 @@ let disconnectTimer: ReturnType<typeof setTimeout> | undefined;
 export const wsClient = new WsClient(apiURL, (state: { connected: boolean }) => {
 	connected.set(state.connected);
 	if (state.connected) {
-		if (disconnectTimer) { clearTimeout(disconnectTimer); disconnectTimer = undefined; }
+		if (disconnectTimer) {
+			clearTimeout(disconnectTimer);
+			disconnectTimer = undefined;
+		}
 		if (wasConnected) addNotification(tt('common.reconnected'), 'success');
 	} else if (wasConnected) {
 		if (!disconnectTimer) {

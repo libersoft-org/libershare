@@ -17,9 +17,13 @@ describe('ErrorRecovery', () => {
 				attemptCalls.push({ lishID });
 				return recoverShouldSucceed;
 			},
-			broadcast: (event, data) => { broadcastCalls.push({ event, data }); },
-			getLISH: (lishID) => ({ directory: '/tmp/test', id: lishID } as any),
-			checkAccess: async () => { /* succeeds */ },
+			broadcast: (event, data) => {
+				broadcastCalls.push({ event, data });
+			},
+			getLISH: lishID => ({ directory: '/tmp/test', id: lishID }) as any,
+			checkAccess: async () => {
+				/* succeeds */
+			},
 		});
 	});
 
@@ -121,7 +125,7 @@ describe('ErrorRecovery', () => {
 		const noDir = new ErrorRecovery({
 			attemptRecover: async (_id, _dl, _ul) => true,
 			broadcast: () => {},
-			getLISH: () => ({ id: 'x' } as any), // no directory field
+			getLISH: () => ({ id: 'x' }) as any, // no directory field
 			checkAccess: async () => {},
 		});
 		noDir.start('lish1', ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: false });
@@ -136,7 +140,7 @@ describe('ErrorRecovery', () => {
 		const rec = new ErrorRecovery({
 			attemptRecover: async (_id, _dl, _ul) => true,
 			broadcast: () => {},
-			getLISH: () => lishExists ? { directory: '/tmp', id: 'x' } as any : null,
+			getLISH: () => (lishExists ? ({ directory: '/tmp', id: 'x' } as any) : null),
 			checkAccess: async () => {},
 		});
 		rec.start('lish1', ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: false });

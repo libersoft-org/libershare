@@ -72,7 +72,9 @@ class MockDataServer {
 		this.writtenChunks.push({ fileIndex, chunkIndex, data });
 	}
 
-	incrementDownloadedBytes(_lishID: LISHid, _bytes: number): void { /* no-op for tests */ }
+	incrementDownloadedBytes(_lishID: LISHid, _bytes: number): void {
+		/* no-op for tests */
+	}
 
 	resetFileChunks(_lishID: LISHid, fileIndex: number): number {
 		// Re-add all chunks for this fileIndex to missingChunks
@@ -215,9 +217,15 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		// Simulate 3 peerLoops calling waitIfDisabled concurrently
 		const unblocked = [false, false, false];
 		const waiters = [
-			waitIfDisabled().then(() => { unblocked[0] = true; }),
-			waitIfDisabled().then(() => { unblocked[1] = true; }),
-			waitIfDisabled().then(() => { unblocked[2] = true; }),
+			waitIfDisabled().then(() => {
+				unblocked[0] = true;
+			}),
+			waitIfDisabled().then(() => {
+				unblocked[1] = true;
+			}),
+			waitIfDisabled().then(() => {
+				unblocked[2] = true;
+			}),
 		];
 
 		// Give event loop a tick — all should still be blocked
@@ -429,9 +437,11 @@ describe('Downloader – downloadChunk private method', () => {
 		mockClient.requestChunkResult = chunkData;
 
 		// Access private method via any-cast
-		const result = await (downloader as never as {
-			downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
-		}).downloadChunk(mockClient, 'chunk-001' as ChunkID);
+		const result = await (
+			downloader as never as {
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+			}
+		).downloadChunk(mockClient, 'chunk-001' as ChunkID);
 
 		expect(result).not.toBe('not_available');
 		expect(result).not.toBe('error');
@@ -441,9 +451,11 @@ describe('Downloader – downloadChunk private method', () => {
 	it('returns "not_available" when client returns null', async () => {
 		mockClient.requestChunkResult = null;
 
-		const result = await (downloader as never as {
-			downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
-		}).downloadChunk(mockClient, 'chunk-002' as ChunkID);
+		const result = await (
+			downloader as never as {
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+			}
+		).downloadChunk(mockClient, 'chunk-002' as ChunkID);
 
 		expect(result).toBe('not_available');
 	});
@@ -451,9 +463,11 @@ describe('Downloader – downloadChunk private method', () => {
 	it('returns "error" when client throws', async () => {
 		mockClient.requestChunkResult = new Error('stream reset');
 
-		const result = await (downloader as never as {
-			downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
-		}).downloadChunk(mockClient, 'chunk-003' as ChunkID);
+		const result = await (
+			downloader as never as {
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+			}
+		).downloadChunk(mockClient, 'chunk-003' as ChunkID);
 
 		expect(result).toBe('error');
 	});
@@ -539,7 +553,9 @@ describe('Downloader – progress callback', () => {
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
 		let received: unknown = null;
-		downloader.setProgressCallback(info => { received = info; });
+		downloader.setProgressCallback(info => {
+			received = info;
+		});
 
 		// Trigger callback directly via the private field
 		const cb = priv(downloader)['onProgress'] as ((info: unknown) => void) | undefined;
@@ -555,7 +571,9 @@ describe('Downloader – progress callback', () => {
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
 		let receivedID: string | undefined;
-		downloader.setManifestImportedCallback(id => { receivedID = id; });
+		downloader.setManifestImportedCallback(id => {
+			receivedID = id;
+		});
 
 		const cb = priv(downloader)['onManifestImported'] as ((id: string) => void) | undefined;
 		expect(cb).toBeDefined();
@@ -638,10 +656,7 @@ describe('Downloader – initFromManifest state transitions', () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
 		const lish = makeLISH();
-		ds.missingChunks = [
-			makeMissingChunk('chunk-a' as ChunkID),
-			makeMissingChunk('chunk-b' as ChunkID, 0, 1),
-		];
+		ds.missingChunks = [makeMissingChunk('chunk-a' as ChunkID), makeMissingChunk('chunk-b' as ChunkID, 0, 1)];
 		ds.storedLishs.set(lish.id, lish);
 
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
@@ -865,11 +880,11 @@ describe('Downloader – chunk integrity verification', () => {
 	// --- Attack: bit-flip in chunk data ---
 
 	it('detects single bit flip in chunk data', () => {
-		const data = new Uint8Array(1024).fill(0xAA);
+		const data = new Uint8Array(1024).fill(0xaa);
 		const expected = sha256(data);
 		// Flip one bit
 		const corrupted = new Uint8Array(data);
-		corrupted[512] = 0xAB;
+		corrupted[512] = 0xab;
 		const result = verifyChunk(corrupted, expected, 'sha256');
 		expect(result.valid).toBe(false);
 	});
@@ -900,7 +915,7 @@ describe('Downloader – chunk integrity verification', () => {
 	// --- Attack: peer sends shorter data ---
 
 	it('detects truncated chunk data (peer sends partial chunk)', () => {
-		const fullData = new Uint8Array(1024).fill(0xFF);
+		const fullData = new Uint8Array(1024).fill(0xff);
 		const expected = sha256(fullData);
 		// Peer sends only half
 		const partial = fullData.slice(0, 512);
@@ -1050,11 +1065,7 @@ describe('Downloader – chunk integrity verification', () => {
 // ---------------------------------------------------------------------------
 
 describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
-	const LISH_ALGOS = [
-		'sha256', 'sha384', 'sha512', 'sha512-256',
-		'sha3-256', 'sha3-384', 'sha3-512',
-		'blake2b256', 'blake2b512', 'blake2s256',
-	] as const;
+	const LISH_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
 
 	function hashWith(algo: string, data: Uint8Array): string {
 		const h = new Bun.CryptoHasher(algo as any);
@@ -1082,7 +1093,7 @@ describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
 		it(`${algo}: rejects wrong data`, () => {
 			const expected = hashWith(algo, testData);
 			const bad = new Uint8Array(testData);
-			bad[0] ^= 0xFF; // flip first byte
+			bad[0] ^= 0xff; // flip first byte
 			const result = verifyChunk(bad, expected, algo);
 			expect(result.valid).toBe(false);
 		});
@@ -1099,9 +1110,16 @@ describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
 		it(`${algo}: produces correct hash length`, () => {
 			const hash = hashWith(algo, testData);
 			const expectedLengths: Record<string, number> = {
-				'sha256': 64, 'sha384': 96, 'sha512': 128, 'sha512-256': 64,
-				'sha3-256': 64, 'sha3-384': 96, 'sha3-512': 128,
-				'blake2b256': 64, 'blake2b512': 128, 'blake2s256': 64,
+				sha256: 64,
+				sha384: 96,
+				sha512: 128,
+				'sha512-256': 64,
+				'sha3-256': 64,
+				'sha3-384': 96,
+				'sha3-512': 128,
+				blake2b256: 64,
+				blake2b512: 128,
+				blake2s256: 64,
 			};
 			expect(hash.length).toBe(expectedLengths[algo]);
 		});
@@ -1148,7 +1166,7 @@ describe('Downloader — inline ENOENT recovery', () => {
 
 	it('retryCallback is set and callable', () => {
 		const calls: any[] = [];
-		downloader.setRetryCallback((info) => calls.push(info));
+		downloader.setRetryCallback(info => calls.push(info));
 		expect(calls.length).toBe(0);
 	});
 
@@ -1245,10 +1263,7 @@ describe('Downloader — inline ENOSPC retry', () => {
 	it('resumeWriters resolves all pending waiters', async () => {
 		const p = priv(downloader) as any;
 		p.writePaused = true;
-		const promises = [
-			p.waitIfWritePaused.call(downloader),
-			p.waitIfWritePaused.call(downloader),
-		];
+		const promises = [p.waitIfWritePaused.call(downloader), p.waitIfWritePaused.call(downloader)];
 		expect(p.writePauseResolvers.length).toBe(2);
 		p.resumeWriters.call(downloader);
 		await Promise.all(promises);

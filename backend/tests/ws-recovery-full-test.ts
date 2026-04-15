@@ -8,7 +8,13 @@
 
 const WS_URL = process.argv[2] || 'ws://192.168.2.9:1158';
 
-interface WSMessage { id?: number; result?: any; error?: string; event?: string; data?: any; }
+interface WSMessage {
+	id?: number;
+	result?: any;
+	error?: string;
+	event?: string;
+	data?: any;
+}
 
 let msgId = 0;
 const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
@@ -19,7 +25,7 @@ function connect(): Promise<WebSocket> {
 		const ws = new WebSocket(WS_URL);
 		ws.onopen = () => resolve(ws);
 		ws.onerror = () => reject(new Error('WS connect failed'));
-		ws.onmessage = (msg) => {
+		ws.onmessage = msg => {
 			const data: WSMessage = JSON.parse(msg.data as string);
 			if (data.id !== undefined && pending.has(data.id)) {
 				const p = pending.get(data.id)!;
@@ -37,19 +43,32 @@ function call(ws: WebSocket, method: string, params: any = {}): Promise<any> {
 	return new Promise((resolve, reject) => {
 		pending.set(id, { resolve, reject });
 		ws.send(JSON.stringify({ id, method, ...params }));
-		setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error(`Timeout: ${method}`)); } }, 10000);
+		setTimeout(() => {
+			if (pending.has(id)) {
+				pending.delete(id);
+				reject(new Error(`Timeout: ${method}`));
+			}
+		}, 10000);
 	});
 }
 
-function sub(ws: WebSocket, event: string): Promise<void> { return call(ws, 'events.subscribe', { event }); }
+function sub(ws: WebSocket, event: string): Promise<void> {
+	return call(ws, 'events.subscribe', { event });
+}
 
 function waitEvent(name: string, afterTime: number, timeout = 15000): Promise<any> {
 	return new Promise((resolve, reject) => {
 		const start = Date.now();
 		const check = setInterval(() => {
 			const evt = eventLog.find(e => e.event === name && e.time >= afterTime);
-			if (evt) { clearInterval(check); resolve(evt.data); }
-			if (Date.now() - start > timeout) { clearInterval(check); reject(new Error(`Timeout waiting for ${name}`)); }
+			if (evt) {
+				clearInterval(check);
+				resolve(evt.data);
+			}
+			if (Date.now() - start > timeout) {
+				clearInterval(check);
+				reject(new Error(`Timeout waiting for ${name}`));
+			}
 		}, 200);
 	});
 }
@@ -57,8 +76,13 @@ function waitEvent(name: string, afterTime: number, timeout = 15000): Promise<an
 let passed = 0;
 let failed = 0;
 function ok(cond: boolean, msg: string): void {
-	if (cond) { passed++; console.log(`  ✅ ${msg}`); }
-	else { failed++; console.log(`  ❌ ${msg}`); }
+	if (cond) {
+		passed++;
+		console.log(`  ✅ ${msg}`);
+	} else {
+		failed++;
+		console.log(`  ❌ ${msg}`);
+	}
 }
 
 async function run(): Promise<void> {
@@ -67,11 +91,7 @@ async function run(): Promise<void> {
 	console.log('Connected.\n');
 
 	// Subscribe to all events
-	for (const e of [
-		'transfer.download:error', 'transfer.download:enabled', 'transfer.download:disabled',
-		'transfer.download:retrying', 'transfer.download:resumed',
-		'transfer.recovery:scheduled', 'transfer.recovery:attempting', 'transfer.recovery:recovered',
-	]) await sub(ws, e);
+	for (const e of ['transfer.download:error', 'transfer.download:enabled', 'transfer.download:disabled', 'transfer.download:retrying', 'transfer.download:resumed', 'transfer.recovery:scheduled', 'transfer.recovery:attempting', 'transfer.recovery:recovered']) await sub(ws, e);
 
 	// Test 1: Settings
 	console.log('--- Test 1: autoErrorRecovery setting ---');
@@ -88,7 +108,10 @@ async function run(): Promise<void> {
 	for (const l of lishs.items) {
 		try {
 			const detail = await call(ws, 'lishs.get', { lishID: l.id });
-			if (detail?.directory && detail.totalChunks > 0) { testLish = { ...l, directory: detail.directory }; break; }
+			if (detail?.directory && detail.totalChunks > 0) {
+				testLish = { ...l, directory: detail.directory };
+				break;
+			}
 		} catch {}
 	}
 	if (!testLish) {
@@ -164,4 +187,7 @@ async function run(): Promise<void> {
 	process.exit(failed > 0 ? 1 : 0);
 }
 
-run().catch(err => { console.error('Test failed:', err); process.exit(1); });
+run().catch(err => {
+	console.error('Test failed:', err);
+	process.exit(1);
+});
