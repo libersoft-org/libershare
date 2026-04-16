@@ -104,7 +104,7 @@ export function triggerEnableDownload(lishID: string): void {
 	}
 }
 
-export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn, settings?: Settings, triggerVerification?: (lishID: string) => void): TransferHandlers {
+export function initTransferHandlers(networks: Networks, dataServer: DataServer, dataDir: string, emit: EmitFn, broadcast?: BroadcastFn, settings?: Settings, triggerVerification?: (lishID: string) => void, finalizeDownload?: (lishID: string) => Promise<{ success: boolean }>): TransferHandlers {
 	const activeDownloaders = new Map<string, Downloader>();
 	setActiveDownloadersRef(activeDownloaders);
 
@@ -297,9 +297,17 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			});
 			downloader
 				.download()
-				.then(() => {
+				.then(async () => {
 					if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID);
 					send('transfer.download:complete', { downloadDir, lishID: p.lishID });
+					// If this LISH was imported into temp, move it to its final directory.
+					if (finalizeDownload) {
+						try {
+							await finalizeDownload(p.lishID);
+						} catch (err) {
+							console.error(`[Transfer] ${p.lishID.slice(0, 8)}: finalizeDownload failed`, err);
+						}
+					}
 				})
 				.catch(err => {
 					if (activeDownloaders.get(p.lishID) === downloader) activeDownloaders.delete(p.lishID);

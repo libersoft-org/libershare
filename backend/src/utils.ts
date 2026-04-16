@@ -101,4 +101,26 @@ export class Utils {
 		if (compress) await Bun.write(filePath, Utils.compress(Buffer.from(jsonContent, 'utf-8'), compressionAlgorithm));
 		else await Bun.write(filePath, jsonContent);
 	}
+
+	/**
+	 * Find a directory path that does not yet exist by appending ` (N)` to the base name if needed.
+	 * Used when importing a LISH to avoid clobbering an unrelated directory with the same name.
+	 */
+	static async findUniqueDirectory(baseDir: string): Promise<string> {
+		const { access } = await import('fs/promises');
+		try {
+			await access(baseDir);
+		} catch {
+			return baseDir;
+		}
+		for (let i = 2; i < 1000; i++) {
+			const candidate = `${baseDir} (${i})`;
+			try {
+				await access(candidate);
+			} catch {
+				return candidate;
+			}
+		}
+		throw new CodedError(ErrorCodes.IO_NOT_FOUND, `too many existing directories for base: ${baseDir}`);
+	}
 }

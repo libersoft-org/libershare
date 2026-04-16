@@ -21,6 +21,9 @@ export interface ILISH {
 // Extended interface for LISHs stored locally in the app (lishs.json)
 export interface IStoredLISH extends ILISH {
 	directory?: string;
+	// Target directory where the LISH should be moved after download completes.
+	// Only set while downloading into temp; cleared once moved to final.
+	finalDirectory?: string;
 	chunks?: string[];
 }
 
