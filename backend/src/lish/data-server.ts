@@ -168,7 +168,7 @@ export class DataServer {
 			const fileHandle = Bun.file(dataFilePath);
 			const slice = fileHandle.slice(offset, offset + meta.chunkSize);
 			const arrayBuffer = await slice.arrayBuffer();
-			console.log(`read chunk ${chunkID.slice(0, 8)}... from ${location.filePath} (index ${location.chunkIndex})`);
+			// console.log(`read chunk ${chunkID.slice(0, 8)}... from ${location.filePath} (index ${location.chunkIndex})`);
 			return new Uint8Array(arrayBuffer);
 		} catch (error: any) {
 			console.error(`Error reading chunk from ${dataFilePath}:`, error.code ?? error.message);

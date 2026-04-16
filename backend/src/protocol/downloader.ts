@@ -519,7 +519,7 @@ export class Downloader {
 
 				// Throttle BEFORE downloading — ensures bandwidth is reserved before network transfer
 				touchPeer(this.lishID, peerID, 'download');
-				console.debug(`[DL] throttle chunkSize=${this.lish.chunkSize} peer=${peerID.slice(0, 12)}`);
+				// console.debug(`[DL] throttle chunkSize=${this.lish.chunkSize} peer=${peerID.slice(0, 12)}`);
 				await downloadLimiter.throttle(this.lish.chunkSize);
 				const result = await this.downloadChunk(client, chunk.chunkID, peerID);
 				if (result === 'drop-peer') {
