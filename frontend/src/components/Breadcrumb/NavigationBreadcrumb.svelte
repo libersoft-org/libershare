@@ -11,7 +11,7 @@
 	}
 	let { areaID, position, items, onBack }: Props = $props();
 	// Convert string items to BreadcrumbItem format
-	// First item (Domů/Home) gets an icon instead of text
+	// First item (Home) gets an icon instead of text
 	let breadcrumbItems = $derived<BreadcrumbItem[]>(
 		items.map((name, index) => ({
 			id: String(index),

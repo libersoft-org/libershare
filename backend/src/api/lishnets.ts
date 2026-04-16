@@ -27,8 +27,8 @@ interface LISHnetsHandlers {
 	findPeer: (p: { peerID: string }) => Promise<void>;
 	getAddresses: () => string[];
 	getPeers: (p: { networkID?: string }) => PeerListEntry[];
-	getPeerLishs: (p: { peerID: string; networkID: string }) => Promise<{ lishs: PeerLishEntry[] | null }>;
-	getPeerLish: (p: { lishID: string; peerID: string; networkID: string }) => Promise<IPeerLishDetail | null>;
+	getPeerLishs: (p: { peerID: string; networkID: string }) => Promise<{ lishs: PeerLishEntry[] }>;
+	getPeerLish: (p: { lishID: string; peerID: string; networkID: string }) => Promise<IPeerLishDetail>;
 	addPeerLish: (p: { lishID: string; peerID: string; networkID: string }) => Promise<{ lishID: string }>;
 	getNodeInfo: () => NetworkNodeInfo | null;
 	getStatus: (p: { networkID: string }) => NetworkStatus;
@@ -174,7 +174,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		}
 		return [...peerMap.values()];
 	}
-	async function getPeerLishs(p: { peerID: string; networkID: string }): Promise<{ lishs: PeerLishEntry[] | null }> {
+	async function getPeerLishs(p: { peerID: string; networkID: string }): Promise<{ lishs: PeerLishEntry[] }> {
 		assert(p, ['peerID', 'networkID']);
 		const network = networks.getRunningNetwork();
 		try {
@@ -182,13 +182,14 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 			const client = new LISHClient(stream);
 			const lishs = await client.requestList();
 			await client.close();
-			return { lishs: lishs ?? null };
+			return { lishs };
 		} catch (error: any) {
+			if (error instanceof CodedError) throw error;
 			console.error(`[Peers] Failed to get LISH list from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
 		}
 	}
-	async function getPeerLish(p: { lishID: string; peerID: string; networkID: string }): Promise<IPeerLishDetail | null> {
+	async function getPeerLish(p: { lishID: string; peerID: string; networkID: string }): Promise<IPeerLishDetail> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
 		const network = networks.getRunningNetwork();
 		try {
@@ -196,7 +197,6 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 			const client = new LISHClient(stream);
 			const manifest = await client.requestManifest(p.lishID);
 			await client.close();
-			if (!manifest) return null;
 			// Strip checksums from files and compute summary
 			const files = (manifest.files ?? []).map(f => {
 				const entry: { path: string; size: number; permissions?: string; modified?: string; created?: string } = { path: f.path, size: f.size };
@@ -221,6 +221,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 				links: manifest.links ?? [],
 			};
 		} catch (error: any) {
+			if (error instanceof CodedError) throw error;
 			console.error(`[Peers] Failed to get LISH ${p.lishID.slice(0, 8)} from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
 		}
@@ -233,7 +234,6 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 			const client = new LISHClient(stream);
 			const manifest = await client.requestManifest(p.lishID);
 			await client.close();
-			if (!manifest) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, p.lishID);
 			// Check if already exists
 			const existing = dataServer.get(p.lishID);
 			if (existing) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, p.lishID);

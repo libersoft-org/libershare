@@ -141,21 +141,21 @@ export class DataServer {
 
 	// Chunk I/O
 
-	public async getChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | null | 'io_error'> {
+	public async getChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | 'lish_not_found' | 'chunk_not_found' | 'io_error'> {
 		const meta = getLISHMeta(this.db, lishID);
 		if (!meta) {
 			console.log(`LISH not found: ${lishID}`);
-			return null;
+			return 'lish_not_found';
 		}
 		if (!meta.directory) {
 			console.log(`No directory set for LISH: ${lishID}`);
-			return null;
+			return 'lish_not_found';
 		}
 
 		const location = findChunkLocation(this.db, lishID, chunkID);
 		if (!location) {
 			console.debug(`Chunk not found in any file: ${chunkID.slice(0, 8)}...`);
-			return null;
+			return 'chunk_not_found';
 		}
 
 		const dataFilePath = join(meta.directory, location.filePath);

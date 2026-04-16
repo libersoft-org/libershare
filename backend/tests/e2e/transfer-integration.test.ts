@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import type { LISHid, ChunkID, IStoredLISH } from '@shared';
+import { CodedError, ErrorCodes } from '@shared';
 import { initLISHsTables, addLISH, setUploadEnabled, setDownloadEnabled, getUploadEnabledLishs, getDownloadEnabledLishs } from '../../src/db/lishs.ts';
 import { initUploadState, disableUpload, enableUpload, isUploadDisabled, isUploadEnabled, getEnabledUploads, getActiveUploads, resetUploadState, setUploadBroadcast } from '../../src/protocol/lish-protocol.ts';
 import { initDownloadState, initTransferHandlers, getDownloadEnabledLishs as getDownloadEnabledLishsRuntime } from '../../src/api/transfer.ts';
@@ -518,34 +519,34 @@ describe('Downloader — download behavior with mocked peers', () => {
 
 		const result = await (
 			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'drop-peer'>;
 			}
 		).downloadChunk(client, CHUNK_A);
 
-		expect(result).not.toBe('not_available');
-		expect(result).not.toBe('error');
+		expect(result).not.toBe('skip-chunk');
+		expect(result).not.toBe('drop-peer');
 		expect((result as { data: Uint8Array }).data).toEqual(chunkData);
 	});
 
-	it('downloadChunk returns "not_available" when client returns null', async () => {
+	it('downloadChunk returns "skip-chunk" on PEER_BUSY', async () => {
 		const lish = createTestLISH();
 		ds.completeLishs.add(lish.id);
 		ds.storedLishs.set(lish.id, lish);
 		await downloader.initFromManifest(lish);
 
 		const client = new MockLISHClient();
-		client.requestChunkResult = null;
+		client.requestChunkResult = new CodedError(ErrorCodes.PEER_BUSY, 'test');
 
 		const result = await (
 			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'drop-peer'>;
 			}
 		).downloadChunk(client, CHUNK_A);
 
-		expect(result).toBe('not_available');
+		expect(result).toBe('skip-chunk');
 	});
 
-	it('downloadChunk returns "error" when client throws', async () => {
+	it('downloadChunk returns "drop-peer" on generic error', async () => {
 		const lish = createTestLISH();
 		ds.completeLishs.add(lish.id);
 		ds.storedLishs.set(lish.id, lish);
@@ -556,24 +557,24 @@ describe('Downloader — download behavior with mocked peers', () => {
 
 		const result = await (
 			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'drop-peer'>;
 			}
 		).downloadChunk(client, CHUNK_A);
 
-		expect(result).toBe('error');
+		expect(result).toBe('drop-peer');
 	});
 
-	it('failedPeers gets cleared and allows re-probe', () => {
-		const failedPeers = priv(downloader)['failedPeers'] as Set<string>;
-		failedPeers.add('peer-dead-001');
-		failedPeers.add('peer-dead-002');
+	it('bannedPeers gets cleared and allows re-probe', () => {
+		const bannedPeers = priv(downloader)['bannedPeers'] as Set<string>;
+		bannedPeers.add('peer-dead-001');
+		bannedPeers.add('peer-dead-002');
 
-		expect(failedPeers.size).toBe(2);
-		expect(failedPeers.has('peer-dead-001')).toBe(true);
+		expect(bannedPeers.size).toBe(2);
+		expect(bannedPeers.has('peer-dead-001')).toBe(true);
 
-		failedPeers.clear();
-		expect(failedPeers.size).toBe(0);
-		expect(failedPeers.has('peer-dead-001')).toBe(false);
+		bannedPeers.clear();
+		expect(bannedPeers.size).toBe(0);
+		expect(bannedPeers.has('peer-dead-001')).toBe(false);
 	});
 
 	it('lastExhaustedTime throttle prevents immediate doWork re-entry', async () => {

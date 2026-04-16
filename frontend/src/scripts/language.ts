@@ -118,6 +118,11 @@ const errorCodeKeys: Record<string, string> = {
 	NETWORK_NOT_STARTED: 'settings.lishNetwork.errorNotStarted',
 	NETWORK_PORT_IN_USE: 'settings.lishNetwork.errorPortInUse',
 	PEER_UNREACHABLE: 'peers.errorUnreachable',
+	PEER_LISH_NOT_SHARED: 'peers.errorLishNotShared',
+	PEER_CHUNK_NOT_FOUND: 'peers.errorChunkNotFound',
+	PEER_BUSY: 'peers.errorBusy',
+	PEER_IO_ERROR: 'peers.errorIO',
+	PEER_INVALID_REQUEST: 'peers.errorInvalidRequest',
 	// Server → common
 	PARSE_ERROR: 'common.errorParseError',
 	METHOD_REQUIRED: 'common.errorMethodRequired',

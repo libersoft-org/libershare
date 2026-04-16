@@ -34,7 +34,6 @@ export interface SettingsData {
 		autoStartSharing: boolean;
 		autoStartDownloading: boolean;
 		autoErrorRecovery: boolean;
-		allowPeerList: boolean;
 		announceAddresses: string[];
 	};
 	system: {
@@ -97,7 +96,6 @@ const DEFAULT_SETTINGS: SettingsData = {
 		autoStartSharing: true,
 		autoStartDownloading: true,
 		autoErrorRecovery: true,
-		allowPeerList: false,
 		announceAddresses: [],
 	},
 	system: {

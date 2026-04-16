@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Downloader } from '../../../src/protocol/downloader.ts';
 import type { IStoredLISH, LISHid, ChunkID } from '@shared';
+import { CodedError, ErrorCodes } from '@shared';
 import type { MissingChunk } from '../../../src/lish/data-server.ts';
 import { MockNetwork } from '../helpers/mock-network.ts';
 
@@ -439,74 +440,74 @@ describe('Downloader – downloadChunk private method', () => {
 		// Access private method via any-cast
 		const result = await (
 			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'drop-peer'>;
 			}
 		).downloadChunk(mockClient, 'chunk-001' as ChunkID);
 
-		expect(result).not.toBe('not_available');
-		expect(result).not.toBe('error');
+		expect(result).not.toBe('skip-chunk');
+		expect(result).not.toBe('drop-peer');
 		expect((result as { data: Uint8Array }).data).toEqual(chunkData);
 	});
 
-	it('returns "not_available" when client returns null', async () => {
-		mockClient.requestChunkResult = null;
+	it('returns "skip-chunk" on PEER_BUSY (chunk-specific transient)', async () => {
+		mockClient.requestChunkResult = new CodedError(ErrorCodes.PEER_BUSY, 'test');
 
 		const result = await (
 			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'drop-peer'>;
 			}
 		).downloadChunk(mockClient, 'chunk-002' as ChunkID);
 
-		expect(result).toBe('not_available');
+		expect(result).toBe('skip-chunk');
 	});
 
-	it('returns "error" when client throws', async () => {
+	it('returns "drop-peer" on generic error', async () => {
 		mockClient.requestChunkResult = new Error('stream reset');
 
 		const result = await (
 			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'drop-peer'>;
 			}
 		).downloadChunk(mockClient, 'chunk-003' as ChunkID);
 
-		expect(result).toBe('error');
+		expect(result).toBe('drop-peer');
 	});
 });
 
-describe('Downloader – failedPeers Set', () => {
-	it('failedPeers starts empty', () => {
+describe('Downloader – bannedPeers Set', () => {
+	it('bannedPeers starts empty', () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
-		const failedPeers = priv(downloader)['failedPeers'] as Set<string>;
-		expect(failedPeers.size).toBe(0);
+		const bannedPeers = priv(downloader)['bannedPeers'] as Set<string>;
+		expect(bannedPeers.size).toBe(0);
 	});
 
-	it('adding to failedPeers prevents re-use of peer within same cycle', () => {
+	it('adding to bannedPeers prevents re-use of peer within same cycle', () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
-		const failedPeers = priv(downloader)['failedPeers'] as Set<string>;
-		failedPeers.add('peer-bad-001');
-		failedPeers.add('peer-bad-002');
+		const bannedPeers = priv(downloader)['bannedPeers'] as Set<string>;
+		bannedPeers.add('peer-bad-001');
+		bannedPeers.add('peer-bad-002');
 
-		expect(failedPeers.has('peer-bad-001')).toBe(true);
-		expect(failedPeers.has('peer-bad-002')).toBe(true);
-		expect(failedPeers.has('peer-ok-003')).toBe(false);
+		expect(bannedPeers.has('peer-bad-001')).toBe(true);
+		expect(bannedPeers.has('peer-bad-002')).toBe(true);
+		expect(bannedPeers.has('peer-ok-003')).toBe(false);
 	});
 
-	it('clearing failedPeers allows re-probe (simulates retry cycle)', () => {
+	it('clearing bannedPeers allows re-probe (simulates manual unban)', () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
-		const failedPeers = priv(downloader)['failedPeers'] as Set<string>;
-		failedPeers.add('peer-retry');
-		failedPeers.clear();
+		const bannedPeers = priv(downloader)['bannedPeers'] as Set<string>;
+		bannedPeers.add('peer-retry');
+		bannedPeers.clear();
 
-		expect(failedPeers.has('peer-retry')).toBe(false);
+		expect(bannedPeers.has('peer-retry')).toBe(false);
 	});
 });
 

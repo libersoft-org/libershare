@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, type LISHResponse } from '../../../src/protocol/lish-protocol.ts';
+import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -274,16 +274,16 @@ describe('lish-protocol – upload state', () => {
 // ---------------------------------------------------------------------------
 
 describe('lish-protocol – base64 chunk encoding', () => {
-	// --- LISHResponse type conformance ---
+	// --- LISHGetChunkResponse type conformance ---
 
-	it('LISHResponse.data is string|null (base64), not number[]', () => {
-		const response: LISHResponse = { data: 'AQID' }; // base64 for [1,2,3]
-		expect(typeof response.data).toBe('string');
+	it('LISHGetChunkResponse.data is string (base64), not number[]', () => {
+		const response: LISHGetChunkResponse = { data: 'AQID' }; // base64 for [1,2,3]
+		expect('data' in response && typeof response.data).toBe('string');
 	});
 
-	it('LISHResponse.data null represents missing chunk', () => {
-		const response: LISHResponse = { data: null };
-		expect(response.data).toBeNull();
+	it('LISHGetChunkResponse error variant represents missing chunk / failure', () => {
+		const response: LISHGetChunkResponse = { error: 'PEER_CHUNK_NOT_FOUND' };
+		expect('error' in response && response.error).toBe('PEER_CHUNK_NOT_FOUND');
 	});
 
 	// --- Encode/decode roundtrip ---
@@ -293,12 +293,13 @@ describe('lish-protocol – base64 chunk encoding', () => {
 		for (let i = 0; i < original.length; i++) original[i] = i % 256;
 
 		// Server side: encode
-		const response: LISHResponse = { data: Buffer.from(original).toString('base64') };
+		const response: LISHGetChunkResponse = { data: Buffer.from(original).toString('base64') };
 		const json = JSON.stringify(response);
 
 		// Client side: decode
-		const parsed: LISHResponse = JSON.parse(json);
-		const decoded = new Uint8Array(Buffer.from(parsed.data!, 'base64'));
+		const parsed: LISHGetChunkResponse = JSON.parse(json);
+		if (!('data' in parsed)) throw new Error('expected data variant');
+		const decoded = new Uint8Array(Buffer.from(parsed.data, 'base64'));
 
 		expect(decoded.length).toBe(original.length);
 		expect(decoded).toEqual(original);
@@ -419,10 +420,11 @@ describe('lish-protocol – base64 chunk encoding', () => {
 		expect(parsed.data).toBe(b64);
 	});
 
-	it('null response serializes correctly in JSON', () => {
-		const response: LISHResponse = { data: null };
+	it('error response serializes correctly in JSON', () => {
+		const response: LISHGetChunkResponse = { error: 'PEER_CHUNK_NOT_FOUND' };
 		const json = JSON.stringify(response);
-		const parsed: LISHResponse = JSON.parse(json);
-		expect(parsed.data).toBeNull();
+		const parsed: LISHGetChunkResponse = JSON.parse(json);
+		if (!('error' in parsed)) throw new Error('expected error variant');
+		expect(parsed.error).toBe('PEER_CHUNK_NOT_FOUND');
 	});
 });

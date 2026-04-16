@@ -105,7 +105,12 @@
 		"chunkSize": "Velikost chunku",
 		"checksumAlgo": "Algoritmus kontrolního součtu",
 		"fileStructure": "Struktura souborů",
-		"errorUnreachable": "Peer je nedostupný"
+		"errorUnreachable": "Účastník je nedostupný",
+		"errorLishNotShared": "Účastník tento LISH nesdílí",
+		"errorChunkNotFound": "Účastník tento chunk nemá",
+		"errorBusy": "Účastník je zaneprázdněný, zkus to později",
+		"errorIO": "U účastníka došlo k I/O chybě",
+		"errorInvalidRequest": "Účastník odmítl požadavek jako neplatný"
 	},
 	"localStorage": {
 		"title": "Místní úložiště",

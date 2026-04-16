@@ -105,7 +105,12 @@
 		"chunkSize": "Chunk size",
 		"checksumAlgo": "Checksum algorithm",
 		"fileStructure": "File structure",
-		"errorUnreachable": "Peer is unreachable"
+		"errorUnreachable": "Peer is unreachable",
+		"errorLishNotShared": "Peer does not share this LISH",
+		"errorChunkNotFound": "Peer does not have this chunk",
+		"errorBusy": "Peer is busy, try again later",
+		"errorIO": "Peer encountered an I/O error",
+		"errorInvalidRequest": "Peer rejected the request as invalid"
 	},
 	"localStorage": {
 		"title": "Local storage",
