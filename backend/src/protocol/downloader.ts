@@ -500,6 +500,12 @@ export class Downloader {
 			activePeerLoops.add(peerID);
 			let skippedChunks = 0;
 			let consecutiveNotAvailable = 0;
+			// Per-phase timing accumulator (ms), flushed every 50 successful chunks
+			let profN = 0;
+			let profThrottle = 0;
+			let profNet = 0;
+			let profHash = 0;
+			let profDisk = 0;
 			while (true) {
 				if (this.destroyed || this.disabled) break;
 				await this.waitIfDisabled();
@@ -520,8 +526,12 @@ export class Downloader {
 				// Throttle BEFORE downloading — ensures bandwidth is reserved before network transfer
 				touchPeer(this.lishID, peerID, 'download');
 				// console.debug(`[DL] throttle chunkSize=${this.lish.chunkSize} peer=${peerID.slice(0, 12)}`);
+				const _tT0 = performance.now();
 				await downloadLimiter.throttle(this.lish.chunkSize);
+				const _tN0 = performance.now();
+				profThrottle += _tN0 - _tT0;
 				const result = await this.downloadChunk(client, chunk.chunkID, peerID);
+				profNet += performance.now() - _tN0;
 				if (result === 'drop-peer') {
 					// Peer unusable for this session (no LISH / unreachable / invalid / unknown error).
 					// Soft quarantine in droppedPeers — peer can come back via pubsub 'have' or ~5min cyclic reset.
@@ -564,9 +574,11 @@ export class Downloader {
 				}
 				// Verify chunk integrity before writing
 				const data = result.data;
+				const _tH0 = performance.now();
 				const hasher = new Bun.CryptoHasher(this.lish.checksumAlgo as any);
 				hasher.update(data);
 				const actualHash = hasher.digest('hex');
+				profHash += performance.now() - _tH0;
 				if (actualHash !== chunk.chunkID) {
 					const count = (corruptCount.get(peerID) ?? 0) + 1;
 					corruptCount.set(peerID, count);
@@ -592,7 +604,20 @@ export class Downloader {
 				globalNotAvailable = 0;
 
 				try {
+					const _tD0 = performance.now();
 					await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
+					profDisk += performance.now() - _tD0;
+					profN++;
+					if (profN >= 50) {
+						const _profTotal = profThrottle + profNet + profHash + profDisk;
+						const _profKBps = _profTotal > 0 ? Math.round((this.lish.chunkSize * profN) / _profTotal / 1.024) : 0;
+						console.log(`[PROF] ${peerID.slice(0, 12)} avg/chunk over ${profN}: throttle=${(profThrottle / profN).toFixed(1)}ms net=${(profNet / profN).toFixed(1)}ms hash=${(profHash / profN).toFixed(1)}ms disk=${(profDisk / profN).toFixed(1)}ms total=${(_profTotal / profN).toFixed(1)}ms (~${_profKBps}KB/s/peer)`);
+						profN = 0;
+						profThrottle = 0;
+						profNet = 0;
+						profHash = 0;
+						profDisk = 0;
+					}
 				} catch (err: any) {
 					if (err.code === 'ENOENT') {
 						// File deleted — pause ALL peers, verify ALL files, re-allocate missing, reset chunks, resume
