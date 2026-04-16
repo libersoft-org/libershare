@@ -1,7 +1,7 @@
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type CompressionAlgorithm, CodedError, ErrorCodes } from '@shared';
+import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, CodedError, ErrorCodes } from '@shared';
 import { LISHClient, LISH_PROTOCOL } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -35,7 +35,9 @@ interface LISHnetsHandlers {
 	infoAll: () => NetworkInfo[];
 }
 
-export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings): LISHnetsHandlers {
+type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
+
+export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifest: ImportManifestFn): LISHnetsHandlers {
 	function list(): LISHNetworkConfig[] {
 		return networks.list();
 	}
@@ -229,32 +231,22 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	async function addPeerLish(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
 		const network = networks.getRunningNetwork();
+		let manifest;
 		try {
 			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
 			const client = new LISHClient(stream);
-			const manifest = await client.requestManifest(p.lishID);
+			manifest = await client.requestManifest(p.lishID);
 			await client.close();
-			// Check if already exists
-			const existing = dataServer.get(p.lishID);
-			if (existing) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, p.lishID);
-			// Save to DB with a download directory
-			const { sanitizeFilename } = await import('@shared');
-			const { join } = await import('path');
-			const { mkdir } = await import('fs/promises');
-			const downloadPath = Utils.expandHome(settings.get('storage.downloadPath') ?? '~/LiberShare/finished/');
-			const dirName = sanitizeFilename(manifest.name || manifest.id) || manifest.id;
-			const directory = join(downloadPath, dirName);
-			await mkdir(directory, { recursive: true });
-			const storedLISH = { ...manifest, directory };
-			dataServer.add(storedLISH);
-			console.log(`✓ Peer LISH imported: ${manifest.id}`);
-			broadcast('lishs:add', dataServer.getDetail(manifest.id));
-			return { lishID: manifest.id };
 		} catch (error: any) {
 			if (error instanceof CodedError) throw error;
 			console.error(`[Peers] Failed to add LISH ${p.lishID.slice(0, 8)} from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
 		}
+		// Delegate to the shared import pipeline — handles temp allocation, finalDirectory wiring,
+		// DB persist, broadcast, verification kick-off and markDownloadEnabled.
+		const downloadPath = settings.get('storage.downloadPath') ?? '~/LiberShare/finished/';
+		const result = await importManifest(manifest, downloadPath, { enableDownloading: true });
+		return { lishID: result.lishID };
 	}
 	function getNodeInfo(): NetworkNodeInfo | null {
 		return networks.getNetwork().getNodeInfo();

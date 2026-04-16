@@ -60,10 +60,10 @@ export class APIServer {
 		const broadcastFn = (event: string, data: any) => this.broadcast(event, data);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _settings = initSettingsHandlers(this.settings);
-		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
+		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownload);
 		const hasSubscribers = (event: string): boolean => {
 			for (const client of this.clients) {
@@ -265,7 +265,9 @@ export class APIServer {
 		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) client.send(JSON.stringify({ event, data }));
 	}
 
-	broadcastEvent(event: string, data: any): void { this.broadcast(event, data); }
+	broadcastEvent(event: string, data: any): void {
+		this.broadcast(event, data);
+	}
 
 	private broadcast(event: string, data: any): void {
 		const msg = JSON.stringify({ event, data });
@@ -279,7 +281,7 @@ export class APIServer {
 		if (event.startsWith('transfer.')) {
 			const d = data as any;
 			const extra = d.peers !== undefined ? ` peers=${d.peers}` : '';
-			const speed = d.bytesPerSecond !== undefined ? ` speed=${Math.round(d.bytesPerSecond/1024)}KB/s` : '';
+			const speed = d.bytesPerSecond !== undefined ? ` speed=${Math.round(d.bytesPerSecond / 1024)}KB/s` : '';
 			const chunks = d.downloadedChunks !== undefined ? ` ${d.downloadedChunks}/${d.totalChunks}` : '';
 			console.log(`[TRANSFER] ${event}${chunks}${extra}${speed} → ${sent}/${this.clients.size} clients`);
 		}
