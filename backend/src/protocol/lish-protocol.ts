@@ -239,9 +239,10 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 
 			if (request.type === 'getLishs') {
-				// Return list of all shared (upload_enabled) LISHs — id and name only
+				// Return list of all shared (upload_enabled) LISHs — id and name only.
+				// Newest first — matches the order shown locally in "Download and Sharing".
 				const allLishs = dataServer.list();
-				const shared = allLishs.filter(l => uploadEnabled.has(l.id));
+				const shared = allLishs.filter(l => uploadEnabled.has(l.id)).reverse();
 				const response: LISHGetLishsResponse = {
 					type: 'getLishs-result',
 					lishs: shared.map(l => {
