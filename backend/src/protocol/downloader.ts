@@ -10,7 +10,8 @@ import { type HaveChunks, LISH_PROTOCOL, LISHClient } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { trace } from '../logger.ts';
-import { registerDownloadPeer, unregisterDownloadPeer, recordDownloadBytes, unregisterAllPeersForLISH, touchPeer, updatePeerHavePercent } from './peer-tracker.ts';
+import { recordDownloadBytes, touchPeer } from './peer-tracker.ts';
+import { PeerManager } from './peer-manager.ts';
 
 type NodeID = string;
 interface PubsubMessage {
@@ -60,15 +61,8 @@ export class Downloader {
 	private state: State = 'added';
 	private workMutex = new Mutex();
 	private missingChunks: MissingChunk[] = [];
-	private peers: Map<NodeID, LISHClient> = new Map();
+	private readonly peerManager = new PeerManager();
 	private lastServingPeerCount = 0;
-	// Banned peers — permanent for this app session (until restart). Only set for actively malicious behavior
-	// (3× corrupt chunks in a row). Kept in RAM only; future: user-visible list with manual clear.
-	private bannedPeers = new Set<NodeID>();
-	// Dropped peers — soft quarantine. Peer is temporarily unusable (no LISH / unreachable / invalid response / unknown error).
-	// Auto-recovers via pubsub 'have' broadcast or ~5min cyclic reset.
-	private droppedPeers = new Set<NodeID>();
-	private droppedCycleCount = 0;
 	private static readonly MAX_CORRUPT_CHUNKS = 3; // max corrupted chunks before banning peer
 	private callForPeersInterval: ReturnType<typeof setInterval> | undefined;
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -179,9 +173,7 @@ export class Downloader {
 		this.pubsubHandlers = [];
 		// Fire-and-forget close — stream may already be reset/aborted, which is benign.
 		// Log at trace so real bugs (e.g. TypeError) can still be spotted in debug logs.
-		for (const [, client] of this.peers) client.close().catch((err: any) => trace(`[DL] setError close: ${err?.message ?? err}`));
-		this.peers.clear();
-		unregisterAllPeersForLISH(this.lishID);
+		this.peerManager.closeAll('setError');
 		this.lastServingPeerCount = 0;
 		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
 		const missing = this.dataServer.getMissingChunks(this.lishID).length;
@@ -219,9 +211,7 @@ export class Downloader {
 			clearInterval(this.callForPeersInterval);
 			this.callForPeersInterval = undefined;
 		}
-		for (const [, client] of this.peers) client.close().catch((err: any) => trace(`[DL] disable close: ${err?.message ?? err}`));
-		this.peers.clear();
-		unregisterAllPeersForLISH(this.lishID);
+		this.peerManager.closeAll('disable');
 		this.lastServingPeerCount = 0;
 		for (const resolve of this.enableResolvers) resolve();
 		this.enableResolvers = [];
@@ -246,8 +236,7 @@ export class Downloader {
 		this.lastExhaustedTime = 0;
 		this.fileReallocAttempts.clear();
 		this.writeRetryCount = 0;
-		this.droppedPeers.clear();
-		this.droppedCycleCount = 0;
+		this.peerManager.clearAllDropped();
 		console.log(`[DL] Enabled ${this.lishID.slice(0, 8)}`);
 		for (const resolve of this.enableResolvers) resolve();
 		this.enableResolvers = [];
@@ -265,7 +254,7 @@ export class Downloader {
 	}
 
 	async destroy(): Promise<void> {
-		console.debug(`[DL] destroy ${this.lishID.slice(0, 8)}, state=${this.state}, peers=${this.peers.size}`);
+		console.debug(`[DL] destroy ${this.lishID.slice(0, 8)}, state=${this.state}, peers=${this.peerManager.size()}`);
 		this.disabled = true;
 		this.destroyed = true;
 		this.clearRetryTimer();
@@ -275,9 +264,7 @@ export class Downloader {
 		}
 		for (const { topic, handler } of this.pubsubHandlers) this.network.unsubscribeHandler(topic, handler);
 		this.pubsubHandlers = [];
-		for (const [, client] of this.peers) await client.close().catch((err: any) => trace(`[DL] destroy close: ${err?.message ?? err}`));
-		this.peers.clear();
-		unregisterAllPeersForLISH(this.lishID);
+		await this.peerManager.closeAllAwait('destroy');
 		// Notify frontend to reset peers/speed immediately
 		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
 		this.onProgress?.({ downloadedChunks: 0, totalChunks: total, peers: 0, bytesPerSecond: 0 });
@@ -324,6 +311,7 @@ export class Downloader {
 		const content = await Bun.file(lishPath).text();
 		this.lish = Utils.safeJSONParse(content, `LISH file: ${lishPath}`);
 		this.lishID = this.lish.id as LISHid;
+		this.peerManager.setLishID(this.lishID);
 		console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), ${this.dataServer.getMissingChunks(this.lishID).length} chunks to download`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 		this.subscribePubsub();
@@ -334,6 +322,7 @@ export class Downloader {
 		this.transitionTo('initializing', 'initFromManifest() start');
 		this.lish = lish;
 		this.lishID = this.lish.id as LISHid;
+		this.peerManager.setLishID(this.lishID);
 		// Check if we already have the full manifest in DB
 		const existingChunks = this.dataServer.getMissingChunks(this.lishID);
 		if (existingChunks.length > 0 || this.dataServer.isCompleteLISH(lish)) {
@@ -358,7 +347,7 @@ export class Downloader {
 			this.transitionTo('preparing', 'download() has manifest');
 			trace(`[DL] calling doWork, state=${this.state}`);
 			await this.doWork();
-			trace(`[DL] doWork returned, state=${this.state}, peers=${this.peers.size}`);
+			trace(`[DL] doWork returned, state=${this.state}, peers=${this.peerManager.size()}`);
 		}
 		// Wait until state reaches 'downloaded' — doWork may change state asynchronously
 		if ((this.state as State) !== 'downloaded') {
@@ -384,8 +373,8 @@ export class Downloader {
 		await this.workMutex.runExclusive(async () => {
 			// Phase 1: fetch manifest from a peer if needed
 			if (this.state === 'awaiting-manifest') {
-				if (this.peers.size === 0) return;
-				for (const [, client] of this.peers) {
+				if (this.peerManager.size() === 0) return;
+				for (const [, client] of this.peerManager.entries()) {
 					let manifest: import('@shared').IStoredLISH | null = null;
 					try {
 						manifest = await client.requestManifest(this.lishID);
@@ -453,19 +442,19 @@ export class Downloader {
 					this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 					// Continue downloading the reset chunks
 				}
-				if (this.peers.size === 0) {
-					console.debug(`[DL] no peers, calling for peers (banned: ${this.bannedPeers.size})`);
+				if (this.peerManager.size() === 0) {
+					console.debug(`[DL] no peers, calling for peers (banned: ${this.peerManager.bannedSize()})`);
 					await this.callForPeers();
 					// Wait briefly for have responses via GossipSub before giving up
-					if (this.peers.size === 0) await new Promise(r => setTimeout(r, 2000));
-					if (this.peers.size === 0) {
+					if (this.peerManager.size() === 0) await new Promise(r => setTimeout(r, 2000));
+					if (this.peerManager.size() === 0) {
 						console.debug(`[DL] no peers found, retry in 10s`);
 						this.lastExhaustedTime = Date.now();
 						this.scheduleRetry();
 						return;
 					}
 				}
-				if (this.peers.size !== 0) {
+				if (this.peerManager.size() !== 0) {
 					this.downloadActive = true;
 					try {
 						await this.downloadChunks();
@@ -489,8 +478,7 @@ export class Downloader {
 						// Fall through to retry with reset chunks
 					}
 					console.log(`[DL] ${remaining.length} chunks missing, retrying in 10s`);
-					this.peers.clear();
-					unregisterAllPeersForLISH(this.lishID);
+					this.peerManager.closeAll('doWork retry');
 					this.lastExhaustedTime = Date.now();
 					this.scheduleRetry();
 					return;
@@ -508,16 +496,15 @@ export class Downloader {
 		const allChunks = this.dataServer.getAllChunkCount(this.lishID);
 		const totalChunks = allChunks > 0 ? allChunks : missingChunks.length;
 		let downloadedCount = totalChunks - missingChunks.length;
-		console.log(`[DL] downloadChunks: ${missingChunks.length} missing, ${totalChunks} total, ${this.peers.size} peers`);
+		console.log(`[DL] downloadChunks: ${missingChunks.length} missing, ${totalChunks} total, ${this.peerManager.size()} peers`);
 		this.notAvailableLoggedPeers.clear();
 
-		if (this.peers.size === 0) return;
+		if (this.peerManager.size() === 0) return;
 
 		// Shared queue — peers pull chunks concurrently
 		const queue = [...missingChunks];
 		let queueIdx = 0;
 		const lock = new Mutex();
-		const activePeerLoops = new Set<string>();
 		// Track all peerLoop promises so we can await dynamically spawned ones
 		const peerLoopPromises = new Map<string, Promise<void>>();
 
@@ -535,20 +522,23 @@ export class Downloader {
 			}
 		}
 
-		const spawnNewPeerLoops = (): void => {
-			for (const [pid, cli] of this.peers) {
-				if (!activePeerLoops.has(pid)) {
-					console.log(`[DL] Peer ${pid.slice(0, 12)} joined (total: ${this.peers.size})`);
-					const p = peerLoop(pid, cli).catch(err => {
-						console.error(`[DL] Peer loop ${pid.slice(0, 12)} error:`, err);
-					});
-					peerLoopPromises.set(pid, p);
-				}
-			}
+		const spawnPeerLoop = (peerID: string, client: LISHClient): void => {
+			// Safety dedup: onPeerAdded callback fires once per tryAdd, but protects against
+			// double-spawn if a peer somehow re-adds while its previous loop is still teardown-ing.
+			if (this.peerManager.isActive(peerID)) return;
+			console.log(`[DL] Peer ${peerID.slice(0, 12)} joined (total: ${this.peerManager.size()})`);
+			// peerLoop should not throw — catch is a safety net for unexpected bugs (state race, type errors, etc.).
+			// A silently crashed peer loop would leave the peer in peerManager but not actually downloading,
+			// causing the download to stall. So log loudly AND remove the peer.
+			const p = peerLoop(peerID, client).catch((err: any) => {
+				console.error(`[DL] peerLoop CRASHED for ${peerID.slice(0, 12)}:`, err);
+				this.peerManager.remove(peerID, 'disconnect');
+			});
+			peerLoopPromises.set(peerID, p);
 		};
 
 		const peerLoop = async (peerID: string, client: LISHClient): Promise<void> => {
-			activePeerLoops.add(peerID);
+			this.peerManager.markActive(peerID);
 			let skippedChunks = 0;
 			let consecutiveNotAvailable = 0;
 			while (true) {
@@ -577,15 +567,10 @@ export class Downloader {
 					// Peer unusable for this session (no LISH / unreachable / invalid / unknown error).
 					// Soft quarantine in droppedPeers — peer can come back via pubsub 'have' or ~5min cyclic reset.
 					console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped to droppedPeers`);
-					this.peers.delete(peerID);
-					this.droppedPeers.add(peerID);
-					unregisterDownloadPeer(this.lishID, peerID);
-					await client.close().catch((err: any) => trace(`[DL] drop-peer close: ${err?.message ?? err}`));
+					await this.peerManager.removeAwait(peerID, 'drop');
 					await lock.runExclusive(() => {
 						queue.push(chunk!);
 					});
-					// Spawn loops for any newly discovered peers before exiting
-					spawnNewPeerLoops();
 					break;
 				}
 				if (result === 'skip-chunk') {
@@ -600,17 +585,13 @@ export class Downloader {
 					// Per-peer: disconnect if peer has nothing useful (10 consecutive skip-chunk)
 					if (consecutiveNotAvailable >= 10) {
 						console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped: ${consecutiveNotAvailable} consecutive skip-chunk`);
-						this.peers.delete(peerID);
-						this.droppedPeers.add(peerID);
-						unregisterDownloadPeer(this.lishID, peerID);
-						await client.close().catch((err: any) => trace(`[DL] skip-chunk close: ${err?.message ?? err}`));
+						await this.peerManager.removeAwait(peerID, 'drop');
 						break;
 					}
 					if (globalNotAvailable > queue.length) {
 						console.debug(`[DL] Peer ${peerID.slice(0, 12)} exhausted (${globalNotAvailable} skip-chunk)`);
 						break;
 					}
-					spawnNewPeerLoops();
 					continue;
 				}
 				// Verify chunk integrity before writing
@@ -627,12 +608,7 @@ export class Downloader {
 					});
 					if (count >= Downloader.MAX_CORRUPT_CHUNKS) {
 						console.log(`[DL] Peer ${peerID.slice(0, 12)} banned: ${count} corrupt chunks`);
-						this.peers.delete(peerID);
-						this.bannedPeers.add(peerID);
-
-						unregisterDownloadPeer(this.lishID, peerID);
-						await client.close().catch((err: any) => trace(`[DL] ban close: ${err?.message ?? err}`));
-						spawnNewPeerLoops();
+						await this.peerManager.removeAwait(peerID, 'ban');
 						break;
 					}
 					continue;
@@ -766,7 +742,7 @@ export class Downloader {
 								queue.length = queueIdx;
 								for (const mc of allMissing) queue.push(mc);
 							});
-							this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: this.peers.size, bytesPerSecond: 0 });
+							this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: this.peerManager.size(), bytesPerSecond: 0 });
 							console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
 						} catch (allocErr: any) {
 							console.error(`[DL] File recovery failed: ${allocErr.message}`);
@@ -845,16 +821,14 @@ export class Downloader {
 				this.currentSpeed = elapsed >= 0.5 ? windowBytes / elapsed : 0;
 				const bytesPerSecond = Math.round(this.currentSpeed);
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
-					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${this.peers.size} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
+					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${this.peerManager.size()} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
 				}
 				const fIdx = chunk.fileIndex;
 				fileDownloadedChunks.set(fIdx, (fileDownloadedChunks.get(fIdx) ?? 0) + 1);
 				lastFilePath = this.lish.files?.[fIdx]?.path;
 				lastFileChunks = fileDownloadedChunks.get(fIdx);
-				// Check for newly discovered peers and spawn loops for them
-				spawnNewPeerLoops();
 			}
-			activePeerLoops.delete(peerID);
+			this.peerManager.markInactive(peerID);
 		};
 
 		// 1s periodic progress emitter — sliding window speed with actual elapsed denominator
@@ -866,25 +840,17 @@ export class Downloader {
 			const oldestTime = this.speedSamples.length > 1 ? this.speedSamples[0]!.time : now;
 			const elapsed = (now - oldestTime) / 1000;
 			const bytesPerSecond = elapsed >= 0.5 ? Math.round(windowBytes / elapsed) : 0;
-			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peers.size, bytesPerSecond, ...(lastFilePath != null ? { filePath: lastFilePath } : {}), ...(lastFileChunks != null ? { fileDownloadedChunks: lastFileChunks } : {}) });
+			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peerManager.size(), bytesPerSecond, ...(lastFilePath != null ? { filePath: lastFilePath } : {}), ...(lastFileChunks != null ? { fileDownloadedChunks: lastFileChunks } : {}) });
 		}, 1000);
 
 		try {
-			const initialPeers = [...this.peers.entries()];
+			// Wire dynamic spawn: any peer added to peerManager (via tryAdd from pubsub / probe)
+			// fires this callback and gets its own peerLoop. Replaces the old poll-based spawnNewPeerLoops.
+			this.peerManager.setCallbacks({ onPeerAdded: spawnPeerLoop });
+
+			const initialPeers = this.peerManager.snapshot();
 			console.log(`[DL] Starting: ${totalChunks} chunks from ${initialPeers.length} peer(s)`);
-			// Start initial peer loops.
-			// peerLoop should not throw — catch is a safety net for unexpected bugs (state race, type errors, etc.).
-			// A silently crashed peer loop would leave the peer in `this.peers` but not actually downloading,
-			// causing the download to stall. So log loudly AND drop the peer from the map.
-			for (const [peerID, client] of initialPeers) {
-				const p = peerLoop(peerID, client).catch((err: any) => {
-					console.error(`[DL] peerLoop CRASHED for ${peerID.slice(0, 12)}:`, err);
-					this.peers.delete(peerID);
-					unregisterDownloadPeer(this.lishID, peerID);
-					client.close().catch((closeErr: any) => trace(`[DL] post-crash close: ${closeErr?.message ?? closeErr}`));
-				});
-				peerLoopPromises.set(peerID, p);
-			}
+			for (const [peerID, client] of initialPeers) spawnPeerLoop(peerID, client);
 			// Wait until all peer loops (including dynamically spawned ones) settle
 			while (peerLoopPromises.size > 0) {
 				const current = [...peerLoopPromises.entries()];
@@ -897,9 +863,9 @@ export class Downloader {
 			}
 		} finally {
 			clearInterval(progressInterval);
-			for (const [, client] of this.peers) await client.close().catch((err: any) => trace(`[DL] downloadChunks finally close: ${err?.message ?? err}`));
-			this.peers.clear();
-			unregisterAllPeersForLISH(this.lishID);
+			// Unwire spawn BEFORE closing — avoids spawning a loop for a peer we're about to tear down.
+			this.peerManager.clearCallbacks();
+			await this.peerManager.closeAllAwait('downloadChunks finally');
 			this.lastServingPeerCount = 0;
 			// Reset frontend peers/speed immediately when all peer loops finish
 			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: 0, bytesPerSecond: 0 });
@@ -907,14 +873,14 @@ export class Downloader {
 	}
 
 	private async callForPeers() {
-		console.debug(`[DL] callForPeers: ${this.lishID.slice(0, 8)} on ${this.networkIDs.length} networks, peers: ${this.peers.size}`);
+		console.debug(`[DL] callForPeers: ${this.lishID.slice(0, 8)} on ${this.networkIDs.length} networks, peers: ${this.peerManager.size()}`);
 		// GossipSub broadcast — peers respond with have+multiaddrs via handlePubsubMessage → connectToPeer
 		const msg: PubsubMessage = { type: 'want', lishID: this.lishID };
 		for (const nid of this.networkIDs) {
 			await this.network.broadcast(lishTopic(nid), msg).catch((err: any) => trace(`[DL] broadcast WANT on ${nid}: ${err?.message ?? err}`));
 		}
 		// probeTopicPeers runs only via 15s interval (setupCallForPeersInterval), not here — avoids stale stream issues
-		trace(`[DL] callForPeers done: ${this.peers.size} peers`);
+		trace(`[DL] callForPeers done: ${this.peerManager.size()} peers`);
 		this.setupCallForPeersInterval();
 	}
 
@@ -924,19 +890,19 @@ export class Downloader {
 		for (const nid of this.networkIDs) {
 			for (const p of this.network.getTopicPeers(nid)) topicPeers.add(p);
 		}
-		console.debug(`[DL] probeTopicPeers: ${topicPeers.size} topic, ${this.peers.size} connected, ${this.bannedPeers.size} banned`);
+		console.debug(`[DL] probeTopicPeers: ${topicPeers.size} topic, ${this.peerManager.size()} connected, ${this.peerManager.bannedSize()} banned`);
 		let foundNew = false;
 		for (const peerID of topicPeers) {
 			if (this.destroyed) return;
-			if (this.peers.has(peerID)) {
+			if (this.peerManager.has(peerID)) {
 				trace(`[DL] probe skip ${peerID.slice(0, 12)}: connected`);
 				continue;
 			}
-			if (this.bannedPeers.has(peerID)) {
+			if (this.peerManager.isBanned(peerID)) {
 				trace(`[DL] probe skip ${peerID.slice(0, 12)}: banned`);
 				continue;
 			}
-			if (this.droppedPeers.has(peerID)) {
+			if (this.peerManager.isDropped(peerID)) {
 				trace(`[DL] probe skip ${peerID.slice(0, 12)}: dropped`);
 				continue;
 			}
@@ -953,13 +919,13 @@ export class Downloader {
 					manifest = await probeClient.requestManifest(this.lishID);
 				} catch (error: any) {
 					console.debug(`[DL] probe ${peerID.slice(0, 12)}: manifest error ${error.code ?? error.message?.slice(0, 60) ?? error}`);
-					this.droppedPeers.add(peerID);
+					this.peerManager.remove(peerID, 'drop');
 				}
 				await probeClient.close();
 				if (this.destroyed) return;
 
 				if (!manifest) {
-					this.droppedPeers.add(peerID);
+					this.peerManager.remove(peerID, 'drop');
 					continue;
 				}
 
@@ -982,18 +948,17 @@ export class Downloader {
 					dlStream.abort(new Error('downloader destroyed'));
 					return;
 				}
-				// Guard: peer may have connected via handlePubsubMessage during our dial
-				if (this.peers.has(peerID)) {
-					await new LISHClient(dlStream).close().catch((err: any) => trace(`[DL] probe duplicate close: ${err?.message ?? err}`));
+				// Atomic add — if handlePubsubMessage concurrently added this peer during our dial,
+				// tryAdd returns false and we close the duplicate stream. No check-then-act race.
+				const dlClient = new LISHClient(dlStream);
+				if (!this.peerManager.tryAdd(peerID, dlClient, connectionType)) {
+					await dlClient.close().catch((err: any) => trace(`[DL] probe duplicate close: ${err?.message ?? err}`));
 					trace(`[DL] probe ${peerID.slice(0, 12)}: already connected, closing duplicate`);
 					continue;
 				}
-
-				this.peers.set(peerID, new LISHClient(dlStream));
-				registerDownloadPeer(this.lishID, peerID, connectionType);
 				this.lastExhaustedTime = 0;
 				foundNew = true;
-				console.debug(`[DL] probe: ${peerID.slice(0, 12)} connected [${connectionType}] (total: ${this.peers.size})`);
+				console.debug(`[DL] probe: ${peerID.slice(0, 12)} connected [${connectionType}] (total: ${this.peerManager.size()})`);
 			} catch (err: any) {
 				console.debug(`[DL] probe ${peerID.slice(0, 12)} unreachable: ${err.message?.slice(0, 80)}`);
 			}
@@ -1019,18 +984,14 @@ export class Downloader {
 				return;
 			}
 			if (this.state !== 'downloading' && this.state !== 'awaiting-manifest') return;
-			const before = this.peers.size;
+			const before = this.peerManager.size();
 			// NOTE: bannedPeers is NEVER cleared here — bans are persistent for the app session.
-			this.droppedCycleCount++;
-			if (this.droppedCycleCount >= 20) {
-				this.droppedPeers.clear();
-				this.droppedCycleCount = 0;
-			} // re-check every ~5 min
+			this.peerManager.tickCycleAndMaybeReset(); // re-check every ~5 min
 			this.lastExhaustedTime = 0;
 			// Broadcast want so all peers (including probe-only) respond with have + chunk availability
 			await this.callForPeers().catch((err: any) => trace(`[DL] interval callForPeers failed (will retry): ${err?.message ?? err}`));
 			await this.probeTopicPeers();
-			if (!this.downloadActive && !this.destroyed && this.peers.size > before)
+			if (!this.downloadActive && !this.destroyed && this.peerManager.size() > before)
 				this.doWork().catch(e => {
 					if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e);
 				});
@@ -1046,19 +1007,19 @@ export class Downloader {
 			const addrs = (data['multiaddrs'] as any[])?.map(a => a?.toString?.() ?? String(a)) ?? [];
 			const addrTypes = addrs.map(a => (a.includes('/p2p-circuit') ? 'RELAY' : 'DIRECT'));
 			// Peer sent have → it has data now, remove from dropped (but not if banned — bans are permanent)
-			if (this.bannedPeers.has(data['peerID'])) {
+			if (this.peerManager.isBanned(data['peerID'])) {
 				trace(`[DL] HAVE from ${(data['peerID'] as string)?.slice(0, 12)} ignored: banned`);
-			} else if (this.droppedPeers.delete(data['peerID'])) console.debug(`[DL] ${(data['peerID'] as string)?.slice(0, 12)} removed from droppedPeers (sent have)`);
+			} else if (this.peerManager.clearDropped(data['peerID'])) console.debug(`[DL] ${(data['peerID'] as string)?.slice(0, 12)} removed from droppedPeers (sent have)`);
 			console.debug(`[DL] HAVE from ${(data['peerID'] as string)?.slice(0, 12)}: ${chunks} chunks [${addrTypes.join(',')}], active=${this.downloadActive}`);
-			if (this.peers.has(data['peerID'])) {
+			if (this.peerManager.has(data['peerID'])) {
 				// Update availability for already-connected peer
 				const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;
 				const hp = data['chunks'] === 'all' ? 100 : Math.round((((data['chunks'] as any[])?.length ?? 0) / totalChunks) * 100);
-				updatePeerHavePercent(this.lishID, data['peerID'], hp);
+				this.peerManager.updateHavePercent(data['peerID'], hp);
 				return;
 			}
 			// Don't reconnect banned peers (permanent ban for this app session)
-			if (this.bannedPeers.has(data['peerID'])) {
+			if (this.peerManager.isBanned(data['peerID'])) {
 				trace(`[DL] HAVE from ${(data['peerID'] as string)?.slice(0, 12)} ignored: banned`);
 				return;
 			}
@@ -1085,12 +1046,17 @@ export class Downloader {
 			stream.abort(new Error('downloader destroyed'));
 			return;
 		}
-		if (this.peers.has(data.peerID)) throw new Error(`Already connected to peer: ${peerID}`);
-		this.peers.set(peerID, new LISHClient(stream));
 		const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;
 		const havePercent = data.chunks === 'all' ? 100 : Math.round((data.chunks.length / totalChunks) * 100);
-		registerDownloadPeer(this.lishID, peerID, connectionType, havePercent);
-		console.debug(`[DL] peer ${peerID.slice(0, 12)} connected [${connectionType}] have=${havePercent}% (total: ${this.peers.size})`);
+		// Atomic add — if probeTopicPeers concurrently added the same peer during our dial,
+		// tryAdd returns false; close the duplicate stream to avoid a leak.
+		const client = new LISHClient(stream);
+		if (!this.peerManager.tryAdd(peerID, client, connectionType, havePercent)) {
+			await client.close().catch((err: any) => trace(`[DL] connectToPeer duplicate close: ${err?.message ?? err}`));
+			trace(`[DL] connectToPeer ${peerID.slice(0, 12)}: already connected, closing duplicate`);
+			return;
+		}
+		console.debug(`[DL] peer ${peerID.slice(0, 12)} connected [${connectionType}] have=${havePercent}% (total: ${this.peerManager.size()})`);
 	}
 
 	private async getMissingFileIndexes(): Promise<number[]> {
