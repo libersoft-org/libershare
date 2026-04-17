@@ -54,6 +54,10 @@ export class Network {
 	private _peerCountDebounceTimer: NodeJS.Timeout | null = null;
 	private _lastPeerCounts: Map<string, number> = new Map();
 
+	// Tracked libp2p/pubsub event listeners for clean removal in stop().
+	// Each entry captures the exact handler reference so removeEventListener can unhook it.
+	private listeners: Array<{ target: EventTarget; event: string; handler: (evt: any) => void }> = [];
+
 	private readonly settings: Settings;
 
 	constructor(dataDir: string, dataServer: DataServer, settings: Settings, enablePink: boolean = false) {
@@ -68,6 +72,16 @@ export class Network {
 	 */
 	set onPeerCountChange(cb: ((counts: { networkID: string; count: number }[]) => void) | null) {
 		this._onPeerCountChange = cb;
+	}
+
+	/**
+	 * Register an event listener on a libp2p/pubsub target and track it so it can be removed in stop().
+	 * IMPORTANT: always use this helper instead of calling addEventListener() directly — otherwise
+	 * the handler stays attached after stop() and holds a reference to `this` (memory leak).
+	 */
+	private addListener(target: EventTarget, event: string, handler: (evt: any) => void): void {
+		target.addEventListener(event, handler as any);
+		this.listeners.push({ target, event, handler });
 	}
 
 	/**
@@ -238,12 +252,12 @@ export class Network {
 			console.log('✓ DHT running in', mode, 'mode');
 		}
 
-		this.pubsub.addEventListener('gossipsub:graft', (evt: any) => {
+		this.addListener(this.pubsub, 'gossipsub:graft', (evt: any) => {
 			trace(`[NET] GRAFT: ${evt.detail.peerID} joined ${evt.detail.topic}`);
 			this.schedulePeerCountCheck();
 		});
 
-		this.pubsub.addEventListener('gossipsub:prune', (evt: any) => {
+		this.addListener(this.pubsub, 'gossipsub:prune', (evt: any) => {
 			trace(`[NET] PRUNE: ${evt.detail.peerID} left ${evt.detail.topic}`);
 			this.schedulePeerCountCheck();
 		});
@@ -263,13 +277,13 @@ export class Network {
 	// =========================================================================
 
 	private setupEventListeners(): void {
-		this.node!.addEventListener('peer:discovery', async evt => {
+		this.addListener(this.node!, 'peer:discovery', async (evt: any) => {
 			const peerID = evt.detail.id.toString();
 			const multiaddrs = evt.detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
 			trace(`[NET] Discovered peer: ${peerID}, addrs: ${multiaddrs.join(', ') || '(empty)'}`);
 		});
 
-		this.node!.addEventListener('peer:connect', async evt => {
+		this.addListener(this.node!, 'peer:connect', async (evt: any) => {
 			const peerID = evt.detail.toString();
 			const connections = this.node!.getConnections(evt.detail);
 			const connTypes = connections.map(c => {
@@ -293,31 +307,31 @@ export class Network {
 			this.schedulePeerCountCheck();
 		});
 
-		this.node!.addEventListener('peer:disconnect', evt => {
+		this.addListener(this.node!, 'peer:disconnect', (evt: any) => {
 			const peerID = evt.detail.toString();
 			console.debug(`❌ Peer disconnected: ${peerID.slice(0, 16)}, remaining: ${this.node!.getPeers().length}`);
 			this.schedulePeerCountCheck();
 		});
 
-		this.node!.addEventListener('relay:created-reservation' as any, (evt: any) => {
+		this.addListener(this.node!, 'relay:created-reservation', (evt: any) => {
 			console.debug('🔄 Relay reservation created with:', evt.detail?.relay?.toString?.() ?? 'unknown');
 		});
-		this.node!.addEventListener('relay:removed' as any, (evt: any) => {
+		this.addListener(this.node!, 'relay:removed', (evt: any) => {
 			console.debug('⚠️  Relay removed:', evt.detail?.relay?.toString?.() ?? 'unknown');
 		});
 
 		// DCUtR hole punch events
-		this.node!.addEventListener('dcutr:success' as any, (evt: any) => {
+		this.addListener(this.node!, 'dcutr:success', (evt: any) => {
 			const peer = evt.detail?.remotePeer?.toString?.();
 			if (peer) this.dcutrPeers.add(peer);
 			console.log(`[NET] DCUtR hole punch SUCCESS: ${peer?.slice(0, 16) ?? 'unknown'}, dcutrPeers=[${[...this.dcutrPeers].map(p => p.slice(0, 12)).join(',')}]`);
 		});
-		this.node!.addEventListener('dcutr:error' as any, (evt: any) => {
+		this.addListener(this.node!, 'dcutr:error', (evt: any) => {
 			console.debug(`[NET] DCUtR hole punch FAILED: ${evt.detail?.remotePeer?.toString?.()?.slice(0, 16) ?? 'unknown'} — ${evt.detail?.error?.message ?? 'unknown error'}`);
 		});
 
 		// Connection close/abort events for relay debugging
-		this.node!.addEventListener('connection:close' as any, (evt: any) => {
+		this.addListener(this.node!, 'connection:close', (evt: any) => {
 			const conn = evt.detail;
 			if (conn?.remoteAddr?.toString?.()?.includes('/p2p-circuit')) {
 				trace(`[NET] Relay connection closed: ${conn.remotePeer?.toString?.()?.slice(0, 16)} addr=${conn.remoteAddr?.toString()}`);
@@ -336,7 +350,7 @@ export class Network {
 	}
 
 	private setupPubsubDispatch(): void {
-		this.pubsub!.addEventListener('message', (evt: any) => {
+		this.addListener(this.pubsub!, 'message', (evt: any) => {
 			this.handleMessage(evt.detail);
 		});
 	}
@@ -732,6 +746,21 @@ export class Network {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;
 		}
+		if (this._peerCountDebounceTimer) {
+			clearTimeout(this._peerCountDebounceTimer);
+			this._peerCountDebounceTimer = null;
+		}
+		// Detach all tracked libp2p/pubsub event listeners before stopping the node,
+		// so late-firing events (e.g. peer:disconnect during shutdown) don't hit a half-dead instance
+		// and the handlers don't keep closures on `this` alive after stop().
+		for (const { target, event, handler } of this.listeners) {
+			try {
+				target.removeEventListener(event, handler as any);
+			} catch (err: any) {
+				trace(`[NET] removeEventListener(${event}) failed: ${err?.message ?? err}`);
+			}
+		}
+		this.listeners.length = 0;
 		this.topicHandlers.clear();
 		if (this.node) {
 			await this.node.stop();
