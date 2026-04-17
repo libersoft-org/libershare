@@ -128,7 +128,9 @@ export class Downloader {
 		}
 		for (const { topic, handler } of this.pubsubHandlers) this.network.unsubscribeHandler(topic, handler);
 		this.pubsubHandlers = [];
-		for (const [, client] of this.peers) client.close().catch(() => {});
+		// Fire-and-forget close — stream may already be reset/aborted, which is benign.
+		// Log at trace so real bugs (e.g. TypeError) can still be spotted in debug logs.
+		for (const [, client] of this.peers) client.close().catch((err: any) => trace(`[DL] setError close: ${err?.message ?? err}`));
 		this.peers.clear();
 		unregisterAllPeersForLISH(this.lishID);
 		this.lastServingPeerCount = 0;
@@ -168,7 +170,7 @@ export class Downloader {
 			clearInterval(this.callForPeersInterval);
 			this.callForPeersInterval = undefined;
 		}
-		for (const [, client] of this.peers) client.close().catch(() => {});
+		for (const [, client] of this.peers) client.close().catch((err: any) => trace(`[DL] disable close: ${err?.message ?? err}`));
 		this.peers.clear();
 		unregisterAllPeersForLISH(this.lishID);
 		this.lastServingPeerCount = 0;
@@ -202,7 +204,7 @@ export class Downloader {
 		this.enableResolvers = [];
 		this.setupCallForPeersInterval();
 		if (this.state === 'downloading' || this.state === 'awaiting-manifest' || this.state === 'preparing') {
-			this.callForPeers().catch(() => {});
+			this.callForPeers().catch((err: any) => trace(`[DL] enable callForPeers failed (will retry): ${err?.message ?? err}`));
 			this.doWork().catch(e => {
 				if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e);
 			});
@@ -224,7 +226,7 @@ export class Downloader {
 		}
 		for (const { topic, handler } of this.pubsubHandlers) this.network.unsubscribeHandler(topic, handler);
 		this.pubsubHandlers = [];
-		for (const [, client] of this.peers) await client.close().catch(() => {});
+		for (const [, client] of this.peers) await client.close().catch((err: any) => trace(`[DL] destroy close: ${err?.message ?? err}`));
 		this.peers.clear();
 		unregisterAllPeersForLISH(this.lishID);
 		// Notify frontend to reset peers/speed immediately
@@ -529,7 +531,7 @@ export class Downloader {
 					this.peers.delete(peerID);
 					this.droppedPeers.add(peerID);
 					unregisterDownloadPeer(this.lishID, peerID);
-					await client.close().catch(() => {});
+					await client.close().catch((err: any) => trace(`[DL] drop-peer close: ${err?.message ?? err}`));
 					await lock.runExclusive(() => {
 						queue.push(chunk!);
 					});
@@ -552,7 +554,7 @@ export class Downloader {
 						this.peers.delete(peerID);
 						this.droppedPeers.add(peerID);
 						unregisterDownloadPeer(this.lishID, peerID);
-						await client.close().catch(() => {});
+						await client.close().catch((err: any) => trace(`[DL] skip-chunk close: ${err?.message ?? err}`));
 						break;
 					}
 					if (globalNotAvailable > queue.length) {
@@ -580,7 +582,7 @@ export class Downloader {
 						this.bannedPeers.add(peerID);
 
 						unregisterDownloadPeer(this.lishID, peerID);
-						await client.close().catch(() => {});
+						await client.close().catch((err: any) => trace(`[DL] ban close: ${err?.message ?? err}`));
 						spawnNewPeerLoops();
 						break;
 					}
@@ -821,9 +823,17 @@ export class Downloader {
 		try {
 			const initialPeers = [...this.peers.entries()];
 			console.log(`[DL] Starting: ${totalChunks} chunks from ${initialPeers.length} peer(s)`);
-			// Start initial peer loops
+			// Start initial peer loops.
+			// peerLoop should not throw — catch is a safety net for unexpected bugs (state race, type errors, etc.).
+			// A silently crashed peer loop would leave the peer in `this.peers` but not actually downloading,
+			// causing the download to stall. So log loudly AND drop the peer from the map.
 			for (const [peerID, client] of initialPeers) {
-				const p = peerLoop(peerID, client).catch(() => {});
+				const p = peerLoop(peerID, client).catch((err: any) => {
+					console.error(`[DL] peerLoop CRASHED for ${peerID.slice(0, 12)}:`, err);
+					this.peers.delete(peerID);
+					unregisterDownloadPeer(this.lishID, peerID);
+					client.close().catch((closeErr: any) => trace(`[DL] post-crash close: ${closeErr?.message ?? closeErr}`));
+				});
 				peerLoopPromises.set(peerID, p);
 			}
 			// Wait until all peer loops (including dynamically spawned ones) settle
@@ -838,7 +848,7 @@ export class Downloader {
 			}
 		} finally {
 			clearInterval(progressInterval);
-			for (const [, client] of this.peers) await client.close().catch(() => {});
+			for (const [, client] of this.peers) await client.close().catch((err: any) => trace(`[DL] downloadChunks finally close: ${err?.message ?? err}`));
 			this.peers.clear();
 			unregisterAllPeersForLISH(this.lishID);
 			this.lastServingPeerCount = 0;
@@ -852,7 +862,7 @@ export class Downloader {
 		// GossipSub broadcast — peers respond with have+multiaddrs via handlePubsubMessage → connectToPeer
 		const msg: PubsubMessage = { type: 'want', lishID: this.lishID };
 		for (const nid of this.networkIDs) {
-			await this.network.broadcast(lishTopic(nid), msg).catch(() => {});
+			await this.network.broadcast(lishTopic(nid), msg).catch((err: any) => trace(`[DL] broadcast WANT on ${nid}: ${err?.message ?? err}`));
 		}
 		// probeTopicPeers runs only via 15s interval (setupCallForPeersInterval), not here — avoids stale stream issues
 		trace(`[DL] callForPeers done: ${this.peers.size} peers`);
@@ -925,7 +935,7 @@ export class Downloader {
 				}
 				// Guard: peer may have connected via handlePubsubMessage during our dial
 				if (this.peers.has(peerID)) {
-					await new LISHClient(dlStream).close().catch(() => {});
+					await new LISHClient(dlStream).close().catch((err: any) => trace(`[DL] probe duplicate close: ${err?.message ?? err}`));
 					trace(`[DL] probe ${peerID.slice(0, 12)}: already connected, closing duplicate`);
 					continue;
 				}
@@ -969,7 +979,7 @@ export class Downloader {
 			} // re-check every ~5 min
 			this.lastExhaustedTime = 0;
 			// Broadcast want so all peers (including probe-only) respond with have + chunk availability
-			await this.callForPeers().catch(() => {});
+			await this.callForPeers().catch((err: any) => trace(`[DL] interval callForPeers failed (will retry): ${err?.message ?? err}`));
 			await this.probeTopicPeers();
 			if (!this.downloadActive && !this.destroyed && this.peers.size > before)
 				this.doWork().catch(e => {

@@ -93,14 +93,18 @@ export function setEnableDownloadFn(fn: (p: { lishID: string }) => Promise<{ suc
 }
 export function restartDownloadIfEnabled(lishID: string): void {
 	if (downloadEnabledLishs.has(lishID) && _enableDownloadFn) {
-		_enableDownloadFn({ lishID }).catch(() => {});
+		_enableDownloadFn({ lishID }).catch((err: any) => {
+			console.error(`[Transfer] restartDownloadIfEnabled(${lishID.slice(0, 8)}) failed:`, err?.message ?? err);
+		});
 	}
 }
 
 /** Enable downloading for a LISH from outside the transfer module (e.g. after import). */
 export function triggerEnableDownload(lishID: string): void {
 	if (_enableDownloadFn) {
-		_enableDownloadFn({ lishID }).catch(() => {});
+		_enableDownloadFn({ lishID }).catch((err: any) => {
+			console.error(`[Transfer] triggerEnableDownload(${lishID.slice(0, 8)}) failed:`, err?.message ?? err);
+		});
 	}
 }
 
