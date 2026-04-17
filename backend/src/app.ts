@@ -174,7 +174,19 @@ const TRANSIENT_ERRORS = new Set([
 
 function isTransientError(err: any): boolean {
 	const name = err?.constructor?.name || err?.name || '';
-	return TRANSIENT_ERRORS.has(name);
+	if (TRANSIENT_ERRORS.has(name)) return true;
+	// Node.js EventEmitter wraps stream errors as "Unhandled error." Error
+	// when a stream destroy()→emitError fires without an 'error' listener.
+	// The wrapped cause is in err.context (DOMException TimeoutError, etc).
+	const msg = err?.message ?? '';
+	const ctxMsg = err?.context?.message ?? '';
+	if (msg.includes('Unhandled error') && (
+		ctxMsg.includes('timed out') ||
+		ctxMsg.includes('aborted') ||
+		ctxMsg.includes('closed') ||
+		ctxMsg.includes('reset')
+	)) return true;
+	return false;
 }
 
 // Rate-limiter for the highest-frequency transient error coming from gossipsub
