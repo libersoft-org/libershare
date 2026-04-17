@@ -205,7 +205,14 @@ process.on('uncaughtException', err => {
 		logTransientRateLimited('error', name, err.message);
 		return;
 	}
-	console.error('[FATAL] Uncaught exception:', err);
+	const ctorName = (err as any)?.constructor?.name || '';
+	const errName = (err as any)?.name || '';
+	const errMessage = (err as any)?.message || '';
+	const errStack = (err as any)?.stack || '';
+	const errKeys = err && typeof err === 'object' ? Object.keys(err as any).join(',') : '';
+	console.error(`[FATAL] Uncaught exception: ctor=${ctorName} name=${errName} msg=${errMessage} keys=${errKeys}`);
+	console.error('[FATAL] stack:', errStack);
+	console.error('[FATAL] full:', JSON.stringify(err, Object.getOwnPropertyNames(err as any)));
 	process.exit(1);
 });
 
@@ -215,7 +222,14 @@ process.on('unhandledRejection', (reason: any) => {
 		logTransientRateLimited('rejection', name, reason?.message ?? '');
 		return;
 	}
-	console.error('[FATAL] Unhandled rejection:', reason);
+	const ctorName = reason?.constructor?.name || '';
+	const errName = reason?.name || '';
+	const errMessage = reason?.message || '';
+	const errStack = reason?.stack || '';
+	const errKeys = reason && typeof reason === 'object' ? Object.keys(reason).join(',') : '';
+	console.error(`[FATAL] Unhandled rejection: ctor=${ctorName} name=${errName} msg=${errMessage} keys=${errKeys}`);
+	console.error('[FATAL] stack:', errStack);
+	console.error('[FATAL] full:', JSON.stringify(reason, Object.getOwnPropertyNames(reason)));
 	process.exit(1);
 });
 
