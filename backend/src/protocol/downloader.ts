@@ -1,5 +1,5 @@
-import { access, mkdir, open, constants } from 'fs/promises';
-import { dirname, resolve, sep } from 'path';
+import { access, constants } from 'fs/promises';
+import { dirname } from 'path';
 import { type IStoredLISH, type LISHid, type ChunkID, CodedError, ErrorCodes } from '@shared';
 import { type Network } from './network.ts';
 import { downloadLimiter } from './speed-limiter.ts';
@@ -12,6 +12,7 @@ import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { trace } from '../logger.ts';
 import { recordDownloadBytes, touchPeer } from './peer-tracker.ts';
 import { PeerManager } from './peer-manager.ts';
+import { FileAllocator, type AllocationProgress } from './file-allocator.ts';
 
 type NodeID = string;
 interface PubsubMessage {
@@ -62,6 +63,11 @@ export class Downloader {
 	private workMutex = new Mutex();
 	private missingChunks: MissingChunk[] = [];
 	private readonly peerManager = new PeerManager();
+	// File allocation (zero-fill + directory layout). Stateless — only config is downloadDir;
+	// it's assigned in the constructor once downloadDir is known.
+	private readonly fileAllocator: FileAllocator;
+	// Aborted in destroy(); passed to fileAllocator to stop in-progress zero-filling.
+	private readonly abortController = new AbortController();
 	private lastServingPeerCount = 0;
 	private static readonly MAX_CORRUPT_CHUNKS = 3; // max corrupted chunks before banning peer
 	private callForPeersInterval: ReturnType<typeof setInterval> | undefined;
@@ -257,6 +263,7 @@ export class Downloader {
 		console.debug(`[DL] destroy ${this.lishID.slice(0, 8)}, state=${this.state}, peers=${this.peerManager.size()}`);
 		this.disabled = true;
 		this.destroyed = true;
+		this.abortController.abort();
 		this.clearRetryTimer();
 		if (this.callForPeersInterval) {
 			clearInterval(this.callForPeersInterval);
@@ -303,6 +310,7 @@ export class Downloader {
 		this.network = network;
 		this.dataServer = dataServer;
 		this.networkIDs = Array.isArray(networkIDs) ? networkIDs : [networkIDs];
+		this.fileAllocator = new FileAllocator(downloadDir);
 	}
 
 	async init(lishPath: string): Promise<void> {
@@ -410,11 +418,19 @@ export class Downloader {
 				const totalChunksForProgress = this.dataServer.getAllChunkCount(this.lishID) || this.missingChunks.length;
 				const downloadedForProgress = totalChunksForProgress - this.missingChunks.length;
 				console.debug(`[DL] preparing ${this.lishID.slice(0, 8)}: ${downloadedForProgress}/${totalChunksForProgress}, missing=${this.missingChunks.length}`);
-				const needsAllocation = await this.needsFileAllocation();
-				if (needsAllocation) {
+				// Empty-manifest recovery: if the LISH has no file metadata and the DB has no chunks,
+				// we need a manifest re-fetch before we can do anything else. (Was the side-effect
+				// inside the former needsFileAllocation() — kept here to preserve control flow.)
+				if ((!this.lish.files || this.lish.files.length === 0) && this.dataServer.getAllChunkCount(this.lishID) === 0) {
+					console.warn(`[DL] ${this.lishID.slice(0, 8)}: no files in manifest or DB, requesting manifest from peers`);
+					this.needsManifest = true;
+					this.transitionTo('awaiting-manifest', 'doWork phase 2: empty manifest, re-fetch');
+				}
+				const missingBeforeAlloc = await this.fileAllocator.findMissingFiles(this.lish);
+				if (missingBeforeAlloc.length > 0) {
 					console.debug(`[DL] allocating files for ${this.lishID.slice(0, 8)}`);
 					this.onProgress?.({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
-					await this.createDirectoryStructure(totalChunksForProgress);
+					await this.fileAllocator.allocateStructure(this.lish, (p: AllocationProgress) => this.emitAllocProgress(p, totalChunksForProgress), this.abortController.signal);
 					if (this.destroyed) return;
 				} else {
 					trace(`[DL] skipping allocation for ${this.lishID.slice(0, 8)} (files exist)`);
@@ -426,7 +442,7 @@ export class Downloader {
 			// Phase 3: download chunks
 			if (this.state === 'downloading') {
 				if (this.missingChunks.length === 0) {
-					const missingFileIndexes = await this.getMissingFileIndexes();
+					const missingFileIndexes = await this.fileAllocator.findMissingFiles(this.lish);
 					if (missingFileIndexes.length === 0) {
 						console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
 						this.transitionTo('downloaded', 'doWork() all chunks present');
@@ -436,7 +452,7 @@ export class Downloader {
 					// Reset only the missing files' chunks (surgical, not full manifest re-fetch)
 					console.warn(`[DL] ${this.lishID.slice(0, 8)}: ${missingFileIndexes.length} files missing on disk, resetting their chunks`);
 					for (const fi of missingFileIndexes) {
-						await this.allocateSingleFile(fi);
+						await this.fileAllocator.allocateFile(this.lish, fi, this.abortController.signal);
 						this.dataServer.resetFileChunks(this.lishID, fi);
 					}
 					this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
@@ -463,7 +479,7 @@ export class Downloader {
 					}
 					const remaining = this.dataServer.getMissingChunks(this.lishID);
 					if (remaining.length === 0) {
-						const missingFiles = await this.getMissingFileIndexes();
+						const missingFiles = await this.fileAllocator.findMissingFiles(this.lish);
 						if (missingFiles.length === 0) {
 							console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
 							this.transitionTo('downloaded', 'doWork() complete after downloadChunks');
@@ -472,7 +488,7 @@ export class Downloader {
 						}
 						console.warn(`[DL] ${this.lishID.slice(0, 8)}: ${missingFiles.length} files missing on disk after downloadChunks, resetting`);
 						for (const fi of missingFiles) {
-							await this.allocateSingleFile(fi);
+							await this.fileAllocator.allocateFile(this.lish, fi, this.abortController.signal);
 							this.dataServer.resetFileChunks(this.lishID, fi);
 						}
 						// Fall through to retry with reset chunks
@@ -664,40 +680,12 @@ export class Downloader {
 							console.log(`[DL] Recovery: verifying all files`);
 
 							// Step 2: Find and re-allocate missing files with progress
-							const missingFiles = await this.getMissingFileIndexes();
+							const missingFiles = await this.fileAllocator.findMissingFiles(this.lish);
 							if (missingFiles.length > 0) {
 								const totalMissingBytes = missingFiles.reduce((sum, fi) => sum + (this.lish.files?.[fi]?.size ?? 0), 0);
 								console.log(`[DL] ${missingFiles.length} files missing (${Math.round(totalMissingBytes / 1024 / 1024)}MB), allocating`);
 								this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: 0 });
-								let allocatedBytes = 0;
-								for (const fi of missingFiles) {
-									const file = this.lish.files?.[fi];
-									if (!file || this.destroyed) break;
-									const filePath = this.safePath(file.path);
-									await mkdir(dirname(filePath), { recursive: true });
-									const fd = await open(filePath, 'w');
-									try {
-										const zeroChunk = new Uint8Array(1024 * 1024);
-										let remaining = file.size;
-										while (remaining > 0) {
-											if (this.destroyed) break;
-											const writeSize = Math.min(remaining, zeroChunk.length);
-											await fd.write(zeroChunk.subarray(0, writeSize));
-											remaining -= writeSize;
-											allocatedBytes += writeSize;
-											if (allocatedBytes % (50 * 1024 * 1024) < 1024 * 1024) {
-												const pct = totalMissingBytes > 0 ? Math.round((allocatedBytes / totalMissingBytes) * 100) : 0;
-												this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: pct, allocatingFile: file.path, allocatingFileProgress: Math.round(((file.size - remaining) / file.size) * 100) });
-											}
-										}
-									} finally {
-										await fd.close();
-									}
-									// Emit 100% for completed file
-									const donePct = totalMissingBytes > 0 ? Math.round((allocatedBytes / totalMissingBytes) * 100) : 100;
-									this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: donePct, allocatingFile: file.path, allocatingFileProgress: 100 });
-									console.log(`[DL] Allocated ${file.path} (${Math.round(file.size / 1024 / 1024)}MB)`);
-								}
+								await this.fileAllocator.allocateFiles(this.lish, missingFiles, (p: AllocationProgress) => this.emitAllocProgress(p, totalChunks), this.abortController.signal);
 							}
 
 							// Step 3: Full verification of ALL files — checksum every chunk
@@ -1059,127 +1047,25 @@ export class Downloader {
 		console.debug(`[DL] peer ${peerID.slice(0, 12)} connected [${connectionType}] have=${havePercent}% (total: ${this.peerManager.size()})`);
 	}
 
-	private async getMissingFileIndexes(): Promise<number[]> {
-		if (!this.lish.files || this.lish.files.length === 0) return [];
-		const missing: number[] = [];
-		for (let i = 0; i < this.lish.files.length; i++) {
-			const file = this.lish.files[i]!;
-			const filePath = this.safePath(file.path);
-			const f = Bun.file(filePath);
-			const exists = await f.exists();
-			if (!exists || f.size !== file.size) {
-				trace(`[DL] getMissingFileIndexes: ${file.path} exists=${exists} size=${f.size} expected=${file.size}`);
-				missing.push(i);
-			}
-		}
-		return missing;
-	}
-
-	private safePath(relativePath: string): string {
-		const resolved = resolve(this.downloadDir, relativePath);
-		if (!resolved.startsWith(resolve(this.downloadDir) + sep)) throw new Error(`Path traversal blocked: ${relativePath}`);
-		return resolved;
-	}
-
-	private async needsFileAllocation(): Promise<boolean> {
-		if (!this.lish.files || this.lish.files.length === 0) {
-			// No file metadata — if DB also has no chunks, we need a manifest re-fetch
-			if (this.dataServer.getAllChunkCount(this.lishID) === 0) {
-				console.warn(`[DL] ${this.lishID.slice(0, 8)}: no files in manifest or DB, requesting manifest from peers`);
-				this.needsManifest = true;
-				this.transitionTo('awaiting-manifest', 'needsFileAllocation: empty manifest, re-fetch');
-			}
-			return false;
-		}
-		for (const file of this.lish.files) {
-			const filePath = this.safePath(file.path);
-			const f = Bun.file(filePath);
-			const exists = await f.exists();
-			if (!exists || f.size !== file.size) {
-				trace(`[DL] needsAlloc: ${file.path} exists=${exists} size=${f.size} expected=${file.size}`);
-				return true;
-			}
-		}
-		return false;
-	}
-
-	private async createDirectoryStructure(totalChunksForProgress: number): Promise<void> {
-		const startTime = Date.now();
-		if (this.lish.directories) {
-			for (const dir of this.lish.directories) {
-				await mkdir(this.safePath(dir.path), { recursive: true });
-			}
-		}
-		let createdFiles = 0;
-		let skippedFiles = 0;
-		if (this.lish.files) {
-			const totalBytes = this.lish.files.reduce((sum, f) => sum + f.size, 0);
-			let totalWritten = 0;
-			let nextProgressAt = 100 * 1024 * 1024; // emit every ~100MB
-			const emitAllocProgress = (currentFile: string, fileWritten: number, fileSize: number) => {
-				const pct = totalBytes > 0 ? Math.round((totalWritten / totalBytes) * 100) : 0;
-				const filePct = fileSize > 0 ? Math.round((fileWritten / fileSize) * 100) : 100;
-				this.onProgress?.({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: pct, allocatingFile: currentFile, allocatingFileProgress: filePct });
-			};
-			for (const file of this.lish.files) {
-				if (this.destroyed) return;
-				const filePath = this.safePath(file.path);
-				await mkdir(dirname(filePath), { recursive: true });
-				if (!(await Bun.file(filePath).exists())) {
-					const fd = await open(filePath, 'w');
-					try {
-						const zeroChunk = new Uint8Array(1024 * 1024);
-						let remaining = file.size;
-						let fileWritten = 0;
-						while (remaining > 0) {
-							if (this.destroyed) return;
-							const writeSize = Math.min(remaining, zeroChunk.length);
-							await fd.write(zeroChunk.subarray(0, writeSize));
-							remaining -= writeSize;
-							totalWritten += writeSize;
-							fileWritten += writeSize;
-							if (totalWritten >= nextProgressAt || remaining === 0) {
-								nextProgressAt = totalWritten + 100 * 1024 * 1024;
-								emitAllocProgress(file.path, fileWritten, file.size);
-								await new Promise(r => setTimeout(r, 0));
-							}
-						}
-					} finally {
-						await fd.close();
-					}
-					createdFiles++;
-					trace(`[DL] created file: ${file.path} (${file.size}B)`);
-				} else {
-					totalWritten += file.size;
-					skippedFiles++;
-				}
-			}
-		}
-		console.log(`[DL] Directory structure created: ${this.lish.files?.length ?? 0} files in ${this.downloadDir} (created=${createdFiles}, skipped=${skippedFiles}, ${Date.now() - startTime}ms)`);
-	}
-
-	/** Re-allocate a single file (create dirs + zero-fill). Used when a file is deleted mid-download. */
-	private async allocateSingleFile(fileIndex: number): Promise<void> {
-		const file = this.lish.files?.[fileIndex];
-		if (!file) return;
-		const filePath = this.safePath(file.path);
-		await mkdir(dirname(filePath), { recursive: true });
-		const f = Bun.file(filePath);
-		if (!(await f.exists()) || f.size !== file.size) {
-			const fd = await open(filePath, 'w');
-			try {
-				const zeroChunk = new Uint8Array(Math.min(1024 * 1024, file.size));
-				let remaining = file.size;
-				while (remaining > 0) {
-					const writeSize = Math.min(remaining, zeroChunk.length);
-					await fd.write(zeroChunk.subarray(0, writeSize));
-					remaining -= writeSize;
-				}
-			} finally {
-				await fd.close();
-			}
-			console.log(`[DL] Re-allocated file: ${file.path} (${file.size} bytes)`);
-		}
+	/**
+	 * Bridge from FileAllocator's AllocationProgress events to the Downloader's
+	 * onProgress shape (filePath: '__allocating__', fileDownloadedChunks is the
+	 * aggregate allocation percentage, allocatingFile / allocatingFileProgress
+	 * describe the file currently being zero-filled).
+	 */
+	private emitAllocProgress(p: AllocationProgress, totalChunks: number): void {
+		const pct = p.totalBytes > 0 ? Math.round((p.totalBytesWritten / p.totalBytes) * 100) : 0;
+		const filePct = p.fileSize > 0 ? Math.round((p.fileBytesWritten / p.fileSize) * 100) : 100;
+		this.onProgress?.({
+			downloadedChunks: 0,
+			totalChunks,
+			peers: 0,
+			bytesPerSecond: 0,
+			filePath: '__allocating__',
+			fileDownloadedChunks: pct,
+			allocatingFile: p.filePath,
+			allocatingFileProgress: filePct,
+		});
 	}
 
 	// Download a single chunk from a peer using an existing client.
