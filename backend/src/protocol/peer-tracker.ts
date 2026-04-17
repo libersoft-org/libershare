@@ -64,7 +64,9 @@ function key(lishID: string, peerID: string, direction: 'download' | 'upload'): 
 function createEntry(peerID: string, lishID: string, direction: 'download' | 'upload', connectionType: ConnectionType, havePercent?: number): PeerEntry {
 	const k = key(lishID, peerID, direction);
 	const now = Date.now();
-	return { peerID, lishID, direction, connectionType, connectedAt: now, totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: now, speedSamples: [], havePercent };
+	const entry: PeerEntry = { peerID, lishID, direction, connectionType, connectedAt: now, totalBytes: cumulativeBytes.get(k) ?? 0, lastActivity: now, speedSamples: [] };
+	if (havePercent !== undefined) entry.havePercent = havePercent;
+	return entry;
 }
 
 /**
@@ -104,7 +106,11 @@ function pruneSamples(samples: SpeedSample[], now: number): void {
 export function registerDownloadPeer(lishID: string, peerID: string, connectionType: ConnectionType, havePercent?: number): void {
 	const k = key(lishID, peerID, 'download');
 	const existing = entries.get(k);
-	if (existing) { existing.connectionType = connectionType; if (havePercent !== undefined) existing.havePercent = havePercent; return; }
+	if (existing) {
+		existing.connectionType = connectionType;
+		if (havePercent !== undefined) existing.havePercent = havePercent;
+		return;
+	}
 	entries.set(k, createEntry(peerID, lishID, 'download', connectionType, havePercent));
 	trace(`[PEERS] register download ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
@@ -119,7 +125,10 @@ export function unregisterDownloadPeer(lishID: string, peerID: string): void {
 export function registerUploadPeer(lishID: string, peerID: string, connectionType: ConnectionType): void {
 	const k = key(lishID, peerID, 'upload');
 	const existing = entries.get(k);
-	if (existing) { existing.connectionType = connectionType; return; }
+	if (existing) {
+		existing.connectionType = connectionType;
+		return;
+	}
 	entries.set(k, createEntry(peerID, lishID, 'upload', connectionType));
 	trace(`[PEERS] register upload ${peerID.slice(0, 12)} for ${lishID.slice(0, 8)}`);
 }
@@ -231,7 +240,7 @@ export function getDebugSnapshot(lishID?: string): { now: number; entries: PeerT
 	for (const [k, entry] of entries) {
 		if (lishID && entry.lishID !== lishID) continue;
 		const sampleBytesSum = entry.speedSamples.reduce((s, x) => s + x.bytes, 0);
-		const windowMs = entry.speedSamples.length >= 2 ? (entry.speedSamples[entry.speedSamples.length - 1]!.time - entry.speedSamples[0]!.time) : 0;
+		const windowMs = entry.speedSamples.length >= 2 ? entry.speedSamples[entry.speedSamples.length - 1]!.time - entry.speedSamples[0]!.time : 0;
 		const computedSpeed = computeSpeed(entry.speedSamples, now);
 		out.push({
 			key: k,
@@ -265,7 +274,10 @@ export function startPeerEmitter(): void {
 }
 
 export function stopPeerEmitter(): void {
-	if (emitInterval) { clearInterval(emitInterval); emitInterval = null; }
+	if (emitInterval) {
+		clearInterval(emitInterval);
+		emitInterval = null;
+	}
 }
 
 // --- Internal: emit aggregated peer details ---
@@ -323,20 +335,21 @@ function emitPeerDetails(): void {
 			if (entry.connectedAt < existing.connectedAt) existing.connectedAt = entry.connectedAt;
 			if (entry.lastActivity > existing.lastActivity) existing.lastActivity = entry.lastActivity;
 		} else {
-			peerMap.set(entry.peerID, {
+			const detail: PeerDetail = {
 				peerID: entry.peerID,
 				connectionType: entry.connectionType,
 				downloadSpeed: entry.direction === 'download' ? speed : 0,
 				uploadSpeed: entry.direction === 'upload' ? speed : 0,
 				totalDownloaded: entry.direction === 'download' ? entry.totalBytes : 0,
 				totalUploaded: entry.direction === 'upload' ? entry.totalBytes : 0,
-				currentFile: entry.currentFile,
-				currentChunk: entry.currentChunk,
 				connectedAt: entry.connectedAt,
 				lastActivity: entry.lastActivity,
 				stale: isStale,
-				havePercent: entry.havePercent,
-			});
+			};
+			if (entry.currentFile !== undefined) detail.currentFile = entry.currentFile;
+			if (entry.currentChunk !== undefined) detail.currentChunk = entry.currentChunk;
+			if (entry.havePercent !== undefined) detail.havePercent = entry.havePercent;
+			peerMap.set(entry.peerID, detail);
 		}
 	}
 

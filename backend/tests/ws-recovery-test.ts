@@ -6,10 +6,11 @@
  * 3. Settings autoErrorRecovery
  *
  * Run: bun run backend/tests/ws-recovery-test.ts [ws-url]
- * Default URL: ws://192.168.2.9:1158
+ * Default URL: ws://<redacted-lan-ip>:1158
  */
+export {};
 
-const WS_URL = process.argv[2] || 'ws://192.168.2.9:1158';
+const WS_URL = process.argv[2] || 'ws://<redacted-lan-ip>:1158';
 
 interface WSMessage {
 	id?: number;
@@ -27,8 +28,8 @@ async function connect(): Promise<WebSocket> {
 	return new Promise((resolve, reject) => {
 		const ws = new WebSocket(WS_URL);
 		ws.onopen = () => resolve(ws);
-		ws.onerror = (e) => reject(new Error(`WS connect failed: ${e}`));
-		ws.onmessage = (msg) => {
+		ws.onerror = e => reject(new Error(`WS connect failed: ${e}`));
+		ws.onmessage = msg => {
 			const data: WSMessage = JSON.parse(msg.data as string);
 			if (data.id !== undefined && pending.has(data.id)) {
 				const p = pending.get(data.id)!;
@@ -48,7 +49,12 @@ async function call(ws: WebSocket, method: string, params: any = {}): Promise<an
 	return new Promise((resolve, reject) => {
 		pending.set(id, { resolve, reject });
 		ws.send(JSON.stringify({ id, method, ...params }));
-		setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error(`Timeout: ${method}`)); } }, 10000);
+		setTimeout(() => {
+			if (pending.has(id)) {
+				pending.delete(id);
+				reject(new Error(`Timeout: ${method}`));
+			}
+		}, 10000);
 	});
 }
 
@@ -56,13 +62,19 @@ async function subscribe(ws: WebSocket, event: string): Promise<void> {
 	await call(ws, 'events.subscribe', { event });
 }
 
-function waitForEvent(eventName: string, timeout = 5000): Promise<any> {
+export function waitForEvent(eventName: string, timeout = 5000): Promise<any> {
 	return new Promise((resolve, reject) => {
 		const start = Date.now();
 		const check = setInterval(() => {
 			const evt = eventLog.find(e => e.event === eventName && e.time > start);
-			if (evt) { clearInterval(check); resolve(evt.data); }
-			if (Date.now() - start > timeout) { clearInterval(check); reject(new Error(`Timeout waiting for ${eventName}`)); }
+			if (evt) {
+				clearInterval(check);
+				resolve(evt.data);
+			}
+			if (Date.now() - start > timeout) {
+				clearInterval(check);
+				reject(new Error(`Timeout waiting for ${eventName}`));
+			}
 		}, 100);
 	});
 }
@@ -75,8 +87,13 @@ let passed = 0;
 let failed = 0;
 
 function assert(condition: boolean, msg: string): void {
-	if (condition) { passed++; console.log(`  ✅ ${msg}`); }
-	else { failed++; console.log(`  ❌ ${msg}`); }
+	if (condition) {
+		passed++;
+		console.log(`  ✅ ${msg}`);
+	} else {
+		failed++;
+		console.log(`  ❌ ${msg}`);
+	}
 }
 
 async function run(): Promise<void> {

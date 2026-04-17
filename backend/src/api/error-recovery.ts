@@ -21,9 +21,9 @@ interface RecoveryDeps {
 /** Only these error codes trigger auto-recovery (IO-related, may self-resolve). */
 const RECOVERABLE_CODES = new Set([ErrorCodes.IO_NOT_FOUND, ErrorCodes.DISK_FULL, ErrorCodes.DIRECTORY_ACCESS_DENIED]);
 
-const FAST_DELAY = 7_000;   // IO_NOT_FOUND: 7 seconds (base)
-const SLOW_DELAY = 60_000;  // Other errors: 60 seconds (base)
-const MAX_DELAY = 300_000;  // Cap: 5 minutes
+const FAST_DELAY = 7_000; // IO_NOT_FOUND: 7 seconds (base)
+const SLOW_DELAY = 60_000; // Other errors: 60 seconds (base)
+const MAX_DELAY = 300_000; // Cap: 5 minutes
 const MAX_RECOVERY_ATTEMPTS = 5;
 
 function getDelay(errorCode: string, retryCount: number): number {
@@ -122,7 +122,9 @@ export class ErrorRecovery {
 		if (entry.errorCode === ErrorCodes.IO_NOT_FOUND) {
 			try {
 				await mkdir(lish.directory, { recursive: true });
-			} catch { /* best effort */ }
+			} catch {
+				/* best effort */
+			}
 		}
 
 		// Check if directory is accessible

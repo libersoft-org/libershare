@@ -5,7 +5,7 @@ describe('SpeedLimiter', () => {
 	let limiter: SpeedLimiter;
 
 	beforeEach(() => {
-		limiter = new SpeedLimiter();
+		limiter = new SpeedLimiter('test');
 	});
 
 	// --- Basic behavior ---

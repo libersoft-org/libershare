@@ -77,7 +77,9 @@
 	function handleTypedChar(char: string): void {
 		if (typeAheadTimeout) clearTimeout(typeAheadTimeout);
 		typeAheadBuffer += char.toLowerCase();
-		typeAheadTimeout = setTimeout(() => { typeAheadBuffer = ''; }, 800);
+		typeAheadTimeout = setTimeout(() => {
+			typeAheadBuffer = '';
+		}, 800);
 		const idx = items.findIndex(i => i.name !== '..' && i.name.toLowerCase().startsWith(typeAheadBuffer));
 		if (idx >= 0) {
 			selectedIndex = idx;
@@ -1126,9 +1128,9 @@
 							{/if}
 						</div>
 					</Table>
-				{#if typeAheadBuffer}
-					<div class="type-ahead-hint">{typeAheadBuffer}</div>
-				{/if}
+					{#if typeAheadBuffer}
+						<div class="type-ahead-hint">{typeAheadBuffer}</div>
+					{/if}
 				</div>
 				{#if showActions && selectedItem?.type === 'file'}
 					<div class="actions">

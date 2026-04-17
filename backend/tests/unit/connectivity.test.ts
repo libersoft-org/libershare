@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect } from 'bun:test';
 
 // ============================================================================
 // Integration tests — verify real connectivity endpoints respond as expected
@@ -46,7 +46,9 @@ function createChecker(broadcast: BroadcastFn) {
 	let running = false;
 
 	return {
-		get state(): CheckResult { return { online, consecutiveFailures }; },
+		get state(): CheckResult {
+			return { online, consecutiveFailures };
+		},
 		async processResult(isOnline: boolean): Promise<void> {
 			if (running) return;
 			running = true;
@@ -119,7 +121,7 @@ describe('connectivity check — recovery', () => {
 
 		await checker.processResult(false);
 		await checker.processResult(false); // → offline
-		await checker.processResult(true);  // → online
+		await checker.processResult(true); // → online
 		expect(checker.state.online).toBe(true);
 		expect(checker.state.consecutiveFailures).toBe(0);
 		expect(events).toHaveLength(2);
@@ -146,7 +148,7 @@ describe('connectivity check — counter reset', () => {
 		const checker = createChecker((event, data) => events.push({ event, data }));
 
 		await checker.processResult(false); // 1 failure
-		await checker.processResult(true);  // reset
+		await checker.processResult(true); // reset
 		expect(checker.state.consecutiveFailures).toBe(0);
 		expect(events).toHaveLength(0); // never went offline
 	});
@@ -175,7 +177,7 @@ describe('connectivity check — flapping', () => {
 
 		await checker.processResult(false);
 		await checker.processResult(false); // → offline (broadcast 1)
-		await checker.processResult(true);  // → online (broadcast 2)
+		await checker.processResult(true); // → online (broadcast 2)
 		await checker.processResult(false);
 		await checker.processResult(false); // → offline again (broadcast 3)
 
@@ -202,7 +204,6 @@ describe('connectivity check — initial state', () => {
 
 describe('connectivity check — concurrent guard', () => {
 	it('rejects concurrent processResult calls', async () => {
-		const events: any[] = [];
 		// Create checker with a slow broadcast to simulate concurrency
 		let running = false;
 		const checker = {
@@ -216,7 +217,7 @@ describe('connectivity check — concurrent guard', () => {
 				} finally {
 					running = false;
 				}
-			}
+			},
 		};
 
 		// Both should not increment twice if guard works

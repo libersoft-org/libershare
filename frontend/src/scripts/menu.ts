@@ -22,6 +22,7 @@ import LISHNetworkList from '../pages/Settings/SettingsLISHNetworkList.svelte';
 import LISHNetworkImportFile from '../pages/Settings/SettingsLISHNetworkImportFile.svelte';
 import LISHNetworkImportWeb from '../pages/Settings/SettingsLISHNetworkImportWeb.svelte';
 import LISHNetworkImportJSON from '../pages/Settings/SettingsLISHNetworkImportJSON.svelte';
+import Peers from '../pages/Peers/Peers.svelte';
 import About from '../pages/About/About.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
@@ -155,6 +156,12 @@ export const menuStructure = derived(
 						action: 'back' as const,
 					},
 				],
+			},
+			{
+				id: 'peers',
+				label: tt('peers.title'),
+				icon: '/img/network.svg',
+				component: Peers,
 			},
 			{
 				id: 'localStorage',

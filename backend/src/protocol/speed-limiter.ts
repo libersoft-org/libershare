@@ -68,5 +68,5 @@ export class SpeedLimiter {
 }
 
 // Singleton instances — shared across all peers and all LISHes.
-export const uploadLimiter = new SpeedLimiter('UL');
-export const downloadLimiter = new SpeedLimiter('DL');
+export const uploadLimiter: SpeedLimiter = new SpeedLimiter('UL');
+export const downloadLimiter: SpeedLimiter = new SpeedLimiter('DL');

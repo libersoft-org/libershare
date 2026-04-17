@@ -20,8 +20,12 @@ async function connectNodes(): Promise<void> {
 	const networkID = joinedNet.id;
 
 	// Join same network on node2 and node3
-	try { await node2.call('lishnets.join', { networkID }); } catch {}
-	try { await node3.call('lishnets.join', { networkID }); } catch {}
+	try {
+		await node2.call('lishnets.join', { networkID });
+	} catch {}
+	try {
+		await node3.call('lishnets.join', { networkID });
+	} catch {}
 
 	// Connect node2 and node3 to node1
 	await node2.call('lishnets.connect', { multiaddr });
@@ -90,21 +94,21 @@ afterAll(async () => {
 // Test 1: Basic download (node2 downloads from node1)
 // ============================================================================
 describe('Basic download', () => {
-	it('node2 starts downloading and receives progress events', async () => {
-		const progressPromise = node2.waitForEvent(
-			'transfer.download:progress',
-			(d: any) => d.lishID === LISH_ID && d.downloadedChunks > 0 && d.peers >= 1,
-			EVENT_TIMEOUT
-		);
+	it(
+		'node2 starts downloading and receives progress events',
+		async () => {
+			const progressPromise = node2.waitForEvent('transfer.download:progress', (d: any) => d.lishID === LISH_ID && d.downloadedChunks > 0 && d.peers >= 1, EVENT_TIMEOUT);
 
-		await node2.call('transfer.enableDownload', { lishID: LISH_ID });
-		const progress = await progressPromise;
+			await node2.call('transfer.enableDownload', { lishID: LISH_ID });
+			const progress = await progressPromise;
 
-		expect(progress.lishID).toBe(LISH_ID);
-		expect(progress.downloadedChunks).toBeGreaterThan(0);
-		expect(progress.totalChunks).toBeGreaterThan(0);
-		expect(progress.peers).toBeGreaterThanOrEqual(1);
-	}, EVENT_TIMEOUT + 5000);
+			expect(progress.lishID).toBe(LISH_ID);
+			expect(progress.downloadedChunks).toBeGreaterThan(0);
+			expect(progress.totalChunks).toBeGreaterThan(0);
+			expect(progress.peers).toBeGreaterThanOrEqual(1);
+		},
+		EVENT_TIMEOUT + 5000
+	);
 
 	it('progress shows realistic speed (bytesPerSecond > 0)', async () => {
 		const events = await node2.collectEvents('transfer.download:progress', 5000);
@@ -121,107 +125,103 @@ describe('Basic download', () => {
 // Test 2+3: Upload pause and resume on node1
 // ============================================================================
 describe('Upload pause/resume', () => {
-	it('pausing node1 upload stops node2 download progress (peers=0)', async () => {
-		// Ensure download is running
-		await node2.waitForEvent(
-			'transfer.download:progress',
-			(d: any) => d.lishID === LISH_ID && d.peers >= 1,
-			EVENT_TIMEOUT
-		);
+	it(
+		'pausing node1 upload stops node2 download progress (peers=0)',
+		async () => {
+			// Ensure download is running
+			await node2.waitForEvent('transfer.download:progress', (d: any) => d.lishID === LISH_ID && d.peers >= 1, EVENT_TIMEOUT);
 
-		node2.clearHistory();
+			node2.clearHistory();
 
-		// Pause upload on node1
-		await node1.call('transfer.disableUpload', { lishID: LISH_ID });
+			// Pause upload on node1
+			await node1.call('transfer.disableUpload', { lishID: LISH_ID });
 
-		// Wait for node2 to see peers=0
-		const exhausted = await node2.waitForEvent(
-			'transfer.download:progress',
-			(d: any) => d.lishID === LISH_ID && d.peers === 0,
-			EVENT_TIMEOUT
-		);
-		expect(exhausted.peers).toBe(0);
-		expect(exhausted.bytesPerSecond).toBe(0);
-	}, EVENT_TIMEOUT + 5000);
+			// Wait for node2 to see peers=0
+			const exhausted = await node2.waitForEvent('transfer.download:progress', (d: any) => d.lishID === LISH_ID && d.peers === 0, EVENT_TIMEOUT);
+			expect(exhausted.peers).toBe(0);
+			expect(exhausted.bytesPerSecond).toBe(0);
+		},
+		EVENT_TIMEOUT + 5000
+	);
 
-	it('resuming node1 upload restarts node2 download', async () => {
-		await node1.call('transfer.enableUpload', { lishID: LISH_ID });
+	it(
+		'resuming node1 upload restarts node2 download',
+		async () => {
+			await node1.call('transfer.enableUpload', { lishID: LISH_ID });
 
-		// Wait for progress with peers > 0
-		const resumed = await node2.waitForEvent(
-			'transfer.download:progress',
-			(d: any) => d.lishID === LISH_ID && d.peers >= 1 && d.bytesPerSecond > 0,
-			EVENT_TIMEOUT
-		);
-		expect(resumed.peers).toBeGreaterThanOrEqual(1);
-		expect(resumed.bytesPerSecond).toBeGreaterThan(0);
-	}, EVENT_TIMEOUT + 5000);
+			// Wait for progress with peers > 0
+			const resumed = await node2.waitForEvent('transfer.download:progress', (d: any) => d.lishID === LISH_ID && d.peers >= 1 && d.bytesPerSecond > 0, EVENT_TIMEOUT);
+			expect(resumed.peers).toBeGreaterThanOrEqual(1);
+			expect(resumed.bytesPerSecond).toBeGreaterThan(0);
+		},
+		EVENT_TIMEOUT + 5000
+	);
 });
 
 // ============================================================================
 // Test 4: Upload tracking (node1 sees upload progress)
 // ============================================================================
 describe('Upload tracking', () => {
-	it('node1 emits upload:progress when serving chunks', async () => {
-		const uploadProgress = await node1.waitForEvent(
-			'transfer.upload:progress',
-			(d: any) => d.lishID === LISH_ID && d.peers >= 1 && d.bytesPerSecond > 0,
-			EVENT_TIMEOUT
-		);
-		expect(uploadProgress.peers).toBeGreaterThanOrEqual(1);
-		expect(uploadProgress.bytesPerSecond).toBeGreaterThan(0);
-		expect(uploadProgress.uploadedChunks).toBeGreaterThan(0);
-	}, EVENT_TIMEOUT + 5000);
+	it(
+		'node1 emits upload:progress when serving chunks',
+		async () => {
+			const uploadProgress = await node1.waitForEvent('transfer.upload:progress', (d: any) => d.lishID === LISH_ID && d.peers >= 1 && d.bytesPerSecond > 0, EVENT_TIMEOUT);
+			expect(uploadProgress.peers).toBeGreaterThanOrEqual(1);
+			expect(uploadProgress.bytesPerSecond).toBeGreaterThan(0);
+			expect(uploadProgress.uploadedChunks).toBeGreaterThan(0);
+		},
+		EVENT_TIMEOUT + 5000
+	);
 });
 
 // ============================================================================
 // Test 5: Download pause/resume
 // ============================================================================
 describe('Download pause/resume', () => {
-	it('pausing download stops progress events', async () => {
-		// Ensure active
-		await node2.waitForEvent(
-			'transfer.download:progress',
-			(d: any) => d.lishID === LISH_ID && d.peers >= 1,
-			EVENT_TIMEOUT
-		);
+	it(
+		'pausing download stops progress events',
+		async () => {
+			// Ensure active
+			await node2.waitForEvent('transfer.download:progress', (d: any) => d.lishID === LISH_ID && d.peers >= 1, EVENT_TIMEOUT);
 
-		await node2.call('transfer.disableDownload', { lishID: LISH_ID });
+			await node2.call('transfer.disableDownload', { lishID: LISH_ID });
 
-		// Verify: no progress events for 3 seconds
-		const events = await node2.collectEvents('transfer.download:progress', 3000);
-		const forLISH = events.filter((e: any) => e.lishID === LISH_ID && e.peers > 0);
-		expect(forLISH.length).toBe(0);
-	}, EVENT_TIMEOUT + 10000);
+			// Verify: no progress events for 3 seconds
+			const events = await node2.collectEvents('transfer.download:progress', 3000);
+			const forLISH = events.filter((e: any) => e.lishID === LISH_ID && e.peers > 0);
+			expect(forLISH.length).toBe(0);
+		},
+		EVENT_TIMEOUT + 10000
+	);
 
-	it('resuming download restarts progress', async () => {
-		await node2.call('transfer.enableDownload', { lishID: LISH_ID });
+	it(
+		'resuming download restarts progress',
+		async () => {
+			await node2.call('transfer.enableDownload', { lishID: LISH_ID });
 
-		const progress = await node2.waitForEvent(
-			'transfer.download:progress',
-			(d: any) => d.lishID === LISH_ID && d.peers >= 1,
-			EVENT_TIMEOUT
-		);
-		expect(progress.peers).toBeGreaterThanOrEqual(1);
-	}, EVENT_TIMEOUT + 5000);
+			const progress = await node2.waitForEvent('transfer.download:progress', (d: any) => d.lishID === LISH_ID && d.peers >= 1, EVENT_TIMEOUT);
+			expect(progress.peers).toBeGreaterThanOrEqual(1);
+		},
+		EVENT_TIMEOUT + 5000
+	);
 });
 
 // ============================================================================
 // Test 6: getActiveTransfers state
 // ============================================================================
 describe('getActiveTransfers', () => {
-	it('returns correct state for active download', async () => {
-		// Ensure download active
-		await node2.waitForEvent(
-			'transfer.download:progress',
-			(d: any) => d.lishID === LISH_ID && d.peers >= 1,
-			EVENT_TIMEOUT
-		);
+	it(
+		'returns correct state for active download',
+		async () => {
+			// Ensure download active
+			await node2.waitForEvent('transfer.download:progress', (d: any) => d.lishID === LISH_ID && d.peers >= 1, EVENT_TIMEOUT);
 
-		const transfers = await node2.call('transfer.getActiveTransfers', {});
-		const dl = transfers.find((t: any) => t.lishID === LISH_ID && t.type === 'downloading');
-		expect(dl).toBeDefined();
-	}, EVENT_TIMEOUT + 5000);
+			const transfers = await node2.call('transfer.getActiveTransfers', {});
+			const dl = transfers.find((t: any) => t.lishID === LISH_ID && t.type === 'downloading');
+			expect(dl).toBeDefined();
+		},
+		EVENT_TIMEOUT + 5000
+	);
 
 	it('returns upload-disabled after disableUpload', async () => {
 		await node1.call('transfer.disableUpload', { lishID: LISH_ID });
@@ -240,19 +240,19 @@ describe('getActiveTransfers', () => {
 // Test 7: Node3 downloads from node1
 // ============================================================================
 describe('Multi-node download', () => {
-	it('node3 starts downloading and receives progress', async () => {
-		const progressPromise = node3.waitForEvent(
-			'transfer.download:progress',
-			(d: any) => d.lishID === LISH_ID && d.downloadedChunks > 0 && d.peers >= 1,
-			EVENT_TIMEOUT
-		);
+	it(
+		'node3 starts downloading and receives progress',
+		async () => {
+			const progressPromise = node3.waitForEvent('transfer.download:progress', (d: any) => d.lishID === LISH_ID && d.downloadedChunks > 0 && d.peers >= 1, EVENT_TIMEOUT);
 
-		await node3.call('transfer.enableDownload', { lishID: LISH_ID });
-		const progress = await progressPromise;
+			await node3.call('transfer.enableDownload', { lishID: LISH_ID });
+			const progress = await progressPromise;
 
-		expect(progress.peers).toBeGreaterThanOrEqual(1);
-		expect(progress.downloadedChunks).toBeGreaterThan(0);
-	}, EVENT_TIMEOUT + 5000);
+			expect(progress.peers).toBeGreaterThanOrEqual(1);
+			expect(progress.downloadedChunks).toBeGreaterThan(0);
+		},
+		EVENT_TIMEOUT + 5000
+	);
 });
 
 // ============================================================================
@@ -283,7 +283,7 @@ describe('Peer exchange', () => {
 		const chunks3after = list3after.items?.find((i: any) => i.id === LISH_ID)?.verifiedChunks ?? 0;
 
 		// At least one should have gained chunks from the other
-		const gained = (chunks2after - chunks2before) + (chunks3after - chunks3before);
+		const gained = chunks2after - chunks2before + (chunks3after - chunks3before);
 		expect(gained).toBeGreaterThan(0);
 
 		// Resume node1 for cleanup
@@ -297,11 +297,7 @@ describe('Peer exchange', () => {
 describe('Upload state cleanup', () => {
 	it('upload peers reset to 0 after peer disconnects', async () => {
 		// Ensure node1 is uploading
-		await node1.waitForEvent(
-			'transfer.upload:progress',
-			(d: any) => d.lishID === LISH_ID && d.peers >= 1,
-			EVENT_TIMEOUT
-		);
+		await node1.waitForEvent('transfer.upload:progress', (d: any) => d.lishID === LISH_ID && d.peers >= 1, EVENT_TIMEOUT);
 
 		// Pause download on node2 (simulates disconnect)
 		await node2.call('transfer.disableDownload', { lishID: LISH_ID });
@@ -339,7 +335,6 @@ describe('Speed calculation', () => {
 
 		if (speeds.length >= 3) {
 			// Speed should not be constant — rolling window produces variation
-			const min = Math.min(...speeds);
 			const max = Math.max(...speeds);
 			// Allow some variation (at least 10% difference between min and max)
 			// This is a soft check — on very stable connections it might be nearly constant

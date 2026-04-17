@@ -1,15 +1,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
-import {
-	disableUpload,
-	enableUpload,
-	isUploadDisabled,
-	getEnabledUploads,
-	getActiveUploads,
-	setUploadBroadcast,
-	setMaxUploadSpeed,
-	resetUploadState,
-	type LISHResponse,
-} from '../../../src/protocol/lish-protocol.ts';
+import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
+import { encode as codecEncode, decode as codecDecode } from '../../../src/protocol/codec.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -280,124 +271,75 @@ describe('lish-protocol – upload state', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Base64 chunk encoding (per LISH protocol spec)
+// Msgpack chunk encoding (LISH protocol /lish/0.0.2)
 // ---------------------------------------------------------------------------
 
-describe('lish-protocol – base64 chunk encoding', () => {
+describe('lish-protocol – msgpack chunk encoding', () => {
+	// --- LISHGetChunkResponse type conformance ---
 
-	// --- LISHResponse type conformance ---
-
-	it('LISHResponse.data is string|null (base64), not number[]', () => {
-		const response: LISHResponse = { data: 'AQID' }; // base64 for [1,2,3]
-		expect(typeof response.data).toBe('string');
+	it('LISHGetChunkResponse.data is Uint8Array (raw binary), not string', () => {
+		const response: LISHGetChunkResponse = { data: new Uint8Array([1, 2, 3]) };
+		expect('data' in response && response.data instanceof Uint8Array).toBe(true);
 	});
 
-	it('LISHResponse.data null represents missing chunk', () => {
-		const response: LISHResponse = { data: null };
-		expect(response.data).toBeNull();
+	it('LISHGetChunkResponse error variant represents missing chunk / failure', () => {
+		const response: LISHGetChunkResponse = { error: 'PEER_CHUNK_NOT_FOUND' };
+		expect('error' in response && response.error).toBe('PEER_CHUNK_NOT_FOUND');
 	});
 
-	// --- Encode/decode roundtrip ---
+	// --- Encode/decode roundtrip via codec ---
 
-	it('roundtrip: 1MB chunk survives base64 encode → JSON → parse → decode', () => {
+	it('roundtrip: 1MB chunk survives msgpack encode → decode', () => {
 		const original = new Uint8Array(1024 * 1024);
 		for (let i = 0; i < original.length; i++) original[i] = i % 256;
 
-		// Server side: encode
-		const response: LISHResponse = { data: Buffer.from(original).toString('base64') };
-		const json = JSON.stringify(response);
+		const response: LISHGetChunkResponse = { data: original };
+		const wire = codecEncode(response);
+		const parsed = codecDecode<LISHGetChunkResponse>(wire);
 
-		// Client side: decode
-		const parsed: LISHResponse = JSON.parse(json);
-		const decoded = new Uint8Array(Buffer.from(parsed.data!, 'base64'));
-
-		expect(decoded.length).toBe(original.length);
-		expect(decoded).toEqual(original);
+		if (!('data' in parsed)) throw new Error('expected data variant');
+		expect(parsed.data).toBeInstanceOf(Uint8Array);
+		expect(parsed.data.length).toBe(original.length);
+		expect(parsed.data).toEqual(original);
 	});
 
 	it('roundtrip: small chunk (3 bytes)', () => {
-		const original = new Uint8Array([0xDE, 0xAD, 0xBE]);
-		const b64 = Buffer.from(original).toString('base64');
-		const decoded = new Uint8Array(Buffer.from(b64, 'base64'));
-		expect(decoded).toEqual(original);
+		const original = new Uint8Array([0xde, 0xad, 0xbe]);
+		const parsed = codecDecode<LISHGetChunkResponse>(codecEncode({ data: original }));
+		if (!('data' in parsed)) throw new Error('expected data variant');
+		expect(parsed.data).toEqual(original);
 	});
 
 	it('roundtrip: empty chunk (0 bytes)', () => {
 		const original = new Uint8Array(0);
-		const b64 = Buffer.from(original).toString('base64');
-		expect(b64).toBe('');
-		const decoded = new Uint8Array(Buffer.from(b64, 'base64'));
-		expect(decoded.length).toBe(0);
+		const parsed = codecDecode<LISHGetChunkResponse>(codecEncode({ data: original }));
+		if (!('data' in parsed)) throw new Error('expected data variant');
+		expect(parsed.data.length).toBe(0);
 	});
 
 	it('roundtrip: all possible byte values (0-255)', () => {
 		const original = new Uint8Array(256);
 		for (let i = 0; i < 256; i++) original[i] = i;
-		const b64 = Buffer.from(original).toString('base64');
-		const decoded = new Uint8Array(Buffer.from(b64, 'base64'));
-		expect(decoded).toEqual(original);
+		const parsed = codecDecode<LISHGetChunkResponse>(codecEncode({ data: original }));
+		if (!('data' in parsed)) throw new Error('expected data variant');
+		expect(parsed.data).toEqual(original);
 	});
 
-	// --- Performance vs old Array.from() ---
+	// --- Size: msgpack should be ~1:1 with raw bytes (tiny header overhead) ---
 
-	it('base64 encode is faster than Array.from for 1MB', () => {
+	it('msgpack wire size is close to raw chunk size for 1MB (no base64 bloat)', () => {
 		const data = new Uint8Array(1024 * 1024);
 		for (let i = 0; i < data.length; i++) data[i] = i % 256;
 
-		const t1 = Date.now();
-		for (let i = 0; i < 10; i++) Buffer.from(data).toString('base64');
-		const b64Time = Date.now() - t1;
-
-		const t2 = Date.now();
-		for (let i = 0; i < 10; i++) Array.from(data);
-		const arrayTime = Date.now() - t2;
-
-		// base64 should be significantly faster
-		expect(b64Time).toBeLessThan(arrayTime);
+		const wire = codecEncode({ data });
+		// msgpack: ~1MB + small header (a few dozen bytes); base64 JSON would be ~1.4MB
+		expect(wire.byteLength).toBeLessThan(1024 * 1024 + 1024);
+		expect(wire.byteLength).toBeGreaterThanOrEqual(1024 * 1024);
 	});
 
-	it('base64 full roundtrip (encode+JSON+parse+decode) is faster than Array.from roundtrip for 1MB', () => {
-		const data = new Uint8Array(1024 * 1024);
-		for (let i = 0; i < data.length; i++) data[i] = i % 256;
+	// --- Integrity: msgpack chunk + SHA256 verification ---
 
-		const t1 = Date.now();
-		for (let i = 0; i < 5; i++) {
-			const json = JSON.stringify({ data: Buffer.from(data).toString('base64') });
-			const parsed = JSON.parse(json);
-			Buffer.from(parsed.data, 'base64');
-		}
-		const b64Time = Date.now() - t1;
-
-		const t2 = Date.now();
-		for (let i = 0; i < 5; i++) {
-			const json = JSON.stringify({ data: Array.from(data) });
-			const parsed = JSON.parse(json);
-			new Uint8Array(parsed.data);
-		}
-		const arrayTime = Date.now() - t2;
-
-		// Full roundtrip: base64 should be significantly faster
-		expect(b64Time).toBeLessThan(arrayTime);
-	});
-
-	// --- Size comparison ---
-
-	it('base64 JSON is smaller than Array.from JSON for 1MB', () => {
-		const data = new Uint8Array(1024 * 1024);
-		for (let i = 0; i < data.length; i++) data[i] = i % 256;
-
-		const b64Json = JSON.stringify({ data: Buffer.from(data).toString('base64') });
-		const arrayJson = JSON.stringify({ data: Array.from(data) });
-
-		// base64: ~1.33MB, Array.from: ~3.57MB
-		expect(b64Json.length).toBeLessThan(arrayJson.length);
-		expect(b64Json.length).toBeLessThan(1.5 * 1024 * 1024); // under 1.5MB
-		expect(arrayJson.length).toBeGreaterThan(3 * 1024 * 1024); // over 3MB
-	});
-
-	// --- Integrity: base64 chunk + SHA256 verification ---
-
-	it('base64 roundtrip preserves SHA256 hash', () => {
+	it('msgpack roundtrip preserves SHA256 hash', () => {
 		const data = new Uint8Array(4096);
 		for (let i = 0; i < data.length; i++) data[i] = (i * 13 + 7) % 256;
 
@@ -405,35 +347,20 @@ describe('lish-protocol – base64 chunk encoding', () => {
 		originalHash.update(data);
 		const expectedHash = originalHash.digest('hex');
 
-		// Encode → JSON → decode
-		const b64 = Buffer.from(data).toString('base64');
-		const decoded = new Uint8Array(Buffer.from(b64, 'base64'));
+		const parsed = codecDecode<LISHGetChunkResponse>(codecEncode({ data }));
+		if (!('data' in parsed)) throw new Error('expected data variant');
 
 		const decodedHash = new Bun.CryptoHasher('sha256');
-		decodedHash.update(decoded);
+		decodedHash.update(parsed.data);
 		const actualHash = decodedHash.digest('hex');
 
 		expect(actualHash).toBe(expectedHash);
 	});
 
-	// --- Edge: JSON serialization correctness ---
-
-	it('base64 string does not contain characters that break JSON', () => {
-		// base64 alphabet: A-Z, a-z, 0-9, +, /, = — all JSON-safe
-		const data = new Uint8Array(1024);
-		for (let i = 0; i < data.length; i++) data[i] = i % 256;
-		const b64 = Buffer.from(data).toString('base64');
-
-		// Verify it survives JSON roundtrip
-		const json = JSON.stringify({ data: b64 });
-		const parsed = JSON.parse(json);
-		expect(parsed.data).toBe(b64);
-	});
-
-	it('null response serializes correctly in JSON', () => {
-		const response: LISHResponse = { data: null };
-		const json = JSON.stringify(response);
-		const parsed: LISHResponse = JSON.parse(json);
-		expect(parsed.data).toBeNull();
+	it('error response serializes correctly through codec', () => {
+		const response: LISHGetChunkResponse = { error: 'PEER_CHUNK_NOT_FOUND' };
+		const parsed = codecDecode<LISHGetChunkResponse>(codecEncode(response));
+		if (!('error' in parsed)) throw new Error('expected error variant');
+		expect(parsed.error).toBe('PEER_CHUNK_NOT_FOUND');
 	});
 });

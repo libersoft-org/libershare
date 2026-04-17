@@ -7,6 +7,8 @@ import { openDatabase } from './db/database.ts';
 import { APIServer } from './api/api.ts';
 import { Settings } from './settings.ts';
 import { setWorkerUrl } from './lish/lish.ts';
+import { startMemoryTrace } from './monitoring/memory-trace.ts';
+import { startHeapSnapshotTrigger } from './monitoring/heap-snapshot.ts';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -93,6 +95,16 @@ setUploadBroadcast((event, data) => apiServer.broadcastEvent(event, data));
 // Periodic internet connectivity check
 import { startConnectivityCheck } from './connectivity.ts';
 const stopConnectivityCheck = startConnectivityCheck((event, data) => apiServer.broadcastEvent(event, data));
+
+// Memory profiling: JSONL log RSS/heap/internal sizes. LIBERSHARE_MEMTRACE=0 disables.
+if (process.env['LIBERSHARE_MEMTRACE'] !== '0') {
+	const intervalMs = Number(process.env['LIBERSHARE_MEMTRACE_INTERVAL_MS'] ?? 30_000);
+	const tracePath = process.env['LIBERSHARE_MEMTRACE_FILE'] ?? join(dataDir, 'memory-trace.jsonl');
+	startMemoryTrace({ filePath: tracePath, intervalMs, stdout: true });
+}
+
+// Heap snapshot on-demand: touch <dataDir>/trigger-heap OR kill -USR2 <pid>
+if (process.env['LIBERSHARE_HEAP_TRIGGER'] !== '0') startHeapSnapshotTrigger(dataDir);
 
 async function shutdown(): Promise<void> {
 	console.log('Shutting down...');

@@ -2,7 +2,9 @@ import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-function lishTopic(networkID: string): string { return `lish/${networkID}`; }
+function lishTopic(networkID: string): string {
+	return `lish/${networkID}`;
+}
 
 const NETWORK_TS = readFileSync(join(__dirname, '../../../src/protocol/network.ts'), 'utf-8');
 const CONFIG_TS = readFileSync(join(__dirname, '../../../src/protocol/network-config.ts'), 'utf-8');
@@ -107,20 +109,14 @@ describe('lishTopic helper', () => {
 
 describe('subscribeTopic — peer count scheduling', () => {
 	it('schedules 3 delayed peer count checks after subscribe', () => {
-		const subscribeBlock = NETWORK_TS.slice(
-			NETWORK_TS.indexOf('subscribeTopic(networkID: string)'),
-			NETWORK_TS.indexOf('unsubscribeHandler'),
-		);
+		const subscribeBlock = NETWORK_TS.slice(NETWORK_TS.indexOf('subscribeTopic(networkID: string)'), NETWORK_TS.indexOf('unsubscribeHandler'));
 		const matches = subscribeBlock.match(/setTimeout\(\(\) => this\.schedulePeerCountCheck\(\)/g);
 		expect(matches).not.toBeNull();
 		expect(matches!.length).toBe(3);
 	});
 
 	it('uses delays 2s, 5s, 15s for mesh rebuild', () => {
-		const subscribeBlock = NETWORK_TS.slice(
-			NETWORK_TS.indexOf('subscribeTopic(networkID: string)'),
-			NETWORK_TS.indexOf('unsubscribeHandler'),
-		);
+		const subscribeBlock = NETWORK_TS.slice(NETWORK_TS.indexOf('subscribeTopic(networkID: string)'), NETWORK_TS.indexOf('unsubscribeHandler'));
 		expect(subscribeBlock).toContain('2000');
 		expect(subscribeBlock).toContain('5000');
 		expect(subscribeBlock).toContain('15000');
@@ -129,10 +125,7 @@ describe('subscribeTopic — peer count scheduling', () => {
 
 describe('unsubscribeTopic — peer count scheduling', () => {
 	it('calls schedulePeerCountCheck immediately', () => {
-		const unsubBlock = NETWORK_TS.slice(
-			NETWORK_TS.indexOf('unsubscribeTopic(networkID: string)'),
-			NETWORK_TS.indexOf('getTopicPeers'),
-		);
+		const unsubBlock = NETWORK_TS.slice(NETWORK_TS.indexOf('unsubscribeTopic(networkID: string)'), NETWORK_TS.indexOf('getTopicPeers'));
 		expect(unsubBlock).toContain('this.schedulePeerCountCheck()');
 	});
 });
@@ -161,11 +154,7 @@ describe('statusInterval — periodic peer count refresh', () => {
 // ---------------------------------------------------------------------------
 
 describe('checkPeerCounts logic', () => {
-	function checkPeerCountsLogic(
-		topics: string[],
-		getSubscribers: (topic: string) => string[],
-		lastCounts: Map<string, number>,
-	): { changed: boolean; counts: { networkID: string; count: number }[] } {
+	function checkPeerCountsLogic(topics: string[], getSubscribers: (topic: string) => string[], lastCounts: Map<string, number>): { changed: boolean; counts: { networkID: string; count: number }[] } {
 		const prefix = 'lish/';
 		let changed = false;
 		const counts: { networkID: string; count: number }[] = [];
@@ -173,7 +162,9 @@ describe('checkPeerCounts logic', () => {
 			if (!topic.startsWith(prefix)) continue;
 			const networkID = topic.slice(prefix.length);
 			let count = 0;
-			try { count = getSubscribers(topic).length; } catch {}
+			try {
+				count = getSubscribers(topic).length;
+			} catch {}
 			const prev = lastCounts.get(networkID) ?? -1;
 			if (count !== prev) changed = true;
 			lastCounts.set(networkID, count);
@@ -191,11 +182,7 @@ describe('checkPeerCounts logic', () => {
 
 	it('detects new subscribers on a topic', () => {
 		const lastCounts = new Map<string, number>();
-		const result = checkPeerCountsLogic(
-			['lish/net1', 'lish/net2'],
-			(topic) => topic === 'lish/net1' ? ['peerA'] : ['peerA', 'peerB'],
-			lastCounts,
-		);
+		const result = checkPeerCountsLogic(['lish/net1', 'lish/net2'], topic => (topic === 'lish/net1' ? ['peerA'] : ['peerA', 'peerB']), lastCounts);
 		expect(result.changed).toBe(true);
 		expect(result.counts).toEqual([
 			{ networkID: 'net1', count: 1 },
@@ -204,55 +191,41 @@ describe('checkPeerCounts logic', () => {
 	});
 
 	it('reports no change when counts are same', () => {
-		const lastCounts = new Map<string, number>([['net1', 1], ['net2', 2]]);
-		const result = checkPeerCountsLogic(
-			['lish/net1', 'lish/net2'],
-			(topic) => topic === 'lish/net1' ? ['peerA'] : ['peerA', 'peerB'],
-			lastCounts,
-		);
+		const lastCounts = new Map<string, number>([
+			['net1', 1],
+			['net2', 2],
+		]);
+		const result = checkPeerCountsLogic(['lish/net1', 'lish/net2'], topic => (topic === 'lish/net1' ? ['peerA'] : ['peerA', 'peerB']), lastCounts);
 		expect(result.changed).toBe(false);
 	});
 
 	it('detects count increase', () => {
 		const lastCounts = new Map<string, number>([['net1', 1]]);
-		const result = checkPeerCountsLogic(
-			['lish/net1'],
-			() => ['peerA', 'peerB', 'peerC'],
-			lastCounts,
-		);
+		const result = checkPeerCountsLogic(['lish/net1'], () => ['peerA', 'peerB', 'peerC'], lastCounts);
 		expect(result.changed).toBe(true);
 		expect(result.counts[0]!.count).toBe(3);
 	});
 
 	it('detects count decrease', () => {
 		const lastCounts = new Map<string, number>([['net1', 3]]);
-		const result = checkPeerCountsLogic(
-			['lish/net1'],
-			() => ['peerA'],
-			lastCounts,
-		);
+		const result = checkPeerCountsLogic(['lish/net1'], () => ['peerA'], lastCounts);
 		expect(result.changed).toBe(true);
 		expect(result.counts[0]!.count).toBe(1);
 	});
 
 	it('detects count going to zero', () => {
 		const lastCounts = new Map<string, number>([['net1', 2]]);
-		const result = checkPeerCountsLogic(
-			['lish/net1'],
-			() => [],
-			lastCounts,
-		);
+		const result = checkPeerCountsLogic(['lish/net1'], () => [], lastCounts);
 		expect(result.changed).toBe(true);
 		expect(result.counts[0]!.count).toBe(0);
 	});
 
 	it('detects removed topic', () => {
-		const lastCounts = new Map<string, number>([['net1', 1], ['net2', 2]]);
-		const result = checkPeerCountsLogic(
-			['lish/net1'],
-			() => ['peerA'],
-			lastCounts,
-		);
+		const lastCounts = new Map<string, number>([
+			['net1', 1],
+			['net2', 2],
+		]);
+		const result = checkPeerCountsLogic(['lish/net1'], () => ['peerA'], lastCounts);
 		expect(result.changed).toBe(true);
 		expect(result.counts.length).toBe(1);
 		expect(lastCounts.has('net2')).toBe(false);
@@ -260,11 +233,7 @@ describe('checkPeerCounts logic', () => {
 
 	it('ignores non-lish topics', () => {
 		const lastCounts = new Map<string, number>();
-		const result = checkPeerCountsLogic(
-			['pink', 'ponk', 'lish/net1'],
-			(topic) => topic === 'lish/net1' ? ['peerA'] : ['shouldBeIgnored'],
-			lastCounts,
-		);
+		const result = checkPeerCountsLogic(['pink', 'ponk', 'lish/net1'], topic => (topic === 'lish/net1' ? ['peerA'] : ['shouldBeIgnored']), lastCounts);
 		expect(result.counts.length).toBe(1);
 		expect(result.counts[0]!.networkID).toBe('net1');
 	});
@@ -273,8 +242,10 @@ describe('checkPeerCounts logic', () => {
 		const lastCounts = new Map<string, number>();
 		const result = checkPeerCountsLogic(
 			['lish/net1'],
-			() => { throw new Error('not subscribed'); },
-			lastCounts,
+			() => {
+				throw new Error('not subscribed');
+			},
+			lastCounts
 		);
 		expect(result.changed).toBe(true);
 		expect(result.counts[0]!.count).toBe(0);
@@ -282,24 +253,24 @@ describe('checkPeerCounts logic', () => {
 
 	it('first call always reports changed (from -1 sentinel)', () => {
 		const lastCounts = new Map<string, number>();
-		const result = checkPeerCountsLogic(
-			['lish/net1'],
-			() => [],
-			lastCounts,
-		);
+		const result = checkPeerCountsLogic(['lish/net1'], () => [], lastCounts);
 		expect(result.changed).toBe(true);
 	});
 
 	it('handles multiple topics with mixed changes', () => {
-		const lastCounts = new Map<string, number>([['net1', 1], ['net2', 2], ['net3', 0]]);
+		const lastCounts = new Map<string, number>([
+			['net1', 1],
+			['net2', 2],
+			['net3', 0],
+		]);
 		const result = checkPeerCountsLogic(
 			['lish/net1', 'lish/net2', 'lish/net3'],
-			(topic) => {
+			topic => {
 				if (topic === 'lish/net1') return ['peerA'];
 				if (topic === 'lish/net2') return ['peerA', 'peerB', 'peerC'];
 				return [];
 			},
-			lastCounts,
+			lastCounts
 		);
 		expect(result.changed).toBe(true);
 		expect(result.counts.find(c => c.networkID === 'net2')!.count).toBe(3);

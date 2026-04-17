@@ -48,6 +48,34 @@ export interface PeerConnectionInfo {
 	relay: number;
 }
 
+export interface PeerListEntry {
+	peerID: string;
+	networks: Array<{ networkID: string; networkName: string }>;
+	direct: number;
+	relay: number;
+}
+
+export interface PeerLishEntry {
+	id: string;
+	name?: string | undefined;
+}
+
+// LISH detail for peer preview (no checksums, no chunks)
+export interface IPeerLishDetail {
+	id: string;
+	name?: string | undefined;
+	description?: string | undefined;
+	created: string;
+	chunkSize: number;
+	checksumAlgo: import('./lish.ts').HashAlgorithm;
+	totalSize: number;
+	fileCount: number;
+	directoryCount: number;
+	files: Array<{ path: string; size: number; permissions?: string; modified?: string; created?: string }>;
+	directories: import('./lish.ts').IDirectoryEntry[];
+	links: import('./lish.ts').ILinkEntry[];
+}
+
 // LISH Network definition (pure network parameters)
 export interface LISHNetworkDefinition {
 	networkID: string;
@@ -101,6 +129,7 @@ export interface FsEntry {
 export interface FsListResult {
 	path: string;
 	entries: FsEntry[];
+	error?: string | undefined;
 }
 
 // API response wrappers

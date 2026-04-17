@@ -25,12 +25,41 @@ export function initLISHsTables(db: Database): void {
 	`);
 
 	// Migration: add columns to existing databases
-	try { db.run('ALTER TABLE lishs ADD COLUMN upload_enabled BOOL NOT NULL DEFAULT FALSE'); } catch { /* already exists */ }
-	try { db.run('ALTER TABLE lishs ADD COLUMN download_enabled BOOL NOT NULL DEFAULT FALSE'); } catch { /* already exists */ }
-	try { db.run('ALTER TABLE lishs ADD COLUMN total_uploaded_bytes INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
-	try { db.run('ALTER TABLE lishs ADD COLUMN total_downloaded_bytes INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
-	try { db.run('ALTER TABLE lishs ADD COLUMN error_code TEXT DEFAULT NULL'); } catch { /* already exists */ }
-	try { db.run('ALTER TABLE lishs ADD COLUMN error_detail TEXT DEFAULT NULL'); } catch { /* already exists */ }
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN upload_enabled BOOL NOT NULL DEFAULT FALSE');
+	} catch {
+		/* already exists */
+	}
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN download_enabled BOOL NOT NULL DEFAULT FALSE');
+	} catch {
+		/* already exists */
+	}
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN total_uploaded_bytes INTEGER NOT NULL DEFAULT 0');
+	} catch {
+		/* already exists */
+	}
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN total_downloaded_bytes INTEGER NOT NULL DEFAULT 0');
+	} catch {
+		/* already exists */
+	}
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN error_code TEXT DEFAULT NULL');
+	} catch {
+		/* already exists */
+	}
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN error_detail TEXT DEFAULT NULL');
+	} catch {
+		/* already exists */
+	}
+	try {
+		db.run('ALTER TABLE lishs ADD COLUMN final_directory TEXT DEFAULT NULL');
+	} catch {
+		/* already exists */
+	}
 
 	db.run(`
 		CREATE TABLE IF NOT EXISTS lishs_files (
@@ -99,16 +128,17 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 	const tx = db.transaction(() => {
 		// Upsert main record — preserves upload_enabled/download_enabled on conflict
 		db.run(
-			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(lish_id) DO UPDATE SET
 			   name = excluded.name,
 			   description = excluded.description,
 			   created = excluded.created,
 			   chunk_size = excluded.chunk_size,
 			   checksum_algo = excluded.checksum_algo,
-			   directory = excluded.directory`,
-			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null]
+			   directory = excluded.directory,
+			   final_directory = excluded.final_directory`,
+			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null, lish.finalDirectory ?? null]
 		);
 		const internalID = getInternalID(db, lish.id as LISHid)!;
 
@@ -162,8 +192,13 @@ export function updateLISHDirectory(db: Database, lishID: LISHid, directory: str
 	return result.changes > 0;
 }
 
+export function updateLISHFinalDirectory(db: Database, lishID: LISHid, finalDirectory: string | null): boolean {
+	const result = db.run('UPDATE lishs SET final_directory = ? WHERE lish_id = ?', [finalDirectory, lishID]);
+	return result.changes > 0;
+}
+
 export function getLISH(db: Database, lishID: LISHid): IStoredLISH | null {
-	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory FROM lishs WHERE lish_id = ?').get(lishID);
+	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
 	return buildStoredLISH(db, row);
 }
@@ -307,12 +342,12 @@ export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null 
 }
 
 export function listAllStoredLISHs(db: Database): IStoredLISH[] {
-	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory FROM lishs ORDER BY added ASC').all();
+	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory FROM lishs ORDER BY added ASC').all();
 	return rows.map(r => buildStoredLISH(db, r));
 }
 
 export function getDatasets(db: Database): IStoredLISH[] {
-	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory FROM lishs WHERE directory IS NOT NULL ORDER BY added ASC').all();
+	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory FROM lishs WHERE directory IS NOT NULL ORDER BY added ASC').all();
 	return rows.map(r => buildStoredLISH(db, r));
 }
 
@@ -545,6 +580,7 @@ interface LISHRow {
 	chunk_size: number;
 	checksum_algo: string;
 	directory: string | null;
+	final_directory: string | null;
 }
 
 function buildStoredLISH(db: Database, row: LISHRow): IStoredLISH {
@@ -561,6 +597,7 @@ function buildStoredLISH(db: Database, row: LISHRow): IStoredLISH {
 		chunkSize: row.chunk_size,
 		checksumAlgo: row.checksum_algo as HashAlgorithm,
 		...(row.directory != null ? { directory: row.directory } : {}),
+		...(row.final_directory != null ? { finalDirectory: row.final_directory } : {}),
 		...(files.length > 0 ? { files } : {}),
 		...(directories.length > 0 ? { directories } : {}),
 		...(links.length > 0 ? { links } : {}),
@@ -641,13 +678,19 @@ export function setDownloadEnabled(db: Database, lishID: LISHid, enabled: boolea
 
 export function getUploadEnabledLishs(db: Database): Set<string> {
 	return new Set(
-		db.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE upload_enabled = TRUE').all().map(r => r.lish_id)
+		db
+			.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE upload_enabled = TRUE')
+			.all()
+			.map(r => r.lish_id)
 	);
 }
 
 export function getDownloadEnabledLishs(db: Database): Set<string> {
 	return new Set(
-		db.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE download_enabled = TRUE').all().map(r => r.lish_id)
+		db
+			.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE download_enabled = TRUE')
+			.all()
+			.map(r => r.lish_id)
 	);
 }
 
@@ -662,9 +705,7 @@ export function incrementDownloadedBytes(db: Database, lishID: LISHid, bytes: nu
 }
 
 export function getTransferStats(db: Database, lishID: LISHid): { uploadedBytes: number; downloadedBytes: number } {
-	const row = db.query<{ total_uploaded_bytes: number; total_downloaded_bytes: number }, [string]>(
-		'SELECT total_uploaded_bytes, total_downloaded_bytes FROM lishs WHERE lish_id = ?'
-	).get(lishID);
+	const row = db.query<{ total_uploaded_bytes: number; total_downloaded_bytes: number }, [string]>('SELECT total_uploaded_bytes, total_downloaded_bytes FROM lishs WHERE lish_id = ?').get(lishID);
 	return { uploadedBytes: row?.total_uploaded_bytes ?? 0, downloadedBytes: row?.total_downloaded_bytes ?? 0 };
 }
 

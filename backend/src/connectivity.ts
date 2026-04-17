@@ -12,11 +12,11 @@ interface ConnectivityTarget {
 const TARGETS: ConnectivityTarget[] = [
 	{
 		url: 'http://connectivitycheck.gstatic.com/generate_204',
-		validate: async (r) => r.status === 204,
+		validate: async r => r.status === 204,
 	},
 	{
 		url: 'http://www.msftconnecttest.com/connecttest.txt',
-		validate: async (r) => r.ok && (await r.text()).includes('Microsoft Connect Test'),
+		validate: async r => r.ok && (await r.text()).includes('Microsoft Connect Test'),
 	},
 ];
 

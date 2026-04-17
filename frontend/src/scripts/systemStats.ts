@@ -11,14 +11,14 @@ export async function initSystemStats(): Promise<void> {
 	if (!handlersRegistered) {
 		handlersRegistered = true;
 		api.on('system:ram', (data: SystemRAMInfo) => {
-		ramInfo.set(data);
-	});
-	api.on('system:storage', (data: SystemStorageInfo) => {
-		storageInfo.set(data);
-	});
-	api.on('system:cpu', (data: SystemCPUInfo) => {
-		cpuInfo.set(data);
-	});
+			ramInfo.set(data);
+		});
+		api.on('system:storage', (data: SystemStorageInfo) => {
+			storageInfo.set(data);
+		});
+		api.on('system:cpu', (data: SystemCPUInfo) => {
+			cpuInfo.set(data);
+		});
 	}
 	api.subscribe('system:ram');
 	api.subscribe('system:storage');

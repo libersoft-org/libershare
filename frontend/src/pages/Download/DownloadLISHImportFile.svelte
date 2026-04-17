@@ -31,7 +31,7 @@
 	let uploadMode = $state(!$localFilesystem);
 	let uploadFileName = $state('');
 	let uploadContent = $state('');
-	let fileInput: HTMLInputElement;
+	let fileInput = $state<HTMLInputElement>();
 	let downloadPath = $state($storagePath);
 	let autoStart = $state($autoStartSharing);
 	let autoStartDl = $state($autoStartDownloading);
@@ -40,7 +40,9 @@
 	let browsingDownloadPath = $state(false);
 	let parsedLISHs = $state<ILISH[] | null>(null);
 
-	function openFilePicker(): void { fileInput?.click(); }
+	function openFilePicker(): void {
+		fileInput?.click();
+	}
 
 	async function handleFileSelected(e: Event): Promise<void> {
 		const input = e.target as HTMLInputElement;
@@ -80,9 +82,7 @@
 			return;
 		}
 		try {
-			parsedLISHs = uploadMode
-				? await api.lishs.parseFromJSON(uploadContent)
-				: await api.lishs.parseFromFile(filePath);
+			parsedLISHs = uploadMode ? await api.lishs.parseFromJSON(uploadContent) : await api.lishs.parseFromFile(filePath);
 		} catch (e) {
 			errorMessage = translateError(e);
 		}

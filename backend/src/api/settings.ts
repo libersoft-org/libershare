@@ -27,9 +27,7 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 	async function set(p: { path: string; value: any }): Promise<boolean> {
 		assert(p, ['path', 'value']);
 		await settings.set(p.path, p.value);
-		if (p.path.startsWith('network.maxDownloadSpeed') || p.path.startsWith('network.maxUploadSpeed')) {
-			applySpeedLimits();
-		}
+		if (p.path.startsWith('network.maxDownloadSpeed') || p.path.startsWith('network.maxUploadSpeed')) applySpeedLimits();
 		return true;
 	}
 

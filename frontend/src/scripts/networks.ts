@@ -38,14 +38,20 @@ export async function subscribePeerCounts(): Promise<void> {
 	// Re-subscribe on reconnect (backend has fresh subscribedEvents after reconnect)
 	let skipFirst = true;
 	unsubReconnect = connected.subscribe(isConnected => {
-		if (skipFirst) { skipFirst = false; return; }
+		if (skipFirst) {
+			skipFirst = false;
+			return;
+		}
 		if (isConnected && unsubListener) api.subscribe('peers:count');
 	}) as () => void;
 }
 
 // Unsubscribe from peer count updates. Call when leaving the LISH Network settings page.
 export async function unsubscribePeerCounts(): Promise<void> {
-	if (unsubReconnect) { unsubReconnect(); unsubReconnect = null; }
+	if (unsubReconnect) {
+		unsubReconnect();
+		unsubReconnect = null;
+	}
 	if (!unsubListener) return;
 	await api.unsubscribe('peers:count');
 	unsubListener();

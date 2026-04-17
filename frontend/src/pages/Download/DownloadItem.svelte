@@ -74,8 +74,20 @@
 	<TableCell align="center" desktopOnly>{sizeDisplay}</TableCell>
 	<TableCell desktopOnly><ProgressBar {progress} animated={status === 'downloading' || status === 'downloading-uploading' || status === 'verifying' || status === 'moving' || status === 'allocating'} /></TableCell>
 	<TableCell align="center" desktopOnly><Badge label={$t('downloads.statuses.' + status)} {status} /></TableCell>
-	<TableCell align="center" desktopOnly><span class="peers">{#if totalDownloadedBytes || totalUploadedBytes}<span class="dl">↓{formatSize(totalDownloadedBytes)}</span> <span class="ul">↑{formatSize(totalUploadedBytes)}</span>{:else}—{/if}</span></TableCell>
+	<TableCell align="center" desktopOnly
+		><span class="peers"
+			>{#if totalDownloadedBytes || totalUploadedBytes}<span class="dl">↓{formatSize(totalDownloadedBytes)}</span> <span class="ul">↑{formatSize(totalUploadedBytes)}</span>{:else}—{/if}</span
+		></TableCell
+	>
 	<TableCell align="center" desktopOnly><ModeBadge mode={enabledMode} /></TableCell>
-	<TableCell align="center" desktopOnly><span class="peers">{#if downloadPeers || uploadPeers}<span class="dl">↓{downloadPeers}</span> <span class="ul">↑{uploadPeers}</span>{:else}—{/if}</span></TableCell>
-	<TableCell align="center" desktopOnly><span class="peers">{#if downloadSpeed !== '0 B/s' || uploadSpeed !== '0 B/s'}<span class="dl">↓{downloadSpeed}</span> <span class="ul">↑{uploadSpeed}</span>{:else}—{/if}</span></TableCell>
+	<TableCell align="center" desktopOnly
+		><span class="peers"
+			>{#if downloadPeers || uploadPeers}<span class="dl">↓{downloadPeers}</span> <span class="ul">↑{uploadPeers}</span>{:else}—{/if}</span
+		></TableCell
+	>
+	<TableCell align="center" desktopOnly
+		><span class="peers"
+			>{#if downloadSpeed !== '0 B/s' || uploadSpeed !== '0 B/s'}<span class="dl">↓{downloadSpeed}</span> <span class="ul">↑{uploadSpeed}</span>{:else}—{/if}</span
+		></TableCell
+	>
 </TableRow>

@@ -35,19 +35,25 @@
 		border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
 		background: linear-gradient(135deg, var(--secondary-background) 0%, color-mix(in srgb, var(--color-success) 15%, var(--secondary-background)) 100%);
 	}
-	.notification.success:hover { border-color: var(--color-success); }
+	.notification.success:hover {
+		border-color: var(--color-success);
+	}
 
 	.notification.error {
 		border-color: color-mix(in srgb, var(--color-error) 40%, transparent);
 		background: linear-gradient(135deg, var(--secondary-background) 0%, color-mix(in srgb, var(--color-error) 15%, var(--secondary-background)) 100%);
 	}
-	.notification.error:hover { border-color: var(--color-error); }
+	.notification.error:hover {
+		border-color: var(--color-error);
+	}
 
 	.notification.warning {
 		border-color: color-mix(in srgb, var(--color-warning) 40%, transparent);
 		background: linear-gradient(135deg, var(--secondary-background) 0%, color-mix(in srgb, var(--color-warning) 15%, var(--secondary-background)) 100%);
 	}
-	.notification.warning:hover { border-color: var(--color-warning); }
+	.notification.warning:hover {
+		border-color: var(--color-warning);
+	}
 
 	.type-indicator {
 		width: 0.8vh;
@@ -55,10 +61,18 @@
 		flex-shrink: 0;
 		align-self: stretch;
 	}
-	.type-indicator.info { background: var(--primary-foreground); }
-	.type-indicator.success { background: var(--color-success); }
-	.type-indicator.error { background: var(--color-error); }
-	.type-indicator.warning { background: var(--color-warning); }
+	.type-indicator.info {
+		background: var(--primary-foreground);
+	}
+	.type-indicator.success {
+		background: var(--color-success);
+	}
+	.type-indicator.error {
+		background: var(--color-error);
+	}
+	.type-indicator.warning {
+		background: var(--color-warning);
+	}
 
 	.text {
 		flex: 1;
