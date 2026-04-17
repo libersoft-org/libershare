@@ -13,6 +13,7 @@ import { trace } from '../logger.ts';
 import { recordDownloadBytes, touchPeer } from './peer-tracker.ts';
 import { PeerManager } from './peer-manager.ts';
 import { FileAllocator, type AllocationProgress } from './file-allocator.ts';
+import { PauseController } from './pause-controller.ts';
 
 type NodeID = string;
 interface PubsubMessage {
@@ -77,7 +78,12 @@ export class Downloader {
 	private destroyed = false;
 	private lastExhaustedTime = 0;
 	private downloadActive = false; // true while downloadChunks is running inside workMutex
-	private enableResolvers: (() => void)[] = [];
+	// Pause/resume coordination — owns enableResolvers, writePauseResolvers, writePaused, progressPaused.
+	// Reads `disabled`/`destroyed` via callbacks so those flags remain single-source on this class.
+	private readonly pauseController = new PauseController(
+		() => this.disabled,
+		() => this.destroyed,
+	);
 	private downloadResolve: (() => void) | undefined;
 	private downloadReject: ((err: Error) => void) | undefined;
 	private pubsubHandlers: { topic: string; handler: (data: Record<string, any>) => void }[] = [];
@@ -92,9 +98,6 @@ export class Downloader {
 	private fileReallocAttempts = new Map<number, number>();
 	private static readonly MAX_FILE_REALLOC = 3;
 	private fileReallocInProgress = new Set<number>();
-	private writePaused = false;
-	private progressPaused = false;
-	private writePauseResolvers: Array<() => void> = [];
 	private writeRetryCount = 0;
 	private static readonly MAX_WRITE_RETRIES = 5;
 	private static readonly WRITE_RETRY_DELAY = 60_000;
@@ -152,19 +155,6 @@ export class Downloader {
 		this.onRetry = cb;
 	}
 
-	private async waitIfWritePaused(): Promise<void> {
-		if (!this.writePaused) return;
-		await new Promise<void>(resolve => {
-			this.writePauseResolvers.push(resolve);
-		});
-	}
-
-	private resumeWriters(): void {
-		this.writePaused = false;
-		for (const resolve of this.writePauseResolvers) resolve();
-		this.writePauseResolvers = [];
-	}
-
 	private setError(code: string, detail?: string): void {
 		this.transitionTo('error', `setError(${code})`, true);
 		this.disabled = true;
@@ -187,8 +177,7 @@ export class Downloader {
 		this.downloadReject?.(new CodedError(code as any, detail));
 		this.downloadResolve = undefined;
 		this.downloadReject = undefined;
-		for (const resolve of this.enableResolvers) resolve();
-		this.enableResolvers = [];
+		this.pauseController.notifyStateChange();
 		console.error(`[DL] Error ${this.lishID.slice(0, 8)}: ${code}${detail ? ` — ${detail}` : ''}`);
 	}
 
@@ -219,8 +208,7 @@ export class Downloader {
 		}
 		this.peerManager.closeAll('disable');
 		this.lastServingPeerCount = 0;
-		for (const resolve of this.enableResolvers) resolve();
-		this.enableResolvers = [];
+		this.pauseController.notifyStateChange();
 		console.log(`[DL] Disabled ${this.lishID.slice(0, 8)}`);
 	}
 
@@ -244,8 +232,7 @@ export class Downloader {
 		this.writeRetryCount = 0;
 		this.peerManager.clearAllDropped();
 		console.log(`[DL] Enabled ${this.lishID.slice(0, 8)}`);
-		for (const resolve of this.enableResolvers) resolve();
-		this.enableResolvers = [];
+		this.pauseController.notifyStateChange();
 		this.setupCallForPeersInterval();
 		if (this.state === 'downloading' || this.state === 'awaiting-manifest' || this.state === 'preparing') {
 			this.callForPeers().catch((err: any) => trace(`[DL] enable callForPeers failed (will retry): ${err?.message ?? err}`));
@@ -278,20 +265,10 @@ export class Downloader {
 		this.downloadReject?.(new CodedError(ErrorCodes.DOWNLOAD_CANCELLED));
 		this.downloadResolve = undefined;
 		this.downloadReject = undefined;
-		for (const resolve of this.enableResolvers) resolve();
-		this.enableResolvers = [];
+		this.pauseController.notifyStateChange();
 		delete this.onProgress;
 		delete this.onManifestImported;
 		console.log(`[DL] Destroyed ${this.lishID.slice(0, 8)}`);
-	}
-
-	private async waitIfDisabled(): Promise<void> {
-		if (!this.disabled) return;
-		if (this.destroyed) throw new CodedError(ErrorCodes.DOWNLOAD_CANCELLED);
-		await new Promise<void>(resolve => {
-			this.enableResolvers.push(resolve);
-		});
-		if (this.destroyed) throw new CodedError(ErrorCodes.DOWNLOAD_CANCELLED);
 	}
 
 	private subscribePubsub(): void {
@@ -559,8 +536,8 @@ export class Downloader {
 			let consecutiveNotAvailable = 0;
 			while (true) {
 				if (this.destroyed || this.disabled) break;
-				await this.waitIfDisabled();
-				await this.waitIfWritePaused();
+				await this.pauseController.waitIfDisabled();
+				await this.pauseController.waitIfWritePaused();
 				let chunk: MissingChunk | undefined;
 				await lock.runExclusive(() => {
 					while (queueIdx < queue.length) {
@@ -641,7 +618,7 @@ export class Downloader {
 						// File deleted — pause ALL peers, verify ALL files, re-allocate missing, reset chunks, resume
 						if (this.fileReallocInProgress.size > 0) {
 							// Another peer is already handling recovery — wait and re-queue
-							await this.waitIfWritePaused();
+							await this.pauseController.waitIfWritePaused();
 							await lock.runExclusive(() => {
 								queue.push(chunk!);
 							});
@@ -656,8 +633,8 @@ export class Downloader {
 						}
 						// Mark recovery in progress, pause all peer writes AND progress emissions
 						this.fileReallocInProgress.add(-1);
-						this.writePaused = true;
-						this.progressPaused = true;
+						this.pauseController.pauseWrites();
+						this.pauseController.pauseProgress();
 						lastFilePath = undefined;
 						lastFileChunks = undefined;
 						console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${Downloader.MAX_FILE_REALLOC})`);
@@ -738,17 +715,17 @@ export class Downloader {
 							break;
 						} finally {
 							this.fileReallocInProgress.delete(-1);
-							this.progressPaused = false;
-							this.resumeWriters();
+							this.pauseController.resumeProgress();
+							this.pauseController.resumeWrites();
 						}
 						this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: this.downloadDir, retryCount: globalAttempts, maxRetries: Downloader.MAX_FILE_REALLOC, resolved: true });
 						continue;
 					} else if (err.code === 'ENOSPC' || err.code === 'EACCES' || err.code === 'EPERM') {
 						// Disk full or permission denied — inline retry with pause
 						const code = err.code === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
-						if (this.writePaused) {
+						if (this.pauseController.writePaused) {
 							// Another peer already handling the write error — just wait and re-queue
-							await this.waitIfWritePaused();
+							await this.pauseController.waitIfWritePaused();
 							await lock.runExclusive(() => {
 								queue.push(chunk!);
 							});
@@ -762,7 +739,7 @@ export class Downloader {
 						}
 						console.warn(`[DL] ${this.lishID.slice(0, 8)}: write failed (${err.code}), pausing ${Downloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${Downloader.MAX_WRITE_RETRIES})`);
 						this.onRetry?.({ errorCode: code, errorDetail: this.downloadDir, retryCount: this.writeRetryCount, maxRetries: Downloader.MAX_WRITE_RETRIES });
-						this.writePaused = true;
+						this.pauseController.pauseWrites();
 						await new Promise<void>(resolve => {
 							const timer = setTimeout(resolve, Downloader.WRITE_RETRY_DELAY);
 							const check = setInterval(() => {
@@ -779,11 +756,11 @@ export class Downloader {
 							await this.dataServer.writeChunk(this.downloadDir, this.lish, chunk.fileIndex, chunk.chunkIndex, data);
 							console.log(`[DL] Write retry succeeded for ${this.lishID.slice(0, 8)}`);
 							this.writeRetryCount = 0;
-							this.resumeWriters();
+							this.pauseController.resumeWrites();
 							this.onRetry?.({ errorCode: code, errorDetail: this.downloadDir, retryCount: 0, maxRetries: Downloader.MAX_WRITE_RETRIES, resolved: true });
 						} catch (retryErr: any) {
 							console.warn(`[DL] ${this.lishID.slice(0, 8)}: write retry still failed (attempt ${this.writeRetryCount}/${Downloader.MAX_WRITE_RETRIES}): ${retryErr.code ?? retryErr.message}`);
-							this.resumeWriters();
+							this.pauseController.resumeWrites();
 							await lock.runExclusive(() => {
 								queue.push(chunk!);
 							});
@@ -821,7 +798,7 @@ export class Downloader {
 
 		// 1s periodic progress emitter — sliding window speed with actual elapsed denominator
 		const progressInterval = setInterval(() => {
-			if (this.progressPaused) return; // suppress during ENOENT/write recovery
+			if (this.pauseController.progressPaused) return; // suppress during ENOENT/write recovery
 			const now = Date.now();
 			this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
 			const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);

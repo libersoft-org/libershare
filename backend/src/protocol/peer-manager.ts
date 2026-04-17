@@ -3,9 +3,7 @@ import type { LISHClient } from './lish-protocol.ts';
 import type { ConnectionType } from './peer-tracker.ts';
 import { registerDownloadPeer, unregisterDownloadPeer, unregisterAllPeersForLISH, updatePeerHavePercent } from './peer-tracker.ts';
 import { trace } from '../logger.ts';
-
 type NodeID = string;
-
 export interface PeerManagerCallbacks {
 	/**
 	 * Fired synchronously after a peer is successfully added via tryAdd().
@@ -210,9 +208,7 @@ export class PeerManager {
 		this.peers.clear();
 		this.activeLoops.clear();
 		if (this.lishID) unregisterAllPeersForLISH(this.lishID);
-		for (const client of clients) {
-			client.close().catch((err: any) => trace(`[PM] closeAll(${reason}) close: ${err?.message ?? err}`));
-		}
+		for (const client of clients) client.close().catch((err: any) => trace(`[PM] closeAll(${reason}) close: ${err?.message ?? err}`));
 	}
 
 	/** Close-all with awaited closes — for destroy() / downloadChunks finally. */
@@ -221,8 +217,6 @@ export class PeerManager {
 		this.peers.clear();
 		this.activeLoops.clear();
 		if (this.lishID) unregisterAllPeersForLISH(this.lishID);
-		for (const client of clients) {
-			await client.close().catch((err: any) => trace(`[PM] closeAllAwait(${reason}) close: ${err?.message ?? err}`));
-		}
+		for (const client of clients) await client.close().catch((err: any) => trace(`[PM] closeAllAwait(${reason}) close: ${err?.message ?? err}`));
 	}
 }

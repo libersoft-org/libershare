@@ -132,23 +132,16 @@ export class FileAllocator {
 
 	// ======== internals ========
 
-	private async allocateFilesInternal(
-		lish: IStoredLISH,
-		fileIndexes: readonly number[],
-		onProgress: ((p: AllocationProgress) => void) | undefined,
-		signal: AbortSignal | undefined,
-	): Promise<{ created: number; skipped: number }> {
+	private async allocateFilesInternal(lish: IStoredLISH, fileIndexes: readonly number[], onProgress: ((p: AllocationProgress) => void) | undefined, signal: AbortSignal | undefined): Promise<{ created: number; skipped: number }> {
 		let created = 0;
 		let skipped = 0;
 		if (!lish.files) return { created, skipped };
-
 		// Aggregate totals across the requested subset — allows per-batch progress
 		// percentage irrespective of how many files the caller picked.
 		let totalBytes = 0;
 		for (const fi of fileIndexes) totalBytes += lish.files[fi]?.size ?? 0;
 		let totalBytesWritten = 0;
 		let nextProgressAt = PROGRESS_EMIT_INTERVAL;
-
 		for (const fi of fileIndexes) {
 			if (signal?.aborted) return { created, skipped };
 			const file = lish.files[fi];
