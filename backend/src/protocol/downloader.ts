@@ -14,6 +14,7 @@ import { recordDownloadBytes, touchPeer } from './peer-tracker.ts';
 import { PeerManager } from './peer-manager.ts';
 import { FileAllocator, type AllocationProgress } from './file-allocator.ts';
 import { PauseController } from './pause-controller.ts';
+import { ProgressReporter, type ProgressCallback, type FileProgressEntry } from './progress-reporter.ts';
 
 type NodeID = string;
 interface PubsubMessage {
@@ -87,10 +88,9 @@ export class Downloader {
 	private downloadResolve: (() => void) | undefined;
 	private downloadReject: ((err: Error) => void) | undefined;
 	private pubsubHandlers: { topic: string; handler: (data: Record<string, any>) => void }[] = [];
-	private onProgress?: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number }) => void;
+	// All progress accounting (speed window, per-file counters, 1s ticker, pass-through emit).
+	private readonly progressReporter = new ProgressReporter();
 	private onManifestImported?: (lishID: string) => void;
-	private speedSamples: { time: number; bytes: number }[] = [];
-	private currentSpeed = 0;
 	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
 	private errorCode: string | undefined;
 	private errorDetail: string | undefined;
@@ -143,8 +143,8 @@ export class Downloader {
 		return this.lastServingPeerCount;
 	}
 
-	setProgressCallback(cb: (info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number; filePath?: string; fileDownloadedChunks?: number; allocatingFile?: string; allocatingFileProgress?: number }) => void): void {
-		this.onProgress = cb;
+	setProgressCallback(cb: ProgressCallback): void {
+		this.progressReporter.setCallback(cb);
 	}
 
 	setManifestImportedCallback(cb: (lishID: string) => void): void {
@@ -173,7 +173,7 @@ export class Downloader {
 		this.lastServingPeerCount = 0;
 		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
 		const missing = this.dataServer.getMissingChunks(this.lishID).length;
-		this.onProgress?.({ downloadedChunks: total - missing, totalChunks: total, peers: 0, bytesPerSecond: 0 });
+		this.progressReporter.emit({ downloadedChunks: total - missing, totalChunks: total, peers: 0, bytesPerSecond: 0 });
 		this.downloadReject?.(new CodedError(code as any, detail));
 		this.downloadResolve = undefined;
 		this.downloadReject = undefined;
@@ -261,12 +261,12 @@ export class Downloader {
 		await this.peerManager.closeAllAwait('destroy');
 		// Notify frontend to reset peers/speed immediately
 		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
-		this.onProgress?.({ downloadedChunks: 0, totalChunks: total, peers: 0, bytesPerSecond: 0 });
+		this.progressReporter.emit({ downloadedChunks: 0, totalChunks: total, peers: 0, bytesPerSecond: 0 });
 		this.downloadReject?.(new CodedError(ErrorCodes.DOWNLOAD_CANCELLED));
 		this.downloadResolve = undefined;
 		this.downloadReject = undefined;
 		this.pauseController.notifyStateChange();
-		delete this.onProgress;
+		this.progressReporter.clearCallback();
 		delete this.onManifestImported;
 		console.log(`[DL] Destroyed ${this.lishID.slice(0, 8)}`);
 	}
@@ -406,14 +406,14 @@ export class Downloader {
 				const missingBeforeAlloc = await this.fileAllocator.findMissingFiles(this.lish);
 				if (missingBeforeAlloc.length > 0) {
 					console.debug(`[DL] allocating files for ${this.lishID.slice(0, 8)}`);
-					this.onProgress?.({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
+					this.progressReporter.emit({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
 					await this.fileAllocator.allocateStructure(this.lish, (p: AllocationProgress) => this.emitAllocProgress(p, totalChunksForProgress), this.abortController.signal);
 					if (this.destroyed) return;
 				} else {
 					trace(`[DL] skipping allocation for ${this.lishID.slice(0, 8)} (files exist)`);
 				}
 				trace(`[DL] phase 2 done: ${this.lishID.slice(0, 8)}`);
-				this.onProgress?.({ downloadedChunks: downloadedForProgress, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0 });
+				this.progressReporter.emit({ downloadedChunks: downloadedForProgress, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0 });
 				this.transitionTo('downloading', 'doWork() phase 2 complete');
 			}
 			// Phase 3: download chunks
@@ -501,19 +501,12 @@ export class Downloader {
 		// Track all peerLoop promises so we can await dynamically spawned ones
 		const peerLoopPromises = new Map<string, Promise<void>>();
 
-		let lastFilePath: string | undefined;
-		let lastFileChunks: number | undefined;
 		const corruptCount = new Map<string, number>(); // per-peer corruption counter
 		let globalNotAvailable = 0; // consecutive not_available across all peers — reset on any success
-		// Pre-populate per-file downloaded chunk counts from DB
-		const fileDownloadedChunks = new Map<number, number>();
-		const fileVP = this.dataServer.getFileVerificationProgress(this.lishID);
-		if (this.lish.files) {
-			for (let i = 0; i < this.lish.files.length; i++) {
-				const vp = fileVP.find(f => f.filePath === this.lish.files![i]!.path);
-				if (vp) fileDownloadedChunks.set(i, vp.verifiedChunks);
-			}
-		}
+		// Seed per-file counters from DB verification state. Reporter owns the fileDownloadedChunks map,
+		// lastFilePath/lastFileChunks pointers, sliding speed window and the 1s ticker.
+		this.progressReporter.resetSession();
+		this.progressReporter.loadFileProgress(this.buildFileProgressEntries());
 
 		const spawnPeerLoop = (peerID: string, client: LISHClient): void => {
 			// Safety dedup: onPeerAdded callback fires once per tryAdd, but protects against
@@ -635,8 +628,7 @@ export class Downloader {
 						this.fileReallocInProgress.add(-1);
 						this.pauseController.pauseWrites();
 						this.pauseController.pauseProgress();
-						lastFilePath = undefined;
-						lastFileChunks = undefined;
+						this.progressReporter.resetLastFile();
 						console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${Downloader.MAX_FILE_REALLOC})`);
 						this.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: this.downloadDir, retryCount: globalAttempts, maxRetries: Downloader.MAX_FILE_REALLOC });
 						// FE shows "Opakuji" (retrying) badge during the 10s pause — no progress override
@@ -661,14 +653,14 @@ export class Downloader {
 							if (missingFiles.length > 0) {
 								const totalMissingBytes = missingFiles.reduce((sum, fi) => sum + (this.lish.files?.[fi]?.size ?? 0), 0);
 								console.log(`[DL] ${missingFiles.length} files missing (${Math.round(totalMissingBytes / 1024 / 1024)}MB), allocating`);
-								this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: 0 });
+								this.progressReporter.emit({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: 0 });
 								await this.fileAllocator.allocateFiles(this.lish, missingFiles, (p: AllocationProgress) => this.emitAllocProgress(p, totalChunks), this.abortController.signal);
 							}
 
 							// Step 3: Full verification of ALL files — checksum every chunk
 							if (this.lish.files && !this.destroyed) {
 								console.log(`[DL] Verifying ALL file checksums...`);
-								this.onProgress?.({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
+								this.progressReporter.emit({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
 								const { runVerification } = await import('../lish/lish.ts');
 								const ac = new AbortController();
 								let lastVerified = 0;
@@ -681,12 +673,12 @@ export class Downloader {
 										const now = Date.now();
 										if (now - lastVerifyEmit >= 1000) {
 											lastVerifyEmit = now;
-											this.onProgress?.({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
+											this.progressReporter.emit({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
 										}
 									},
 									ac.signal
 								);
-								this.onProgress?.({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
+								this.progressReporter.emit({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
 								console.log(`[DL] Verification done: ${lastVerified}/${totalChunks} chunks valid`);
 							}
 
@@ -695,19 +687,12 @@ export class Downloader {
 							const allTotal = this.dataServer.getAllChunkCount(this.lishID) || totalChunks;
 							downloadedCount = allTotal - allMissing.length;
 							// Re-initialize per-file counters from verified DB state
-							fileDownloadedChunks.clear();
-							const postRecoveryVP = this.dataServer.getFileVerificationProgress(this.lishID);
-							if (this.lish.files) {
-								for (let i = 0; i < this.lish.files.length; i++) {
-									const vp = postRecoveryVP.find(f => f.filePath === this.lish.files![i]!.path);
-									if (vp && vp.verifiedChunks > 0) fileDownloadedChunks.set(i, vp.verifiedChunks);
-								}
-							}
+							this.progressReporter.loadFileProgress(this.buildFileProgressEntries());
 							await lock.runExclusive(() => {
 								queue.length = queueIdx;
 								for (const mc of allMissing) queue.push(mc);
 							});
-							this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: this.peerManager.size(), bytesPerSecond: 0 });
+							this.progressReporter.emit({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: this.peerManager.size(), bytesPerSecond: 0 });
 							console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
 						} catch (allocErr: any) {
 							console.error(`[DL] File recovery failed: ${allocErr.message}`);
@@ -776,37 +761,24 @@ export class Downloader {
 				recordDownloadBytes(this.lishID, peerID, data.length, this.lish.files?.[chunk.fileIndex]?.path, chunk.chunkID);
 				downloadedCount++;
 				if (this.writeRetryCount > 0) this.writeRetryCount = 0;
-				// Sliding window speed — actual elapsed time denominator (no chunk-size quantization)
-				const now = Date.now();
-				this.speedSamples.push({ time: now, bytes: data.length });
-				this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
-				const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-				const oldestTime = this.speedSamples.length > 1 ? this.speedSamples[0]!.time : now;
-				const elapsed = (now - oldestTime) / 1000;
-				this.currentSpeed = elapsed >= 0.5 ? windowBytes / elapsed : 0;
-				const bytesPerSecond = Math.round(this.currentSpeed);
+				const fIdx = chunk.fileIndex;
+				this.progressReporter.recordChunk(data.length, fIdx, this.lish.files?.[fIdx]?.path);
 				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
+					const bytesPerSecond = this.progressReporter.bytesPerSecond();
 					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${this.peerManager.size()} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
 				}
-				const fIdx = chunk.fileIndex;
-				fileDownloadedChunks.set(fIdx, (fileDownloadedChunks.get(fIdx) ?? 0) + 1);
-				lastFilePath = this.lish.files?.[fIdx]?.path;
-				lastFileChunks = fileDownloadedChunks.get(fIdx);
 			}
 			this.peerManager.markInactive(peerID);
 		};
 
-		// 1s periodic progress emitter — sliding window speed with actual elapsed denominator
-		const progressInterval = setInterval(() => {
-			if (this.pauseController.progressPaused) return; // suppress during ENOENT/write recovery
-			const now = Date.now();
-			this.speedSamples = this.speedSamples.filter(s => s.time > now - 10000);
-			const windowBytes = this.speedSamples.reduce((sum, s) => sum + s.bytes, 0);
-			const oldestTime = this.speedSamples.length > 1 ? this.speedSamples[0]!.time : now;
-			const elapsed = (now - oldestTime) / 1000;
-			const bytesPerSecond = elapsed >= 0.5 ? Math.round(windowBytes / elapsed) : 0;
-			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: this.peerManager.size(), bytesPerSecond, ...(lastFilePath != null ? { filePath: lastFilePath } : {}), ...(lastFileChunks != null ? { fileDownloadedChunks: lastFileChunks } : {}) });
-		}, 1000);
+		// 1s periodic progress emitter — reporter owns the sliding window + emit; getSnapshot supplies
+		// the values that live on the Downloader local scope (downloadedCount, totalChunks, peer count).
+		this.progressReporter.startTicker(() => ({
+			downloadedChunks: downloadedCount,
+			totalChunks,
+			peers: this.peerManager.size(),
+			paused: this.pauseController.progressPaused,
+		}));
 
 		try {
 			// Wire dynamic spawn: any peer added to peerManager (via tryAdd from pubsub / probe)
@@ -827,13 +799,13 @@ export class Downloader {
 				console.log(`[DL] Peers exhausted at ${downloadedCount}/${totalChunks}, will retry`);
 			}
 		} finally {
-			clearInterval(progressInterval);
+			this.progressReporter.stopTicker();
 			// Unwire spawn BEFORE closing — avoids spawning a loop for a peer we're about to tear down.
 			this.peerManager.clearCallbacks();
 			await this.peerManager.closeAllAwait('downloadChunks finally');
 			this.lastServingPeerCount = 0;
 			// Reset frontend peers/speed immediately when all peer loops finish
-			this.onProgress?.({ downloadedChunks: downloadedCount, totalChunks, peers: 0, bytesPerSecond: 0 });
+			this.progressReporter.emit({ downloadedChunks: downloadedCount, totalChunks, peers: 0, bytesPerSecond: 0 });
 		}
 	}
 
@@ -1033,7 +1005,7 @@ export class Downloader {
 	private emitAllocProgress(p: AllocationProgress, totalChunks: number): void {
 		const pct = p.totalBytes > 0 ? Math.round((p.totalBytesWritten / p.totalBytes) * 100) : 0;
 		const filePct = p.fileSize > 0 ? Math.round((p.fileBytesWritten / p.fileSize) * 100) : 100;
-		this.onProgress?.({
+		this.progressReporter.emit({
 			downloadedChunks: 0,
 			totalChunks,
 			peers: 0,
@@ -1043,6 +1015,22 @@ export class Downloader {
 			allocatingFile: p.filePath,
 			allocatingFileProgress: filePct,
 		});
+	}
+
+	/**
+	 * Map DB file verification progress onto fileIndex-keyed entries for the
+	 * ProgressReporter. Called once at downloadChunks start and again after
+	 * surgical ENOENT recovery to re-seed the per-file counters from verified state.
+	 */
+	private buildFileProgressEntries(): FileProgressEntry[] {
+		if (!this.lish.files) return [];
+		const vp = this.dataServer.getFileVerificationProgress(this.lishID);
+		const entries: FileProgressEntry[] = [];
+		for (let i = 0; i < this.lish.files.length; i++) {
+			const match = vp.find(f => f.filePath === this.lish.files![i]!.path);
+			if (match) entries.push({ fileIndex: i, verifiedChunks: match.verifiedChunks });
+		}
+		return entries;
 	}
 
 	// Download a single chunk from a peer using an existing client.
