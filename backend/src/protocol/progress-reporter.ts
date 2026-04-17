@@ -99,7 +99,7 @@ export class ProgressReporter {
 	}
 
 	/**
-	 * Clear the last-served file pointer. Called before recovery so the "Opakuji"
+	 * Clear the last-served file pointer. Called before recovery so the retrying
 	 * UI state doesn't show a stale file path while we're re-verifying.
 	 */
 	resetLastFile(): void {

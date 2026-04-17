@@ -225,28 +225,34 @@ export class ChunkDownloader {
 							this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
 							break;
 						}
-						// Mark recovery in progress, pause all peer writes AND progress emissions
+						// Mark recovery in progress, pause all peer writes AND progress emissions.
+						// Everything below this line MUST run inside try/finally so destroy/disable
+						// during the 10s sleep can't leak pause state or the fileReallocInProgress flag.
 						this.fileReallocInProgress.add(-1);
 						pauseController.pauseWrites();
 						pauseController.pauseProgress();
 						progressReporter.resetLastFile();
 						console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${ChunkDownloader.MAX_FILE_REALLOC})`);
 						this.deps.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: downloadDir, retryCount: globalAttempts, maxRetries: ChunkDownloader.MAX_FILE_REALLOC });
-						// FE shows "Opakuji" (retrying) badge during the 10s pause \u2014 no progress override
-						// 10s delay \u2014 let the user finish deleting files before we scan
-						await new Promise<void>(resolve => {
-							const timer = setTimeout(resolve, 10_000);
-							const check = setInterval(() => {
-								if (this.deps.isDestroyed() || this.deps.isDisabled()) {
-									clearTimeout(timer);
-									clearInterval(check);
-									resolve();
-								}
-							}, 1000);
-							setTimeout(() => clearInterval(check), 10_100);
-						});
-						if (this.deps.isDestroyed() || this.deps.isDisabled()) break;
+						let aborted = false;
 						try {
+							// FE shows retrying badge during the 10s pause — no progress override
+							// 10s delay — let the user finish deleting files before we scan
+							await new Promise<void>(resolve => {
+								const timer = setTimeout(resolve, 10_000);
+								const check = setInterval(() => {
+									if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+										clearTimeout(timer);
+										clearInterval(check);
+										resolve();
+									}
+								}, 1000);
+								setTimeout(() => clearInterval(check), 10_100);
+							});
+							if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+								aborted = true;
+								break;
+							}
 							console.log(`[DL] Recovery: verifying all files`);
 
 							// Step 2: Find and re-allocate missing files with progress
@@ -298,12 +304,14 @@ export class ChunkDownloader {
 						} catch (allocErr: any) {
 							console.error(`[DL] File recovery failed: ${allocErr.message}`);
 							this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
+							aborted = true;
 							break;
 						} finally {
 							this.fileReallocInProgress.delete(-1);
 							pauseController.resumeProgress();
 							pauseController.resumeWrites();
 						}
+						if (aborted) break;
 						this.deps.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: downloadDir, retryCount: globalAttempts, maxRetries: ChunkDownloader.MAX_FILE_REALLOC, resolved: true });
 						continue;
 					} else if (err.code === 'ENOSPC' || err.code === 'EACCES' || err.code === 'EPERM') {
@@ -325,28 +333,41 @@ export class ChunkDownloader {
 						}
 						console.warn(`[DL] ${lishID.slice(0, 8)}: write failed (${err.code}), pausing ${ChunkDownloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES})`);
 						this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: this.writeRetryCount, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES });
+						// Everything below MUST run inside try/finally so destroy/disable during the 60s
+						// sleep can't leak _writePaused=true, which would hang all peer loops on the next enable().
 						pauseController.pauseWrites();
-						await new Promise<void>(resolve => {
-							const timer = setTimeout(resolve, ChunkDownloader.WRITE_RETRY_DELAY);
-							const check = setInterval(() => {
-								if (this.deps.isDestroyed() || this.deps.isDisabled()) {
-									clearTimeout(timer);
-									clearInterval(check);
-									resolve();
-								}
-							}, 1000);
-							setTimeout(() => clearInterval(check), ChunkDownloader.WRITE_RETRY_DELAY + 100);
-						});
-						if (this.deps.isDestroyed() || this.deps.isDisabled()) break;
+						let writeAborted = false;
+						let writeRequeue = false;
 						try {
-							await dataServer.writeChunk(downloadDir, lish, chunk.fileIndex, chunk.chunkIndex, data);
-							console.log(`[DL] Write retry succeeded for ${lishID.slice(0, 8)}`);
-							this.writeRetryCount = 0;
+							await new Promise<void>(resolve => {
+								const timer = setTimeout(resolve, ChunkDownloader.WRITE_RETRY_DELAY);
+								const check = setInterval(() => {
+									if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+										clearTimeout(timer);
+										clearInterval(check);
+										resolve();
+									}
+								}, 1000);
+								setTimeout(() => clearInterval(check), ChunkDownloader.WRITE_RETRY_DELAY + 100);
+							});
+							if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+								writeAborted = true;
+								break;
+							}
+							try {
+								await dataServer.writeChunk(downloadDir, lish, chunk.fileIndex, chunk.chunkIndex, data);
+								console.log(`[DL] Write retry succeeded for ${lishID.slice(0, 8)}`);
+								this.writeRetryCount = 0;
+								this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
+							} catch (retryErr: any) {
+								console.warn(`[DL] ${lishID.slice(0, 8)}: write retry still failed (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES}): ${retryErr.code ?? retryErr.message}`);
+								writeRequeue = true;
+							}
+						} finally {
 							pauseController.resumeWrites();
-							this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
-						} catch (retryErr: any) {
-							console.warn(`[DL] ${lishID.slice(0, 8)}: write retry still failed (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES}): ${retryErr.code ?? retryErr.message}`);
-							pauseController.resumeWrites();
+						}
+						if (writeAborted) break;
+						if (writeRequeue) {
 							await lock.runExclusive(() => {
 								queue.push(chunk!);
 							});
