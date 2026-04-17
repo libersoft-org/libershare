@@ -29,6 +29,27 @@ export interface HaveMessage extends PubsubMessage {
 }
 type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'awaiting-manifest' | 'downloading' | 'downloaded' | 'error';
 
+/**
+ * Allowed state transitions for the Downloader state machine.
+ *
+ * Rules:
+ *  - Every state can transition to 'error' at any time (via setError) — this is handled by `force: true`
+ *    in transitionTo(), not by listing 'error' in every row.
+ *  - Retry from 'error' can shortcut back into 'downloading' directly (files/dir already allocated).
+ *  - 'preparing' appears as a target from 'downloading' for mid-download file reallocation recovery.
+ *  - Attempting an invalid transition logs a warning and is a no-op (safe degradation).
+ */
+const ALLOWED_TRANSITIONS: Record<State, readonly State[]> = {
+	'added':             ['initializing'],
+	'initializing':      ['initialized'],
+	'initialized':       ['awaiting-manifest', 'preparing'],
+	'awaiting-manifest': ['preparing'],
+	'preparing':         ['downloading', 'downloaded', 'awaiting-manifest'],
+	'downloading':       ['downloaded', 'preparing'],
+	'downloaded':        ['preparing'],
+	'error':             ['downloading', 'preparing', 'awaiting-manifest', 'initialized'],
+};
+
 export class Downloader {
 	private lish!: IStoredLISH;
 	private readonly dataServer: DataServer;
@@ -81,6 +102,34 @@ export class Downloader {
 	getLISHID(): string {
 		return this.lishID;
 	}
+
+	/**
+	 * Central state mutation. Validates the requested transition against ALLOWED_TRANSITIONS
+	 * and logs a warning (and bails) if the transition is not allowed.
+	 *
+	 * Pass `force: true` for emergency transitions to 'error' (setError) — these are permitted
+	 * from any state and cannot fail.
+	 *
+	 * Returns true if the state was changed, false otherwise. Callers that rely on the old state
+	 * (e.g. retry logic) MUST check the return value.
+	 */
+	private transitionTo(newState: State, reason: string, force: boolean = false): boolean {
+		const from = this.state;
+		if (from === newState) {
+			// Idempotent self-transition — no-op, no log.
+			return true;
+		}
+		if (!force) {
+			const allowed = ALLOWED_TRANSITIONS[from];
+			if (!allowed.includes(newState)) {
+				console.warn(`[DL] ${this.lishID?.slice(0, 8) ?? '?'} invalid transition ${from} → ${newState} (${reason}), ignored`);
+				return false;
+			}
+		}
+		trace(`[DL] ${this.lishID?.slice(0, 8) ?? '?'} ${from} → ${newState} (${reason})`);
+		this.state = newState;
+		return true;
+	}
 	getError(): { code: string; detail?: string } | null {
 		if (this.state !== 'error') return null;
 		const err: { code: string; detail?: string } = { code: this.errorCode! };
@@ -117,7 +166,7 @@ export class Downloader {
 	}
 
 	private setError(code: string, detail?: string): void {
-		this.state = 'error';
+		this.transitionTo('error', `setError(${code})`, true);
 		this.disabled = true;
 		this.errorCode = code;
 		this.errorDetail = detail;
@@ -191,7 +240,7 @@ export class Downloader {
 			return;
 		}
 		this.disabled = false;
-		if (this.state === 'error') this.state = this.missingChunks.length > 0 ? 'downloading' : 'preparing';
+		if (this.state === 'error') this.transitionTo(this.missingChunks.length > 0 ? 'downloading' : 'preparing', 'enable() retry from error');
 		this.errorCode = undefined;
 		this.errorDetail = undefined;
 		this.lastExhaustedTime = 0;
@@ -270,7 +319,7 @@ export class Downloader {
 	}
 
 	async init(lishPath: string): Promise<void> {
-		this.state = 'initializing';
+		this.transitionTo('initializing', 'init() start');
 		// Read and parse LISH
 		const content = await Bun.file(lishPath).text();
 		this.lish = Utils.safeJSONParse(content, `LISH file: ${lishPath}`);
@@ -278,11 +327,11 @@ export class Downloader {
 		console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), ${this.dataServer.getMissingChunks(this.lishID).length} chunks to download`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 		this.subscribePubsub();
-		this.state = 'initialized';
+		this.transitionTo('initialized', 'init() done');
 	}
 
 	async initFromManifest(lish: IStoredLISH): Promise<void> {
-		this.state = 'initializing';
+		this.transitionTo('initializing', 'initFromManifest() start');
 		this.lish = lish;
 		this.lishID = this.lish.id as LISHid;
 		// Check if we already have the full manifest in DB
@@ -295,7 +344,7 @@ export class Downloader {
 			console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), awaiting manifest from peer`);
 		}
 		this.subscribePubsub();
-		this.state = 'initialized';
+		this.transitionTo('initialized', 'initFromManifest() done');
 	}
 
 	// Main download loop — returns only when fully downloaded (or throws on error)
@@ -303,10 +352,10 @@ export class Downloader {
 		trace(`[DL] download() state=${this.state}, destroyed=${this.destroyed}, disabled=${this.disabled}`);
 		if (this.state !== 'initialized') throw new CodedError(ErrorCodes.DOWNLOADER_NOT_INITIALIZED);
 		if (this.needsManifest) {
-			this.state = 'awaiting-manifest';
+			this.transitionTo('awaiting-manifest', 'download() needs manifest');
 			await this.callForPeers();
 		} else {
-			this.state = 'preparing';
+			this.transitionTo('preparing', 'download() has manifest');
 			trace(`[DL] calling doWork, state=${this.state}`);
 			await this.doWork();
 			trace(`[DL] doWork returned, state=${this.state}, peers=${this.peers.size}`);
@@ -350,7 +399,7 @@ export class Downloader {
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 						this.needsManifest = false;
 						console.log(`[DL] Got manifest: ${manifest.files.length} files, ${this.missingChunks.length} chunks`);
-						this.state = 'preparing';
+						this.transitionTo('preparing', 'doWork() got manifest');
 						break;
 					}
 				}
@@ -383,7 +432,7 @@ export class Downloader {
 				}
 				trace(`[DL] phase 2 done: ${this.lishID.slice(0, 8)}`);
 				this.onProgress?.({ downloadedChunks: downloadedForProgress, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0 });
-				this.state = 'downloading';
+				this.transitionTo('downloading', 'doWork() phase 2 complete');
 			}
 			// Phase 3: download chunks
 			if (this.state === 'downloading') {
@@ -391,7 +440,7 @@ export class Downloader {
 					const missingFileIndexes = await this.getMissingFileIndexes();
 					if (missingFileIndexes.length === 0) {
 						console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
-						this.state = 'downloaded';
+						this.transitionTo('downloaded', 'doWork() all chunks present');
 						this.downloadResolve?.();
 						return;
 					}
@@ -428,7 +477,7 @@ export class Downloader {
 						const missingFiles = await this.getMissingFileIndexes();
 						if (missingFiles.length === 0) {
 							console.log(`[DL] Complete: ${this.lishID.slice(0, 8)}`);
-							this.state = 'downloaded';
+							this.transitionTo('downloaded', 'doWork() complete after downloadChunks');
 							this.downloadResolve?.();
 							return;
 						}
@@ -923,7 +972,7 @@ export class Downloader {
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 						this.needsManifest = false;
-						this.state = 'preparing';
+						this.transitionTo('preparing', 'probeTopicPeers() got manifest');
 						console.log(`[DL] Got manifest from ${peerID.slice(0, 12)}: ${manifest.files?.length ?? 0} files, ${this.missingChunks.length} chunks`);
 					});
 				}
@@ -1072,7 +1121,7 @@ export class Downloader {
 			if (this.dataServer.getAllChunkCount(this.lishID) === 0) {
 				console.warn(`[DL] ${this.lishID.slice(0, 8)}: no files in manifest or DB, requesting manifest from peers`);
 				this.needsManifest = true;
-				this.state = 'awaiting-manifest';
+				this.transitionTo('awaiting-manifest', 'needsFileAllocation: empty manifest, re-fetch');
 			}
 			return false;
 		}
