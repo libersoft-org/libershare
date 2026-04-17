@@ -34,7 +34,8 @@ export class PeerManager {
 	private readonly activeLoops = new Set<NodeID>();
 	private readonly bannedPeers = new Set<NodeID>();
 	private readonly droppedPeers = new Set<NodeID>();
-	private droppedCycleCount = 0;
+	/** Wall-clock timestamp of the last droppedPeers reset. Drives maybeResetDroppedAfter5Min(). */
+	private lastDroppedReset = Date.now();
 	private callbacks: PeerManagerCallbacks = {};
 
 	// ============ Lifecycle ============
@@ -174,18 +175,19 @@ export class PeerManager {
 
 	clearAllDropped(): void {
 		this.droppedPeers.clear();
-		this.droppedCycleCount = 0;
+		this.lastDroppedReset = Date.now();
 	}
 
 	/**
-	 * Called once per setupCallForPeersInterval tick (every 15s).
-	 * Returns true iff the cycle wrapped (≥20 ticks = ~5min) and droppedPeers was cleared.
+	 * Time-based dropped-peers reset. Called from any peer-discovery cycle.
+	 * Returns true iff ≥5 minutes elapsed since the last reset and droppedPeers was cleared.
+	 * Replaces the old fixed-cycle-count logic so the reset cadence is independent of the
+	 * (now adaptive) discovery interval.
 	 */
-	tickCycleAndMaybeReset(): boolean {
-		this.droppedCycleCount++;
-		if (this.droppedCycleCount >= 20) {
+	maybeResetDroppedAfter5Min(): boolean {
+		if (Date.now() - this.lastDroppedReset >= 5 * 60_000) {
 			this.droppedPeers.clear();
-			this.droppedCycleCount = 0;
+			this.lastDroppedReset = Date.now();
 			return true;
 		}
 		return false;

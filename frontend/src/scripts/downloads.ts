@@ -885,7 +885,7 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 // Table columns definition
 export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 9vw 9vw 8vw 13vw 3vw 5vw 11vw';
 // Toolbar action IDs for download detail view
-export type DownloadToolbarActionID = 'back' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'verify' | 'stop-verify' | 'export' | 'move' | 'delete';
+export type DownloadToolbarActionID = 'back' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'find-peers' | 'verify' | 'stop-verify' | 'export' | 'move' | 'delete';
 export interface DownloadToolbarAction {
 	id: DownloadToolbarActionID;
 	icon: string | ((downloadPaused: boolean, uploadPaused: boolean) => string);
@@ -896,6 +896,7 @@ export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
 	{ id: 'open-directory', icon: '/img/directory.svg', getLabel: t => t('common.openDirectory') },
 	{ id: 'toggle-download', icon: dp => (dp ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, dp) => (dp ? t('downloads.enableDownload') : t('downloads.disableDownload')) },
 	{ id: 'toggle-upload', icon: (_dp, up) => (up ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, _dp, up) => (up ? t('downloads.enableUpload') : t('downloads.disableUpload')) },
+	{ id: 'find-peers', icon: '/img/search.svg', getLabel: t => t('downloads.findPeers') },
 	{ id: 'verify', icon: '/img/check.svg', getLabel: t => t('downloads.verify') },
 	{ id: 'stop-verify', icon: '/img/cross.svg', getLabel: t => t('downloads.stopVerify') },
 	{ id: 'export', icon: '/img/upload.svg', getLabel: t => t('common.export') },
@@ -919,6 +920,9 @@ export function handleDownloadToolbarAction(actionID: DownloadToolbarActionID): 
 			return { handled: true };
 		case 'toggle-upload':
 			// TODO: Implement toggle pause/resume upload
+			return { handled: true };
+		case 'find-peers':
+			// Action handled inside DownloadDetail (calls transfer.findPeers via API).
 			return { handled: true };
 		case 'verify':
 			return { handled: false, needsVerify: true };

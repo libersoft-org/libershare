@@ -70,7 +70,13 @@ export class Downloader {
 	// Aborted in destroy(); passed to fileAllocator to stop in-progress zero-filling.
 	private readonly abortController = new AbortController();
 	private lastServingPeerCount = 0;
-	private callForPeersInterval: ReturnType<typeof setInterval> | undefined;
+	/**
+	 * Self-rescheduling timer for periodic peer discovery (callForPeers + probeTopicPeers).
+	 * Delay is adaptive based on current peer count — see getPeerDiscoveryDelay().
+	 * Replaces the old fixed 15s setInterval with a setTimeout chain so each cycle
+	 * can recompute the delay based on the current state.
+	 */
+	private peerDiscoveryTimer: ReturnType<typeof setTimeout> | undefined;
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
 	private needsManifest = false;
 	private disabled = false;
@@ -155,10 +161,7 @@ export class Downloader {
 		this.errorCode = code;
 		this.errorDetail = detail;
 		this.clearRetryTimer();
-		if (this.callForPeersInterval) {
-			clearInterval(this.callForPeersInterval);
-			this.callForPeersInterval = undefined;
-		}
+		this.clearPeerDiscoveryTimer();
 		for (const { topic, handler } of this.pubsubHandlers) this.network.unsubscribeHandler(topic, handler);
 		this.pubsubHandlers = [];
 		// Fire-and-forget close — stream may already be reset/aborted, which is benign.
@@ -196,10 +199,7 @@ export class Downloader {
 	disable(): void {
 		this.disabled = true;
 		this.clearRetryTimer();
-		if (this.callForPeersInterval) {
-			clearInterval(this.callForPeersInterval);
-			this.callForPeersInterval = undefined;
-		}
+		this.clearPeerDiscoveryTimer();
 		this.peerManager.closeAll('disable');
 		this.lastServingPeerCount = 0;
 		this.pauseController.notifyStateChange();
@@ -226,7 +226,7 @@ export class Downloader {
 		this.peerManager.clearAllDropped();
 		console.log(`[DL] Enabled ${this.lishID.slice(0, 8)}`);
 		this.pauseController.notifyStateChange();
-		this.setupCallForPeersInterval();
+		this.scheduleNextPeerDiscovery();
 		if (this.state === 'downloading' || this.state === 'awaiting-manifest' || this.state === 'preparing') {
 			this.callForPeers().catch((err: any) => trace(`[DL] enable callForPeers failed (will retry): ${err?.message ?? err}`));
 			this.doWork().catch(e => {
@@ -245,10 +245,7 @@ export class Downloader {
 		this.destroyed = true;
 		this.abortController.abort();
 		this.clearRetryTimer();
-		if (this.callForPeersInterval) {
-			clearInterval(this.callForPeersInterval);
-			this.callForPeersInterval = undefined;
-		}
+		this.clearPeerDiscoveryTimer();
 		for (const { topic, handler } of this.pubsubHandlers) this.network.unsubscribeHandler(topic, handler);
 		this.pubsubHandlers = [];
 		await this.peerManager.closeAllAwait('destroy');
@@ -510,9 +507,10 @@ export class Downloader {
 		for (const nid of this.networkIDs) {
 			await this.network.broadcast(lishTopic(nid), msg).catch((err: any) => trace(`[DL] broadcast WANT on ${nid}: ${err?.message ?? err}`));
 		}
-		// probeTopicPeers runs only via 15s interval (setupCallForPeersInterval), not here — avoids stale stream issues
+		// probeTopicPeers runs only via the adaptive peer-discovery timer (scheduleNextPeerDiscovery), not here
+		// — avoids stale stream issues.
 		trace(`[DL] callForPeers done: ${this.peerManager.size()} peers`);
-		this.setupCallForPeersInterval();
+		this.scheduleNextPeerDiscovery();
 	}
 
 	private async probeTopicPeers(): Promise<void> {
@@ -601,32 +599,79 @@ export class Downloader {
 		}
 	}
 
-	private setupCallForPeersInterval() {
-		if (this.callForPeersInterval) return;
-		this.callForPeersInterval = setInterval(async () => {
-			if (this.destroyed) {
-				clearInterval(this.callForPeersInterval);
-				this.callForPeersInterval = undefined;
-				return;
-			}
-			if (this.state === 'downloaded') {
-				clearInterval(this.callForPeersInterval);
-				this.callForPeersInterval = undefined;
-				return;
-			}
-			if (this.state !== 'downloading' && this.state !== 'awaiting-manifest') return;
-			const before = this.peerManager.size();
-			// NOTE: bannedPeers is NEVER cleared here — bans are persistent for the app session.
-			this.peerManager.tickCycleAndMaybeReset(); // re-check every ~5 min
-			this.lastExhaustedTime = 0;
-			// Broadcast want so all peers (including probe-only) respond with have + chunk availability
-			await this.callForPeers().catch((err: any) => trace(`[DL] interval callForPeers failed (will retry): ${err?.message ?? err}`));
-			await this.probeTopicPeers();
-			if (!this.downloadActive && !this.destroyed && this.peerManager.size() > before)
-				this.doWork().catch(e => {
-					if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e);
-				});
-		}, 15000);
+	/**
+	 * Adaptive delay for the next peer-discovery cycle, chosen by current peer count.
+	 * Fewer peers → more aggressive discovery; once we have plenty, back off significantly.
+	 * Replaces the old fixed 15s cadence which was extremely noisy on busy networks.
+	 */
+	private getPeerDiscoveryDelay(): number {
+		const count = this.peerManager.size();
+		if (count === 0) return 120_000; // 2min — ramp-up / no peers found yet
+		if (count < 6) return 300_000; // 5min — 1–5 peers, still hungry
+		if (count < 20) return 600_000; // 10min — 6–19 peers, comfortable
+		return 1_800_000; // 30min — 20+ peers, plenty
+	}
+
+	private clearPeerDiscoveryTimer(): void {
+		if (this.peerDiscoveryTimer) {
+			clearTimeout(this.peerDiscoveryTimer);
+			this.peerDiscoveryTimer = undefined;
+		}
+	}
+
+	/**
+	 * Schedule the next peer-discovery cycle (callForPeers + probeTopicPeers).
+	 * Self-rescheduling: each fired callback re-schedules itself with a freshly computed delay.
+	 * Idempotent — if a timer is already pending it stays.
+	 */
+	private scheduleNextPeerDiscovery(): void {
+		if (this.peerDiscoveryTimer) return;
+		if (this.destroyed) return;
+		if (this.disabled) return;
+		if (this.state === 'downloaded' || this.state === 'error') return;
+		const delay = this.getPeerDiscoveryDelay();
+		trace(`[DL] next peer discovery in ${Math.round(delay / 1000)}s (peers=${this.peerManager.size()})`);
+		this.peerDiscoveryTimer = setTimeout(() => {
+			this.peerDiscoveryTimer = undefined;
+			this.runPeerDiscoveryCycle().catch(e => trace(`[DL] discovery cycle error: ${e?.message ?? e}`));
+		}, delay);
+	}
+
+	/**
+	 * Manually trigger an immediate peer-discovery cycle (e.g. user clicked "Find peers" in UI).
+	 * Cancels any pending scheduled cycle, runs immediately, then re-schedules normally.
+	 * Cheap by design — if the user clicks repeatedly, each click sends another `want` broadcast;
+	 * remote peers rate-limit their `have` responses so the spam is harmless.
+	 */
+	triggerPeerDiscovery(): void {
+		if (this.destroyed) return;
+		if (this.disabled) return;
+		if (this.state === 'downloaded' || this.state === 'error') return;
+		this.clearPeerDiscoveryTimer();
+		console.debug(`[DL] manual peer discovery trigger for ${this.lishID.slice(0, 8)}`);
+		this.runPeerDiscoveryCycle().catch(e => trace(`[DL] manual discovery cycle error: ${e?.message ?? e}`));
+	}
+
+	private async runPeerDiscoveryCycle(): Promise<void> {
+		if (this.destroyed) return;
+		if (this.state === 'downloaded') return;
+		if (this.state !== 'downloading' && this.state !== 'awaiting-manifest') {
+			// State not eligible right now — just re-schedule, will check again next time.
+			this.scheduleNextPeerDiscovery();
+			return;
+		}
+		const before = this.peerManager.size();
+		// NOTE: bannedPeers is NEVER cleared here — bans are persistent for the app session.
+		this.peerManager.maybeResetDroppedAfter5Min();
+		this.lastExhaustedTime = 0;
+		// Broadcast want so all peers (including probe-only) respond with have + chunk availability.
+		await this.callForPeers().catch((err: any) => trace(`[DL] cycle callForPeers failed (will retry): ${err?.message ?? err}`));
+		await this.probeTopicPeers();
+		if (!this.downloadActive && !this.destroyed && this.peerManager.size() > before)
+			this.doWork().catch(e => {
+				if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e);
+			});
+		this.scheduleNextPeerDiscovery();
 	}
 
 	private async handlePubsubMessage(topic: string, data: Record<string, any>): Promise<void> {

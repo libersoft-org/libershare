@@ -23,11 +23,21 @@ type PubSub = any; // PubSub type - using any since the exact type isn't exporte
 interface PubsubEvent {
 	topic: string;
 	data: Uint8Array;
+	/** Cryptographically-verified peer ID of the original publisher (provided by libp2p gossipsub). */
+	from?: { toString(): string };
 }
-/** Handler for parsed pubsub topic messages. */
-type TopicHandler = (data: Record<string, any>) => void;
+/**
+ * Handler for parsed pubsub topic messages.
+ * `from` is the original publisher peer ID (verified by libp2p) when available —
+ * used for per-source rate-limiting in handleWant.
+ */
+type TopicHandler = (data: Record<string, any>, from?: string) => void;
 const PRIVATE_KEY_PATH = '/local/privatekey';
 const AUTODIAL_WORKAROUND = true;
+/** Minimum interval between two `have` responses sent to the same peer for the same LISH. */
+const WANT_RESPONSE_COOLDOWN_MS = 60_000;
+/** Periodic cleanup of stale entries in lastWantResponseTime (entries older than the cooldown are useless). */
+const WANT_RESPONSE_CLEANUP_INTERVAL_MS = 5 * 60_000;
 
 /**
  * Single shared libp2p node.
@@ -41,6 +51,13 @@ export class Network {
 	private readonly dataDir: string;
 	private pingInterval: NodeJS.Timeout | null = null;
 	private statusInterval: NodeJS.Timeout | null = null;
+	/**
+	 * Per-(peer,lish) timestamp of the last `have` response we sent.
+	 * Used to rate-limit responses to repeated `want` queries from the same peer for the same LISH:
+	 * we respond at most once per WANT_RESPONSE_COOLDOWN_MS. Periodic cleanup removes stale entries.
+	 */
+	private readonly lastWantResponseTime = new Map<string, number>();
+	private wantResponseCleanupInterval: NodeJS.Timeout | null = null;
 	private readonly enablePink: boolean;
 	private bootstrapPeerIDs: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
@@ -270,6 +287,7 @@ export class Network {
 		this.setupPubsubDispatch();
 		this.setupBootstrapWorkaround();
 		this.setupStatusInterval();
+		this.setupWantResponseCleanup();
 	}
 
 	// =========================================================================
@@ -353,6 +371,25 @@ export class Network {
 		this.addListener(this.pubsub!, 'message', (evt: any) => {
 			this.handleMessage(evt.detail);
 		});
+	}
+
+	/**
+	 * Periodically prune lastWantResponseTime entries older than the cooldown window.
+	 * Entries past the cooldown have no effect (next want would pass anyway), so dropping them
+	 * keeps the map bounded over long-running sessions even with churn of remote peers.
+	 */
+	private setupWantResponseCleanup(): void {
+		this.wantResponseCleanupInterval = setInterval(() => {
+			const cutoff = Date.now() - WANT_RESPONSE_COOLDOWN_MS;
+			let removed = 0;
+			for (const [key, ts] of this.lastWantResponseTime) {
+				if (ts < cutoff) {
+					this.lastWantResponseTime.delete(key);
+					removed++;
+				}
+			}
+			if (removed > 0) trace(`[NET] want-response cooldown cleanup: pruned ${removed}, kept ${this.lastWantResponseTime.size}`);
+		}, WANT_RESPONSE_CLEANUP_INTERVAL_MS);
 	}
 
 	private setupBootstrapWorkaround(): void {
@@ -492,9 +529,9 @@ export class Network {
 		const topic = lishTopic(networkID);
 		this.pubsub.subscribe(topic);
 		// Register the Want handler for this network
-		const handler: TopicHandler = data => {
+		const handler: TopicHandler = (data, from) => {
 			trace(`[NET] pubsub ${topic}: ${data['type']}`);
-			if (data['type'] === 'want') this.handleWant(data as WantMessage, networkID);
+			if (data['type'] === 'want') this.handleWant(data as WantMessage, networkID, from);
 		};
 		if (!this.topicHandlers.has(topic)) this.topicHandlers.set(topic, new Set());
 		this.topicHandlers.get(topic)!.add(handler);
@@ -544,6 +581,7 @@ export class Network {
 			const topic = msgEvent.topic;
 			const data = new TextDecoder().decode(msgEvent.data);
 			const message = JSON.parse(data);
+			const from = msgEvent.from?.toString();
 
 			// Dispatch to pink handler
 			if (topic === PINK_TOPIC) {
@@ -553,7 +591,7 @@ export class Network {
 
 			// Dispatch to registered topic handlers
 			const handlers = this.topicHandlers.get(topic);
-			if (handlers) for (const handler of handlers) handler(message);
+			if (handlers) for (const handler of handlers) handler(message, from);
 		} catch (error) {
 			console.error('Error in handleMessage:', error);
 		}
@@ -585,7 +623,7 @@ export class Network {
 	// Want/Have protocol (LISH data exchange)
 	// =========================================================================
 
-	private async handleWant(data: WantMessage, networkID: string): Promise<void> {
+	private async handleWant(data: WantMessage, networkID: string, fromPeerID?: string): Promise<void> {
 		if (!isUploadEnabled(data.lishID)) {
 			trace(`[NET] want ignored: upload disabled for ${data.lishID.slice(0, 8)}`);
 			return;
@@ -593,6 +631,17 @@ export class Network {
 		if (isBusy(data.lishID)) {
 			trace(`[NET] want ignored: busy for ${data.lishID.slice(0, 8)}`);
 			return;
+		}
+		// Per-(peer,lish) rate-limit: ignore want from same peer for same LISH within cooldown.
+		// Without this, an aggressive (or buggy) peer could trigger many redundant HAVE broadcasts.
+		// Note: skipped when fromPeerID is unavailable (older libp2p builds without verified sender).
+		if (fromPeerID) {
+			const key = `${fromPeerID}:${data.lishID}`;
+			const last = this.lastWantResponseTime.get(key);
+			if (last !== undefined && Date.now() - last < WANT_RESPONSE_COOLDOWN_MS) {
+				trace(`[NET] want rate-limited: ${fromPeerID.slice(0, 12)} for ${data.lishID.slice(0, 8)} (cooldown)`);
+				return;
+			}
 		}
 		const lish = this.dataServer.get(data.lishID);
 		if (!lish) return;
@@ -617,6 +666,8 @@ export class Network {
 			peerID: this.node!.peerId.toString(),
 		};
 		await this.broadcast(lishTopic(networkID), haveMessage);
+		// Record send time only after broadcast was attempted; cleanup interval drains stale entries.
+		if (fromPeerID) this.lastWantResponseTime.set(`${fromPeerID}:${data.lishID}`, Date.now());
 	}
 
 	// =========================================================================
@@ -746,6 +797,11 @@ export class Network {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;
 		}
+		if (this.wantResponseCleanupInterval) {
+			clearInterval(this.wantResponseCleanupInterval);
+			this.wantResponseCleanupInterval = null;
+		}
+		this.lastWantResponseTime.clear();
 		if (this._peerCountDebounceTimer) {
 			clearTimeout(this._peerCountDebounceTimer);
 			this._peerCountDebounceTimer = null;
