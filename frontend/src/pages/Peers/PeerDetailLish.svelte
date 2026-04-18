@@ -196,18 +196,6 @@
 		white-space: pre-wrap;
 	}
 
-	.section-title {
-		display: flex;
-		align-items: center;
-		font-size: 3vh;
-		font-weight: bold;
-		padding: 2vh;
-		border-radius: 2vh;
-		background-color: var(--secondary-soft-background);
-		border: 0.4vh solid var(--secondary-softer-background);
-		color: var(--secondary-foreground);
-	}
-
 	@media (max-width: 1199px) {
 		.container {
 			max-width: calc(100vw);
@@ -273,7 +261,6 @@
 					<span class="value">{detail.checksumAlgo}</span>
 				</div>
 			</div>
-			<div class="section-title">{$t('peers.fileStructure')}</div>
 			<Table columns="1fr auto" columnsMobile="1fr auto">
 				{#each fileRows as row, i (row.node.path + ':' + i)}
 					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={i + 1} />
