@@ -148,7 +148,7 @@
 			"error": "Error",
 			"retrying": "Error"
 		},
-		"mode": "Mode",
+		"allowed": "Allowed",
 		"createLISH": "Create LISH",
 		"errorInvalidFormat": "Invalid LISH format",
 		"emptyList": "No LISH to export found",

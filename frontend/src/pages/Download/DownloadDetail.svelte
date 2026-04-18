@@ -5,7 +5,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
-	import ModeBadge from '../../components/Badge/ModeBadge.svelte';
+	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
@@ -17,6 +17,7 @@
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Badge from '../../components/Badge/Badge.svelte';
+	import Icon from '../../components/Icon/Icon.svelte';
 	import DownloadFile from './DownloadFile.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import DownloadDetailDelete from './DownloadDetailDelete.svelte';
@@ -64,6 +65,13 @@
 	let downloadPaused = $derived(!isDownloading);
 	let uploadPaused = $derived(!isUploading);
 	let enabledMode = $derived(download ? computeEnabledMode(download.downloadEnabled, download.uploadEnabled) : ('disabled' as const));
+	function tabColorVariable(tabIndex: number): string {
+		if (tabActive && selectedTabIndex === tabIndex) return '--primary-background';
+		if ((tabIndex === 0 && activeTab === 'files') || (tabIndex === 1 && activeTab === 'peers')) return '--primary-foreground';
+		return '--secondary-foreground';
+	}
+	let filesTabColor = $derived(tabColorVariable(0));
+	let peersTabColor = $derived(tabColorVariable(1));
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => {
 			if (action.id === 'toggle-download') return true;
@@ -482,12 +490,6 @@
 		gap: 0.8vh;
 	}
 
-	.tab-icon {
-		width: 1.8vh;
-		height: 1.8vh;
-		flex-shrink: 0;
-	}
-
 	.tab.active {
 		color: var(--primary-foreground);
 		border-bottom: 0.3vh solid var(--primary-foreground);
@@ -670,8 +672,8 @@
 							<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} status={download.status} /></Cell>
 						</TableRow>
 						<TableRow>
-							<Cell>{$t('downloads.mode')}:</Cell>
-							<Cell align="right"><ModeBadge mode={enabledMode} size="3vh" /></Cell>
+							<Cell>{$t('downloads.allowed')}:</Cell>
+							<Cell align="right"><AllowedBadge mode={enabledMode} size="3vh" /></Cell>
 						</TableRow>
 						<TableRow>
 							<Cell>{$t('downloads.downloadingFrom')}:</Cell>
@@ -703,23 +705,11 @@
 				<div class="container">
 					<div class="tab-header">
 						<button class="tab" class:active={activeTab === 'files'} class:selected={tabActive && selectedTabIndex === 0}>
-							<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-								<polyline points="14 2 14 8 20 8" />
-								<line x1="16" y1="13" x2="8" y2="13" />
-								<line x1="16" y1="17" x2="8" y2="17" />
-								<polyline points="10 9 9 9 8 9" />
-							</svg>
+							<Icon img="/img/file.svg" size="1.8vh" padding="0" colorVariable={filesTabColor} />
 							{$t('downloads.tabs.files')}
 						</button>
 						<button class="tab" class:active={activeTab === 'peers'} class:selected={tabActive && selectedTabIndex === 1}>
-							<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<circle cx="18" cy="5" r="3" />
-								<circle cx="6" cy="12" r="3" />
-								<circle cx="18" cy="19" r="3" />
-								<line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-								<line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-							</svg>
+							<Icon img="/img/peers.svg" size="1.8vh" padding="0" colorVariable={peersTabColor} />
 							{$t('downloads.tabs.peers')}
 						</button>
 					</div>

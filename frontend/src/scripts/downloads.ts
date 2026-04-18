@@ -883,7 +883,7 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 }
 
 // Table columns definition
-export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 9vw 9vw 8vw 13vw 3vw 5vw 11vw';
+export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 9vw 9vw 8vw 7vw 7vw 5vw 11vw';
 // Toolbar action IDs for download detail view
 export type DownloadToolbarActionID = 'back' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'find-peers' | 'verify' | 'stop-verify' | 'export' | 'move' | 'delete';
 export interface DownloadToolbarAction {

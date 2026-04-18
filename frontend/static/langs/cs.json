@@ -148,7 +148,7 @@
 			"error": "Chyba",
 			"retrying": "Chyba"
 		},
-		"mode": "Režim",
+		"allowed": "Povoleno",
 		"createLISH": "Vytvořit LISH",
 		"errorInvalidFormat": "Neplatný formát LISH",
 		"emptyList": "Nebyl nalezen žádný LISH k exportu",
