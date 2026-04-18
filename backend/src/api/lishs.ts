@@ -7,7 +7,7 @@ import { type Settings } from '../settings.ts';
 import { setBusy, clearBusy } from './busy.ts';
 import { getEnabledUploads, removeUploadState, enableUpload } from '../protocol/lish-protocol.ts';
 import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, triggerEnableDownload, markDownloadEnabled, stopRecoveryForLISH } from './transfer.ts';
-import { mkdir, readdir, stat, access, unlink, rmdir, rename } from 'fs/promises';
+import { mkdir, readdir, stat, access, unlink, rmdir, rename, rm } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
 const assert = Utils.assertParams;
@@ -96,9 +96,24 @@ interface LISHsHandlers {
  * Delete only the files and empty directories that belong to a LISH structure.
  * Files not part of the LISH are left untouched.
  * Directories are removed only if they are empty after file deletion (deepest first).
+ *
+ * Exception: when the LISH is still in its temp download directory (finalDirectory is set),
+ * the whole baseDir is recursively wiped — the temp dir is uniquely allocated per LISH and
+ * may contain partially-allocated files, intermediate parent directories not listed in the
+ * manifest, or other download artifacts. Partial downloads must be fully cleaned up.
  */
 async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 	const baseDir = lish.directory!;
+	// Download in progress — temp dir is unique per LISH, wipe it entirely.
+	if (lish.finalDirectory) {
+		try {
+			await rm(baseDir, { recursive: true, force: true });
+			console.log(`✓ Temp directory removed: ${baseDir}`);
+		} catch (err: any) {
+			console.error(`Failed to remove temp directory: ${baseDir}`, err);
+		}
+		return;
+	}
 	// 1. Delete all files listed in the LISH
 	let deletedFiles = 0;
 	for (const file of lish.files ?? []) {
