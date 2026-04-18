@@ -363,7 +363,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				sendLengthPrefixed(stream, codecEncode(response));
 				ioErrorCounts.delete(chunkReq.lishID); // reset on success
 				const chunkLoc = dataServer.findChunkFile(chunkReq.lishID as LISHid, chunkReq.chunkID as import('@shared').ChunkID);
-				if (remotePeerID) recordUploadBytes(chunkReq.lishID, fullRemotePeer, chunkData.length, chunkReq.chunkID, chunkLoc);
+				if (remotePeerID) recordUploadBytes(chunkReq.lishID, fullRemotePeer, chunkData.length, chunkLoc);
 				dataServer.incrementUploadedBytes(chunkReq.lishID as import('@shared').LISHid, chunkData.length);
 				await uploadLimiter.throttle(chunkData.length);
 				// Upload progress tracking (sliding window speed, 1s polling)

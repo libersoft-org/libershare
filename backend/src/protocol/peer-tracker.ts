@@ -10,7 +10,6 @@ export interface PeerDetail {
 	totalDownloaded: number;
 	totalUploaded: number;
 	currentFile?: string;
-	currentChunk?: string;
 	connectedAt: number;
 	lastActivity: number;
 	stale: boolean;
@@ -32,7 +31,6 @@ interface PeerEntry {
 	connectedAt: number;
 	totalBytes: number;
 	currentFile?: string;
-	currentChunk?: string;
 	lastActivity: number;
 	/** Per-peer sliding window speed samples (same algorithm as global). */
 	speedSamples: SpeedSample[];
@@ -164,7 +162,7 @@ export function touchPeer(lishID: string, peerID: string, direction: 'download' 
 	if (entry) entry.lastActivity = Date.now();
 }
 
-export function recordDownloadBytes(lishID: string, peerID: string, bytes: number, currentFile?: string, currentChunk?: string): void {
+export function recordDownloadBytes(lishID: string, peerID: string, bytes: number, currentFile?: string): void {
 	const k = key(lishID, peerID, 'download');
 	let entry = entries.get(k);
 	if (!entry) {
@@ -178,10 +176,9 @@ export function recordDownloadBytes(lishID: string, peerID: string, bytes: numbe
 	entry.lastActivity = now;
 	entry.speedSamples.push({ time: now, bytes });
 	if (currentFile !== undefined) entry.currentFile = currentFile;
-	if (currentChunk !== undefined) entry.currentChunk = currentChunk;
 }
 
-export function recordUploadBytes(lishID: string, peerID: string, bytes: number, currentChunk?: string, currentFile?: string): void {
+export function recordUploadBytes(lishID: string, peerID: string, bytes: number, currentFile?: string): void {
 	const k = key(lishID, peerID, 'upload');
 	let entry = entries.get(k);
 	if (!entry) {
@@ -193,7 +190,6 @@ export function recordUploadBytes(lishID: string, peerID: string, bytes: number,
 	cumulativeBytes.set(k, entry.totalBytes);
 	entry.lastActivity = now;
 	entry.speedSamples.push({ time: now, bytes });
-	if (currentChunk !== undefined) entry.currentChunk = currentChunk;
 	if (currentFile !== undefined) entry.currentFile = currentFile;
 }
 
@@ -319,12 +315,10 @@ function emitPeerDetails(): void {
 				existing.downloadSpeed = speed;
 				existing.totalDownloaded = entry.totalBytes;
 				if (entry.currentFile) existing.currentFile = entry.currentFile;
-				if (entry.currentChunk) existing.currentChunk = entry.currentChunk;
 			} else {
 				existing.uploadSpeed = speed;
 				existing.totalUploaded = entry.totalBytes;
 				if (entry.currentFile) existing.currentFile = entry.currentFile;
-				if (entry.currentChunk) existing.currentChunk = entry.currentChunk;
 			}
 			if (entry.havePercent !== undefined) existing.havePercent = entry.havePercent;
 			// Prefer DCUtR > RELAY > DIRECT for display
@@ -347,7 +341,6 @@ function emitPeerDetails(): void {
 				stale: isStale,
 			};
 			if (entry.currentFile !== undefined) detail.currentFile = entry.currentFile;
-			if (entry.currentChunk !== undefined) detail.currentChunk = entry.currentChunk;
 			if (entry.havePercent !== undefined) detail.havePercent = entry.havePercent;
 			peerMap.set(entry.peerID, detail);
 		}

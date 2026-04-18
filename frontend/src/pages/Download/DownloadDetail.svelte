@@ -518,12 +518,15 @@
 		height: 100%;
 		font-size: 1.6vh;
 		color: var(--secondary-foreground);
-		opacity: 0.6;
 	}
 
 	.peer-id {
 		font-family: var(--font-mono);
 		font-size: 1.5vh;
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.conn-badge {
@@ -557,6 +560,7 @@
 	.peer-metric {
 		display: flex;
 		flex-direction: column;
+		align-items: center;
 		gap: 0.2vh;
 		font-family: var(--font-mono);
 		font-size: 1.5vh;
@@ -589,10 +593,6 @@
 		color: inherit;
 	}
 
-	.speed-idle {
-		opacity: 0.35;
-	}
-
 	.speed-dl,
 	.speed-ul {
 		font-weight: bold;
@@ -600,7 +600,6 @@
 
 	.peer-file {
 		font-size: 1.4vh;
-		opacity: 0.7;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -610,7 +609,6 @@
 		font-size: 1.4vh;
 		font-family: var(--font-mono);
 		color: var(--secondary-foreground);
-		opacity: 0.6;
 	}
 
 	:global(.row.selected) .peer-ago,
@@ -618,7 +616,6 @@
 	:global(.row.selected) .peer-id,
 	:global(.row.selected) .conn-badge {
 		color: var(--primary-background);
-		opacity: 1;
 	}
 
 	:global(.row.selected) .conn-badge {
@@ -765,16 +762,15 @@
 					{:else if currentPeers.length === 0}
 						<div class="empty-peers">{$t('downloads.peerList.noPeers')}</div>
 					{:else}
-						<Table columns="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" columnsMobile="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" noBorder>
+						<Table columns="2fr 2fr 8vh 6vh 12vh 12vh 8vh" columnsMobile="2fr 2fr 8vh 6vh 12vh 12vh 8vh" noBorder>
 							<Header fontSize="1.3vh">
+								<Cell>{$t('downloads.peerList.currentFile')}</Cell>
 								<Cell>{$t('downloads.peerList.id')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.availability')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.speed')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.transferred')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.activity')}</Cell>
-								<Cell>{$t('downloads.peerList.currentFile')}</Cell>
-								<Cell>Chunk</Cell>
 							</Header>
 							<div class="items">
 								{#each currentPeers as peer, index (peer.peerID)}
@@ -783,16 +779,17 @@
 									{@const downloadColor = rowSelected ? '--primary-background' : '--mode-download-fg'}
 									{@const uploadColor = rowSelected ? '--primary-background' : '--mode-upload-fg'}
 									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale}>
-										<Cell><span class="peer-id">{peer.peerID.slice(0, 12)}</span></Cell>
+										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
+										<Cell><span class="peer-id">{peer.peerID}</span></Cell>
 										<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
 										<Cell align="center"><span class="peer-ago">{peer.havePercent != null ? `${peer.havePercent}%` : '—'}</span></Cell>
 										<Cell align="center">
 											<span class="peer-metric" class:sel={rowSelected}>
-												<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>
+												<span class="speed-dl">
 													<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
 													<span>{formatSize(peer.downloadSpeed || 0)}/s</span>
 												</span>
-												<span class="speed-ul" class:speed-idle={!peer.uploadSpeed}>
+												<span class="speed-ul">
 													<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
 													<span>{formatSize(peer.uploadSpeed || 0)}/s</span>
 												</span>
@@ -811,8 +808,6 @@
 											</span>
 										</Cell>
 										<Cell align="center"><span class="peer-ago">{ageSec}s</span></Cell>
-										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
-										<Cell><span class="peer-file">{peer.currentChunk ? peer.currentChunk.slice(0, 8) : ''}</span></Cell>
 									</TableRow>
 								{/each}
 							</div>
