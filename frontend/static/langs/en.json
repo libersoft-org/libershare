@@ -124,6 +124,7 @@
 		},
 		"peerList": {
 			"searching": "Searching for peers...",
+			"noPeers": "No peers",
 			"id": "Peer",
 			"currentFile": "Current file",
 			"transferred": "Transferred",

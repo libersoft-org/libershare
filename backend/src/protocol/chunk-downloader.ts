@@ -380,7 +380,7 @@ export class ChunkDownloader {
 				}
 				dataServer.markChunkDownloaded(lishID, chunk.chunkID);
 				dataServer.incrementDownloadedBytes(lishID, data.length);
-				recordDownloadBytes(lishID, peerID, data.length, lish.files?.[chunk.fileIndex]?.path, chunk.chunkID);
+				recordDownloadBytes(lishID, peerID, data.length, lish.files?.[chunk.fileIndex]?.path);
 				downloadedCount++;
 				if (this.writeRetryCount > 0) this.writeRetryCount = 0;
 				const fIdx = chunk.fileIndex;

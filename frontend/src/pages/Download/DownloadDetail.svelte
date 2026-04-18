@@ -518,12 +518,15 @@
 		height: 100%;
 		font-size: 1.6vh;
 		color: var(--secondary-foreground);
-		opacity: 0.6;
 	}
 
 	.peer-id {
 		font-family: var(--font-mono);
 		font-size: 1.5vh;
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.conn-badge {
@@ -557,10 +560,20 @@
 	.peer-metric {
 		display: flex;
 		flex-direction: column;
+		align-items: center;
 		gap: 0.2vh;
 		font-family: var(--font-mono);
 		font-size: 1.5vh;
 		white-space: nowrap;
+	}
+
+	.speed-dl,
+	.speed-ul,
+	.total-dl,
+	.total-ul {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4vh;
 	}
 
 	.speed-dl,
@@ -573,8 +586,11 @@
 		color: var(--mode-upload-fg, #28f);
 	}
 
-	.speed-idle {
-		opacity: 0.35;
+	.peer-metric.sel .speed-dl,
+	.peer-metric.sel .speed-ul,
+	.peer-metric.sel .total-dl,
+	.peer-metric.sel .total-ul {
+		color: inherit;
 	}
 
 	.speed-dl,
@@ -584,7 +600,6 @@
 
 	.peer-file {
 		font-size: 1.4vh;
-		opacity: 0.7;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -594,7 +609,18 @@
 		font-size: 1.4vh;
 		font-family: var(--font-mono);
 		color: var(--secondary-foreground);
-		opacity: 0.6;
+	}
+
+	:global(.row.selected) .peer-ago,
+	:global(.row.selected) .peer-file,
+	:global(.row.selected) .peer-id,
+	:global(.row.selected) .conn-badge {
+		color: var(--primary-background);
+	}
+
+	:global(.row.selected) .conn-badge {
+		background-color: transparent;
+		border-color: var(--primary-background);
 	}
 
 	@media (max-width: 1199px) {
@@ -734,41 +760,54 @@
 					{:else if !peerSnapshotLoaded}
 						<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
 					{:else if currentPeers.length === 0}
-						<div class="empty-peers">Žádní peeri</div>
+						<div class="empty-peers">{$t('downloads.peerList.noPeers')}</div>
 					{:else}
-						<Table columns="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" columnsMobile="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" noBorder>
+						<Table columns="2fr 2fr 8vh 6vh 12vh 12vh 8vh" columnsMobile="2fr 2fr 8vh 6vh 12vh 12vh 8vh" noBorder>
 							<Header fontSize="1.3vh">
+								<Cell>{$t('downloads.peerList.currentFile')}</Cell>
 								<Cell>{$t('downloads.peerList.id')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.availability')}</Cell>
-								<Cell align="right">{$t('downloads.peerList.speed')}</Cell>
-								<Cell align="right">{$t('downloads.peerList.transferred')}</Cell>
-								<Cell align="right">{$t('downloads.peerList.activity')}</Cell>
-								<Cell>{$t('downloads.peerList.currentFile')}</Cell>
-								<Cell>Chunk</Cell>
+								<Cell align="center">{$t('downloads.peerList.speed')}</Cell>
+								<Cell align="center">{$t('downloads.peerList.transferred')}</Cell>
+								<Cell align="center">{$t('downloads.peerList.activity')}</Cell>
 							</Header>
 							<div class="items">
 								{#each currentPeers as peer, index (peer.peerID)}
 									{@const ageSec = peer.lastActivity ? Math.max(0, Math.round((now - peer.lastActivity) / 1000)) : 0}
-									<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index} dimmed={peer.stale}>
-										<Cell><span class="peer-id">{peer.peerID.slice(0, 12)}</span></Cell>
+									{@const rowSelected = peerListActive && selectedPeerIndex === index}
+									{@const downloadColor = rowSelected ? '--primary-background' : '--mode-download-fg'}
+									{@const uploadColor = rowSelected ? '--primary-background' : '--mode-upload-fg'}
+									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale}>
+										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
+										<Cell><span class="peer-id">{peer.peerID}</span></Cell>
 										<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
 										<Cell align="center"><span class="peer-ago">{peer.havePercent != null ? `${peer.havePercent}%` : '—'}</span></Cell>
-										<Cell align="right">
-											<span class="peer-metric">
-												<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>↓ {formatSize(peer.downloadSpeed || 0)}/s</span>
-												<span class="speed-ul" class:speed-idle={!peer.uploadSpeed}>↑ {formatSize(peer.uploadSpeed || 0)}/s</span>
+										<Cell align="center">
+											<span class="peer-metric" class:sel={rowSelected}>
+												<span class="speed-dl">
+													<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
+													<span>{formatSize(peer.downloadSpeed || 0)}/s</span>
+												</span>
+												<span class="speed-ul">
+													<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
+													<span>{formatSize(peer.uploadSpeed || 0)}/s</span>
+												</span>
 											</span>
 										</Cell>
-										<Cell align="right">
-											<span class="peer-metric">
-												<span class="total-dl">↓ {formatSize(peer.totalDownloaded || 0)}</span>
-												<span class="total-ul">↑ {formatSize(peer.totalUploaded || 0)}</span>
+										<Cell align="center">
+											<span class="peer-metric" class:sel={rowSelected}>
+												<span class="total-dl">
+													<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
+													<span>{formatSize(peer.totalDownloaded || 0)}</span>
+												</span>
+												<span class="total-ul">
+													<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
+													<span>{formatSize(peer.totalUploaded || 0)}</span>
+												</span>
 											</span>
 										</Cell>
-										<Cell align="right"><span class="peer-ago">{ageSec}s</span></Cell>
-										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
-										<Cell><span class="peer-file">{peer.currentChunk ? peer.currentChunk.slice(0, 8) : ''}</span></Cell>
+										<Cell align="center"><span class="peer-ago">{ageSec}s</span></Cell>
 									</TableRow>
 								{/each}
 							</div>
