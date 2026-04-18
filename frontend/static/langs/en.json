@@ -89,8 +89,6 @@
 		"noPeers": "No connected peers found.",
 		"peerDeclined": "Peer declined to share their list or did not respond.",
 		"noSharedLishs": "This peer is not sharing any LISHs.",
-		"lish": "LISH",
-		"actions": "Actions",
 		"addToDownloads": "Add to Downloads",
 		"details": "Details",
 		"unnamed": "(unnamed)",
@@ -104,7 +102,6 @@
 		"created": "Created",
 		"chunkSize": "Chunk size",
 		"checksumAlgo": "Checksum algorithm",
-		"fileStructure": "File structure",
 		"errorUnreachable": "Peer is unreachable",
 		"errorLishNotShared": "Peer does not share this LISH",
 		"errorChunkNotFound": "Peer does not have this chunk",
@@ -154,12 +151,6 @@
 			"allocating": "Allocating",
 			"error": "Error",
 			"retrying": "Error"
-		},
-		"modes": {
-			"disabled": "Disabled",
-			"download": "↓ Download",
-			"upload": "↑ Upload",
-			"both": "↕ Both"
 		},
 		"mode": "Mode",
 		"createLISH": "Create LISH",

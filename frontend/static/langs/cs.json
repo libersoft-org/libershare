@@ -89,8 +89,6 @@
 		"noPeers": "Žádní připojení účastníci.",
 		"peerDeclined": "Účastník odmítl sdílet svůj seznam nebo neodpověděl.",
 		"noSharedLishs": "Tento účastník nesdílí žádné LISHe.",
-		"lish": "LISH",
-		"actions": "Akce",
 		"addToDownloads": "Přidat ke stahování",
 		"details": "Podrobnosti",
 		"unnamed": "(bez názvu)",
@@ -104,7 +102,6 @@
 		"created": "Vytvořeno",
 		"chunkSize": "Velikost chunku",
 		"checksumAlgo": "Algoritmus kontrolního součtu",
-		"fileStructure": "Struktura souborů",
 		"errorUnreachable": "Účastník je nedostupný",
 		"errorLishNotShared": "Účastník tento LISH nesdílí",
 		"errorChunkNotFound": "Účastník tento chunk nemá",
@@ -154,12 +151,6 @@
 			"allocating": "Připravuje se",
 			"error": "Chyba",
 			"retrying": "Chyba"
-		},
-		"modes": {
-			"disabled": "Vypnuto",
-			"download": "↓ Stahování",
-			"upload": "↑ Odesílání",
-			"both": "↕ Oboje"
 		},
 		"mode": "Režim",
 		"createLISH": "Vytvořit LISH",
