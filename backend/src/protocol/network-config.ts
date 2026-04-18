@@ -43,7 +43,10 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// Build listen addresses
 	const port = allSettings.network?.incomingPort || 0;
 	const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
-	const maxRelays = 10;
+	// Each /p2p-circuit slot accumulates Multiaddr objects from periodic relay
+	// reservation refresh; 10 slots caused ~117k Multiaddr instances on <redacted-arm-peer>
+	// (heap snapshot 2026-04-18). 5 keeps redundancy without the leak amplifier.
+	const maxRelays = 5;
 	for (let i = 0; i < maxRelays; i++) listenAddresses.push('/p2p-circuit');
 	console.log(`✓ Configured to reserve ${maxRelays} relay slots`);
 	// Build appendAnnounce addresses.
@@ -89,6 +92,10 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		peerStore: {
 			persistence: true,
 			threshold: 15,
+			// Aggressive pruning — circuit-relay addresses re-created on every
+			// reservation refresh (~minute); default 1h kept stale duplicates.
+			maxAddressAge: 300_000,   // 5 min (default 3_600_000 = 1h)
+			maxPeerAge: 1_800_000,    // 30 min (default 21_600_000 = 6h)
 		},
 		services: {
 			identify: identify(),
