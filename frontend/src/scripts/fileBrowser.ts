@@ -52,7 +52,11 @@ export function joinPath(directory: string, fileName: string): string {
 export function getParentPath(path: string, separator: string): string | null {
 	if (!path || path === separator) return null;
 	if (/^[A-Z]:\\?$/i.test(path)) return '';
-	const parts = path.split(separator).filter(Boolean);
+	// On Windows accept both '\' and '/' as separators (paths may be mixed
+	// after user edits / cross-platform settings). On Linux split strictly on
+	// '/' since '\' is a valid filename character.
+	const splitRegex = separator === '/' ? /\// : /[\\/]/;
+	const parts = path.split(splitRegex).filter(Boolean);
 	if (parts.length <= 1) {
 		if (separator === '\\' && /^[A-Z]:/i.test(path)) return parts[0] + '\\';
 		return separator === '/' ? '/' : '';
@@ -261,7 +265,11 @@ export interface PathBreadcrumbItem {
  */
 export function parsePathToBreadcrumbs(path: string, separator: string): PathBreadcrumbItem[] {
 	if (!path) return [{ id: '0', name: separator === '/' ? '/' : 'Drives', path: '', icon: '/img/storage.svg' }];
-	const parts = path.split(separator).filter(Boolean);
+	// On Windows accept both '\' and '/' as separators (paths may be mixed
+	// after user edits / cross-platform settings). On Linux split strictly on
+	// '/' since '\' is a valid filename character.
+	const splitRegex = separator === '/' ? /\// : /[\\/]/;
+	const parts = path.split(splitRegex).filter(Boolean);
 	const items: PathBreadcrumbItem[] = [];
 	if (separator === '/') {
 		// Linux: start with root "/"
