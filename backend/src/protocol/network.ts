@@ -3,7 +3,7 @@ import { KEEP_ALIVE } from '@libp2p/interface';
 import { SqliteDatastore } from './datastore.ts';
 import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { type Libp2p } from 'libp2p';
-import { type PeerId as PeerID, type PrivateKey, type PeerInfo, type Stream } from '@libp2p/interface';
+import { type PeerId as PeerID, type PrivateKey, type Stream } from '@libp2p/interface';
 import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
 import { join } from 'path';
 import { existsSync } from 'fs';
@@ -267,11 +267,7 @@ export class Network {
 		);
 		console.log(`✓ Registered ${LISH_PROTOCOL} protocol handler`);
 
-		const dht = this.node.services['dht'] as any;
-		if (dht) {
-			const mode = dht.clientMode === false ? 'server' : 'client';
-			console.log('✓ DHT running in', mode, 'mode');
-		}
+		// DHT removed; only bootstrap + gossipsub for discovery
 
 		this.addListener(this.pubsub, 'gossipsub:graft', (evt: any) => {
 			trace(`[NET] GRAFT: ${evt.detail.peerID} joined ${evt.detail.topic}`);
@@ -823,11 +819,16 @@ export class Network {
 	}
 
 	async findPeer(peerID: PeerID): Promise<void> {
-		console.log('Finding peer:');
-		console.log('Closest peers:');
-		for await (const peer of this.node!.peerRouting.getClosestPeers(peerID.toMultihash().bytes)) console.log(peer.id, peer.multiaddrs);
-		const peer: PeerInfo = await this.node!.peerRouting.findPeer(peerID);
-		console.log('Found it, multiaddrs are:');
-		peer.multiaddrs.forEach(ma => console.log(ma.toString()));
+		// DHT removed; debug API now stubbed. Use gossipsub topic subscribers
+		// + bootstrap peer list for peer discovery instead.
+		console.log('findPeer: DHT removed, only bootstrap + gossipsub peers visible');
+		const peers = await this.node!.peerStore.all();
+		const match = peers.find(p => p.id.toString() === peerID.toString());
+		if (match) {
+			console.log('Known multiaddrs:');
+			match.addresses.forEach(a => console.log(a.multiaddr.toString()));
+		} else {
+			console.log('Peer not in peerStore');
+		}
 	}
 }

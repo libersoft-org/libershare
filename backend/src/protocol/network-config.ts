@@ -8,7 +8,6 @@ import { yamux } from '@chainsafe/libp2p-yamux';
 import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { identify, identifyPush } from '@libp2p/identify';
 import { bootstrap } from '@libp2p/bootstrap';
-import { kadDHT } from '@libp2p/kad-dht';
 import { ping } from '@libp2p/ping';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
@@ -114,13 +113,11 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				fanoutTTL: 60000,
 				runOnLimitedConnection: true,
 			}),
-			// Hourly self-query causes ~200 MB transient RSS burst on <redacted-fleet-peer>;
-			// back off to 2h to reduce burst frequency.
-			dht: kadDHT({
-				clientMode: false,
-				initialQuerySelfInterval: 7200000,
-				querySelfInterval: 7200000,
-			}),
+			// DHT removed entirely — only used by debug `lishnets.findPeer` API
+			// (see network.ts:825). Real peer discovery uses gossipsub mesh +
+			// bootstrap peers. Removal saves 100-300 MB peak burst from
+			// TABLE_REFRESH (5min, 15×K=20 RPC) + querySelf + routing table
+			// maintenance. clientMode option deprecated by removing service.
 		},
 	};
 	// Add relay server service if enabled
