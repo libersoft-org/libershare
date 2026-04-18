@@ -20,9 +20,9 @@ export class Networks {
 	// Callback for peer count changes
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
 
-	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings, enablePink: boolean = false) {
+	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.db = db;
-		this.network = new Network(dataDir, dataServer, settings, enablePink);
+		this.network = new Network(dataDir, dataServer, settings);
 		// Forward peer count changes from the network node
 		this.network.onPeerCountChange = counts => {
 			if (this._onPeerCountChange) this._onPeerCountChange(counts);

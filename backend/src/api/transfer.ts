@@ -31,6 +31,7 @@ interface TransferHandlers {
 	subscribePeers: (p: { lishID: string }, client: any) => boolean;
 	unsubscribePeers: (p: { lishID: string }, client: any) => boolean;
 	debugPeers: (p: { lishID?: string }) => ReturnType<typeof getDebugSnapshot>;
+	findPeers: (p: { lishID: string }) => { success: boolean };
 }
 
 type PersistDownloadFn = (lishID: string, enabled: boolean) => void;
@@ -457,5 +458,19 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return getDebugSnapshot(p?.lishID);
 	}
 
-	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler };
+	/**
+	 * Manually trigger an immediate peer-discovery cycle for the given LISH ("Find peers" UI button).
+	 * Returns success=false when no active downloader exists for the LISH (e.g. download already finished
+	 * or never started). Repeated clicks are intentionally cheap; remote peers rate-limit their HAVE
+	 * responses so manual spam is harmless.
+	 */
+	function findPeersHandler(p: { lishID: string }): { success: boolean } {
+		assert(p, ['lishID']);
+		const dl = activeDownloaders.get(p.lishID);
+		if (!dl) return { success: false };
+		dl.triggerPeerDiscovery();
+		return { success: true };
+	}
+
+	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler };
 }

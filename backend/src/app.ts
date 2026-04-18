@@ -21,7 +21,6 @@ let dataDir = isCompiledBinary ? join(dirname(process.execPath), 'data') : './da
 // In dev mode the default in lish.ts (./checksum-worker.ts relative to lish.ts) is correct.
 if (isCompiledBinary) setWorkerUrl(new URL('./lish/checksum-worker.js', import.meta.url).href);
 
-let enablePink = false;
 let logLevel: LogLevel = isCompiledBinary ? 'info' : 'debug';
 let apiHost = 'localhost';
 let apiPort = 0;
@@ -34,8 +33,7 @@ for (let i = 0; i < args.length; i++) {
 	if (args[i] === '--datadir' && i + 1 < args.length) {
 		dataDir = args[i + 1]!;
 		i++;
-	} else if (args[i] === '--pink') enablePink = true;
-	else if (args[i] === '--loglevel' && i + 1 < args.length) {
+	} else if (args[i] === '--loglevel' && i + 1 < args.length) {
 		logLevel = args[i + 1]! as LogLevel;
 		i++;
 	} else if (args[i] === '--host' && i + 1 < args.length) {
@@ -67,7 +65,7 @@ const settings = await Settings.create(dataDir);
 await settings.ensureStorageDirs();
 const db = openDatabase(dataDir);
 const dataServer = new DataServer(db);
-const networks = new Networks(db, dataDir, dataServer, settings, enablePink);
+const networks = new Networks(db, dataDir, dataServer, settings);
 networks.init();
 
 // Apply speed limits from settings

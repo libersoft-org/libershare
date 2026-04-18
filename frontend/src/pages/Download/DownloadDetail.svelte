@@ -170,6 +170,10 @@
 			api.lishs.stopVerify(download.id).catch(err => console.error('Stop verification failed:', err));
 			return;
 		}
+		if (actionID === 'find-peers' && download) {
+			api.call('transfer.findPeers', { lishID: download.id }).catch(err => console.error('Find peers failed:', err));
+			return;
+		}
 		if (actionID === 'open-directory' && download?.directory) {
 			pushBreadcrumb($t('downloads.targetDirectory'));
 			unregisterDetailAreas();

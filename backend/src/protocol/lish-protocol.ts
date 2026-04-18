@@ -10,7 +10,7 @@ import { trace } from '../logger.ts';
 import { registerUploadPeer, unregisterUploadPeer, recordUploadBytes, type ConnectionType } from './peer-tracker.ts';
 import { encode as codecEncode, decode as codecDecode } from './codec.ts';
 export const LISH_PROTOCOL = '/lish/0.0.1';
-export type LISHRequest = LISHGetChunkRequest | LISHGetLishRequest | LISHGetLishsRequest;
+export type LISHRequest = LISHGetChunkRequest | LISHGetLishRequest | LISHGetLishsRequest | LISHAnnounceHaveRequest;
 export interface LISHGetChunkRequest {
 	type?: 'getChunk';
 	lishID: LISHid;
@@ -23,13 +23,47 @@ export interface LISHGetLishRequest {
 export interface LISHGetLishsRequest {
 	type: 'getLishs';
 }
+/**
+ * Unicast "I have this LISH" announcement — response to a pubsub `want`.
+ * Sent over a fresh LISH protocol stream from seeder → requester; small (no chunk data, no manifest).
+ * `multiaddrs` carries the seeder's dial addresses so the requester can open a chunk-transfer connection.
+ */
+export interface LISHAnnounceHaveRequest {
+	type: 'announceHave';
+	lishID: LISHid;
+	chunks: HaveChunks;
+	multiaddrs: string[];
+}
 // Discriminated responses: always exactly one of { data | manifest | lishs } OR { error }.
 export type LISHGetChunkResponse =
 	| { data: Uint8Array } // raw binary chunk data (msgpack native bin type, no base64)
 	| { error: ErrorCode };
 export type LISHGetLishResponse = { manifest: import('@shared').IStoredLISH } | { error: ErrorCode };
 export type LISHGetLishsResponse = { type: 'getLishs-result'; lishs: Array<{ id: string; name?: string }> } | { type: 'getLishs-result'; error: ErrorCode };
+export type LISHAnnounceHaveResponse = { ok: true } | { error: ErrorCode };
 export type HaveChunks = 'all' | ChunkID[];
+
+/**
+ * Incoming HAVE announcement payload handed to the Downloader registered for the given lishID.
+ * `peerID` is the remote end of the stream (verified by libp2p), NOT a field from the wire —
+ * this removes the spoofing vector the old pubsub HaveMessage had.
+ */
+export interface HaveAnnouncement {
+	lishID: string;
+	peerID: string;
+	multiaddrs: string[];
+	chunks: HaveChunks;
+}
+type HaveAnnouncementHandler = (ann: HaveAnnouncement) => void;
+const haveAnnouncementHandlers = new Map<string, HaveAnnouncementHandler>();
+
+/** Register a handler for incoming unicast HAVE announcements for a given lishID. Only one handler per lishID. */
+export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler): void {
+	haveAnnouncementHandlers.set(lishID, handler);
+}
+export function unregisterHaveAnnouncementHandler(lishID: string): void {
+	haveAnnouncementHandlers.delete(lishID);
+}
 
 // Client-side stream wrapper that can send multiple requests
 export class LISHClient {
@@ -114,6 +148,20 @@ export class LISHClient {
 		} catch (error) {
 			// Ignore errors on close
 		}
+	}
+
+	/**
+	 * Send a unicast HAVE announcement (replaces the old pubsub broadcast).
+	 * Fire-and-forget in spirit, but waits briefly for the ACK so the caller knows the write landed.
+	 */
+	async announceHave(lishID: LISHid, chunks: HaveChunks, multiaddrs: string[]): Promise<void> {
+		const request: LISHAnnounceHaveRequest = { type: 'announceHave', lishID, chunks, multiaddrs };
+		sendLengthPrefixed(this.stream, codecEncode(request));
+		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(15000, 'announceHave-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
+		if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, lishID);
+		const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
+		const response = this.parseResponse<LISHAnnounceHaveResponse>(responseData, `announceHave ${lishID}`);
+		if ('error' in response) throw new CodedError(response.error, lishID);
 	}
 }
 
@@ -340,6 +388,25 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					const bytesPerSecond = elapsed >= 0.5 ? Math.round(windowBytes / elapsed) : 0;
 					broadcastFn('transfer.upload:progress', { lishID: chunkReq.lishID, uploadedChunks: info.chunks, bytesPerSecond, peers: info.peers });
 				}
+			} else if (request.type === 'announceHave') {
+				// Unicast HAVE announcement from a seeder in response to our pubsub WANT.
+				// Dispatch to the registered Downloader (if any) — peerID is the verified stream remote,
+				// NOT a field from the wire, so it can't be spoofed.
+				const handler = haveAnnouncementHandlers.get(request.lishID);
+				if (handler && remotePeerID) {
+					try {
+						handler({
+							lishID: request.lishID,
+							peerID: remotePeerID,
+							multiaddrs: Array.isArray(request.multiaddrs) ? request.multiaddrs : [],
+							chunks: request.chunks,
+						});
+					} catch (err: any) {
+						console.warn(`[PROTO] announceHave handler error for ${request.lishID.slice(0, 8)}: ${err?.message ?? err}`);
+					}
+				}
+				const response: LISHAnnounceHaveResponse = { ok: true };
+				sendLengthPrefixed(stream, codecEncode(response));
 			} else {
 				// Unknown request type — reject with PEER_INVALID_REQUEST
 				const response: LISHGetChunkResponse = { error: ErrorCodes.PEER_INVALID_REQUEST };

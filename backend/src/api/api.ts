@@ -140,6 +140,7 @@ export class APIServer {
 			'transfer.subscribePeers': _transfer.subscribePeers,
 			'transfer.unsubscribePeers': _transfer.unsubscribePeers,
 			'transfer.debugPeers': _transfer.debugPeers,
+			'transfer.findPeers': _transfer.findPeers,
 			// Datasets
 			'datasets.getDatasets': _datasets.getDatasets,
 			'datasets.getDataset': _datasets.getDataset,
