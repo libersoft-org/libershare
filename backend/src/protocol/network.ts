@@ -17,7 +17,7 @@ import { type WantMessage } from './downloader.ts';
 import { lishTopic } from './constants.ts';
 import { CodedError, ErrorCodes } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
-const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
+import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 /** Raw gossipsub message event. */
 interface PubsubEvent {
