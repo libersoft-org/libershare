@@ -12,7 +12,7 @@ import { mdns } from '@libp2p/mdns';
 import { ping } from '@libp2p/ping';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
-import { autoNAT } from '@libp2p/autonat';
+import { autoNATv2 } from '@libp2p/autonat-v2';
 import { dcutr } from '@libp2p/dcutr';
 import { networkInterfaces } from 'os';
 import { isLinkLocalIp } from '@libp2p/utils';
@@ -137,10 +137,11 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		});
 		console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservationsRaw === 0 ? 'unlimited' : maxReservationsRaw}, dataLimit: 1GB, duration: 30min)`);
 	}
-	// Add autonat + dcutr for NAT traversal
-	config.services.autonat = autoNAT();
+	// AutoNAT v2 adds amplification-attack protection (maxDialDataBytes)
+	// and supersedes v1, which upstream deprecated.
+	config.services.autonat = autoNATv2();
 	config.services.dcutr = dcutr();
-	console.log('✓ AutoNAT + DCUtR enabled');
+	console.log('✓ AutoNAT v2 + DCUtR enabled');
 	// Build peerDiscovery array: bootstrap (if peers provided) + mDNS (if enabled).
 	const peerDiscovery: any[] = [];
 
