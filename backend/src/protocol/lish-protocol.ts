@@ -278,9 +278,9 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				const response: LISHGetLishsResponse = {
 					type: 'getLishs-result',
 					lishs: shared.map(l => {
-						const entry: { id: string; name?: string; totalSize?: number } = { id: l.id };
+						const totalSize = (l.files ?? []).reduce((sum, f) => sum + f.size, 0);
+						const entry: { id: string; name?: string; totalSize?: number } = { id: l.id, totalSize };
 						if (l.name !== undefined) entry.name = l.name;
-						if (l.totalSize !== undefined) entry.totalSize = l.totalSize;
 						return entry;
 					}),
 				};
