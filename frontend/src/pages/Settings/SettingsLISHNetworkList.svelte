@@ -17,13 +17,11 @@
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	import Row from '../../components/Row/Row.svelte';
-	import Table from '../../components/Table/Table.svelte';
-	import TableRow from '../../components/Table/TableRow.svelte';
-	import TableCell from '../../components/Table/TableCell.svelte';
 	import LISHNetworkAddEdit from './SettingsLISHNetworkAddEdit.svelte';
 	import LISHNetworkExport from './SettingsLISHNetworkExport.svelte';
 	import LISHNetworkExportAll from './SettingsLISHNetworkExportAll.svelte';
 	import LISHNetworkPublic from './SettingsLISHNetworkPublic.svelte';
+	import NodeInfoRow from '../../components/NodeInfo/NodeInfoRow.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -36,7 +34,6 @@
 	let showExportAll = $state(false);
 	let showPublic = $state(false);
 	let showDeleteConfirm = $state(false);
-	let showAddresses = $state(false);
 	let editingNetwork = $state<LISHNetworkConfig | null>(null);
 	let exportingNetwork = $state<LISHNetworkConfig | null>(null);
 	let deletingNetwork = $state<LISHNetworkConfig | null>(null);
@@ -265,45 +262,6 @@
 		max-width: 100%;
 	}
 
-	.node-info {
-		display: flex;
-		flex-direction: column;
-		gap: 1.5vh;
-	}
-
-	.node-info .peer-id {
-		font-size: 1.8vh;
-		word-break: break-all;
-	}
-
-	.node-info .peer-id .label {
-		color: var(--disabled-foreground);
-	}
-
-	.node-info .peer-id .value {
-		font-family: var(--font-mono);
-		color: var(--primary-foreground);
-	}
-
-	.node-info .buttons {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 1vh;
-	}
-
-	.node-info .address-index {
-		font-size: 1.5vh;
-		font-family: var(--font-mono);
-		color: var(--disabled-foreground);
-	}
-
-	.node-info .address-value {
-		font-size: 1.5vh;
-		font-family: var(--font-mono);
-		color: var(--disabled-foreground);
-		word-break: break-all;
-	}
-
 	.network {
 		display: flex;
 		flex-direction: column;
@@ -383,31 +341,7 @@
 				<Button icon="/img/export.svg" label={$t('common.exportAll')} position={[4, 0]} onConfirm={openExportAll} />
 			</ButtonBar>
 			{#if globalNodeInfo}
-				<Row selected={navHandle.controller.isYSelected(1)}>
-					<div class="node-info">
-						<div class="peer-id"><span class="label">{$t('settings.lishNetwork.yourPeerID')}:</span> <span class="value">{globalNodeInfo.peerID}</span></div>
-						<div class="buttons">
-							<Button
-								icon={showAddresses ? '/img/up.svg' : '/img/down.svg'}
-								label={showAddresses ? $t('common.hide') + ' ' + $t('settings.lishNetwork.addresses') : $t('common.show') + ' ' + $t('settings.lishNetwork.addresses')}
-								position={[0, 1]}
-								onConfirm={() => {
-									showAddresses = !showAddresses;
-								}}
-							/>
-						</div>
-						{#if showAddresses && globalNodeInfo.addresses.length > 0}
-							<Table columns="auto 1fr">
-								{#each globalNodeInfo.addresses as address, i}
-									<TableRow>
-										<TableCell><span class="address-index">{i + 1}.</span></TableCell>
-										<TableCell wrap><span class="address-value">{address}</span></TableCell>
-									</TableRow>
-								{/each}
-							</Table>
-						{/if}
-					</div>
-				</Row>
+				<NodeInfoRow nodeInfo={globalNodeInfo} rowY={1} />
 			{/if}
 			{#if networks.length === 0}
 				<Alert type="warning" message={$t('settings.lishNetwork.emptyList')} />
@@ -433,9 +367,9 @@
 							{/if}
 							<div class="buttons">
 								<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} position={[0, rowY]} onConfirm={() => connectNetwork(network)} />
-								<Button icon="/img/export.svg" label={$t('common.export')} position={[1, rowY]} onConfirm={() => openExport(network)} />
-								<Button icon="/img/edit.svg" label={$t('common.edit')} position={[2, rowY]} onConfirm={() => openEditNetwork(network)} />
-								<Button icon="/img/del.svg" label={$t('common.delete')} position={[3, rowY]} onConfirm={() => deleteNetwork(network)} />
+							<Button icon="/img/export.svg" label={$t('common.export')} position={[1, rowY]} onConfirm={() => openExport(network)} />
+							<Button icon="/img/edit.svg" label={$t('common.edit')} position={[2, rowY]} onConfirm={() => openEditNetwork(network)} />
+							<Button icon="/img/del.svg" label={$t('common.delete')} position={[3, rowY]} onConfirm={() => deleteNetwork(network)} />
 								{#if i > 0}
 									<Button icon="/img/up.svg" position={[4, rowY]} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
 								{/if}

@@ -7,7 +7,7 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { activateArea } from '../../scripts/areas.ts';
-	import { type PeerListEntry, type LISHNetworkConfig } from '@shared';
+	import { type PeerListEntry, type LISHNetworkConfig, type NetworkNodeInfo } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { tick } from 'svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -21,6 +21,7 @@
 	import Input from '../../components/Input/Input.svelte';
 	import Select from '../../components/Input/Select.svelte';
 	import SelectOption from '../../components/Input/SelectOption.svelte';
+	import NodeInfoRow from '../../components/NodeInfo/NodeInfoRow.svelte';
 	import PeerDetail from './PeerDetail.svelte';
 	interface Props {
 		areaID: string;
@@ -30,6 +31,7 @@
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 	let peers = $state<PeerListEntry[]>([]);
 	let networks = $state<LISHNetworkConfig[]>([]);
+	let nodeInfo = $state<NetworkNodeInfo | null>(null);
 	let loading = $state(true);
 	let error = $state('');
 	let search = $state('');
@@ -53,9 +55,10 @@
 		loading = true;
 		error = '';
 		try {
-			const [peerList, netList] = await Promise.all([api.lishnets.getPeers(), api.lishnets.list()]);
+			const [peerList, netList, info] = await Promise.all([api.lishnets.getPeers(), api.lishnets.list(), api.lishnets.getNodeInfo().catch((): null => null)]);
 			peers = peerList;
 			networks = netList.filter(n => n.enabled);
+			nodeInfo = info;
 		} catch (e: any) {
 			error = translateError(e);
 			peers = [];
@@ -153,6 +156,9 @@
 				<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} width="auto" />
 				<Button icon="/img/restart.svg" label={$t('common.refresh')} position={[1, 0]} onConfirm={loadData} width="auto" />
 			</ButtonBar>
+			{#if nodeInfo}
+				<NodeInfoRow {nodeInfo} rowY={1} />
+			{/if}
 			{#if loading}
 				<Spinner size="8vh" />
 			{:else if error}
@@ -160,9 +166,10 @@
 			{:else if peers.length === 0}
 				<Alert type="warning" message={$t('peers.noPeers')} />
 			{:else}
+				{@const nodeOffset = nodeInfo ? 1 : 0}
 				<div class="filters">
-					<Input bind:value={search} placeholder={$t('peers.searchPlaceholder')} fontSize="2vh" padding="1vh 1.5vh" position={[0, 1]} />
-					<Select bind:value={selectedNetworkID} fontSize="2vh" padding="1vh 1.5vh" position={[1, 1]}>
+					<Input bind:value={search} placeholder={$t('peers.searchPlaceholder')} fontSize="2vh" padding="1vh 1.5vh" position={[0, 1 + nodeOffset]} />
+					<Select bind:value={selectedNetworkID} fontSize="2vh" padding="1vh 1.5vh" position={[1, 1 + nodeOffset]}>
 						<SelectOption value="" label={$t('peers.allNetworks')} />
 						{#each networks as net}
 							<SelectOption value={net.networkID} label={net.name} />
@@ -177,7 +184,7 @@
 						<TableCell>{$t('peers.connections')}</TableCell>
 					</TableHeader>
 					{#each filteredPeers as peer, i}
-						<TableRow position={[0, i + 2]} onConfirm={() => openPeerDetail(peer)}>
+						<TableRow position={[0, i + 2 + nodeOffset]} onConfirm={() => openPeerDetail(peer)}>
 							<TableCell desktopOnly>{i + 1}</TableCell>
 							<TableCell wrap><span class="peer-id">{peer.peerID}</span></TableCell>
 							<TableCell><span class="networks-col">{getNetworkNames(peer)}</span></TableCell>
