@@ -564,6 +564,15 @@
 	}
 
 	.speed-dl,
+	.speed-ul,
+	.total-dl,
+	.total-ul {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4vh;
+	}
+
+	.speed-dl,
 	.total-dl {
 		color: var(--mode-download-fg, #0c0);
 	}
@@ -571,6 +580,13 @@
 	.speed-ul,
 	.total-ul {
 		color: var(--mode-upload-fg, #28f);
+	}
+
+	.peer-metric.sel .speed-dl,
+	.peer-metric.sel .speed-ul,
+	.peer-metric.sel .total-dl,
+	.peer-metric.sel .total-ul {
+		color: inherit;
 	}
 
 	.speed-idle {
@@ -734,7 +750,7 @@
 					{:else if !peerSnapshotLoaded}
 						<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
 					{:else if currentPeers.length === 0}
-						<div class="empty-peers">Žádní peeri</div>
+						<div class="empty-peers">{$t('downloads.peerList.noPeers')}</div>
 					{:else}
 						<Table columns="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" columnsMobile="14vh 8vh 6vh 1fr 1fr 6vh 2fr 8vh" noBorder>
 							<Header fontSize="1.3vh">
@@ -750,20 +766,35 @@
 							<div class="items">
 								{#each currentPeers as peer, index (peer.peerID)}
 									{@const ageSec = peer.lastActivity ? Math.max(0, Math.round((now - peer.lastActivity) / 1000)) : 0}
-									<TableRow bind:el={peerElements[index]} selected={peerListActive && selectedPeerIndex === index} dimmed={peer.stale}>
+									{@const rowSelected = peerListActive && selectedPeerIndex === index}
+									{@const downloadColor = rowSelected ? '--primary-background' : '--mode-download-fg'}
+									{@const uploadColor = rowSelected ? '--primary-background' : '--mode-upload-fg'}
+									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale}>
 										<Cell><span class="peer-id">{peer.peerID.slice(0, 12)}</span></Cell>
 										<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
 										<Cell align="center"><span class="peer-ago">{peer.havePercent != null ? `${peer.havePercent}%` : '—'}</span></Cell>
 										<Cell align="right">
-											<span class="peer-metric">
-												<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>↓ {formatSize(peer.downloadSpeed || 0)}/s</span>
-												<span class="speed-ul" class:speed-idle={!peer.uploadSpeed}>↑ {formatSize(peer.uploadSpeed || 0)}/s</span>
+											<span class="peer-metric" class:sel={rowSelected}>
+												<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>
+													<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
+													<span>{formatSize(peer.downloadSpeed || 0)}/s</span>
+												</span>
+												<span class="speed-ul" class:speed-idle={!peer.uploadSpeed}>
+													<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
+													<span>{formatSize(peer.uploadSpeed || 0)}/s</span>
+												</span>
 											</span>
 										</Cell>
 										<Cell align="right">
-											<span class="peer-metric">
-												<span class="total-dl">↓ {formatSize(peer.totalDownloaded || 0)}</span>
-												<span class="total-ul">↑ {formatSize(peer.totalUploaded || 0)}</span>
+											<span class="peer-metric" class:sel={rowSelected}>
+												<span class="total-dl">
+													<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
+													<span>{formatSize(peer.totalDownloaded || 0)}</span>
+												</span>
+												<span class="total-ul">
+													<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
+													<span>{formatSize(peer.totalUploaded || 0)}</span>
+												</span>
 											</span>
 										</Cell>
 										<Cell align="right"><span class="peer-ago">{ageSec}s</span></Cell>

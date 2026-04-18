@@ -124,6 +124,7 @@
 		},
 		"peerList": {
 			"searching": "Hledám spojení...",
+			"noPeers": "Žádní účastníci",
 			"id": "Peer",
 			"currentFile": "Aktuální soubor",
 			"transferred": "Přeneseno",
