@@ -6,6 +6,7 @@ import { downloadLimiter } from './speed-limiter.ts';
 import { lishTopic } from './constants.ts';
 import { Utils } from '../utils.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
+import { Circuit } from '@multiformats/multiaddr-matcher';
 import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, registerHaveAnnouncementHandler, unregisterHaveAnnouncementHandler } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
@@ -691,7 +692,7 @@ export class Downloader {
 		if (ann.lishID !== this.lishID) return;
 		const peerIDShort = ann.peerID.slice(0, 12);
 		const chunks = ann.chunks === 'all' ? 'ALL' : `${(ann.chunks as any[])?.length ?? 0}`;
-		const addrTypes = ann.multiaddrs.map(a => (a.includes('/p2p-circuit') ? 'RELAY' : 'DIRECT'));
+		const addrTypes = ann.multiaddrs.map(a => (Circuit.matches(multiaddr(a)) ? 'RELAY' : 'DIRECT'));
 		// Peer sent have → it has data now, remove from dropped (but not if banned — bans are permanent)
 		if (this.peerManager.isBanned(ann.peerID)) {
 			trace(`[DL] HAVE from ${peerIDShort} ignored: banned`);

@@ -16,6 +16,7 @@ import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic } from './constants.ts';
 import { CodedError, ErrorCodes } from '@shared';
+import { Circuit } from '@multiformats/multiaddr-matcher';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 /** Raw gossipsub message event. */
@@ -243,7 +244,7 @@ export class Network {
 				const stream = data.stream ?? data;
 				const connection = data.connection;
 				let remotePeerID = connection?.remotePeer?.toString?.();
-				let isRelay = connection?.remoteAddr?.toString?.()?.includes('/p2p-circuit') ?? false;
+				let isRelay = connection?.remoteAddr ? Circuit.matches(connection.remoteAddr) : false;
 				if (!remotePeerID && this.node) {
 					for (let attempt = 0; attempt < 3 && !remotePeerID; attempt++) {
 						if (attempt > 0) await new Promise(r => setTimeout(r, 50));
@@ -252,7 +253,7 @@ export class Network {
 								try {
 									if (conn.streams.some((s: any) => s.id === stream.id)) {
 										remotePeerID = peer.toString();
-										isRelay = conn.remoteAddr.toString().includes('/p2p-circuit');
+										isRelay = Circuit.matches(conn.remoteAddr);
 									}
 								} catch {}
 							}
@@ -318,10 +319,9 @@ export class Network {
 			const peerID = evt.detail.toString();
 			const connections = this.node!.getConnections(evt.detail);
 			const connTypes = connections.map(c => {
-				const addr = c.remoteAddr.toString();
-				const isRelay = addr.includes('/p2p-circuit');
+				const isRelay = Circuit.matches(c.remoteAddr);
 				const limited = (c as any).limits != null;
-				return `${addr} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}${c.direction}]`;
+				return `${c.remoteAddr.toString()} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}${c.direction}]`;
 			});
 			console.debug(`✅ Peer connected: ${peerID.slice(0, 16)}`);
 			console.debug(`   Connections (${connections.length}): ${connTypes.join(' | ')}`);
@@ -366,8 +366,8 @@ export class Network {
 		// Connection close/abort events for relay debugging
 		this.addListener(this.node!, 'connection:close', (evt: any) => {
 			const conn = evt.detail;
-			if (conn?.remoteAddr?.toString?.()?.includes('/p2p-circuit')) {
-				trace(`[NET] Relay connection closed: ${conn.remotePeer?.toString?.()?.slice(0, 16)} addr=${conn.remoteAddr?.toString()}`);
+			if (conn?.remoteAddr && Circuit.matches(conn.remoteAddr)) {
+				trace(`[NET] Relay connection closed: ${conn.remotePeer?.toString?.()?.slice(0, 16)} addr=${conn.remoteAddr.toString()}`);
 			}
 		});
 	}
@@ -423,7 +423,7 @@ export class Network {
 			const peerDetails = connectedPeers.map(p => {
 				const conns = this.node!.getConnections(p);
 				const types = conns.map(c => {
-					const isRelay = c.remoteAddr.toString().includes('/p2p-circuit');
+					const isRelay = Circuit.matches(c.remoteAddr);
 					const limited = (c as any).limits != null;
 					return `${isRelay ? 'R' : 'D'}${limited ? 'L' : ''}`;
 				});
@@ -445,7 +445,7 @@ export class Network {
 				try {
 					await this.node!.dial(peer.id, { signal: AbortSignal.timeout(5000) });
 					const conns = this.node!.getConnections(peer.id);
-					const connType = conns.map(c => (c.remoteAddr.toString().includes('/p2p-circuit') ? 'RELAY' : 'DIRECT')).join(',');
+					const connType = conns.map(c => (Circuit.matches(c.remoteAddr) ? 'RELAY' : 'DIRECT')).join(',');
 					trace(`   ✓ Re-dialed ${pid.slice(0, 16)} [${connType}]`);
 					redialSuccess++;
 				} catch (err: any) {
@@ -717,7 +717,7 @@ export class Network {
 		trace(`[NET] dial ${protocol} to ${multiaddrs.map(m => m.toString()).join(', ')}`);
 		const connection = await this.node.dial(multiaddrs);
 		const peerID = connection.remotePeer.toString();
-		const isRelay = connection.remoteAddr.toString().includes('/p2p-circuit');
+		const isRelay = Circuit.matches(connection.remoteAddr);
 		const connectionType = this.classifyConnection(peerID, isRelay);
 		const limited = (connection as any).limits != null;
 		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}] addr=${connection.remoteAddr.toString().slice(0, 60)}`);
@@ -732,7 +732,7 @@ export class Network {
 		const { peerIdFromString } = await import('@libp2p/peer-id');
 		const pid = peerIdFromString(peerID);
 		const connection = await this.node.dial(pid);
-		const isRelay = connection.remoteAddr.toString().includes('/p2p-circuit');
+		const isRelay = Circuit.matches(connection.remoteAddr);
 		const connectionType = this.classifyConnection(peerID, isRelay);
 		const limited = (connection as any).limits != null;
 		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}] addr=${connection.remoteAddr.toString().slice(0, 60)}`);
@@ -773,7 +773,7 @@ export class Network {
 				let direct = 0;
 				let relay = 0;
 				for (const conn of connections) {
-					if (conn.remoteAddr.toString().includes('/p2p-circuit/')) relay++;
+					if (Circuit.matches(conn.remoteAddr)) relay++;
 					else direct++;
 				}
 				return { peerID: p.toString(), direct, relay };
