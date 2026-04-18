@@ -51,6 +51,15 @@
 		adding = false;
 	}
 
+	async function copyLishID(): Promise<void> {
+		try {
+			await navigator.clipboard.writeText(lish.id);
+			addNotification($t('peers.lishIDCopied'), 'success');
+		} catch (e: any) {
+			addNotification(translateError(e), 'error');
+		}
+	}
+
 	function buildFileTree(detail: IPeerLishDetail): TreeNode[] {
 		const root: TreeNode = { name: '/', children: [], type: 'dir', size: 0, path: '' };
 		const dirMap = new Map<string, TreeNode>();
@@ -212,6 +221,7 @@
 			<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} width="auto" />
 			{#if detail}
 				<Button icon="/img/download.svg" label={$t('peers.addToDownloads')} position={[1, 0]} onConfirm={addToDownloads} width="auto" disabled={adding} />
+				<Button icon="/img/copy.svg" label={$t('peers.copyLishID')} position={[2, 0]} onConfirm={copyLishID} width="auto" />
 			{/if}
 		</ButtonBar>
 		{#if loading}

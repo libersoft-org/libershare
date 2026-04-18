@@ -58,6 +58,7 @@ export interface PeerListEntry {
 export interface PeerLishEntry {
 	id: string;
 	name?: string | undefined;
+	totalSize?: number | undefined;
 }
 
 // LISH detail for peer preview (no checksums, no chunks)

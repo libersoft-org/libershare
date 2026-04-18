@@ -192,7 +192,7 @@
 			{:else}
 				<div class="lishs">
 					{#each lishs as lish, i (lish.id)}
-						<PeerDetailLishItem name={lish.name || $t('peers.unnamed')} id={lish.id} rowY={i + 1} disabled={addingLish === lish.id} onAdd={() => addToDownloads(lish)} onDetails={() => openLishDetail(lish)} />
+						<PeerDetailLishItem name={lish.name || $t('peers.unnamed')} id={lish.id} totalSize={lish.totalSize} rowY={i + 1} disabled={addingLish === lish.id} onAdd={() => addToDownloads(lish)} onDetails={() => openLishDetail(lish)} />
 					{/each}
 				</div>
 			{/if}

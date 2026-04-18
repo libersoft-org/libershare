@@ -2,17 +2,19 @@
 	import { getContext } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import type { NavAreaController } from '../../scripts/navArea.svelte.ts';
+	import { formatSize } from '../../scripts/utils.ts';
 	import Row from '../../components/Row/Row.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	interface Props {
 		name: string;
 		id: string;
+		totalSize?: number | undefined;
 		rowY: number;
 		disabled?: boolean;
 		onAdd: () => void;
 		onDetails: () => void;
 	}
-	let { name, id, rowY, disabled = false, onAdd, onDetails }: Props = $props();
+	let { name, id, totalSize, rowY, disabled = false, onAdd, onDetails }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let rowSelected = $derived(navArea ? navArea.isSelected([0, rowY]) || navArea.isSelected([1, rowY]) : false);
 </script>
@@ -41,9 +43,14 @@
 		word-break: break-all;
 	}
 
+	.info .size {
+		font-size: 1.8vh;
+		color: var(--secondary-foreground);
+	}
+
 	.actions {
 		display: flex;
-		gap: 2vh;
+		gap: 1vh;
 	}
 
 	@media (max-width: 768px) {
@@ -62,9 +69,12 @@
 	<div class="info">
 		<div class="name">{name}</div>
 		<div class="id">{id}</div>
+		{#if totalSize !== undefined}
+			<div class="size">{formatSize(totalSize)}</div>
+		{/if}
 	</div>
 	<div class="actions">
-		<Button icon="/img/download.svg" label={$t('peers.addToDownloads')} position={[0, rowY]} onConfirm={onAdd} {disabled} />
-		<Button icon="/img/info.svg" label={$t('peers.details')} position={[1, rowY]} onConfirm={onDetails} />
+		<Button icon="/img/download.svg" label={$t('peers.addToDownloads')} position={[0, rowY]} onConfirm={onAdd} {disabled} padding="1vh 1.5vh" fontSize="1.6vh" width="auto" />
+		<Button icon="/img/info.svg" label={$t('peers.details')} position={[1, rowY]} onConfirm={onDetails} padding="1vh 1.5vh" fontSize="1.6vh" width="auto" />
 	</div>
 </Row>
