@@ -39,7 +39,7 @@ export type LISHGetChunkResponse =
 	| { data: Uint8Array } // raw binary chunk data (msgpack native bin type, no base64)
 	| { error: ErrorCode };
 export type LISHGetLishResponse = { manifest: import('@shared').IStoredLISH } | { error: ErrorCode };
-export type LISHGetLishsResponse = { type: 'getLishs-result'; lishs: Array<{ id: string; name?: string }> } | { type: 'getLishs-result'; error: ErrorCode };
+export type LISHGetLishsResponse = { type: 'getLishs-result'; lishs: Array<{ id: string; name?: string; totalSize?: number }> } | { type: 'getLishs-result'; error: ErrorCode };
 export type LISHAnnounceHaveResponse = { ok: true } | { error: ErrorCode };
 export type HaveChunks = 'all' | ChunkID[];
 
@@ -106,7 +106,7 @@ export class LISHClient {
 	}
 
 	// Request list of shared LISHs from peer
-	async requestList(): Promise<Array<{ id: string; name?: string }>> {
+	async requestList(): Promise<Array<{ id: string; name?: string; totalSize?: number }>> {
 		const request: LISHGetLishsRequest = { type: 'getLishs' };
 		sendLengthPrefixed(this.stream, codecEncode(request));
 		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(15000, 'list-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
@@ -278,7 +278,8 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				const response: LISHGetLishsResponse = {
 					type: 'getLishs-result',
 					lishs: shared.map(l => {
-						const entry: { id: string; name?: string } = { id: l.id };
+						const totalSize = (l.files ?? []).reduce((sum, f) => sum + f.size, 0);
+						const entry: { id: string; name?: string; totalSize?: number } = { id: l.id, totalSize };
 						if (l.name !== undefined) entry.name = l.name;
 						return entry;
 					}),

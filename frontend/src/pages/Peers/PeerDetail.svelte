@@ -15,10 +15,7 @@
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
-	import Table from '../../components/Table/Table.svelte';
-	import TableHeader from '../../components/Table/TableHeader.svelte';
-	import TableRow from '../../components/Table/TableRow.svelte';
-	import TableCell from '../../components/Table/TableCell.svelte';
+	import PeerDetailLishItem from './PeerDetailLishItem.svelte';
 	import PeerDetailLish from './PeerDetailLish.svelte';
 	interface Props {
 		areaID: string;
@@ -111,19 +108,28 @@
 	.container {
 		display: flex;
 		flex-direction: column;
+		align-items: center;
 		gap: 2vh;
 		width: 1200px;
-		max-width: 100%;
+		max-width: calc(94vw);
+		padding: 2vh;
+		border-radius: 2vh;
+		box-sizing: border-box;
+		background-color: var(--secondary-background);
+		box-shadow: 0 0 2vh var(--secondary-background);
 	}
 
 	.peer-info {
 		display: flex;
 		flex-direction: column;
 		gap: 1vh;
+		width: 100%;
 		padding: 2vh;
+		border-radius: 2vh;
+		border: 0.4vh solid var(--secondary-softer-background);
 		background-color: var(--secondary-soft-background);
-		border: 0.2vh solid var(--secondary-softer-background);
-		border-radius: 1vh;
+		box-sizing: border-box;
+		color: var(--secondary-foreground);
 	}
 
 	.peer-info .label {
@@ -133,34 +139,29 @@
 
 	.peer-info .value {
 		font-family: var(--font-mono);
-		color: var(--primary-foreground);
+		color: var(--secondary-foreground);
 		font-size: 1.8vh;
 		word-break: break-all;
 	}
 
-	.lish-id {
-		font-family: var(--font-mono);
-		font-size: 1.6vh;
-		color: var(--secondary-foreground);
-		word-break: break-all;
-	}
-
-	.lish-name {
-		font-size: 2vh;
-		font-weight: bold;
-		color: var(--primary-foreground);
-	}
-
-	.lish-row {
+	.lishs {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5vh;
+		gap: 2vh;
+		width: 100%;
 	}
 
-	.lish-actions {
-		display: flex;
-		gap: 1vh;
-		margin-top: 0.5vh;
+	.button-bar-wrap {
+		width: 100%;
+	}
+
+	@media (max-width: 1199px) {
+		.container {
+			max-width: calc(100vw);
+			margin: 0;
+			border-radius: 0;
+			box-shadow: none;
+		}
 	}
 </style>
 
@@ -169,10 +170,12 @@
 {:else}
 	<div class="peer-detail">
 		<div class="container">
-			<ButtonBar>
-				<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} width="auto" />
-				<Button icon="/img/restart.svg" label={$t('common.refresh')} position={[1, 0]} onConfirm={loadLishs} width="auto" />
-			</ButtonBar>
+			<div class="button-bar-wrap">
+				<ButtonBar>
+					<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} width="auto" />
+					<Button icon="/img/restart.svg" label={$t('common.refresh')} position={[1, 0]} onConfirm={loadLishs} width="auto" />
+				</ButtonBar>
+			</div>
 			<div class="peer-info">
 				<div><span class="label">{$t('peers.peerID')}:</span> <span class="value">{peer.peerID}</span></div>
 				<div><span class="label">{$t('peers.network')}:</span> <span class="value">{peer.networks.map(n => n.networkName).join(', ')}</span></div>
@@ -187,28 +190,11 @@
 			{:else if lishs.length === 0}
 				<Alert type="warning" message={$t('peers.noSharedLishs')} />
 			{:else}
-				<Table columns="1fr auto" columnsMobile="1fr auto">
-					<TableHeader>
-						<TableCell>{$t('peers.lish')}</TableCell>
-						<TableCell>{$t('peers.actions')}</TableCell>
-					</TableHeader>
-					{#each lishs as lish, i}
-						<TableRow position={[0, i + 1]}>
-							<TableCell wrap>
-								<div class="lish-row">
-									<div class="lish-name">{lish.name || $t('peers.unnamed')}</div>
-									<div class="lish-id">{lish.id}</div>
-								</div>
-							</TableCell>
-							<TableCell>
-								<div class="lish-actions">
-									<Button icon="/img/download.svg" label={$t('peers.addToDownloads')} position={[0, i + 1]} onConfirm={() => addToDownloads(lish)} width="auto" disabled={addingLish === lish.id} />
-									<Button icon="/img/info.svg" label={$t('peers.details')} position={[1, i + 1]} onConfirm={() => openLishDetail(lish)} width="auto" />
-								</div>
-							</TableCell>
-						</TableRow>
+				<div class="lishs">
+					{#each lishs as lish, i (lish.id)}
+						<PeerDetailLishItem name={lish.name || $t('peers.unnamed')} id={lish.id} totalSize={lish.totalSize} rowY={i + 1} disabled={addingLish === lish.id} onAdd={() => addToDownloads(lish)} onDetails={() => openLishDetail(lish)} />
 					{/each}
-				</Table>
+				</div>
 			{/if}
 		</div>
 	</div>

@@ -5,6 +5,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
+	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { type PeerLishEntry, type IPeerLishDetail } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { formatSize } from '../../scripts/utils.ts';
@@ -12,6 +13,8 @@
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
+	import Table from '../../components/Table/Table.svelte';
+	import PeerDetailLishFileRow from './PeerDetailLishFileRow.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -47,6 +50,10 @@
 			addNotification(translateError(e), 'error');
 		}
 		adding = false;
+	}
+
+	async function copyLishID(): Promise<void> {
+		await copyToClipboard(lish.id, $t('common.lishIDCopied'));
 	}
 
 	function buildFileTree(detail: IPeerLishDetail): TreeNode[] {
@@ -96,12 +103,32 @@
 		return root.children;
 	}
 
+	function flattenTree(nodes: TreeNode[], depth: number, out: FlatRow[]): void {
+		for (const node of nodes) {
+			out.push({ node, depth });
+			if (node.type === 'dir' && node.children.length > 0) flattenTree(node.children, depth + 1, out);
+		}
+	}
+
+	let fileRows = $derived.by((): FlatRow[] => {
+		if (!detail) return [];
+		const tree = buildFileTree(detail);
+		const rows: FlatRow[] = [];
+		flattenTree(tree, 0, rows);
+		return rows;
+	});
+
 	interface TreeNode {
 		name: string;
 		children: TreeNode[];
 		type: 'dir' | 'file' | 'link';
 		size: number;
 		path: string;
+	}
+
+	interface FlatRow {
+		node: TreeNode;
+		depth: number;
 	}
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
@@ -126,9 +153,15 @@
 	.container {
 		display: flex;
 		flex-direction: column;
+		align-items: stretch;
 		gap: 2vh;
 		width: 1200px;
-		max-width: 100%;
+		max-width: calc(94vw);
+		padding: 2vh;
+		border-radius: 2vh;
+		box-sizing: border-box;
+		background-color: var(--secondary-background);
+		box-shadow: 0 0 2vh var(--secondary-background);
 	}
 
 	.info-section {
@@ -136,14 +169,16 @@
 		flex-direction: column;
 		gap: 1vh;
 		padding: 2vh;
-		background-color: var(--secondary-soft-background);
-		border: 0.2vh solid var(--secondary-softer-background);
-		border-radius: 1vh;
+		background-color: var(--secondary-hard-background);
+		border: 0.4vh solid var(--secondary-softer-background);
+		border-radius: 2vh;
+		color: var(--secondary-foreground);
 	}
 
 	.info-row {
 		display: flex;
 		gap: 1vh;
+		flex-wrap: wrap;
 	}
 
 	.info-row .label {
@@ -153,7 +188,7 @@
 	}
 
 	.info-row .value {
-		color: var(--primary-foreground);
+		color: var(--secondary-foreground);
 		font-size: 1.8vh;
 		word-break: break-all;
 	}
@@ -162,41 +197,17 @@
 		font-family: var(--font-mono);
 	}
 
-	.file-tree {
-		padding: 2vh;
-		background-color: var(--secondary-soft-background);
-		border: 0.2vh solid var(--secondary-softer-background);
-		border-radius: 1vh;
-		font-family: var(--font-mono);
-		font-size: 1.6vh;
-		line-height: 2.2;
-		overflow-x: auto;
-	}
-
-	.tree-item {
-		white-space: nowrap;
-	}
-
-	.tree-icon {
-		display: inline-block;
-		width: 2.5vh;
-		text-align: center;
-		margin-right: 0.5vh;
-	}
-
-	.tree-size {
-		color: var(--disabled-foreground);
-		margin-left: 1vh;
-	}
-
 	.description {
 		white-space: pre-wrap;
 	}
 
-	.section-title {
-		font-size: 2.2vh;
-		font-weight: bold;
-		color: var(--primary-foreground);
+	@media (max-width: 1199px) {
+		.container {
+			max-width: calc(100vw);
+			margin: 0;
+			border-radius: 0;
+			box-shadow: none;
+		}
 	}
 </style>
 
@@ -206,6 +217,7 @@
 			<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} width="auto" />
 			{#if detail}
 				<Button icon="/img/download.svg" label={$t('peers.addToDownloads')} position={[1, 0]} onConfirm={addToDownloads} width="auto" disabled={adding} />
+				<Button icon="/img/copy.svg" label={$t('common.copyLishID')} position={[2, 0]} onConfirm={copyLishID} width="auto" />
 			{/if}
 		</ButtonBar>
 		{#if loading}
@@ -255,26 +267,11 @@
 					<span class="value">{detail.checksumAlgo}</span>
 				</div>
 			</div>
-			<div class="section-title">{$t('peers.fileStructure')}</div>
-			<div class="file-tree">
-				{#each buildFileTree(detail) as node}
-					{@render treeNode(node, 0)}
+			<Table columns="1fr auto" columnsMobile="1fr auto">
+				{#each fileRows as row, i (row.node.path + ':' + i)}
+					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={i + 1} />
 				{/each}
-			</div>
+			</Table>
 		{/if}
 	</div>
 </div>
-{#snippet treeNode(node: TreeNode, depth: number)}
-	<div class="tree-item" style="padding-left: {depth * 2.5}vh">
-		{#if node.type === 'dir'}
-			<span class="tree-icon">📁</span>{node.name}
-			{#each node.children as child}
-				{@render treeNode(child, depth + 1)}
-			{/each}
-		{:else if node.type === 'link'}
-			<span class="tree-icon">🔗</span>{node.name}
-		{:else}
-			<span class="tree-icon">📄</span>{node.name}<span class="tree-size">{formatSize(node.size)}</span>
-		{/if}
-	</div>
-{/snippet}

@@ -136,7 +136,7 @@
 					<Cell align="center" desktopOnly>{$t('common.progress')}</Cell>
 					<Cell align="center" desktopOnly>{$t('common.status')}</Cell>
 					<Cell align="center" desktopOnly>{$t('downloads.transferred')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.mode')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.allowed')}</Cell>
 					<Cell align="center" desktopOnly>{$t('downloads.peers')}</Cell>
 					<Cell align="center" desktopOnly>{$t('downloads.speed')}</Cell>
 				</Header>

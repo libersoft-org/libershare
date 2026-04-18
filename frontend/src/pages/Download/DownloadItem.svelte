@@ -2,13 +2,14 @@
 	import { getContext, onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { type DownloadStatus, type EnabledMode } from '../../scripts/downloads.ts';
-	import ModeBadge from '../../components/Badge/ModeBadge.svelte';
+	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
 	import { truncateID, formatSize } from '../../scripts/utils.ts';
 	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Badge from '../../components/Badge/Badge.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import TableCell from '../../components/Table/TableCell.svelte';
+	import Icon from '../../components/Icon/Icon.svelte';
 	interface Props {
 		name: string;
 		id: string;
@@ -32,6 +33,9 @@
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let rowEl = $state<HTMLElement | undefined>(undefined);
 	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : selected);
+	let downloadColor = $derived(isSelected ? '--primary-background' : '--mode-download-fg');
+	let uploadColor = $derived(isSelected ? '--primary-background' : '--mode-upload-fg');
+	let disabledColor = $derived(isSelected ? '--primary-background' : '--mode-disabled-fg');
 	// Show "downloaded / total" format when downloading
 	let sizeDisplay = $derived(downloadedSize && progress < 100 ? `${downloadedSize} / ${size}` : size);
 
@@ -57,11 +61,42 @@
 		white-space: nowrap;
 	}
 
+	.peers .dl,
+	.peers .ul,
+	.transferred .dl,
+	.transferred .ul {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3vh;
+	}
+
 	.peers .dl {
 		color: var(--mode-download-fg);
 	}
 
 	.peers .ul {
+		color: var(--mode-upload-fg);
+	}
+
+	.peers.sel .dl,
+	.peers.sel .ul,
+	.transferred.sel .dl,
+	.transferred.sel .ul {
+		color: inherit;
+	}
+
+	.transferred {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		line-height: 1.2;
+	}
+
+	.transferred .dl {
+		color: var(--mode-download-fg);
+	}
+
+	.transferred .ul {
 		color: var(--mode-upload-fg);
 	}
 </style>
@@ -74,20 +109,55 @@
 	<TableCell align="center" desktopOnly>{sizeDisplay}</TableCell>
 	<TableCell desktopOnly><ProgressBar {progress} animated={status === 'downloading' || status === 'downloading-uploading' || status === 'verifying' || status === 'moving' || status === 'allocating'} /></TableCell>
 	<TableCell align="center" desktopOnly><Badge label={$t('downloads.statuses.' + status)} {status} /></TableCell>
-	<TableCell align="center" desktopOnly
-		><span class="peers"
-			>{#if totalDownloadedBytes || totalUploadedBytes}<span class="dl">↓{formatSize(totalDownloadedBytes)}</span> <span class="ul">↑{formatSize(totalUploadedBytes)}</span>{:else}—{/if}</span
-		></TableCell
-	>
-	<TableCell align="center" desktopOnly><ModeBadge mode={enabledMode} /></TableCell>
-	<TableCell align="center" desktopOnly
-		><span class="peers"
-			>{#if downloadPeers || uploadPeers}<span class="dl">↓{downloadPeers}</span> <span class="ul">↑{uploadPeers}</span>{:else}—{/if}</span
-		></TableCell
-	>
-	<TableCell align="center" desktopOnly
-		><span class="peers"
-			>{#if downloadSpeed !== '0 B/s' || uploadSpeed !== '0 B/s'}<span class="dl">↓{downloadSpeed}</span> <span class="ul">↑{uploadSpeed}</span>{:else}—{/if}</span
-		></TableCell
-	>
+	<TableCell align="center" desktopOnly>
+		<span class="transferred" class:sel={isSelected}>
+			{#if totalDownloadedBytes || totalUploadedBytes}
+				<div class="dl">
+					<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
+					<span>{formatSize(totalDownloadedBytes)}</span>
+				</div>
+				<div class="ul">
+					<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
+					<span>{formatSize(totalUploadedBytes)}</span>
+				</div>
+			{:else}
+				<div>—</div>
+			{/if}
+		</span>
+	</TableCell>
+	<TableCell align="center" desktopOnly>
+		<AllowedBadge mode={enabledMode} downloadColorVariable={downloadColor} uploadColorVariable={uploadColor} disabledColorVariable={disabledColor} />
+	</TableCell>
+	<TableCell align="center" desktopOnly>
+		<span class="peers" class:sel={isSelected}>
+			{#if downloadPeers || uploadPeers}
+				<div class="dl">
+					<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
+					<span>{downloadPeers}</span>
+				</div>
+				<div class="ul">
+					<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
+					<span>{uploadPeers}</span>
+				</div>
+			{:else}
+				<div>—</div>
+			{/if}
+		</span>
+	</TableCell>
+	<TableCell align="center" desktopOnly>
+		<span class="peers" class:sel={isSelected}>
+			{#if downloadSpeed !== '0 B/s' || uploadSpeed !== '0 B/s'}
+				<div class="dl">
+					<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
+					<span>{downloadSpeed}</span>
+				</div>
+				<div class="ul">
+					<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
+					<span>{uploadSpeed}</span>
+				</div>
+			{:else}
+				<div>—</div>
+			{/if}
+		</span>
+	</TableCell>
 </TableRow>
