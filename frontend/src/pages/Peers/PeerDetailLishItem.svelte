@@ -32,7 +32,7 @@
 	.info .name {
 		font-size: 3vh;
 		font-weight: bold;
-		color: var(--secondary-foreground);
+		color: var(--primary-foreground);
 		word-break: break-word;
 	}
 
@@ -68,10 +68,10 @@
 <Row selected={rowSelected}>
 	<div class="info">
 		<div class="name">{name}</div>
-		<div class="id">{id}</div>
 		{#if totalSize !== undefined}
 			<div class="size">{formatSize(totalSize)}</div>
 		{/if}
+		<div class="id">{id}</div>
 	</div>
 	<div class="actions">
 		<Button icon="/img/download.svg" label={$t('peers.addToDownloads')} position={[0, rowY]} onConfirm={onAdd} {disabled} padding="1vh 1.5vh" fontSize="1.6vh" width="auto" />

@@ -5,6 +5,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
+	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { type PeerLishEntry, type IPeerLishDetail } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { formatSize } from '../../scripts/utils.ts';
@@ -52,12 +53,7 @@
 	}
 
 	async function copyLishID(): Promise<void> {
-		try {
-			await navigator.clipboard.writeText(lish.id);
-			addNotification($t('peers.lishIDCopied'), 'success');
-		} catch (e: any) {
-			addNotification(translateError(e), 'error');
-		}
+		await copyToClipboard(lish.id, $t('common.lishIDCopied'));
 	}
 
 	function buildFileTree(detail: IPeerLishDetail): TreeNode[] {
@@ -221,7 +217,7 @@
 			<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} width="auto" />
 			{#if detail}
 				<Button icon="/img/download.svg" label={$t('peers.addToDownloads')} position={[1, 0]} onConfirm={addToDownloads} width="auto" disabled={adding} />
-				<Button icon="/img/copy.svg" label={$t('peers.copyLishID')} position={[2, 0]} onConfirm={copyLishID} width="auto" />
+				<Button icon="/img/copy.svg" label={$t('common.copyLishID')} position={[2, 0]} onConfirm={copyLishID} width="auto" />
 			{/if}
 		</ButtonBar>
 		{#if loading}

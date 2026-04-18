@@ -5,6 +5,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
 	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
+	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
@@ -180,6 +181,10 @@
 		}
 		if (actionID === 'find-peers' && download) {
 			api.call('transfer.findPeers', { lishID: download.id }).catch(err => console.error('Find peers failed:', err));
+			return;
+		}
+		if (actionID === 'copy-lish-id' && download) {
+			copyToClipboard(download.id, $t('common.lishIDCopied'));
 			return;
 		}
 		if (actionID === 'open-directory' && download?.directory) {
@@ -624,7 +629,7 @@
 	<div class="detail">
 		<div class="toolbar">
 			{#each toolbarActions as action, index (action.id)}
-				<Button icon={action.icon} label={action.label} selected={toolbarActive && selectedToolbarIndex === index} onConfirm={() => handleToolbarAction(action.id)} />
+				<Button icon={action.icon} label={action.label} selected={toolbarActive && selectedToolbarIndex === index} onConfirm={() => handleToolbarAction(action.id)} padding="1.2vh 1.8vh" fontSize="1.6vh" width="auto" />
 			{/each}
 		</div>
 		{#if deleteError}

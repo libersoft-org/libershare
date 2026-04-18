@@ -885,7 +885,7 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 // Table columns definition
 export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 9vw 9vw 8vw 7vw 7vw 5vw 11vw';
 // Toolbar action IDs for download detail view
-export type DownloadToolbarActionID = 'back' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'find-peers' | 'verify' | 'stop-verify' | 'export' | 'move' | 'delete';
+export type DownloadToolbarActionID = 'back' | 'copy-lish-id' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'find-peers' | 'verify' | 'stop-verify' | 'export' | 'move' | 'delete';
 export interface DownloadToolbarAction {
 	id: DownloadToolbarActionID;
 	icon: string | ((downloadPaused: boolean, uploadPaused: boolean) => string);
@@ -893,6 +893,7 @@ export interface DownloadToolbarAction {
 }
 export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
 	{ id: 'back', icon: '/img/back.svg', getLabel: t => t('common.back') },
+	{ id: 'copy-lish-id', icon: '/img/copy.svg', getLabel: t => t('common.copyLishID') },
 	{ id: 'open-directory', icon: '/img/directory.svg', getLabel: t => t('common.openDirectory') },
 	{ id: 'toggle-download', icon: dp => (dp ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, dp) => (dp ? t('downloads.enableDownload') : t('downloads.disableDownload')) },
 	{ id: 'toggle-upload', icon: (_dp, up) => (up ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, _dp, up) => (up ? t('downloads.enableUpload') : t('downloads.disableUpload')) },
@@ -912,6 +913,9 @@ export function handleDownloadToolbarAction(actionID: DownloadToolbarActionID): 
 	switch (actionID) {
 		case 'back':
 			return { handled: false, needsBack: true };
+		case 'copy-lish-id':
+			// Handled inside DownloadDetail (accesses lishID + clipboard).
+			return { handled: true };
 		case 'open-directory':
 			// TODO: Implement open directory in file browser
 			return { handled: true };
