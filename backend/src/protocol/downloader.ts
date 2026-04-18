@@ -369,6 +369,8 @@ export class Downloader {
 			return;
 		}
 		await this.workMutex.runExclusive(async () => {
+			// Re-check after acquiring the mutex — destroy() may have fired while we were queued.
+			if (this.destroyed) return;
 			// Phase 1: fetch manifest from a peer if needed
 			if (this.state === 'awaiting-manifest') {
 				if (this.peerManager.size() === 0) return;
