@@ -107,10 +107,12 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				fanoutTTL: 60000,
 				runOnLimitedConnection: true,
 			}),
+			// Hourly self-query causes ~200 MB transient RSS burst on <redacted-fleet-peer>;
+			// back off to 2h to reduce burst frequency.
 			dht: kadDHT({
 				clientMode: false,
-				initialQuerySelfInterval: 3600000,
-				querySelfInterval: 3600000,
+				initialQuerySelfInterval: 7200000,
+				querySelfInterval: 7200000,
 			}),
 		},
 	};
