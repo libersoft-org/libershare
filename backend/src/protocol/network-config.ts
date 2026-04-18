@@ -13,6 +13,8 @@ import { ping } from '@libp2p/ping';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { autoNATv2 } from '@libp2p/autonat-v2';
+import { simpleMetrics } from '@libp2p/simple-metrics';
+import { onLibp2pMetrics } from '../monitoring/libp2p-metrics.ts';
 import { dcutr } from '@libp2p/dcutr';
 import { networkInterfaces } from 'os';
 import { isLinkLocalIp } from '@libp2p/utils';
@@ -82,6 +84,10 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			listen: listenAddresses,
 			appendAnnounce: appendAnnounceAddresses.length > 0 ? appendAnnounceAddresses : undefined,
 		},
+		// Metrics snapshot every 5s → monitoring/memory-trace picks the relevant
+		// counters on its own sample cadence. Used to correlate RSS growth with
+		// libp2p internal collection sizes during leak investigations.
+		metrics: simpleMetrics({ intervalMs: 5000, onMetrics: onLibp2pMetrics }),
 		transports,
 		connectionEncrypters: [noise({ crypto: pureJsCrypto })],
 		streamMuxers: [yamux()],
