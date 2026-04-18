@@ -151,18 +151,6 @@
 		width: 100%;
 	}
 
-	.lishs .title {
-		display: flex;
-		align-items: center;
-		font-size: 3vh;
-		font-weight: bold;
-		padding: 2vh;
-		border-radius: 2vh;
-		background-color: var(--secondary-soft-background);
-		border: 0.4vh solid var(--secondary-softer-background);
-		color: var(--secondary-foreground);
-	}
-
 	.button-bar-wrap {
 		width: 100%;
 	}
