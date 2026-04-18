@@ -92,10 +92,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		connectionEncrypters: [noise({ crypto: pureJsCrypto })],
 		streamMuxers: [yamux()],
 		connectionManager: {
-			minConnections: 5,
 			maxConnections: 100,
-			autoDial: true,
-			autoDialInterval: 5000,
 		},
 		// No connectionProtector - swarm key removed. Open network, isolation via topics.
 		peerStore: {
