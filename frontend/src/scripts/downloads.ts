@@ -493,6 +493,23 @@ export async function initDownloads(): Promise<void> {
 			const prevChunks = lastDownloadedChunks.get(data.lishID) ?? data.downloadedChunks;
 			const deltaChunks = Math.max(0, data.downloadedChunks - prevChunks);
 			lastDownloadedChunks.set(data.lishID, data.downloadedChunks);
+			// Detect allocating→downloading transition: allocation phase left every
+			// file with progress=100 (zero-fill complete), so refetch real per-file
+			// state from backend. Without this, files other than the currently
+			// downloading one keep stale 100% until page refresh.
+			const prevStatus = get(downloads).find(d => d.id === data.lishID)?.status;
+			if (prevStatus === 'allocating' && data.filePath !== '__allocating__') {
+				api.lishs.get(data.lishID).then(detail => {
+					if (!detail) return;
+					const fresh = detailToDownload(detail);
+					downloads.update(list =>
+						list.map(d => {
+							if (d.id !== data.lishID) return d;
+							return { ...d, files: fresh.files };
+						})
+					);
+				});
+			}
 			downloads.update(list =>
 				list.map(d => {
 					if (d.id !== data.lishID) return d;
