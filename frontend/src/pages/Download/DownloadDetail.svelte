@@ -613,6 +613,19 @@
 		opacity: 0.6;
 	}
 
+	:global(.row.selected) .peer-ago,
+	:global(.row.selected) .peer-file,
+	:global(.row.selected) .peer-id,
+	:global(.row.selected) .conn-badge {
+		color: var(--primary-background);
+		opacity: 1;
+	}
+
+	:global(.row.selected) .conn-badge {
+		background-color: transparent;
+		border-color: var(--primary-background);
+	}
+
 	@media (max-width: 1199px) {
 		.content {
 			flex-direction: column;
@@ -757,9 +770,9 @@
 								<Cell>{$t('downloads.peerList.id')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.availability')}</Cell>
-								<Cell align="right">{$t('downloads.peerList.speed')}</Cell>
-								<Cell align="right">{$t('downloads.peerList.transferred')}</Cell>
-								<Cell align="right">{$t('downloads.peerList.activity')}</Cell>
+								<Cell align="center">{$t('downloads.peerList.speed')}</Cell>
+								<Cell align="center">{$t('downloads.peerList.transferred')}</Cell>
+								<Cell align="center">{$t('downloads.peerList.activity')}</Cell>
 								<Cell>{$t('downloads.peerList.currentFile')}</Cell>
 								<Cell>Chunk</Cell>
 							</Header>
@@ -773,7 +786,7 @@
 										<Cell><span class="peer-id">{peer.peerID.slice(0, 12)}</span></Cell>
 										<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
 										<Cell align="center"><span class="peer-ago">{peer.havePercent != null ? `${peer.havePercent}%` : '—'}</span></Cell>
-										<Cell align="right">
+										<Cell align="center">
 											<span class="peer-metric" class:sel={rowSelected}>
 												<span class="speed-dl" class:speed-idle={!peer.downloadSpeed}>
 													<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
@@ -785,7 +798,7 @@
 												</span>
 											</span>
 										</Cell>
-										<Cell align="right">
+										<Cell align="center">
 											<span class="peer-metric" class:sel={rowSelected}>
 												<span class="total-dl">
 													<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
@@ -797,7 +810,7 @@
 												</span>
 											</span>
 										</Cell>
-										<Cell align="right"><span class="peer-ago">{ageSec}s</span></Cell>
+										<Cell align="center"><span class="peer-ago">{ageSec}s</span></Cell>
 										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
 										<Cell><span class="peer-file">{peer.currentChunk ? peer.currentChunk.slice(0, 8) : ''}</span></Cell>
 									</TableRow>
