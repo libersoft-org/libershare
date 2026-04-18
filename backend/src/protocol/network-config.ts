@@ -96,7 +96,6 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		},
 		// No connectionProtector - swarm key removed. Open network, isolation via topics.
 		peerStore: {
-			persistence: true,
 			threshold: 15,
 			// Aggressive pruning — circuit-relay addresses re-created on every
 			// reservation refresh (~minute); default 1h kept stale duplicates.
