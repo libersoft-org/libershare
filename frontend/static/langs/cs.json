@@ -303,7 +303,9 @@
 			"maxRelayReservations": "Maximální počet spojení k předávacímu serveru (0 = neomezeno)",
 			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH (výchozí hodnota)",
 			"autoStartDownloadingDefault": "Automaticky spustit stahování po přidání LISH (výchozí hodnota)",
-			"autoErrorRecovery": "Automatická obnova po chybě"
+			"autoErrorRecovery": "Automatická obnova po chybě",
+			"mdnsEnabled": "Vyhledávat účastníky v lokální síti (mDNS)",
+			"mdnsInterval": "Interval vyhledávání v lokální síti (ms)"
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",

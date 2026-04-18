@@ -298,6 +298,20 @@ export class Network {
 			const peerID = evt.detail.id.toString();
 			const multiaddrs = evt.detail.multiaddrs?.map((ma: any) => ma.toString()) || [];
 			trace(`[NET] Discovered peer: ${peerID}, addrs: ${multiaddrs.join(', ') || '(empty)'}`);
+
+			// Skip if already connected (autoDial in v2 is unreliable; we dial actively
+			// for mDNS/bootstrap discoveries to ensure local peers form a mesh quickly).
+			if (peerID === this.node!.peerId.toString()) return;
+			const existing = this.node!.getConnections(evt.detail.id);
+			if (existing.length > 0) return;
+			if (!evt.detail.multiaddrs?.length) return;
+
+			try {
+				await this.node!.dial(evt.detail.multiaddrs);
+				trace(`[NET] Dialed discovered peer ${peerID.slice(0, 16)}`);
+			} catch (err: any) {
+				trace(`[NET] Failed to dial discovered peer ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			}
 		});
 
 		this.addListener(this.node!, 'peer:connect', async (evt: any) => {

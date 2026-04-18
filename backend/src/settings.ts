@@ -35,6 +35,8 @@ export interface SettingsData {
 		autoStartDownloading: boolean;
 		autoErrorRecovery: boolean;
 		announceAddresses: string[];
+		mdnsEnabled: boolean;
+		mdnsInterval: number;
 	};
 	system: {
 		autoStartOnBoot: boolean;
@@ -97,6 +99,8 @@ const DEFAULT_SETTINGS: SettingsData = {
 		autoStartDownloading: true,
 		autoErrorRecovery: true,
 		announceAddresses: [],
+		mdnsEnabled: true,
+		mdnsInterval: 10000,
 	},
 	system: {
 		autoStartOnBoot: true,

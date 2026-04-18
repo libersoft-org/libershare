@@ -8,6 +8,7 @@ import { yamux } from '@chainsafe/libp2p-yamux';
 import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { identify, identifyPush } from '@libp2p/identify';
 import { bootstrap } from '@libp2p/bootstrap';
+import { mdns } from '@libp2p/mdns';
 import { ping } from '@libp2p/ping';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
@@ -137,6 +138,9 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	config.services.autonat = autoNAT();
 	config.services.dcutr = dcutr();
 	console.log('✓ AutoNAT + DCUtR enabled');
+	// Build peerDiscovery array: bootstrap (if peers provided) + mDNS (if enabled).
+	const peerDiscovery: any[] = [];
+
 	// Deduplicate bootstrap peers and filter out our own peer ID
 	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => !p.includes(myPeerID));
 	if (uniqueBootstrapPeers.length > 0) {
@@ -157,15 +161,32 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			}
 		}
 		if (validBootstrapPeers.length > 0) {
-			config.peerDiscovery = [
-				bootstrap({
-					list: validBootstrapPeers,
-					timeout: 1000,
-					tagTTL: 2147483647,
-					tagValue: 100,
-				}),
-			];
+			peerDiscovery.push(bootstrap({
+				list: validBootstrapPeers,
+				timeout: 1000,
+				tagTTL: 2147483647,
+				tagValue: 100,
+			}));
 		}
 	} else console.log('No bootstrap peers configured. Node will start in standalone mode.');
+
+	// mDNS LAN discovery (multicast 224.0.0.251:5353).
+	// Only useful for nodes on the same L2 network. WAN peers are unreachable
+	// via mDNS — bootstrap + gossipsub mesh handles WAN.
+	// Default ON since cost is negligible (~1 packet / interval) and gain
+	// (zero-config LAN peer discovery) is high.
+	const mdnsEnabled = allSettings.network?.mdnsEnabled ?? true;
+	if (mdnsEnabled) {
+		const mdnsInterval = allSettings.network?.mdnsInterval ?? 10000;
+		peerDiscovery.push(mdns({
+			interval: mdnsInterval,
+		}));
+		console.log(`✓ mDNS LAN discovery enabled (interval ${mdnsInterval}ms)`);
+	}
+
+	if (peerDiscovery.length > 0) {
+		config.peerDiscovery = peerDiscovery;
+	}
+
 	return { config, port, bootstrapPeerIDs: bootstrapPeerIDs, bootstrapMultiaddrs };
 }
