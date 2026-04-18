@@ -10,11 +10,10 @@ import { existsSync } from 'fs';
 import { trace } from '../logger.ts';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { LISH_PROTOCOL, handleLISHProtocol, isUploadEnabled } from './lish-protocol.ts';
+import { LISH_PROTOCOL, LISHClient, handleLISHProtocol, isUploadEnabled } from './lish-protocol.ts';
 import { isBusy } from '../api/busy.ts';
 import { buildLibp2pConfig } from './network-config.ts';
-import { PINK_TOPIC, PONK_TOPIC, createPinkMessage, createPonkMessage } from './pink-ponk.ts';
-import { type HaveMessage, type WantMessage } from './downloader.ts';
+import { type WantMessage } from './downloader.ts';
 import { lishTopic } from './constants.ts';
 import { CodedError, ErrorCodes } from '@shared';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
@@ -38,6 +37,13 @@ const AUTODIAL_WORKAROUND = true;
 const WANT_RESPONSE_COOLDOWN_MS = 60_000;
 /** Periodic cleanup of stale entries in lastWantResponseTime (entries older than the cooldown are useless). */
 const WANT_RESPONSE_CLEANUP_INTERVAL_MS = 5 * 60_000;
+/**
+ * Maximum size (bytes) of an incoming pubsub payload we are willing to decode.
+ * Only small control messages ride pubsub now (WANT — a tiny JSON object);
+ * HAVE is unicast via the LISH protocol. Anything bigger is rejected before JSON parse, so a
+ * malicious peer can't OOM us by publishing a giant payload on a topic we're subscribed to.
+ */
+const MAX_PUBSUB_PAYLOAD_BYTES = 4 * 1024;
 
 /**
  * Single shared libp2p node.
@@ -49,7 +55,6 @@ export class Network {
 	private datastore: SqliteDatastore | null = null;
 	private readonly dataServer: DataServer;
 	private readonly dataDir: string;
-	private pingInterval: NodeJS.Timeout | null = null;
 	private statusInterval: NodeJS.Timeout | null = null;
 	/**
 	 * Per-(peer,lish) timestamp of the last `have` response we sent.
@@ -58,7 +63,6 @@ export class Network {
 	 */
 	private readonly lastWantResponseTime = new Map<string, number>();
 	private wantResponseCleanupInterval: NodeJS.Timeout | null = null;
-	private readonly enablePink: boolean;
 	private bootstrapPeerIDs: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
 	private bootstrapMultiaddrs: any[] = [];
@@ -77,9 +81,9 @@ export class Network {
 
 	private readonly settings: Settings;
 
-	constructor(dataDir: string, dataServer: DataServer, settings: Settings, enablePink: boolean = false) {
+	constructor(dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.dataDir = dataDir;
-		this.enablePink = enablePink;
+
 		this.dataServer = dataServer;
 		this.settings = settings;
 	}
@@ -283,7 +287,6 @@ export class Network {
 		console.log('Services loaded:', Object.keys(this.node.services));
 
 		this.setupEventListeners();
-		this.setupPinkPonk();
 		this.setupPubsubDispatch();
 		this.setupBootstrapWorkaround();
 		this.setupStatusInterval();
@@ -355,16 +358,6 @@ export class Network {
 				trace(`[NET] Relay connection closed: ${conn.remotePeer?.toString?.()?.slice(0, 16)} addr=${conn.remoteAddr?.toString()}`);
 			}
 		});
-	}
-
-	private setupPinkPonk(): void {
-		if (!this.enablePink) return;
-		this.pubsub!.subscribe(PINK_TOPIC);
-		this.pubsub!.subscribe(PONK_TOPIC);
-		console.log('✓ Subscribed to pink/ponk topics');
-		this.pingInterval = setInterval(async () => {
-			await this.sendPink();
-		}, 10000);
 	}
 
 	private setupPubsubDispatch(): void {
@@ -573,21 +566,23 @@ export class Network {
 	}
 
 	// =========================================================================
-	// Pink/Ponk (debug)
+	// Pubsub dispatch
 	// =========================================================================
 
 	private handleMessage(msgEvent: PubsubEvent): void {
 		try {
 			const topic = msgEvent.topic;
+			// Reject oversize payloads before decoding — cheap DoS guard.
+			// All our pubsub messages are small JSON control frames; anything larger is either
+			// a bug or hostile.
+			if (msgEvent.data.byteLength > MAX_PUBSUB_PAYLOAD_BYTES) {
+				const from = msgEvent.from?.toString().slice(0, 12) ?? 'unknown';
+				console.warn(`[NET] pubsub ${topic} payload too large: ${msgEvent.data.byteLength}B from ${from} (max ${MAX_PUBSUB_PAYLOAD_BYTES}B), dropped`);
+				return;
+			}
 			const data = new TextDecoder().decode(msgEvent.data);
 			const message = JSON.parse(data);
 			const from = msgEvent.from?.toString();
-
-			// Dispatch to pink handler
-			if (topic === PINK_TOPIC) {
-				this.sendPonk(message.peerID);
-				return;
-			}
 
 			// Dispatch to registered topic handlers
 			const handlers = this.topicHandlers.get(topic);
@@ -597,33 +592,15 @@ export class Network {
 		}
 	}
 
-	public async sendPink(): Promise<void> {
-		if (!this.pubsub || !this.node) return;
-		const message = createPinkMessage(this.node.peerId.toString());
-		const data = new TextEncoder().encode(JSON.stringify(message));
-		try {
-			await this.pubsub.publish(PINK_TOPIC, data);
-		} catch (error) {
-			trace('[NET] pink send error:', error);
-		}
-	}
-
-	private async sendPonk(inReplyTo: string): Promise<void> {
-		if (!this.pubsub || !this.node) return;
-		const message = createPonkMessage(this.node.peerId.toString(), inReplyTo);
-		const data = new TextEncoder().encode(JSON.stringify(message));
-		try {
-			await this.pubsub.publish(PONK_TOPIC, data);
-		} catch (error) {
-			trace('[NET] ponk reply attempted (no peers)');
-		}
-	}
-
 	// =========================================================================
 	// Want/Have protocol (LISH data exchange)
 	// =========================================================================
 
 	private async handleWant(data: WantMessage, networkID: string, fromPeerID?: string): Promise<void> {
+		if (!fromPeerID) {
+			trace(`[NET] want ignored: no verified sender peerID`);
+			return;
+		}
 		if (!isUploadEnabled(data.lishID)) {
 			trace(`[NET] want ignored: upload disabled for ${data.lishID.slice(0, 8)}`);
 			return;
@@ -633,16 +610,16 @@ export class Network {
 			return;
 		}
 		// Per-(peer,lish) rate-limit: ignore want from same peer for same LISH within cooldown.
-		// Without this, an aggressive (or buggy) peer could trigger many redundant HAVE broadcasts.
-		// Note: skipped when fromPeerID is unavailable (older libp2p builds without verified sender).
-		if (fromPeerID) {
-			const key = `${fromPeerID}:${data.lishID}`;
-			const last = this.lastWantResponseTime.get(key);
-			if (last !== undefined && Date.now() - last < WANT_RESPONSE_COOLDOWN_MS) {
-				trace(`[NET] want rate-limited: ${fromPeerID.slice(0, 12)} for ${data.lishID.slice(0, 8)} (cooldown)`);
-				return;
-			}
+		// Without this, an aggressive (or buggy) peer could trigger many redundant HAVE responses.
+		const key = `${fromPeerID}:${data.lishID}`;
+		const last = this.lastWantResponseTime.get(key);
+		if (last !== undefined && Date.now() - last < WANT_RESPONSE_COOLDOWN_MS) {
+			trace(`[NET] want rate-limited: ${fromPeerID.slice(0, 12)} for ${data.lishID.slice(0, 8)} (cooldown)`);
+			return;
 		}
+		// Networks, by referenced networkID, are also checked: the seeder must belong to the same LISH net.
+		// (networkID currently unused beyond routing; future: verify lish.networkIDs.includes(networkID).)
+		void networkID;
 		const lish = this.dataServer.get(data.lishID);
 		if (!lish) return;
 		// Verify data directory exists on disk — prevents false-positive "have"
@@ -656,18 +633,24 @@ export class Network {
 			trace(`[NET] no chunks for ${data.lishID.slice(0, 8)}`);
 			return;
 		}
-		const myAddrs = this.node!.getMultiaddrs();
-		console.debug(`[NET] responding HAVE for ${data.lishID.slice(0, 8)}, chunks=${haveChunks === 'all' ? 'ALL' : haveChunks.size}`);
-		const haveMessage: HaveMessage = {
-			type: 'have',
-			lishID: lish.id,
-			chunks: haveChunks === 'all' ? 'all' : Array.from(haveChunks),
-			multiaddrs: myAddrs,
-			peerID: this.node!.peerId.toString(),
-		};
-		await this.broadcast(lishTopic(networkID), haveMessage);
-		// Record send time only after broadcast was attempted; cleanup interval drains stale entries.
-		if (fromPeerID) this.lastWantResponseTime.set(`${fromPeerID}:${data.lishID}`, Date.now());
+		const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
+		const chunksPayload: import('./lish-protocol.ts').HaveChunks = haveChunks === 'all' ? 'all' : Array.from(haveChunks);
+		console.debug(`[NET] sending unicast HAVE to ${fromPeerID.slice(0, 12)} for ${data.lishID.slice(0, 8)}, chunks=${chunksPayload === 'all' ? 'ALL' : chunksPayload.length}`);
+		// Open a fresh LISH protocol stream to the requester and send the HAVE announcement.
+		// Errors are traced (not thrown) — a single unreachable requester mustn't break our own subscription.
+		let client: LISHClient | undefined;
+		try {
+			const { stream } = await this.dialProtocolByPeerId(fromPeerID, LISH_PROTOCOL);
+			client = new LISHClient(stream);
+			await client.announceHave(data.lishID, chunksPayload, myAddrs);
+		} catch (err: any) {
+			trace(`[NET] announceHave to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
+			await client?.close().catch(() => {});
+			return;
+		}
+		await client.close().catch(() => {});
+		// Record send time only after the announcement was sent; cleanup interval drains stale entries.
+		this.lastWantResponseTime.set(key, Date.now());
 	}
 
 	// =========================================================================
@@ -789,10 +772,6 @@ export class Network {
 	}
 
 	async stop(): Promise<void> {
-		if (this.pingInterval) {
-			clearInterval(this.pingInterval);
-			this.pingInterval = null;
-		}
 		if (this.statusInterval) {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;

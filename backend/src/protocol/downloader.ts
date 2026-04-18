@@ -6,7 +6,7 @@ import { downloadLimiter } from './speed-limiter.ts';
 import { lishTopic } from './constants.ts';
 import { Utils } from '../utils.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
-import { type HaveChunks, LISH_PROTOCOL, LISHClient } from './lish-protocol.ts';
+import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, registerHaveAnnouncementHandler, unregisterHaveAnnouncementHandler } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { trace } from '../logger.ts';
@@ -16,19 +16,11 @@ import { PauseController } from './pause-controller.ts';
 import { ProgressReporter, type ProgressCallback } from './progress-reporter.ts';
 import { ChunkDownloader, type RetryInfo } from './chunk-downloader.ts';
 type NodeID = string;
-interface PubsubMessage {
-	type: 'want' | 'have';
-	lishID: LISHid;
-}
-export interface WantMessage extends PubsubMessage {
+// WANT is the only message still carried on pubsub (small, broadcast by design).
+// HAVE is unicast via the LISH protocol — see LISHAnnounceHaveRequest.
+export interface WantMessage {
 	type: 'want';
-}
-export interface HaveMessage extends PubsubMessage {
-	type: 'have';
 	lishID: LISHid;
-	peerID: NodeID;
-	multiaddrs: Multiaddr[];
-	chunks: HaveChunks;
 }
 type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'awaiting-manifest' | 'downloading' | 'downloaded' | 'error';
 
@@ -91,7 +83,6 @@ export class Downloader {
 	);
 	private downloadResolve: (() => void) | undefined;
 	private downloadReject: ((err: Error) => void) | undefined;
-	private pubsubHandlers: { topic: string; handler: (data: Record<string, any>) => void }[] = [];
 	// All progress accounting (speed window, per-file counters, 1s ticker, pass-through emit).
 	private readonly progressReporter = new ProgressReporter();
 	private onManifestImported?: (lishID: string) => void;
@@ -162,8 +153,7 @@ export class Downloader {
 		this.errorDetail = detail;
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
-		for (const { topic, handler } of this.pubsubHandlers) this.network.unsubscribeHandler(topic, handler);
-		this.pubsubHandlers = [];
+		if (this.lishID) unregisterHaveAnnouncementHandler(this.lishID);
 		// Fire-and-forget close — stream may already be reset/aborted, which is benign.
 		// Log at trace so real bugs (e.g. TypeError) can still be spotted in debug logs.
 		this.peerManager.closeAll('setError');
@@ -246,8 +236,7 @@ export class Downloader {
 		this.abortController.abort();
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
-		for (const { topic, handler } of this.pubsubHandlers) this.network.unsubscribeHandler(topic, handler);
-		this.pubsubHandlers = [];
+		if (this.lishID) unregisterHaveAnnouncementHandler(this.lishID);
 		await this.peerManager.closeAllAwait('destroy');
 		// Notify frontend to reset peers/speed immediately
 		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
@@ -261,15 +250,14 @@ export class Downloader {
 		console.log(`[DL] Destroyed ${this.lishID.slice(0, 8)}`);
 	}
 
-	private subscribePubsub(): void {
-		for (const nid of this.networkIDs) {
-			const topic = lishTopic(nid);
-			const handler = async (data: Record<string, any>) => {
-				await this.handlePubsubMessage(topic, data);
-			};
-			this.pubsubHandlers.push({ topic, handler });
-			this.network.subscribe(topic, handler);
-		}
+	/**
+	 * Register this downloader as the handler for unicast HAVE announcements for our lishID.
+	 * Called once per init/initFromManifest; unregistered in destroy/setError.
+	 */
+	private registerAnnouncementHandler(): void {
+		registerHaveAnnouncementHandler(this.lishID, ann => {
+			this.onHaveAnnouncement(ann).catch(e => trace(`[DL] onHaveAnnouncement error: ${e?.message ?? e}`));
+		});
 	}
 
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkIDs: string | string[]) {
@@ -290,7 +278,7 @@ export class Downloader {
 		this.chunkDownloader = this.createChunkDownloader();
 		console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), ${this.dataServer.getMissingChunks(this.lishID).length} chunks to download`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
-		this.subscribePubsub();
+		this.registerAnnouncementHandler();
 		this.transitionTo('initialized', 'init() done');
 	}
 
@@ -309,7 +297,7 @@ export class Downloader {
 			this.needsManifest = true;
 			console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), awaiting manifest from peer`);
 		}
-		this.subscribePubsub();
+		this.registerAnnouncementHandler();
 		this.transitionTo('initialized', 'initFromManifest() done');
 	}
 
@@ -504,8 +492,9 @@ export class Downloader {
 
 	private async callForPeers() {
 		console.debug(`[DL] callForPeers: ${this.lishID.slice(0, 8)} on ${this.networkIDs.length} networks, peers: ${this.peerManager.size()}`);
-		// GossipSub broadcast — peers respond with have+multiaddrs via handlePubsubMessage → connectToPeer
-		const msg: PubsubMessage = { type: 'want', lishID: this.lishID };
+		// GossipSub broadcast — seeders respond with a unicast HAVE over the LISH protocol
+		// (see network.handleWant → LISHClient.announceHave → Downloader.onHaveAnnouncement).
+		const msg: WantMessage = { type: 'want', lishID: this.lishID };
 		for (const nid of this.networkIDs) {
 			await this.network.broadcast(lishTopic(nid), msg).catch((err: any) => trace(`[DL] broadcast WANT on ${nid}: ${err?.message ?? err}`));
 		}
@@ -579,7 +568,7 @@ export class Downloader {
 					dlStream.abort(new Error('downloader destroyed'));
 					return;
 				}
-				// Atomic add — if handlePubsubMessage concurrently added this peer during our dial,
+				// Atomic add — if onHaveAnnouncement concurrently added this peer during our dial,
 				// tryAdd returns false and we close the duplicate stream. No check-then-act race.
 				const dlClient = new LISHClient(dlStream);
 				if (!this.peerManager.tryAdd(peerID, dlClient, connectionType)) {
@@ -676,48 +665,42 @@ export class Downloader {
 		this.scheduleNextPeerDiscovery();
 	}
 
-	private async handlePubsubMessage(topic: string, data: Record<string, any>): Promise<void> {
+	private async onHaveAnnouncement(ann: HaveAnnouncement): Promise<void> {
 		if (this.destroyed) return;
 		if (this.disabled) return;
-		if (!this.networkIDs.some(nid => topic === lishTopic(nid))) return;
-		if (data['type'] === 'have' && data['lishID'] === this.lishID && data['chunks']) {
-			const chunks = data['chunks'] === 'all' ? 'ALL' : `${(data['chunks'] as any[])?.length ?? 0}`;
-			const addrs = (data['multiaddrs'] as any[])?.map(a => a?.toString?.() ?? String(a)) ?? [];
-			const addrTypes = addrs.map(a => (a.includes('/p2p-circuit') ? 'RELAY' : 'DIRECT'));
-			// Peer sent have → it has data now, remove from dropped (but not if banned — bans are permanent)
-			if (this.peerManager.isBanned(data['peerID'])) {
-				trace(`[DL] HAVE from ${(data['peerID'] as string)?.slice(0, 12)} ignored: banned`);
-			} else if (this.peerManager.clearDropped(data['peerID'])) console.debug(`[DL] ${(data['peerID'] as string)?.slice(0, 12)} removed from droppedPeers (sent have)`);
-			console.debug(`[DL] HAVE from ${(data['peerID'] as string)?.slice(0, 12)}: ${chunks} chunks [${addrTypes.join(',')}], active=${this.downloadActive}`);
-			if (this.peerManager.has(data['peerID'])) {
-				// Update availability for already-connected peer
-				const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;
-				const hp = data['chunks'] === 'all' ? 100 : Math.round((((data['chunks'] as any[])?.length ?? 0) / totalChunks) * 100);
-				this.peerManager.updateHavePercent(data['peerID'], hp);
-				return;
-			}
-			// Don't reconnect banned peers (permanent ban for this app session)
-			if (this.peerManager.isBanned(data['peerID'])) {
-				trace(`[DL] HAVE from ${(data['peerID'] as string)?.slice(0, 12)} ignored: banned`);
-				return;
-			}
-			try {
-				await this.connectToPeer(data as HaveMessage);
-			} catch (err: any) {
-				console.debug(`[DL] connectToPeer failed: ${(data['peerID'] as string)?.slice(0, 12)}: ${err.message?.slice(0, 80)}`);
-				return;
-			}
-			this.lastExhaustedTime = 0;
-			if (!this.downloadActive && !this.destroyed)
-				this.doWork().catch(e => {
-					if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e);
-				});
+		if (ann.lishID !== this.lishID) return;
+		const peerIDShort = ann.peerID.slice(0, 12);
+		const chunks = ann.chunks === 'all' ? 'ALL' : `${(ann.chunks as any[])?.length ?? 0}`;
+		const addrTypes = ann.multiaddrs.map(a => (a.includes('/p2p-circuit') ? 'RELAY' : 'DIRECT'));
+		// Peer sent have → it has data now, remove from dropped (but not if banned — bans are permanent)
+		if (this.peerManager.isBanned(ann.peerID)) {
+			trace(`[DL] HAVE from ${peerIDShort} ignored: banned`);
+			return;
 		}
+		if (this.peerManager.clearDropped(ann.peerID)) console.debug(`[DL] ${peerIDShort} removed from droppedPeers (sent have)`);
+		console.debug(`[DL] HAVE from ${peerIDShort}: ${chunks} chunks [${addrTypes.join(',')}], active=${this.downloadActive}`);
+		if (this.peerManager.has(ann.peerID)) {
+			// Update availability for already-connected peer
+			const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;
+			const hp = ann.chunks === 'all' ? 100 : Math.round((((ann.chunks as any[])?.length ?? 0) / totalChunks) * 100);
+			this.peerManager.updateHavePercent(ann.peerID, hp);
+			return;
+		}
+		try {
+			await this.connectToPeer(ann.peerID, ann.multiaddrs, ann.chunks);
+		} catch (err: any) {
+			console.debug(`[DL] connectToPeer failed: ${peerIDShort}: ${err.message?.slice(0, 80)}`);
+			return;
+		}
+		this.lastExhaustedTime = 0;
+		if (!this.downloadActive && !this.destroyed)
+			this.doWork().catch(e => {
+				if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e);
+			});
 	}
 
-	private async connectToPeer(data: HaveMessage): Promise<void> {
-		const peerID: NodeID = data.peerID;
-		const multiaddrs: Multiaddr[] = data.multiaddrs.map(ma => multiaddr(ma.toString()));
+	private async connectToPeer(peerID: NodeID, multiaddrStrings: string[], chunks: HaveChunks): Promise<void> {
+		const multiaddrs: Multiaddr[] = multiaddrStrings.map(ma => multiaddr(ma));
 		trace(`[DL] dialing ${peerID.slice(0, 12)} via ${multiaddrs.length} addrs`);
 		const { stream, connectionType } = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL);
 		if (this.destroyed) {
@@ -725,7 +708,7 @@ export class Downloader {
 			return;
 		}
 		const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;
-		const havePercent = data.chunks === 'all' ? 100 : Math.round((data.chunks.length / totalChunks) * 100);
+		const havePercent = chunks === 'all' ? 100 : Math.round((chunks.length / totalChunks) * 100);
 		// Atomic add — if probeTopicPeers concurrently added the same peer during our dial,
 		// tryAdd returns false; close the duplicate stream to avoid a leak.
 		const client = new LISHClient(stream);

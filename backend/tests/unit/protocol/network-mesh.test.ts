@@ -233,7 +233,7 @@ describe('checkPeerCounts logic', () => {
 
 	it('ignores non-lish topics', () => {
 		const lastCounts = new Map<string, number>();
-		const result = checkPeerCountsLogic(['pink', 'ponk', 'lish/net1'], topic => (topic === 'lish/net1' ? ['peerA'] : ['shouldBeIgnored']), lastCounts);
+		const result = checkPeerCountsLogic(['other1', 'other2', 'lish/net1'], topic => (topic === 'lish/net1' ? ['peerA'] : ['shouldBeIgnored']), lastCounts);
 		expect(result.counts.length).toBe(1);
 		expect(result.counts[0]!.networkID).toBe('net1');
 	});
