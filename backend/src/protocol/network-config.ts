@@ -15,6 +15,7 @@ import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { autoNAT } from '@libp2p/autonat';
 import { dcutr } from '@libp2p/dcutr';
 import { networkInterfaces } from 'os';
+import { isLinkLocalIp } from '@libp2p/utils';
 import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
@@ -59,7 +60,9 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	for (const [name, addrs] of Object.entries(ifaces)) {
 		if (!addrs) continue;
 		for (const addr of addrs) {
-			if (addr.family === 'IPv4' && !addr.internal) {
+			// Skip link-local (169.254.0.0/16) — announcing these never helps
+			// a remote peer and pollutes the peerStore with unreachable addresses.
+			if (addr.family === 'IPv4' && !addr.internal && !isLinkLocalIp(addr.address)) {
 				appendAnnounceAddresses.push(`/ip4/${addr.address}/tcp/${port}`);
 				console.log(`✓ Announce address (auto-detected, ${name}): /ip4/${addr.address}/tcp/${port}`);
 			}
