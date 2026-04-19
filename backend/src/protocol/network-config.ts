@@ -46,8 +46,12 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// passively for /p2p-circuit multiaddrs to be announced. Without this,
 	// NAT'd nodes (<redacted-arm-peer>, local, docker behind NAT) never get reservations
 	// and are unreachable from siblings that only know their private IPs.
-	transports.push(circuitRelayTransport({ discoverRelays: 2 }));
-	console.log(`✓ Circuit relay client enabled (discoverRelays: 2)`);
+	// discoverRelays should match maxRelays (/p2p-circuit slots, below) so we
+	// advertise as many reserved relay paths as we listen for. With 2 we'd
+	// saturate on <redacted-bootstrap>+<redacted-bootstrap> only; with 5 we can include siblings as relays
+	// too, giving NAT'd nodes multiple paths to reach each other.
+	transports.push(circuitRelayTransport({ discoverRelays: 5 }));
+	console.log(`✓ Circuit relay client enabled (discoverRelays: 5)`);
 	// Build listen addresses
 	const port = allSettings.network?.incomingPort || 0;
 	const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
