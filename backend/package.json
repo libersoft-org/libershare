@@ -42,6 +42,6 @@
 		"test": "bun test tests/unit/",
 		"test:e2e": "bun test tests/e2e/ --timeout 300000",
 		"test:all": "bun test tests/unit/ && bun test tests/e2e/ --timeout 300000",
-		"postinstall": "cd node_modules/@chainsafe/libp2p-gossipsub && bun install && bun run build && cd ../../../ && sh patches/apply-gossipsub-async-push-fix.sh"
+		"postinstall": "cd node_modules/@chainsafe/libp2p-gossipsub && bun install && bun run build"
 	}
 }
