@@ -40,11 +40,14 @@ const WANT_RESPONSE_COOLDOWN_MS = 60_000;
 const WANT_RESPONSE_CLEANUP_INTERVAL_MS = 5 * 60_000;
 /**
  * Maximum size (bytes) of an incoming pubsub payload we are willing to decode.
- * Only small control messages ride pubsub now (WANT — a tiny JSON object);
- * HAVE is unicast via the LISH protocol. Anything bigger is rejected before JSON parse, so a
- * malicious peer can't OOM us by publishing a giant payload on a topic we're subscribed to.
+ * Our own control messages ride pubsub (WANT — tiny JSON), but older/foreign peers
+ * still broadcast HAVE announcements and catalog inventories on the same topic and
+ * those can reach tens of KB for nodes with large libraries. A too-small cap silently
+ * dropped those messages so peer presence info never reached topic handlers (observed
+ * 46167B payloads from <redacted-public-ip>). 256 KiB fits realistic HAVE/catalog frames while
+ * still bounding the damage a malicious publisher can do per message.
  */
-const MAX_PUBSUB_PAYLOAD_BYTES = 4 * 1024;
+const MAX_PUBSUB_PAYLOAD_BYTES = 256 * 1024;
 
 /**
  * Single shared libp2p node.
