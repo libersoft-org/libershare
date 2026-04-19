@@ -97,10 +97,14 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		// No connectionProtector - swarm key removed. Open network, isolation via topics.
 		peerStore: {
 			threshold: 15,
-			// Aggressive pruning — circuit-relay addresses re-created on every
+			// Moderate pruning — circuit-relay addresses re-created on every
 			// reservation refresh (~minute); default 1h kept stale duplicates.
-			maxAddressAge: 300_000,   // 5 min (default 3_600_000 = 1h)
-			maxPeerAge: 1_800_000,    // 30 min (default 21_600_000 = 6h)
+			// 300_000/1_800_000 (5m/30m) was too aggressive: connections evicted
+			// mid-handshake caused StreamStateError flood from gossipsub sendRpc
+			// writing to closed streams (100+/h), which in turn prevented
+			// SUBSCRIBE RPC propagation → fragmented pubsub mesh.
+			maxAddressAge: 1_800_000, // 30 min (default 3_600_000 = 1h)
+			maxPeerAge: 7_200_000,    // 2h (default 21_600_000 = 6h)
 		},
 		services: {
 			identify: identify(),
