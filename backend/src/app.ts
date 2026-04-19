@@ -177,7 +177,16 @@ const TRANSIENT_ERRORS = new Set([
 
 function isTransientError(err: any): boolean {
 	const name = err?.constructor?.name || err?.name || '';
-	return TRANSIENT_ERRORS.has(name);
+	if (TRANSIENT_ERRORS.has(name)) return true;
+	// Node EventEmitter wraps stream 'error' events with no listener as `Error: Unhandled error. (...)`.
+	// libp2p stream/muxer paths emit DOMException TimeoutError / AbortError on the underlying socket
+	// when a peer goes silent, and there's no listener attached. Treat as transient.
+	const msg: string = err?.message || '';
+	if (msg.startsWith('Unhandled error.') && /TimeoutError|AbortError|ECONNRESET|EPIPE/i.test(msg)) return true;
+	// Cause-chain check (Node may set .cause on wrapped errors)
+	const causeName = err?.cause?.constructor?.name || err?.cause?.name || '';
+	if (causeName === 'TimeoutError' || causeName === 'AbortError') return true;
+	return false;
 }
 
 process.on('uncaughtException', err => {

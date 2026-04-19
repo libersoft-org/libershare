@@ -18,6 +18,25 @@ const levelNames: Record<number, string> = {
 };
 const LOG_PREFIX = process.env['LOG_PREFIX'] || '';
 
+// JSON.stringify drops Error.name/message/stack (non-enumerable). This serializer keeps them
+// (and includes any custom properties like libp2p's `code`/`context`) so log lines stay diagnosable.
+function serializeArg(arg: unknown): string {
+	if (arg instanceof Error) {
+		const extra: Record<string, unknown> = {};
+		for (const key of Object.keys(arg)) extra[key] = (arg as any)[key];
+		const extraStr = Object.keys(extra).length ? ' ' + JSON.stringify(extra) : '';
+		return `${arg.name}: ${arg.message}${extraStr}\n${arg.stack ?? ''}`;
+	}
+	if (typeof arg === 'object' && arg !== null) {
+		try {
+			return JSON.stringify(arg);
+		} catch {
+			return String(arg);
+		}
+	}
+	return String(arg);
+}
+
 function formatTimestamp(date: Date): string {
 	function pad(n: number, len = 2): string {
 		return n.toString().padStart(len, '0');
@@ -40,7 +59,7 @@ function createPreciseReporter(): ConsolaReporter {
 			const timestamp = formatTimestamp(logObj.date);
 			const levelName = levelNames[logObj.level] || 'INFO';
 			const prefix = LOG_PREFIX ? `[${LOG_PREFIX}] ` : '';
-			const args = logObj.args.map(arg => (typeof arg === 'object' ? JSON.stringify(arg) : arg)).join(' ');
+			const args = logObj.args.map(serializeArg).join(' ');
 			const color = levelColors[levelName] || '';
 			const levelTag = color ? `${color}[${levelName}]${RESET}` : `[${levelName}]`;
 			const output = `${prefix}[${timestamp}] ${levelTag} ${args}`;
@@ -78,7 +97,7 @@ function createFileReporter(filePath: string): ConsolaReporter {
 			const timestamp = formatTimestamp(logObj.date);
 			const levelName = levelNames[logObj.level] || 'INFO';
 			const prefix = LOG_PREFIX ? `[${LOG_PREFIX}] ` : '';
-			const args = logObj.args.map(arg => (typeof arg === 'object' ? JSON.stringify(arg) : arg)).join(' ');
+			const args = logObj.args.map(serializeArg).join(' ');
 			const line = `${prefix}[${timestamp}] [${levelName}] ${args}\n`;
 			try {
 				appendFileSync(filePath, line);
