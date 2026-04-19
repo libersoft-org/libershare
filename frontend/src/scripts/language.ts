@@ -135,6 +135,27 @@ const errorCodeKeys: Record<string, string> = {
 	UNSUPPORTED_DECOMPRESSION: 'common.errorUnsupportedDecompression',
 	HTTP_ERROR: 'common.errorHTTP',
 	INVALID_SIZE_FORMAT: 'common.errorInvalidSizeFormat',
+	// Filesystem (FileBrowser) → fileBrowser
+	FS_NOT_FOUND: 'fileBrowser.errorNotFound',
+	FS_ACCESS_DENIED: 'fileBrowser.errorAccessDenied',
+	FS_NOT_PERMITTED: 'fileBrowser.errorNotPermitted',
+	FS_ALREADY_EXISTS: 'fileBrowser.errorAlreadyExists',
+	FS_NOT_EMPTY: 'fileBrowser.errorNotEmpty',
+	FS_IS_DIRECTORY: 'fileBrowser.errorIsDirectory',
+	FS_NOT_DIRECTORY: 'fileBrowser.errorNotDirectory',
+	FS_BUSY: 'fileBrowser.errorBusy',
+	FS_NO_SPACE: 'fileBrowser.errorNoSpace',
+	FS_READ_ONLY: 'fileBrowser.errorReadOnly',
+	FS_NAME_TOO_LONG: 'fileBrowser.errorNameTooLong',
+	FS_TOO_MANY_OPEN: 'fileBrowser.errorTooManyOpen',
+	FS_INVALID: 'fileBrowser.errorInvalid',
+	FS_CROSS_DEVICE: 'fileBrowser.errorCrossDevice',
+	FS_NOT_SUPPORTED: 'fileBrowser.errorNotSupported',
+	FS_IO: 'fileBrowser.errorIO',
+	FS_TOO_MANY_LINKS: 'fileBrowser.errorTooManyLinks',
+	FS_FILE_TOO_LARGE: 'fileBrowser.errorFileTooLarge',
+	FS_TIMEOUT: 'fileBrowser.errorTimeout',
+	FS_ERROR: 'fileBrowser.errorGeneric',
 };
 
 /**
