@@ -31,7 +31,6 @@
 	let createSubdirectory = $state(true);
 	let moving = $state(false);
 	let errorMessage = $state('');
-
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
 
 	function openDirectoryBrowse(): void {

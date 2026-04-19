@@ -13,14 +13,12 @@
 	import TableHeader from '../../components/Table/TableHeader.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import TableCell from '../../components/Table/TableCell.svelte';
-
 	interface FileProgress {
 		path: string;
 		size: number;
 		bytesTransferred: number;
 		done: boolean;
 	}
-
 	interface ProgressEvent {
 		lishID: string;
 		type: 'file-list' | 'chunk' | 'file';
@@ -33,7 +31,6 @@
 		fileSize?: number;
 		files?: { path: string; size: number }[];
 	}
-
 	interface Props {
 		areaID: string;
 		position?: Position;
@@ -42,17 +39,14 @@
 		onComplete?: () => void;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, params, onBack, onComplete }: Props = $props();
-
 	type Status = 'moving' | 'done' | 'error';
 	let status = $state<Status>('moving');
 	let errorText = $state('');
 	let overallProgress = $state(0);
 	let totalBytes = $state(0);
 	let completedBytes = $state(0);
-
 	let allFiles = $state<FileProgress[]>([]);
 	let completedCount = $derived(allFiles.filter(f => f.done).length);
-
 	let unsubProgress: (() => void) | null = null;
 
 	function formatBytes(bytes: number, decimals: number = 2): string {
@@ -98,10 +92,8 @@
 		status = 'moving';
 		errorText = '';
 		allFiles = [];
-
 		unsubProgress = api.on('lishs:move:progress', handleProgressEvent) || null;
 		await api.subscribe('lishs:move:progress');
-
 		try {
 			await api.lishs.move(params.lishID, params.newDirectory, params.moveData, params.createSubdirectory);
 			status = 'done';

@@ -5,23 +5,10 @@ import { formatSize } from './utils.ts';
 import { navigateBack } from './navigation.ts';
 import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
-
 export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'moving' | 'allocating' | 'error' | 'retrying';
 export type EnabledMode = 'disabled' | 'download' | 'upload' | 'both';
-
-export function computeEnabledMode(downloadEnabled: boolean, uploadEnabled: boolean): EnabledMode {
-	if (downloadEnabled && uploadEnabled) return 'both';
-	if (downloadEnabled) return 'download';
-	if (uploadEnabled) return 'upload';
-	return 'disabled';
-}
-
-// ============================================================================
 // Download Data Types
-// ============================================================================
-
 export type DownloadFileType = 'file' | 'directory' | 'link';
-
 export interface DownloadFileData {
 	id: number;
 	name: string;
@@ -34,7 +21,6 @@ export interface DownloadFileData {
 	downloadedSize?: string;
 	linkTarget?: string;
 }
-
 export interface PeerDetail {
 	peerID: string;
 	connectionType: 'DIRECT' | 'RELAY' | 'DCUtR';
@@ -48,7 +34,6 @@ export interface PeerDetail {
 	stale: boolean;
 	havePercent?: number;
 }
-
 export interface DownloadData {
 	id: string;
 	name: string;
@@ -82,9 +67,14 @@ export interface DownloadData {
 	retryMaxRetries?: number | undefined;
 }
 
-/**
- * Convert a backend ILISHDetail to frontend DownloadData.
- */
+export function computeEnabledMode(downloadEnabled: boolean, uploadEnabled: boolean): EnabledMode {
+	if (downloadEnabled && uploadEnabled) return 'both';
+	if (downloadEnabled) return 'download';
+	if (uploadEnabled) return 'upload';
+	return 'disabled';
+}
+
+//Convert a backend ILISHDetail to frontend DownloadData.
 function detailToDownload(detail: ILISHDetail): DownloadData {
 	let nextID = 0;
 	const files: DownloadFileData[] = detail.files.map(f => {
@@ -104,12 +94,8 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 			downloadedSize,
 		};
 	});
-	for (const d of detail.directories) {
-		files.push({ id: nextID++, name: d.path, type: 'directory', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0 });
-	}
-	for (const l of detail.links) {
-		files.push({ id: nextID++, name: l.path, type: 'link', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0, linkTarget: l.target });
-	}
+	for (const d of detail.directories) files.push({ id: nextID++, name: d.path, type: 'directory', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0 });
+	for (const l of detail.links) files.push({ id: nextID++, name: l.path, type: 'link', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0, linkTarget: l.target });
 	files.sort((a, b) => a.name.localeCompare(b.name));
 	const progress = detail.totalChunks > 0 ? Math.round((detail.verifiedChunks / detail.totalChunks) * 10000) / 100 : 0;
 	const downloadedSize = detail.totalSize > 0 && detail.verifiedChunks > 0 ? formatSize(Math.round((detail.totalSize * detail.verifiedChunks) / detail.totalChunks)) : '0 B';
@@ -140,10 +126,7 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 	};
 }
 
-// ============================================================================
 // Stores
-// ============================================================================
-
 // Statuses that should not be overridden by transfer events
 function isStatusLocked(status: DownloadStatus): boolean {
 	return status === 'verifying' || status === 'pending-verification' || status === 'moving' || status === 'allocating' || status === 'error' || status === 'retrying';
@@ -159,7 +142,6 @@ function computeStatus(isDown: boolean, isUp: boolean): DownloadStatus {
 
 let handlersRegistered = false;
 let currentDetailLISHID: string | null = null;
-
 export const downloads = writable<DownloadData[]>([]);
 export const downloadsLoading = writable<boolean>(true);
 export const peerDetails = writable<Map<string, PeerDetail[]>>(new Map());
@@ -269,7 +251,6 @@ export async function initDownloads(): Promise<void> {
 	// Register event handlers only once (they persist across reconnects)
 	if (!handlersRegistered) {
 		handlersRegistered = true;
-
 		// lishs:add — new LISH created or imported (broadcast from backend)
 		api.on('lishs:add', (detail: ILISHDetail) => {
 			downloads.update(list => {
@@ -316,9 +297,7 @@ export async function initDownloads(): Promise<void> {
 		// lishs:verify — verification progress (broadcast from backend)
 		api.on('lishs:verify', (data: { lishID: string; filePath: string; verifiedChunks: number; done?: boolean; reset?: boolean; queued?: boolean; started?: boolean }) => {
 			// console.log('[downloads] lishs:verify received:', data.filePath, 'verified:', data.verifiedChunks, 'done:', data.done);
-			if (data.reset) {
-				return;
-			}
+			if (data.reset) return;
 			if (data.queued) {
 				downloads.update(list =>
 					list.map(d => {
@@ -339,9 +318,7 @@ export async function initDownloads(): Promise<void> {
 			}
 			if (data.done) {
 				const lish = get(downloads).find(d => d.id === data.lishID);
-				if (lish && lish.status !== 'moving' && lish.status !== 'downloading' && lish.status !== 'downloading-uploading' && lish.status !== 'allocating') {
-					addNotification(tt('downloads.verifyDone', { name: lish.name }), 'success');
-				}
+				if (lish && lish.status !== 'moving' && lish.status !== 'downloading' && lish.status !== 'downloading-uploading' && lish.status !== 'allocating') addNotification(tt('downloads.verifyDone', { name: lish.name }), 'success');
 				// Refresh from backend to restore correct per-file progress after verify.
 				// Always apply fresh per-file state — a new downloader may have already started
 				// (restartDownloadIfEnabled runs after verify done) and set status=downloading,

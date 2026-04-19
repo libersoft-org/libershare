@@ -1,7 +1,5 @@
 import { trace } from '../logger.ts';
-
 export type ConnectionType = 'DIRECT' | 'RELAY' | 'DCUtR';
-
 export interface PeerDetail {
 	peerID: string;
 	connectionType: ConnectionType;
@@ -15,14 +13,10 @@ export interface PeerDetail {
 	stale: boolean;
 	havePercent?: number;
 }
-
 interface SpeedSample {
 	time: number;
 	bytes: number;
 }
-
-const SPEED_WINDOW = 30_000; // 30s — per-peer chunk interval is 5-18s, need ≥2 samples in window
-
 interface PeerEntry {
 	peerID: string;
 	lishID: string;
@@ -37,19 +31,16 @@ interface PeerEntry {
 	/** Percentage of LISH chunks this peer has (from have message). */
 	havePercent?: number;
 }
-
+const SPEED_WINDOW = 30_000; // 30s — per-peer chunk interval is 5-18s, need ≥2 samples in window
 const STALE_THRESHOLD = 30_000; // 30s — peer shown dimmed
 const PRUNE_THRESHOLD = 60_000; // 60s — peer removed entirely
-
 // Per-peer per-direction entries
 const entries = new Map<string, PeerEntry>();
 // Cumulative bytes per key — survives prune/unregister cycles
 const cumulativeBytes = new Map<string, number>();
-
 // Subscription management: which clients want peers for which lishIDs
 type ClientRef = any;
 const subscriptions = new Map<ClientRef, Set<string>>();
-
 // Broadcast function (set by transfer.ts)
 type EmitFn = (client: ClientRef, event: string, data: any) => void;
 let emitFn: EmitFn | null = null;
@@ -100,7 +91,6 @@ function pruneSamples(samples: SpeedSample[], now: number): void {
 }
 
 // --- Public API: registration ---
-
 export function registerDownloadPeer(lishID: string, peerID: string, connectionType: ConnectionType, havePercent?: number): void {
 	const k = key(lishID, peerID, 'download');
 	const existing = entries.get(k);
@@ -149,7 +139,6 @@ export function unregisterAllPeersForLISH(lishID: string): void {
 }
 
 // --- Public API: recording bytes ---
-
 export function updatePeerHavePercent(lishID: string, peerID: string, havePercent: number): void {
 	const k = key(lishID, peerID, 'download');
 	const entry = entries.get(k);
@@ -194,7 +183,6 @@ export function recordUploadBytes(lishID: string, peerID: string, bytes: number,
 }
 
 // --- Public API: subscription management ---
-
 export function subscribePeers(client: ClientRef, lishID: string): void {
 	if (!subscriptions.has(client)) subscriptions.set(client, new Set());
 	subscriptions.get(client)!.add(lishID);
@@ -212,7 +200,6 @@ export function unsubscribeAllPeers(client: ClientRef): void {
 }
 
 // --- Debug API: snapshot of internal state ---
-
 export interface PeerTrackerDebugEntry {
 	key: string;
 	peerID: string;
@@ -259,7 +246,6 @@ export function getDebugSnapshot(lishID?: string): { now: number; entries: PeerT
 }
 
 // --- Emitter setup ---
-
 export function setPeerEmit(fn: EmitFn): void {
 	emitFn = fn;
 }
@@ -277,38 +263,29 @@ export function stopPeerEmitter(): void {
 }
 
 // --- Internal: emit aggregated peer details ---
-
 function emitPeerDetails(): void {
 	if (!emitFn) return;
-
 	const now = Date.now();
-
 	// Prune old entries (cumulative bytes survive for future re-registration)
 	for (const [k, entry] of entries) {
 		if (now - entry.lastActivity > PRUNE_THRESHOLD) entries.delete(k);
 	}
-
 	// Collect subscribed lishIDs across all clients
 	const subscribedLishIDs = new Set<string>();
 	for (const [, lishIDs] of subscriptions) {
 		for (const id of lishIDs) subscribedLishIDs.add(id);
 	}
 	if (subscribedLishIDs.size === 0) return;
-
 	// Group entries by lishID, then merge download+upload per peerID
 	const byLish = new Map<string, Map<string, PeerDetail>>();
-
 	for (const entry of entries.values()) {
 		if (!subscribedLishIDs.has(entry.lishID)) continue;
-
 		if (!byLish.has(entry.lishID)) byLish.set(entry.lishID, new Map());
 		const peerMap = byLish.get(entry.lishID)!;
-
 		// Prune expired samples and compute speed from sliding window
 		pruneSamples(entry.speedSamples, now);
 		const speed = computeSpeed(entry.speedSamples, now);
 		const isStale = now - entry.lastActivity > STALE_THRESHOLD;
-
 		const existing = peerMap.get(entry.peerID);
 		if (existing) {
 			if (entry.direction === 'download') {
@@ -322,9 +299,7 @@ function emitPeerDetails(): void {
 			}
 			if (entry.havePercent !== undefined) existing.havePercent = entry.havePercent;
 			// Prefer DCUtR > RELAY > DIRECT for display
-			if (entry.connectionType === 'DCUtR' || (entry.connectionType === 'RELAY' && existing.connectionType === 'DIRECT')) {
-				existing.connectionType = entry.connectionType;
-			}
+			if (entry.connectionType === 'DCUtR' || (entry.connectionType === 'RELAY' && existing.connectionType === 'DIRECT')) existing.connectionType = entry.connectionType;
 			existing.stale = existing.stale && isStale;
 			if (entry.connectedAt < existing.connectedAt) existing.connectedAt = entry.connectedAt;
 			if (entry.lastActivity > existing.lastActivity) existing.lastActivity = entry.lastActivity;
@@ -345,7 +320,6 @@ function emitPeerDetails(): void {
 			peerMap.set(entry.peerID, detail);
 		}
 	}
-
 	// Emit to subscribed clients
 	for (const [client, lishIDs] of subscriptions) {
 		for (const lishID of lishIDs) {
