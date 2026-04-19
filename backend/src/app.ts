@@ -92,15 +92,32 @@ setUploadBroadcast((event, data) => apiServer.broadcastEvent(event, data));
 import { startConnectivityCheck } from './connectivity.ts';
 const stopConnectivityCheck = startConnectivityCheck((event, data) => apiServer.broadcastEvent(event, data));
 
+let shuttingDown = false;
 async function shutdown(): Promise<void> {
+	if (shuttingDown) {
+		// Second Ctrl+C → hard kill
+		process.exit(1);
+	}
+	shuttingDown = true;
 	console.log('Shutting down...');
+	// Stop accepting new work (sync)
 	stopConnectivityCheck();
 	apiServer.stop();
-	await networks.stopAllNetworks();
+	// Flush SQLite (bun:sqlite is synchronous, so all committed writes are already on disk —
+	// close() finalizes any open statements and the WAL).
+	try {
+		db.close();
+	} catch (err) {
+		console.error('DB close error:', err);
+	}
+	// Give a short grace for any in-flight fs writes (download chunks, uploads) to drain.
+	// We do NOT wait for libp2p node.stop() — peers get a TCP FIN from OS when the process exits.
+	await new Promise(resolve => setTimeout(resolve, 200));
 	process.exit(0);
 }
 
 process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 // Transient libp2p errors that can occur during normal peer churn, stream
 // timeouts, connection drops, etc. These must not crash the process.
