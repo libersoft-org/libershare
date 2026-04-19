@@ -432,8 +432,12 @@ export class Network {
 				});
 				return `${p.toString().slice(0, 12)}[${types.join(',')}]`;
 			});
-			console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${this.pubsub!.getTopics().join(', ')}`);
-			console.debug(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
+			const topicInfo = this.pubsub!.getTopics().map(t => {
+				const subs = this.pubsub!.getSubscribers(t);
+				return `${t.slice(0, 28)}[${subs.length}]`;
+			}).join(' ');
+			console.log(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${topicInfo}`);
+			console.log(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
 			// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 			this.checkPeerCounts();
 			// Dial known peers not currently connected (maintains relay connections to NATed peers)

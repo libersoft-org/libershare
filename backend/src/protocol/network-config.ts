@@ -122,6 +122,12 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				heartbeatInterval: 1000,
 				fanoutTTL: 60000,
 				runOnLimitedConnection: true,
+				// Peer exchange: when we PRUNE a peer from our mesh, send them a
+				// list of other subscribers so they can dial those directly.
+				// Critical for NAT'd fleets where bootstrap-only peer lists fail:
+				// nodes learn about siblings only through mesh gossip, not through
+				// DHT (we removed it) or mDNS (WAN only sees LAN).
+				doPX: true,
 			}),
 			// DHT removed entirely — only used by debug `lishnets.findPeer` API
 			// (see network.ts:825). Real peer discovery uses gossipsub mesh +
