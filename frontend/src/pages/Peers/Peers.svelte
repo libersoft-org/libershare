@@ -130,8 +130,10 @@
 	.peer-id {
 		font-family: var(--font-mono);
 		font-size: 1.8vh;
-		word-break: break-all;
-		white-space: normal;
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.networks-col {
@@ -176,19 +178,19 @@
 						{/each}
 					</Select>
 				</div>
-				<Table columns="auto 1fr auto auto" columnsMobile="1fr auto">
+				<Table columns="auto 1fr 30vh 15vh" columnsMobile="1fr auto">
 					<TableHeader>
 						<TableCell desktopOnly>#</TableCell>
 						<TableCell>{$t('peers.peerID')}</TableCell>
-						<TableCell>{$t('peers.network')}</TableCell>
-						<TableCell>{$t('peers.connections')}</TableCell>
+						<TableCell align="center">{$t('peers.network')}</TableCell>
+						<TableCell align="center">{$t('peers.connections')}</TableCell>
 					</TableHeader>
 					{#each filteredPeers as peer, i}
 						<TableRow position={[0, i + 2 + nodeOffset]} onConfirm={() => openPeerDetail(peer)}>
 							<TableCell desktopOnly>{i + 1}</TableCell>
-							<TableCell wrap><span class="peer-id">{peer.peerID}</span></TableCell>
-							<TableCell><span class="networks-col">{getNetworkNames(peer)}</span></TableCell>
-							<TableCell>
+							<TableCell><span class="peer-id">{peer.peerID}</span></TableCell>
+							<TableCell align="center"><span class="networks-col">{getNetworkNames(peer)}</span></TableCell>
+							<TableCell align="center">
 								<div class="connections">
 									{#if peer.direct > 0}<div>{$t('peers.direct', { count: String(peer.direct) })}</div>{/if}
 									{#if peer.relay > 0}<div>{$t('peers.relayed', { count: String(peer.relay) })}</div>{/if}
