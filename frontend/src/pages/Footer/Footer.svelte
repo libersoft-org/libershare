@@ -65,7 +65,7 @@
 				return {
 					topIcon: 'img/share.svg',
 					topIconAlt: $t('settings.footerWidgets.relay'),
-					topLabel: `${$relayStats.reservations} / ${$relayStats.activeTunnels}`,
+					topLabel: `${$relayStats.activeTunnels} / ${$relayStats.reservations}`,
 					bottomLabel: formatSize($relayStats.downloadSpeed + $relayStats.uploadSpeed) + '/s',
 				};
 			},
