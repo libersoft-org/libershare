@@ -41,8 +41,13 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	const bootstrapMultiaddrs: any[] = [];
 	// Build transports array
 	const transports: any[] = [tcp()];
-	transports.push(circuitRelayTransport());
-	console.log(`✓ Circuit relay client enabled`);
+	// discoverRelays actively negotiates a reservation with the first N
+	// relay-capable peers identified via peer:identify, instead of waiting
+	// passively for /p2p-circuit multiaddrs to be announced. Without this,
+	// NAT'd nodes (<redacted-arm-peer>, local, docker behind NAT) never get reservations
+	// and are unreachable from siblings that only know their private IPs.
+	transports.push(circuitRelayTransport({ discoverRelays: 2 }));
+	console.log(`✓ Circuit relay client enabled (discoverRelays: 2)`);
 	// Build listen addresses
 	const port = allSettings.network?.incomingPort || 0;
 	const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
