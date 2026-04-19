@@ -95,7 +95,7 @@ export const menuStructure = derived(
 				submenu: [
 					{
 						id: 'create-lish',
-						label: tt('downloads.createLISH'),
+						label: tt('common.createLISH'),
 						icon: '/img/plus.svg',
 						iconPosition: 'left',
 						iconSize: '2vh',

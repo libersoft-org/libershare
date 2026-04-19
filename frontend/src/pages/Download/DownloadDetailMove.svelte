@@ -36,7 +36,7 @@
 	function openDirectoryBrowse(): void {
 		browsingDirectory = true;
 		navHandle.pause();
-		pushBreadcrumb($t('downloads.newDirectory'));
+		pushBreadcrumb($t('common.newDirectory'));
 		removeBackHandler = pushBackHandler(handleBrowseBack);
 	}
 
@@ -128,7 +128,7 @@
 	<div class="move">
 		<div class="container">
 			<div class="row">
-				<Input bind:value={newDirectory} label={$t('downloads.newDirectory')} position={[0, 0]} flex />
+				<Input bind:value={newDirectory} label={$t('common.newDirectory')} position={[0, 0]} flex />
 				<Button icon="/img/directory.svg" position={[1, 0]} onConfirm={openDirectoryBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<SwitchRow label={$t('downloads.moveDataFromOriginal')} checked={moveData} position={[0, 1]} onToggle={() => (moveData = !moveData)} />

@@ -113,7 +113,7 @@
 
 <div class="download">
 	<ButtonBar>
-		<Button icon="/img/plus.svg" label={$t('downloads.createLISH')} position={[0, 0]} onConfirm={() => navigateTo('create-lish')} />
+		<Button icon="/img/plus.svg" label={$t('common.createLISH')} position={[0, 0]} onConfirm={() => navigateTo('create-lish')} />
 		<Button icon="/img/download.svg" label={$t('common.import')} position={[1, 0]} onConfirm={() => navigateTo('import-lish')} />
 		<Button icon="/img/upload.svg" label={$t('common.exportAll')} position={[2, 0]} onConfirm={() => navigateTo('export-all-lish')} />
 		<Button icon={allDownloadDisabled ? '/img/play.svg' : '/img/pause.svg'} label={allDownloadDisabled ? $t('downloads.enableDownloadAll') : $t('downloads.disableDownloadAll')} position={[3, 0]} onConfirm={toggleAllDownloads} />
@@ -135,10 +135,10 @@
 					<Cell align="center" desktopOnly>{$t('common.size')}</Cell>
 					<Cell align="center" desktopOnly>{$t('common.progress')}</Cell>
 					<Cell align="center" desktopOnly>{$t('common.status')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.transferred')}</Cell>
+					<Cell align="center" desktopOnly>{$t('common.transferred')}</Cell>
 					<Cell align="center" desktopOnly>{$t('downloads.allowed')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.peers')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.speed')}</Cell>
+					<Cell align="center" desktopOnly>{$t('common.connections')}</Cell>
+					<Cell align="center" desktopOnly>{$t('common.speed')}</Cell>
 				</Header>
 				<div class="items">
 					{#each filteredDownloads as download, index (download.id)}

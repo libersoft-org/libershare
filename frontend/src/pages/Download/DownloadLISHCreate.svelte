@@ -387,7 +387,7 @@
 			<Alert type="error" message={errorMessage} />
 		</div>
 		<ButtonBar justify="center">
-			<Button icon="/img/plus.svg" label={$t('lish.create.create')} position={[0, 12]} onConfirm={handleCreate} />
+			<Button icon="/img/plus.svg" label={$t('common.createLISH')} position={[0, 12]} onConfirm={handleCreate} />
 			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 12]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>

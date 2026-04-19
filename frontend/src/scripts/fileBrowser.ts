@@ -219,7 +219,7 @@ export function buildDirectoryActions(t: (key: string) => string, filesOnly: boo
 	const isDriveList = currentPath === '' || currentPath === undefined;
 	if (!filesOnly && !isDriveList) {
 		if (selectDirectoryButton) actions.push({ id: 'select', label: t('fileBrowser.selectDirectory'), icon: '/img/check.svg' });
-		actions.push({ id: 'new', label: t('fileBrowser.newDirectory'), icon: '/img/plus.svg' });
+		actions.push({ id: 'new', label: t('common.newDirectory'), icon: '/img/plus.svg' });
 		actions.push({ id: 'rename', label: t('fileBrowser.renameDirectory'), icon: '/img/edit.svg' });
 		actions.push({ id: 'delete', label: t('fileBrowser.deleteDirectory'), icon: '/img/del.svg' });
 	}
@@ -315,7 +315,7 @@ export async function deleteFileOrDirectory(path: string): Promise<FileOperation
 		await api.fs.delete(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: withDetail(tt('fileBrowser.deleteFailed'), translateError(e)) };
+		return { success: false, error: withDetail(tt('common.deleteFailed'), translateError(e)) };
 	}
 }
 

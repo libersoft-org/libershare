@@ -228,7 +228,7 @@
 			<div class="info-section">
 				{#if detail.name}
 					<div class="info-row">
-						<span class="label">{$t('peers.lishName')}:</span>
+						<span class="label">{$t('common.name')}:</span>
 						<span class="value">{detail.name}</span>
 					</div>
 				{/if}
@@ -238,7 +238,7 @@
 				</div>
 				{#if detail.description}
 					<div class="info-row">
-						<span class="label">{$t('peers.description')}:</span>
+						<span class="label">{$t('common.description')}:</span>
 						<span class="value description">{detail.description}</span>
 					</div>
 				{/if}
@@ -247,7 +247,7 @@
 					<span class="value">{formatSize(detail.totalSize)}</span>
 				</div>
 				<div class="info-row">
-					<span class="label">{$t('peers.files')}:</span>
+					<span class="label">{$t('common.files')}:</span>
 					<span class="value">{detail.fileCount}</span>
 				</div>
 				<div class="info-row">
