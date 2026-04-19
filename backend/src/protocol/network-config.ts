@@ -14,6 +14,7 @@ import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { autoNAT } from '@libp2p/autonat';
 import { dcutr } from '@libp2p/dcutr';
+import { simpleMetrics } from '@libp2p/simple-metrics';
 import { networkInterfaces } from 'os';
 import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
@@ -69,9 +70,19 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			console.log(`✓ Announce address (configured): ${addr}`);
 		}
 	}
+	// Shared metrics collector — callback is invoked every intervalMs with a snapshot of all libp2p metrics.
+	// We store the latest snapshot on the node so relay stats API can read it.
+	const metricsSnapshot: { current: Record<string, any> } = { current: {} };
+	(globalThis as any).__libp2pMetricsSnapshot = metricsSnapshot;
 	const config: any = {
 		privateKey,
 		datastore,
+		metrics: simpleMetrics({
+			intervalMs: 1000,
+			onMetrics: (metrics: Record<string, any>) => {
+				metricsSnapshot.current = metrics;
+			},
+		}),
 		addresses: {
 			listen: listenAddresses,
 			appendAnnounce: appendAnnounceAddresses.length > 0 ? appendAnnounceAddresses : undefined,

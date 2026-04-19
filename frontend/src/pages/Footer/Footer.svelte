@@ -14,6 +14,7 @@
 	import { ramInfo, storageInfo, cpuInfo } from '../../scripts/systemStats.ts';
 	import { formatSize } from '../../scripts/utils.ts';
 	import { transferStats } from '../../scripts/downloads.ts';
+	import { relayStats } from '../../scripts/relayStats.ts';
 
 	type Widget = {
 		id: FooterWidget;
@@ -54,6 +55,18 @@
 					topIconAlt: $t('common.upload'),
 					topLabel: `${$transferStats.uploadPeers}`,
 					bottomLabel: formatSize($transferStats.uploadSpeed) + '/s',
+				};
+			},
+		},
+		{
+			id: 'relay',
+			component: Item,
+			props() {
+				return {
+					topIcon: 'img/share.svg',
+					topIconAlt: $t('settings.footerWidgets.relay'),
+					topLabel: `${$relayStats.reservations} / ${$relayStats.activeTunnels}`,
+					bottomLabel: formatSize($relayStats.downloadSpeed + $relayStats.uploadSpeed) + '/s',
 				};
 			},
 		},

@@ -13,6 +13,7 @@
 	import { connected, apiURL } from '../scripts/ws-client.ts';
 	import { initDownloads } from '../scripts/downloads.ts';
 	import { initSystemStats } from '../scripts/systemStats.ts';
+	import { initRelayStats } from '../scripts/relayStats.ts';
 	import { initNetworkEvents } from '../scripts/networks.ts';
 	import { detectLocalFilesystem } from '../scripts/localFilesystem.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedID: selectedID, navigate, onBack: onBack } = createNavigation();
@@ -74,6 +75,7 @@
 			await initDownloads(); // Load download list and subscribe to verify/list events
 			await initNetworkEvents(); // Subscribe to LISH network join/leave events
 			initSystemStats(); // Subscribe to system stats (RAM, etc.)
+			initRelayStats(); // Subscribe to relay server stats
 			detectLocalFilesystem(); // Detect if browser and backend share filesystem
 			play('welcome'); //	Play welcome sound on connect
 		} catch (error) {

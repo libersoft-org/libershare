@@ -71,7 +71,7 @@ export async function loadSettings(): Promise<void> {
 		cursorSize.set(settings.ui.cursorSize);
 		footerVisible.set(settings.ui.footerVisible);
 		footerPosition.set(settings.ui.footerPosition);
-		footerWidgetVisibility.set(settings.ui.footerWidgets);
+		footerWidgetVisibility.set({ ...defaultWidgetVisibility, ...settings.ui.footerWidgets });
 		timeFormat.set(settings.ui.timeFormat24h);
 		showSeconds.set(settings.ui.showSeconds);
 

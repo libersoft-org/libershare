@@ -12,6 +12,7 @@ import { initLISHsHandlers } from './lishs.ts';
 import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
 import { initSystemHandlers } from './system.ts';
+import { initRelayHandlers } from './relay.ts';
 import { getLocalAddresses } from '../container.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
@@ -73,6 +74,8 @@ export class APIServer {
 		};
 		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers);
 		_system.startPolling();
+		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
+		_relay.startPolling();
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
@@ -160,6 +163,8 @@ export class APIServer {
 			'system.ram': _system.ram,
 			'system.storage': _system.storage,
 			'system.cpu': _system.cpu,
+			// Relay
+			'relay.stats': _relay.stats,
 		};
 	}
 

@@ -337,6 +337,7 @@
 			"lishStatus": "Stav LISH sítě",
 			"gamepad": "Ovladač",
 			"connection": "Připojení",
+			"relay": "Předávací server",
 			"cpu": "Využití CPU",
 			"ram": "Využití RAM",
 			"storage": "Využití úložiště",

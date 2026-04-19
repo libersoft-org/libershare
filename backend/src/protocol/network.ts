@@ -468,6 +468,14 @@ export class Network {
 	}
 
 	/**
+	 * Get the underlying libp2p node (for low-level event listening / stats).
+	 * Returns null if node has not been started yet.
+	 */
+	getNode(): any {
+		return this.node;
+	}
+
+	/**
 	 * Add bootstrap peers dynamically to the running node.
 	 * Dials them directly since the bootstrap module only works at config time.
 	 */

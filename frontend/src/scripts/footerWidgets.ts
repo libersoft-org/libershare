@@ -1,12 +1,13 @@
 // Footer position type
 export type FooterPosition = 'left' | 'center' | 'right';
 // Footer widget definitions
-export type FooterWidget = 'version' | 'download' | 'upload' | 'cpu' | 'ram' | 'storage' | 'lishStatus' | 'gamepad' | 'connection' | 'volume' | 'clock';
-export const footerWidgets: FooterWidget[] = ['version', 'download', 'upload', 'cpu', 'ram', 'storage', 'lishStatus', 'gamepad', 'connection', 'volume', 'clock'];
+export type FooterWidget = 'version' | 'download' | 'upload' | 'relay' | 'cpu' | 'ram' | 'storage' | 'lishStatus' | 'gamepad' | 'connection' | 'volume' | 'clock';
+export const footerWidgets: FooterWidget[] = ['version', 'download', 'upload', 'relay', 'cpu', 'ram', 'storage', 'lishStatus', 'gamepad', 'connection', 'volume', 'clock'];
 export const defaultWidgetVisibility: Record<FooterWidget, boolean> = {
 	version: false,
 	download: true,
 	upload: true,
+	relay: false,
 	cpu: false,
 	ram: false,
 	storage: false,
@@ -25,6 +26,7 @@ export function getWidgetLabel(widget: FooterWidget, t: (key: string) => string)
 		version: t('common.version'),
 		download: t('common.downloads'),
 		upload: t('common.uploads'),
+		relay: t('settings.footerWidgets.relay'),
 		cpu: t('settings.footerWidgets.cpu'),
 		ram: t('settings.footerWidgets.ram'),
 		storage: t('settings.footerWidgets.storage'),
@@ -81,6 +83,7 @@ export const FOOTER_WIDGET_CONFIGS: FooterWidgetConfig[] = [
 	{ id: 'version', componentType: 'item' },
 	{ id: 'download', componentType: 'item' },
 	{ id: 'upload', componentType: 'item' },
+	{ id: 'relay', componentType: 'item' },
 	{ id: 'cpu', componentType: 'bar' },
 	{ id: 'ram', componentType: 'bar' },
 	{ id: 'storage', componentType: 'bar' },

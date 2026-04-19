@@ -337,6 +337,7 @@
 			"lishStatus": "LISH network status",
 			"gamepad": "Gamepad",
 			"connection": "Connection",
+			"relay": "Relay server",
 			"cpu": "CPU usage",
 			"ram": "RAM usage",
 			"storage": "Storage usage",

@@ -740,7 +740,7 @@
 							{$t('common.files')}
 						</button>
 						<button class="tab" class:active={activeTab === 'peers'} class:selected={tabActive && selectedTabIndex === 1}>
-							<Icon img="/img/peers.svg" size="1.8vh" padding="0" colorVariable={peersTabColor} />
+							<Icon img="/img/share.svg" size="1.8vh" padding="0" colorVariable={peersTabColor} />
 							{$t('common.connections')}
 						</button>
 					</div>

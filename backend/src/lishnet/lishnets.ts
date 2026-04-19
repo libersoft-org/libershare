@@ -41,6 +41,13 @@ export class Networks {
 	}
 
 	/**
+	 * Get the underlying libp2p node (for low-level event listening / stats).
+	 */
+	getLibp2pNode(): any {
+		return this.network.getNode();
+	}
+
+	/**
 	 * Start the shared libp2p node and join all enabled lishnets.
 	 * The node always starts, even if no lishnets are enabled.
 	 */
