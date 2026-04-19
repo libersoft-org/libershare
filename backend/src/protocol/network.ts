@@ -452,6 +452,10 @@ export class Network {
 			}).join(' ');
 			console.log(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${topicInfo}`);
 			console.log(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
+			// Announced multiaddrs — if /p2p-circuit appears, relay reservation is active
+			const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
+			const circuit = myAddrs.filter(a => a.includes('/p2p-circuit'));
+			console.log(`   MyAddrs: ${myAddrs.length} total, ${circuit.length} /p2p-circuit${circuit.length > 0 ? ' (' + circuit.slice(0, 2).map(a => a.slice(0, 80)).join(' | ') + ')' : ''}`);
 			// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 			this.checkPeerCounts();
 			// Dial known peers not currently connected (maintains relay connections to NATed peers)
