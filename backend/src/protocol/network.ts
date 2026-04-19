@@ -104,6 +104,63 @@ export class Network {
 	 * IMPORTANT: always use this helper instead of calling addEventListener() directly — otherwise
 	 * the handler stays attached after stop() and holds a reference to `this` (memory leak).
 	 */
+	/**
+	 * Runtime patch: wrap @chainsafe/libp2p-gossipsub OutboundStream.push() to swallow
+	 * the rejected Promise it returns when rawStream.send() throws synchronously. Upstream
+	 * sendRpc() does `try { stream.push(rpc) } catch {}` but push() is declared async, so
+	 * the synchronous throw becomes a rejected Promise that the try/catch cannot see.
+	 *
+	 * We cannot import OutboundStream directly (not in package exports, Bun bundler
+	 * refuses `/dist/src/stream.js`). Instead we poll streamsOutbound on the pubsub
+	 * instance after startup — once any peer registers a stream we grab its prototype
+	 * and override .push() for ALL instances (current + future) since they share one
+	 * prototype object.
+	 */
+	private patchGossipsubOutboundPushOnce(): void {
+		const pubsub = this.pubsub as any;
+		if (!pubsub || pubsub.__libershareOutboundPatched) return;
+		const trySetup = () => {
+			try {
+				const streamsOutbound: Map<any, any> | undefined = pubsub.streamsOutbound;
+				if (!streamsOutbound || streamsOutbound.size === 0) return false;
+				const sample = streamsOutbound.values().next().value;
+				if (!sample) return false;
+				const proto = Object.getPrototypeOf(sample);
+				if (!proto || typeof proto.push !== 'function' || proto.__libershareOutboundPatched) return true;
+				const original = proto.push;
+				proto.push = function (this: any, data: any): any {
+					let result: any;
+					try {
+						result = original.call(this, data);
+					} catch (e) {
+						// Belt & braces — also handle the sync path if upstream ever de-asyncs push()
+						return false;
+					}
+					// Async throw case: attach .catch() so rejection never reaches unhandledRejection.
+					// The underlying stream state (closed) is already tracked by gossipsub; losing
+					// the write is exactly what the existing try/catch around sendRpc assumed.
+					if (result && typeof (result as Promise<unknown>).catch === 'function') {
+						(result as Promise<unknown>).catch(() => { /* stream closed mid-write, swallowed */ });
+					}
+					return result;
+				};
+				proto.__libershareOutboundPatched = true;
+				pubsub.__libershareOutboundPatched = true;
+				console.log('[NET] gossipsub OutboundStream.push() wrapped (sync-throw-in-async bug mitigation)');
+				return true;
+			} catch (err: any) {
+				trace(`[NET] patchGossipsub retry: ${err?.message ?? err}`);
+				return false;
+			}
+		};
+		// Try immediately, then poll every 2s for up to 60s (streams appear as peers connect)
+		if (trySetup()) return;
+		const start = Date.now();
+		const interval = setInterval(() => {
+			if (trySetup() || Date.now() - start > 60_000) clearInterval(interval);
+		}, 2000);
+	}
+
 	private addListener(target: EventTarget, event: string, handler: (evt: any) => void): void {
 		target.addEventListener(event, handler as any);
 		this.listeners.push({ target, event, handler });
@@ -239,6 +296,18 @@ export class Network {
 		addresses.forEach(addr => console.log('  -', addr.toString()));
 
 		this.pubsub = this.node.services['pubsub'] as PubSub;
+
+		// Runtime patch for @chainsafe/libp2p-gossipsub OutboundStream.push():
+		// Upstream declares `async push(data)` but the body is synchronous. Any throw
+		// from rawStream.send() (e.g. StreamStateError when peer disconnect closes the
+		// yamux stream between gossipsub's map lookup and the actual write) becomes
+		// a rejected Promise that sendRpc's try/catch cannot catch (catch handles sync
+		// throws only). Those rejections are exactly the ~180/h StreamStateError noise
+		// we see in unhandledRejection. Fix by attaching a .catch() to the Promise
+		// returned by push() at every call site — intercept via prototype override
+		// on the first OutboundStream instance we observe (all instances share one
+		// prototype).
+		this.patchGossipsubOutboundPushOnce();
 
 		// Register lish protocol handler
 		await this.node.handle(
