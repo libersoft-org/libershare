@@ -244,28 +244,37 @@ export class Network {
 		await this.node.handle(
 			LISH_PROTOCOL,
 			async (data: any) => {
-				const stream = data.stream ?? data;
-				const connection = data.connection;
-				let remotePeerID = connection?.remotePeer?.toString?.();
-				let isRelay = connection?.remoteAddr ? Circuit.matches(connection.remoteAddr) : false;
-				if (!remotePeerID && this.node) {
-					for (let attempt = 0; attempt < 3 && !remotePeerID; attempt++) {
-						if (attempt > 0) await new Promise(r => setTimeout(r, 50));
-						for (const peer of this.node.getPeers()) {
-							for (const conn of this.node.getConnections(peer)) {
-								try {
-									if (conn.streams.some((s: any) => s.id === stream.id)) {
-										remotePeerID = peer.toString();
-										isRelay = Circuit.matches(conn.remoteAddr);
-									}
-								} catch {}
+				// libp2p does NOT attach .catch() to the Promise returned by the registered
+				// protocol handler. Any throw from here (including TypeError when this.node
+				// is nulled by stop() racing with the 50ms await below) escapes as an
+				// unhandledRejection. Wrap the full body so the handler can never leak.
+				try {
+					const stream = data.stream ?? data;
+					const connection = data.connection;
+					let remotePeerID = connection?.remotePeer?.toString?.();
+					let isRelay = connection?.remoteAddr ? Circuit.matches(connection.remoteAddr) : false;
+					if (!remotePeerID && this.node) {
+						for (let attempt = 0; attempt < 3 && !remotePeerID; attempt++) {
+							if (attempt > 0) await new Promise(r => setTimeout(r, 50));
+							if (!this.node) break; // node stopped during the sleep
+							for (const peer of this.node.getPeers()) {
+								for (const conn of this.node.getConnections(peer)) {
+									try {
+										if (conn.streams.some((s: any) => s.id === stream.id)) {
+											remotePeerID = peer.toString();
+											isRelay = Circuit.matches(conn.remoteAddr);
+										}
+									} catch {}
+								}
+								if (remotePeerID) break;
 							}
-							if (remotePeerID) break;
 						}
 					}
+					const connType = remotePeerID ? this.classifyConnection(remotePeerID, isRelay) : 'DIRECT';
+					await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType);
+				} catch (err: any) {
+					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
 				}
-				const connType = remotePeerID ? this.classifyConnection(remotePeerID, isRelay) : 'DIRECT';
-				await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType);
 			},
 			{ runOnLimitedConnection: true }
 		);
@@ -421,19 +430,24 @@ export class Network {
 
 	private setupBootstrapWorkaround(): void {
 		if (!AUTODIAL_WORKAROUND || this.bootstrapMultiaddrs.length === 0) return;
-		setTimeout(async () => {
-			if (this.node!.getPeers().length === 0) {
+		// setTimeout discards the Promise returned by async callbacks, so throws escape
+		// as unhandledRejection. Plus this.node can be null if stop() fires within 2s.
+		// Null-check at entry, wrap inner async work, attach .catch() to surface errors.
+		setTimeout(() => {
+			if (!this.node || this.node.getPeers().length > 0) return;
+			(async () => {
 				console.log('⚠️  Bootstrap module failed - dialing directly...');
 				for (const ma of this.bootstrapMultiaddrs) {
+					if (!this.node) break;
 					try {
-						await this.node!.dial(ma);
+						await this.node.dial(ma);
 						console.log('✓ Connected to bootstrap peer via direct dial');
 						break;
 					} catch (err: any) {
 						console.log('✗ Direct dial failed:', err.message);
 					}
 				}
-			}
+			})().catch(err => trace(`[NET] bootstrapWorkaround error: ${err?.message ?? err}`));
 		}, 2000);
 	}
 
