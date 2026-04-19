@@ -70,18 +70,15 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			console.log(`✓ Announce address (configured): ${addr}`);
 		}
 	}
-	// Shared metrics collector — callback is invoked every intervalMs with a snapshot of all libp2p metrics.
-	// We store the latest snapshot on the node so relay stats API can read it.
-	const metricsSnapshot: { current: Record<string, any> } = { current: {} };
-	(globalThis as any).__libp2pMetricsSnapshot = metricsSnapshot;
+	// simple-metrics is required to enable per-protocol stream byte tracking (used by the relay
+	// stats API). The onMetrics callback is a no-op here because we read `transferStats` directly
+	// from the metrics instance in backend/src/api/relay.ts.
 	const config: any = {
 		privateKey,
 		datastore,
 		metrics: simpleMetrics({
 			intervalMs: 1000,
-			onMetrics: (metrics: Record<string, any>) => {
-				metricsSnapshot.current = metrics;
-			},
+			onMetrics: () => {},
 		}),
 		addresses: {
 			listen: listenAddresses,
