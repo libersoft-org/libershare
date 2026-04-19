@@ -318,27 +318,32 @@ export class Network {
 			}
 		});
 
+		// Async listener — any rejection must be caught or it becomes unhandledRejection
 		this.addListener(this.node!, 'peer:connect', async (evt: any) => {
-			const peerID = evt.detail.toString();
-			const connections = this.node!.getConnections(evt.detail);
-			const connTypes = connections.map(c => {
-				const isRelay = Circuit.matches(c.remoteAddr);
-				const limited = (c as any).limits != null;
-				return `${c.remoteAddr.toString()} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}${c.direction}]`;
-			});
-			console.debug(`✅ Peer connected: ${peerID.slice(0, 16)}`);
-			console.debug(`   Connections (${connections.length}): ${connTypes.join(' | ')}`);
-			console.debug(`   Total connected: ${this.node!.getPeers().length}`);
-
-			if (this.bootstrapPeerIDs.has(peerID)) {
-				const connectionMultiaddrs = connections.map(c => c.remoteAddr);
-				await this.node!.peerStore.merge(evt.detail, {
-					multiaddrs: connectionMultiaddrs,
-					tags: { [KEEP_ALIVE]: { value: 1 } },
+			try {
+				const peerID = evt.detail.toString();
+				const connections = this.node!.getConnections(evt.detail);
+				const connTypes = connections.map(c => {
+					const isRelay = Circuit.matches(c.remoteAddr);
+					const limited = (c as any).limits != null;
+					return `${c.remoteAddr.toString()} [${isRelay ? 'RELAY' : 'DIRECT'}${limited ? ',LIMITED' : ''}${c.direction}]`;
 				});
-				console.debug('   Tagged as KEEP_ALIVE (bootstrap peer)');
+				console.debug(`✅ Peer connected: ${peerID.slice(0, 16)}`);
+				console.debug(`   Connections (${connections.length}): ${connTypes.join(' | ')}`);
+				console.debug(`   Total connected: ${this.node!.getPeers().length}`);
+
+				if (this.bootstrapPeerIDs.has(peerID)) {
+					const connectionMultiaddrs = connections.map(c => c.remoteAddr);
+					await this.node!.peerStore.merge(evt.detail, {
+						multiaddrs: connectionMultiaddrs,
+						tags: { [KEEP_ALIVE]: { value: 1 } },
+					});
+					console.debug('   Tagged as KEEP_ALIVE (bootstrap peer)');
+				}
+				this.schedulePeerCountCheck();
+			} catch (err: any) {
+				trace(`[NET] peer:connect handler error: ${err?.message ?? err}`);
 			}
-			this.schedulePeerCountCheck();
 		});
 
 		this.addListener(this.node!, 'peer:disconnect', (evt: any) => {
@@ -434,6 +439,7 @@ export class Network {
 
 	private setupStatusInterval(): void {
 		this.statusInterval = setInterval(async () => {
+			try {
 			const connectedPeers = this.node!.getPeers();
 			const allPeers = await this.node!.peerStore.all();
 			// Detailed connection info per peer
@@ -489,6 +495,9 @@ export class Network {
 						console.log(`   ✗ Failed: ${err.message}`);
 					}
 				}
+			}
+			} catch (err: any) {
+				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
 			}
 		}, 30000);
 	}
@@ -558,10 +567,17 @@ export class Network {
 		}
 		const topic = lishTopic(networkID);
 		this.pubsub.subscribe(topic);
-		// Register the Want handler for this network
+		// Register the Want handler for this network. TopicHandler is sync (returns void) but
+		// handleWant is async — a rejection from any async operation inside it (dial failure,
+		// CodedError from closed stream, etc.) would otherwise propagate as unhandledRejection.
+		// Catch here so the pubsub dispatch loop remains isolated from per-handler failures.
 		const handler: TopicHandler = (data, from) => {
 			trace(`[NET] pubsub ${topic}: ${data['type']}`);
-			if (data['type'] === 'want') this.handleWant(data as WantMessage, networkID, from);
+			if (data['type'] === 'want') {
+				this.handleWant(data as WantMessage, networkID, from).catch(err => {
+					trace(`[NET] handleWant failed: ${err?.message ?? err}`);
+				});
+			}
 		};
 		if (!this.topicHandlers.has(topic)) this.topicHandlers.set(topic, new Set());
 		this.topicHandlers.get(topic)!.add(handler);
