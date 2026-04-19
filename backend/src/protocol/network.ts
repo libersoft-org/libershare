@@ -350,10 +350,24 @@ export class Network {
 		});
 
 		this.addListener(this.node!, 'relay:created-reservation', (evt: any) => {
-			console.debug('🔄 Relay reservation created with:', evt.detail?.relay?.toString?.() ?? 'unknown');
+			console.log(`[NET] 🔄 Relay reservation CREATED with: ${evt.detail?.relay?.toString?.() ?? 'unknown'}`);
 		});
 		this.addListener(this.node!, 'relay:removed', (evt: any) => {
-			console.debug('⚠️  Relay removed:', evt.detail?.relay?.toString?.() ?? 'unknown');
+			console.log(`[NET] ⚠️  Relay removed: ${evt.detail?.relay?.toString?.() ?? 'unknown'}`);
+		});
+		// Surface reservation failures — silent failures are why <redacted-arm-peer>/local/<redacted-test-container> can't
+		// be reached by NAT'd siblings (no /p2p-circuit announceable without reservation).
+		this.addListener(this.node!, 'relay:reservation:failed' as any, (evt: any) => {
+			console.log(`[NET] ❌ Relay reservation FAILED: ${evt.detail?.relay?.toString?.() ?? 'unknown'} err=${evt.detail?.error?.message ?? ''}`);
+		});
+		this.addListener(this.node!, 'relay:reservation:expired' as any, (evt: any) => {
+			console.log(`[NET] ⏰ Relay reservation EXPIRED: ${evt.detail?.relay?.toString?.() ?? 'unknown'}`);
+		});
+		// Surface self-dial events — when we try to dial a peer, log which transport type is used
+		this.addListener(this.node!, 'peer:connect' as any, (evt: any) => {
+			const peerID = evt.detail?.toString?.() ?? '';
+			if (this.bootstrapPeerIDs.has(peerID)) return; // skip bootstrap noise
+			console.log(`[NET] 🔗 peer:connect ${peerID.slice(0, 16)}`);
 		});
 
 		// DCUtR hole punch events
