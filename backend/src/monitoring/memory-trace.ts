@@ -83,7 +83,9 @@ async function collect(): Promise<Record<string, unknown>> {
 async function writeSample(): Promise<void> {
 	const snap = await collect();
 	const line = JSON.stringify(snap);
-	if (logToStdout) console.log(`[MEM-TRACE] ${line}`);
+	// Per-sample output is DEBUG — INFO is reserved for events worth a quick scroll.
+	// The JSONL file (logPath) still captures every sample regardless of log level.
+	if (logToStdout) console.debug(`[MEM-TRACE] ${line}`);
 	if (logPath) {
 		try {
 			await appendFile(logPath, line + '\n');
