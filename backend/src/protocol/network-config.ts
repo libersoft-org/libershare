@@ -137,6 +137,42 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				// nodes learn about siblings only through mesh gossip, not through
 				// DHT (we removed it) or mDNS (WAN only sees LAN).
 				doPX: true,
+				// Peer scoring — required to make doPX functional.
+				// Without scoring, all peers have score=0 and default acceptPXThreshold=+10
+				// means PX payloads are always rejected on receive side.
+				// appSpecificScore gives bootstrap peers +1000 (trusted anchor) so their
+				// PX payloads always pass. Regular peers build score via P1 (timeInMesh)
+				// and P2 (firstMessageDeliveries) registered per-topic in subscribeTopic().
+				scoreParams: {
+					topicScoreCap: 10.0,
+					appSpecificWeight: 1.0,
+					appSpecificScore: (peerId: any) =>
+						bootstrapPeerIDs.has(peerId.toString()) ? 1000 : 0,
+					// Sybil protection: penalize many peers from same IP.
+					// Threshold 10 tolerates home NAT / hosting colocation; above that,
+					// each extra peer from same IP accrues quadratic penalty.
+					IPColocationFactorWeight: -5,
+					IPColocationFactorThreshold: 10,
+					// Behavior penalty (P7): default anti-flood against GRAFT backoff abuse.
+					behaviourPenaltyWeight: -10,
+					behaviourPenaltyDecay: 0.999,
+					behaviourPenaltyThreshold: 0,
+					decayInterval: 1000,
+					decayToZero: 0.01,
+					// Retain score for 15 min after disconnect — prevents cycling
+					// disconnect-reconnect to reset accumulated penalties.
+					retainScore: 900_000,
+				},
+				scoreThresholds: {
+					gossipThreshold: -10,
+					publishThreshold: -50,
+					graylistThreshold: -80,
+					// Default +10 nedosažitelné bez aktivního scoring → PX dead.
+					// Nula — bootstrap (+1000) i neutrální peer (score >=0) projde.
+					acceptPXThreshold: 0,
+					// Default +20 nedosažitelné. 1 = aktivní peer po ~5 min do mesh.
+					opportunisticGraftThreshold: 1,
+				},
 			}),
 			// DHT removed entirely — only used by debug `lishnets.findPeer` API
 			// (see network.ts:825). Real peer discovery uses gossipsub mesh +

@@ -79,6 +79,10 @@ export class Network {
 	private _peerCountDebounceTimer: NodeJS.Timeout | null = null;
 	private _lastPeerCounts: Map<string, number> = new Map();
 
+	// Previous gossipsub peer scores — tracked per-peer to detect significant
+	// score deltas and log threshold crossings (e.g. entered graylist).
+	private _lastScores: Map<string, number> = new Map();
+
 	// Tracked libp2p/pubsub event listeners for clean removal in stop().
 	// Each entry captures the exact handler reference so removeEventListener can unhook it.
 	private listeners: Array<{ target: EventTarget; event: string; handler: (evt: any) => void }> = [];
@@ -545,6 +549,49 @@ export class Network {
 			const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
 			const circuit = myAddrs.filter(a => a.includes('/p2p-circuit'));
 			console.log(`   MyAddrs: ${myAddrs.length} total, ${circuit.length} /p2p-circuit${circuit.length > 0 ? ' (' + circuit.slice(0, 2).map(a => a.slice(0, 80)).join(' | ') + ')' : ''}`);
+			// Gossipsub peer scoring — dump top/bottom scores + deltas.
+			// INFO: summary (top 3 + bottom 3 + threshold crossings).
+			// DEBUG (trace): per-peer full breakdown when LIBERSHARE_SCORE_DEBUG=1.
+			try {
+				const scoreSvc: any = (this.pubsub as any)?.score;
+				if (scoreSvc && typeof scoreSvc.score === 'function') {
+					const entries: Array<{ id: string; score: number; delta: number }> = [];
+					for (const p of connectedPeers) {
+						const pid = p.toString();
+						const s = Number(scoreSvc.score(pid)) || 0;
+						const prev = this._lastScores.get(pid);
+						const delta = prev === undefined ? 0 : s - prev;
+						entries.push({ id: pid, score: s, delta });
+						// Threshold-crossing INFO logs
+						if (prev !== undefined) {
+							if (prev >= -80 && s < -80) console.warn(`[NET] peer ${pid.slice(0, 12)} entered graylist (score=${s.toFixed(1)})`);
+							else if (prev < -80 && s >= -80) console.log(`[NET] peer ${pid.slice(0, 12)} left graylist (score=${s.toFixed(1)})`);
+							else if (prev < 0 && s >= 0) console.log(`[NET] peer ${pid.slice(0, 12)} now PX-eligible (score=${s.toFixed(1)})`);
+							else if (prev >= 0 && s < 0) console.log(`[NET] peer ${pid.slice(0, 12)} lost PX eligibility (score=${s.toFixed(1)})`);
+						}
+						this._lastScores.set(pid, s);
+					}
+					// Evict entries for peers no longer connected
+					const connectedSet2 = new Set(connectedPeers.map(p => p.toString()));
+					for (const k of this._lastScores.keys()) if (!connectedSet2.has(k)) this._lastScores.delete(k);
+					if (entries.length > 0) {
+						entries.sort((a, b) => b.score - a.score);
+						const fmt = (e: { id: string; score: number; delta: number }) =>
+							`${e.id.slice(0, 12)}=${e.score.toFixed(1)}${e.delta !== 0 ? (e.delta > 0 ? '(+' : '(') + e.delta.toFixed(1) + ')' : ''}`;
+						const top = entries.slice(0, 3).map(fmt).join(' | ');
+						const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
+						console.log(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
+					}
+					if (process.env['LIBERSHARE_SCORE_DEBUG'] === '1' && entries.length > 0) {
+						const fullDump = entries
+							.map(e => `${e.id.slice(0, 16)}:${e.score.toFixed(2)}`)
+							.join(' ');
+						trace(`[NET] full scores: ${fullDump}`);
+					}
+				}
+			} catch (err: any) {
+				trace(`[NET] score dump error: ${err?.message ?? err}`);
+			}
 			// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 			this.checkPeerCounts();
 			// Dial known peers not currently connected (maintains relay connections to NATed peers)
@@ -650,6 +697,31 @@ export class Network {
 		}
 		const topic = lishTopic(networkID);
 		this.pubsub.subscribe(topic);
+		// Register per-topic score parameters so gossipsub can measure peer behaviour
+		// (P1 timeInMesh, P2 firstMessageDeliveries, P4 invalidMessageDeliveries) for
+		// this topic. Without this, per-topic score is always 0 → acceptPXThreshold
+		// unreachable for non-bootstrap peers → PX limited to bootstrap-sourced peers only.
+		// P3 (meshMessageDeliveries) intentionally disabled: false-positive killer in
+		// low-traffic topics per Ethereum consensus research.
+		const scoreSvc = (this.pubsub as any).score;
+		if (scoreSvc?.params?.topics) {
+			scoreSvc.params.topics[topic] = {
+				topicWeight: 0.5,
+				timeInMeshWeight: 0.01,
+				timeInMeshQuantum: 1000,
+				timeInMeshCap: 300,
+				firstMessageDeliveriesWeight: 0.5,
+				firstMessageDeliveriesDecay: 0.998,
+				firstMessageDeliveriesCap: 100,
+				meshMessageDeliveriesWeight: 0,
+				meshFailurePenaltyWeight: 0,
+				invalidMessageDeliveriesWeight: -20,
+				invalidMessageDeliveriesDecay: 0.9,
+			};
+			console.log(`[NET] gossipsub score registered for ${topic}`);
+		} else {
+			trace(`[NET] gossipsub score service not available for ${topic}`);
+		}
 		// Register the Want handler for this network. TopicHandler is sync (returns void) but
 		// handleWant is async — a rejection from any async operation inside it (dial failure,
 		// CodedError from closed stream, etc.) would otherwise propagate as unhandledRejection.
