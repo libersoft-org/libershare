@@ -413,6 +413,33 @@
 		"errorTimeout": "Operation timed out: {detail}",
 		"errorGeneric": "Filesystem error: {detail}"
 	},
+	"help": {
+		"title": "Help",
+		"controls": "Controls",
+		"keyboard": {
+			"title": "Keyboard"
+		},
+		"gamepad": {
+			"title": "Gamepad",
+			"dpadOrStick": "D-pad / analog stick"
+		},
+		"actions": {
+			"navigate": "Navigate",
+			"confirm": "Confirm",
+			"back": "Back",
+			"pageUpDown": "Scroll one page up / down",
+			"pageUp": "Scroll one page up",
+			"pageDown": "Scroll one page down",
+			"homeEnd": "Jump to start / end",
+			"home": "Jump to start",
+			"end": "Jump to end",
+			"volume": "Increase / decrease volume",
+			"volumeUp": "Increase volume",
+			"volumeDown": "Decrease volume",
+			"reload": "Reload page",
+			"typeAhead": "Type-ahead search in lists"
+		}
+	},
 	"about": {
 		"title": "About",
 		"buildDate": "Build date",

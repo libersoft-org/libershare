@@ -23,6 +23,7 @@ import LISHNetworkImportFile from '../pages/Settings/SettingsLISHNetworkImportFi
 import LISHNetworkImportWeb from '../pages/Settings/SettingsLISHNetworkImportWeb.svelte';
 import LISHNetworkImportJSON from '../pages/Settings/SettingsLISHNetworkImportJSON.svelte';
 import Peers from '../pages/Peers/Peers.svelte';
+import Help from '../pages/Help/Help.svelte';
 import About from '../pages/About/About.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
@@ -451,6 +452,12 @@ export const menuStructure = derived(
 						action: 'back' as const,
 					},
 				],
+			},
+			{
+				id: 'help',
+				label: tt('help.title'),
+				icon: '/img/help.svg',
+				component: Help,
 			},
 			{
 				id: 'about',

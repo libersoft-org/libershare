@@ -413,6 +413,33 @@
 		"errorTimeout": "Časový limit vypršel: {detail}",
 		"errorGeneric": "Chyba souborového systému: {detail}"
 	},
+	"help": {
+		"title": "Nápověda",
+		"controls": "Ovládání",
+		"keyboard": {
+			"title": "Klávesnice"
+		},
+		"gamepad": {
+			"title": "Gamepad",
+			"dpadOrStick": "D-pad / analog"
+		},
+		"actions": {
+			"navigate": "Navigace",
+			"confirm": "Potvrdit",
+			"back": "Zpět",
+			"pageUpDown": "Posun o stránku nahoru / dolů",
+			"pageUp": "Posun o stránku nahoru",
+			"pageDown": "Posun o stránku dolů",
+			"homeEnd": "Skok na začátek / konec",
+			"home": "Skok na začátek",
+			"end": "Skok na konec",
+			"volume": "Zvýšit / snížit hlasitost",
+			"volumeUp": "Zvýšit hlasitost",
+			"volumeDown": "Snížit hlasitost",
+			"reload": "Obnovit stránku",
+			"typeAhead": "Rychlé vyhledávání v seznamu"
+		}
+	},
 	"about": {
 		"title": "O aplikaci",
 		"buildDate": "Datum sestavení",
