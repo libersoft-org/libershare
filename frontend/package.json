@@ -13,8 +13,7 @@
 		"lint": "prettier --check ."
 	},
 	"dependencies": {
-		"country-flags": "github:hampusborgos/country-flags",
-		"hex-to-css-filter": "^6.0.0"
+		"country-flags": "github:hampusborgos/country-flags"
 	},
 	"devDependencies": {
 		"svelte": "^5.55.4",
