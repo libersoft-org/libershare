@@ -23,7 +23,6 @@ export type AreaHandlers = {
 // Stores
 export const areaLayout = writable<Record<string, Position>>({});
 export const activeArea = writable<string | null>(null);
-export const debugAreas = writable<boolean>(false); // Debug mode - when true, shows area overlay
 // Internal handlers map
 const areaHandlers = new Map<string, AreaHandlers>();
 let confirmActive = false;

@@ -17,7 +17,6 @@
 	import { initNetworkEvents } from '../scripts/networks.ts';
 	import { detectLocalFilesystem } from '../scripts/localFilesystem.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedID: selectedID, navigate, onBack: onBack } = createNavigation();
-	import Debug from '../components/Debug/Debug.svelte';
 	import NotificationContainer from '../components/Notification/NotificationContainer.svelte';
 	import Header from '../pages/Header/Header.svelte';
 	import NavigationBreadcrumb from '../components/Breadcrumb/NavigationBreadcrumb.svelte';
@@ -144,6 +143,5 @@
 			<Footer />
 		{/if}
 	</div>
-	<Debug />
 	<NotificationContainer />
 {/if}
