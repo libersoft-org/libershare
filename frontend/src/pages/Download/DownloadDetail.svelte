@@ -317,6 +317,26 @@
 			// TODO: Open file or show file actions
 		},
 		confirmCancel() {},
+		pageUp() {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = Math.max(0, selectedFileIndex - 10);
+			scrollToSelected();
+		},
+		pageDown() {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = Math.min(download.files.length - 1, selectedFileIndex + 10);
+			scrollToSelected();
+		},
+		home() {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = 0;
+			scrollToSelected();
+		},
+		end() {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = download.files.length - 1;
+			scrollToSelected();
+		},
 		back() {
 			handleBack();
 		},
@@ -392,6 +412,26 @@
 		confirmDown() {},
 		confirmUp() {},
 		confirmCancel() {},
+		pageUp() {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = Math.max(0, selectedPeerIndex - 10);
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
+		pageDown() {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = Math.min(currentPeers.length - 1, selectedPeerIndex + 10);
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
+		home() {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = 0;
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
+		end() {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = currentPeers.length - 1;
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
 		back() {
 			handleBack();
 		},

@@ -73,7 +73,13 @@
 			: $downloads
 	);
 
-	createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	createNavArea(() => ({
+		areaID,
+		position,
+		onBack,
+		activate: true,
+		listRange: () => [2, Math.max(2, filteredDownloads.length + 1)],
+	}));
 
 	function closeVerifyAllDialog(): void {
 		showVerifyAllDialog = false;

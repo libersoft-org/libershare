@@ -23,7 +23,7 @@
 		{ id: 6, name: `${itemTitle} - 4320p`, size: '68.27 GB' },
 	]);
 	let imageElement: HTMLElement;
-	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack, initialPosition: [0, 0] }));
+	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack, initialPosition: [0, 0], listRange: () => [1, Math.max(1, files.length)] }));
 	let imageSelected = $derived(navHandle.controller.isSelected([0, 0]));
 
 	onMount(() => {

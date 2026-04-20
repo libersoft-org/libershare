@@ -93,7 +93,17 @@
 		activateArea(areaID);
 	}
 
-	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const navHandle = createNavArea(() => ({
+		areaID,
+		position,
+		onBack,
+		activate: true,
+		listRange: () => {
+			const nodeOffset = nodeInfo ? 1 : 0;
+			const start = 2 + nodeOffset;
+			return [start, Math.max(start, filteredPeers.length + 1 + nodeOffset)];
+		},
+	}));
 
 	onMount(() => {
 		loadData();
