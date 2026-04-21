@@ -117,6 +117,16 @@ describe('network-config.ts — PX trust policy', () => {
 	});
 });
 
+describe('network.ts — PX ingress filter', () => {
+	it('filters incoming PX before gossipsub handles PRUNE', () => {
+		const filterBlock = NETWORK_TS.slice(NETWORK_TS.indexOf('patchGossipsubPXIngressPolicyOnce'), NETWORK_TS.indexOf('private addListener'));
+		expect(filterBlock).toContain('handleReceivedRpc');
+		expect(filterBlock).toContain('ingressFilterEnabled');
+		expect(filterBlock).toContain('trusted.has(sender)');
+		expect(filterBlock).toContain('peers: []');
+	});
+});
+
 // ---------------------------------------------------------------------------
 // lishTopic helper
 // ---------------------------------------------------------------------------
