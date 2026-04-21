@@ -97,7 +97,7 @@ describe('network-config.ts — PX trust policy', () => {
 
 	it('does not use bootstrap peers as app-specific PX trust', () => {
 		const scoreBlock = CONFIG_TS.slice(CONFIG_TS.indexOf('appSpecificScore'), CONFIG_TS.indexOf('IPColocationFactorWeight'));
-		expect(scoreBlock).toContain('trustedPXPeerIDs.has(pid)');
+		expect(scoreBlock).toContain('pxEnabled && isConfiguredTrustedPXPeer');
 		expect(scoreBlock).not.toContain('bootstrapPeerIDs.has');
 	});
 
@@ -123,7 +123,9 @@ describe('network.ts — PX ingress filter', () => {
 		expect(filterBlock).toContain('handleReceivedRpc');
 		expect(filterBlock).toContain('ingressFilterEnabled');
 		expect(filterBlock).toContain('trusted.has(sender)');
+		expect(filterBlock).toContain("topic.startsWith('lish/')");
 		expect(filterBlock).toContain('peers: []');
+		expect(filterBlock).toContain('throw new Error');
 	});
 });
 

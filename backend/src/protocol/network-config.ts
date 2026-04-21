@@ -151,12 +151,13 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 					appSpecificWeight: 1.0,
 					appSpecificScore: (peerId: any) => {
 						const pid = typeof peerId === 'string' ? peerId : peerId?.toString?.() ?? '';
-						const isTrustedPXPeer = trustedPXPeerIDs.has(pid);
+						const isConfiguredTrustedPXPeer = trustedPXPeerIDs.has(pid);
+						const isTrustedPXPeer = pxEnabled && isConfiguredTrustedPXPeer;
 						// Trace a bounded sample so score callbacks do not flood logs.
 						const dbg = (globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() };
 						if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
 							dbg.seen.add(pid);
-							trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} trusted=${isTrustedPXPeer} trustedSetSize=${trustedPXPeerIDs.size}`);
+							trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} trustedSetSize=${trustedPXPeerIDs.size}`);
 						}
 						if (isTrustedPXPeer && !dbg.trustedLogged.has(pid)) {
 							dbg.trustedLogged.add(pid);

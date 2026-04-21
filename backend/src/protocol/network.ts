@@ -174,8 +174,7 @@ export class Network {
 		const pubsub = this.pubsub as any;
 		if (!pubsub || pubsub.__libersharePXIngressPatched) return;
 		if (typeof pubsub.handleReceivedRpc !== 'function') {
-			console.warn('[NET] PX ingress filter unavailable: handleReceivedRpc missing');
-			return;
+			throw new Error('PX ingress filter unavailable: gossipsub handleReceivedRpc missing');
 		}
 
 		const original = pubsub.handleReceivedRpc.bind(pubsub);
@@ -186,12 +185,13 @@ export class Network {
 			const sender = from?.toString?.() ?? '';
 			const trustedPeerIds = Array.isArray(peerExchange.trustedPeerIds) ? peerExchange.trustedPeerIds : [];
 			const trusted = new Set(trustedPeerIds.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(Boolean));
-			const allowPX = peerExchange.enabled === true && trusted.has(sender);
 			let allowed = 0;
 			let stripped = 0;
 
 			const prune = rpc.control.prune.map((p: any) => {
 				if (!p?.peers?.length) return p;
+				const topic = p.topicID;
+				const allowPX = peerExchange.enabled === true && trusted.has(sender) && typeof topic === 'string' && topic.startsWith('lish/');
 				if (allowPX) {
 					allowed++;
 					return p;
@@ -202,7 +202,7 @@ export class Network {
 
 			if (stripped > 0 || allowed > 0) {
 				const topic = prune.find((p: any) => p?.topicID)?.topicID ?? 'unknown';
-				const key = `${allowPX ? 'allow' : 'strip'}:${sender}:${topic}`;
+				const key = `${allowed > 0 ? 'allow' : 'strip'}:${sender}:${topic}`;
 				if (!this.pxIngressLogKeys.has(key)) {
 					this.pxIngressLogKeys.add(key);
 					if (allowed > 0) console.debug(`[NET] PX ingress allowed sender=${sender.slice(0, 16)} topic=${String(topic).slice(0, 48)} prunes=${allowed}`);
@@ -608,6 +608,8 @@ export class Network {
 				const scoreSvc: any = (this.pubsub as any)?.score;
 				if (scoreSvc && typeof scoreSvc.score === 'function') {
 					const entries: Array<{ id: string; score: number; delta: number }> = [];
+					const configuredPXThreshold = this.settings.list().network.peerExchange?.acceptPXThreshold;
+					const pxEligibilityThreshold = typeof configuredPXThreshold === 'number' && Number.isFinite(configuredPXThreshold) && configuredPXThreshold > 0 ? configuredPXThreshold : 10;
 					for (const p of connectedPeers) {
 						const pid = p.toString();
 						const s = Number(scoreSvc.score(pid)) || 0;
@@ -618,8 +620,8 @@ export class Network {
 						if (prev !== undefined) {
 							if (prev >= -80 && s < -80) console.warn(`[NET] peer ${pid.slice(0, 12)} entered graylist (score=${s.toFixed(1)})`);
 							else if (prev < -80 && s >= -80) console.log(`[NET] peer ${pid.slice(0, 12)} left graylist (score=${s.toFixed(1)})`);
-							else if (prev < 0 && s >= 0) console.log(`[NET] peer ${pid.slice(0, 12)} now PX-eligible (score=${s.toFixed(1)})`);
-							else if (prev >= 0 && s < 0) console.log(`[NET] peer ${pid.slice(0, 12)} lost PX eligibility (score=${s.toFixed(1)})`);
+							else if (prev < pxEligibilityThreshold && s >= pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} now PX-eligible (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
+							else if (prev >= pxEligibilityThreshold && s < pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} lost PX eligibility (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
 						}
 						this._lastScores.set(pid, s);
 					}
@@ -632,7 +634,7 @@ export class Network {
 							`${e.id.slice(0, 12)}=${e.score.toFixed(1)}${e.delta !== 0 ? (e.delta > 0 ? '(+' : '(') + e.delta.toFixed(1) + ')' : ''}`;
 						const top = entries.slice(0, 3).map(fmt).join(' | ');
 						const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
-						console.log(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
+						console.debug(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
 					}
 					if (process.env['LIBERSHARE_SCORE_DEBUG'] === '1' && entries.length > 0) {
 						const fullDump = entries
