@@ -8,6 +8,7 @@ function lishTopic(networkID: string): string {
 
 const NETWORK_TS = readFileSync(join(__dirname, '../../../src/protocol/network.ts'), 'utf-8');
 const CONFIG_TS = readFileSync(join(__dirname, '../../../src/protocol/network-config.ts'), 'utf-8');
+const SETTINGS_TS = readFileSync(join(__dirname, '../../../src/settings.ts'), 'utf-8');
 
 // ---------------------------------------------------------------------------
 // GossipSub parameter constraint validation
@@ -85,6 +86,34 @@ describe('network-config.ts — gossipsub options', () => {
 
 	it('fanoutTTL is set', () => {
 		expect(CONFIG_TS).toMatch(/fanoutTTL:\s*\d+/);
+	});
+});
+
+describe('network-config.ts — PX trust policy', () => {
+	it('does not enable PX unconditionally', () => {
+		expect(CONFIG_TS).toContain('doPX: pxEnabled');
+		expect(CONFIG_TS).not.toContain('doPX: true');
+	});
+
+	it('does not use bootstrap peers as app-specific PX trust', () => {
+		const scoreBlock = CONFIG_TS.slice(CONFIG_TS.indexOf('appSpecificScore'), CONFIG_TS.indexOf('IPColocationFactorWeight'));
+		expect(scoreBlock).toContain('trustedPXPeerIDs.has(pid)');
+		expect(scoreBlock).not.toContain('bootstrapPeerIDs.has');
+	});
+
+	it('uses a positive acceptPXThreshold from local policy', () => {
+		expect(CONFIG_TS).toContain('acceptPXThreshold,');
+		expect(CONFIG_TS).not.toContain('acceptPXThreshold: 0');
+	});
+
+	it('defaults PX policy to fail closed', () => {
+		const defaultsStart = SETTINGS_TS.indexOf('const DEFAULT_SETTINGS');
+		const peerExchangeStart = SETTINGS_TS.indexOf('peerExchange: {', defaultsStart);
+		const defaultBlock = SETTINGS_TS.slice(peerExchangeStart, SETTINGS_TS.indexOf('system:', peerExchangeStart));
+		expect(defaultBlock).toContain('enabled: false');
+		expect(defaultBlock).toContain('acceptPXThreshold: 10');
+		expect(defaultBlock).toContain('trustedPeerIds: []');
+		expect(defaultBlock).toContain('ingressFilterEnabled: false');
 	});
 });
 
