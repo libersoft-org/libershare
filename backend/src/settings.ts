@@ -37,6 +37,12 @@ export interface SettingsData {
 		announceAddresses: string[];
 		mdnsEnabled: boolean;
 		mdnsInterval: number;
+		peerExchange: {
+			enabled: boolean;
+			acceptPXThreshold: number;
+			trustedPeerIds: string[];
+			ingressFilterEnabled: boolean;
+		};
 	};
 	system: {
 		autoStartOnBoot: boolean;
@@ -101,6 +107,12 @@ const DEFAULT_SETTINGS: SettingsData = {
 		announceAddresses: [],
 		mdnsEnabled: true,
 		mdnsInterval: 10000,
+		peerExchange: {
+			enabled: false,
+			acceptPXThreshold: 10,
+			trustedPeerIds: [],
+			ingressFilterEnabled: false,
+		},
 	},
 	system: {
 		autoStartOnBoot: true,

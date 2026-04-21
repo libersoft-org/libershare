@@ -20,6 +20,7 @@ import { networkInterfaces } from 'os';
 import { isLinkLocalIp } from '@libp2p/utils';
 import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
+import { trace } from '../logger.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 export interface BuildConfigParams {
 	privateKey: PrivateKey;
@@ -39,6 +40,15 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	const { privateKey, datastore, allSettings, bootstrapPeers, myPeerID: myPeerID } = params;
 	const bootstrapPeerIDs = new Set<string>();
 	const bootstrapMultiaddrs: any[] = [];
+	const peerExchange = allSettings.network?.peerExchange;
+	const pxEnabled = peerExchange?.enabled ?? false;
+	const configuredAcceptPXThreshold = typeof peerExchange?.acceptPXThreshold === 'number' && Number.isFinite(peerExchange.acceptPXThreshold) ? peerExchange.acceptPXThreshold : 10;
+	const acceptPXThreshold = configuredAcceptPXThreshold > 0 ? configuredAcceptPXThreshold : 10;
+	if (configuredAcceptPXThreshold <= 0) console.warn(`[NET] PX acceptPXThreshold=${configuredAcceptPXThreshold} is unsafe; using ${acceptPXThreshold}`);
+	const configuredTrustedPXPeerIDs = Array.isArray(peerExchange?.trustedPeerIds) ? peerExchange.trustedPeerIds : [];
+	const trustedPXPeerIDs = new Set(configuredTrustedPXPeerIDs.map(p => p.trim()).filter(Boolean));
+	if (pxEnabled) console.log(`[NET] PX enabled by local policy (trustedPeers=${trustedPXPeerIDs.size}, acceptPXThreshold=${acceptPXThreshold})`);
+	else console.debug('[NET] PX disabled by local policy');
 	// Build transports array
 	const transports: any[] = [tcp()];
 	// discoverRelays actively negotiates a reservation with the first N
@@ -50,7 +60,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// advertise as many reserved relay paths as we listen for. With 2 we'd
 	// saturate on <redacted-bootstrap>+<redacted-bootstrap> only; with 5 we can include siblings as relays
 	// too, giving NAT'd nodes multiple paths to reach each other.
-	transports.push(circuitRelayTransport({ discoverRelays: 5 }));
+	transports.push(circuitRelayTransport({ discoverRelays: 5 } as any));
 	console.log(`✓ Circuit relay client enabled (discoverRelays: 5)`);
 	// Build listen addresses
 	const port = allSettings.network?.incomingPort || 0;
@@ -131,23 +141,29 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				heartbeatInterval: 1000,
 				fanoutTTL: 60000,
 				runOnLimitedConnection: true,
-				// Peer exchange: when we PRUNE a peer from our mesh, send them a
-				// list of other subscribers so they can dial those directly.
-				// Critical for NAT'd fleets where bootstrap-only peer lists fail:
-				// nodes learn about siblings only through mesh gossip, not through
-				// DHT (we removed it) or mDNS (WAN only sees LAN).
-				doPX: true,
-				// Peer scoring — required to make doPX functional.
-				// Without scoring, all peers have score=0 and default acceptPXThreshold=+10
-				// means PX payloads are always rejected on receive side.
-				// appSpecificScore gives bootstrap peers +1000 (trusted anchor) so their
-				// PX payloads always pass. Regular peers build score via P1 (timeInMesh)
-				// and P2 (firstMessageDeliveries) registered per-topic in subscribeTopic().
+				// Peer exchange is a local operator policy. Bootstrap peers are only
+				// discovery/onboarding hints, not trusted PX authorities.
+				doPX: pxEnabled,
+				// Scoring remains enabled so explicit local PX authorities can cross a
+				// positive acceptPXThreshold while neutral peers fail closed.
 				scoreParams: {
 					topicScoreCap: 10.0,
 					appSpecificWeight: 1.0,
-					appSpecificScore: (peerId: any) =>
-						bootstrapPeerIDs.has(peerId.toString()) ? 1000 : 0,
+					appSpecificScore: (peerId: any) => {
+						const pid = typeof peerId === 'string' ? peerId : peerId?.toString?.() ?? '';
+						const isTrustedPXPeer = trustedPXPeerIDs.has(pid);
+						// Trace a bounded sample so score callbacks do not flood logs.
+						const dbg = (globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() };
+						if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
+							dbg.seen.add(pid);
+							trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} trusted=${isTrustedPXPeer} trustedSetSize=${trustedPXPeerIDs.size}`);
+						}
+						if (isTrustedPXPeer && !dbg.trustedLogged.has(pid)) {
+							dbg.trustedLogged.add(pid);
+							console.debug(`[NET] PX trust score applied peer=${pid.slice(0, 16)}`);
+						}
+						return isTrustedPXPeer ? 1000 : 0;
+					},
 					// Sybil protection: penalize many peers from same IP.
 					// Threshold 10 tolerates home NAT / hosting colocation; above that,
 					// each extra peer from same IP accrues quadratic penalty.
@@ -167,9 +183,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 					gossipThreshold: -10,
 					publishThreshold: -50,
 					graylistThreshold: -80,
-					// Default +10 nedosažitelné bez aktivního scoring → PX dead.
-					// Nula — bootstrap (+1000) i neutrální peer (score >=0) projde.
-					acceptPXThreshold: 0,
+					// Positive threshold prevents neutral peers from supplying PX.
+					acceptPXThreshold,
 					// Default +20 nedosažitelné. 1 = aktivní peer po ~5 min do mesh.
 					opportunisticGraftThreshold: 1,
 				},

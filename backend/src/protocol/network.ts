@@ -539,7 +539,7 @@ export class Network {
 				});
 				return `${p.toString().slice(0, 12)}[${types.join(',')}]`;
 			});
-			const topicInfo = this.pubsub!.getTopics().map(t => {
+			const topicInfo = this.pubsub!.getTopics().map((t: string) => {
 				const subs = this.pubsub!.getSubscribers(t);
 				return `${t.slice(0, 28)}[${subs.length}]`;
 			}).join(' ');
