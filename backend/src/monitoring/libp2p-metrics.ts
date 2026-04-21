@@ -13,16 +13,7 @@ export function onLibp2pMetrics(metrics: Record<string, any>): void {
 }
 
 /** Keys we care about for periodic trace. Rest of `latest` is discarded at sample time. */
-const TRACKED_KEYS = [
-	'libp2p_peer_store_peers_total',
-	'libp2p_connection_manager_connections',
-	'libp2p_dialer_pending_dials',
-	'libp2p_dial_queue_length',
-	'libp2p_transport_circuit_relay_reservations',
-	'gossipsub_peers_total',
-	'gossipsub_mesh_peers_total',
-	'gossipsub_mcache_size',
-];
+const TRACKED_KEYS = ['libp2p_peer_store_peers_total', 'libp2p_connection_manager_connections', 'libp2p_dialer_pending_dials', 'libp2p_dial_queue_length', 'libp2p_transport_circuit_relay_reservations', 'gossipsub_peers_total', 'gossipsub_mesh_peers_total', 'gossipsub_mcache_size'];
 
 registerMemTraceSource('libp2p', () => {
 	const out: Record<string, unknown> = {};

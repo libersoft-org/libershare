@@ -2,11 +2,14 @@
 export {};
 const path = process.argv[2];
 const target = process.argv[3] ?? 'Multiaddr';
-if (!path) { console.error('Usage: bun find-multiaddr.ts <heapsnapshot> [classname]'); process.exit(1); }
+if (!path) {
+	console.error('Usage: bun find-multiaddr.ts <heapsnapshot> [classname]');
+	process.exit(1);
+}
 
 console.log(`Reading ${path}...`);
 const file = Bun.file(path);
-const data = await file.json() as any;
+const data = (await file.json()) as any;
 
 const meta = data.snapshot.meta;
 const nodeFields = meta.node_fields as string[];
@@ -44,7 +47,9 @@ for (const [key, { count, size }] of top) {
 	console.log(
 		String(count).padStart(8),
 		(size / 1024).toFixed(1).padStart(8),
-		Math.round(size / count).toString().padStart(7),
+		Math.round(size / count)
+			.toString()
+			.padStart(7),
 		key
 	);
 }

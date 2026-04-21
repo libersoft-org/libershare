@@ -178,12 +178,7 @@ function isTransientError(err: any): boolean {
 	// The wrapped cause is in err.context (DOMException TimeoutError, etc).
 	const msg = err?.message ?? '';
 	const ctxMsg = err?.context?.message ?? '';
-	if (msg.includes('Unhandled error') && (
-		ctxMsg.includes('timed out') ||
-		ctxMsg.includes('aborted') ||
-		ctxMsg.includes('closed') ||
-		ctxMsg.includes('reset')
-	)) return true;
+	if (msg.includes('Unhandled error') && (ctxMsg.includes('timed out') || ctxMsg.includes('aborted') || ctxMsg.includes('closed') || ctxMsg.includes('reset'))) return true;
 	return false;
 }
 

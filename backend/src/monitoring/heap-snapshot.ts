@@ -46,7 +46,11 @@ async function handleTrigger(filename: string): Promise<void> {
 		return; // file already removed
 	}
 	await writeSnapshot('file-trigger');
-	try { await unlink(triggerPath); } catch { /* ignore */ }
+	try {
+		await unlink(triggerPath);
+	} catch {
+		/* ignore */
+	}
 }
 
 export function startHeapSnapshotTrigger(dir: string): void {
@@ -58,7 +62,9 @@ export function startHeapSnapshotTrigger(dir: string): void {
 	try {
 		watch(dir, (_event, filename) => {
 			if (!filename) return;
-			handleTrigger(filename.toString()).catch(() => { /* ignore */ });
+			handleTrigger(filename.toString()).catch(() => {
+				/* ignore */
+			});
 		});
 		console.log(`[HEAP] file-watch trigger ready: touch ${join(dir, 'trigger-heap')} to dump heap`);
 	} catch (err) {
@@ -69,9 +75,13 @@ export function startHeapSnapshotTrigger(dir: string): void {
 	if (process.platform !== 'win32') {
 		try {
 			process.on('SIGUSR2', () => {
-				writeSnapshot('SIGUSR2').catch(() => { /* ignore */ });
+				writeSnapshot('SIGUSR2').catch(() => {
+					/* ignore */
+				});
 			});
 			console.log(`[HEAP] SIGUSR2 handler ready: kill -USR2 ${process.pid} to dump heap`);
-		} catch { /* ignore */ }
+		} catch {
+			/* ignore */
+		}
 	}
 }

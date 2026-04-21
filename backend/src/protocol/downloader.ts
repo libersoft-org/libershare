@@ -176,10 +176,7 @@ export class Downloader {
 	private scheduleRetry(): void {
 		if (this.retryTimer) clearTimeout(this.retryTimer);
 		// Fix D: exponential backoff — 10s, 20s, 40s, 80s, ... capped at 5 min
-		const delay = Math.min(
-			Downloader.BASE_NO_PEERS_RETRY_MS * Math.pow(2, this.noPeersRetryCount),
-			Downloader.MAX_NO_PEERS_RETRY_MS
-		);
+		const delay = Math.min(Downloader.BASE_NO_PEERS_RETRY_MS * Math.pow(2, this.noPeersRetryCount), Downloader.MAX_NO_PEERS_RETRY_MS);
 		this.noPeersRetryCount++;
 		console.log(`[DL] ${this.lishID.slice(0, 8)}: retry scheduled in ${Math.round(delay / 1000)}s (attempt ${this.noPeersRetryCount})`);
 		this.retryTimer = setTimeout(() => {

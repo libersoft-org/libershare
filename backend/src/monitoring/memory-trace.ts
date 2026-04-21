@@ -35,12 +35,20 @@ function tryForceGc(): void {
 	if (!forceGcEnabled) return;
 	const bun = (globalThis as any).Bun;
 	if (bun && typeof bun.gc === 'function') {
-		try { bun.gc(true); } catch { /* ignore */ }
+		try {
+			bun.gc(true);
+		} catch {
+			/* ignore */
+		}
 		return;
 	}
 	const g = (globalThis as any).gc;
 	if (typeof g === 'function') {
-		try { g(); } catch { /* ignore */ }
+		try {
+			g();
+		} catch {
+			/* ignore */
+		}
 	}
 }
 
