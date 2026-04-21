@@ -595,12 +595,12 @@ export class Network {
 				const subs = this.pubsub!.getSubscribers(t);
 				return `${t.slice(0, 28)}[${subs.length}]`;
 			}).join(' ');
-			console.log(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${topicInfo}`);
-			console.log(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
+			console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${topicInfo}`);
+			console.debug(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
 			// Announced multiaddrs — if /p2p-circuit appears, relay reservation is active
 			const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
 			const circuit = myAddrs.filter(a => a.includes('/p2p-circuit'));
-			console.log(`   MyAddrs: ${myAddrs.length} total, ${circuit.length} /p2p-circuit${circuit.length > 0 ? ' (' + circuit.slice(0, 2).map(a => a.slice(0, 80)).join(' | ') + ')' : ''}`);
+			console.debug(`   MyAddrs: ${myAddrs.length} total, ${circuit.length} /p2p-circuit${circuit.length > 0 ? ' (' + circuit.slice(0, 2).map(a => a.slice(0, 80)).join(' | ') + ')' : ''}`);
 			// Gossipsub peer scoring — dump top/bottom scores + deltas.
 			// INFO: summary (top 3 + bottom 3 + threshold crossings).
 			// DEBUG (trace): per-peer full breakdown when LIBERSHARE_SCORE_DEBUG=1.
