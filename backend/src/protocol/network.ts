@@ -14,7 +14,7 @@ import { LISH_PROTOCOL, LISHClient, handleLISHProtocol, isUploadEnabled } from '
 import { isBusy } from '../api/busy.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
-import { lishTopic } from './constants.ts';
+import { lishTopic, LISH_TOPIC_PREFIX, normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { CodedError, ErrorCodes } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
@@ -145,7 +145,9 @@ export class Network {
 					// The underlying stream state (closed) is already tracked by gossipsub; losing
 					// the write is exactly what the existing try/catch around sendRpc assumed.
 					if (result && typeof (result as Promise<unknown>).catch === 'function') {
-						(result as Promise<unknown>).catch(() => { /* stream closed mid-write, swallowed */ });
+						(result as Promise<unknown>).catch(() => {
+							/* stream closed mid-write, swallowed */
+						});
 					}
 					return result;
 				};
@@ -183,15 +185,14 @@ export class Network {
 			if (!peerExchange?.ingressFilterEnabled || !rpc?.control?.prune?.length) return original(from, rpc);
 
 			const sender = from?.toString?.() ?? '';
-			const trustedPeerIds = Array.isArray(peerExchange.trustedPeerIds) ? peerExchange.trustedPeerIds : [];
-			const trusted = new Set(trustedPeerIds.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(Boolean));
+			const trusted = normalizeTrustedPeerIds(peerExchange.trustedPeerIds);
 			let allowed = 0;
 			let stripped = 0;
 
 			const prune = rpc.control.prune.map((p: any) => {
 				if (!p?.peers?.length) return p;
 				const topic = p.topicID;
-				const allowPX = peerExchange.enabled === true && trusted.has(sender) && typeof topic === 'string' && topic.startsWith('lish/');
+				const allowPX = peerExchange.enabled === true && trusted.has(sender) && typeof topic === 'string' && topic.startsWith(LISH_TOPIC_PREFIX);
 				if (allowPX) {
 					allowed++;
 					return p;
@@ -238,7 +239,7 @@ export class Network {
 	private checkPeerCounts(): void {
 		if (!this._onPeerCountChange || !this.pubsub) return;
 		const topics = this.pubsub.getTopics();
-		const prefix = 'lish/';
+		const prefix = LISH_TOPIC_PREFIX;
 		let changed = false;
 		const counts: { networkID: string; count: number }[] = [];
 		for (const topic of topics) {
@@ -579,107 +580,116 @@ export class Network {
 	private setupStatusInterval(): void {
 		this.statusInterval = setInterval(async () => {
 			try {
-			const connectedPeers = this.node!.getPeers();
-			const allPeers = await this.node!.peerStore.all();
-			// Detailed connection info per peer
-			const peerDetails = connectedPeers.map(p => {
-				const conns = this.node!.getConnections(p);
-				const types = conns.map(c => {
-					const isRelay = Circuit.matches(c.remoteAddr);
-					const limited = (c as any).limits != null;
-					return `${isRelay ? 'R' : 'D'}${limited ? 'L' : ''}`;
+				const connectedPeers = this.node!.getPeers();
+				const allPeers = await this.node!.peerStore.all();
+				// Detailed connection info per peer
+				const peerDetails = connectedPeers.map(p => {
+					const conns = this.node!.getConnections(p);
+					const types = conns.map(c => {
+						const isRelay = Circuit.matches(c.remoteAddr);
+						const limited = (c as any).limits != null;
+						return `${isRelay ? 'R' : 'D'}${limited ? 'L' : ''}`;
+					});
+					return `${p.toString().slice(0, 12)}[${types.join(',')}]`;
 				});
-				return `${p.toString().slice(0, 12)}[${types.join(',')}]`;
-			});
-			const topicInfo = this.pubsub!.getTopics().map((t: string) => {
-				const subs = this.pubsub!.getSubscribers(t);
-				return `${t.slice(0, 28)}[${subs.length}]`;
-			}).join(' ');
-			console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${topicInfo}`);
-			console.debug(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
-			// Announced multiaddrs — if /p2p-circuit appears, relay reservation is active
-			const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
-			const circuit = myAddrs.filter(a => a.includes('/p2p-circuit'));
-			console.debug(`   MyAddrs: ${myAddrs.length} total, ${circuit.length} /p2p-circuit${circuit.length > 0 ? ' (' + circuit.slice(0, 2).map(a => a.slice(0, 80)).join(' | ') + ')' : ''}`);
-			// Gossipsub peer scoring — dump top/bottom scores + deltas.
-			// INFO: summary (top 3 + bottom 3 + threshold crossings).
-			// DEBUG (trace): per-peer full breakdown when LIBERSHARE_SCORE_DEBUG=1.
-			try {
-				const scoreSvc: any = (this.pubsub as any)?.score;
-				if (scoreSvc && typeof scoreSvc.score === 'function') {
-					const entries: Array<{ id: string; score: number; delta: number }> = [];
-					const configuredPXThreshold = this.settings.list().network.peerExchange?.acceptPXThreshold;
-					const pxEligibilityThreshold = typeof configuredPXThreshold === 'number' && Number.isFinite(configuredPXThreshold) && configuredPXThreshold > 0 ? configuredPXThreshold : 10;
-					for (const p of connectedPeers) {
-						const pid = p.toString();
-						const s = Number(scoreSvc.score(pid)) || 0;
-						const prev = this._lastScores.get(pid);
-						const delta = prev === undefined ? 0 : s - prev;
-						entries.push({ id: pid, score: s, delta });
-						// Threshold-crossing INFO logs
-						if (prev !== undefined) {
-							if (prev >= -80 && s < -80) console.warn(`[NET] peer ${pid.slice(0, 12)} entered graylist (score=${s.toFixed(1)})`);
-							else if (prev < -80 && s >= -80) console.log(`[NET] peer ${pid.slice(0, 12)} left graylist (score=${s.toFixed(1)})`);
-							else if (prev < pxEligibilityThreshold && s >= pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} now PX-eligible (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
-							else if (prev >= pxEligibilityThreshold && s < pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} lost PX eligibility (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
-						}
-						this._lastScores.set(pid, s);
-					}
-					// Evict entries for peers no longer connected
-					const connectedSet2 = new Set(connectedPeers.map(p => p.toString()));
-					for (const k of this._lastScores.keys()) if (!connectedSet2.has(k)) this._lastScores.delete(k);
-					if (entries.length > 0) {
-						entries.sort((a, b) => b.score - a.score);
-						const fmt = (e: { id: string; score: number; delta: number }) =>
-							`${e.id.slice(0, 12)}=${e.score.toFixed(1)}${e.delta !== 0 ? (e.delta > 0 ? '(+' : '(') + e.delta.toFixed(1) + ')' : ''}`;
-						const top = entries.slice(0, 3).map(fmt).join(' | ');
-						const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
-						console.debug(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
-					}
-					if (process.env['LIBERSHARE_SCORE_DEBUG'] === '1' && entries.length > 0) {
-						const fullDump = entries
-							.map(e => `${e.id.slice(0, 16)}:${e.score.toFixed(2)}`)
-							.join(' ');
-						trace(`[NET] full scores: ${fullDump}`);
-					}
-				}
-			} catch (err: any) {
-				trace(`[NET] score dump error: ${err?.message ?? err}`);
-			}
-			// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
-			this.checkPeerCounts();
-			// Dial known peers not currently connected (maintains relay connections to NATed peers)
-			const connectedSet = new Set(connectedPeers.map(p => p.toString()));
-			let redialAttempts = 0;
-			let redialSuccess = 0;
-			for (const peer of allPeers) {
-				const pid = peer.id.toString();
-				if (connectedSet.has(pid)) continue;
-				if (this.bootstrapPeerIDs.has(pid)) continue; // bootstrap handled separately
-				redialAttempts++;
+				const topicInfo = this.pubsub!.getTopics()
+					.map((t: string) => {
+						const subs = this.pubsub!.getSubscribers(t);
+						return `${t.slice(0, 28)}[${subs.length}]`;
+					})
+					.join(' ');
+				console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${topicInfo}`);
+				console.debug(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
+				// Announced multiaddrs — if /p2p-circuit appears, relay reservation is active
+				const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
+				const circuit = myAddrs.filter(a => a.includes('/p2p-circuit'));
+				console.debug(
+					`   MyAddrs: ${myAddrs.length} total, ${circuit.length} /p2p-circuit${
+						circuit.length > 0
+							? ' (' +
+								circuit
+									.slice(0, 2)
+									.map(a => a.slice(0, 80))
+									.join(' | ') +
+								')'
+							: ''
+					}`
+				);
+				// Gossipsub peer scoring — dump top/bottom scores + deltas.
+				// INFO: summary (top 3 + bottom 3 + threshold crossings).
+				// DEBUG (trace): per-peer full breakdown when LIBERSHARE_SCORE_DEBUG=1.
 				try {
-					await this.node!.dial(peer.id, { signal: AbortSignal.timeout(5000) });
-					const conns = this.node!.getConnections(peer.id);
-					const connType = conns.map(c => (Circuit.matches(c.remoteAddr) ? 'RELAY' : 'DIRECT')).join(',');
-					trace(`   ✓ Re-dialed ${pid.slice(0, 16)} [${connType}]`);
-					redialSuccess++;
+					const scoreSvc: any = (this.pubsub as any)?.score;
+					if (scoreSvc && typeof scoreSvc.score === 'function') {
+						const entries: Array<{ id: string; score: number; delta: number }> = [];
+						const pxEligibilityThreshold = parseAcceptPXThreshold(this.settings.list().network.peerExchange?.acceptPXThreshold).value;
+						for (const p of connectedPeers) {
+							const pid = p.toString();
+							const s = Number(scoreSvc.score(pid)) || 0;
+							const prev = this._lastScores.get(pid);
+							const delta = prev === undefined ? 0 : s - prev;
+							entries.push({ id: pid, score: s, delta });
+							// Threshold-crossing INFO logs
+							if (prev !== undefined) {
+								if (prev >= -80 && s < -80) console.warn(`[NET] peer ${pid.slice(0, 12)} entered graylist (score=${s.toFixed(1)})`);
+								else if (prev < -80 && s >= -80) console.log(`[NET] peer ${pid.slice(0, 12)} left graylist (score=${s.toFixed(1)})`);
+								else if (prev < pxEligibilityThreshold && s >= pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} now PX-eligible (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
+								else if (prev >= pxEligibilityThreshold && s < pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} lost PX eligibility (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
+							}
+							this._lastScores.set(pid, s);
+						}
+						// Evict entries for peers no longer connected
+						const connectedSet2 = new Set(connectedPeers.map(p => p.toString()));
+						for (const k of this._lastScores.keys()) if (!connectedSet2.has(k)) this._lastScores.delete(k);
+						if (entries.length > 0) {
+							entries.sort((a, b) => b.score - a.score);
+							const fmt = (e: { id: string; score: number; delta: number }) => `${e.id.slice(0, 12)}=${e.score.toFixed(1)}${e.delta !== 0 ? (e.delta > 0 ? '(+' : '(') + e.delta.toFixed(1) + ')' : ''}`;
+							const top = entries.slice(0, 3).map(fmt).join(' | ');
+							const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
+							console.debug(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
+						}
+						if (process.env['LIBERSHARE_SCORE_DEBUG'] === '1' && entries.length > 0) {
+							const fullDump = entries.map(e => `${e.id.slice(0, 16)}:${e.score.toFixed(2)}`).join(' ');
+							trace(`[NET] full scores: ${fullDump}`);
+						}
+					}
 				} catch (err: any) {
-					trace(`   ✗ Re-dial ${pid.slice(0, 16)} failed: ${err.message?.slice(0, 80)}`);
+					trace(`[NET] score dump error: ${err?.message ?? err}`);
 				}
-			}
-			if (redialAttempts > 0) console.debug(`   Re-dial: ${redialSuccess}/${redialAttempts} succeeded`);
-			if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && this.bootstrapMultiaddrs.length > 0) {
-				console.log('   ⚠️  No connections - dialing bootstrap peers directly...');
-				for (const ma of this.bootstrapMultiaddrs) {
+				// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
+				this.checkPeerCounts();
+				// Dial known peers not currently connected (maintains relay connections to NATed peers)
+				const connectedSet = new Set(connectedPeers.map(p => p.toString()));
+				let redialAttempts = 0;
+				let redialSuccess = 0;
+				for (const peer of allPeers) {
+					const pid = peer.id.toString();
+					if (connectedSet.has(pid)) continue;
+					if (this.bootstrapPeerIDs.has(pid)) continue; // bootstrap handled separately
+					redialAttempts++;
 					try {
-						await this.node!.dial(ma, { signal: AbortSignal.timeout(10000) });
-						console.log(`   ✓ Connected`);
-						break;
+						await this.node!.dial(peer.id, { signal: AbortSignal.timeout(5000) });
+						const conns = this.node!.getConnections(peer.id);
+						const connType = conns.map(c => (Circuit.matches(c.remoteAddr) ? 'RELAY' : 'DIRECT')).join(',');
+						trace(`   ✓ Re-dialed ${pid.slice(0, 16)} [${connType}]`);
+						redialSuccess++;
 					} catch (err: any) {
-						console.log(`   ✗ Failed: ${err.message}`);
+						trace(`   ✗ Re-dial ${pid.slice(0, 16)} failed: ${err.message?.slice(0, 80)}`);
 					}
 				}
-			}
+				if (redialAttempts > 0) console.debug(`   Re-dial: ${redialSuccess}/${redialAttempts} succeeded`);
+				if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && this.bootstrapMultiaddrs.length > 0) {
+					console.log('   ⚠️  No connections - dialing bootstrap peers directly...');
+					for (const ma of this.bootstrapMultiaddrs) {
+						try {
+							await this.node!.dial(ma, { signal: AbortSignal.timeout(10000) });
+							console.log(`   ✓ Connected`);
+							break;
+						} catch (err: any) {
+							console.log(`   ✗ Failed: ${err.message}`);
+						}
+					}
+				}
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
 			}

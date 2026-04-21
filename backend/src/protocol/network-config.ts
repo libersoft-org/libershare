@@ -21,6 +21,7 @@ import { isLinkLocalIp } from '@libp2p/utils';
 import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
 import { trace } from '../logger.ts';
+import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 export interface BuildConfigParams {
 	privateKey: PrivateKey;
@@ -42,11 +43,10 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	const bootstrapMultiaddrs: any[] = [];
 	const peerExchange = allSettings.network?.peerExchange;
 	const pxEnabled = peerExchange?.enabled === true;
-	const configuredAcceptPXThreshold = typeof peerExchange?.acceptPXThreshold === 'number' && Number.isFinite(peerExchange.acceptPXThreshold) ? peerExchange.acceptPXThreshold : 10;
-	const acceptPXThreshold = configuredAcceptPXThreshold > 0 ? configuredAcceptPXThreshold : 10;
-	if (configuredAcceptPXThreshold <= 0) console.warn(`[NET] PX acceptPXThreshold=${configuredAcceptPXThreshold} is unsafe; using ${acceptPXThreshold}`);
-	const configuredTrustedPXPeerIDs = Array.isArray(peerExchange?.trustedPeerIds) ? peerExchange.trustedPeerIds : [];
-	const trustedPXPeerIDs = new Set(configuredTrustedPXPeerIDs.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(Boolean));
+	const parsedThreshold = parseAcceptPXThreshold(peerExchange?.acceptPXThreshold);
+	const acceptPXThreshold = parsedThreshold.value;
+	if (parsedThreshold.unsafe) console.warn(`[NET] PX acceptPXThreshold=${String(parsedThreshold.raw)} is unsafe; using ${acceptPXThreshold}`);
+	const trustedPXPeerIDs = normalizeTrustedPeerIds(peerExchange?.trustedPeerIds);
 	if (pxEnabled) console.log(`[NET] PX enabled by local policy (trustedPeers=${trustedPXPeerIDs.size}, acceptPXThreshold=${acceptPXThreshold})`);
 	else console.debug('[NET] PX disabled by local policy');
 	// Build transports array
@@ -123,7 +123,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			// writing to closed streams (100+/h), which in turn prevented
 			// SUBSCRIBE RPC propagation → fragmented pubsub mesh.
 			maxAddressAge: 1_800_000, // 30 min (default 3_600_000 = 1h)
-			maxPeerAge: 7_200_000,    // 2h (default 21_600_000 = 6h)
+			maxPeerAge: 7_200_000, // 2h (default 21_600_000 = 6h)
 		},
 		services: {
 			identify: identify(),
@@ -150,11 +150,11 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 					topicScoreCap: 10.0,
 					appSpecificWeight: 1.0,
 					appSpecificScore: (peerId: any) => {
-						const pid = typeof peerId === 'string' ? peerId : peerId?.toString?.() ?? '';
+						const pid = typeof peerId === 'string' ? peerId : (peerId?.toString?.() ?? '');
 						const isConfiguredTrustedPXPeer = trustedPXPeerIDs.has(pid);
 						const isTrustedPXPeer = pxEnabled && isConfiguredTrustedPXPeer;
 						// Trace a bounded sample so score callbacks do not flood logs.
-						const dbg = (globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() };
+						const dbg = ((globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
 						if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
 							dbg.seen.add(pid);
 							trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} trustedSetSize=${trustedPXPeerIDs.size}`);
@@ -238,12 +238,14 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			}
 		}
 		if (validBootstrapPeers.length > 0) {
-			peerDiscovery.push(bootstrap({
-				list: validBootstrapPeers,
-				timeout: 1000,
-				tagTTL: 2147483647,
-				tagValue: 100,
-			}));
+			peerDiscovery.push(
+				bootstrap({
+					list: validBootstrapPeers,
+					timeout: 1000,
+					tagTTL: 2147483647,
+					tagValue: 100,
+				})
+			);
 		}
 	} else console.log('No bootstrap peers configured. Node will start in standalone mode.');
 
@@ -255,9 +257,11 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	const mdnsEnabled = allSettings.network?.mdnsEnabled ?? true;
 	if (mdnsEnabled) {
 		const mdnsInterval = allSettings.network?.mdnsInterval ?? 10000;
-		peerDiscovery.push(mdns({
-			interval: mdnsInterval,
-		}));
+		peerDiscovery.push(
+			mdns({
+				interval: mdnsInterval,
+			})
+		);
 		console.log(`✓ mDNS LAN discovery enabled (interval ${mdnsInterval}ms)`);
 	}
 
