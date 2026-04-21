@@ -41,12 +41,12 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	const bootstrapPeerIDs = new Set<string>();
 	const bootstrapMultiaddrs: any[] = [];
 	const peerExchange = allSettings.network?.peerExchange;
-	const pxEnabled = peerExchange?.enabled ?? false;
+	const pxEnabled = peerExchange?.enabled === true;
 	const configuredAcceptPXThreshold = typeof peerExchange?.acceptPXThreshold === 'number' && Number.isFinite(peerExchange.acceptPXThreshold) ? peerExchange.acceptPXThreshold : 10;
 	const acceptPXThreshold = configuredAcceptPXThreshold > 0 ? configuredAcceptPXThreshold : 10;
 	if (configuredAcceptPXThreshold <= 0) console.warn(`[NET] PX acceptPXThreshold=${configuredAcceptPXThreshold} is unsafe; using ${acceptPXThreshold}`);
 	const configuredTrustedPXPeerIDs = Array.isArray(peerExchange?.trustedPeerIds) ? peerExchange.trustedPeerIds : [];
-	const trustedPXPeerIDs = new Set(configuredTrustedPXPeerIDs.map(p => p.trim()).filter(Boolean));
+	const trustedPXPeerIDs = new Set(configuredTrustedPXPeerIDs.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(Boolean));
 	if (pxEnabled) console.log(`[NET] PX enabled by local policy (trustedPeers=${trustedPXPeerIDs.size}, acceptPXThreshold=${acceptPXThreshold})`);
 	else console.debug('[NET] PX disabled by local policy');
 	// Build transports array

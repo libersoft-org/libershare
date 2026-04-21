@@ -185,8 +185,8 @@ export class Network {
 
 			const sender = from?.toString?.() ?? '';
 			const trustedPeerIds = Array.isArray(peerExchange.trustedPeerIds) ? peerExchange.trustedPeerIds : [];
-			const trusted = new Set(trustedPeerIds.map(p => p.trim()).filter(Boolean));
-			const allowPX = peerExchange.enabled && trusted.has(sender);
+			const trusted = new Set(trustedPeerIds.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(Boolean));
+			const allowPX = peerExchange.enabled === true && trusted.has(sender);
 			let allowed = 0;
 			let stripped = 0;
 
@@ -363,7 +363,7 @@ export class Network {
 		// on the first OutboundStream instance we observe (all instances share one
 		// prototype).
 		this.patchGossipsubOutboundPushOnce();
-		if (allSettings.network.peerExchange.ingressFilterEnabled) this.patchGossipsubPXIngressPolicyOnce();
+		if (allSettings.network.peerExchange.ingressFilterEnabled === true) this.patchGossipsubPXIngressPolicyOnce();
 
 		// Register lish protocol handler
 		await this.node.handle(
