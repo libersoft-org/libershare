@@ -82,6 +82,7 @@ export class Network {
 	// Previous gossipsub peer scores — tracked per-peer to detect significant
 	// score deltas and log threshold crossings (e.g. entered graylist).
 	private _lastScores: Map<string, number> = new Map();
+	private readonly pxIngressLogKeys = new Set<string>();
 
 	// Tracked libp2p/pubsub event listeners for clean removal in stop().
 	// Each entry captures the exact handler reference so removeEventListener can unhook it.
@@ -163,6 +164,56 @@ export class Network {
 		const interval = setInterval(() => {
 			if (trySetup() || Date.now() - start > 60_000) clearInterval(interval);
 		}, 2000);
+	}
+
+	/**
+	 * Strip PX peer lists from incoming PRUNE control messages unless the sender is
+	 * explicitly trusted by local operator policy. Normal PRUNE/backoff semantics stay intact.
+	 */
+	private patchGossipsubPXIngressPolicyOnce(): void {
+		const pubsub = this.pubsub as any;
+		if (!pubsub || pubsub.__libersharePXIngressPatched) return;
+		if (typeof pubsub.handleReceivedRpc !== 'function') {
+			console.warn('[NET] PX ingress filter unavailable: handleReceivedRpc missing');
+			return;
+		}
+
+		const original = pubsub.handleReceivedRpc.bind(pubsub);
+		pubsub.handleReceivedRpc = async (from: any, rpc: any): Promise<any> => {
+			const peerExchange = this.settings.list().network.peerExchange;
+			if (!peerExchange?.ingressFilterEnabled || !rpc?.control?.prune?.length) return original(from, rpc);
+
+			const sender = from?.toString?.() ?? '';
+			const trustedPeerIds = Array.isArray(peerExchange.trustedPeerIds) ? peerExchange.trustedPeerIds : [];
+			const trusted = new Set(trustedPeerIds.map(p => p.trim()).filter(Boolean));
+			const allowPX = peerExchange.enabled && trusted.has(sender);
+			let allowed = 0;
+			let stripped = 0;
+
+			const prune = rpc.control.prune.map((p: any) => {
+				if (!p?.peers?.length) return p;
+				if (allowPX) {
+					allowed++;
+					return p;
+				}
+				stripped++;
+				return { ...p, peers: [] };
+			});
+
+			if (stripped > 0 || allowed > 0) {
+				const topic = prune.find((p: any) => p?.topicID)?.topicID ?? 'unknown';
+				const key = `${allowPX ? 'allow' : 'strip'}:${sender}:${topic}`;
+				if (!this.pxIngressLogKeys.has(key)) {
+					this.pxIngressLogKeys.add(key);
+					if (allowed > 0) console.debug(`[NET] PX ingress allowed sender=${sender.slice(0, 16)} topic=${String(topic).slice(0, 48)} prunes=${allowed}`);
+					else console.debug(`[NET] PX ingress stripped sender=${sender.slice(0, 16)} topic=${String(topic).slice(0, 48)} prunes=${stripped}`);
+				}
+			}
+
+			return original(from, { ...rpc, control: { ...rpc.control, prune } });
+		};
+		pubsub.__libersharePXIngressPatched = true;
+		console.log('[NET] gossipsub PX ingress filter enabled');
 	}
 
 	private addListener(target: EventTarget, event: string, handler: (evt: any) => void): void {
@@ -312,6 +363,7 @@ export class Network {
 		// on the first OutboundStream instance we observe (all instances share one
 		// prototype).
 		this.patchGossipsubOutboundPushOnce();
+		if (allSettings.network.peerExchange.ingressFilterEnabled) this.patchGossipsubPXIngressPolicyOnce();
 
 		// Register lish protocol handler
 		await this.node.handle(
