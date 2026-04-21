@@ -37,10 +37,39 @@ export interface SettingsData {
 		announceAddresses: string[];
 		mdnsEnabled: boolean;
 		mdnsInterval: number;
+		/**
+		 * GossipSub Peer Exchange (PX) local operator policy.
+		 *
+		 * PX allows peers to recommend other peers to each other through PRUNE control messages
+		 * (see GossipSub v1.1 spec). This exposes the mesh to Sybil-style injection if PX is
+		 * accepted from untrusted senders, so LiberShare ships a fail-closed default: PX is
+		 * disabled, no peers are trusted, and no ingress is filtered. Operators opt in per node.
+		 */
 		peerExchange: {
+			/**
+			 * Master switch for doPX emission (we advertise peers when pruning) AND for the
+			 * local trust score that makes an individual peer's PX acceptable inbound.
+			 * When false the score path fails closed regardless of trustedPeerIds.
+			 */
 			enabled: boolean;
+			/**
+			 * Minimum gossipsub score a sender must reach before its PX is accepted. Must be
+			 * strictly positive to keep neutral (score=0) peers from supplying peer lists.
+			 * Unsafe values (<= 0, non-finite, non-number) fall back to the safe default.
+			 */
 			acceptPXThreshold: number;
+			/**
+			 * Explicit allow-list of peer IDs that receive a trust boost via appSpecificScore.
+			 * Only these peers can cross acceptPXThreshold via the trust signal alone. Empty
+			 * list + enabled=true means PX is emitted but nobody is trusted to receive it.
+			 */
 			trustedPeerIds: string[];
+			/**
+			 * Independent defense-in-depth: when true, the gossipsub handleReceivedRpc wrapper
+			 * strips `peers` from any PRUNE control message unless the sender is in
+			 * trustedPeerIds AND the topic is under the lishnet namespace. Can be enabled
+			 * without `enabled` (belt-and-braces) or disabled to rely purely on scoring.
+			 */
 			ingressFilterEnabled: boolean;
 		};
 	};
