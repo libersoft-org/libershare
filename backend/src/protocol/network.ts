@@ -185,7 +185,11 @@ export class Network {
 			if (!peerExchange?.ingressFilterEnabled || !rpc?.control?.prune?.length) return original(from, rpc);
 
 			const sender = from?.toString?.() ?? '';
+			// Trust union: explicit operator-configured peers + bootstrap peers from the
+			// lishnets the operator has joined (both represent "operator deliberately chose
+			// to trust this peer", see appSpecificScore in network-config.ts for rationale).
 			const trusted = normalizeTrustedPeerIds(peerExchange.trustedPeerIds);
+			for (const bp of this.bootstrapPeerIDs) trusted.add(bp);
 			let allowed = 0;
 			let stripped = 0;
 

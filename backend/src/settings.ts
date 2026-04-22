@@ -41,15 +41,17 @@ export interface SettingsData {
 		 * GossipSub Peer Exchange (PX) local operator policy.
 		 *
 		 * PX allows peers to recommend other peers to each other through PRUNE control messages
-		 * (see GossipSub v1.1 spec). This exposes the mesh to Sybil-style injection if PX is
-		 * accepted from untrusted senders, so LiberShare ships a fail-closed default: PX is
-		 * disabled, no peers are trusted, and no ingress is filtered. Operators opt in per node.
+		 * (see GossipSub v1.1 spec). Sybil-style injection is neutralised by a two-layer defence:
+		 * (1) gossipsub scoring + acceptPXThreshold so only peers above a positive score can
+		 * deliver PX, and (2) an ingress filter that strips PRUNE peer lists unless the sender
+		 * is trusted. Trust is granted automatically to bootstrap peers (operator already chose
+		 * them at lishnet-join time) and extended by the optional trustedPeerIds list.
 		 */
 		peerExchange: {
 			/**
 			 * Master switch for doPX emission (we advertise peers when pruning) AND for the
 			 * local trust score that makes an individual peer's PX acceptable inbound.
-			 * When false the score path fails closed regardless of trustedPeerIds.
+			 * When false the score path fails closed for every peer, including bootstraps.
 			 */
 			enabled: boolean;
 			/**
@@ -59,16 +61,17 @@ export interface SettingsData {
 			 */
 			acceptPXThreshold: number;
 			/**
-			 * Explicit allow-list of peer IDs that receive a trust boost via appSpecificScore.
-			 * Only these peers can cross acceptPXThreshold via the trust signal alone. Empty
-			 * list + enabled=true means PX is emitted but nobody is trusted to receive it.
+			 * Extra allow-list of peer IDs on top of bootstrap peers. The appSpecificScore
+			 * boost (+1000) is given to any peer that is either in this list OR in the
+			 * bootstrap set derived from the lishnets this node has joined. Leave empty to
+			 * rely purely on bootstrap trust.
 			 */
 			trustedPeerIds: string[];
 			/**
 			 * Independent defense-in-depth: when true, the gossipsub handleReceivedRpc wrapper
-			 * strips `peers` from any PRUNE control message unless the sender is in
-			 * trustedPeerIds AND the topic is under the lishnet namespace. Can be enabled
-			 * without `enabled` (belt-and-braces) or disabled to rely purely on scoring.
+			 * strips `peers` from any PRUNE control message unless the sender is trusted
+			 * (configured OR bootstrap) AND the topic is under the lishnet namespace. Can be
+			 * enabled without `enabled` (belt-and-braces) or disabled to rely purely on scoring.
 			 */
 			ingressFilterEnabled: boolean;
 		};
@@ -137,10 +140,17 @@ const DEFAULT_SETTINGS: SettingsData = {
 		mdnsEnabled: true,
 		mdnsInterval: 10000,
 		peerExchange: {
-			enabled: false,
+			// Enabled by default: bootstrap peers (operator-configured in lishnet joins)
+			// are automatically trusted PX sources, so mesh density converges without
+			// operator having to seed trustedPeerIds manually. See
+			// network-config.ts appSpecificScore for the bootstrap-trust rationale.
+			enabled: true,
 			acceptPXThreshold: 10,
 			trustedPeerIds: [],
-			ingressFilterEnabled: false,
+			// Defense-in-depth: even if a non-bootstrap peer somehow crosses the score
+			// threshold, the ingress filter still strips its PX peer list unless it is
+			// in the trusted set (configured OR bootstrap).
+			ingressFilterEnabled: true,
 		},
 	},
 	system: {

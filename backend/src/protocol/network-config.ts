@@ -141,27 +141,31 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				heartbeatInterval: 1000,
 				fanoutTTL: 60000,
 				runOnLimitedConnection: true,
-				// Peer exchange is a local operator policy. Bootstrap peers are only
-				// discovery/onboarding hints, not trusted PX authorities.
+				// Peer exchange is a local operator policy. A peer is considered trusted
+				// for PX if it is either (a) explicitly listed in peerExchange.trustedPeerIds
+				// (manual operator opt-in) OR (b) one of the bootstrap peers for any of the
+				// lishnets this node is a member of (bootstrap = "operator deliberately chose
+				// this peer for discovery", so extending the same trust to PX is a natural
+				// default and avoids the cold-start problem where an empty trustedPeerIds
+				// list plus a positive acceptPXThreshold meant PX was effectively dead).
 				doPX: pxEnabled,
-				// Scoring remains enabled so explicit local PX authorities can cross a
-				// positive acceptPXThreshold while neutral peers fail closed.
 				scoreParams: {
 					topicScoreCap: 10.0,
 					appSpecificWeight: 1.0,
 					appSpecificScore: (peerId: any) => {
 						const pid = typeof peerId === 'string' ? peerId : (peerId?.toString?.() ?? '');
 						const isConfiguredTrustedPXPeer = trustedPXPeerIDs.has(pid);
-						const isTrustedPXPeer = pxEnabled && isConfiguredTrustedPXPeer;
+						const isBootstrapPeer = bootstrapPeerIDs.has(pid);
+						const isTrustedPXPeer = pxEnabled && (isConfiguredTrustedPXPeer || isBootstrapPeer);
 						// Trace a bounded sample so score callbacks do not flood logs.
 						const dbg = ((globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
 						if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
 							dbg.seen.add(pid);
-							trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} trustedSetSize=${trustedPXPeerIDs.size}`);
+							trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} bootstrap=${isBootstrapPeer} trustedSetSize=${trustedPXPeerIDs.size} bootstrapSetSize=${bootstrapPeerIDs.size}`);
 						}
 						if (isTrustedPXPeer && !dbg.trustedLogged.has(pid)) {
 							dbg.trustedLogged.add(pid);
-							console.debug(`[NET] PX trust score applied peer=${pid.slice(0, 16)}`);
+							console.debug(`[NET] PX trust score applied peer=${pid.slice(0, 16)} source=${isConfiguredTrustedPXPeer ? 'configured' : 'bootstrap'}`);
 						}
 						return isTrustedPXPeer ? 1000 : 0;
 					},
