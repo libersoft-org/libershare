@@ -36,13 +36,16 @@ describe('SpeedLimiter', () => {
 	});
 
 	it('setLimit changes limit dynamically', async () => {
-		limiter.setLimit(1024); // 1MB/s
-		await limiter.throttle(512 * 1024); // under limit, no wait
-		limiter.setLimit(512); // 512KB/s — halved
+		// setLimit resets the cursor to Date.now() so the new rate takes effect
+		// immediately without inheriting a stale future slot. After a reset, the
+		// FIRST throttle() never waits (it only *claims* a slot for the next
+		// caller); the second throttle() then has to wait for that slot to open.
+		limiter.setLimit(512); // 512 KB/s — ~500ms slot per 256KB
+		await limiter.throttle(256 * 1024); // primes the cursor to ~now+500ms
 		const start = Date.now();
-		await limiter.throttle(512 * 1024); // 512KB more — total 1MB in window at 512KB/s limit
+		await limiter.throttle(256 * 1024); // should wait for the primed slot
 		const elapsed = Date.now() - start;
-		expect(elapsed).toBeGreaterThan(400); // should wait ~1s
+		expect(elapsed).toBeGreaterThan(400);
 		expect(elapsed).toBeLessThan(2000);
 	});
 
