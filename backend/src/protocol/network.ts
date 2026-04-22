@@ -669,28 +669,45 @@ export class Network {
 				for (const peer of allPeers) {
 					const pid = peer.id.toString();
 					if (connectedSet.has(pid)) continue;
-					if (this.bootstrapPeerIDs.has(pid)) continue; // bootstrap handled separately
+					// Bootstrap peers are included in the re-dial loop intentionally: the
+					// old "skip and handle separately" branch only fired when
+					// connectedPeers.length===0, so a fleet node that kept one live
+					// non-bootstrap peer would never retry a bootstrap that had gone down
+					// and come back (observed 2026-04-22 after <redacted-bootstrap> redeploy).
 					redialAttempts++;
+					// Enumerate known multiaddrs for this peer so the log shows exactly
+					// what the dial is going to try (LAN / public / circuit-relay).
+					const addrList = (peer.addresses ?? []).map((a: any) => a?.multiaddr?.toString?.() ?? String(a)).filter(Boolean);
+					const addrSummary = addrList.length > 0 ? addrList.join(' | ') : '(no known addrs)';
+					console.debug(`   ↻ Re-dial attempt peer=${pid} addrs=${addrSummary}`);
 					try {
 						await this.node!.dial(peer.id, { signal: AbortSignal.timeout(5000) });
 						const conns = this.node!.getConnections(peer.id);
-						const connType = conns.map(c => (Circuit.matches(c.remoteAddr) ? 'RELAY' : 'DIRECT')).join(',');
-						trace(`   ✓ Re-dialed ${pid.slice(0, 16)} [${connType}]`);
+						const connDetail = conns
+							.map(c => {
+								const ra = c.remoteAddr?.toString?.() ?? '?';
+								const type = Circuit.matches(c.remoteAddr) ? 'RELAY' : 'DIRECT';
+								return `${type}(${ra})`;
+							})
+							.join(',');
+						console.debug(`   ✓ Re-dialed peer=${pid} via=${connDetail || '(no conn info)'}`);
 						redialSuccess++;
 					} catch (err: any) {
-						trace(`   ✗ Re-dial ${pid.slice(0, 16)} failed: ${err.message?.slice(0, 80)}`);
+						console.debug(`   ✗ Re-dial peer=${pid} failed: ${err.message ?? err} (tried: ${addrSummary})`);
 					}
 				}
 				if (redialAttempts > 0) console.debug(`   Re-dial: ${redialSuccess}/${redialAttempts} succeeded`);
 				if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && this.bootstrapMultiaddrs.length > 0) {
-					console.log('   ⚠️  No connections - dialing bootstrap peers directly...');
+					console.log(`   ⚠️  No connections - dialing ${this.bootstrapMultiaddrs.length} bootstrap peer(s) directly...`);
 					for (const ma of this.bootstrapMultiaddrs) {
+						const maStr = ma?.toString?.() ?? String(ma);
 						try {
+							console.log(`   → Dialing ${maStr}`);
 							await this.node!.dial(ma, { signal: AbortSignal.timeout(10000) });
-							console.log(`   ✓ Connected`);
+							console.log(`   ✓ Connected via ${maStr}`);
 							break;
 						} catch (err: any) {
-							console.log(`   ✗ Failed: ${err.message}`);
+							console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
 						}
 					}
 				}
