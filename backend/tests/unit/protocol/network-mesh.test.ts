@@ -92,10 +92,11 @@ describe('network-config.ts — PX trust policy', () => {
 		expect(CONFIG_TS).not.toContain('doPX: true');
 	});
 
-	it('does not use bootstrap peers as app-specific PX trust', () => {
+	it('grants PX trust to bootstrap peers and configured trusted peers', () => {
 		const scoreBlock = CONFIG_TS.slice(CONFIG_TS.indexOf('appSpecificScore'), CONFIG_TS.indexOf('IPColocationFactorWeight'));
-		expect(scoreBlock).toContain('pxEnabled && isConfiguredTrustedPXPeer');
-		expect(scoreBlock).not.toContain('bootstrapPeerIDs.has');
+		expect(scoreBlock).toContain('isConfiguredTrustedPXPeer');
+		expect(scoreBlock).toContain('bootstrapPeerIDs.has');
+		expect(scoreBlock).toContain('pxEnabled && (isConfiguredTrustedPXPeer || isBootstrapPeer)');
 	});
 
 	it('uses a positive acceptPXThreshold from local policy', () => {
@@ -103,14 +104,25 @@ describe('network-config.ts — PX trust policy', () => {
 		expect(CONFIG_TS).not.toContain('acceptPXThreshold: 0');
 	});
 
-	it('defaults PX policy to fail closed', () => {
+	it('defaults PX policy to safely-enabled with bootstrap trust', () => {
+		// With bootstrap-as-trusted logic, enabling PX by default is safe: only bootstrap
+		// peers the operator has explicitly configured for this lishnet can deliver PX,
+		// so the Sybil vector from the pre-bootstrap-trust era is neutralised.
 		const defaultsStart = SETTINGS_TS.indexOf('const DEFAULT_SETTINGS');
 		const peerExchangeStart = SETTINGS_TS.indexOf('peerExchange: {', defaultsStart);
 		const defaultBlock = SETTINGS_TS.slice(peerExchangeStart, SETTINGS_TS.indexOf('system:', peerExchangeStart));
-		expect(defaultBlock).toContain('enabled: false');
+		expect(defaultBlock).toContain('enabled: true');
 		expect(defaultBlock).toContain('acceptPXThreshold: 10');
 		expect(defaultBlock).toContain('trustedPeerIds: []');
-		expect(defaultBlock).toContain('ingressFilterEnabled: false');
+		expect(defaultBlock).toContain('ingressFilterEnabled: true');
+	});
+
+	it('ingress filter unions bootstrap peers into trusted set', () => {
+		// Source-surface check: network.ts must import bootstrapPeerIDs into the trusted
+		// Set so the ingress filter decides the same way as the score callback.
+		const filterSurface = NETWORK_TS.slice(NETWORK_TS.indexOf('patchGossipsubPXIngressPolicyOnce'), NETWORK_TS.indexOf('private addListener'));
+		expect(filterSurface).toContain('this.bootstrapPeerIDs');
+		expect(filterSurface).toContain('trusted.add');
 	});
 });
 
