@@ -84,6 +84,14 @@ export class Network {
 	private _lastScores: Map<string, number> = new Map();
 	private readonly pxIngressLogKeys = new Set<string>();
 
+	/**
+	 * Per-peer re-dial backoff tracker. Re-dial attempts that fail bump the
+	 * per-peer failCount and push nextAttempt forward exponentially (30s × 2^fails
+	 * capped at 10 min), so a persistently-unreachable peer does not saturate the
+	 * re-dial pool every 30s. Successful dial clears the entry.
+	 */
+	private readonly redialBackoff = new Map<string, { nextAttempt: number; failCount: number }>();
+
 	// Tracked libp2p/pubsub event listeners for clean removal in stop().
 	// Each entry captures the exact handler reference so removeEventListener can unhook it.
 	private listeners: Array<{ target: EventTarget; event: string; handler: (evt: any) => void }> = [];
@@ -664,39 +672,66 @@ export class Network {
 				this.checkPeerCounts();
 				// Dial known peers not currently connected (maintains relay connections to NATed peers)
 				const connectedSet = new Set(connectedPeers.map(p => p.toString()));
-				let redialAttempts = 0;
-				let redialSuccess = 0;
+				const now = Date.now();
+				// Build candidate list: all known peers that are (a) not connected, and
+				// (b) past their backoff window. Bootstrap peers are included so a bootstrap
+				// that drops comes back quickly without needing connectedPeers.length===0.
+				const candidates: Array<{ peer: any; pid: string; addrSummary: string; failCount: number }> = [];
+				let skippedBackoff = 0;
 				for (const peer of allPeers) {
 					const pid = peer.id.toString();
-					if (connectedSet.has(pid)) continue;
-					// Bootstrap peers are included in the re-dial loop intentionally: the
-					// old "skip and handle separately" branch only fired when
-					// connectedPeers.length===0, so a fleet node that kept one live
-					// non-bootstrap peer would never retry a bootstrap that had gone down
-					// and come back (observed 2026-04-22 after <redacted-bootstrap> redeploy).
-					redialAttempts++;
-					// Enumerate known multiaddrs for this peer so the log shows exactly
-					// what the dial is going to try (LAN / public / circuit-relay).
+					if (connectedSet.has(pid)) {
+						this.redialBackoff.delete(pid); // clear on observed connection
+						continue;
+					}
+					const bo = this.redialBackoff.get(pid);
+					if (bo && bo.nextAttempt > now) {
+						skippedBackoff++;
+						continue;
+					}
 					const addrList = (peer.addresses ?? []).map((a: any) => a?.multiaddr?.toString?.() ?? String(a)).filter(Boolean);
 					const addrSummary = addrList.length > 0 ? addrList.join(' | ') : '(no known addrs)';
-					console.debug(`   ↻ Re-dial attempt peer=${pid} addrs=${addrSummary}`);
-					try {
-						await this.node!.dial(peer.id, { signal: AbortSignal.timeout(5000) });
-						const conns = this.node!.getConnections(peer.id);
-						const connDetail = conns
-							.map(c => {
-								const ra = c.remoteAddr?.toString?.() ?? '?';
-								const type = Circuit.matches(c.remoteAddr) ? 'RELAY' : 'DIRECT';
-								return `${type}(${ra})`;
-							})
-							.join(',');
-						console.debug(`   ✓ Re-dialed peer=${pid} via=${connDetail || '(no conn info)'}`);
-						redialSuccess++;
-					} catch (err: any) {
-						console.debug(`   ✗ Re-dial peer=${pid} failed: ${err.message ?? err} (tried: ${addrSummary})`);
-					}
+					candidates.push({ peer, pid, addrSummary, failCount: bo?.failCount ?? 0 });
 				}
-				if (redialAttempts > 0) console.debug(`   Re-dial: ${redialSuccess}/${redialAttempts} succeeded`);
+				// Parallel dial with concurrency=10 via rolling promise pool; caps worst-case
+				// tick latency at ~5s × ceil(N/10) instead of 5s × N for pre-throttle code.
+				const CONCURRENCY = 10;
+				let redialSuccess = 0;
+				let idx = 0;
+				const worker = async (): Promise<void> => {
+					while (idx < candidates.length) {
+						const c = candidates[idx++]!;
+						console.debug(`   ↻ Re-dial attempt peer=${c.pid} addrs=${c.addrSummary} fails=${c.failCount}`);
+						try {
+							await this.node!.dial(c.peer.id, { signal: AbortSignal.timeout(5000) });
+							const conns = this.node!.getConnections(c.peer.id);
+							const connDetail = conns
+								.map(conn => {
+									const ra = conn.remoteAddr?.toString?.() ?? '?';
+									const type = Circuit.matches(conn.remoteAddr) ? 'RELAY' : 'DIRECT';
+									return `${type}(${ra})`;
+								})
+								.join(',');
+							console.debug(`   ✓ Re-dialed peer=${c.pid} via=${connDetail || '(no conn info)'}`);
+							this.redialBackoff.delete(c.pid);
+							redialSuccess++;
+						} catch (err: any) {
+							// Exponential backoff: 30s × 2^failCount, capped at 10 min.
+							const nextFailCount = c.failCount + 1;
+							const delayMs = Math.min(30_000 * 2 ** c.failCount, 600_000);
+							this.redialBackoff.set(c.pid, { nextAttempt: Date.now() + delayMs, failCount: nextFailCount });
+							console.debug(`   ✗ Re-dial peer=${c.pid} failed: ${err.message ?? err} (tried: ${c.addrSummary}, next in ${Math.round(delayMs / 1000)}s)`);
+						}
+					}
+				};
+				const workers = Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, () => worker());
+				await Promise.all(workers);
+				if (candidates.length > 0 || skippedBackoff > 0) {
+					console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff)`);
+				}
+				// Prune backoff entries for peers that are no longer in peerStore to prevent unbounded growth.
+				const storeSet = new Set(allPeers.map(p => p.id.toString()));
+				for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
 				if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && this.bootstrapMultiaddrs.length > 0) {
 					console.log(`   ⚠️  No connections - dialing ${this.bootstrapMultiaddrs.length} bootstrap peer(s) directly...`);
 					for (const ma of this.bootstrapMultiaddrs) {
@@ -1095,6 +1130,8 @@ export class Network {
 		this.bootstrapPeerIDs.clear();
 		this.bootstrapMultiaddrs = [];
 		this._lastPeerCounts.clear();
+		this._lastScores.clear();
+		this.redialBackoff.clear();
 		if (this.node) {
 			await this.node.stop();
 			console.log('Network stopped');

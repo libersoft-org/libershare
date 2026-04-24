@@ -111,7 +111,12 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		connectionEncrypters: [noise({ crypto: pureJsCrypto })],
 		streamMuxers: [yamux()],
 		connectionManager: {
-			maxConnections: 100,
+			// 300 = 2× (maxDownloadConnections=200 + maxUploadConnections=200)/2 margin.
+			// Previous 100 capped the mesh at a size that could not absorb fleets >40
+			// peers while keeping bootstrap + relay headroom. 300 provides room for
+			// ~N=150 fleet peers + their relay slots without triggering connection
+			// pruning that destabilises gossipsub mesh maintenance.
+			maxConnections: 300,
 		},
 		// No connectionProtector - swarm key removed. Open network, isolation via topics.
 		peerStore: {
@@ -133,11 +138,17 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				emitSelf: false,
 				allowPublishToZeroTopicPeers: true,
 				floodPublish: true,
-				D: 3,
-				Dlo: 2,
-				Dhi: 6,
+				// Gossipsub mesh sized for larger fleets (tens-hundreds of peers):
+				// D/Dlo/Dhi/Dlazy raised to go-libp2p defaults (D:6, Dhi:12, Dlazy:6)
+				// so each peer keeps 6-12 in mesh + gossips to 6 lazy peers — 2-hop
+				// full-fleet reach at N=50+ without flood-publish bandwidth amplification.
+				// Previous D:3/Dhi:6 was calibrated for 3-5 peer test fleet and throttled
+				// mesh growth at N>10. Dout:0 kept (asymmetric inbound bias, intentional).
+				D: 6,
+				Dlo: 4,
+				Dhi: 12,
 				Dout: 0,
-				Dlazy: 3,
+				Dlazy: 6,
 				heartbeatInterval: 1000,
 				fanoutTTL: 60000,
 				runOnLimitedConnection: true,
