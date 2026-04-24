@@ -460,7 +460,7 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 		const fileExists = await file.exists();
 		if (!fileExists) {
 			console.log(`[Verify] MISSING ${fileEntry.path} (${fileEntry.checksums.length} chunks) at ${filePath}`);
-			for (let i = 0; i < fileEntry.checksums.length; i++) dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, i);
+			dataServer.markAllFileChunksFailed(fileEntry.fileInternalID);
 			totalMissing += fileEntry.checksums.length;
 			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: 0 });
 			continue;
@@ -472,9 +472,10 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 				return;
 			}
 			const expectedChecksum = fileEntry.checksums[chunkIndex]!;
+			const chunkRowID = fileEntry.chunkRowIDs[chunkIndex]!;
 			const offset = chunkIndex * meta.chunkSize;
 			if (offset >= file.size) {
-				dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
+				dataServer.markChunkFailed(chunkRowID);
 				fileFailed++;
 				fileShort++;
 				onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
@@ -483,15 +484,15 @@ export async function runVerification(dataServer: DataServer, lishID: string, on
 			try {
 				const actualChecksum = await calculateChecksum(file, offset, meta.chunkSize, meta.checksumAlgo);
 				if (actualChecksum === expectedChecksum) {
-					dataServer.markChunkVerified(lishID, fileEntry.fileInternalID, chunkIndex);
+					dataServer.markChunkVerified(chunkRowID);
 					fileVerified++;
 					totalBytes += Math.min(meta.chunkSize, file.size - offset);
 				} else {
-					dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
+					dataServer.markChunkFailed(chunkRowID);
 					fileFailed++;
 				}
 			} catch (err: any) {
-				dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
+				dataServer.markChunkFailed(chunkRowID);
 				fileFailed++;
 			}
 			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });

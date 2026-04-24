@@ -5,6 +5,8 @@
 	import { type ILISH } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
+	import Dialog from '../../components/Dialog/Dialog.svelte';
+	import Spinner from '../../components/Spinner/Spinner.svelte';
 	interface Props {
 		lishs: ILISH[];
 		downloadPath: string;
@@ -16,6 +18,7 @@
 	let { lishs, downloadPath, position, enableSharing, enableDownloading, onDone }: Props = $props();
 	let overwriteQueue = $state<ILISH[]>([]);
 	let newLISHs = $state<ILISH[]>([]);
+	let processing = $state(true);
 	let currentOverwriteLISH = $derived(overwriteQueue.length > 0 ? overwriteQueue[0] : null);
 
 	async function processLISHs(): Promise<void> {
@@ -27,14 +30,18 @@
 			else toAdd.push(lish);
 		}
 		newLISHs = toAdd;
-		if (toConfirm.length > 0) overwriteQueue = toConfirm;
-		else await finishImport();
+		if (toConfirm.length > 0) {
+			overwriteQueue = toConfirm;
+			processing = false;
+		} else await finishImport();
 	}
 
 	async function confirmOverwrite(): Promise<void> {
 		if (currentOverwriteLISH) {
+			processing = true;
 			await api.lishs.importFromJSON(JSON.stringify(currentOverwriteLISH), downloadPath, true, enableSharing, enableDownloading);
 			overwriteQueue = overwriteQueue.slice(1);
+			processing = false;
 		}
 		if (overwriteQueue.length === 0) await finishImport();
 	}
@@ -45,6 +52,7 @@
 	}
 
 	async function finishImport(): Promise<void> {
+		processing = true;
 		for (const lish of newLISHs) {
 			await api.lishs.importFromJSON(JSON.stringify(lish), downloadPath, undefined, enableSharing, enableDownloading);
 		}
@@ -57,6 +65,28 @@
 	});
 </script>
 
-{#if currentOverwriteLISH}
+<style>
+	.loading {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 3vh;
+		padding: 2vh 4vh;
+	}
+
+	.label {
+		font-size: 2vh;
+		text-align: center;
+	}
+</style>
+
+{#if processing}
+	<Dialog title={$t('common.import')}>
+		<div class="loading">
+			<Spinner size="8vh" />
+			<div class="label">{$t('lish.import.importing')}</div>
+		</div>
+	</Dialog>
+{:else if currentOverwriteLISH}
 	<ConfirmDialog title={$t('common.import')} message={$t('lish.import.confirmOverwrite', { name: currentOverwriteLISH.name || currentOverwriteLISH.id, id: currentOverwriteLISH.id })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={skipOverwrite} />
 {/if}

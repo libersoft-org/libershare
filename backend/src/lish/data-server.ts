@@ -2,7 +2,7 @@ import { open } from 'fs/promises';
 import { join, resolve, sep } from 'path';
 import { type Database } from 'bun:sqlite';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder, CodedError, ErrorCodes } from '@shared';
-import { type MissingChunk, type VerificationProgress, type FileVerificationProgress, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, updateLISHDirectory as dbUpdateLISHDirectory, updateLISHFinalDirectory as dbUpdateLISHFinalDirectory, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, findChunkLocation, getVerificationProgress as dbGetVerificationProgress, getFileVerificationProgress as dbGetFileVerificationProgress, markChunkVerified as dbMarkChunkVerified, markChunkFailed as dbMarkChunkFailed, resetVerification as dbResetVerification, isVerified as dbIsVerified, getFilesForVerification as dbGetFilesForVerification, incrementUploadedBytes as dbIncrementUploadedBytes, incrementDownloadedBytes as dbIncrementDownloadedBytes, setLISHError as dbSetLISHError, clearLISHError as dbClearLISHError, resetFileChunks as dbResetFileChunks, getFileInternalID as dbGetFileInternalID } from '../db/lishs.ts';
+import { type MissingChunk, type VerificationProgress, type FileVerificationProgress, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, updateLISHDirectory as dbUpdateLISHDirectory, updateLISHFinalDirectory as dbUpdateLISHFinalDirectory, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, findChunkLocation, getVerificationProgress as dbGetVerificationProgress, getFileVerificationProgress as dbGetFileVerificationProgress, markChunkVerified as dbMarkChunkVerified, markChunkFailed as dbMarkChunkFailed, markAllFileChunksFailed as dbMarkAllFileChunksFailed, resetVerification as dbResetVerification, isVerified as dbIsVerified, getFilesForVerification as dbGetFilesForVerification, incrementUploadedBytes as dbIncrementUploadedBytes, incrementDownloadedBytes as dbIncrementDownloadedBytes, setLISHError as dbSetLISHError, clearLISHError as dbClearLISHError, resetFileChunks as dbResetFileChunks, getFileInternalID as dbGetFileInternalID } from '../db/lishs.ts';
 
 export type { MissingChunk };
 
@@ -106,12 +106,16 @@ export class DataServer {
 		return dbGetFileVerificationProgress(this.db, lishID);
 	}
 
-	markChunkVerified(lishID: LISHid, fileInternalID: number, chunkIndex: number): void {
-		dbMarkChunkVerified(this.db, lishID, fileInternalID, chunkIndex);
+	markChunkVerified(chunkRowID: number): void {
+		dbMarkChunkVerified(this.db, chunkRowID);
 	}
 
-	markChunkFailed(lishID: LISHid, fileInternalID: number, chunkIndex: number): void {
-		dbMarkChunkFailed(this.db, lishID, fileInternalID, chunkIndex);
+	markChunkFailed(chunkRowID: number): void {
+		dbMarkChunkFailed(this.db, chunkRowID);
+	}
+
+	markAllFileChunksFailed(fileInternalID: number): void {
+		dbMarkAllFileChunksFailed(this.db, fileInternalID);
 	}
 
 	resetVerification(lishID: LISHid): void {
@@ -122,7 +126,7 @@ export class DataServer {
 		return dbIsVerified(this.db, lishID);
 	}
 
-	getFilesForVerification(lishID: LISHid): Array<{ fileInternalID: number; path: string; checksums: string[] }> | null {
+	getFilesForVerification(lishID: LISHid): Array<{ fileInternalID: number; path: string; checksums: string[]; chunkRowIDs: number[] }> | null {
 		return dbGetFilesForVerification(this.db, lishID);
 	}
 

@@ -229,7 +229,8 @@
 			"jsonRequired": "LISH JSON is required",
 			"autoStartSharing": "Automatically start sharing after adding",
 			"autoStartDownloading": "Automatically start downloading after adding",
-			"confirmOverwrite": "The following LISH already exists:\n\nName: {name}\nID: {id}\n\nDo you want to overwrite it?"
+			"confirmOverwrite": "The following LISH already exists:\n\nName: {name}\nID: {id}\n\nDo you want to overwrite it?",
+			"importing": "Importing ..."
 		},
 		"export": {
 			"errorIDRequired": "LISH ID is required"

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import type { LISHid } from '@shared';
-import { addLISH, deleteLISH, lishExists, getLISH, getLISHMeta, getLISHDetail, listLISHSummaries, listAllStoredLISHs, isChunkDownloaded, markChunkDownloaded, isComplete, getHaveChunks, getMissingChunks, findChunkLocation, getVerificationProgress, getFileVerificationProgress, setUploadEnabled, setDownloadEnabled, getUploadEnabledLishs, getDownloadEnabledLishs, getFilesForVerification, markChunkVerified, markChunkFailed, resetVerification, isVerified } from '../../../src/db/lishs.ts';
+import { addLISH, deleteLISH, lishExists, getLISH, getLISHMeta, getLISHDetail, listLISHSummaries, listAllStoredLISHs, isChunkDownloaded, markChunkDownloaded, isComplete, getHaveChunks, getMissingChunks, findChunkLocation, getVerificationProgress, getFileVerificationProgress, setUploadEnabled, setDownloadEnabled, getUploadEnabledLishs, getDownloadEnabledLishs, getFilesForVerification, markChunkVerified, markChunkFailed, markAllFileChunksFailed, resetVerification, isVerified } from '../../../src/db/lishs.ts';
 import { TEST_LISH_ID, TEST_LISH_ID_2, TEST_CHUNK_IDS, createTestLISH, createTestDB, populateTestDB } from '../helpers/fixtures.ts';
 
 // ---------------------------------------------------------------------------
@@ -224,17 +224,37 @@ describe('markChunkFailed', () => {
 		const files = getFilesForVerification(db, TEST_LISH_ID);
 		expect(files).not.toBeNull();
 		const file0 = files![0]!;
-		markChunkFailed(db, TEST_LISH_ID, file0.fileInternalID, 0);
+		markChunkFailed(db, file0.chunkRowIDs[0]!);
 
 		expect(isChunkDownloaded(db, TEST_LISH_ID, TEST_CHUNK_IDS[0])).toBe(false);
 		expect(getMissingChunks(db, TEST_LISH_ID)).toHaveLength(3);
 	});
 
-	it('no-ops silently for out-of-range chunkIndex', () => {
+	it('no-ops silently for non-existent chunk row ID', () => {
 		populateTestDB(db);
-		const files = getFilesForVerification(db, TEST_LISH_ID);
-		const file0 = files![0]!;
-		expect(() => markChunkFailed(db, TEST_LISH_ID, file0.fileInternalID, 999)).not.toThrow();
+		expect(() => markChunkFailed(db, 999_999)).not.toThrow();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// markAllFileChunksFailed
+// ---------------------------------------------------------------------------
+
+describe('markAllFileChunksFailed', () => {
+	it('resets have=FALSE for all chunks of a single file in one call', () => {
+		populateTestDB(db);
+		markChunkDownloaded(db, TEST_LISH_ID, TEST_CHUNK_IDS[0]);
+		markChunkDownloaded(db, TEST_LISH_ID, TEST_CHUNK_IDS[1]);
+		markChunkDownloaded(db, TEST_LISH_ID, TEST_CHUNK_IDS[2]);
+		expect(getMissingChunks(db, TEST_LISH_ID)).toHaveLength(0);
+
+		const files = getFilesForVerification(db, TEST_LISH_ID)!;
+		markAllFileChunksFailed(db, files[0]!.fileInternalID);
+
+		// File 0 (2 chunks) now missing; file 1 (1 chunk) still downloaded
+		expect(isChunkDownloaded(db, TEST_LISH_ID, TEST_CHUNK_IDS[0])).toBe(false);
+		expect(isChunkDownloaded(db, TEST_LISH_ID, TEST_CHUNK_IDS[1])).toBe(false);
+		expect(isChunkDownloaded(db, TEST_LISH_ID, TEST_CHUNK_IDS[2])).toBe(true);
 	});
 });
 
@@ -405,16 +425,14 @@ describe('markChunkVerified', () => {
 		const files = getFilesForVerification(db, TEST_LISH_ID);
 		expect(files).not.toBeNull();
 		const file0 = files![0]!;
-		markChunkVerified(db, TEST_LISH_ID, file0.fileInternalID, 0);
+		markChunkVerified(db, file0.chunkRowIDs[0]!);
 		expect(isChunkDownloaded(db, TEST_LISH_ID, TEST_CHUNK_IDS[0])).toBe(true);
 		expect(getMissingChunks(db, TEST_LISH_ID)).toHaveLength(2);
 	});
 
-	it('no-ops silently for out-of-range chunkIndex', () => {
+	it('no-ops silently for non-existent chunk row ID', () => {
 		populateTestDB(db);
-		const files = getFilesForVerification(db, TEST_LISH_ID);
-		const file0 = files![0]!;
-		expect(() => markChunkVerified(db, TEST_LISH_ID, file0.fileInternalID, 999)).not.toThrow();
+		expect(() => markChunkVerified(db, 999_999)).not.toThrow();
 	});
 });
 
@@ -436,8 +454,8 @@ describe('isVerified', () => {
 		populateTestDB(db);
 		const files = getFilesForVerification(db, TEST_LISH_ID)!;
 		for (const f of files) {
-			for (let i = 0; i < f.checksums.length; i++) {
-				markChunkVerified(db, TEST_LISH_ID, f.fileInternalID, i);
+			for (const rowID of f.chunkRowIDs) {
+				markChunkVerified(db, rowID);
 			}
 		}
 		expect(isVerified(db, TEST_LISH_ID)).toBe(true);
@@ -459,14 +477,17 @@ describe('getFilesForVerification', () => {
 		expect(files).toHaveLength(2);
 	});
 
-	it('each entry includes fileInternalID, path, and checksums', () => {
+	it('each entry includes fileInternalID, path, checksums, and chunkRowIDs', () => {
 		populateTestDB(db);
 		const files = getFilesForVerification(db, TEST_LISH_ID)!;
 		expect(files[0]?.path).toBe('docs/readme.txt');
 		expect(files[0]?.checksums).toEqual([TEST_CHUNK_IDS[0], TEST_CHUNK_IDS[1]]);
 		expect(files[0]?.fileInternalID).toBeGreaterThan(0);
+		expect(files[0]?.chunkRowIDs).toHaveLength(2);
+		expect(files[0]?.chunkRowIDs[0]).toBeGreaterThan(0);
 		expect(files[1]?.path).toBe('data/archive.bin');
 		expect(files[1]?.checksums).toEqual([TEST_CHUNK_IDS[2]]);
+		expect(files[1]?.chunkRowIDs).toHaveLength(1);
 	});
 });
 

@@ -229,7 +229,8 @@
 			"jsonRequired": "LISH JSON je povinný",
 			"autoStartSharing": "Automaticky spustit sdílení po přidání",
 			"autoStartDownloading": "Automaticky spustit stahování po přidání",
-			"confirmOverwrite": "Následující LISH již existuje:\n\nJméno: {name}\nID: {id}\n\nChcete jej přepsat?"
+			"confirmOverwrite": "Následující LISH již existuje:\n\nJméno: {name}\nID: {id}\n\nChcete jej přepsat?",
+			"importing": "Importuji ..."
 		},
 		"export": {
 			"errorIDRequired": "LISH ID je povinné"

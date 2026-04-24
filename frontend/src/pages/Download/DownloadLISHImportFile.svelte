@@ -6,7 +6,7 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb, navigateBack } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, autoStartSharing, autoStartDownloading } from '../../scripts/settings.ts';
+	import { storagePath, storageLISHPath, autoStartSharing, autoStartDownloading } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
@@ -19,6 +19,8 @@
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	import ImportOverwrite from './DownloadLISHImportOverwrite.svelte';
+	import Dialog from '../../components/Dialog/Dialog.svelte';
+	import Spinner from '../../components/Spinner/Spinner.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -37,6 +39,7 @@
 	let browsingFilePath = $state(false);
 	let browsingDownloadPath = $state(false);
 	let parsedLISHs = $state<ILISH[] | null>(null);
+	let importing = $state(false);
 
 	function openFilePicker(): void {
 		fileInput?.click();
@@ -80,9 +83,12 @@
 			return;
 		}
 		try {
+			importing = true;
 			parsedLISHs = uploadMode ? await api.lishs.parseFromJSON(uploadContent) : await api.lishs.parseFromFile(filePath);
 		} catch (e) {
 			errorMessage = translateError(e);
+		} finally {
+			importing = false;
 		}
 	}
 
@@ -162,12 +168,25 @@
 	.file-input {
 		display: none;
 	}
+
+	.loading {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 3vh;
+		padding: 2vh 4vh;
+	}
+
+	.loading-label {
+		font-size: 2vh;
+		text-align: center;
+	}
 </style>
 
 {#if parsedLISHs}
 	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} onDone={handleOverwriteDone} />
 {:else if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storagePath} showPath fileFilter={['*.lish', '*.lishs', '*.json', '*.lish.gz', '*.lishs.gz', '*.json.gz', '*.lish.gzip', '*.lishs.gzip', '*.json.gzip']} fileFilterName={'LISH ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={filePath || $storageLISHPath} showPath fileFilter={['*.lish', '*.lishs', '*.json', '*.lish.gz', '*.lishs.gz', '*.json.gz', '*.lish.gzip', '*.lishs.gzip', '*.json.gzip']} fileFilterName={'LISH ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else if browsingDownloadPath}
 	<FileBrowser {areaID} {position} initialPath={downloadPath} directoriesOnly showPath selectDirectoryButton onSelect={handleDownloadPathSelect} onBack={handleBrowseBack} />
 {:else}
@@ -198,4 +217,12 @@
 			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 3]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
+	{#if importing}
+		<Dialog title={$t('common.import')}>
+			<div class="loading">
+				<Spinner size="8vh" />
+				<div class="loading-label">{$t('lish.import.importing')}</div>
+			</div>
+		</Dialog>
+	{/if}
 {/if}
