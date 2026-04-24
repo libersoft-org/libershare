@@ -218,6 +218,7 @@
 			"uploadFromLocal": "Upload from local computer",
 			"localFile": "Local file",
 			"noFileSelected": "No file selected",
+			"selectLocalFile": "Select local file",
 			"uploadRequired": "Please select a file to upload",
 			"filePath": "LISH file",
 			"url": "URL address of LISH file",

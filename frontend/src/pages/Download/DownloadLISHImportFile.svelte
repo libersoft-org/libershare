@@ -28,7 +28,7 @@
 	let { areaID, position = CONTENT_POSITIONS.main, onBack, onImport }: Props = $props();
 	let removeBackHandler: (() => void) | null = null;
 	let filePath = $state('');
-	let uploadMode = $state(!$localFilesystem);
+	let uploadMode = $state(false);
 	let uploadFileName = $state('');
 	let uploadContent = $state('');
 	let fileInput = $state<HTMLInputElement>();
@@ -178,10 +178,7 @@
 				<SwitchRow label={$t('lish.import.uploadFromLocal')} checked={uploadMode} position={[0, 0]} onToggle={() => (uploadMode = !uploadMode)} />
 			{/if}
 			{#if uploadMode}
-				<div class="row">
-					<Input value={uploadFileName || $t('lish.import.noFileSelected')} label={$t('lish.import.localFile')} position={[0, 1]} flex disabled />
-					<Button icon="/img/upload.svg" position={[1, 1]} onConfirm={openFilePicker} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
-				</div>
+				<Button icon="/img/upload.svg" label={uploadFileName || $t('lish.import.selectLocalFile')} position={[0, 1]} onConfirm={openFilePicker} width="100%" />
 			{:else}
 				<div class="row">
 					<Input bind:value={filePath} label={$t('lish.import.filePath')} position={[0, 1]} flex />

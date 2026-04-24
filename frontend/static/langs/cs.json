@@ -218,6 +218,7 @@
 			"uploadFromLocal": "Nahrát z lokálního počítače",
 			"localFile": "Lokální soubor",
 			"noFileSelected": "Žádný soubor nevybrán",
+			"selectLocalFile": "Vybrat lokální soubor",
 			"uploadRequired": "Vyberte soubor k nahrání",
 			"filePath": "LISH soubor",
 			"url": "URL adresa LISH souboru",
