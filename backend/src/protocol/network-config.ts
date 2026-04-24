@@ -212,10 +212,15 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 						return isTrustedPXPeer ? 1000 : 0;
 					},
 					// Sybil protection: penalize many peers from same IP.
-					// Threshold 10 tolerates home NAT / hosting colocation; above that,
-					// each extra peer from same IP accrues quadratic penalty.
+					// Threshold raised from 10→50 to tolerate trusted-fleet NAT topology
+					// (observed 2026-04-24 on <redacted-bootstrap>: 15 <redacted-test-containers> + <redacted-arm-peer> + <redacted-test-container> all
+					// routed through one <redacted-operator> NAT <redacted-public-ip> produced peers_from_same_ip=18,
+					// which at threshold=10 gave P6 score = -5×(18-10)² = -320 — graylisting
+					// half the fleet and cutting gossipsub mesh from ~12 peers down to 2).
+					// 50 still catches abusive single-IP floods in public networks but
+					// accepts NAT collocation typical in datacentres and home fleets.
 					IPColocationFactorWeight: -5,
-					IPColocationFactorThreshold: 10,
+					IPColocationFactorThreshold: 50,
 					// Behavior penalty (P7): anti-flood against GRAFT backoff abuse.
 					// Tuned for fleet warmup: when a bootstrap hub restarts and 20+ peers
 					// reconnect simultaneously, gossipsub PRUNEs the overflow (Dhi=12) and
