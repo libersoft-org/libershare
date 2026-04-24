@@ -266,6 +266,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2vh;
+		width: 100%;
 	}
 
 	.network .header {
@@ -334,11 +335,11 @@
 	<div class="lish-network-list">
 		<div class="container">
 			<ButtonBar>
-				<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} />
-				<Button icon="/img/online.svg" label={$t('settings.lishNetwork.publicList')} position={[1, 0]} onConfirm={openPublic} />
-				<Button icon="/img/plus.svg" label={$t('common.add')} position={[2, 0]} onConfirm={openAddNetwork} />
-				<Button icon="/img/import.svg" label={$t('common.import')} position={[3, 0]} onConfirm={openImport} />
-				<Button icon="/img/export.svg" label={$t('common.exportAll')} position={[4, 0]} onConfirm={openExportAll} />
+				<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/online.svg" label={$t('settings.lishNetwork.publicList')} position={[1, 0]} onConfirm={openPublic} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/plus.svg" label={$t('common.add')} position={[2, 0]} onConfirm={openAddNetwork} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/import.svg" label={$t('common.import')} position={[3, 0]} onConfirm={openImport} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/export.svg" label={$t('common.exportAll')} position={[4, 0]} onConfirm={openExportAll} padding="1vh 1.5vh" fontSize="1.6vh" />
 			</ButtonBar>
 			{#if globalNodeInfo}
 				<NodeInfoRow nodeInfo={globalNodeInfo} rowY={1} />
@@ -367,9 +368,9 @@
 							{/if}
 							<div class="buttons">
 								<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} position={[0, rowY]} onConfirm={() => connectNetwork(network)} />
-							<Button icon="/img/export.svg" label={$t('common.export')} position={[1, rowY]} onConfirm={() => openExport(network)} />
-							<Button icon="/img/edit.svg" label={$t('common.edit')} position={[2, rowY]} onConfirm={() => openEditNetwork(network)} />
-							<Button icon="/img/del.svg" label={$t('common.delete')} position={[3, rowY]} onConfirm={() => deleteNetwork(network)} />
+								<Button icon="/img/export.svg" label={$t('common.export')} position={[1, rowY]} onConfirm={() => openExport(network)} />
+								<Button icon="/img/edit.svg" label={$t('common.edit')} position={[2, rowY]} onConfirm={() => openEditNetwork(network)} />
+								<Button icon="/img/del.svg" label={$t('common.delete')} position={[3, rowY]} onConfirm={() => deleteNetwork(network)} />
 								{#if i > 0}
 									<Button icon="/img/up.svg" position={[4, rowY]} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
 								{/if}

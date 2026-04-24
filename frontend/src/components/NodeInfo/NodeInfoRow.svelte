@@ -28,6 +28,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1.5vh;
+		width: 100%;
 	}
 
 	.node-info .peer-id {
