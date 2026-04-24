@@ -22,6 +22,7 @@ import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
 import { trace } from '../logger.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
+import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 export interface BuildConfigParams {
 	privateKey: PrivateKey;
@@ -117,6 +118,36 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			// ~N=150 fleet peers + their relay slots without triggering connection
 			// pruning that destabilises gossipsub mesh maintenance.
 			maxConnections: 300,
+		},
+		// Deny dial attempts to multiaddrs that cannot possibly succeed from this
+		// node's own interfaces. Peers advertise every known multiaddr (via
+		// identify), so a public-IP node ends up with dozens of LAN addresses like
+		// <redacted-lan-ip> in its peerStore. Without this gater, every re-dial cycle
+		// spawned 5s-timeout dials against all of them — pure waste.
+		// Rules in address-filter.ts:
+		//   DNS / p2p-circuit        → allow (no IPv4 yet, let libp2p resolve)
+		//   127.x                    → deny (loopback useless for remote peer)
+		//   public IPv4              → allow
+		//   RFC1918 / LL / CGNAT     → allow iff IP falls inside one of our own
+		//                              live-enumerated interface CIDRs.
+		// VPN up/down is picked up within 10 s via the CIDR cache TTL.
+		connectionGater: {
+			denyDialMultiaddr: async (ma: any): Promise<boolean> => {
+				const deny = shouldDenyDial(ma, getLocalCidrs());
+				if (deny) {
+					// Bounded debug sample so denied-dial flood does not overwhelm logs.
+					const dbg = ((globalThis as any).__libershareDenyDialDbg ??= new Set<string>());
+					if (dbg.size < 50) {
+						const ip = extractFirstIPv4(ma) ?? '?';
+						const addr = ma?.toString?.() ?? String(ma);
+						if (!dbg.has(addr)) {
+							dbg.add(addr);
+							trace(`[NET] denyDial ip=${ip} ma=${addr.slice(0, 120)}`);
+						}
+					}
+				}
+				return deny;
+			},
 		},
 		// No connectionProtector - swarm key removed. Open network, isolation via topics.
 		peerStore: {
