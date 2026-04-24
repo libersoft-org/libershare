@@ -275,8 +275,8 @@
 			"maxUploadSpeed": "Maximum upload speed in KB/s (0 = unlimited)",
 			"allowRelay": "Enable relay server (relay data for other peers)",
 			"maxRelayReservations": "Maximum number of connections to relay server (0 = unlimited)",
-			"autoStartSharingDefault": "Automatically start sharing after adding a LISH (default value)",
-			"autoStartDownloadingDefault": "Automatically start downloading after adding a LISH (default value)",
+			"autoStartSharingDefault": "Automatically start sharing after adding a LISH",
+			"autoStartDownloadingDefault": "Automatically start downloading after adding a LISH",
 			"autoErrorRecovery": "Automatic error recovery"
 		},
 		"lishNetwork": {
