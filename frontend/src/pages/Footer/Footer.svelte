@@ -15,6 +15,7 @@
 	import { formatSize } from '../../scripts/utils.ts';
 	import { transferStats } from '../../scripts/downloads.ts';
 	import { relayStats } from '../../scripts/relayStats.ts';
+	import { networkSummary } from '../../scripts/networks.ts';
 
 	type Widget = {
 		id: FooterWidget;
@@ -110,9 +111,9 @@
 			component: LISHStatus,
 			props() {
 				return {
-					networkName: 'Main Network',
-					lishConnected: false,
-					vpnConnected: null,
+					connectedNetworks: $networkSummary.connectedNetworks,
+					totalNetworks: $networkSummary.totalNetworks,
+					totalPeers: $networkSummary.totalPeers,
 				};
 			},
 		},
