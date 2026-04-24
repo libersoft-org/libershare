@@ -169,6 +169,18 @@ export function setMaxUploadSpeed(kbPerSec: number): void {
 	uploadLimiter.setLimit(kbPerSec);
 }
 
+/**
+ * Global per-LISH upload peer cap. 0 = unlimited. Enforced on the first chunk
+ * request for a given LISH on a stream — if already at cap, the request is
+ * rejected with PEER_BUSY (transient; client retries later via its own
+ * peer-discovery cycle).
+ */
+let maxUploadPeersPerLISH = 30;
+
+export function setMaxUploadPeersPerLISH(n: number): void {
+	maxUploadPeersPerLISH = Math.max(0, Math.floor(n));
+}
+
 type BroadcastFn = (event: string, data: any) => void;
 let broadcastFn: BroadcastFn | null = null;
 // Per-LISH upload tracking
@@ -190,6 +202,7 @@ export function resetUploadState(): void {
 	uploadEnabled.clear();
 	uploadLimiter.setLimit(0);
 	uploadLimiter.reset();
+	maxUploadPeersPerLISH = 30;
 	broadcastFn = null;
 }
 
@@ -316,6 +329,13 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					// Transient — client should retry later.
 					const blockedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_BUSY };
 					sendLengthPrefixed(stream, codecEncode(blockedResponse));
+					continue;
+				}
+				// Per-LISH upload peer cap — check BEFORE the disk read so a cap-reached stream
+				// doesn't fan out into expensive I/O. Transient PEER_BUSY so the remote retries later.
+				if (!servedLishIDs.has(chunkReq.lishID) && maxUploadPeersPerLISH > 0 && (activeStreamCount.get(chunkReq.lishID) ?? 0) >= maxUploadPeersPerLISH) {
+					const busyResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_BUSY };
+					sendLengthPrefixed(stream, codecEncode(busyResponse));
 					continue;
 				}
 				const chunkResult = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);

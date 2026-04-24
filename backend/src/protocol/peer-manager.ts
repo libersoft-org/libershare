@@ -14,6 +14,17 @@ export interface PeerManagerCallbacks {
 }
 
 /**
+ * Global per-LISH download peer cap. 0 = unlimited. Applied per PeerManager
+ * instance (one manager per Downloader = one per LISH). Enforced in tryAdd()
+ * and queryable via hasCapacity() so callers can skip expensive dials.
+ */
+let maxDownloadPeersPerLISH = 30;
+
+export function setMaxDownloadPeersPerLISH(n: number): void {
+	maxDownloadPeersPerLISH = Math.max(0, Math.floor(n));
+}
+
+/**
  * Central owner of peer-related state for a single download session.
  *
  * Invariants (maintained by atomic methods on this class):
@@ -87,6 +98,15 @@ export class PeerManager {
 		return !this.peers.has(peerID) && !this.bannedPeers.has(peerID) && !this.droppedPeers.has(peerID);
 	}
 
+	/**
+	 * True if we can accept another peer under the per-LISH cap.
+	 * Callers check this before dialing to avoid wasted network round-trips.
+	 * tryAdd() re-checks atomically — this is just an advisory gate.
+	 */
+	hasCapacity(): boolean {
+		return maxDownloadPeersPerLISH === 0 || this.peers.size < maxDownloadPeersPerLISH;
+	}
+
 	// ============ Adding / removing peers ============
 
 	/**
@@ -98,6 +118,7 @@ export class PeerManager {
 	 */
 	tryAdd(peerID: NodeID, client: LISHClient, connectionType: ConnectionType, havePercent?: number): boolean {
 		if (this.peers.has(peerID)) return false;
+		if (maxDownloadPeersPerLISH > 0 && this.peers.size >= maxDownloadPeersPerLISH) return false;
 		this.peers.set(peerID, client);
 		if (this.lishID) {
 			if (havePercent !== undefined) registerDownloadPeer(this.lishID, peerID, connectionType, havePercent);

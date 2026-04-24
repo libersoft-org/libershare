@@ -25,8 +25,8 @@ export interface SettingsData {
 	};
 	network: {
 		incomingPort: number;
-		maxDownloadConnections: number;
-		maxUploadConnections: number;
+		maxDownloadPeersPerLISH: number;
+		maxUploadPeersPerLISH: number;
 		maxDownloadSpeed: number;
 		maxUploadSpeed: number;
 		allowRelay: boolean;
@@ -89,8 +89,8 @@ const DEFAULT_SETTINGS: SettingsData = {
 	},
 	network: {
 		incomingPort: 9090,
-		maxDownloadConnections: 200,
-		maxUploadConnections: 200,
+		maxDownloadPeersPerLISH: 30,
+		maxUploadPeersPerLISH: 30,
 		maxDownloadSpeed: 0,
 		maxUploadSpeed: 0,
 		allowRelay: true,
