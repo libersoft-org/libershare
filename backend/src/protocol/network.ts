@@ -15,6 +15,7 @@ import { isBusy } from '../api/busy.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX, normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
+import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { CodedError, ErrorCodes } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
@@ -678,6 +679,8 @@ export class Network {
 				// that drops comes back quickly without needing connectedPeers.length===0.
 				const candidates: Array<{ peer: any; pid: string; addrSummary: string; failCount: number }> = [];
 				let skippedBackoff = 0;
+				let skippedNoReachable = 0;
+				const localCidrs = getLocalCidrs(now);
 				for (const peer of allPeers) {
 					const pid = peer.id.toString();
 					if (connectedSet.has(pid)) {
@@ -689,9 +692,22 @@ export class Network {
 						skippedBackoff++;
 						continue;
 					}
-					const addrList = (peer.addresses ?? []).map((a: any) => a?.multiaddr?.toString?.() ?? String(a)).filter(Boolean);
-					const addrSummary = addrList.length > 0 ? addrList.join(' | ') : '(no known addrs)';
-					candidates.push({ peer, pid, addrSummary, failCount: bo?.failCount ?? 0 });
+					// Pre-filter peerStore multiaddrs through the dial gater. If every
+					// known address is unreachable from this node (e.g. only LAN addrs
+					// of a foreign subnet), skip the dial entirely — otherwise libp2p
+					// returns "no valid addresses" after still spending a slot on us.
+					const entries = peer.addresses ?? [];
+					const reachable: string[] = [];
+					for (const a of entries) {
+						const ma = a?.multiaddr;
+						if (!ma) continue;
+						if (!shouldDenyDial(ma, localCidrs)) reachable.push(ma.toString());
+					}
+					if (reachable.length === 0) {
+						skippedNoReachable++;
+						continue;
+					}
+					candidates.push({ peer, pid, addrSummary: reachable.join(' | '), failCount: bo?.failCount ?? 0 });
 				}
 				// Parallel dial with concurrency=10 via rolling promise pool; caps worst-case
 				// tick latency at ~5s × ceil(N/10) instead of 5s × N for pre-throttle code.
@@ -726,8 +742,8 @@ export class Network {
 				};
 				const workers = Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, () => worker());
 				await Promise.all(workers);
-				if (candidates.length > 0 || skippedBackoff > 0) {
-					console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff)`);
+				if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0) {
+					console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs)`);
 				}
 				// Prune backoff entries for peers that are no longer in peerStore to prevent unbounded growth.
 				const storeSet = new Set(allPeers.map(p => p.id.toString()));
