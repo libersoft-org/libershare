@@ -55,11 +55,11 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// discoverRelays actively negotiates a reservation with the first N
 	// relay-capable peers identified via peer:identify, instead of waiting
 	// passively for /p2p-circuit multiaddrs to be announced. Without this,
-	// NAT'd nodes (<redacted-arm-peer>, local, docker behind NAT) never get reservations
-	// and are unreachable from siblings that only know their private IPs.
-	// discoverRelays should match maxRelays (/p2p-circuit slots, below) so we
-	// advertise as many reserved relay paths as we listen for. With 2 we'd
-	// saturate on <redacted-bootstrap>+<redacted-bootstrap> only; with 5 we can include siblings as relays
+	// NAT'd nodes never get reservations and are unreachable from siblings
+	// that only know their private IPs. discoverRelays should match maxRelays
+	// (/p2p-circuit slots, below) so we advertise as many reserved relay
+	// paths as we listen for. With only the two bootstrap peers as relays,
+	// NAT'd nodes saturate on them; raising this lets siblings act as relays
 	// too, giving NAT'd nodes multiple paths to reach each other.
 	transports.push(circuitRelayTransport({ discoverRelays: 5 } as any));
 	console.log(`✓ Circuit relay client enabled (discoverRelays: 5)`);
@@ -67,8 +67,9 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	const port = allSettings.network?.incomingPort || 0;
 	const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
 	// Each /p2p-circuit slot accumulates Multiaddr objects from periodic relay
-	// reservation refresh; 10 slots caused ~117k Multiaddr instances on <redacted-arm-peer>
-	// (heap snapshot 2026-04-18). 5 keeps redundancy without the leak amplifier.
+	// reservation refresh; 10 slots were observed to produce ~117k Multiaddr
+	// instances on a long-running node (heap snapshot captured during leak
+	// investigation). 5 keeps redundancy without the leak amplifier.
 	const maxRelays = 5;
 	for (let i = 0; i < maxRelays; i++) listenAddresses.push('/p2p-circuit');
 	console.log(`✓ Configured to reserve ${maxRelays} relay slots`);
@@ -121,8 +122,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		},
 		// Deny dial attempts to multiaddrs that cannot possibly succeed from this
 		// node's own interfaces. Peers advertise every known multiaddr (via
-		// identify), so a public-IP node ends up with dozens of LAN addresses like
-		// <redacted-lan-ip> in its peerStore. Without this gater, every re-dial cycle
+		// identify), so a public-IP node ends up with dozens of private-range
+		// LAN addresses in its peerStore. Without this gater, every re-dial cycle
 		// spawned 5s-timeout dials against all of them — pure waste.
 		// Rules in address-filter.ts:
 		//   DNS / p2p-circuit        → allow (no IPv4 yet, let libp2p resolve)
@@ -212,11 +213,10 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 						return isTrustedPXPeer ? 1000 : 0;
 					},
 					// Sybil protection: penalize many peers from same IP.
-					// Threshold raised from 10→50 to tolerate trusted-fleet NAT topology
-					// (observed 2026-04-24 on <redacted-bootstrap>: 15 <redacted-test-containers> + <redacted-arm-peer> + <redacted-test-container> all
-					// routed through one <redacted-operator> NAT <redacted-public-ip> produced peers_from_same_ip=18,
-					// which at threshold=10 gave P6 score = -5×(18-10)² = -320 — graylisting
-					// half the fleet and cutting gossipsub mesh from ~12 peers down to 2).
+					// Threshold raised from 10→50 to tolerate trusted-fleet NAT topology:
+					// when 15+ nodes share one public IP via NAT, P6 at threshold=10 was
+					// observed to produce score = -5×(peers-10)² ≈ -320 for each peer,
+					// graylisting the mesh and cutting pubsub mesh density drastically.
 					// 50 still catches abusive single-IP floods in public networks but
 					// accepts NAT collocation typical in datacentres and home fleets.
 					IPColocationFactorWeight: -5,

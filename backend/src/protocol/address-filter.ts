@@ -3,10 +3,10 @@
  * target IP cannot possibly be reached from this node's local interfaces.
  *
  * Problem: peers advertise every multiaddr they know (via libp2p identify),
- * including LAN addresses like <redacted-lan-ip> that are only reachable from
- * peers on the same L2 segment. A public-IP node receiving those addresses
- * will dutifully try to dial them, consuming 5s per timeout × many addresses
- * per peer × many peers = minutes wasted per re-dial cycle.
+ * including private-range LAN addresses that are only reachable from peers
+ * on the same L2 segment. A public-IP node receiving those addresses will
+ * dutifully try to dial them, consuming 5s per timeout × many addresses per
+ * peer × many peers = minutes wasted per re-dial cycle.
  *
  * Strategy: on every dial, look at the first /ip4/ component. If it is:
  *   - not present (DNS, pure p2p-circuit, etc.) → allow (no IP knowledge)

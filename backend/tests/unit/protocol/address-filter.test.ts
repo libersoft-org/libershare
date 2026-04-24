@@ -31,22 +31,22 @@ describe('ipInCIDR', () => {
 		expect(ipInCIDR('10.0.0.2', '10.0.0.1/32')).toBe(false);
 	});
 	it('matches /24', () => {
-		expect(ipInCIDR('<redacted-lan-ip>', '<redacted-lan-ip>/24')).toBe(true);
-		expect(ipInCIDR('<redacted-lan-ip>', '<redacted-lan-ip>/24')).toBe(true);
-		expect(ipInCIDR('192.168.4.1', '<redacted-lan-ip>/24')).toBe(false);
+		expect(ipInCIDR('192.168.99.28', '192.168.99.0/24')).toBe(true);
+		expect(ipInCIDR('192.168.99.255', '192.168.99.0/24')).toBe(true);
+		expect(ipInCIDR('192.168.100.1', '192.168.99.0/24')).toBe(false);
 	});
 	it('matches /16', () => {
 		expect(ipInCIDR('192.168.99.1', '192.168.0.0/16')).toBe(true);
 		expect(ipInCIDR('192.169.0.1', '192.168.0.0/16')).toBe(false);
 	});
 	it('matches /23 (spans two /24s)', () => {
-		expect(ipInCIDR('<redacted-lan-ip>', '<redacted-lan-ip>/23')).toBe(true);
-		expect(ipInCIDR('<redacted-lan-ip>', '<redacted-lan-ip>/23')).toBe(true);
-		expect(ipInCIDR('192.168.4.1', '<redacted-lan-ip>/23')).toBe(false);
+		expect(ipInCIDR('192.168.98.1', '192.168.98.0/23')).toBe(true);
+		expect(ipInCIDR('192.168.99.1', '192.168.98.0/23')).toBe(true);
+		expect(ipInCIDR('192.168.100.1', '192.168.98.0/23')).toBe(false);
 	});
 	it('accepts host-address form (CIDR with host bits set)', () => {
-		// PVE adds the CIDR as "<redacted-lan-ip>/23" where 22 is host within the /23 net.
-		expect(ipInCIDR('<redacted-lan-ip>', '<redacted-lan-ip>/23')).toBe(true);
+		// PVE adds the CIDR as "192.168.99.22/23" where 22 is host within the /23 net.
+		expect(ipInCIDR('192.168.99.28', '192.168.99.22/23')).toBe(true);
 	});
 	it('handles /0 (everything)', () => {
 		expect(ipInCIDR('8.8.8.8', '0.0.0.0/0')).toBe(true);
@@ -89,7 +89,7 @@ describe('isPrivate', () => {
 	});
 	it('returns false for public', () => {
 		expect(isPrivate('8.8.8.8')).toBe(false);
-		expect(isPrivate('<redacted-public-ip>')).toBe(false);
+		expect(isPrivate('203.0.113.10')).toBe(false);
 	});
 });
 
@@ -97,12 +97,12 @@ describe('isPublic', () => {
 	it('accepts globally routable IPv4', () => {
 		expect(isPublic('8.8.8.8')).toBe(true);
 		expect(isPublic('1.1.1.1')).toBe(true);
-		expect(isPublic('<redacted-public-ip>')).toBe(true); // <redacted-bootstrap>
-		expect(isPublic('<redacted-public-ip>')).toBe(true); // <redacted-operator> NAT
-		expect(isPublic('<redacted-public-ip>')).toBe(true); // <redacted-fleet-peer>
+		expect(isPublic('203.0.113.10')).toBe(true);
+		expect(isPublic('198.51.100.1')).toBe(true);
+		expect(isPublic('203.0.113.20')).toBe(true);
 	});
 	it('rejects private / loopback / multicast / zero', () => {
-		expect(isPublic('<redacted-lan-ip>')).toBe(false);
+		expect(isPublic('192.168.99.28')).toBe(false);
 		expect(isPublic('<redacted-vpn-ip>')).toBe(false);
 		expect(isPublic('127.0.0.1')).toBe(false);
 		expect(isPublic('0.0.0.0')).toBe(false);
@@ -115,16 +115,16 @@ describe('extractFirstIPv4', () => {
 	it('extracts from getComponents() code 4 entries', () => {
 		const ma = {
 			getComponents: () => [
-				{ code: 4, value: '<redacted-public-ip>' },
+				{ code: 4, value: '203.0.113.10' },
 				{ code: 6, value: 9090 },
 			],
 		};
-		expect(extractFirstIPv4(ma)).toBe('<redacted-public-ip>');
+		expect(extractFirstIPv4(ma)).toBe('203.0.113.10');
 	});
 	it('returns null if no IPv4 component (DNS multiaddr)', () => {
 		const ma = {
 			getComponents: () => [
-				{ code: 54, value: '<redacted-bootstrap-hostname>' },
+				{ code: 54, value: 'bootstrap.example.test' },
 				{ code: 6, value: 9090 },
 			],
 		};
@@ -135,8 +135,8 @@ describe('extractFirstIPv4', () => {
 		expect(extractFirstIPv4(null)).toBe(null);
 	});
 	it('falls back to nodeAddress()', () => {
-		const ma = { nodeAddress: () => ({ family: 4, address: '<redacted-lan-ip>', port: 9090 }) };
-		expect(extractFirstIPv4(ma)).toBe('<redacted-lan-ip>');
+		const ma = { nodeAddress: () => ({ family: 4, address: '192.168.99.11', port: 9090 }) };
+		expect(extractFirstIPv4(ma)).toBe('192.168.99.11');
 	});
 });
 
@@ -151,9 +151,9 @@ function mkMA(ip: string | null): any {
 }
 
 describe('shouldDenyDial', () => {
-	const lanOnly = ['<redacted-lan-ip>/23']; // we live on LAN 3.x only
-	const publicOnly = ['<redacted-public-ip>/32']; // we live on public IP only (like <redacted-bootstrap>)
-	const mixed = ['<redacted-public-ip>/32', '<redacted-lan-ip>/23', '<redacted-vpn-ip>/24'];
+	const lanOnly = ['192.168.99.22/23']; // node lives on a private /23 LAN only
+	const publicOnly = ['203.0.113.10/32']; // node has only a single public IP
+	const mixed = ['203.0.113.10/32', '<redacted-lan-ip>/23', '<redacted-vpn-ip>/24'];
 
 	it('allows any multiaddr without IPv4 (DNS, circuit-relay)', () => {
 		expect(shouldDenyDial(mkMA(null), publicOnly)).toBe(false);
@@ -165,26 +165,26 @@ describe('shouldDenyDial', () => {
 	});
 
 	it('allows any public IPv4 regardless of local interfaces', () => {
-		expect(shouldDenyDial(mkMA('<redacted-public-ip>'), lanOnly)).toBe(false);
+		expect(shouldDenyDial(mkMA('203.0.113.10'), lanOnly)).toBe(false);
 		expect(shouldDenyDial(mkMA('8.8.8.8'), publicOnly)).toBe(false);
-		expect(shouldDenyDial(mkMA('<redacted-public-ip>'), [])).toBe(false);
+		expect(shouldDenyDial(mkMA('203.0.113.20'), [])).toBe(false);
 	});
 
-	it('denies LAN multiaddr when I have only a public interface (<redacted-bootstrap> case)', () => {
-		// <redacted-bootstrap> has only <redacted-public-ip>/32. A peer advertised <redacted-lan-ip> → deny.
-		expect(shouldDenyDial(mkMA('<redacted-lan-ip>'), publicOnly)).toBe(true);
+	it('denies LAN multiaddr when the node has only a public interface', () => {
+		// A public-only node has no LAN interface → deny any private-range multiaddr.
+		expect(shouldDenyDial(mkMA('192.168.99.28'), publicOnly)).toBe(true);
 		expect(shouldDenyDial(mkMA('10.0.0.5'), publicOnly)).toBe(true);
 	});
 
-	it('allows LAN multiaddr when I share the same subnet (LXC peers on <redacted-lan-range>)', () => {
-		// LXC 120 (<redacted-lan-ip>) filtering LXC 121 (<redacted-lan-ip>) — same /23
-		expect(shouldDenyDial(mkMA('<redacted-lan-ip>'), lanOnly)).toBe(false);
-		expect(shouldDenyDial(mkMA('<redacted-lan-ip>'), lanOnly)).toBe(false); // also in /23
+	it('allows LAN multiaddr when the node shares the same subnet', () => {
+		// Both nodes on 192.168.99.0/23 — LAN peer is directly reachable.
+		expect(shouldDenyDial(mkMA('192.168.99.28'), lanOnly)).toBe(false);
+		expect(shouldDenyDial(mkMA('192.168.98.5'), lanOnly)).toBe(false); // also in /23
 	});
 
 	it('denies LAN multiaddr from DIFFERENT private subnet even if I have LAN interfaces', () => {
-		// I have 192.168.22.x; peer has <redacted-lan-ip> → deny (different /23)
-		expect(shouldDenyDial(mkMA('<redacted-lan-ip>'), ['<redacted-lan-ip>/23'])).toBe(true);
+		// I have 192.168.22.x; peer has 192.168.99.28 → deny (different /23)
+		expect(shouldDenyDial(mkMA('192.168.99.28'), ['<redacted-lan-ip>/23'])).toBe(true);
 	});
 
 	it('allows VPN LAN when I share the VPN subnet', () => {

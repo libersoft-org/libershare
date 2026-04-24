@@ -45,8 +45,8 @@ const WANT_RESPONSE_CLEANUP_INTERVAL_MS = 5 * 60_000;
  * still broadcast HAVE announcements and catalog inventories on the same topic and
  * those can reach tens of KB for nodes with large libraries. A too-small cap silently
  * dropped those messages so peer presence info never reached topic handlers (observed
- * 46167B payloads from <redacted-public-ip>). 256 KiB fits realistic HAVE/catalog frames while
- * still bounding the damage a malicious publisher can do per message.
+ * ~46 KB payloads from peers with large catalogs). 256 KiB fits realistic HAVE/catalog
+ * frames while still bounding the damage a malicious publisher can do per message.
  */
 const MAX_PUBSUB_PAYLOAD_BYTES = 256 * 1024;
 
@@ -508,8 +508,8 @@ export class Network {
 		this.addListener(this.node!, 'relay:removed', (evt: any) => {
 			console.log(`[NET] ⚠️  Relay removed: ${evt.detail?.relay?.toString?.() ?? 'unknown'}`);
 		});
-		// Surface reservation failures — silent failures are why <redacted-arm-peer>/local/<redacted-test-container> can't
-		// be reached by NAT'd siblings (no /p2p-circuit announceable without reservation).
+		// Surface reservation failures — silent failures are why NAT'd peers can't
+		// be reached by siblings (no /p2p-circuit announceable without reservation).
 		this.addListener(this.node!, 'relay:reservation:failed' as any, (evt: any) => {
 			console.log(`[NET] ❌ Relay reservation FAILED: ${evt.detail?.relay?.toString?.() ?? 'unknown'} err=${evt.detail?.error?.message ?? ''}`);
 		});
