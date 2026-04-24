@@ -835,7 +835,15 @@ export class Network {
 				firstMessageDeliveriesCap: 100,
 				meshMessageDeliveriesWeight: 0,
 				meshFailurePenaltyWeight: 0,
-				invalidMessageDeliveriesWeight: -20,
+				// invalidMessageDeliveriesWeight tuned from -20 → -5 to match go-libp2p
+				// defaults and tolerate warmup noise. Observed fleet regression (2026-04-24):
+				// with -20 × topicWeight=0.5, a single counter of ~5.6 produced score=-320,
+				// graylisting half the fleet after every coordinated restart. Invalid msgs
+				// during warmup are frequently caused by signature races at peer:connect
+				// (stale gossipsub peer keys as fresh IDs propagate), not by malicious
+				// publishers — the severe penalty is inappropriate for trusted-fleet setups.
+				// -5 keeps it 5× stronger than go-libp2p default while halving peak penalty.
+				invalidMessageDeliveriesWeight: -5,
 				invalidMessageDeliveriesDecay: 0.9,
 			};
 			console.log(`[NET] gossipsub score registered for ${topic}`);
