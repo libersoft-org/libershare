@@ -185,10 +185,20 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 					// each extra peer from same IP accrues quadratic penalty.
 					IPColocationFactorWeight: -5,
 					IPColocationFactorThreshold: 10,
-					// Behavior penalty (P7): default anti-flood against GRAFT backoff abuse.
-					behaviourPenaltyWeight: -10,
-					behaviourPenaltyDecay: 0.999,
-					behaviourPenaltyThreshold: 0,
+					// Behavior penalty (P7): anti-flood against GRAFT backoff abuse.
+					// Tuned for fleet warmup: when a bootstrap hub restarts and 20+ peers
+					// reconnect simultaneously, gossipsub PRUNEs the overflow (Dhi=12) and
+					// issues 60s backoff. Natural reconnect-churn during warmup trips the
+					// counter ~5-6 times per peer before stabilising. With the old
+					// (threshold=0, weight=-10) each violation squared to a -320 score,
+					// graylisting whole fleet for ~12 min after every coordinated restart.
+					// threshold=6 gives a warmup grace period (no penalty for first 6
+					// violations); weight=-2 makes steady-state misbehaviour cost linearly
+					// less (-2×16 = -32 at counter=10 instead of -160×10 = -1600 with the
+					// original settings); faster decay (0.99) halves penalty every 70s.
+					behaviourPenaltyWeight: -2,
+					behaviourPenaltyDecay: 0.99,
+					behaviourPenaltyThreshold: 6,
 					decayInterval: 1000,
 					decayToZero: 0.01,
 					// Retain score for 15 min after disconnect — prevents cycling
