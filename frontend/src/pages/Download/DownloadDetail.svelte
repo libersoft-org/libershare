@@ -781,11 +781,37 @@
 				<!-- Tab header + content -->
 				<div class="container">
 					<div class="tab-header">
-						<button class="tab" class:active={activeTab === 'files'} class:selected={tabActive && selectedTabIndex === 0}>
+						<button
+							class="tab"
+							class:active={activeTab === 'files'}
+							class:selected={tabActive && selectedTabIndex === 0}
+							onclick={() => {
+								selectedTabIndex = 0;
+								activeTab = 'files';
+								activateArea(tabAreaID);
+							}}
+							onmouseenter={() => {
+								selectedTabIndex = 0;
+								activateArea(tabAreaID);
+							}}
+						>
 							<Icon img="/img/file.svg" size="1.8vh" padding="0" colorVariable={filesTabColor} />
 							{$t('common.files')}
 						</button>
-						<button class="tab" class:active={activeTab === 'peers'} class:selected={tabActive && selectedTabIndex === 1}>
+						<button
+							class="tab"
+							class:active={activeTab === 'peers'}
+							class:selected={tabActive && selectedTabIndex === 1}
+							onclick={() => {
+								selectedTabIndex = 1;
+								activeTab = 'peers';
+								activateArea(tabAreaID);
+							}}
+							onmouseenter={() => {
+								selectedTabIndex = 1;
+								activateArea(tabAreaID);
+							}}
+						>
 							<Icon img="/img/share.svg" size="1.8vh" padding="0" colorVariable={peersTabColor} />
 							{$t('common.connections')}
 						</button>

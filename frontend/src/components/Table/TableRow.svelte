@@ -72,10 +72,6 @@
 		opacity: 0.55;
 	}
 
-	.row.clickable {
-		cursor: pointer;
-	}
-
 	.row:hover:not(.selected) {
 		background-color: var(--secondary-background);
 	}
