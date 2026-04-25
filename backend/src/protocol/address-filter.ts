@@ -99,7 +99,7 @@ export function enumerateLocalCidrs(): string[] {
 			const bits = netmaskToCidrBits(addr.netmask);
 			out.add(`${addr.address}/${bits}`);
 			// Network address form — easier to reason about, same match behaviour.
-			const netN = ipToUint32(addr.address) & (bits === 0 ? 0 : ((-1 << (32 - bits)) >>> 0));
+			const netN = ipToUint32(addr.address) & (bits === 0 ? 0 : (-1 << (32 - bits)) >>> 0);
 			const netIp = [(netN >>> 24) & 0xff, (netN >>> 16) & 0xff, (netN >>> 8) & 0xff, netN & 0xff].join('.');
 			out.add(`${netIp}/${bits}`);
 		}

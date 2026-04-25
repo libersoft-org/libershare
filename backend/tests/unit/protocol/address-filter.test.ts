@@ -147,7 +147,12 @@ describe('extractFirstIPv4', () => {
 function mkMA(ip: string | null): any {
 	return ip === null
 		? { getComponents: () => [{ code: 54, value: 'some.dns.name' }] }
-		: { getComponents: () => [{ code: 4, value: ip }, { code: 6, value: 9090 }] };
+		: {
+				getComponents: () => [
+					{ code: 4, value: ip },
+					{ code: 6, value: 9090 },
+				],
+			};
 }
 
 describe('shouldDenyDial', () => {
