@@ -12,7 +12,7 @@ export const LISH_TOPIC_PREFIX = 'lish/';
  * Default gossipsub acceptPXThreshold. Matches the default in settings.ts and is used as
  * fail-closed fallback whenever a user-supplied threshold is missing, non-finite, or <= 0.
  */
-export const DEFAULT_ACCEPT_PX_THRESHOLD = 10;
+export const DEFAULT_ACCEPT_PX_THRESHOLD = 5;
 
 /**
  * Returns the pubsub topic name for a given lishnet/network ID.

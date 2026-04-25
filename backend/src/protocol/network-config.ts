@@ -23,7 +23,30 @@ import { type SettingsData } from '../settings.ts';
 import { trace } from '../logger.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
+import { peerIdFromString } from '@libp2p/peer-id';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
+
+/**
+ * Convert bootstrap multiaddr strings to gossipsub DirectPeer entries
+ * ({ id: PeerId, addrs: Multiaddr[] }). Peers that lack a /p2p/<id> component
+ * or whose components fail to parse are skipped. Result: a fresh node starts
+ * inside the gossipsub mesh at config time, without waiting for the first
+ * peer-announce discovery cycle to surface bootstraps as direct peers.
+ */
+function buildDirectPeersFromBootstrap(uniquePeers: string[]): Array<{ id: any; addrs: any[] }> {
+	const direct: Array<{ id: any; addrs: any[] }> = [];
+	for (const ma of uniquePeers) {
+		try {
+			const parsed = Multiaddr(ma);
+			const pid = parsed.getComponents().find((c: any) => c.code === 421)?.value;
+			if (!pid) continue;
+			direct.push({ id: peerIdFromString(pid), addrs: [parsed] });
+		} catch {
+			/* unparseable multiaddr — skip silently */
+		}
+	}
+	return direct;
+}
 export interface BuildConfigParams {
 	privateKey: PrivateKey;
 	datastore: any;
@@ -42,6 +65,9 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	const { privateKey, datastore, allSettings, bootstrapPeers, myPeerID: myPeerID } = params;
 	const bootstrapPeerIDs = new Set<string>();
 	const bootstrapMultiaddrs: any[] = [];
+	// Unique bootstrap peers computed up-front so gossipsub config below can
+	// pre-populate directPeers from them.
+	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => !p.includes(myPeerID));
 	const peerExchange = allSettings.network?.peerExchange;
 	const pxEnabled = peerExchange?.enabled === true;
 	const parsedThreshold = parseAcceptPXThreshold(peerExchange?.acceptPXThreshold);
@@ -113,12 +139,18 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		connectionEncrypters: [noise({ crypto: pureJsCrypto })],
 		streamMuxers: [yamux()],
 		connectionManager: {
-			// 300 = 2× (maxDownloadConnections=200 + maxUploadConnections=200)/2 margin.
-			// Previous 100 capped the mesh at a size that could not absorb fleets >40
-			// peers while keeping bootstrap + relay headroom. 300 provides room for
-			// ~N=150 fleet peers + their relay slots without triggering connection
-			// pruning that destabilises gossipsub mesh maintenance.
+			// Tuned for ~100-peer fleets. Each peer keeps gossipsub mesh (D=12 / Dhi=16)
+			// + relay reservations + transient identify/AutoNAT dials. 300 leaves comfortable
+			// headroom even when most of the fleet is reachable simultaneously.
 			maxConnections: 300,
+			// ReconnectQueue fires on peer:disconnect and retries with exponential backoff.
+			// First retry at 500 ms (default 1000) — disconnected fleet peers come back
+			// fast. Backoff factor 1.5 (default 2) softens the climb. Retry depth 15
+			// covers peers whose first few retries hit a partition.
+			reconnectRetries: 15,
+			reconnectRetryInterval: 500,
+			reconnectBackoffFactor: 1.5,
+			maxParallelReconnects: 30,
 		},
 		// Deny dial attempts to multiaddrs that cannot possibly succeed from this
 		// node's own interfaces. Peers advertise every known multiaddr (via
@@ -134,6 +166,14 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		// VPN up/down is picked up within 10 s via the CIDR cache TTL.
 		connectionGater: {
 			denyDialMultiaddr: async (ma: any): Promise<boolean> => {
+				// Bypass gater for trusted peers (bootstrap set ∪ configured trustedPeerIds).
+				// Multi-subnet fleets (e.g. 192.168.2.x + 192.168.3.x) would otherwise have
+				// trusted peers blocked when their advertised addr lives on a LAN segment
+				// different from our own. Trusted peers are by policy known-good
+				// destinations, so dial them regardless of CIDR match.
+				const pidComponent = ma?.getComponents?.()?.find?.((c: any) => c.code === 421);
+				const pid = pidComponent?.value ?? null;
+				if (pid && (bootstrapPeerIDs.has(pid) || trustedPXPeerIDs.has(pid))) return false;
 				const deny = shouldDenyDial(ma, getLocalCidrs());
 				if (deny) {
 					// Bounded debug sample so denied-dial flood does not overwhelm logs.
@@ -170,18 +210,38 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				emitSelf: false,
 				allowPublishToZeroTopicPeers: true,
 				floodPublish: true,
-				// Gossipsub mesh sized for larger fleets (tens-hundreds of peers):
-				// D/Dlo/Dhi/Dlazy raised to go-libp2p defaults (D:6, Dhi:12, Dlazy:6)
-				// so each peer keeps 6-12 in mesh + gossips to 6 lazy peers — 2-hop
-				// full-fleet reach at N=50+ without flood-publish bandwidth amplification.
-				// Previous D:3/Dhi:6 was calibrated for 3-5 peer test fleet and throttled
-				// mesh growth at N>10. Dout:0 kept (asymmetric inbound bias, intentional).
-				D: 6,
-				Dlo: 4,
-				Dhi: 12,
+				// Pre-populate directPeers at config time from the bootstrap list.
+				// Guarantees gossipsub stream membership at startup, before any
+				// peer-announce cycle — without this, fresh nodes can sit at min=0
+				// for tens of seconds because they aren't yet in any other peer's
+				// flood-publish set. Runtime additions via gossipsub.direct still
+				// happen in Network.promoteKnownPeersToBootstrap().
+				directPeers: buildDirectPeersFromBootstrap(uniqueBootstrapPeers),
+				// directConnectTicks 60 (default 300). At heartbeatInterval=500ms this
+				// makes directPeers reconnect cadence 30s instead of 150s. directPeers
+				// are never PRUNED by Dhi, guaranteeing mesh membership; lower cadence
+				// surfaces lost connections fast enough to keep mesh stable.
+				directConnectTicks: 60,
+				// Gossipsub mesh sized for ~100-peer fleets.
+				//   D=12   target mesh degree per peer
+				//   Dlo=8  graft when below
+				//   Dhi=16 prune when above (4 slots above D — modest opportunistic graft
+				//          headroom; full TCP fullmesh is not the goal at this fleet size)
+				//   Dout=0 asymmetric inbound bias (intentional)
+				//   Dlazy=12 wider gossip fanout so IHAVE metadata reaches more peers
+				//          per heartbeat, supporting dissemination of peer IDs (though
+				//          not multiaddrs — those still need PX or peer-announce).
+				// Theoretical reach: log(100)/log(12) ≈ 2 hops at heartbeat 500ms,
+				// well below the human-perceptible delivery threshold.
+				D: 12,
+				Dlo: 8,
+				Dhi: 16,
 				Dout: 0,
-				Dlazy: 6,
-				heartbeatInterval: 1000,
+				Dlazy: 12,
+				// heartbeatInterval 500 (default 1000). Doubles gossipsub mesh
+				// maintenance rate → doubles PRUNE frequency → doubles PX emission,
+				// helpful for fleet convergence when PX is the primary peer-list source.
+				heartbeatInterval: 500,
 				fanoutTTL: 60000,
 				runOnLimitedConnection: true,
 				// Peer exchange is a local operator policy. A peer is considered trusted
@@ -212,27 +272,23 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 						}
 						return isTrustedPXPeer ? 1000 : 0;
 					},
-					// Sybil protection: penalize many peers from same IP.
-					// Threshold raised from 10→50 to tolerate trusted-fleet NAT topology:
-					// when 15+ nodes share one public IP via NAT, P6 at threshold=10 was
-					// observed to produce score = -5×(peers-10)² ≈ -320 for each peer,
-					// graylisting the mesh and cutting pubsub mesh density drastically.
-					// 50 still catches abusive single-IP floods in public networks but
-					// accepts NAT collocation typical in datacentres and home fleets.
-					IPColocationFactorWeight: -5,
+					// IP colocation factor: would penalise many peers reporting the same
+					// public IP (sybil heuristic). Disabled (weight=0) because NAT'd fleet
+					// peers legitimately share a public IP. Sybil protection in this code
+					// path comes from acceptPXThreshold (only positively-scored peers may
+					// supply PX) plus the ingress filter (peerExchange.ingressFilterEnabled).
+					IPColocationFactorWeight: 0,
 					IPColocationFactorThreshold: 50,
-					// Behavior penalty (P7): anti-flood against GRAFT backoff abuse.
-					// Tuned for fleet warmup: when a bootstrap hub restarts and 20+ peers
-					// reconnect simultaneously, gossipsub PRUNEs the overflow (Dhi=12) and
-					// issues 60s backoff. Natural reconnect-churn during warmup trips the
-					// counter ~5-6 times per peer before stabilising. With the old
-					// (threshold=0, weight=-10) each violation squared to a -320 score,
-					// graylisting whole fleet for ~12 min after every coordinated restart.
-					// threshold=6 gives a warmup grace period (no penalty for first 6
-					// violations); weight=-2 makes steady-state misbehaviour cost linearly
-					// less (-2×16 = -32 at counter=10 instead of -160×10 = -1600 with the
-					// original settings); faster decay (0.99) halves penalty every 70s.
-					behaviourPenaltyWeight: -2,
+					// Behaviour penalty: anti-flood against GRAFT backoff abuse.
+					// threshold=6 grants a warmup grace period (no penalty for first 6
+					//   violations) so coordinated fleet restarts — where 20+ peers reconnect
+					//   simultaneously and trip the counter naturally before stabilising —
+					//   don't immediately graylist the whole fleet.
+					// weight=-1 keeps long-term abuse linearly costly without producing
+					//   the -1600 scores that earlier (-10 × counter²) settings caused.
+					// decay=0.99 halves accumulated penalty every ~70s, so transient
+					//   misbehaviour fades inside one steady-state interval.
+					behaviourPenaltyWeight: -1,
 					behaviourPenaltyDecay: 0.99,
 					behaviourPenaltyThreshold: 6,
 					decayInterval: 1000,
@@ -247,8 +303,11 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 					graylistThreshold: -80,
 					// Positive threshold prevents neutral peers from supplying PX.
 					acceptPXThreshold,
-					// Default +20 nedosažitelné. 1 = aktivní peer po ~5 min do mesh.
-					opportunisticGraftThreshold: 1,
+					// Accept any non-graylisted peer for opportunistic graft. The default
+					// (1) gated too many neutral peers (score=0.0 is the norm for
+					// freshly-joined nodes) from being pulled into mesh, slowing mesh
+					// convergence in fleets where PX is the primary discovery path.
+					opportunisticGraftThreshold: 0,
 				},
 			}),
 			// DHT removed entirely — only used by debug `lishnets.findPeer` API
@@ -279,8 +338,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// Build peerDiscovery array: bootstrap (if peers provided) + mDNS (if enabled).
 	const peerDiscovery: any[] = [];
 
-	// Deduplicate bootstrap peers and filter out our own peer ID
-	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => !p.includes(myPeerID));
+	// uniqueBootstrapPeers computed at top of function (used above for directPeers seed).
 	if (uniqueBootstrapPeers.length > 0) {
 		console.log('Configuring bootstrap peers:');
 		const validBootstrapPeers: string[] = [];

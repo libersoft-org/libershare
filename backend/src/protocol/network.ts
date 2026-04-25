@@ -28,6 +28,40 @@ interface PubsubEvent {
 	from?: { toString(): string };
 }
 /**
+ * Gossip-based peer-discovery bootstrap.
+ *
+ * Periodically each node broadcasts its reachable multiaddrs (and a subset of its
+ * known peerStore) on every lishnet topic it is subscribed to. Receivers parse the
+ * list and pass it through `addBootstrapPeers`, which dedupes against known peers
+ * and calls `dial()`. This augments gossipsub PX (which only propagates on PRUNE)
+ * and libp2p autodial (which is gated by peerStore) in topologies where bootstrap
+ * hubs are few and NATed fleet members rely on relay reservations that expire
+ * before libp2p would normally re-dial.
+ */
+interface PeerAnnounceMessage {
+	type: 'peer-announce';
+	/** Multiaddrs (as strings) we claim to be reachable on, including /p2p/<peerID>. */
+	multiaddrs: string[];
+}
+/**
+ * Adaptive peer-announce interval. Instead of a fixed cadence that spams the network
+ * once saturated, the emitter picks an interval based on peerStore size — aggressive
+ * when isolated, lazy when near full visibility. Traffic at saturation is reduced
+ * roughly 6× compared to a fixed 20s cadence.
+ */
+const PEER_ANNOUNCE_INTERVAL_ISOLATED_MS = 15_000; // peerStore < 20 (cold start / edge peer)
+const PEER_ANNOUNCE_INTERVAL_STEADY_MS = 30_000; // peerStore 20..80 (mid-convergence)
+const PEER_ANNOUNCE_INTERVAL_SATURATED_MS = 120_000; // peerStore > 80 (near full visibility)
+const PEER_ANNOUNCE_JITTER_RATIO = 0.25; // ±25% jitter of chosen interval (thunder-herd avoidance)
+/** Minimum peerStore size before we consider ourselves worth advertising. */
+const PEER_ANNOUNCE_MIN_PEER_STORE = 5;
+/** Hard cap on number of multiaddrs we include in a single announce (safety bound). */
+const PEER_ANNOUNCE_MAX_ADDRS = 32;
+/** Cap on TOTAL multiaddrs in a peer-announce (self + peerStore transitive). */
+const PEER_ANNOUNCE_MAX_TOTAL_ADDRS = 256;
+/** Max addrs we take from a single known peer when including transitive list. */
+const PEER_ANNOUNCE_MAX_ADDRS_PER_PEER = 3;
+/**
  * Handler for parsed pubsub topic messages.
  * `from` is the original publisher peer ID (verified by libp2p) when available —
  * used for per-source rate-limiting in handleWant.
@@ -61,6 +95,9 @@ export class Network {
 	private readonly dataServer: DataServer;
 	private readonly dataDir: string;
 	private statusInterval: NodeJS.Timeout | null = null;
+	private peerAnnounceInterval: NodeJS.Timeout | null = null;
+	/** Monotonic counter for status-interval ticks. Used by the periodic autodial promotion. */
+	private statusTickCount = 0;
 	/**
 	 * Per-(peer,lish) timestamp of the last `have` response we sent.
 	 * Used to rate-limit responses to repeated `want` queries from the same peer for the same LISH:
@@ -439,6 +476,7 @@ export class Network {
 		this.setupBootstrapWorkaround();
 		this.setupStatusInterval();
 		this.setupWantResponseCleanup();
+		this.setupPeerAnnounceEmitter();
 	}
 
 	// =========================================================================
@@ -454,6 +492,20 @@ export class Network {
 			// Skip if already connected (autoDial in v2 is unreliable; we dial actively
 			// for mDNS/bootstrap discoveries to ensure local peers form a mesh quickly).
 			if (peerID === this.node!.peerId.toString()) return;
+			// Stamp `keep-alive-fleet` on every discovered peer, regardless of how they
+			// surfaced (mDNS, bootstrap, autonat, identify, peer-announce). libp2p
+			// ReconnectQueue only acts on peers with a tag whose key starts with
+			// `keep-alive`; without it, fleet peers found via non-announce channels
+			// (e.g. identify push from a common neighbour) are not re-dialed when
+			// they drop. Value 50 sits between bootstrap (100) and idle (1) — protects
+			// from ConnectionPruner without taking precedence over true bootstraps.
+			try {
+				await this.node!.peerStore.merge(evt.detail.id, {
+					tags: { 'keep-alive-fleet': { value: 50 } },
+				});
+			} catch {
+				/* ignore */
+			}
 			const existing = this.node!.getConnections(evt.detail.id);
 			if (existing.length > 0) return;
 			if (!evt.detail.multiaddrs?.length) return;
@@ -565,6 +617,124 @@ export class Network {
 			}
 			if (removed > 0) trace(`[NET] want-response cooldown cleanup: pruned ${removed}, kept ${this.lastWantResponseTime.size}`);
 		}, WANT_RESPONSE_CLEANUP_INTERVAL_MS);
+	}
+
+	/**
+	 * Periodically broadcast our reachable multiaddrs on every subscribed lishnet topic so
+	 * far-away peers who never encountered us via autodial/PX can still learn about us.
+	 * Gated on peerStore size so a freshly-started isolated node does not flood empty topics.
+	 * See `PeerAnnounceMessage` doc for the broader rationale.
+	 */
+	private setupPeerAnnounceEmitter(): void {
+		const schedule = async () => {
+			if (!this.node || !this.pubsub) return;
+			// Pick base interval from current peerStore saturation.
+			let base: number;
+			try {
+				const storeSize = (await this.node.peerStore.all()).length;
+				if (storeSize < 20) base = PEER_ANNOUNCE_INTERVAL_ISOLATED_MS;
+				else if (storeSize < 80) base = PEER_ANNOUNCE_INTERVAL_STEADY_MS;
+				else base = PEER_ANNOUNCE_INTERVAL_SATURATED_MS;
+			} catch {
+				base = PEER_ANNOUNCE_INTERVAL_STEADY_MS;
+			}
+			const jitter = Math.floor((Math.random() * 2 - 1) * base * PEER_ANNOUNCE_JITTER_RATIO);
+			const delay = Math.max(5_000, base + jitter);
+			this.peerAnnounceInterval = setTimeout(async () => {
+				try {
+					await this.emitPeerAnnounce();
+				} catch (err: any) {
+					trace(`[NET] peer-announce emit error: ${err?.message ?? err}`);
+				}
+				schedule().catch(() => {
+					/* schedule is async but errors handled inline */
+				});
+			}, delay);
+		};
+		schedule().catch(() => {
+			/* first-tick scheduling failure would leave emitter stopped — acceptable fallback */
+		});
+	}
+
+	private async emitPeerAnnounce(): Promise<void> {
+		if (!this.node || !this.pubsub) return;
+		const allPeers = await this.node.peerStore.all();
+		if (allPeers.length < PEER_ANNOUNCE_MIN_PEER_STORE) return;
+		// Include our full known peerStore in addition to our own reachable multiaddrs.
+		// This turns peer-announce into a transitive gossip protocol: edge-of-mesh
+		// peers learn about the whole fleet in one hop instead of waiting for mesh
+		// GRAFT to surface them. Total payload bounded by PEER_ANNOUNCE_MAX_TOTAL_ADDRS.
+		const collected = new Set<string>();
+		// Our own multiaddrs first (priority).
+		for (const ma of this.node.getMultiaddrs()) {
+			const s = ma.toString();
+			if (!s.includes('/p2p-circuit')) collected.add(s);
+			if (collected.size >= PEER_ANNOUNCE_MAX_ADDRS) break;
+		}
+		// Transitive peerStore addrs.
+		const myID = this.node.peerId.toString();
+		for (const peer of allPeers) {
+			if (collected.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
+			const pid = peer.id.toString();
+			if (pid === myID) continue;
+			let perPeer = 0;
+			for (const addr of peer.addresses) {
+				if (perPeer >= PEER_ANNOUNCE_MAX_ADDRS_PER_PEER) break;
+				if (collected.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
+				const base = addr.multiaddr.toString();
+				if (base.includes('/p2p-circuit')) continue;
+				const full = base.includes('/p2p/') ? base : `${base}/p2p/${pid}`;
+				collected.add(full);
+				perPeer++;
+			}
+		}
+		if (collected.size === 0) return;
+		const lishTopics = this.pubsub.getTopics().filter((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
+		if (lishTopics.length === 0) return;
+		const msg: PeerAnnounceMessage = { type: 'peer-announce', multiaddrs: Array.from(collected) };
+		trace(`[NET] peer-announce emit: ${collected.size} addrs (self + ${allPeers.length} known peers)`);
+		for (const topic of lishTopics) {
+			try {
+				await this.broadcast(topic, msg as unknown as Record<string, any>);
+			} catch (err: any) {
+				trace(`[NET] peer-announce publish failed topic=${topic}: ${err?.message ?? err}`);
+			}
+		}
+	}
+
+	/**
+	 * Accept inbound peer-announce: dial each advertised multiaddr through addBootstrapPeers
+	 * (which dedupes against our existing bootstrap set and skips our own peer ID).
+	 */
+	private async handlePeerAnnounce(data: PeerAnnounceMessage, fromPeerID?: string): Promise<void> {
+		if (!Array.isArray(data.multiaddrs) || data.multiaddrs.length === 0) return;
+		// Cap at MAX_TOTAL_ADDRS to match sender's transitive payload.
+		const filtered = data.multiaddrs.filter(a => typeof a === 'string' && a.length > 0).slice(0, PEER_ANNOUNCE_MAX_TOTAL_ADDRS);
+		if (filtered.length === 0) return;
+		trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: ${filtered.length} addrs`);
+		await this.addBootstrapPeers(filtered);
+		// Stamp `keep-alive-fleet` on every peer the announce mentioned. libp2p
+		// ReconnectQueue only acts on peers carrying a tag whose key starts with
+		// `keep-alive`; without this tag, fleet-discovered peers that drop are
+		// not re-dialed automatically. addBootstrapPeers() above tags via KEEP_ALIVE
+		// only for peer IDs it successfully extracts from multiaddrs — this adds
+		// the same treatment for every known peer, driving mesh maintenance.
+		if (this.node) {
+			for (const ma of filtered) {
+				try {
+					const mapath = Multiaddr(ma);
+					const pidComp = mapath.getComponents().find(c => c.code === 421);
+					const pid = pidComp?.value;
+					if (!pid) continue;
+					if (pid === this.node.peerId.toString()) continue;
+					await this.node.peerStore.merge(peerIDFromString(pid), {
+						tags: { 'keep-alive-fleet': { value: 50 } },
+					});
+				} catch {
+					/* invalid multiaddr — skip */
+				}
+			}
+		}
 	}
 
 	private setupBootstrapWorkaround(): void {
@@ -731,6 +901,17 @@ export class Network {
 							console.debug(`   ✓ Re-dialed peer=${c.pid} via=${connDetail || '(no conn info)'}`);
 							this.redialBackoff.delete(c.pid);
 							redialSuccess++;
+							// Re-stamp keep-alive-fleet on every successful re-dial so
+							// ReconnectQueue will fire if this peer drops again. Peers may
+							// have lost the tag through peerStore cleanup
+							// (maxAddressAge/maxPeerAge) between earlier tagging events.
+							try {
+								await this.node!.peerStore.merge(c.peer.id, {
+									tags: { 'keep-alive-fleet': { value: 50 } },
+								});
+							} catch {
+								/* non-fatal */
+							}
 						} catch (err: any) {
 							// Exponential backoff: 30s × 2^failCount, capped at 10 min.
 							const nextFailCount = c.failCount + 1;
@@ -762,10 +943,70 @@ export class Network {
 						}
 					}
 				}
+				// Every 3rd status tick (~45 s at 15 s status cadence) promote every
+				// peerStore entry back to bootstrap priority. Re-stamps KEEP_ALIVE tags
+				// and feeds libp2p a concrete multiaddr list to re-dial against, catching
+				// peers whose original dial cached a stale (unreachable) address — these
+				// would otherwise sit idle until they reappeared via identify/PX/announce.
+				this.statusTickCount++;
+				if (this.statusTickCount % 3 === 0) {
+					try {
+						await this.promoteKnownPeersToBootstrap();
+					} catch (err: any) {
+						trace(`[NET] promoteKnownPeersToBootstrap failed: ${err?.message ?? err}`);
+					}
+				}
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
 			}
-		}, 30000);
+		}, 15000);
+		// Status interval 15 s. promoteKnownPeersToBootstrap + gossipsub.direct
+		// mutations run on the 3rd tick (~45 s), giving a balance between
+		// rediscovery latency and CPU/log noise.
+	}
+
+	/**
+	 * Promote every known peer (from libp2p peerStore) back to bootstrap priority so
+	 * KEEP_ALIVE tagging and direct-dial re-runs cover peers the ordinary re-dial loop
+	 * skipped because their cached multiaddrs looked like loopback/private-IP garbage.
+	 * Runs every ~45 s from the status tick.
+	 */
+	private async promoteKnownPeersToBootstrap(): Promise<void> {
+		if (!this.node) return;
+		const allPeers = await this.node.peerStore.all();
+		const myID = this.node.peerId.toString();
+		const maStrings: string[] = [];
+		for (const peer of allPeers) {
+			const pid = peer.id.toString();
+			if (pid === myID) continue;
+			if (this.bootstrapPeerIDs.has(pid)) continue;
+			if (peer.addresses.length === 0) continue;
+			const addr = peer.addresses[0]!;
+			const base = addr.multiaddr.toString();
+			// Ensure /p2p/<id> suffix — addBootstrapPeers extracts peer ID via multiaddr component 421.
+			const maStr = base.includes('/p2p/') ? base : `${base}/p2p/${pid}`;
+			maStrings.push(maStr);
+		}
+		if (maStrings.length === 0) return;
+		trace(`[NET] periodic autodial: promoting ${maStrings.length} peer(s) to bootstrap`);
+		await this.addBootstrapPeers(maStrings);
+		// Also insert every known peer into the gossipsub `direct` Set at runtime.
+		// Direct peers are never PRUNED by D/Dhi and have their own fast reconnect
+		// cadence (directConnectTicks × heartbeatInterval). KEEP_ALIVE handles the
+		// TCP layer; gossipsub.direct handles the gossipsub-stream layer.
+		const gossipsub: any = this.pubsub;
+		if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') {
+			let added = 0;
+			for (const peer of allPeers) {
+				const pid = peer.id.toString();
+				if (pid === myID) continue;
+				if (!gossipsub.direct.has(pid)) {
+					gossipsub.direct.add(pid);
+					added++;
+				}
+			}
+			if (added > 0) trace(`[NET] gossipsub direct: added ${added} known peer(s) to never-PRUNE set`);
+		}
 	}
 
 	// =========================================================================
@@ -851,14 +1092,14 @@ export class Network {
 				firstMessageDeliveriesCap: 100,
 				meshMessageDeliveriesWeight: 0,
 				meshFailurePenaltyWeight: 0,
-				// invalidMessageDeliveriesWeight tuned from -20 → -5 to match go-libp2p
-				// defaults and tolerate warmup noise. Observed fleet regression (2026-04-24):
-				// with -20 × topicWeight=0.5, a single counter of ~5.6 produced score=-320,
-				// graylisting half the fleet after every coordinated restart. Invalid msgs
-				// during warmup are frequently caused by signature races at peer:connect
-				// (stale gossipsub peer keys as fresh IDs propagate), not by malicious
-				// publishers — the severe penalty is inappropriate for trusted-fleet setups.
-				// -5 keeps it 5× stronger than go-libp2p default while halving peak penalty.
+				// invalidMessageDeliveriesWeight tuned to -5 (default would be -20). The
+				// stronger default, multiplied by topicWeight=0.5, easily produces -320
+				// scores that graylist half the fleet after every coordinated restart.
+				// Invalid messages during warmup are frequently caused by signature races
+				// at peer:connect (stale gossipsub peer keys as fresh IDs propagate), not
+				// by malicious publishers — the severe penalty is inappropriate for
+				// trusted-fleet setups. -5 keeps it 5× stronger than the go-libp2p
+				// default while halving the peak penalty.
 				invalidMessageDeliveriesWeight: -5,
 				invalidMessageDeliveriesDecay: 0.9,
 			};
@@ -875,6 +1116,10 @@ export class Network {
 			if (data['type'] === 'want') {
 				this.handleWant(data as WantMessage, networkID, from).catch(err => {
 					trace(`[NET] handleWant failed: ${err?.message ?? err}`);
+				});
+			} else if (data['type'] === 'peer-announce') {
+				this.handlePeerAnnounce(data as unknown as PeerAnnounceMessage, from).catch(err => {
+					trace(`[NET] handlePeerAnnounce failed: ${err?.message ?? err}`);
 				});
 			}
 		};
@@ -1127,6 +1372,10 @@ export class Network {
 		if (this.statusInterval) {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;
+		}
+		if (this.peerAnnounceInterval) {
+			clearTimeout(this.peerAnnounceInterval);
+			this.peerAnnounceInterval = null;
 		}
 		if (this.wantResponseCleanupInterval) {
 			clearInterval(this.wantResponseCleanupInterval);

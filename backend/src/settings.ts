@@ -145,7 +145,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 			// operator having to seed trustedPeerIds manually. See
 			// network-config.ts appSpecificScore for the bootstrap-trust rationale.
 			enabled: true,
-			acceptPXThreshold: 10,
+			acceptPXThreshold: 5,
 			trustedPeerIds: [],
 			// Defense-in-depth: even if a non-bootstrap peer somehow crosses the score
 			// threshold, the ingress filter still strips its PX peer list unless it is
