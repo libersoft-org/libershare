@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { type Snippet, getContext, onMount } from 'svelte';
 	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
+	import { activateArea } from '../../scripts/areas.ts';
 	interface Props {
 		children: Snippet;
 		selected?: boolean;
@@ -27,6 +28,21 @@
 		}
 		return undefined;
 	});
+
+	function handleClick() {
+		if (navArea && position) {
+			activateArea(navArea.areaID);
+			navArea.select(position);
+		}
+		onConfirm?.();
+	}
+
+	function handleMouseEnter() {
+		if (navArea && position) {
+			activateArea(navArea.areaID);
+			navArea.select(position);
+		}
+	}
 </script>
 
 <style>
@@ -52,6 +68,10 @@
 		opacity: 0.55;
 	}
 
+	.row.clickable {
+		cursor: pointer;
+	}
+
 	.row:hover:not(.selected) {
 		background-color: var(--secondary-background);
 	}
@@ -63,6 +83,6 @@
 	}
 </style>
 
-<div bind:this={el} class="row" class:selected={isSelected} class:dimmed>
+<div bind:this={el} class="row" class:selected={isSelected} class:dimmed class:clickable={navArea && position} onclick={handleClick} onmouseenter={handleMouseEnter} role={navArea && position ? 'row' : undefined} tabindex="-1">
 	{@render children()}
 </div>
