@@ -139,18 +139,24 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		connectionEncrypters: [noise({ crypto: pureJsCrypto })],
 		streamMuxers: [yamux()],
 		connectionManager: {
-			// Tuned for ~100-peer fleets. Each peer keeps gossipsub mesh (D=12 / Dhi=16)
-			// + relay reservations + transient identify/AutoNAT dials. 300 leaves comfortable
-			// headroom even when most of the fleet is reachable simultaneously.
+			// Tuned for ~100-peer fleets. Each peer keeps gossipsub mesh (D=8 / Dhi=12)
+			// + relay reservations + transient identify/AutoNAT dials. 300 leaves
+			// comfortable headroom even when most of the fleet is reachable
+			// simultaneously and during reconnect storms after coordinated restarts.
 			maxConnections: 300,
-			// ReconnectQueue fires on peer:disconnect and retries with exponential backoff.
-			// First retry at 500 ms (default 1000) — disconnected fleet peers come back
-			// fast. Backoff factor 1.5 (default 2) softens the climb. Retry depth 15
-			// covers peers whose first few retries hit a partition.
-			reconnectRetries: 15,
-			reconnectRetryInterval: 500,
+			// ReconnectQueue fires on peer:disconnect and retries with exponential
+			// backoff. retryInterval 1000 ms matches the libp2p default. Backoff
+			// factor 1.5 (default 2) softens the climb so a peer experiencing a
+			// brief partition is re-tried sooner. Retry depth 10 is enough — past
+			// that the peer is durably unreachable and the redialBackoff loop in
+			// network.ts takes over with its own 30 s × 2^n schedule.
+			reconnectRetries: 10,
+			reconnectRetryInterval: 1000,
 			reconnectBackoffFactor: 1.5,
-			maxParallelReconnects: 30,
+			// 15 parallel reconnects is enough headroom for a 100-peer coordinated
+			// restart without saturating dial CPU; libp2p default of 5 is too low
+			// for fleets >30 peers.
+			maxParallelReconnects: 15,
 		},
 		// Deny dial attempts to multiaddrs that cannot possibly succeed from this
 		// node's own interfaces. Peers advertise every known multiaddr (via
@@ -217,31 +223,35 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				// flood-publish set. Runtime additions via gossipsub.direct still
 				// happen in Network.promoteKnownPeersToBootstrap().
 				directPeers: buildDirectPeersFromBootstrap(uniqueBootstrapPeers),
-				// directConnectTicks 60 (default 300). At heartbeatInterval=500ms this
-				// makes directPeers reconnect cadence 30s instead of 150s. directPeers
-				// are never PRUNED by Dhi, guaranteeing mesh membership; lower cadence
-				// surfaces lost connections fast enough to keep mesh stable.
-				directConnectTicks: 60,
-				// Gossipsub mesh sized for ~100-peer fleets.
-				//   D=12   target mesh degree per peer
-				//   Dlo=8  graft when below
-				//   Dhi=16 prune when above (4 slots above D — modest opportunistic graft
-				//          headroom; full TCP fullmesh is not the goal at this fleet size)
-				//   Dout=0 asymmetric inbound bias (intentional)
-				//   Dlazy=12 wider gossip fanout so IHAVE metadata reaches more peers
-				//          per heartbeat, supporting dissemination of peer IDs (though
-				//          not multiaddrs — those still need PX or peer-announce).
-				// Theoretical reach: log(100)/log(12) ≈ 2 hops at heartbeat 500ms,
-				// well below the human-perceptible delivery threshold.
-				D: 12,
-				Dlo: 8,
-				Dhi: 16,
+				// directConnectTicks 120 (default 300). At heartbeatInterval=1000 ms this
+				// makes directPeers reconnect cadence 120 s instead of 300 s. directPeers
+				// are never PRUNED by Dhi, guaranteeing mesh membership; the lowered
+				// cadence surfaces lost bootstrap connections in ~2 min instead of 5,
+				// without burning CPU on per-second probes.
+				directConnectTicks: 120,
+				// Gossipsub mesh sized for ~100-peer partial-mesh operation.
+				//   D=8    target mesh degree per peer (Filecoin-scale default).
+				//   Dlo=6  graft when below — proportional to D.
+				//   Dhi=12 prune when above (4 slots above D — opportunistic graft
+				//          headroom; full TCP fullmesh is explicitly NOT the goal).
+				//   Dout=0 asymmetric inbound bias (intentional, trusted-fleet only).
+				//   Dlazy=8 IHAVE fanout to non-mesh peers per heartbeat (~9% of an
+				//          N=100 fleet/heartbeat, sufficient for fast metadata spread
+				//          without per-publish O(N) bandwidth amplification).
+				// Theoretical reach: log(100)/log(8) ≈ 2.2 hops × 1 s heartbeat = ~2 s
+				// to the entire fleet, well below the human-perceptible delivery
+				// threshold for downloads/catalog updates.
+				D: 8,
+				Dlo: 6,
+				Dhi: 12,
 				Dout: 0,
-				Dlazy: 12,
-				// heartbeatInterval 500 (default 1000). Doubles gossipsub mesh
-				// maintenance rate → doubles PRUNE frequency → doubles PX emission,
-				// helpful for fleet convergence when PX is the primary peer-list source.
-				heartbeatInterval: 500,
+				Dlazy: 8,
+				// heartbeatInterval 1000 ms (libp2p default). The earlier 500 ms doubled
+				// gossipsub CPU and PRUNE/PX emission rate to accelerate cold-start
+				// convergence on a 30-peer fleet; at the steady-state N=100 target,
+				// adaptive peer-announce + the new keep-alive-fleet tag handle warmup
+				// at the discovery layer, leaving gossipsub free to run at default.
+				heartbeatInterval: 1000,
 				fanoutTTL: 60000,
 				runOnLimitedConnection: true,
 				// Peer exchange is a local operator policy. A peer is considered trusted

@@ -943,13 +943,13 @@ export class Network {
 						}
 					}
 				}
-				// Every 3rd status tick (~45 s at 15 s status cadence) promote every
+				// Every 5th status tick (~150 s at 30 s status cadence) promote every
 				// peerStore entry back to bootstrap priority. Re-stamps KEEP_ALIVE tags
 				// and feeds libp2p a concrete multiaddr list to re-dial against, catching
 				// peers whose original dial cached a stale (unreachable) address — these
 				// would otherwise sit idle until they reappeared via identify/PX/announce.
 				this.statusTickCount++;
-				if (this.statusTickCount % 3 === 0) {
+				if (this.statusTickCount % 5 === 0) {
 					try {
 						await this.promoteKnownPeersToBootstrap();
 					} catch (err: any) {
@@ -959,10 +959,10 @@ export class Network {
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
 			}
-		}, 15000);
-		// Status interval 15 s. promoteKnownPeersToBootstrap + gossipsub.direct
-		// mutations run on the 3rd tick (~45 s), giving a balance between
-		// rediscovery latency and CPU/log noise.
+		}, 30000);
+		// Status interval 30 s. promoteKnownPeersToBootstrap + gossipsub.direct
+		// mutations run on the 5th tick (~150 s) — fast enough to absorb peer
+		// churn at N≈100 without flooding logs or burning CPU on per-second probes.
 	}
 
 	/**
