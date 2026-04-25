@@ -45,6 +45,13 @@ export const defaultMinifyJSON = writable(false);
 export const defaultCompress = writable(false);
 export const defaultCompressionAlgorithm = writable('gzip');
 
+/**
+ * Master switch for mouse support. When false, MouseManager skips listener
+ * registration entirely — no cursor tracking, no click/hover delegation, no
+ * right-click-as-back. Defaults to true; UI toggle can be added later.
+ */
+export const mouseSupportEnabled = writable(true);
+
 // Cached defaults from backend (loaded once)
 export let settingsDefaults: any = null;
 
