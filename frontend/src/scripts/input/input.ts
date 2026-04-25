@@ -98,6 +98,7 @@ class InputManager {
 	private startMouse(): void {
 		if (this.mouseStarted) return;
 		const mouse = getMouseManager();
+		mouse.on('back', () => emit('back'));
 		mouse.start();
 		this.mouseStarted = true;
 	}
@@ -105,6 +106,7 @@ class InputManager {
 	private stopMouse(): void {
 		if (!this.mouseStarted) return;
 		const mouse = getMouseManager();
+		mouse.off('back');
 		mouse.stop();
 		this.mouseStarted = false;
 	}
