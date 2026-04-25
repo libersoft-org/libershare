@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
+	import { activateArea } from '../../scripts/areas.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
 	import { footerVisible, setFooterVisible, footerPosition, footerWidgetVisibility, setFooterWidgetVisibility } from '../../scripts/settings.ts';
 	import { footerWidgets, getWidgetLabel } from '../../scripts/footerWidgets.ts';
@@ -50,12 +51,16 @@
 		<ButtonBar>
 			<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} />
 		</ButtonBar>
-		<SwitchRow label={$t('settings.footerVisible')} checked={$footerVisible} position={[0, 1]} onToggle={() => setFooterVisible(!$footerVisible)} />
+		<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+			<SwitchRow label={$t('settings.footerVisible')} checked={$footerVisible} position={[0, 1]} onToggle={() => setFooterVisible(!$footerVisible)} />
+		</div>
 		<ButtonBar justify="center">
 			<Button label="{$t('settings.footerPosition')}: {$t('settings.footerPositions.' + $footerPosition)}" position={[0, 2]} onConfirm={openPositionDialog} />
 		</ButtonBar>
 		{#each footerWidgets as widget, index}
-			<SwitchRow label={getWidgetLabel(widget, $t)} checked={$footerWidgetVisibility[widget]} position={[0, index + 3]} onToggle={() => setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget])} />
+			<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<SwitchRow label={getWidgetLabel(widget, $t)} checked={$footerWidgetVisibility[widget]} position={[0, index + 3]} onToggle={() => setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget])} />
+			</div>
 		{/each}
 	</div>
 </div>

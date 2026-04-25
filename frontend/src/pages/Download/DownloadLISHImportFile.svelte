@@ -194,17 +194,21 @@
 	<div class="import">
 		<div class="container">
 			{#if !$localFilesystem}
-				<SwitchRow label={$t('lish.import.uploadFromLocal')} checked={uploadMode} position={[0, 0]} onToggle={() => (uploadMode = !uploadMode)} />
+				<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+					<SwitchRow label={$t('lish.import.uploadFromLocal')} checked={uploadMode} position={[0, 0]} onToggle={() => (uploadMode = !uploadMode)} />
+				</div>
 			{/if}
 			{#if uploadMode}
-				<Button icon="/img/upload.svg" label={uploadFileName || $t('lish.import.selectLocalFile')} position={[0, 1]} onConfirm={openFilePicker} width="100%" />
+				<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+					<Button icon="/img/upload.svg" label={uploadFileName || $t('lish.import.selectLocalFile')} position={[0, 1]} onConfirm={openFilePicker} width="100%" />
+				</div>
 			{:else}
-				<div class="row">
+				<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 					<Input bind:value={filePath} label={$t('lish.import.filePath')} position={[0, 1]} flex />
 					<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={openFilePathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
 			{/if}
-			<div class="row">
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={downloadPath} label={$t('lish.import.downloadPath')} position={[0, 2]} flex />
 				<Button icon="/img/directory.svg" position={[1, 2]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>

@@ -142,8 +142,10 @@
 {:else}
 	<div class="import">
 		<div class="container">
-			<Input bind:value={lishJSON} label={$t('lish.import.lishJSON')} multiline rows={10} placeholder={$t('lish.import.placeholder')} fontSize="2vh" fontFamily="var(--font-mono)" position={[0, 0]} />
-			<div class="row">
+			<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<Input bind:value={lishJSON} label={$t('lish.import.lishJSON')} multiline rows={10} placeholder={$t('lish.import.placeholder')} fontSize="2vh" fontFamily="var(--font-mono)" position={[0, 0]} />
+			</div>
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={downloadPath} label={$t('lish.import.downloadPath')} position={[0, 1]} flex />
 				<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>

@@ -219,54 +219,62 @@
 	<div class="settings">
 		<div class="container">
 			<!-- Storage paths -->
-			<div class="row">
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={storagePathValue} label={$t('settings.download.directoryDownload')} position={[0, 0]} flex />
 				<Button icon="/img/directory.svg" position={[1, 0]} onConfirm={() => openBrowse('storage')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 0]} onConfirm={resetStoragePath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={tempPathValue} label={$t('settings.download.directoryTemp')} position={[0, 1]} flex />
 				<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={() => openBrowse('temp')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 1]} onConfirm={resetTempPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={lishPathValue} label={$t('settings.download.directoryLISH')} position={[0, 2]} flex />
 				<Button icon="/img/directory.svg" position={[1, 2]} onConfirm={() => openBrowse('lish')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 2]} onConfirm={resetLISHPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={lishnetPathValue} label={$t('settings.download.directoryLISHnet')} position={[0, 3]} flex />
 				<Button icon="/img/directory.svg" position={[1, 3]} onConfirm={() => openBrowse('lishnet')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 3]} onConfirm={resetLISHnetPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={port} label={$t('settings.download.incomingPort')} type="number" position={[0, 4]} flex />
 				<Button icon="/img/restart.svg" position={[1, 4]} onConfirm={resetPort} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={downloadConnections} label={$t('settings.download.maxDownloadPeersPerLISH')} type="number" position={[0, 5]} flex />
 				<Button icon="/img/restart.svg" position={[1, 5]} onConfirm={resetDownloadConnections} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={uploadConnections} label={$t('settings.download.maxUploadPeersPerLISH')} type="number" position={[0, 6]} flex />
 				<Button icon="/img/restart.svg" position={[1, 6]} onConfirm={resetUploadConnections} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={downloadSpeed} label={$t('settings.download.maxDownloadSpeed')} type="number" min={0} position={[0, 7]} flex />
 				<Button icon="/img/restart.svg" position={[1, 7]} onConfirm={resetDownloadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={uploadSpeed} label={$t('settings.download.maxUploadSpeed')} type="number" min={0} position={[0, 8]} flex />
 				<Button icon="/img/restart.svg" position={[1, 8]} onConfirm={resetUploadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('settings.download.allowRelay') + ':'} checked={relay} position={[0, 9]} onToggle={toggleAllowRelay} />
-			<div class="row">
+			<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<SwitchRow label={$t('settings.download.allowRelay') + ':'} checked={relay} position={[0, 9]} onToggle={toggleAllowRelay} />
+			</div>
+			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={relayReservations} label={$t('settings.download.maxRelayReservations')} type="number" position={[0, 10]} flex />
 				<Button icon="/img/restart.svg" position={[1, 10]} onConfirm={resetRelayReservations} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} position={[0, 11]} onToggle={toggleAutoStart} />
-			<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 12]} onToggle={toggleAutoStartDl} />
-			<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 13]} onToggle={toggleAutoRecovery} />
+			<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} position={[0, 11]} onToggle={toggleAutoStart} />
+			</div>
+			<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 12]} onToggle={toggleAutoStartDl} />
+			</div>
+			<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 13]} onToggle={toggleAutoRecovery} />
+			</div>
 		</div>
 		<ButtonBar justify="center">
 			<Button icon="/img/save.svg" label={$t('common.save')} position={[0, 14]} onConfirm={handleSave} />

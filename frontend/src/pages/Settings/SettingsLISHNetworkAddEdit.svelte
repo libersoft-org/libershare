@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { t } from '../../scripts/language.ts';
+	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { type NetworkFormData } from '../../scripts/lishNetwork.ts';
@@ -91,21 +92,31 @@
 
 <div class="add-edit">
 	<div class="container">
-		<Input bind:value={name} label={$t('common.name')} position={[0, 0]} />
-		<Input bind:value={description} label={$t('common.description')} multiline rows={4} position={[0, 1]} />
+		<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+			<Input bind:value={name} label={$t('common.name')} position={[0, 0]} />
+		</div>
+		<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+			<Input bind:value={description} label={$t('common.description')} multiline rows={4} position={[0, 1]} />
+		</div>
 		{#if !isEditing}
-			<SwitchRow label={$t('settings.lishNetwork.autoGenerate') + ':'} checked={autoGenerateID} position={[0, 2]} onToggle={toggleAutoGenerateID} />
+			<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<SwitchRow label={$t('settings.lishNetwork.autoGenerate') + ':'} checked={autoGenerateID} position={[0, 2]} onToggle={toggleAutoGenerateID} />
+			</div>
 			{#key autoGenerateID}
-				<Input bind:value={networkID} label={$t('settings.lishNetwork.networkID')} position={autoGenerateID ? undefined : [0, 3]} disabled={autoGenerateID} />
+				<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+					<Input bind:value={networkID} label={$t('settings.lishNetwork.networkID')} position={autoGenerateID ? undefined : [0, 3]} disabled={autoGenerateID} />
+				</div>
 			{/key}
 		{:else}
-			<Input bind:value={networkID} label={$t('settings.lishNetwork.networkID')} position={[0, 2]} />
+			<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<Input bind:value={networkID} label={$t('settings.lishNetwork.networkID')} position={[0, 2]} />
+			</div>
 		{/if}
 		<div class="label">{$t('settings.lishNetwork.bootstrapServers')}:</div>
 		{#each bootstrapServers as _server, index (index)}
 			{@const isLast = index === bootstrapServers.length - 1}
 			{@const hasRemove = bootstrapServers.length > 1}
-			<div class="bootstrap-row">
+			<div class="bootstrap-row" role="group" onmouseenter={() => { activateArea(areaID); }}>
 				<Input bind:value={bootstrapServers[index]} placeholder="address:port" position={[0, bootstrapOffset + index]} flex />
 				{#if hasRemove}
 					<Button icon="/img/minus.svg" position={[1, bootstrapOffset + index]} onConfirm={() => removeBootstrapServer(index)} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
