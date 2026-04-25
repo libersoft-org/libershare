@@ -113,21 +113,7 @@
 {:else}
 	<div class="items">
 		{#each items as item, index (item.id)}
-			<div
-				onclick={() => {
-					activateArea(areaID);
-					openItem(index);
-				}}
-				onmouseenter={() => {
-					activateArea(areaID);
-					navHandle.controller.select(getItemPos(index));
-				}}
-				onkeydown={e => e.key === 'Enter' && openItem(index)}
-				role="row"
-				tabindex="-1"
-			>
-				<ProductsItem bind:el={itemElements[index]} title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={navHandle.controller.isSelected(getItemPos(index))} isAPressed={navHandle.controller.isPressed(getItemPos(index))} />
-			</div>
+			<ProductsItem bind:el={itemElements[index]} title={item.title} image="https://picsum.photos/seed/{item.id}/400/225" isGamepadHovered={navHandle.controller.isSelected(getItemPos(index))} isAPressed={navHandle.controller.isPressed(getItemPos(index))} />
 		{/each}
 	</div>
 {/if}
