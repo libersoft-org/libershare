@@ -47,7 +47,8 @@
 				navItem(
 					() => position!,
 					() => el,
-					onConfirm
+					onConfirm,
+					{ noDelegateMouse: true }
 				)
 			);
 		if (buttonsGroup) {

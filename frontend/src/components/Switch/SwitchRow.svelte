@@ -24,7 +24,8 @@
 				navItem(
 					() => position!,
 					() => el,
-					onToggle ?? onConfirm
+					onToggle ?? onConfirm,
+					{ noDelegateMouse: true }
 				)
 			);
 		}
