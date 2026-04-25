@@ -6,7 +6,7 @@ import { Utils } from '../utils.ts';
 import { type Settings } from '../settings.ts';
 import { setBusy, clearBusy } from './busy.ts';
 import { getEnabledUploads, removeUploadState, enableUpload } from '../protocol/lish-protocol.ts';
-import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, triggerEnableDownload, markDownloadEnabled, stopRecoveryForLISH } from './transfer.ts';
+import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, markDownloadEnabled, stopRecoveryForLISH } from './transfer.ts';
 import { mkdir, readdir, stat, access, unlink, rmdir, rename, rm } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
@@ -251,14 +251,17 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			await exportLISHToFile(lish, lishFilePath, minifyJSON, compress, compressionAlgorithm);
 			resultLISHFile = lishFilePath;
 		}
-		// 3. Save to data-server if requested
-		if (addToSharing) {
+		// 3. Save to data-server if requested (required for both sharing and downloading)
+		if (addToSharing || addToDownloading) {
 			lish.directory = dataPathStat.isFile() ? dirname(dataPath) : dataPath;
 			dataServer.add(lish);
 			console.log(`✓ Dataset imported: ${lish.id}`);
 			broadcast('lishs:add', dataServer.getDetail(lish.id));
+			// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
+			// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
+			if (addToSharing) enableUpload(lish.id);
+			if (addToDownloading) markDownloadEnabled(lish.id);
 			startVerification(lish.id);
-			if (addToDownloading) triggerEnableDownload(lish.id);
 		}
 		return { lishID: lish.id, lishFile: resultLISHFile };
 	}
@@ -277,9 +280,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			const qIdx = verificationQueue.indexOf(p.lishID);
 			if (qIdx >= 0) verificationQueue.splice(qIdx, 1);
 			clearBusy(p.lishID);
-			if (p.deleteData && lish.directory) {
-				await deleteLISHData(lish);
-			}
+			if (p.deleteData && lish.directory) await deleteLISHData(lish);
 			const deleted = dataServer.delete(p.lishID);
 			if (deleted) {
 				console.log(`✓ LISH deleted: ${p.lishID}`);
@@ -314,10 +315,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			const tempBaseDir = join(Utils.expandHome(tempPath), dirName);
 			directory = await Utils.findUniqueDirectory(tempBaseDir);
 			finalDirectory = finalBaseDir;
-		} else {
-			// Share-only / metadata-only import → files already live at the target location.
-			directory = finalBaseDir;
-		}
+		} else directory = finalBaseDir; // Share-only / metadata-only import → files already live at the target location.
 		await mkdir(directory, { recursive: true });
 		const storedLISH: IStoredLISH = {
 			...lish,
@@ -339,9 +337,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['filePath', 'downloadPath']);
 		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) {
-			lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
-		}
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
 		return lastResponse;
 	}
 

@@ -8,7 +8,7 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { sanitizeFilename } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
-	import { storageLISHPath, storagePath, autoStartSharing, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
+	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
 
 	function parseChunkSize(value: string): number | null {
 		if (!value.trim()) return null;
@@ -24,7 +24,6 @@
 		dataPath: string;
 		saveToFile?: boolean | undefined;
 		lishFile?: string | undefined;
-		addToSharing?: boolean | undefined;
 		chunkSize?: string | undefined;
 		threads?: string | undefined;
 	}
@@ -90,7 +89,6 @@
 	// Form state
 	let dataPath = $state($storagePath);
 	let saveToFile = $state(true);
-	let addToSharing = $state($autoStartSharing);
 	let minifyJSON = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
 	let showAdvanced = $state(false);
@@ -130,7 +128,7 @@
 	let errorMessage = $state('');
 
 	async function handleCreate(): Promise<void> {
-		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, addToSharing, chunkSize, threads });
+		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, chunkSize, threads });
 		errorMessage = validationError ? getLISHCreateErrorMessage(validationError, $t) : '';
 		if (!errorMessage) {
 			// Check if data path exists and is not an empty directory
@@ -160,7 +158,9 @@
 				params['minifyJSON'] = minifyJSON;
 				params['compress'] = compress;
 			}
-			if (addToSharing) params['addToSharing'] = addToSharing;
+			// Apply global auto-start settings — controlled in Settings → Download.
+			if ($autoStartSharing) params['addToSharing'] = true;
+			if ($autoStartDownloading) params['addToDownloading'] = true;
 			// Only pass non-default advanced options
 			const parsedChunkSize = parseChunkSize(chunkSize);
 			if (parsedChunkSize !== null && parsedChunkSize !== 1024 * 1024) params['chunkSize'] = parsedChunkSize;
@@ -196,7 +196,6 @@
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
-
 	let progressDone = false;
 
 	function openProgressPage(params: Record<string, any>): void {
@@ -359,36 +358,34 @@
 					<Button icon="/img/directory.svg" position={[1, 4]} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
 			{/if}
-			<!-- Add to Sharing Switch -->
-			<SwitchRow label={$t('lish.import.autoStartSharing') + ':'} checked={addToSharing} position={[0, 5]} onConfirm={() => (addToSharing = !addToSharing)} />
 			<!-- Advanced Settings Toggle -->
-			<Button icon={showAdvanced ? '/img/up.svg' : '/img/down.svg'} label={$t(showAdvanced ? 'lish.create.hideAdvanced' : 'lish.create.showAdvanced')} position={[0, 6]} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+			<Button icon={showAdvanced ? '/img/up.svg' : '/img/down.svg'} label={$t(showAdvanced ? 'lish.create.hideAdvanced' : 'lish.create.showAdvanced')} position={[0, 5]} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 			{#if showAdvanced}
 				{#if saveToFile}
 					<!-- Minify JSON Switch -->
-					<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} position={[0, 7]} onConfirm={() => (minifyJSON = !minifyJSON)} />
+					<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} position={[0, 6]} onConfirm={() => (minifyJSON = !minifyJSON)} />
 					<!-- Compress Switch -->
-					<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 8]} onConfirm={handleCompressToggle} />
+					<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 7]} onConfirm={handleCompressToggle} />
 				{/if}
 				<!-- Chunk Size -->
-				<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 9]} />
+				<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 8]} />
 				<!-- Hash Algorithm -->
 				<div>
 					<div class="label">{$t('lish.create.algorithm')}:</div>
 					<div class="algo-selector">
 						{#each SUPPORTED_ALGOS as algo, i}
-							<Button label={algo} position={[i, 10]} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+							<Button label={algo} position={[i, 9]} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 						{/each}
 					</div>
 				</div>
 				<!-- Threads -->
-				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 11]} />
+				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 10]} />
 			{/if}
 			<Alert type="error" message={errorMessage} />
 		</div>
 		<ButtonBar justify="center">
-			<Button icon="/img/plus.svg" label={$t('lish.create.create')} position={[0, 12]} onConfirm={handleCreate} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 12]} onConfirm={onBack} />
+			<Button icon="/img/plus.svg" label={$t('common.createLISH')} position={[0, 11]} onConfirm={handleCreate} />
+			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 11]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

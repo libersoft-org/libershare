@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import { inputInitialDelay, inputRepeatDelay, increaseVolume, decreaseVolume } from '../settings.ts';
-type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'pageUp' | 'pageDown' | 'home' | 'end' | 'typedChar' | 'confirmDown' | 'confirmUp' | 'back' | 'debug' | 'reload';
+type KeyboardAction = 'up' | 'down' | 'left' | 'right' | 'pageUp' | 'pageDown' | 'home' | 'end' | 'typedChar' | 'confirmDown' | 'confirmUp' | 'back' | 'reload';
 type KeyboardCallback = () => void;
 const ARROW_KEYS: Record<string, KeyboardAction> = {
 	ArrowUp: 'up',
@@ -122,14 +122,8 @@ class KeyboardManager {
 				this.emit('back');
 				return;
 			}
-			// F2 - debug toggle
+			// F2 - reload
 			if (e.key === 'F2') {
-				e.preventDefault();
-				this.emit('debug');
-				return;
-			}
-			// F3 - reload
-			if (e.key === 'F3') {
 				e.preventDefault();
 				this.emit('reload');
 				return;

@@ -86,7 +86,13 @@
 		return parts.join(', ');
 	}
 
-	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const navHandle = createNavArea(() => ({
+		areaID,
+		position,
+		onBack,
+		activate: true,
+		listRange: () => [1, Math.max(1, lishs?.length ?? 0)],
+	}));
 
 	onMount(() => {
 		loadLishs();

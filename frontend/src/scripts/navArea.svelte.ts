@@ -113,6 +113,12 @@ export interface NavAreaOptions {
 	onActivate?: (() => void) | undefined;
 	/** Called when selected item changes */
 	onSelect?: ((pos: NavPos) => void) | undefined;
+	/**
+	 * Y-range of the list/table inside this area, as `[minY, maxY]` (inclusive).
+	 * Only when the currently selected item's Y is within this range will pageUp/pageDown/home/end act,
+	 * and they stay strictly inside the range. Without this option, those actions are no-ops.
+	 */
+	listRange?: (() => [number, number]) | undefined;
 }
 
 /** Handle returned by createNavArea for dynamic area management */
@@ -160,6 +166,42 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		selectItem(best);
 	}
 
+	const PAGE_SIZE = 10;
+
+	/** Get the list's [minY, maxY] range if defined. Items outside this range are not navigated to by page/home/end. */
+	function getListRange(): [number, number] | null {
+		const range = getConfig().listRange?.();
+		return range ?? null;
+	}
+
+	/** Items within the configured listRange, in the currently selected column, sorted by y. */
+	function listColumnItems(): NavItem[] {
+		if (!selectedPos) return [];
+		const range = getListRange();
+		if (!range) return [];
+		const [minY, maxY] = range;
+		// Only act if current selection is inside the list range
+		if (selectedPos[1] < minY || selectedPos[1] > maxY) return [];
+		return items.filter(i => i.pos[0] === selectedPos![0] && i.pos[1] >= minY && i.pos[1] <= maxY).sort((a, b) => a.pos[1] - b.pos[1]);
+	}
+
+	function jumpBy(delta: number): void {
+		const col = listColumnItems();
+		if (col.length === 0) return;
+		const idx = col.findIndex(i => i.pos[1] === selectedPos![1]);
+		if (idx < 0) return;
+		const targetIdx = Math.max(0, Math.min(col.length - 1, idx + delta));
+		const target = col[targetIdx];
+		if (target && target !== col[idx]) selectItem(target);
+	}
+
+	function jumpEdge(edge: 'first' | 'last'): void {
+		const col = listColumnItems();
+		if (col.length === 0) return;
+		const target = edge === 'first' ? col[0] : col[col.length - 1];
+		if (target) selectItem(target);
+	}
+
 	function navigate(direction: Direction): boolean {
 		if (!selectedPos || items.length === 0) return trap;
 		const target = findItemInDirection(items, selectedPos, direction);
@@ -200,6 +242,18 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		},
 		back() {
 			onBack?.();
+		},
+		pageUp() {
+			jumpBy(-PAGE_SIZE);
+		},
+		pageDown() {
+			jumpBy(PAGE_SIZE);
+		},
+		home() {
+			jumpEdge('first');
+		},
+		end() {
+			jumpEdge('last');
 		},
 		onActivate() {
 			onAreaActivate?.();

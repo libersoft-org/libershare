@@ -503,16 +503,17 @@ export function getFileVerificationProgress(db: Database, lishID: LISHid): FileV
 		.map(r => ({ filePath: r.path, verifiedChunks: r.verified, totalChunks: r.total }));
 }
 
-export function markChunkVerified(db: Database, _lishID: LISHid, fileInternalID: number, chunkIndex: number): void {
-	const chunks = db.query<{ id: number }, [number]>('SELECT id FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(fileInternalID);
-	const chunk = chunks[chunkIndex];
-	if (chunk) db.run('UPDATE lishs_chunks SET have = TRUE WHERE id = ?', [chunk.id]);
+export function markChunkVerified(db: Database, chunkRowID: number): void {
+	db.run('UPDATE lishs_chunks SET have = TRUE WHERE id = ?', [chunkRowID]);
 }
 
-export function markChunkFailed(db: Database, _lishID: LISHid, fileInternalID: number, chunkIndex: number): void {
-	const chunks = db.query<{ id: number }, [number]>('SELECT id FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(fileInternalID);
-	const chunk = chunks[chunkIndex];
-	if (chunk) db.run('UPDATE lishs_chunks SET have = FALSE WHERE id = ?', [chunk.id]);
+export function markChunkFailed(db: Database, chunkRowID: number): void {
+	db.run('UPDATE lishs_chunks SET have = FALSE WHERE id = ?', [chunkRowID]);
+}
+
+/** Batch-mark all chunks of a single file as failed (e.g. whole file missing on disk). */
+export function markAllFileChunksFailed(db: Database, fileInternalID: number): void {
+	db.run('UPDATE lishs_chunks SET have = FALSE WHERE id_lishs_files = ?', [fileInternalID]);
 }
 
 export function resetVerification(db: Database, lishID: LISHid): void {
@@ -554,18 +555,16 @@ export function isVerified(db: Database, lishID: LISHid): boolean {
 }
 
 /**
- * Get files with their internal IDs and chunk checksums, for verification.
+ * Get files with their internal IDs, chunk checksums and chunk row IDs, for verification.
+ * Chunk row IDs are used to perform O(1) mark updates without re-scanning chunks per update.
  */
-export function getFilesForVerification(db: Database, lishID: LISHid): Array<{ fileInternalID: number; path: string; checksums: string[] }> | null {
+export function getFilesForVerification(db: Database, lishID: LISHid): Array<{ fileInternalID: number; path: string; checksums: string[]; chunkRowIDs: number[] }> | null {
 	const internalID = getInternalID(db, lishID);
 	if (internalID === null) return null;
 	const files = db.query<{ id: number; path: string }, [number]>('SELECT id, path FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
 	return files.map(f => {
-		const checksums = db
-			.query<{ checksum: string }, [number]>('SELECT checksum FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id')
-			.all(f.id)
-			.map(c => c.checksum);
-		return { fileInternalID: f.id, path: f.path, checksums };
+		const rows = db.query<{ id: number; checksum: string }, [number]>('SELECT id, checksum FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(f.id);
+		return { fileInternalID: f.id, path: f.path, checksums: rows.map(r => r.checksum), chunkRowIDs: rows.map(r => r.id) };
 	});
 }
 

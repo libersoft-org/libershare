@@ -14,6 +14,8 @@
 	import { ramInfo, storageInfo, cpuInfo } from '../../scripts/systemStats.ts';
 	import { formatSize } from '../../scripts/utils.ts';
 	import { transferStats } from '../../scripts/downloads.ts';
+	import { relayStats } from '../../scripts/relayStats.ts';
+	import { networkSummary } from '../../scripts/networks.ts';
 
 	type Widget = {
 		id: FooterWidget;
@@ -58,6 +60,18 @@
 			},
 		},
 		{
+			id: 'relay',
+			component: Item,
+			props() {
+				return {
+					topIcon: 'img/share.svg',
+					topIconAlt: $t('settings.footerWidgets.relay'),
+					topLabel: `${$relayStats.activeTunnels} / ${$relayStats.reservations}`,
+					bottomLabel: formatSize($relayStats.downloadSpeed + $relayStats.uploadSpeed) + '/s',
+				};
+			},
+		},
+		{
 			id: 'cpu',
 			component: Bar,
 			props() {
@@ -97,9 +111,9 @@
 			component: LISHStatus,
 			props() {
 				return {
-					networkName: 'Main Network',
-					lishConnected: false,
-					vpnConnected: null,
+					connectedNetworks: $networkSummary.connectedNetworks,
+					totalNetworks: $networkSummary.totalNetworks,
+					totalPeers: $networkSummary.totalPeers,
 				};
 			},
 		},

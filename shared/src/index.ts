@@ -175,3 +175,11 @@ export interface SystemStorageInfo {
 export interface SystemCPUInfo {
 	usage: number;
 }
+
+// Relay (circuit-relay server) statistics — counts of reservations, active tunnels and bytes/sec going through us
+export interface RelayStats {
+	reservations: number;
+	activeTunnels: number;
+	downloadSpeed: number;
+	uploadSpeed: number;
+}

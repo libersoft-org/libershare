@@ -532,6 +532,10 @@ export class Downloader {
 		let foundNew = false;
 		for (const peerID of topicPeers) {
 			if (this.destroyed) return;
+			if (!this.peerManager.hasCapacity()) {
+				trace(`[DL] probe skip: per-LISH peer cap reached`);
+				break;
+			}
 			if (this.peerManager.has(peerID)) {
 				trace(`[DL] probe skip ${peerID.slice(0, 12)}: connected`);
 				continue;
@@ -702,6 +706,10 @@ export class Downloader {
 			const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;
 			const hp = ann.chunks === 'all' ? 100 : Math.round((((ann.chunks as any[])?.length ?? 0) / totalChunks) * 100);
 			this.peerManager.updateHavePercent(ann.peerID, hp);
+			return;
+		}
+		if (!this.peerManager.hasCapacity()) {
+			trace(`[DL] HAVE from ${peerIDShort} ignored: per-LISH peer cap reached`);
 			return;
 		}
 		try {

@@ -70,12 +70,15 @@ networks.init();
 
 // Apply speed limits from settings
 import { Downloader } from './protocol/downloader.ts';
-import { setMaxUploadSpeed, setUploadBroadcast, initUploadState } from './protocol/lish-protocol.ts';
+import { setMaxUploadSpeed, setUploadBroadcast, initUploadState, setMaxUploadPeersPerLISH } from './protocol/lish-protocol.ts';
+import { setMaxDownloadPeersPerLISH } from './protocol/peer-manager.ts';
 import { getUploadEnabledLishs, setUploadEnabled, getDownloadEnabledLishs, setDownloadEnabled } from './db/lishs.ts';
 import { initDownloadState } from './api/transfer.ts';
 const networkSettings = settings.get().network;
 Downloader.setMaxDownloadSpeed(networkSettings.maxDownloadSpeed);
 setMaxUploadSpeed(networkSettings.maxUploadSpeed);
+setMaxDownloadPeersPerLISH(networkSettings.maxDownloadPeersPerLISH);
+setMaxUploadPeersPerLISH(networkSettings.maxUploadPeersPerLISH);
 initUploadState(getUploadEnabledLishs(db), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 initDownloadState(getDownloadEnabledLishs(db), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
 
@@ -104,15 +107,32 @@ if (process.env['LIBERSHARE_MEMTRACE'] !== '0') {
 // Heap snapshot on-demand: touch <dataDir>/trigger-heap OR kill -USR2 <pid>
 if (process.env['LIBERSHARE_HEAP_TRIGGER'] !== '0') startHeapSnapshotTrigger(dataDir);
 
+let shuttingDown = false;
 async function shutdown(): Promise<void> {
+	if (shuttingDown) {
+		// Second Ctrl+C → hard kill
+		process.exit(1);
+	}
+	shuttingDown = true;
 	console.log('Shutting down...');
+	// Stop accepting new work (sync)
 	stopConnectivityCheck();
 	apiServer.stop();
-	await networks.stopAllNetworks();
+	// Flush SQLite (bun:sqlite is synchronous, so all committed writes are already on disk —
+	// close() finalizes any open statements and the WAL).
+	try {
+		db.close();
+	} catch (err) {
+		console.error('DB close error:', err);
+	}
+	// Give a short grace for any in-flight fs writes (download chunks, uploads) to drain.
+	// We do NOT wait for libp2p node.stop() — peers get a TCP FIN from OS when the process exits.
+	await new Promise(resolve => setTimeout(resolve, 200));
 	process.exit(0);
 }
 
 process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 // Transient libp2p errors that can occur during normal peer churn, stream
 // timeouts, connection drops, etc. These must not crash the process.
@@ -173,12 +193,17 @@ const TRANSIENT_ERRORS = new Set([
 function isTransientError(err: any): boolean {
 	const name = err?.constructor?.name || err?.name || '';
 	if (TRANSIENT_ERRORS.has(name)) return true;
-	// Node.js EventEmitter wraps stream errors as "Unhandled error." Error
-	// when a stream destroy()→emitError fires without an 'error' listener.
-	// The wrapped cause is in err.context (DOMException TimeoutError, etc).
-	const msg = err?.message ?? '';
-	const ctxMsg = err?.context?.message ?? '';
+	// Node EventEmitter wraps stream 'error' events with no listener as
+	// `Error: Unhandled error.` libp2p stream/muxer paths emit DOMException
+	// TimeoutError / AbortError on the underlying socket when a peer goes silent
+	// and no listener is attached. Both forms are transient.
+	const msg: string = err?.message ?? '';
+	const ctxMsg: string = err?.context?.message ?? '';
+	if (msg.startsWith('Unhandled error.') && /TimeoutError|AbortError|ECONNRESET|EPIPE/i.test(msg)) return true;
 	if (msg.includes('Unhandled error') && (ctxMsg.includes('timed out') || ctxMsg.includes('aborted') || ctxMsg.includes('closed') || ctxMsg.includes('reset'))) return true;
+	// Cause-chain check (Node may set .cause on wrapped errors).
+	const causeName = err?.cause?.constructor?.name || err?.cause?.name || '';
+	if (causeName === 'TimeoutError' || causeName === 'AbortError') return true;
 	return false;
 }
 

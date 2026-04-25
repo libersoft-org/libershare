@@ -7,7 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, allowRelay, maxRelayReservations, autoStartSharing, autoStartDownloading, autoErrorRecovery, mdnsEnabled, mdnsInterval, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setMdnsEnabled, setMdnsInterval, settingsDefaults } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, allowRelay, maxRelayReservations, autoStartSharing, autoStartDownloading, autoErrorRecovery, mdnsEnabled, mdnsInterval, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setMdnsEnabled, setMdnsInterval, settingsDefaults } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -29,8 +29,8 @@
 	let lishPathValue = $state($storageLISHPath);
 	let lishnetPathValue = $state($storageLISHnetPath);
 	let port = $state($incomingPort.toString());
-	let downloadConnections = $state($maxDownloadConnections.toString());
-	let uploadConnections = $state($maxUploadConnections.toString());
+	let downloadConnections = $state($maxDownloadPeersPerLISH.toString());
+	let uploadConnections = $state($maxUploadPeersPerLISH.toString());
 	let downloadSpeed = $state($maxDownloadSpeed.toString());
 	let uploadSpeed = $state($maxUploadSpeed.toString());
 	let relay = $state($allowRelay);
@@ -83,13 +83,13 @@
 	}
 
 	function saveDownloadConnections(): void {
-		setMaxDownloadConnections(parseInt(downloadConnections) || 0);
-		downloadConnections = $maxDownloadConnections.toString();
+		setMaxDownloadPeersPerLISH(parseInt(downloadConnections) || 0);
+		downloadConnections = $maxDownloadPeersPerLISH.toString();
 	}
 
 	function saveUploadConnections(): void {
-		setMaxUploadConnections(parseInt(uploadConnections) || 0);
-		uploadConnections = $maxUploadConnections.toString();
+		setMaxUploadPeersPerLISH(parseInt(uploadConnections) || 0);
+		uploadConnections = $maxUploadPeersPerLISH.toString();
 	}
 
 	function saveDownloadSpeed(): void {
@@ -178,11 +178,11 @@
 	}
 
 	function resetDownloadConnections(): void {
-		downloadConnections = String(settingsDefaults?.network?.maxDownloadConnections ?? 0);
+		downloadConnections = String(settingsDefaults?.network?.maxDownloadPeersPerLISH ?? 0);
 	}
 
 	function resetUploadConnections(): void {
-		uploadConnections = String(settingsDefaults?.network?.maxUploadConnections ?? 0);
+		uploadConnections = String(settingsDefaults?.network?.maxUploadPeersPerLISH ?? 0);
 	}
 
 	function resetDownloadSpeed(): void {
@@ -261,11 +261,11 @@
 				<Button icon="/img/restart.svg" position={[1, 4]} onConfirm={resetPort} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row">
-				<Input bind:value={downloadConnections} label={$t('settings.download.maxDownloadConnections')} type="number" position={[0, 5]} flex />
+				<Input bind:value={downloadConnections} label={$t('settings.download.maxDownloadPeersPerLISH')} type="number" position={[0, 5]} flex />
 				<Button icon="/img/restart.svg" position={[1, 5]} onConfirm={resetDownloadConnections} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row">
-				<Input bind:value={uploadConnections} label={$t('settings.download.maxUploadConnections')} type="number" position={[0, 6]} flex />
+				<Input bind:value={uploadConnections} label={$t('settings.download.maxUploadPeersPerLISH')} type="number" position={[0, 6]} flex />
 				<Button icon="/img/restart.svg" position={[1, 6]} onConfirm={resetUploadConnections} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row">

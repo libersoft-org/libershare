@@ -245,7 +245,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		// Delegate to the shared import pipeline — handles temp allocation, finalDirectory wiring,
 		// DB persist, broadcast, verification kick-off and markDownloadEnabled.
 		const downloadPath = settings.get('storage.downloadPath') ?? '~/LiberShare/finished/';
-		const result = await importManifest(manifest, downloadPath, { enableDownloading: true });
+		const enableSharing = settings.get('network.autoStartSharing') ?? true;
+		const enableDownloading = settings.get('network.autoStartDownloading') ?? true;
+		const result = await importManifest(manifest, downloadPath, { enableSharing, enableDownloading });
 		return { lishID: result.lishID };
 	}
 	function getNodeInfo(): NetworkNodeInfo | null {

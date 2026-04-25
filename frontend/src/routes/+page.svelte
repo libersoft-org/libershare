@@ -13,10 +13,10 @@
 	import { connected, apiURL } from '../scripts/ws-client.ts';
 	import { initDownloads } from '../scripts/downloads.ts';
 	import { initSystemStats } from '../scripts/systemStats.ts';
-	import { initNetworkEvents } from '../scripts/networks.ts';
+	import { initRelayStats } from '../scripts/relayStats.ts';
+	import { initNetworkEvents, subscribePeerCounts } from '../scripts/networks.ts';
 	import { detectLocalFilesystem } from '../scripts/localFilesystem.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedID: selectedID, navigate, onBack: onBack } = createNavigation();
-	import Debug from '../components/Debug/Debug.svelte';
 	import NotificationContainer from '../components/Notification/NotificationContainer.svelte';
 	import Header from '../pages/Header/Header.svelte';
 	import NavigationBreadcrumb from '../components/Breadcrumb/NavigationBreadcrumb.svelte';
@@ -68,12 +68,19 @@
 		hideConfirmDialog();
 	}
 
+	let peerCountsSubscribed = false;
+
 	async function onConnected(): Promise<void> {
 		try {
 			await loadSettings(); //	Load settings immediately on connect to ensure they're available for the rest of the initialization
 			await initDownloads(); // Load download list and subscribe to verify/list events
 			await initNetworkEvents(); // Subscribe to LISH network join/leave events
+			if (!peerCountsSubscribed) {
+				peerCountsSubscribed = true;
+				await subscribePeerCounts(); // Global peer-count subscription for Footer LISH widget (only once; reconnects handled internally)
+			}
 			initSystemStats(); // Subscribe to system stats (RAM, etc.)
+			initRelayStats(); // Subscribe to relay server stats
 			detectLocalFilesystem(); // Detect if browser and backend share filesystem
 			play('welcome'); //	Play welcome sound on connect
 		} catch (error) {
@@ -142,6 +149,5 @@
 			<Footer />
 		{/if}
 	</div>
-	<Debug />
 	<NotificationContainer />
 {/if}

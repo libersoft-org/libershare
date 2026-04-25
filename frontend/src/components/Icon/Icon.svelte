@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { getColorFromCSSToFilter } from '../../scripts/colors.ts';
 	interface Props {
 		img?: string | undefined;
 		alt?: string | undefined;
@@ -11,16 +10,7 @@
 		badgeColorVariable?: string | undefined;
 	}
 	let { img, alt = '', size = '24px', padding = '10px', colorVariable, noColorFilter = false, badgeIcon, badgeColorVariable = '--color-success' }: Props = $props();
-	let filterValue = $derived.by(() => {
-		if (noColorFilter) return 'none';
-		if (colorVariable) return getColorFromCSSToFilter(colorVariable);
-		return 'none';
-	});
-	let badgeFilterValue = $derived.by(() => {
-		const shadow = 'drop-shadow(0 0 0.4vh rgba(0, 0, 0, 1)) drop-shadow(0 0 0.4vh rgba(0, 0, 0, 1)) drop-shadow(0 0 0.4vh rgba(0, 0, 0, 1))';
-		if (badgeColorVariable) return getColorFromCSSToFilter(badgeColorVariable) + ' ' + shadow;
-		return shadow;
-	});
+	let useMask = $derived(!!colorVariable && !noColorFilter);
 </script>
 
 <style>
@@ -31,7 +21,18 @@
 		position: relative;
 	}
 
-	.icon img {
+	.icon-img {
+		display: flex;
+		user-select: none;
+		mask-size: contain;
+		mask-repeat: no-repeat;
+		mask-position: center;
+		-webkit-mask-size: contain;
+		-webkit-mask-repeat: no-repeat;
+		-webkit-mask-position: center;
+	}
+
+	.icon-img-plain {
 		display: flex;
 		user-select: none;
 	}
@@ -46,18 +47,29 @@
 		justify-content: center;
 	}
 
-	.badge img {
+	.badge-img {
 		display: flex;
 		user-select: none;
+		mask-size: contain;
+		mask-repeat: no-repeat;
+		mask-position: center;
+		-webkit-mask-size: contain;
+		-webkit-mask-repeat: no-repeat;
+		-webkit-mask-position: center;
+		filter: drop-shadow(0 0 0.4vh rgba(0, 0, 0, 1)) drop-shadow(0 0 0.4vh rgba(0, 0, 0, 1)) drop-shadow(0 0 0.4vh rgba(0, 0, 0, 1));
 	}
 </style>
 
 {#if img}
 	<div class="icon" style:padding>
-		<img style:min-width={size} style:min-height={size} style:max-width={size} style:max-height={size} style:filter={filterValue} src={img} draggable={false} {alt} />
+		{#if useMask}
+			<div class="icon-img" role="img" aria-label={alt} style:min-width={size} style:min-height={size} style:max-width={size} style:max-height={size} style:background-color="var({colorVariable})" style:mask-image="url('{img}')" style:-webkit-mask-image="url('{img}')"></div>
+		{:else}
+			<img class="icon-img-plain" style:min-width={size} style:min-height={size} style:max-width={size} style:max-height={size} src={img} draggable={false} {alt} />
+		{/if}
 		{#if badgeIcon}
 			<div class="badge">
-				<img style:width="calc({size} * 0.5)" style:height="calc({size} * 0.5)" style:filter={badgeFilterValue} src={badgeIcon} draggable={false} alt="" />
+				<div class="badge-img" role="presentation" style:width="calc({size} * 0.5)" style:height="calc({size} * 0.5)" style:background-color="var({badgeColorVariable})" style:mask-image="url('{badgeIcon}')" style:-webkit-mask-image="url('{badgeIcon}')"></div>
 			</div>
 		{/if}
 	</div>

@@ -18,6 +18,9 @@ export class GamepadManager {
 	private volumeButtonHeld: number | null = null;
 	// Button state tracking (for A/B press/release)
 	private previousButtons: boolean[] = [];
+	// Per-button flag: was SELECT held at the moment this button went down? Used to suppress
+	// normal release events (e.g. aUp) when the press was actually a SELECT+button combo.
+	private pressWithSelect: boolean[] = [];
 	// Connection state
 	private isConnected = false;
 	private started = false;
@@ -81,6 +84,7 @@ export class GamepadManager {
 		this.firstInputTime = 0;
 		this.lastInputTime = 0;
 		this.previousButtons = [];
+		this.pressWithSelect = [];
 	}
 
 	on(key: string, callback: GamepadCallback): void {
@@ -120,16 +124,33 @@ export class GamepadManager {
 	};
 
 	private handleButtons(buttons: boolean[]): void {
-		// A button (0) - confirm
-		if (buttons[0] && !this.previousButtons[0]) this.emit('aDown');
-		if (!buttons[0] && this.previousButtons[0]) this.emit('aUp');
-		// B button (1) - back
-		if (buttons[1] && !this.previousButtons[1]) this.emit('bDown');
-		if (!buttons[1] && this.previousButtons[1]) this.emit('bUp');
-		// Select button (8) - reload
-		if (buttons[8] && !this.previousButtons[8]) this.emit('select');
-		// Start button (9) - debug
-		if (buttons[9] && !this.previousButtons[9]) this.emit('start');
+		const selectHeld = !!buttons[8];
+		const startHeld = !!buttons[9];
+		// A (0) - confirm, or pageDown when SELECT is held
+		if (buttons[0] && !this.previousButtons[0]) {
+			if (selectHeld) this.emit('pageDown');
+			else if (!startHeld) this.emit('aDown');
+		}
+		// Emit aUp on release only if aDown was emitted on press (i.e. not a combo press).
+		// previousSelectOnPress[n] tracks whether SELECT was held at the moment the button went down.
+		if (!buttons[0] && this.previousButtons[0] && !this.pressWithSelect[0]) this.emit('aUp');
+		// B (1) - back, or pageUp when SELECT is held
+		if (buttons[1] && !this.previousButtons[1]) {
+			if (selectHeld) this.emit('pageUp');
+			else if (!startHeld) this.emit('bDown');
+		}
+		// X (3) - SELECT+X = end (X alone is handled in handleVolume as decrease volume)
+		if (buttons[3] && !this.previousButtons[3] && selectHeld) this.emit('end');
+		// Y (4) - SELECT+Y = home, START+Y = reload (Y alone is handled in handleVolume as increase volume)
+		if (buttons[4] && !this.previousButtons[4]) {
+			if (selectHeld) this.emit('home');
+			else if (startHeld) this.emit('reload');
+		}
+		// Remember which buttons were pressed WITH select/start held (so release suppresses normal release events)
+		for (let i = 0; i < buttons.length; i++) {
+			if (buttons[i] && !this.previousButtons[i]) this.pressWithSelect[i] = selectHeld || startHeld;
+			else if (!buttons[i]) this.pressWithSelect[i] = false;
+		}
 		this.previousButtons = [...buttons];
 	}
 
@@ -161,6 +182,12 @@ export class GamepadManager {
 	}
 
 	private handleVolume(buttons: boolean[], now: number): void {
+		// While SELECT or START is held, X/Y act as combo modifiers — suppress volume.
+		if (buttons[8] || buttons[9]) {
+			this.volumeButtonHeld = null;
+			this.volumeFirstTime = 0;
+			return;
+		}
 		const currentButton = buttons[4] ? 4 : buttons[3] ? 3 : null;
 		if (currentButton === null) {
 			this.volumeButtonHeld = null;

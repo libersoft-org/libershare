@@ -1,7 +1,7 @@
 import { getKeyboardManager } from './keyboard.ts';
 import { getGamepadManager } from './gamepad.ts';
 import { getMouseManager } from './mouse.ts';
-import { emit, emitTypedChar, debugAreas } from '../areas.ts';
+import { emit, emitTypedChar } from '../areas.ts';
 
 class InputManager {
 	private keyboardStarted = false;
@@ -35,7 +35,6 @@ class InputManager {
 		keyboard.on('confirmUp', () => emit('confirmUp'));
 		keyboard.on('back', () => emit('back'));
 		keyboard.onTypedChar(char => emitTypedChar(char));
-		keyboard.on('debug', () => debugAreas.update(v => !v));
 		keyboard.on('reload', () => window.location.reload());
 		keyboard.start();
 		this.keyboardStarted = true;
@@ -51,7 +50,6 @@ class InputManager {
 		keyboard.off('confirmDown');
 		keyboard.off('confirmUp');
 		keyboard.off('back');
-		keyboard.off('debug');
 		keyboard.off('reload');
 		keyboard.stop();
 		this.keyboardStarted = false;
@@ -67,8 +65,13 @@ class InputManager {
 		gamepad.on('aDown', () => emit('confirmDown'));
 		gamepad.on('aUp', () => emit('confirmUp'));
 		gamepad.on('bDown', () => emit('back'));
-		gamepad.on('select', () => window.location.reload());
-		gamepad.on('start', () => debugAreas.update(v => !v));
+		// SELECT + A/B/X/Y combos (emitted by gamepad manager only when SELECT is held)
+		gamepad.on('pageDown', () => emit('pageDown'));
+		gamepad.on('pageUp', () => emit('pageUp'));
+		gamepad.on('end', () => emit('end'));
+		gamepad.on('home', () => emit('home'));
+		// START + Y = reload
+		gamepad.on('reload', () => window.location.reload());
 		gamepad.start();
 		this.gamepadStarted = true;
 	}
@@ -83,8 +86,11 @@ class InputManager {
 		gamepad.off('aDown');
 		gamepad.off('aUp');
 		gamepad.off('bDown');
-		gamepad.off('select');
-		gamepad.off('start');
+		gamepad.off('pageDown');
+		gamepad.off('pageUp');
+		gamepad.off('end');
+		gamepad.off('home');
+		gamepad.off('reload');
 		gamepad.stop();
 		this.gamepadStarted = false;
 	}

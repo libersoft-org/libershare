@@ -607,7 +607,7 @@
 			unregisterActions();
 			unregisterActions = null;
 		}
-		pushBreadcrumb($t('fileBrowser.newDirectory'));
+		pushBreadcrumb($t('common.newDirectory'));
 	}
 
 	async function confirmNewDirectory(directoryName: string): Promise<void> {
@@ -1157,7 +1157,7 @@
 	<ConfirmDialog title={$t('fileBrowser.deleteFile')} message={$t('fileBrowser.confirmDeleteFile', { name: fileToDelete.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteFile} onBack={cancelDeleteFile} />
 {/if}
 {#if showNewDirectoryDialogState}
-	<InputDialog title={$t('fileBrowser.newDirectory')} label={$t('fileBrowser.directoryName')} placeholder={$t('fileBrowser.enterDirectoryName')} confirmLabel={$t('common.create')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmNewDirectory} onBack={cancelNewDirectory} />
+	<InputDialog title={$t('common.newDirectory')} label={$t('fileBrowser.directoryName')} placeholder={$t('fileBrowser.enterDirectoryName')} confirmLabel={$t('common.create')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmNewDirectory} onBack={cancelNewDirectory} />
 {/if}
 {#if showCreateFileDialogState}
 	<InputDialog title={$t('fileBrowser.createFile')} label={$t('common.fileName')} placeholder={$t('fileBrowser.enterFileName')} confirmLabel={$t('common.create')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmCreateFile} onBack={cancelCreateFile} />

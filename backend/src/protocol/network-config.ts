@@ -133,9 +133,13 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			listen: listenAddresses,
 			appendAnnounce: appendAnnounceAddresses.length > 0 ? appendAnnounceAddresses : undefined,
 		},
-		// Metrics snapshot every 5s → monitoring/memory-trace picks the relevant
-		// counters on its own sample cadence. Used to correlate RSS growth with
-		// libp2p internal collection sizes during leak investigations.
+		// simple-metrics drives two consumers:
+		//   1. backend/src/monitoring/memory-trace.ts via onLibp2pMetrics — correlates
+		//      RSS growth with libp2p internal collection sizes during leak investigations.
+		//   2. backend/src/api/relay.ts reads `transferStats` directly off the metrics
+		//      instance for the relay widget; only the interval matters for that path.
+		// 5 s sample interval is sufficient for both: the leak monitor is anyway
+		// downsampled, and the relay widget refreshes far less often than 1 Hz.
 		metrics: simpleMetrics({ intervalMs: 5000, onMetrics: onLibp2pMetrics }),
 		transports,
 		connectionEncrypters: [noise({ crypto: pureJsCrypto })],
@@ -389,7 +393,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// (zero-config LAN peer discovery) is high.
 	const mdnsEnabled = allSettings.network?.mdnsEnabled ?? true;
 	if (mdnsEnabled) {
-		const mdnsInterval = allSettings.network?.mdnsInterval ?? 10000;
+		const mdnsInterval = allSettings.network?.mdnsInterval ?? 30000;
 		peerDiscovery.push(
 			mdns({
 				interval: mdnsInterval,

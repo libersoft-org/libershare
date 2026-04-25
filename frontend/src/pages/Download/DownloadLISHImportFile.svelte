@@ -6,7 +6,7 @@
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { pushBreadcrumb, popBreadcrumb, navigateBack } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, autoStartSharing, autoStartDownloading } from '../../scripts/settings.ts';
+	import { storagePath, storageLISHPath, autoStartSharing, autoStartDownloading } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
@@ -19,6 +19,8 @@
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	import ImportOverwrite from './DownloadLISHImportOverwrite.svelte';
+	import Dialog from '../../components/Dialog/Dialog.svelte';
+	import Spinner from '../../components/Spinner/Spinner.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -28,17 +30,16 @@
 	let { areaID, position = CONTENT_POSITIONS.main, onBack, onImport }: Props = $props();
 	let removeBackHandler: (() => void) | null = null;
 	let filePath = $state('');
-	let uploadMode = $state(!$localFilesystem);
+	let uploadMode = $state(false);
 	let uploadFileName = $state('');
 	let uploadContent = $state('');
 	let fileInput = $state<HTMLInputElement>();
 	let downloadPath = $state($storagePath);
-	let autoStart = $state($autoStartSharing);
-	let autoStartDl = $state($autoStartDownloading);
 	let errorMessage = $state('');
 	let browsingFilePath = $state(false);
 	let browsingDownloadPath = $state(false);
 	let parsedLISHs = $state<ILISH[] | null>(null);
+	let importing = $state(false);
 
 	function openFilePicker(): void {
 		fileInput?.click();
@@ -82,9 +83,12 @@
 			return;
 		}
 		try {
+			importing = true;
 			parsedLISHs = uploadMode ? await api.lishs.parseFromJSON(uploadContent) : await api.lishs.parseFromFile(filePath);
 		} catch (e) {
 			errorMessage = translateError(e);
+		} finally {
+			importing = false;
 		}
 	}
 
@@ -164,12 +168,25 @@
 	.file-input {
 		display: none;
 	}
+
+	.loading {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 3vh;
+		padding: 2vh 4vh;
+	}
+
+	.loading-label {
+		font-size: 2vh;
+		text-align: center;
+	}
 </style>
 
 {#if parsedLISHs}
-	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} enableSharing={autoStart} enableDownloading={autoStartDl} onDone={handleOverwriteDone} />
+	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} onDone={handleOverwriteDone} />
 {:else if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storagePath} showPath fileFilter={['*.lish', '*.lishs', '*.json', '*.lish.gz', '*.lishs.gz', '*.json.gz', '*.lish.gzip', '*.lishs.gzip', '*.json.gzip']} fileFilterName={'LISH ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
+	<FileBrowser {areaID} {position} initialPath={filePath || $storageLISHPath} showPath fileFilter={['*.lish', '*.lishs', '*.json', '*.lish.gz', '*.lishs.gz', '*.json.gz', '*.lish.gzip', '*.lishs.gzip', '*.json.gzip']} fileFilterName={'LISH ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
 {:else if browsingDownloadPath}
 	<FileBrowser {areaID} {position} initialPath={downloadPath} directoriesOnly showPath selectDirectoryButton onSelect={handleDownloadPathSelect} onBack={handleBrowseBack} />
 {:else}
@@ -180,10 +197,7 @@
 				<SwitchRow label={$t('lish.import.uploadFromLocal')} checked={uploadMode} position={[0, 0]} onToggle={() => (uploadMode = !uploadMode)} />
 			{/if}
 			{#if uploadMode}
-				<div class="row">
-					<Input value={uploadFileName || $t('lish.import.noFileSelected')} label={$t('lish.import.localFile')} position={[0, 1]} flex disabled />
-					<Button icon="/img/upload.svg" position={[1, 1]} onConfirm={openFilePicker} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
-				</div>
+				<Button icon="/img/upload.svg" label={uploadFileName || $t('lish.import.selectLocalFile')} position={[0, 1]} onConfirm={openFilePicker} width="100%" />
 			{:else}
 				<div class="row">
 					<Input bind:value={filePath} label={$t('lish.import.filePath')} position={[0, 1]} flex />
@@ -194,15 +208,21 @@
 				<Input bind:value={downloadPath} label={$t('lish.import.downloadPath')} position={[0, 2]} flex />
 				<Button icon="/img/directory.svg" position={[1, 2]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('lish.import.autoStartSharing')} checked={autoStart} position={[0, 3]} onToggle={() => (autoStart = !autoStart)} />
-			<SwitchRow label={$t('lish.import.autoStartDownloading')} checked={autoStartDl} position={[0, 4]} onToggle={() => (autoStartDl = !autoStartDl)} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
 		<ButtonBar justify="center">
-			<Button icon="/img/download.svg" label={$t('common.import')} position={[0, 5]} onConfirm={handleImport} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 5]} onConfirm={onBack} />
+			<Button icon="/img/download.svg" label={$t('common.import')} position={[0, 3]} onConfirm={handleImport} />
+			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 3]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
+	{#if importing}
+		<Dialog title={$t('common.import')}>
+			<div class="loading">
+				<Spinner size="8vh" />
+				<div class="loading-label">{$t('lish.import.importing')}</div>
+			</div>
+		</Dialog>
+	{/if}
 {/if}

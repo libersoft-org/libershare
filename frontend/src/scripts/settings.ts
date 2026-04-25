@@ -28,8 +28,8 @@ export const storageTempPath = writable('');
 export const storageLISHPath = writable('');
 export const storageLISHnetPath = writable('');
 export const incomingPort = writable(0);
-export const maxDownloadConnections = writable(0);
-export const maxUploadConnections = writable(0);
+export const maxDownloadPeersPerLISH = writable(0);
+export const maxUploadPeersPerLISH = writable(0);
 export const maxDownloadSpeed = writable(0);
 export const maxUploadSpeed = writable(0);
 export const allowRelay = writable(true);
@@ -73,7 +73,7 @@ export async function loadSettings(): Promise<void> {
 		cursorSize.set(settings.ui.cursorSize);
 		footerVisible.set(settings.ui.footerVisible);
 		footerPosition.set(settings.ui.footerPosition);
-		footerWidgetVisibility.set(settings.ui.footerWidgets);
+		footerWidgetVisibility.set({ ...defaultWidgetVisibility, ...settings.ui.footerWidgets });
 		timeFormat.set(settings.ui.timeFormat24h);
 		showSeconds.set(settings.ui.showSeconds);
 
@@ -89,8 +89,8 @@ export async function loadSettings(): Promise<void> {
 
 		// Network
 		incomingPort.set(settings.network.incomingPort);
-		maxDownloadConnections.set(settings.network.maxDownloadConnections);
-		maxUploadConnections.set(settings.network.maxUploadConnections);
+		maxDownloadPeersPerLISH.set(settings.network.maxDownloadPeersPerLISH);
+		maxUploadPeersPerLISH.set(settings.network.maxUploadPeersPerLISH);
 		maxDownloadSpeed.set(settings.network.maxDownloadSpeed);
 		maxUploadSpeed.set(settings.network.maxUploadSpeed);
 		allowRelay.set(settings.network.allowRelay);
@@ -175,14 +175,14 @@ export function setIncomingPort(value: number): void {
 	updateSetting(incomingPort, 'network.incomingPort', clampedValue);
 }
 
-export function setMaxDownloadConnections(value: number): void {
+export function setMaxDownloadPeersPerLISH(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
-	updateSetting(maxDownloadConnections, 'network.maxDownloadConnections', clampedValue);
+	updateSetting(maxDownloadPeersPerLISH, 'network.maxDownloadPeersPerLISH', clampedValue);
 }
 
-export function setMaxUploadConnections(value: number): void {
+export function setMaxUploadPeersPerLISH(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
-	updateSetting(maxUploadConnections, 'network.maxUploadConnections', clampedValue);
+	updateSetting(maxUploadPeersPerLISH, 'network.maxUploadPeersPerLISH', clampedValue);
 }
 
 export function setMaxDownloadSpeed(value: number): void {

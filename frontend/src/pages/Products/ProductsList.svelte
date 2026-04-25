@@ -49,6 +49,11 @@
 		position,
 		onBack,
 		activate: true,
+		listRange: () => {
+			const cols = Math.max(1, getGridColumnsCount(itemElements));
+			const lastRow = Math.max(0, Math.ceil(items.length / cols) - 1);
+			return [0, lastRow];
+		},
 	}));
 
 	onMount(() => {

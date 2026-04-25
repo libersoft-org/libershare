@@ -223,7 +223,7 @@
 			handleBack();
 			return;
 		}
-		if (!success) deleteError = $t('downloads.deleteFailed');
+		if (!success) deleteError = $t('common.deleteFailed');
 		// Backend already handles verification after data-only delete (startVerification in del())
 		activateArea(toolbarAreaID);
 	}
@@ -317,6 +317,26 @@
 			// TODO: Open file or show file actions
 		},
 		confirmCancel() {},
+		pageUp() {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = Math.max(0, selectedFileIndex - 10);
+			scrollToSelected();
+		},
+		pageDown() {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = Math.min(download.files.length - 1, selectedFileIndex + 10);
+			scrollToSelected();
+		},
+		home() {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = 0;
+			scrollToSelected();
+		},
+		end() {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = download.files.length - 1;
+			scrollToSelected();
+		},
 		back() {
 			handleBack();
 		},
@@ -392,6 +412,26 @@
 		confirmDown() {},
 		confirmUp() {},
 		confirmCancel() {},
+		pageUp() {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = Math.max(0, selectedPeerIndex - 10);
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
+		pageDown() {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = Math.min(currentPeers.length - 1, selectedPeerIndex + 10);
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
+		home() {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = 0;
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
+		end() {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = currentPeers.length - 1;
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
 		back() {
 			handleBack();
 		},
@@ -737,11 +777,11 @@
 					<div class="tab-header">
 						<button class="tab" class:active={activeTab === 'files'} class:selected={tabActive && selectedTabIndex === 0}>
 							<Icon img="/img/file.svg" size="1.8vh" padding="0" colorVariable={filesTabColor} />
-							{$t('downloads.tabs.files')}
+							{$t('common.files')}
 						</button>
 						<button class="tab" class:active={activeTab === 'peers'} class:selected={tabActive && selectedTabIndex === 1}>
-							<Icon img="/img/peers.svg" size="1.8vh" padding="0" colorVariable={peersTabColor} />
-							{$t('downloads.tabs.peers')}
+							<Icon img="/img/share.svg" size="1.8vh" padding="0" colorVariable={peersTabColor} />
+							{$t('common.connections')}
 						</button>
 					</div>
 					{#if activeTab === 'files'}
@@ -768,8 +808,8 @@
 								<Cell>{$t('downloads.peerList.id')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.availability')}</Cell>
-								<Cell align="center">{$t('downloads.peerList.speed')}</Cell>
-								<Cell align="center">{$t('downloads.peerList.transferred')}</Cell>
+								<Cell align="center">{$t('common.speed')}</Cell>
+								<Cell align="center">{$t('common.transferred')}</Cell>
 								<Cell align="center">{$t('downloads.peerList.activity')}</Cell>
 							</Header>
 							<div class="items">
