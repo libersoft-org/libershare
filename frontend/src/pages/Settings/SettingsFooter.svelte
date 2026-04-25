@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
-	import { activateArea } from '../../scripts/areas.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
 	import { footerVisible, setFooterVisible, footerPosition, footerWidgetVisibility, setFooterWidgetVisibility } from '../../scripts/settings.ts';
 	import { footerWidgets, getWidgetLabel } from '../../scripts/footerWidgets.ts';
@@ -53,9 +52,7 @@
 		</ButtonBar>
 		<div
 			role="group"
-			onmouseenter={() => {
-				activateArea(areaID);
-			}}
+			data-mouse-activate-area={areaID}
 		>
 			<SwitchRow label={$t('settings.footerVisible')} checked={$footerVisible} position={[0, 1]} onToggle={() => setFooterVisible(!$footerVisible)} />
 		</div>
@@ -65,9 +62,7 @@
 		{#each footerWidgets as widget, index}
 			<div
 				role="group"
-				onmouseenter={() => {
-					activateArea(areaID);
-				}}
+				data-mouse-activate-area={areaID}
 			>
 				<SwitchRow label={getWidgetLabel(widget, $t)} checked={$footerWidgetVisibility[widget]} position={[0, index + 3]} onToggle={() => setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget])} />
 			</div>

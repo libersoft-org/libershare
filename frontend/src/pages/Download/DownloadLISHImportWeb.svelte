@@ -121,18 +121,14 @@
 		<div class="container">
 			<div
 				role="group"
-				onmouseenter={() => {
-					activateArea(areaID);
-				}}
+				data-mouse-activate-area={areaID}
 			>
 				<Input bind:value={url} label={$t('lish.import.url')} placeholder="https://..." position={[0, 0]} flex />
 			</div>
 			<div
 				class="row"
 				role="group"
-				onmouseenter={() => {
-					activateArea(areaID);
-				}}
+				data-mouse-activate-area={areaID}
 			>
 				<Input bind:value={downloadPath} label={$t('lish.import.downloadPath')} position={[0, 1]} flex />
 				<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />

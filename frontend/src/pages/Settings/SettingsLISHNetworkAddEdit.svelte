@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { type NetworkFormData } from '../../scripts/lishNetwork.ts';
@@ -94,35 +93,27 @@
 	<div class="container">
 		<div
 			role="group"
-			onmouseenter={() => {
-				activateArea(areaID);
-			}}
+			data-mouse-activate-area={areaID}
 		>
 			<Input bind:value={name} label={$t('common.name')} position={[0, 0]} />
 		</div>
 		<div
 			role="group"
-			onmouseenter={() => {
-				activateArea(areaID);
-			}}
+			data-mouse-activate-area={areaID}
 		>
 			<Input bind:value={description} label={$t('common.description')} multiline rows={4} position={[0, 1]} />
 		</div>
 		{#if !isEditing}
 			<div
 				role="group"
-				onmouseenter={() => {
-					activateArea(areaID);
-				}}
+				data-mouse-activate-area={areaID}
 			>
 				<SwitchRow label={$t('settings.lishNetwork.autoGenerate') + ':'} checked={autoGenerateID} position={[0, 2]} onToggle={toggleAutoGenerateID} />
 			</div>
 			{#key autoGenerateID}
 				<div
 					role="group"
-					onmouseenter={() => {
-						activateArea(areaID);
-					}}
+					data-mouse-activate-area={areaID}
 				>
 					<Input bind:value={networkID} label={$t('settings.lishNetwork.networkID')} position={autoGenerateID ? undefined : [0, 3]} disabled={autoGenerateID} />
 				</div>
@@ -130,9 +121,7 @@
 		{:else}
 			<div
 				role="group"
-				onmouseenter={() => {
-					activateArea(areaID);
-				}}
+				data-mouse-activate-area={areaID}
 			>
 				<Input bind:value={networkID} label={$t('settings.lishNetwork.networkID')} position={[0, 2]} />
 			</div>
@@ -144,9 +133,7 @@
 			<div
 				class="bootstrap-row"
 				role="group"
-				onmouseenter={() => {
-					activateArea(areaID);
-				}}
+				data-mouse-activate-area={areaID}
 			>
 				<Input bind:value={bootstrapServers[index]} placeholder="address:port" position={[0, bootstrapOffset + index]} flex />
 				{#if hasRemove}
