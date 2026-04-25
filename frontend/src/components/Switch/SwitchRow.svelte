@@ -46,7 +46,16 @@
 </style>
 
 <Row selected={isSelected} {disabled} bind:el>
-	<div class="switch-row" onclick={() => (onToggle ?? onConfirm)?.()} onkeydown={e => { if (e.key === 'Enter') (onToggle ?? onConfirm)?.(); }} role="switch" aria-checked={checked} tabindex="-1">
+	<div
+		class="switch-row"
+		onclick={() => (onToggle ?? onConfirm)?.()}
+		onkeydown={e => {
+			if (e.key === 'Enter') (onToggle ?? onConfirm)?.();
+		}}
+		role="switch"
+		aria-checked={checked}
+		tabindex="-1"
+	>
 		<span class="label">{label}</span>
 		<Switch {checked} selected={isSelected} {disabled} />
 	</div>

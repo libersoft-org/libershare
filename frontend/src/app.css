@@ -70,7 +70,7 @@ body {
 	font-weight: bold;
 }
 
-[role="button"],
-[role="row"] {
+[role='button'],
+[role='row'] {
 	cursor: none;
 }

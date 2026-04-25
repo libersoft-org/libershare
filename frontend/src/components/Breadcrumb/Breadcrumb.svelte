@@ -104,7 +104,22 @@
 			<Icon img="/img/caret-right.svg" size="2vh" padding="0" colorVariable="--disabled-foreground" />
 		{/if}
 		{@const isSelected = navHandle.controller.isSelected([index, 0])}
-		<div use:registerItem={index < items.length - 1 ? index : -1} class="item" class:current={index === items.length - 1} class:selected={isSelected} class:clickable={index < items.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => { if (index < items.length - 1) { activateArea(areaID); navHandle.controller.select([index, 0]); } }} role={index < items.length - 1 ? 'button' : undefined} tabindex="-1">
+		<div
+			use:registerItem={index < items.length - 1 ? index : -1}
+			class="item"
+			class:current={index === items.length - 1}
+			class:selected={isSelected}
+			class:clickable={index < items.length - 1}
+			onclick={() => handleItemClick(index)}
+			onmouseenter={() => {
+				if (index < items.length - 1) {
+					activateArea(areaID);
+					navHandle.controller.select([index, 0]);
+				}
+			}}
+			role={index < items.length - 1 ? 'button' : undefined}
+			tabindex="-1"
+		>
 			{#if item.icon}
 				<Icon img={item.icon} size="2vh" padding="0" colorVariable={isSelected ? '--primary-background' : '--disabled-foreground'} />
 			{:else}

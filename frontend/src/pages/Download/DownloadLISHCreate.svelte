@@ -341,25 +341,52 @@
 	<div class="create">
 		<div class="container">
 			<!-- Name (optional) -->
-			<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+			<div
+				role="group"
+				onmouseenter={() => {
+					activateArea(areaID);
+				}}
+			>
 				<Input value={name} onchange={handleNameChange} label={`${$t('common.name')} (${$t('common.optional')})`} position={[0, 0]} />
 			</div>
 			<!-- Description (optional) -->
-			<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+			<div
+				role="group"
+				onmouseenter={() => {
+					activateArea(areaID);
+				}}
+			>
 				<Input bind:value={description} label={`${$t('common.description')} (${$t('common.optional')})`} multiline rows={3} position={[0, 1]} />
 			</div>
 			<!-- Data Path (required) -->
-			<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
+			<div
+				class="row"
+				role="group"
+				onmouseenter={() => {
+					activateArea(areaID);
+				}}
+			>
 				<Input bind:value={dataPath} label={$t('lish.create.dataPath')} position={[0, 2]} flex />
 				<Button icon="/img/directory.svg" position={[1, 2]} onConfirm={openInputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<!-- Save to File Switch -->
-			<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+			<div
+				role="group"
+				onmouseenter={() => {
+					activateArea(areaID);
+				}}
+			>
 				<SwitchRow label={$t('lish.create.saveToFile') + ':'} checked={saveToFile} position={[0, 3]} onConfirm={() => (saveToFile = !saveToFile)} />
 			</div>
 			{#if saveToFile}
 				<!-- LISH File Path (optional) -->
-				<div class="row" role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<div
+					class="row"
+					role="group"
+					onmouseenter={() => {
+						activateArea(areaID);
+					}}
+				>
 					<Input bind:value={lishFile} label={`${$t('lish.create.lishFile')} (${$t('common.optional')})`} position={[0, 4]} flex onchange={() => (lishFileManuallyEdited = true)} />
 					<Button icon="/img/directory.svg" position={[1, 4]} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
@@ -369,20 +396,40 @@
 			{#if showAdvanced}
 				{#if saveToFile}
 					<!-- Minify JSON Switch -->
-					<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+					<div
+						role="group"
+						onmouseenter={() => {
+							activateArea(areaID);
+						}}
+					>
 						<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} position={[0, 6]} onConfirm={() => (minifyJSON = !minifyJSON)} />
 					</div>
 					<!-- Compress Switch -->
-					<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+					<div
+						role="group"
+						onmouseenter={() => {
+							activateArea(areaID);
+						}}
+					>
 						<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 7]} onConfirm={handleCompressToggle} />
 					</div>
 				{/if}
 				<!-- Chunk Size -->
-				<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<div
+					role="group"
+					onmouseenter={() => {
+						activateArea(areaID);
+					}}
+				>
 					<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 8]} />
 				</div>
 				<!-- Hash Algorithm -->
-				<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<div
+					role="group"
+					onmouseenter={() => {
+						activateArea(areaID);
+					}}
+				>
 					<div class="label">{$t('lish.create.algorithm')}:</div>
 					<div class="algo-selector">
 						{#each SUPPORTED_ALGOS as algo, i}
@@ -391,7 +438,12 @@
 					</div>
 				</div>
 				<!-- Threads -->
-				<div role="group" onmouseenter={() => { activateArea(areaID); }}>
+				<div
+					role="group"
+					onmouseenter={() => {
+						activateArea(areaID);
+					}}
+				>
 					<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 10]} />
 				</div>
 			{/if}
