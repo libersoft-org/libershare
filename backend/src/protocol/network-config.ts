@@ -84,19 +84,21 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// NAT'd nodes never get reservations and are unreachable from siblings
 	// that only know their private IPs. discoverRelays should match maxRelays
 	// (/p2p-circuit slots, below) so we advertise as many reserved relay
-	// paths as we listen for. With only the two bootstrap peers as relays,
-	// NAT'd nodes saturate on them; raising this lets siblings act as relays
-	// too, giving NAT'd nodes multiple paths to reach each other.
-	transports.push(circuitRelayTransport({ discoverRelays: 5 } as any));
-	console.log(`✓ Circuit relay client enabled (discoverRelays: 5)`);
+	// paths as we listen for. 3 paths per NAT'd peer gives 1-down-2-fallback
+	// redundancy for ~100-peer fleets without amplifying the per-refresh
+	// Multiaddr churn that drove the earlier circuit-relay leak.
+	transports.push(circuitRelayTransport({ discoverRelays: 3 } as any));
+	console.log(`✓ Circuit relay client enabled (discoverRelays: 3)`);
 	// Build listen addresses
 	const port = allSettings.network?.incomingPort || 0;
 	const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
 	// Each /p2p-circuit slot accumulates Multiaddr objects from periodic relay
-	// reservation refresh; 10 slots were observed to produce ~117k Multiaddr
-	// instances on a long-running node (heap snapshot captured during leak
-	// investigation). 5 keeps redundancy without the leak amplifier.
-	const maxRelays = 5;
+	// reservation refresh; 10 slots produced ~117k Multiaddr instances on a
+	// long-running node (heap snapshot captured during leak investigation).
+	// 3 slots gives 1-down-2-fallback redundancy for NAT'd peers in a ~100-peer
+	// fleet at ~40% less per-refresh churn than 5, while still surviving a
+	// transient relay-peer outage.
+	const maxRelays = 3;
 	for (let i = 0; i < maxRelays; i++) listenAddresses.push('/p2p-circuit');
 	console.log(`✓ Configured to reserve ${maxRelays} relay slots`);
 	// Build appendAnnounce addresses.
@@ -140,10 +142,12 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		streamMuxers: [yamux()],
 		connectionManager: {
 			// Tuned for ~100-peer fleets. Each peer keeps gossipsub mesh (D=8 / Dhi=12)
-			// + relay reservations + transient identify/AutoNAT dials. 300 leaves
-			// comfortable headroom even when most of the fleet is reachable
-			// simultaneously and during reconnect storms after coordinated restarts.
-			maxConnections: 300,
+			// + a handful of relay reservations + transient identify/AutoNAT dials —
+			// realistic steady-state ceiling ~120-150 concurrent connections per node.
+			// 200 keeps a comfortable 1.3× headroom for reconnect storms after
+			// coordinated restarts without burning per-connection memory on a value
+			// that is twice what the fleet can actually use.
+			maxConnections: 200,
 			// ReconnectQueue fires on peer:disconnect and retries with exponential
 			// backoff. retryInterval 1000 ms matches the libp2p default. Backoff
 			// factor 1.5 (default 2) softens the climb so a peer experiencing a

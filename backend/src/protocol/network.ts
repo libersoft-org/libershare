@@ -51,14 +51,20 @@ interface PeerAnnounceMessage {
  */
 const PEER_ANNOUNCE_INTERVAL_ISOLATED_MS = 15_000; // peerStore < 20 (cold start / edge peer)
 const PEER_ANNOUNCE_INTERVAL_STEADY_MS = 30_000; // peerStore 20..80 (mid-convergence)
-const PEER_ANNOUNCE_INTERVAL_SATURATED_MS = 120_000; // peerStore > 80 (near full visibility)
+const PEER_ANNOUNCE_INTERVAL_SATURATED_MS = 180_000; // peerStore > 80 (near full visibility)
 const PEER_ANNOUNCE_JITTER_RATIO = 0.25; // ±25% jitter of chosen interval (thunder-herd avoidance)
 /** Minimum peerStore size before we consider ourselves worth advertising. */
 const PEER_ANNOUNCE_MIN_PEER_STORE = 5;
 /** Hard cap on number of multiaddrs we include in a single announce (safety bound). */
 const PEER_ANNOUNCE_MAX_ADDRS = 32;
-/** Cap on TOTAL multiaddrs in a peer-announce (self + peerStore transitive). */
-const PEER_ANNOUNCE_MAX_TOTAL_ADDRS = 256;
+/**
+ * Cap on TOTAL multiaddrs in a peer-announce (self + peerStore transitive).
+ * 128 covers ~half a 100-peer fleet per announce; receivers fill in the rest
+ * from their own peerStore + subsequent announce cycles. Halving from 256
+ * cuts saturation-time announce bandwidth ~50% with negligible discovery
+ * latency cost (sub-2 announce cycles to fill peerStore).
+ */
+const PEER_ANNOUNCE_MAX_TOTAL_ADDRS = 128;
 /** Max addrs we take from a single known peer when including transitive list. */
 const PEER_ANNOUNCE_MAX_ADDRS_PER_PEER = 3;
 /**

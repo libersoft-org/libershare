@@ -138,7 +138,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		autoErrorRecovery: true,
 		announceAddresses: [],
 		mdnsEnabled: true,
-		mdnsInterval: 10000,
+		mdnsInterval: 30000,
 		peerExchange: {
 			// Enabled by default: bootstrap peers (operator-configured in lishnet joins)
 			// are automatically trusted PX sources, so mesh density converges without
