@@ -39,8 +39,12 @@
 
 	function handleMouseEnter() {
 		if (navArea && position) {
-			activateArea(navArea.areaID);
+			// Select first so that if this is the first mouseenter into a non-active
+			// area, the subsequent activateArea -> onActivate scrolls to the row
+			// under the cursor (already in view) instead of the previously selected
+			// row (which would cause a jarring scroll).
 			navArea.select(position);
+			activateArea(navArea.areaID);
 		}
 	}
 </script>
