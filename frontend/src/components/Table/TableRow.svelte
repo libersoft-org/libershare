@@ -52,6 +52,10 @@
 		opacity: 0.55;
 	}
 
+	.row:hover:not(.selected) {
+		background-color: var(--secondary-background);
+	}
+
 	@media (max-width: 1199px) {
 		.row {
 			grid-template-columns: var(--table-columns-mobile);

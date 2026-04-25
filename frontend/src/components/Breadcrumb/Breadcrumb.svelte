@@ -2,6 +2,7 @@
 	import { type NavPos, createNavArea, navItem } from '../../scripts/navArea.svelte.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { type BreadcrumbItem } from '../../scripts/breadcrumb.ts';
+	import { activateArea } from '../../scripts/areas.ts';
 	import Icon from '../Icon/Icon.svelte';
 	interface Props {
 		areaID: string;
@@ -23,6 +24,14 @@
 			navHandle.controller.select([lastIDx, 0]);
 		},
 	}));
+
+	function handleItemClick(index: number) {
+		if (index >= items.length - 1) return;
+		activateArea(areaID);
+		navHandle.controller.select([index, 0]);
+		const item = items[index];
+		if (item) onSelect?.(item, index);
+	}
 
 	function registerItem(node: HTMLElement, selectableIndex: number) {
 		let cleanup: (() => void) | undefined;
@@ -82,6 +91,11 @@
 		background-color: var(--primary-foreground);
 		color: var(--secondary-background);
 	}
+
+	.item.clickable:hover:not(.selected) {
+		color: var(--secondary-foreground);
+		background-color: var(--secondary-softer-background);
+	}
 </style>
 
 <div class="breadcrumb">
@@ -90,7 +104,7 @@
 			<Icon img="/img/caret-right.svg" size="2vh" padding="0" colorVariable="--disabled-foreground" />
 		{/if}
 		{@const isSelected = navHandle.controller.isSelected([index, 0])}
-		<div use:registerItem={index < items.length - 1 ? index : -1} class="item" class:current={index === items.length - 1} class:selected={isSelected}>
+		<div use:registerItem={index < items.length - 1 ? index : -1} class="item" class:current={index === items.length - 1} class:selected={isSelected} class:clickable={index < items.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => { if (index < items.length - 1) { activateArea(areaID); navHandle.controller.select([index, 0]); } }} role={index < items.length - 1 ? 'button' : undefined} tabindex="-1">
 			{#if item.icon}
 				<Icon img={item.icon} size="2vh" padding="0" colorVariable={isSelected ? '--primary-background' : '--disabled-foreground'} />
 			{:else}
