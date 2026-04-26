@@ -65,6 +65,13 @@
 		align-items: center;
 		gap: 1vh;
 	}
+
+	.search-status.stacked {
+		flex-direction: column;
+		gap: 2vh;
+		padding: 4vh 0;
+		font-size: 2vh;
+	}
 </style>
 
 <div class="filters">
@@ -77,8 +84,8 @@
 {#if search.error}
 	<Alert type="error" message={search.error} />
 {:else if search.searching && search.results.length === 0}
-	<div class="search-status">
-		<Spinner size="3vh" />
+	<div class="search-status stacked">
+		<Spinner size="8vh" />
 		<span>{$t('network.searching')}</span>
 	</div>
 {:else if !search.searching && search.results.length === 0 && search.searchID !== null}
