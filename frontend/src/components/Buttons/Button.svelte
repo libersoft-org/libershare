@@ -30,7 +30,8 @@
 	const menuButtons = getContext<MenuButtonsContext | undefined>('menuButtons');
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	const buttonBar = getContext<ButtonBarContext | undefined>('buttonBar');
-	const effectivePosition: NavPos | undefined = untrack(() => position ?? buttonBar?.nextPosition());
+	const buttonBarPosition: NavPos | undefined = untrack(() => (position ? undefined : buttonBar?.nextPosition())); // Capture the buttonBar fallback once so we don't consume multiple positions on re-renders.
+	let effectivePosition = $derived<NavPos | undefined>(position ?? buttonBarPosition); // Reactive effective position so dynamic `position` prop changes propagate to NavArea.
 	let index = $state(-1);
 	let isSelected = $derived(navArea && effectivePosition ? navArea.isSelected(effectivePosition) : menuButtons ? menuButtons.isSelected(index) : selected);
 	let isPressed = $derived(navArea && effectivePosition ? navArea.isPressed(effectivePosition) : menuButtons ? menuButtons.isPressed(index) : pressed);

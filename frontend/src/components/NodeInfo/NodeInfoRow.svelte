@@ -12,11 +12,11 @@
 		nodeInfo: NetworkNodeInfo;
 		rowY: number;
 		buttonX?: number;
+		showAddresses?: boolean;
 	}
-	let { nodeInfo, rowY, buttonX = 0 }: Props = $props();
+	let { nodeInfo, rowY, buttonX = 0, showAddresses = $bindable(false) }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let rowSelected = $derived(navArea ? navArea.isSelected([buttonX, rowY]) : false);
-	let showAddresses = $state(false);
 
 	function toggleAddresses(): void {
 		showAddresses = !showAddresses;
@@ -75,7 +75,7 @@
 			{#if showAddresses && nodeInfo.addresses.length > 0}
 				<Table columns="auto 1fr">
 					{#each nodeInfo.addresses as address, i}
-						<TableRow>
+						<TableRow position={[buttonX, rowY + 1 + i]}>
 							<TableCell><span class="address-index">{i + 1}.</span></TableCell>
 							<TableCell wrap><span class="address-value">{address}</span></TableCell>
 						</TableRow>

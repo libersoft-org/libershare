@@ -18,14 +18,18 @@
 		nodeInfo: NetworkNodeInfo | null;
 		loading: boolean;
 		error: string;
-		/** Y-coordinate of the filter row. Peer rows live at `baseY + 1 + i`. NodeInfoRow (when shown) sits at `baseY - 1`. */
+		/** Y-coordinate of the filter row. Peer rows live at `baseY + 1 + i`. */
 		baseY: number;
+		/** Y-coordinate of the NodeInfoRow toggle button (when nodeInfo is present). Address rows then occupy `nodeInfoRowY + 1 .. baseY - 1`. */
+		nodeInfoRowY: number;
 		/** Filter state owned by the parent (so parent can also derive filteredPeers + listRange). */
 		peersSearch: string;
 		selectedNetworkID: string;
+		/** Whether the NodeInfo addresses sub-table is expanded (owned by parent for NavArea layout). */
+		nodeInfoShowAddresses: boolean;
 		onOpenPeer: (peer: PeerListEntry) => void;
 	}
-	let { peers, filteredPeers, networks, nodeInfo, loading, error, baseY, peersSearch = $bindable(), selectedNetworkID = $bindable(), onOpenPeer }: Props = $props();
+	let { peers, filteredPeers, networks, nodeInfo, loading, error, baseY, nodeInfoRowY, peersSearch = $bindable(), selectedNetworkID = $bindable(), nodeInfoShowAddresses = $bindable(), onOpenPeer }: Props = $props();
 
 	function getNetworkNames(peer: PeerListEntry): string {
 		return peer.networks.map(n => n.networkName).join(', ');
@@ -72,7 +76,7 @@
 </style>
 
 {#if nodeInfo}
-	<NodeInfoRow {nodeInfo} rowY={baseY - 1} />
+	<NodeInfoRow {nodeInfo} rowY={nodeInfoRowY} bind:showAddresses={nodeInfoShowAddresses} />
 {/if}
 {#if loading}
 	<Spinner size="8vh" />

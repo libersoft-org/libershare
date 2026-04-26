@@ -39,6 +39,11 @@
 	let peersError = $state('');
 	let peersSearch = $state('');
 	let selectedNetworkID = $state('');
+	let nodeInfoShowAddresses = $state(false);
+
+	const nodeInfoRowY = 2;
+	let nodeInfoAddressRows = $derived(nodeInfo && nodeInfoShowAddresses ? nodeInfo.addresses.length : 0);
+	let peersBaseY = $derived((nodeInfo ? nodeInfoRowY + 1 : 2) + nodeInfoAddressRows);
 
 	let filteredPeers = $derived.by((): PeerListEntry[] => {
 		let result = peers;
@@ -157,9 +162,10 @@
 	//   y=2 — search input + buttons
 	//   y=3+i — LISH rows
 	// Peers tab:
-	//   y=2 — NodeInfoRow (when present)
-	//   y=baseY (3 or 2) — filters
-	//   y=baseY+1+i — peer rows
+	//   y=2 — NodeInfoRow toggle (when present)
+	//   y=3 .. 2+N — NodeInfoRow address rows (when expanded; N = address count)
+	//   y=peersBaseY — filters
+	//   y=peersBaseY+1+i — peer rows
 	const navHandle = createNavArea(() => ({
 		areaID,
 		position,
@@ -167,8 +173,7 @@
 		activate: true,
 		listRange: () => {
 			if (activeTab === 'peers') {
-				const baseY = nodeInfo ? 3 : 2;
-				return [baseY, Math.max(baseY, baseY + filteredPeers.length)];
+				return [peersBaseY, Math.max(peersBaseY, peersBaseY + filteredPeers.length)];
 			}
 			return [2, Math.max(2, 2 + search.results.length)];
 		},
@@ -219,8 +224,7 @@
 			{#if activeTab === 'lishs'}
 				<NetworkLishs baseY={2} {search} onOpenLishPeers={openLishPeerList} />
 			{:else}
-				{@const baseY = nodeInfo ? 3 : 2}
-				<NetworkPeers {peers} {filteredPeers} {networks} {nodeInfo} loading={peersLoading} error={peersError} {baseY} bind:peersSearch bind:selectedNetworkID onOpenPeer={openPeerFromPeersTab} />
+				<NetworkPeers {peers} {filteredPeers} {networks} {nodeInfo} loading={peersLoading} error={peersError} baseY={peersBaseY} {nodeInfoRowY} bind:peersSearch bind:selectedNetworkID bind:nodeInfoShowAddresses onOpenPeer={openPeerFromPeersTab} />
 			{/if}
 		</div>
 	</div>

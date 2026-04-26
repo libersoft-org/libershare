@@ -41,6 +41,7 @@
 	// Networks loaded from backend
 	let networks = $state<LISHNetworkConfig[]>([]);
 	let globalNodeInfo = $state<NetworkNodeInfo | null>(null);
+	let nodeInfoShowAddresses = $state(false);
 	let networkErrors = $state<Record<string, string>>({});
 
 	async function loadNetworks(): Promise<void> {
@@ -50,7 +51,7 @@
 	}
 
 	// Row offsets for positions
-	let nodeInfoOffset = $derived(globalNodeInfo ? 1 : 0);
+	let nodeInfoOffset = $derived(globalNodeInfo ? 1 + (nodeInfoShowAddresses ? globalNodeInfo.addresses.length : 0) : 0);
 
 	function openPublic(): void {
 		showPublic = true;
@@ -342,7 +343,7 @@
 				<Button icon="/img/export.svg" label={$t('common.exportAll')} onConfirm={openExportAll} padding="1vh 1.5vh" fontSize="1.6vh" />
 			</ButtonBar>
 			{#if globalNodeInfo}
-				<NodeInfoRow nodeInfo={globalNodeInfo} rowY={1} />
+				<NodeInfoRow nodeInfo={globalNodeInfo} rowY={1} bind:showAddresses={nodeInfoShowAddresses} />
 			{/if}
 			{#if networks.length === 0}
 				<Alert type="warning" message={$t('settings.lishNetwork.emptyList')} />
