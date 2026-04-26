@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	export type ButtonsGroupContext = {
+	export type MenuButtonsContext = {
 		register: (button: { onConfirm?: (() => void) | undefined }) => { index: number; unregister: () => void };
 		isSelected: (index: number) => boolean;
 		isPressed: (index: number) => boolean;
@@ -27,7 +27,7 @@
 	let itemsElement = $state<HTMLElement | null>(null);
 	let translateX = $state(0);
 
-	setContext<ButtonsGroupContext>('buttonsGroup', {
+	setContext<MenuButtonsContext>('menuButtons', {
 		register(button) {
 			const index = buttons.length;
 			buttons.push(button);

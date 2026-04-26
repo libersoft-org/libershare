@@ -2,7 +2,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import MenuTitle from './MenuTitle.svelte';
 	import MenuBar from './MenuBar.svelte';
-	import ButtonsGroup from '../Buttons/ButtonsGroup.svelte';
+	import MenuButtons from './MenuButtons.svelte';
 	import Button from '../Buttons/Button.svelte';
 	interface Props {
 		areaID: string;
@@ -44,14 +44,14 @@
 	<MenuTitle {title} />
 	<MenuBar>
 		{#key `${title}-${selectedID}-${orientation}`}
-			<ButtonsGroup {areaID} {position} {initialIndex} {orientation} {onBack}>
+			<MenuButtons {areaID} {position} {initialIndex} {orientation} {onBack}>
 				{#each items as item (item.id)}
 					{@const showCheckAsIcon = item.selected && !item.icon}
 					{@const iconToShow = showCheckAsIcon ? '/img/check.svg' : item.icon}
 					{@const badgeToShow = item.selected && item.icon ? '/img/check.svg' : undefined}
 					<Button label={item.label} icon={iconToShow} iconPosition={item.iconPosition ?? 'top'} iconSize={item.iconSize ?? '6vh'} noColorFilter={showCheckAsIcon ? false : item.noColorFilter} badgeIcon={badgeToShow} width={buttonWidth} onConfirm={() => onselect?.(item.id)} />
 				{/each}
-			</ButtonsGroup>
+			</MenuButtons>
 		{/key}
 	</MenuBar>
 </div>

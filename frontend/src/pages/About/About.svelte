@@ -4,8 +4,9 @@
 	import { t } from '../../scripts/language.ts';
 	import { LAYOUT, type Position } from '../../scripts/navigationLayout.ts';
 	import { openExternalURL } from '../../scripts/utils.ts';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import Dialog from '../../components/Dialog/Dialog.svelte';
-	import ButtonsGroup from '../../components/Buttons/ButtonsGroup.svelte';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	interface Props {
 		areaID: string;
@@ -13,6 +14,15 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
+
+	createNavArea(() => ({
+		areaID,
+		position,
+		activate: true,
+		trap: true,
+		initialPosition: [0, 2],
+		onBack,
+	}));
 </script>
 
 <style>
@@ -58,10 +68,10 @@
 		</div>
 	</div>
 	<div class="links">
-		<ButtonsGroup {areaID} {position} initialIndex={2} {onBack}>
-			<Button icon="/img/github.svg" label={$t('about.githubPage')} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalURL(productGithub)} />
-			<Button icon="/img/online.svg" label={$t('about.officialWebsite')} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalURL(productWebsite)} />
-			<Button icon="/img/check.svg" label={$t('common.ok')} width="20vh" onConfirm={onBack} />
-		</ButtonsGroup>
+		<ButtonBar direction="column" gap="1vh">
+			<Button icon="/img/github.svg" label={$t('about.githubPage')} position={[0, 0]} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalURL(productGithub)} />
+			<Button icon="/img/online.svg" label={$t('about.officialWebsite')} position={[0, 1]} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalURL(productWebsite)} />
+			<Button icon="/img/check.svg" label={$t('common.ok')} position={[0, 2]} width="20vh" onConfirm={onBack} />
+		</ButtonBar>
 	</div>
 </Dialog>
