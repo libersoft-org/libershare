@@ -119,14 +119,14 @@
 
 <div class="download">
 	<ButtonBar>
-		<Button icon="/img/plus.svg" label={$t('common.createLISH')} position={[0, 0]} onConfirm={() => navigateTo('create-lish')} />
-		<Button icon="/img/download.svg" label={$t('common.import')} position={[1, 0]} onConfirm={() => navigateTo('import-lish')} />
-		<Button icon="/img/upload.svg" label={$t('common.exportAll')} position={[2, 0]} onConfirm={() => navigateTo('export-all-lish')} />
-		<Button icon={allDownloadDisabled ? '/img/play.svg' : '/img/pause.svg'} label={allDownloadDisabled ? $t('downloads.enableDownloadAll') : $t('downloads.disableDownloadAll')} position={[3, 0]} onConfirm={toggleAllDownloads} />
-		<Button icon={allUploadDisabled ? '/img/play.svg' : '/img/pause.svg'} label={allUploadDisabled ? $t('downloads.enableUploadAll') : $t('downloads.disableUploadAll')} position={[4, 0]} onConfirm={toggleAllUploads} />
-		<Button icon="/img/check.svg" label={$t('downloads.verifyAll')} position={[5, 0]} onConfirm={() => (showVerifyAllDialog = true)} />
+		<Button icon="/img/plus.svg" label={$t('common.createLISH')} position={[0, 0]} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={() => navigateTo('create-lish')} />
+		<Button icon="/img/download.svg" label={$t('common.import')} position={[1, 0]} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={() => navigateTo('import-lish')} />
+		<Button icon="/img/upload.svg" label={$t('common.exportAll')} position={[2, 0]} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={() => navigateTo('export-all-lish')} />
+		<Button icon={allDownloadDisabled ? '/img/play.svg' : '/img/pause.svg'} label={allDownloadDisabled ? $t('downloads.enableDownloadAll') : $t('downloads.disableDownloadAll')} position={[3, 0]} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={toggleAllDownloads} />
+		<Button icon={allUploadDisabled ? '/img/play.svg' : '/img/pause.svg'} label={allUploadDisabled ? $t('downloads.enableUploadAll') : $t('downloads.disableUploadAll')} position={[4, 0]} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={toggleAllUploads} />
+		<Button icon="/img/check.svg" label={$t('downloads.verifyAll')} position={[5, 0]} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={() => (showVerifyAllDialog = true)} />
 		{#if anyVerifying}
-			<Button icon="/img/cross.svg" label={$t('downloads.stopVerifyAll')} position={[6, 0]} onConfirm={() => api.lishs.stopVerifyAll()} />
+			<Button icon="/img/cross.svg" label={$t('downloads.stopVerifyAll')} position={[6, 0]} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={() => api.lishs.stopVerifyAll()} />
 		{/if}
 	</ButtonBar>
 	<Input bind:value={search} placeholder={$t('common.search') + ' ...'} fontSize="2vh" position={[0, 1]} />
