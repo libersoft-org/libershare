@@ -2,6 +2,7 @@ import { decode as lpDecode } from 'it-length-prefixed';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { type Stream } from '@libp2p/interface';
 import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError } from '@shared';
+import { DEFAULT_MAX_MESSAGE_SIZE } from '../settings.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
 import { uploadLimiter } from './speed-limiter.ts';
@@ -10,6 +11,21 @@ import { trace } from '../logger.ts';
 import { registerUploadPeer, unregisterUploadPeer, recordUploadBytes, type ConnectionType } from './peer-tracker.ts';
 import { encode as codecEncode, decode as codecDecode } from './codec.ts';
 export const LISH_PROTOCOL = '/lish/0.0.1';
+
+/**
+ * Hard upper bound on a single P2P msgpack message size, in bytes.
+ * Configurable via settings (`network.maxMessageSize`); read live on every new stream so
+ * settings changes take effect immediately for subsequent requests — no peer restart needed.
+ */
+let maxMessageSize: number = DEFAULT_MAX_MESSAGE_SIZE;
+export function setMaxMessageSize(size: number): void {
+	if (typeof size === 'number' && Number.isFinite(size) && size > 0) maxMessageSize = size;
+}
+
+export function getMaxMessageSize(): number {
+	return maxMessageSize;
+}
+
 export type LISHRequest = LISHGetChunkRequest | LISHGetLishRequest | LISHGetLishsRequest | LISHAnnounceHaveRequest;
 export interface LISHGetChunkRequest {
 	type?: 'getChunk';
@@ -74,7 +90,7 @@ export class LISHClient {
 	constructor(stream: Stream) {
 		this.stream = stream;
 		// Chunk response ≈ chunkSize + small msgpack overhead; manifest can be large for many-file LISHs.
-		this.decoder = lpDecode(stream, { maxDataLength: 8 * 1024 * 1024 });
+		this.decoder = lpDecode(stream, { maxDataLength: maxMessageSize });
 	}
 
 	// Safely parse a peer response. Maps malformed wire bytes / incompatible-protocol responses
@@ -262,8 +278,8 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 	let requestCount = 0;
 	try {
 		// Wrap the stream with length-prefixed decoder for multiple messages
-		// requests are small (<200 bytes); 8MB covers edge cases with large manifests
-		const decoder = lpDecode(stream, { maxDataLength: 8 * 1024 * 1024 });
+		// requests are small (<200 bytes); maxMessageSize covers chunks + large manifests
+		const decoder = lpDecode(stream, { maxDataLength: maxMessageSize });
 		// Handle multiple requests on the same stream
 		for await (const msg of decoder) {
 			requestCount++;

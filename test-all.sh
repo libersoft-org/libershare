@@ -4,3 +4,4 @@
 ./test-fe.sh
 ./test-shared.sh
 ./test-cli.sh
+./fix-rights.sh

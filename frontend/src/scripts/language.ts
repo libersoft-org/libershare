@@ -99,6 +99,8 @@ const errorCodeKeys: Record<string, string> = {
 	LISH_MISSING_ID: 'lish.errorMissingID',
 	LISH_MISSING_CREATED: 'lish.errorMissingCreated',
 	LISH_INVALID_CHUNK_SIZE: 'lish.errorInvalidChunkSize',
+	LISH_CHUNK_SIZE_TOO_LARGE: 'lish.errorChunkSizeTooLarge',
+	LISH_INVALID_MANIFEST: 'lish.errorInvalidManifest',
 	LISH_UNSUPPORTED_CHECKSUM: 'lish.errorUnsupportedChecksum',
 	LISH_UNEXPECTED_ARRAY: 'lish.errorUnexpectedArray',
 	PATH_ACCESS_DENIED: 'lish.errorPathAccessDenied',

@@ -7,8 +7,9 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, allowRelay, maxRelayReservations, autoStartSharing, autoStartDownloading, autoErrorRecovery, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, settingsDefaults } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, autoStartSharing, autoStartDownloading, autoErrorRecovery, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, settingsDefaults } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
+	import { parseBytes, formatBytes } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -33,6 +34,8 @@
 	let uploadConnections = $state($maxUploadPeersPerLISH.toString());
 	let downloadSpeed = $state($maxDownloadSpeed.toString());
 	let uploadSpeed = $state($maxUploadSpeed.toString());
+	let chunkSizeLimit = $state(formatBytes($maxChunkSize));
+	let messageSizeLimit = $state(formatBytes($maxMessageSize));
 	let relay = $state($allowRelay);
 	let relayReservations = $state($maxRelayReservations.toString());
 	let autoStart = $state($autoStartSharing);
@@ -100,6 +103,26 @@
 		uploadSpeed = $maxUploadSpeed.toString();
 	}
 
+	function parseSizeOrFallback(value: string, fallback: number): number {
+		try {
+			const bytes = parseBytes(value);
+			if (bytes > 0) return bytes;
+		} catch {
+			// fall through
+		}
+		return fallback;
+	}
+
+	function saveChunkSizeLimit(): void {
+		setMaxChunkSize(parseSizeOrFallback(chunkSizeLimit, $maxChunkSize));
+		chunkSizeLimit = formatBytes($maxChunkSize);
+	}
+
+	function saveMessageSizeLimit(): void {
+		setMaxMessageSize(parseSizeOrFallback(messageSizeLimit, $maxMessageSize));
+		messageSizeLimit = formatBytes($maxMessageSize);
+	}
+
 	function saveRelayReservations(): void {
 		setMaxRelayReservations(parseInt(relayReservations) || 100);
 		relayReservations = $maxRelayReservations.toString();
@@ -115,6 +138,8 @@
 		saveUploadConnections();
 		saveDownloadSpeed();
 		saveUploadSpeed();
+		saveChunkSizeLimit();
+		saveMessageSizeLimit();
 		saveRelayReservations();
 	}
 
@@ -178,6 +203,14 @@
 
 	function resetUploadSpeed(): void {
 		uploadSpeed = String(settingsDefaults?.network?.maxUploadSpeed ?? 0);
+	}
+
+	function resetChunkSizeLimit(): void {
+		chunkSizeLimit = formatBytes(settingsDefaults?.network?.maxChunkSize ?? 0);
+	}
+
+	function resetMessageSizeLimit(): void {
+		messageSizeLimit = formatBytes(settingsDefaults?.network?.maxMessageSize ?? 0);
 	}
 
 	function resetRelayReservations(): void {
@@ -259,18 +292,26 @@
 				<Input bind:value={uploadSpeed} label={$t('settings.download.maxUploadSpeed')} type="number" min={0} position={[0, 8]} flex />
 				<Button icon="/img/restart.svg" position={[1, 8]} onConfirm={resetUploadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('settings.download.allowRelay') + ':'} checked={relay} position={[0, 9]} onToggle={toggleAllowRelay} />
 			<div class="row">
-				<Input bind:value={relayReservations} label={$t('settings.download.maxRelayReservations')} type="number" position={[0, 10]} flex />
-				<Button icon="/img/restart.svg" position={[1, 10]} onConfirm={resetRelayReservations} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Input bind:value={chunkSizeLimit} label={$t('settings.download.maxChunkSize')} position={[0, 9]} flex />
+				<Button icon="/img/restart.svg" position={[1, 9]} onConfirm={resetChunkSizeLimit} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} position={[0, 11]} onToggle={toggleAutoStart} />
-			<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 12]} onToggle={toggleAutoStartDl} />
-			<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 13]} onToggle={toggleAutoRecovery} />
+			<div class="row">
+				<Input bind:value={messageSizeLimit} label={$t('settings.download.maxMessageSize')} position={[0, 10]} flex />
+				<Button icon="/img/restart.svg" position={[1, 10]} onConfirm={resetMessageSizeLimit} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<SwitchRow label={$t('settings.download.allowRelay') + ':'} checked={relay} position={[0, 11]} onToggle={toggleAllowRelay} />
+			<div class="row">
+				<Input bind:value={relayReservations} label={$t('settings.download.maxRelayReservations')} type="number" position={[0, 12]} flex />
+				<Button icon="/img/restart.svg" position={[1, 12]} onConfirm={resetRelayReservations} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} position={[0, 13]} onToggle={toggleAutoStart} />
+			<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 14]} onToggle={toggleAutoStartDl} />
+			<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 15]} onToggle={toggleAutoRecovery} />
 		</div>
 		<ButtonBar justify="center">
-			<Button icon="/img/save.svg" label={$t('common.save')} position={[0, 14]} onConfirm={handleSave} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 14]} onConfirm={onBack} />
+			<Button icon="/img/save.svg" label={$t('common.save')} position={[0, 16]} onConfirm={handleSave} />
+			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 16]} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}
