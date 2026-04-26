@@ -39,11 +39,6 @@
 		flex-wrap: wrap;
 	}
 
-	.filters :global(.input-wrapper) {
-		flex: 1;
-		min-width: 24vh;
-	}
-
 	.lish-id {
 		font-family: var(--font-mono);
 		font-size: 1.4vh;
@@ -73,7 +68,7 @@
 </style>
 
 <div class="filters">
-	<Input bind:value={search.query} placeholder={$t('network.searchLishsPlaceholder')} fontSize="2vh" padding="1vh 1.5vh" position={[0, baseY]} />
+	<Input bind:value={search.query} placeholder={$t('network.searchLishsPlaceholder')} fontSize="2vh" padding="1vh 1.5vh" position={[0, baseY]} flex />
 	<Button icon="/img/search.svg" label={$t('common.search')} onConfirm={handleStart} position={[1, baseY]} width="auto" disabled={search.searching || search.query.trim().length === 0} />
 	{#if search.searching}
 		<Button icon="/img/cross.svg" label={$t('common.cancel')} onConfirm={handleCancel} position={[2, baseY]} width="auto" />

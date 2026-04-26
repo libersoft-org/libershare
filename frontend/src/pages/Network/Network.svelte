@@ -215,9 +215,7 @@
 				<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
 				<Button icon="/img/restart.svg" label={$t('common.refresh')} onConfirm={refreshActive} width="auto" />
 			</ButtonBar>
-
 			<Tabs tabs={tabDefs} bind:activeID={activeTab} position={[0, 1]} />
-
 			{#if activeTab === 'lishs'}
 				<NetworkLishs baseY={2} {search} onOpenLishPeers={openLishPeerList} />
 			{:else}
