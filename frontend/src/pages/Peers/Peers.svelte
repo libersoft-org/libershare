@@ -164,9 +164,9 @@
 {:else}
 	<div class="peers-page">
 		<div class="container">
-			<ButtonBar>
-				<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} width="auto" />
-				<Button icon="/img/restart.svg" label={$t('common.refresh')} position={[1, 0]} onConfirm={loadData} width="auto" />
+			<ButtonBar basePosition={[0, 0]}>
+				<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
+				<Button icon="/img/restart.svg" label={$t('common.refresh')} onConfirm={loadData} width="auto" />
 			</ButtonBar>
 			{#if nodeInfo}
 				<NodeInfoRow {nodeInfo} rowY={1} />

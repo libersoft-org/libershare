@@ -94,9 +94,9 @@
 					<div>{$t('common.name')}: <span class="highlight">{lishName}</span></div>
 				{/if}
 			</div>
-			<ButtonBar justify="center" direction="column">
+			<ButtonBar justify="center" direction="column" basePosition={[0, 0]}>
 				{#each options as option, index}
-					<Button icon={option.icon} label={option.label} position={[0, index]} onConfirm={() => handleConfirm(index)} />
+					<Button icon={option.icon} label={option.label} onConfirm={() => handleConfirm(index)} />
 				{/each}
 			</ButtonBar>
 		{/if}

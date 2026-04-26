@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { getContext, onMount } from 'svelte';
+	import { getContext, onMount, untrack } from 'svelte';
 	import { type MenuButtonsContext } from '../Menu/MenuButtons.svelte';
+	import { type ButtonBarContext } from './ButtonBar.svelte';
 	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
 	import Icon from '../Icon/Icon.svelte';
 	interface Props {
@@ -28,15 +29,17 @@
 	let { label, icon, iconPosition = 'left', iconSize, noColorFilter = false, badgeIcon, alt = '', selected = false, pressed = false, active = false, disabled = false, padding = '2vh', fontSize = '2vh', borderRadius = '2vh', width, height, onConfirm, position, el = $bindable() }: Props = $props();
 	const menuButtons = getContext<MenuButtonsContext | undefined>('menuButtons');
 	const navArea = getContext<NavAreaController | undefined>('navArea');
+	const buttonBar = getContext<ButtonBarContext | undefined>('buttonBar');
+	const effectivePosition: NavPos | undefined = untrack(() => position ?? buttonBar?.nextPosition());
 	let index = $state(-1);
-	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : menuButtons ? menuButtons.isSelected(index) : selected);
-	let isPressed = $derived(navArea && position ? navArea.isPressed(position) : menuButtons ? menuButtons.isPressed(index) : pressed);
+	let isSelected = $derived(navArea && effectivePosition ? navArea.isSelected(effectivePosition) : menuButtons ? menuButtons.isSelected(index) : selected);
+	let isPressed = $derived(navArea && effectivePosition ? navArea.isPressed(effectivePosition) : menuButtons ? menuButtons.isPressed(index) : pressed);
 
 	onMount(() => {
-		if (navArea && position)
+		if (navArea && effectivePosition)
 			return navArea.register(
 				navItem(
-					() => position!,
+					() => effectivePosition,
 					() => el,
 					onConfirm
 				)

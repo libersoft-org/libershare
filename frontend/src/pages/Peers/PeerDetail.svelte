@@ -177,9 +177,9 @@
 	<div class="peer-detail">
 		<div class="container">
 			<div class="button-bar-wrap">
-				<ButtonBar>
-					<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} width="auto" />
-					<Button icon="/img/restart.svg" label={$t('common.refresh')} position={[1, 0]} onConfirm={loadLishs} width="auto" />
+				<ButtonBar basePosition={[0, 0]}>
+					<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
+					<Button icon="/img/restart.svg" label={$t('common.refresh')} onConfirm={loadLishs} width="auto" />
 				</ButtonBar>
 			</div>
 			<div class="peer-info">

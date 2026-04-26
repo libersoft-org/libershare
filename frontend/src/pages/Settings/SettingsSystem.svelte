@@ -94,8 +94,8 @@
 		<SwitchRow label={$t('settings.system.defaultCompress') + ':'} checked={compress} position={compressPos} onToggle={toggleCompress} />
 		<Input bind:value={timeout} label={$t('settings.system.notificationTimeout')} type="number" position={timeoutPos} flex />
 	</div>
-	<ButtonBar justify="center">
-		<Button icon="/img/save.svg" label={$t('common.save')} position={[0, buttonsY]} onConfirm={saveSettings} />
-		<Button icon="/img/back.svg" label={$t('common.back')} position={[1, buttonsY]} onConfirm={onBack} />
+	<ButtonBar justify="center" basePosition={[0, buttonsY]}>
+		<Button icon="/img/save.svg" label={$t('common.save')} onConfirm={saveSettings} />
+		<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 	</ButtonBar>
 </div>

@@ -383,9 +383,9 @@
 			{/if}
 			<Alert type="error" message={errorMessage} />
 		</div>
-		<ButtonBar justify="center">
-			<Button icon="/img/plus.svg" label={$t('common.createLISH')} position={[0, 11]} onConfirm={handleCreate} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 11]} onConfirm={onBack} />
+		<ButtonBar justify="center" basePosition={[0, 11]}>
+			<Button icon="/img/plus.svg" label={$t('common.createLISH')} onConfirm={handleCreate} />
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

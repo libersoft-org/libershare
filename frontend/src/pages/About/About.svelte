@@ -68,10 +68,10 @@
 		</div>
 	</div>
 	<div class="links">
-		<ButtonBar direction="column" gap="1vh">
-			<Button icon="/img/github.svg" label={$t('about.githubPage')} position={[0, 0]} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalURL(productGithub)} />
-			<Button icon="/img/online.svg" label={$t('about.officialWebsite')} position={[0, 1]} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalURL(productWebsite)} />
-			<Button icon="/img/check.svg" label={$t('common.ok')} position={[0, 2]} width="20vh" onConfirm={onBack} />
+		<ButtonBar direction="column" gap="1vh" basePosition={[0, 0]}>
+			<Button icon="/img/github.svg" label={$t('about.githubPage')} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalURL(productGithub)} />
+			<Button icon="/img/online.svg" label={$t('about.officialWebsite')} padding="1vh" width="20vh" fontSize="1.4vh" borderRadius="1vh" onConfirm={() => openExternalURL(productWebsite)} />
+			<Button icon="/img/check.svg" label={$t('common.ok')} width="20vh" onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 </Dialog>

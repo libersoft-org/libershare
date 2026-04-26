@@ -159,8 +159,8 @@
 
 <div class="progress-page">
 	<div class="container">
-		<ButtonBar>
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={handleBack} />
+		<ButtonBar basePosition={[0, 0]}>
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={handleBack} />
 		</ButtonBar>
 		{#if status === 'moving'}
 			<div class="status-label">{$t('downloads.moveProgress.moving')}</div>

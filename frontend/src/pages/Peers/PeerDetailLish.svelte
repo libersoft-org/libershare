@@ -213,11 +213,11 @@
 
 <div class="peer-lish-detail">
 	<div class="container">
-		<ButtonBar>
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} width="auto" />
+		<ButtonBar basePosition={[0, 0]}>
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
 			{#if detail}
-				<Button icon="/img/download.svg" label={$t('peers.addToDownloads')} position={[1, 0]} onConfirm={addToDownloads} width="auto" disabled={adding} />
-				<Button icon="/img/copy.svg" label={$t('common.copyLishID')} position={[2, 0]} onConfirm={copyLishID} width="auto" />
+				<Button icon="/img/download.svg" label={$t('peers.addToDownloads')} onConfirm={addToDownloads} width="auto" disabled={adding} />
+				<Button icon="/img/copy.svg" label={$t('common.copyLishID')} onConfirm={copyLishID} width="auto" />
 			{/if}
 		</ButtonBar>
 		{#if loading}

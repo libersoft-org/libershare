@@ -104,8 +104,8 @@
 
 <div class="help">
 	<div class="container">
-		<ButtonBar>
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} width="auto" />
+		<ButtonBar basePosition={[0, 0]}>
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
 		</ButtonBar>
 		<div class="heading">{$t('help.controls')}</div>
 		<div>

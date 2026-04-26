@@ -212,9 +212,9 @@
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
-		<ButtonBar justify="center">
-			<Button icon="/img/download.svg" label={$t('common.import')} position={[0, 3]} onConfirm={handleImport} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 3]} onConfirm={onBack} />
+		<ButtonBar justify="center" basePosition={[0, 3]}>
+			<Button icon="/img/download.svg" label={$t('common.import')} onConfirm={handleImport} />
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 	{#if importing}

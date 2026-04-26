@@ -309,9 +309,9 @@
 			<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 14]} onToggle={toggleAutoStartDl} />
 			<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 15]} onToggle={toggleAutoRecovery} />
 		</div>
-		<ButtonBar justify="center">
-			<Button icon="/img/save.svg" label={$t('common.save')} position={[0, 16]} onConfirm={handleSave} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 16]} onConfirm={onBack} />
+		<ButtonBar justify="center" basePosition={[0, 16]}>
+			<Button icon="/img/save.svg" label={$t('common.save')} onConfirm={handleSave} />
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

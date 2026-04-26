@@ -334,12 +334,12 @@
 {:else}
 	<div class="lish-network-list">
 		<div class="container">
-			<ButtonBar>
-				<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} padding="1vh 1.5vh" fontSize="1.6vh" />
-				<Button icon="/img/online.svg" label={$t('settings.lishNetwork.publicList')} position={[1, 0]} onConfirm={openPublic} padding="1vh 1.5vh" fontSize="1.6vh" />
-				<Button icon="/img/plus.svg" label={$t('common.add')} position={[2, 0]} onConfirm={openAddNetwork} padding="1vh 1.5vh" fontSize="1.6vh" />
-				<Button icon="/img/import.svg" label={$t('common.import')} position={[3, 0]} onConfirm={openImport} padding="1vh 1.5vh" fontSize="1.6vh" />
-				<Button icon="/img/export.svg" label={$t('common.exportAll')} position={[4, 0]} onConfirm={openExportAll} padding="1vh 1.5vh" fontSize="1.6vh" />
+			<ButtonBar basePosition={[0, 0]}>
+				<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/online.svg" label={$t('settings.lishNetwork.publicList')} onConfirm={openPublic} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/plus.svg" label={$t('common.add')} onConfirm={openAddNetwork} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/import.svg" label={$t('common.import')} onConfirm={openImport} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/export.svg" label={$t('common.exportAll')} onConfirm={openExportAll} padding="1vh 1.5vh" fontSize="1.6vh" />
 			</ButtonBar>
 			{#if globalNodeInfo}
 				<NodeInfoRow nodeInfo={globalNodeInfo} rowY={1} />
