@@ -3,7 +3,6 @@ import { describe, it, expect } from 'bun:test';
 // ============================================================================
 // Integration tests — verify real connectivity endpoints respond as expected
 // ============================================================================
-
 describe('connectivity endpoints (live)', () => {
 	it('Google generate_204 returns HTTP 204', async () => {
 		const response = await fetch('http://connectivitycheck.gstatic.com/generate_204', {
@@ -27,14 +26,10 @@ describe('connectivity endpoints (live)', () => {
 // ============================================================================
 // Unit tests — state machine logic (re-implemented, mirrors backend/src/connectivity.ts)
 // ============================================================================
-
 // Re-implement connectivity logic for unit testing (mirrors backend/src/connectivity.ts)
 // Cannot import directly because checkOnline uses global fetch which is hard to mock in-module.
-
 const FAIL_THRESHOLD = 2;
-
 type BroadcastFn = (event: string, data: any) => void;
-
 interface CheckResult {
 	online: boolean;
 	consecutiveFailures: number;
@@ -118,7 +113,6 @@ describe('connectivity check — recovery', () => {
 	it('success after offline triggers online broadcast', async () => {
 		const events: any[] = [];
 		const checker = createChecker((event, data) => events.push({ event, data }));
-
 		await checker.processResult(false);
 		await checker.processResult(false); // → offline
 		await checker.processResult(true); // → online
@@ -131,7 +125,6 @@ describe('connectivity check — recovery', () => {
 	it('success while online does not broadcast', async () => {
 		const events: any[] = [];
 		const checker = createChecker((event, data) => events.push({ event, data }));
-
 		await checker.processResult(true);
 		await checker.processResult(true);
 		expect(events).toHaveLength(0);
@@ -146,7 +139,6 @@ describe('connectivity check — counter reset', () => {
 	it('single failure then success resets counter', async () => {
 		const events: any[] = [];
 		const checker = createChecker((event, data) => events.push({ event, data }));
-
 		await checker.processResult(false); // 1 failure
 		await checker.processResult(true); // reset
 		expect(checker.state.consecutiveFailures).toBe(0);
@@ -156,7 +148,6 @@ describe('connectivity check — counter reset', () => {
 	it('fail-success-fail-success never goes offline', async () => {
 		const events: any[] = [];
 		const checker = createChecker((event, data) => events.push({ event, data }));
-
 		await checker.processResult(false);
 		await checker.processResult(true);
 		await checker.processResult(false);
@@ -174,13 +165,11 @@ describe('connectivity check — flapping', () => {
 	it('offline then online then offline produces 3 broadcasts', async () => {
 		const events: any[] = [];
 		const checker = createChecker((event, data) => events.push({ event, data }));
-
 		await checker.processResult(false);
 		await checker.processResult(false); // → offline (broadcast 1)
 		await checker.processResult(true); // → online (broadcast 2)
 		await checker.processResult(false);
 		await checker.processResult(false); // → offline again (broadcast 3)
-
 		expect(events).toHaveLength(3);
 		expect(events.map(e => e.data.online)).toEqual([false, true, false]);
 	});

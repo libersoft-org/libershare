@@ -7,6 +7,17 @@
 		type?: NotificationType;
 	}
 	let { id, text, type = 'info' }: Props = $props();
+
+	function handleClose(): void {
+		removeNotification(id);
+	}
+
+	function handleCloseKey(e: KeyboardEvent): void {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			removeNotification(id);
+		}
+	}
 </script>
 
 <style>
@@ -35,6 +46,7 @@
 		border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
 		background: linear-gradient(135deg, var(--secondary-background) 0%, color-mix(in srgb, var(--color-success) 15%, var(--secondary-background)) 100%);
 	}
+
 	.notification.success:hover {
 		border-color: var(--color-success);
 	}
@@ -43,6 +55,7 @@
 		border-color: color-mix(in srgb, var(--color-error) 40%, transparent);
 		background: linear-gradient(135deg, var(--secondary-background) 0%, color-mix(in srgb, var(--color-error) 15%, var(--secondary-background)) 100%);
 	}
+
 	.notification.error:hover {
 		border-color: var(--color-error);
 	}
@@ -51,6 +64,7 @@
 		border-color: color-mix(in srgb, var(--color-warning) 40%, transparent);
 		background: linear-gradient(135deg, var(--secondary-background) 0%, color-mix(in srgb, var(--color-warning) 15%, var(--secondary-background)) 100%);
 	}
+
 	.notification.warning:hover {
 		border-color: var(--color-warning);
 	}
@@ -61,15 +75,19 @@
 		flex-shrink: 0;
 		align-self: stretch;
 	}
+
 	.type-indicator.info {
 		background: var(--primary-foreground);
 	}
+
 	.type-indicator.success {
 		background: var(--color-success);
 	}
+
 	.type-indicator.error {
 		background: var(--color-error);
 	}
+
 	.type-indicator.warning {
 		background: var(--color-warning);
 	}
@@ -79,12 +97,12 @@
 	}
 
 	.close {
-		background: none;
-		border: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		color: var(--secondary-foreground);
-		font-size: 2vh;
 		cursor: none;
-		padding: 0;
+		outline: none;
 	}
 
 	@keyframes slide-in {
@@ -100,5 +118,7 @@
 <div class="notification {type}">
 	<div class="type-indicator {type}"></div>
 	<span class="text">{text}</span>
-	<button class="close" onclick={() => removeNotification(id)}><Icon img="/img/cross.svg" size="1.8vh" padding="0" colorVariable="--secondary-foreground" /></button>
+	<div class="close" role="button" tabindex="-1" onclick={handleClose} onkeydown={handleCloseKey}>
+		<Icon img="/img/cross.svg" size="1.8vh" padding="0" colorVariable="--secondary-foreground" />
+	</div>
 </div>

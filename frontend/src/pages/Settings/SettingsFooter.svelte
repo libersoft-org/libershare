@@ -47,14 +47,14 @@
 
 <div class="content">
 	<div class="inner">
-		<ButtonBar>
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} />
+		<ButtonBar basePosition={[0, 0]}>
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
 		<div role="group" data-mouse-activate-area={areaID}>
 			<SwitchRow label={$t('settings.footerVisible')} checked={$footerVisible} position={[0, 1]} onToggle={() => setFooterVisible(!$footerVisible)} />
 		</div>
-		<ButtonBar justify="center">
-			<Button label="{$t('settings.footerPosition')}: {$t('settings.footerPositions.' + $footerPosition)}" position={[0, 2]} onConfirm={openPositionDialog} />
+		<ButtonBar justify="center" basePosition={[0, 2]}>
+			<Button label="{$t('settings.footerPosition')}: {$t('settings.footerPositions.' + $footerPosition)}" onConfirm={openPositionDialog} />
 		</ButtonBar>
 		{#each footerWidgets as widget, index}
 			<div role="group" data-mouse-activate-area={areaID}>

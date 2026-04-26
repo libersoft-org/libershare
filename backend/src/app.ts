@@ -68,7 +68,7 @@ networks.init();
 
 // Apply speed limits from settings
 import { Downloader } from './protocol/downloader.ts';
-import { setMaxUploadSpeed, setUploadBroadcast, initUploadState, setMaxUploadPeersPerLISH } from './protocol/lish-protocol.ts';
+import { setMaxUploadSpeed, setUploadBroadcast, initUploadState, setMaxUploadPeersPerLISH, setMaxMessageSize } from './protocol/lish-protocol.ts';
 import { setMaxDownloadPeersPerLISH } from './protocol/peer-manager.ts';
 import { getUploadEnabledLishs, setUploadEnabled, getDownloadEnabledLishs, setDownloadEnabled } from './db/lishs.ts';
 import { initDownloadState } from './api/transfer.ts';
@@ -77,6 +77,7 @@ Downloader.setMaxDownloadSpeed(networkSettings.maxDownloadSpeed);
 setMaxUploadSpeed(networkSettings.maxUploadSpeed);
 setMaxDownloadPeersPerLISH(networkSettings.maxDownloadPeersPerLISH);
 setMaxUploadPeersPerLISH(networkSettings.maxUploadPeersPerLISH);
+setMaxMessageSize(networkSettings.maxMessageSize);
 initUploadState(getUploadEnabledLishs(db), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 initDownloadState(getDownloadEnabledLishs(db), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
 

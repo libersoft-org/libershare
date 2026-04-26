@@ -77,9 +77,9 @@
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
-		<ButtonBar justify="center">
-			<Button icon="/img/download.svg" label={$t('common.import')} position={[0, 1]} onConfirm={handleImport} disabled={loading} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 1]} onConfirm={onBack} />
+		<ButtonBar justify="center" basePosition={[0, 1]}>
+			<Button icon="/img/download.svg" label={$t('common.import')} onConfirm={handleImport} disabled={loading} />
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

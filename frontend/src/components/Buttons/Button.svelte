@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { getContext, onMount } from 'svelte';
-	import { type ButtonsGroupContext } from './ButtonsGroup.svelte';
+	import { getContext, onMount, untrack } from 'svelte';
+	import { type MenuButtonsContext } from '../Menu/MenuButtons.svelte';
+	import { type ButtonBarContext } from './ButtonBar.svelte';
 	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
 	import Icon from '../Icon/Icon.svelte';
 	interface Props {
@@ -26,33 +27,36 @@
 		el?: HTMLElement | undefined;
 	}
 	let { label, icon, iconPosition = 'left', iconSize, noColorFilter = false, badgeIcon, alt = '', selected = false, pressed = false, active = false, disabled = false, padding = '2vh', fontSize = '2vh', borderRadius = '2vh', width, height, onConfirm, position, el = $bindable() }: Props = $props();
-	const buttonsGroup = getContext<ButtonsGroupContext | undefined>('buttonsGroup');
+	const menuButtons = getContext<MenuButtonsContext | undefined>('menuButtons');
 	const navArea = getContext<NavAreaController | undefined>('navArea');
+	const buttonBar = getContext<ButtonBarContext | undefined>('buttonBar');
+	const buttonBarPosition: NavPos | undefined = untrack(() => (position ? undefined : buttonBar?.nextPosition())); // Capture the buttonBar fallback once so we don't consume multiple positions on re-renders.
+	let effectivePosition = $derived<NavPos | undefined>(position ?? buttonBarPosition); // Reactive effective position so dynamic `position` prop changes propagate to NavArea.
 	let index = $state(-1);
-	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : buttonsGroup ? buttonsGroup.isSelected(index) : selected);
-	let isPressed = $derived(navArea && position ? navArea.isPressed(position) : buttonsGroup ? buttonsGroup.isPressed(index) : pressed);
+	let isSelected = $derived(navArea && effectivePosition ? navArea.isSelected(effectivePosition) : menuButtons ? menuButtons.isSelected(index) : selected);
+	let isPressed = $derived(navArea && effectivePosition ? navArea.isPressed(effectivePosition) : menuButtons ? menuButtons.isPressed(index) : pressed);
 
 	function handleClick() {
 		if (disabled) return;
-		if (buttonsGroup && index >= 0) {
-			buttonsGroup.handleClick(index);
+		if (menuButtons && index >= 0) {
+			menuButtons.handleClick(index);
 		} else if (onConfirm) {
 			onConfirm();
 		}
 	}
 
 	onMount(() => {
-		if (navArea && position)
+		if (navArea && effectivePosition)
 			return navArea.register(
 				navItem(
-					() => position!,
+					() => effectivePosition,
 					() => el,
 					onConfirm,
 					{ noDelegateMouse: true }
 				)
 			);
-		if (buttonsGroup) {
-			const { index: idx, unregister } = buttonsGroup.register({ onConfirm });
+		if (menuButtons) {
+			const { index: idx, unregister } = menuButtons.register({ onConfirm });
 			index = idx;
 			return unregister;
 		}

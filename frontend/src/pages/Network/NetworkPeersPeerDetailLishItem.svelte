@@ -11,15 +11,24 @@
 		totalSize?: number | undefined;
 		rowY: number;
 		disabled?: boolean;
+		highlight?: boolean;
 		onAdd: () => void;
 		onDetails: () => void;
+		el?: HTMLDivElement | undefined;
 	}
-	let { name, id, totalSize, rowY, disabled = false, onAdd, onDetails }: Props = $props();
+	let { name, id, totalSize, rowY, disabled = false, highlight = false, onAdd, onDetails, el = $bindable() }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let rowSelected = $derived(navArea ? navArea.isSelected([0, rowY]) || navArea.isSelected([1, rowY]) : false);
 </script>
 
 <style>
+	.wrap {
+		border-radius: 2vh;
+		transition: box-shadow 0.4s ease;
+	}
+	.wrap.highlight {
+		box-shadow: 0 0 0 0.4vh var(--primary-foreground), 0 0 2vh var(--primary-foreground);
+	}
 	.info {
 		display: flex;
 		flex-direction: column;
@@ -65,16 +74,18 @@
 	}
 </style>
 
-<Row selected={rowSelected}>
-	<div class="info">
-		<div class="name">{name}</div>
-		{#if totalSize !== undefined}
-			<div class="size">{formatSize(totalSize)}</div>
-		{/if}
-		<div class="id">{id}</div>
-	</div>
-	<div class="actions">
-		<Button icon="/img/download.svg" label={$t('peers.addToDownloads')} position={[0, rowY]} onConfirm={onAdd} {disabled} padding="1vh 1.5vh" fontSize="1.6vh" width="auto" />
-		<Button icon="/img/info.svg" label={$t('peers.details')} position={[1, rowY]} onConfirm={onDetails} padding="1vh 1.5vh" fontSize="1.6vh" width="auto" />
-	</div>
-</Row>
+<div class="wrap" class:highlight bind:this={el}>
+	<Row selected={rowSelected}>
+		<div class="info">
+			<div class="name">{name}</div>
+			{#if totalSize !== undefined}
+				<div class="size">{formatSize(totalSize)}</div>
+			{/if}
+			<div class="id">{id}</div>
+		</div>
+		<div class="actions">
+			<Button icon="/img/download.svg" label={$t('network.addToDownloads')} position={[0, rowY]} onConfirm={onAdd} {disabled} padding="1vh 1.5vh" fontSize="1.6vh" width="auto" />
+			<Button icon="/img/info.svg" label={$t('network.details')} position={[1, rowY]} onConfirm={onDetails} padding="1vh 1.5vh" fontSize="1.6vh" width="auto" />
+		</div>
+	</Row>
+</div>

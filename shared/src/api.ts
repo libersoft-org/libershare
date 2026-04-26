@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -24,6 +24,7 @@ export class API {
 	readonly lishnets: LISHnetsAPI;
 	readonly lishs: LISHsAPI;
 	readonly transfer: TransferAPI;
+	readonly search: SearchAPI;
 
 	constructor(client: IWsClient) {
 		this.client = client;
@@ -33,6 +34,7 @@ export class API {
 		this.lishnets = new LISHnetsAPI(client);
 		this.lishs = new LISHsAPI(client);
 		this.transfer = new TransferAPI(client);
+		this.search = new SearchAPI(client);
 	}
 
 	// Raw call access
@@ -371,3 +373,26 @@ class TransferAPI {
 		return this.client.call<DownloadResponse>('transfer.download', { networkID, lishPath });
 	}
 }
+
+/**
+ * Browse network → LISH search.
+ * `startSearch` returns immediately with a `searchID`; results stream in via the
+ * `search:lishs:update` WebSocket event and end with `search:lishs:complete`.
+ * `LishSearchResult` aggregates one row per LISH with the list of peers offering it.
+ */
+class SearchAPI {
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
+
+	startSearch(query: string): Promise<{ searchID: string }> {
+		return this.client.call<{ searchID: string }>('search.startSearch', { query });
+	}
+
+	cancelSearch(searchID: string): Promise<{ ok: true }> {
+		return this.client.call<{ ok: true }>('search.cancelSearch', { searchID });
+	}
+}
+
+export type { LishSearchResult };

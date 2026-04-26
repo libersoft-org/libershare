@@ -32,6 +32,8 @@ export const maxDownloadPeersPerLISH = writable(0);
 export const maxUploadPeersPerLISH = writable(0);
 export const maxDownloadSpeed = writable(0);
 export const maxUploadSpeed = writable(0);
+export const maxChunkSize = writable(0);
+export const maxMessageSize = writable(0);
 export const allowRelay = writable(true);
 export const maxRelayReservations = writable(0);
 export const autoStartSharing = writable(true);
@@ -98,6 +100,8 @@ export async function loadSettings(): Promise<void> {
 		maxUploadPeersPerLISH.set(settings.network.maxUploadPeersPerLISH);
 		maxDownloadSpeed.set(settings.network.maxDownloadSpeed);
 		maxUploadSpeed.set(settings.network.maxUploadSpeed);
+		maxChunkSize.set(settings.network.maxChunkSize);
+		maxMessageSize.set(settings.network.maxMessageSize);
 		allowRelay.set(settings.network.allowRelay);
 		maxRelayReservations.set(settings.network.maxRelayReservations);
 		autoStartSharing.set(settings.network.autoStartSharing);
@@ -196,6 +200,16 @@ export function setMaxDownloadSpeed(value: number): void {
 export function setMaxUploadSpeed(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
 	updateSetting(maxUploadSpeed, 'network.maxUploadSpeed', clampedValue);
+}
+
+export function setMaxChunkSize(value: number): void {
+	const clampedValue = Math.max(1, value || 1);
+	updateSetting(maxChunkSize, 'network.maxChunkSize', clampedValue);
+}
+
+export function setMaxMessageSize(value: number): void {
+	const clampedValue = Math.max(1, value || 1);
+	updateSetting(maxMessageSize, 'network.maxMessageSize', clampedValue);
 }
 
 export function setAllowRelay(enabled: boolean): void {
