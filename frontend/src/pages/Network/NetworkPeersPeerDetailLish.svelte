@@ -14,7 +14,7 @@
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import Table from '../../components/Table/Table.svelte';
-	import PeerDetailLishFileRow from './PeerDetailLishFileRow.svelte';
+	import PeerDetailLishFileRow from './NetworkPeersPeerDetailLishFileRow.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;

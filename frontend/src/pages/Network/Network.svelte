@@ -8,13 +8,14 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { createLishSearch } from '../../scripts/lishSearch.svelte.ts';
-	import { type PeerListEntry, type LISHNetworkConfig, type NetworkNodeInfo } from '@shared';
+	import { type PeerListEntry, type LISHNetworkConfig, type NetworkNodeInfo, type LishSearchResult } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Tabs, { type TabDef } from '../../components/Tabs/Tabs.svelte';
-	import PeerDetail from './PeerDetail.svelte';
+	import PeerDetail from './NetworkPeersPeerDetail.svelte';
 	import NetworkLishs from './NetworkLishs.svelte';
+	import NetworkLishsPeerList from './NetworkLishsPeerList.svelte';
 	import NetworkPeers from './NetworkPeers.svelte';
 	interface Props {
 		areaID: string;
@@ -71,6 +72,36 @@
 
 	// =================== LISH search session (owned here so listRange can read result count) ===================
 	const search = createLishSearch();
+
+	// =================== LISH peer-list page (overlay over the search tab) ===================
+	let showLishPeerList = $state(false);
+	let lishPeerListRow = $state<LishSearchResult | null>(null);
+	let removeLishPeerListBackHandler: (() => void) | null = null;
+
+	function openLishPeerList(row: LishSearchResult): void {
+		lishPeerListRow = row;
+		showLishPeerList = true;
+		navHandle.pause();
+		pushBreadcrumb(row.name ?? row.id.slice(0, 16) + '...');
+		removeLishPeerListBackHandler = pushBackHandler(handleLishPeerListBack);
+	}
+	async function handleLishPeerListBack(): Promise<void> {
+		if (removeLishPeerListBackHandler) {
+			removeLishPeerListBackHandler();
+			removeLishPeerListBackHandler = null;
+		}
+		popBreadcrumb();
+		showLishPeerList = false;
+		lishPeerListRow = null;
+		await tick();
+		navHandle.resume();
+		activateArea(areaID);
+	}
+	async function openPeerFromLishPeerList(peerID: string, networkID: string, lishID: string): Promise<void> {
+		// Close the LISH peer-list page first, then open the PeerDetail page on top of the search tab.
+		await handleLishPeerListBack();
+		openPeerFromSearch(peerID, networkID, lishID);
+	}
 
 	// =================== PeerDetail overlay ===================
 	let showDetail = $state(false);
@@ -175,6 +206,8 @@
 
 {#if showDetail && selectedPeer}
 	<PeerDetail {areaID} {position} peer={selectedPeer} networkID={selectedPeerNetworkID} {highlightLishID} onBack={handleDetailBack} />
+{:else if showLishPeerList && lishPeerListRow}
+	<NetworkLishsPeerList {areaID} {position} row={lishPeerListRow} {networks} onBack={handleLishPeerListBack} onOpenPeer={openPeerFromLishPeerList} />
 {:else}
 	<div class="network-page">
 		<div class="container">
@@ -186,7 +219,7 @@
 			<Tabs tabs={tabDefs} bind:activeID={activeTab} position={[0, 1]} />
 
 			{#if activeTab === 'lishs'}
-				<NetworkLishs baseY={2} {networks} {search} onOpenPeer={openPeerFromSearch} />
+				<NetworkLishs baseY={2} {search} onOpenLishPeers={openLishPeerList} />
 			{:else}
 				{@const baseY = nodeInfo ? 3 : 2}
 				<NetworkPeers {peers} {filteredPeers} {networks} {nodeInfo} loading={peersLoading} error={peersError} {baseY} bind:peersSearch bind:selectedNetworkID onOpenPeer={openPeerFromPeersTab} />

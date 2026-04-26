@@ -15,8 +15,8 @@
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
-	import PeerDetailLishItem from './PeerDetailLishItem.svelte';
-	import PeerDetailLish from './PeerDetailLish.svelte';
+	import PeerDetailLishItem from './NetworkPeersPeerDetailLishItem.svelte';
+	import PeerDetailLish from './NetworkPeersPeerDetailLish.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;

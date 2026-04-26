@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
-	import { type LISHNetworkConfig, type LishSearchResult } from '@shared';
+	import { type LishSearchResult } from '@shared';
 	import { formatSize } from '../../scripts/utils.ts';
 	import { type LishSearchSession } from '../../scripts/lishSearch.svelte.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -11,26 +11,14 @@
 	import TableCell from '../../components/Table/TableCell.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
-	import NetworkLishPeersPopup from './NetworkLishPeersPopup.svelte';
 	interface Props {
 		baseY: number; // Y-coordinate of the filter row in the parent NavArea grid. Result rows live at `baseY + 1 + i`
-		networks: LISHNetworkConfig[];
 		search: LishSearchSession; // Search session created and disposed by the parent (so the parent can also read result count for its NavArea `listRange`).
-		onOpenPeer: (peerID: string, networkID: string, lishID: string) => void;
+		onOpenLishPeers: (row: LishSearchResult) => void;
 	}
-	let { baseY, networks, search, onOpenPeer }: Props = $props();
-	let popupRow = $state<LishSearchResult | null>(null);
-
-	function openPopup(row: LishSearchResult): void {
-		popupRow = row;
-	}
-
-	function closePopup(): void {
-		popupRow = null;
-	}
+	let { baseY, search, onOpenLishPeers }: Props = $props();
 
 	function handleStart(): void {
-		popupRow = null;
 		void search.start();
 	}
 
@@ -38,13 +26,8 @@
 		void search.cancel();
 	}
 
-	function makeOpenPopup(row: LishSearchResult): () => void {
-		return () => openPopup(row);
-	}
-
-	function handlePopupOpenPeer(peerID: string, networkID: string, lishID: string): void {
-		popupRow = null;
-		onOpenPeer(peerID, networkID, lishID);
+	function makeOpenHandler(row: LishSearchResult): () => void {
+		return () => onOpenLishPeers(row);
 	}
 </script>
 
@@ -119,7 +102,7 @@
 			<TableCell align="center">{$t('network.peerCount')}</TableCell>
 		</TableHeader>
 		{#each search.results as row, i (row.id)}
-			<TableRow position={[0, baseY + 1 + i]} onConfirm={makeOpenPopup(row)}>
+			<TableRow position={[0, baseY + 1 + i]} onConfirm={makeOpenHandler(row)}>
 				<TableCell desktopOnly>{i + 1}</TableCell>
 				<TableCell><span class="lish-id">{row.id}</span></TableCell>
 				<TableCell><span class="lish-name">{row.name ?? $t('network.unnamed')}</span></TableCell>
@@ -128,7 +111,4 @@
 			</TableRow>
 		{/each}
 	</Table>
-{/if}
-{#if popupRow}
-	<NetworkLishPeersPopup row={popupRow} {networks} onClose={closePopup} onOpenPeer={handlePopupOpenPeer} />
 {/if}
