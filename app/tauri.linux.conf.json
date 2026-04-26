@@ -3,7 +3,7 @@
 	"mainBinaryName": "libershare",
 	"bundle": {
 		"resources": {
-			"../backend/build/lish-backend": "./"
+			"../backend/build/lish-backend": "./lish-backend"
 		},
 		"linux": {
 			"deb": {
