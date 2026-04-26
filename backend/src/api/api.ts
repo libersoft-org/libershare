@@ -13,6 +13,7 @@ import { initTransferHandlers } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
 import { initSystemHandlers } from './system.ts';
 import { initRelayHandlers } from './relay.ts';
+import { initSearchManager } from './search.ts';
 import { getLocalAddresses } from '../container.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
@@ -45,6 +46,7 @@ export class APIServer {
 	private readonly dataDir: string;
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
+	private _search: ReturnType<typeof import('./search.ts').initSearchManager> | null = null;
 
 	constructor(dataDir: string, dataServer: DataServer, networks: Networks, settings: Settings, options: APIServerOptions) {
 		this.dataDir = dataDir;
@@ -76,6 +78,8 @@ export class APIServer {
 		_system.startPolling();
 		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
 		_relay.startPolling();
+		const _search = initSearchManager(this.networks, this.settings, broadcastFn);
+		this._search = _search;
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
@@ -113,6 +117,9 @@ export class APIServer {
 			'lishnets.getNodeInfo': _lishnets.getNodeInfo,
 			'lishnets.getStatus': _lishnets.getStatus,
 			'lishnets.infoAll': _lishnets.infoAll,
+			// Browse network — LISH search
+			'search.startSearch': _search.startSearch,
+			'search.cancelSearch': _search.cancelSearch,
 			// LISHs
 			'lishs.list': _lishs.list,
 			'lishs.get': _lishs.get,
@@ -219,6 +226,7 @@ export class APIServer {
 	}
 
 	stop(): void {
+		this._search?.stopAll();
 		if (this.server) {
 			this.server.stop();
 			this.server = null;

@@ -1,9 +1,9 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, CodedError, ErrorCodes } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, validateLISHStructure, CodedError, ErrorCodes } from '@shared';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
-import { type Settings } from '../settings.ts';
+import { type Settings, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
 import { setBusy, clearBusy } from './busy.ts';
 import { getEnabledUploads, removeUploadState, enableUpload } from '../protocol/lish-protocol.ts';
 import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, markDownloadEnabled, stopRecoveryForLISH } from './transfer.ts';
@@ -200,6 +200,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const addToDownloading = p.addToDownloading ?? false;
 		const algorithm = p.algorithm ?? DEFAULT_ALGO;
 		const chunkSize = p.chunkSize ?? DEFAULT_CHUNK_SIZE;
+		// Reject overly large chunkSize before the (potentially long) hashing pass.
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		if (typeof chunkSize !== 'number' || !Number.isFinite(chunkSize) || chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(chunkSize));
+		if (chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${chunkSize} > ${maxChunkSize}`);
 		const threads = p.threads ?? 0; // 0 = all CPU threads
 		const minifyJSON = p.minifyJSON ?? false;
 		const compress = p.compress ?? false;
@@ -254,14 +258,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// 3. Save to data-server if requested (required for both sharing and downloading)
 		if (addToSharing || addToDownloading) {
 			lish.directory = dataPathStat.isFile() ? dirname(dataPath) : dataPath;
-			dataServer.add(lish);
-			console.log(`✓ Dataset imported: ${lish.id}`);
-			broadcast('lishs:add', dataServer.getDetail(lish.id));
-			// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
-			// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
-			if (addToSharing) enableUpload(lish.id);
-			if (addToDownloading) markDownloadEnabled(lish.id);
-			startVerification(lish.id);
+			await addLISH(lish, { enableSharing: addToSharing, enableDownloading: addToDownloading });
 		}
 		return { lishID: lish.id, lishFile: resultLISHFile };
 	}
@@ -301,7 +298,29 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return true;
 	}
 
+	/**
+	 * Single entry point for adding any LISH (locally created, imported from .lish/JSON/URL,
+	 * or received as a manifest from a peer) into the data-server. Validates structure, persists,
+	 * broadcasts, applies sharing/downloading flags, and starts verification.
+	 * Caller must have already resolved `lish.directory` (and optionally `lish.finalDirectory`).
+	 */
+	async function addLISH(lish: IStoredLISH, opts: { enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined }): Promise<void> {
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		validateLISHStructure(lish, maxChunkSize);
+		dataServer.add(lish);
+		console.log(`✓ LISH added: ${lish.id}${lish.finalDirectory ? ` (temp: ${lish.directory} → final: ${lish.finalDirectory})` : ''}`);
+		broadcast('lishs:add', dataServer.getDetail(lish.id));
+		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
+		// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
+		if (opts.enableSharing) enableUpload(lish.id);
+		if (opts.enableDownloading) markDownloadEnabled(lish.id);
+		startVerification(lish.id);
+	}
+
 	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
+		// Validate structure early to fail fast before any disk operations.
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		validateLISHStructure(lish, maxChunkSize);
 		const existing = dataServer.get(lish.id);
 		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
 		if (existing) dataServer.delete(lish.id);
@@ -322,14 +341,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			directory,
 			...(finalDirectory !== undefined ? { finalDirectory } : {}),
 		};
-		dataServer.add(storedLISH);
-		console.log(`✓ LISH imported: ${lish.id}${finalDirectory ? ` (temp: ${directory} → final: ${finalDirectory})` : ''}`);
-		broadcast('lishs:add', dataServer.getDetail(lish.id));
-		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
-		// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
-		if (enableSharing) enableUpload(lish.id);
-		if (enableDownloading) markDownloadEnabled(lish.id);
-		startVerification(lish.id);
+		await addLISH(storedLISH, { enableSharing, enableDownloading });
 		return { lishID: lish.id, directory };
 	}
 

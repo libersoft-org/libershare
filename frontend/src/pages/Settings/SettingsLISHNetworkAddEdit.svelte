@@ -117,8 +117,8 @@
 		{/each}
 		<Alert type="error" message={showError ? errorMessage : ''} />
 	</div>
-	<ButtonBar justify="center">
-		<Button icon="/img/save.svg" label={$t('common.save')} position={[0, bootstrapOffset + bootstrapServers.length]} onConfirm={handleSave} />
-		<Button icon="/img/back.svg" label={$t('common.back')} position={[1, bootstrapOffset + bootstrapServers.length]} onConfirm={onBack} />
+	<ButtonBar justify="center" basePosition={[0, bootstrapOffset + bootstrapServers.length]}>
+		<Button icon="/img/save.svg" label={$t('common.save')} onConfirm={handleSave} />
+		<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 	</ButtonBar>
 </div>

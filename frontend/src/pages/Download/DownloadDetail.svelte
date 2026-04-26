@@ -19,6 +19,7 @@
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Badge from '../../components/Badge/Badge.svelte';
 	import Icon from '../../components/Icon/Icon.svelte';
+	import Tabs, { type TabDef } from '../../components/Tabs/Tabs.svelte';
 	import DownloadFile from './DownloadFile.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import DownloadDetailDelete from './DownloadDetailDelete.svelte';
@@ -48,7 +49,14 @@
 	let selectedToolbarIndex = $state(0);
 	let selectedFileIndex = $state(0);
 	let selectedTabIndex = $state(0); // 0=files, 1=peers
-	let activeTab = $state<'files' | 'peers'>('files');
+	let activeTab = $state<string>('files');
+	let tabDefs = $derived<TabDef[]>([
+		{ id: 'files', icon: '/img/file.svg', label: $t('common.files') },
+		{ id: 'peers', icon: '/img/share.svg', label: $t('common.connections') },
+	]);
+	function handleTabChange(id: string): void {
+		selectedTabIndex = id === 'files' ? 0 : 1;
+	}
 	let selectedPeerIndex = $state(0);
 	let peerElements: HTMLElement[] = $state([]);
 	let itemElements: HTMLElement[] = $state([]);
@@ -66,13 +74,6 @@
 	let downloadPaused = $derived(!isDownloading);
 	let uploadPaused = $derived(!isUploading);
 	let enabledMode = $derived(download ? computeEnabledMode(download.downloadEnabled, download.uploadEnabled) : ('disabled' as const));
-	function tabColorVariable(tabIndex: number): string {
-		if (tabActive && selectedTabIndex === tabIndex) return '--primary-background';
-		if ((tabIndex === 0 && activeTab === 'files') || (tabIndex === 1 && activeTab === 'peers')) return '--primary-foreground';
-		return '--secondary-foreground';
-	}
-	let filesTabColor = $derived(tabColorVariable(0));
-	let peersTabColor = $derived(tabColorVariable(1));
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => {
 			if (action.id === 'toggle-download') return true;
@@ -513,38 +514,6 @@
 		flex-direction: column;
 	}
 
-	.tab-header {
-		display: flex;
-		gap: 0;
-		border-bottom: 0.2vh solid var(--secondary-softer-background);
-		flex-shrink: 0;
-	}
-
-	.tab {
-		flex: 1;
-		padding: 1vh 2vh;
-		font-size: 1.4vh;
-		background: transparent;
-		border: none;
-		color: var(--secondary-foreground);
-		cursor: none;
-		font-family: inherit;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.8vh;
-	}
-
-	.tab.active {
-		color: var(--primary-foreground);
-		border-bottom: 0.3vh solid var(--primary-foreground);
-	}
-
-	.tab.selected {
-		background: var(--primary-foreground);
-		color: var(--primary-background);
-	}
-
 	.items {
 		flex: 1;
 		overflow-y: auto;
@@ -774,16 +743,7 @@
 				</div>
 				<!-- Tab header + content -->
 				<div class="container">
-					<div class="tab-header">
-						<button class="tab" class:active={activeTab === 'files'} class:selected={tabActive && selectedTabIndex === 0}>
-							<Icon img="/img/file.svg" size="1.8vh" padding="0" colorVariable={filesTabColor} />
-							{$t('common.files')}
-						</button>
-						<button class="tab" class:active={activeTab === 'peers'} class:selected={tabActive && selectedTabIndex === 1}>
-							<Icon img="/img/share.svg" size="1.8vh" padding="0" colorVariable={peersTabColor} />
-							{$t('common.connections')}
-						</button>
-					</div>
+					<Tabs tabs={tabDefs} bind:activeID={activeTab} selectedIndex={selectedTabIndex} selectionActive={tabActive} compact onChange={handleTabChange} />
 					{#if activeTab === 'files'}
 						<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
 							<Header fontSize="1.4vh">

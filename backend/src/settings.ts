@@ -2,6 +2,11 @@ import { mkdir } from 'fs/promises';
 import { JSONStorage } from './storage.ts';
 import { Utils } from './utils.ts';
 import { type CompressionAlgorithm } from '@shared';
+// Default upper bound for chunk size accepted by the app (configurable via settings).
+export const DEFAULT_MAX_CHUNK_SIZE: number = 100 * 1024 * 1024;
+// Default upper bound for a single P2P message on the wire (configurable via settings).
+// Must be >= maxChunkSize because a chunk is delivered as a single msgpack message.
+export const DEFAULT_MAX_MESSAGE_SIZE: number = 128 * 1024 * 1024;
 
 export interface SettingsData {
 	language: string;
@@ -29,6 +34,8 @@ export interface SettingsData {
 		maxUploadPeersPerLISH: number;
 		maxDownloadSpeed: number;
 		maxUploadSpeed: number;
+		maxChunkSize: number;
+		maxMessageSize: number;
 		allowRelay: boolean;
 		maxRelayReservations: number;
 		autoStartSharing: boolean;
@@ -37,6 +44,7 @@ export interface SettingsData {
 		announceAddresses: string[];
 		mdnsEnabled: boolean;
 		mdnsInterval: number;
+		searchTimeout: number; // Browse network → LISH search timeout in milliseconds. Search session ends after this.
 		/**
 		 * GossipSub Peer Exchange (PX) local operator policy.
 		 *
@@ -133,6 +141,8 @@ const DEFAULT_SETTINGS: SettingsData = {
 		maxUploadPeersPerLISH: 30,
 		maxDownloadSpeed: 0,
 		maxUploadSpeed: 0,
+		maxChunkSize: DEFAULT_MAX_CHUNK_SIZE,
+		maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE,
 		allowRelay: true,
 		maxRelayReservations: 0,
 		autoStartSharing: true,
@@ -141,6 +151,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		announceAddresses: [],
 		mdnsEnabled: true,
 		mdnsInterval: 30000,
+		searchTimeout: 30_000,
 		peerExchange: {
 			// Enabled by default: bootstrap peers (operator-configured in lishnet joins)
 			// are automatically trusted PX sources, so mesh density converges without

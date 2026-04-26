@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	export type ButtonsGroupContext = {
+	export type MenuButtonsContext = {
 		register: (button: { onConfirm?: (() => void) | undefined }) => { index: number; unregister: () => void };
 		isSelected: (index: number) => boolean;
 		isPressed: (index: number) => boolean;
@@ -17,9 +17,14 @@
 		position: Position;
 		initialIndex?: number | undefined;
 		orientation?: 'horizontal' | 'vertical' | undefined;
+		gap?: string | undefined;
+		justify?: string | undefined;
+		alignItems?: string | undefined;
+		wrap?: boolean | undefined;
 		onBack?: (() => void) | undefined;
 	}
-	let { children, areaID, position, initialIndex = 0, orientation = 'vertical', onBack }: Props = $props();
+	let { children, areaID, position, initialIndex = 0, orientation = 'vertical', gap, justify, alignItems = 'center', wrap = false, onBack }: Props = $props();
+	let effectiveGap = $derived(gap ?? (orientation === 'horizontal' ? '3vh' : '2vh'));
 	let selectedIndex = $state(untrack(() => initialIndex));
 	let isAPressed = $state(false);
 	let buttons: { onConfirm?: (() => void) | undefined }[] = [];
@@ -27,7 +32,7 @@
 	let itemsElement = $state<HTMLElement | null>(null);
 	let translateX = $state(0);
 
-	setContext<ButtonsGroupContext>('buttonsGroup', {
+	setContext<MenuButtonsContext>('menuButtons', {
 		register(button) {
 			const index = buttons.length;
 			buttons.push(button);
@@ -146,8 +151,6 @@
 
 	.buttons {
 		display: flex;
-		align-items: center;
-		gap: 3vh;
 		transition: all 0.2s linear;
 	}
 
@@ -158,7 +161,6 @@
 
 	.buttons.vertical {
 		flex-direction: column;
-		gap: 2vh;
 	}
 
 	.buttons.vertical :global(.menu-button) {
@@ -168,13 +170,13 @@
 
 {#if orientation === 'horizontal'}
 	<div class="buttons-wrapper">
-		<div class="buttons horizontal" bind:this={itemsElement} style="transform: translateX({translateX}px)">
+		<div class="buttons horizontal" bind:this={itemsElement} style="transform: translateX({translateX}px); gap: {effectiveGap}; align-items: {alignItems};{justify ? ` justify-content: ${justify};` : ''}{wrap ? ' flex-wrap: wrap;' : ''}">
 			{@render children()}
 		</div>
 	</div>
 {:else}
 	<div class="buttons-wrapper">
-		<div class="buttons vertical">
+		<div class="buttons vertical" style="gap: {effectiveGap}; align-items: {alignItems};{justify ? ` justify-content: ${justify};` : ''}{wrap ? ' flex-wrap: wrap;' : ''}">
 			{@render children()}
 		</div>
 	</div>

@@ -137,9 +137,9 @@
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
-		<ButtonBar justify="center">
-			<Button icon="/img/move.svg" label={$t('downloads.move')} disabled={moving} position={[0, 3]} onConfirm={handleMove} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 3]} onConfirm={onBack} />
+		<ButtonBar justify="center" basePosition={[0, 3]}>
+			<Button icon="/img/move.svg" label={$t('downloads.move')} disabled={moving} onConfirm={handleMove} />
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

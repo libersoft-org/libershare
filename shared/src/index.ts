@@ -61,6 +61,20 @@ export interface PeerLishEntry {
 	totalSize?: number | undefined;
 }
 
+/**
+ * Network-wide LISH search result row (Browse network → LISHs tab).
+ * Aggregated by `id`: when the same LISH is offered by multiple peers,
+ * `peers` accumulates one entry per offering peer.
+ * `name` / `totalSize` come from the first responder; subsequent responders
+ * may report identical or slightly different values — we keep the first to keep the row stable.
+ */
+export interface LishSearchResult {
+	id: string;
+	name?: string | undefined;
+	totalSize?: number | undefined;
+	peers: Array<{ peerID: string; networkID: string }>;
+}
+
 // LISH detail for peer preview (no checksums, no chunks)
 export interface IPeerLishDetail {
 	id: string;

@@ -1,6 +1,6 @@
 import { type Settings, type SettingsData } from '../settings.ts';
 import { Downloader } from '../protocol/downloader.ts';
-import { setMaxUploadSpeed, setMaxUploadPeersPerLISH } from '../protocol/lish-protocol.ts';
+import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize } from '../protocol/lish-protocol.ts';
 import { setMaxDownloadPeersPerLISH } from '../protocol/peer-manager.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -36,6 +36,7 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		await settings.set(p.path, p.value);
 		if (p.path.startsWith('network.maxDownloadSpeed') || p.path.startsWith('network.maxUploadSpeed')) applySpeedLimits();
 		if (p.path.startsWith('network.maxDownloadPeersPerLISH') || p.path.startsWith('network.maxUploadPeersPerLISH')) applyPeerLimits();
+		if (p.path === 'network.maxMessageSize' || p.path === 'network') setMaxMessageSize(settings.get('network.maxMessageSize'));
 		return true;
 	}
 
