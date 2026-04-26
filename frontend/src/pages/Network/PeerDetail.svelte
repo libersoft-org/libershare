@@ -22,14 +22,17 @@
 		position?: Position | undefined;
 		peer: PeerListEntry;
 		networkID: string;
+		highlightLishID?: string | undefined;
 		onBack?: (() => void) | undefined;
 	}
-	let { areaID, position = LAYOUT.content, peer, networkID, onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, peer, networkID, highlightLishID, onBack }: Props = $props();
 	let lishs = $state<PeerLishEntry[] | null>(null);
 	let loading = $state(true);
 	let error = $state('');
 	let addingLish = $state<string | null>(null);
 	let removeBackHandler: (() => void) | null = null;
+	// Per-row DOM refs so we can scroll the highlighted LISH into view once results load.
+	let itemEls = $state<Record<string, HTMLDivElement | undefined>>({});
 	// Detail view state
 	let showLishDetail = $state(false);
 	let selectedLish = $state<PeerLishEntry | null>(null);
@@ -40,6 +43,8 @@
 		try {
 			const result = await api.lishnets.getPeerLishs(peer.peerID, networkID);
 			lishs = result.lishs;
+			await tick();
+			scrollToHighlight();
 		} catch (e: any) {
 			error = translateError(e);
 			lishs = null;
@@ -47,11 +52,19 @@
 		loading = false;
 	}
 
+	// Scroll the row of `highlightLishID` (if set and present) into view. The visual ring
+	// (PeerDetailLishItem `highlight` prop) tells the user which LISH was the search target.
+	function scrollToHighlight(): void {
+		if (!highlightLishID || !lishs) return;
+		const el = itemEls[highlightLishID];
+		if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	}
+
 	async function addToDownloads(lish: PeerLishEntry): Promise<void> {
 		addingLish = lish.id;
 		try {
 			await api.lishnets.addPeerLish(lish.id, peer.peerID, networkID);
-			addNotification($t('peers.lishAdded', { name: lish.name || lish.id }), 'success');
+			addNotification($t('network.lishAdded', { name: lish.name || lish.id }), 'success');
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
 		}
@@ -183,22 +196,22 @@
 				</ButtonBar>
 			</div>
 			<div class="peer-info">
-				<div><span class="label">{$t('peers.peerID')}:</span> <span class="value">{peer.peerID}</span></div>
-				<div><span class="label">{$t('peers.network')}:</span> <span class="value">{peer.networks.map(n => n.networkName).join(', ')}</span></div>
-				<div><span class="label">{$t('peers.connections')}:</span> <span class="value">{getConnectionInfo()}</span></div>
+				<div><span class="label">{$t('network.peerID')}:</span> <span class="value">{peer.peerID}</span></div>
+				<div><span class="label">{$t('network.network')}:</span> <span class="value">{peer.networks.map(n => n.networkName).join(', ')}</span></div>
+				<div><span class="label">{$t('network.connections')}:</span> <span class="value">{getConnectionInfo()}</span></div>
 			</div>
 			{#if loading}
 				<Spinner size="8vh" />
 			{:else if error}
 				<Alert type="error" message={error} />
 			{:else if lishs === null}
-				<Alert type="warning" message={$t('peers.peerDeclined')} />
+				<Alert type="warning" message={$t('network.peerDeclined')} />
 			{:else if lishs.length === 0}
-				<Alert type="warning" message={$t('peers.noSharedLishs')} />
+				<Alert type="warning" message={$t('network.noSharedLishs')} />
 			{:else}
 				<div class="lishs">
 					{#each lishs as lish, i (lish.id)}
-						<PeerDetailLishItem name={lish.name || $t('peers.unnamed')} id={lish.id} totalSize={lish.totalSize} rowY={i + 1} disabled={addingLish === lish.id} onAdd={() => addToDownloads(lish)} onDetails={() => openLishDetail(lish)} />
+						<PeerDetailLishItem bind:el={itemEls[lish.id]} name={lish.name || $t('network.unnamed')} id={lish.id} totalSize={lish.totalSize} rowY={i + 1} disabled={addingLish === lish.id} highlight={highlightLishID === lish.id} onAdd={() => addToDownloads(lish)} onDetails={() => openLishDetail(lish)} />
 					{/each}
 				</div>
 			{/if}

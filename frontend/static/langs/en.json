@@ -81,11 +81,21 @@
 			"play": "Play"
 		}
 	},
-	"peers": {
-		"title": "Network peers",
+	"network": {
+		"title": "Browse network",
+		"tabLishs": "LISHs",
+		"tabPeers": "Peers",
 		"searchPlaceholder": "Search by peer ID ...",
+		"searchLishsPlaceholder": "Search LISHs by name or ID ...",
+		"searching": "Searching network ...",
+		"searchComplete": "Search complete",
+		"noResults": "No LISHs matched your query.",
+		"lishCount": "{count} LISH(s) found",
+		"peersWithLish": "Peers with this LISH",
+		"openPeer": "Open peer",
 		"allNetworks": "All networks",
 		"peerID": "Peer ID",
+		"peerCount": "Peers",
 		"network": "Network",
 		"connections": "Connections",
 		"direct": "{count} direct",

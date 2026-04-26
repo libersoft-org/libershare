@@ -81,11 +81,21 @@
 			"play": "Přehrát"
 		}
 	},
-	"peers": {
-		"title": "Účastníci v síti",
+	"network": {
+		"title": "Procházet síť",
+		"tabLishs": "LISHe",
+		"tabPeers": "Účastníci",
 		"searchPlaceholder": "Hledat podle ID účastníka ...",
+		"searchLishsPlaceholder": "Hledat LISH podle názvu nebo ID ...",
+		"searching": "Prohledávám síť ...",
+		"searchComplete": "Hledání dokončeno",
+		"noResults": "Žádný LISH neodpovídá dotazu.",
+		"lishCount": "Nalezeno {count} LISH(ů)",
+		"peersWithLish": "Účastníci s tímto LISHem",
+		"openPeer": "Otevřít účastníka",
 		"allNetworks": "Všechny sítě",
 		"peerID": "ID účastníka",
+		"peerCount": "Účastníků",
 		"network": "Síť",
 		"connections": "Připojení",
 		"direct": "{count} přímé",

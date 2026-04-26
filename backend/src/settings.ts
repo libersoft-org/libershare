@@ -42,6 +42,7 @@ export interface SettingsData {
 		autoStartDownloading: boolean;
 		autoErrorRecovery: boolean;
 		announceAddresses: string[];
+		searchTimeout: number; // Browse network → LISH search timeout in milliseconds. Search session ends after this.
 	};
 	system: {
 		autoStartOnBoot: boolean;
@@ -108,6 +109,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		autoStartDownloading: true,
 		autoErrorRecovery: true,
 		announceAddresses: [],
+		searchTimeout: 30_000,
 	},
 	system: {
 		autoStartOnBoot: true,

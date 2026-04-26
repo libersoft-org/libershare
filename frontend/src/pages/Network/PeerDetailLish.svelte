@@ -45,7 +45,7 @@
 		adding = true;
 		try {
 			await api.lishnets.addPeerLish(lish.id, peerID, networkID);
-			addNotification($t('peers.lishAdded', { name: lish.name || lish.id }), 'success');
+			addNotification($t('network.lishAdded', { name: lish.name || lish.id }), 'success');
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
 		}
@@ -216,7 +216,7 @@
 		<ButtonBar basePosition={[0, 0]}>
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
 			{#if detail}
-				<Button icon="/img/download.svg" label={$t('peers.addToDownloads')} onConfirm={addToDownloads} width="auto" disabled={adding} />
+				<Button icon="/img/download.svg" label={$t('network.addToDownloads')} onConfirm={addToDownloads} width="auto" disabled={adding} />
 				<Button icon="/img/copy.svg" label={$t('common.copyLishID')} onConfirm={copyLishID} width="auto" />
 			{/if}
 		</ButtonBar>
@@ -233,7 +233,7 @@
 					</div>
 				{/if}
 				<div class="info-row">
-					<span class="label">{$t('peers.lishID')}:</span>
+					<span class="label">{$t('network.lishID')}:</span>
 					<span class="value mono">{detail.id}</span>
 				</div>
 				{#if detail.description}
@@ -243,7 +243,7 @@
 					</div>
 				{/if}
 				<div class="info-row">
-					<span class="label">{$t('peers.totalSize')}:</span>
+					<span class="label">{$t('network.totalSize')}:</span>
 					<span class="value">{formatSize(detail.totalSize)}</span>
 				</div>
 				<div class="info-row">
@@ -251,19 +251,19 @@
 					<span class="value">{detail.fileCount}</span>
 				</div>
 				<div class="info-row">
-					<span class="label">{$t('peers.directories')}:</span>
+					<span class="label">{$t('network.directories')}:</span>
 					<span class="value">{detail.directoryCount}</span>
 				</div>
 				<div class="info-row">
-					<span class="label">{$t('peers.created')}:</span>
+					<span class="label">{$t('network.created')}:</span>
 					<span class="value">{new Date(detail.created).toLocaleString()}</span>
 				</div>
 				<div class="info-row">
-					<span class="label">{$t('peers.chunkSize')}:</span>
+					<span class="label">{$t('network.chunkSize')}:</span>
 					<span class="value">{formatSize(detail.chunkSize)}</span>
 				</div>
 				<div class="info-row">
-					<span class="label">{$t('peers.checksumAlgo')}:</span>
+					<span class="label">{$t('network.checksumAlgo')}:</span>
 					<span class="value">{detail.checksumAlgo}</span>
 				</div>
 			</div>

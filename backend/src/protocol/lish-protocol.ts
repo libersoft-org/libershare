@@ -26,7 +26,7 @@ export function getMaxMessageSize(): number {
 	return maxMessageSize;
 }
 
-export type LISHRequest = LISHGetChunkRequest | LISHGetLishRequest | LISHGetLishsRequest | LISHAnnounceHaveRequest;
+export type LISHRequest = LISHGetChunkRequest | LISHGetLishRequest | LISHGetLishsRequest | LISHAnnounceHaveRequest | LISHSearchResultRequest;
 export interface LISHGetChunkRequest {
 	type?: 'getChunk';
 	lishID: LISHid;
@@ -50,6 +50,16 @@ export interface LISHAnnounceHaveRequest {
 	chunks: HaveChunks;
 	multiaddrs: string[];
 }
+/**
+ * Unicast "Here are my matching LISHs" response — sent in reply to a pubsub `searchLishs` query.
+ * Each LISH entry contains only public-safe metadata (id, optional name, optional totalSize).
+ * Empty `lishs` is allowed (peer matched nothing — sender can use it to count "no result" responses).
+ */
+export interface LISHSearchResultRequest {
+	type: 'searchResult';
+	searchID: string;
+	lishs: Array<{ id: string; name?: string; totalSize?: number }>;
+}
 // Discriminated responses: always exactly one of { data | manifest | lishs } OR { error }.
 export type LISHGetChunkResponse =
 	| { data: Uint8Array } // raw binary chunk data (msgpack native bin type, no base64)
@@ -57,6 +67,7 @@ export type LISHGetChunkResponse =
 export type LISHGetLishResponse = { manifest: import('@shared').IStoredLISH } | { error: ErrorCode };
 export type LISHGetLishsResponse = { type: 'getLishs-result'; lishs: Array<{ id: string; name?: string; totalSize?: number }> } | { type: 'getLishs-result'; error: ErrorCode };
 export type LISHAnnounceHaveResponse = { ok: true } | { error: ErrorCode };
+export type LISHSearchResultResponse = { ok: true } | { error: ErrorCode };
 export type HaveChunks = 'all' | ChunkID[];
 
 /**
@@ -77,8 +88,30 @@ const haveAnnouncementHandlers = new Map<string, HaveAnnouncementHandler>();
 export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler): void {
 	haveAnnouncementHandlers.set(lishID, handler);
 }
+
 export function unregisterHaveAnnouncementHandler(lishID: string): void {
 	haveAnnouncementHandlers.delete(lishID);
+}
+
+/**
+ * Incoming search response payload (LISHs that the remote peer has and that match the search query).
+ * `peerID` is the verified stream remote (NOT from the wire), preventing spoofing.
+ */
+export interface SearchResultAnnouncement {
+	searchID: string;
+	peerID: string;
+	lishs: Array<{ id: string; name?: string; totalSize?: number }>;
+}
+type SearchResultHandler = (ann: SearchResultAnnouncement) => void;
+const searchResultHandlers = new Map<string, SearchResultHandler>();
+
+/** Register a handler for incoming unicast search results for a given searchID. Only one handler per searchID. */
+export function registerSearchResultHandler(searchID: string, handler: SearchResultHandler): void {
+	searchResultHandlers.set(searchID, handler);
+}
+
+export function unregisterSearchResultHandler(searchID: string): void {
+	searchResultHandlers.delete(searchID);
 }
 
 // Client-side stream wrapper that can send multiple requests
@@ -102,9 +135,7 @@ export class LISHClient {
 		} catch {
 			throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `${detail}: malformed response`);
 		}
-		if (parsed === null || typeof parsed !== 'object') {
-			throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `${detail}: response is not an object`);
-		}
+		if (parsed === null || typeof parsed !== 'object') throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `${detail}: response is not an object`);
 		return parsed as T;
 	}
 
@@ -138,9 +169,7 @@ export class LISHClient {
 	async requestChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array> {
 		// Bail early if stream is already closed/aborted — treat as transient (peer unreachable),
 		// not as a reason to permanently ban the peer.
-		if (this.stream.status !== 'open') {
-			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `${lishID}: stream ${this.stream.status}`);
-		}
+		if (this.stream.status !== 'open') throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `${lishID}: stream ${this.stream.status}`);
 		const request: LISHGetChunkRequest = {
 			type: 'getChunk',
 			lishID,
@@ -178,6 +207,20 @@ export class LISHClient {
 		const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
 		const response = this.parseResponse<LISHAnnounceHaveResponse>(responseData, `announceHave ${lishID}`);
 		if ('error' in response) throw new CodedError(response.error, lishID);
+	}
+
+	/**
+	 * Send a unicast search response (matching LISHs) in reply to a pubsub `searchLishs` query.
+	 * Empty `lishs` is allowed — the requester can use it as a "no result" signal from this peer.
+	 */
+	async sendSearchResult(searchID: string, lishs: Array<{ id: string; name?: string; totalSize?: number }>): Promise<void> {
+		const request: LISHSearchResultRequest = { type: 'searchResult', searchID, lishs };
+		sendLengthPrefixed(this.stream, codecEncode(request));
+		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(15000, 'searchResult-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
+		if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, searchID);
+		const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
+		const response = this.parseResponse<LISHSearchResultResponse>(responseData, `searchResult ${searchID}`);
+		if ('error' in response) throw new CodedError(response.error, searchID);
 	}
 }
 
@@ -443,6 +486,23 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					}
 				}
 				const response: LISHAnnounceHaveResponse = { ok: true };
+				sendLengthPrefixed(stream, codecEncode(response));
+			} else if (request.type === 'searchResult') {
+				// Unicast search response from a peer in reply to our pubsub `searchLishs` query.
+				// peerID is the verified stream remote (anti-spoofing).
+				const handler = searchResultHandlers.get(request.searchID);
+				if (handler && remotePeerID) {
+					try {
+						handler({
+							searchID: request.searchID,
+							peerID: remotePeerID,
+							lishs: Array.isArray(request.lishs) ? request.lishs : [],
+						});
+					} catch (err: any) {
+						console.warn(`[PROTO] searchResult handler error for ${request.searchID.slice(0, 8)}: ${err?.message ?? err}`);
+					}
+				}
+				const response: LISHSearchResultResponse = { ok: true };
 				sendLengthPrefixed(stream, codecEncode(response));
 			} else {
 				// Unknown request type — reject with PEER_INVALID_REQUEST

@@ -18,6 +18,18 @@ import { lishTopic } from './constants.ts';
 import { CodedError, ErrorCodes } from '@shared';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
+
+/**
+ * Pubsub query: "Find LISHs whose name or ID matches `query`".
+ * Sent by a peer that opened the "Browse network" page; received by every subscriber to the topic.
+ * Match is case-insensitive substring on `id` and (if present) `name`.
+ * Responses come back as unicast `searchResult` messages on the LISH protocol (see lish-protocol.ts).
+ */
+export interface SearchLishsMessage {
+	type: 'searchLishs';
+	searchID: string;
+	query: string;
+}
 /** Raw gossipsub message event. */
 interface PubsubEvent {
 	topic: string;
@@ -37,6 +49,8 @@ const AUTODIAL_WORKAROUND = true;
 const WANT_RESPONSE_COOLDOWN_MS = 60_000;
 /** Periodic cleanup of stale entries in lastWantResponseTime (entries older than the cooldown are useless). */
 const WANT_RESPONSE_CLEANUP_INTERVAL_MS = 5 * 60_000;
+/** Search query dedup window — same `searchID` arriving via mesh within this period is ignored. */
+const SEARCH_DEDUP_TTL_MS = 5 * 60_000;
 /**
  * Maximum size (bytes) of an incoming pubsub payload we are willing to decode.
  * Only small control messages ride pubsub now (WANT — a tiny JSON object);
@@ -63,6 +77,11 @@ export class Network {
 	 */
 	private readonly lastWantResponseTime = new Map<string, number>();
 	private wantResponseCleanupInterval: NodeJS.Timeout | null = null;
+	/**
+	 * Recently-seen search IDs, used to dedupe `searchLishs` queries arriving multiple times via
+	 * the gossipsub mesh. Pruned periodically with the same cleanup interval as `lastWantResponseTime`.
+	 */
+	private readonly seenSearchIDs = new Map<string, number>();
 	private bootstrapPeerIDs: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
 	private bootstrapMultiaddrs: any[] = [];
@@ -382,6 +401,15 @@ export class Network {
 				}
 			}
 			if (removed > 0) trace(`[NET] want-response cooldown cleanup: pruned ${removed}, kept ${this.lastWantResponseTime.size}`);
+			const searchCutoff = Date.now() - SEARCH_DEDUP_TTL_MS;
+			let searchRemoved = 0;
+			for (const [key, ts] of this.seenSearchIDs) {
+				if (ts < searchCutoff) {
+					this.seenSearchIDs.delete(key);
+					searchRemoved++;
+				}
+			}
+			if (searchRemoved > 0) trace(`[NET] search-dedup cleanup: pruned ${searchRemoved}, kept ${this.seenSearchIDs.size}`);
 		}, WANT_RESPONSE_CLEANUP_INTERVAL_MS);
 	}
 
@@ -533,6 +561,7 @@ export class Network {
 		const handler: TopicHandler = (data, from) => {
 			trace(`[NET] pubsub ${topic}: ${data['type']}`);
 			if (data['type'] === 'want') this.handleWant(data as WantMessage, networkID, from);
+			else if (data['type'] === 'searchLishs') this.handleSearchLishs(data as SearchLishsMessage, networkID, from);
 		};
 		if (!this.topicHandlers.has(topic)) this.topicHandlers.set(topic, new Set());
 		this.topicHandlers.get(topic)!.add(handler);
@@ -659,6 +688,60 @@ export class Network {
 		await client.close().catch(() => {});
 		// Record send time only after the announcement was sent; cleanup interval drains stale entries.
 		this.lastWantResponseTime.set(key, Date.now());
+	}
+
+	// =========================================================================
+	// Search LISHs (pubsub query, unicast response)
+	// =========================================================================
+
+	/**
+	 * Handle an incoming pubsub `searchLishs` query from a peer browsing the network.
+	 * - Iterates locally shared (upload-enabled) LISHs
+	 * - Filters by case-insensitive substring on `id` and `name`
+	 * - If at least one match → opens a fresh LISH protocol stream to the requester and sends `searchResult`
+	 * Empty result → no response (saves a stream open for non-matching peers).
+	 *
+	 * `seenSearchIDs` deduplicates queries arriving multiple times via the gossipsub mesh
+	 * (same query can hit the same node from several peering paths).
+	 */
+	private async handleSearchLishs(data: SearchLishsMessage, networkID: string, fromPeerID?: string): Promise<void> {
+		void networkID;
+		if (!fromPeerID) {
+			trace(`[NET] searchLishs ignored: no verified sender peerID`);
+			return;
+		}
+		if (typeof data.searchID !== 'string' || typeof data.query !== 'string') return;
+		// Empty / overly long queries are dropped — a defensive bound; UI input is much shorter.
+		if (data.query.length === 0 || data.query.length > 256) return;
+		// Don't reply to our own broadcast (we're a subscriber to the topic too).
+		if (this.node && fromPeerID === this.node.peerId.toString()) return;
+		// Dedup: same searchID arriving multiple times from gossipsub mesh — answer at most once.
+		const lastSeen = this.seenSearchIDs.get(data.searchID);
+		if (lastSeen !== undefined) return;
+		this.seenSearchIDs.set(data.searchID, Date.now());
+		const q = data.query.toLowerCase();
+		const matches: Array<{ id: string; name?: string; totalSize?: number }> = [];
+		for (const lish of this.dataServer.list()) {
+			if (!isUploadEnabled(lish.id)) continue;
+			const idLower = lish.id.toLowerCase();
+			const nameLower = lish.name?.toLowerCase() ?? '';
+			if (!idLower.includes(q) && !nameLower.includes(q)) continue;
+			const totalSize = (lish.files ?? []).reduce((sum: number, f: { size: number }) => sum + f.size, 0);
+			const entry: { id: string; name?: string; totalSize?: number } = { id: lish.id, totalSize };
+			if (lish.name !== undefined) entry.name = lish.name;
+			matches.push(entry);
+		}
+		if (matches.length === 0) return;
+		trace(`[NET] searchLishs ${data.searchID.slice(0, 8)} from ${fromPeerID.slice(0, 12)}: ${matches.length} match(es)`);
+		let client: LISHClient | undefined;
+		try {
+			const { stream } = await this.dialProtocolByPeerId(fromPeerID, LISH_PROTOCOL);
+			client = new LISHClient(stream);
+			await client.sendSearchResult(data.searchID, matches);
+		} catch (err: any) {
+			trace(`[NET] sendSearchResult to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
+		}
+		await client?.close().catch(() => {});
 	}
 
 	// =========================================================================
@@ -789,6 +872,7 @@ export class Network {
 			this.wantResponseCleanupInterval = null;
 		}
 		this.lastWantResponseTime.clear();
+		this.seenSearchIDs.clear();
 		if (this._peerCountDebounceTimer) {
 			clearTimeout(this._peerCountDebounceTimer);
 			this._peerCountDebounceTimer = null;
