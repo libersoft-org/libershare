@@ -293,9 +293,7 @@
 			"maxRelayReservations": "Maximální počet spojení k předávacímu serveru (0 = neomezeno)",
 			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH",
 			"autoStartDownloadingDefault": "Automaticky spustit stahování po přidání LISH",
-			"autoErrorRecovery": "Automatická obnova po chybě",
-			"mdnsEnabled": "Vyhledávat účastníky v lokální síti (mDNS)",
-			"mdnsInterval": "Interval vyhledávání v lokální síti (ms)"
+			"autoErrorRecovery": "Automatická obnova po chybě"
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",
@@ -392,6 +390,9 @@
 		"largeFileWarning": "Velký soubor",
 		"largeFileWarningMessage": "Soubor \"{name}\" má {size}.\nOtevření takto velkého souboru může způsobit zamrznutí či pád aplikace.\nOpravdu ho chcete otevřít v editoru?",
 		"customFilter": "Vlastní filtr",
+		"filterByNamePlaceholder": "Filtrovat podle názvu ...",
+		"showNameFilter": "Filtr názvu",
+		"hideNameFilter": "Skrýt filtr názvu",
 		"filterPattern": "Filtr",
 		"enterFilterPattern": "Zadejte filtr (např. *.txt, *.jpg)",
 		"loadDirectoryFailed": "Nepodařilo se načíst adresář",

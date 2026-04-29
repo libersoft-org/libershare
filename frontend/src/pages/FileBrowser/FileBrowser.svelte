@@ -55,6 +55,7 @@
 	// Calculate sub-area positions based on base position
 	let pathBreadcrumbPosition = $derived({ x: position.x + CONTENT_OFFSETS.pathBreadcrumb.x, y: position.y + CONTENT_OFFSETS.pathBreadcrumb.y });
 	let directoryActionsPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
+	let nameFilterPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y + 0.05 });
 	let listPosition = $derived({ x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y });
 	let actionsPosition = $derived({ x: position.x + CONTENT_OFFSETS.side.x, y: position.y + CONTENT_OFFSETS.side.y });
 	let listAreaID = $derived(`${areaID}-list`);
@@ -80,7 +81,7 @@
 		typeAheadTimeout = setTimeout(() => {
 			typeAheadBuffer = '';
 		}, 800);
-		const idx = items.findIndex(i => i.name !== '..' && i.name.toLowerCase().startsWith(typeAheadBuffer));
+		const idx = filteredItems.findIndex(i => i.name !== '..' && i.name.toLowerCase().startsWith(typeAheadBuffer));
 		if (idx >= 0) {
 			selectedIndex = idx;
 			showActions = false;
@@ -110,6 +111,7 @@
 	let unregisterActions: (() => void) | null = null;
 	let unregisterFilter: (() => void) | null = null;
 	let unregisterSaveFileName: (() => void) | null = null;
+	let unregisterNameFilter: (() => void) | null = null;
 	// Save file name mode
 	function getInitialSaveFileName(): string {
 		return saveFileName ?? '';
@@ -118,9 +120,25 @@
 	let saveFileNameInput: ReturnType<typeof Input> | undefined = $state();
 	let saveFileNameActive = $derived($activeArea === `${areaID}-save-filename`);
 	let saveFileNameColumn = $state(0); // 0 = input, 1 = button
-	let selectedItem = $derived(items[selectedIndex]);
+	// Name filter (FE-only): filters items in the current directory by substring match.
+	let nameFilter = $state('');
+	let showNameFilter = $state(false);
+	let nameFilterInput: ReturnType<typeof Input> | undefined = $state();
+	let nameFilterActive = $derived($activeArea === `${areaID}-name-filter`);
+	let filteredItems = $derived.by((): StorageItemData[] => {
+		const q = nameFilter.trim().toLowerCase();
+		if (!q) return items;
+		return items.filter(item => item.name === '..' || item.name.toLowerCase().includes(q));
+	});
+	let selectedItem = $derived(filteredItems[selectedIndex]);
+
+	function handleNameFilterChange(_value: string): void {
+		// nameFilter is bound; just reset selection on filter change
+		selectedIndex = 0;
+		showActions = false;
+	}
 	// Directory toolbar actions
-	let directoryActions = $derived(buildDirectoryActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectDirectoryButton, customFilter ?? undefined, currentPath));
+	let directoryActions = $derived(buildDirectoryActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectDirectoryButton, customFilter ?? undefined, currentPath, showNameFilter));
 	let selectedDirectoryActionIndex = $state(0);
 	let directoryActionsActive = $derived($activeArea === `${areaID}-directory-actions`);
 	// Filter panel actions
@@ -130,6 +148,8 @@
 	async function loadDirectory(path?: string, selectName?: string): Promise<void> {
 		loading = true;
 		error = null;
+		// Reset name filter when navigating to a different directory
+		nameFilter = '';
 		// Set the intended path immediately so it's visible during loading
 		if (path) {
 			currentPath = path;
@@ -175,7 +195,7 @@
 		selectedIndex = index;
 		showActions = false;
 		scrollToSelected();
-		const item = items[index];
+		const item = filteredItems[index];
 		if (item && (item.type === 'directory' || item.type === 'drive')) navigateInto(item);
 		else if (item?.type === 'file') {
 			if (saveFileName !== undefined) {
@@ -224,12 +244,13 @@
 			if (error) {
 				if (showPath) activateArea(`${areaID}-path`);
 				else return false;
-			} else if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
+			} else if (showNameFilter) activateArea(`${areaID}-name-filter`);
+			else if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
 			else activateArea(`${areaID}-directory-actions`);
 			return true;
 		},
 		down() {
-			if (selectedIndex < items.length - 1) {
+			if (selectedIndex < filteredItems.length - 1) {
 				selectedIndex++;
 				showActions = false;
 				scrollToSelected();
@@ -239,26 +260,26 @@
 			return false;
 		},
 		pageUp() {
-			if (items.length === 0) return;
+			if (filteredItems.length === 0) return;
 			selectedIndex = Math.max(0, selectedIndex - PAGE_SIZE);
 			showActions = false;
 			scrollToSelected();
 		},
 		pageDown() {
-			if (items.length === 0) return;
-			selectedIndex = Math.min(items.length - 1, selectedIndex + PAGE_SIZE);
+			if (filteredItems.length === 0) return;
+			selectedIndex = Math.min(filteredItems.length - 1, selectedIndex + PAGE_SIZE);
 			showActions = false;
 			scrollToSelected();
 		},
 		home() {
-			if (items.length === 0) return;
+			if (filteredItems.length === 0) return;
 			selectedIndex = 0;
 			showActions = false;
 			scrollToSelected();
 		},
 		end() {
-			if (items.length === 0) return;
-			selectedIndex = items.length - 1;
+			if (filteredItems.length === 0) return;
+			selectedIndex = filteredItems.length - 1;
 			showActions = false;
 			scrollToSelected();
 		},
@@ -273,7 +294,7 @@
 		}, // Allow navigation to actions panel only when it's visible
 		confirmDown() {},
 		confirmUp() {
-			const item = items[selectedIndex];
+			const item = filteredItems[selectedIndex];
 			if (item && (item.type === 'directory' || item.type === 'drive'))
 				navigateInto(item); // Directories/drives - navigate into them
 			else if (item?.type === 'file') {
@@ -304,8 +325,9 @@
 			return false;
 		},
 		down() {
-			// Go to save filename input if in save mode, otherwise to file list
-			if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
+			// If the name filter row is visible, descend into it; else skip to save-filename or list
+			if (showNameFilter) activateArea(`${areaID}-name-filter`);
+			else if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
 			else activateArea(listAreaID);
 			return true;
 		},
@@ -403,11 +425,42 @@
 		},
 	};
 
+	const nameFilterAreaHandlers = {
+		up() {
+			nameFilterInput?.blur();
+			activateArea(`${areaID}-directory-actions`);
+			return true;
+		},
+		down() {
+			nameFilterInput?.blur();
+			if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
+			else activateArea(listAreaID);
+			return true;
+		},
+		left() {
+			return true; // stay in input, let it handle cursor
+		},
+		right() {
+			return true; // stay in input, let it handle cursor
+		},
+		confirmDown() {},
+		confirmUp() {
+			nameFilterInput?.focus();
+		},
+		confirmCancel() {},
+		back() {
+			nameFilterInput?.blur();
+			if (parentPath !== null) navigateUp();
+			else onBack?.();
+		},
+	};
+
 	const saveFileNameAreaHandlers = {
 		up() {
-			// Go back to directory actions
+			// Go back to name-filter if visible, otherwise to directory actions
 			saveFileNameInput?.blur();
-			activateArea(`${areaID}-directory-actions`);
+			if (showNameFilter) activateArea(`${areaID}-name-filter`);
+			else activateArea(`${areaID}-directory-actions`);
 			return true;
 		},
 		down() {
@@ -454,7 +507,7 @@
 	}
 
 	function handleAction(actionID: string): void {
-		const item = items[selectedIndex];
+		const item = filteredItems[selectedIndex];
 		if (!item || item.type !== 'file') return;
 		switch (actionID) {
 			case 'select':
@@ -499,6 +552,22 @@
 			case 'filter':
 				openFilterPanel();
 				break;
+			case 'toggleNameFilter':
+				toggleNameFilter();
+				break;
+		}
+	}
+
+	function toggleNameFilter(): void {
+		showNameFilter = !showNameFilter;
+		if (!showNameFilter) {
+			nameFilter = '';
+			selectedIndex = 0;
+		} else {
+			tick().then(() => {
+				activateArea(`${areaID}-name-filter`);
+				nameFilterInput?.focus();
+			});
 		}
 	}
 
@@ -982,6 +1051,7 @@
 	onMount(() => {
 		// Register sub-areas with positions relative to content area
 		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
+		unregisterNameFilter = useArea(`${areaID}-name-filter`, nameFilterAreaHandlers, nameFilterPosition);
 		if (saveFileName !== undefined) unregisterSaveFileName = useArea(`${areaID}-save-filename`, saveFileNameAreaHandlers, directoryActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
@@ -1001,6 +1071,7 @@
 		})();
 		return () => {
 			if (unregisterDirectoryActions) unregisterDirectoryActions();
+			if (unregisterNameFilter) unregisterNameFilter();
 			if (unregisterSaveFileName) unregisterSaveFileName();
 			if (unregisterList) unregisterList();
 			if (unregisterActions) unregisterActions();
@@ -1093,6 +1164,13 @@
 	.save-filename-row :global(.input-container) {
 		flex: 1;
 	}
+
+	.name-filter-row {
+		display: flex;
+		flex-direction: row;
+		gap: 1vh;
+		align-items: center;
+	}
 </style>
 
 <div class="browser">
@@ -1108,9 +1186,14 @@
 			{:else}
 				<div class="directory-actions">
 					{#each directoryActions as action, index (action.id)}
-						<Button label={action.label} icon={action.icon} selected={directoryActionsActive && selectedDirectoryActionIndex === index} onConfirm={() => handleDirectoryAction(action.id)} />
+						<Button label={action.label} icon={action.icon} active={action.id === 'toggleNameFilter' && showNameFilter} selected={directoryActionsActive && selectedDirectoryActionIndex === index} onConfirm={() => handleDirectoryAction(action.id)} />
 					{/each}
 				</div>
+				{#if showNameFilter}
+					<div class="name-filter-row">
+						<Input bind:this={nameFilterInput} bind:value={nameFilter} placeholder={$t('fileBrowser.filterByNamePlaceholder')} fontSize="2vh" padding="1vh 1.5vh" selected={nameFilterActive} onchange={handleNameFilterChange} flex />
+					</div>
+				{/if}
 			{/if}
 			{#if saveFileName !== undefined}
 				<div class="save-filename-row">
@@ -1135,7 +1218,7 @@
 									<Spinner size="8vh" />
 								</div>
 							{:else if error}
-								{#each items as item, index (item.id)}
+								{#each filteredItems as item, index (item.id)}
 									<StorageItem
 										bind:el={itemElements[index]}
 										name={item.name}
@@ -1143,7 +1226,7 @@
 										size={item.size}
 										modified={item.modified}
 										selected={(active || actionsActive) && selectedIndex === index}
-										isLast={index === items.length - 1}
+										isLast={index === filteredItems.length - 1}
 										onclick={() => handleItemClick(index)}
 										onmouseenter={() => {
 											activateArea(listAreaID);
@@ -1153,7 +1236,7 @@
 									/>
 								{/each}
 							{:else}
-								{#each items as item, index (item.id)}
+								{#each filteredItems as item, index (item.id)}
 									<StorageItem
 										bind:el={itemElements[index]}
 										name={item.name}
@@ -1161,7 +1244,7 @@
 										size={item.size}
 										modified={item.modified}
 										selected={(active || actionsActive) && selectedIndex === index}
-										isLast={index === items.length - 1}
+										isLast={index === filteredItems.length - 1}
 										onclick={() => handleItemClick(index)}
 										onmouseenter={() => {
 											activateArea(listAreaID);
