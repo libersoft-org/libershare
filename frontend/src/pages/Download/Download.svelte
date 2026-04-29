@@ -105,13 +105,22 @@
 	.container {
 		flex: 1;
 		min-height: 0;
+		display: flex;
+		flex-direction: column;
 		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
 		overflow: hidden;
 	}
 
+	/* Make .container's only child (Table) a flex item so .items inside can scroll */
+	.container :global(.table) {
+		flex: 1;
+		min-height: 0;
+	}
+
 	.items {
 		flex: 1;
+		min-height: 0;
 		overflow-y: auto;
 		font-size: 1.4vh;
 	}

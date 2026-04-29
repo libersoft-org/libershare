@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
+	import { getContext, onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import type { NavAreaController } from '../../scripts/navArea.svelte.ts';
+	import { type NavAreaController, navItem } from '../../scripts/navArea.svelte.ts';
 	import Row from '../../components/Row/Row.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	interface Props {
@@ -12,6 +12,20 @@
 	let { name, size, rowY }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let rowSelected = $derived(navArea ? navArea.isSelected([0, rowY]) || navArea.isSelected([1, rowY]) : false);
+	// Mouse-only NavItem: delegates hover to select the row's first button position so
+	// hovering over the file name / size area (outside the buttons) still highlights
+	// the row. Buttons opt out of mouse delegation, so this row-level item picks up
+	// hover events anywhere on the row container without colliding with button clicks.
+	let rowEl = $state<HTMLElement | undefined>();
+	onMount(() => {
+		if (!navArea) return;
+		return navArea.register(
+			navItem(
+				() => [0, rowY] as const,
+				() => rowEl
+			)
+		);
+	});
 </script>
 
 <style>
@@ -50,7 +64,7 @@
 	}
 </style>
 
-<Row selected={rowSelected}>
+<Row selected={rowSelected} bind:el={rowEl}>
 	<div class="info">
 		<div class="name">{name}</div>
 		<div class="size">{$t('common.size')}: {size}</div>
