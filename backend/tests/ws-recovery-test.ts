@@ -6,11 +6,11 @@
  * 3. Settings autoErrorRecovery
  *
  * Run: bun run backend/tests/ws-recovery-test.ts [ws-url]
- * Default URL: ws://192.168.2.9:1158
+ * Default URL: ws://<redacted-lan-ip>:1158
  */
 export {};
 
-const WS_URL = process.argv[2] || 'ws://192.168.2.9:1158';
+const WS_URL = process.argv[2] || 'ws://<redacted-lan-ip>:1158';
 
 interface WSMessage {
 	id?: number;

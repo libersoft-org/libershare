@@ -293,7 +293,9 @@
 			"maxRelayReservations": "Maximum number of connections to relay server (0 = unlimited)",
 			"autoStartSharingDefault": "Automatically start sharing after adding a LISH",
 			"autoStartDownloadingDefault": "Automatically start downloading after adding a LISH",
-			"autoErrorRecovery": "Automatic error recovery"
+			"autoErrorRecovery": "Automatic error recovery",
+			"mdnsEnabled": "Discover peers on local network (mDNS)",
+			"mdnsInterval": "Local network discovery interval (ms)"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",

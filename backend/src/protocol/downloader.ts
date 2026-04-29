@@ -6,6 +6,7 @@ import { downloadLimiter } from './speed-limiter.ts';
 import { lishTopic } from './constants.ts';
 import { Utils } from '../utils.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
+import { Circuit } from '@multiformats/multiaddr-matcher';
 import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, registerHaveAnnouncementHandler, unregisterHaveAnnouncementHandler } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
@@ -92,6 +93,10 @@ export class Downloader {
 	// Core chunk-transfer engine. Constructed lazily in init()/initFromManifest() once `lishID` is known.
 	// Owns fileReallocAttempts/writeRetryCount/notAvailableLoggedPeers and the peerLoop orchestration.
 	private chunkDownloader: ChunkDownloader | undefined;
+	// Fix D: exponential backoff for no-peers retry
+	private noPeersRetryCount = 0;
+	private static readonly BASE_NO_PEERS_RETRY_MS = 10_000;
+	private static readonly MAX_NO_PEERS_RETRY_MS = 300_000;
 
 	getLISHID(): string {
 		return this.lishID;
@@ -170,13 +175,25 @@ export class Downloader {
 
 	private scheduleRetry(): void {
 		if (this.retryTimer) clearTimeout(this.retryTimer);
+		// Fix D: exponential backoff — 10s, 20s, 40s, 80s, ... capped at 5 min
+		const delay = Math.min(Downloader.BASE_NO_PEERS_RETRY_MS * Math.pow(2, this.noPeersRetryCount), Downloader.MAX_NO_PEERS_RETRY_MS);
+		this.noPeersRetryCount++;
+		console.log(`[DL] ${this.lishID.slice(0, 8)}: retry scheduled in ${Math.round(delay / 1000)}s (attempt ${this.noPeersRetryCount})`);
 		this.retryTimer = setTimeout(() => {
 			this.retryTimer = undefined;
 			if (this.state === 'downloading' && !this.disabled)
 				this.doWork().catch(e => {
 					if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e);
 				});
-		}, 10000);
+		}, delay);
+	}
+
+	/** Fix D: reset exponential backoff counter on successful peer connection */
+	private resetRetryBackoff(): void {
+		if (this.noPeersRetryCount > 0) {
+			console.log(`[DL] ${this.lishID.slice(0, 8)}: retry backoff reset (was ${this.noPeersRetryCount})`);
+			this.noPeersRetryCount = 0;
+		}
 	}
 
 	private clearRetryTimer(): void {
@@ -451,6 +468,7 @@ export class Downloader {
 					}
 				}
 				if (this.peerManager.size() !== 0) {
+					this.resetRetryBackoff();
 					this.downloadActive = true;
 					try {
 						await this.chunkDownloader!.run();
@@ -675,7 +693,7 @@ export class Downloader {
 		if (ann.lishID !== this.lishID) return;
 		const peerIDShort = ann.peerID.slice(0, 12);
 		const chunks = ann.chunks === 'all' ? 'ALL' : `${(ann.chunks as any[])?.length ?? 0}`;
-		const addrTypes = ann.multiaddrs.map(a => (a.includes('/p2p-circuit') ? 'RELAY' : 'DIRECT'));
+		const addrTypes = ann.multiaddrs.map(a => (Circuit.matches(multiaddr(a)) ? 'RELAY' : 'DIRECT'));
 		// Peer sent have → it has data now, remove from dropped (but not if banned — bans are permanent)
 		if (this.peerManager.isBanned(ann.peerID)) {
 			trace(`[DL] HAVE from ${peerIDShort} ignored: banned`);

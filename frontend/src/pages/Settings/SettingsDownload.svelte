@@ -7,7 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, autoStartSharing, autoStartDownloading, autoErrorRecovery, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, settingsDefaults } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, autoStartSharing, autoStartDownloading, autoErrorRecovery, mdnsEnabled, mdnsInterval, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setMdnsEnabled, setMdnsInterval, settingsDefaults } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { parseBytes, formatBytes } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -41,6 +41,8 @@
 	let autoStart = $state($autoStartSharing);
 	let autoStartDl = $state($autoStartDownloading);
 	let autoRecovery = $state($autoErrorRecovery);
+	let mdns = $state($mdnsEnabled);
+	let mdnsIntervalMs = $state($mdnsInterval.toString());
 
 	// Browse functions
 	function openBrowse(type: 'storage' | 'temp' | 'lish' | 'lishnet'): void {
@@ -128,6 +130,11 @@
 		relayReservations = $maxRelayReservations.toString();
 	}
 
+	function saveMdnsInterval(): void {
+		setMdnsInterval(parseInt(mdnsIntervalMs) || 10000);
+		mdnsIntervalMs = $mdnsInterval.toString();
+	}
+
 	function saveAll(): void {
 		setStoragePath(storagePathValue);
 		setStorageTempPath(tempPathValue);
@@ -141,6 +148,7 @@
 		saveChunkSizeLimit();
 		saveMessageSizeLimit();
 		saveRelayReservations();
+		saveMdnsInterval();
 	}
 
 	function handleSave(): void {
@@ -166,6 +174,11 @@
 	function toggleAutoRecovery(): void {
 		autoRecovery = !autoRecovery;
 		setAutoErrorRecovery(autoRecovery);
+	}
+
+	function toggleMdns(): void {
+		mdns = !mdns;
+		setMdnsEnabled(mdns);
 	}
 
 	// Reset functions
@@ -215,6 +228,10 @@
 
 	function resetRelayReservations(): void {
 		relayReservations = String(settingsDefaults?.network?.maxRelayReservations ?? 0);
+	}
+
+	function resetMdnsInterval(): void {
+		mdnsIntervalMs = String(settingsDefaults?.network?.mdnsInterval ?? 10000);
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
@@ -316,8 +333,15 @@
 			<div role="group" data-mouse-activate-area={areaID}>
 				<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 15]} onToggle={toggleAutoRecovery} />
 			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.mdnsEnabled') + ':'} checked={mdns} position={[0, 16]} onToggle={toggleMdns} />
+			</div>
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={mdnsIntervalMs} label={$t('settings.download.mdnsInterval')} type="number" min={1000} position={[0, 17]} flex />
+				<Button icon="/img/restart.svg" position={[1, 17]} onConfirm={resetMdnsInterval} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
 		</div>
-		<ButtonBar justify="center" basePosition={[0, 16]}>
+		<ButtonBar justify="center" basePosition={[0, 18]}>
 			<Button icon="/img/save.svg" label={$t('common.save')} onConfirm={handleSave} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
