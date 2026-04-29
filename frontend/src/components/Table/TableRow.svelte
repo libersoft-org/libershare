@@ -8,8 +8,14 @@
 		el?: HTMLElement | undefined;
 		position?: NavPos | undefined;
 		onConfirm?: (() => void) | undefined;
+		/** Direct DOM click handler for callers that don't use NavArea (e.g. FileBrowser). */
+		onclick?: ((e: MouseEvent) => void) | undefined;
+		/** Direct DOM mouseenter handler (mouse-driven row activation). */
+		onmouseenter?: ((e: MouseEvent) => void) | undefined;
+		/** Direct DOM keydown handler. */
+		onkeydown?: ((e: KeyboardEvent) => void) | undefined;
 	}
-	let { children, selected = false, dimmed = false, el = $bindable(), position, onConfirm }: Props = $props();
+	let { children, selected = false, dimmed = false, el = $bindable(), position, onConfirm, onclick, onmouseenter, onkeydown }: Props = $props();
 
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 
@@ -63,6 +69,7 @@
 	}
 </style>
 
-<div bind:this={el} class="row" class:selected={isSelected} class:dimmed role={navArea && position ? 'row' : undefined}>
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div bind:this={el} class="row" class:selected={isSelected} class:dimmed role="row" tabindex={onclick || onkeydown ? -1 : undefined} {onclick} {onmouseenter} {onkeydown}>
 	{@render children()}
 </div>
