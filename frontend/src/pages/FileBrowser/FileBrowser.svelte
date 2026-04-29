@@ -1219,33 +1219,39 @@
 								</div>
 							{:else if error}
 								{#each filteredItems as item, index (item.id)}
-									<div
+									<StorageItem
+										bind:el={itemElements[index]}
+										name={item.name}
+										type={item.type}
+										size={item.size}
+										modified={item.modified}
+										selected={(active || actionsActive) && selectedIndex === index}
+										isLast={index === filteredItems.length - 1}
 										onclick={() => handleItemClick(index)}
 										onmouseenter={() => {
 											activateArea(listAreaID);
 											selectedIndex = index;
 										}}
 										onkeydown={e => e.key === 'Enter' && handleItemClick(index)}
-										role="row"
-										tabindex="-1"
-									>
-										<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} />
-									</div>
+									/>
 								{/each}
 							{:else}
 								{#each filteredItems as item, index (item.id)}
-									<div
+									<StorageItem
+										bind:el={itemElements[index]}
+										name={item.name}
+										type={item.type}
+										size={item.size}
+										modified={item.modified}
+										selected={(active || actionsActive) && selectedIndex === index}
+										isLast={index === filteredItems.length - 1}
 										onclick={() => handleItemClick(index)}
 										onmouseenter={() => {
 											activateArea(listAreaID);
 											selectedIndex = index;
 										}}
 										onkeydown={e => e.key === 'Enter' && handleItemClick(index)}
-										role="row"
-										tabindex="-1"
-									>
-										<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} />
-									</div>
+									/>
 								{/each}
 							{/if}
 						</div>
