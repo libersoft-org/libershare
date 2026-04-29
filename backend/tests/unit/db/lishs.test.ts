@@ -284,9 +284,12 @@ describe('isComplete', () => {
 		expect(isComplete(db, TEST_LISH_ID)).toBe(true);
 	});
 
-	it('returns true for a LISH with no files', () => {
+	it('returns false for a LISH with no files (vacuous-truth guard)', () => {
+		// By design (see db/lishs.ts:isComplete): 0 total chunks returns false to
+		// prevent a LISH with no files from being reported as "complete". Covered here
+		// as a regression guard for that explicit decision.
 		addLISH(db, createTestLISH({ id: TEST_LISH_ID_2, files: [] }));
-		expect(isComplete(db, TEST_LISH_ID_2)).toBe(true);
+		expect(isComplete(db, TEST_LISH_ID_2)).toBe(false);
 	});
 });
 
