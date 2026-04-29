@@ -1,13 +1,11 @@
 import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-
-function lishTopic(networkID: string): string {
-	return `lish/${networkID}`;
-}
+import { LISH_TOPIC_PREFIX, DEFAULT_ACCEPT_PX_THRESHOLD, lishTopic, normalizeTrustedPeerIds, parseAcceptPXThreshold } from '../../../src/protocol/constants.ts';
 
 const NETWORK_TS = readFileSync(join(__dirname, '../../../src/protocol/network.ts'), 'utf-8');
 const CONFIG_TS = readFileSync(join(__dirname, '../../../src/protocol/network-config.ts'), 'utf-8');
+const SETTINGS_TS = readFileSync(join(__dirname, '../../../src/settings.ts'), 'utf-8');
 
 // ---------------------------------------------------------------------------
 // GossipSub parameter constraint validation
@@ -85,6 +83,238 @@ describe('network-config.ts — gossipsub options', () => {
 
 	it('fanoutTTL is set', () => {
 		expect(CONFIG_TS).toMatch(/fanoutTTL:\s*\d+/);
+	});
+});
+
+describe('network-config.ts — PX trust policy', () => {
+	it('does not enable PX unconditionally', () => {
+		expect(CONFIG_TS).toContain('doPX: pxEnabled');
+		expect(CONFIG_TS).not.toContain('doPX: true');
+	});
+
+	it('grants PX trust to bootstrap peers and configured trusted peers', () => {
+		const scoreBlock = CONFIG_TS.slice(CONFIG_TS.indexOf('appSpecificScore'), CONFIG_TS.indexOf('IPColocationFactorWeight'));
+		expect(scoreBlock).toContain('isConfiguredTrustedPXPeer');
+		expect(scoreBlock).toContain('bootstrapPeerIDs.has');
+		expect(scoreBlock).toContain('pxEnabled && (isConfiguredTrustedPXPeer || isBootstrapPeer)');
+	});
+
+	it('uses a positive acceptPXThreshold from local policy', () => {
+		expect(CONFIG_TS).toContain('acceptPXThreshold,');
+		expect(CONFIG_TS).not.toContain('acceptPXThreshold: 0');
+	});
+
+	it('defaults PX policy to safely-enabled with bootstrap trust', () => {
+		// With bootstrap-as-trusted logic, enabling PX by default is safe: only bootstrap
+		// peers the operator has explicitly configured for this lishnet can deliver PX,
+		// so the Sybil vector from the pre-bootstrap-trust era is neutralised.
+		const defaultsStart = SETTINGS_TS.indexOf('const DEFAULT_SETTINGS');
+		const peerExchangeStart = SETTINGS_TS.indexOf('peerExchange: {', defaultsStart);
+		const defaultBlock = SETTINGS_TS.slice(peerExchangeStart, SETTINGS_TS.indexOf('system:', peerExchangeStart));
+		expect(defaultBlock).toContain('enabled: true');
+		expect(defaultBlock).toContain('acceptPXThreshold: 10');
+		expect(defaultBlock).toContain('trustedPeerIds: []');
+		expect(defaultBlock).toContain('ingressFilterEnabled: true');
+	});
+
+	it('ingress filter unions bootstrap peers into trusted set', () => {
+		// Source-surface check: network.ts must import bootstrapPeerIDs into the trusted
+		// Set so the ingress filter decides the same way as the score callback.
+		const filterSurface = NETWORK_TS.slice(NETWORK_TS.indexOf('patchGossipsubPXIngressPolicyOnce'), NETWORK_TS.indexOf('private addListener'));
+		expect(filterSurface).toContain('this.bootstrapPeerIDs');
+		expect(filterSurface).toContain('trusted.add');
+	});
+});
+
+describe('network.ts — PX ingress filter (source surface)', () => {
+	it('filters incoming PX before gossipsub handles PRUNE', () => {
+		const filterBlock = NETWORK_TS.slice(NETWORK_TS.indexOf('patchGossipsubPXIngressPolicyOnce'), NETWORK_TS.indexOf('private addListener'));
+		expect(filterBlock).toContain('handleReceivedRpc');
+		expect(filterBlock).toContain('ingressFilterEnabled');
+		expect(filterBlock).toContain('trusted.has(sender)');
+		expect(filterBlock).toContain('LISH_TOPIC_PREFIX');
+		expect(filterBlock).toContain('peers: []');
+		expect(filterBlock).toContain('throw new Error');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// PX ingress filter — behavioural coverage (re-implements the strip logic as a
+// pure function against the same helpers the runtime uses, so drift between
+// this test and the runtime wrapper in network.ts is detected by the source
+// surface check above).
+// ---------------------------------------------------------------------------
+
+type PruneControl = { topicID?: string; peers?: Array<{ peerID?: Uint8Array }> };
+type RPC = { control?: { prune?: PruneControl[] } };
+type FilterSettings = { enabled: boolean; ingressFilterEnabled: boolean; trustedPeerIds: string[] };
+
+function applyPXIngressFilter(peerExchange: FilterSettings, sender: string, rpc: RPC): { prune: PruneControl[]; allowed: number; stripped: number } {
+	const prunes = rpc.control?.prune ?? [];
+	if (!peerExchange.ingressFilterEnabled || prunes.length === 0) return { prune: prunes, allowed: 0, stripped: 0 };
+	const trusted = normalizeTrustedPeerIds(peerExchange.trustedPeerIds);
+	let allowed = 0;
+	let stripped = 0;
+	const prune = prunes.map(p => {
+		if (!p?.peers?.length) return p;
+		const topic = p.topicID;
+		const allowPX = peerExchange.enabled === true && trusted.has(sender) && typeof topic === 'string' && topic.startsWith(LISH_TOPIC_PREFIX);
+		if (allowPX) {
+			allowed++;
+			return p;
+		}
+		stripped++;
+		return { ...p, peers: [] };
+	});
+	return { prune, allowed, stripped };
+}
+
+describe('PX ingress filter — behavioural', () => {
+	const fakePeer = { peerID: new Uint8Array([1, 2, 3]) };
+	const prune = (topicID: string, peerCount = 2): PruneControl => ({
+		topicID,
+		peers: Array.from({ length: peerCount }, () => fakePeer),
+	});
+
+	it('is a no-op when ingressFilterEnabled=false', () => {
+		const rpc: RPC = { control: { prune: [prune('lish/n1')] } };
+		const out = applyPXIngressFilter({ enabled: true, ingressFilterEnabled: false, trustedPeerIds: ['sender1'] }, 'sender1', rpc);
+		expect(out.allowed).toBe(0);
+		expect(out.stripped).toBe(0);
+		expect(out.prune[0]!.peers!.length).toBe(2); // untouched
+	});
+
+	it('is a no-op when RPC has no PRUNE control', () => {
+		const rpc: RPC = { control: { prune: [] } };
+		const out = applyPXIngressFilter({ enabled: true, ingressFilterEnabled: true, trustedPeerIds: ['sender1'] }, 'sender1', rpc);
+		expect(out.stripped).toBe(0);
+		expect(out.allowed).toBe(0);
+	});
+
+	it('strips peers when sender is not trusted (lish topic)', () => {
+		const rpc: RPC = { control: { prune: [prune('lish/n1')] } };
+		const out = applyPXIngressFilter({ enabled: true, ingressFilterEnabled: true, trustedPeerIds: ['someoneElse'] }, 'untrustedSender', rpc);
+		expect(out.stripped).toBe(1);
+		expect(out.allowed).toBe(0);
+		expect(out.prune[0]!.peers).toEqual([]);
+	});
+
+	it('strips peers when topic is outside the lish namespace (trusted sender)', () => {
+		const rpc: RPC = { control: { prune: [prune('other/n1')] } };
+		const out = applyPXIngressFilter({ enabled: true, ingressFilterEnabled: true, trustedPeerIds: ['trustedSender'] }, 'trustedSender', rpc);
+		expect(out.stripped).toBe(1);
+		expect(out.allowed).toBe(0);
+		expect(out.prune[0]!.peers).toEqual([]);
+	});
+
+	it('strips peers when enabled=false even if sender is in trustedPeerIds (defence-in-depth)', () => {
+		const rpc: RPC = { control: { prune: [prune('lish/n1')] } };
+		const out = applyPXIngressFilter({ enabled: false, ingressFilterEnabled: true, trustedPeerIds: ['trustedSender'] }, 'trustedSender', rpc);
+		expect(out.stripped).toBe(1);
+		expect(out.allowed).toBe(0);
+	});
+
+	it('allows PX when trusted sender AND lish topic AND enabled', () => {
+		const rpc: RPC = { control: { prune: [prune('lish/n1', 3)] } };
+		const out = applyPXIngressFilter({ enabled: true, ingressFilterEnabled: true, trustedPeerIds: ['trustedSender'] }, 'trustedSender', rpc);
+		expect(out.allowed).toBe(1);
+		expect(out.stripped).toBe(0);
+		expect(out.prune[0]!.peers!.length).toBe(3);
+	});
+
+	it('leaves PRUNE frames without peers untouched', () => {
+		const rpc: RPC = { control: { prune: [{ topicID: 'lish/n1', peers: [] }] } };
+		const out = applyPXIngressFilter({ enabled: true, ingressFilterEnabled: true, trustedPeerIds: ['untrusted'] }, 'untrusted', rpc);
+		expect(out.stripped).toBe(0);
+		expect(out.allowed).toBe(0);
+	});
+
+	it('treats lish-lookalike topics strictly by prefix (no PX on "lishother/")', () => {
+		const rpc: RPC = { control: { prune: [prune('lish/n1'), prune('other-lish/n2')] } };
+		const out = applyPXIngressFilter({ enabled: true, ingressFilterEnabled: true, trustedPeerIds: ['trustedSender'] }, 'trustedSender', rpc);
+		expect(out.allowed).toBe(1);
+		expect(out.stripped).toBe(1);
+		expect(out.prune[0]!.peers!.length).toBe(2);
+		expect(out.prune[1]!.peers).toEqual([]);
+	});
+
+	it('handles malformed trustedPeerIds (non-strings, empty strings, whitespace) safely', () => {
+		const rpc: RPC = { control: { prune: [prune('lish/n1')] } };
+		const out = applyPXIngressFilter({ enabled: true, ingressFilterEnabled: true, trustedPeerIds: ['  trustedSender  ', '', null as any, 42 as any, '   '] }, 'trustedSender', rpc);
+		expect(out.allowed).toBe(1);
+		expect(out.stripped).toBe(0);
+	});
+
+	it('mixes allowed and stripped prunes in a single RPC', () => {
+		const rpc: RPC = { control: { prune: [prune('lish/n1'), prune('lish/n2'), prune('other/topic')] } };
+		const out = applyPXIngressFilter({ enabled: true, ingressFilterEnabled: true, trustedPeerIds: ['trustedSender'] }, 'trustedSender', rpc);
+		expect(out.allowed).toBe(2);
+		expect(out.stripped).toBe(1);
+		expect(out.prune[0]!.peers!.length).toBe(2);
+		expect(out.prune[1]!.peers!.length).toBe(2);
+		expect(out.prune[2]!.peers).toEqual([]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Shared helpers (normalize / parseAcceptPXThreshold) — used by both
+// network-config.ts and network.ts so drift is impossible.
+// ---------------------------------------------------------------------------
+
+describe('normalizeTrustedPeerIds helper', () => {
+	it('returns empty Set for non-array inputs', () => {
+		expect(normalizeTrustedPeerIds(undefined).size).toBe(0);
+		expect(normalizeTrustedPeerIds(null).size).toBe(0);
+		expect(normalizeTrustedPeerIds('single' as any).size).toBe(0);
+		expect(normalizeTrustedPeerIds({} as any).size).toBe(0);
+	});
+
+	it('filters non-string entries', () => {
+		const out = normalizeTrustedPeerIds([123, null, undefined, {}, 'ok']);
+		expect(out.size).toBe(1);
+		expect(out.has('ok')).toBe(true);
+	});
+
+	it('trims surrounding whitespace and drops empty strings', () => {
+		const out = normalizeTrustedPeerIds(['  a  ', '', '   ', 'b']);
+		expect(out.size).toBe(2);
+		expect(out.has('a')).toBe(true);
+		expect(out.has('b')).toBe(true);
+	});
+
+	it('deduplicates case-sensitively', () => {
+		const out = normalizeTrustedPeerIds(['a', 'a', 'A']);
+		expect(out.size).toBe(2);
+	});
+});
+
+describe('parseAcceptPXThreshold helper', () => {
+	it('accepts positive finite numbers as-is', () => {
+		expect(parseAcceptPXThreshold(25)).toEqual({ value: 25, unsafe: false, raw: 25 });
+		expect(parseAcceptPXThreshold(1)).toEqual({ value: 1, unsafe: false, raw: 1 });
+	});
+
+	it('flags zero and negative numbers as unsafe and falls back to default', () => {
+		const z = parseAcceptPXThreshold(0);
+		expect(z.unsafe).toBe(true);
+		expect(z.value).toBe(DEFAULT_ACCEPT_PX_THRESHOLD);
+		const n = parseAcceptPXThreshold(-5);
+		expect(n.unsafe).toBe(true);
+		expect(n.value).toBe(DEFAULT_ACCEPT_PX_THRESHOLD);
+	});
+
+	it('flags non-numbers and non-finite values as unsafe', () => {
+		expect(parseAcceptPXThreshold('10' as any).unsafe).toBe(true);
+		expect(parseAcceptPXThreshold(NaN).unsafe).toBe(true);
+		expect(parseAcceptPXThreshold(Infinity).unsafe).toBe(true);
+		expect(parseAcceptPXThreshold(-Infinity).unsafe).toBe(true);
+		expect(parseAcceptPXThreshold(undefined).unsafe).toBe(true);
+		expect(parseAcceptPXThreshold(null).unsafe).toBe(true);
+	});
+
+	it('returns the raw value for logging even when unsafe', () => {
+		expect(parseAcceptPXThreshold(-1).raw).toBe(-1);
+		expect(parseAcceptPXThreshold('bogus' as any).raw).toBe('bogus');
 	});
 });
 

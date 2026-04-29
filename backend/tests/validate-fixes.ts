@@ -134,8 +134,8 @@ console.log('\n── C3: ErrorRecovery backoff + max retries ──');
 		},
 	});
 
-	recovery.start('lish1', ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: false });
-	const state = recovery.getState('lish1');
+	recovery.start('<redacted-bootstrap>', ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: false });
+	const state = recovery.getState('<redacted-bootstrap>');
 	assert(state!.nextRetryDelay === 7000, 'Initial delay is 7s');
 
 	// Simulate 6 rapid attempts (manually calling attempt via timer advance)
@@ -144,7 +144,7 @@ console.log('\n── C3: ErrorRecovery backoff + max retries ──');
 	assert(scheduledEvt?.data.delayMs === 7000, 'First scheduled broadcast has 7s delay');
 
 	recovery.stopAll();
-	assert(recovery.getState('lish1') === undefined, 'Recovery stopped');
+	assert(recovery.getState('<redacted-bootstrap>') === undefined, 'Recovery stopped');
 }
 
 // ─── M2: checksum index exists ───────────────────────────────────────────

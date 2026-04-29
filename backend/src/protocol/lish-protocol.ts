@@ -142,7 +142,9 @@ export class LISHClient {
 	// Request full LISH manifest from peer
 	async requestManifest(lishID: LISHid): Promise<import('@shared').IStoredLISH> {
 		const request: LISHGetLishRequest = { type: 'getLish', lishID };
-		sendLengthPrefixed(this.stream, codecEncode(request));
+		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
+			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLish ${lishID}: stream ${this.stream.status}`);
+		}
 		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(30000, 'manifest-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
 		if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, lishID);
 		const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
@@ -155,7 +157,9 @@ export class LISHClient {
 	// Request list of shared LISHs from peer
 	async requestList(): Promise<Array<{ id: string; name?: string; totalSize?: number }>> {
 		const request: LISHGetLishsRequest = { type: 'getLishs' };
-		sendLengthPrefixed(this.stream, codecEncode(request));
+		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
+			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLishs: stream ${this.stream.status}`);
+		}
 		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(15000, 'list-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
 		if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE);
 		const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
@@ -175,7 +179,9 @@ export class LISHClient {
 			lishID,
 			chunkID,
 		};
-		sendLengthPrefixed(this.stream, codecEncode(request));
+		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
+			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getChunk ${lishID}: stream ${this.stream.status}`);
+		}
 		// Read the response (with timeout — prevents hanging on dead/aborted streams)
 		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(30000, 'receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
 		if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, lishID);
@@ -201,7 +207,9 @@ export class LISHClient {
 	 */
 	async announceHave(lishID: LISHid, chunks: HaveChunks, multiaddrs: string[]): Promise<void> {
 		const request: LISHAnnounceHaveRequest = { type: 'announceHave', lishID, chunks, multiaddrs };
-		sendLengthPrefixed(this.stream, codecEncode(request));
+		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
+			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `announceHave ${lishID}: stream ${this.stream.status}`);
+		}
 		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(15000, 'announceHave-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
 		if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, lishID);
 		const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
@@ -325,6 +333,13 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 		const decoder = lpDecode(stream, { maxDataLength: maxMessageSize });
 		// Handle multiple requests on the same stream
 		for await (const msg of decoder) {
+			// Peer may disconnect between decoder.next() and our response send. Bail out if
+			// stream transitioned to closed/closing — any sendLengthPrefixed would throw sync
+			// StreamStateError → rejected Promise from this async handler → unhandledRejection.
+			if (stream.status !== 'open') {
+				trace(`[PROTO] stream ${stream.status} from ${remotePeer}, stopping handler loop`);
+				break;
+			}
 			requestCount++;
 			const data = msg instanceof Uint8ArrayList ? msg.subarray() : msg;
 			trace(`[PROTO] #${requestCount} from ${remotePeer}: ${data.byteLength}B`);
@@ -540,7 +555,15 @@ function rejectAfterTimeout(ms: number, label: string): Promise<never> {
 	return new Promise((_, reject) => setTimeout(() => reject(new CodedError(ErrorCodes.PEER_UNREACHABLE, `${label} timeout >${ms}ms`)), ms));
 }
 
-// Helper to send a length-prefixed message (single atomic send — no inter-chunk race window)
-function sendLengthPrefixed(stream: Stream, data: Uint8Array): void {
+// Send a length-prefixed message. Caller MUST check stream.status === 'open' first
+// because libp2p Stream.send() throws StreamStateError synchronously when writeStatus
+// is closed/closing. When called from an async function, that sync throw becomes a
+// rejected Promise → unhandledRejection flood. The check at call sites eliminates
+// the race window instead of masking the symptom.
+// Returns true if write was attempted, false if stream was not open (caller should
+// break out of its processing loop in that case).
+function sendLengthPrefixed(stream: Stream, data: Uint8Array): boolean {
+	if (stream.status !== 'open') return false;
 	stream.send(lpEncode.single(data));
+	return true;
 }

@@ -39,6 +39,8 @@ export const maxRelayReservations = writable(0);
 export const autoStartSharing = writable(true);
 export const autoStartDownloading = writable(true);
 export const autoErrorRecovery = writable(true);
+export const mdnsEnabled = writable(true);
+export const mdnsInterval = writable(10000);
 export const autoStartOnBoot = writable(true);
 export const showInTray = writable(true);
 export const minimizeToTray = writable(true);
@@ -100,6 +102,8 @@ export async function loadSettings(): Promise<void> {
 		autoStartSharing.set(settings.network.autoStartSharing);
 		autoStartDownloading.set(settings.network.autoStartDownloading);
 		autoErrorRecovery.set(settings.network.autoErrorRecovery ?? true);
+		mdnsEnabled.set(settings.network.mdnsEnabled ?? true);
+		mdnsInterval.set(settings.network.mdnsInterval ?? 10000);
 
 		// System
 		autoStartOnBoot.set(settings.system.autoStartOnBoot);
@@ -224,6 +228,15 @@ export function setAutoStartDownloading(enabled: boolean): void {
 
 export function setAutoErrorRecovery(enabled: boolean): void {
 	updateSetting(autoErrorRecovery, 'network.autoErrorRecovery', enabled);
+}
+
+export function setMdnsEnabled(enabled: boolean): void {
+	updateSetting(mdnsEnabled, 'network.mdnsEnabled', enabled);
+}
+
+export function setMdnsInterval(value: number): void {
+	const clampedValue = Math.max(1000, Math.min(600000, value || 10000));
+	updateSetting(mdnsInterval, 'network.mdnsInterval', clampedValue);
 }
 
 export function setAutoStartOnBoot(enabled: boolean): void {

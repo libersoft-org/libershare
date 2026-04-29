@@ -42,7 +42,47 @@ export interface SettingsData {
 		autoStartDownloading: boolean;
 		autoErrorRecovery: boolean;
 		announceAddresses: string[];
+		mdnsEnabled: boolean;
+		mdnsInterval: number;
 		searchTimeout: number; // Browse network → LISH search timeout in milliseconds. Search session ends after this.
+		/**
+		 * GossipSub Peer Exchange (PX) local operator policy.
+		 *
+		 * PX allows peers to recommend other peers to each other through PRUNE control messages
+		 * (see GossipSub v1.1 spec). Sybil-style injection is neutralised by a two-layer defence:
+		 * (1) gossipsub scoring + acceptPXThreshold so only peers above a positive score can
+		 * deliver PX, and (2) an ingress filter that strips PRUNE peer lists unless the sender
+		 * is trusted. Trust is granted automatically to bootstrap peers (operator already chose
+		 * them at lishnet-join time) and extended by the optional trustedPeerIds list.
+		 */
+		peerExchange: {
+			/**
+			 * Master switch for doPX emission (we advertise peers when pruning) AND for the
+			 * local trust score that makes an individual peer's PX acceptable inbound.
+			 * When false the score path fails closed for every peer, including bootstraps.
+			 */
+			enabled: boolean;
+			/**
+			 * Minimum gossipsub score a sender must reach before its PX is accepted. Must be
+			 * strictly positive to keep neutral (score=0) peers from supplying peer lists.
+			 * Unsafe values (<= 0, non-finite, non-number) fall back to the safe default.
+			 */
+			acceptPXThreshold: number;
+			/**
+			 * Extra allow-list of peer IDs on top of bootstrap peers. The appSpecificScore
+			 * boost (+1000) is given to any peer that is either in this list OR in the
+			 * bootstrap set derived from the lishnets this node has joined. Leave empty to
+			 * rely purely on bootstrap trust.
+			 */
+			trustedPeerIds: string[];
+			/**
+			 * Independent defense-in-depth: when true, the gossipsub handleReceivedRpc wrapper
+			 * strips `peers` from any PRUNE control message unless the sender is trusted
+			 * (configured OR bootstrap) AND the topic is under the lishnet namespace. Can be
+			 * enabled without `enabled` (belt-and-braces) or disabled to rely purely on scoring.
+			 */
+			ingressFilterEnabled: boolean;
+		};
 	};
 	system: {
 		autoStartOnBoot: boolean;
@@ -109,7 +149,22 @@ const DEFAULT_SETTINGS: SettingsData = {
 		autoStartDownloading: true,
 		autoErrorRecovery: true,
 		announceAddresses: [],
+		mdnsEnabled: true,
+		mdnsInterval: 30000,
 		searchTimeout: 30_000,
+		peerExchange: {
+			// Enabled by default: bootstrap peers (operator-configured in lishnet joins)
+			// are automatically trusted PX sources, so mesh density converges without
+			// operator having to seed trustedPeerIds manually. See
+			// network-config.ts appSpecificScore for the bootstrap-trust rationale.
+			enabled: true,
+			acceptPXThreshold: 5,
+			trustedPeerIds: [],
+			// Defense-in-depth: even if a non-bootstrap peer somehow crosses the score
+			// threshold, the ingress filter still strips its PX peer list unless it is
+			// in the trusted set (configured OR bootstrap).
+			ingressFilterEnabled: true,
+		},
 	},
 	system: {
 		autoStartOnBoot: true,

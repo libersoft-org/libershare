@@ -7,6 +7,8 @@ import { openDatabase } from './db/database.ts';
 import { APIServer } from './api/api.ts';
 import { Settings } from './settings.ts';
 import { setWorkerUrl } from './lish/lish.ts';
+import { startMemoryTrace } from './monitoring/memory-trace.ts';
+import { startHeapSnapshotTrigger } from './monitoring/heap-snapshot.ts';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -96,6 +98,16 @@ setUploadBroadcast((event, data) => apiServer.broadcastEvent(event, data));
 import { startConnectivityCheck } from './connectivity.ts';
 const stopConnectivityCheck = startConnectivityCheck((event, data) => apiServer.broadcastEvent(event, data));
 
+// Memory profiling: JSONL log RSS/heap/internal sizes. LIBERSHARE_MEMTRACE=0 disables.
+if (process.env['LIBERSHARE_MEMTRACE'] !== '0') {
+	const intervalMs = Number(process.env['LIBERSHARE_MEMTRACE_INTERVAL_MS'] ?? 30_000);
+	const tracePath = process.env['LIBERSHARE_MEMTRACE_FILE'] ?? join(dataDir, 'memory-trace.jsonl');
+	startMemoryTrace({ filePath: tracePath, intervalMs, stdout: true });
+}
+
+// Heap snapshot on-demand: touch <dataDir>/trigger-heap OR kill -USR2 <pid>
+if (process.env['LIBERSHARE_HEAP_TRIGGER'] !== '0') startHeapSnapshotTrigger(dataDir);
+
 let shuttingDown = false;
 async function shutdown(): Promise<void> {
 	if (shuttingDown) {
@@ -182,34 +194,73 @@ const TRANSIENT_ERRORS = new Set([
 function isTransientError(err: any): boolean {
 	const name = err?.constructor?.name || err?.name || '';
 	if (TRANSIENT_ERRORS.has(name)) return true;
-	// Node EventEmitter wraps stream 'error' events with no listener as `Error: Unhandled error. (...)`.
-	// libp2p stream/muxer paths emit DOMException TimeoutError / AbortError on the underlying socket
-	// when a peer goes silent, and there's no listener attached. Treat as transient.
-	const msg: string = err?.message || '';
+	// Node EventEmitter wraps stream 'error' events with no listener as
+	// `Error: Unhandled error.` libp2p stream/muxer paths emit DOMException
+	// TimeoutError / AbortError on the underlying socket when a peer goes silent
+	// and no listener is attached. Both forms are transient.
+	const msg: string = err?.message ?? '';
+	const ctxMsg: string = err?.context?.message ?? '';
 	if (msg.startsWith('Unhandled error.') && /TimeoutError|AbortError|ECONNRESET|EPIPE/i.test(msg)) return true;
-	// Cause-chain check (Node may set .cause on wrapped errors)
+	if (msg.includes('Unhandled error') && (ctxMsg.includes('timed out') || ctxMsg.includes('aborted') || ctxMsg.includes('closed') || ctxMsg.includes('reset'))) return true;
+	// Cause-chain check (Node may set .cause on wrapped errors).
 	const causeName = err?.cause?.constructor?.name || err?.cause?.name || '';
 	if (causeName === 'TimeoutError' || causeName === 'AbortError') return true;
 	return false;
 }
 
+// Rate-limiter for the highest-frequency transient error coming from gossipsub
+// internals (StreamStateError: "Cannot write to a stream that is closed").
+// This is a known issue in @chainsafe/libp2p-gossipsub where sendRpc does not
+// catch sync throws from rawStream.send() on closed streams. Logging each one
+// produces ~5000 warn/hour of pure noise. We keep an occasional summary so the
+// condition is still observable.
+const transientLogState = new Map<string, { count: number; lastLogAt: number }>();
+const TRANSIENT_LOG_INTERVAL_MS = 60_000;
+function logTransientRateLimited(kind: 'error' | 'rejection', name: string, message: string): void {
+	const key = `${kind}:${name}`;
+	const state = transientLogState.get(key) ?? { count: 0, lastLogAt: 0 };
+	state.count++;
+	const now = Date.now();
+	if (now - state.lastLogAt >= TRANSIENT_LOG_INTERVAL_MS) {
+		const suppressed = state.count > 1 ? ` (×${state.count} in last ${Math.round((now - state.lastLogAt) / 1000)}s)` : '';
+		console.warn(`[WARN] Suppressed transient libp2p ${kind} (${name})${suppressed}: ${message}`);
+		state.count = 0;
+		state.lastLogAt = now;
+	}
+	transientLogState.set(key, state);
+}
+
 process.on('uncaughtException', err => {
 	if (isTransientError(err)) {
 		const name = (err as any)?.constructor?.name || err.name || '';
-		console.warn(`[WARN] Suppressed transient libp2p error (${name}): ${err.message}`);
+		logTransientRateLimited('error', name, err.message);
 		return;
 	}
-	console.error('[FATAL] Uncaught exception:', err);
+	const ctorName = (err as any)?.constructor?.name || '';
+	const errName = (err as any)?.name || '';
+	const errMessage = (err as any)?.message || '';
+	const errStack = (err as any)?.stack || '';
+	const errKeys = err && typeof err === 'object' ? Object.keys(err as any).join(',') : '';
+	console.error(`[FATAL] Uncaught exception: ctor=${ctorName} name=${errName} msg=${errMessage} keys=${errKeys}`);
+	console.error('[FATAL] stack:', errStack);
+	console.error('[FATAL] full:', JSON.stringify(err, Object.getOwnPropertyNames(err as any)));
 	process.exit(1);
 });
 
 process.on('unhandledRejection', (reason: any) => {
 	if (isTransientError(reason)) {
 		const name = reason?.constructor?.name || reason?.name || '';
-		console.warn(`[WARN] Suppressed transient libp2p rejection (${name}): ${reason?.message}`);
+		logTransientRateLimited('rejection', name, reason?.message ?? '');
 		return;
 	}
-	console.error('[FATAL] Unhandled rejection:', reason);
+	const ctorName = reason?.constructor?.name || '';
+	const errName = reason?.name || '';
+	const errMessage = reason?.message || '';
+	const errStack = reason?.stack || '';
+	const errKeys = reason && typeof reason === 'object' ? Object.keys(reason).join(',') : '';
+	console.error(`[FATAL] Unhandled rejection: ctor=${ctorName} name=${errName} msg=${errMessage} keys=${errKeys}`);
+	console.error('[FATAL] stack:', errStack);
+	console.error('[FATAL] full:', JSON.stringify(reason, Object.getOwnPropertyNames(reason)));
 	process.exit(1);
 });
 
