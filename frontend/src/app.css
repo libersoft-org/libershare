@@ -49,6 +49,7 @@ body {
 	margin: 0;
 	padding: 0;
 	height: 100%;
+	user-select: none;
 }
 
 body {
@@ -67,4 +68,9 @@ body {
 
 .bold {
 	font-weight: bold;
+}
+
+[role='button'],
+[role='row'] {
+	cursor: none;
 }

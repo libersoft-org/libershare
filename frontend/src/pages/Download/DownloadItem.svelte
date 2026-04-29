@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { getContext, onMount } from 'svelte';
+	import { getContext } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { type DownloadStatus, type EnabledMode } from '../../scripts/downloads.ts';
 	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
 	import { truncateID, formatSize } from '../../scripts/utils.ts';
-	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
+	import { type NavAreaController, type NavPos } from '../../scripts/navArea.svelte.ts';
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Badge from '../../components/Badge/Badge.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
@@ -31,25 +31,12 @@
 	}
 	let { name, id, progress, size, downloadedSize, status, enabledMode = 'disabled', downloadPeers, uploadPeers, downloadSpeed, uploadSpeed, totalUploadedBytes = 0, totalDownloadedBytes = 0, position, onConfirm, selected = false }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
-	let rowEl = $state<HTMLElement | undefined>(undefined);
 	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : selected);
 	let downloadColor = $derived(isSelected ? '--primary-background' : '--mode-download-fg');
 	let uploadColor = $derived(isSelected ? '--primary-background' : '--mode-upload-fg');
 	let disabledColor = $derived(isSelected ? '--primary-background' : '--mode-disabled-fg');
 	// Show "downloaded / total" format when downloading
 	let sizeDisplay = $derived(downloadedSize && progress < 100 ? `${downloadedSize} / ${size}` : size);
-
-	onMount(() => {
-		if (navArea && position)
-			return navArea.register(
-				navItem(
-					() => position!,
-					() => rowEl,
-					onConfirm
-				)
-			);
-		return undefined;
-	});
 </script>
 
 <style>
@@ -101,7 +88,7 @@
 	}
 </style>
 
-<TableRow bind:el={rowEl} selected={isSelected}>
+<TableRow {position} {onConfirm} selected={isSelected}>
 	<TableCell>
 		<div class="name">{name}</div>
 	</TableCell>

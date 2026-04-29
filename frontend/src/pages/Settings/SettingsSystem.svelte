@@ -85,14 +85,26 @@
 
 <div class="settings">
 	<div class="container">
-		<SwitchRow label={$t('settings.system.autoStartOnBoot') + ':'} checked={autoStart} position={[0, 0]} onToggle={toggleAutoStart} />
-		<SwitchRow label={$t('settings.system.showInTray') + ':'} checked={trayVisible} position={[0, 1]} onToggle={toggleShowInTray} />
+		<div role="group" data-mouse-activate-area={areaID}>
+			<SwitchRow label={$t('settings.system.autoStartOnBoot') + ':'} checked={autoStart} position={[0, 0]} onToggle={toggleAutoStart} />
+		</div>
+		<div role="group" data-mouse-activate-area={areaID}>
+			<SwitchRow label={$t('settings.system.showInTray') + ':'} checked={trayVisible} position={[0, 1]} onToggle={toggleShowInTray} />
+		</div>
 		{#if trayVisible}
-			<SwitchRow label={$t('settings.system.minimizeToTray') + ':'} checked={trayMinimize} position={[0, 2]} onToggle={toggleMinimizeToTray} />
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.system.minimizeToTray') + ':'} checked={trayMinimize} position={[0, 2]} onToggle={toggleMinimizeToTray} />
+			</div>
 		{/if}
-		<SwitchRow label={$t('settings.system.defaultMinifyJSON') + ':'} checked={minifyJSON} position={minifyPos} onToggle={toggleMinifyJSON} />
-		<SwitchRow label={$t('settings.system.defaultCompress') + ':'} checked={compress} position={compressPos} onToggle={toggleCompress} />
-		<Input bind:value={timeout} label={$t('settings.system.notificationTimeout')} type="number" position={timeoutPos} flex />
+		<div role="group" data-mouse-activate-area={areaID}>
+			<SwitchRow label={$t('settings.system.defaultMinifyJSON') + ':'} checked={minifyJSON} position={minifyPos} onToggle={toggleMinifyJSON} />
+		</div>
+		<div role="group" data-mouse-activate-area={areaID}>
+			<SwitchRow label={$t('settings.system.defaultCompress') + ':'} checked={compress} position={compressPos} onToggle={toggleCompress} />
+		</div>
+		<div role="group" data-mouse-activate-area={areaID}>
+			<Input bind:value={timeout} label={$t('settings.system.notificationTimeout')} type="number" position={timeoutPos} flex />
+		</div>
 	</div>
 	<ButtonBar justify="center" basePosition={[0, buttonsY]}>
 		<Button icon="/img/save.svg" label={$t('common.save')} onConfirm={saveSettings} />

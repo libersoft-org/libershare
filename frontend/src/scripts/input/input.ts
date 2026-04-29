@@ -2,21 +2,32 @@ import { getKeyboardManager } from './keyboard.ts';
 import { getGamepadManager } from './gamepad.ts';
 import { getMouseManager } from './mouse.ts';
 import { emit, emitTypedChar } from '../areas.ts';
+import { mouseSupportEnabled } from '../settings.ts';
 
 class InputManager {
 	private keyboardStarted = false;
 	private gamepadStarted = false;
 	private mouseStarted = false;
+	private mouseSupportUnsub: (() => void) | null = null;
 
 	start(): void {
 		this.startKeyboard();
 		this.startGamepad();
-		this.startMouse();
+		// React to the mouseSupportEnabled setting: subscribe once, start/stop
+		// the underlying MouseManager whenever the user flips the toggle.
+		// `subscribe` fires synchronously with the current value, so this also
+		// performs the initial startMouse() (or skips it).
+		this.mouseSupportUnsub = mouseSupportEnabled.subscribe(enabled => {
+			if (enabled) this.startMouse();
+			else this.stopMouse();
+		});
 	}
 
 	stop(): void {
 		this.stopKeyboard();
 		this.stopGamepad();
+		this.mouseSupportUnsub?.();
+		this.mouseSupportUnsub = null;
 		this.stopMouse();
 	}
 
@@ -98,6 +109,7 @@ class InputManager {
 	private startMouse(): void {
 		if (this.mouseStarted) return;
 		const mouse = getMouseManager();
+		mouse.on('back', () => emit('back'));
 		mouse.start();
 		this.mouseStarted = true;
 	}
@@ -105,6 +117,7 @@ class InputManager {
 	private stopMouse(): void {
 		if (!this.mouseStarted) return;
 		const mouse = getMouseManager();
+		mouse.off('back');
 		mouse.stop();
 		this.mouseStarted = false;
 	}

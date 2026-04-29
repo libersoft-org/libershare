@@ -13,10 +13,22 @@ export interface NavItem {
 	onPress?: (() => void) | undefined;
 	onRelease?: (() => void) | undefined;
 	onActivate?: (() => void) | undefined;
+	/**
+	 * When false, MouseManager delegation skips this item. The component then
+	 * owns its own onclick/onmouseenter logic (e.g. ButtonsGroup index pick,
+	 * Switch toggle). Default true.
+	 */
+	delegateMouse?: boolean;
+}
+
+/** Options for navItem() factory. */
+export interface NavItemOptions {
+	/** Disable mouse-event delegation for this item. Default: false (delegation enabled). */
+	noDelegateMouse?: boolean;
 }
 
 /** Create a NavItem with reactive pos and el getters */
-export function navItem(getPos: () => NavPos, getEl: () => HTMLElement | undefined, onConfirm?: () => void): NavItem {
+export function navItem(getPos: () => NavPos, getEl: () => HTMLElement | undefined, onConfirm?: () => void, opts?: NavItemOptions): NavItem {
 	return {
 		get pos() {
 			return getPos();
@@ -25,7 +37,38 @@ export function navItem(getPos: () => NavPos, getEl: () => HTMLElement | undefin
 			return getEl();
 		},
 		onConfirm,
+		delegateMouse: !opts?.noDelegateMouse,
 	};
+}
+
+/** Binding stored in the global registry — links a NavItem back to its NavAreaController. */
+export interface NavItemBinding {
+	controller: NavAreaController;
+	item: NavItem;
+}
+
+/**
+ * Module-level registry of every registered NavItem across all NavAreas.
+ * MouseManager queries this via findBindingForElement() to delegate click/hover
+ * events without needing per-component handlers.
+ */
+const allBindings = new Set<NavItemBinding>();
+
+/**
+ * Walk the parentElement chain from `target` and return the first NavItem whose
+ * `el` is on the chain. Items with `delegateMouse: false` are ignored. Returns
+ * null when no match is found.
+ */
+export function findBindingForElement(target: EventTarget | null): NavItemBinding | null {
+	if (!(target instanceof HTMLElement)) return null;
+	let node: HTMLElement | null = target;
+	while (node) {
+		for (const binding of allBindings) {
+			if (binding.item.delegateMouse !== false && binding.item.el === node) return binding;
+		}
+		node = node.parentElement;
+	}
+	return null;
 }
 
 export interface NavAreaController {
@@ -272,8 +315,11 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 	const controller: NavAreaController = {
 		register(item: NavItem): () => void {
 			items.push(item);
+			const binding: NavItemBinding = { controller, item };
+			allBindings.add(binding);
 			if (items.length === 1 && !selectedPos) selectedPos = item.pos;
 			return () => {
+				allBindings.delete(binding);
 				const idx = items.indexOf(item);
 				if (idx !== -1) items.splice(idx, 1);
 				if (selectedPos && item.pos[0] === selectedPos[0] && item.pos[1] === selectedPos[1]) {

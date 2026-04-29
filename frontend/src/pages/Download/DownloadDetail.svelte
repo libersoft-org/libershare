@@ -151,6 +151,12 @@
 		scrollToElement(itemElements, selectedFileIndex);
 	}
 
+	function handleFileClick(index: number): void {
+		activateArea(listAreaID);
+		selectedFileIndex = index;
+		scrollToSelected();
+	}
+
 	function scrollToInfo(): void {
 		if (infoElement) infoElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
@@ -753,7 +759,18 @@
 							</Header>
 							<div class="items">
 								{#each download.files as file, index (file.id)}
-									<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
+									<div
+										onclick={() => handleFileClick(index)}
+										onmouseenter={() => {
+											activateArea(listAreaID);
+											selectedFileIndex = index;
+										}}
+										onkeydown={e => e.key === 'Enter' && handleFileClick(index)}
+										role="row"
+										tabindex="-1"
+									>
+										<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
+									</div>
 								{/each}
 							</div>
 						</Table>

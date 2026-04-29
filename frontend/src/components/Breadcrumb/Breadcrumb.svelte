@@ -82,6 +82,11 @@
 		background-color: var(--primary-foreground);
 		color: var(--secondary-background);
 	}
+
+	.item.clickable:hover:not(.selected) {
+		color: var(--secondary-foreground);
+		background-color: var(--secondary-softer-background);
+	}
 </style>
 
 <div class="breadcrumb">
@@ -90,7 +95,7 @@
 			<Icon img="/img/caret-right.svg" size="2vh" padding="0" colorVariable="--disabled-foreground" />
 		{/if}
 		{@const isSelected = navHandle.controller.isSelected([index, 0])}
-		<div use:registerItem={index < items.length - 1 ? index : -1} class="item" class:current={index === items.length - 1} class:selected={isSelected}>
+		<div use:registerItem={index < items.length - 1 ? index : -1} class="item" class:current={index === items.length - 1} class:selected={isSelected} class:clickable={index < items.length - 1} role={index < items.length - 1 ? 'button' : undefined}>
 			{#if item.icon}
 				<Icon img={item.icon} size="2vh" padding="0" colorVariable={isSelected ? '--primary-background' : '--disabled-foreground'} />
 			{:else}

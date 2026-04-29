@@ -3,6 +3,7 @@
 		register: (button: { onConfirm?: (() => void) | undefined }) => { index: number; unregister: () => void };
 		isSelected: (index: number) => boolean;
 		isPressed: (index: number) => boolean;
+		handleClick: (index: number) => void;
 	};
 </script>
 
@@ -32,6 +33,71 @@
 	let itemsElement = $state<HTMLElement | null>(null);
 	let translateX = $state(0);
 
+	// Mouse wheel & drag scrolling
+	let dragStartY = 0;
+	let dragStartX = 0;
+	let isDragging = false;
+	let didDrag = false;
+	const DRAG_THRESHOLD = 60;
+
+	function selectPrev() {
+		if (selectedIndex > 0) {
+			activateArea(areaID);
+			selectedIndex--;
+			updateTranslateX();
+		}
+	}
+
+	function selectNext() {
+		if (selectedIndex < buttons.length - 1) {
+			activateArea(areaID);
+			selectedIndex++;
+			updateTranslateX();
+		}
+	}
+
+	function handleWheel(e: WheelEvent) {
+		if (e.deltaY > 0 || e.deltaX > 0) {
+			if (selectedIndex < buttons.length - 1) {
+				e.preventDefault();
+				selectNext();
+			}
+		} else if (e.deltaY < 0 || e.deltaX < 0) {
+			if (selectedIndex > 0) {
+				e.preventDefault();
+				selectPrev();
+			}
+		}
+	}
+
+	function handleDragStart(e: MouseEvent) {
+		isDragging = true;
+		didDrag = false;
+		dragStartY = e.clientY;
+		dragStartX = e.clientX;
+		document.addEventListener('mousemove', handleDragMove);
+		document.addEventListener('mouseup', handleDragEnd);
+	}
+
+	function handleDragMove(e: MouseEvent) {
+		if (!isDragging) return;
+		const isHoriz = orientation === 'horizontal';
+		const delta = isHoriz ? dragStartX - e.clientX : dragStartY - e.clientY;
+		if (Math.abs(delta) >= DRAG_THRESHOLD) {
+			didDrag = true;
+			if (delta > 0) selectNext();
+			else selectPrev();
+			dragStartY = e.clientY;
+			dragStartX = e.clientX;
+		}
+	}
+
+	function handleDragEnd() {
+		isDragging = false;
+		document.removeEventListener('mousemove', handleDragMove);
+		document.removeEventListener('mouseup', handleDragEnd);
+	}
+
 	setContext<MenuButtonsContext>('menuButtons', {
 		register(button) {
 			const index = buttons.length;
@@ -48,6 +114,16 @@
 		},
 		isPressed(index) {
 			return active && selectedIndex === index && isAPressed;
+		},
+		handleClick(index: number) {
+			if (didDrag) {
+				didDrag = false;
+				return;
+			}
+			activateArea(areaID);
+			selectedIndex = index;
+			updateTranslateX();
+			buttons[index]?.onConfirm?.();
 		},
 	});
 
@@ -138,7 +214,11 @@
 		);
 		activateArea(areaID);
 		updateTranslateX();
-		return unregister;
+		return () => {
+			unregister();
+			document.removeEventListener('mousemove', handleDragMove);
+			document.removeEventListener('mouseup', handleDragEnd);
+		};
 	});
 </script>
 
@@ -169,13 +249,13 @@
 </style>
 
 {#if orientation === 'horizontal'}
-	<div class="buttons-wrapper">
+	<div class="buttons-wrapper" onwheel={handleWheel} onmousedown={handleDragStart} role="listbox" tabindex="-1">
 		<div class="buttons horizontal" bind:this={itemsElement} style="transform: translateX({translateX}px); gap: {effectiveGap}; align-items: {alignItems};{justify ? ` justify-content: ${justify};` : ''}{wrap ? ' flex-wrap: wrap;' : ''}">
 			{@render children()}
 		</div>
 	</div>
 {:else}
-	<div class="buttons-wrapper">
+	<div class="buttons-wrapper" onwheel={handleWheel} onmousedown={handleDragStart} role="listbox" tabindex="-1">
 		<div class="buttons vertical" style="gap: {effectiveGap}; align-items: {alignItems};{justify ? ` justify-content: ${justify};` : ''}{wrap ? ' flex-wrap: wrap;' : ''}">
 			{@render children()}
 		</div>

@@ -66,8 +66,12 @@ export function useArea(areaID: string, handlers: AreaHandlers, position: Positi
 export function activateArea(areaID: string): void {
 	const handlers = areaHandlers.get(areaID);
 	if (handlers) {
+		const wasActive = get(activeArea) === areaID;
 		activeArea.set(areaID);
-		handlers.onActivate?.();
+		// Only fire onActivate when actually transitioning into this area.
+		// Re-activating the already-active area would re-trigger scrollIntoView,
+		// which is jarring for mouse hover (one mouseenter per row in a long list).
+		if (!wasActive) handlers.onActivate?.();
 	}
 }
 

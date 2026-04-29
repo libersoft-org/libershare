@@ -162,12 +162,16 @@
 {:else}
 	<div class="export">
 		<div class="container">
-			<div class="row">
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
 				<Input bind:value={filePath} label={$t('common.file')} position={[0, 0]} flex />
 				<Button icon="/img/directory.svg" position={[1, 0]} onConfirm={openDirectoryBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('settings.lishNetwork.minifyJSON')} checked={minifyJSONState} position={[0, 1]} onToggle={() => (minifyJSONState = !minifyJSONState)} />
-			<SwitchRow label={$t('settings.lishNetwork.compress')} checked={compress} position={[0, 2]} onToggle={handleCompressToggle} />
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.lishNetwork.minifyJSON')} checked={minifyJSONState} position={[0, 1]} onToggle={() => (minifyJSONState = !minifyJSONState)} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.lishNetwork.compress')} checked={compress} position={[0, 2]} onToggle={handleCompressToggle} />
+			</div>
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}

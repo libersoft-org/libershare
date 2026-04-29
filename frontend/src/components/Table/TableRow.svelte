@@ -52,6 +52,10 @@
 		opacity: 0.55;
 	}
 
+	.row:hover:not(.selected) {
+		background-color: var(--secondary-background);
+	}
+
 	@media (max-width: 1199px) {
 		.row {
 			grid-template-columns: var(--table-columns-mobile);
@@ -59,6 +63,6 @@
 	}
 </style>
 
-<div bind:this={el} class="row" class:selected={isSelected} class:dimmed>
+<div bind:this={el} class="row" class:selected={isSelected} class:dimmed role={navArea && position ? 'row' : undefined}>
 	{@render children()}
 </div>
