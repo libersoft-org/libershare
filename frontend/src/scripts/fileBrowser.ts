@@ -214,7 +214,7 @@ export function getFileActions(t: (key: string) => string, selectFileButton?: bo
 /**
  * Build directory toolbar actions based on mode
  */
-export function buildDirectoryActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], fileFilterName?: string, selectDirectoryButton?: boolean, customFilter?: string, currentPath?: string): FileBrowserAction[] {
+export function buildDirectoryActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], fileFilterName?: string, selectDirectoryButton?: boolean, customFilter?: string, currentPath?: string, showNameFilter?: boolean): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	const isDriveList = currentPath === '' || currentPath === undefined;
 	if (!filesOnly && !isDriveList) {
@@ -224,6 +224,8 @@ export function buildDirectoryActions(t: (key: string) => string, filesOnly: boo
 		actions.push({ id: 'delete', label: t('fileBrowser.deleteDirectory'), icon: '/img/del.svg' });
 	}
 	if (!isDriveList) actions.push({ id: 'createFile', label: t('fileBrowser.createFile'), icon: '/img/plus.svg' });
+	// Name filter toggle (FE-only filter applied on the loaded list)
+	if (!isDriveList) actions.push({ id: 'toggleNameFilter', label: showNameFilter ? t('fileBrowser.hideNameFilter') : t('fileBrowser.showNameFilter'), icon: '/img/search.svg' });
 	// Filter button always visible, shows current filter state
 	let filterLabel: string;
 	if (customFilter) filterLabel = customFilter;

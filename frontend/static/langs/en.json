@@ -293,9 +293,7 @@
 			"maxRelayReservations": "Maximum number of connections to relay server (0 = unlimited)",
 			"autoStartSharingDefault": "Automatically start sharing after adding a LISH",
 			"autoStartDownloadingDefault": "Automatically start downloading after adding a LISH",
-			"autoErrorRecovery": "Automatic error recovery",
-			"mdnsEnabled": "Discover peers on local network (mDNS)",
-			"mdnsInterval": "Local network discovery interval (ms)"
+			"autoErrorRecovery": "Automatic error recovery"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",
@@ -392,6 +390,9 @@
 		"largeFileWarning": "Large file",
 		"largeFileWarningMessage": "File \"{name}\" is {size}.\nOpening such a large file may cause the application to freeze or crash.\nDo you really want to open it in the editor?",
 		"customFilter": "Custom filter",
+		"filterByNamePlaceholder": "Filter by name ...",
+		"showNameFilter": "Name filter",
+		"hideNameFilter": "Hide name filter",
 		"filterPattern": "Filter",
 		"enterFilterPattern": "Enter filter (e.g. *.txt, *.jpg)",
 		"loadDirectoryFailed": "Failed to load directory",
