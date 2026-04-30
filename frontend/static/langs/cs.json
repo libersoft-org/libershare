@@ -90,6 +90,8 @@
 		"searching": "Prohledávám síť ...",
 		"searchComplete": "Hledání dokončeno",
 		"noResults": "Žádný LISH neodpovídá dotazu.",
+		"noResultsDiagnostic": "Dotázáno {peers} účastníků v {networks} síti(ch). Možné příčiny: účastníci nesdílí odpovídající LISH (Povolit odesílání), nebo není navázáno spojení.",
+		"noResultsNoPeers": "Nejste připojeni k žádnému účastníkovi. Zkontrolujte stav LISH sítě.",
 		"lishCount": "Nalezeno {count} LISH(ů)",
 		"peersWithLish": "Účastníci s tímto LISHem",
 		"openPeer": "Otevřít účastníka",
