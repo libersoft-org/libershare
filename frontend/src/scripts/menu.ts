@@ -22,6 +22,10 @@ import LISHNetworkList from '../pages/Settings/SettingsLISHNetworkList.svelte';
 import LISHNetworkImportFile from '../pages/Settings/SettingsLISHNetworkImportFile.svelte';
 import LISHNetworkImportWeb from '../pages/Settings/SettingsLISHNetworkImportWeb.svelte';
 import LISHNetworkImportJSON from '../pages/Settings/SettingsLISHNetworkImportJSON.svelte';
+import SettingsBackupExport from '../pages/Settings/SettingsBackupExport.svelte';
+import SettingsBackupImportFile from '../pages/Settings/SettingsBackupImportFile.svelte';
+import SettingsBackupImportWeb from '../pages/Settings/SettingsBackupImportWeb.svelte';
+import SettingsBackupImportJSON from '../pages/Settings/SettingsBackupImportJSON.svelte';
 import Network from '../pages/Network/Network.svelte';
 import Help from '../pages/Help/Help.svelte';
 import About from '../pages/About/About.svelte';
@@ -441,6 +445,56 @@ export const menuStructure = derived(
 								icon: '/img/back.svg',
 								iconPosition: 'left',
 								iconSize: '2vh',
+								action: 'back' as const,
+							},
+						],
+					},
+					{
+						id: 'backup',
+						label: tt('settings.backup.title'),
+						icon: '/img/save.svg',
+						submenu: [
+							{
+								id: 'backup-export',
+								label: tt('common.export'),
+								icon: '/img/upload.svg',
+								component: SettingsBackupExport,
+							},
+							{
+								id: 'backup-import',
+								label: tt('common.import'),
+								icon: '/img/download.svg',
+								submenu: [
+									{
+										id: 'backup-import-file',
+										label: tt('common.fromFile'),
+										icon: '/img/directory.svg',
+										component: SettingsBackupImportFile,
+									},
+									{
+										id: 'backup-import-web',
+										label: tt('common.fromWeb'),
+										icon: '/img/online.svg',
+										component: SettingsBackupImportWeb,
+									},
+									{
+										id: 'backup-import-json',
+										label: tt('settings.lishNetworkImport.fromJSON'),
+										icon: '/img/json.svg',
+										component: SettingsBackupImportJSON,
+									},
+									{
+										id: 'back',
+										label: tt('common.back'),
+										icon: '/img/back.svg',
+										action: 'back' as const,
+									},
+								],
+							},
+							{
+								id: 'back',
+								label: tt('common.back'),
+								icon: '/img/back.svg',
 								action: 'back' as const,
 							},
 						],

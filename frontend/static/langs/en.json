@@ -282,6 +282,7 @@
 			"directoryTemp": "Unfinished downloads directory",
 			"directoryLISH": "Default LISH files directory",
 			"directoryLISHnet": "Default LISHNET files directory",
+			"directoryBackup": "Settings backup directory",
 			"incomingPort": "Network port for incoming connections",
 			"maxDownloadPeersPerLISH": "Maximum concurrent connections per LISH for download (0 = unlimited)",
 			"maxUploadPeersPerLISH": "Maximum concurrent connections per LISH for upload (0 = unlimited)",
@@ -332,6 +333,16 @@
 			"fromJSON": "From LISHNET JSON",
 			"filePath": "LISHNET file",
 			"url": "URL address of LISHNET file"
+		},
+		"backup": {
+			"title": "Settings backup",
+			"exportTitle": "Export settings",
+			"importTitle": "Restore settings",
+			"confirmRestore": "Restore settings? Keys present in the backup will overwrite current values.",
+			"exported": "Settings were exported",
+			"restored": "Settings restored ({count} values)",
+			"restartHint": "Some changes will only take effect after restarting the application.",
+			"errorInvalidFormat": "Invalid backup file format"
 		},
 		"language": "Language",
 		"time": {

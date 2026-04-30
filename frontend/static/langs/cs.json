@@ -282,6 +282,7 @@
 			"directoryTemp": "Adresář pro nedokončená stahování",
 			"directoryLISH": "Výchozí adresář pro LISH soubory",
 			"directoryLISHnet": "Výchozí adresář pro LISHNET soubory",
+			"directoryBackup": "Adresář pro zálohy nastavení",
 			"incomingPort": "Síťový port pro příchozí spojení",
 			"maxDownloadPeersPerLISH": "Maximální počet souběžných spojení na 1 LISH pro stahování (0 = neomezeno)",
 			"maxUploadPeersPerLISH": "Maximální počet souběžných spojení na 1 LISH pro odesílání (0 = neomezeno)",
@@ -332,6 +333,16 @@
 			"fromJSON": "Z LISHNET JSON",
 			"filePath": "LISHNET soubor",
 			"url": "URL adresa LISHNET souboru"
+		},
+		"backup": {
+			"title": "Záloha nastavení",
+			"exportTitle": "Export nastavení",
+			"importTitle": "Obnova nastavení",
+			"confirmRestore": "Opravdu obnovit nastavení? Klíče přítomné v záloze přepíší aktuální hodnoty.",
+			"exported": "Nastavení bylo exportováno",
+			"restored": "Nastavení bylo obnoveno ({count} hodnot)",
+			"restartHint": "Některé změny se projeví až po restartu aplikace.",
+			"errorInvalidFormat": "Neplatný formát záložního souboru"
 		},
 		"language": "Jazyk",
 		"time": {

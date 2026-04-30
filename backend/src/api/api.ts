@@ -90,6 +90,11 @@ export class APIServer {
 			'settings.list': _settings.list,
 			'settings.getDefaults': _settings.getDefaults,
 			'settings.reset': _settings.reset,
+			'settings.exportToFile': _settings.exportToFile,
+			'settings.parseFromFile': _settings.parseFromFile,
+			'settings.parseFromJSON': _settings.parseFromJSON,
+			'settings.parseFromURL': _settings.parseFromURL,
+			'settings.applyImported': _settings.applyImported,
 			// LISH Networks
 			'lishnets.list': _lishnets.list,
 			'lishnets.get': _lishnets.get,

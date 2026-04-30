@@ -152,6 +152,26 @@ class SettingsAPI {
 	reset<T = any>(): Promise<T> {
 		return this.client.call<T>('settings.reset');
 	}
+
+	exportToFile(filePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<{ success: boolean; error?: string }> {
+		return this.client.call<{ success: boolean; error?: string }>('settings.exportToFile', { filePath, minifyJSON, compress, compressionAlgorithm });
+	}
+
+	parseFromFile<T = Record<string, unknown>>(filePath: string): Promise<T> {
+		return this.client.call<T>('settings.parseFromFile', { filePath });
+	}
+
+	parseFromJSON<T = Record<string, unknown>>(json: string): Promise<T> {
+		return this.client.call<T>('settings.parseFromJSON', { json });
+	}
+
+	parseFromURL<T = Record<string, unknown>>(url: string): Promise<T> {
+		return this.client.call<T>('settings.parseFromURL', { url });
+	}
+
+	applyImported(data: Record<string, unknown>): Promise<{ applied: number; skipped: string[] }> {
+		return this.client.call<{ applied: number; skipped: string[] }>('settings.applyImported', { data });
+	}
 }
 
 class LISHnetsAPI {
