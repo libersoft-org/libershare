@@ -181,6 +181,35 @@ By default backend starts on a random network port (ws://localhost:XXXXX) and ac
 ./start.sh --datadir ./data --host 0.0.0.0 --port 1158 --secure --privkey /etc/letsencrypt/live/example.com/privkey.pem --pubkey /etc/letsencrypt/live/example.com/fullchain.pem
 ```
 
+##### Debug logging (environment variables)
+
+If you are not a developer, please skip this.
+
+The backend respects a few environment variables for verbose diagnostic output. None of them are required for normal operation — they exist only for development and troubleshooting.
+
+| Variable                 | Source                                  | Description                                                                                                                |
+| ------------------------ | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `DEBUG`                  | External (`libp2p` / `weald` / `debug`) | Enables namespace-based debug logs from the libp2p stack. Standard `debug`-style pattern syntax (wildcards, `-` excludes). |
+| `LIBERSHARE_SCORE_DEBUG` | LiberShare-specific                     | Set to `1` to print a per-peer breakdown of the peer scoring algorithm.                                                    |
+
+`DEBUG` is **not** a LiberShare-defined variable — it comes from the [`debug`](https://www.npmjs.com/package/debug) convention used by libp2p (via the `weald` library). Common patterns:
+
+- `DEBUG='libp2p:*'` — all libp2p namespaces (verbose).
+- `DEBUG='libp2p:gossipsub*'` — only gossipsub.
+- `DEBUG='libp2p:*,-libp2p:noise*'` — everything except noise.
+
+**On Linux / macOS:**
+
+```sh
+DEBUG='libp2p:*' ./start.sh
+```
+
+**On Windows (PowerShell):**
+
+```powershell
+$env:DEBUG='libp2p:*'; .\start.bat
+```
+
 #### Frontend:
 
 If you'd like to **run this software in developer mode**, you need HTTPS certificate keys.
