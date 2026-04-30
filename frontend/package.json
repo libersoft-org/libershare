@@ -16,12 +16,12 @@
 		"country-flags": "github:hampusborgos/country-flags"
 	},
 	"devDependencies": {
-		"svelte": "^5.55.4",
-		"@sveltejs/kit": "^2.57.1",
+		"svelte": "^5.55.5",
+		"@sveltejs/kit": "^2.58.0",
 		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
-		"vite": "^8.0.8",
+		"vite": "^8.0.10",
 		"typescript": "^6.0.3",
 		"@types/node": "^25.6.0",
 		"svelte-check": "^4.4.6",
