@@ -290,7 +290,8 @@
 			"maxChunkSize": "Maximální velikost části (chunku) při přidávání LISHů — větší budou odmítnuty (např. 100MB)",
 			"maxMessageSize": "Maximální velikost jedné P2P zprávy — musí být větší než velikost části (např. 128MB)",
 			"allowRelay": "Zapnout předávací server (přeposílat data pro ostatní účastníky)",
-			"maxRelayReservations": "Maximální počet spojení k předávacímu serveru (0 = neomezeno)",
+			"maxRelayReservations": "Maximální počet spojení k našemu předávacímu serveru (0 = neomezeno)",
+			"maxRelayClients": "Maximální počet spojení k předávacím serverům ostatních (1–20)",
 			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH",
 			"autoStartDownloadingDefault": "Automaticky spustit stahování po přidání LISH",
 			"autoErrorRecovery": "Automatická obnova po chybě"
