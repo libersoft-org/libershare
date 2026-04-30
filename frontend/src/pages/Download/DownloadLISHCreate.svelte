@@ -192,9 +192,9 @@
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
-	const inputPathSubPage = createSubPage(navHandle, areaID);
-	const outputPathSubPage = createSubPage(navHandle, areaID);
-	const progressSubPage = createSubPage(navHandle, areaID);
+	const inputPathSubPage = createSubPage(navHandle, () => areaID);
+	const outputPathSubPage = createSubPage(navHandle, () => areaID);
+	const progressSubPage = createSubPage(navHandle, () => areaID);
 	let progressDone = false;
 
 	function openProgressPage(params: Record<string, any>): void {

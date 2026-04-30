@@ -42,7 +42,7 @@
 	void loadNodeInfo();
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
-	const exportSubPage = createSubPage(navHandle, areaID);
+	const exportSubPage = createSubPage(navHandle, () => areaID);
 
 	async function closeExport(): Promise<void> {
 		await exportSubPage.exit();

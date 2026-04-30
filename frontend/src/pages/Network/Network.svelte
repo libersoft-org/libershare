@@ -150,8 +150,8 @@
 			return [2, Math.max(2, 2 + search.results.length)];
 		},
 	}));
-	const lishPeerListSubPage = createSubPage(navHandle, areaID);
-	const detailSubPage = createSubPage(navHandle, areaID);
+	const lishPeerListSubPage = createSubPage(navHandle, () => areaID);
+	const detailSubPage = createSubPage(navHandle, () => areaID);
 
 	onMount(() => {
 		void loadPeerData();

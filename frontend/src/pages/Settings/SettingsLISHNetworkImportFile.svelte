@@ -45,7 +45,7 @@
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
-	const browseSubPage = createSubPage(navHandle, areaID);
+	const browseSubPage = createSubPage(navHandle, () => areaID);
 
 	function openFilePathBrowse(): void {
 		browseSubPage.enter($t('settings.lishNetworkImport.filePath'));

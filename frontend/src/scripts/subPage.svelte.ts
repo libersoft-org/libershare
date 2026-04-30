@@ -42,7 +42,7 @@ export interface SubPage {
 	readonly active: boolean;
 }
 
-export function createSubPage(navHandle: NavAreaHandle, areaID: string): SubPage {
+export function createSubPage(navHandle: NavAreaHandle, getAreaID: () => string): SubPage {
 	let active = $state(false);
 	let removeBackHandler: (() => void) | null = null;
 
@@ -56,7 +56,7 @@ export function createSubPage(navHandle: NavAreaHandle, areaID: string): SubPage
 		active = false;
 		await tick();
 		navHandle.resume();
-		activateArea(areaID);
+		activateArea(getAreaID());
 	}
 
 	function enter(label: string, onBack?: () => void | Promise<void>): void {

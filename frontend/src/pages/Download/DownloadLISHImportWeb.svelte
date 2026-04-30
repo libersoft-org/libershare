@@ -57,7 +57,7 @@
 		}
 	}
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
-	const browseSubPage = createSubPage(navHandle, areaID);
+	const browseSubPage = createSubPage(navHandle, () => areaID);
 
 	function openDownloadPathBrowse(): void {
 		browseSubPage.enter($t('lish.import.downloadPath'));

@@ -47,7 +47,7 @@
 	void loadPeerID();
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
-	const browseSubPage = createSubPage(navHandle, areaID);
+	const browseSubPage = createSubPage(navHandle, () => areaID);
 
 	function openDirectoryBrowse(): void {
 		const { directory } = splitPath(filePath.trim(), $storageBackupPath);

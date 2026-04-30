@@ -43,7 +43,7 @@
 			return [0, lastRow];
 		},
 	}));
-	const detailSubPage = createSubPage(navHandle, areaID);
+	const detailSubPage = createSubPage(navHandle, () => areaID);
 
 	onMount(() => {
 		const cleanups = items.map((_, idx) => {

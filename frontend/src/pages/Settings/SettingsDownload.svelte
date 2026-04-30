@@ -225,7 +225,7 @@
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
-	const browseSubPage = createSubPage(navHandle, areaID);
+	const browseSubPage = createSubPage(navHandle, () => areaID);
 </script>
 
 <style>

@@ -91,7 +91,7 @@
 		activate: true,
 		listRange: () => [1, Math.max(1, lishs?.length ?? 0)],
 	}));
-	const lishDetailSubPage = createSubPage(navHandle, areaID);
+	const lishDetailSubPage = createSubPage(navHandle, () => areaID);
 
 	onMount(() => {
 		loadLishs();

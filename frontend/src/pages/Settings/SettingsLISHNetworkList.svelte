@@ -47,11 +47,11 @@
 	let nodeInfoOffset = $derived(globalNodeInfo ? 1 + (nodeInfoShowAddresses ? globalNodeInfo.addresses.length : 0) : 0);
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
-	const publicSubPage = createSubPage(navHandle, areaID);
-	const addEditSubPage = createSubPage(navHandle, areaID);
-	const exportSubPage = createSubPage(navHandle, areaID);
-	const exportAllSubPage = createSubPage(navHandle, areaID);
-	const deleteSubPage = createSubPage(navHandle, areaID);
+	const publicSubPage = createSubPage(navHandle, () => areaID);
+	const addEditSubPage = createSubPage(navHandle, () => areaID);
+	const exportSubPage = createSubPage(navHandle, () => areaID);
+	const exportAllSubPage = createSubPage(navHandle, () => areaID);
+	const deleteSubPage = createSubPage(navHandle, () => areaID);
 
 	async function closePublic(): Promise<void> {
 		// Reload networks in case new ones were added

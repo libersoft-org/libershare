@@ -27,8 +27,8 @@
 	let createSubdirectory = $state(true);
 	let errorMessage = $state('');
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
-	const browseSubPage = createSubPage(navHandle, areaID);
-	const progressSubPage = createSubPage(navHandle, areaID);
+	const browseSubPage = createSubPage(navHandle, () => areaID);
+	const progressSubPage = createSubPage(navHandle, () => areaID);
 
 	function openDirectoryBrowse(): void {
 		browseSubPage.enter($t('common.newDirectory'));
