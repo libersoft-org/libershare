@@ -22,6 +22,10 @@ import LISHNetworkList from '../pages/Settings/SettingsLISHNetworkList.svelte';
 import LISHNetworkImportFile from '../pages/Settings/SettingsLISHNetworkImportFile.svelte';
 import LISHNetworkImportWeb from '../pages/Settings/SettingsLISHNetworkImportWeb.svelte';
 import LISHNetworkImportJSON from '../pages/Settings/SettingsLISHNetworkImportJSON.svelte';
+import SettingsIdentity from '../pages/Settings/SettingsIdentity.svelte';
+import SettingsIdentityImportFile from '../pages/Settings/SettingsIdentityImportFile.svelte';
+import SettingsIdentityImportWeb from '../pages/Settings/SettingsIdentityImportWeb.svelte';
+import SettingsIdentityImportJSON from '../pages/Settings/SettingsIdentityImportJSON.svelte';
 import SettingsBackupExport from '../pages/Settings/SettingsBackupExport.svelte';
 import SettingsBackupImportFile from '../pages/Settings/SettingsBackupImportFile.svelte';
 import SettingsBackupImportWeb from '../pages/Settings/SettingsBackupImportWeb.svelte';
@@ -220,6 +224,45 @@ export const menuStructure = derived(
 										label: tt('settings.lishNetworkImport.fromJSON'),
 										icon: '/img/json.svg',
 										component: LISHNetworkImportJSON,
+									},
+									{
+										id: 'back',
+										label: tt('common.back'),
+										icon: '/img/back.svg',
+										action: 'back' as const,
+									},
+								],
+							},
+						],
+					},
+					{
+						id: 'identity',
+						label: tt('settings.identity.title'),
+						icon: '/img/person.svg',
+						component: SettingsIdentity,
+						submenu: [
+							{
+								id: 'import-identity',
+								label: tt('common.import'),
+								icon: '/img/download.svg',
+								submenu: [
+									{
+										id: 'import-identity-file',
+										label: tt('common.fromFile'),
+										icon: '/img/directory.svg',
+										component: SettingsIdentityImportFile,
+									},
+									{
+										id: 'import-identity-web',
+										label: tt('common.fromWeb'),
+										icon: '/img/online.svg',
+										component: SettingsIdentityImportWeb,
+									},
+									{
+										id: 'import-identity-json',
+										label: tt('common.fromJSON'),
+										icon: '/img/json.svg',
+										component: SettingsIdentityImportJSON,
 									},
 									{
 										id: 'back',

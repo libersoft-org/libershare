@@ -47,6 +47,7 @@
 		"optional": "optional",
 		"fromFile": "From file",
 		"fromWeb": "From web",
+		"fromJSON": "From JSON",
 		"extensions": "extensions",
 		"openDirectory": "Open directory",
 		"copyLishID": "Copy LISH ID",
@@ -343,6 +344,18 @@
 			"restored": "Settings restored ({count} values)",
 			"restartHint": "Some changes will only take effect after restarting the application.",
 			"errorInvalidFormat": "Invalid backup file format"
+		},
+		"identity": {
+			"title": "Identity",
+			"regenerate": "Generate new",
+			"regenerateTitle": "Generate new identity",
+			"regenerateConfirm": "Do you really want to generate a new identity? The current private key and peer ID will be overwritten. We recommend exporting first.",
+			"regenerated": "Identity was generated",
+			"importTitle": "Restore identity",
+			"confirmImport": "Replace identity? Current peer ID {current} will be overwritten with {next}. Network will be restarted.",
+			"exported": "Identity was exported",
+			"imported": "Identity was restored",
+			"errorInvalidFormat": "Invalid identity file format"
 		},
 		"language": "Language",
 		"time": {

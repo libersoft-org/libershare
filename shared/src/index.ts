@@ -21,6 +21,7 @@ export * from './lish.ts';
 
 // API client
 export { API, type IWsClient } from './api.ts';
+export type { IdentityBackup } from './api.ts';
 
 // WebSocket client
 export { WsClient } from './client.ts';

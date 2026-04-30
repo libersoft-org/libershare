@@ -112,6 +112,7 @@ export class Network {
 	private node: Libp2p | null = null;
 	private pubsub: PubSub | null = null;
 	private datastore: SqliteDatastore | null = null;
+	private currentPrivateKey: PrivateKey | null = null;
 	private readonly dataServer: DataServer;
 	private readonly dataDir: string;
 	private statusInterval: NodeJS.Timeout | null = null;
@@ -379,6 +380,7 @@ export class Network {
 		console.log('✓ Datastore opened at:', datastorePath);
 
 		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
+		this.currentPrivateKey = privateKey;
 
 		// Build libp2p config via extracted helper
 		const {
@@ -1438,6 +1440,51 @@ export class Network {
 	}
 
 	/**
+	 * Read the current identity (peer ID + private key in libp2p protobuf format).
+	 * Works while the network is running (reads from in-memory node).
+	 * Returns null if the node is not running.
+	 */
+	exportIdentity(): { peerID: string; privateKeyBytes: Uint8Array } | null {
+		if (!this.node || !this.currentPrivateKey) return null;
+		const bytes = privateKeyToProtobuf(this.currentPrivateKey);
+		return { peerID: this.node.peerId.toString(), privateKeyBytes: bytes };
+	}
+
+	/**
+	 * Write a new identity private key into the datastore. The network must be stopped.
+	 * Validates the protobuf bytes by attempting to decode them.
+	 */
+	async writeIdentityKey(privateKeyBytes: Uint8Array): Promise<void> {
+		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before writing identity key');
+		// Validate first — throws if not a valid libp2p private key protobuf
+		privateKeyFromProtobuf(privateKeyBytes);
+		const datastorePath = join(this.dataDir, 'datastore');
+		const ds = new SqliteDatastore(datastorePath);
+		ds.open();
+		try {
+			ds.put(PRIVATE_KEY_PATH as any, privateKeyBytes);
+		} finally {
+			ds.close();
+		}
+	}
+
+	/**
+	 * Delete the identity private key from the datastore. The network must be stopped.
+	 * Next start will generate a fresh key.
+	 */
+	async clearIdentityKey(): Promise<void> {
+		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing identity key');
+		const datastorePath = join(this.dataDir, 'datastore');
+		const ds = new SqliteDatastore(datastorePath);
+		ds.open();
+		try {
+			if (ds.has(PRIVATE_KEY_PATH as any)) ds.delete(PRIVATE_KEY_PATH as any);
+		} finally {
+			ds.close();
+		}
+	}
+
+	/**
 	 * Get all connected peers (global).
 	 */
 	getPeers(): string[] {
@@ -1517,6 +1564,7 @@ export class Network {
 		this.node = null;
 		this.pubsub = null;
 		this.datastore = null;
+		this.currentPrivateKey = null;
 	}
 
 	async cliFindPeer(peerID: string): Promise<void> {
