@@ -4,8 +4,7 @@
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb, navigateBack } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { navigateBack } from '../../scripts/navigation.ts';
 	import { sanitizeFilename } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
 	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
@@ -61,6 +60,7 @@
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -75,11 +75,7 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
 	// Browse state
-	let browsingInputPath = $state(false);
-	let browsingLISHFile = $state(false);
-	let creating = $state(false);
 	let showOverwriteConfirm = $state(false);
 	let pendingCreateParams = $state<Record<string, any>>({});
 	let createParams = $state<Record<string, any>>({});
@@ -196,43 +192,30 @@
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
+	const inputPathSubPage = createSubPage(navHandle, areaID);
+	const outputPathSubPage = createSubPage(navHandle, areaID);
+	const progressSubPage = createSubPage(navHandle, areaID);
 	let progressDone = false;
 
 	function openProgressPage(params: Record<string, any>): void {
 		createParams = params;
-		creating = true;
 		progressDone = false;
-		navHandle.pause();
-		pushBreadcrumb($t('lish.create.progress.title'));
-		removeBackHandler = pushBackHandler(handleProgressNavBack);
+		progressSubPage.enter($t('lish.create.progress.title'), () => void handleProgressNavBack());
 	}
 
-	function handleProgressNavBack(): void {
-		if (progressDone) handleProgressDone();
-		else handleProgressBack();
+	async function handleProgressNavBack(): Promise<void> {
+		if (progressDone) await handleProgressDone();
+		else await handleProgressBack();
 	}
 
 	async function handleProgressBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		creating = false;
 		progressDone = false;
-		await tick();
-		navHandle.resume();
-		await tick();
-		activateArea(areaID);
+		await progressSubPage.exit();
 	}
 
-	function handleProgressDone(): void {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
+	async function handleProgressDone(): Promise<void> {
 		progressDone = false;
+		await progressSubPage.exit();
 		navigateBack();
 	}
 
@@ -240,56 +223,26 @@
 		const { directory, fileName } = splitPath(dataPath.trim(), $storagePath);
 		browseDirectory = directory;
 		browseFile = fileName;
-		browsingInputPath = true;
-		navHandle.pause();
-		pushBreadcrumb($t('lish.create.dataPath'));
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		inputPathSubPage.enter($t('lish.create.dataPath'));
 	}
 
 	function handleInputPathSelect(path: string): void {
 		dataPath = path;
-		handleBrowseBack();
+		void inputPathSubPage.exit();
 	}
 
 	function openOutputPathBrowse(): void {
 		const { directory, fileName } = splitPath(lishFile.trim() || $storageLISHPath, $storageLISHPath);
 		browseDirectory = directory;
 		lishFileName = fileName || '';
-		browsingLISHFile = true;
-		navHandle.pause();
-		pushBreadcrumb($t('lish.create.lishFile'));
-		removeBackHandler = pushBackHandler(handleOutputBrowseBack);
+		outputPathSubPage.enter($t('lish.create.lishFile'));
 	}
 
 	function handleOutputPathSelect(directoryPath: string): void {
 		const fileName = lishFileName.trim() || 'output.lish';
 		lishFile = joinPath(directoryPath, fileName);
 		lishFileManuallyEdited = true;
-		handleOutputBrowseBack();
-	}
-
-	async function handleOutputBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingLISHFile = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
-	}
-
-	async function handleBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingInputPath = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		void outputPathSubPage.exit();
 	}
 </script>
 
@@ -331,35 +284,29 @@
 	}
 </style>
 
-{#if browsingInputPath}
-	<FileBrowser {areaID} {position} initialPath={browseDirectory} initialFile={browseFile} showPath selectDirectoryButton selectFileButton onSelect={handleInputPathSelect} onBack={handleBrowseBack} />
-{:else if browsingLISHFile}
-	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton saveFileName={lishFileName} onSaveFileNameChange={v => (lishFileName = v)} onSelect={handleOutputPathSelect} onBack={handleOutputBrowseBack} />
-{:else if creating}
-	<DownloadLISHProgress {areaID} {position} params={createParams} onBack={handleProgressNavBack} onComplete={() => (progressDone = true)} />
+{#if inputPathSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={browseDirectory} initialFile={browseFile} showPath selectDirectoryButton selectFileButton onSelect={handleInputPathSelect} onBack={() => void inputPathSubPage.exit()} />
+{:else if outputPathSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton saveFileName={lishFileName} onSaveFileNameChange={v => (lishFileName = v)} onSelect={handleOutputPathSelect} onBack={() => void outputPathSubPage.exit()} />
+{:else if progressSubPage.active}
+	<DownloadLISHProgress {areaID} {position} params={createParams} onBack={() => void handleProgressNavBack()} onComplete={() => (progressDone = true)} />
 {:else}
 	<div class="create">
 		<div class="container">
 			<!-- Name (optional) -->
-			<div role="group" data-mouse-activate-area={areaID}>
-				<Input value={name} onchange={handleNameChange} label={`${$t('common.name')} (${$t('common.optional')})`} position={[0, 0]} />
-			</div>
+			<Input value={name} onchange={handleNameChange} label={`${$t('common.name')} (${$t('common.optional')})`} position={[0, 0]} />
 			<!-- Description (optional) -->
-			<div role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={description} label={`${$t('common.description')} (${$t('common.optional')})`} multiline rows={3} position={[0, 1]} />
-			</div>
+			<Input bind:value={description} label={`${$t('common.description')} (${$t('common.optional')})`} multiline rows={3} position={[0, 1]} />
 			<!-- Data Path (required) -->
-			<div class="row" role="group" data-mouse-activate-area={areaID}>
+			<div class="row">
 				<Input bind:value={dataPath} label={$t('lish.create.dataPath')} position={[0, 2]} flex />
 				<Button icon="/img/directory.svg" position={[1, 2]} onConfirm={openInputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<!-- Save to File Switch -->
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('lish.create.saveToFile') + ':'} checked={saveToFile} position={[0, 3]} onConfirm={() => (saveToFile = !saveToFile)} />
-			</div>
+			<SwitchRow label={$t('lish.create.saveToFile') + ':'} checked={saveToFile} position={[0, 3]} onConfirm={() => (saveToFile = !saveToFile)} />
 			{#if saveToFile}
 				<!-- LISH File Path (optional) -->
-				<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<div class="row">
 					<Input bind:value={lishFile} label={`${$t('lish.create.lishFile')} (${$t('common.optional')})`} position={[0, 4]} flex onchange={() => (lishFileManuallyEdited = true)} />
 					<Button icon="/img/directory.svg" position={[1, 4]} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
@@ -369,20 +316,14 @@
 			{#if showAdvanced}
 				{#if saveToFile}
 					<!-- Minify JSON Switch -->
-					<div role="group" data-mouse-activate-area={areaID}>
-						<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} position={[0, 6]} onConfirm={() => (minifyJSON = !minifyJSON)} />
-					</div>
+					<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} position={[0, 6]} onConfirm={() => (minifyJSON = !minifyJSON)} />
 					<!-- Compress Switch -->
-					<div role="group" data-mouse-activate-area={areaID}>
-						<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 7]} onConfirm={handleCompressToggle} />
-					</div>
+					<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 7]} onConfirm={handleCompressToggle} />
 				{/if}
 				<!-- Chunk Size -->
-				<div role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 8]} />
-				</div>
+				<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 8]} />
 				<!-- Hash Algorithm -->
-				<div role="group" data-mouse-activate-area={areaID}>
+				<div>
 					<div class="label">{$t('lish.create.algorithm')}:</div>
 					<div class="algo-selector">
 						{#each SUPPORTED_ALGOS as algo, i}
@@ -391,9 +332,7 @@
 					</div>
 				</div>
 				<!-- Threads -->
-				<div role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 10]} />
-				</div>
+				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 10]} />
 			{/if}
 			<Alert type="error" message={errorMessage} />
 		</div>

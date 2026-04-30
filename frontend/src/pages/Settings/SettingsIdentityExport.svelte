@@ -6,8 +6,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
 	import { storageBackupPath } from '../../scripts/settings.ts';
@@ -23,9 +22,7 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
 	let saving = $state(false);
-	let browsingDirectory = $state(false);
 	let browseDirectory = $state('');
 	let errorMessage = $state('');
 	let showOverwriteConfirm = $state(false);
@@ -50,32 +47,18 @@
 	void loadPeerID();
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const browseSubPage = createSubPage(navHandle, areaID);
 
 	function openDirectoryBrowse(): void {
 		const { directory } = splitPath(filePath.trim(), $storageBackupPath);
 		browseDirectory = directory;
-		browsingDirectory = true;
-		navHandle.pause();
-		pushBreadcrumb($t('common.openDirectory'));
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		browseSubPage.enter($t('common.openDirectory'));
 	}
 
 	function handleDirectorySelect(directoryPath: string): void {
 		const { fileName } = splitPath(filePath.trim(), $storageBackupPath);
 		filePath = joinPath(directoryPath, fileName || generateFileName(peerID));
-		void handleBrowseBack();
-	}
-
-	async function handleBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingDirectory = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		void browseSubPage.exit();
 	}
 
 	async function handleSave(): Promise<void> {
@@ -146,8 +129,8 @@
 	}
 </style>
 
-{#if browsingDirectory}
-	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton onSelect={handleDirectorySelect} onBack={handleBrowseBack} />
+{#if browseSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton onSelect={handleDirectorySelect} onBack={() => void browseSubPage.exit()} />
 {:else}
 	<div class="export-id">
 		<div class="container">

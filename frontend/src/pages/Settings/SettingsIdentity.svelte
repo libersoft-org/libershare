@@ -6,8 +6,8 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { pushBreadcrumb, popBreadcrumb, navigateTo } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
+	import { navigateTo } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
 	import { type NetworkNodeInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -17,8 +17,6 @@
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	import SettingsIdentityExport from './SettingsIdentityExport.svelte';
 
-	type Mode = 'main' | 'export';
-
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -26,13 +24,11 @@
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 
-	let mode = $state<Mode>('main');
 	let nodeInfo = $state<NetworkNodeInfo | null>(null);
 	let showAddresses = $state(false);
 	let errorMessage = $state('');
 	let busy = $state(false);
 	let showRegenerateConfirm = $state(false);
-	let removeBackHandler: (() => void) | null = null;
 
 	async function loadNodeInfo(): Promise<void> {
 		try {
@@ -46,27 +42,15 @@
 	void loadNodeInfo();
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const exportSubPage = createSubPage(navHandle, areaID);
 
-	async function resumeMain(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		mode = 'main';
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+	async function closeExport(): Promise<void> {
+		await exportSubPage.exit();
 		await loadNodeInfo();
 	}
 
 	function openExport(): void {
-		mode = 'export';
-		navHandle.pause();
-		pushBreadcrumb($t('common.export'));
-		removeBackHandler = pushBackHandler(() => {
-			void resumeMain();
-		});
+		exportSubPage.enter($t('common.export'), () => void closeExport());
 	}
 
 	function openImport(): void {
@@ -118,7 +102,7 @@
 	}
 </style>
 
-{#if mode === 'main'}
+{#if !exportSubPage.active}
 	<div class="identity">
 		<ButtonBar justify="center" basePosition={[0, 0]}>
 			<Button icon="/img/download.svg" label={$t('common.import')} disabled={busy} onConfirm={openImport} />
@@ -137,6 +121,6 @@
 	{#if showRegenerateConfirm}
 		<ConfirmDialog title={$t('settings.identity.regenerateTitle')} message={$t('settings.identity.regenerateConfirm')} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="cancel" {position} onConfirm={confirmRegenerate} onBack={cancelRegenerate} />
 	{/if}
-{:else if mode === 'export'}
-	<SettingsIdentityExport {areaID} {position} onBack={() => void resumeMain()} />
+{:else}
+	<SettingsIdentityExport {areaID} {position} onBack={() => void closeExport()} />
 {/if}

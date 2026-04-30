@@ -6,8 +6,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
 	import { storageLISHnetPath, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
@@ -24,9 +23,7 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
 	let saving = $state(false);
-	let browsingDirectory = $state(false);
 	let browseDirectory = $state('');
 	let minifyJSONState = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
@@ -55,32 +52,18 @@
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const browseSubPage = createSubPage(navHandle, areaID);
 
 	function openDirectoryBrowse(): void {
 		const { directory } = splitPath(filePath.trim(), $storageLISHnetPath);
 		browseDirectory = directory;
-		browsingDirectory = true;
-		navHandle.pause();
-		pushBreadcrumb($t('common.openDirectory'));
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		browseSubPage.enter($t('common.openDirectory'));
 	}
 
 	function handleDirectorySelect(directoryPath: string): void {
 		const { fileName } = splitPath(filePath.trim(), $storageLISHnetPath);
 		filePath = joinPath(directoryPath, fileName || generateFileName());
-		handleBrowseBack();
-	}
-
-	async function handleBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingDirectory = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		void browseSubPage.exit();
 	}
 
 	async function handleSave(): Promise<void> {
@@ -151,21 +134,17 @@
 	}
 </style>
 
-{#if browsingDirectory}
-	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton onSelect={handleDirectorySelect} onBack={handleBrowseBack} />
+{#if browseSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton onSelect={handleDirectorySelect} onBack={() => void browseSubPage.exit()} />
 {:else}
 	<div class="export-all">
 		<div class="container">
-			<div class="row" role="group" data-mouse-activate-area={areaID}>
+			<div class="row">
 				<Input bind:value={filePath} label={$t('common.file')} position={[0, 0]} flex />
 				<Button icon="/img/directory.svg" position={[1, 0]} onConfirm={openDirectoryBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.lishNetwork.minifyJSON')} checked={minifyJSONState} position={[0, 1]} onToggle={() => (minifyJSONState = !minifyJSONState)} />
-			</div>
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.lishNetwork.compress')} checked={compress} position={[0, 2]} onToggle={handleCompressToggle} />
-			</div>
+			<SwitchRow label={$t('settings.lishNetwork.minifyJSON')} checked={minifyJSONState} position={[0, 1]} onToggle={() => (minifyJSONState = !minifyJSONState)} />
+			<SwitchRow label={$t('settings.lishNetwork.compress')} checked={compress} position={[0, 2]} onToggle={handleCompressToggle} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}

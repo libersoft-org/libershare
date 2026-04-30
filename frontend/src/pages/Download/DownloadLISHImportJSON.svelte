@@ -1,17 +1,16 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
-	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb, navigateBack } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { navigateBack } from '../../scripts/navigation.ts';
 	import { storagePath, autoStartSharing, autoStartDownloading } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { isCompressed } from '@shared';
 	import { type ILISH } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -26,11 +25,9 @@
 		onImport?: (() => void) | undefined;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, initialFilePath = '', onBack, onImport }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
 	let lishJSON = $state('');
 	let downloadPath = $state($storagePath);
 	let errorMessage = $state('');
-	let browsingDownloadPath = $state(false);
 	let parsedLISHs = $state<ILISH[] | null>(null);
 
 	async function handleImport(): Promise<void> {
@@ -60,29 +57,15 @@
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
+	const browseSubPage = createSubPage(navHandle, areaID);
 
 	function openDownloadPathBrowse(): void {
-		browsingDownloadPath = true;
-		navHandle.pause();
-		pushBreadcrumb($t('lish.import.downloadPath'));
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		browseSubPage.enter($t('lish.import.downloadPath'));
 	}
 
 	function handleBrowseSelect(path: string): void {
 		downloadPath = normalizePath(path);
-		handleBrowseBack();
-	}
-
-	async function handleBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingDownloadPath = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		void browseSubPage.exit();
 	}
 
 	async function loadInitialFile(): Promise<void> {
@@ -137,8 +120,8 @@
 
 {#if parsedLISHs}
 	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} onDone={handleOverwriteDone} />
-{:else if browsingDownloadPath}
-	<FileBrowser {areaID} {position} initialPath={downloadPath} directoriesOnly showPath selectDirectoryButton onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
+{:else if browseSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={downloadPath} directoriesOnly showPath selectDirectoryButton onSelect={handleBrowseSelect} onBack={() => void browseSubPage.exit()} />
 {:else}
 	<div class="import">
 		<div class="container">

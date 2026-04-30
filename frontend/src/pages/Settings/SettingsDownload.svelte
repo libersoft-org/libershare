@@ -1,12 +1,9 @@
 <script lang="ts">
-	import { tick } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, storageBackupPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, setStorageBackupPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, autoStartSharing, autoStartDownloading, autoErrorRecovery, mdnsEnabled, mdnsInterval, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setMdnsEnabled, setMdnsInterval, settingsDefaults } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { parseBytes, formatBytes } from '@shared';
@@ -21,7 +18,6 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
 	let browsingFor = $state<'storage' | 'temp' | 'lish' | 'lishnet' | 'backup' | null>(null);
 
 	// Local state for inputs
@@ -48,7 +44,6 @@
 	// Browse functions
 	function openBrowse(type: 'storage' | 'temp' | 'lish' | 'lishnet' | 'backup'): void {
 		browsingFor = type;
-		navHandle.pause();
 		const labels = {
 			storage: $t('settings.download.directoryDownload'),
 			temp: $t('settings.download.directoryTemp'),
@@ -56,8 +51,7 @@
 			lishnet: $t('settings.download.directoryLISHnet'),
 			backup: $t('settings.download.directoryBackup'),
 		};
-		pushBreadcrumb(labels[type]);
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		browseSubPage.enter(labels[type]);
 	}
 
 	function handleBrowseSelect(path: string): void {
@@ -67,19 +61,7 @@
 		else if (browsingFor === 'lish') lishPathValue = normalizedPath;
 		else if (browsingFor === 'lishnet') lishnetPathValue = normalizedPath;
 		else if (browsingFor === 'backup') backupPathValue = normalizedPath;
-		handleBrowseBack();
-	}
-
-	async function handleBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingFor = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		void browseSubPage.exit();
 	}
 
 	// Save functions
@@ -243,6 +225,7 @@
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const browseSubPage = createSubPage(navHandle, areaID);
 </script>
 
 <style>
@@ -271,8 +254,8 @@
 	}
 </style>
 
-{#if browsingFor}
-	<SettingsStorageBrowse {areaID} {position} initialPath={browsingFor === 'storage' ? $storagePath : browsingFor === 'temp' ? $storageTempPath : browsingFor === 'lish' ? $storageLISHPath : browsingFor === 'lishnet' ? $storageLISHnetPath : $storageBackupPath} onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
+{#if browseSubPage.active && browsingFor}
+	<SettingsStorageBrowse {areaID} {position} initialPath={browsingFor === 'storage' ? $storagePath : browsingFor === 'temp' ? $storageTempPath : browsingFor === 'lish' ? $storageLISHPath : browsingFor === 'lishnet' ? $storageLISHnetPath : $storageBackupPath} onSelect={handleBrowseSelect} onBack={() => void browseSubPage.exit()} />
 {:else}
 	<div class="settings">
 		<div class="container">

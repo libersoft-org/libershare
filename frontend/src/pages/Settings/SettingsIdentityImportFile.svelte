@@ -1,13 +1,10 @@
 <script lang="ts">
-	import { tick } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storageBackupPath } from '../../scripts/settings.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { activateArea } from '../../scripts/areas.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { type IdentityBackup } from '@shared';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -23,10 +20,8 @@
 		onImport?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack, onImport }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
 	let filePath = $state('');
 	let errorMessage = $state('');
-	let browsingFilePath = $state(false);
 	let parsedData = $state<IdentityBackup | null>(null);
 	let currentPeerID = $state('');
 
@@ -52,31 +47,17 @@
 		onBack?.();
 	}
 
+	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const browseSubPage = createSubPage(navHandle, areaID);
+
 	function openFilePathBrowse(): void {
-		browsingFilePath = true;
-		navHandle.pause();
-		pushBreadcrumb($t('common.fromFile'));
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		browseSubPage.enter($t('common.fromFile'));
 	}
 
 	function handleFilePathSelect(path: string): void {
 		filePath = path;
-		void handleBrowseBack();
+		void browseSubPage.exit();
 	}
-
-	async function handleBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingFilePath = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
-	}
-
-	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
 
 <style>
@@ -106,8 +87,8 @@
 
 {#if parsedData}
 	<SettingsIdentityImportConfirm data={parsedData} {currentPeerID} {position} onDone={handleConfirmDone} />
-{:else if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storageBackupPath} showPath fileFilter={['*.json']} fileFilterName={'JSON ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
+{:else if browseSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={filePath || $storageBackupPath} showPath fileFilter={['*.json']} fileFilterName={'JSON ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={() => void browseSubPage.exit()} />
 {:else}
 	<div class="import">
 		<div class="container">

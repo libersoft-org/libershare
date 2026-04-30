@@ -2,11 +2,9 @@
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { storageLISHnetPath } from '../../scripts/settings.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { activateArea } from '../../scripts/areas.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { type LISHNetworkDefinition } from '@shared';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -22,10 +20,8 @@
 		onImport?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack, onImport }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
 	let filePath = $state('');
 	let errorMessage = $state('');
-	let browsingFilePath = $state(false);
 	let parsedNetworks = $state<LISHNetworkDefinition[] | null>(null);
 
 	async function handleImport(): Promise<void> {
@@ -48,30 +44,17 @@
 		onBack?.();
 	}
 
+	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const browseSubPage = createSubPage(navHandle, areaID);
+
 	function openFilePathBrowse(): void {
-		browsingFilePath = true;
-		navHandle.pause();
-		pushBreadcrumb($t('settings.lishNetworkImport.filePath'));
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		browseSubPage.enter($t('settings.lishNetworkImport.filePath'));
 	}
 
 	function handleFilePathSelect(path: string): void {
 		filePath = path;
-		handleBrowseBack();
+		void browseSubPage.exit();
 	}
-
-	function handleBrowseBack(): void {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingFilePath = false;
-		navHandle.resume();
-		activateArea(areaID);
-	}
-
-	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
 
 <style>
@@ -101,8 +84,8 @@
 
 {#if parsedNetworks}
 	<ImportOverwrite networks={parsedNetworks} {position} onDone={handleOverwriteDone} />
-{:else if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storageLISHnetPath} showPath fileFilter={['*.lishnet', '*.lishnets', '*.json', '*.lishnet.gz', '*.lishnets.gz', '*.json.gz', '*.lishnet.gzip', '*.lishnets.gzip', '*.json.gzip']} fileFilterName={'LISHNET ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
+{:else if browseSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={filePath || $storageLISHnetPath} showPath fileFilter={['*.lishnet', '*.lishnets', '*.json', '*.lishnet.gz', '*.lishnets.gz', '*.json.gz', '*.lishnet.gzip', '*.lishnets.gzip', '*.json.gzip']} fileFilterName={'LISHNET ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={() => void browseSubPage.exit()} />
 {:else}
 	<div class="import">
 		<div class="container">

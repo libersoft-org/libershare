@@ -1,15 +1,13 @@
 <script lang="ts">
-	import { tick } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
-	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb, navigateBack } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { navigateBack } from '../../scripts/navigation.ts';
 	import { storagePath, storageLISHPath, autoStartSharing, autoStartDownloading } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { localFilesystem } from '../../scripts/localFilesystem.ts';
 	import { type ILISH } from '@shared';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -28,7 +26,6 @@
 		onImport?: (() => void) | undefined;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack, onImport }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
 	let filePath = $state('');
 	let uploadMode = $state(false);
 	let uploadFileName = $state('');
@@ -36,8 +33,6 @@
 	let fileInput = $state<HTMLInputElement>();
 	let downloadPath = $state($storagePath);
 	let errorMessage = $state('');
-	let browsingFilePath = $state(false);
-	let browsingDownloadPath = $state(false);
 	let parsedLISHs = $state<ILISH[] | null>(null);
 	let importing = $state(false);
 
@@ -102,42 +97,25 @@
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
+	const filePathSubPage = createSubPage(navHandle, areaID);
+	const downloadPathSubPage = createSubPage(navHandle, areaID);
 
 	function openFilePathBrowse(): void {
-		browsingFilePath = true;
-		navHandle.pause();
-		pushBreadcrumb($t('lish.import.filePath'));
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		filePathSubPage.enter($t('lish.import.filePath'));
 	}
 
 	function openDownloadPathBrowse(): void {
-		browsingDownloadPath = true;
-		navHandle.pause();
-		pushBreadcrumb($t('lish.import.downloadPath'));
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		downloadPathSubPage.enter($t('lish.import.downloadPath'));
 	}
 
 	function handleFilePathSelect(path: string): void {
 		filePath = path;
-		handleBrowseBack();
+		void filePathSubPage.exit();
 	}
 
 	function handleDownloadPathSelect(path: string): void {
 		downloadPath = normalizePath(path);
-		handleBrowseBack();
-	}
-
-	async function handleBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingFilePath = false;
-		browsingDownloadPath = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		void downloadPathSubPage.exit();
 	}
 </script>
 
@@ -185,10 +163,10 @@
 
 {#if parsedLISHs}
 	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} onDone={handleOverwriteDone} />
-{:else if browsingFilePath}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storageLISHPath} showPath fileFilter={['*.lish', '*.lishs', '*.json', '*.lish.gz', '*.lishs.gz', '*.json.gz', '*.lish.gzip', '*.lishs.gzip', '*.json.gzip']} fileFilterName={'LISH ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={handleBrowseBack} />
-{:else if browsingDownloadPath}
-	<FileBrowser {areaID} {position} initialPath={downloadPath} directoriesOnly showPath selectDirectoryButton onSelect={handleDownloadPathSelect} onBack={handleBrowseBack} />
+{:else if filePathSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={filePath || $storageLISHPath} showPath fileFilter={['*.lish', '*.lishs', '*.json', '*.lish.gz', '*.lishs.gz', '*.json.gz', '*.lish.gzip', '*.lishs.gzip', '*.json.gzip']} fileFilterName={'LISH ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={() => void filePathSubPage.exit()} />
+{:else if downloadPathSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={downloadPath} directoriesOnly showPath selectDirectoryButton onSelect={handleDownloadPathSelect} onBack={() => void downloadPathSubPage.exit()} />
 {:else}
 	<input class="file-input" type="file" accept=".lish,.lishs,.json,.lish.gz,.lishs.gz,.json.gz,.lish.gzip,.lishs.gzip,.json.gzip" bind:this={fileInput} onchange={handleFileSelected} />
 	<div class="import">

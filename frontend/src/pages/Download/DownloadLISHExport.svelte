@@ -5,13 +5,12 @@
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
 	import { storageLISHPath, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
 	import { sanitizeFilename } from '@shared';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -26,8 +25,6 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, lish = null, onBack }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
-	let browsingDirectory = $state(false);
 	let browseDirectory = $state('');
 	let saving = $state(false);
 	let minifyJSONState = $state($defaultMinifyJSON);
@@ -56,32 +53,18 @@
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
+	const browseSubPage = createSubPage(navHandle, areaID);
 
 	function openDirectoryBrowse(): void {
 		const { directory } = splitPath(filePath.trim(), $storageLISHPath);
 		browseDirectory = directory;
-		browsingDirectory = true;
-		navHandle.pause();
-		pushBreadcrumb($t('common.openDirectory'));
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		browseSubPage.enter($t('common.openDirectory'));
 	}
 
 	function handleDirectorySelect(directoryPath: string): void {
 		const { fileName } = splitPath(filePath.trim(), $storageLISHPath);
 		filePath = joinPath(directoryPath, fileName || getInitialFileName());
-		handleBrowseBack();
-	}
-
-	async function handleBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingDirectory = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		void browseSubPage.exit();
 	}
 
 	async function handleSave(): Promise<void> {
@@ -157,8 +140,8 @@
 	}
 </style>
 
-{#if browsingDirectory}
-	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton onSelect={handleDirectorySelect} onBack={handleBrowseBack} />
+{#if browseSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton onSelect={handleDirectorySelect} onBack={() => void browseSubPage.exit()} />
 {:else}
 	<div class="export">
 		<div class="container">

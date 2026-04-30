@@ -1,12 +1,10 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { activateArea } from '../../scripts/areas.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { createLishSearch } from '../../scripts/lishSearch.svelte.ts';
 	import { type PeerListEntry, type LISHNetworkConfig, type NetworkNodeInfo, type LishSearchResult } from '@shared';
 	import { api } from '../../scripts/api.ts';
@@ -79,28 +77,15 @@
 	const search = createLishSearch();
 
 	// =================== LISH peer-list page (overlay over the search tab) ===================
-	let showLishPeerList = $state(false);
 	let lishPeerListRow = $state<LishSearchResult | null>(null);
-	let removeLishPeerListBackHandler: (() => void) | null = null;
 
 	function openLishPeerList(row: LishSearchResult): void {
 		lishPeerListRow = row;
-		showLishPeerList = true;
-		navHandle.pause();
-		pushBreadcrumb(row.name ?? row.id.slice(0, 16) + '...');
-		removeLishPeerListBackHandler = pushBackHandler(handleLishPeerListBack);
+		lishPeerListSubPage.enter(row.name ?? row.id.slice(0, 16) + '...');
 	}
 	async function handleLishPeerListBack(): Promise<void> {
-		if (removeLishPeerListBackHandler) {
-			removeLishPeerListBackHandler();
-			removeLishPeerListBackHandler = null;
-		}
-		popBreadcrumb();
-		showLishPeerList = false;
 		lishPeerListRow = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		await lishPeerListSubPage.exit();
 	}
 	async function openPeerFromLishPeerList(peerID: string, networkID: string, lishID: string): Promise<void> {
 		// Close the LISH peer-list page first, then open the PeerDetail page on top of the search tab.
@@ -109,20 +94,15 @@
 	}
 
 	// =================== PeerDetail overlay ===================
-	let showDetail = $state(false);
 	let selectedPeer = $state<PeerListEntry | null>(null);
 	let selectedPeerNetworkID = $state('');
 	let highlightLishID = $state<string | undefined>(undefined);
-	let removeBackHandler: (() => void) | null = null;
 
 	function openPeerDetail(peer: PeerListEntry, networkID: string, lishID?: string): void {
 		selectedPeer = peer;
 		selectedPeerNetworkID = networkID;
 		highlightLishID = lishID;
-		showDetail = true;
-		navHandle.pause();
-		pushBreadcrumb(peer.peerID.slice(0, 16) + '...');
-		removeBackHandler = pushBackHandler(handleDetailBack);
+		detailSubPage.enter(peer.peerID.slice(0, 16) + '...');
 	}
 	function openPeerFromPeersTab(peer: PeerListEntry): void {
 		const netID = peer.networks[0]?.networkID ?? '';
@@ -142,17 +122,9 @@
 		openPeerDetail(peer, networkID, lishID);
 	}
 	async function handleDetailBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showDetail = false;
 		selectedPeer = null;
 		highlightLishID = undefined;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		await detailSubPage.exit();
 	}
 
 	// =================== NavArea grid ===================
@@ -178,6 +150,8 @@
 			return [2, Math.max(2, 2 + search.results.length)];
 		},
 	}));
+	const lishPeerListSubPage = createSubPage(navHandle, areaID);
+	const detailSubPage = createSubPage(navHandle, areaID);
 
 	onMount(() => {
 		void loadPeerData();
@@ -209,10 +183,10 @@
 	}
 </style>
 
-{#if showDetail && selectedPeer}
-	<PeerDetail {areaID} {position} peer={selectedPeer} networkID={selectedPeerNetworkID} {highlightLishID} onBack={handleDetailBack} />
-{:else if showLishPeerList && lishPeerListRow}
-	<NetworkLishsPeerList {areaID} {position} row={lishPeerListRow} {networks} onBack={handleLishPeerListBack} onOpenPeer={openPeerFromLishPeerList} />
+{#if detailSubPage.active && selectedPeer}
+	<PeerDetail {areaID} {position} peer={selectedPeer} networkID={selectedPeerNetworkID} {highlightLishID} onBack={() => void handleDetailBack()} />
+{:else if lishPeerListSubPage.active && lishPeerListRow}
+	<NetworkLishsPeerList {areaID} {position} row={lishPeerListRow} {networks} onBack={() => void handleLishPeerListBack()} onOpenPeer={openPeerFromLishPeerList} />
 {:else}
 	<div class="network-page">
 		<div class="container">
