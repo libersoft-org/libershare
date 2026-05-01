@@ -27,7 +27,9 @@
 		transition: box-shadow 0.4s ease;
 	}
 	.wrap.highlight {
-		box-shadow: 0 0 0 0.4vh var(--primary-foreground), 0 0 2vh var(--primary-foreground);
+		box-shadow:
+			0 0 0 0.4vh var(--primary-foreground),
+			0 0 2vh var(--primary-foreground);
 	}
 	.info {
 		display: flex;
