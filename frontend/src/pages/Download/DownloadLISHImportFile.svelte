@@ -1,24 +1,13 @@
 <script lang="ts">
-	import { t, translateError } from '../../scripts/language.ts';
+	import { t } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
 	import { navigateBack } from '../../scripts/navigation.ts';
 	import { storagePath, storageLISHPath, autoStartSharing, autoStartDownloading } from '../../scripts/settings.ts';
-	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
-	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { createSubPage } from '../../scripts/subPage.svelte.ts';
-	import { localFilesystem } from '../../scripts/localFilesystem.ts';
 	import { type ILISH } from '@shared';
-	import Alert from '../../components/Alert/Alert.svelte';
-	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
-	import Button from '../../components/Buttons/Button.svelte';
-	import Input from '../../components/Input/Input.svelte';
-	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
-	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
+	import ImportFileForm from '../../components/Import/ImportFileForm.svelte';
 	import ImportOverwrite from './DownloadLISHImportOverwrite.svelte';
-	import Dialog from '../../components/Dialog/Dialog.svelte';
-	import Spinner from '../../components/Spinner/Spinner.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -26,185 +15,27 @@
 		onImport?: (() => void) | undefined;
 	}
 	let { areaID, position = CONTENT_POSITIONS.main, onBack, onImport }: Props = $props();
-	let filePath = $state('');
-	let uploadMode = $state(false);
-	let uploadFileName = $state('');
-	let uploadContent = $state('');
-	let fileInput = $state<HTMLInputElement>();
 	let downloadPath = $state($storagePath);
-	let errorMessage = $state('');
-	let parsedLISHs = $state<ILISH[] | null>(null);
-	let importing = $state(false);
 
-	function openFilePicker(): void {
-		fileInput?.click();
+	function parseFile(path: string): Promise<ILISH[]> {
+		return api.lishs.parseFromFile(path);
 	}
 
-	async function handleFileSelected(e: Event): Promise<void> {
-		const input = e.target as HTMLInputElement;
-		const file = input.files?.[0];
-		if (!file) return;
-		uploadFileName = file.name;
-		errorMessage = '';
-		try {
-			if (file.name.endsWith('.gz') || file.name.endsWith('.gzip')) {
-				const buffer = await file.arrayBuffer();
-				const decompressed = new Response(new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip')));
-				uploadContent = await decompressed.text();
-			} else {
-				uploadContent = await file.text();
-			}
-		} catch (err) {
-			errorMessage = translateError(err);
-			uploadContent = '';
-		}
+	function parseJSON(content: string): Promise<ILISH[]> {
+		return api.lishs.parseFromJSON(content);
 	}
 
-	async function handleImport(): Promise<void> {
-		errorMessage = '';
-		if (uploadMode) {
-			if (!uploadContent.trim()) {
-				errorMessage = $t('lish.import.uploadRequired');
-				return;
-			}
-		} else {
-			if (!filePath.trim()) {
-				errorMessage = $t('common.errorFilePathRequired');
-				return;
-			}
-		}
-		if (!downloadPath.trim()) {
-			errorMessage = $t('lish.import.downloadPathRequired');
-			return;
-		}
-		try {
-			importing = true;
-			parsedLISHs = uploadMode ? await api.lishs.parseFromJSON(uploadContent) : await api.lishs.parseFromFile(filePath);
-		} catch (e) {
-			errorMessage = translateError(e);
-		} finally {
-			importing = false;
-		}
-	}
-
-	function handleOverwriteDone(): void {
-		parsedLISHs = null;
+	function handleConfirmDone(): void {
 		if (onImport) onImport();
 		else {
 			navigateBack();
 			navigateBack();
 		}
 	}
-
-	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
-	const filePathSubPage = createSubPage(navHandle, () => areaID);
-	const downloadPathSubPage = createSubPage(navHandle, () => areaID);
-
-	function openFilePathBrowse(): void {
-		filePathSubPage.enter($t('lish.import.filePath'));
-	}
-
-	function openDownloadPathBrowse(): void {
-		downloadPathSubPage.enter($t('lish.import.downloadPath'));
-	}
-
-	function handleFilePathSelect(path: string): void {
-		filePath = path;
-		void filePathSubPage.exit();
-	}
-
-	function handleDownloadPathSelect(path: string): void {
-		downloadPath = normalizePath(path);
-		void downloadPathSubPage.exit();
-	}
 </script>
 
-<style>
-	.import {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		height: 100%;
-		padding: 2vh;
-		gap: 2vh;
-	}
-
-	.container {
-		display: flex;
-		flex-direction: column;
-		gap: 1vh;
-		width: 800px;
-		max-width: 100%;
-	}
-
-	.row {
-		display: flex;
-		gap: 1vh;
-		align-items: flex-end;
-	}
-
-	.file-input {
-		display: none;
-	}
-
-	.loading {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 3vh;
-		padding: 2vh 4vh;
-	}
-
-	.loading-label {
-		font-size: 2vh;
-		text-align: center;
-	}
-</style>
-
-{#if parsedLISHs}
-	<ImportOverwrite lishs={parsedLISHs} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} onDone={handleOverwriteDone} />
-{:else if filePathSubPage.active}
-	<FileBrowser {areaID} {position} initialPath={filePath || $storageLISHPath} showPath fileFilter={['*.lish', '*.lishs', '*.json', '*.lish.gz', '*.lishs.gz', '*.json.gz', '*.lish.gzip', '*.lishs.gzip', '*.json.gzip']} fileFilterName={'LISH ' + $t('common.extensions')} selectFileButton onSelect={handleFilePathSelect} onBack={() => void filePathSubPage.exit()} />
-{:else if downloadPathSubPage.active}
-	<FileBrowser {areaID} {position} initialPath={downloadPath} directoriesOnly showPath selectDirectoryButton onSelect={handleDownloadPathSelect} onBack={() => void downloadPathSubPage.exit()} />
-{:else}
-	<input class="file-input" type="file" accept=".lish,.lishs,.json,.lish.gz,.lishs.gz,.json.gz,.lish.gzip,.lishs.gzip,.json.gzip" bind:this={fileInput} onchange={handleFileSelected} />
-	<div class="import">
-		<div class="container">
-			{#if !$localFilesystem}
-				<div role="group" data-mouse-activate-area={areaID}>
-					<SwitchRow label={$t('lish.import.uploadFromLocal')} checked={uploadMode} position={[0, 0]} onToggle={() => (uploadMode = !uploadMode)} />
-				</div>
-			{/if}
-			{#if uploadMode}
-				<div role="group" data-mouse-activate-area={areaID}>
-					<Button icon="/img/upload.svg" label={uploadFileName || $t('lish.import.selectLocalFile')} position={[0, 1]} onConfirm={openFilePicker} width="100%" />
-				</div>
-			{:else}
-				<div class="row" role="group" data-mouse-activate-area={areaID}>
-					<Input bind:value={filePath} label={$t('lish.import.filePath')} position={[0, 1]} flex />
-					<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={openFilePathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
-				</div>
-			{/if}
-			<div class="row" role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={downloadPath} label={$t('lish.import.downloadPath')} position={[0, 2]} flex />
-				<Button icon="/img/directory.svg" position={[1, 2]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
-			</div>
-			{#if errorMessage}
-				<Alert type="error" message={errorMessage} />
-			{/if}
-		</div>
-		<ButtonBar justify="center" basePosition={[0, 3]}>
-			<Button icon="/img/download.svg" label={$t('common.import')} onConfirm={handleImport} />
-			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
-		</ButtonBar>
-	</div>
-	{#if importing}
-		<Dialog title={$t('common.import')}>
-			<div class="loading">
-				<Spinner size="8vh" />
-				<div class="loading-label">{$t('lish.import.importing')}</div>
-			</div>
-		</Dialog>
-	{/if}
-{/if}
+<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageLISHPath} fileFilter={['*.lish', '*.lishs', '*.json', '*.lish.gz', '*.lishs.gz', '*.json.gz', '*.lish.gzip', '*.lishs.gzip', '*.json.gzip']} fileFilterName={'LISH ' + $t('common.extensions')} filePathLabel={$t('lish.import.filePath')} {parseFile} {parseJSON} bind:downloadPath downloadPathLabel={$t('lish.import.downloadPath')} onConfirmDone={handleConfirmDone}>
+	{#snippet confirm({ data, onDone })}
+		<ImportOverwrite lishs={data as ILISH[]} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} {onDone} />
+	{/snippet}
+</ImportFileForm>

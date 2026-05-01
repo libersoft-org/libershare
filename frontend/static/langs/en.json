@@ -226,11 +226,8 @@
 		},
 		"import": {
 			"fromJSON": "From LISH JSON",
-			"uploadFromLocal": "Upload from local computer",
 			"localFile": "Local file",
 			"noFileSelected": "No file selected",
-			"selectLocalFile": "Select local file",
-			"uploadRequired": "Please select a file to upload",
 			"filePath": "LISH file",
 			"url": "URL address of LISH file",
 			"placeholder": "Paste LISH JSON here ...",
@@ -240,8 +237,7 @@
 			"jsonRequired": "LISH JSON is required",
 			"autoStartSharing": "Automatically start sharing after adding",
 			"autoStartDownloading": "Automatically start downloading after adding",
-			"confirmOverwrite": "The following LISH already exists:\n\nName: {name}\nID: {id}\n\nDo you want to overwrite it?",
-			"importing": "Importing ..."
+			"confirmOverwrite": "The following LISH already exists:\n\nName: {name}\nID: {id}\n\nDo you want to overwrite it?"
 		},
 		"export": {
 			"errorIDRequired": "LISH ID is required"
@@ -266,6 +262,12 @@
 		"errorDirectoryAccessDenied": "Access denied: {detail}",
 		"errorDownloaderNotInitialized": "Downloader not initialized",
 		"errorDownload": "Download failed: {detail}"
+	},
+	"import": {
+		"uploadFromLocal": "Upload from local computer",
+		"selectLocalFile": "Select local file",
+		"uploadRequired": "Please select a file to upload",
+		"importing": "Importing ..."
 	},
 	"settings": {
 		"title": "Settings",
