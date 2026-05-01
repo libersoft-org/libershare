@@ -191,8 +191,8 @@ class IdentityAPI {
 		return this.client.call<IdentityBackup>('identity.get');
 	}
 
-	exportToFile(filePath: string): Promise<SuccessResponse> {
-		return this.client.call<SuccessResponse>('identity.exportToFile', { filePath });
+	exportToFile(filePath: string, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('identity.exportToFile', { filePath, minifyJSON, compress, compressionAlgorithm });
 	}
 
 	parseFromFile(filePath: string): Promise<IdentityBackup> {

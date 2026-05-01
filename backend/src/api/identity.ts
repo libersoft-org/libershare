@@ -1,6 +1,6 @@
 import { type Networks } from '../lishnet/lishnets.ts';
 import { Utils } from '../utils.ts';
-import { type SuccessResponse, CodedError, ErrorCodes } from '@shared';
+import { type CompressionAlgorithm, type SuccessResponse, CodedError, ErrorCodes } from '@shared';
 import { privateKeyFromProtobuf } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 const assert = Utils.assertParams;
@@ -16,7 +16,7 @@ interface IdentityFile {
 
 interface IdentityHandlers {
 	get: () => IdentityBackup;
-	exportToFile: (p: { filePath: string }) => Promise<SuccessResponse>;
+	exportToFile: (p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 	parseFromFile: (p: { filePath: string }) => Promise<IdentityBackup>;
 	parseFromJSON: (p: { json: string }) => IdentityBackup;
 	parseFromURL: (p: { url: string }) => Promise<IdentityBackup>;
@@ -59,12 +59,12 @@ export function initIdentityHandlers(networks: Networks): IdentityHandlers {
 		return { peerID: id.peerID, privateKey: Buffer.from(id.privateKeyBytes).toString('base64') };
 	}
 
-	async function exportToFile(p: { filePath: string }): Promise<SuccessResponse> {
+	async function exportToFile(p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
 		assert(p, ['filePath']);
 		const resolved = Utils.expandHome(p.filePath);
 		const backup = get();
 		const file: IdentityFile = { privateKey: backup.privateKey };
-		await Utils.writeJSONToFile(file, resolved);
+		await Utils.writeJSONToFile(file, resolved, p.minifyJSON, p.compress, p.compressionAlgorithm);
 		console.log(`✓ Identity exported to: ${resolved}`);
 		return { success: true };
 	}
