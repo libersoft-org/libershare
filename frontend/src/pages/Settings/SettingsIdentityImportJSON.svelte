@@ -8,10 +8,11 @@
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
+		initialFilePath?: string | undefined;
 		onBack?: (() => void) | undefined;
 		onImport?: (() => void) | undefined;
 	}
-	let { areaID, position = LAYOUT.content, onBack, onImport }: Props = $props();
+	let { areaID, position = LAYOUT.content, initialFilePath = '', onBack, onImport }: Props = $props();
 	let currentPeerID = $state('');
 
 	async function parseJSON(content: string): Promise<IdentityBackup> {
@@ -27,7 +28,7 @@
 	}
 </script>
 
-<ImportJSONForm {areaID} {position} {onBack} {parseJSON} placeholder={'{"peerID": "12D3KooW...", "privateKey": "..."}'} errorEmptyKey="settings.identity.errorInvalidFormat" onConfirmDone={handleConfirmDone}>
+<ImportJSONForm {areaID} {position} {onBack} {parseJSON} placeholder={'{"peerID": "12D3KooW...", "privateKey": "..."}'} errorEmptyKey="settings.identity.errorInvalidFormat" {initialFilePath} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<SettingsIdentityImportConfirm data={data as IdentityBackup} {currentPeerID} {position} {onDone} />
 	{/snippet}

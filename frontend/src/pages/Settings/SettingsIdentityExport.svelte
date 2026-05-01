@@ -16,7 +16,7 @@
 	let peerID = $state('');
 
 	function generateFileName(id: string): string {
-		const base = id ? `identity_${id}.json` : 'identity.json';
+		const base = id ? `identity_${id}.lishid` : 'identity.lishid';
 		return $defaultCompress ? base + '.gz' : base;
 	}
 
@@ -44,4 +44,4 @@
 	}
 </script>
 
-<ExportFileForm {areaID} {position} {onBack} bind:filePath defaultDirectory={$storageBackupPath} extension="json" fallbackFileName={generateFileName(peerID)} {doExport} {onSuccess} />
+<ExportFileForm {areaID} {position} {onBack} bind:filePath defaultDirectory={$storageBackupPath} extension="lishid" fallbackFileName={generateFileName(peerID)} {doExport} {onSuccess} />

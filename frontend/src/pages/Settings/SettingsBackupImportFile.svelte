@@ -31,7 +31,7 @@
 	}
 </script>
 
-<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={['*.json', '*.json.gz', '*.json.gzip']} fileFilterName={'JSON ' + $t('common.extensions')} {parseFile} {parseJSON} onConfirmDone={handleConfirmDone}>
+<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={['*.lishset', '*.lishset.gz', '*.lishset.gzip', '*.json', '*.json.gz', '*.json.gzip']} fileFilterName={'LISHSET ' + $t('common.extensions')} {parseFile} {parseJSON} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<SettingsBackupImportConfirm data={data as BackupData} {position} {onDone} />
 	{/snippet}

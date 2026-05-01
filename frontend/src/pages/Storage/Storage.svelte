@@ -9,6 +9,8 @@
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import DownloadLISHImportJSON from '../Download/DownloadLISHImportJSON.svelte';
 	import SettingsLISHNetworkImportJSON from '../Settings/SettingsLISHNetworkImportJSON.svelte';
+	import SettingsBackupImportJSON from '../Settings/SettingsBackupImportJSON.svelte';
+	import SettingsIdentityImportJSON from '../Settings/SettingsIdentityImportJSON.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -27,6 +29,18 @@
 			label: 'LISHNET',
 			extensions: ['.lishnet', '.lishnets', '.lishnet.gz', '.lishnets.gz', '.lishnet.gzip', '.lishnets.gzip'],
 			component: SettingsLISHNetworkImportJSON,
+		},
+		{
+			mode: 'lishset',
+			label: 'LISHSET',
+			extensions: ['.lishset', '.lishset.gz', '.lishset.gzip'],
+			component: SettingsBackupImportJSON,
+		},
+		{
+			mode: 'lishid',
+			label: 'LISHID',
+			extensions: ['.lishid', '.lishid.gz', '.lishid.gzip'],
+			component: SettingsIdentityImportJSON,
 		},
 	] as const;
 	let importMode = $state<string | null>(null);

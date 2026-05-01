@@ -7,10 +7,11 @@
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
+		initialFilePath?: string | undefined;
 		onBack?: (() => void) | undefined;
 		onImport?: (() => void) | undefined;
 	}
-	let { areaID, position = LAYOUT.content, onBack, onImport }: Props = $props();
+	let { areaID, position = LAYOUT.content, initialFilePath = '', onBack, onImport }: Props = $props();
 
 	type BackupData = Record<string, unknown>;
 
@@ -25,7 +26,7 @@
 	}
 </script>
 
-<ImportJSONForm {areaID} {position} {onBack} {parseJSON} placeholder={'{"language": "...", "ui": {...}, ...}'} errorEmptyKey="settings.backup.errorInvalidFormat" onConfirmDone={handleConfirmDone}>
+<ImportJSONForm {areaID} {position} {onBack} {parseJSON} placeholder={'{"language": "...", "ui": {...}, ...}'} errorEmptyKey="settings.backup.errorInvalidFormat" {initialFilePath} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<SettingsBackupImportConfirm data={data as BackupData} {position} {onDone} />
 	{/snippet}
