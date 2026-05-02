@@ -30,6 +30,12 @@
 		border-color: var(--primary-foreground);
 	}
 
+	/* Mouse hover preview — distinct from keyboard selection so the two never fight. */
+	.row:hover:not(.selected):not(.disabled) {
+		background-color: var(--secondary-hard-background);
+		border-color: var(--secondary-foreground);
+	}
+
 	.row.disabled {
 		background-color: var(--disabled-foreground);
 		color: var(--disabled-background);
