@@ -107,6 +107,10 @@
 		font-weight: bold;
 		white-space: nowrap;
 	}
+
+	.bindings {
+		font-size: 1.8vh;
+	}
 </style>
 
 <div class="help">
@@ -115,7 +119,7 @@
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
 		</ButtonBar>
 		<div class="heading">{$t('help.controls')}</div>
-		<div>
+		<div class="bindings">
 			<div class="subheading">{$t('help.keyboard.title')}</div>
 			<Table columns="30vh 1fr">
 				{#each keyboardBindings as b, i}
@@ -126,7 +130,7 @@
 				{/each}
 			</Table>
 		</div>
-		<div>
+		<div class="bindings">
 			<div class="subheading">{$t('help.mouse.title')}</div>
 			<Table columns="30vh 1fr">
 				{#each mouseBindings as b, i}
@@ -137,7 +141,7 @@
 				{/each}
 			</Table>
 		</div>
-		<div>
+		<div class="bindings">
 			<div class="subheading">{$t('help.gamepad.title')}</div>
 			<Table columns="30vh 1fr">
 				{#each gamepadBindings as b, i}
