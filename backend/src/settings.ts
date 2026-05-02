@@ -38,7 +38,10 @@ export interface SettingsData {
 		maxChunkSize: number;
 		maxMessageSize: number;
 		allowRelay: boolean;
+		/** How many other peers may reserve a relay slot ON US (we are the relay server). 0 = unlimited. */
 		maxRelayReservations: number;
+		/** How many other peers' relays we use AS A CLIENT (`discoverRelays` + `/p2p-circuit` listen slots). */
+		maxRelayClients: number;
 		autoStartSharing: boolean;
 		autoStartDownloading: boolean;
 		autoErrorRecovery: boolean;
@@ -147,6 +150,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE,
 		allowRelay: true,
 		maxRelayReservations: 0,
+		maxRelayClients: 5,
 		autoStartSharing: true,
 		autoStartDownloading: true,
 		autoErrorRecovery: true,

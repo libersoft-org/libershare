@@ -294,7 +294,8 @@
 			"maxChunkSize": "Maximum chunk size accepted when adding LISHs — larger LISHs are rejected (e.g. 100MB)",
 			"maxMessageSize": "Maximum P2P message size — must be greater than chunk size (e.g. 128MB)",
 			"allowRelay": "Enable relay server (relay data for other peers)",
-			"maxRelayReservations": "Maximum number of connections to relay server (0 = unlimited)",
+			"maxRelayReservations": "Maximum number of connections to our relay server (0 = unlimited)",
+			"maxRelayClients": "Maximum number of connections to other peers' relay servers (1–20)",
 			"autoStartSharingDefault": "Automatically start sharing after adding a LISH",
 			"autoStartDownloadingDefault": "Automatically start downloading after adding a LISH",
 			"autoErrorRecovery": "Automatic error recovery"

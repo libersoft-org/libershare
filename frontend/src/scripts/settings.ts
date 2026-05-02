@@ -37,6 +37,7 @@ export const maxChunkSize = writable(0);
 export const maxMessageSize = writable(0);
 export const allowRelay = writable(true);
 export const maxRelayReservations = writable(0);
+export const maxRelayClients = writable(5);
 export const autoStartSharing = writable(true);
 export const autoStartDownloading = writable(true);
 export const autoErrorRecovery = writable(true);
@@ -108,6 +109,7 @@ export async function loadSettings(): Promise<void> {
 		maxMessageSize.set(settings.network.maxMessageSize);
 		allowRelay.set(settings.network.allowRelay);
 		maxRelayReservations.set(settings.network.maxRelayReservations);
+		maxRelayClients.set(settings.network.maxRelayClients ?? 5);
 		autoStartSharing.set(settings.network.autoStartSharing);
 		autoStartDownloading.set(settings.network.autoStartDownloading);
 		autoErrorRecovery.set(settings.network.autoErrorRecovery ?? true);
@@ -229,6 +231,13 @@ export function setAllowRelay(enabled: boolean): void {
 export function setMaxRelayReservations(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
 	updateSetting(maxRelayReservations, 'network.maxRelayReservations', clampedValue);
+}
+
+export function setMaxRelayClients(value: number): void {
+	// Hard upper bound mirrors network-config.ts cap (20). Each /p2p-circuit slot
+	// adds Multiaddr churn on relay reservation refresh, so silently clamp here.
+	const clampedValue = Math.max(1, Math.min(20, value || 5));
+	updateSetting(maxRelayClients, 'network.maxRelayClients', clampedValue);
 }
 
 export function setAutoStartSharing(enabled: boolean): void {

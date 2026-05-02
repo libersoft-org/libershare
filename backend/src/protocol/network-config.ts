@@ -87,18 +87,16 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// paths as we listen for. 5 paths per NAT'd peer gives generous
 	// redundancy for fleets up to a few hundred peers without re-introducing
 	// the multiaddr churn observed at the original 10-slot configuration.
-	transports.push(circuitRelayTransport({ discoverRelays: 5 } as any));
-	console.log(`✓ Circuit relay client enabled (discoverRelays: 5)`);
-	// Build listen addresses
-	const port = allSettings.network?.incomingPort || 0;
-	const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
 	// Each /p2p-circuit slot accumulates Multiaddr objects from periodic relay
 	// reservation refresh; 10 slots produced ~117k Multiaddr instances on a
 	// long-running node (heap snapshot captured during leak investigation).
-	// 5 slots is the sweet spot: enough redundancy to survive one or two
-	// relay-peer outages while keeping per-refresh Multiaddr churn well below
-	// the leak threshold seen at 10.
-	const maxRelays = 5;
+	const rawMaxRelayClients = allSettings.network?.maxRelayClients;
+	const maxRelays = typeof rawMaxRelayClients === 'number' && rawMaxRelayClients > 0 ? Math.min(rawMaxRelayClients, 20) : 5;
+	transports.push(circuitRelayTransport({ discoverRelays: maxRelays } as any));
+	console.log(`✓ Circuit relay client enabled (discoverRelays: ${maxRelays})`);
+	// Build listen addresses
+	const port = allSettings.network?.incomingPort || 0;
+	const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
 	for (let i = 0; i < maxRelays; i++) listenAddresses.push('/p2p-circuit');
 	console.log(`✓ Configured to reserve ${maxRelays} relay slots`);
 	// Build appendAnnounce addresses.
