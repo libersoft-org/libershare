@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type Settings } from '../settings.ts';
 import { lishTopic } from '../protocol/constants.ts';
+import { trace } from '../logger.ts';
 import { registerSearchResultHandler, unregisterSearchResultHandler, type SearchResultAnnouncement } from '../protocol/lish-protocol.ts';
 import type { LishSearchResult } from '@shared';
 
@@ -48,6 +49,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	}
 
 	function handleResult(ann: SearchResultAnnouncement): void {
+		trace(`[Search] result in: searchID=${ann.searchID.slice(0, 8)} from=${ann.peerID.slice(0, 12)} lishs=${ann.lishs.length} sessionExists=${sessions.has(ann.searchID)}`);
 		const session = sessions.get(ann.searchID);
 		if (!session) return;
 		// Map peerID → networkID is non-trivial without checking pubsub subscribers across topics;
