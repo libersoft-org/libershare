@@ -217,8 +217,24 @@ export class Network {
 					// The underlying stream state (closed) is already tracked by gossipsub; losing
 					// the write is exactly what the existing try/catch around sendRpc assumed.
 					if (result && typeof (result as Promise<unknown>).catch === 'function') {
+						const failedStream = this; // OutboundStream instance
 						(result as Promise<unknown>).catch((e: any) => {
-							console.warn('[GS-PUSH-FAIL] async push rejected:', e?.code ?? e?.name ?? '', e?.message ?? String(e));
+							// Reverse lookup: find which peerId owns this dead stream and evict it
+							// from streamsOutbound so the next sendRpc call sees null and gossipsub
+							// will reattach a fresh stream when libp2p reconnects to that peer.
+							const gs: any = pubsub;
+							let evicted = '';
+							if (gs?.streamsOutbound instanceof Map) {
+								for (const [pid, stream] of gs.streamsOutbound) {
+									if (stream === failedStream) {
+										try { stream.close?.().catch?.(() => {}); } catch { /* ignore */ }
+										gs.streamsOutbound.delete(pid);
+										evicted = pid.toString().slice(0, 12);
+										break;
+									}
+								}
+							}
+							console.warn('[GS-PUSH-FAIL] async push rejected to', evicted || 'unknown', ':', e?.code ?? e?.name ?? '', e?.message ?? String(e), '— evicted stream');
 						});
 					}
 					return result;
