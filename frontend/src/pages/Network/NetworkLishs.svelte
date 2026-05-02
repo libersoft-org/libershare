@@ -3,6 +3,7 @@
 	import { type LishSearchResult } from '@shared';
 	import { formatSize } from '../../scripts/utils.ts';
 	import { type LishSearchSession } from '../../scripts/lishSearch.svelte.ts';
+	import { networkSummary } from '../../scripts/networks.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import Table from '../../components/Table/Table.svelte';
@@ -83,34 +84,48 @@
 </div>
 {#if search.error}
 	<Alert type="error" message={search.error} />
-{:else if search.searching && search.results.length === 0}
-	<div class="search-status stacked">
-		<Spinner size="8vh" />
-		<span>{$t('network.searching')}</span>
-	</div>
-{:else if !search.searching && search.results.length === 0 && search.searchID !== null}
-	<Alert type="warning" message={$t('network.noResults')} />
-{:else if search.results.length > 0}
-	<div class="search-status">
-		{#if search.searching}<Spinner size="2vh" />{/if}
-		<span>{$t('network.lishCount', { count: String(search.results.length) })}</span>
-	</div>
-	<Table columns="auto 2fr 1fr 12vh 10vh" columnsMobile="1fr auto">
-		<TableHeader>
-			<TableCell desktopOnly>#</TableCell>
-			<TableCell>{$t('network.lishID')}</TableCell>
-			<TableCell>{$t('common.name')}</TableCell>
-			<TableCell align="center">{$t('network.totalSize')}</TableCell>
-			<TableCell align="center">{$t('network.peerCount')}</TableCell>
-		</TableHeader>
-		{#each search.results as row, i (row.id)}
-			<TableRow position={[0, baseY + 1 + i]} onConfirm={makeOpenHandler(row)}>
-				<TableCell desktopOnly>{i + 1}</TableCell>
-				<TableCell><span class="lish-id">{row.id}</span></TableCell>
-				<TableCell><span class="lish-name">{row.name ?? $t('network.unnamed')}</span></TableCell>
-				<TableCell align="center">{row.totalSize !== undefined ? formatSize(row.totalSize) : '—'}</TableCell>
-				<TableCell align="center">{row.peers.length}</TableCell>
-			</TableRow>
-		{/each}
-	</Table>
+{:else}
+	{#if search.searching}
+		<!-- Same big spinner whether 0 or N results: keeps the visual centre of attention
+		     stable while incremental results stream in below. Older code used a tiny inline
+		     spinner once results arrived, which made the search look "done" prematurely. -->
+		<div class="search-status stacked">
+			<Spinner size="8vh" />
+			<span>{$t('network.searching')}{#if search.results.length > 0} — {$t('network.lishCount', { count: String(search.results.length) })}{/if}</span>
+		</div>
+	{:else if search.results.length === 0 && search.searchID !== null}
+		<Alert type="warning" message={$t('network.noResults')} />
+		<!-- Diagnostic hint: most "search returned nothing" reports turn out to be a mesh
+		     connectivity problem (0 peers) rather than a query mismatch. Surface peer/network
+		     counts so the user can tell the difference without opening Settings. -->
+		{#if $networkSummary.totalPeers === 0}
+			<Alert type="info" message={$t('network.noResultsNoPeers')} />
+		{:else}
+			<Alert type="info" message={$t('network.noResultsDiagnostic', { peers: String($networkSummary.totalPeers), networks: String($networkSummary.connectedNetworks) })} />
+		{/if}
+	{:else if search.results.length > 0}
+		<div class="search-status">
+			<span>{$t('network.lishCount', { count: String(search.results.length) })}</span>
+		</div>
+	{/if}
+	{#if search.results.length > 0}
+		<Table columns="auto 2fr 1fr 12vh 10vh" columnsMobile="1fr auto">
+			<TableHeader>
+				<TableCell desktopOnly>#</TableCell>
+				<TableCell>{$t('network.lishID')}</TableCell>
+				<TableCell>{$t('common.name')}</TableCell>
+				<TableCell align="center">{$t('network.totalSize')}</TableCell>
+				<TableCell align="center">{$t('network.peerCount')}</TableCell>
+			</TableHeader>
+			{#each search.results as row, i (row.id)}
+				<TableRow position={[0, baseY + 1 + i]} onConfirm={makeOpenHandler(row)}>
+					<TableCell desktopOnly>{i + 1}</TableCell>
+					<TableCell><span class="lish-id">{row.id}</span></TableCell>
+					<TableCell><span class="lish-name">{row.name ?? $t('network.unnamed')}</span></TableCell>
+					<TableCell align="center">{row.totalSize !== undefined ? formatSize(row.totalSize) : '—'}</TableCell>
+					<TableCell align="center">{row.peers.length}</TableCell>
+				</TableRow>
+			{/each}
+		</Table>
+	{/if}
 {/if}
