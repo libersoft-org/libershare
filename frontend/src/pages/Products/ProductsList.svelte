@@ -1,10 +1,8 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { createNavArea, type NavPos, type NavItem } from '../../scripts/navArea.svelte.ts';
-	import { activateArea } from '../../scripts/areas.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { getGridColumnsCount } from '../../scripts/products.ts';
 	import ProductsItem from './ProductsItem.svelte';
 	import Product from '../Product/Product.svelte';
@@ -18,7 +16,6 @@
 	let { areaID, position, title, items, onBack }: Props = $props();
 	let selectedItem = $state<{ id: number; title: string } | null>(null);
 	let itemElements: HTMLElement[] = $state([]);
-	let removeBackHandler: (() => void) | null = null;
 
 	function getItemPos(index: number): NavPos {
 		const cols = getGridColumnsCount(itemElements);
@@ -27,21 +24,12 @@
 
 	function openItem(index: number): void {
 		selectedItem = items[index]!;
-		pushBreadcrumb(items[index]!.title);
-		navHandle.pause();
-		removeBackHandler = pushBackHandler(closeDetail);
+		detailSubPage.enter(items[index]!.title);
 	}
 
 	async function closeDetail(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
 		selectedItem = null;
-		popBreadcrumb();
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		await detailSubPage.exit();
 	}
 
 	const navHandle = createNavArea(() => ({
@@ -55,6 +43,7 @@
 			return [0, lastRow];
 		},
 	}));
+	const detailSubPage = createSubPage(navHandle, () => areaID);
 
 	onMount(() => {
 		const cleanups = items.map((_, idx) => {
@@ -109,7 +98,7 @@
 </style>
 
 {#if selectedItem}
-	<Product {areaID} category={title} itemTitle={selectedItem.title} itemID={selectedItem.id} onBack={closeDetail} />
+	<Product {areaID} category={title} itemTitle={selectedItem.title} itemID={selectedItem.id} onBack={() => void closeDetail()} />
 {:else}
 	<div class="items">
 		{#each items as item, index (item.id)}

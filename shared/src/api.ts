@@ -21,6 +21,7 @@ export class API {
 	readonly datasets: DatasetsAPI;
 	readonly fs: FsAPI;
 	readonly settings: SettingsAPI;
+	readonly identity: IdentityAPI;
 	readonly lishnets: LISHnetsAPI;
 	readonly lishs: LISHsAPI;
 	readonly transfer: TransferAPI;
@@ -31,6 +32,7 @@ export class API {
 		this.datasets = new DatasetsAPI(client);
 		this.fs = new FsAPI(client);
 		this.settings = new SettingsAPI(client);
+		this.identity = new IdentityAPI(client);
 		this.lishnets = new LISHnetsAPI(client);
 		this.lishs = new LISHsAPI(client);
 		this.transfer = new TransferAPI(client);
@@ -151,6 +153,66 @@ class SettingsAPI {
 
 	reset<T = any>(): Promise<T> {
 		return this.client.call<T>('settings.reset');
+	}
+
+	exportToFile(filePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<{ success: boolean; error?: string }> {
+		return this.client.call<{ success: boolean; error?: string }>('settings.exportToFile', { filePath, minifyJSON, compress, compressionAlgorithm });
+	}
+
+	parseFromFile<T = Record<string, unknown>>(filePath: string): Promise<T> {
+		return this.client.call<T>('settings.parseFromFile', { filePath });
+	}
+
+	parseFromJSON<T = Record<string, unknown>>(json: string): Promise<T> {
+		return this.client.call<T>('settings.parseFromJSON', { json });
+	}
+
+	parseFromURL<T = Record<string, unknown>>(url: string): Promise<T> {
+		return this.client.call<T>('settings.parseFromURL', { url });
+	}
+
+	applyImported(data: Record<string, unknown>): Promise<{ applied: number; skipped: string[] }> {
+		return this.client.call<{ applied: number; skipped: string[] }>('settings.applyImported', { data });
+	}
+}
+
+export interface IdentityBackup {
+	peerID: string;
+	privateKey: string;
+}
+
+class IdentityAPI {
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
+
+	get(): Promise<IdentityBackup> {
+		return this.client.call<IdentityBackup>('identity.get');
+	}
+
+	exportToFile(filePath: string, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('identity.exportToFile', { filePath, minifyJSON, compress, compressionAlgorithm });
+	}
+
+	parseFromFile(filePath: string): Promise<IdentityBackup> {
+		return this.client.call<IdentityBackup>('identity.parseFromFile', { filePath });
+	}
+
+	parseFromJSON(json: string): Promise<IdentityBackup> {
+		return this.client.call<IdentityBackup>('identity.parseFromJSON', { json });
+	}
+
+	parseFromURL(url: string): Promise<IdentityBackup> {
+		return this.client.call<IdentityBackup>('identity.parseFromURL', { url });
+	}
+
+	applyImported(privateKey: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('identity.applyImported', { privateKey });
+	}
+
+	regenerate(): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('identity.regenerate');
 	}
 }
 

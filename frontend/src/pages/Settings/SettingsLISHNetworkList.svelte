@@ -1,13 +1,12 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import { t, translateError, tt } from '../../scripts/language.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
-	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { pushBreadcrumb, popBreadcrumb, navigateTo } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
+	import { navigateTo } from '../../scripts/navigation.ts';
 	import { type LISHNetworkConfig, type NetworkNodeInfo } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { getNetworks, deleteNetwork as deleteNetworkFromAPI, updateNetwork as updateNetworkFromAPI, addNetwork as addNetworkFromAPI, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
@@ -28,12 +27,6 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
-	let showAddEdit = $state(false);
-	let showExport = $state(false);
-	let showExportAll = $state(false);
-	let showPublic = $state(false);
-	let showDeleteConfirm = $state(false);
 	let editingNetwork = $state<LISHNetworkConfig | null>(null);
 	let exportingNetwork = $state<LISHNetworkConfig | null>(null);
 	let deletingNetwork = $state<LISHNetworkConfig | null>(null);
@@ -53,33 +46,31 @@
 	// Row offsets for positions
 	let nodeInfoOffset = $derived(globalNodeInfo ? 1 + (nodeInfoShowAddresses ? globalNodeInfo.addresses.length : 0) : 0);
 
-	function openPublic(): void {
-		showPublic = true;
-		navHandle.pause();
-		pushBreadcrumb($t('settings.lishNetwork.publicList'));
-		removeBackHandler = pushBackHandler(handlePublicBack);
-	}
+	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const publicSubPage = createSubPage(navHandle, () => areaID);
+	const addEditSubPage = createSubPage(navHandle, () => areaID);
+	const exportSubPage = createSubPage(navHandle, () => areaID);
+	const exportAllSubPage = createSubPage(navHandle, () => areaID);
+	const deleteSubPage = createSubPage(navHandle, () => areaID);
 
-	async function handlePublicBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showPublic = false;
+	async function closePublic(): Promise<void> {
 		// Reload networks in case new ones were added
 		await loadNetworks();
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		await publicSubPage.exit();
+	}
+
+	function openPublic(): void {
+		publicSubPage.enter($t('settings.lishNetwork.publicList'), () => void closePublic());
+	}
+
+	async function closeAddEdit(): Promise<void> {
+		editingNetwork = null;
+		await addEditSubPage.exit();
 	}
 
 	function openAddNetwork(): void {
 		editingNetwork = null;
-		showAddEdit = true;
-		navHandle.pause();
-		pushBreadcrumb($t('common.add'));
-		removeBackHandler = pushBackHandler(handleAddEditBack);
+		addEditSubPage.enter($t('common.add'), () => void closeAddEdit());
 	}
 
 	function openImport(): void {
@@ -87,22 +78,7 @@
 	}
 
 	function openExportAll(): void {
-		showExportAll = true;
-		navHandle.pause();
-		pushBreadcrumb($t('common.exportAll'));
-		removeBackHandler = pushBackHandler(handleExportAllBack);
-	}
-
-	async function handleExportAllBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showExportAll = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		exportAllSubPage.enter($t('common.exportAll'));
 	}
 
 	async function connectNetwork(network: LISHNetworkConfig): Promise<void> {
@@ -134,40 +110,29 @@
 		await api.lishnets.replace(networks);
 	}
 
-	function openExport(network: LISHNetworkConfig): void {
-		exportingNetwork = network;
-		showExport = true;
-		navHandle.pause();
-		pushBreadcrumb(`${network.name} - ${$t('common.export')}`);
-		removeBackHandler = pushBackHandler(handleExportBack);
+	async function closeExport(): Promise<void> {
+		exportingNetwork = null;
+		await exportSubPage.exit();
 	}
 
-	async function handleExportBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showExport = false;
-		exportingNetwork = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+	function openExport(network: LISHNetworkConfig): void {
+		exportingNetwork = network;
+		exportSubPage.enter(`${network.name} - ${$t('common.export')}`, () => void closeExport());
 	}
 
 	function openEditNetwork(network: LISHNetworkConfig): void {
 		editingNetwork = network;
-		showAddEdit = true;
-		navHandle.pause();
-		pushBreadcrumb(`${network.name} - ${$t('common.edit')}`);
-		removeBackHandler = pushBackHandler(handleAddEditBack);
+		addEditSubPage.enter(`${network.name} - ${$t('common.edit')}`, () => void closeAddEdit());
+	}
+
+	async function closeDelete(): Promise<void> {
+		deletingNetwork = null;
+		await deleteSubPage.exit();
 	}
 
 	function deleteNetwork(network: LISHNetworkConfig): void {
 		deletingNetwork = network;
-		showDeleteConfirm = true;
-		navHandle.pause();
-		pushBreadcrumb(`${network.name} - ${$t('common.delete')}`);
+		deleteSubPage.enter(`${network.name} - ${$t('common.delete')}`, () => void closeDelete());
 	}
 
 	async function confirmDeleteNetwork(): Promise<void> {
@@ -176,35 +141,12 @@
 			const deletedName = deletingNetwork.name;
 			networks = networks.filter(n => n.networkID !== deletingNetwork!.networkID);
 			addNotification(tt('settings.lishNetwork.networkDeleted', { name: deletedName }), 'warning');
-			deletingNetwork = null;
-			showDeleteConfirm = false;
-			popBreadcrumb();
-			await tick();
-			navHandle.resume();
-			activateArea(areaID);
+			await closeDelete();
 		}
 	}
 
 	async function cancelDelete(): Promise<void> {
-		deletingNetwork = null;
-		showDeleteConfirm = false;
-		popBreadcrumb();
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
-	}
-
-	async function handleAddEditBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showAddEdit = false;
-		editingNetwork = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		await closeDelete();
 	}
 
 	async function handleSave(savedNetwork: NetworkFormData): Promise<void> {
@@ -220,19 +162,8 @@
 			// Reload from backend to get the generated values
 			await loadNetworks();
 		}
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showAddEdit = false;
-		editingNetwork = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		await closeAddEdit();
 	}
-
-	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
 
 	onMount(() => {
 		loadNetworks();
@@ -321,16 +252,16 @@
 	}
 </style>
 
-{#if showAddEdit}
+{#if addEditSubPage.active}
 	{@const networkForEdit = editingNetwork ? { id: editingNetwork.networkID, name: editingNetwork.name, description: editingNetwork.description, bootstrapServers: editingNetwork.bootstrapPeers.length > 0 ? editingNetwork.bootstrapPeers : [''] } : null}
-	<LISHNetworkAddEdit {areaID} {position} network={networkForEdit} onBack={handleAddEditBack} onSave={handleSave} />
-{:else if showExport}
-	<LISHNetworkExport {areaID} {position} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={handleExportBack} />
-{:else if showExportAll}
-	<LISHNetworkExportAll {areaID} {position} onBack={handleExportAllBack} />
-{:else if showPublic}
-	<LISHNetworkPublic {areaID} {position} onBack={handlePublicBack} />
-{:else if showDeleteConfirm && deletingNetwork}
+	<LISHNetworkAddEdit {areaID} {position} network={networkForEdit} onBack={() => void closeAddEdit()} onSave={handleSave} />
+{:else if exportSubPage.active}
+	<LISHNetworkExport {areaID} {position} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={() => void closeExport()} />
+{:else if exportAllSubPage.active}
+	<LISHNetworkExportAll {areaID} {position} onBack={() => void exportAllSubPage.exit()} />
+{:else if publicSubPage.active}
+	<LISHNetworkPublic {areaID} {position} onBack={() => void closePublic()} />
+{:else if deleteSubPage.active && deletingNetwork}
 	<ConfirmDialog title={$t('common.delete')} message={$t('settings.lishNetwork.confirmDelete', { name: deletingNetwork.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
 {:else}
 	<div class="lish-network-list">

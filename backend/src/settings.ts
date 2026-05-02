@@ -27,6 +27,7 @@ export interface SettingsData {
 		tempPath: string;
 		lishPath: string;
 		lishnetPath: string;
+		backupPath: string;
 	};
 	network: {
 		incomingPort: number;
@@ -137,6 +138,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		tempPath: '~/LiberShare/temp/',
 		lishPath: '~/LiberShare/lish/',
 		lishnetPath: '~/LiberShare/lishnet/',
+		backupPath: '~/LiberShare/backup/',
 	},
 	network: {
 		incomingPort: 9090,
@@ -226,7 +228,7 @@ export class Settings {
 	/** Create all storage directories from current settings (expanding ~ to home). */
 	async ensureStorageDirs(): Promise<void> {
 		const storage = this.get('storage') as SettingsData['storage'];
-		const paths = [storage.downloadPath, storage.tempPath, storage.lishPath, storage.lishnetPath];
+		const paths = [storage.downloadPath, storage.tempPath, storage.lishPath, storage.lishnetPath, storage.backupPath];
 		for (const p of paths) {
 			const resolved = Utils.expandHome(p);
 			await mkdir(resolved, { recursive: true });

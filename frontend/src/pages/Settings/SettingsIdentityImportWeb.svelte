@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { t } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { api } from '../../scripts/api.ts';
-	import { type LISHNetworkDefinition } from '@shared';
+	import { type IdentityBackup } from '@shared';
 	import ImportWebForm from '../../components/Import/ImportWebForm.svelte';
-	import ImportOverwrite from './SettingsLISHNetworkImportOverwrite.svelte';
+	import SettingsIdentityImportConfirm from './SettingsIdentityImportConfirm.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -13,9 +12,12 @@
 		onImport?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack, onImport }: Props = $props();
+	let currentPeerID = $state('');
 
-	function parseURL(url: string): Promise<LISHNetworkDefinition[]> {
-		return api.lishnets.parseFromURL(url);
+	async function parseURL(url: string): Promise<IdentityBackup> {
+		const cur = await api.identity.get();
+		currentPeerID = cur.peerID;
+		return await api.identity.parseFromURL(url);
 	}
 
 	function handleConfirmDone(): void {
@@ -25,8 +27,8 @@
 	}
 </script>
 
-<ImportWebForm {areaID} {position} {onBack} {parseURL} urlLabel={$t('settings.lishNetworkImport.url')} onConfirmDone={handleConfirmDone}>
+<ImportWebForm {areaID} {position} {onBack} {parseURL} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
-		<ImportOverwrite networks={data as LISHNetworkDefinition[]} {position} {onDone} />
+		<SettingsIdentityImportConfirm data={data as IdentityBackup} {currentPeerID} {position} {onDone} />
 	{/snippet}
 </ImportWebForm>

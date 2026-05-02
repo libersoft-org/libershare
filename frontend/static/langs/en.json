@@ -47,6 +47,7 @@
 		"optional": "optional",
 		"fromFile": "From file",
 		"fromWeb": "From web",
+		"fromJSON": "From JSON",
 		"extensions": "extensions",
 		"openDirectory": "Open directory",
 		"copyLishID": "Copy LISH ID",
@@ -225,11 +226,8 @@
 		},
 		"import": {
 			"fromJSON": "From LISH JSON",
-			"uploadFromLocal": "Upload from local computer",
 			"localFile": "Local file",
 			"noFileSelected": "No file selected",
-			"selectLocalFile": "Select local file",
-			"uploadRequired": "Please select a file to upload",
 			"filePath": "LISH file",
 			"url": "URL address of LISH file",
 			"placeholder": "Paste LISH JSON here ...",
@@ -239,8 +237,7 @@
 			"jsonRequired": "LISH JSON is required",
 			"autoStartSharing": "Automatically start sharing after adding",
 			"autoStartDownloading": "Automatically start downloading after adding",
-			"confirmOverwrite": "The following LISH already exists:\n\nName: {name}\nID: {id}\n\nDo you want to overwrite it?",
-			"importing": "Importing ..."
+			"confirmOverwrite": "The following LISH already exists:\n\nName: {name}\nID: {id}\n\nDo you want to overwrite it?"
 		},
 		"export": {
 			"errorIDRequired": "LISH ID is required"
@@ -266,6 +263,12 @@
 		"errorDownloaderNotInitialized": "Downloader not initialized",
 		"errorDownload": "Download failed: {detail}"
 	},
+	"import": {
+		"uploadFromLocal": "Upload from local computer",
+		"selectLocalFile": "Select local file",
+		"uploadRequired": "Please select a file to upload",
+		"importing": "Importing ..."
+	},
 	"settings": {
 		"title": "Settings",
 		"system": {
@@ -282,6 +285,7 @@
 			"directoryTemp": "Unfinished downloads directory",
 			"directoryLISH": "Default LISH files directory",
 			"directoryLISHnet": "Default LISHNET files directory",
+			"directoryBackup": "Settings backup directory",
 			"incomingPort": "Network port for incoming connections",
 			"maxDownloadPeersPerLISH": "Maximum concurrent connections per LISH for download (0 = unlimited)",
 			"maxUploadPeersPerLISH": "Maximum concurrent connections per LISH for upload (0 = unlimited)",
@@ -333,6 +337,28 @@
 			"fromJSON": "From LISHNET JSON",
 			"filePath": "LISHNET file",
 			"url": "URL address of LISHNET file"
+		},
+		"backup": {
+			"title": "Settings backup",
+			"exportTitle": "Export settings",
+			"importTitle": "Restore settings",
+			"confirmRestore": "Restore settings? Keys present in the backup will overwrite current values.",
+			"exported": "Settings were exported",
+			"restored": "Settings restored ({count} values)",
+			"restartHint": "Some changes will only take effect after restarting the application.",
+			"errorInvalidFormat": "Invalid backup file format"
+		},
+		"identity": {
+			"title": "Identity",
+			"regenerate": "Generate new",
+			"regenerateTitle": "Generate new identity",
+			"regenerateConfirm": "Do you really want to generate a new identity? The current private key and peer ID will be overwritten. We recommend exporting first.",
+			"regenerated": "Identity was generated",
+			"importTitle": "Restore identity",
+			"confirmImport": "Replace identity? Current peer ID {current} will be overwritten with {next}. Network will be restarted.",
+			"exported": "Identity was exported",
+			"imported": "Identity was restored",
+			"errorInvalidFormat": "Invalid identity file format"
 		},
 		"language": "Language",
 		"time": {

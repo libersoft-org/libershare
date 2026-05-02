@@ -6,6 +6,7 @@ import { CodedError, ErrorCodes } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
+import { initIdentityHandlers } from './identity.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
 import { initLISHsHandlers } from './lishs.ts';
@@ -67,6 +68,7 @@ export class APIServer {
 		const _fs = initFsHandlers();
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest);
+		const _identity = initIdentityHandlers(this.networks);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownload);
 		const hasSubscribers = (event: string): boolean => {
 			for (const client of this.clients) {
@@ -90,6 +92,19 @@ export class APIServer {
 			'settings.list': _settings.list,
 			'settings.getDefaults': _settings.getDefaults,
 			'settings.reset': _settings.reset,
+			'settings.exportToFile': _settings.exportToFile,
+			'settings.parseFromFile': _settings.parseFromFile,
+			'settings.parseFromJSON': _settings.parseFromJSON,
+			'settings.parseFromURL': _settings.parseFromURL,
+			'settings.applyImported': _settings.applyImported,
+			// Identity
+			'identity.get': _identity.get,
+			'identity.exportToFile': _identity.exportToFile,
+			'identity.parseFromFile': _identity.parseFromFile,
+			'identity.parseFromJSON': _identity.parseFromJSON,
+			'identity.parseFromURL': _identity.parseFromURL,
+			'identity.applyImported': _identity.applyImported,
+			'identity.regenerate': _identity.regenerate,
 			// LISH Networks
 			'lishnets.list': _lishnets.list,
 			'lishnets.get': _lishnets.get,

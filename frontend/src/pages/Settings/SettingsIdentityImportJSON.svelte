@@ -2,9 +2,9 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { api } from '../../scripts/api.ts';
-	import { type LISHNetworkDefinition } from '@shared';
+	import { type IdentityBackup } from '@shared';
 	import ImportJSONForm from '../../components/Import/ImportJSONForm.svelte';
-	import ImportOverwrite from './SettingsLISHNetworkImportOverwrite.svelte';
+	import SettingsIdentityImportConfirm from './SettingsIdentityImportConfirm.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -13,9 +13,12 @@
 		onImport?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, initialFilePath = '', onBack, onImport }: Props = $props();
+	let currentPeerID = $state('');
 
-	function parseJSON(content: string): Promise<LISHNetworkDefinition[]> {
-		return api.lishnets.parseFromJSON(content);
+	async function parseJSON(content: string): Promise<IdentityBackup> {
+		const cur = await api.identity.get();
+		currentPeerID = cur.peerID;
+		return await api.identity.parseFromJSON(content);
 	}
 
 	function handleConfirmDone(): void {
@@ -25,8 +28,8 @@
 	}
 </script>
 
-<ImportJSONForm {areaID} {position} {onBack} {parseJSON} placeholder={'{"networkID": "...", "name": "...", ...}'} errorEmptyKey="settings.lishNetwork.errorInvalidFormat" {initialFilePath} onConfirmDone={handleConfirmDone}>
+<ImportJSONForm {areaID} {position} {onBack} {parseJSON} placeholder={'{"peerID": "12D3KooW...", "privateKey": "..."}'} errorEmptyKey="settings.identity.errorInvalidFormat" {initialFilePath} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
-		<ImportOverwrite networks={data as LISHNetworkDefinition[]} {position} {onDone} />
+		<SettingsIdentityImportConfirm data={data as IdentityBackup} {currentPeerID} {position} {onDone} />
 	{/snippet}
 </ImportJSONForm>

@@ -27,6 +27,7 @@ export const storagePath = writable('');
 export const storageTempPath = writable('');
 export const storageLISHPath = writable('');
 export const storageLISHnetPath = writable('');
+export const storageBackupPath = writable('');
 export const incomingPort = writable(0);
 export const maxDownloadPeersPerLISH = writable(0);
 export const maxUploadPeersPerLISH = writable(0);
@@ -96,6 +97,7 @@ export async function loadSettings(): Promise<void> {
 		storageTempPath.set(settings.storage.tempPath);
 		storageLISHPath.set(settings.storage.lishPath);
 		storageLISHnetPath.set(settings.storage.lishnetPath);
+		storageBackupPath.set(settings.storage.backupPath ?? '');
 
 		// Network
 		incomingPort.set(settings.network.incomingPort);
@@ -181,6 +183,10 @@ export function setStorageLISHPath(path: string): void {
 
 export function setStorageLISHnetPath(path: string): void {
 	updateSetting(storageLISHnetPath, 'storage.lishnetPath', path);
+}
+
+export function setStorageBackupPath(path: string): void {
+	updateSetting(storageBackupPath, 'storage.backupPath', path);
 }
 
 export function setIncomingPort(value: number): void {

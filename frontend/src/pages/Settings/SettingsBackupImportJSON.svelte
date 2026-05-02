@@ -2,9 +2,8 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { api } from '../../scripts/api.ts';
-	import { type LISHNetworkDefinition } from '@shared';
 	import ImportJSONForm from '../../components/Import/ImportJSONForm.svelte';
-	import ImportOverwrite from './SettingsLISHNetworkImportOverwrite.svelte';
+	import SettingsBackupImportConfirm from './SettingsBackupImportConfirm.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -14,8 +13,10 @@
 	}
 	let { areaID, position = LAYOUT.content, initialFilePath = '', onBack, onImport }: Props = $props();
 
-	function parseJSON(content: string): Promise<LISHNetworkDefinition[]> {
-		return api.lishnets.parseFromJSON(content);
+	type BackupData = Record<string, unknown>;
+
+	function parseJSON(content: string): Promise<BackupData> {
+		return api.settings.parseFromJSON(content);
 	}
 
 	function handleConfirmDone(): void {
@@ -25,8 +26,8 @@
 	}
 </script>
 
-<ImportJSONForm {areaID} {position} {onBack} {parseJSON} placeholder={'{"networkID": "...", "name": "...", ...}'} errorEmptyKey="settings.lishNetwork.errorInvalidFormat" {initialFilePath} onConfirmDone={handleConfirmDone}>
+<ImportJSONForm {areaID} {position} {onBack} {parseJSON} placeholder={'{"language": "...", "ui": {...}, ...}'} errorEmptyKey="settings.backup.errorInvalidFormat" {initialFilePath} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
-		<ImportOverwrite networks={data as LISHNetworkDefinition[]} {position} {onDone} />
+		<SettingsBackupImportConfirm data={data as BackupData} {position} {onDone} />
 	{/snippet}
 </ImportJSONForm>

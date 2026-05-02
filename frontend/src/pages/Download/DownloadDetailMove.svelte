@@ -1,15 +1,13 @@
 <script lang="ts">
-	import { tick, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { resetVerifyState, setMovingStatus } from '../../scripts/downloads.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -24,37 +22,21 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, lish, onBack }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
-	let browsingDirectory = $state(false);
 	let newDirectory = $state(untrack(() => lish.directory ?? ''));
 	let moveData = $state(true);
 	let createSubdirectory = $state(true);
-	let moving = $state(false);
 	let errorMessage = $state('');
 	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
+	const browseSubPage = createSubPage(navHandle, () => areaID);
+	const progressSubPage = createSubPage(navHandle, () => areaID);
 
 	function openDirectoryBrowse(): void {
-		browsingDirectory = true;
-		navHandle.pause();
-		pushBreadcrumb($t('common.newDirectory'));
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		browseSubPage.enter($t('common.newDirectory'));
 	}
 
 	function handleDirectorySelect(directoryPath: string): void {
 		newDirectory = normalizePath(directoryPath);
-		handleBrowseBack();
-	}
-
-	async function handleBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingDirectory = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		void browseSubPage.exit();
 	}
 
 	function handleMove(): void {
@@ -67,11 +49,8 @@
 	}
 
 	function openProgressPage(): void {
-		moving = true;
 		setMovingStatus(lish.id, true);
-		navHandle.pause();
-		pushBreadcrumb($t('downloads.moveProgress.title'));
-		removeBackHandler = pushBackHandler(handleProgressNavBack);
+		progressSubPage.enter($t('downloads.moveProgress.title'), () => void handleProgressClose());
 	}
 
 	function handleMoveComplete(): void {
@@ -80,17 +59,8 @@
 		api.lishs.verify(lish.id).catch(err => console.error('Verification after move failed:', err));
 	}
 
-	function handleProgressNavBack(): void {
-		handleProgressClose();
-	}
-
-	function handleProgressClose(): void {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		moving = false;
+	async function handleProgressClose(): Promise<void> {
+		await progressSubPage.exit();
 		onBack?.();
 	}
 </script>
@@ -120,10 +90,10 @@
 	}
 </style>
 
-{#if browsingDirectory}
-	<FileBrowser {areaID} {position} initialPath={newDirectory || lish.directory || ''} showPath directoriesOnly selectDirectoryButton onSelect={handleDirectorySelect} onBack={handleBrowseBack} />
-{:else if moving}
-	<DownloadDetailMoveProgress {areaID} {position} params={{ lishID: lish.id, newDirectory: newDirectory.trim(), moveData, createSubdirectory }} onBack={handleProgressNavBack} onComplete={handleMoveComplete} />
+{#if browseSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={newDirectory || lish.directory || ''} showPath directoriesOnly selectDirectoryButton onSelect={handleDirectorySelect} onBack={() => void browseSubPage.exit()} />
+{:else if progressSubPage.active}
+	<DownloadDetailMoveProgress {areaID} {position} params={{ lishID: lish.id, newDirectory: newDirectory.trim(), moveData, createSubdirectory }} onBack={() => void handleProgressClose()} onComplete={handleMoveComplete} />
 {:else}
 	<div class="move">
 		<div class="container">
@@ -138,7 +108,7 @@
 			{/if}
 		</div>
 		<ButtonBar justify="center" basePosition={[0, 3]}>
-			<Button icon="/img/move.svg" label={$t('downloads.move')} disabled={moving} onConfirm={handleMove} />
+			<Button icon="/img/move.svg" label={$t('downloads.move')} disabled={progressSubPage.active} onConfirm={handleMove} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
 	</div>

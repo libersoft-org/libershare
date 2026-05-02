@@ -4,9 +4,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { activateArea } from '../../scripts/areas.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { type PeerListEntry, type PeerLishEntry } from '@shared';
 	import { api } from '../../scripts/api.ts';
@@ -30,11 +28,9 @@
 	let loading = $state(true);
 	let error = $state('');
 	let addingLish = $state<string | null>(null);
-	let removeBackHandler: (() => void) | null = null;
 	// Per-row DOM refs so we can scroll the highlighted LISH into view once results load.
 	let itemEls = $state<Record<string, HTMLDivElement | undefined>>({});
 	// Detail view state
-	let showLishDetail = $state(false);
 	let selectedLish = $state<PeerLishEntry | null>(null);
 
 	async function loadLishs(): Promise<void> {
@@ -73,23 +69,12 @@
 
 	function openLishDetail(lish: PeerLishEntry): void {
 		selectedLish = lish;
-		showLishDetail = true;
-		navHandle.pause();
-		pushBreadcrumb(lish.name || lish.id.slice(0, 16) + '...');
-		removeBackHandler = pushBackHandler(handleLishDetailBack);
+		lishDetailSubPage.enter(lish.name || lish.id.slice(0, 16) + '...');
 	}
 
 	async function handleLishDetailBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showLishDetail = false;
 		selectedLish = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		await lishDetailSubPage.exit();
 	}
 
 	function getConnectionInfo(): string {
@@ -106,6 +91,7 @@
 		activate: true,
 		listRange: () => [1, Math.max(1, lishs?.length ?? 0)],
 	}));
+	const lishDetailSubPage = createSubPage(navHandle, () => areaID);
 
 	onMount(() => {
 		loadLishs();
@@ -184,8 +170,8 @@
 	}
 </style>
 
-{#if showLishDetail && selectedLish}
-	<PeerDetailLish {areaID} {position} lish={selectedLish} peerID={peer.peerID} {networkID} onBack={handleLishDetailBack} />
+{#if lishDetailSubPage.active && selectedLish}
+	<PeerDetailLish {areaID} {position} lish={selectedLish} peerID={peer.peerID} {networkID} onBack={() => void handleLishDetailBack()} />
 {:else}
 	<div class="peer-detail">
 		<div class="container">
