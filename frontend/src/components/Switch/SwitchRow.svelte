@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getContext, onMount } from 'svelte';
+	import { play as playSound } from '../../scripts/audio.ts';
 	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
 	import Row from '../Row/Row.svelte';
 	import Switch from './Switch.svelte';
@@ -49,7 +50,10 @@
 <Row selected={isSelected} {disabled} bind:el>
 	<div
 		class="switch-row"
-		onclick={() => (onToggle ?? onConfirm)?.()}
+		onclick={() => {
+			playSound('confirm');
+			(onToggle ?? onConfirm)?.();
+		}}
 		onkeydown={e => {
 			if (e.key === 'Enter') (onToggle ?? onConfirm)?.();
 		}}

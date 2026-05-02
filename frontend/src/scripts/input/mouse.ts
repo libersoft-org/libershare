@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import { findBindingForElement, type NavItem } from '../navArea.svelte.ts';
 import { activateArea } from '../areas.ts';
+import { play as playSound } from '../audio.ts';
 type MouseAction = 'back';
 type MouseCallback = () => void;
 const CURSOR_HIDE_DELAY = 2000;
@@ -116,6 +117,8 @@ class MouseManager {
 		if (binding) {
 			activateArea(binding.controller.areaID);
 			binding.controller.select(binding.item.pos);
+			// Match keyboard flow which plays 'confirm' via areas.ts `dispatchAction('confirmUp')`.
+			playSound('confirm');
 			binding.item.onConfirm?.();
 			return;
 		}

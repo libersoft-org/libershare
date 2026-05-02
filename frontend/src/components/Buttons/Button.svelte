@@ -3,6 +3,7 @@
 	import { type MenuButtonsContext } from '../Menu/MenuButtons.svelte';
 	import { type ButtonBarContext } from './ButtonBar.svelte';
 	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
+	import { play as playSound } from '../../scripts/audio.ts';
 	import Icon from '../Icon/Icon.svelte';
 	interface Props {
 		label?: string | undefined;
@@ -38,6 +39,10 @@
 
 	function handleClick() {
 		if (disabled) return;
+		// Mirror keyboard: pressing Enter on a focused item plays the confirm sound via
+		// areas.ts `dispatchAction('confirmUp')`. Mouse clicks on Button bypass that flow
+		// (Button opts out of mouse delegation), so play the sound here for parity.
+		playSound('confirm');
 		if (menuButtons && index >= 0) {
 			menuButtons.handleClick(index);
 		} else if (onConfirm) {
