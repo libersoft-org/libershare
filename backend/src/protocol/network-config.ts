@@ -301,7 +301,16 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 							dbg.trustedLogged.add(pid);
 							console.debug(`[NET] PX trust score applied peer=${pid.slice(0, 16)} source=${isConfiguredTrustedPXPeer ? 'configured' : 'bootstrap'}`);
 						}
-						return isTrustedPXPeer ? 1000 : 0;
+						// Non-trusted peers get +1 instead of 0 so their score (= appSpecificWeight × 1
+						// = 1) sits *above* publishThreshold (-50) and gossipThreshold (-10).
+						// Returning 0 caused the gossipsub library to filter freshly-connected
+						// peers out of `floodPublish` and mesh GRAFT candidates because score
+						// computation returned `undefined` (no scoring history) and `undefined >=
+						// publishThreshold` is `false` in JS — preventing search broadcasts from
+						// reaching them. +1 is a no-op for sybil/abuse defence (penalties still
+						// drop the score well below thresholds) but keeps neutral peers eligible
+						// for delivery, which restores log_D(N) gossip propagation at scale.
+						return isTrustedPXPeer ? 1000 : 1;
 					},
 					// IP colocation factor: would penalise many peers reporting the same
 					// public IP (sybil heuristic). Disabled (weight=0) because NAT'd fleet

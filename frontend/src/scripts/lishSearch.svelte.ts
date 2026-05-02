@@ -31,10 +31,31 @@ export function createLishSearch(): LishSearchSession {
 	function handleUpdate(data: unknown): void {
 		const d = data as { searchID: string; lishs: LishSearchResult[] };
 		if (d.searchID !== searchID) return;
-		// Backend sends the cumulative row for each updated LISH; replace by id.
+		// Backend sends the cumulative row for each updated LISH. Mutate existing row in
+		// place when present (preserves object identity for any caller holding a snapshot
+		// reference, e.g. detail page captured by openLishPeerList) and only insert a
+		// fresh row when the LISH was not seen before. Without this, replacing the row
+		// object orphaned the detail page's reference and `peers` updates stopped
+		// propagating into the open detail view.
 		const byID = new Map(results.map(r => [r.id, r] as const));
-		for (const row of d.lishs) byID.set(row.id, row);
-		results = [...byID.values()];
+		let inserted = false;
+		for (const incoming of d.lishs) {
+			const existing = byID.get(incoming.id);
+			if (existing) {
+				// Merge: in-place replace fields the backend may have refined (name, totalSize)
+				// and union the peers list by peerID.
+				if (incoming.name !== undefined) existing.name = incoming.name;
+				if (incoming.totalSize !== undefined) existing.totalSize = incoming.totalSize;
+				const known = new Set(existing.peers.map(p => p.peerID));
+				for (const p of incoming.peers) if (!known.has(p.peerID)) existing.peers.push(p);
+			} else {
+				byID.set(incoming.id, incoming);
+				inserted = true;
+			}
+		}
+		// Only reassign results array reference if a new LISH was discovered — Svelte 5
+		// reactivity tracks deep mutations on existing rows automatically.
+		if (inserted) results = [...byID.values()];
 	}
 	function handleComplete(data: unknown): void {
 		const d = data as { searchID: string };
