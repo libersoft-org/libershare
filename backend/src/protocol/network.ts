@@ -1141,6 +1141,12 @@ export class Network {
 		// low-traffic topics per Ethereum consensus research.
 		const scoreSvc = (this.pubsub as any).score;
 		if (scoreSvc?.params?.topics) {
+			// CRITICAL: every numeric field below must be defined. Missing decay fields
+			// turn `0 * undefined = NaN` in PeerScore.refreshScores() (called every
+			// decayInterval), which then propagates through computeScore via P3b
+			// (`tstats.meshFailurePenalty * weight`) into the final per-peer score.
+			// A NaN score makes `score >= publishThreshold` evaluate to false in JS,
+			// silently excluding peers from gossipsub `floodPublish` recipients.
 			scoreSvc.params.topics[topic] = {
 				topicWeight: 0.5,
 				timeInMeshWeight: 0.01,
@@ -1149,8 +1155,17 @@ export class Network {
 				firstMessageDeliveriesWeight: 0.5,
 				firstMessageDeliveriesDecay: 0.998,
 				firstMessageDeliveriesCap: 100,
+				// P3 (meshMessageDeliveries) intentionally disabled via weight=0, but the
+				// decay/cap/threshold/activation/window fields must still be defined or
+				// `refreshScores` will multiply existing counter by undefined → NaN.
 				meshMessageDeliveriesWeight: 0,
+				meshMessageDeliveriesDecay: 0.5,
+				meshMessageDeliveriesCap: 100,
+				meshMessageDeliveriesThreshold: 20,
+				meshMessageDeliveriesActivation: 5000,
+				meshMessageDeliveriesWindow: 10,
 				meshFailurePenaltyWeight: 0,
+				meshFailurePenaltyDecay: 0.5,
 				// invalidMessageDeliveriesWeight tuned to -5 (default would be -20). The
 				// stronger default, multiplied by topicWeight=0.5, easily produces -320
 				// scores that graylist half the fleet after every coordinated restart.
