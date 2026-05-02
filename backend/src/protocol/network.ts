@@ -216,8 +216,8 @@ export class Network {
 					// The underlying stream state (closed) is already tracked by gossipsub; losing
 					// the write is exactly what the existing try/catch around sendRpc assumed.
 					if (result && typeof (result as Promise<unknown>).catch === 'function') {
-						(result as Promise<unknown>).catch(() => {
-							/* stream closed mid-write, swallowed */
+						(result as Promise<unknown>).catch((e: any) => {
+							console.warn('[GS-PUSH-FAIL] async push rejected:', e?.code ?? e?.name ?? '', e?.message ?? String(e));
 						});
 					}
 					return result;
@@ -812,11 +812,26 @@ export class Network {
 				const topicInfo = this.pubsub!.getTopics()
 					.map((t: string) => {
 						const subs = this.pubsub!.getSubscribers(t);
-						return `${t.slice(0, 28)}[${subs.length}]`;
+						const mesh = (this.pubsub as any).getMeshPeers ? (this.pubsub as any).getMeshPeers(t) : [];
+						return `${t.slice(0, 28)}[subs=${subs.length} mesh=${mesh.length}]`;
 					})
 					.join(' ');
 				console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${topicInfo}`);
 				console.debug(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
+				// DEBUG: per-topic mesh members detail
+				for (const t of this.pubsub!.getTopics()) {
+					const subs = this.pubsub!.getSubscribers(t).map((p: any) => p.toString().slice(0, 12));
+					const mesh = (this.pubsub as any).getMeshPeers ? (this.pubsub as any).getMeshPeers(t).map((p: any) => p.toString().slice(0, 12)) : [];
+					console.debug(`   [MESH] ${t.slice(0, 28)} subs=[${subs.join(',')}] mesh=[${mesh.join(',')}]`);
+				}
+				// DEBUG: gossipsub stream state — outbound streams are mesh-graft prerequisite
+				const gs: any = this.pubsub;
+				if (gs?.streamsOutbound && gs?.streamsInbound) {
+					const out = Array.from(gs.streamsOutbound.keys()).map((p: any) => p.toString().slice(0, 12));
+					const inb = Array.from(gs.streamsInbound.keys()).map((p: any) => p.toString().slice(0, 12));
+					const direct = gs.direct ? Array.from(gs.direct).map((p: any) => p.toString().slice(0, 12)) : [];
+					console.debug(`   [GS-STREAMS] out=[${out.join(',')}] in=[${inb.join(',')}] direct=[${direct.join(',')}]`);
+				}
 				// Announced multiaddrs — if /p2p-circuit appears, relay reservation is active
 				const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
 				const circuit = myAddrs.filter(a => a.includes('/p2p-circuit'));
@@ -1361,7 +1376,9 @@ export class Network {
 		}
 		trace(`[NET] broadcast ${topic}: ${data['type']}`);
 		const encoded = new TextEncoder().encode(JSON.stringify(data));
-		await this.pubsub.publish(topic, encoded);
+		const result = await this.pubsub.publish(topic, encoded);
+		const recips = (result as any)?.recipients?.map((p: any) => p.toString().slice(0, 12)) ?? [];
+		trace(`[NET] broadcast ${topic.slice(0, 28)}: ${data['type']} → recipients=[${recips.join(',')}] count=${recips.length}`);
 	}
 
 	/**

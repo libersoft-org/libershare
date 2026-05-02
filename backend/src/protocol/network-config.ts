@@ -106,13 +106,28 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// but marks public transport addresses as unverified (requires AutoNAT confirmation).
 	// appendAnnounce addresses are always marked as verified, so they appear immediately.
 	// We auto-detect non-internal IPv4 interfaces and add them here.
+	//
+	// Filter rules (in order):
+	// 1. Skip internal (loopback) and link-local (169.254.0.0/16) — never useful.
+	// 2. Skip docker bridge interfaces (docker0, br-XXXX) — these are HOST gateway IPs
+	//    visible to a container running with --network=bridge. The IP belongs to the
+	//    bridge gateway on the host, NOT to our container — announcing it makes peers
+	//    dial a different host and silently lose pubsub stream traffic. Confirmed bug
+	//    on docker setups: docker announces 192.168.x.1 (bridge gw) → peers dial that
+	//    address → "successful" stream open to wrong endpoint → no message delivery.
+	const isDockerBridgeIface = (name: string): boolean => {
+		// docker0 = legacy bridge, br-<hash> = user-defined bridges, vethXXXX = veth pair (rare in container)
+		return name === 'docker0' || /^br-[0-9a-f]+$/i.test(name) || /^veth/i.test(name);
+	};
 	const appendAnnounceAddresses: string[] = [];
 	const ifaces = networkInterfaces();
 	for (const [name, addrs] of Object.entries(ifaces)) {
 		if (!addrs) continue;
+		if (isDockerBridgeIface(name)) {
+			console.log(`✗ Announce address SKIPPED (docker bridge gw, ${name}): ${(addrs[0] || {}).address ?? '?'}`);
+			continue;
+		}
 		for (const addr of addrs) {
-			// Skip link-local (169.254.0.0/16) — announcing these never helps
-			// a remote peer and pollutes the peerStore with unreachable addresses.
 			if (addr.family === 'IPv4' && !addr.internal && !isLinkLocalIp(addr.address)) {
 				appendAnnounceAddresses.push(`/ip4/${addr.address}/tcp/${port}`);
 				console.log(`✓ Announce address (auto-detected, ${name}): /ip4/${addr.address}/tcp/${port}`);
