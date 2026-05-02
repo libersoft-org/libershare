@@ -467,6 +467,11 @@
 		"keyboard": {
 			"title": "Keyboard"
 		},
+		"mouse": {
+			"title": "Mouse",
+			"leftButton": "Left button",
+			"rightButton": "Right button"
+		},
 		"gamepad": {
 			"title": "Gamepad",
 			"dpadOrStick": "D-pad / analog stick"

@@ -91,7 +91,10 @@
 		     spinner once results arrived, which made the search look "done" prematurely. -->
 		<div class="search-status stacked">
 			<Spinner size="8vh" />
-			<span>{$t('network.searching')}{#if search.results.length > 0} — {$t('network.lishCount', { count: String(search.results.length) })}{/if}</span>
+			<span
+				>{$t('network.searching')}{#if search.results.length > 0}
+					— {$t('network.lishCount', { count: String(search.results.length) })}{/if}</span
+			>
 		</div>
 	{:else if search.results.length === 0 && search.searchID !== null}
 		<Alert type="warning" message={$t('network.noResults')} />

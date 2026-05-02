@@ -32,6 +32,12 @@
 		{ keys: 'A – Z, 0 – 9', action: $t('help.actions.typeAhead') },
 	]);
 
+	// Mouse bindings
+	let mouseBindings = $derived<Binding[]>([
+		{ keys: $t('help.mouse.leftButton'), action: $t('help.actions.confirm') },
+		{ keys: $t('help.mouse.rightButton'), action: $t('help.actions.back') },
+	]);
+
 	// Gamepad bindings — mirror mappings in gamepad.ts + input.ts
 	let gamepadBindings = $derived<Binding[]>([
 		{ keys: $t('help.gamepad.dpadOrStick'), action: $t('help.actions.navigate') },
@@ -46,9 +52,10 @@
 		{ keys: 'START + Y', action: $t('help.actions.reload') },
 	]);
 
-	// Row Y positions: back = 0, keyboard rows start at 1, gamepad rows follow.
+	// Row Y positions: back = 0, keyboard rows start at 1, mouse rows follow, gamepad rows follow.
 	let keyboardStartY = 1;
-	let gamepadStartY = $derived(keyboardStartY + keyboardBindings.length);
+	let mouseStartY = $derived(keyboardStartY + keyboardBindings.length);
+	let gamepadStartY = $derived(mouseStartY + mouseBindings.length);
 	let lastRowY = $derived(gamepadStartY + gamepadBindings.length - 1);
 
 	createNavArea(() => ({
@@ -113,6 +120,17 @@
 			<Table columns="30vh 1fr">
 				{#each keyboardBindings as b, i}
 					<TableRow position={[0, keyboardStartY + i]}>
+						<TableCell><span class="keys">{b.keys}</span></TableCell>
+						<TableCell>{b.action}</TableCell>
+					</TableRow>
+				{/each}
+			</Table>
+		</div>
+		<div>
+			<div class="subheading">{$t('help.mouse.title')}</div>
+			<Table columns="30vh 1fr">
+				{#each mouseBindings as b, i}
+					<TableRow position={[0, mouseStartY + i]}>
 						<TableCell><span class="keys">{b.keys}</span></TableCell>
 						<TableCell>{b.action}</TableCell>
 					</TableRow>
