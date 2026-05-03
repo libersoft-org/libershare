@@ -112,7 +112,7 @@ describe('network-config.ts — PX trust policy', () => {
 		const peerExchangeStart = SETTINGS_TS.indexOf('peerExchange: {', defaultsStart);
 		const defaultBlock = SETTINGS_TS.slice(peerExchangeStart, SETTINGS_TS.indexOf('system:', peerExchangeStart));
 		expect(defaultBlock).toContain('enabled: true');
-		expect(defaultBlock).toContain('acceptPXThreshold: 10');
+		expect(defaultBlock).toContain(`acceptPXThreshold: ${DEFAULT_ACCEPT_PX_THRESHOLD}`);
 		expect(defaultBlock).toContain('trustedPeerIds: []');
 		expect(defaultBlock).toContain('ingressFilterEnabled: true');
 	});
@@ -289,12 +289,14 @@ describe('normalizeTrustedPeerIds helper', () => {
 });
 
 describe('parseAcceptPXThreshold helper', () => {
-	it('accepts positive finite numbers as-is', () => {
+	it('accepts finite numbers above the neutral appSpecificScore baseline as-is', () => {
 		expect(parseAcceptPXThreshold(25)).toEqual({ value: 25, unsafe: false, raw: 25 });
-		expect(parseAcceptPXThreshold(1)).toEqual({ value: 1, unsafe: false, raw: 1 });
 	});
 
-	it('flags zero and negative numbers as unsafe and falls back to default', () => {
+	it('flags values at or below the neutral appSpecificScore baseline as unsafe and falls back to default', () => {
+		const one = parseAcceptPXThreshold(1);
+		expect(one.unsafe).toBe(true);
+		expect(one.value).toBe(DEFAULT_ACCEPT_PX_THRESHOLD);
 		const z = parseAcceptPXThreshold(0);
 		expect(z.unsafe).toBe(true);
 		expect(z.value).toBe(DEFAULT_ACCEPT_PX_THRESHOLD);
