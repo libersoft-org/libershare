@@ -206,10 +206,12 @@ export class Network {
 				const proto = Object.getPrototypeOf(sample);
 				if (!proto || typeof proto.push !== 'function' || proto.__libershareOutboundPatched) return true;
 				const original = proto.push;
-				proto.push = function (this: any, data: any): any {
+				// Forward all arguments via rest+apply so a future upstream signature
+				// extension (e.g. push(data, opts)) is preserved transparently.
+				proto.push = function (this: any, ...args: any[]): any {
 					let result: any;
 					try {
-						result = original.call(this, data);
+						result = original.apply(this, args);
 					} catch (e) {
 						// Belt & braces — also handle the sync path if upstream ever de-asyncs push()
 						return false;
@@ -235,7 +237,15 @@ export class Network {
 									}
 								}
 							}
-							console.warn('[GS-PUSH-FAIL] async push rejected to', evicted || 'unknown', ':', e?.code ?? e?.name ?? '', e?.message ?? String(e), '— evicted stream');
+							// Rate-limit so a flapping peer (NAT churn / Wi-Fi roam) cannot fill the log
+							// with thousands of identical lines per hour. One warn line per peer per 5 s.
+							const lastLog: Map<string, number> = ((gs as any).__libershareGsPushFailLogged ??= new Map());
+							const now = Date.now();
+							const key = evicted || 'unknown';
+							if ((lastLog.get(key) ?? 0) + 5000 < now) {
+								lastLog.set(key, now);
+								console.warn('[GS-PUSH-FAIL] async push rejected to', key, ':', e?.code ?? e?.name ?? '', e?.message ?? String(e), '— evicted stream');
+							}
 						});
 					}
 					return result;
