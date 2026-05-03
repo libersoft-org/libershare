@@ -291,15 +291,20 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 						const isConfiguredTrustedPXPeer = trustedPXPeerIDs.has(pid);
 						const isBootstrapPeer = bootstrapPeerIDs.has(pid);
 						const isTrustedPXPeer = pxEnabled && (isConfiguredTrustedPXPeer || isBootstrapPeer);
-						// Trace a bounded sample so score callbacks do not flood logs.
-						const dbg = ((globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
-						if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
-							dbg.seen.add(pid);
-							trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} bootstrap=${isBootstrapPeer} trustedSetSize=${trustedPXPeerIDs.size} bootstrapSetSize=${bootstrapPeerIDs.size}`);
-						}
-						if (isTrustedPXPeer && !dbg.trustedLogged.has(pid)) {
-							dbg.trustedLogged.add(pid);
-							console.debug(`[NET] PX trust score applied peer=${pid.slice(0, 16)} source=${isConfiguredTrustedPXPeer ? 'configured' : 'bootstrap'}`);
+						// Optional bounded trace of score callbacks. Off by default to keep production
+						// memory footprint clean — the `seen`/`trustedLogged` Sets would otherwise
+						// grow with every distinct peer encountered for the lifetime of the process.
+						// Enable via `LIBERSHARE_TRACE_PX=1` when investigating PX trust decisions.
+						if (process.env['LIBERSHARE_TRACE_PX'] === '1') {
+							const dbg = ((globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
+							if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
+								dbg.seen.add(pid);
+								trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} bootstrap=${isBootstrapPeer} trustedSetSize=${trustedPXPeerIDs.size} bootstrapSetSize=${bootstrapPeerIDs.size}`);
+							}
+							if (isTrustedPXPeer && !dbg.trustedLogged.has(pid)) {
+								dbg.trustedLogged.add(pid);
+								console.debug(`[NET] PX trust score applied peer=${pid.slice(0, 16)} source=${isConfiguredTrustedPXPeer ? 'configured' : 'bootstrap'}`);
+							}
 						}
 						// Non-trusted peers get +1 instead of 0 so their score
 						// (= appSpecificWeight × 1 = 1) sits clearly above publishThreshold (-50)
