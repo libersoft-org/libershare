@@ -68,8 +68,9 @@ export interface SettingsData {
 			enabled: boolean;
 			/**
 			 * Minimum gossipsub score a sender must reach before its PX is accepted. Must be
-			 * strictly positive to keep neutral (score=0) peers from supplying peer lists.
-			 * Unsafe values (<= 0, non-finite, non-number) fall back to the safe default.
+			 * above the neutral appSpecificScore baseline (1) to keep non-trusted peers from
+			 * supplying peer lists. Unsafe values (<= 1, non-finite, non-number) fall back to
+			 * the safe default.
 			 */
 			acceptPXThreshold: number;
 			/**

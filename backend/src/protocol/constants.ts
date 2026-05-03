@@ -10,7 +10,7 @@ export const LISH_TOPIC_PREFIX = 'lish/';
 
 /**
  * Default gossipsub acceptPXThreshold. Matches the default in settings.ts and is used as
- * fail-closed fallback whenever a user-supplied threshold is missing, non-finite, or <= 0.
+ * fail-closed fallback whenever a user-supplied threshold is missing, non-finite, or <= 1.
  */
 export const DEFAULT_ACCEPT_PX_THRESHOLD = 5;
 
@@ -38,12 +38,12 @@ export function normalizeTrustedPeerIds(raw: unknown): Set<string> {
 
 /**
  * Parse a user-supplied acceptPXThreshold. Returns the effective threshold and whether the
- * raw value was unsafe (non-finite, non-number, or <= 0). The effective threshold is always
+ * raw value was unsafe (non-finite, non-number, or <= 1). The effective threshold is always
  * a safe positive number; callers may warn on `unsafe === true`.
  */
 export function parseAcceptPXThreshold(raw: unknown): { value: number; unsafe: boolean; raw: unknown } {
 	const isValid = typeof raw === 'number' && Number.isFinite(raw);
 	const candidate = isValid ? (raw as number) : DEFAULT_ACCEPT_PX_THRESHOLD;
-	const unsafe = !isValid || candidate <= 0;
+	const unsafe = !isValid || candidate <= 1;
 	return { value: unsafe ? DEFAULT_ACCEPT_PX_THRESHOLD : candidate, unsafe, raw };
 }

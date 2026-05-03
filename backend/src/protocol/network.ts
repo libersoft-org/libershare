@@ -193,6 +193,11 @@ export class Network {
 	 * instance after startup — once any peer registers a stream we grab its prototype
 	 * and override .push() for ALL instances (current + future) since they share one
 	 * prototype object.
+	 *
+	 * TODO(upstream): this intentionally reaches into private gossipsub internals
+	 * (`streamsOutbound` and OutboundStream.prototype). Keep it as a temporary
+	 * mitigation only; replace it with an upstream @chainsafe/libp2p-gossipsub fix
+	 * once sendRpc/push handles rejected async writes and evicts dead streams itself.
 	 */
 	private patchGossipsubOutboundPushOnce(): void {
 		const pubsub = this.pubsub as any;
