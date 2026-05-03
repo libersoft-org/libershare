@@ -120,7 +120,7 @@ if "!ZIP_PS_LEVEL!"=="" (
     exit /b 1
 )
 
-rem ─── Ensure PowerShell 7+ is installed (needed for Compress-Archive SmallestSize) ───
+rem ─── Ensure PowerShell 7+ is installed (SmallestSize needs PS 7.4+ Archive module) ───
 where pwsh >nul 2>&1
 if errorlevel 1 (
     echo PowerShell 7 ^(pwsh^) not found. Installing via winget...
@@ -814,7 +814,9 @@ copy /y "!BUILD_RELEASE_DIR!\!PRODUCT_NAME!.exe" "!ZIP_STAGING!\!PRODUCT_NAME!.e
 copy /y "!ROOT_DIR!\backend\build\lish-backend.exe" "!ZIP_STAGING!\lish-backend.exe" >nul
 rem Create Debug.bat from template
 powershell -Command "(Get-Content '!SCRIPT_DIR!bundle-scripts\Debug.bat' -Raw) -replace '\{\{product_name\}\}','!PRODUCT_NAME!' | Set-Content '!ZIP_STAGING!\Debug.bat' -NoNewline"
-pwsh -Command "Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip' -CompressionLevel !ZIP_PS_LEVEL! -Force"
+set "ZIP_OUT=!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip"
+if exist "!ZIP_OUT!" del /q "!ZIP_OUT!"
+pwsh -Command "Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!ZIP_OUT!' -CompressionLevel !ZIP_PS_LEVEL! -Force"
 rmdir /s /q "!ZIP_STAGING!"
 echo === ZIP done ===
 exit /b 0
