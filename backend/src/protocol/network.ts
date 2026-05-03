@@ -228,7 +228,11 @@ export class Network {
 							if (gs?.streamsOutbound instanceof Map) {
 								for (const [pid, stream] of gs.streamsOutbound) {
 									if (stream === failedStream) {
-										try { stream.close?.().catch?.(() => {}); } catch { /* ignore */ }
+										try {
+											stream.close?.().catch?.(() => {});
+										} catch {
+											/* ignore */
+										}
 										gs.streamsOutbound.delete(pid);
 										evicted = pid.toString().slice(0, 12);
 										break;
