@@ -291,17 +291,31 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 						const isConfiguredTrustedPXPeer = trustedPXPeerIDs.has(pid);
 						const isBootstrapPeer = bootstrapPeerIDs.has(pid);
 						const isTrustedPXPeer = pxEnabled && (isConfiguredTrustedPXPeer || isBootstrapPeer);
-						// Trace a bounded sample so score callbacks do not flood logs.
-						const dbg = ((globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
-						if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
-							dbg.seen.add(pid);
-							trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} bootstrap=${isBootstrapPeer} trustedSetSize=${trustedPXPeerIDs.size} bootstrapSetSize=${bootstrapPeerIDs.size}`);
+						// Optional bounded trace of score callbacks. Off by default to keep production
+						// memory footprint clean — the `seen`/`trustedLogged` Sets would otherwise
+						// grow with every distinct peer encountered for the lifetime of the process.
+						// Enable via `LIBERSHARE_TRACE_PX=1` when investigating PX trust decisions.
+						if (process.env['LIBERSHARE_TRACE_PX'] === '1') {
+							const dbg = ((globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
+							if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
+								dbg.seen.add(pid);
+								trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} bootstrap=${isBootstrapPeer} trustedSetSize=${trustedPXPeerIDs.size} bootstrapSetSize=${bootstrapPeerIDs.size}`);
+							}
+							if (isTrustedPXPeer && !dbg.trustedLogged.has(pid)) {
+								dbg.trustedLogged.add(pid);
+								console.debug(`[NET] PX trust score applied peer=${pid.slice(0, 16)} source=${isConfiguredTrustedPXPeer ? 'configured' : 'bootstrap'}`);
+							}
 						}
-						if (isTrustedPXPeer && !dbg.trustedLogged.has(pid)) {
-							dbg.trustedLogged.add(pid);
-							console.debug(`[NET] PX trust score applied peer=${pid.slice(0, 16)} source=${isConfiguredTrustedPXPeer ? 'configured' : 'bootstrap'}`);
-						}
-						return isTrustedPXPeer ? 1000 : 0;
+						// Non-trusted peers get +1 instead of 0 so their score
+						// (= appSpecificWeight × 1 = 1) sits clearly above publishThreshold (-50)
+						// and gossipThreshold (-10) without sitting at the equality boundary.
+						// With baseline 0, freshly-connected peers were observed to be excluded
+						// from `floodPublish` recipient set (subs=6 vs tosend=4) — search RPCs
+						// did not reach all topic members. +1 is a no-op for sybil/abuse defence
+						// (penalties still drop the score well below thresholds) but keeps
+						// neutral peers eligible for delivery, restoring log_D(N) gossip
+						// propagation at scale.
+						return isTrustedPXPeer ? 1000 : 1;
 					},
 					// IP colocation factor: would penalise many peers reporting the same
 					// public IP (sybil heuristic). Disabled (weight=0) because NAT'd fleet
