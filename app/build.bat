@@ -120,6 +120,30 @@ if "!ZIP_PS_LEVEL!"=="" (
     exit /b 1
 )
 
+rem ─── Ensure PowerShell 7+ is installed (needed for Compress-Archive SmallestSize) ───
+where pwsh >nul 2>&1
+if errorlevel 1 (
+    echo PowerShell 7 ^(pwsh^) not found. Installing via winget...
+    where winget >nul 2>&1
+    if errorlevel 1 (
+        echo Error: winget not available. Install PowerShell 7 manually: https://aka.ms/powershell
+        exit /b 1
+    )
+    winget install --id Microsoft.PowerShell --source winget --accept-package-agreements --accept-source-agreements --silent
+    if errorlevel 1 (
+        echo Error: Failed to install PowerShell 7 via winget.
+        exit /b 1
+    )
+    rem Refresh PATH so pwsh is found in this session
+    for /f "usebackq tokens=2,*" %%A in (`reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul ^| findstr /i "Path"`) do set "PATH=%%B;!PATH!"
+    where pwsh >nul 2>&1
+    if errorlevel 1 (
+        echo Error: pwsh still not found after install. Restart terminal and retry.
+        exit /b 1
+    )
+    echo PowerShell 7 installed successfully.
+)
+
 rem ─── Validate inputs ─────────────────────────────────────────────────────
 
 rem Validate OS values
