@@ -18,6 +18,7 @@ import { lishTopic, LISH_TOPIC_PREFIX, normalizeTrustedPeerIds, parseAcceptPXThr
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { CodedError, ErrorCodes } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
+import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 
@@ -1157,13 +1158,13 @@ export class Network {
 		// low-traffic topics per Ethereum consensus research.
 		const scoreSvc = (this.pubsub as any).score;
 		if (scoreSvc?.params?.topics) {
-			// CRITICAL: every numeric field below must be defined. Missing decay fields
-			// turn `0 * undefined = NaN` in PeerScore.refreshScores() (called every
-			// decayInterval), which then propagates through computeScore via P3b
-			// (`tstats.meshFailurePenalty * weight`) into the final per-peer score.
-			// A NaN score makes `score >= publishThreshold` evaluate to false in JS,
-			// silently excluding peers from gossipsub `floodPublish` recipients.
-			scoreSvc.params.topics[topic] = {
+			// Use createTopicScoreParams() helper from gossipsub: it merges our overrides
+			// onto defaultTopicScoreParams. This guarantees every numeric field is defined
+			// (including any new fields a future library upgrade may add), preventing the
+			// `0 * undefined = NaN` propagation in PeerScore.refreshScores() that
+			// previously surfaced as NaN per-peer scores → silent exclusion from
+			// gossipsub floodPublish (NaN >= publishThreshold === false in JS).
+			scoreSvc.params.topics[topic] = createTopicScoreParams({
 				topicWeight: 0.5,
 				timeInMeshWeight: 0.01,
 				timeInMeshQuantum: 1000,
@@ -1171,28 +1172,21 @@ export class Network {
 				firstMessageDeliveriesWeight: 0.5,
 				firstMessageDeliveriesDecay: 0.998,
 				firstMessageDeliveriesCap: 100,
-				// P3 (meshMessageDeliveries) intentionally disabled via weight=0, but the
-				// decay/cap/threshold/activation/window fields must still be defined or
-				// `refreshScores` will multiply existing counter by undefined → NaN.
+				// P3 (meshMessageDeliveries) and P3b (meshFailurePenalty) intentionally
+				// disabled via weight=0 — defaults supply finite numbers for the related
+				// decay/cap/threshold/activation/window fields so the unused arithmetic
+				// in refreshScores still yields 0 instead of NaN.
 				meshMessageDeliveriesWeight: 0,
-				meshMessageDeliveriesDecay: 0.5,
-				meshMessageDeliveriesCap: 100,
-				meshMessageDeliveriesThreshold: 20,
-				meshMessageDeliveriesActivation: 5000,
-				meshMessageDeliveriesWindow: 10,
 				meshFailurePenaltyWeight: 0,
-				meshFailurePenaltyDecay: 0.5,
-				// invalidMessageDeliveriesWeight tuned to -5 (default would be -20). The
-				// stronger default, multiplied by topicWeight=0.5, easily produces -320
-				// scores that graylist half the fleet after every coordinated restart.
-				// Invalid messages during warmup are frequently caused by signature races
-				// at peer:connect (stale gossipsub peer keys as fresh IDs propagate), not
-				// by malicious publishers — the severe penalty is inappropriate for
-				// trusted-fleet setups. -5 keeps it 5× stronger than the go-libp2p
-				// default while halving the peak penalty.
+				// invalidMessageDeliveriesWeight tuned to -5 (default would be -1, but
+				// even -1 multiplied by topicWeight=0.5 plus quadratic invalidMessages²
+				// quickly produces -320 scores that graylist half the fleet after every
+				// coordinated restart. Invalid messages during warmup are frequently
+				// caused by signature races at peer:connect, not malicious publishers —
+				// the severe default penalty is inappropriate for trusted-fleet setups.
 				invalidMessageDeliveriesWeight: -5,
 				invalidMessageDeliveriesDecay: 0.9,
-			};
+			});
 			console.log(`[NET] gossipsub score registered for ${topic}`);
 		} else {
 			trace(`[NET] gossipsub score service not available for ${topic}`);
