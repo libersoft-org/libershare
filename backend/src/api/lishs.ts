@@ -396,6 +396,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	function enqueueVerification(lishID: string): void {
 		if (currentVerification?.lishID === lishID) return;
 		if (verificationQueue.includes(lishID)) return;
+		setBusy(lishID, 'verifying');
 		verificationQueue.push(lishID);
 		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, queued: true });
 		processVerificationQueue();

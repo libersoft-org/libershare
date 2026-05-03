@@ -308,6 +308,9 @@ export function isUploadDisabled(lishID: string): boolean {
 export function isUploadEnabled(lishID: string): boolean {
 	return uploadEnabled.has(lishID);
 }
+export function isUploadAdvertisable(lishID: string): boolean {
+	return uploadEnabled.has(lishID) && !isBusy(lishID);
+}
 export function getEnabledUploads(): Set<string> {
 	return uploadEnabled;
 }
@@ -361,7 +364,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				// Return list of all shared (upload_enabled) LISHs — id and name only.
 				// Newest first — matches the order shown locally in "Download and Sharing".
 				const allLishs = dataServer.list();
-				const shared = allLishs.filter(l => uploadEnabled.has(l.id)).reverse();
+				const shared = allLishs.filter(l => isUploadAdvertisable(l.id)).reverse();
 				const response: LISHGetLishsResponse = {
 					type: 'getLishs-result',
 					lishs: shared.map(l => {
@@ -374,7 +377,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				sendLengthPrefixed(stream, codecEncode(response));
 			} else if (request.type === 'getLish') {
 				// Only return manifest for LISHs with upload enabled
-				if (!uploadEnabled.has(request.lishID)) {
+				if (!isUploadAdvertisable(request.lishID)) {
 					const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					sendLengthPrefixed(stream, codecEncode(response));
 				} else {
