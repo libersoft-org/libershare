@@ -164,28 +164,27 @@ rem Note: FORMAT_LIST 'all' is expanded per-OS in the build loop
 
 rem ─── Validate formats for each requested OS ──────────────────────────────
 
-if not "!FORMAT_LIST!"=="all" (
-    for %%o in (!OS_LIST!) do (
-        for %%f in (!FORMAT_LIST!) do (
-            set "_fmt_ok=0"
-            if "%%f"=="zip" set "_fmt_ok=1"
-            if "%%o"=="linux" (
-                if "%%f"=="deb" set "_fmt_ok=1"
-                if "%%f"=="rpm" set "_fmt_ok=1"
-                if "%%f"=="pacman" set "_fmt_ok=1"
-                if "%%f"=="appimage" set "_fmt_ok=1"
-            )
-            if "%%o"=="windows" (
-                if "%%f"=="nsis" set "_fmt_ok=1"
-                if "%%f"=="msi" set "_fmt_ok=1"
-            )
-            if "%%o"=="macos" (
-                if "%%f"=="dmg" set "_fmt_ok=1"
-            )
-            if "!_fmt_ok!"=="0" (
-                echo Error: Format '%%f' is not valid for OS '%%o'
-                exit /b 1
-            )
+for %%o in (!OS_LIST!) do (
+    for %%f in (!FORMAT_LIST!) do (
+        set "_fmt_ok=0"
+        if "%%f"=="all" set "_fmt_ok=1"
+        if "%%f"=="zip" set "_fmt_ok=1"
+        if "%%o"=="linux" (
+            if "%%f"=="deb" set "_fmt_ok=1"
+            if "%%f"=="rpm" set "_fmt_ok=1"
+            if "%%f"=="pacman" set "_fmt_ok=1"
+            if "%%f"=="appimage" set "_fmt_ok=1"
+        )
+        if "%%o"=="windows" (
+            if "%%f"=="nsis" set "_fmt_ok=1"
+            if "%%f"=="msi" set "_fmt_ok=1"
+        )
+        if "%%o"=="macos" (
+            if "%%f"=="dmg" set "_fmt_ok=1"
+        )
+        if "!_fmt_ok!"=="0" (
+            echo Error: Format '%%f' is not valid for OS '%%o'
+            exit /b 1
         )
     )
 )
