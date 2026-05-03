@@ -82,7 +82,7 @@
 	// in the search reducer — the parent always reads the freshest row by id, so the search
 	// reducer is free to replace row objects (simpler, no cognitive load about mutate-vs-replace).
 	let lishPeerListRowID = $state<string | null>(null);
-	let lishPeerListRow = $derived<LishSearchResult | null>(lishPeerListRowID === null ? null : search.results.find(r => r.id === lishPeerListRowID) ?? null);
+	let lishPeerListRow = $derived<LishSearchResult | null>(lishPeerListRowID === null ? null : (search.results.find(r => r.id === lishPeerListRowID) ?? null));
 
 	function openLishPeerList(row: LishSearchResult): void {
 		lishPeerListRowID = row.id;
