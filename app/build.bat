@@ -112,36 +112,12 @@ if "!FORMAT_LIST!"=="" set "FORMAT_LIST=all"
 rem ─── Resolve compression level ────────────────────────────────────────────
 
 set "ZIP_PS_LEVEL="
-if "!COMPRESS_LEVEL!"=="min" set "ZIP_PS_LEVEL=Fastest"
-if "!COMPRESS_LEVEL!"=="mid" set "ZIP_PS_LEVEL=Optimal"
-if "!COMPRESS_LEVEL!"=="max" set "ZIP_PS_LEVEL=SmallestSize"
+if "!COMPRESS_LEVEL!"=="min" set "ZIP_PS_LEVEL=NoCompression"
+if "!COMPRESS_LEVEL!"=="mid" set "ZIP_PS_LEVEL=Fastest"
+if "!COMPRESS_LEVEL!"=="max" set "ZIP_PS_LEVEL=Optimal"
 if "!ZIP_PS_LEVEL!"=="" (
     echo Error: Invalid --compress value '!COMPRESS_LEVEL!' ^(use: min, mid, max^)
     exit /b 1
-)
-
-rem ─── Ensure PowerShell 7+ is installed (SmallestSize needs PS 7.4+ Archive module) ───
-where pwsh >nul 2>&1
-if errorlevel 1 (
-    echo PowerShell 7 ^(pwsh^) not found. Installing via winget...
-    where winget >nul 2>&1
-    if errorlevel 1 (
-        echo Error: winget not available. Install PowerShell 7 manually: https://aka.ms/powershell
-        exit /b 1
-    )
-    winget install --id Microsoft.PowerShell --source winget --accept-package-agreements --accept-source-agreements --silent
-    if errorlevel 1 (
-        echo Error: Failed to install PowerShell 7 via winget.
-        exit /b 1
-    )
-    rem Refresh PATH so pwsh is found in this session
-    for /f "usebackq tokens=2,*" %%A in (`reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul ^| findstr /i "Path"`) do set "PATH=%%B;!PATH!"
-    where pwsh >nul 2>&1
-    if errorlevel 1 (
-        echo Error: pwsh still not found after install. Restart terminal and retry.
-        exit /b 1
-    )
-    echo PowerShell 7 installed successfully.
 )
 
 rem ─── Validate inputs ─────────────────────────────────────────────────────
@@ -814,9 +790,7 @@ copy /y "!BUILD_RELEASE_DIR!\!PRODUCT_NAME!.exe" "!ZIP_STAGING!\!PRODUCT_NAME!.e
 copy /y "!ROOT_DIR!\backend\build\lish-backend.exe" "!ZIP_STAGING!\lish-backend.exe" >nul
 rem Create Debug.bat from template
 powershell -Command "(Get-Content '!SCRIPT_DIR!bundle-scripts\Debug.bat' -Raw) -replace '\{\{product_name\}\}','!PRODUCT_NAME!' | Set-Content '!ZIP_STAGING!\Debug.bat' -NoNewline"
-set "ZIP_OUT=!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip"
-if exist "!ZIP_OUT!" del /q "!ZIP_OUT!"
-pwsh -Command "Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!ZIP_OUT!' -CompressionLevel !ZIP_PS_LEVEL! -Force"
+powershell -Command "Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip' -CompressionLevel !ZIP_PS_LEVEL! -Force"
 rmdir /s /q "!ZIP_STAGING!"
 echo === ZIP done ===
 exit /b 0
