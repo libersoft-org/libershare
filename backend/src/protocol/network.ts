@@ -10,7 +10,7 @@ import { existsSync } from 'fs';
 import { trace } from '../logger.ts';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { LISH_PROTOCOL, LISHClient, handleLISHProtocol, isUploadEnabled } from './lish-protocol.ts';
+import { LISH_PROTOCOL, LISHClient, handleLISHProtocol, isUploadAdvertisable, isUploadEnabled } from './lish-protocol.ts';
 import { isBusy } from '../api/busy.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
@@ -33,6 +33,11 @@ export interface SearchLishsMessage {
 	searchID: string;
 	query: string;
 }
+
+export function isSearchAdvertisableLish(lish: import('@shared').IStoredLISH): boolean {
+	return isUploadAdvertisable(lish.id);
+}
+
 /** Raw gossipsub message event. */
 interface PubsubEvent {
 	topic: string;
@@ -1389,7 +1394,7 @@ export class Network {
 		const q = data.query.toLowerCase();
 		const matches: Array<{ id: string; name?: string; totalSize?: number }> = [];
 		for (const lish of this.dataServer.list()) {
-			if (!isUploadEnabled(lish.id)) continue;
+			if (!isSearchAdvertisableLish(lish)) continue;
 			const idLower = lish.id.toLowerCase();
 			const nameLower = lish.name?.toLowerCase() ?? '';
 			if (!idLower.includes(q) && !nameLower.includes(q)) continue;
