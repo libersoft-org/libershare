@@ -114,7 +114,9 @@ rem ─── Resolve compression level ─────────────�
 set "ZIP_PS_LEVEL="
 if "!COMPRESS_LEVEL!"=="min" set "ZIP_PS_LEVEL=Fastest"
 if "!COMPRESS_LEVEL!"=="mid" set "ZIP_PS_LEVEL=Optimal"
-if "!COMPRESS_LEVEL!"=="max" set "ZIP_PS_LEVEL=SmallestSize"
+if "!COMPRESS_LEVEL!"=="max" (
+    for /f "usebackq tokens=*" %%z in (`powershell -NoProfile -Command "$p=(Get-Command Compress-Archive).Parameters['CompressionLevel']; $small=$false; foreach ($a in $p.Attributes) { if ($a.ValidValues -contains 'SmallestSize') { $small=$true } }; if ($small) { 'SmallestSize' } else { 'Optimal' }"`) do set "ZIP_PS_LEVEL=%%z"
+)
 if "!ZIP_PS_LEVEL!"=="" (
     echo Error: Invalid --compress value '!COMPRESS_LEVEL!' ^(use: min, mid, max^)
     exit /b 1
@@ -749,10 +751,10 @@ call :get_timestamp _be_start
 echo === Building backend ^(target: !BUN_TGT!^) ===
 cd /d "!ROOT_DIR!\backend"
 if exist build rmdir /s /q build
-bun i --frozen-lockfile
+call bun i --frozen-lockfile
 if errorlevel 1 ( endlocal & exit /b 1 )
 mkdir build
-bun build --compile --target !BUN_TGT! src/app.ts --outfile build\lish-backend.exe
+call bun build --compile --target !BUN_TGT! src/app.ts --outfile build\lish-backend.exe
 if errorlevel 1 ( endlocal & exit /b 1 )
 set "_be_elapsed=0"
 call :elapsed_since !_be_start! _be_elapsed
@@ -770,13 +772,13 @@ for /f "tokens=*" %%d in ('bun -e "process.stdout.write(require(process.argv[1])
 echo Product: !PRODUCT_NAME! v!PRODUCT_VERSION! (!PRODUCT_IDENTIFIER!)
 
 rem Sync tauri.conf.json
-bun -e "var f=require('fs'),p=require(process.argv[1]),t=process.argv[2],c=JSON.parse(f.readFileSync(t,'utf8'));c.productName=p.name;c.mainBinaryName=p.name;c.version=p.version;c.identifier=p.identifier;c.bundle.windows.nsis.startMenuFolder=p.name;f.writeFileSync(t,JSON.stringify(c,null,'\t')+'\n')" "!PRODUCT_JSON!" "!SCRIPT_DIR!tauri.conf.json"
+call bun -e "var f=require('fs'),p=require(process.argv[1]),t=process.argv[2],c=JSON.parse(f.readFileSync(t,'utf8'));c.productName=p.name;c.mainBinaryName=p.name;c.version=p.version;c.identifier=p.identifier;c.bundle.windows.nsis.startMenuFolder=p.name;f.writeFileSync(t,JSON.stringify(c,null,'\t')+'\n')" "!PRODUCT_JSON!" "!SCRIPT_DIR!tauri.conf.json"
 
 rem Sync Cargo.toml version
-bun -e "var f=require('fs'),v=process.argv[1],t=process.argv[2],s=f.readFileSync(t,'utf8').replace(/^version = \"[^\"]*\"/m,'version = \"'+v+'\"');f.writeFileSync(t,s)" "!PRODUCT_VERSION!" "!SCRIPT_DIR!Cargo.toml"
+call bun -e "var f=require('fs'),v=process.argv[1],t=process.argv[2],s=f.readFileSync(t,'utf8').replace(/^version = \"[^\"]*\"/m,'version = \"'+v+'\"');f.writeFileSync(t,s)" "!PRODUCT_VERSION!" "!SCRIPT_DIR!Cargo.toml"
 
 rem Sync wix-fragment-debug.wxs
-bun -e "var f=require('fs'),n=process.argv[1],s=f.readFileSync(process.argv[2],'utf8').replace(/\{\{product_name\}\}/g,n);f.writeFileSync(process.argv[2],s)" "!PRODUCT_NAME!" "!SCRIPT_DIR!wix-fragment-debug.wxs"
+call bun -e "var f=require('fs'),n=process.argv[1],s=f.readFileSync(process.argv[2],'utf8').replace(/\{\{product_name\}\}/g,n);f.writeFileSync(process.argv[2],s)" "!PRODUCT_NAME!" "!SCRIPT_DIR!wix-fragment-debug.wxs"
 exit /b 0
 
 rem ─── build_zip ────────────────────────────────────────────────────────────
@@ -789,8 +791,10 @@ mkdir "!ZIP_STAGING!"
 copy /y "!BUILD_RELEASE_DIR!\!PRODUCT_NAME!.exe" "!ZIP_STAGING!\!PRODUCT_NAME!.exe" >nul
 copy /y "!ROOT_DIR!\backend\build\lish-backend.exe" "!ZIP_STAGING!\lish-backend.exe" >nul
 rem Create Debug.bat from template
-powershell -Command "(Get-Content '!SCRIPT_DIR!bundle-scripts\Debug.bat' -Raw) -replace '\{\{product_name\}\}','!PRODUCT_NAME!' | Set-Content '!ZIP_STAGING!\Debug.bat' -NoNewline"
-powershell -Command "Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip' -CompressionLevel !ZIP_PS_LEVEL! -Force"
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; (Get-Content '!SCRIPT_DIR!bundle-scripts\Debug.bat' -Raw) -replace '\{\{product_name\}\}','!PRODUCT_NAME!' | Set-Content '!ZIP_STAGING!\Debug.bat' -NoNewline"
+if errorlevel 1 exit /b 1
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip' -CompressionLevel !ZIP_PS_LEVEL! -Force"
+if errorlevel 1 exit /b 1
 rmdir /s /q "!ZIP_STAGING!"
 echo === ZIP done ===
 exit /b 0
