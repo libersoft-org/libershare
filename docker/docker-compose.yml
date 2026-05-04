@@ -1,0 +1,74 @@
+name: libershare
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: docker-libershare-backend:local
+    container_name: libershare-backend
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["--datadir", "/app/config", "--host", "0.0.0.0", "--port", "${BACKEND_PORT:-1158}"]
+    environment:
+      LIBERSHARE_MEMTRACE: ${LIBERSHARE_MEMTRACE:-0}
+      LIBERSHARE_STORAGE_ROOT: /app/storage
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: ${LOG_MAX_FILE:-3}
+    ports:
+      - "${BACKEND_PORT:-1158}:${BACKEND_PORT:-1158}"
+      - "9091:9090"
+    volumes:
+      - ${LIBERSHARE_CONFIG_SOURCE:-./config}:/app/config
+      - ${LIBERSHARE_STORAGE_SOURCE:-./storage}:/app/storage
+    tmpfs:
+      - /tmp
+    networks:
+      - libershare-net
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+    image: docker-libershare-frontend:local
+    container_name: libershare-frontend
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      BACKEND_WS_URL: ws://backend:${BACKEND_PORT:-1158}
+      TLS_CERT_DIR: /app/certs
+      TLS_CERT_FILE: ${TLS_CERT_FILE:-/app/certs/pubkey.pem}
+      TLS_KEY_FILE: ${TLS_KEY_FILE:-/app/certs/privkey.pem}
+      TLS_CERT_SAN: ${TLS_CERT_SAN:-DNS:localhost,IP:127.0.0.1}
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: ${LOG_MAX_FILE:-3}
+    ports:
+      - "6003:6003"
+    depends_on:
+      - backend
+    volumes:
+      - ${TLS_CERT_SOURCE:-./certs}:/app/certs
+    tmpfs:
+      - /tmp
+    networks:
+      - libershare-net
+
+networks:
+  libershare-net:
+    name: libershare-net
