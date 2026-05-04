@@ -120,7 +120,7 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 				const message = event instanceof ErrorEvent ? event.message : 'checksum worker failed';
 				failWorker(new Error(message));
 			});
-			worker.addEventListener('messageerror', event => failWorker(new Error(`checksum worker message error: ${event.type}`)));
+			worker.addEventListener('messageerror', () => failWorker(new Error('checksum worker message could not be deserialized')));
 		}
 		function feedWorker(workerIndex: number): void {
 			if (finished) return;
