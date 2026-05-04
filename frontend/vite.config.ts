@@ -6,6 +6,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function getBackendProxyTarget(): string {
+	return process.env['VITE_BACKEND_URL'] || 'ws://localhost:1158';
+}
+
 function getCommitHash(): string {
 	try {
 		return execSync('git rev-parse --short HEAD').toString().trim();
@@ -67,6 +71,12 @@ export default defineConfig({
 		allowedHosts: true,
 		host: true,
 		port: 6003,
+		proxy: {
+			'/ws': {
+				target: getBackendProxyTarget(),
+				ws: true,
+			},
+		},
 		fs: {
 			allow: [__dirname, path.resolve(__dirname, '..')],
 		},
