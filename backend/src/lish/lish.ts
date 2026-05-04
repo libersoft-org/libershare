@@ -84,7 +84,7 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 	const releaseWorkers = (): void => {
 		for (const worker of workers) {
 			if (_canTerminateBusyWorkers) worker.terminate();
-			else (worker as any).unref?.();
+			else (worker as Worker & { unref?: () => void }).unref?.();
 		}
 	};
 	// Create workers
