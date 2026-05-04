@@ -43,7 +43,6 @@
 	.lish-id {
 		font-family: var(--font-mono);
 		font-size: 1.4vh;
-		color: var(--disabled-foreground);
 		display: block;
 		overflow: hidden;
 		text-overflow: ellipsis;
