@@ -147,8 +147,8 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 		// Start one chunk per worker
 		for (let i = 0; i < workerCount; i++) feedWorker(i);
 	});
-	// Terminate workers
-	workers.forEach(w => w.terminate());
+	// Release workers via the platform-aware helper so the success path matches abort/error cleanup.
+	releaseWorkers();
 	return results;
 }
 
