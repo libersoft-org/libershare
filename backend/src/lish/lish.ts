@@ -7,6 +7,11 @@ import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from './data-server.ts';
 
+// Cached at module load: Bun.which() walks PATH on every call, and this flag is consulted on
+// every parallel-checksum invocation. Compiled binaries always have execPath !== Bun.which('bun').
+const _isCompiledBinary = process.execPath !== Bun.which('bun');
+const _canTerminateBusyWorkers = !(process.platform === 'win32' && _isCompiledBinary);
+
 let _workerUrl: string | null = null;
 
 /** Override the checksum worker URL for tests or external launchers. */
@@ -76,10 +81,9 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 	const totalChunks = Math.ceil(fileSize / chunkSize);
 	const cpuCount = maxWorkers > 0 ? maxWorkers : navigator.hardwareConcurrency || 1;
 	const workerCount = Math.min(cpuCount, totalChunks);
-	const canTerminateBusyWorkers = !(process.platform === 'win32' && process.execPath !== Bun.which('bun'));
 	const releaseWorkers = (): void => {
 		for (const worker of workers) {
-			if (canTerminateBusyWorkers) worker.terminate();
+			if (_canTerminateBusyWorkers) worker.terminate();
 			else (worker as any).unref?.();
 		}
 	};
