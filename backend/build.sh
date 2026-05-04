@@ -25,13 +25,15 @@ done
 [ -d "./build/" ] && rm -r build
 mkdir -p build
 bun i --frozen-lockfile
+mkdir -p build/lish
 
 if [ -n "$BUN_TARGET" ]; then
 	echo "Building backend for target: $BUN_TARGET"
 	case "$BUN_TARGET" in
-	*windows*) bun build --compile --target "$BUN_TARGET" src/app.ts --outfile build/lish-backend.exe ;;
-	*) bun build --compile --target "$BUN_TARGET" src/app.ts --outfile build/lish-backend ;;
+	*windows*) bun build --compile --target "$BUN_TARGET" ./src/app.ts --outfile build/lish-backend.exe ;;
+	*) bun build --compile --target "$BUN_TARGET" ./src/app.ts --outfile build/lish-backend ;;
 	esac
 else
-	bun build --compile src/app.ts --outfile build/lish-backend
+	bun build --compile ./src/app.ts --outfile build/lish-backend
 fi
+bun build ./src/lish/checksum-worker.ts --target bun --outfile build/lish/checksum-worker.js

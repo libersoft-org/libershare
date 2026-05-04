@@ -7,14 +7,16 @@ import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from './data-server.ts';
 
-// Worker URL for checksum-worker. Default works in dev mode (import.meta.url is the actual file URL).
-// In compiled binaries, import.meta.url is always the binary path, so app.ts must call setWorkerUrl()
-// with new URL('./lish/checksum-worker.js', import.meta.url).href before any LISH creation.
-let _workerUrl: string = new URL('./checksum-worker.ts', import.meta.url).href;
+let _workerUrl: string | null = null;
 
-/** Override the checksum worker URL. Must be called from the main entrypoint (app.ts) in compiled mode. */
+/** Override the checksum worker URL for tests or external launchers. */
 export function setWorkerUrl(url: string): void {
 	_workerUrl = url;
+}
+
+function createChecksumWorker(): Worker {
+	if (_workerUrl) return new Worker(_workerUrl);
+	return new Worker(new URL('./checksum-worker.ts', import.meta.url));
 }
 
 // Helper to normalize paths to forward slashes
@@ -74,9 +76,16 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 	const totalChunks = Math.ceil(fileSize / chunkSize);
 	const cpuCount = maxWorkers > 0 ? maxWorkers : navigator.hardwareConcurrency || 1;
 	const workerCount = Math.min(cpuCount, totalChunks);
+	const canTerminateBusyWorkers = !(process.platform === 'win32' && process.execPath !== Bun.which('bun'));
+	const releaseWorkers = (): void => {
+		for (const worker of workers) {
+			if (canTerminateBusyWorkers) worker.terminate();
+			else (worker as any).unref?.();
+		}
+	};
 	// Create workers
 	const workers: Worker[] = [];
-	for (let i = 0; i < workerCount; i++) workers.push(new Worker(_workerUrl));
+	for (let i = 0; i < workerCount; i++) workers.push(createChecksumWorker());
 	let completedChunks = 0;
 	const results: string[] = new Array(totalChunks);
 	let nextChunk = 0;
@@ -87,14 +96,28 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 		function abortHandler(): void {
 			if (finished) return;
 			finished = true;
-			workers.forEach(w => w.terminate());
+			releaseWorkers();
 			rejectAll(new CodedError(ErrorCodes.LISH_CREATE_CANCELLED));
+		}
+		function failWorker(error: unknown): void {
+			if (finished) return;
+			finished = true;
+			signal?.removeEventListener('abort', abortHandler);
+			releaseWorkers();
+			rejectAll(error instanceof Error ? error : new Error(String(error)));
 		}
 		if (signal?.aborted) {
 			abortHandler();
 			return;
 		}
 		signal?.addEventListener('abort', abortHandler, { once: true });
+		for (const worker of workers) {
+			worker.addEventListener('error', event => {
+				const message = event instanceof ErrorEvent ? event.message : 'checksum worker failed';
+				failWorker(new Error(message));
+			});
+			worker.addEventListener('messageerror', event => failWorker(new Error(`checksum worker message error: ${event.type}`)));
+		}
 		function feedWorker(workerIndex: number): void {
 			if (finished) return;
 			if (nextChunk >= totalChunks) return;
@@ -106,8 +129,7 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 					worker.removeEventListener('message', handler);
 					if (finished) return;
 					if (event.data.error) {
-						finished = true;
-						rejectAll(new Error(event.data.error));
+						failWorker(new Error(event.data.error));
 						return;
 					}
 					results[chunkIndex] = event.data.checksum;

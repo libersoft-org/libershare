@@ -732,8 +732,11 @@ set "_fe_start=0"
 call :get_timestamp _fe_start
 echo === Building frontend ===
 cd /d "!ROOT_DIR!\frontend"
-call build.bat
+call bun i --frozen-lockfile
 if errorlevel 1 exit /b 1
+call bun --bun run build
+if errorlevel 1 exit /b 1
+cd /d "!SCRIPT_DIR!"
 set "_fe_elapsed=0"
 call :elapsed_since !_fe_start! _fe_elapsed
 echo === Frontend done ^(!_fe_elapsed!^) ===
@@ -749,10 +752,13 @@ call :get_timestamp _be_start
 echo === Building backend ^(target: !BUN_TGT!^) ===
 cd /d "!ROOT_DIR!\backend"
 if exist build rmdir /s /q build
-bun i --frozen-lockfile
+call bun i --frozen-lockfile
 if errorlevel 1 ( endlocal & exit /b 1 )
 mkdir build
-bun build --compile --target !BUN_TGT! src/app.ts --outfile build\lish-backend.exe
+call bun build --compile --target !BUN_TGT! ./src/app.ts --outfile build\lish-backend.exe
+if errorlevel 1 ( endlocal & exit /b 1 )
+mkdir build\lish
+call bun build ./src/lish/checksum-worker.ts --target bun --outfile build\lish\checksum-worker.js
 if errorlevel 1 ( endlocal & exit /b 1 )
 set "_be_elapsed=0"
 call :elapsed_since !_be_start! _be_elapsed
@@ -764,19 +770,19 @@ rem ─── sync_product_info ────────────────
 
 :sync_product_info
 set "PRODUCT_JSON=!ROOT_DIR!\shared\src\product.json"
-for /f "tokens=*" %%v in ('bun -e "process.stdout.write(require(process.argv[1]).version)" "!PRODUCT_JSON!"') do set "PRODUCT_VERSION=%%v"
-for /f "tokens=*" %%n in ('bun -e "process.stdout.write(require(process.argv[1]).name)" "!PRODUCT_JSON!"') do set "PRODUCT_NAME=%%n"
-for /f "tokens=*" %%d in ('bun -e "process.stdout.write(require(process.argv[1]).identifier)" "!PRODUCT_JSON!"') do set "PRODUCT_IDENTIFIER=%%d"
+for /f "tokens=*" %%v in ('call bun -e "process.stdout.write(require(process.argv[1]).version)" "!PRODUCT_JSON!"') do set "PRODUCT_VERSION=%%v"
+for /f "tokens=*" %%n in ('call bun -e "process.stdout.write(require(process.argv[1]).name)" "!PRODUCT_JSON!"') do set "PRODUCT_NAME=%%n"
+for /f "tokens=*" %%d in ('call bun -e "process.stdout.write(require(process.argv[1]).identifier)" "!PRODUCT_JSON!"') do set "PRODUCT_IDENTIFIER=%%d"
 echo Product: !PRODUCT_NAME! v!PRODUCT_VERSION! (!PRODUCT_IDENTIFIER!)
 
 rem Sync tauri.conf.json
-bun -e "var f=require('fs'),p=require(process.argv[1]),t=process.argv[2],c=JSON.parse(f.readFileSync(t,'utf8'));c.productName=p.name;c.mainBinaryName=p.name;c.version=p.version;c.identifier=p.identifier;c.bundle.windows.nsis.startMenuFolder=p.name;f.writeFileSync(t,JSON.stringify(c,null,'\t')+'\n')" "!PRODUCT_JSON!" "!SCRIPT_DIR!tauri.conf.json"
+call bun -e "var f=require('fs'),p=require(process.argv[1]),t=process.argv[2],c=JSON.parse(f.readFileSync(t,'utf8'));c.productName=p.name;c.mainBinaryName=p.name;c.version=p.version;c.identifier=p.identifier;c.bundle.windows.nsis.startMenuFolder=p.name;f.writeFileSync(t,JSON.stringify(c,null,'\t')+'\n')" "!PRODUCT_JSON!" "!SCRIPT_DIR!tauri.conf.json"
 
 rem Sync Cargo.toml version
-bun -e "var f=require('fs'),v=process.argv[1],t=process.argv[2],s=f.readFileSync(t,'utf8').replace(/^version = \"[^\"]*\"/m,'version = \"'+v+'\"');f.writeFileSync(t,s)" "!PRODUCT_VERSION!" "!SCRIPT_DIR!Cargo.toml"
+call bun -e "var f=require('fs'),v=process.argv[1],t=process.argv[2],s=f.readFileSync(t,'utf8').replace(/^version = \"[^\"]*\"/m,'version = \"'+v+'\"');f.writeFileSync(t,s)" "!PRODUCT_VERSION!" "!SCRIPT_DIR!Cargo.toml"
 
 rem Sync wix-fragment-debug.wxs
-bun -e "var f=require('fs'),n=process.argv[1],s=f.readFileSync(process.argv[2],'utf8').replace(/\{\{product_name\}\}/g,n);f.writeFileSync(process.argv[2],s)" "!PRODUCT_NAME!" "!SCRIPT_DIR!wix-fragment-debug.wxs"
+call bun -e "var f=require('fs'),n=process.argv[1],s=f.readFileSync(process.argv[2],'utf8').replace(/\{\{product_name\}\}/g,n);f.writeFileSync(process.argv[2],s)" "!PRODUCT_NAME!" "!SCRIPT_DIR!wix-fragment-debug.wxs"
 exit /b 0
 
 rem ─── build_zip ────────────────────────────────────────────────────────────
@@ -788,6 +794,8 @@ if exist "!ZIP_STAGING!" rmdir /s /q "!ZIP_STAGING!"
 mkdir "!ZIP_STAGING!"
 copy /y "!BUILD_RELEASE_DIR!\!PRODUCT_NAME!.exe" "!ZIP_STAGING!\!PRODUCT_NAME!.exe" >nul
 copy /y "!ROOT_DIR!\backend\build\lish-backend.exe" "!ZIP_STAGING!\lish-backend.exe" >nul
+mkdir "!ZIP_STAGING!\lish"
+xcopy /e /i /y "!ROOT_DIR!\backend\build\lish" "!ZIP_STAGING!\lish" >nul
 rem Create Debug.bat from template
 powershell -Command "(Get-Content '!SCRIPT_DIR!bundle-scripts\Debug.bat' -Raw) -replace '\{\{product_name\}\}','!PRODUCT_NAME!' | Set-Content '!ZIP_STAGING!\Debug.bat' -NoNewline"
 powershell -Command "Compress-Archive -Path '!ZIP_STAGING!\*' -DestinationPath '!FINAL_DIR!\!PRODUCT_NAME!_!PRODUCT_VERSION!_windows_!_arch!.zip' -CompressionLevel !ZIP_PS_LEVEL! -Force"
