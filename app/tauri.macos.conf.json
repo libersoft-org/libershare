@@ -1,7 +1,8 @@
 {
 	"bundle": {
 		"resources": {
-			"../backend/build/lish-backend": "./lish-backend"
+			"../backend/build/lish-backend": "./lish-backend",
+			"../backend/build/lish/checksum-worker.js": "./lish/checksum-worker.js"
 		}
 	}
 }

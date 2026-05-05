@@ -334,6 +334,22 @@ build_frontend() {
 	echo "=== Frontend done ($(elapsed_since $_t)) ==="
 }
 
+# Pre-build verification: ensure source quality across packages before producing artifacts.
+# Backend unit tests run inside backend/build.sh, here we cover the rest.
+# Skip with SKIP_TESTS=1 only in emergencies (e.g. broken upstream tooling); CI must never set it.
+run_pre_build_tests() {
+	if [ "${SKIP_TESTS:-0}" = "1" ]; then
+		echo "=== Pre-build tests skipped (SKIP_TESTS=1) ==="
+		return 0
+	fi
+	_t=$(date +%s)
+	echo "=== Running pre-build verification ==="
+	(cd "$ROOT_DIR/shared" && bun install --frozen-lockfile && bun run typecheck)
+	(cd "$ROOT_DIR/cli" && bun install --frozen-lockfile && bun run typecheck)
+	(cd "$ROOT_DIR/frontend" && bun install --frozen-lockfile && bun run check)
+	echo "=== Pre-build verification done ($(elapsed_since $_t)) ==="
+}
+
 build_backend() {
 	if [ "$BUILD_OS" = "macos" ] && [ "$BUILD_ARCH" = "universal" ]; then
 		_t=$(date +%s)
@@ -563,6 +579,7 @@ ${PRODUCT_NAME} - peer-to-peer file sharing application
 %files
 /usr/bin/${PRODUCT_NAME_LOWER}
 /usr/bin/lish-backend
+/usr/bin/lish
 /usr/share/applications/${PRODUCT_NAME_LOWER}.desktop
 /usr/share/applications/${PRODUCT_NAME_LOWER}-debug.desktop
 /usr/share/icons/hicolor/256x256/apps/${PRODUCT_NAME_LOWER}.png
@@ -646,6 +663,8 @@ APPRUN_EOF
 _stage_zip_linux() {
 	cp "$BUILD_RELEASE_DIR/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/"
 	cp "$ROOT_DIR/backend/build/lish-backend" "$ZIP_STAGING/lish-backend"
+	mkdir -p "$ZIP_STAGING/lish"
+	cp -r "$ROOT_DIR/backend/build/lish/." "$ZIP_STAGING/lish/"
 	_copy_debug_script
 	chmod +x "$ZIP_STAGING/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/lish-backend"
 }
@@ -653,6 +672,8 @@ _stage_zip_linux() {
 _stage_zip_windows() {
 	cp "$BUILD_RELEASE_DIR/${PRODUCT_NAME}.exe" "$ZIP_STAGING/"
 	cp "$ROOT_DIR/backend/build/lish-backend.exe" "$ZIP_STAGING/lish-backend.exe"
+	mkdir -p "$ZIP_STAGING/lish"
+	cp -r "$ROOT_DIR/backend/build/lish/." "$ZIP_STAGING/lish/"
 	sed "s/{{product_name}}/$PRODUCT_NAME/g" \
 		"$SCRIPT_DIR/bundle-scripts/Debug.bat" >"$ZIP_STAGING/Debug.bat"
 }
@@ -694,6 +715,8 @@ build_linux_packages() {
 	chmod +x "$PKG_STAGING/usr/bin/$PRODUCT_NAME_LOWER"
 	cp "$ROOT_DIR/backend/build/lish-backend" "$PKG_STAGING/usr/bin/"
 	chmod +x "$PKG_STAGING/usr/bin/lish-backend"
+	mkdir -p "$PKG_STAGING/usr/bin/lish"
+	cp -r "$ROOT_DIR/backend/build/lish/." "$PKG_STAGING/usr/bin/lish/"
 
 	generate_desktop_entry "$PKG_STAGING/usr/share/applications/${PRODUCT_NAME_LOWER}.desktop"
 	generate_desktop_entry "$PKG_STAGING/usr/share/applications/${PRODUCT_NAME_LOWER}-debug.desktop" --debug
@@ -914,6 +937,7 @@ docker_inner_build() {
 	_inner_fail=0
 
 	build_icons
+	run_pre_build_tests
 	build_frontend
 	build_backend
 	sync_product_info
