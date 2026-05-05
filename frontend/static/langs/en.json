@@ -302,6 +302,7 @@
 			"autoStartSharingDefault": "Automatically start sharing after adding a LISH",
 			"autoStartDownloadingDefault": "Automatically start downloading after adding a LISH",
 			"autoErrorRecovery": "Automatic error recovery",
+			"autoConnectNewNetworks": "Automatically connect to newly added networks",
 			"mdnsEnabled": "Discover peers on local network (mDNS)",
 			"mdnsInterval": "Local network discovery interval (ms)"
 		},

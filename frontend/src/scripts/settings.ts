@@ -42,6 +42,7 @@ export const maxRelayClients = writable(5);
 export const autoStartSharing = writable(true);
 export const autoStartDownloading = writable(true);
 export const autoErrorRecovery = writable(true);
+export const autoConnectNewNetworks = writable(true);
 export const mdnsEnabled = writable(true);
 export const mdnsInterval = writable(10000);
 export const autoStartOnBoot = writable(true);
@@ -115,6 +116,7 @@ export async function loadSettings(): Promise<void> {
 		autoStartSharing.set(settings.network.autoStartSharing);
 		autoStartDownloading.set(settings.network.autoStartDownloading);
 		autoErrorRecovery.set(settings.network.autoErrorRecovery ?? true);
+		autoConnectNewNetworks.set(settings.network.autoConnectNewNetworks ?? true);
 		mdnsEnabled.set(settings.network.mdnsEnabled ?? true);
 		mdnsInterval.set(settings.network.mdnsInterval ?? 10000);
 
@@ -252,6 +254,10 @@ export function setAutoStartSharing(enabled: boolean): void {
 
 export function setAutoStartDownloading(enabled: boolean): void {
 	updateSetting(autoStartDownloading, 'network.autoStartDownloading', enabled);
+}
+
+export function setAutoConnectNewNetworks(enabled: boolean): void {
+	updateSetting(autoConnectNewNetworks, 'network.autoConnectNewNetworks', enabled);
 }
 
 export function setAutoErrorRecovery(enabled: boolean): void {

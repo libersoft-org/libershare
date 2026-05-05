@@ -51,6 +51,12 @@ export interface SettingsData {
 		autoStartSharing: boolean;
 		autoStartDownloading: boolean;
 		autoErrorRecovery: boolean;
+		/**
+		 * When true, networks added via API (manual form or public-list import) are
+		 * immediately set to enabled=true so the node joins them without an extra click.
+		 * Backwards-compatible: missing field is treated as true.
+		 */
+		autoConnectNewNetworks: boolean;
 		announceAddresses: string[];
 		mdnsEnabled: boolean;
 		mdnsInterval: number;
@@ -162,6 +168,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		autoStartSharing: true,
 		autoStartDownloading: true,
 		autoErrorRecovery: true,
+		autoConnectNewNetworks: true,
 		announceAddresses: [],
 		mdnsEnabled: true,
 		mdnsInterval: 30000,

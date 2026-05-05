@@ -302,6 +302,7 @@
 			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH",
 			"autoStartDownloadingDefault": "Automaticky spustit stahování po přidání LISH",
 			"autoErrorRecovery": "Automatická obnova po chybě",
+			"autoConnectNewNetworks": "Po přidání nové sítě se k ní automaticky připojit",
 			"mdnsEnabled": "Vyhledávat účastníky v místní síti (mDNS)",
 			"mdnsInterval": "Interval vyhledávání v místní síti v ms"
 		},

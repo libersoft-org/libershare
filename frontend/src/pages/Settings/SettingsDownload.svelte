@@ -4,7 +4,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
-	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, storageBackupPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, setStorageBackupPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, useRelayClients, maxRelayClients, autoStartSharing, autoStartDownloading, autoErrorRecovery, mdnsEnabled, mdnsInterval, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setUseRelayClients, setMaxRelayClients, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setMdnsEnabled, setMdnsInterval, settingsDefaults } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, storageBackupPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, setStorageBackupPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, useRelayClients, maxRelayClients, autoStartSharing, autoStartDownloading, autoErrorRecovery, autoConnectNewNetworks, mdnsEnabled, mdnsInterval, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setUseRelayClients, setMaxRelayClients, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setAutoConnectNewNetworks, setMdnsEnabled, setMdnsInterval, settingsDefaults } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { parseBytes, formatBytes } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -40,6 +40,7 @@
 	let autoStart = $state($autoStartSharing);
 	let autoStartDl = $state($autoStartDownloading);
 	let autoRecovery = $state($autoErrorRecovery);
+	let autoConnectNetworks = $state($autoConnectNewNetworks);
 	let mdns = $state($mdnsEnabled);
 	let mdnsIntervalMs = $state($mdnsInterval.toString());
 
@@ -169,6 +170,11 @@
 	function toggleAutoRecovery(): void {
 		autoRecovery = !autoRecovery;
 		setAutoErrorRecovery(autoRecovery);
+	}
+
+	function toggleAutoConnectNetworks(): void {
+		autoConnectNetworks = !autoConnectNetworks;
+		setAutoConnectNewNetworks(autoConnectNetworks);
 	}
 
 	function toggleMdns(): void {
@@ -350,14 +356,17 @@
 				<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 18]} onToggle={toggleAutoRecovery} />
 			</div>
 			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.mdnsEnabled') + ':'} checked={mdns} position={[0, 19]} onToggle={toggleMdns} />
+				<SwitchRow label={$t('settings.download.autoConnectNewNetworks') + ':'} checked={autoConnectNetworks} position={[0, 19]} onToggle={toggleAutoConnectNetworks} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.mdnsEnabled') + ':'} checked={mdns} position={[0, 20]} onToggle={toggleMdns} />
 			</div>
 			<div class="row" role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={mdnsIntervalMs} label={$t('settings.download.mdnsInterval')} type="number" min={1000} position={[0, 20]} flex />
-				<Button icon="/img/restart.svg" position={[1, 20]} onConfirm={resetMdnsInterval} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Input bind:value={mdnsIntervalMs} label={$t('settings.download.mdnsInterval')} type="number" min={1000} position={[0, 21]} flex />
+				<Button icon="/img/restart.svg" position={[1, 21]} onConfirm={resetMdnsInterval} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 		</div>
-		<ButtonBar justify="center" basePosition={[0, 21]}>
+		<ButtonBar justify="center" basePosition={[0, 22]}>
 			<Button icon="/img/save.svg" label={$t('common.save')} onConfirm={handleSave} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
