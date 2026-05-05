@@ -107,6 +107,14 @@ export interface SettingsData {
 	};
 }
 
+function storagePath(envName: string, defaultRelative: string, fallback: string): string {
+	const explicit = process.env[envName];
+	if (explicit) return explicit;
+	const root = process.env['LIBERSHARE_STORAGE_ROOT'];
+	if (!root) return fallback;
+	return `${root.replace(/[\\/]+$/, '')}/${defaultRelative}/`;
+}
+
 const DEFAULT_SETTINGS: SettingsData = {
 	language: '',
 	ui: {
@@ -135,11 +143,11 @@ const DEFAULT_SETTINGS: SettingsData = {
 		volume: 50,
 	},
 	storage: {
-		downloadPath: '~/LiberShare/finished/',
-		tempPath: '~/LiberShare/temp/',
-		lishPath: '~/LiberShare/lish/',
-		lishnetPath: '~/LiberShare/lishnet/',
-		backupPath: '~/LiberShare/backup/',
+		downloadPath: storagePath('LIBERSHARE_DOWNLOAD_PATH', 'finished', '~/LiberShare/finished/'),
+		tempPath: storagePath('LIBERSHARE_TEMP_PATH', 'temp', '~/LiberShare/temp/'),
+		lishPath: storagePath('LIBERSHARE_LISH_PATH', 'lish', '~/LiberShare/lish/'),
+		lishnetPath: storagePath('LIBERSHARE_LISHNET_PATH', 'lishnet', '~/LiberShare/lishnet/'),
+		backupPath: storagePath('LIBERSHARE_BACKUP_PATH', 'backup', '~/LiberShare/backup/'),
 	},
 	network: {
 		incomingPort: 9090,
