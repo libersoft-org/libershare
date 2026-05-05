@@ -610,6 +610,13 @@ if errorlevel 1 (
     endlocal & exit /b 1
 )
 
+rem ── Pre-build verification (typecheck + tests across packages) ──
+call :run_pre_build_tests
+if errorlevel 1 (
+    for %%f in (!_all_expected!) do echo FAIL %%f>>"!BUILD_RESULTS_FILE!"
+    endlocal & exit /b 1
+)
+
 rem ── Build frontend ──
 call :build_frontend
 if errorlevel 1 (
@@ -719,6 +726,40 @@ if errorlevel 1 exit /b 1
 set "_icons_elapsed=0"
 call :elapsed_since !_icons_start! _icons_elapsed
 echo === Icons done ^(!_icons_elapsed!^) ===
+exit /b 0
+
+rem ─── run_pre_build_tests ─────────────────────────────────────────────────
+rem Pre-build verification: ensure source quality across packages before producing artifacts.
+rem Backend unit tests run inside backend\build.bat, here we cover the rest.
+rem Skip with SKIP_TESTS=1 only in emergencies (e.g. broken upstream tooling); CI must never set it.
+
+:run_pre_build_tests
+if "%SKIP_TESTS%"=="1" (
+    echo === Pre-build tests skipped ^(SKIP_TESTS=1^) ===
+    exit /b 0
+)
+set "_test_start=0"
+call :get_timestamp _test_start
+echo === Running pre-build verification ===
+cd /d "!ROOT_DIR!\shared"
+call bun install --frozen-lockfile
+if errorlevel 1 exit /b 1
+call bun run typecheck
+if errorlevel 1 exit /b 1
+cd /d "!ROOT_DIR!\cli"
+call bun install --frozen-lockfile
+if errorlevel 1 exit /b 1
+call bun run typecheck
+if errorlevel 1 exit /b 1
+cd /d "!ROOT_DIR!\frontend"
+call bun install --frozen-lockfile
+if errorlevel 1 exit /b 1
+call bun run check
+if errorlevel 1 exit /b 1
+cd /d "!SCRIPT_DIR!"
+set "_test_elapsed=0"
+call :elapsed_since !_test_start! _test_elapsed
+echo === Pre-build verification done ^(!_test_elapsed!^) ===
 exit /b 0
 
 rem ─── build_frontend ──────────────────────────────────────────────────────

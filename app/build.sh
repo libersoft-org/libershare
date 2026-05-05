@@ -334,6 +334,22 @@ build_frontend() {
 	echo "=== Frontend done ($(elapsed_since $_t)) ==="
 }
 
+# Pre-build verification: ensure source quality across packages before producing artifacts.
+# Backend unit tests run inside backend/build.sh, here we cover the rest.
+# Skip with SKIP_TESTS=1 only in emergencies (e.g. broken upstream tooling); CI must never set it.
+run_pre_build_tests() {
+	if [ "${SKIP_TESTS:-0}" = "1" ]; then
+		echo "=== Pre-build tests skipped (SKIP_TESTS=1) ==="
+		return 0
+	fi
+	_t=$(date +%s)
+	echo "=== Running pre-build verification ==="
+	(cd "$ROOT_DIR/shared" && bun install --frozen-lockfile && bun run typecheck)
+	(cd "$ROOT_DIR/cli" && bun install --frozen-lockfile && bun run typecheck)
+	(cd "$ROOT_DIR/frontend" && bun install --frozen-lockfile && bun run check)
+	echo "=== Pre-build verification done ($(elapsed_since $_t)) ==="
+}
+
 build_backend() {
 	if [ "$BUILD_OS" = "macos" ] && [ "$BUILD_ARCH" = "universal" ]; then
 		_t=$(date +%s)
@@ -921,6 +937,7 @@ docker_inner_build() {
 	_inner_fail=0
 
 	build_icons
+	run_pre_build_tests
 	build_frontend
 	build_backend
 	sync_product_info
