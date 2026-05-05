@@ -736,12 +736,16 @@ describe('Downloader – path traversal protection', () => {
 
 	// --- Encoded/obfuscated traversal attempts (must block) ---
 
-	it('blocks backslash traversal on Windows', () => {
+	// Backslash is only a path separator on Windows. On POSIX it is a literal filename character,
+	// so safePath cannot — and should not — interpret it as traversal.
+	const itWindows = process.platform === 'win32' ? it : it.skip;
+
+	itWindows('blocks backslash traversal on Windows', () => {
 		const dl = makeDownloader();
 		expect(() => callSafePath(dl, '..\\evil.txt')).toThrow('Path traversal blocked');
 	});
 
-	it('blocks mixed slash traversal', () => {
+	itWindows('blocks mixed slash traversal on Windows', () => {
 		const dl = makeDownloader();
 		expect(() => callSafePath(dl, '..\\..\\evil.txt')).toThrow('Path traversal blocked');
 	});
