@@ -795,6 +795,17 @@ cd /d "!ROOT_DIR!\backend"
 if exist build rmdir /s /q build
 call bun i --frozen-lockfile
 if errorlevel 1 ( endlocal & exit /b 1 )
+
+rem Pre-build verification: typecheck + unit tests must pass before producing artifacts.
+rem Mirrors the gate inside backend\build.bat (used when invoking it directly) so Tauri
+rem builds don't bypass tests. Skip with SKIP_TESTS=1 only in emergencies; CI must never set it.
+if not "%SKIP_TESTS%"=="1" (
+	call bun run typecheck
+	if errorlevel 1 ( endlocal & exit /b 1 )
+	call bun run test
+	if errorlevel 1 ( endlocal & exit /b 1 )
+)
+
 mkdir build
 call bun build --compile --target !BUN_TGT! ./src/app.ts --outfile build\lish-backend.exe
 if errorlevel 1 ( endlocal & exit /b 1 )
