@@ -300,7 +300,9 @@
 			"maxRelayClients": "Maximum number of connections to other peers' relay servers (1–20)",
 			"autoStartSharingDefault": "Automatically start sharing after adding a LISH",
 			"autoStartDownloadingDefault": "Automatically start downloading after adding a LISH",
-			"autoErrorRecovery": "Automatic error recovery"
+			"autoErrorRecovery": "Automatic error recovery",
+			"mdnsEnabled": "Discover peers on local network (mDNS)",
+			"mdnsInterval": "Local network discovery interval (ms)"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",
