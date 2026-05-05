@@ -25,6 +25,14 @@ done
 [ -d "./build/" ] && rm -r build
 mkdir -p build
 bun i --frozen-lockfile
+
+# Pre-build verification: typecheck + unit tests must pass before producing artifacts.
+# Skip with SKIP_TESTS=1 only in emergencies (e.g. broken upstream tooling); CI must never set it.
+if [ "${SKIP_TESTS:-0}" != "1" ]; then
+	bun run typecheck
+	bun run test
+fi
+
 mkdir -p build/lish
 
 if [ -n "$BUN_TARGET" ]; then
