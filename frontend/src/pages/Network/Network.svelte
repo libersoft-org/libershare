@@ -87,9 +87,11 @@
 		lishPeerListRow = null;
 		await lishPeerListSubPage.exit();
 	}
-	async function openPeerFromLishPeerList(peerID: string, networkID: string, lishID: string): Promise<void> {
-		// Close the LISH peer-list page first, then open the PeerDetail page on top of the search tab.
-		await handleLishPeerListBack();
+	function openPeerFromLishPeerList(peerID: string, networkID: string, lishID: string): void {
+		// Layer PeerDetail on top of the LISH peer-list (instead of closing the
+		// peer-list first). Back from PeerDetail returns to the peer-list — one
+		// level up — and a second back returns to the Network root. Closing the
+		// peer-list first would skip a level and confuse the user.
 		openPeerFromSearch(peerID, networkID, lishID);
 	}
 
@@ -125,6 +127,11 @@
 		selectedPeer = null;
 		highlightLishID = undefined;
 		await detailSubPage.exit();
+		// detailSubPage.exit() always calls navHandle.resume(). When PeerDetail
+		// was layered above the LishPeerList, the peer-list is still on top of
+		// the SubPage stack and must keep ownership of the navArea — re-pause
+		// so its own createNavArea remains the only active registration.
+		if (lishPeerListSubPage.active) navHandle.pause();
 	}
 
 	// =================== NavArea grid ===================
