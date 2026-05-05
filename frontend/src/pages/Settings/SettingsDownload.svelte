@@ -4,7 +4,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
-	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, storageBackupPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, setStorageBackupPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, maxRelayClients, autoStartSharing, autoStartDownloading, autoErrorRecovery, mdnsEnabled, mdnsInterval, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setMaxRelayClients, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setMdnsEnabled, setMdnsInterval, settingsDefaults } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, storageBackupPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, setStorageBackupPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, useRelayClients, maxRelayClients, autoStartSharing, autoStartDownloading, autoErrorRecovery, mdnsEnabled, mdnsInterval, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setUseRelayClients, setMaxRelayClients, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setMdnsEnabled, setMdnsInterval, settingsDefaults } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { parseBytes, formatBytes } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -35,6 +35,7 @@
 	let messageSizeLimit = $state(formatBytes($maxMessageSize));
 	let relay = $state($allowRelay);
 	let relayReservations = $state($maxRelayReservations.toString());
+	let useRelayClientsState = $state($useRelayClients);
 	let relayClients = $state($maxRelayClients.toString());
 	let autoStart = $state($autoStartSharing);
 	let autoStartDl = $state($autoStartDownloading);
@@ -148,6 +149,11 @@
 	function toggleAllowRelay(): void {
 		relay = !relay;
 		setAllowRelay(relay);
+	}
+
+	function toggleUseRelayClients(): void {
+		useRelayClientsState = !useRelayClientsState;
+		setUseRelayClients(useRelayClientsState);
 	}
 
 	function toggleAutoStart(): void {
@@ -327,28 +333,31 @@
 				<Input bind:value={relayReservations} label={$t('settings.download.maxRelayReservations')} type="number" position={[0, 13]} flex />
 				<Button icon="/img/restart.svg" position={[1, 13]} onConfirm={resetRelayReservations} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row" role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={relayClients} label={$t('settings.download.maxRelayClients')} type="number" position={[0, 14]} flex />
-				<Button icon="/img/restart.svg" position={[1, 14]} onConfirm={resetRelayClients} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
-			</div>
 			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} position={[0, 15]} onToggle={toggleAutoStart} />
-			</div>
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 16]} onToggle={toggleAutoStartDl} />
-			</div>
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 17]} onToggle={toggleAutoRecovery} />
-			</div>
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.mdnsEnabled') + ':'} checked={mdns} position={[0, 18]} onToggle={toggleMdns} />
+				<SwitchRow label={$t('settings.download.useRelayClients') + ':'} checked={useRelayClientsState} position={[0, 14]} onToggle={toggleUseRelayClients} />
 			</div>
 			<div class="row" role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={mdnsIntervalMs} label={$t('settings.download.mdnsInterval')} type="number" min={1000} position={[0, 19]} flex />
-				<Button icon="/img/restart.svg" position={[1, 19]} onConfirm={resetMdnsInterval} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Input bind:value={relayClients} label={$t('settings.download.maxRelayClients')} type="number" position={[0, 15]} flex />
+				<Button icon="/img/restart.svg" position={[1, 15]} onConfirm={resetRelayClients} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} position={[0, 16]} onToggle={toggleAutoStart} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 17]} onToggle={toggleAutoStartDl} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 18]} onToggle={toggleAutoRecovery} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.mdnsEnabled') + ':'} checked={mdns} position={[0, 19]} onToggle={toggleMdns} />
+			</div>
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={mdnsIntervalMs} label={$t('settings.download.mdnsInterval')} type="number" min={1000} position={[0, 20]} flex />
+				<Button icon="/img/restart.svg" position={[1, 20]} onConfirm={resetMdnsInterval} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 		</div>
-		<ButtonBar justify="center" basePosition={[0, 20]}>
+		<ButtonBar justify="center" basePosition={[0, 21]}>
 			<Button icon="/img/save.svg" label={$t('common.save')} onConfirm={handleSave} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>

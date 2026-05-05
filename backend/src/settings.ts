@@ -40,6 +40,12 @@ export interface SettingsData {
 		allowRelay: boolean;
 		/** How many other peers may reserve a relay slot ON US (we are the relay server). 0 = unlimited. */
 		maxRelayReservations: number;
+		/**
+		 * Master switch for the circuit-relay CLIENT role. When false, this node will not
+		 * reserve relay slots on other peers regardless of `maxRelayClients`. When true,
+		 * `maxRelayClients` defines how many slots to reserve.
+		 */
+		useRelayClients: boolean;
 		/** How many other peers' relays we use AS A CLIENT (`discoverRelays` + `/p2p-circuit` listen slots). */
 		maxRelayClients: number;
 		autoStartSharing: boolean;
@@ -151,6 +157,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE,
 		allowRelay: true,
 		maxRelayReservations: 0,
+		useRelayClients: true,
 		maxRelayClients: 5,
 		autoStartSharing: true,
 		autoStartDownloading: true,

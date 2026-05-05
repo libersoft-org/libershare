@@ -297,6 +297,7 @@
 			"maxMessageSize": "Maximální velikost jedné P2P zprávy — musí být větší než velikost části (např. 128MB)",
 			"allowRelay": "Zapnout předávací server (přeposílat data pro ostatní účastníky)",
 			"maxRelayReservations": "Maximální počet spojení k našemu předávacímu serveru (0 = neomezeno)",
+			"useRelayClients": "Připojovat se k předávacím serverům ostatních (využít je jako klient)",
 			"maxRelayClients": "Maximální počet spojení k předávacím serverům ostatních (1–20)",
 			"autoStartSharingDefault": "Automaticky spustit sdílení po přidání LISH",
 			"autoStartDownloadingDefault": "Automaticky spustit stahování po přidání LISH",

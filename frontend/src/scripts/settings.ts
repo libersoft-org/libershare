@@ -37,6 +37,7 @@ export const maxChunkSize = writable(0);
 export const maxMessageSize = writable(0);
 export const allowRelay = writable(true);
 export const maxRelayReservations = writable(0);
+export const useRelayClients = writable(true);
 export const maxRelayClients = writable(5);
 export const autoStartSharing = writable(true);
 export const autoStartDownloading = writable(true);
@@ -109,6 +110,7 @@ export async function loadSettings(): Promise<void> {
 		maxMessageSize.set(settings.network.maxMessageSize);
 		allowRelay.set(settings.network.allowRelay);
 		maxRelayReservations.set(settings.network.maxRelayReservations);
+		useRelayClients.set(settings.network.useRelayClients ?? true);
 		maxRelayClients.set(settings.network.maxRelayClients ?? 5);
 		autoStartSharing.set(settings.network.autoStartSharing);
 		autoStartDownloading.set(settings.network.autoStartDownloading);
@@ -231,6 +233,10 @@ export function setAllowRelay(enabled: boolean): void {
 export function setMaxRelayReservations(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
 	updateSetting(maxRelayReservations, 'network.maxRelayReservations', clampedValue);
+}
+
+export function setUseRelayClients(enabled: boolean): void {
+	updateSetting(useRelayClients, 'network.useRelayClients', enabled);
 }
 
 export function setMaxRelayClients(value: number): void {
