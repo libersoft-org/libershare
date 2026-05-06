@@ -7,10 +7,13 @@ import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from './data-server.ts';
 
-// Static worker URL — Bun's bundler statically detects this pattern and embeds the worker
-// into the compiled binary. Must remain a literal string so static analysis works.
+// Static worker URL — Bun's bundler statically detects this exact pattern and embeds
+// the worker into the compiled binary. The `new URL(...)` MUST be the direct argument
+// of `new Worker(...)` for static analysis to work.
 function createChecksumWorker(): Worker {
-	return new Worker(new URL('./checksum-worker.ts', import.meta.url).href);
+	const w = new Worker(new URL('./checksum-worker.ts', import.meta.url).href);
+	console.log('[checksum-worker] created (import.meta.url=', import.meta.url, ')');
+	return w;
 }
 
 // Helper to normalize paths to forward slashes
@@ -91,6 +94,26 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 			return;
 		}
 		signal?.addEventListener('abort', abortHandler, { once: true });
+		// Attach error listeners so worker startup/runtime failures don't hang silently
+		for (const w of workers) {
+			w.addEventListener('error', (e: ErrorEvent) => {
+				if (finished) return;
+				finished = true;
+				signal?.removeEventListener('abort', abortHandler);
+				workers.forEach(x => x.terminate());
+				const msg = e.message || (e as unknown as { error?: { message?: string } }).error?.message || String(e);
+				console.error('[checksum-worker] error:', msg, e);
+				rejectAll(new Error(`Checksum worker failed: ${msg}`));
+			});
+			w.addEventListener('messageerror', (e: MessageEvent) => {
+				if (finished) return;
+				finished = true;
+				signal?.removeEventListener('abort', abortHandler);
+				workers.forEach(x => x.terminate());
+				console.error('[checksum-worker] messageerror:', e);
+				rejectAll(new Error('Checksum worker message error'));
+			});
+		}
 		function feedWorker(workerIndex: number): void {
 			if (finished) return;
 			if (nextChunk >= totalChunks) return;
