@@ -87,7 +87,7 @@ function evaluateMeshStatus(health: Record<string, MeshHealthEntry>, counts: Rec
 		// topic; treat the worst-case as "forming" by leaving `worstStable` at
 		// its current minimum and recording `anyMeshEmpty` if appropriate.
 		const live = entry.stableSinceMs === null ? null : entry.stableSinceMs + elapsedSinceAnchor;
-		if (live === null) anyMeshEmpty = anyMeshEmpty || true;
+		if (live === null) anyMeshEmpty = true;
 		else if (live < worstStable) worstStable = live;
 		if (entry.medianScore !== null && (worstScore === null || entry.medianScore < worstScore)) worstScore = entry.medianScore;
 	}
