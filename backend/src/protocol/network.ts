@@ -1379,7 +1379,13 @@ export class Network {
 			}
 			if (scores.length > 0) {
 				scores.sort((a, b) => a - b);
-				medianScore = scores[Math.floor(scores.length / 2)] ?? null;
+				const n = scores.length;
+				// True statistical median: average the two middle values for
+				// even N. Picking the upper middle silently rounded a half-
+				// graylisted mesh (e.g. `[-100, 0]` → 0 → "stable") into the
+				// healthy bucket — a single positive outlier could mask a peer
+				// the heartbeat is about to PRUNE.
+				medianScore = n % 2 === 0 ? (scores[n / 2 - 1]! + scores[n / 2]!) / 2 : (scores[Math.floor(n / 2)] ?? null);
 			}
 		}
 		return { meshSize: meshPeers.length, stableSinceMs, medianScore };
