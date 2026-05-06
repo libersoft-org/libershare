@@ -1,6 +1,7 @@
 import { type ServerWebSocket } from 'bun';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
+import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
 import { CodedError, ErrorCodes } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
@@ -282,12 +283,18 @@ export class APIServer {
 		return handler.call(this, params, client);
 	}
 
-	private getCurrentPeerCounts(): { networkID: string; count: number }[] {
+	private getCurrentPeerCounts(): PeerCountEntry[] {
 		const enabled = this.networks.getEnabled();
-		return enabled.map(net => ({
-			networkID: net.networkID,
-			count: this.networks.getTopicPeers(net.networkID).length,
-		}));
+		return enabled.map(net => {
+			const health = this.networks.getMeshHealth(net.networkID);
+			return {
+				networkID: net.networkID,
+				count: this.networks.getTopicPeers(net.networkID).length,
+				meshSize: health.meshSize,
+				stableSinceMs: health.stableSinceMs,
+				medianScore: health.medianScore,
+			};
+		});
 	}
 
 	private emit(client: ClientSocket, event: string, data: any): void {

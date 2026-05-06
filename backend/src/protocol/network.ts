@@ -38,6 +38,26 @@ export function isSearchAdvertisableLish(lish: import('@shared').IStoredLISH): b
 	return isUploadAdvertisable(lish.id);
 }
 
+/**
+ * Per-network entry of the `peers:count` API event. The `count` field is the
+ * subscriber count to the lishnet topic (peers we know are listening); the
+ * remaining fields are a snapshot of mesh health used by the UI to colour the
+ * network indicator without making a separate poll. See
+ * {@link Network.getMeshHealth} for semantics of the mesh-health fields.
+ */
+export interface PeerCountEntry {
+	networkID: string;
+	count: number;
+	meshSize: number;
+	/** Milliseconds since the last graft/prune at the moment the event was
+	 * emitted, or `null` if no graft/prune has ever been observed on this
+	 * topic (mesh still forming). The frontend should anchor a non-null
+	 * value to its own clock and recompute elapsed time client-side instead
+	 * of polling. */
+	stableSinceMs: number | null;
+	medianScore: number | null;
+}
+
 /** Raw gossipsub message event. */
 interface PubsubEvent {
 	topic: string;
@@ -144,10 +164,21 @@ export class Network {
 	// Topic handlers: topic -> Set of handler functions
 	private topicHandlers: Map<string, Set<TopicHandler>> = new Map();
 
+	/**
+	 * Per-topic timestamp of the last mesh churn (GRAFT or PRUNE on that topic).
+	 * Used as a fleet-size-agnostic mesh-stability signal: if no graft/prune has
+	 * arrived for several heartbeats the gossipsub mesh is considered settled
+	 * and broadcasts on that topic will reach the expected fan-out. Topic with
+	 * no recorded entry has never observed a mesh event yet (mesh still
+	 * forming).
+	 */
+	private readonly lastMeshChange: Map<string, number> = new Map();
+
 	// Peer count change callback and debounce
-	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
+	private _onPeerCountChange: ((counts: PeerCountEntry[]) => void) | null = null;
 	private _peerCountDebounceTimer: NodeJS.Timeout | null = null;
 	private _lastPeerCounts: Map<string, number> = new Map();
+	private _lastMeshSizes: Map<string, number> = new Map();
 
 	// Previous gossipsub peer scores — tracked per-peer to detect significant
 	// score deltas and log threshold crossings (e.g. entered graylist).
@@ -178,7 +209,7 @@ export class Network {
 	/**
 	 * Set a callback to be called when peer counts change for any subscribed topic.
 	 */
-	set onPeerCountChange(cb: ((counts: { networkID: string; count: number }[]) => void) | null) {
+	set onPeerCountChange(cb: ((counts: PeerCountEntry[]) => void) | null) {
 		this._onPeerCountChange = cb;
 	}
 
@@ -351,14 +382,17 @@ export class Network {
 	}
 
 	/**
-	 * Check peer counts for all subscribed topics and fire callback if any changed.
+	 * Check peer counts and mesh health for all subscribed topics and fire
+	 * the callback if either subscriber count or mesh size has changed for
+	 * any network. Both are batched into one emission so the FE never sees
+	 * an inconsistent (count-without-mesh-size) snapshot.
 	 */
 	private checkPeerCounts(): void {
 		if (!this._onPeerCountChange || !this.pubsub) return;
 		const topics = this.pubsub.getTopics();
 		const prefix = LISH_TOPIC_PREFIX;
 		let changed = false;
-		const counts: { networkID: string; count: number }[] = [];
+		const counts: PeerCountEntry[] = [];
 		for (const topic of topics) {
 			if (!topic.startsWith(prefix)) continue;
 			const networkID = topic.slice(prefix.length);
@@ -366,16 +400,20 @@ export class Network {
 			try {
 				count = this.pubsub.getSubscribers(topic).length;
 			} catch {}
-			const prev = this._lastPeerCounts.get(networkID) ?? -1;
-			if (count !== prev) changed = true;
+			const health = this.getMeshHealth(networkID);
+			const prevCount = this._lastPeerCounts.get(networkID) ?? -1;
+			const prevMesh = this._lastMeshSizes.get(networkID) ?? -1;
+			if (count !== prevCount || health.meshSize !== prevMesh) changed = true;
 			this._lastPeerCounts.set(networkID, count);
-			counts.push({ networkID, count });
+			this._lastMeshSizes.set(networkID, health.meshSize);
+			counts.push({ networkID, count, meshSize: health.meshSize, stableSinceMs: health.stableSinceMs, medianScore: health.medianScore });
 		}
 		// Also detect removed topics
 		const currentNetworkIDs = new Set(counts.map(c => c.networkID));
 		for (const [id] of this._lastPeerCounts) {
 			if (!currentNetworkIDs.has(id)) {
 				this._lastPeerCounts.delete(id);
+				this._lastMeshSizes.delete(id);
 				changed = true;
 			}
 		}
@@ -528,11 +566,13 @@ export class Network {
 
 		this.addListener(this.pubsub, 'gossipsub:graft', (evt: any) => {
 			trace(`[NET] GRAFT: ${evt.detail.peerID} joined ${evt.detail.topic}`);
+			this.lastMeshChange.set(evt.detail.topic, Date.now());
 			this.schedulePeerCountCheck();
 		});
 
 		this.addListener(this.pubsub, 'gossipsub:prune', (evt: any) => {
 			trace(`[NET] PRUNE: ${evt.detail.peerID} left ${evt.detail.topic}`);
+			this.lastMeshChange.set(evt.detail.topic, Date.now());
 			this.schedulePeerCountCheck();
 		});
 
@@ -1272,6 +1312,60 @@ export class Network {
 		} catch {
 			return [];
 		}
+	}
+
+	/**
+	 * Snapshot of fleet-size-agnostic mesh health for a network's gossipsub topic.
+	 *
+	 * - `meshSize` — count of peers currently in the gossipsub topic mesh
+	 *   (`pubsub.mesh[topic]`). 0 means we have no full-mesh peers and broadcasts
+	 *   on this topic will not be delivered (only gossiped).
+	 * - `stableSinceMs` — milliseconds elapsed since the last GRAFT or PRUNE on
+	 *   this topic. The gossipsub heartbeat interval is 1 s; staying silent for
+	 *   several heartbeats (≥ 5 s in practice) means the heartbeat algorithm
+	 *   considers the mesh size settled within `[D_low, D_high]`. Returns
+	 *   `Number.POSITIVE_INFINITY` while no event has been observed yet — the
+	 *   caller should treat this as "unknown" and combine with `meshSize === 0`
+	 *   to distinguish "freshly subscribed" from "long-quiet steady state".
+	 * - `medianScore` — median of `pubsub.score.score(peerID)` across mesh peers,
+	 *   or `null` when the mesh is empty. Spec defines score 0 as the baseline
+	 *   for staying in the mesh; positive median = healthy, negative median =
+	 *   the heartbeat will start pruning peers and the router may opportunistic-
+	 *   graft. Median (not mean) so a single sybil cannot skew the indicator.
+	 *
+	 * The signal is intentionally relative — no absolute peer count is required
+	 * to interpret it, so the same logic works for a 3-peer LAN and a 300-peer
+	 * fleet.
+	 */
+	getMeshHealth(networkID: string): { meshSize: number; stableSinceMs: number | null; medianScore: number | null } {
+		const empty = { meshSize: 0, stableSinceMs: null, medianScore: null };
+		if (!this.pubsub) return empty;
+		const topic = lishTopic(networkID);
+		const gs: any = this.pubsub;
+		const meshPeerSet: Set<string> | undefined = gs.mesh?.get(topic);
+		const meshPeers = meshPeerSet ? [...meshPeerSet] : [];
+		const last = this.lastMeshChange.get(topic);
+		// `null` means "no graft/prune ever observed on this topic" — distinct
+		// from "0 ms since last change". Sent over the wire because JSON has no
+		// Infinity; the FE treats null as "stability unknown / still forming".
+		const stableSinceMs = last === undefined ? null : Math.max(0, Date.now() - last);
+		let medianScore: number | null = null;
+		if (meshPeers.length > 0 && typeof gs.score?.score === 'function') {
+			const scores: number[] = [];
+			for (const p of meshPeers) {
+				try {
+					const s = Number(gs.score.score(p));
+					if (Number.isFinite(s)) scores.push(s);
+				} catch {
+					// Score lookup may throw for peers in transitional states; skip.
+				}
+			}
+			if (scores.length > 0) {
+				scores.sort((a, b) => a - b);
+				medianScore = scores[Math.floor(scores.length / 2)] ?? null;
+			}
+		}
+		return { meshSize: meshPeers.length, stableSinceMs, medianScore };
 	}
 
 	// =========================================================================
