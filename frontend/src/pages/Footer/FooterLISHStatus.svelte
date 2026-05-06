@@ -18,7 +18,7 @@
 		meshState?: MeshState;
 	}
 	const { connectedNetworks = 0, totalNetworks = 0, totalPeers = 0, meshState = 'unknown' }: Props = $props();
-	const stateColorVar = $derived(meshState === 'stable' ? '--color-success' : meshState === 'forming' ? '--color-warning' : meshState === 'unstable' ? '--color-error' : '--primary-foreground');
+	const stateColorVar = $derived(meshState === 'stable' ? '--mesh-state-stable' : meshState === 'forming' ? '--mesh-state-forming' : meshState === 'unstable' ? '--mesh-state-unstable' : '--primary-foreground');
 	const stateLabel = $derived($t(`settings.lishNetwork.meshState.${meshState}`));
 </script>
 
