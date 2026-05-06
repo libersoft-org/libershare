@@ -37,10 +37,12 @@ export const maxChunkSize = writable(0);
 export const maxMessageSize = writable(0);
 export const allowRelay = writable(true);
 export const maxRelayReservations = writable(0);
+export const useRelayClients = writable(true);
 export const maxRelayClients = writable(5);
 export const autoStartSharing = writable(true);
 export const autoStartDownloading = writable(true);
 export const autoErrorRecovery = writable(true);
+export const autoConnectNewNetworks = writable(true);
 export const mdnsEnabled = writable(true);
 export const mdnsInterval = writable(10000);
 export const autoStartOnBoot = writable(true);
@@ -109,10 +111,12 @@ export async function loadSettings(): Promise<void> {
 		maxMessageSize.set(settings.network.maxMessageSize);
 		allowRelay.set(settings.network.allowRelay);
 		maxRelayReservations.set(settings.network.maxRelayReservations);
+		useRelayClients.set(settings.network.useRelayClients ?? true);
 		maxRelayClients.set(settings.network.maxRelayClients ?? 5);
 		autoStartSharing.set(settings.network.autoStartSharing);
 		autoStartDownloading.set(settings.network.autoStartDownloading);
 		autoErrorRecovery.set(settings.network.autoErrorRecovery ?? true);
+		autoConnectNewNetworks.set(settings.network.autoConnectNewNetworks ?? true);
 		mdnsEnabled.set(settings.network.mdnsEnabled ?? true);
 		mdnsInterval.set(settings.network.mdnsInterval ?? 10000);
 
@@ -233,6 +237,10 @@ export function setMaxRelayReservations(value: number): void {
 	updateSetting(maxRelayReservations, 'network.maxRelayReservations', clampedValue);
 }
 
+export function setUseRelayClients(enabled: boolean): void {
+	updateSetting(useRelayClients, 'network.useRelayClients', enabled);
+}
+
 export function setMaxRelayClients(value: number): void {
 	// Hard upper bound mirrors network-config.ts cap (20). Each /p2p-circuit slot
 	// adds Multiaddr churn on relay reservation refresh, so silently clamp here.
@@ -246,6 +254,10 @@ export function setAutoStartSharing(enabled: boolean): void {
 
 export function setAutoStartDownloading(enabled: boolean): void {
 	updateSetting(autoStartDownloading, 'network.autoStartDownloading', enabled);
+}
+
+export function setAutoConnectNewNetworks(enabled: boolean): void {
+	updateSetting(autoConnectNewNetworks, 'network.autoConnectNewNetworks', enabled);
 }
 
 export function setAutoErrorRecovery(enabled: boolean): void {

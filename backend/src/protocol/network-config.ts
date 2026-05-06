@@ -90,15 +90,20 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// Each /p2p-circuit slot accumulates Multiaddr objects from periodic relay
 	// reservation refresh; 10 slots produced ~117k Multiaddr instances on a
 	// long-running node (heap snapshot captured during leak investigation).
+	// useRelayClients=false fully disables the circuit-relay client role: zero discoverRelays
+	// reservations and zero /p2p-circuit listen slots so we never announce relayed multiaddrs.
+	// Defaults to true for backward compatibility when the field is absent in older settings files.
+	const useRelayClients = allSettings.network?.useRelayClients !== false;
 	const rawMaxRelayClients = allSettings.network?.maxRelayClients;
-	const maxRelays = typeof rawMaxRelayClients === 'number' && rawMaxRelayClients > 0 ? Math.min(rawMaxRelayClients, 20) : 5;
+	const maxRelays = useRelayClients ? (typeof rawMaxRelayClients === 'number' && rawMaxRelayClients > 0 ? Math.min(rawMaxRelayClients, 20) : 5) : 0;
 	transports.push(circuitRelayTransport({ discoverRelays: maxRelays } as any));
-	console.log(`✓ Circuit relay client enabled (discoverRelays: ${maxRelays})`);
+	if (maxRelays > 0) console.log(`✓ Circuit relay client enabled (discoverRelays: ${maxRelays})`);
+	else console.log('✓ Circuit relay client disabled by useRelayClients=false');
 	// Build listen addresses
 	const port = allSettings.network?.incomingPort || 0;
 	const listenAddresses = [`/ip4/0.0.0.0/tcp/${port}`];
 	for (let i = 0; i < maxRelays; i++) listenAddresses.push('/p2p-circuit');
-	console.log(`✓ Configured to reserve ${maxRelays} relay slots`);
+	if (maxRelays > 0) console.log(`✓ Configured to reserve ${maxRelays} relay slots`);
 	// Build appendAnnounce addresses.
 	// libp2p detects all network interfaces when listening on 0.0.0.0,
 	// but marks public transport addresses as unverified (requires AutoNAT confirmation).
