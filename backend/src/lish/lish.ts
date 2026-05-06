@@ -8,12 +8,12 @@ import { Utils } from '../utils.ts';
 import { type DataServer } from './data-server.ts';
 // Embed worker source as a file asset. Bun bundler copies the file into the
 // compiled binary's bunfs and returns the runtime path (works in dev too,
-// where it returns the absolute source path). Worker must be self-contained.
+// where it returns the absolute source path). Worker must be self-contained
+// and valid plain JS — see checksum-worker.js for details.
 // @ts-expect-error - Bun-specific `with { type: 'file' }` import returns the asset path as a string
-import checksumWorkerPath from './checksum-worker.ts' with { type: 'file' };
+import checksumWorkerPath from './checksum-worker.js' with { type: 'file' };
 
 function createChecksumWorker(): Worker {
-	console.log('[checksum-worker] creating with path:', checksumWorkerPath);
 	return new Worker(checksumWorkerPath);
 }
 
@@ -96,24 +96,19 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 		}
 		signal?.addEventListener('abort', abortHandler, { once: true });
 		// Attach error listeners so worker startup/runtime failures don't hang silently
+		function failWith(err: Error): void {
+			if (finished) return;
+			finished = true;
+			signal?.removeEventListener('abort', abortHandler);
+			workers.forEach(x => x.terminate());
+			rejectAll(err);
+		}
 		for (const w of workers) {
 			w.addEventListener('error', (e: ErrorEvent) => {
-				if (finished) return;
-				finished = true;
-				signal?.removeEventListener('abort', abortHandler);
-				workers.forEach(x => x.terminate());
 				const msg = e.message || (e as unknown as { error?: { message?: string } }).error?.message || String(e);
-				console.error('[checksum-worker] error:', msg, e);
-				rejectAll(new Error(`Checksum worker failed: ${msg}`));
+				failWith(new Error(`Checksum worker failed: ${msg}`));
 			});
-			w.addEventListener('messageerror', (e: MessageEvent) => {
-				if (finished) return;
-				finished = true;
-				signal?.removeEventListener('abort', abortHandler);
-				workers.forEach(x => x.terminate());
-				console.error('[checksum-worker] messageerror:', e);
-				rejectAll(new Error('Checksum worker message error'));
-			});
+			w.addEventListener('messageerror', () => failWith(new Error('Checksum worker message error')));
 		}
 		function feedWorker(workerIndex: number): void {
 			if (finished) return;
