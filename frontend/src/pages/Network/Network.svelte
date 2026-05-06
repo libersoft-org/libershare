@@ -99,6 +99,16 @@
 	let selectedPeer = $state<PeerListEntry | null>(null);
 	let selectedPeerNetworkID = $state('');
 	let highlightLishID = $state<string | undefined>(undefined);
+	/**
+	 * Bumped after each PeerDetail exit so the embedded LishPeerList re-mounts
+	 * via `{#key}`. LishPeerList registers its own `createNavArea` with the
+	 * shared `areaID`; without a forced re-mount, `detailSubPage.exit()` would
+	 * already have called `navHandle.resume()` (which re-registers the parent
+	 * Network handler under the same `areaID`, overwriting LishPeerList's
+	 * registration via last-write-wins in `useArea`). Re-mounting LishPeerList
+	 * makes it the final writer so keyboard navigation reaches its handlers.
+	 */
+	let lishPeerListMountKey = $state(0);
 
 	function openPeerDetail(peer: PeerListEntry, networkID: string, lishID?: string): void {
 		selectedPeer = peer;
@@ -127,11 +137,12 @@
 		selectedPeer = null;
 		highlightLishID = undefined;
 		await detailSubPage.exit();
-		// detailSubPage.exit() always calls navHandle.resume(). When PeerDetail
-		// was layered above the LishPeerList, the peer-list is still on top of
-		// the SubPage stack and must keep ownership of the navArea — re-pause
-		// so its own createNavArea remains the only active registration.
-		if (lishPeerListSubPage.active) navHandle.pause();
+		// `detailSubPage.exit()` calls `navHandle.resume()` which re-registers
+		// the parent Network handler under the shared `areaID`, overwriting any
+		// existing LishPeerList registration. Force LishPeerList to re-mount so
+		// its `createNavArea` runs again as the last writer — that restores its
+		// keyboard navigation when control returns to the peer-list view.
+		if (lishPeerListSubPage.active) lishPeerListMountKey++;
 	}
 
 	// =================== NavArea grid ===================
@@ -193,7 +204,9 @@
 {#if detailSubPage.active && selectedPeer}
 	<PeerDetail {areaID} {position} peer={selectedPeer} networkID={selectedPeerNetworkID} {highlightLishID} onBack={() => void handleDetailBack()} />
 {:else if lishPeerListSubPage.active && lishPeerListRow}
-	<NetworkLishsPeerList {areaID} {position} row={lishPeerListRow} {networks} onBack={() => void handleLishPeerListBack()} onOpenPeer={openPeerFromLishPeerList} />
+	{#key lishPeerListMountKey}
+		<NetworkLishsPeerList {areaID} {position} row={lishPeerListRow} {networks} onBack={() => void handleLishPeerListBack()} onOpenPeer={openPeerFromLishPeerList} />
+	{/key}
 {:else}
 	<div class="network-page">
 		<div class="container">
