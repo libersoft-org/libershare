@@ -170,6 +170,15 @@ export class Networks {
 	}
 
 	/**
+	 * Pass-through to {@link Network.getMeshHealth} so the API surface can read
+	 * the per-network gossipsub-mesh health snapshot (mesh size, time since
+	 * the last graft/prune, median peer score).
+	 */
+	getMeshHealth(id: string): { meshSize: number; stableSinceMs: number | null; medianScore: number | null } {
+		return this.network.getMeshHealth(id);
+	}
+
+	/**
 	 * Collect and deduplicate bootstrap peers from a set of network configs.
 	 */
 	private collectBootstrapPeers(configs: LISHNetworkConfig[]): string[] {

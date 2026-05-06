@@ -333,7 +333,13 @@
 			"networkDisconnected": "Síť LISH \"{name}\" odpojena",
 			"networkDeleted": "Síť LISH \"{name}\" byla smazána",
 			"networkExported": "Síť LISH \"{name}\" byla exportována",
-			"allNetworksExported": "Všechny sítě LISH byly exportovány"
+			"allNetworksExported": "Všechny sítě LISH byly exportovány",
+			"meshState": {
+				"unknown": "Žádná LISH síť není připojena",
+				"forming": "Mesh se ještě staví — vyhledávání může být neúplné",
+				"unstable": "Peery v mesh mají nízké skóre — degradované směrování",
+				"stable": "Mesh je stabilní — broadcasty dorazí k fleetu"
+			}
 		},
 		"lishNetworkImport": {
 			"fromJSON": "Z LISHNET JSON",

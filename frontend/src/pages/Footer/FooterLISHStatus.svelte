@@ -1,12 +1,25 @@
 <script lang="ts">
 	import Icon from '../../components/Icon/Icon.svelte';
 	import { t } from '../../scripts/language.ts';
+	import type { MeshState } from '../../scripts/networks.ts';
 	interface Props {
 		connectedNetworks?: number;
 		totalNetworks?: number;
 		totalPeers?: number;
+		/**
+		 * Worst-case mesh state across joined networks. Drives the network icon
+		 * colour:
+		 *   `unknown`   — no networks joined → neutral.
+		 *   `forming`   — mesh is still settling (no peers yet, mesh empty for
+		 *                 some topic, or last graft/prune within ~5 s).
+		 *   `unstable`  — median peer score below 0; heartbeat will prune.
+		 *   `stable`    — quiet for ≥ 5 s, all meshes non-empty, scores ≥ 0.
+		 */
+		meshState?: MeshState;
 	}
-	const { connectedNetworks = 0, totalNetworks = 0, totalPeers = 0 }: Props = $props();
+	const { connectedNetworks = 0, totalNetworks = 0, totalPeers = 0, meshState = 'unknown' }: Props = $props();
+	const stateColorVar = $derived(meshState === 'stable' ? '--mesh-state-stable' : meshState === 'forming' ? '--mesh-state-forming' : meshState === 'unstable' ? '--mesh-state-unstable' : '--primary-foreground');
+	const stateLabel = $derived($t(`settings.lishNetwork.meshState.${meshState}`));
 </script>
 
 <style>
@@ -26,9 +39,9 @@
 	}
 </style>
 
-<div class="item">
+<div class="item" title={stateLabel}>
 	<div class="top">
-		<Icon img="img/network.svg" alt={$t('settings.footerWidgets.lishStatus')} size="2vh" padding="0" colorVariable="--primary-foreground" />
+		<Icon img="img/network.svg" alt={$t('settings.footerWidgets.lishStatus')} size="2vh" padding="0" colorVariable={stateColorVar} />
 		<span class="value">{connectedNetworks} / {totalNetworks}</span>
 	</div>
 	<div class="bottom">

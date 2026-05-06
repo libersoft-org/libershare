@@ -16,6 +16,13 @@
 	--color-error: #e00;
 	--color-warning: #da0;
 	--color-success: #080;
+	/* Mesh-state colours used by the footer LISH-network indicator. The hue
+	 * sequence (red → orange → green) is intentionally distinct from the
+	 * yellow `--primary-foreground` baseline so that the "forming" state is
+	 * unmistakable at a glance. */
+	--mesh-state-forming: #f60;
+	--mesh-state-unstable: #e22;
+	--mesh-state-stable: #2a2;
 	--status-idling-fg: #aaa;
 	--status-idling-bg: #222;
 	--status-downloading-fg: #0a0;

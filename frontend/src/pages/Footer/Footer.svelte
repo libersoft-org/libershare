@@ -15,7 +15,7 @@
 	import { formatSize } from '../../scripts/utils.ts';
 	import { transferStats } from '../../scripts/downloads.ts';
 	import { relayStats } from '../../scripts/relayStats.ts';
-	import { networkSummary } from '../../scripts/networks.ts';
+	import { networkSummary, meshStatus } from '../../scripts/networks.ts';
 
 	type Widget = {
 		id: FooterWidget;
@@ -114,6 +114,7 @@
 					connectedNetworks: $networkSummary.connectedNetworks,
 					totalNetworks: $networkSummary.totalNetworks,
 					totalPeers: $networkSummary.totalPeers,
+					meshState: $meshStatus.state,
 				};
 			},
 		},

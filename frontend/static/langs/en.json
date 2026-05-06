@@ -333,7 +333,13 @@
 			"networkDisconnected": "LISH network \"{name}\" disconnected",
 			"networkDeleted": "LISH network \"{name}\" was deleted",
 			"networkExported": "LISH network \"{name}\" was exported",
-			"allNetworksExported": "All LISH networks were exported"
+			"allNetworksExported": "All LISH networks were exported",
+			"meshState": {
+				"unknown": "No LISH networks joined",
+				"forming": "Mesh is still forming — searches may be incomplete",
+				"unstable": "Mesh peers have low scores — degraded routing",
+				"stable": "Mesh is stable — broadcasts will reach the fleet"
+			}
 		},
 		"lishNetworkImport": {
 			"fromJSON": "From LISHNET JSON",
