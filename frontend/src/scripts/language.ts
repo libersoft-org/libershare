@@ -30,14 +30,33 @@ export const t = derived(translations, $translations => {
 	};
 });
 
-// Initialize and update translations when language changes
-currentLanguage.subscribe(async langID => {
-	const data = await loadLanguage(langID);
-	translations.set(data);
-});
+/**
+ * Build a language-change handler that guards against stale fetches.
+ *
+ * `currentLanguage.subscribe` fires for every value the store takes. When the
+ * value changes faster than `loadLanguage()` can resolve (e.g. module-load
+ * default → browser language → backend setting on startup), older fetches may
+ * resolve last and stomp the translations selected by the latest value. The
+ * `pendingLangID` guard captures the most recent target; if a fetch resolves
+ * for a target that is no longer current, its result is discarded.
+ */
+export function createTranslationLoader(loader: (langID: string) => Promise<any>, applyTranslations: (data: any) => void): (langID: string) => Promise<void> {
+	let pendingLangID: string | null = null;
+	return async (langID: string) => {
+		pendingLangID = langID;
+		const data = await loader(langID);
+		if (pendingLangID !== langID) return;
+		applyTranslations(data);
+	};
+}
 
-// Initialize with browser language or default
-initLanguage();
+// Initialize and update translations when language changes. Skipped under
+// non-browser runtimes (e.g. unit-test imports via `bun test`) so loaders
+// don't fire against an unavailable network.
+if (typeof window !== 'undefined') {
+	currentLanguage.subscribe(createTranslationLoader(loadLanguage, data => translations.set(data)));
+	initLanguage();
+}
 
 function initLanguage(): void {
 	const browserLang = navigator.language?.split('-')[0];
