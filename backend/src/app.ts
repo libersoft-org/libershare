@@ -6,7 +6,6 @@ import { DataServer } from './lish/data-server.ts';
 import { openDatabase } from './db/database.ts';
 import { APIServer } from './api/api.ts';
 import { Settings } from './settings.ts';
-import { setWorkerUrl } from './lish/lish.ts';
 import { startMemoryTrace } from './monitoring/memory-trace.ts';
 import { startHeapSnapshotTrigger } from './monitoring/heap-snapshot.ts';
 
@@ -15,11 +14,6 @@ const args = process.argv.slice(2);
 // Default dataDir: next to binary if compiled, otherwise ./data (relative to CWD)
 const isCompiledBinary = process.execPath !== Bun.which('bun');
 let dataDir = isCompiledBinary ? join(dirname(process.execPath), 'data') : './data';
-
-// In compiled binaries, import.meta.url is always the binary path (/$bunfs/root/<binary>),
-// so the worker is at ./lish/checksum-worker.js relative to it.
-// In dev mode the default in lish.ts (./checksum-worker.ts relative to lish.ts) is correct.
-if (isCompiledBinary) setWorkerUrl(new URL('./lish/checksum-worker.js', import.meta.url).href);
 
 let logLevel: LogLevel = isCompiledBinary ? 'info' : 'debug';
 let apiHost = 'localhost';

@@ -6,20 +6,15 @@ import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from './data-server.ts';
-
-// Worker URL for checksum-worker. Default works in dev mode (import.meta.url is the actual file URL).
-// In compiled binaries, import.meta.url is always the binary path, so app.ts must call setWorkerUrl()
-// with new URL('./lish/checksum-worker.js', import.meta.url).href before any LISH creation.
-let _workerUrl: string = new URL('./checksum-worker.ts', import.meta.url).href;
-
-/** Override the checksum worker URL. Must be called from the main entrypoint (app.ts) in compiled mode. */
-export function setWorkerUrl(url: string): void {
-	_workerUrl = url;
-}
+// Embed worker source as a file asset. Bun bundler copies the file into the
+// compiled binary's bunfs and returns the runtime path (works in dev too,
+// where it returns the absolute source path). Worker must be self-contained.
+// @ts-expect-error - Bun-specific `with { type: 'file' }` import returns the asset path as a string
+import checksumWorkerPath from './checksum-worker.ts' with { type: 'file' };
 
 function createChecksumWorker(): Worker {
-	console.log('[checksum-worker] creating with URL:', _workerUrl);
-	return new Worker(_workerUrl);
+	console.log('[checksum-worker] creating with path:', checksumWorkerPath);
+	return new Worker(checksumWorkerPath);
 }
 
 // Helper to normalize paths to forward slashes
