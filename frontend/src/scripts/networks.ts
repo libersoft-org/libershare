@@ -9,9 +9,13 @@ export const peerCounts = writable<Record<string, number>>({});
 /**
  * Per-network mesh health snapshot taken at the moment the most recent
  * `peers:count` event arrived. The frontend cannot keep a global server-side
- * clock in sync, so each entry is anchored against the local `Date.now()`
- * read at receive time (`anchor`) and the elapsed-since-mesh-change is
- * recomputed reactively elsewhere as `Date.now() - anchor + stableSinceMs`.
+ * clock in sync, so each entry is anchored against the browser's monotonic
+ * `performance.now()` read at receive time (`anchor`) and the elapsed-since-
+ * mesh-change is recomputed reactively elsewhere as
+ * `performance.now() - anchor + stableSinceMs`. `performance.now()` (rather
+ * than `Date.now()`) survives wall-clock jumps from suspend/resume or NTP
+ * step adjustments — relying on `Date.now()` would let a laptop wake up and
+ * spuriously flip the indicator to "stable".
  */
 export interface MeshHealthEntry {
 	meshSize: number;
@@ -21,7 +25,8 @@ export interface MeshHealthEntry {
 	 * mesh change". */
 	stableSinceMs: number | null;
 	medianScore: number | null;
-	/** Local `Date.now()` at the moment the event was processed by the FE. */
+	/** Browser monotonic time (`performance.now()`) at the moment the event
+	 * was processed by the FE. */
 	anchor: number;
 }
 export const meshHealth = writable<Record<string, MeshHealthEntry>>({});
@@ -60,11 +65,12 @@ const STABILITY_THRESHOLD_MS = 5000; // ≥ 5 heartbeats with no graft/prune
 
 /**
  * Internal tick store nudged once per second so {@link meshStatus} re-evaluates
- * elapsed time without relying on backend pushes. The actual value carried is
- * the wall-clock at the tick.
+ * elapsed time without relying on backend pushes. The value is the browser's
+ * monotonic `performance.now()` so it stays in lockstep with `anchor` even
+ * across system-clock jumps.
  */
-const _meshTick = writable<number>(Date.now());
-if (typeof window !== 'undefined') setInterval(() => _meshTick.set(Date.now()), 1000);
+const _meshTick = writable<number>(typeof performance !== 'undefined' ? performance.now() : 0);
+if (typeof window !== 'undefined') setInterval(() => _meshTick.set(performance.now()), 1000);
 
 function evaluateMeshStatus(health: Record<string, MeshHealthEntry>, counts: Record<string, number>, now: number): MeshStatusOverview {
 	const networkIDs = Object.keys(counts);
@@ -139,7 +145,7 @@ export async function subscribePeerCounts(): Promise<void> {
 	unsubListener = api.on('peers:count', (data: Array<{ networkID: string; count: number; meshSize?: number; stableSinceMs?: number | null; medianScore?: number | null }>) => {
 		const counts: Record<string, number> = {};
 		const health: Record<string, MeshHealthEntry> = {};
-		const now = Date.now();
+		const now = performance.now();
 		for (const entry of data) {
 			counts[entry.networkID] = entry.count;
 			if (entry.meshSize !== undefined) {
