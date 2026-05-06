@@ -7,13 +7,19 @@ import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from './data-server.ts';
 
-// Static worker URL — Bun's bundler statically detects this exact pattern and embeds
-// the worker into the compiled binary. The `new URL(...)` MUST be the direct argument
-// of `new Worker(...)` for static analysis to work.
+// Worker URL for checksum-worker. Default works in dev mode (import.meta.url is the actual file URL).
+// In compiled binaries, import.meta.url is always the binary path, so app.ts must call setWorkerUrl()
+// with new URL('./lish/checksum-worker.js', import.meta.url).href before any LISH creation.
+let _workerUrl: string = new URL('./checksum-worker.ts', import.meta.url).href;
+
+/** Override the checksum worker URL. Must be called from the main entrypoint (app.ts) in compiled mode. */
+export function setWorkerUrl(url: string): void {
+	_workerUrl = url;
+}
+
 function createChecksumWorker(): Worker {
-	const w = new Worker(new URL('./checksum-worker.ts', import.meta.url).href);
-	console.log('[checksum-worker] created (import.meta.url=', import.meta.url, ')');
-	return w;
+	console.log('[checksum-worker] creating with URL:', _workerUrl);
+	return new Worker(_workerUrl);
 }
 
 // Helper to normalize paths to forward slashes
