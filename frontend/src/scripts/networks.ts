@@ -92,8 +92,14 @@ function evaluateMeshStatus(health: Record<string, MeshHealthEntry>, counts: Rec
 		if (entry.medianScore !== null && (worstScore === null || entry.medianScore < worstScore)) worstScore = entry.medianScore;
 	}
 	const stableValue = Number.isFinite(worstStable) ? worstStable : 0;
-	if (anyMeshEmpty) return { state: 'forming', worstStableSinceMs: stableValue, worstMedianScore: worstScore };
+	// Order matters: a negative median score means the heartbeat will start
+	// pruning peers and routing is already degraded. That diagnosis trumps
+	// "still forming" because a forming-but-otherwise-healthy mesh recovers
+	// on its own; an unstable mesh needs operator attention. So check
+	// `unstable` before `forming`, even when some other topic happens to be
+	// empty.
 	if (worstScore !== null && worstScore < 0) return { state: 'unstable', worstStableSinceMs: stableValue, worstMedianScore: worstScore };
+	if (anyMeshEmpty) return { state: 'forming', worstStableSinceMs: stableValue, worstMedianScore: worstScore };
 	if (!Number.isFinite(worstStable) || worstStable < STABILITY_THRESHOLD_MS) return { state: 'forming', worstStableSinceMs: stableValue, worstMedianScore: worstScore };
 	return { state: 'stable', worstStableSinceMs: stableValue, worstMedianScore: worstScore };
 }
