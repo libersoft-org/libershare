@@ -87,9 +87,11 @@
 		lishPeerListRow = null;
 		await lishPeerListSubPage.exit();
 	}
-	async function openPeerFromLishPeerList(peerID: string, networkID: string, lishID: string): Promise<void> {
-		// Close the LISH peer-list page first, then open the PeerDetail page on top of the search tab.
-		await handleLishPeerListBack();
+	function openPeerFromLishPeerList(peerID: string, networkID: string, lishID: string): void {
+		// Layer PeerDetail on top of the LISH peer-list (instead of closing the
+		// peer-list first). Back from PeerDetail returns to the peer-list — one
+		// level up — and a second back returns to the Network root. Closing the
+		// peer-list first would skip a level and confuse the user.
 		openPeerFromSearch(peerID, networkID, lishID);
 	}
 
@@ -97,6 +99,16 @@
 	let selectedPeer = $state<PeerListEntry | null>(null);
 	let selectedPeerNetworkID = $state('');
 	let highlightLishID = $state<string | undefined>(undefined);
+	/**
+	 * Bumped after each PeerDetail exit so the embedded LishPeerList re-mounts
+	 * via `{#key}`. LishPeerList registers its own `createNavArea` with the
+	 * shared `areaID`; without a forced re-mount, `detailSubPage.exit()` would
+	 * already have called `navHandle.resume()` (which re-registers the parent
+	 * Network handler under the same `areaID`, overwriting LishPeerList's
+	 * registration via last-write-wins in `useArea`). Re-mounting LishPeerList
+	 * makes it the final writer so keyboard navigation reaches its handlers.
+	 */
+	let lishPeerListMountKey = $state(0);
 
 	function openPeerDetail(peer: PeerListEntry, networkID: string, lishID?: string): void {
 		selectedPeer = peer;
@@ -125,6 +137,12 @@
 		selectedPeer = null;
 		highlightLishID = undefined;
 		await detailSubPage.exit();
+		// `detailSubPage.exit()` calls `navHandle.resume()` which re-registers
+		// the parent Network handler under the shared `areaID`, overwriting any
+		// existing LishPeerList registration. Force LishPeerList to re-mount so
+		// its `createNavArea` runs again as the last writer — that restores its
+		// keyboard navigation when control returns to the peer-list view.
+		if (lishPeerListSubPage.active) lishPeerListMountKey++;
 	}
 
 	// =================== NavArea grid ===================
@@ -186,7 +204,9 @@
 {#if detailSubPage.active && selectedPeer}
 	<PeerDetail {areaID} {position} peer={selectedPeer} networkID={selectedPeerNetworkID} {highlightLishID} onBack={() => void handleDetailBack()} />
 {:else if lishPeerListSubPage.active && lishPeerListRow}
-	<NetworkLishsPeerList {areaID} {position} row={lishPeerListRow} {networks} onBack={() => void handleLishPeerListBack()} onOpenPeer={openPeerFromLishPeerList} />
+	{#key lishPeerListMountKey}
+		<NetworkLishsPeerList {areaID} {position} row={lishPeerListRow} {networks} onBack={() => void handleLishPeerListBack()} onOpenPeer={openPeerFromLishPeerList} />
+	{/key}
 {:else}
 	<div class="network-page">
 		<div class="container">
