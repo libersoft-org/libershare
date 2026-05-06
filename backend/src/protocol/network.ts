@@ -1358,8 +1358,12 @@ export class Network {
 		const empty = { meshSize: 0, stableSinceMs: null, medianScore: null };
 		if (!this.pubsub) return empty;
 		const topic = lishTopic(networkID);
-		const gs: any = this.pubsub;
-		const meshPeerSet: Set<string> | undefined = gs.mesh?.get(topic);
+		// `mesh` and `score` are declared `readonly public` on `GossipSub`
+		// (see gossipsub.d.ts:50,102). The libp2p `PubSub` interface used as
+		// the field type here doesn't surface them, so a narrow structural
+		// cast keeps the access typed without a blanket `any`.
+		const gs = this.pubsub as unknown as { mesh?: Map<string, Set<string>>; score?: { score(peerID: string): number } };
+		const meshPeerSet = gs.mesh?.get(topic);
 		const meshPeers = meshPeerSet ? [...meshPeerSet] : [];
 		const last = this.lastMeshChange.get(topic);
 		// `null` means "no graft/prune ever observed on this topic" — distinct
