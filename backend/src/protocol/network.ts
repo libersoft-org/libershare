@@ -659,6 +659,23 @@ export class Network {
 			console.debug(`❌ Peer disconnected: ${peerID.slice(0, 16)}, remaining: ${this.node!.getPeers().length}`);
 			// Fix C: clear per-peer state on disconnect to prevent unbounded growth
 			this.dcutrPeers.delete(peerID);
+			// `@chainsafe/libp2p-gossipsub` v14 removes the peer from `this.mesh`
+			// directly inside `removePeer()` on disconnect — without emitting a
+			// `gossipsub:prune` event (verified in node_modules/.../gossipsub.js:
+			// `removePeer` block deletes from `this.mesh` then `this.fanout`,
+			// only emit-paths are explicit PRUNE control messages). Without
+			// stamping `lastMeshChange` here the FE would keep `stableSinceMs`
+			// climbing while the mesh was actually churned by the disconnect.
+			// The peer may not have been a mesh member of every subscribed
+			// topic, but a disconnect can still trigger heartbeat reshuffles
+			// across all of them, so refresh every LISH topic's timestamp as
+			// a safe upper bound.
+			if (this.pubsub) {
+				const now = Date.now();
+				for (const topic of this.pubsub.getTopics()) {
+					if (topic.startsWith(LISH_TOPIC_PREFIX)) this.lastMeshChange.set(topic, now);
+				}
+			}
 			this.schedulePeerCountCheck();
 		});
 
