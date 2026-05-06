@@ -752,7 +752,7 @@ if exist build rmdir /s /q build
 bun i --frozen-lockfile
 if errorlevel 1 ( endlocal & exit /b 1 )
 mkdir build
-bun build --compile --target !BUN_TGT! src/app.ts --outfile build\lish-backend.exe
+bun build --compile --target !BUN_TGT! src/app.ts src/lish/checksum-worker.ts --outfile build\lish-backend.exe
 if errorlevel 1 ( endlocal & exit /b 1 )
 set "_be_elapsed=0"
 call :elapsed_since !_be_start! _be_elapsed
