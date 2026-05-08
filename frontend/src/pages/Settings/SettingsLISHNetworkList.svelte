@@ -30,6 +30,7 @@
 	let editingNetwork = $state<LISHNetworkConfig | null>(null);
 	let exportingNetwork = $state<LISHNetworkConfig | null>(null);
 	let deletingNetwork = $state<LISHNetworkConfig | null>(null);
+	let pendingConnectNetwork = $state<LISHNetworkConfig | null>(null);
 
 	// Networks loaded from backend
 	let networks = $state<LISHNetworkConfig[]>([]);
@@ -52,6 +53,7 @@
 	const exportSubPage = createSubPage(navHandle, () => areaID);
 	const exportAllSubPage = createSubPage(navHandle, () => areaID);
 	const deleteSubPage = createSubPage(navHandle, () => areaID);
+	const connectSubPage = createSubPage(navHandle, () => areaID);
 
 	async function closePublic(): Promise<void> {
 		// Reload networks in case new ones were added
@@ -156,13 +158,34 @@
 			await updateNetworkFromAPI(network);
 			const index = networks.findIndex(n => n.networkID === editingNetwork!.networkID);
 			if (index !== -1) networks[index] = network;
+			await closeAddEdit();
 		} else {
-			// Add new - backend generates networkID and key if empty
+			// Add new - backend generates networkID and key if empty. Detect the new
+			// network by diffing IDs before/after, then prompt the user to connect.
+			const beforeIDs = new Set(networks.map(n => n.networkID));
 			await addNetworkFromAPI(network);
-			// Reload from backend to get the generated values
 			await loadNetworks();
+			const newNet = networks.find(n => !beforeIDs.has(n.networkID));
+			await closeAddEdit();
+			if (newNet) {
+				pendingConnectNetwork = newNet;
+				connectSubPage.enter(`${newNet.name} - ${$t('common.connect')}`, () => void closeConnect());
+			}
 		}
-		await closeAddEdit();
+	}
+
+	async function closeConnect(): Promise<void> {
+		pendingConnectNetwork = null;
+		await connectSubPage.exit();
+	}
+
+	async function confirmConnect(): Promise<void> {
+		if (pendingConnectNetwork) await connectNetwork(pendingConnectNetwork);
+		await closeConnect();
+	}
+
+	function cancelConnect(): void {
+		void closeConnect();
 	}
 
 	onMount(() => {
@@ -263,6 +286,8 @@
 	<LISHNetworkPublic {areaID} {position} onBack={() => void closePublic()} />
 {:else if deleteSubPage.active && deletingNetwork}
 	<ConfirmDialog title={$t('common.delete')} message={$t('settings.lishNetwork.confirmDelete', { name: deletingNetwork.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
+{:else if connectSubPage.active && pendingConnectNetwork}
+	<ConfirmDialog title={$t('common.connect')} message={$t('settings.lishNetwork.confirmConnect', { name: pendingConnectNetwork.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="confirm" {position} onConfirm={confirmConnect} onBack={cancelConnect} />
 {:else}
 	<div class="lish-network-list">
 		<div class="container">

@@ -5,7 +5,6 @@ import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessRespons
 import { LISHClient, LISH_PROTOCOL } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
-
 interface LISHnetsHandlers {
 	list: () => LISHNetworkConfig[];
 	get: (p: { networkID: string }) => LISHNetworkConfig | undefined;
@@ -34,7 +33,6 @@ interface LISHnetsHandlers {
 	getStatus: (p: { networkID: string }) => NetworkStatus;
 	infoAll: () => NetworkInfo[];
 }
-
 type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
 
 export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifest: ImportManifestFn): LISHnetsHandlers {
@@ -49,27 +47,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['networkID']);
 		return networks.exists(p.networkID);
 	}
-	// Honour `autoConnectNewNetworks` from settings: when a network is added (manual or from
-	// public list) and the policy is opt-in, immediately enable it so the node joins without
-	// an extra user action. Skipped silently for already-enabled inputs (manual edits).
-	function shouldAutoConnect(): boolean {
-		const v = settings.get('network.autoConnectNewNetworks');
-		return v === undefined || v === true;
-	}
-
-	async function maybeAutoEnable(networkID: string): Promise<void> {
-		if (!shouldAutoConnect()) return;
-		const net = networks.get(networkID);
-		if (!net || net.enabled) return;
-		const ok = await networks.setEnabled(networkID, true);
-		if (ok) broadcast('lishnets:joined', { networkID, name: net.name });
-	}
-
 	async function add(p: { network: LISHNetworkConfig }): Promise<boolean> {
 		assert(p, ['network']);
-		const added = networks.add(p.network);
-		if (added) await maybeAutoEnable(p.network.networkID);
-		return added;
+		return networks.add(p.network);
 	}
 	function update(p: { network: LISHNetworkConfig }): boolean {
 		assert(p, ['network']);
@@ -81,9 +61,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	}
 	async function addIfNotExists(p: { network: LISHNetworkDefinition }): Promise<boolean> {
 		assert(p, ['network']);
-		const added = networks.addIfNotExists(p.network);
-		if (added) await maybeAutoEnable(p.network.networkID);
-		return added;
+		return networks.addIfNotExists(p.network);
 	}
 	function importNetworks(p: { networks: LISHNetworkDefinition[] }): number {
 		assert(p, ['networks']);
