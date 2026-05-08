@@ -2,6 +2,7 @@ import { get, writable } from 'svelte/store';
 import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone, increaseVolume, decreaseVolume } from '../settings.ts';
 import { addNotification } from '../notifications.ts';
 import { tt } from '../language.ts';
+import { windowActive } from './focus.ts';
 type GamepadCallback = () => void;
 let globalGamepadManager: GamepadManager | null = null;
 export const gamepadConnected = writable(false);
@@ -24,6 +25,9 @@ export class GamepadManager {
 	// Connection state
 	private isConnected = false;
 	private started = false;
+	// Window-focus state from the shared windowActive store. Polling pauses when false.
+	private active = false;
+	private activeUnsub: (() => void) | null = null;
 	private boundHandleConnect: (e: GamepadEvent) => void;
 	private boundHandleDisconnect: (e: GamepadEvent) => void;
 
@@ -40,12 +44,20 @@ export class GamepadManager {
 		// Listen for gamepad connection events
 		window.addEventListener('gamepadconnected', this.boundHandleConnect);
 		window.addEventListener('gamepaddisconnected', this.boundHandleDisconnect);
+		// Pause/resume polling based on window focus so we don't react when the app is
+		// defocused or minimized. Uses the shared windowActive store.
+		this.activeUnsub = windowActive.subscribe(active => {
+			this.active = active;
+			if (active) {
+				if (this.isConnected) this.startPolling();
+			} else this.stopPolling();
+		});
 		// Check if gamepad is already connected
 		const gamepads = navigator.getGamepads();
 		if (gamepads[0]) {
 			this.isConnected = true;
 			gamepadConnected.set(true);
-			this.startPolling();
+			if (this.active) this.startPolling();
 		}
 	}
 
@@ -54,6 +66,8 @@ export class GamepadManager {
 		this.started = false;
 		window.removeEventListener('gamepadconnected', this.boundHandleConnect);
 		window.removeEventListener('gamepaddisconnected', this.boundHandleDisconnect);
+		this.activeUnsub?.();
+		this.activeUnsub = null;
 		this.stopPolling();
 	}
 
@@ -61,7 +75,7 @@ export class GamepadManager {
 		addNotification(tt('common.gamepadConnected', { name: e.gamepad.id }), 'success');
 		this.isConnected = true;
 		gamepadConnected.set(true);
-		if (this.started) this.startPolling();
+		if (this.started && this.active) this.startPolling();
 	}
 
 	private handleDisconnect(e: GamepadEvent): void {
