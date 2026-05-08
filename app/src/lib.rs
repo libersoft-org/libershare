@@ -5,6 +5,17 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 struct BackendChild(Mutex<Option<std::process::Child>>);
 
+fn generate_api_token() -> String {
+	let mut bytes = [0u8; 32];
+	getrandom::fill(&mut bytes).expect("Failed to generate API token");
+	let mut token = String::with_capacity(bytes.len() * 2);
+	for byte in bytes {
+		use std::fmt::Write as _;
+		write!(&mut token, "{:02x}", byte).expect("Failed to format API token");
+	}
+	token
+}
+
 fn find_free_port() -> u16 {
 	let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to find free port");
 	listener.local_addr().unwrap().port()
@@ -103,6 +114,7 @@ fn app_fullscreen(window: tauri::Window) {
 pub fn run() {
 	let debug_mode = std::env::args().any(|a| a == "--debug" || a == "/debug");
 	let port = find_free_port();
+	let api_token = generate_api_token();
 
 	let app = tauri::Builder::default()
 		.plugin(tauri_plugin_window_state::Builder::default().build())
@@ -117,6 +129,7 @@ pub fn run() {
 			std::fs::create_dir_all(&data_dir)?;
 			let data_dir_str = data_dir.to_string_lossy().to_string();
 			let port_str = port.to_string();
+			let api_token_script = format!("{:?}", api_token);
 			let product_name = app.config().product_name.clone().unwrap_or_default();
 
 			// Create main window with backend port in query parameter
@@ -125,7 +138,10 @@ pub fn run() {
 			let window =
 				tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
 					.title(&product_name)
-					.initialization_script(&format!("window.__BACKEND_PORT__ = {};", port))
+					.initialization_script(&format!(
+						"window.__BACKEND_PORT__ = {}; window.__BACKEND_TOKEN__ = {};",
+						port, api_token_script
+					))
 					.devtools(debug_mode)
 					.visible(false)
 					.build()?;
@@ -193,6 +209,7 @@ pub fn run() {
 				}
 			}
 			cmd.args(["--datadir", &data_dir_str, "--port", &port_str]);
+			cmd.env("LISH_TOKEN", &api_token);
 
 			// AppImage sets LD_LIBRARY_PATH to bundled GTK/WebKit libs which conflict
 			// with Bun standalone binaries, causing SIGSEGV. Restore original env.

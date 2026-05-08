@@ -173,24 +173,59 @@ cd backend
 start.bat
 ```
 
-By default backend starts on a random network port (ws://localhost:XXXXX) and accepts connections from localhost only. If you'd like to start it publicly, you can use parameter **--host** (0.0.0.0 means to make it public on all networks). You can also change port by **--port** and if you need secure connection (wss://), add **--secure** parameter following with **--privkey** and **--pubkey** paths for private and public key of your domain certificate.
+By default backend starts on a random network port (ws://localhost:XXXXX) and accepts connections from localhost only. If you'd like to start it publicly, you can use parameter **--host** (0.0.0.0 means to make it public on all networks). You can also change port by **--port** and if you need secure connection (wss://), add **--secure** parameter following with **--privkey** and **--pubkey** paths for private and public key of your domain certificate. Use **--token** to protect the WebSocket API against misuse. When starting the frontend manually, pass the same token there.
 
 **For example:**
 
 ```sh
-./start.sh --datadir ./data --host 0.0.0.0 --port 1158 --secure --privkey /etc/letsencrypt/live/example.com/privkey.pem --pubkey /etc/letsencrypt/live/example.com/fullchain.pem
+./start.sh --datadir ./data --host 0.0.0.0 --port 1158 --token devtoken --secure --privkey /etc/letsencrypt/live/example.com/privkey.pem --pubkey /etc/letsencrypt/live/example.com/fullchain.pem
+```
+
+##### Token environment variables
+
+You can also provide the API token through environment variables instead of command-line arguments.
+
+| Variable          | Used by              | Description                                                       |
+| ----------------- | -------------------- | ----------------------------------------------------------------- |
+| `LISH_TOKEN`      | Backend              | Protects the backend WebSocket API with the given token.          |
+| `VITE_LISH_TOKEN` | Frontend development | Passes the backend token to the Vite frontend development server. |
+
+**On Linux / macOS:**
+
+```sh
+cd backend
+LISH_TOKEN=devtoken ./start.sh --port 1158
+
+cd ../frontend
+VITE_LISH_TOKEN=devtoken ./start-dev.sh wss://localhost:1158/
+```
+
+**On Windows (PowerShell):**
+
+```powershell
+cd backend
+$env:LISH_TOKEN='devtoken'; .\start.bat --port 1158
+
+cd ..\frontend
+$env:VITE_LISH_TOKEN='devtoken'; .\start-dev.bat wss://localhost:1158/
 ```
 
 ##### Debug logging (environment variables)
 
 If you are not a developer, please skip this.
 
-The backend respects a few environment variables for verbose diagnostic output. None of them are required for normal operation — they exist only for development and troubleshooting.
+The backend respects a few environment variables for verbose diagnostic output. None of them are required for normal operation - they exist only for development and troubleshooting.
 
-| Variable                 | Source                                  | Description                                                                                                                |
-| ------------------------ | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `DEBUG`                  | External (`libp2p` / `weald` / `debug`) | Enables namespace-based debug logs from the libp2p stack. Standard `debug`-style pattern syntax (wildcards, `-` excludes). |
-| `LIBERSHARE_SCORE_DEBUG` | LiberShare-specific                     | Set to `1` to print a per-peer breakdown of the peer scoring algorithm.                                                    |
+| Variable                          | Source                                  | Description                                                                                                                |
+| --------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `DEBUG`                           | External (`libp2p` / `weald` / `debug`) | Enables namespace-based debug logs from the libp2p stack. Standard `debug`-style pattern syntax (wildcards, `-` excludes). |
+| `LOG_PREFIX`                      | LiberShare-specific                     | Adds a prefix to backend log lines, useful when comparing logs from multiple backend instances.                            |
+| `LIBERSHARE_SCORE_DEBUG`          | LiberShare-specific                     | Set to `1` to print a per-peer breakdown of the peer scoring algorithm.                                                    |
+| `LIBERSHARE_TRACE_PX`             | LiberShare-specific                     | Set to `1` to trace PX trust score decisions for a small bounded set of peers.                                             |
+| `LIBERSHARE_MEMTRACE`             | LiberShare-specific                     | Set to `0` to disable periodic memory trace logging.                                                                       |
+| `LIBERSHARE_MEMTRACE_INTERVAL_MS` | LiberShare-specific                     | Memory trace interval in milliseconds. Defaults to `30000`.                                                                |
+| `LIBERSHARE_MEMTRACE_FILE`        | LiberShare-specific                     | Memory trace output file. Defaults to `memory-trace.jsonl` in the data directory.                                          |
+| `LIBERSHARE_HEAP_TRIGGER`         | LiberShare-specific                     | Set to `0` to disable heap snapshot trigger support.                                                                       |
 
 `DEBUG` is **not** a LiberShare-defined variable — it comes from the [`debug`](https://www.npmjs.com/package/debug) convention used by libp2p (via the `weald` library). Common patterns:
 
@@ -243,14 +278,14 @@ With self-signed certificates in the frontend directory:
 
 ```sh
 cd ../frontend
-./start-dev.sh wss://localhost:1158/
+./start-dev.sh wss://localhost:1158/ --token devtoken
 ```
 
 With custom certificate paths:
 
 ```sh
 cd ../frontend
-./start-dev.sh wss://localhost:1158/ --privkey /etc/letsencrypt/live/example.com/privkey.pem --pubkey /etc/letsencrypt/live/example.com/fullchain.pem
+./start-dev.sh wss://localhost:1158/ --token devtoken --privkey /etc/letsencrypt/live/example.com/privkey.pem --pubkey /etc/letsencrypt/live/example.com/fullchain.pem
 ```
 
 **On Windows:**
@@ -259,15 +294,25 @@ With self-signed certificates in the frontend directory:
 
 ```bat
 cd ..\frontend
-start-dev.bat wss://localhost:1158/
+start-dev.bat wss://localhost:1158/ --token devtoken
 ```
 
 With custom certificate paths:
 
 ```bat
 cd ..\frontend
-start-dev.bat wss://localhost:1158/ --privkey C:\certs\privkey.pem --pubkey C:\certs\fullchain.pem
+start-dev.bat wss://localhost:1158/ --token devtoken --privkey C:\certs\privkey.pem --pubkey C:\certs\fullchain.pem
 ```
+
+##### Frontend development environment variables
+
+The frontend development server can also be configured through Vite environment variables. The `start-dev` scripts set these for you when you use command-line arguments.
+
+| Variable           | Description                                                         |
+| ------------------ | ------------------------------------------------------------------- |
+| `VITE_BACKEND_URL` | Backend WebSocket URL used by the frontend, e.g. `wss://host:1158`. |
+| `VITE_SSL_KEY`     | Private key path for the HTTPS development server.                  |
+| `VITE_SSL_CERT`    | Certificate path for the HTTPS development server.                  |
 
 Open your browser with parameter that allows playing sounds without user's interaction, for example in Chrome:
 

@@ -529,6 +529,9 @@
 		}
 	},
 	"splash": {
-		"connecting": "Probíhá připojování k backendu"
+		"connecting": "Probíhá připojování k backendu",
+		"backendToken": "Token backendu",
+		"backendTokenRequired": "Je vyžadován autorizační token backendu",
+		"backendTokenInvalid": "Autorizační token backendu není platný"
 	}
 }

@@ -10,7 +10,7 @@
 	import { initAudio, play } from '../scripts/audio.ts';
 	import { cursorVisible } from '../scripts/input/mouse.ts';
 	import { cursorSize, cursorSizes, footerVisible, loadSettings } from '../scripts/settings.ts';
-	import { connected, apiURL } from '../scripts/ws-client.ts';
+	import { connected, apiURL, backendConnectionStatus, setBackendToken } from '../scripts/ws-client.ts';
 	import { initDownloads } from '../scripts/downloads.ts';
 	import { initSystemStats } from '../scripts/systemStats.ts';
 	import { initRelayStats } from '../scripts/relayStats.ts';
@@ -68,6 +68,10 @@
 		hideConfirmDialog();
 	}
 
+	function handleBackendTokenSubmit(token: string): void {
+		setBackendToken(token);
+	}
+
 	let peerCountsSubscribed = false;
 
 	async function onConnected(): Promise<void> {
@@ -123,14 +127,14 @@
 </svelte:head>
 <svelte:window onmousemove={handleMouseMove} ontouchstart={handleTouchStart} />
 
+{#if $cursorVisible && cursorMoved && !isTouchDevice}
+	<img class="cursor" src="/img/cursor.svg" alt="" style="left: {cursorX}px; top: {cursorY}px; width: {cursorSizeValue}; height: {cursorSizeValue};" />
+{/if}
 {#if exitAction}
 	<SplashExit action={exitAction} />
 {:else if !$connected}
-	<SplashWelcome url={apiURL} />
+	<SplashWelcome url={apiURL} connectionStatus={$backendConnectionStatus} onTokenSubmit={handleBackendTokenSubmit} />
 {:else}
-	{#if $cursorVisible && cursorMoved && !isTouchDevice}
-		<img class="cursor" src="/img/cursor.svg" alt="" style="left: {cursorX}px; top: {cursorY}px; width: {cursorSizeValue}; height: {cursorSizeValue};" />
-	{/if}
 	<div class="page">
 		<Header areaID="header" position={LAYOUT.header} {onBack} />
 		<NavigationBreadcrumb areaID="breadcrumb" position={LAYOUT.breadcrumb} items={$breadcrumbItems} {onBack} />

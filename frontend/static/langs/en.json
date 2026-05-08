@@ -529,6 +529,9 @@
 		}
 	},
 	"splash": {
-		"connecting": "Connecting to backend in progress"
+		"connecting": "Connecting to backend in progress",
+		"backendToken": "Backend token",
+		"backendTokenRequired": "Backend authorization token is required",
+		"backendTokenInvalid": "Backend authorization token is invalid"
 	}
 }

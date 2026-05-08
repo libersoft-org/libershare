@@ -21,6 +21,7 @@ let apiPort = 0;
 let apiSecure = false;
 let apiKeyFile: string | undefined;
 let apiCertFile: string | undefined;
+let apiToken: string | undefined = process.env['LISH_TOKEN'];
 let logFile: string | undefined;
 
 for (let i = 0; i < args.length; i++) {
@@ -42,6 +43,9 @@ for (let i = 0; i < args.length; i++) {
 		i++;
 	} else if (args[i] === '--pubkey' && i + 1 < args.length) {
 		apiCertFile = args[i + 1];
+		i++;
+	} else if (args[i] === '--token' && i + 1 < args.length) {
+		apiToken = args[i + 1]!;
 		i++;
 	} else if (args[i] === '--logfile' && i + 1 < args.length) {
 		logFile = args[i + 1]!;
@@ -83,6 +87,7 @@ const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
 	secure: apiSecure,
 	keyFile: apiKeyFile,
 	certFile: apiCertFile,
+	apiToken,
 });
 
 // Wire upload progress broadcast (after apiServer is created)

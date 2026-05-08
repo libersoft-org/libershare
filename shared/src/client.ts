@@ -16,6 +16,7 @@ export class WsClient {
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private connected = false;
 	private connectPromise: Promise<void> | null = null;
+	private autoReconnect = true;
 	private apiURL: string;
 	private onStateChange: (state: State) => void;
 	onError?: (error: any) => void;
@@ -23,10 +24,11 @@ export class WsClient {
 	constructor(apiURL: string, onStateChange: (state: State) => void) {
 		this.apiURL = apiURL;
 		this.onStateChange = onStateChange;
-		this.connect();
+		this.connect().catch(() => {});
 	}
 
 	private connect(): Promise<void> {
+		if (this.connected && this.ws?.readyState === WebSocket.OPEN) return Promise.resolve();
 		if (this.connectPromise) return this.connectPromise;
 		this.connectPromise = new Promise((resolve, reject) => {
 			this.ws = new WebSocket(this.apiURL);
@@ -58,11 +60,41 @@ export class WsClient {
 	}
 
 	private scheduleReconnect(): void {
+		if (!this.autoReconnect) return;
 		if (this.reconnectTimer) return;
 		this.reconnectTimer = setTimeout(() => {
 			this.reconnectTimer = null;
 			this.connect().catch(() => {});
 		}, 2000);
+	}
+
+	setAPIURL(apiURL: string): void {
+		if (this.apiURL === apiURL) return;
+		this.apiURL = apiURL;
+		this.reconnect();
+	}
+
+	setAutoReconnect(enabled: boolean): void {
+		this.autoReconnect = enabled;
+		if (!enabled && this.reconnectTimer) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+		if (enabled && !this.connected && !this.connectPromise) this.scheduleReconnect();
+	}
+
+	reconnect(): void {
+		this.setAutoReconnect(true);
+		if (this.ws) {
+			this.ws.close();
+			return;
+		}
+		this.connect().catch(() => {});
+	}
+
+	stopReconnect(): void {
+		this.setAutoReconnect(false);
+		if (this.ws) this.ws.close();
 	}
 
 	private handleMessage(data: string): void {

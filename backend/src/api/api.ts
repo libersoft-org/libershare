@@ -33,6 +33,7 @@ export interface APIServerOptions {
 	secure: boolean;
 	keyFile: string | undefined;
 	certFile: string | undefined;
+	apiToken?: string | undefined;
 }
 
 export class APIServer {
@@ -45,6 +46,7 @@ export class APIServer {
 	private readonly secure: boolean;
 	private readonly keyFile?: string | undefined;
 	private readonly certFile?: string | undefined;
+	private readonly apiToken?: string | undefined;
 	private readonly dataDir: string;
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
@@ -60,6 +62,7 @@ export class APIServer {
 		this.secure = options.secure;
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
+		this.apiToken = options.apiToken || undefined;
 		this.localAddresses = getLocalAddresses();
 		const emitTo = (client: ClientSocket, event: string, data: any) => this.emit(client, event, data);
 		const broadcastFn = (event: string, data: any) => this.broadcast(event, data);
@@ -197,7 +200,11 @@ export class APIServer {
 			port: this.port,
 			hostname: this.host,
 			fetch(req, server): Response | undefined {
-				console.log(`[API] Incoming request: ${req.method} ${req.url}`);
+				const url = new URL(req.url);
+				console.log(`[API] Incoming request: ${req.method} ${url.pathname}`);
+				if (req.method === 'OPTIONS' && url.pathname === '/status') return self.statusOptionsResponse();
+				if (url.pathname === '/status') return self.statusResponse(url);
+				if (!self.isAuthorized(url)) return self.unauthorizedResponse();
 				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
 					data: { subscribedEvents: new Set<string>(), isLocalClient: self.localAddresses.has(clientIP) },
@@ -247,6 +254,50 @@ export class APIServer {
 			this.server.stop();
 			this.server = null;
 		}
+	}
+
+	private isAuthorized(url: URL): boolean {
+		if (!this.apiToken) return true;
+		return url.searchParams.get('token') === this.apiToken;
+	}
+
+	private jsonResponse(data: unknown, status: number = 200): Response {
+		return new Response(JSON.stringify(data), {
+			status,
+			headers: {
+				'content-type': 'application/json; charset=utf-8',
+				'access-control-allow-origin': '*',
+			},
+		});
+	}
+
+	private statusOptionsResponse(): Response {
+		return new Response(null, {
+			status: 204,
+			headers: {
+				'access-control-allow-origin': '*',
+				'access-control-allow-methods': 'GET, OPTIONS',
+				'access-control-allow-headers': 'content-type',
+			},
+		});
+	}
+
+	private unauthorizedResponse(): Response {
+		return this.jsonResponse({ ok: false, authRequired: true, authenticated: false, error: 'UNAUTHORIZED' }, 401);
+	}
+
+	private statusResponse(url: URL): Response {
+		const authRequired = !!this.apiToken;
+		const authenticated = this.isAuthorized(url);
+		return this.jsonResponse(
+			{
+				ok: authenticated,
+				authRequired,
+				authenticated,
+				...(authenticated ? {} : { error: 'UNAUTHORIZED' }),
+			},
+			authenticated ? 200 : 401
+		);
 	}
 
 	private async handleMessage(client: ClientSocket, message: string): Promise<void> {
