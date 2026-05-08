@@ -245,6 +245,7 @@ export class APIServer {
 		};
 
 		const protocol = this.secure ? 'wss' : 'ws';
+		console.log(`[API] Token authentication ${this.apiToken ? 'enabled' : 'disabled'}`);
 		console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${actualPort}`);
 	}
 
