@@ -26,7 +26,7 @@
 				gap: 8px;
 				user-select: none;
 			}
-			#toolbar button {
+			#toolbar .toolbar-button {
 				background: #333;
 				color: #ccc;
 				border: 1px solid #555;
@@ -35,8 +35,10 @@
 				cursor: pointer;
 				font-size: 12px;
 			}
-			#toolbar button:hover {
+			#toolbar .toolbar-button:hover,
+			#toolbar .toolbar-button:focus-visible {
 				background: #444;
+				outline: 1px solid #777;
 			}
 			#toolbar .status {
 				margin-left: auto;
@@ -62,8 +64,9 @@
 	</head>
 	<body>
 		<div id="toolbar">
-			<button id="clearBtn">Clear</button>
-			<button id="scrollBtn">Auto-scroll: ON</button>
+			<div id="clearBtn" class="toolbar-button" role="button" tabindex="0">Clear</div>
+			<div id="copyBtn" class="toolbar-button" role="button" tabindex="0">Copy</div>
+			<div id="scrollBtn" class="toolbar-button" role="button" tabindex="0">Auto-scroll: ON</div>
 			<span class="status" id="status">Waiting for backend...</span>
 		</div>
 		<div id="output"></div>
@@ -72,17 +75,59 @@
 				const output = document.getElementById('output');
 				const status = document.getElementById('status');
 				const clearBtn = document.getElementById('clearBtn');
+				const copyBtn = document.getElementById('copyBtn');
 				const scrollBtn = document.getElementById('scrollBtn');
 				let autoScroll = true;
 				let lineCount = 0;
 
-				clearBtn.addEventListener('click', () => {
+				function bindToolbarAction(element, callback) {
+					element.addEventListener('click', callback);
+					element.addEventListener('keydown', event => {
+						if (event.key !== 'Enter' && event.key !== ' ') return;
+						event.preventDefault();
+						callback();
+					});
+				}
+
+				function copyTextFallback(text) {
+					const textArea = document.createElement('textarea');
+					textArea.value = text;
+					textArea.setAttribute('readonly', '');
+					textArea.style.position = 'fixed';
+					textArea.style.left = '-9999px';
+					document.body.appendChild(textArea);
+					textArea.select();
+					try {
+						return document.execCommand('copy');
+					} finally {
+						document.body.removeChild(textArea);
+					}
+				}
+
+				async function copyOutput() {
+					const text = output.innerText;
+					if (!text) {
+						status.textContent = 'Nothing to copy';
+						return;
+					}
+					try {
+						await navigator.clipboard.writeText(text);
+						status.textContent = 'Copied ' + lineCount + ' lines';
+					} catch {
+						if (copyTextFallback(text)) status.textContent = 'Copied ' + lineCount + ' lines';
+						else status.textContent = 'Copy failed';
+					}
+				}
+
+				bindToolbarAction(clearBtn, () => {
 					output.innerHTML = '';
 					lineCount = 0;
 					status.textContent = 'Cleared';
 				});
 
-				scrollBtn.addEventListener('click', () => {
+				bindToolbarAction(copyBtn, () => void copyOutput());
+
+				bindToolbarAction(scrollBtn, () => {
 					autoScroll = !autoScroll;
 					scrollBtn.textContent = 'Auto-scroll: ' + (autoScroll ? 'ON' : 'OFF');
 				});
@@ -125,38 +170,25 @@
 					let fgColor = null;
 					let bold = false;
 					let match;
-
 					while ((match = re.exec(str)) !== null) {
 						// Append escaped text before this sequence
 						const preceding = str.slice(lastIndex, match.index);
-						if (preceding) {
-							html += wrapSpan(preceding, fgColor, bold);
-						}
-
+						if (preceding) html += wrapSpan(preceding, fgColor, bold);
 						// Parse SGR codes (e.g. "32" or "1;31" or "0")
 						const codes = match[1] === '' ? [0] : match[1].split(';').map(Number);
 						for (const code of codes) {
 							if (code === 0) {
 								fgColor = null;
 								bold = false;
-							} else if (code === 1) {
-								bold = true;
-							} else if (code === 22) {
-								bold = false;
-							} else if (SGR_FG[code]) {
-								fgColor = SGR_FG[code];
-							}
+							} else if (code === 1) bold = true;
+							else if (code === 22) bold = false;
+							else if (SGR_FG[code]) fgColor = SGR_FG[code];
 						}
-
 						lastIndex = re.lastIndex;
 					}
-
 					// Remaining text after last escape (or entire string if no escapes)
 					const tail = str.slice(lastIndex);
-					if (tail) {
-						html += wrapSpan(tail, fgColor, bold);
-					}
-
+					if (tail) html += wrapSpan(tail, fgColor, bold);
 					return html;
 				}
 
@@ -195,10 +227,8 @@
 
 				const TAURI = await waitForTauri();
 				const { listen } = TAURI.event;
-
 				await listen('backend-stdout', e => appendLine(e.payload, false));
 				await listen('backend-stderr', e => appendLine(e.payload, true));
-
 				status.textContent = 'Connected, waiting for output...';
 			})();
 		</script>
