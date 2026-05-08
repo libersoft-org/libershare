@@ -136,7 +136,7 @@
 		"peerList": {
 			"searching": "Hledám spojení ...",
 			"noPeers": "Žádní účastníci",
-			"id": "Peer",
+			"id": "Účastník",
 			"currentFile": "Aktuální soubor",
 			"connection": "Typ",
 			"availability": "Dost.",
@@ -293,8 +293,8 @@
 			"maxUploadPeersPerLISH": "Maximální počet souběžných spojení na 1 LISH pro odesílání (0 = neomezeno)",
 			"maxDownloadSpeed": "Maximální rychlost stahování v KB/s (0 = neomezeno)",
 			"maxUploadSpeed": "Maximální rychlost odesílání v KB/s (0 = neomezeno)",
-			"maxChunkSize": "Maximální velikost části (chunku) při přidávání LISHů — větší budou odmítnuty (např. 100MB)",
-			"maxMessageSize": "Maximální velikost jedné P2P zprávy — musí být větší než velikost části (např. 128MB)",
+			"maxChunkSize": "Maximální velikost části (chunku) při přidávání LISHů - větší budou odmítnuty (např. 100MB)",
+			"maxMessageSize": "Maximální velikost jedné P2P zprávy - musí být větší než velikost části (např. 128MB)",
 			"allowRelay": "Fungovat jako předávač (přeposílat datový provoz ostatním účastníkům)",
 			"maxRelayReservations": "Maximální počet spojení k našemu předávači (0 = neomezeno)",
 			"useRelayClients": "Připojovat se k předávačům ostatních",
@@ -340,9 +340,9 @@
 			"allNetworksExported": "Všechny sítě LISH byly exportovány",
 			"meshState": {
 				"unknown": "Žádná LISH síť není připojena",
-				"forming": "Mesh se ještě staví — vyhledávání může být neúplné",
-				"unstable": "Peery v mesh mají nízké skóre — degradované směrování",
-				"stable": "Mesh je stabilní — broadcasty dorazí k fleetu"
+				"forming": "Síť se ještě staví - vyhledávání může být neúplné",
+				"unstable": "Účastníci v síti mají nízké skóre - degradované směrování",
+				"stable": "Síť je stabilní - broadcasty dorazí k fleetu"
 			}
 		},
 		"lishNetworkImport": {
@@ -364,10 +364,10 @@
 			"title": "Identita",
 			"regenerate": "Vygenerovat novou",
 			"regenerateTitle": "Vygenerovat novou identitu",
-			"regenerateConfirm": "Opravdu chcete vygenerovat novou identitu? Stávající soukromý klíč a peer ID budou přepsané. Doporučujeme nejprve provést Export.",
+			"regenerateConfirm": "Opravdu chcete vygenerovat novou identitu? Stávající soukromý klíč a ID účastníka budou přepsané. Doporučujeme nejprve provést Export.",
 			"regenerated": "Identita byla vygenerována",
 			"importTitle": "Obnova identity",
-			"confirmImport": "Opravdu nahradit identitu? Stávající peer ID {current} bude přepsané na {next}. Síť bude restartována.",
+			"confirmImport": "Opravdu nahradit identitu? Stávající ID účastníka {current} bude přepsané na {next}. Síť bude restartována.",
 			"exported": "Identita byla exportována",
 			"imported": "Identita byla obnovena",
 			"errorInvalidFormat": "Neplatný formát souboru identity"
@@ -435,7 +435,7 @@
 		"filterPattern": "Filtr",
 		"enterFilterPattern": "Zadejte filtr (např. *.txt, *.jpg)",
 		"loadDirectoryFailed": "Nepodařilo se načíst adresář",
-		"permissionDenied": "Přístup odepřen — nelze otevřít tento adresář",
+		"permissionDenied": "Přístup odepřen - nelze otevřít tento adresář",
 		"deleteDirectoryFailed": "Nepodařilo se smazat adresář",
 		"createDirectoryFailed": "Nepodařilo se vytvořit adresář",
 		"createFileFailed": "Nepodařilo se vytvořit soubor",
