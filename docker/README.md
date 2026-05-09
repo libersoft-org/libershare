@@ -10,11 +10,17 @@ Run commands from this `docker/` directory.
 ## Defaults
 
 - Compose project name: `libershare`
-- Backend API/WebSocket: `${BACKEND_PORT:-1158}:${BACKEND_PORT:-1158}`
-- libp2p TCP: `9091:9090`
+- Backend API/WebSocket: `127.0.0.1:${BACKEND_PORT:-1158}` (host-bound to loopback by default)
+- libp2p TCP: `9091:9090` (LAN-bound — peers must reach it externally)
 - Frontend HTTPS: `6003:6003`
 - Browser URL: `https://<docker-host>:6003/`
 - Docker network: `libershare-net`, created automatically by compose
+
+The frontend container reaches the backend over the internal Docker network
+(`ws://backend:${BACKEND_PORT}`), so the API does not need to be published on
+the host's public interface. Override with `BACKEND_BIND=0.0.0.0` only when a
+non-Docker frontend or the CLI client running on another machine needs direct
+access.
 
 Default writable paths are local directories next to `docker-compose.yml`:
 
@@ -108,6 +114,48 @@ goes to same-origin `/ws`, and the frontend container proxies it to:
 ```sh
 BACKEND_WS_URL=ws://backend:${BACKEND_PORT:-1158}
 ```
+
+By default the host-side publication of the backend API/WebSocket port is
+bound to `127.0.0.1`, so only the local machine (and the in-network frontend
+container) can reach it. Set `BACKEND_BIND=0.0.0.0` to expose the API to the
+LAN — for example when the CLI client or a non-Docker frontend runs on a
+different host:
+
+```sh
+BACKEND_BIND=0.0.0.0 docker compose up -d
+```
+
+Combine `BACKEND_BIND=0.0.0.0` with `LISH_TOKEN=...` (see *Authentication*
+below) so the exposed port still requires a shared secret.
+
+## Authentication
+
+The backend reads `LISH_TOKEN` from the environment. Set it in `.env` next
+to `docker-compose.yml`:
+
+```sh
+LISH_TOKEN=$(openssl rand -hex 32)
+```
+
+When `LISH_TOKEN` is non-empty, every WebSocket and REST request must carry
+the same value as `?token=<value>` in the URL — the only exceptions are the
+liveness probe `/health` and the auth-state endpoint `/status`, which stay
+public so orchestrators and the frontend can detect the auth state without
+already knowing the token.
+
+Browser side: the SvelteKit frontend stores the token (set on the auth
+prompt or injected as `__BACKEND_TOKEN__` by the Tauri shell) and passes it
+on every WebSocket reconnect. The Docker frontend proxy forwards URLs as-is,
+so the same `?token=` query string is preserved when the browser connects to
+same-origin `/ws`.
+
+CLI / curl:
+
+```sh
+curl -fsS "http://localhost:${BACKEND_PORT:-1158}/status?token=$LISH_TOKEN"
+```
+
+Leave `LISH_TOKEN` unset (the default) to disable authentication entirely.
 
 ## TLS
 
