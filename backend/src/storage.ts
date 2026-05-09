@@ -1,6 +1,38 @@
 import { join } from 'path';
 
 /**
+ * Filesystem error codes that signal the data directory cannot be written —
+ * persisting state would silently disappear, so the caller fails fast instead
+ * of limping along with non-persistent in-memory state. Exported so unit tests
+ * can drive the same set the production code uses.
+ */
+export const FATAL_STORAGE_CODES = ['EACCES', 'EROFS', 'EPERM', 'ENOSPC', 'EISDIR'] as const;
+export type FatalStorageCode = (typeof FATAL_STORAGE_CODES)[number];
+
+export function isFatalStorageError(error: unknown): error is NodeJS.ErrnoException & { code: FatalStorageCode } {
+	const code = (error as NodeJS.ErrnoException | null)?.code;
+	return typeof code === 'string' && (FATAL_STORAGE_CODES as readonly string[]).includes(code);
+}
+
+/**
+ * Build the operator-facing message for a fatal storage error. Pure function
+ * so unit tests can assert the exact wording without spawning a real process.
+ */
+export function fatalStorageMessage(filePath: string, code: FatalStorageCode): string[] {
+	const lines = [`[Storage] FATAL: cannot persist ${filePath} (${code}).`];
+	if (code === 'ENOSPC') {
+		lines.push(`[Storage] The filesystem hosting the data directory is full.`);
+	} else if (code === 'EISDIR') {
+		lines.push(`[Storage] A directory exists where a file is expected — remove it before restart.`);
+	} else {
+		lines.push(`[Storage] If running in Docker with cap_drop:ALL, the container loses CAP_DAC_OVERRIDE and`);
+		lines.push(`[Storage] cannot write to a host bind-mount unless its owner matches the container UID.`);
+		lines.push(`[Storage] Fix on the host: chown 0:0 <mounted-dir> && chmod 0700 <mounted-dir>, then restart.`);
+	}
+	return lines;
+}
+
+/**
  * Base class for JSON file storage.
  */
 abstract class BaseStorage<T> {
@@ -30,7 +62,6 @@ abstract class BaseStorage<T> {
 		try {
 			await Bun.write(this.filePath, JSON.stringify(data, null, '\t'));
 		} catch (error) {
-			const code = (error as NodeJS.ErrnoException)?.code;
 			// Permission / read-only filesystem errors at this layer mean every
 			// subsequent write to settings.json (peer identity, joined networks,
 			// user preferences) would silently disappear and the next restart
@@ -39,17 +70,8 @@ abstract class BaseStorage<T> {
 			// limping along. The most common trigger in container deployments is
 			// `cap_drop: ALL` stripping CAP_DAC_OVERRIDE while the bind-mount on
 			// the host is owned by a non-root user.
-			if (code === 'EACCES' || code === 'EROFS' || code === 'EPERM' || code === 'ENOSPC' || code === 'EISDIR') {
-				console.error(`[Storage] FATAL: cannot persist ${this.filePath} (${code}).`);
-				if (code === 'ENOSPC') {
-					console.error(`[Storage] The filesystem hosting the data directory is full.`);
-				} else if (code === 'EISDIR') {
-					console.error(`[Storage] A directory exists where a file is expected — remove it before restart.`);
-				} else {
-					console.error(`[Storage] If running in Docker with cap_drop:ALL, the container loses CAP_DAC_OVERRIDE and`);
-					console.error(`[Storage] cannot write to a host bind-mount unless its owner matches the container UID.`);
-					console.error(`[Storage] Fix on the host: chown 0:0 <mounted-dir> && chmod 0700 <mounted-dir>, then restart.`);
-				}
+			if (isFatalStorageError(error)) {
+				for (const line of fatalStorageMessage(this.filePath, error.code!)) console.error(line);
 				process.exit(74); // sysexits.h EX_IOERR
 			}
 			console.error(`[Storage] Error saving ${this.filePath}:`, error);

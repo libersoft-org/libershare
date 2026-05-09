@@ -1,5 +1,6 @@
 import { dirname, join } from 'path';
 import { productName, productVersion } from '@shared';
+import { resolveHealthcheckPort } from './healthcheck.ts';
 import { setupLogger, type LogLevel } from './logger.ts';
 import { Networks } from './lishnet/lishnets.ts';
 import { DataServer } from './lish/data-server.ts';
@@ -55,21 +56,15 @@ for (let i = 0; i < args.length; i++) {
 
 // Self-healthcheck mode used by docker-compose / orchestrators. Performs a
 // single HTTP GET against the running instance's `/health` endpoint and exits
-// 0 on 2xx, 1 otherwise — no logger setup, no DB open, no libp2p init. The
-// target port comes from `--port`, then `BACKEND_PORT` env, then the 1158
-// default that matches the binary's own default everywhere else. A `--port 0`
-// (random port) cannot be probed reliably from a separate process — fail
-// healthcheck so an operator catches the misconfiguration instead of the
-// orchestrator silently flapping the container.
+// 0 on 2xx, 1 otherwise — no logger setup, no DB open, no libp2p init.
 if (args.includes('--healthcheck')) {
-	const envPort = Number(process.env['BACKEND_PORT']);
-	const probePort = apiPort > 0 ? apiPort : envPort > 0 ? envPort : 1158;
-	if (apiPort === 0 && !envPort) {
-		console.error('[Healthcheck] cannot probe random-port server (--port 0); set BACKEND_PORT env or pass --port explicitly');
-		process.exit(2);
+	const decision = resolveHealthcheckPort(apiPort, process.env['BACKEND_PORT']);
+	if (decision.exit !== undefined) {
+		if (decision.message) console.error(decision.message);
+		process.exit(decision.exit);
 	}
 	try {
-		const res = await fetch(`http://127.0.0.1:${probePort}/health`, { signal: AbortSignal.timeout(2500) });
+		const res = await fetch(`http://127.0.0.1:${decision.port}/health`, { signal: AbortSignal.timeout(2500) });
 		process.exit(res.ok ? 0 : 1);
 	} catch {
 		process.exit(1);
