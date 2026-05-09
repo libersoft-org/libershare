@@ -30,6 +30,28 @@ abstract class BaseStorage<T> {
 		try {
 			await Bun.write(this.filePath, JSON.stringify(data, null, '\t'));
 		} catch (error) {
+			const code = (error as NodeJS.ErrnoException)?.code;
+			// Permission / read-only filesystem errors at this layer mean every
+			// subsequent write to settings.json (peer identity, joined networks,
+			// user preferences) would silently disappear and the next restart
+			// would regenerate state from defaults. That is much worse than
+			// crashing — fail fast with an operator-actionable hint instead of
+			// limping along. The most common trigger in container deployments is
+			// `cap_drop: ALL` stripping CAP_DAC_OVERRIDE while the bind-mount on
+			// the host is owned by a non-root user.
+			if (code === 'EACCES' || code === 'EROFS' || code === 'EPERM' || code === 'ENOSPC' || code === 'EISDIR') {
+				console.error(`[Storage] FATAL: cannot persist ${this.filePath} (${code}).`);
+				if (code === 'ENOSPC') {
+					console.error(`[Storage] The filesystem hosting the data directory is full.`);
+				} else if (code === 'EISDIR') {
+					console.error(`[Storage] A directory exists where a file is expected — remove it before restart.`);
+				} else {
+					console.error(`[Storage] If running in Docker with cap_drop:ALL, the container loses CAP_DAC_OVERRIDE and`);
+					console.error(`[Storage] cannot write to a host bind-mount unless its owner matches the container UID.`);
+					console.error(`[Storage] Fix on the host: chown 0:0 <mounted-dir> && chmod 0700 <mounted-dir>, then restart.`);
+				}
+				process.exit(74); // sysexits.h EX_IOERR
+			}
 			console.error(`[Storage] Error saving ${this.filePath}:`, error);
 		}
 	}
