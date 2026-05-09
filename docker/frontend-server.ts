@@ -27,14 +27,59 @@ function contentType(path: string): string | undefined {
 
 function fileForPath(pathname: string): string {
 	const decoded = decodeURIComponent(pathname);
-	const parts = decoded.split('/').filter((part) => part && part !== '.' && part !== '..');
+	const parts = decoded.split('/').filter(part => part && part !== '.' && part !== '..');
 	return parts.length > 0 ? join(root, ...parts) : join(root, 'index.html');
 }
 
 type ClientData = {
 	upstream?: WebSocket;
 	pending: Array<string | ArrayBuffer | Uint8Array>;
+	closed: boolean;
+	reconnectAttempt: number;
+	reconnectTimer?: ReturnType<typeof setTimeout>;
 };
+
+const MAX_PENDING_BYTES = 1 * 1024 * 1024; // 1 MiB cap so a long backend outage does not exhaust container memory
+const MAX_RECONNECT_DELAY_MS = 5000;
+const BASE_RECONNECT_DELAY_MS = 250;
+// Log a single warning after this many consecutive upstream-reconnect attempts
+// fail; reconnects continue silently afterwards so a tab left open over a
+// weekend doesn't fill the proxy log with retries.
+const RECONNECT_WARN_AFTER_ATTEMPTS = 10;
+
+function pendingByteSize(pending: ClientData['pending']): number {
+	let total = 0;
+	for (const m of pending) total += typeof m === 'string' ? Buffer.byteLength(m, 'utf8') : m.byteLength;
+	return total;
+}
+
+function connectUpstream(ws: import('bun').ServerWebSocket<ClientData>): void {
+	if (ws.data.closed) return;
+	const upstream = new WebSocket(backendWsUrl!);
+	ws.data.upstream = upstream;
+	upstream.onopen = () => {
+		ws.data.reconnectAttempt = 0;
+		for (const message of ws.data.pending.splice(0)) upstream.send(message);
+	};
+	upstream.onmessage = event => {
+		if (ws.readyState === WebSocket.OPEN) ws.send(event.data);
+	};
+	const handleDrop = (): void => {
+		if (ws.data.closed) return;
+		// Exponential backoff capped at MAX_RECONNECT_DELAY_MS. The browser
+		// tab stays connected to this proxy while we retry the upstream — so
+		// a backend rolling restart no longer forces every open page to
+		// reload to recover its WebSocket session.
+		const attempt = ws.data.reconnectAttempt++;
+		if (attempt === RECONNECT_WARN_AFTER_ATTEMPTS) {
+			console.warn(`[proxy] upstream still unreachable after ${attempt} attempts; will keep retrying every ${MAX_RECONNECT_DELAY_MS}ms`);
+		}
+		const delay = Math.min(MAX_RECONNECT_DELAY_MS, BASE_RECONNECT_DELAY_MS * 2 ** attempt);
+		ws.data.reconnectTimer = setTimeout(() => connectUpstream(ws), delay);
+	};
+	upstream.onclose = handleDrop;
+	upstream.onerror = handleDrop;
+}
 
 Bun.serve({
 	port,
@@ -47,7 +92,7 @@ Bun.serve({
 	async fetch(request, server) {
 		const url = new URL(request.url);
 		if (url.pathname === '/ws') {
-			const upgraded = server.upgrade<ClientData>(request, { data: { pending: [] } });
+			const upgraded = server.upgrade<ClientData>(request, { data: { pending: [], closed: false, reconnectAttempt: 0 } });
 			if (upgraded) return undefined;
 			return new Response('Expected WebSocket', { status: 400 });
 		}
@@ -65,24 +110,34 @@ Bun.serve({
 	},
 	websocket: {
 		open(ws) {
-			const upstream = new WebSocket(backendWsUrl);
-			ws.data.upstream = upstream;
-
-			upstream.onopen = () => {
-				for (const message of ws.data.pending.splice(0)) upstream.send(message);
-			};
-			upstream.onmessage = event => {
-				if (ws.readyState === WebSocket.OPEN) ws.send(event.data);
-			};
-			upstream.onclose = () => ws.close();
-			upstream.onerror = () => ws.close();
+			connectUpstream(ws);
 		},
 		message(ws, message) {
 			const upstream = ws.data.upstream;
-			if (upstream?.readyState === WebSocket.OPEN) upstream.send(message);
-			else ws.data.pending.push(message);
+			if (upstream?.readyState === WebSocket.OPEN) {
+				upstream.send(message);
+				return;
+			}
+			// Buffer messages while upstream is reconnecting. The LISH protocol
+			// is stateful (subscribe → receive events) — silently dropping the
+			// oldest queued message would let the subscribe handshake disappear
+			// while later events survive, leaving the FE wired to a topic the
+			// backend never registered. Closing the client with a non-normal
+			// code instead forces the browser-side WsClient to reconnect and
+			// re-run its full handshake from scratch.
+			ws.data.pending.push(message);
+			if (pendingByteSize(ws.data.pending) > MAX_PENDING_BYTES) {
+				console.warn(`[proxy] pending queue exceeded ${MAX_PENDING_BYTES} bytes during upstream outage; closing client to force re-handshake`);
+				ws.data.pending.length = 0;
+				ws.close(1011, 'upstream backlog overflow');
+			}
 		},
 		close(ws) {
+			ws.data.closed = true;
+			if (ws.data.reconnectTimer) {
+				clearTimeout(ws.data.reconnectTimer);
+				ws.data.reconnectTimer = undefined;
+			}
 			ws.data.upstream?.close();
 		},
 	},
