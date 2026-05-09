@@ -37,7 +37,27 @@ type ClientData = {
 	closed: boolean;
 	reconnectAttempt: number;
 	reconnectTimer?: ReturnType<typeof setTimeout>;
+	/**
+	 * Upstream URL with the client's original query string preserved so the
+	 * backend sees `?token=…` (and any future query params) when
+	 * authentication is enabled. Computed at upgrade time and reused on
+	 * every reconnect attempt.
+	 */
+	upstreamUrl: string;
 };
+
+/**
+ * Build the upstream WebSocket URL for one client connection by copying any
+ * query params from the incoming `/ws` URL onto the configured
+ * `BACKEND_WS_URL`. The backend's `isAuthorized` middleware reads `?token=…`
+ * from the URL it receives, so without this the token a client carries on
+ * `wss://frontend/ws?token=…` would be lost at the proxy boundary.
+ */
+function buildUpstreamUrl(clientUrl: URL): string {
+	const upstream = new URL(backendWsUrl!);
+	for (const [k, v] of clientUrl.searchParams) upstream.searchParams.set(k, v);
+	return upstream.toString();
+}
 
 const MAX_PENDING_BYTES = 1 * 1024 * 1024; // 1 MiB cap so a long backend outage does not exhaust container memory
 const MAX_RECONNECT_DELAY_MS = 5000;
@@ -55,7 +75,7 @@ function pendingByteSize(pending: ClientData['pending']): number {
 
 function connectUpstream(ws: import('bun').ServerWebSocket<ClientData>): void {
 	if (ws.data.closed) return;
-	const upstream = new WebSocket(backendWsUrl!);
+	const upstream = new WebSocket(ws.data.upstreamUrl);
 	ws.data.upstream = upstream;
 	upstream.onopen = () => {
 		ws.data.reconnectAttempt = 0;
@@ -92,7 +112,9 @@ Bun.serve({
 	async fetch(request, server) {
 		const url = new URL(request.url);
 		if (url.pathname === '/ws') {
-			const upgraded = server.upgrade<ClientData>(request, { data: { pending: [], closed: false, reconnectAttempt: 0 } });
+			const upgraded = server.upgrade<ClientData>(request, {
+				data: { pending: [], closed: false, reconnectAttempt: 0, upstreamUrl: buildUpstreamUrl(url) },
+			});
 			if (upgraded) return undefined;
 			return new Response('Expected WebSocket', { status: 400 });
 		}
