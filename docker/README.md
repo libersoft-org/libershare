@@ -27,6 +27,30 @@ Default writable paths are local directories next to `docker-compose.yml`:
 finished downloads, temp files, LISH files, LISH network files, and backups.
 `./certs` contains frontend TLS certificate files.
 
+## First-run permissions
+
+Both services run with `cap_drop: ALL`, which strips `CAP_DAC_OVERRIDE` so
+root inside the container cannot bypass host filesystem permissions. The bind
+mounts must therefore be writable by UID 0 — and the directories must already
+exist when the stack starts. If they were created by the host user (typical
+when cloning the repo) the backend will fail fast with:
+
+```
+[Storage] FATAL: cannot persist /app/config/settings.json (EACCES).
+[Storage] Fix on the host: chown 0:0 <mounted-dir> && chmod 0700 <mounted-dir>, then restart.
+```
+
+Apply the fix once before the first start:
+
+```sh
+mkdir -p config storage certs
+sudo chown 0:0 config storage certs
+sudo chmod 0700 config storage certs
+```
+
+Docker named volumes (`LIBERSHARE_CONFIG_SOURCE=my-libershare-config`) avoid
+this entirely because the daemon creates them root-owned by default.
+
 ## Start
 
 ```sh
@@ -34,6 +58,10 @@ docker compose config
 docker compose up -d --build
 docker compose logs -f
 ```
+
+The frontend `depends_on.backend.condition: service_healthy` waits until the
+backend healthcheck reports `healthy` before the frontend container is
+started, so the WebSocket proxy never races a backend that's still booting.
 
 ## Storage
 
@@ -149,6 +177,44 @@ Both services run with:
 - all Linux capabilities dropped
 - read-only root filesystem
 - writable state only through explicit mounts and `/tmp`
+
+## Healthcheck
+
+The backend exposes an unauthenticated `GET /health` endpoint that returns
+`200 ok` once the API server has bound. The compose healthcheck reuses the
+same binary as a self-probe:
+
+```yaml
+healthcheck:
+  test: ["CMD", "/app/lish-backend", "--healthcheck"]
+  interval: 10s
+  timeout: 3s
+  retries: 5
+  start_period: 20s
+```
+
+`--healthcheck` does no logger setup, no DB open, no libp2p init — it just
+performs one HTTP `GET http://127.0.0.1:$BACKEND_PORT/health` and exits 0 on
+2xx, 1 on any other response, 2 on a misconfigured `BACKEND_PORT` env. Probe
+the endpoint manually with:
+
+```sh
+curl -fsS http://localhost:${BACKEND_PORT:-1158}/health
+```
+
+## WebSocket proxy resilience
+
+The frontend container terminates the browser WebSocket and forwards it to
+`ws://backend:$BACKEND_PORT`. If the backend goes away (rolling restart,
+crash) the proxy keeps the browser-side socket alive while it reconnects the
+upstream with exponential backoff (250 ms → 5 s, capped). It buffers up to
+1 MiB of in-flight messages during the outage; if that ceiling is exceeded
+the client is closed with code 1011 to force a fresh handshake instead of
+silently dropping subscribe messages.
+
+A single warning is logged after 10 consecutive reconnect attempts; further
+retries continue silently to avoid filling the proxy log when a tab is left
+open across a long backend outage.
 
 ## Verification
 
