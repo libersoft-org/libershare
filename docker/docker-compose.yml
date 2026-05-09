@@ -21,6 +21,11 @@ services:
       # Read by `--healthcheck` self-flag so the probe targets the same port as
       # the live API server when BACKEND_PORT is overridden via .env.
       BACKEND_PORT: ${BACKEND_PORT:-1158}
+      # Optional shared secret. If set, every WebSocket and REST request must
+      # carry `?token=<value>` (the frontend proxy forwards the URL untouched,
+      # so the browser-side WsClient handles it). Empty default preserves the
+      # current "no auth" behaviour for upgraders.
+      LISH_TOKEN: ${LISH_TOKEN:-}
     healthcheck:
       test: ["CMD", "/app/lish-backend", "--healthcheck"]
       interval: 10s
@@ -32,8 +37,14 @@ services:
       options:
         max-size: ${LOG_MAX_SIZE:-10m}
         max-file: ${LOG_MAX_FILE:-3}
+    # Backend WebSocket/API is reached by the frontend container over the
+    # internal Docker network, not by the host browser, so by default we bind
+    # the host-side publication to localhost (`127.0.0.1`). Set
+    # `BACKEND_BIND=0.0.0.0` to expose the API to the LAN (e.g. for the CLI
+    # client or a non-Docker frontend on another host). The libp2p TCP port
+    # always listens on every interface — peers must reach it from outside.
     ports:
-      - "${BACKEND_PORT:-1158}:${BACKEND_PORT:-1158}"
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-1158}:${BACKEND_PORT:-1158}"
       - "9091:9090"
     volumes:
       - ${LIBERSHARE_CONFIG_SOURCE:-./config}:/app/config
