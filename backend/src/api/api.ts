@@ -201,6 +201,12 @@ export class APIServer {
 			hostname: this.host,
 			fetch(req, server): Response | undefined {
 				const url = new URL(req.url);
+				// Liveness probe used by docker-compose healthcheck and external
+				// orchestrators. Returns plain text and 200 once the API server
+				// is bound; intentionally placed before auth + per-request log so
+				// orchestrators can probe without a token and the log isn't
+				// polluted at the healthcheck cadence.
+				if (url.pathname === '/health') return new Response('ok\n', { status: 200, headers: { 'content-type': 'text/plain' } });
 				console.log(`[API] Incoming request: ${req.method} ${url.pathname}`);
 				if (req.method === 'OPTIONS' && url.pathname === '/status') return self.statusOptionsResponse();
 				if (url.pathname === '/status') return self.statusResponse(url);
