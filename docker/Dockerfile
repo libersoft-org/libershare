@@ -22,7 +22,7 @@ RUN set -eu; \
 		*) echo "Unsupported Docker target architecture: $TARGETARCH" >&2; exit 1 ;; \
 	esac; \
 	cd backend; \
-	bun build --compile --target "$BUN_TARGET" src/app.ts src/lish/checksum-worker.ts --outfile build/lish-backend
+	bun build --compile --target "$BUN_TARGET" src/app.ts --outfile build/lish-backend
 
 FROM debian:trixie-slim AS runtime
 
