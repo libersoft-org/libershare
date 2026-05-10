@@ -16,10 +16,15 @@ services:
       - ALL
     # Granted back so backend-entrypoint.sh can chown the bind-mounted
     # config/storage dirs at startup. This makes the deploy independent of
-    # who created the dirs on the host (root vs. an unprivileged user) —
-    # see backend-entrypoint.sh for the rationale.
+    # who created the dirs on the host (root vs. an unprivileged user) and
+    # of the mode bits the host user picked (e.g. an opinionated 0700).
+    # CHOWN — change file ownership.
+    # DAC_READ_SEARCH — traverse and read dirs the container does not own,
+    # so chown(2) can reach files inside a 0700 host dir without needing
+    # the broader DAC_OVERRIDE that also bypasses write checks.
     cap_add:
       - CHOWN
+      - DAC_READ_SEARCH
     command: ["--datadir", "/app/config", "--host", "0.0.0.0", "--port", "${BACKEND_PORT:-1158}"]
     environment:
       LIBERSHARE_MEMTRACE: ${LIBERSHARE_MEMTRACE:-0}
@@ -75,9 +80,10 @@ services:
       - ALL
     # Granted back so frontend-entrypoint.sh can chown the bind-mounted
     # certs dir before openssl writes the self-signed cert/key. Same
-    # rationale as the backend service above.
+    # rationale (and same minimal cap set) as the backend service above.
     cap_add:
       - CHOWN
+      - DAC_READ_SEARCH
     environment:
       BACKEND_WS_URL: ws://backend:${BACKEND_PORT:-1158}
       TLS_CERT_DIR: /app/certs
