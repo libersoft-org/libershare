@@ -35,27 +35,28 @@ finished downloads, temp files, LISH files, LISH network files, and backups.
 
 ## First-run permissions
 
-Both services run with `cap_drop: ALL`, which strips `CAP_DAC_OVERRIDE` so
-root inside the container cannot bypass host filesystem permissions. The bind
-mounts must therefore be writable by UID 0 — and the directories must already
-exist when the stack starts. If they were created by the host user (typical
-when cloning the repo) the backend will fail fast with:
+Both services run with `cap_drop: ALL` and `read_only: true` rootfs, but each
+keeps `cap_add: CHOWN` so its entrypoint can re-own the bind-mounted state
+directories (`/app/config`, `/app/storage`, `/app/certs`) to UID 0 at startup.
+The deploy is therefore independent of who runs `mkdir` on the host:
+
+```sh
+mkdir -p config storage certs
+docker compose up -d --build
+```
+
+If the entrypoints are bypassed (e.g. somebody removes `cap_add: CHOWN`) the
+backend still fails fast with an actionable message instead of silently
+losing writes:
 
 ```
 [Storage] FATAL: cannot persist /app/config/settings.json (EACCES).
 [Storage] Fix on the host: chown 0:0 <mounted-dir> && chmod 0700 <mounted-dir>, then restart.
 ```
 
-Apply the fix once before the first start:
-
-```sh
-mkdir -p config storage certs
-sudo chown 0:0 config storage certs
-sudo chmod 0700 config storage certs
-```
-
-Docker named volumes (`LIBERSHARE_CONFIG_SOURCE=my-libershare-config`) avoid
-this entirely because the daemon creates them root-owned by default.
+Docker named volumes (`LIBERSHARE_CONFIG_SOURCE=my-libershare-config`) work
+out of the box without any host-side `mkdir` — the daemon creates the volume
+root-owned.
 
 ## Start
 
