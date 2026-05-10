@@ -32,8 +32,9 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=build /src/backend/build/lish-backend /app/lish-backend
-RUN chmod 0755 /app/lish-backend
+COPY docker/backend-entrypoint.sh /app/backend-entrypoint.sh
+RUN chmod 0755 /app/lish-backend /app/backend-entrypoint.sh
 
 EXPOSE 1158/tcp 9090/tcp
-ENTRYPOINT ["/app/lish-backend"]
+ENTRYPOINT ["/app/backend-entrypoint.sh"]
 CMD ["--datadir", "/app/data", "--host", "0.0.0.0", "--port", "1158"]
