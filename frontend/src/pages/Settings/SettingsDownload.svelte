@@ -42,7 +42,8 @@
 	let autoRecovery = $state($autoErrorRecovery);
 	let autoConnectNetworks = $state($autoConnectNewNetworks);
 	let mdns = $state($mdnsEnabled);
-	let mdnsIntervalMs = $state($mdnsInterval.toString());
+	// UI exposes the interval in whole seconds; backend stores it in milliseconds.
+	let mdnsIntervalSec = $state(Math.round($mdnsInterval / 1000).toString());
 
 	// Browse functions
 	function openBrowse(type: 'storage' | 'temp' | 'lish' | 'lishnet' | 'backup'): void {
@@ -121,8 +122,9 @@
 	}
 
 	function saveMdnsInterval(): void {
-		setMdnsInterval(parseInt(mdnsIntervalMs) || 10000);
-		mdnsIntervalMs = $mdnsInterval.toString();
+		const seconds = parseInt(mdnsIntervalSec);
+		setMdnsInterval(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 10000);
+		mdnsIntervalSec = Math.round($mdnsInterval / 1000).toString();
 	}
 
 	function saveAll(): void {
@@ -240,7 +242,7 @@
 	}
 
 	function resetMdnsInterval(): void {
-		mdnsIntervalMs = String(settingsDefaults?.network?.mdnsInterval ?? 10000);
+		mdnsIntervalSec = String(Math.round((settingsDefaults?.network?.mdnsInterval ?? 10000) / 1000));
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
@@ -362,7 +364,7 @@
 				<SwitchRow label={$t('settings.download.mdnsEnabled') + ':'} checked={mdns} position={[0, 20]} onToggle={toggleMdns} />
 			</div>
 			<div class="row" role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={mdnsIntervalMs} label={$t('settings.download.mdnsInterval')} type="number" min={1000} position={[0, 21]} flex />
+				<Input bind:value={mdnsIntervalSec} label={$t('settings.download.mdnsInterval')} type="number" min={1} position={[0, 21]} flex />
 				<Button icon="/img/restart.svg" position={[1, 21]} onConfirm={resetMdnsInterval} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 		</div>
