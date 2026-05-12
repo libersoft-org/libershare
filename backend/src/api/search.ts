@@ -216,11 +216,25 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			const { stream } = await network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
 			client = new LISHClient(stream);
 			const lishs = await client.requestList(query);
-			if (sessions.has(searchID) && lishs.length > 0) {
+			if (!sessions.has(searchID)) return;
+			// Defense-in-depth: peers running an older version silently ignore
+			// the `query` field in our getLishs request and respond with their
+			// FULL advertised list. Without a client-side filter that would
+			// produce false-positive matches in the UI. Apply the same
+			// case-insensitive substring rule used by the server-side filter
+			// (network.ts:handleSearchLishs) so old peers behave identically
+			// to upgraded ones from the caller's perspective.
+			const q = query.toLowerCase();
+			const matches = lishs.filter(l => {
+				if (typeof l.id !== 'string') return false;
+				if (l.id.toLowerCase().includes(q)) return true;
+				return (l.name?.toLowerCase() ?? '').includes(q);
+			});
+			if (matches.length > 0) {
 				// Re-use the same aggregation/dedup path as the pubsub-driven
 				// responses, so a peer reachable through both channels never
 				// produces a duplicate row in the FE result list.
-				handleResult({ searchID, peerID, lishs });
+				handleResult({ searchID, peerID, lishs: matches });
 			}
 		} catch (err: any) {
 			trace(`[Search] unicast getLishs to ${peerID.slice(0, 12)} failed: ${err?.message ?? err}`);
