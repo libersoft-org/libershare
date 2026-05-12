@@ -371,6 +371,40 @@ export class Network {
 	}
 
 	/**
+	 * Subscribe to libp2p `peer:connect` events for the duration of the
+	 * returned disposer. The handler receives the peer ID as a string.
+	 *
+	 * Unlike the private `addListener`, this is intended for short-lived
+	 * subscriptions tied to a specific operation (e.g. an in-flight LISH
+	 * search session) — the disposer removes the listener from the global
+	 * tracked-listener list so it does not leak across sessions. If the
+	 * network is stopped before the caller disposes, the listener is still
+	 * cleaned up via the normal {@link stop} path.
+	 */
+	onPeerConnect(handler: (peerID: string) => void): () => void {
+		if (!this.node) return () => {};
+		const node = this.node;
+		const listener = (evt: any): void => {
+			const pid = evt.detail?.toString?.();
+			if (pid) handler(pid);
+		};
+		this.addListener(node, 'peer:connect', listener);
+		let disposed = false;
+		return () => {
+			if (disposed) return;
+			disposed = true;
+			try {
+				node.removeEventListener('peer:connect', listener as any);
+			} catch {
+				// Node may already be stopped — fine, stop() walked the tracked
+				// list already.
+			}
+			const idx = this.listeners.findIndex(l => l.target === node && l.event === 'peer:connect' && l.handler === listener);
+			if (idx >= 0) this.listeners.splice(idx, 1);
+		};
+	}
+
+	/**
 	 * Schedule a debounced check of peer counts for all subscribed topics.
 	 */
 	private schedulePeerCountCheck(): void {
