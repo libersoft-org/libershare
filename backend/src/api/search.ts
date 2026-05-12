@@ -3,8 +3,16 @@ import { type Networks } from '../lishnet/lishnets.ts';
 import { type Settings } from '../settings.ts';
 import { lishTopic } from '../protocol/constants.ts';
 import { trace } from '../logger.ts';
-import { registerSearchResultHandler, unregisterSearchResultHandler, type SearchResultAnnouncement } from '../protocol/lish-protocol.ts';
+import { LISH_PROTOCOL, LISHClient, registerSearchResultHandler, unregisterSearchResultHandler, type SearchResultAnnouncement } from '../protocol/lish-protocol.ts';
 import type { LishSearchResult } from '@shared';
+
+/**
+ * Concurrency cap for the unicast `getLishs` fallback. Each fan-out opens a
+ * fresh LISH protocol stream per peer; on large fleets a uncapped loop would
+ * burst dozens of dials at once. 10 is a balance between LAN search latency
+ * (sub-second for typical 5-30 peer fleets) and load on the libp2p dialer.
+ */
+const UNICAST_FALLBACK_PARALLEL = 10;
 
 type BroadcastFn = (event: string, data: any) => void;
 
@@ -119,7 +127,78 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				console.warn(`[Search] broadcast on ${config.networkID.slice(0, 8)} failed: ${err?.message ?? err}`);
 			}
 		}
+		// Kick off the unicast fallback in parallel with the pubsub broadcast.
+		// floodPublish only reaches peers already in pubsub.getSubscribers(topic)
+		// AND scored above publishThreshold — a freshly-discovered peer (mDNS /
+		// peer-announce / bootstrap dial) typically has a 100-500 ms window
+		// after dial completes before its SUBSCRIBE RPC propagates back to us,
+		// during which floodPublish silently skips them. Dialing them directly
+		// via the LISH protocol bypasses gossipsub state entirely, so the
+		// search works the instant the libp2p connection is up. Fire-and-forget:
+		// rejections are logged but never bubble up into the FE response.
+		runUnicastFallback(searchID, query).catch(err => trace(`[Search] unicast fallback ${searchID.slice(0, 8)} failed: ${err?.message ?? err}`));
 		return { searchID };
+	}
+
+	/**
+	 * Per-search unicast fan-out. Collects the union of topic-subscribed
+	 * peers across every joined network, removes our own peerID, and sends a
+	 * `getLishs(query)` request on a freshly-opened LISH protocol stream to
+	 * each. Successful responses are routed through {@link handleResult},
+	 * which dedupes peer-id collisions against any reply we may already have
+	 * received via the pubsub `searchResult` path. Bounded concurrency via a
+	 * cursor-based worker pool — see {@link UNICAST_FALLBACK_PARALLEL}.
+	 */
+	async function runUnicastFallback(searchID: string, query: string): Promise<void> {
+		const network = networks.getRunningNetwork();
+		const selfPeerID = network.getNodeInfo()?.peerID;
+		const peers = new Set<string>();
+		for (const config of networks.list()) {
+			if (!config.enabled || !networks.isJoined(config.networkID)) continue;
+			for (const p of network.getTopicPeers(config.networkID)) {
+				if (p && p !== selfPeerID) peers.add(p);
+			}
+		}
+		if (peers.size === 0) {
+			trace(`[Search] unicast fallback ${searchID.slice(0, 8)}: no connected topic peers, skipping`);
+			return;
+		}
+		const peerList = [...peers];
+		trace(`[Search] unicast fallback ${searchID.slice(0, 8)}: dispatching to ${peerList.length} peer(s)`);
+		let cursor = 0;
+		const workerCount = Math.min(UNICAST_FALLBACK_PARALLEL, peerList.length);
+		const workers = Array.from({ length: workerCount }, async () => {
+			for (;;) {
+				// Bail immediately if the session has been cancelled or timed
+				// out — no point opening a stream for results we will discard.
+				if (!sessions.has(searchID)) return;
+				const idx = cursor++;
+				if (idx >= peerList.length) return;
+				await queryOnePeer(searchID, query, peerList[idx]!);
+			}
+		});
+		await Promise.allSettled(workers);
+	}
+
+	async function queryOnePeer(searchID: string, query: string, peerID: string): Promise<void> {
+		if (!sessions.has(searchID)) return;
+		const network = networks.getRunningNetwork();
+		let client: LISHClient | undefined;
+		try {
+			const { stream } = await network.dialProtocolByPeerId(peerID, LISH_PROTOCOL);
+			client = new LISHClient(stream);
+			const lishs = await client.requestList(query);
+			if (sessions.has(searchID) && lishs.length > 0) {
+				// Re-use the same aggregation/dedup path as the pubsub-driven
+				// responses, so a peer reachable through both channels never
+				// produces a duplicate row in the FE result list.
+				handleResult({ searchID, peerID, lishs });
+			}
+		} catch (err: any) {
+			trace(`[Search] unicast getLishs to ${peerID.slice(0, 12)} failed: ${err?.message ?? err}`);
+		} finally {
+			await client?.close().catch(() => {});
+		}
 	}
 
 	function cancelSearch(p: { searchID: string }): { ok: true } {
