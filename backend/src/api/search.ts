@@ -13,6 +13,13 @@ import type { LishSearchResult } from '@shared';
  * (sub-second for typical 5-30 peer fleets) and load on the libp2p dialer.
  */
 const UNICAST_FALLBACK_PARALLEL = 10;
+/**
+ * Already-queried peer set lives on the session so the initial snapshot
+ * dispatch and the live `peer:connect` listener can deduplicate against
+ * each other without re-asking the same peer twice. handleResult's own
+ * dedup catches the response side; this avoids the wasted dial.
+ */
+type Queried = Set<string>;
 
 type BroadcastFn = (event: string, data: any) => void;
 
@@ -23,6 +30,10 @@ interface SearchSession {
 	timeout: ReturnType<typeof setTimeout>;
 	/** Aggregated results, keyed by LISH id. New responders for the same LISH push into `peers`. */
 	results: Map<string, LishSearchResult>;
+	/** Peers we have already dispatched a unicast getLishs to. */
+	queried: Queried;
+	/** Disposer for the `peer:connect` listener, called on timeout/cancel. */
+	disposePeerConnect: () => void;
 }
 
 export interface SearchManager {
@@ -51,6 +62,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		const session = sessions.get(searchID);
 		if (!session) return;
 		clearTimeout(session.timeout);
+		session.disposePeerConnect();
 		unregisterSearchResultHandler(searchID);
 		sessions.delete(searchID);
 		broadcast('search:lishs:complete', { searchID, reason });
@@ -106,18 +118,36 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		if (query.length === 0) throw new Error('search query is empty');
 		const searchID = randomUUID();
 		const timeoutMs = settings.get('network.searchTimeout') ?? 30_000;
+		const network = networks.getRunningNetwork();
+		const selfPeerID = network.getNodeInfo()?.peerID ?? '';
+		const queried: Queried = new Set();
+		// Live listener: every peer that completes a libp2p connection while
+		// this search is in flight gets a unicast `getLishs(query)`. Catches
+		// the case where a peer appears via mDNS / peer-announce / hole-punch
+		// AFTER the user clicked Search but BEFORE the timeout fires, so the
+		// result shows up without the user having to retry.
+		const disposePeerConnect = network.onPeerConnect(peerID => {
+			if (!sessions.has(searchID)) return;
+			if (!peerID || peerID === selfPeerID) return;
+			if (queried.has(peerID)) return;
+			queried.add(peerID);
+			void queryOnePeer(searchID, query, peerID).catch(() => {
+				/* logged inside queryOnePeer */
+			});
+		});
 		const session: SearchSession = {
 			searchID,
 			query,
 			startedAt: Date.now(),
 			results: new Map(),
 			timeout: setTimeout(() => endSession(searchID, 'timeout'), timeoutMs),
+			queried,
+			disposePeerConnect,
 		};
 		sessions.set(searchID, session);
 		registerSearchResultHandler(searchID, handleResult);
 		// Broadcast the query on every joined network topic. If broadcast fails on a particular
 		// topic, log and continue — the search is still useful on other networks.
-		const network = networks.getRunningNetwork();
 		const message = { type: 'searchLishs', searchID, query };
 		for (const config of networks.list()) {
 			if (!config.enabled || !networks.isJoined(config.networkID)) continue;
@@ -128,43 +158,41 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			}
 		}
 		// Kick off the unicast fallback in parallel with the pubsub broadcast.
-		// floodPublish only reaches peers already in pubsub.getSubscribers(topic)
-		// AND scored above publishThreshold — a freshly-discovered peer (mDNS /
-		// peer-announce / bootstrap dial) typically has a 100-500 ms window
-		// after dial completes before its SUBSCRIBE RPC propagates back to us,
-		// during which floodPublish silently skips them. Dialing them directly
-		// via the LISH protocol bypasses gossipsub state entirely, so the
-		// search works the instant the libp2p connection is up. Fire-and-forget:
-		// rejections are logged but never bubble up into the FE response.
-		runUnicastFallback(searchID, query).catch(err => trace(`[Search] unicast fallback ${searchID.slice(0, 8)} failed: ${err?.message ?? err}`));
+		// The fallback covers two windows the pubsub path leaves open:
+		//  1. Peer subscribed but skipped by floodPublish (NaN score, dead
+		//     RPC stream, sparse mesh) — `getPeers()` returns them too.
+		//  2. Peer connected at the libp2p layer but the gossipsub SUBSCRIBE
+		//     RPC has not yet propagated. floodPublish only iterates
+		//     `pubsub.getSubscribers(topic)` so these peers silently miss the
+		//     query; the unicast dial reaches them the moment the connection
+		//     is up, independent of gossipsub state.
+		runUnicastFallback(session).catch(err => trace(`[Search] unicast fallback ${searchID.slice(0, 8)} failed: ${err?.message ?? err}`));
 		return { searchID };
 	}
 
 	/**
-	 * Per-search unicast fan-out. Collects the union of topic-subscribed
-	 * peers across every joined network, removes our own peerID, and sends a
-	 * `getLishs(query)` request on a freshly-opened LISH protocol stream to
-	 * each. Successful responses are routed through {@link handleResult},
-	 * which dedupes peer-id collisions against any reply we may already have
-	 * received via the pubsub `searchResult` path. Bounded concurrency via a
-	 * cursor-based worker pool — see {@link UNICAST_FALLBACK_PARALLEL}.
+	 * Initial unicast fan-out at search start. Queries the union of every
+	 * libp2p-connected peer (across all networks; we don't try to map peers
+	 * to lishnets here — the server-side `isUploadAdvertisable` guard plus
+	 * the optional query filter handle that on the responder). Live peers
+	 * that connect AFTER this snapshot are picked up by the
+	 * `peer:connect` listener installed in `startSearch`.
 	 */
-	async function runUnicastFallback(searchID: string, query: string): Promise<void> {
+	async function runUnicastFallback(session: SearchSession): Promise<void> {
+		const { searchID, query, queried } = session;
 		const network = networks.getRunningNetwork();
-		const selfPeerID = network.getNodeInfo()?.peerID;
-		const peers = new Set<string>();
-		for (const config of networks.list()) {
-			if (!config.enabled || !networks.isJoined(config.networkID)) continue;
-			for (const p of network.getTopicPeers(config.networkID)) {
-				if (p && p !== selfPeerID) peers.add(p);
-			}
-		}
-		if (peers.size === 0) {
-			trace(`[Search] unicast fallback ${searchID.slice(0, 8)}: no connected topic peers, skipping`);
+		const selfPeerID = network.getNodeInfo()?.peerID ?? '';
+		// `getPeers()` is the libp2p-connection peer set, NOT the gossipsub
+		// subscriber set. Includes peers freshly dialed via mDNS for whom
+		// gossipsub SUBSCRIBE has not yet completed — exactly the case the
+		// fallback exists to fix.
+		const peerList = network.getPeers().filter(p => p && p !== selfPeerID && !queried.has(p));
+		for (const p of peerList) queried.add(p);
+		if (peerList.length === 0) {
+			trace(`[Search] unicast fallback ${searchID.slice(0, 8)}: no connected peers in snapshot`);
 			return;
 		}
-		const peerList = [...peers];
-		trace(`[Search] unicast fallback ${searchID.slice(0, 8)}: dispatching to ${peerList.length} peer(s)`);
+		trace(`[Search] unicast fallback ${searchID.slice(0, 8)}: snapshot dispatching to ${peerList.length} peer(s)`);
 		let cursor = 0;
 		const workerCount = Math.min(UNICAST_FALLBACK_PARALLEL, peerList.length);
 		const workers = Array.from({ length: workerCount }, async () => {
