@@ -16,7 +16,7 @@ import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX, normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
-import { CodedError, ErrorCodes } from '@shared';
+import { CodedError, ErrorCodes, type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
@@ -179,6 +179,20 @@ export class Network {
 	private _peerCountDebounceTimer: NodeJS.Timeout | null = null;
 	private _lastPeerCounts: Map<string, number> = new Map();
 	private _lastMeshSizes: Map<string, number> = new Map();
+
+	/**
+	 * Per-network → per-bootstrap-peer dial outcome status. Outer key is
+	 * networkID; inner key is the exact multiaddr string from the network
+	 * config. Populated by addBootstrapPeers() when called with a networkID
+	 * context (initial join + manual updates). Lets the UI surface which
+	 * SPECIFIC bootstrap entry is stale (identity-mismatch) or unreachable
+	 * (timeout), rather than flagging the whole network.
+	 *
+	 * NOT populated for dynamic bootstrap additions from peer-announce gossip
+	 * (those have no single owning network and would dilute per-network stats).
+	 */
+	private bootstrapStats: Map<string, Map<string, BootstrapPeerStatus>> = new Map();
+	private _onBootstrapStatusChange: ((networkID: string, status: BootstrapStatus) => void) | null = null;
 
 	// Previous gossipsub peer scores — tracked per-peer to detect significant
 	// score deltas and log threshold crossings (e.g. entered graylist).
@@ -874,13 +888,16 @@ export class Network {
 	 * Accept inbound peer-announce: dial each advertised multiaddr through addBootstrapPeers
 	 * (which dedupes against our existing bootstrap set and skips our own peer ID).
 	 */
-	private async handlePeerAnnounce(data: PeerAnnounceMessage, fromPeerID?: string): Promise<void> {
+	private async handlePeerAnnounce(data: PeerAnnounceMessage, networkID: string, fromPeerID?: string): Promise<void> {
 		if (!Array.isArray(data.multiaddrs) || data.multiaddrs.length === 0) return;
 		// Cap at MAX_TOTAL_ADDRS to match sender's transitive payload.
 		const filtered = data.multiaddrs.filter(a => typeof a === 'string' && a.length > 0).slice(0, PEER_ANNOUNCE_MAX_TOTAL_ADDRS);
 		if (filtered.length === 0) return;
-		trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: ${filtered.length} addrs`);
-		await this.addBootstrapPeers(filtered);
+		trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: ${filtered.length} addrs (network ${networkID.slice(0, 8)})`);
+		// Pass networkID so per-peer outcomes from gossiped entries surface in the
+		// UI under the network through which they arrived. Identity-mismatch
+		// outcomes inside addBootstrapPeers also trigger purgeStalePeer.
+		await this.addBootstrapPeers(filtered, networkID, 'discovered');
 		// Stamp `keep-alive-fleet` on every peer the announce mentioned. libp2p
 		// ReconnectQueue only acts on peers carrying a tag whose key starts with
 		// `keep-alive`; without this tag, fleet-discovered peers that drop are
@@ -1214,41 +1231,188 @@ export class Network {
 	/**
 	 * Add bootstrap peers dynamically to the running node.
 	 * Dials them directly since the bootstrap module only works at config time.
+	 *
+	 * When `networkID` is provided, dial outcomes are recorded into per-network
+	 * bootstrap status counters (used by the UI to surface stale-config warnings).
+	 * Pass `null` for dynamic additions that have no single owning network
+	 * (e.g. peer-announce gossip), in which case stats are skipped.
 	 */
-	async addBootstrapPeers(peers: string[]): Promise<void> {
+	async addBootstrapPeers(peers: string[], networkID: string | null = null, origin: BootstrapPeerOrigin = 'discovered'): Promise<void> {
 		if (!this.node) {
 			console.error('Network not started - cannot add bootstrap peers');
 			return;
 		}
 		const myPeerID = this.node.peerId.toString();
 		for (const peer of peers) {
-			// Skip our own address or already-known bootstrap peers
+			// Skip our own address
 			if (peer.includes(myPeerID)) continue;
 			try {
 				const ma = Multiaddr(peer);
 				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
-				if (peerID && this.bootstrapPeerIDs.has(peerID)) continue;
-				if (peerID) {
+				const alreadyKnown = !!peerID && this.bootstrapPeerIDs.has(peerID);
+				if (peerID && !alreadyKnown) {
 					this.bootstrapPeerIDs.add(peerID);
 					this.bootstrapMultiaddrs.push(ma);
 				}
 				console.debug('Adding bootstrap peer:', peer);
+				this.markBootstrapPending(networkID, peer, peerID, origin);
 				try {
-					await this.node.dial(ma);
+					// Skip re-dialing when libp2p already has an active connection to this peer
+					// (typical when the same bootstrap entry appears in multiple lishnets).
+					// We still record the outcome so per-network status reflects "connected"
+					// rather than leaving the entry stuck at "pending".
+					const reuseExisting = alreadyKnown && peerID && this.node.getConnections(peerIDFromString(peerID)).length > 0;
+					if (!reuseExisting) await this.node.dial(ma);
 					if (peerID) {
 						await this.node.peerStore.merge(peerIDFromString(peerID), {
 							multiaddrs: [ma],
 							tags: { [KEEP_ALIVE]: { value: 1 } },
 						});
 					}
+					this.recordBootstrapOutcome(networkID, peer, peerID, 'connected', null, null, origin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
-					console.log('⚠️  Could not connect to bootstrap peer:', err.message);
+					const message = err?.message ?? String(err);
+					const kind = classifyBootstrapError(message);
+					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
+					this.recordBootstrapOutcome(networkID, peer, peerID, kind, message, actualPeerID, origin);
+					console.log('⚠️  Could not connect to bootstrap peer:', message);
+					// Crypto-verified identity mismatch ⇒ peerID stored in our peerStore
+					// is provably wrong for this address. Purge it so libp2p autodial
+					// stops retrying the dead identity. Safe because Noise handshake
+					// is unforgeable — a mismatch is definitive, never a transient
+					// network issue. Only triggers when we have an expected peerID
+					// to purge.
+					if (kind === 'identity-mismatch' && peerID) {
+						await this.purgeStalePeer(peerID, `${origin} dial identity mismatch`);
+						// For DISCOVERED entries (peer-announce gossip), also drop the
+						// status entry — there's no saved config row to "fix" and leaving
+						// it visible just adds UI noise. For CONFIGURED entries, keep
+						// it so the user can decide to update or remove the saved row.
+						if (origin === 'discovered' && networkID) {
+							const net = this.bootstrapStats.get(networkID);
+							if (net) {
+								net.delete(peer);
+								if (net.size === 0) this.bootstrapStats.delete(networkID);
+								const snap = this.buildBootstrapStatus(networkID) ?? { networkID, peers: [] };
+								this._onBootstrapStatusChange?.(networkID, snap);
+							}
+						}
+					}
 				}
 			} catch (error: any) {
+				this.recordBootstrapOutcome(networkID, peer, null, 'error', error?.message ?? String(error), null, origin);
 				console.log('⚠️  Skipping invalid multiaddr:', peer, '-', error.message);
 			}
 		}
+	}
+
+	/**
+	 * Set a callback for per-network bootstrap status updates. Called whenever
+	 * `addBootstrapPeers(_, networkID)` records a new outcome for any entry.
+	 */
+	set onBootstrapStatusChange(cb: ((networkID: string, status: BootstrapStatus) => void) | null) {
+		this._onBootstrapStatusChange = cb;
+	}
+
+	/**
+	 * Remove a peerID from libp2p's peerStore + drop it from our bootstrap dedup set.
+	 *
+	 * Called when we have crypto-strong evidence the stored identity is wrong
+	 * (Noise handshake reported a different peerID than the multiaddr's `/p2p/<id>`
+	 * suffix claimed). Removing the entry stops libp2p ReconnectQueue / autodial
+	 * from re-attempting the dead identity.
+	 *
+	 * Best-effort: a peerStore.delete failure is logged at debug but does not throw —
+	 * the same peer will be re-purged next cycle if libp2p keeps trying it.
+	 */
+	async purgeStalePeer(peerID: string, reason: string): Promise<void> {
+		if (!this.node) return;
+		this.bootstrapPeerIDs.delete(peerID);
+		try {
+			const pid = peerIDFromString(peerID);
+			// Drop existing connections so libp2p considers the entry fully gone.
+			const conns = this.node.getConnections(pid);
+			for (const c of conns) {
+				try {
+					await c.close();
+				} catch {
+					/* connection may already be closing */
+				}
+			}
+			await this.node.peerStore.delete(pid);
+			console.log(`[NET] purged stale peerStore entry ${peerID.slice(0, 16)}… (reason: ${reason})`);
+		} catch (err: any) {
+			trace(`[NET] purgeStalePeer ${peerID.slice(0, 16)} failed: ${err?.message ?? err}`);
+		}
+	}
+
+	/** Snapshot of all per-network bootstrap statuses. */
+	getAllBootstrapStatuses(): BootstrapStatus[] {
+		return [...this.bootstrapStats.keys()].map(id => this.buildBootstrapStatus(id)!).filter(Boolean);
+	}
+
+	/** Snapshot of a single network's bootstrap status, or null if no attempts have been recorded. */
+	getBootstrapStatus(networkID: string): BootstrapStatus | null {
+		return this.buildBootstrapStatus(networkID);
+	}
+
+	/** Drop bootstrap status entries no longer in the configured peer list (after an update). */
+	pruneBootstrapStatus(networkID: string, keepMultiaddrs: string[]): void {
+		const peers = this.bootstrapStats.get(networkID);
+		if (!peers) return;
+		const keep = new Set(keepMultiaddrs);
+		for (const addr of [...peers.keys()]) {
+			if (!keep.has(addr)) peers.delete(addr);
+		}
+		if (peers.size === 0) this.bootstrapStats.delete(networkID);
+		const snapshot = this.buildBootstrapStatus(networkID);
+		if (snapshot) this._onBootstrapStatusChange?.(networkID, snapshot);
+	}
+
+	/** Reset the bootstrap status for a single network (used when re-joining). */
+	resetBootstrapStatus(networkID: string): void {
+		this.bootstrapStats.delete(networkID);
+		this._onBootstrapStatusChange?.(networkID, { networkID, peers: [] });
+	}
+
+	private ensureBootstrapNetwork(networkID: string): Map<string, BootstrapPeerStatus> {
+		let net = this.bootstrapStats.get(networkID);
+		if (!net) {
+			net = new Map();
+			this.bootstrapStats.set(networkID, net);
+		}
+		return net;
+	}
+
+	private buildBootstrapStatus(networkID: string): BootstrapStatus | null {
+		const peers = this.bootstrapStats.get(networkID);
+		if (!peers) return null;
+		return { networkID, peers: [...peers.values()].map(p => ({ ...p })) };
+	}
+
+	private markBootstrapPending(networkID: string | null, multiaddr: string, expectedPeerID: string | null, origin: BootstrapPeerOrigin): void {
+		if (!networkID) return;
+		const net = this.ensureBootstrapNetwork(networkID);
+		// Preserve a stronger origin classification — once we know an entry is in
+		// the saved config ('configured'), an inbound peer-announce later restating
+		// the same multiaddr must not downgrade it to 'discovered'.
+		const previous = net.get(multiaddr);
+		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
+		net.set(multiaddr, { multiaddr, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: new Date().toISOString() });
+		const snapshot = this.buildBootstrapStatus(networkID);
+		if (snapshot) this._onBootstrapStatusChange?.(networkID, snapshot);
+	}
+
+	private recordBootstrapOutcome(networkID: string | null, multiaddr: string, expectedPeerID: string | null, status: BootstrapPeerDialStatus, message: string | null, actualPeerID: string | null, origin: BootstrapPeerOrigin): void {
+		if (!networkID) return;
+		const net = this.ensureBootstrapNetwork(networkID);
+		const truncated = message ? (message.length > 200 ? message.slice(0, 200) + '…' : message) : null;
+		const previous = net.get(multiaddr);
+		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
+		net.set(multiaddr, { multiaddr, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString() });
+		const snapshot = this.buildBootstrapStatus(networkID);
+		if (snapshot) this._onBootstrapStatusChange?.(networkID, snapshot);
 	}
 
 	// =========================================================================
@@ -1317,7 +1481,7 @@ export class Network {
 					trace(`[NET] handleWant failed: ${err?.message ?? err}`);
 				});
 			} else if (data['type'] === 'peer-announce') {
-				this.handlePeerAnnounce(data as unknown as PeerAnnounceMessage, from).catch(err => {
+				this.handlePeerAnnounce(data as unknown as PeerAnnounceMessage, networkID, from).catch(err => {
 					trace(`[NET] handlePeerAnnounce failed: ${err?.message ?? err}`);
 				});
 			} else if (data['type'] === 'searchLishs') {
@@ -1806,4 +1970,35 @@ export class Network {
 			console.log('Peer not in peerStore');
 		}
 	}
+}
+
+/**
+ * Classify a libp2p dial error into a coarse status the UI can render distinctly.
+ *
+ * - `identity-mismatch`: the remote completed Noise handshake but reported a
+ *   different peer ID than the multiaddr's `/p2p/<id>` claimed. Always means
+ *   the configured peerID is stale (or the address routes to a wrong node).
+ * - `timeout`: the dial never completed — peer offline, behind NAT without relay,
+ *   firewall, or unreachable network path.
+ * - `error`: every other reason (invalid multiaddr, connection refused, protocol
+ *   negotiation failure, etc).
+ */
+export function classifyBootstrapError(message: string): BootstrapPeerDialStatus {
+	if (!message) return 'error';
+	if (message.includes('does not match expected remote identity key')) return 'identity-mismatch';
+	if (message.includes('timed out') || message.includes('operation was aborted') || message.includes('TimeoutError')) return 'timeout';
+	return 'error';
+}
+
+/**
+ * Parse the actual peerID reported by the remote out of libp2p's identity-mismatch
+ * error message. Returns null on shape mismatch (so the UI can fall back to a
+ * generic "stale config" message instead of a confident replacement suggestion).
+ *
+ * Expected message format (libp2p Noise plaintext):
+ *   "Payload identity key <ACTUAL_ID> does not match expected remote identity key <EXPECTED_ID>"
+ */
+export function extractActualPeerID(message: string): string | null {
+	const m = message.match(/Payload identity key (\S+) does not match expected remote identity key /);
+	return m ? m[1]! : null;
 }

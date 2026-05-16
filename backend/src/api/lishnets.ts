@@ -1,7 +1,7 @@
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, CodedError, ErrorCodes } from '@shared';
+import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, CodedError, ErrorCodes } from '@shared';
 import { LISHClient, LISH_PROTOCOL } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -32,6 +32,9 @@ interface LISHnetsHandlers {
 	getNodeInfo: () => NetworkNodeInfo | null;
 	getStatus: (p: { networkID: string }) => NetworkStatus;
 	infoAll: () => NetworkInfo[];
+	getBootstrapStatus: (p: { networkID: string }) => BootstrapStatus | null;
+	getAllBootstrapStatuses: () => BootstrapStatus[];
+	updateBootstrapPeers: (p: { networkID: string; bootstrapPeers: string[] }) => Promise<LISHNetworkConfig>;
 }
 type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
 
@@ -263,6 +266,21 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 			datasets: dataServer.getDatasets().length,
 		};
 	}
+	function getBootstrapStatus(p: { networkID: string }): BootstrapStatus | null {
+		assert(p, ['networkID']);
+		return networks.getBootstrapStatus(p.networkID);
+	}
+	function getAllBootstrapStatuses(): BootstrapStatus[] {
+		return networks.getAllBootstrapStatuses();
+	}
+	async function updateBootstrapPeers(p: { networkID: string; bootstrapPeers: string[] }): Promise<LISHNetworkConfig> {
+		assert(p, ['networkID', 'bootstrapPeers']);
+		if (!Array.isArray(p.bootstrapPeers)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'bootstrapPeers must be an array');
+		const updated = await networks.updateBootstrapPeers(p.networkID, p.bootstrapPeers);
+		if (!updated) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, p.networkID);
+		broadcast('lishnets:updated', { networkID: updated.networkID });
+		return updated;
+	}
 	function infoAll(): NetworkInfo[] {
 		const configs = networks.list();
 		const network = networks.getNetwork();
@@ -308,5 +326,8 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		getNodeInfo,
 		getStatus,
 		infoAll,
+		getBootstrapStatus,
+		getAllBootstrapStatuses,
+		updateBootstrapPeers,
 	};
 }

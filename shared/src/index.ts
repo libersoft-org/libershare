@@ -116,6 +116,67 @@ export interface NetworkInfo extends LISHNetworkConfig {
 	peersInStore?: number;
 }
 
+/**
+ * Per-bootstrap-peer dial outcome.
+ *
+ * Tracks the latest dial attempt result for one entry in a network's
+ * configured `bootstrapPeers` list. This is granular per-entry, so the UI
+ * can surface exactly which configured peer is misconfigured rather than
+ * just flagging the whole network as "stale".
+ */
+export type BootstrapPeerDialStatus = 'pending' | 'connected' | 'identity-mismatch' | 'timeout' | 'error';
+
+/**
+ * Where this bootstrap-peer entry came from:
+ *  - 'configured': it is part of the network's saved `bootstrapPeers` list (user-visible, editable)
+ *  - 'discovered': it arrived via peer-announce gossip from another connected peer (transient, not in config)
+ *
+ * The UI separates the two so the user clearly sees what their own config
+ * contains versus what the network told us about. Cleanup actions on
+ * 'discovered' entries don't touch the saved config — they purge libp2p
+ * peerStore so the dead identity stops being re-dialed and re-gossiped.
+ */
+export type BootstrapPeerOrigin = 'configured' | 'discovered';
+
+export interface BootstrapPeerStatus {
+	/** The multiaddr exactly as observed (from config OR from inbound peer-announce). */
+	multiaddr: string;
+	/** PeerID extracted from the multiaddr (the `/p2p/<id>` component), or null if absent. */
+	expectedPeerID: string | null;
+	/** Latest dial outcome for this entry. */
+	status: BootstrapPeerDialStatus;
+	/** Source of this entry — see {@link BootstrapPeerOrigin}. */
+	origin: BootstrapPeerOrigin;
+	/**
+	 * If `status === 'identity-mismatch'`, the peerID actually reported by the
+	 * remote during Noise handshake (parsed from libp2p's error message). Lets
+	 * the UI offer "update entry to <actualPeerID>" as a one-click remedy.
+	 */
+	actualPeerID: string | null;
+	/** Truncated message of the most recent dial failure (≤200 chars), if any. */
+	lastError: string | null;
+	/** ISO timestamp of the last update to this entry's status. */
+	updatedAt: string;
+}
+
+/**
+ * Per-network bootstrap dial status — one entry per configured bootstrap peer
+ * plus aggregate counters.
+ *
+ * Populated when the backend attempts to dial the bootstrap peers configured
+ * for a lishnet. Lets the UI detect which specific entries are stale
+ * (identity-mismatch) or unreachable (timeout) and offer corrective actions:
+ * delete bad entry, update peerID to the actual one, or refresh the whole
+ * list from the public network catalogue.
+ *
+ * Stats reset when a peer entry is removed/replaced via lishnets.updateBootstrapPeers.
+ */
+export interface BootstrapStatus {
+	networkID: string;
+	/** Per-bootstrap-entry dial outcomes, keyed implicitly by `multiaddr`. */
+	peers: BootstrapPeerStatus[];
+}
+
 // Dataset types (derived from ILISH entries that have a directory)
 export interface Dataset {
 	id: string;

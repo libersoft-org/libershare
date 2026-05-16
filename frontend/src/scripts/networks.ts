@@ -3,6 +3,7 @@ import { api } from './api.ts';
 import { connected } from './ws-client.ts';
 import { tt } from './language.ts';
 import { addNotification } from './notifications.ts';
+import type { BootstrapStatus } from '@shared';
 // Reactive store of peer counts per network, updated via push events from backend, key: networkID, value: number of connected peers
 export const peerCounts = writable<Record<string, number>>({});
 
@@ -170,6 +171,82 @@ export async function subscribePeerCounts(): Promise<void> {
 		}
 		if (isConnected && unsubListener) api.subscribe('peers:count');
 	}) as () => void;
+}
+
+/**
+ * Per-network bootstrap dial status, keyed by networkID. Each entry lists the
+ * latest dial outcome for every configured bootstrap peer (connected /
+ * identity-mismatch / timeout / error / pending). The settings UI renders this
+ * to highlight WHICH specific bootstrap entry is misconfigured rather than
+ * flagging the whole network as stale.
+ */
+export const bootstrapStatuses = writable<Record<string, BootstrapStatus>>({});
+
+let bootstrapUnsubListener: (() => void) | null = null;
+let bootstrapUnsubReconnect: (() => void) | null = null;
+let bootstrapSubscriberCount = 0;
+
+/** Helper: do any of this network's configured peers report a hard failure (identity-mismatch / timeout / error)? */
+export function hasBootstrapProblems(status: BootstrapStatus | undefined): boolean {
+	if (!status) return false;
+	return status.peers.some(p => p.status === 'identity-mismatch' || p.status === 'timeout' || p.status === 'error');
+}
+
+/**
+ * Subscribe to per-network bootstrap status updates. Loads the current
+ * snapshot synchronously and then keeps it live via the
+ * `lishnets:bootstrapStatus` push event.
+ */
+export async function subscribeBootstrapStatuses(): Promise<void> {
+	bootstrapSubscriberCount++;
+	if (bootstrapUnsubListener) return;
+	// Initial snapshot — events only fire on subsequent state changes.
+	try {
+		const initial = await api.lishnets.getAllBootstrapStatuses();
+		const map: Record<string, BootstrapStatus> = {};
+		for (const s of initial) map[s.networkID] = s;
+		bootstrapStatuses.set(map);
+	} catch {
+		// Network not running or unsupported backend — leave store empty, banner will simply not show.
+	}
+	bootstrapUnsubListener = api.on('lishnets:bootstrapStatus', (data: { networkID: string; status: BootstrapStatus }) => {
+		bootstrapStatuses.update(curr => ({ ...curr, [data.networkID]: data.status }));
+	}) as () => void;
+	api.subscribe('lishnets:bootstrapStatus');
+	let skipFirst = true;
+	bootstrapUnsubReconnect = connected.subscribe(isConnected => {
+		if (skipFirst) {
+			skipFirst = false;
+			return;
+		}
+		if (isConnected && bootstrapUnsubListener) {
+			api.subscribe('lishnets:bootstrapStatus');
+			// Re-fetch snapshot on reconnect to catch updates we missed while disconnected.
+			api.lishnets
+				.getAllBootstrapStatuses()
+				.then(snap => {
+					const map: Record<string, BootstrapStatus> = {};
+					for (const s of snap) map[s.networkID] = s;
+					bootstrapStatuses.set(map);
+				})
+				.catch(() => undefined);
+		}
+	}) as () => void;
+}
+
+export async function unsubscribeBootstrapStatuses(): Promise<void> {
+	if (bootstrapSubscriberCount === 0) return;
+	bootstrapSubscriberCount--;
+	if (bootstrapSubscriberCount > 0) return;
+	if (bootstrapUnsubReconnect) {
+		bootstrapUnsubReconnect();
+		bootstrapUnsubReconnect = null;
+	}
+	if (!bootstrapUnsubListener) return;
+	await api.unsubscribe('lishnets:bootstrapStatus');
+	bootstrapUnsubListener();
+	bootstrapUnsubListener = null;
+	bootstrapStatuses.set({});
 }
 
 // Unsubscribe from peer count updates. Reference-counted: actual unsubscribe happens only when the last subscriber leaves.
