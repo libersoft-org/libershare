@@ -359,12 +359,12 @@
 							{/if}
 							<div class="buttons">
 								<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} position={[0, rowY]} onConfirm={() => connectNetwork(network)} />
-								<Button icon="/img/export.svg" label={$t('common.export')} position={[1, rowY]} onConfirm={() => openExport(network)} />
-								<Button icon="/img/edit.svg" label={$t('common.edit')} position={[2, rowY]} onConfirm={() => openEditNetwork(network)} />
-								<Button icon="/img/del.svg" label={$t('common.delete')} position={[3, rowY]} onConfirm={() => deleteNetwork(network)} />
-								{#if network.enabled && configuredProblems(network.networkID) > 0}
-									<Button icon="/img/warning.svg" label={tt('settings.lishNetwork.bootstrap.openLabel', { count: String(configuredProblems(network.networkID)) })} position={[4, rowY]} onConfirm={() => openBootstrap(network)} />
+								{#if network.enabled}
+									<Button icon={configuredProblems(network.networkID) > 0 ? '/img/warning.svg' : '/img/person.svg'} label={$t('settings.lishNetwork.bootstrap.openLabel')} position={[1, rowY]} onConfirm={() => openBootstrap(network)} />
 								{/if}
+								<Button icon="/img/export.svg" label={$t('common.export')} position={[2, rowY]} onConfirm={() => openExport(network)} />
+								<Button icon="/img/edit.svg" label={$t('common.edit')} position={[3, rowY]} onConfirm={() => openEditNetwork(network)} />
+								<Button icon="/img/del.svg" label={$t('common.delete')} position={[4, rowY]} onConfirm={() => deleteNetwork(network)} />
 								{#if i > 0}
 									<Button icon="/img/up.svg" position={[5, rowY]} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
 								{/if}
