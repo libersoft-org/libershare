@@ -866,10 +866,23 @@ export class Network {
 		// peers learn about the whole fleet in one hop instead of waiting for mesh
 		// GRAFT to surface them. Total payload bounded by PEER_ANNOUNCE_MAX_TOTAL_ADDRS.
 		const collected = new Set<string>();
-		// Our own multiaddrs first (priority).
+		const localCidrs = getLocalCidrs();
+		let skippedSelf = 0;
+		let skippedTransitive = 0;
+		// Our own multiaddrs first (priority). Filter loopback (127.0.0.0/8) and
+		// non-local private addresses through shouldDenyDial — a remote peer
+		// receiving our /ip4/127.0.0.1 would otherwise TCP-loop to itself and
+		// hit identity-mismatch on every dial (validated on docker 2026-05-24:
+		// the moment debug logging landed it captured 3× back-to-back loopback
+		// dials from peer-announce intake within 3s of startup).
 		for (const ma of this.node.getMultiaddrs()) {
 			const s = ma.toString();
-			if (!s.includes('/p2p-circuit')) collected.add(s);
+			if (s.includes('/p2p-circuit')) continue;
+			if (shouldDenyDial(ma, localCidrs)) {
+				skippedSelf++;
+				continue;
+			}
+			collected.add(s);
 			if (collected.size >= PEER_ANNOUNCE_MAX_ADDRS) break;
 		}
 		// Transitive peerStore addrs.
@@ -884,10 +897,17 @@ export class Network {
 				if (collected.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
 				const base = addr.multiaddr.toString();
 				if (base.includes('/p2p-circuit')) continue;
+				if (shouldDenyDial(addr.multiaddr, localCidrs)) {
+					skippedTransitive++;
+					continue;
+				}
 				const full = base.includes('/p2p/') ? base : `${base}/p2p/${pid}`;
 				collected.add(full);
 				perPeer++;
 			}
+		}
+		if (skippedSelf > 0 || skippedTransitive > 0) {
+			trace(`[NET] peer-announce filter: skipped ${skippedSelf} self + ${skippedTransitive} transitive non-routable addrs`);
 		}
 		if (collected.size === 0) return;
 		const lishTopics = this.pubsub.getTopics().filter((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
@@ -909,10 +929,37 @@ export class Network {
 	 */
 	private async handlePeerAnnounce(data: PeerAnnounceMessage, networkID: string, fromPeerID?: string): Promise<void> {
 		if (!Array.isArray(data.multiaddrs) || data.multiaddrs.length === 0) return;
-		// Cap at MAX_TOTAL_ADDRS to match sender's transitive payload.
-		const filtered = data.multiaddrs.filter(a => typeof a === 'string' && a.length > 0).slice(0, PEER_ANNOUNCE_MAX_TOTAL_ADDRS);
-		if (filtered.length === 0) return;
-		trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: ${filtered.length} addrs (network ${networkID.slice(0, 8)})`);
+		// Two-stage filter: shape (non-empty string) THEN routability (drop
+		// loopback + non-local private through shouldDenyDial). Without the
+		// routability stage, broadcasters with buggy emitters can inject their
+		// /ip4/127.0.0.1 into our bootstrap set, causing TCP loop → Noise
+		// identity-mismatch storm. Even though emitPeerAnnounce now filters
+		// these out on our side, we cannot trust older peers in the fleet to
+		// do the same — every receiver must be defensive.
+		const localCidrs = getLocalCidrs();
+		const rawCount = data.multiaddrs.length;
+		const filtered: string[] = [];
+		let droppedNonRoutable = 0;
+		for (const a of data.multiaddrs) {
+			if (typeof a !== 'string' || a.length === 0) continue;
+			if (filtered.length >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
+			try {
+				if (shouldDenyDial(Multiaddr(a), localCidrs)) {
+					droppedNonRoutable++;
+					continue;
+				}
+			} catch {
+				// Unparseable multiaddr → drop (can't safely dial it anyway).
+				droppedNonRoutable++;
+				continue;
+			}
+			filtered.push(a);
+		}
+		if (filtered.length === 0) {
+			if (droppedNonRoutable > 0) trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: dropped all ${droppedNonRoutable}/${rawCount} addrs as non-routable`);
+			return;
+		}
+		trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: ${filtered.length}/${rawCount} addrs (dropped ${droppedNonRoutable} non-routable, network ${networkID.slice(0, 8)})`);
 		// Pass networkID so per-peer outcomes from gossiped entries surface in the
 		// UI under the network through which they arrived. Identity-mismatch
 		// outcomes inside addBootstrapPeers also trigger purgeStalePeer.
@@ -1278,11 +1325,21 @@ export class Network {
 			return;
 		}
 		const myPeerID = this.node.peerId.toString();
+		const localCidrs = getLocalCidrs();
 		for (const peer of peers) {
 			// Skip our own address
 			if (peer.includes(myPeerID)) continue;
 			try {
 				const ma = Multiaddr(peer);
+				// Safety net: refuse to add loopback / unreachable-private bootstrap
+				// entries even if the upstream (catalog or peer-announce intake)
+				// failed to filter them. Failing here is silent because the call
+				// site iterates many candidates and we shouldn't spam INFO for
+				// every drop; trace-level keeps it greppable when debugging.
+				if (shouldDenyDial(ma, localCidrs)) {
+					trace(`[NET] addBootstrapPeers skip non-routable: ${peer}`);
+					continue;
+				}
 				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
 				const alreadyKnown = !!peerID && this.bootstrapPeerIDs.has(peerID);
 				if (peerID && !alreadyKnown) {
