@@ -194,6 +194,18 @@ export class Network {
 	private bootstrapStats: Map<string, Map<string, BootstrapPeerStatus>> = new Map();
 	private _onBootstrapStatusChange: ((networkID: string, status: BootstrapStatus) => void) | null = null;
 
+	/**
+	 * Ring buffer of the most recent peer disconnects. Capacity 10. Dumped at
+	 * INFO level via [NET-CHURN] whenever the node drops to zero connections so
+	 * we can see WHICH peers vanished right before the storm hit, instead of
+	 * just observing the symptom "No connections - dialing N bootstrap peer(s)".
+	 *
+	 * Each entry: { ts (epoch ms), peerID (full), remaining (count after disc),
+	 * wasBootstrap (whether peer was in our bootstrapPeerIDs set) }.
+	 */
+	private recentDisconnects: Array<{ ts: number; peerID: string; remaining: number; wasBootstrap: boolean }> = [];
+	private static readonly NET_CHURN_BUFFER = 10;
+
 	// Previous gossipsub peer scores — tracked per-peer to detect significant
 	// score deltas and log threshold crossings (e.g. entered graylist).
 	private _lastScores: Map<string, number> = new Map();
@@ -704,7 +716,14 @@ export class Network {
 
 		this.addListener(this.node!, 'peer:disconnect', (evt: any) => {
 			const peerID = evt.detail.toString();
-			console.debug(`❌ Peer disconnected: ${peerID.slice(0, 16)}, remaining: ${this.node!.getPeers().length}`);
+			const remaining = this.node!.getPeers().length;
+			const wasBootstrap = this.bootstrapPeerIDs.has(peerID);
+			console.debug(`❌ Peer disconnected: ${peerID.slice(0, 16)}, remaining: ${remaining}`);
+			// Push into churn ring buffer; trim to capacity. Used by [NET-CHURN] dump
+			// when getConnections() hits zero so we can see who left right before the storm.
+			this.recentDisconnects.push({ ts: Date.now(), peerID, remaining, wasBootstrap });
+			if (this.recentDisconnects.length > Network.NET_CHURN_BUFFER) this.recentDisconnects.shift();
+			trace(`[NET-DISC] peer=${peerID.slice(0, 16)} remaining=${remaining} bootstrap=${wasBootstrap}`);
 			// Fix C: clear per-peer state on disconnect to prevent unbounded growth
 			this.dcutrPeers.delete(peerID);
 			// `@chainsafe/libp2p-gossipsub` v14 removes the peer from `this.mesh`
@@ -1131,6 +1150,22 @@ export class Network {
 				for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
 				if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && this.bootstrapMultiaddrs.length > 0) {
 					console.log(`   ⚠️  No connections - dialing ${this.bootstrapMultiaddrs.length} bootstrap peer(s) directly...`);
+					// [NET-CHURN] dump: who left in the run-up to this zero-connection
+					// state, and what each configured bootstrap entry's last dial outcome
+					// was. Without this we only ever see the recovery dial — never the cause.
+					if (this.recentDisconnects.length > 0) {
+						const now = Date.now();
+						const summary = this.recentDisconnects.map(d => `${d.peerID.slice(0, 16)}(${Math.round((now - d.ts) / 1000)}s${d.wasBootstrap ? ',BS' : ''})`).join(' ');
+						console.log(`   [NET-CHURN] last ${this.recentDisconnects.length} disconnects: ${summary}`);
+					} else {
+						console.log(`   [NET-CHURN] no disconnects recorded — autodial fired without any peer:disconnect event (libp2p internal eviction?)`);
+					}
+					for (const [networkID, peers] of this.bootstrapStats) {
+						const counts: Record<string, number> = {};
+						for (const p of peers.values()) counts[p.status] = (counts[p.status] ?? 0) + 1;
+						const parts = Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(' ');
+						console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
+					}
 					for (const ma of this.bootstrapMultiaddrs) {
 						const maStr = ma?.toString?.() ?? String(ma);
 						try {
@@ -1276,7 +1311,16 @@ export class Network {
 					const kind = classifyBootstrapError(message);
 					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
 					this.recordBootstrapOutcome(networkID, peer, peerID, kind, message, actualPeerID, origin);
-					console.log('⚠️  Could not connect to bootstrap peer:', message);
+					// [NET-MISMATCH] richer log for identity-mismatch — single line containing
+					// origin (configured / discovered from peer-announce), multiaddr,
+					// expected peerID and the actual peerID Noise reported. Makes it
+					// trivial to grep `[NET-MISMATCH]` and diff what the catalog has
+					// vs reality, even before the UI shows the same data.
+					if (kind === 'identity-mismatch') {
+						console.log(`[NET-MISMATCH] origin=${origin} net=${networkID?.slice(0, 8) ?? 'none'} addr=${peer} expected=${peerID ?? 'none'} actual=${actualPeerID ?? 'unparsed'}`);
+					} else {
+						console.log(`⚠️  Could not connect to bootstrap peer (${kind}): ${peer} — ${message}`);
+					}
 					// Crypto-verified identity mismatch ⇒ peerID stored in our peerStore
 					// is provably wrong for this address. Purge it so libp2p autodial
 					// stops retrying the dead identity. Safe because Noise handshake
