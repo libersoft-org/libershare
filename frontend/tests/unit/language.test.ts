@@ -6,7 +6,6 @@
  * svelte/store, so these tests can run under `bun test` without dragging in
  * the SvelteKit runtime.
  */
-// @ts-expect-error -- bun:test is a virtual module provided by the bun runtime
 import { test, expect } from 'bun:test';
 import { createTranslationLoader } from '../../src/scripts/language.ts';
 
