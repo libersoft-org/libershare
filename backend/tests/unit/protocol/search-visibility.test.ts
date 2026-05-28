@@ -41,7 +41,12 @@ describe('LISH search visibility', () => {
 	});
 
 	it('uses the same advertisable guard for direct getLishs and getLish protocol requests', () => {
-		expect(LISH_PROTOCOL_TS).toContain('filter(l => isUploadAdvertisable(l.id))');
+		// The getLishs handler may layer additional predicates (e.g. an
+		// optional query filter for the unicast-search fallback), so assert
+		// the guard is present in the filter chain rather than matching an
+		// exact substring that would break on every new predicate.
+		const getLishsBlock = LISH_PROTOCOL_TS.slice(LISH_PROTOCOL_TS.indexOf("request.type === 'getLishs'"), LISH_PROTOCOL_TS.indexOf("request.type === 'getLish'"));
+		expect(getLishsBlock).toContain('isUploadAdvertisable(l.id)');
 		expect(LISH_PROTOCOL_TS).toContain('if (!isUploadAdvertisable(request.lishID))');
 	});
 

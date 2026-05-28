@@ -134,9 +134,19 @@ export function extractFirstIPv4(ma: any): string | null {
 		}
 	} catch {}
 	try {
-		// Fallback: some multiaddr implementations expose .nodeAddress()
+		// Fallback: some multiaddr implementations expose .nodeAddress().
+		// IMPORTANT: nodeAddress() on a /dns4/<host>/tcp/<port> multiaddr returns
+		// { family: 4, address: '<host>', port: ... } — the address is the HOSTNAME,
+		// not an IP, even though family is 4. Validate that the returned string
+		// is a real dotted-quad before accepting it; otherwise shouldDenyDial would
+		// treat the hostname as a malformed IP (ipToUint32 → 0, isPublic → false)
+		// and refuse to dial the entire /dns4/ entry. Caught in production
+		// 2026-05-26 when local node skipped lish1/lish2.libershare.com bootstraps.
 		const na = ma?.nodeAddress?.();
-		if (na && (na.family === 4 || na.family === 'IPv4')) return String(na.address);
+		if (na && (na.family === 4 || na.family === 'IPv4')) {
+			const addr = String(na.address);
+			if (ipToUint32(addr) !== 0) return addr;
+		}
 	} catch {}
 	return null;
 }

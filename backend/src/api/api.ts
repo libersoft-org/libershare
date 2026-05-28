@@ -149,6 +149,9 @@ export class APIServer {
 			'lishnets.getNodeInfo': _lishnets.getNodeInfo,
 			'lishnets.getStatus': _lishnets.getStatus,
 			'lishnets.infoAll': _lishnets.infoAll,
+			'lishnets.getBootstrapStatus': _lishnets.getBootstrapStatus,
+			'lishnets.getAllBootstrapStatuses': _lishnets.getAllBootstrapStatuses,
+			'lishnets.updateBootstrapPeers': _lishnets.updateBootstrapPeers,
 			// Browse network — LISH search
 			'search.startSearch': _search.startSearch,
 			'search.cancelSearch': _search.cancelSearch,
@@ -260,6 +263,14 @@ export class APIServer {
 		this.networks.onPeerCountChange = counts => {
 			if (this.clients.size === 0) return;
 			for (const client of this.clients) this.emit(client, 'peers:count', counts);
+		};
+
+		// Broadcast per-network bootstrap status updates (per-peer dial outcomes).
+		// Clients use the lishnets:bootstrapStatus event to surface stale-config
+		// warnings (configured peerID does not match actual remote identity) and
+		// offer remediation actions in the LISH networks settings UI.
+		this.networks.onBootstrapStatusChange = (networkID, status) => {
+			this.broadcast('lishnets:bootstrapStatus', { networkID, status });
 		};
 
 		const protocol = this.secure ? 'wss' : 'ws';

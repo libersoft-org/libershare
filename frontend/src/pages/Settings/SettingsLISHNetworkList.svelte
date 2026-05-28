@@ -10,7 +10,7 @@
 	import { type LISHNetworkConfig, type NetworkNodeInfo } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { getNetworks, deleteNetwork as deleteNetworkFromAPI, updateNetwork as updateNetworkFromAPI, addNetwork as addNetworkFromAPI, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
-	import { peerCounts, subscribePeerCounts, unsubscribePeerCounts } from '../../scripts/networks.ts';
+	import { peerCounts, subscribePeerCounts, unsubscribePeerCounts, bootstrapStatuses, subscribeBootstrapStatuses, unsubscribeBootstrapStatuses } from '../../scripts/networks.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -20,6 +20,7 @@
 	import LISHNetworkExport from './SettingsLISHNetworkExport.svelte';
 	import LISHNetworkExportAll from './SettingsLISHNetworkExportAll.svelte';
 	import LISHNetworkPublic from './SettingsLISHNetworkPublic.svelte';
+	import LISHNetworkBootstrap from './SettingsLISHNetworkBootstrap.svelte';
 	import NodeInfoRow from '../../components/NodeInfo/NodeInfoRow.svelte';
 	interface Props {
 		areaID: string;
@@ -54,6 +55,23 @@
 	const exportAllSubPage = createSubPage(navHandle, () => areaID);
 	const deleteSubPage = createSubPage(navHandle, () => areaID);
 	const connectSubPage = createSubPage(navHandle, () => areaID);
+	const bootstrapSubPage = createSubPage(navHandle, () => areaID);
+	let bootstrapNetwork = $state<LISHNetworkConfig | null>(null);
+
+	function openBootstrap(network: LISHNetworkConfig): void {
+		bootstrapNetwork = network;
+		bootstrapSubPage.enter(`${network.name} - ${$t('settings.lishNetwork.bootstrap.title')}`, () => void closeBootstrap());
+	}
+	async function closeBootstrap(): Promise<void> {
+		bootstrapNetwork = null;
+		await bootstrapSubPage.exit();
+	}
+
+	function configuredProblems(networkID: string): number {
+		const s = $bootstrapStatuses[networkID];
+		if (!s) return 0;
+		return s.peers.filter(p => p.origin === 'configured' && (p.status === 'identity-mismatch' || p.status === 'timeout' || p.status === 'error')).length;
+	}
 
 	async function closePublic(): Promise<void> {
 		// Reload networks in case new ones were added
@@ -188,11 +206,21 @@
 		void closeConnect();
 	}
 
+	function handleBootstrapUpdated(updated: LISHNetworkConfig): void {
+		const index = networks.findIndex(n => n.networkID === updated.networkID);
+		if (index !== -1) {
+			networks[index] = { ...networks[index]!, ...updated };
+			networks = [...networks];
+		}
+	}
+
 	onMount(() => {
 		loadNetworks();
 		subscribePeerCounts();
+		subscribeBootstrapStatuses();
 		return () => {
 			unsubscribePeerCounts();
+			unsubscribeBootstrapStatuses();
 		};
 	});
 </script>
@@ -284,6 +312,8 @@
 	<LISHNetworkExportAll {areaID} {position} onBack={() => void exportAllSubPage.exit()} />
 {:else if publicSubPage.active}
 	<LISHNetworkPublic {areaID} {position} onBack={() => void closePublic()} />
+{:else if bootstrapSubPage.active && bootstrapNetwork}
+	<LISHNetworkBootstrap {areaID} {position} network={bootstrapNetwork} status={$bootstrapStatuses[bootstrapNetwork.networkID]} onUpdated={handleBootstrapUpdated} onBack={() => void closeBootstrap()} />
 {:else if deleteSubPage.active && deletingNetwork}
 	<ConfirmDialog title={$t('common.delete')} message={$t('settings.lishNetwork.confirmDelete', { name: deletingNetwork.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
 {:else if connectSubPage.active && pendingConnectNetwork}
@@ -323,16 +353,23 @@
 							{#if networkErrors[network.networkID]}
 								<Alert type="error" message={networkErrors[network.networkID]!} />
 							{/if}
+							{#if network.enabled && configuredProblems(network.networkID) > 0}
+								{@const probs = configuredProblems(network.networkID)}
+								<Alert type="warning" message={tt(probs === 1 ? 'settings.lishNetwork.bootstrap.warningOne' : 'settings.lishNetwork.bootstrap.warningMany', { count: String(probs), total: String(network.bootstrapPeers.length) })} />
+							{/if}
 							<div class="buttons">
 								<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} position={[0, rowY]} onConfirm={() => connectNetwork(network)} />
-								<Button icon="/img/export.svg" label={$t('common.export')} position={[1, rowY]} onConfirm={() => openExport(network)} />
-								<Button icon="/img/edit.svg" label={$t('common.edit')} position={[2, rowY]} onConfirm={() => openEditNetwork(network)} />
-								<Button icon="/img/del.svg" label={$t('common.delete')} position={[3, rowY]} onConfirm={() => deleteNetwork(network)} />
+								{#if network.enabled}
+									<Button icon={configuredProblems(network.networkID) > 0 ? '/img/warning.svg' : '/img/person.svg'} label={$t('settings.lishNetwork.bootstrap.openLabel')} position={[1, rowY]} onConfirm={() => openBootstrap(network)} />
+								{/if}
+								<Button icon="/img/export.svg" label={$t('common.export')} position={[2, rowY]} onConfirm={() => openExport(network)} />
+								<Button icon="/img/edit.svg" label={$t('common.edit')} position={[3, rowY]} onConfirm={() => openEditNetwork(network)} />
+								<Button icon="/img/del.svg" label={$t('common.delete')} position={[4, rowY]} onConfirm={() => deleteNetwork(network)} />
 								{#if i > 0}
-									<Button icon="/img/up.svg" position={[4, rowY]} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
+									<Button icon="/img/up.svg" position={[5, rowY]} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
 								{/if}
 								{#if i < networks.length - 1}
-									<Button icon="/img/down.svg" position={[5, rowY]} onConfirm={() => moveNetwork(i, false)} padding="1vh" fontSize="4vh" width="auto" />
+									<Button icon="/img/down.svg" position={[6, rowY]} onConfirm={() => moveNetwork(i, false)} padding="1vh" fontSize="4vh" width="auto" />
 								{/if}
 							</div>
 						</div>

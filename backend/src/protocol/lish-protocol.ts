@@ -38,6 +38,15 @@ export interface LISHGetLishRequest {
 }
 export interface LISHGetLishsRequest {
 	type: 'getLishs';
+	/**
+	 * Optional case-insensitive substring filter applied server-side to each
+	 * LISH's id and (if present) name. When omitted the responder returns its
+	 * full advertised list — backward-compatible with peers that predate this
+	 * field. Used by the unicast fallback in `api/search.ts` so a search can
+	 * succeed even when the gossipsub subscriber set has not yet propagated
+	 * to a freshly-discovered peer (e.g. one just dialed via mDNS).
+	 */
+	query?: string;
 }
 /**
  * Unicast "I have this LISH" announcement — response to a pubsub `want`.
@@ -154,9 +163,11 @@ export class LISHClient {
 		return response.manifest;
 	}
 
-	// Request list of shared LISHs from peer
-	async requestList(): Promise<Array<{ id: string; name?: string; totalSize?: number }>> {
-		const request: LISHGetLishsRequest = { type: 'getLishs' };
+	// Request list of shared LISHs from peer. `query` is an optional
+	// case-insensitive substring filter the peer applies server-side; omit it
+	// to retrieve the full list.
+	async requestList(query?: string): Promise<Array<{ id: string; name?: string; totalSize?: number }>> {
+		const request: LISHGetLishsRequest = { type: 'getLishs', ...(query !== undefined ? { query } : {}) };
 		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLishs: stream ${this.stream.status}`);
 		}
@@ -364,7 +375,14 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				// Return list of all shared (upload_enabled) LISHs — id and name only.
 				// Newest first — matches the order shown locally in "Download and Sharing".
 				const allLishs = dataServer.list();
-				const shared = allLishs.filter(l => isUploadAdvertisable(l.id)).reverse();
+				const q = typeof request.query === 'string' && request.query.length > 0 ? request.query.toLowerCase() : null;
+				const matches = (l: import('@shared').IStoredLISH): boolean => {
+					if (!q) return true;
+					if (l.id.toLowerCase().includes(q)) return true;
+					const name = l.name?.toLowerCase() ?? '';
+					return name.includes(q);
+				};
+				const shared = allLishs.filter(l => isUploadAdvertisable(l.id) && matches(l)).reverse();
 				const response: LISHGetLishsResponse = {
 					type: 'getLishs-result',
 					lishs: shared.map(l => {

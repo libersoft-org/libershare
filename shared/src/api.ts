@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -326,6 +326,18 @@ class LISHnetsAPI {
 
 	infoAll(): Promise<NetworkInfo[]> {
 		return this.client.call<NetworkInfo[]>('lishnets.infoAll');
+	}
+
+	getBootstrapStatus(networkID: string): Promise<BootstrapStatus | null> {
+		return this.client.call<BootstrapStatus | null>('lishnets.getBootstrapStatus', { networkID });
+	}
+
+	getAllBootstrapStatuses(): Promise<BootstrapStatus[]> {
+		return this.client.call<BootstrapStatus[]>('lishnets.getAllBootstrapStatuses');
+	}
+
+	updateBootstrapPeers(networkID: string, bootstrapPeers: string[]): Promise<LISHNetworkConfig> {
+		return this.client.call<LISHNetworkConfig>('lishnets.updateBootstrapPeers', { networkID, bootstrapPeers });
 	}
 }
 
