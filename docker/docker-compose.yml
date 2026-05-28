@@ -1,0 +1,112 @@
+name: libershare
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: docker-libershare-backend:local
+    container_name: libershare-backend
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Granted back so backend-entrypoint.sh can chown the bind-mounted
+    # config/storage dirs at startup. This makes the deploy independent of
+    # who created the dirs on the host (root vs. an unprivileged user) and
+    # of the mode bits the host user picked (e.g. an opinionated 0700).
+    # CHOWN — change file ownership.
+    # DAC_READ_SEARCH — traverse and read dirs the container does not own,
+    # so chown(2) can reach files inside a 0700 host dir without needing
+    # the broader DAC_OVERRIDE that also bypasses write checks.
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+    command: ["--datadir", "/app/config", "--host", "0.0.0.0", "--port", "${BACKEND_PORT:-1158}"]
+    environment:
+      LIBERSHARE_MEMTRACE: ${LIBERSHARE_MEMTRACE:-0}
+      LIBERSHARE_STORAGE_ROOT: /app/storage
+      # Read by `--healthcheck` self-flag so the probe targets the same port as
+      # the live API server when BACKEND_PORT is overridden via .env.
+      BACKEND_PORT: ${BACKEND_PORT:-1158}
+      # Optional shared secret. If set, every WebSocket and REST request must
+      # carry `?token=<value>` (the frontend proxy forwards the URL untouched,
+      # so the browser-side WsClient handles it). Empty default preserves the
+      # current "no auth" behaviour for upgraders.
+      LISH_TOKEN: ${LISH_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "/app/lish-backend", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: ${LOG_MAX_FILE:-3}
+    # Backend WebSocket/API is reached by the frontend container over the
+    # internal Docker network, not by the host browser, so by default we bind
+    # the host-side publication to localhost (`127.0.0.1`). Set
+    # `BACKEND_BIND=0.0.0.0` to expose the API to the LAN (e.g. for the CLI
+    # client or a non-Docker frontend on another host). The libp2p TCP port
+    # always listens on every interface — peers must reach it from outside.
+    ports:
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-1158}:${BACKEND_PORT:-1158}"
+      - "9091:9090"
+    volumes:
+      - ${LIBERSHARE_CONFIG_SOURCE:-./config}:/app/config
+      - ${LIBERSHARE_STORAGE_SOURCE:-./storage}:/app/storage
+    tmpfs:
+      - /tmp
+    networks:
+      - libershare-net
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+    image: docker-libershare-frontend:local
+    container_name: libershare-frontend
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Granted back so frontend-entrypoint.sh can chown the bind-mounted
+    # certs dir before openssl writes the self-signed cert/key. Same
+    # rationale (and same minimal cap set) as the backend service above.
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+    environment:
+      BACKEND_WS_URL: ws://backend:${BACKEND_PORT:-1158}
+      TLS_CERT_DIR: /app/certs
+      TLS_CERT_FILE: ${TLS_CERT_FILE:-/app/certs/pubkey.pem}
+      TLS_KEY_FILE: ${TLS_KEY_FILE:-/app/certs/privkey.pem}
+      TLS_CERT_SAN: ${TLS_CERT_SAN:-DNS:localhost,IP:127.0.0.1}
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: ${LOG_MAX_FILE:-3}
+    ports:
+      - "6003:6003"
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ${TLS_CERT_SOURCE:-./certs}:/app/certs
+    tmpfs:
+      - /tmp
+    networks:
+      - libershare-net
+
+networks:
+  libershare-net:
+    name: libershare-net

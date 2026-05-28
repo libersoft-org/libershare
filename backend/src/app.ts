@@ -1,5 +1,6 @@
 import { dirname, join } from 'path';
 import { productName, productVersion } from '@shared';
+import { resolveHealthcheckPort } from './healthcheck.ts';
 import { setupLogger, type LogLevel } from './logger.ts';
 import { Networks } from './lishnet/lishnets.ts';
 import { DataServer } from './lish/data-server.ts';
@@ -51,6 +52,30 @@ for (let i = 0; i < args.length; i++) {
 		logFile = args[i + 1]!;
 		i++;
 	}
+}
+
+// Self-healthcheck mode used by docker-compose / orchestrators. Performs a
+// single HTTP GET against the running instance's `/health` endpoint and exits
+// 0 on 2xx, 1 otherwise — no logger setup, no DB open, no libp2p init.
+if (args.includes('--healthcheck')) {
+	const decision = resolveHealthcheckPort(apiPort, process.env['BACKEND_PORT']);
+	if (decision.exit !== undefined) {
+		if (decision.message) console.error(decision.message);
+		process.exit(decision.exit);
+	}
+	// Try IPv4 first, then IPv6 — `--host localhost` on Windows binds only to
+	// `[::1]` while the same flag in a Docker container binds to `127.0.0.1`.
+	// Probing both addresses keeps the self-flag portable across deployments.
+	const targets = [`http://127.0.0.1:${decision.port}/health`, `http://[::1]:${decision.port}/health`];
+	for (const target of targets) {
+		try {
+			const res = await fetch(target, { signal: AbortSignal.timeout(2500) });
+			if (res.ok) process.exit(0);
+		} catch {
+			// Try the next address.
+		}
+	}
+	process.exit(1);
 }
 
 setupLogger(logLevel, logFile ?? join(dataDir, 'libershare.log'));

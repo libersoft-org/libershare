@@ -36,6 +36,19 @@ export interface APIServerOptions {
 	apiToken?: string | undefined;
 }
 
+/**
+ * Liveness probe handler used by the docker-compose healthcheck and external
+ * orchestrators. Returns a 200 plain-text response when the URL pathname is
+ * exactly `/health`, or `null` to let the caller fall through to other
+ * routing (WebSocket upgrade, 400 fallback). Pure so it stays unit-testable
+ * without spinning up the full APIServer dependency graph.
+ */
+export function handleHealthProbe(req: globalThis.Request): Response | null {
+	const url = new URL(req.url);
+	if (url.pathname === '/health') return new Response('ok\n', { status: 200, headers: { 'content-type': 'text/plain' } });
+	return null;
+}
+
 export class APIServer {
 	private clients: Set<ClientSocket> = new Set();
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
@@ -201,6 +214,11 @@ export class APIServer {
 			hostname: this.host,
 			fetch(req, server): Response | undefined {
 				const url = new URL(req.url);
+				// Liveness probe used by docker-compose healthcheck and external
+				// orchestrators. Placed before auth + per-request log so probes
+				// don't need a token and don't pollute traces at probe cadence.
+				const probe = handleHealthProbe(req);
+				if (probe) return probe;
 				console.log(`[API] Incoming request: ${req.method} ${url.pathname}`);
 				if (req.method === 'OPTIONS' && url.pathname === '/status') return self.statusOptionsResponse();
 				if (url.pathname === '/status') return self.statusResponse(url);
