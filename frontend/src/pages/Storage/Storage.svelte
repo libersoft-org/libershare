@@ -3,7 +3,7 @@
 	import { type Component } from 'svelte';
 	import { storagePath } from '../../scripts/settings.ts';
 	import { tt } from '../../scripts/language.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBreadcrumb, popBreadcrumb, navigateToAbsolutePath } from '../../scripts/navigation.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
@@ -56,6 +56,11 @@
 		},
 	}));
 
+	// Open the Create LISH page with the chosen storage path prefilled as the data source.
+	function handleShare(path: string): void {
+		navigateToAbsolutePath(['downloads', 'create-lish'], { initialDataPath: path });
+	}
+
 	async function handleImportBack(): Promise<void> {
 		popBreadcrumb();
 		importMode = null;
@@ -73,5 +78,5 @@
 {#if ImportComponent}
 	<ImportComponent {areaID} {position} initialFilePath={importFilePath} onBack={handleImportBack} onImport={handleImportComplete} />
 {:else}
-	<FileBrowser {areaID} {position} {onBack} initialPath={$storagePath} {specialFileTypes} />
+	<FileBrowser {areaID} {position} {onBack} initialPath={$storagePath} {specialFileTypes} onShare={handleShare} />
 {/if}

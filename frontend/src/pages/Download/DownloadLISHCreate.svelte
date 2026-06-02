@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
@@ -73,8 +73,10 @@
 		areaID: string;
 		position?: Position | undefined;
 		onBack?: (() => void) | undefined;
+		/** Prefill the data path (e.g. when sharing a file/directory from local storage). */
+		initialDataPath?: string | undefined;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack, initialDataPath }: Props = $props();
 	// Browse state
 	let showOverwriteConfirm = $state(false);
 	let pendingCreateParams = $state<Record<string, any>>({});
@@ -82,8 +84,8 @@
 	let browseDirectory = $state('');
 	let browseFile = $state<string | undefined>(undefined);
 	let lishFileName = $state(''); // File name input in LISH file browse dialog
-	// Form state
-	let dataPath = $state($storagePath);
+	// Form state — prefill once from the share path (if any), then user-editable.
+	let dataPath = $state(untrack(() => initialDataPath) ?? $storagePath);
 	let saveToFile = $state(true);
 	let minifyJSON = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
