@@ -445,17 +445,21 @@
 	};
 
 	onMount(() => {
-		setCurrentDetailLISHID(lishID);
+		// Capture the lishID at mount: the prop is cleared when the LISH is deleted and we
+		// navigate back, so reading it lazily in the cleanup would unsubscribe with an empty
+		// lishID (backend MISSING_PARAMETER). The captured value always matches the subscribe.
+		const subscribedLishID = lishID;
+		setCurrentDetailLISHID(subscribedLishID);
 		registerDetailAreas();
 		// Subscribe to per-peer details for this LISH
-		api.call('transfer.subscribePeers', { lishID });
+		if (subscribedLishID) api.call('transfer.subscribePeers', { lishID: subscribedLishID });
 		const clockInterval = setInterval(() => {
 			now = Date.now();
 		}, 1000);
 		return () => {
 			clearInterval(clockInterval);
 			setCurrentDetailLISHID(null);
-			api.call('transfer.unsubscribePeers', { lishID });
+			if (subscribedLishID) api.call('transfer.unsubscribePeers', { lishID: subscribedLishID });
 			unregisterDetailAreas();
 			removeFileBrowserBackHandler?.();
 		};
