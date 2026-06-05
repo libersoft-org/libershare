@@ -416,7 +416,8 @@
 			"resetting": "Obnovuji…",
 			"confirmTitle": "Obnovit tovární nastavení",
 			"confirmMessage": "Opravdu kompletně vymazat databázi a obnovit tovární nastavení? Soubory na disku zůstanou, ale tuto akci nelze vrátit zpět.",
-			"error": "Obnova továrního nastavení selhala: {detail}"
+			"error": "Obnova továrního nastavení selhala: {detail}",
+			"done": "Tovární nastavení bylo obnoveno."
 		},
 		"identity": {
 			"title": "Identita",

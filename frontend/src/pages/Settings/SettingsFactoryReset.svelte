@@ -32,6 +32,10 @@
 		errorMessage = '';
 		try {
 			await api.settings.factoryReset();
+			// Stash the already-translated confirmation so it can be shown after the
+			// reload (the page reloads to a clean slate, so a notification raised here
+			// would be discarded). Pre-translating avoids any i18n load-timing race.
+			sessionStorage.setItem('factoryResetDone', tt('settings.factoryReset.done'));
 			// Identity, networks, downloads and settings all changed — reload the UI
 			// from a clean slate rather than reconciling every store by hand.
 			window.location.reload();

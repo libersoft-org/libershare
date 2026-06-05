@@ -17,6 +17,7 @@
 	import { initNetworkEvents, subscribePeerCounts } from '../scripts/networks.ts';
 	import { detectLocalFilesystem } from '../scripts/localFilesystem.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedID: selectedID, navigate, onBack: onBack } = createNavigation();
+	import { addNotification } from '../scripts/notifications.ts';
 	import NotificationContainer from '../components/Notification/NotificationContainer.svelte';
 	import Header from '../pages/Header/Header.svelte';
 	import NavigationBreadcrumb from '../components/Breadcrumb/NavigationBreadcrumb.svelte';
@@ -93,6 +94,12 @@
 	}
 
 	onMount(() => {
+		// Surface the factory-reset confirmation that survived the page reload.
+		const factoryResetMsg = sessionStorage.getItem('factoryResetDone');
+		if (factoryResetMsg) {
+			sessionStorage.removeItem('factoryResetDone');
+			addNotification(factoryResetMsg, 'success');
+		}
 		// Initialize local systems (don't need backend)
 		setContentElement(contentElement);
 		startInput();

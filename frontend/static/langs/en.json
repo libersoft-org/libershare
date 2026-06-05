@@ -416,7 +416,8 @@
 			"resetting": "Resetting…",
 			"confirmTitle": "Factory reset",
 			"confirmMessage": "Completely wipe the database and restore factory settings? Files on disk are kept, but this action cannot be undone.",
-			"error": "Factory reset failed: {detail}"
+			"error": "Factory reset failed: {detail}",
+			"done": "Factory reset completed."
 		},
 		"identity": {
 			"title": "Identity",
