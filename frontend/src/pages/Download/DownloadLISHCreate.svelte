@@ -99,6 +99,7 @@
 	let showAdvanced = $state(false);
 	// Prefill the LISH name from the shared file/directory basename (if any).
 	let name = $state(untrack(() => (initialDataPath ? shareBaseName(initialDataPath) : '')));
+	let nameManuallyEdited = $state(false); // Stop auto-filling the name from the data path once the user types one
 	// LISH file path - editable state, initialized from settings
 	let lishFile = $state($storageLISHPath);
 	let lishFileManuallyEdited = $state(false); // Track if user manually edited the path
@@ -116,6 +117,12 @@
 				lishFile = directory.endsWith(sep) ? directory : directory + sep;
 			}
 		}
+	}
+
+	// User typed in the name field — remember it so the data-path picker stops overwriting it.
+	function handleNameInput(newName: string): void {
+		nameManuallyEdited = true;
+		handleNameChange(newName);
 	}
 
 	function handleCompressToggle(): void {
@@ -243,6 +250,8 @@
 
 	function handleInputPathSelect(path: string): void {
 		dataPath = path;
+		// Mirror the picked file/directory name into the LISH name, unless the user already typed one.
+		if (!nameManuallyEdited) handleNameChange(shareBaseName(path));
 		void inputPathSubPage.exit();
 	}
 
@@ -309,7 +318,7 @@
 	<div class="create">
 		<div class="container">
 			<!-- Name (optional) -->
-			<Input value={name} onchange={handleNameChange} label={`${$t('common.name')} (${$t('common.optional')})`} position={[0, 0]} />
+			<Input value={name} onchange={handleNameInput} label={`${$t('common.name')} (${$t('common.optional')})`} position={[0, 0]} />
 			<!-- Description (optional) -->
 			<Input bind:value={description} label={`${$t('common.description')} (${$t('common.optional')})`} multiline rows={3} position={[0, 1]} />
 			<!-- Data Path (required) -->
