@@ -420,7 +420,7 @@
 			"reset": "Factory reset",
 			"resetting": "Resetting…",
 			"confirmTitle": "Factory reset",
-			"confirmMessage": "Completely wipe the database and restore factory settings? Files on disk are kept, but this action cannot be undone.",
+			"confirmMessage": "Wipe the selected categories? Files on disk are kept, but this action cannot be undone.",
 			"error": "Factory reset failed: {detail}",
 			"done": "Factory reset completed."
 		},
