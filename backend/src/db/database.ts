@@ -21,14 +21,18 @@ export function getDatabase(): Database {
 }
 
 /**
- * Remove every row from all persistent tables. `ON DELETE CASCADE` clears the
- * lishs_* children and lishnets_peers, so deleting the two parent tables is
- * enough. On-disk LISH data files are NOT touched — this only wipes DB records.
- * Used by the factory reset.
+ * Remove every LISH row (and its `ON DELETE CASCADE` children: files, chunks,
+ * directories, links). On-disk LISH data files are NOT touched. Used by the
+ * factory reset "downloads" category.
  */
-export function clearAllData(database: Database): void {
-	database.transaction(() => {
-		database.run('DELETE FROM lishs');
-		database.run('DELETE FROM lishnets');
-	})();
+export function clearLishData(database: Database): void {
+	database.run('DELETE FROM lishs');
+}
+
+/**
+ * Remove every lishnet row (and its cascade children: lishnets_peers). Used by
+ * the factory reset "networks" category.
+ */
+export function clearLishnetData(database: Database): void {
+	database.run('DELETE FROM lishnets');
 }

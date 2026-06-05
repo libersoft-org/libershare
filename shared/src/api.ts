@@ -156,12 +156,13 @@ class SettingsAPI {
 	}
 
 	/**
-	 * Complete factory reset: empties the database, wipes the libp2p datastore
-	 * (peerstore + identity) and resets settings to defaults. On-disk LISH data
-	 * files are kept. The UI should reload afterwards.
+	 * Factory reset with per-category selection (each defaults to ON). Wipes the
+	 * selected categories: settings → defaults, identity → new peer ID + cleared
+	 * peerstore, downloads → all LISH records (on-disk files kept), networks → all
+	 * lishnets. The UI should reload afterwards.
 	 */
-	factoryReset(): Promise<{ success: boolean }> {
-		return this.client.call<{ success: boolean }>('settings.factoryReset');
+	factoryReset(options?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean }): Promise<{ success: boolean }> {
+		return this.client.call<{ success: boolean }>('settings.factoryReset', options ?? {});
 	}
 
 	exportToFile(filePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<{ success: boolean; error?: string }> {

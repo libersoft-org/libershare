@@ -11,14 +11,14 @@ import { initIdentityHandlers } from './identity.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
 import { initLISHsHandlers } from './lishs.ts';
-import { initTransferHandlers } from './transfer.ts';
+import { initTransferHandlers, initDownloadState, triggerEnableDownload } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
 import { initSystemHandlers } from './system.ts';
 import { initRelayHandlers } from './relay.ts';
 import { initSearchManager } from './search.ts';
 import { getLocalAddresses } from '../container.ts';
 import { Downloader } from '../protocol/downloader.ts';
-import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize } from '../protocol/lish-protocol.ts';
+import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize, initUploadState } from '../protocol/lish-protocol.ts';
 import { setMaxDownloadPeersPerLISH } from '../protocol/peer-manager.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
@@ -103,29 +103,48 @@ export class APIServer {
 		const _search = initSearchManager(this.networks, this.settings, broadcastFn);
 		this._search = _search;
 
-		// Complete factory reset: empty the database in one shot (no per-row
-		// deletion), wipe the libp2p datastore (peerstore + identity key) and
-		// reset settings to defaults. On-disk LISH data files are deliberately
-		// left untouched — downloaded and seeded files survive. Connected clients
-		// are told to reload since identity, networks and all state change.
-		const factoryReset = async (): Promise<{ success: boolean }> => {
-			// 1. Stop everything that writes to the DB or holds peer connections.
-			await _lishs.stopVerifyAll();
-			await _transfer.clearAll();
-			await this.networks.stopAllNetworks();
-			// 2. Wipe persistent state. Files on disk are NOT deleted.
-			this.dataServer.clearAll();
-			await this.networks.getNetwork().clearDatastore();
-			const defaults = await this.settings.reset();
-			// 3. Re-apply runtime knobs from the restored defaults (limits are module state).
-			Downloader.setMaxDownloadSpeed(defaults.network.maxDownloadSpeed);
-			setMaxUploadSpeed(defaults.network.maxUploadSpeed);
-			setMaxDownloadPeersPerLISH(defaults.network.maxDownloadPeersPerLISH);
-			setMaxUploadPeersPerLISH(defaults.network.maxUploadPeersPerLISH);
-			setMaxMessageSize(defaults.network.maxMessageSize);
-			// 4. Restart the libp2p node — fresh identity, no lishnets.
-			await this.networks.startEnabledNetworks();
-			// 5. Tell every connected client to reload from a clean slate.
+		// Factory reset with per-category selection (each defaults to ON, so a
+		// plain call wipes everything). Wipes happen at table level — never
+		// per-row. On-disk LISH data files are deliberately left untouched, so
+		// downloaded and seeded files survive. Connected clients are told to
+		// reload since identity, networks and state change.
+		const factoryReset = async (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean }): Promise<{ success: boolean }> => {
+			const wipeSettings = p?.settings ?? true;
+			const wipeIdentity = p?.identity ?? true;
+			const wipeDownloads = p?.downloads ?? true;
+			const wipeNetworks = p?.networks ?? true;
+			// The libp2p node must restart when its identity is regenerated or its
+			// joined networks are removed. A node restart also tears down every live
+			// transfer, so transfers are cleared whenever the node restarts.
+			const restartNode = wipeIdentity || wipeNetworks;
+			if (wipeDownloads || restartNode) {
+				await _lishs.stopVerifyAll();
+				await _transfer.clearAll();
+			}
+			if (restartNode) await this.networks.stopAllNetworks();
+			// Table-level wipes of the selected categories (cascade clears children).
+			if (wipeDownloads) this.dataServer.clearLishs();
+			if (wipeNetworks) this.dataServer.clearLishnets();
+			if (wipeIdentity) await this.networks.getNetwork().clearDatastore();
+			if (wipeSettings) {
+				const defaults = await this.settings.reset();
+				// Re-apply runtime knobs from the restored defaults (limits are module state).
+				Downloader.setMaxDownloadSpeed(defaults.network.maxDownloadSpeed);
+				setMaxUploadSpeed(defaults.network.maxUploadSpeed);
+				setMaxDownloadPeersPerLISH(defaults.network.maxDownloadPeersPerLISH);
+				setMaxUploadPeersPerLISH(defaults.network.maxUploadPeersPerLISH);
+				setMaxMessageSize(defaults.network.maxMessageSize);
+			}
+			if (restartNode) {
+				await this.networks.startEnabledNetworks();
+				// Re-establish transfers that survived the wipe (e.g. downloads kept
+				// when only identity/networks were reset) — they were torn down for
+				// the node restart, so rebuild their enabled-state from the DB.
+				const enabledDownloads = this.dataServer.getDownloadEnabledLishs();
+				initDownloadState(enabledDownloads, (id, en) => this.dataServer.setDownloadEnabled(id, en));
+				initUploadState(this.dataServer.getUploadEnabledLishs(), (id, en) => this.dataServer.setUploadEnabled(id, en));
+				for (const id of enabledDownloads) triggerEnableDownload(id);
+			}
 			broadcastFn('system:factoryReset', {});
 			return { success: true };
 		};
