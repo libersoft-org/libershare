@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import product from './product.json';
 
 const root = '/app/build';
 const port = Number(process.env['PORT'] ?? 6003);
@@ -166,4 +167,4 @@ Bun.serve({
 });
 
 const protocol = tlsEnabled ? 'https' : 'http';
-console.log(`LiberShare frontend listening on ${protocol}://0.0.0.0:${port}`);
+console.log(`${product.name} frontend listening on ${protocol}://0.0.0.0:${port}`);

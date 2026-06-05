@@ -1,8 +1,9 @@
 import { Database } from 'bun:sqlite';
 import { join } from 'path';
+import { productName } from '@shared';
 import { initLISHsTables } from './lishs.ts';
 import { initLISHnetsTables } from './lishnets.ts';
-const DB_FILENAME = 'libershare.db';
+const DB_FILENAME = `${productName.toLowerCase()}.db`;
 let db: Database;
 
 export function openDatabase(dataDir: string): Database {

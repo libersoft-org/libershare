@@ -78,7 +78,7 @@ if (args.includes('--healthcheck')) {
 	process.exit(1);
 }
 
-setupLogger(logLevel, logFile ?? join(dataDir, 'libershare.log'));
+setupLogger(logLevel, logFile ?? join(dataDir, `${productName.toLowerCase()}.log`));
 const header = `${productName} v${productVersion}`;
 console.log('='.repeat(header.length));
 console.log(header);

@@ -1210,7 +1210,9 @@ export class Network {
 					for (const [networkID, peers] of this.bootstrapStats) {
 						const counts: Record<string, number> = {};
 						for (const p of peers.values()) counts[p.status] = (counts[p.status] ?? 0) + 1;
-						const parts = Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(' ');
+						const parts = Object.entries(counts)
+							.map(([k, v]) => `${k}=${v}`)
+							.join(' ');
 						console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
 					}
 					for (const ma of this.bootstrapMultiaddrs) {

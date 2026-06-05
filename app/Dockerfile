@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# LiberShare cross-compilation build environment
+# Cross-compilation build environment
 # Runs natively on the host architecture (amd64 or arm64).
 # Can cross-compile to the other Linux arch via cross-linker + multiarch libs.
 # Can cross-compile to Windows via cargo-xwin.
