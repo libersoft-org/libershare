@@ -408,6 +408,16 @@
 			"restartHint": "Some changes will only take effect after restarting the application.",
 			"errorInvalidFormat": "Invalid backup file format"
 		},
+		"factoryReset": {
+			"title": "Factory reset",
+			"intro": "Completely wipes the application database: all LISHs, networks, the identity and user settings return to their default state.",
+			"warning": "Files of already downloaded and shared LISHs on disk are KEPT untouched. Only the application state is cleared, not your data.",
+			"reset": "Factory reset",
+			"resetting": "Resetting…",
+			"confirmTitle": "Factory reset",
+			"confirmMessage": "Completely wipe the database and restore factory settings? Files on disk are kept, but this action cannot be undone.",
+			"error": "Factory reset failed: {detail}"
+		},
 		"identity": {
 			"title": "Identity",
 			"regenerate": "Generate new",
