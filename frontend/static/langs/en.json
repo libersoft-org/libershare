@@ -410,7 +410,12 @@
 		},
 		"factoryReset": {
 			"title": "Factory reset",
-			"intro": "Completely wipes the application database: all LISHs, networks, the identity and user settings return to their default state.",
+			"intro": "Select what to wipe. The chosen categories return to their default state.",
+			"optionSettings": "Settings",
+			"optionIdentity": "Identity",
+			"optionDownloads": "Downloads & sharing (LISHs)",
+			"optionNetworks": "LISH networks",
+			"nothingSelected": "Select at least one item to wipe.",
 			"warning": "Files of already downloaded and shared LISHs on disk are KEPT untouched. Only the application state is cleared, not your data.",
 			"reset": "Factory reset",
 			"resetting": "Resetting…",

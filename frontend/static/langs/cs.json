@@ -410,7 +410,12 @@
 		},
 		"factoryReset": {
 			"title": "Tovární nastavení",
-			"intro": "Kompletně vymaže databázi aplikace: všechny LISHe, sítě, identitu a uživatelská nastavení se vrátí do výchozího stavu.",
+			"intro": "Vyberte, co chcete vymazat. Vybrané kategorie se vrátí do výchozího stavu.",
+			"optionSettings": "Nastavení",
+			"optionIdentity": "Identita",
+			"optionDownloads": "Stahování a sdílení (LISHe)",
+			"optionNetworks": "Sítě LISH",
+			"nothingSelected": "Vyberte alespoň jednu položku ke smazání.",
 			"warning": "Soubory již stažených a sdílených LISHů na disku ZŮSTANOU nedotčené. Maže se pouze stav aplikace, ne vaše data.",
 			"reset": "Obnovit tovární nastavení",
 			"resetting": "Obnovuji…",

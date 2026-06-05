@@ -9,6 +9,7 @@
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
+	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	interface Props {
 		areaID: string;
@@ -17,12 +18,23 @@
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 
+	// Each category defaults to ON so a plain confirm wipes everything.
+	let resetSettings = $state(true);
+	let resetIdentity = $state(true);
+	let resetDownloads = $state(true);
+	let resetNetworks = $state(true);
 	let busy = $state(false);
 	let errorMessage = $state('');
 	let showConfirm = $state(false);
 
+	let anySelected = $derived(resetSettings || resetIdentity || resetDownloads || resetNetworks);
+
 	function askReset(): void {
 		errorMessage = '';
+		if (!anySelected) {
+			errorMessage = $t('settings.factoryReset.nothingSelected');
+			return;
+		}
 		showConfirm = true;
 	}
 
@@ -31,13 +43,10 @@
 		busy = true;
 		errorMessage = '';
 		try {
-			await api.settings.factoryReset();
-			// Stash the already-translated confirmation so it can be shown after the
-			// reload (the page reloads to a clean slate, so a notification raised here
-			// would be discarded). Pre-translating avoids any i18n load-timing race.
+			await api.settings.factoryReset({ settings: resetSettings, identity: resetIdentity, downloads: resetDownloads, networks: resetNetworks });
+			// Stash the already-translated confirmation so it survives the reload.
 			sessionStorage.setItem('factoryResetDone', tt('settings.factoryReset.done'));
-			// Identity, networks, downloads and settings all changed — reload the UI
-			// from a clean slate rather than reconciling every store by hand.
+			// Selected state changed across many stores — reload from a clean slate.
 			window.location.reload();
 		} catch (e) {
 			errorMessage = tt('settings.factoryReset.error', { detail: translateError(e) });
@@ -61,15 +70,15 @@
 		align-items: center;
 		height: 100%;
 		padding: 2vh;
-		gap: 2vh;
+		gap: 1.5vh;
 		overflow-y: auto;
 	}
 
 	.container {
 		display: flex;
 		flex-direction: column;
-		gap: 1.5vh;
-		width: 800px;
+		gap: 1vh;
+		width: 900px;
 		max-width: 100%;
 	}
 
@@ -83,12 +92,24 @@
 <div class="factory-reset">
 	<div class="container">
 		<div class="intro">{$t('settings.factoryReset.intro')}</div>
+		<div role="group" data-mouse-activate-area={areaID}>
+			<SwitchRow label={$t('settings.factoryReset.optionSettings')} checked={resetSettings} disabled={busy} position={[0, 0]} onToggle={() => (resetSettings = !resetSettings)} />
+		</div>
+		<div role="group" data-mouse-activate-area={areaID}>
+			<SwitchRow label={$t('settings.factoryReset.optionIdentity')} checked={resetIdentity} disabled={busy} position={[0, 1]} onToggle={() => (resetIdentity = !resetIdentity)} />
+		</div>
+		<div role="group" data-mouse-activate-area={areaID}>
+			<SwitchRow label={$t('settings.factoryReset.optionDownloads')} checked={resetDownloads} disabled={busy} position={[0, 2]} onToggle={() => (resetDownloads = !resetDownloads)} />
+		</div>
+		<div role="group" data-mouse-activate-area={areaID}>
+			<SwitchRow label={$t('settings.factoryReset.optionNetworks')} checked={resetNetworks} disabled={busy} position={[0, 3]} onToggle={() => (resetNetworks = !resetNetworks)} />
+		</div>
 		<Alert type="warning" message={$t('settings.factoryReset.warning')} />
 		{#if errorMessage}
 			<Alert type="error" message={errorMessage} />
 		{/if}
 	</div>
-	<ButtonBar justify="center" basePosition={[0, 0]}>
+	<ButtonBar justify="center" basePosition={[0, 4]}>
 		<Button icon="/img/factory-reset.svg" label={busy ? $t('settings.factoryReset.resetting') : $t('settings.factoryReset.reset')} disabled={busy} onConfirm={askReset} />
 		<Button icon="/img/back.svg" label={$t('common.back')} disabled={busy} onConfirm={onBack} />
 	</ButtonBar>
