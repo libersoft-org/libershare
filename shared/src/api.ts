@@ -155,6 +155,15 @@ class SettingsAPI {
 		return this.client.call<T>('settings.reset');
 	}
 
+	/**
+	 * Complete factory reset: empties the database, wipes the libp2p datastore
+	 * (peerstore + identity) and resets settings to defaults. On-disk LISH data
+	 * files are kept. The UI should reload afterwards.
+	 */
+	factoryReset(): Promise<{ success: boolean }> {
+		return this.client.call<{ success: boolean }>('settings.factoryReset');
+	}
+
 	exportToFile(filePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<{ success: boolean; error?: string }> {
 		return this.client.call<{ success: boolean; error?: string }>('settings.exportToFile', { filePath, minifyJSON, compress, compressionAlgorithm });
 	}

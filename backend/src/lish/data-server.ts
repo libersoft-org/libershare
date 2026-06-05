@@ -1,6 +1,7 @@
 import { open } from 'fs/promises';
 import { join, resolve, sep } from 'path';
 import { type Database } from 'bun:sqlite';
+import { clearAllData } from '../db/database.ts';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder, CodedError, ErrorCodes } from '@shared';
 import { type MissingChunk, type VerificationProgress, type FileVerificationProgress, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, updateLISHDirectory as dbUpdateLISHDirectory, updateLISHFinalDirectory as dbUpdateLISHFinalDirectory, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, findChunkLocation, getVerificationProgress as dbGetVerificationProgress, getFileVerificationProgress as dbGetFileVerificationProgress, markChunkVerified as dbMarkChunkVerified, markChunkFailed as dbMarkChunkFailed, markAllFileChunksFailed as dbMarkAllFileChunksFailed, resetVerification as dbResetVerification, isVerified as dbIsVerified, getFilesForVerification as dbGetFilesForVerification, incrementUploadedBytes as dbIncrementUploadedBytes, incrementDownloadedBytes as dbIncrementDownloadedBytes, setLISHError as dbSetLISHError, clearLISHError as dbClearLISHError, resetFileChunks as dbResetFileChunks, getFileInternalID as dbGetFileInternalID } from '../db/lishs.ts';
 
@@ -42,6 +43,14 @@ export class DataServer {
 
 	delete(lishID: LISHid): boolean {
 		return dbDeleteLISH(this.db, lishID);
+	}
+
+	/**
+	 * Remove every LISH and lishnet record from the database. On-disk data files
+	 * are left untouched — this only clears DB state. Used by the factory reset.
+	 */
+	clearAll(): void {
+		clearAllData(this.db);
 	}
 
 	updateDirectory(lishID: LISHid, directory: string): boolean {

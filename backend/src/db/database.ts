@@ -19,3 +19,16 @@ export function openDatabase(dataDir: string): Database {
 export function getDatabase(): Database {
 	return db;
 }
+
+/**
+ * Remove every row from all persistent tables. `ON DELETE CASCADE` clears the
+ * lishs_* children and lishnets_peers, so deleting the two parent tables is
+ * enough. On-disk LISH data files are NOT touched — this only wipes DB records.
+ * Used by the factory reset.
+ */
+export function clearAllData(database: Database): void {
+	database.transaction(() => {
+		database.run('DELETE FROM lishs');
+		database.run('DELETE FROM lishnets');
+	})();
+}

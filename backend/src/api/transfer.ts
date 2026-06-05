@@ -2,7 +2,7 @@ import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
-import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, setUploadRecoveryHooks } from '../protocol/lish-protocol.ts';
+import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, setUploadRecoveryHooks, clearAllUploads } from '../protocol/lish-protocol.ts';
 import { join, dirname } from 'path';
 import { access, constants } from 'fs/promises';
 import { isBusy } from './busy.ts';
@@ -32,6 +32,8 @@ interface TransferHandlers {
 	unsubscribePeers: (p: { lishID: string }, client: any) => boolean;
 	debugPeers: (p: { lishID?: string }) => ReturnType<typeof getDebugSnapshot>;
 	findPeers: (p: { lishID: string }) => { success: boolean };
+	/** Tear down all in-memory transfer state (factory reset). Not a WS endpoint. */
+	clearAll: () => Promise<void>;
 }
 
 type PersistDownloadFn = (lishID: string, enabled: boolean) => void;
@@ -472,5 +474,24 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return { success: true };
 	}
 
-	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler };
+	/**
+	 * Tear down all in-memory transfer state (factory reset): destroy every active
+	 * downloader, clear the enabled-download set, wipe upload state, and stop all
+	 * pending error recovery. Does not touch the DB or on-disk files.
+	 */
+	async function clearAllTransfers(): Promise<void> {
+		for (const [, dl] of activeDownloaders) {
+			try {
+				await dl.destroy();
+			} catch {
+				// Best effort — everything is being wiped anyway.
+			}
+		}
+		activeDownloaders.clear();
+		downloadEnabledLishs.clear();
+		clearAllUploads();
+		recovery.stopAll();
+	}
+
+	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler, clearAll: clearAllTransfers };
 }

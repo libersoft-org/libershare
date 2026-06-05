@@ -17,6 +17,9 @@ import { initSystemHandlers } from './system.ts';
 import { initRelayHandlers } from './relay.ts';
 import { initSearchManager } from './search.ts';
 import { getLocalAddresses } from '../container.ts';
+import { Downloader } from '../protocol/downloader.ts';
+import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize } from '../protocol/lish-protocol.ts';
+import { setMaxDownloadPeersPerLISH } from '../protocol/peer-manager.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
 	isLocalClient: boolean;
@@ -99,6 +102,34 @@ export class APIServer {
 		_relay.startPolling();
 		const _search = initSearchManager(this.networks, this.settings, broadcastFn);
 		this._search = _search;
+
+		// Complete factory reset: empty the database in one shot (no per-row
+		// deletion), wipe the libp2p datastore (peerstore + identity key) and
+		// reset settings to defaults. On-disk LISH data files are deliberately
+		// left untouched — downloaded and seeded files survive. Connected clients
+		// are told to reload since identity, networks and all state change.
+		const factoryReset = async (): Promise<{ success: boolean }> => {
+			// 1. Stop everything that writes to the DB or holds peer connections.
+			await _lishs.stopVerifyAll();
+			await _transfer.clearAll();
+			await this.networks.stopAllNetworks();
+			// 2. Wipe persistent state. Files on disk are NOT deleted.
+			this.dataServer.clearAll();
+			await this.networks.getNetwork().clearDatastore();
+			const defaults = await this.settings.reset();
+			// 3. Re-apply runtime knobs from the restored defaults (limits are module state).
+			Downloader.setMaxDownloadSpeed(defaults.network.maxDownloadSpeed);
+			setMaxUploadSpeed(defaults.network.maxUploadSpeed);
+			setMaxDownloadPeersPerLISH(defaults.network.maxDownloadPeersPerLISH);
+			setMaxUploadPeersPerLISH(defaults.network.maxUploadPeersPerLISH);
+			setMaxMessageSize(defaults.network.maxMessageSize);
+			// 4. Restart the libp2p node — fresh identity, no lishnets.
+			await this.networks.startEnabledNetworks();
+			// 5. Tell every connected client to reload from a clean slate.
+			broadcastFn('system:factoryReset', {});
+			return { success: true };
+		};
+
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
@@ -109,6 +140,7 @@ export class APIServer {
 			'settings.list': _settings.list,
 			'settings.getDefaults': _settings.getDefaults,
 			'settings.reset': _settings.reset,
+			'settings.factoryReset': factoryReset,
 			'settings.exportToFile': _settings.exportToFile,
 			'settings.parseFromFile': _settings.parseFromFile,
 			'settings.parseFromJSON': _settings.parseFromJSON,

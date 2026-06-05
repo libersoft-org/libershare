@@ -1210,7 +1210,9 @@ export class Network {
 					for (const [networkID, peers] of this.bootstrapStats) {
 						const counts: Record<string, number> = {};
 						for (const p of peers.values()) counts[p.status] = (counts[p.status] ?? 0) + 1;
-						const parts = Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(' ');
+						const parts = Object.entries(counts)
+							.map(([k, v]) => `${k}=${v}`)
+							.join(' ');
 						console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
 					}
 					for (const ma of this.bootstrapMultiaddrs) {
@@ -1965,6 +1967,23 @@ export class Network {
 		ds.open();
 		try {
 			if (ds.has(PRIVATE_KEY_PATH as any)) ds.delete(PRIVATE_KEY_PATH as any);
+		} finally {
+			ds.close();
+		}
+	}
+
+	/**
+	 * Wipe the entire datastore — peerstore (discovered peers, addresses) and the
+	 * identity private key. The network must be stopped. Next start regenerates a
+	 * fresh identity and an empty peerstore. Used by the factory reset.
+	 */
+	async clearDatastore(): Promise<void> {
+		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing datastore');
+		const datastorePath = join(this.dataDir, 'datastore');
+		const ds = new SqliteDatastore(datastorePath);
+		ds.open();
+		try {
+			ds.clear();
 		} finally {
 			ds.close();
 		}
