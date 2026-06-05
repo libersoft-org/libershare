@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick, untrack } from 'svelte';
+	import { tick, untrack, onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
@@ -8,6 +8,13 @@
 	import { sanitizeFilename } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
 	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
+
+	/** Basename of a shared file/directory path (last segment, trailing separators stripped). */
+	function shareBaseName(path: string): string {
+		const trimmed = path.replace(/[\\/]+$/, '');
+		const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+		return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
+	}
 
 	function parseChunkSize(value: string): number | null {
 		if (!value.trim()) return null;
@@ -90,7 +97,8 @@
 	let minifyJSON = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
 	let showAdvanced = $state(false);
-	let name = $state('');
+	// Prefill the LISH name from the shared file/directory basename (if any).
+	let name = $state(untrack(() => (initialDataPath ? shareBaseName(initialDataPath) : '')));
 	// LISH file path - editable state, initialized from settings
 	let lishFile = $state($storageLISHPath);
 	let lishFileManuallyEdited = $state(false); // Track if user manually edited the path
@@ -117,6 +125,11 @@
 			else if (!compress && lishFile.endsWith('.lish.gz')) lishFile = lishFile.slice(0, -3);
 		}
 	}
+
+	// When the name was prefilled from a shared path, derive the .lish filename from it too.
+	onMount(() => {
+		if (untrack(() => initialDataPath) && name) handleNameChange(name);
+	});
 
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
