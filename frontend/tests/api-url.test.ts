@@ -13,7 +13,7 @@ function browserWindow(protocol: string, host: string, search = '') {
 
 describe('getAPIURL', () => {
 	test('uses same-origin WSS endpoint for HTTPS static frontend', () => {
-		expect(getAPIURL({ window: browserWindow('https:', '192.168.2.9:6003') })).toBe('wss://192.168.2.9:6003/ws');
+		expect(getAPIURL({ window: browserWindow('https:', '192.0.2.9:6003') })).toBe('wss://192.0.2.9:6003/ws');
 	});
 
 	test('uses same-origin WS endpoint for HTTP static frontend', () => {
