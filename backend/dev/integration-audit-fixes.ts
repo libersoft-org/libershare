@@ -1,7 +1,7 @@
 /**
  * Integration test for audit fixes via WebSocket API.
  * Requires backend running on localhost:1158.
- * Usage: bun run backend/tests/integration-audit-fixes.ts
+ * Usage: bun run backend/dev/integration-audit-fixes.ts
  */
 export {};
 
