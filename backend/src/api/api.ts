@@ -3,7 +3,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
-import { CodedError, ErrorCodes } from '@shared';
+import { CodedError, ErrorCodes, type FactoryResetResponse } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
@@ -11,12 +11,16 @@ import { initIdentityHandlers } from './identity.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
 import { initLISHsHandlers } from './lishs.ts';
-import { initTransferHandlers } from './transfer.ts';
+import { initTransferHandlers, initDownloadState, triggerEnableDownload } from './transfer.ts';
 import { initEventsHandlers } from './events.ts';
 import { initSystemHandlers } from './system.ts';
 import { initRelayHandlers } from './relay.ts';
 import { initSearchManager } from './search.ts';
+import { runFactoryReset } from './factory-reset.ts';
 import { getLocalAddresses } from '../container.ts';
+import { Downloader } from '../protocol/downloader.ts';
+import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize, initUploadState } from '../protocol/lish-protocol.ts';
+import { setMaxDownloadPeersPerLISH } from '../protocol/peer-manager.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
 	isLocalClient: boolean;
@@ -99,6 +103,62 @@ export class APIServer {
 		_relay.startPolling();
 		const _search = initSearchManager(this.networks, this.settings, broadcastFn);
 		this._search = _search;
+
+		// Factory reset with per-category selection (each defaults to ON, so a
+		// plain call wipes everything). Wipes happen at table level — never
+		// per-row. On-disk LISH data files are deliberately left untouched, so
+		// downloaded and seeded files survive. Connected clients are told to
+		// reload since identity, networks and state change.
+		const factoryReset = async (p?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean }): Promise<FactoryResetResponse> => {
+			const wipeSettings = p?.settings ?? true;
+			const wipeIdentity = p?.identity ?? true;
+			const wipeDownloads = p?.downloads ?? true;
+			const wipeNetworks = p?.networks ?? true;
+			// The libp2p node must restart when its identity is regenerated or its joined
+			// networks are removed. A node restart also tears down every live transfer.
+			const restartNode = wipeIdentity || wipeNetworks;
+			const restartNodeAndTransfers = async (): Promise<void> => {
+				await this.networks.startEnabledNetworks();
+				// Re-establish transfers that survived the wipe (e.g. downloads kept when only
+				// identity/networks were reset) — they were torn down for the node restart.
+				const enabledDownloads = this.dataServer.getDownloadEnabledLishs();
+				initDownloadState(enabledDownloads, (id, en) => this.dataServer.setDownloadEnabled(id, en));
+				initUploadState(this.dataServer.getUploadEnabledLishs(), (id, en) => this.dataServer.setUploadEnabled(id, en));
+				for (const id of enabledDownloads) triggerEnableDownload(id);
+			};
+			// Each selected category is wiped INDEPENDENTLY (a failure in one never blocks the
+			// others) and the node is always brought back up best-effort, so a partial failure
+			// can't leave networks stopped. Per-category outcomes go to the FE, which surfaces
+			// one notification per category. See runFactoryReset.
+			const response = await runFactoryReset({
+				prepare: async () => {
+					if (wipeDownloads || restartNode) {
+						await _lishs.stopVerifyAll();
+						await _transfer.clearAll();
+					}
+					if (restartNode) await this.networks.stopAllNetworks();
+				},
+				// Table-level wipes (cascade clears children).
+				downloads: wipeDownloads ? () => this.dataServer.clearLishs() : undefined,
+				networks: wipeNetworks ? () => this.dataServer.clearLishnets() : undefined,
+				identity: wipeIdentity ? () => this.networks.getNetwork().clearDatastore() : undefined,
+				settings: wipeSettings
+					? async () => {
+							const defaults = await this.settings.reset();
+							// Re-apply runtime knobs from the restored defaults (limits are module state).
+							Downloader.setMaxDownloadSpeed(defaults.network.maxDownloadSpeed);
+							setMaxUploadSpeed(defaults.network.maxUploadSpeed);
+							setMaxDownloadPeersPerLISH(defaults.network.maxDownloadPeersPerLISH);
+							setMaxUploadPeersPerLISH(defaults.network.maxUploadPeersPerLISH);
+							setMaxMessageSize(defaults.network.maxMessageSize);
+						}
+					: undefined,
+				restart: restartNode ? restartNodeAndTransfers : undefined,
+			});
+			broadcastFn('system:factoryReset', {});
+			return response;
+		};
+
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
@@ -109,6 +169,7 @@ export class APIServer {
 			'settings.list': _settings.list,
 			'settings.getDefaults': _settings.getDefaults,
 			'settings.reset': _settings.reset,
+			'settings.factoryReset': factoryReset,
 			'settings.exportToFile': _settings.exportToFile,
 			'settings.parseFromFile': _settings.parseFromFile,
 			'settings.parseFromJSON': _settings.parseFromJSON,

@@ -408,6 +408,24 @@
 			"restartHint": "Některé změny se projeví až po restartu aplikace.",
 			"errorInvalidFormat": "Neplatný formát záložního souboru"
 		},
+		"factoryReset": {
+			"title": "Tovární nastavení",
+			"intro": "Vyberte, co chcete vymazat. Vybrané kategorie se vrátí do výchozího stavu.",
+			"optionSettings": "Nastavení",
+			"optionIdentity": "Identita",
+			"optionDownloads": "Stahování a sdílení (LISHe)",
+			"optionNetworks": "Sítě LISH",
+			"nothingSelected": "Vyberte alespoň jednu položku ke smazání.",
+			"warning": "Soubory již stažených a sdílených LISHů na disku ZŮSTANOU nedotčené. Maže se pouze stav aplikace, ne vaše data.",
+			"reset": "Obnovit tovární nastavení",
+			"resetting": "Obnovuji…",
+			"reloadApp": "Obnovit aplikaci",
+			"confirmTitle": "Obnovit tovární nastavení",
+			"confirmMessage": "Opravdu vymazat vybrané kategorie? Soubory na disku zůstanou, ale tuto akci nelze vrátit zpět.",
+			"error": "Obnova továrního nastavení selhala: {detail}",
+			"categoryDone": "{category} – vyresetováno",
+			"categoryFailed": "{category} – selhalo: {detail}"
+		},
 		"identity": {
 			"title": "Identita",
 			"regenerate": "Vygenerovat novou",

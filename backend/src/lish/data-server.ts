@@ -1,6 +1,8 @@
 import { open } from 'fs/promises';
 import { join, resolve, sep } from 'path';
 import { type Database } from 'bun:sqlite';
+import { clearLishData, clearLishnetData } from '../db/database.ts';
+import { getDownloadEnabledLishs as dbGetDownloadEnabledLishs, getUploadEnabledLishs as dbGetUploadEnabledLishs, setDownloadEnabled as dbSetDownloadEnabled, setUploadEnabled as dbSetUploadEnabled } from '../db/lishs.ts';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder, CodedError, ErrorCodes } from '@shared';
 import { type MissingChunk, type VerificationProgress, type FileVerificationProgress, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, updateLISHDirectory as dbUpdateLISHDirectory, updateLISHFinalDirectory as dbUpdateLISHFinalDirectory, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, findChunkLocation, getVerificationProgress as dbGetVerificationProgress, getFileVerificationProgress as dbGetFileVerificationProgress, markChunkVerified as dbMarkChunkVerified, markChunkFailed as dbMarkChunkFailed, markAllFileChunksFailed as dbMarkAllFileChunksFailed, resetVerification as dbResetVerification, isVerified as dbIsVerified, getFilesForVerification as dbGetFilesForVerification, incrementUploadedBytes as dbIncrementUploadedBytes, incrementDownloadedBytes as dbIncrementDownloadedBytes, setLISHError as dbSetLISHError, clearLISHError as dbClearLISHError, resetFileChunks as dbResetFileChunks, getFileInternalID as dbGetFileInternalID } from '../db/lishs.ts';
 
@@ -42,6 +44,37 @@ export class DataServer {
 
 	delete(lishID: LISHid): boolean {
 		return dbDeleteLISH(this.db, lishID);
+	}
+
+	/**
+	 * Remove every LISH record from the database (downloads category of the
+	 * factory reset). On-disk data files are left untouched.
+	 */
+	clearLishs(): void {
+		clearLishData(this.db);
+	}
+
+	/** Remove every lishnet record (networks category of the factory reset). */
+	clearLishnets(): void {
+		clearLishnetData(this.db);
+	}
+
+	/** LISHs with downloading enabled in the DB (used to resume after a reset). */
+	getDownloadEnabledLishs(): Set<string> {
+		return dbGetDownloadEnabledLishs(this.db);
+	}
+
+	/** LISHs with sharing enabled in the DB (used to resume after a reset). */
+	getUploadEnabledLishs(): Set<string> {
+		return dbGetUploadEnabledLishs(this.db);
+	}
+
+	setDownloadEnabled(lishID: LISHid, enabled: boolean): void {
+		dbSetDownloadEnabled(this.db, lishID, enabled);
+	}
+
+	setUploadEnabled(lishID: LISHid, enabled: boolean): void {
+		dbSetUploadEnabled(this.db, lishID, enabled);
 	}
 
 	updateDirectory(lishID: LISHid, directory: string): boolean {

@@ -1973,6 +1973,23 @@ export class Network {
 	}
 
 	/**
+	 * Wipe the entire datastore — peerstore (discovered peers, addresses) and the
+	 * identity private key. The network must be stopped. Next start regenerates a
+	 * fresh identity and an empty peerstore. Used by the factory reset.
+	 */
+	async clearDatastore(): Promise<void> {
+		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing datastore');
+		const datastorePath = join(this.dataDir, 'datastore');
+		const ds = new SqliteDatastore(datastorePath);
+		ds.open();
+		try {
+			ds.clear();
+		} finally {
+			ds.close();
+		}
+	}
+
+	/**
 	 * Get all connected peers (global).
 	 */
 	getPeers(): string[] {

@@ -331,6 +331,16 @@ export function removeUploadState(lishID: string): void {
 	broadcastFn?.('transfer.upload:disabled', { lishID });
 }
 
+/**
+ * Clear all in-memory upload state (factory reset). Keeps the broadcast and
+ * limiter wiring intact so the module stays usable after the reset.
+ */
+export function clearAllUploads(): void {
+	uploadEnabled.clear();
+	activeUploads.clear();
+	activeStreamCount.clear();
+}
+
 const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload
 
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType): Promise<void> {

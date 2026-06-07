@@ -30,6 +30,7 @@ import SettingsBackupExport from '../pages/Settings/SettingsBackupExport.svelte'
 import SettingsBackupImportFile from '../pages/Settings/SettingsBackupImportFile.svelte';
 import SettingsBackupImportWeb from '../pages/Settings/SettingsBackupImportWeb.svelte';
 import SettingsBackupImportJSON from '../pages/Settings/SettingsBackupImportJSON.svelte';
+import SettingsFactoryReset from '../pages/Settings/SettingsFactoryReset.svelte';
 import Network from '../pages/Network/Network.svelte';
 import Help from '../pages/Help/Help.svelte';
 import About from '../pages/About/About.svelte';
@@ -541,6 +542,12 @@ export const menuStructure = derived(
 								action: 'back' as const,
 							},
 						],
+					},
+					{
+						id: 'factory-reset',
+						label: tt('settings.factoryReset.title'),
+						icon: '/img/factory-reset.svg',
+						component: SettingsFactoryReset,
 					},
 					{
 						id: 'back',

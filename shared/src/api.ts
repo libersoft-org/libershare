@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -153,6 +153,16 @@ class SettingsAPI {
 
 	reset<T = any>(): Promise<T> {
 		return this.client.call<T>('settings.reset');
+	}
+
+	/**
+	 * Factory reset with per-category selection (each defaults to ON). Wipes the
+	 * selected categories: settings → defaults, identity → new peer ID + cleared
+	 * peerstore, downloads → all LISH records (on-disk files kept), networks → all
+	 * lishnets. The UI should reload afterwards.
+	 */
+	factoryReset(options?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean }): Promise<FactoryResetResponse> {
+		return this.client.call<FactoryResetResponse>('settings.factoryReset', options ?? {});
 	}
 
 	exportToFile(filePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<{ success: boolean; error?: string }> {

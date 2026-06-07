@@ -65,6 +65,12 @@ export class SqliteDatastore extends _BaseDatastore {
 		this.db.close();
 	}
 
+	/** Remove every entry (peerstore records + identity key). Used by factory reset. */
+	clear(): void {
+		this.ensureOpen();
+		this.db.run('DELETE FROM datastore');
+	}
+
 	put(key: Key, val: Uint8Array): Key {
 		this.ensureOpen();
 		this.stmtPut.run(key.toString(), Buffer.from(val));
