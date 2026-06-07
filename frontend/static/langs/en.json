@@ -422,6 +422,7 @@
 			"confirmTitle": "Factory reset",
 			"confirmMessage": "Wipe the selected categories? Files on disk are kept, but this action cannot be undone.",
 			"error": "Factory reset failed: {detail}",
+			"failed": "{detail}",
 			"done": "Factory reset completed."
 		},
 		"identity": {

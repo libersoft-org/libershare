@@ -117,36 +117,56 @@ export class APIServer {
 			// joined networks are removed. A node restart also tears down every live
 			// transfer, so transfers are cleared whenever the node restarts.
 			const restartNode = wipeIdentity || wipeNetworks;
-			if (wipeDownloads || restartNode) {
-				await _lishs.stopVerifyAll();
-				await _transfer.clearAll();
-			}
-			if (restartNode) await this.networks.stopAllNetworks();
-			// Table-level wipes of the selected categories (cascade clears children).
-			if (wipeDownloads) this.dataServer.clearLishs();
-			if (wipeNetworks) this.dataServer.clearLishnets();
-			if (wipeIdentity) await this.networks.getNetwork().clearDatastore();
-			if (wipeSettings) {
-				const defaults = await this.settings.reset();
-				// Re-apply runtime knobs from the restored defaults (limits are module state).
-				Downloader.setMaxDownloadSpeed(defaults.network.maxDownloadSpeed);
-				setMaxUploadSpeed(defaults.network.maxUploadSpeed);
-				setMaxDownloadPeersPerLISH(defaults.network.maxDownloadPeersPerLISH);
-				setMaxUploadPeersPerLISH(defaults.network.maxUploadPeersPerLISH);
-				setMaxMessageSize(defaults.network.maxMessageSize);
-			}
-			if (restartNode) {
+			// Bring the node + its surviving transfers back after a restart. Defined once so the
+			// happy path and the failure-recovery path use identical logic.
+			const restartNodeAndTransfers = async (): Promise<void> => {
 				await this.networks.startEnabledNetworks();
-				// Re-establish transfers that survived the wipe (e.g. downloads kept
-				// when only identity/networks were reset) — they were torn down for
-				// the node restart, so rebuild their enabled-state from the DB.
+				// Re-establish transfers that survived the wipe (e.g. downloads kept when only
+				// identity/networks were reset) — they were torn down for the node restart.
 				const enabledDownloads = this.dataServer.getDownloadEnabledLishs();
 				initDownloadState(enabledDownloads, (id, en) => this.dataServer.setDownloadEnabled(id, en));
 				initUploadState(this.dataServer.getUploadEnabledLishs(), (id, en) => this.dataServer.setUploadEnabled(id, en));
 				for (const id of enabledDownloads) triggerEnableDownload(id);
+			};
+			// A factory reset spans four independent stores (SQLite DB, libp2p datastore,
+			// settings.json, the live node) so it cannot be one atomic transaction. On failure we
+			// (a) bring the node back up so a mid-wipe error never leaves networks stopped, and
+			// (b) surface a CodedError through the normal error channel — the FE shows it as an
+			// alert via the standard handler. The request never crashes the backend.
+			try {
+				if (wipeDownloads || restartNode) {
+					await _lishs.stopVerifyAll();
+					await _transfer.clearAll();
+				}
+				if (restartNode) await this.networks.stopAllNetworks();
+				// Table-level wipes of the selected categories (cascade clears children).
+				if (wipeDownloads) this.dataServer.clearLishs();
+				if (wipeNetworks) this.dataServer.clearLishnets();
+				if (wipeIdentity) await this.networks.getNetwork().clearDatastore();
+				if (wipeSettings) {
+					const defaults = await this.settings.reset();
+					// Re-apply runtime knobs from the restored defaults (limits are module state).
+					Downloader.setMaxDownloadSpeed(defaults.network.maxDownloadSpeed);
+					setMaxUploadSpeed(defaults.network.maxUploadSpeed);
+					setMaxDownloadPeersPerLISH(defaults.network.maxDownloadPeersPerLISH);
+					setMaxUploadPeersPerLISH(defaults.network.maxUploadPeersPerLISH);
+					setMaxMessageSize(defaults.network.maxMessageSize);
+				}
+				if (restartNode) await restartNodeAndTransfers();
+				broadcastFn('system:factoryReset', {});
+				return { success: true };
+			} catch (err: any) {
+				console.error(`[API] factoryReset failed: ${err?.message ?? err}`);
+				// Never leave the node stopped after a partial failure — best-effort bring it back.
+				if (restartNode) {
+					try {
+						await restartNodeAndTransfers();
+					} catch (recoveryErr: any) {
+						console.error(`[API] factoryReset recovery restart failed: ${recoveryErr?.message ?? recoveryErr}`);
+					}
+				}
+				throw err instanceof CodedError ? err : new CodedError(ErrorCodes.FACTORY_RESET_FAILED, err?.message ?? String(err));
 			}
-			broadcastFn('system:factoryReset', {});
-			return { success: true };
 		};
 
 		this.handlers = {
