@@ -419,7 +419,7 @@
 			"warning": "Soubory již stažených a sdílených LISHů na disku ZŮSTANOU nedotčené. Maže se pouze stav aplikace, ne vaše data.",
 			"reset": "Obnovit tovární nastavení",
 			"resetting": "Obnovuji…",
-			"reloadPage": "Obnovit stránku",
+			"reloadApp": "Obnovit aplikaci",
 			"confirmTitle": "Obnovit tovární nastavení",
 			"confirmMessage": "Opravdu vymazat vybrané kategorie? Soubory na disku zůstanou, ale tuto akci nelze vrátit zpět.",
 			"error": "Obnova továrního nastavení selhala: {detail}",

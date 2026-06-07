@@ -134,7 +134,7 @@
 			{/each}
 		</div>
 		<ButtonBar justify="center" basePosition={[0, 0]}>
-			<Button icon="/img/restart.svg" label={$t('settings.factoryReset.reloadPage')} onConfirm={reloadApp} />
+			<Button icon="/img/restart.svg" label={$t('settings.factoryReset.reloadApp')} onConfirm={reloadApp} />
 		</ButtonBar>
 	</div>
 {:else}

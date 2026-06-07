@@ -419,7 +419,7 @@
 			"warning": "Files of already downloaded and shared LISHs on disk are KEPT untouched. Only the application state is cleared, not your data.",
 			"reset": "Factory reset",
 			"resetting": "Resetting…",
-			"reloadPage": "Reload page",
+			"reloadApp": "Reload application",
 			"confirmTitle": "Factory reset",
 			"confirmMessage": "Wipe the selected categories? Files on disk are kept, but this action cannot be undone.",
 			"error": "Factory reset failed: {detail}",
