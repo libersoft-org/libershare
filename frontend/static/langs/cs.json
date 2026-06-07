@@ -485,6 +485,8 @@
 		"renameDirectory": "Přejmenovat adresář",
 		"createFile": "Vytvořit soubor",
 		"deleteFile": "Smazat soubor",
+		"shareFile": "Sdílet soubor",
+		"shareDirectory": "Sdílet adresář",
 		"directoryName": "Název adresáře",
 		"enterDirectoryName": "Zadejte název adresáře",
 		"directoryNameRequired": "Název adresáře musí být vyplněn",

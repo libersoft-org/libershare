@@ -485,6 +485,8 @@
 		"renameDirectory": "Rename directory",
 		"createFile": "Create file",
 		"deleteFile": "Delete file",
+		"shareFile": "Share file",
+		"shareDirectory": "Share directory",
 		"directoryName": "Directory name",
 		"enterDirectoryName": "Enter directory name",
 		"directoryNameRequired": "Directory name is required",

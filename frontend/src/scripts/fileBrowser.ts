@@ -200,10 +200,11 @@ export interface FileBrowserAction {
 /**
  * Get file actions for action panel
  */
-export function getFileActions(t: (key: string) => string, selectFileButton?: boolean): FileBrowserAction[] {
+export function getFileActions(t: (key: string) => string, selectFileButton?: boolean, canShare?: boolean): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	if (selectFileButton) actions.push({ id: 'select', label: t('fileBrowser.selectFile'), icon: '/img/check.svg' });
 	actions.push({ id: 'open', label: t('fileBrowser.openFile'), icon: '/img/directory.svg' });
+	if (canShare) actions.push({ id: 'share', label: t('fileBrowser.shareFile'), icon: '/img/share.svg' });
 	actions.push({ id: 'edit', label: t('fileBrowser.editFile'), icon: '/img/edit.svg' });
 	actions.push({ id: 'rename', label: t('fileBrowser.renameFile'), icon: '/img/edit.svg' });
 	actions.push({ id: 'delete', label: t('fileBrowser.deleteFile'), icon: '/img/del.svg' });
@@ -214,11 +215,12 @@ export function getFileActions(t: (key: string) => string, selectFileButton?: bo
 /**
  * Build directory toolbar actions based on mode
  */
-export function buildDirectoryActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], fileFilterName?: string, selectDirectoryButton?: boolean, customFilter?: string, currentPath?: string, showNameFilter?: boolean): FileBrowserAction[] {
+export function buildDirectoryActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], fileFilterName?: string, selectDirectoryButton?: boolean, customFilter?: string, currentPath?: string, showNameFilter?: boolean, canShare?: boolean): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	const isDriveList = currentPath === '' || currentPath === undefined;
 	if (!filesOnly && !isDriveList) {
 		if (selectDirectoryButton) actions.push({ id: 'select', label: t('fileBrowser.selectDirectory'), icon: '/img/check.svg' });
+		if (canShare) actions.push({ id: 'share', label: t('fileBrowser.shareDirectory'), icon: '/img/share.svg' });
 		actions.push({ id: 'new', label: t('common.newDirectory'), icon: '/img/plus.svg' });
 		actions.push({ id: 'rename', label: t('fileBrowser.renameDirectory'), icon: '/img/edit.svg' });
 		actions.push({ id: 'delete', label: t('fileBrowser.deleteDirectory'), icon: '/img/del.svg' });
