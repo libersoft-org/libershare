@@ -26,6 +26,8 @@
 	let busy = $state(false);
 	let errorMessage = $state('');
 	let showConfirm = $state(false);
+	// Per-category outcomes shown in place after a reset (one alert each) — no page reload.
+	let resultAlerts = $state<Array<{ type: 'info' | 'error'; message: string }>>([]);
 
 	let anySelected = $derived(resetSettings || resetIdentity || resetDownloads || resetNetworks);
 
@@ -42,18 +44,16 @@
 		showConfirm = false;
 		busy = true;
 		errorMessage = '';
+		resultAlerts = [];
 		try {
 			const res = await api.settings.factoryReset({ settings: resetSettings, identity: resetIdentity, downloads: resetDownloads, networks: resetNetworks });
-			// Each category is wiped independently — build one notification per category and
-			// stash the already-translated strings so they survive the reload below.
+			// Each category is wiped independently — show one alert per category in place (no reload).
 			const labelKey: Record<string, string> = { settings: 'optionSettings', identity: 'optionIdentity', downloads: 'optionDownloads', networks: 'optionNetworks' };
-			const notifications = res.results.map(r => {
+			resultAlerts = res.results.map(r => {
 				const category = tt('settings.factoryReset.' + labelKey[r.category]);
-				return r.ok ? { text: tt('settings.factoryReset.categoryDone', { category }), type: 'success' } : { text: tt('settings.factoryReset.categoryFailed', { category, detail: r.detail ?? '' }), type: 'error' };
+				return r.ok ? { type: 'info' as const, message: tt('settings.factoryReset.categoryDone', { category }) } : { type: 'error' as const, message: tt('settings.factoryReset.categoryFailed', { category, detail: r.detail ?? '' }) };
 			});
-			sessionStorage.setItem('factoryResetNotifications', JSON.stringify(notifications));
-			// Selected state changed across many stores — reload from a clean slate.
-			window.location.reload();
+			busy = false;
 		} catch (e) {
 			errorMessage = tt('settings.factoryReset.error', { detail: translateError(e) });
 			busy = false;
@@ -114,6 +114,9 @@
 		{#if errorMessage}
 			<Alert type="error" message={errorMessage} />
 		{/if}
+		{#each resultAlerts as a (a.message)}
+			<Alert type={a.type} message={a.message} />
+		{/each}
 	</div>
 	<ButtonBar justify="center" basePosition={[0, 4]}>
 		<Button icon="/img/factory-reset.svg" label={busy ? $t('settings.factoryReset.resetting') : $t('settings.factoryReset.reset')} disabled={busy} onConfirm={askReset} />
