@@ -153,7 +153,6 @@ const errorCodeKeys: Record<string, string> = {
 	INVALID_JSON: 'common.errorInvalidJSON',
 	INVALID_SETTINGS_BACKUP: 'settings.backup.errorInvalidFormat',
 	INVALID_IDENTITY_BACKUP: 'settings.identity.errorInvalidFormat',
-	FACTORY_RESET_FAILED: 'settings.factoryReset.failed',
 	MISSING_PARAMETER: 'common.errorMissingParameter',
 	UNSUPPORTED_COMPRESSION: 'common.errorUnsupportedCompression',
 	UNSUPPORTED_DECOMPRESSION: 'common.errorUnsupportedDecompression',

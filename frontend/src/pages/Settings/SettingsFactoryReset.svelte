@@ -43,9 +43,15 @@
 		busy = true;
 		errorMessage = '';
 		try {
-			await api.settings.factoryReset({ settings: resetSettings, identity: resetIdentity, downloads: resetDownloads, networks: resetNetworks });
-			// Stash the already-translated confirmation so it survives the reload.
-			sessionStorage.setItem('factoryResetDone', tt('settings.factoryReset.done'));
+			const res = await api.settings.factoryReset({ settings: resetSettings, identity: resetIdentity, downloads: resetDownloads, networks: resetNetworks });
+			// Each category is wiped independently — build one notification per category and
+			// stash the already-translated strings so they survive the reload below.
+			const labelKey: Record<string, string> = { settings: 'optionSettings', identity: 'optionIdentity', downloads: 'optionDownloads', networks: 'optionNetworks' };
+			const notifications = res.results.map(r => {
+				const category = tt('settings.factoryReset.' + labelKey[r.category]);
+				return r.ok ? { text: tt('settings.factoryReset.categoryDone', { category }), type: 'success' } : { text: tt('settings.factoryReset.categoryFailed', { category, detail: r.detail ?? '' }), type: 'error' };
+			});
+			sessionStorage.setItem('factoryResetNotifications', JSON.stringify(notifications));
 			// Selected state changed across many stores — reload from a clean slate.
 			window.location.reload();
 		} catch (e) {

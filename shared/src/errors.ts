@@ -85,9 +85,6 @@ const errorCodes = [
 	// Download events
 	'DOWNLOAD_ERROR',
 
-	// Settings / System
-	'FACTORY_RESET_FAILED',
-
 	// Internal (catch-all for uncoded errors)
 	'INTERNAL_ERROR',
 ] as const;

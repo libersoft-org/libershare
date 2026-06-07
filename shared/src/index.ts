@@ -177,6 +177,26 @@ export interface BootstrapStatus {
 	peers: BootstrapPeerStatus[];
 }
 
+/** The independently-wipeable categories of a factory reset. */
+export type FactoryResetCategory = 'settings' | 'identity' | 'downloads' | 'networks';
+
+/** Outcome of one factory-reset category. Each category runs independently — a
+ * failure in one never prevents the others, so the FE can report one notification
+ * per category. */
+export interface FactoryResetResult {
+	category: FactoryResetCategory;
+	ok: boolean;
+	/** Failure reason (error message) when `ok` is false. */
+	detail?: string;
+}
+
+/** Aggregate factory-reset response: `success` is true only when every selected
+ * category succeeded; `results` carries the per-category outcome. */
+export interface FactoryResetResponse {
+	success: boolean;
+	results: FactoryResetResult[];
+}
+
 // Dataset types (derived from ILISH entries that have a directory)
 export interface Dataset {
 	id: string;

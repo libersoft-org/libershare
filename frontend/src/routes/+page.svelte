@@ -94,11 +94,15 @@
 	}
 
 	onMount(() => {
-		// Surface the factory-reset confirmation that survived the page reload.
-		const factoryResetMsg = sessionStorage.getItem('factoryResetDone');
-		if (factoryResetMsg) {
-			sessionStorage.removeItem('factoryResetDone');
-			addNotification(factoryResetMsg, 'success');
+		// Replay the per-category factory-reset notifications that survived the page reload.
+		const factoryResetNotifications = sessionStorage.getItem('factoryResetNotifications');
+		if (factoryResetNotifications) {
+			sessionStorage.removeItem('factoryResetNotifications');
+			try {
+				for (const n of JSON.parse(factoryResetNotifications) as Array<{ text: string; type: 'success' | 'error' }>) addNotification(n.text, n.type);
+			} catch {
+				/* ignore malformed payload */
+			}
 		}
 		// Initialize local systems (don't need backend)
 		setContentElement(contentElement);

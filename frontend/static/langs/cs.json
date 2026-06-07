@@ -422,8 +422,8 @@
 			"confirmTitle": "Obnovit tovární nastavení",
 			"confirmMessage": "Opravdu vymazat vybrané kategorie? Soubory na disku zůstanou, ale tuto akci nelze vrátit zpět.",
 			"error": "Obnova továrního nastavení selhala: {detail}",
-			"failed": "{detail}",
-			"done": "Tovární nastavení bylo obnoveno."
+			"categoryDone": "{category} – vyresetováno",
+			"categoryFailed": "{category} – selhalo: {detail}"
 		},
 		"identity": {
 			"title": "Identita",
