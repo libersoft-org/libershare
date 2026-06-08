@@ -199,7 +199,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		connectionGater: {
 			denyDialMultiaddr: async (ma: any): Promise<boolean> => {
 				// Bypass gater for trusted peers (bootstrap set ∪ configured trustedPeerIds).
-				// Multi-subnet fleets (e.g. 192.168.2.x + 192.168.3.x) would otherwise have
+				// Multi-subnet fleets (e.g. 192.168.10.x + 192.168.20.x) would otherwise have
 				// trusted peers blocked when their advertised addr lives on a LAN segment
 				// different from our own. Trusted peers are by policy known-good
 				// destinations, so dial them regardless of CIDR match.

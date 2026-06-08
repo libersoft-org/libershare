@@ -5,12 +5,12 @@
  * 2. transfer.download:retrying / resumed events
  * 3. Settings autoErrorRecovery
  *
- * Run: bun run backend/tests/ws-recovery-test.ts [ws-url]
- * Default URL: ws://<redacted-lan-ip>:1158
+ * Run: bun run backend/dev/ws-recovery-test.ts [ws-url]
+ * Default URL: ws://localhost:1158
  */
 export {};
 
-const WS_URL = process.argv[2] || 'ws://<redacted-lan-ip>:1158';
+const WS_URL = process.argv[2] || 'ws://localhost:1158';
 
 interface WSMessage {
 	id?: number;
