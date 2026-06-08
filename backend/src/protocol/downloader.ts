@@ -139,6 +139,11 @@ export class Downloader {
 		return this.lastServingPeerCount;
 	}
 
+	/** True while the downloader is creating the directory layout and zero-filling files (pre-download). */
+	isAllocating(): boolean {
+		return this.state === 'preparing';
+	}
+
 	setProgressCallback(cb: ProgressCallback): void {
 		this.progressReporter.setCallback(cb);
 	}
