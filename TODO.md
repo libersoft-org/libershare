@@ -1,7 +1,0 @@
-- Main menu (even after game ended)
-- Sell building
-- Building and unit repair
-- Roadkill infantry units by heavy units
-- Map editor (no more autogeneration)
-- Single Player - Campaign + Load level
-- Multiplayer
