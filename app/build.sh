@@ -1083,6 +1083,17 @@ build_docker_image() {
 HOST_OS=$(detect_host_os)
 HOST_ARCH=$(detect_host_arch)
 
+# The build touches root-owned paths (Docker daemon socket, build/ and icons/
+# directories that may have been created by a previous sudo run, etc.), so on
+# Linux it must run as root. Fail early with a clear hint instead of letting
+# individual commands die with "permission denied" partway through.
+if [ "$HOST_OS" = "linux" ] && [ "$(id -u)" != "0" ]; then
+	echo "Error: This script must be run as root on Linux."
+	echo "Re-run it with sudo:"
+	echo "    sudo ./build.sh $*"
+	exit 1
+fi
+
 [ -z "$OS_LIST" ] && OS_LIST="all"
 [ -z "$TARGET_LIST" ] && TARGET_LIST="all"
 [ -z "$FORMAT_LIST" ] && FORMAT_LIST="all"
@@ -1112,21 +1123,6 @@ if [ "$NEEDS_DOCKER" = "1" ]; then
 	fi
 	[ "$HOST_OS" = "macos" ] && ensure_colima
 	[ "$(uname)" = "Darwin" ] && ensure_docker_buildx
-	# On Linux, accessing the Docker daemon requires root or membership in the
-	# 'docker' group. Detect the permission error early and print a clear hint
-	# instead of a raw "permission denied" further down.
-	if [ "$HOST_OS" = "linux" ] && ! docker info >/dev/null 2>&1; then
-		echo "Error: Cannot access the Docker daemon (permission denied)."
-		if [ "$(id -u)" != "0" ]; then
-			echo "Re-run this script with sudo:"
-			echo "    sudo ./build.sh $*"
-			echo "Or add your user to the 'docker' group (then log out and back in):"
-			echo "    sudo usermod -aG docker $(id -un)"
-		else
-			echo "Is the Docker daemon running? Try: systemctl enable --now docker"
-		fi
-		exit 1
-	fi
 	build_docker_image
 fi
 
