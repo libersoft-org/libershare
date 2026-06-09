@@ -1112,6 +1112,21 @@ if [ "$NEEDS_DOCKER" = "1" ]; then
 	fi
 	[ "$HOST_OS" = "macos" ] && ensure_colima
 	[ "$(uname)" = "Darwin" ] && ensure_docker_buildx
+	# On Linux, accessing the Docker daemon requires root or membership in the
+	# 'docker' group. Detect the permission error early and print a clear hint
+	# instead of a raw "permission denied" further down.
+	if [ "$HOST_OS" = "linux" ] && ! docker info >/dev/null 2>&1; then
+		echo "Error: Cannot access the Docker daemon (permission denied)."
+		if [ "$(id -u)" != "0" ]; then
+			echo "Re-run this script with sudo:"
+			echo "    sudo ./build.sh $*"
+			echo "Or add your user to the 'docker' group (then log out and back in):"
+			echo "    sudo usermod -aG docker $(id -un)"
+		else
+			echo "Is the Docker daemon running? Try: systemctl enable --now docker"
+		fi
+		exit 1
+	fi
 	build_docker_image
 fi
 
