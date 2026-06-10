@@ -1,4 +1,5 @@
 import { join } from 'path';
+import { CodedError, ErrorCodes } from '@shared';
 
 /**
  * Filesystem error codes that signal the data directory cannot be written —
@@ -122,6 +123,12 @@ export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 
 	async set(path: string, value: any): Promise<void> {
 		const keys = path.split('.');
+		// Reject prototype-polluting keys at every depth. Without this, a path like
+		// "__proto__.polluted" or "constructor.prototype.polluted" would walk into
+		// Object.prototype and assign to it, affecting every object in the process.
+		for (const key of keys) {
+			if (key === '__proto__' || key === 'prototype' || key === 'constructor') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `Illegal settings key: ${key}`);
+		}
 		let obj: any = this.data;
 		for (let i = 0; i < keys.length - 1; i++) {
 			const key = keys[i]!;

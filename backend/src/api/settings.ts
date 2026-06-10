@@ -69,6 +69,11 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 
 	async function set(p: { path: string; value: any }): Promise<boolean> {
 		assert(p, ['path', 'value']);
+		// Confine writes to known top-level settings groups. This rejects unknown
+		// roots and — together with the key guard in JSONStorage.set — blocks
+		// prototype-pollution paths such as "__proto__.x" or "constructor.x".
+		const rootKey = p.path.split('.')[0];
+		if (!rootKey || !ALLOWED_ROOT_KEYS.has(rootKey)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `Unknown settings key: ${p.path}`);
 		await settings.set(p.path, p.value);
 		if (p.path.startsWith('network.maxDownloadSpeed') || p.path.startsWith('network.maxUploadSpeed')) applySpeedLimits();
 		if (p.path.startsWith('network.maxDownloadPeersPerLISH') || p.path.startsWith('network.maxUploadPeersPerLISH')) applyPeerLimits();
