@@ -443,6 +443,25 @@ export function getMissingChunks(db: Database, lishID: LISHid): MissingChunk[] {
 }
 
 /**
+ * Every chunk slot (fileIndex, chunkIndex, checksum) for a LISH, in manifest order.
+ * Mirrors getMissingChunks ordering so the indexes line up with DataServer.writeChunk.
+ * Used so a downloaded chunk can be written to EVERY offset that shares its checksum —
+ * markChunkDownloaded flips `have` for all matching slots, so any slot not also written
+ * would be left zero-filled from allocation (silent corruption).
+ */
+export function getAllChunkSlots(db: Database, lishID: LISHid): Array<{ fileIndex: number; chunkIndex: number; checksum: ChunkID }> {
+	const internalID = getInternalID(db, lishID);
+	if (internalID === null) return [];
+	const files = db.query<{ id: number }, [number]>('SELECT id FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
+	const slots: Array<{ fileIndex: number; chunkIndex: number; checksum: ChunkID }> = [];
+	for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+		const chunks = db.query<{ checksum: string }, [number]>('SELECT checksum FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(files[fileIndex]!.id);
+		for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) slots.push({ fileIndex, chunkIndex, checksum: chunks[chunkIndex]!.checksum as ChunkID });
+	}
+	return slots;
+}
+
+/**
  * Find which file a chunk belongs to and return its index info.
  * Used for reading/writing chunk data from/to disk.
  */

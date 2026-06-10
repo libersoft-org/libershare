@@ -110,6 +110,31 @@ export class ChunkDownloader {
 		progressReporter.resetSession();
 		progressReporter.loadFileProgress(this.buildFileProgressEntries());
 
+		// Duplicate-checksum slot map. A chunk's content can legitimately appear at multiple
+		// (fileIndex, chunkIndex) offsets (shared content across files, or repeated blocks within one).
+		// markChunkDownloaded flips `have` for ALL slots sharing a checksum, but writeChunk writes only
+		// the requested offset — so a downloaded chunk MUST be written to every shared offset, otherwise
+		// the others stay zero-filled from allocation while reported complete (silent corruption).
+		// Build checksum → all-slots once; keep only checksums that occur in more than one slot.
+		const dupTargets = new Map<string, Array<{ fileIndex: number; chunkIndex: number }>>();
+		for (const slot of dataServer.getAllChunkSlots(lishID)) {
+			const arr = dupTargets.get(slot.checksum);
+			if (arr) arr.push({ fileIndex: slot.fileIndex, chunkIndex: slot.chunkIndex });
+			else dupTargets.set(slot.checksum, [{ fileIndex: slot.fileIndex, chunkIndex: slot.chunkIndex }]);
+		}
+		for (const [cs, arr] of dupTargets) if (arr.length < 2) dupTargets.delete(cs);
+		if (dupTargets.size > 0) console.log(`[DL] ${lishID.slice(0, 8)}: ${dupTargets.size} duplicate-checksum group(s); chunks written to all shared offsets`);
+
+		// Write a verified chunk to its own offset, plus every other offset sharing its checksum.
+		const writeChunkToAllSlots = async (c: MissingChunk, payload: Uint8Array): Promise<void> => {
+			const targets = dupTargets.get(c.chunkID);
+			if (!targets) {
+				await dataServer.writeChunk(downloadDir, lish, c.fileIndex, c.chunkIndex, payload);
+				return;
+			}
+			for (const t of targets) await dataServer.writeChunk(downloadDir, lish, t.fileIndex, t.chunkIndex, payload);
+		};
+
 		const spawnPeerLoop = (peerID: string, client: LISHClient): void => {
 			// Safety dedup: onPeerAdded callback fires once per tryAdd, but protects against
 			// double-spawn if a peer somehow re-adds while its previous loop is still teardown-ing.
@@ -206,7 +231,7 @@ export class ChunkDownloader {
 				globalNotAvailable = 0;
 
 				try {
-					await dataServer.writeChunk(downloadDir, lish, chunk.fileIndex, chunk.chunkIndex, data);
+					await writeChunkToAllSlots(chunk, data);
 				} catch (err: any) {
 					if (err.code === 'ENOENT') {
 						// File deleted \u2014 pause ALL peers, verify ALL files, re-allocate missing, reset chunks, resume
@@ -355,7 +380,7 @@ export class ChunkDownloader {
 								break;
 							}
 							try {
-								await dataServer.writeChunk(downloadDir, lish, chunk.fileIndex, chunk.chunkIndex, data);
+								await writeChunkToAllSlots(chunk, data);
 								console.log(`[DL] Write retry succeeded for ${lishID.slice(0, 8)}`);
 								this.writeRetryCount = 0;
 								this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
