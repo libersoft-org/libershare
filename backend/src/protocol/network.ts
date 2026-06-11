@@ -16,7 +16,7 @@ import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX, normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
-import { CodedError, ErrorCodes, type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { CodedError, ErrorCodes, productEnvPrefix, type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
@@ -1097,7 +1097,7 @@ export class Network {
 							const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
 							console.debug(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
 						}
-						if (process.env['LIBERSHARE_SCORE_DEBUG'] === '1' && entries.length > 0) {
+						if (process.env[`${productEnvPrefix}_SCORE_DEBUG`] === '1' && entries.length > 0) {
 							const fullDump = entries.map(e => `${e.id.slice(0, 16)}:${e.score.toFixed(2)}`).join(' ');
 							trace(`[NET] full scores: ${fullDump}`);
 						}

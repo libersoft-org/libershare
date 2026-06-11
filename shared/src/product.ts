@@ -6,5 +6,7 @@ export const productIdentifier: string = product.identifier;
 export const productWebsite: string = product.website;
 export const productGithub: string = product.github;
 export const productNetworkList: string = product.networkList;
+// Prefix for product-specific environment variables, derived from product name (e.g. "LIBERSHARE")
+export const productEnvPrefix: string = product.name.toUpperCase().replace(/[^A-Z0-9]/g, '');
 export const DEFAULT_API_PORT: number = 1158;
 export const DEFAULT_API_URL: string = `ws://localhost:${DEFAULT_API_PORT}`;

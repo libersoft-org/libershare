@@ -1,5 +1,5 @@
 import { dirname, join } from 'path';
-import { productName, productVersion } from '@shared';
+import { productName, productVersion, productEnvPrefix } from '@shared';
 import { resolveHealthcheckPort } from './healthcheck.ts';
 import { setupLogger, type LogLevel } from './logger.ts';
 import { Networks } from './lishnet/lishnets.ts';
@@ -122,15 +122,15 @@ setUploadBroadcast((event, data) => apiServer.broadcastEvent(event, data));
 import { startConnectivityCheck } from './connectivity.ts';
 const stopConnectivityCheck = startConnectivityCheck((event, data) => apiServer.broadcastEvent(event, data));
 
-// Memory profiling: JSONL log RSS/heap/internal sizes. LIBERSHARE_MEMTRACE=0 disables.
-if (process.env['LIBERSHARE_MEMTRACE'] !== '0') {
-	const intervalMs = Number(process.env['LIBERSHARE_MEMTRACE_INTERVAL_MS'] ?? 30_000);
-	const tracePath = process.env['LIBERSHARE_MEMTRACE_FILE'] ?? join(dataDir, 'memory-trace.jsonl');
+// Memory profiling: JSONL log RSS/heap/internal sizes. <PREFIX>_MEMTRACE=0 disables.
+if (process.env[`${productEnvPrefix}_MEMTRACE`] !== '0') {
+	const intervalMs = Number(process.env[`${productEnvPrefix}_MEMTRACE_INTERVAL_MS`] ?? 30_000);
+	const tracePath = process.env[`${productEnvPrefix}_MEMTRACE_FILE`] ?? join(dataDir, 'memory-trace.jsonl');
 	startMemoryTrace({ filePath: tracePath, intervalMs, stdout: true });
 }
 
 // Heap snapshot on-demand: touch <dataDir>/trigger-heap OR kill -USR2 <pid>
-if (process.env['LIBERSHARE_HEAP_TRIGGER'] !== '0') startHeapSnapshotTrigger(dataDir);
+if (process.env[`${productEnvPrefix}_HEAP_TRIGGER`] !== '0') startHeapSnapshotTrigger(dataDir);
 
 let shuttingDown = false;
 async function shutdown(): Promise<void> {

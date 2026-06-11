@@ -20,6 +20,7 @@ import { networkInterfaces } from 'os';
 import { isLinkLocalIp } from '@libp2p/utils';
 import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
+import { productEnvPrefix } from '@shared';
 import { trace } from '../logger.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
@@ -299,8 +300,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 						// Optional bounded trace of score callbacks. Off by default to keep production
 						// memory footprint clean — the `seen`/`trustedLogged` Sets would otherwise
 						// grow with every distinct peer encountered for the lifetime of the process.
-						// Enable via `LIBERSHARE_TRACE_PX=1` when investigating PX trust decisions.
-						if (process.env['LIBERSHARE_TRACE_PX'] === '1') {
+						// Enable via `<PREFIX>_TRACE_PX=1` when investigating PX trust decisions.
+						if (process.env[`${productEnvPrefix}_TRACE_PX`] === '1') {
 							const dbg = ((globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
 							if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
 								dbg.seen.add(pid);

@@ -1,5 +1,5 @@
 // Product info
-export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, DEFAULT_API_PORT, DEFAULT_API_URL } from './product.ts';
+export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL } from './product.ts';
 
 // Utils
 export { formatBytes, parseBytes, sanitizeFilename } from './utils.ts';
