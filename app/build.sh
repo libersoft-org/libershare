@@ -89,9 +89,9 @@ Options:
 
 Examples:
   ./$_help_name
-  ./$_help_name --os linux --target x86_64 --format deb rpm
-  ./$_help_name --os linux --target all --format all
-  ./$_help_name --os linux windows --target x86_64 --format all
+  ./$_help_name --os linux --target x86_64 --format deb rpm --compress min
+  ./$_help_name --os linux --target all --format all --compress mid
+  ./$_help_name --os linux windows --target x86_64 --format all --compress max
   ./$_help_name --os windows --target x86_64 --format nsis zip
   ./$_help_name --os macos --target universal --format dmg zip
 

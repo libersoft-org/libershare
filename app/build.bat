@@ -46,9 +46,9 @@ echo   --help      Show this help
 echo.
 echo Examples:
 echo   %~nx0
-echo   %~nx0 --os linux --target x86_64 --format deb rpm
-echo   %~nx0 --os linux --target all --format all
-echo   %~nx0 --os linux windows --target x86_64 --format all
+echo   %~nx0 --os linux --target x86_64 --format deb rpm --compress min
+echo   %~nx0 --os linux --target all --format all --compress mid
+echo   %~nx0 --os linux windows --target x86_64 --format all --compress max
 echo   %~nx0 --os windows --target x86_64 --format nsis zip
 echo.
 echo Notes:
