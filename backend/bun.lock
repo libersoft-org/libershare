@@ -27,13 +27,13 @@
         "datastore-core": "^12.0.1",
         "interface-datastore": "^10.0.1",
         "libp2p": "^3.3.3",
-        "msgpackr": "^2.0.3",
+        "msgpackr": "^2.0.4",
         "uint8arrays": "^6.1.1",
       },
       "devDependencies": {
         "@types/bun": "^1.3.14",
-        "@types/node": "^25.9.2",
-        "prettier": "^3.6.2",
+        "@types/node": "^25.9.3",
+        "prettier": "^3.8.4",
         "prettier-plugin-svelte": "^4.1.0",
         "typescript": "^6.0.3",
       },
@@ -149,7 +149,7 @@
 
     "@types/multicast-dns": ["@types/multicast-dns@7.2.4", "", { "dependencies": { "@types/dns-packet": "*", "@types/node": "*" } }, "sha512-ib5K4cIDR4Ro5SR3Sx/LROkMDa0BHz0OPaCBL/OSPDsAXEGZ3/KQeS6poBKYVN7BfjXDL9lWNwzyHVgt/wkyCw=="],
 
-    "@types/node": ["@types/node@25.9.2", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-G05zqtJhcDLb8uslf5EjCxXg9G1KQxiV8OS0R26IC//Eoyitzqe8z37I7cqvnZlrlSfgocQRfSn/AHBZJJFyGw=="],
+    "@types/node": ["@types/node@25.9.3", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-603BddQMv3pUcr4U2dhujk83N2tTDVr/34wII2B6bJy6g+8WD6yUb11jszNs0gdi4PesVWl7ABt8nYMVpnLUcg=="],
 
     "@types/trusted-types": ["@types/trusted-types@2.0.7", "", {}, "sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw=="],
 
@@ -259,7 +259,7 @@
 
     "ms": ["ms@3.0.0-canary.202508261828", "", {}, "sha512-NotsCoUCIUkojWCzQff4ttdCfIPoA1UGZsyQbi7KmqkNRfKCrvga8JJi2PknHymHOuor0cJSn/ylj52Cbt2IrQ=="],
 
-    "msgpackr": ["msgpackr@2.0.3", "", { "optionalDependencies": { "msgpackr-extract": "^3.0.4" } }, "sha512-vFKpMYFTEQujRQxvdS/u6zlfesws0J40K74w6E1fVsYnIa9WKJKB5xIVVON8L7S39hCNrCVGXcPjrYmCb9lT+w=="],
+    "msgpackr": ["msgpackr@2.0.4", "", { "optionalDependencies": { "msgpackr-extract": "^3.0.4" } }, "sha512-o1C5KRmuRt+apqMr1HuGSqWStZoRBUpEsCsl15uM9VdAF1qHLtvMOU2En747EnTyEl6c4pzPewRMFF31s1CNbA=="],
 
     "msgpackr-extract": ["msgpackr-extract@3.0.4", "", { "dependencies": { "node-gyp-build-optional-packages": "5.2.2" }, "optionalDependencies": { "@msgpackr-extract/msgpackr-extract-darwin-arm64": "3.0.4", "@msgpackr-extract/msgpackr-extract-darwin-x64": "3.0.4", "@msgpackr-extract/msgpackr-extract-linux-arm": "3.0.4", "@msgpackr-extract/msgpackr-extract-linux-arm64": "3.0.4", "@msgpackr-extract/msgpackr-extract-linux-x64": "3.0.4", "@msgpackr-extract/msgpackr-extract-win32-x64": "3.0.4" }, "bin": { "download-msgpackr-prebuilds": "bin/download-prebuilds.js" } }, "sha512-4kmO/MdyUIkLIvTPr8VHLil4AtoKIoniWPIEk5+CDy0xnWC84azhSFmuJ7PxZdsYtiP5kEeQsORAVIeMgxT+Hw=="],
 
@@ -283,7 +283,7 @@
 
     "p-timeout": ["p-timeout@7.0.1", "", {}, "sha512-AxTM2wDGORHGEkPCt8yqxOTMgpfbEHqF51f/5fJCmwFC3C/zNcGT63SymH2ttOAaiIws2zVg4+izQCjrakcwHg=="],
 
-    "prettier": ["prettier@3.8.3", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-7igPTM53cGHMW8xWuVTydi2KO233VFiTNyF5hLJqpilHfmn8C8gPf+PS7dUT64YcXFbiMGZxS9pCSxL/Dxm/Jw=="],
+    "prettier": ["prettier@3.8.4", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-N2MylSdi48+5N/6S5j+maeHbUSIzzZ5uOcX5Hm4QpV8Dkb1HFjfAKTKX6yNPJQD9AhcT3ifHNB66tWTTJDi11Q=="],
 
     "prettier-plugin-svelte": ["prettier-plugin-svelte@4.1.0", "", { "peerDependencies": { "prettier": "^3.0.0", "svelte": "^5.0.0" } }, "sha512-YZkhA2Q9oOerFFG9tq+2f98WYT7Z2JgrybJrAyrB78jpsH9i/DdgplXemehuFPgsldetFNCcR/yCcYlDjPy94Q=="],
 
@@ -422,6 +422,8 @@
     "@types/dns-packet/@types/node": ["@types/node@25.6.0", "", { "dependencies": { "undici-types": "~7.19.0" } }, "sha512-+qIYRKdNYJwY3vRCZMdJbPLJAtGjQBudzZzdzwQYkEPQd+PJGixUL5QfvCLDaULoLv+RhT3LDkwEfKaAkgSmNQ=="],
 
     "@types/multicast-dns/@types/node": ["@types/node@25.6.0", "", { "dependencies": { "undici-types": "~7.19.0" } }, "sha512-+qIYRKdNYJwY3vRCZMdJbPLJAtGjQBudzZzdzwQYkEPQd+PJGixUL5QfvCLDaULoLv+RhT3LDkwEfKaAkgSmNQ=="],
+
+    "bun-types/@types/node": ["@types/node@25.9.2", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-G05zqtJhcDLb8uslf5EjCxXg9G1KQxiV8OS0R26IC//Eoyitzqe8z37I7cqvnZlrlSfgocQRfSn/AHBZJJFyGw=="],
 
     "it-length-prefixed/uint8arrays": ["uint8arrays@5.1.0", "", { "dependencies": { "multiformats": "^13.0.0" } }, "sha512-vA6nFepEmlSKkMBnLBaUMVvAC4G3CTmO58C12y4sq6WPDOR7mOFYOi7GlrQ4djeSbP6JG9Pv9tJDM97PedRSww=="],
 
