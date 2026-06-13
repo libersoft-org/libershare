@@ -116,8 +116,11 @@
 	}
 
 	.button:hover:not(.selected) {
-		opacity: 0.85;
-		border-color: var(--secondary-foreground);
+		background-color: var(--primary-background);
+		color: var(--primary-foreground);
+		border-color: var(--primary-foreground);
+		box-shadow: 0 0 1.5vh var(--primary-foreground);
+		opacity: 1;
 	}
 
 	.button:active:not(.selected) {
