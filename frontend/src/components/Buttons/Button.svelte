@@ -125,7 +125,8 @@
 	}
 </style>
 
-<div bind:this={el} class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:active class:disabled class:icon-only={icon && !label} class:icon-top={iconPosition === 'top'} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}" onclick={handleClick} onkeydown={e => e.key === 'Enter' && handleClick()} role="button" tabindex="-1">
+<!-- svelte-ignore a11y_click_events_have_key_events -- keyboard activation is handled centrally by the input system (keyboard.ts → areas.ts confirmUp → navArea.onConfirm), not via an element-level onkeydown which would double-fire on focused fullscreen items. -->
+<div bind:this={el} class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:active class:disabled class:icon-only={icon && !label} class:icon-top={iconPosition === 'top'} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}" onclick={handleClick} role="button" tabindex="-1">
 	{#if icon}
 		<Icon img={icon} {alt} size={iconSize ?? fontSize} padding="0" colorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} {noColorFilter} {badgeIcon} badgeColorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} />
 	{/if}
