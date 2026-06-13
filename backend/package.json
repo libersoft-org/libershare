@@ -24,6 +24,7 @@
 		"@libp2p/ping": "^3.1.6",
 		"@libp2p/simple-metrics": "^2.0.16",
 		"@libp2p/tcp": "^11.0.21",
+		"@libp2p/upnp-nat": "^4.0.21",
 		"@libp2p/utils": "^7.2.2",
 		"@multiformats/multiaddr-matcher": "^3.0.2",
 		"async-mutex": "^0.5.0",
