@@ -304,7 +304,8 @@
 			"autoErrorRecovery": "Automatická obnova po chybě",
 			"autoConnectNewNetworks": "Po přidání nové sítě se k ní automaticky připojit",
 			"mdnsEnabled": "Vyhledávat účastníky v místní síti (mDNS)",
-			"mdnsInterval": "Interval vyhledávání v místní síti (s)"
+			"mdnsInterval": "Interval vyhledávání v místní síti (s)",
+			"upnpEnabled": "Automatické přesměrování portu na routeru (UPnP)"
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",
