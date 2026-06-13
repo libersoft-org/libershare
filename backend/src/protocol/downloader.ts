@@ -109,6 +109,15 @@ export class Downloader {
 	}
 
 	/**
+	 * The lishnet network IDs this download is bound to (the networks across
+	 * which it searches for and dials peers). Returned as a defensive copy so
+	 * callers cannot mutate the downloader's internal list.
+	 */
+	getNetworkIDs(): string[] {
+		return [...this.networkIDs];
+	}
+
+	/**
 	 * Central state mutation. Validates the requested transition against ALLOWED_TRANSITIONS
 	 * and logs a warning (and bails) if the transition is not allowed.
 	 *
