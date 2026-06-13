@@ -21,6 +21,9 @@ export class Networks {
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
 	// Callback for bootstrap status changes
 	private _onBootstrapStatusChange: ((networkID: string, status: BootstrapStatus) => void) | null = null;
+	// Callback fired after a lishnet is left (topic unsubscribed). Lets higher
+	// layers (e.g. transfer) stop downloads bound exclusively to that lishnet.
+	private _onNetworkLeft: ((networkID: string) => void) | null = null;
 
 	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.db = db;
@@ -48,6 +51,16 @@ export class Networks {
 	 */
 	set onBootstrapStatusChange(cb: ((networkID: string, status: BootstrapStatus) => void) | null) {
 		this._onBootstrapStatusChange = cb;
+	}
+
+	/**
+	 * Set a callback fired right after a lishnet is left (its topic has been
+	 * unsubscribed and removed from {@link joinedNetworks}). The callback runs
+	 * synchronously from {@link leaveNetwork}; consumers should not assume any
+	 * particular peer/connection state beyond "this lishnet is no longer joined".
+	 */
+	set onNetworkLeft(cb: ((networkID: string) => void) | null) {
+		this._onNetworkLeft = cb;
 	}
 
 	init(): void {
@@ -133,11 +146,36 @@ export class Networks {
 	private async leaveNetwork(id: string): Promise<void> {
 		if (!this.joinedNetworks.has(id)) return;
 
+		// Snapshot the topic subscribers BEFORE unsubscribing — unsubscribeTopic
+		// tears the topic out of pubsub, after which getTopicPeers(id) returns [].
+		const leftPeers = this.network.getTopicPeers(id);
+
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
 
+		// Disconnect peers that belonged exclusively to the lishnet we just left.
+		// A peer is kept connected if it is still a subscriber of any OTHER joined
+		// lishnet, or if it is a bootstrap/relay peer (shared infrastructure other
+		// networks depend on). Everything else is a plain content peer with no
+		// remaining reason to stay connected, so hang it up via the single
+		// Network.disconnectPeer entry point (which also clears the keep-alive tag
+		// so ReconnectQueue does not immediately re-dial it).
+		const stillJoinedPeers = new Set<string>();
+		for (const otherID of this.joinedNetworks) {
+			for (const pid of this.network.getTopicPeers(otherID)) stillJoinedPeers.add(pid);
+		}
+		for (const pid of leftPeers) {
+			if (stillJoinedPeers.has(pid)) continue;
+			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
+			await this.network.disconnectPeer(pid);
+		}
+
 		const net = this.get(id);
 		console.log(`✓ Left lishnet: ${net?.name ?? id}`);
+
+		// Notify higher layers (e.g. transfer) so downloads bound exclusively to
+		// this lishnet can be stopped.
+		this._onNetworkLeft?.(id);
 	}
 
 	/**
