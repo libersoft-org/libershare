@@ -5,7 +5,7 @@
  * 2. transfer.download:retrying / resumed events
  * 3. Settings autoErrorRecovery
  *
- * Run: bun run backend/dev/ws-recovery-test.ts [ws-url]
+ * Run: bun run backend/tests/dev/ws-recovery-test.ts [ws-url]
  * Default URL: ws://localhost:1158
  */
 export {};
