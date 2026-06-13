@@ -346,6 +346,12 @@
 				"unstable": "Účastníci v síti mají nízké skóre - degradované směrování",
 				"stable": "Síť je stabilní - broadcasty dorazí k fleetu"
 			},
+			"meshStateNetwork": {
+				"disabled": "Nepřipojeno - síť je neaktivní",
+				"forming": "Síť se ještě staví - vyhledávání může být neúplné",
+				"unstable": "Účastníci v síti mají nízké skóre - degradované směrování",
+				"stable": "Síť je stabilní - broadcasty dorazí k fleetu"
+			},
 			"bootstrap": {
 				"title": "Bootstrap účastníci",
 				"discoveredShort": "z gossipu",
