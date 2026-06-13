@@ -1016,6 +1016,68 @@ export class Network {
 		}
 	}
 
+	/**
+	 * True if the peer is one we must never voluntarily disconnect because it
+	 * provides infrastructure rather than being a plain content peer: a
+	 * configured/known bootstrap peer, or a peer we are currently reaching over a
+	 * circuit-relay connection (dropping the relay would also kill transit for
+	 * any NAT'd siblings reachable only through it).
+	 *
+	 * Used by lishnet leave to decide which topic peers are safe to hang up —
+	 * leaving an empty lishnet must not tear down shared bootstrap/relay links
+	 * that other still-joined lishnets depend on.
+	 */
+	isBootstrapOrRelayPeer(peerID: string): boolean {
+		if (this.bootstrapPeerIDs.has(peerID)) return true;
+		if (!this.node) return false;
+		try {
+			const conns = this.node.getConnections(peerIDFromString(peerID));
+			return conns.some(c => Circuit.matches(c.remoteAddr));
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * Gracefully disconnect from a single peer and stop libp2p from immediately
+	 * re-dialing it. This is the ONLY place that should call `node.hangUp()` so
+	 * the accompanying ReconnectQueue cleanup (removing the `keep-alive-fleet`
+	 * tag) is never forgotten — without dropping that tag, `peer:discovery` /
+	 * ReconnectQueue would re-dial the peer within seconds and the disconnect
+	 * would be pointless.
+	 *
+	 * Unlike {@link purgeStalePeer} this does NOT delete the peerStore entry: the
+	 * peer is legitimate (we just no longer have a reason to stay connected after
+	 * leaving its lishnet), so we keep its addresses cached for cheap re-dial if
+	 * the user re-joins. Best-effort: failures are logged at trace, never thrown.
+	 */
+	async disconnectPeer(peerID: string): Promise<void> {
+		if (!this.node) return;
+		let pid: PeerID;
+		try {
+			pid = peerIDFromString(peerID);
+		} catch (err: any) {
+			trace(`[NET] disconnectPeer: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			return;
+		}
+		// Remove the fleet keep-alive tag FIRST so the imminent hangUp does not
+		// race the ReconnectQueue back into a re-dial. Passing undefined as the
+		// tag value removes it (per @libp2p/interface PeerStore merge semantics).
+		try {
+			await this.node.peerStore.merge(pid, {
+				tags: { 'keep-alive-fleet': undefined },
+			});
+		} catch (err: any) {
+			trace(`[NET] disconnectPeer: tag removal failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+		}
+		try {
+			await this.node.hangUp(pid);
+			trace(`[NET] disconnectPeer: hung up ${peerID.slice(0, 16)}`);
+		} catch (err: any) {
+			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+		}
+	}
+
 	/** Snapshot of all per-network bootstrap statuses. */
 	getAllBootstrapStatuses(): BootstrapStatus[] {
 		return this.bootstrapTracker.getAllStatuses();
