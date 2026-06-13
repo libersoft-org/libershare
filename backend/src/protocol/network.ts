@@ -267,6 +267,41 @@ export class Network {
 	}
 
 	/**
+	 * Subscribe to libp2p `peer:disconnect` events for the duration of the
+	 * returned disposer. The handler receives the disconnected peer's ID as a
+	 * string.
+	 *
+	 * Registered via {@link addListener} (memory hygiene — never call
+	 * `addEventListener` directly) so a forgotten disposer is still cleaned up by
+	 * {@link stop}. The returned disposer removes the listener from the tracked
+	 * list so short-lived subscribers (e.g. a Downloader) do not leak across
+	 * their own lifecycle. Used by downloads to drop a vanished peer from their
+	 * per-LISH peer manager immediately, instead of waiting for the next failed
+	 * dial/probe to notice the dead connection.
+	 */
+	onPeerDisconnect(handler: (peerID: string) => void): () => void {
+		if (!this.node) return () => {};
+		const node = this.node;
+		const listener = (evt: any): void => {
+			const pid = evt.detail?.toString?.();
+			if (pid) handler(pid);
+		};
+		this.addListener(node, 'peer:disconnect', listener);
+		let disposed = false;
+		return () => {
+			if (disposed) return;
+			disposed = true;
+			try {
+				node.removeEventListener('peer:disconnect', listener as any);
+			} catch {
+				// Node may already be stopped — stop() walked the tracked list already.
+			}
+			const idx = this.listeners.findIndex(l => l.target === node && l.event === 'peer:disconnect' && l.handler === listener);
+			if (idx >= 0) this.listeners.splice(idx, 1);
+		};
+	}
+
+	/**
 	 * Schedule a debounced check of peer counts for all subscribed topics.
 	 */
 	private schedulePeerCountCheck(): void {
