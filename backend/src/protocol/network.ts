@@ -1833,6 +1833,7 @@ export class Network {
 		// Fix C: clear accumulated per-peer/bootstrap state on stop
 		this.dcutrPeers.clear();
 		this.bootstrapPeerIDs.clear();
+		this.bootstrapTracker.clear();
 		this.bootstrapMultiaddrs = [];
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
