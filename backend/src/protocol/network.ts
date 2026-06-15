@@ -15,14 +15,15 @@ import { LISH_PROTOCOL, LISHClient, handleLISHProtocol, isUploadAdvertisable, is
 import { isBusy } from '../api/busy.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
-import { lishTopic, LISH_TOPIC_PREFIX, parseAcceptPXThreshold } from './constants.ts';
+import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
-import { CodedError, ErrorCodes, productEnvPrefix, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { CodedError, ErrorCodes, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 import { applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
+import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 
 /**
@@ -853,8 +854,8 @@ export class Network {
 			try {
 				const connectedPeers = this.node!.getPeers();
 				const allPeers = await this.node!.peerStore.all();
-				this.logStatusDebug(connectedPeers, allPeers);
-				this.dumpGossipsubScores(connectedPeers);
+				logStatusDebug({ node: this.node, pubsub: this.pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers, allPeers);
+				dumpGossipsubScores({ node: this.node, pubsub: this.pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers);
 				// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 				this.checkPeerCounts();
 				await this.runRedialMaintenance(connectedPeers, allPeers);
@@ -867,101 +868,6 @@ export class Network {
 		// Status interval 30 s. promoteKnownPeersToBootstrap + gossipsub.direct
 		// mutations run on the 5th tick (~150 s) — fast enough to absorb peer
 		// churn at N≈100 without flooding logs or burning CPU on per-second probes.
-	}
-
-	private logStatusDebug(connectedPeers: any[], allPeers: any[]): void {
-		// Detailed connection info per peer
-		const peerDetails = connectedPeers.map(p => {
-			const conns = this.node!.getConnections(p);
-			const types = conns.map(c => {
-				const isRelay = Circuit.matches(c.remoteAddr);
-				const limited = (c as any).limits != null;
-				return `${isRelay ? 'R' : 'D'}${limited ? 'L' : ''}`;
-			});
-			return `${p.toString().slice(0, 12)}[${types.join(',')}]`;
-		});
-		const topicInfo = this.pubsub!.getTopics()
-			.map((t: string) => {
-				const subs = this.pubsub!.getSubscribers(t);
-				const mesh = (this.pubsub as any).getMeshPeers ? (this.pubsub as any).getMeshPeers(t) : [];
-				return `${t.slice(0, 28)}[subs=${subs.length} mesh=${mesh.length}]`;
-			})
-			.join(' ');
-		console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${topicInfo}`);
-		console.debug(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
-		// DEBUG: per-topic mesh members detail
-		for (const t of this.pubsub!.getTopics()) {
-			const subs = this.pubsub!.getSubscribers(t).map((p: any) => p.toString().slice(0, 12));
-			const mesh = (this.pubsub as any).getMeshPeers ? (this.pubsub as any).getMeshPeers(t).map((p: any) => p.toString().slice(0, 12)) : [];
-			console.debug(`   [MESH] ${t.slice(0, 28)} subs=[${subs.join(',')}] mesh=[${mesh.join(',')}]`);
-		}
-		// DEBUG: gossipsub stream state — outbound streams are mesh-graft prerequisite
-		const gs: any = this.pubsub;
-		if (gs?.streamsOutbound && gs?.streamsInbound) {
-			const out = Array.from(gs.streamsOutbound.keys()).map((p: any) => p.toString().slice(0, 12));
-			const inb = Array.from(gs.streamsInbound.keys()).map((p: any) => p.toString().slice(0, 12));
-			const direct = gs.direct ? Array.from(gs.direct).map((p: any) => p.toString().slice(0, 12)) : [];
-			console.debug(`   [GS-STREAMS] out=[${out.join(',')}] in=[${inb.join(',')}] direct=[${direct.join(',')}]`);
-		}
-		// Announced multiaddrs — if /p2p-circuit appears, relay reservation is active
-		const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
-		const circuit = myAddrs.filter(a => a.includes('/p2p-circuit'));
-		console.debug(
-			`   MyAddrs: ${myAddrs.length} total, ${circuit.length} /p2p-circuit${
-				circuit.length > 0
-					? ' (' +
-						circuit
-							.slice(0, 2)
-							.map(a => a.slice(0, 80))
-							.join(' | ') +
-						')'
-					: ''
-			}`
-		);
-	}
-
-	private dumpGossipsubScores(connectedPeers: any[]): void {
-		// Gossipsub peer scoring — dump top/bottom scores + deltas.
-		// INFO: summary (top 3 + bottom 3 + threshold crossings).
-		// DEBUG (trace): per-peer full breakdown when LIBERSHARE_SCORE_DEBUG=1.
-		try {
-			const scoreSvc: any = (this.pubsub as any)?.score;
-			if (scoreSvc && typeof scoreSvc.score === 'function') {
-				const entries: Array<{ id: string; score: number; delta: number }> = [];
-				const pxEligibilityThreshold = parseAcceptPXThreshold(this.settings.list().network.peerExchange?.acceptPXThreshold).value;
-				for (const p of connectedPeers) {
-					const pid = p.toString();
-					const s = Number(scoreSvc.score(pid)) || 0;
-					const prev = this._lastScores.get(pid);
-					const delta = prev === undefined ? 0 : s - prev;
-					entries.push({ id: pid, score: s, delta });
-					// Threshold-crossing INFO logs
-					if (prev !== undefined) {
-						if (prev >= -80 && s < -80) console.warn(`[NET] peer ${pid.slice(0, 12)} entered graylist (score=${s.toFixed(1)})`);
-						else if (prev < -80 && s >= -80) console.log(`[NET] peer ${pid.slice(0, 12)} left graylist (score=${s.toFixed(1)})`);
-						else if (prev < pxEligibilityThreshold && s >= pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} now PX-eligible (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
-						else if (prev >= pxEligibilityThreshold && s < pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} lost PX eligibility (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
-					}
-					this._lastScores.set(pid, s);
-				}
-				// Evict entries for peers no longer connected
-				const connectedSet2 = new Set(connectedPeers.map(p => p.toString()));
-				for (const k of this._lastScores.keys()) if (!connectedSet2.has(k)) this._lastScores.delete(k);
-				if (entries.length > 0) {
-					entries.sort((a, b) => b.score - a.score);
-					const fmt = (e: { id: string; score: number; delta: number }) => `${e.id.slice(0, 12)}=${e.score.toFixed(1)}${e.delta !== 0 ? (e.delta > 0 ? '(+' : '(') + e.delta.toFixed(1) + ')' : ''}`;
-					const top = entries.slice(0, 3).map(fmt).join(' | ');
-					const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
-					console.debug(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
-				}
-				if (process.env[`${productEnvPrefix}_SCORE_DEBUG`] === '1' && entries.length > 0) {
-					const fullDump = entries.map(e => `${e.id.slice(0, 16)}:${e.score.toFixed(2)}`).join(' ');
-					trace(`[NET] full scores: ${fullDump}`);
-				}
-			}
-		} catch (err: any) {
-			trace(`[NET] score dump error: ${err?.message ?? err}`);
-		}
 	}
 
 	private async runRedialMaintenance(connectedPeers: any[], allPeers: any[]): Promise<void> {
