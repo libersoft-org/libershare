@@ -1,7 +1,8 @@
 import { createLibp2p } from 'libp2p';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { SqliteDatastore } from './datastore.ts';
-import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
+import { privateKeyToProtobuf } from '@libp2p/crypto/keys';
+import { loadOrCreatePrivateKey, writeIdentityKey as writeIdentityKeyToDatastore, clearIdentityKey as clearIdentityKeyFromDatastore, clearDatastore as clearDatastoreDir } from './identity-store.ts';
 import { type Libp2p } from 'libp2p';
 import { type PeerId as PeerID, type PrivateKey, type Stream } from '@libp2p/interface';
 import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
@@ -113,7 +114,6 @@ const PEER_ANNOUNCE_MAX_ADDRS_PER_PEER = 3;
  * used for per-source rate-limiting in handleWant.
  */
 type TopicHandler = (data: Record<string, any>, from?: string) => void;
-const PRIVATE_KEY_PATH = '/local/privatekey';
 const AUTODIAL_WORKAROUND = true;
 /** Minimum interval between two `have` responses sent to the same peer for the same LISH. */
 const WANT_RESPONSE_COOLDOWN_MS = 60_000;
@@ -334,25 +334,6 @@ export class Network {
 		if (changed) this._onPeerCountChange(counts);
 	}
 
-	private async loadOrCreatePrivateKey(datastore: SqliteDatastore): Promise<PrivateKey> {
-		try {
-			if (await datastore.has(PRIVATE_KEY_PATH as any)) {
-				const bytes = await datastore.get(PRIVATE_KEY_PATH as any);
-				const privateKey = privateKeyFromProtobuf(bytes);
-				console.log('✓ Loaded private key from datastore');
-				return privateKey;
-			}
-		} catch (error) {
-			console.log('Could not load private key:', error);
-		}
-
-		const privateKey = await generateKeyPair('Ed25519');
-		const bytes = privateKeyToProtobuf(privateKey);
-		await datastore.put(PRIVATE_KEY_PATH as any, bytes);
-		console.log('✓ Saved new private key to datastore');
-		return privateKey;
-	}
-
 	/**
 	 * Start the single libp2p node.
 	 * @param bootstrapPeers - merged list of bootstrap peers from all enabled lishnets
@@ -372,7 +353,7 @@ export class Network {
 		this.datastore.open();
 		console.log('✓ Datastore opened at:', datastorePath);
 
-		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
+		const privateKey = await loadOrCreatePrivateKey(this.datastore);
 		this.currentPrivateKey = privateKey;
 
 		// Build libp2p config via extracted helper
@@ -1743,16 +1724,7 @@ export class Network {
 	 */
 	async writeIdentityKey(privateKeyBytes: Uint8Array): Promise<void> {
 		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before writing identity key');
-		// Validate first — throws if not a valid libp2p private key protobuf
-		privateKeyFromProtobuf(privateKeyBytes);
-		const datastorePath = join(this.dataDir, 'datastore');
-		const ds = new SqliteDatastore(datastorePath);
-		ds.open();
-		try {
-			ds.put(PRIVATE_KEY_PATH as any, privateKeyBytes);
-		} finally {
-			ds.close();
-		}
+		await writeIdentityKeyToDatastore(this.dataDir, privateKeyBytes);
 	}
 
 	/**
@@ -1761,14 +1733,7 @@ export class Network {
 	 */
 	async clearIdentityKey(): Promise<void> {
 		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing identity key');
-		const datastorePath = join(this.dataDir, 'datastore');
-		const ds = new SqliteDatastore(datastorePath);
-		ds.open();
-		try {
-			if (ds.has(PRIVATE_KEY_PATH as any)) ds.delete(PRIVATE_KEY_PATH as any);
-		} finally {
-			ds.close();
-		}
+		await clearIdentityKeyFromDatastore(this.dataDir);
 	}
 
 	/**
@@ -1778,14 +1743,7 @@ export class Network {
 	 */
 	async clearDatastore(): Promise<void> {
 		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing datastore');
-		const datastorePath = join(this.dataDir, 'datastore');
-		const ds = new SqliteDatastore(datastorePath);
-		ds.open();
-		try {
-			ds.clear();
-		} finally {
-			ds.close();
-		}
+		await clearDatastoreDir(this.dataDir);
 	}
 
 	/**
