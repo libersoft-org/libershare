@@ -24,6 +24,7 @@ import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 import { applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
 import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
+import { classifyConnection as classifyConnectionFn, dialProtocol as dialProtocolFn, dialProtocolByPeerId as dialProtocolByPeerIdFn, connectToPeer as connectToPeerFn } from './dial-helpers.ts';
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 
 /**
@@ -450,7 +451,7 @@ export class Network {
 							}
 						}
 					}
-					const connType = remotePeerID ? this.classifyConnection(remotePeerID, isRelay) : 'DIRECT';
+					const connType = remotePeerID ? classifyConnectionFn(remotePeerID, isRelay, this.dcutrPeers) : 'DIRECT';
 					await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType);
 				} catch (err: any) {
 					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
@@ -1578,50 +1579,17 @@ export class Network {
 
 	async connectToPeer(multiaddr: string): Promise<void> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		const ma = Multiaddr(multiaddr);
-		await this.node.dial(ma);
-		console.debug('→ Connected to:', multiaddr);
-	}
-
-	/**
-	 * Determine connection type from a specific connection + dcutrPeers set.
-	 * Only dcutr:success event marks a peer as DCUtR — not the presence of both
-	 * relay and direct connections (which can happen during normal discovery).
-	 */
-	private classifyConnection(peerID: string, isRelay: boolean): 'DIRECT' | 'RELAY' | 'DCUtR' {
-		const isDcutr = this.dcutrPeers.has(peerID);
-		const result = isDcutr && !isRelay ? 'DCUtR' : isRelay ? 'RELAY' : 'DIRECT';
-		trace(`[NET] classify ${peerID.slice(0, 12)}: relay=${isRelay} dcutrSet=${isDcutr} → ${result}`);
-		return result;
+		await connectToPeerFn(this.node, multiaddr);
 	}
 
 	async dialProtocol(multiaddrs: any[], protocol: string): Promise<{ stream: Stream; connectionType: 'DIRECT' | 'RELAY' | 'DCUtR' }> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		trace(`[NET] dial ${protocol} to ${multiaddrs.map(m => m.toString()).join(', ')}`);
-		const connection = await this.node.dial(multiaddrs);
-		const peerID = connection.remotePeer.toString();
-		const isRelay = Circuit.matches(connection.remoteAddr);
-		const connectionType = this.classifyConnection(peerID, isRelay);
-		const limited = (connection as any).limits != null;
-		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}] addr=${connection.remoteAddr.toString().slice(0, 60)}`);
-		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
-		trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
-		return { stream, connectionType };
+		return dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol);
 	}
 
 	async dialProtocolByPeerId(peerID: string, protocol: string): Promise<{ stream: Stream; connectionType: 'DIRECT' | 'RELAY' | 'DCUtR' }> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		trace(`[NET] dial ${protocol} to ${peerID.slice(0, 16)}`);
-		const { peerIdFromString } = await import('@libp2p/peer-id');
-		const pid = peerIdFromString(peerID);
-		const connection = await this.node.dial(pid);
-		const isRelay = Circuit.matches(connection.remoteAddr);
-		const connectionType = this.classifyConnection(peerID, isRelay);
-		const limited = (connection as any).limits != null;
-		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}] addr=${connection.remoteAddr.toString().slice(0, 60)}`);
-		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
-		trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
-		return { stream, connectionType };
+		return dialProtocolByPeerIdFn(this.node, this.dcutrPeers, peerID, protocol);
 	}
 
 	/**

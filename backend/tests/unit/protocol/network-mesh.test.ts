@@ -1,4 +1,4 @@
-import { describe, it, expect, spyOn, afterEach } from 'bun:test';
+import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { LISH_TOPIC_PREFIX, DEFAULT_ACCEPT_PX_THRESHOLD, lishTopic, normalizeTrustedPeerIds, parseAcceptPXThreshold } from '../../../src/protocol/constants.ts';
