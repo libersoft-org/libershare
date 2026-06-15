@@ -16,11 +16,12 @@ import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
-import { CodedError, ErrorCodes, productEnvPrefix, type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { CodedError, ErrorCodes, productEnvPrefix, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 import { applyGossipsubPatches } from './gossipsub-patches.ts';
+import { BootstrapStatusTracker } from './bootstrap-status.ts';
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 
 /**
@@ -192,8 +193,7 @@ export class Network {
 	 * NOT populated for dynamic bootstrap additions from peer-announce gossip
 	 * (those have no single owning network and would dilute per-network stats).
 	 */
-	private bootstrapStats: Map<string, Map<string, BootstrapPeerStatus>> = new Map();
-	private _onBootstrapStatusChange: ((networkID: string, status: BootstrapStatus) => void) | null = null;
+	private readonly bootstrapTracker = new BootstrapStatusTracker();
 
 	/**
 	 * Ring buffer of the most recent peer disconnects. Capacity 10. Dumped at
@@ -1060,7 +1060,7 @@ export class Network {
 					} else {
 						console.log(`   [NET-CHURN] no disconnects recorded — autodial fired without any peer:disconnect event (libp2p internal eviction?)`);
 					}
-					for (const [networkID, peers] of this.bootstrapStats) {
+					for (const [networkID, peers] of this.bootstrapTracker.entries()) {
 						const counts: Record<string, number> = {};
 						for (const p of peers.values()) counts[p.status] = (counts[p.status] ?? 0) + 1;
 						const parts = Object.entries(counts)
@@ -1202,7 +1202,7 @@ export class Network {
 					this.bootstrapMultiaddrs.push(ma);
 				}
 				console.debug('Adding bootstrap peer:', peer);
-				this.markBootstrapPending(networkID, peer, peerID, origin);
+				this.bootstrapTracker.markPending(networkID, peer, peerID, origin);
 				try {
 					// Skip re-dialing when libp2p already has an active connection to this peer
 					// (typical when the same bootstrap entry appears in multiple lishnets).
@@ -1216,13 +1216,13 @@ export class Network {
 							tags: { [KEEP_ALIVE]: { value: 1 } },
 						});
 					}
-					this.recordBootstrapOutcome(networkID, peer, peerID, 'connected', null, null, origin);
+					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, origin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
 					const message = err?.message ?? String(err);
 					const kind = classifyBootstrapError(message);
 					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
-					this.recordBootstrapOutcome(networkID, peer, peerID, kind, message, actualPeerID, origin);
+					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, kind, message, actualPeerID, origin);
 					// [NET-MISMATCH] richer log for identity-mismatch — single line containing
 					// origin (configured / discovered from peer-announce), multiaddr,
 					// expected peerID and the actual peerID Noise reported. Makes it
@@ -1246,18 +1246,12 @@ export class Network {
 						// it visible just adds UI noise. For CONFIGURED entries, keep
 						// it so the user can decide to update or remove the saved row.
 						if (origin === 'discovered' && networkID) {
-							const net = this.bootstrapStats.get(networkID);
-							if (net) {
-								net.delete(peer);
-								if (net.size === 0) this.bootstrapStats.delete(networkID);
-								const snap = this.buildBootstrapStatus(networkID) ?? { networkID, peers: [] };
-								this._onBootstrapStatusChange?.(networkID, snap);
-							}
+							this.bootstrapTracker.deletePeer(networkID, peer);
 						}
 					}
 				}
 			} catch (error: any) {
-				this.recordBootstrapOutcome(networkID, peer, null, 'error', error?.message ?? String(error), null, origin);
+				this.bootstrapTracker.recordOutcome(networkID, peer, null, 'error', error?.message ?? String(error), null, origin);
 				console.log('⚠️  Skipping invalid multiaddr:', peer, '-', error.message);
 			}
 		}
@@ -1268,7 +1262,7 @@ export class Network {
 	 * `addBootstrapPeers(_, networkID)` records a new outcome for any entry.
 	 */
 	set onBootstrapStatusChange(cb: ((networkID: string, status: BootstrapStatus) => void) | null) {
-		this._onBootstrapStatusChange = cb;
+		this.bootstrapTracker.setOnChange(cb);
 	}
 
 	/**
@@ -1305,70 +1299,22 @@ export class Network {
 
 	/** Snapshot of all per-network bootstrap statuses. */
 	getAllBootstrapStatuses(): BootstrapStatus[] {
-		return [...this.bootstrapStats.keys()].map(id => this.buildBootstrapStatus(id)!).filter(Boolean);
+		return this.bootstrapTracker.getAllStatuses();
 	}
 
 	/** Snapshot of a single network's bootstrap status, or null if no attempts have been recorded. */
 	getBootstrapStatus(networkID: string): BootstrapStatus | null {
-		return this.buildBootstrapStatus(networkID);
+		return this.bootstrapTracker.getStatus(networkID);
 	}
 
 	/** Drop bootstrap status entries no longer in the configured peer list (after an update). */
 	pruneBootstrapStatus(networkID: string, keepMultiaddrs: string[]): void {
-		const peers = this.bootstrapStats.get(networkID);
-		if (!peers) return;
-		const keep = new Set(keepMultiaddrs);
-		for (const addr of [...peers.keys()]) {
-			if (!keep.has(addr)) peers.delete(addr);
-		}
-		if (peers.size === 0) this.bootstrapStats.delete(networkID);
-		const snapshot = this.buildBootstrapStatus(networkID);
-		if (snapshot) this._onBootstrapStatusChange?.(networkID, snapshot);
+		this.bootstrapTracker.pruneEntries(networkID, keepMultiaddrs);
 	}
 
 	/** Reset the bootstrap status for a single network (used when re-joining). */
 	resetBootstrapStatus(networkID: string): void {
-		this.bootstrapStats.delete(networkID);
-		this._onBootstrapStatusChange?.(networkID, { networkID, peers: [] });
-	}
-
-	private ensureBootstrapNetwork(networkID: string): Map<string, BootstrapPeerStatus> {
-		let net = this.bootstrapStats.get(networkID);
-		if (!net) {
-			net = new Map();
-			this.bootstrapStats.set(networkID, net);
-		}
-		return net;
-	}
-
-	private buildBootstrapStatus(networkID: string): BootstrapStatus | null {
-		const peers = this.bootstrapStats.get(networkID);
-		if (!peers) return null;
-		return { networkID, peers: [...peers.values()].map(p => ({ ...p })) };
-	}
-
-	private markBootstrapPending(networkID: string | null, multiaddr: string, expectedPeerID: string | null, origin: BootstrapPeerOrigin): void {
-		if (!networkID) return;
-		const net = this.ensureBootstrapNetwork(networkID);
-		// Preserve a stronger origin classification — once we know an entry is in
-		// the saved config ('configured'), an inbound peer-announce later restating
-		// the same multiaddr must not downgrade it to 'discovered'.
-		const previous = net.get(multiaddr);
-		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
-		net.set(multiaddr, { multiaddr, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: new Date().toISOString() });
-		const snapshot = this.buildBootstrapStatus(networkID);
-		if (snapshot) this._onBootstrapStatusChange?.(networkID, snapshot);
-	}
-
-	private recordBootstrapOutcome(networkID: string | null, multiaddr: string, expectedPeerID: string | null, status: BootstrapPeerDialStatus, message: string | null, actualPeerID: string | null, origin: BootstrapPeerOrigin): void {
-		if (!networkID) return;
-		const net = this.ensureBootstrapNetwork(networkID);
-		const truncated = message ? (message.length > 200 ? message.slice(0, 200) + '…' : message) : null;
-		const previous = net.get(multiaddr);
-		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
-		net.set(multiaddr, { multiaddr, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString() });
-		const snapshot = this.buildBootstrapStatus(networkID);
-		if (snapshot) this._onBootstrapStatusChange?.(networkID, snapshot);
+		this.bootstrapTracker.resetNetwork(networkID);
 	}
 
 	// =========================================================================
