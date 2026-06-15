@@ -14,12 +14,13 @@ import { LISH_PROTOCOL, LISHClient, handleLISHProtocol, isUploadAdvertisable, is
 import { isBusy } from '../api/busy.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
-import { lishTopic, LISH_TOPIC_PREFIX, normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
+import { lishTopic, LISH_TOPIC_PREFIX, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { CodedError, ErrorCodes, productEnvPrefix, type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
+import { applyGossipsubPatches } from './gossipsub-patches.ts';
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 
 /**
@@ -209,7 +210,6 @@ export class Network {
 	// Previous gossipsub peer scores — tracked per-peer to detect significant
 	// score deltas and log threshold crossings (e.g. entered graylist).
 	private _lastScores: Map<string, number> = new Map();
-	private readonly pxIngressLogKeys = new Set<string>();
 
 	/**
 	 * Per-peer re-dial backoff tracker. Re-dial attempts that fail bump the
@@ -244,152 +244,6 @@ export class Network {
 	 * IMPORTANT: always use this helper instead of calling addEventListener() directly — otherwise
 	 * the handler stays attached after stop() and holds a reference to `this` (memory leak).
 	 */
-	/**
-	 * Runtime patch: wrap @chainsafe/libp2p-gossipsub OutboundStream.push() to swallow
-	 * the rejected Promise it returns when rawStream.send() throws synchronously. Upstream
-	 * sendRpc() does `try { stream.push(rpc) } catch {}` but push() is declared async, so
-	 * the synchronous throw becomes a rejected Promise that the try/catch cannot see.
-	 *
-	 * We cannot import OutboundStream directly (not in package exports, Bun bundler
-	 * refuses `/dist/src/stream.js`). Instead we poll streamsOutbound on the pubsub
-	 * instance after startup — once any peer registers a stream we grab its prototype
-	 * and override .push() for ALL instances (current + future) since they share one
-	 * prototype object.
-	 *
-	 * TODO(upstream): this intentionally reaches into private gossipsub internals
-	 * (`streamsOutbound` and OutboundStream.prototype). Keep it as a temporary
-	 * mitigation only; replace it with an upstream @chainsafe/libp2p-gossipsub fix
-	 * once sendRpc/push handles rejected async writes and evicts dead streams itself.
-	 */
-	private patchGossipsubOutboundPushOnce(): void {
-		const pubsub = this.pubsub as any;
-		if (!pubsub || pubsub.__libershareOutboundPatched) return;
-		const trySetup = () => {
-			try {
-				const streamsOutbound: Map<any, any> | undefined = pubsub.streamsOutbound;
-				if (!streamsOutbound || streamsOutbound.size === 0) return false;
-				const sample = streamsOutbound.values().next().value;
-				if (!sample) return false;
-				const proto = Object.getPrototypeOf(sample);
-				if (!proto || typeof proto.push !== 'function' || proto.__libershareOutboundPatched) return true;
-				const original = proto.push;
-				// Forward all arguments via rest+apply so a future upstream signature
-				// extension (e.g. push(data, opts)) is preserved transparently.
-				proto.push = function (this: any, ...args: any[]): any {
-					let result: any;
-					try {
-						result = original.apply(this, args);
-					} catch (e) {
-						// Belt & braces — also handle the sync path if upstream ever de-asyncs push()
-						return false;
-					}
-					// Async throw case: attach .catch() so rejection never reaches unhandledRejection.
-					// The underlying stream state (closed) is already tracked by gossipsub; losing
-					// the write is exactly what the existing try/catch around sendRpc assumed.
-					if (result && typeof (result as Promise<unknown>).catch === 'function') {
-						const failedStream = this; // OutboundStream instance
-						(result as Promise<unknown>).catch((e: any) => {
-							// Reverse lookup: find which peerId owns this dead stream and evict it
-							// from streamsOutbound so the next sendRpc call sees null and gossipsub
-							// will reattach a fresh stream when libp2p reconnects to that peer.
-							const gs: any = pubsub;
-							let evicted = '';
-							if (gs?.streamsOutbound instanceof Map) {
-								for (const [pid, stream] of gs.streamsOutbound) {
-									if (stream === failedStream) {
-										try {
-											stream.close?.().catch?.(() => {});
-										} catch {
-											/* ignore */
-										}
-										gs.streamsOutbound.delete(pid);
-										evicted = pid.toString().slice(0, 12);
-										break;
-									}
-								}
-							}
-							// Rate-limit so a flapping peer (NAT churn / Wi-Fi roam) cannot fill the log
-							// with thousands of identical lines per hour. One warn line per peer per 5 s.
-							const lastLog: Map<string, number> = ((gs as any).__libershareGsPushFailLogged ??= new Map());
-							const now = Date.now();
-							const key = evicted || 'unknown';
-							if ((lastLog.get(key) ?? 0) + 5000 < now) {
-								lastLog.set(key, now);
-								console.warn('[GS-PUSH-FAIL] async push rejected to', key, ':', e?.code ?? e?.name ?? '', e?.message ?? String(e), '— evicted stream');
-							}
-						});
-					}
-					return result;
-				};
-				proto.__libershareOutboundPatched = true;
-				pubsub.__libershareOutboundPatched = true;
-				console.log('[NET] gossipsub OutboundStream.push() wrapped (sync-throw-in-async bug mitigation)');
-				return true;
-			} catch (err: any) {
-				trace(`[NET] patchGossipsub retry: ${err?.message ?? err}`);
-				return false;
-			}
-		};
-		// Try immediately, then poll every 2s for up to 60s (streams appear as peers connect)
-		if (trySetup()) return;
-		const start = Date.now();
-		const interval = setInterval(() => {
-			if (trySetup() || Date.now() - start > 60_000) clearInterval(interval);
-		}, 2000);
-	}
-
-	/**
-	 * Strip PX peer lists from incoming PRUNE control messages unless the sender is
-	 * explicitly trusted by local operator policy. Normal PRUNE/backoff semantics stay intact.
-	 */
-	private patchGossipsubPXIngressPolicyOnce(): void {
-		const pubsub = this.pubsub as any;
-		if (!pubsub || pubsub.__libersharePXIngressPatched) return;
-		if (typeof pubsub.handleReceivedRpc !== 'function') {
-			throw new Error('PX ingress filter unavailable: gossipsub handleReceivedRpc missing');
-		}
-
-		const original = pubsub.handleReceivedRpc.bind(pubsub);
-		pubsub.handleReceivedRpc = async (from: any, rpc: any): Promise<any> => {
-			const peerExchange = this.settings.list().network.peerExchange;
-			if (!peerExchange?.ingressFilterEnabled || !rpc?.control?.prune?.length) return original(from, rpc);
-
-			const sender = from?.toString?.() ?? '';
-			// Trust union: explicit operator-configured peers + bootstrap peers from the
-			// lishnets the operator has joined (both represent "operator deliberately chose
-			// to trust this peer", see appSpecificScore in network-config.ts for rationale).
-			const trusted = normalizeTrustedPeerIds(peerExchange.trustedPeerIds);
-			for (const bp of this.bootstrapPeerIDs) trusted.add(bp);
-			let allowed = 0;
-			let stripped = 0;
-
-			const prune = rpc.control.prune.map((p: any) => {
-				if (!p?.peers?.length) return p;
-				const topic = p.topicID;
-				const allowPX = peerExchange.enabled === true && trusted.has(sender) && typeof topic === 'string' && topic.startsWith(LISH_TOPIC_PREFIX);
-				if (allowPX) {
-					allowed++;
-					return p;
-				}
-				stripped++;
-				return { ...p, peers: [] };
-			});
-
-			if (stripped > 0 || allowed > 0) {
-				const topic = prune.find((p: any) => p?.topicID)?.topicID ?? 'unknown';
-				const key = `${allowed > 0 ? 'allow' : 'strip'}:${sender}:${topic}`;
-				if (!this.pxIngressLogKeys.has(key)) {
-					this.pxIngressLogKeys.add(key);
-					if (allowed > 0) console.debug(`[NET] PX ingress allowed sender=${sender.slice(0, 16)} topic=${String(topic).slice(0, 48)} prunes=${allowed}`);
-					else console.debug(`[NET] PX ingress stripped sender=${sender.slice(0, 16)} topic=${String(topic).slice(0, 48)} prunes=${stripped}`);
-				}
-			}
-
-			return original(from, { ...rpc, control: { ...rpc.control, prune } });
-		};
-		pubsub.__libersharePXIngressPatched = true;
-		console.log('[NET] gossipsub PX ingress filter enabled');
-	}
 
 	private addListener(target: EventTarget, event: string, handler: (evt: any) => void): void {
 		target.addEventListener(event, handler as any);
@@ -579,8 +433,7 @@ export class Network {
 		// returned by push() at every call site — intercept via prototype override
 		// on the first OutboundStream instance we observe (all instances share one
 		// prototype).
-		this.patchGossipsubOutboundPushOnce();
-		if (allSettings.network.peerExchange.ingressFilterEnabled === true) this.patchGossipsubPXIngressPolicyOnce();
+		applyGossipsubPatches(this.pubsub, { settings: this.settings, getBootstrapPeerIDs: () => this.bootstrapPeerIDs }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
 
 		// Register lish protocol handler
 		await this.node.handle(
