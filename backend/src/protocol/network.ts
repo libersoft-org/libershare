@@ -850,230 +850,13 @@ export class Network {
 			try {
 				const connectedPeers = this.node!.getPeers();
 				const allPeers = await this.node!.peerStore.all();
-				// Detailed connection info per peer
-				const peerDetails = connectedPeers.map(p => {
-					const conns = this.node!.getConnections(p);
-					const types = conns.map(c => {
-						const isRelay = Circuit.matches(c.remoteAddr);
-						const limited = (c as any).limits != null;
-						return `${isRelay ? 'R' : 'D'}${limited ? 'L' : ''}`;
-					});
-					return `${p.toString().slice(0, 12)}[${types.join(',')}]`;
-				});
-				const topicInfo = this.pubsub!.getTopics()
-					.map((t: string) => {
-						const subs = this.pubsub!.getSubscribers(t);
-						const mesh = (this.pubsub as any).getMeshPeers ? (this.pubsub as any).getMeshPeers(t) : [];
-						return `${t.slice(0, 28)}[subs=${subs.length} mesh=${mesh.length}]`;
-					})
-					.join(' ');
-				console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${topicInfo}`);
-				console.debug(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
-				// DEBUG: per-topic mesh members detail
-				for (const t of this.pubsub!.getTopics()) {
-					const subs = this.pubsub!.getSubscribers(t).map((p: any) => p.toString().slice(0, 12));
-					const mesh = (this.pubsub as any).getMeshPeers ? (this.pubsub as any).getMeshPeers(t).map((p: any) => p.toString().slice(0, 12)) : [];
-					console.debug(`   [MESH] ${t.slice(0, 28)} subs=[${subs.join(',')}] mesh=[${mesh.join(',')}]`);
-				}
-				// DEBUG: gossipsub stream state — outbound streams are mesh-graft prerequisite
-				const gs: any = this.pubsub;
-				if (gs?.streamsOutbound && gs?.streamsInbound) {
-					const out = Array.from(gs.streamsOutbound.keys()).map((p: any) => p.toString().slice(0, 12));
-					const inb = Array.from(gs.streamsInbound.keys()).map((p: any) => p.toString().slice(0, 12));
-					const direct = gs.direct ? Array.from(gs.direct).map((p: any) => p.toString().slice(0, 12)) : [];
-					console.debug(`   [GS-STREAMS] out=[${out.join(',')}] in=[${inb.join(',')}] direct=[${direct.join(',')}]`);
-				}
-				// Announced multiaddrs — if /p2p-circuit appears, relay reservation is active
-				const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
-				const circuit = myAddrs.filter(a => a.includes('/p2p-circuit'));
-				console.debug(
-					`   MyAddrs: ${myAddrs.length} total, ${circuit.length} /p2p-circuit${
-						circuit.length > 0
-							? ' (' +
-								circuit
-									.slice(0, 2)
-									.map(a => a.slice(0, 80))
-									.join(' | ') +
-								')'
-							: ''
-					}`
-				);
-				// Gossipsub peer scoring — dump top/bottom scores + deltas.
-				// INFO: summary (top 3 + bottom 3 + threshold crossings).
-				// DEBUG (trace): per-peer full breakdown when LIBERSHARE_SCORE_DEBUG=1.
-				try {
-					const scoreSvc: any = (this.pubsub as any)?.score;
-					if (scoreSvc && typeof scoreSvc.score === 'function') {
-						const entries: Array<{ id: string; score: number; delta: number }> = [];
-						const pxEligibilityThreshold = parseAcceptPXThreshold(this.settings.list().network.peerExchange?.acceptPXThreshold).value;
-						for (const p of connectedPeers) {
-							const pid = p.toString();
-							const s = Number(scoreSvc.score(pid)) || 0;
-							const prev = this._lastScores.get(pid);
-							const delta = prev === undefined ? 0 : s - prev;
-							entries.push({ id: pid, score: s, delta });
-							// Threshold-crossing INFO logs
-							if (prev !== undefined) {
-								if (prev >= -80 && s < -80) console.warn(`[NET] peer ${pid.slice(0, 12)} entered graylist (score=${s.toFixed(1)})`);
-								else if (prev < -80 && s >= -80) console.log(`[NET] peer ${pid.slice(0, 12)} left graylist (score=${s.toFixed(1)})`);
-								else if (prev < pxEligibilityThreshold && s >= pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} now PX-eligible (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
-								else if (prev >= pxEligibilityThreshold && s < pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} lost PX eligibility (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
-							}
-							this._lastScores.set(pid, s);
-						}
-						// Evict entries for peers no longer connected
-						const connectedSet2 = new Set(connectedPeers.map(p => p.toString()));
-						for (const k of this._lastScores.keys()) if (!connectedSet2.has(k)) this._lastScores.delete(k);
-						if (entries.length > 0) {
-							entries.sort((a, b) => b.score - a.score);
-							const fmt = (e: { id: string; score: number; delta: number }) => `${e.id.slice(0, 12)}=${e.score.toFixed(1)}${e.delta !== 0 ? (e.delta > 0 ? '(+' : '(') + e.delta.toFixed(1) + ')' : ''}`;
-							const top = entries.slice(0, 3).map(fmt).join(' | ');
-							const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
-							console.debug(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
-						}
-						if (process.env[`${productEnvPrefix}_SCORE_DEBUG`] === '1' && entries.length > 0) {
-							const fullDump = entries.map(e => `${e.id.slice(0, 16)}:${e.score.toFixed(2)}`).join(' ');
-							trace(`[NET] full scores: ${fullDump}`);
-						}
-					}
-				} catch (err: any) {
-					trace(`[NET] score dump error: ${err?.message ?? err}`);
-				}
+				this.logStatusDebug(connectedPeers, allPeers);
+				this.dumpGossipsubScores(connectedPeers);
 				// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 				this.checkPeerCounts();
-				// Dial known peers not currently connected (maintains relay connections to NATed peers)
-				const connectedSet = new Set(connectedPeers.map(p => p.toString()));
-				const now = Date.now();
-				// Build candidate list: all known peers that are (a) not connected, and
-				// (b) past their backoff window. Bootstrap peers are included so a bootstrap
-				// that drops comes back quickly without needing connectedPeers.length===0.
-				const candidates: Array<{ peer: any; pid: string; addrSummary: string; failCount: number }> = [];
-				let skippedBackoff = 0;
-				let skippedNoReachable = 0;
-				const localCidrs = getLocalCidrs(now);
-				for (const peer of allPeers) {
-					const pid = peer.id.toString();
-					if (connectedSet.has(pid)) {
-						this.redialBackoff.delete(pid); // clear on observed connection
-						continue;
-					}
-					const bo = this.redialBackoff.get(pid);
-					if (bo && bo.nextAttempt > now) {
-						skippedBackoff++;
-						continue;
-					}
-					// Pre-filter peerStore multiaddrs through the dial gater. If every
-					// known address is unreachable from this node (e.g. only LAN addrs
-					// of a foreign subnet), skip the dial entirely — otherwise libp2p
-					// returns "no valid addresses" after still spending a slot on us.
-					const entries = peer.addresses ?? [];
-					const reachable: string[] = [];
-					for (const a of entries) {
-						const ma = a?.multiaddr;
-						if (!ma) continue;
-						if (!shouldDenyDial(ma, localCidrs)) reachable.push(ma.toString());
-					}
-					if (reachable.length === 0) {
-						skippedNoReachable++;
-						continue;
-					}
-					candidates.push({ peer, pid, addrSummary: reachable.join(' | '), failCount: bo?.failCount ?? 0 });
-				}
-				// Parallel dial with concurrency=10 via rolling promise pool; caps worst-case
-				// tick latency at ~5s × ceil(N/10) instead of 5s × N for pre-throttle code.
-				const CONCURRENCY = 10;
-				let redialSuccess = 0;
-				let idx = 0;
-				const worker = async (): Promise<void> => {
-					while (idx < candidates.length) {
-						const c = candidates[idx++]!;
-						console.debug(`   ↻ Re-dial attempt peer=${c.pid} addrs=${c.addrSummary} fails=${c.failCount}`);
-						try {
-							await this.node!.dial(c.peer.id, { signal: AbortSignal.timeout(5000) });
-							const conns = this.node!.getConnections(c.peer.id);
-							const connDetail = conns
-								.map(conn => {
-									const ra = conn.remoteAddr?.toString?.() ?? '?';
-									const type = Circuit.matches(conn.remoteAddr) ? 'RELAY' : 'DIRECT';
-									return `${type}(${ra})`;
-								})
-								.join(',');
-							console.debug(`   ✓ Re-dialed peer=${c.pid} via=${connDetail || '(no conn info)'}`);
-							this.redialBackoff.delete(c.pid);
-							redialSuccess++;
-							// Re-stamp keep-alive-fleet on every successful re-dial so
-							// ReconnectQueue will fire if this peer drops again. Peers may
-							// have lost the tag through peerStore cleanup
-							// (maxAddressAge/maxPeerAge) between earlier tagging events.
-							try {
-								await this.node!.peerStore.merge(c.peer.id, {
-									tags: { 'keep-alive-fleet': { value: 50 } },
-								});
-							} catch {
-								/* non-fatal */
-							}
-						} catch (err: any) {
-							// Exponential backoff: 30s × 2^failCount, capped at 10 min.
-							const nextFailCount = c.failCount + 1;
-							const delayMs = Math.min(30_000 * 2 ** c.failCount, 600_000);
-							this.redialBackoff.set(c.pid, { nextAttempt: Date.now() + delayMs, failCount: nextFailCount });
-							console.debug(`   ✗ Re-dial peer=${c.pid} failed: ${err.message ?? err} (tried: ${c.addrSummary}, next in ${Math.round(delayMs / 1000)}s)`);
-						}
-					}
-				};
-				const workers = Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, () => worker());
-				await Promise.all(workers);
-				if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0) {
-					console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs)`);
-				}
-				// Prune backoff entries for peers that are no longer in peerStore to prevent unbounded growth.
-				const storeSet = new Set(allPeers.map(p => p.id.toString()));
-				for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
-				if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && this.bootstrapMultiaddrs.length > 0) {
-					console.log(`   ⚠️  No connections - dialing ${this.bootstrapMultiaddrs.length} bootstrap peer(s) directly...`);
-					// [NET-CHURN] dump: who left in the run-up to this zero-connection
-					// state, and what each configured bootstrap entry's last dial outcome
-					// was. Without this we only ever see the recovery dial — never the cause.
-					if (this.recentDisconnects.length > 0) {
-						const now = Date.now();
-						const summary = this.recentDisconnects.map(d => `${d.peerID.slice(0, 16)}(${Math.round((now - d.ts) / 1000)}s${d.wasBootstrap ? ',BS' : ''})`).join(' ');
-						console.log(`   [NET-CHURN] last ${this.recentDisconnects.length} disconnects: ${summary}`);
-					} else {
-						console.log(`   [NET-CHURN] no disconnects recorded — autodial fired without any peer:disconnect event (libp2p internal eviction?)`);
-					}
-					for (const [networkID, peers] of this.bootstrapTracker.entries()) {
-						const counts: Record<string, number> = {};
-						for (const p of peers.values()) counts[p.status] = (counts[p.status] ?? 0) + 1;
-						const parts = Object.entries(counts)
-							.map(([k, v]) => `${k}=${v}`)
-							.join(' ');
-						console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
-					}
-					for (const ma of this.bootstrapMultiaddrs) {
-						const maStr = ma?.toString?.() ?? String(ma);
-						try {
-							console.log(`   → Dialing ${maStr}`);
-							await this.node!.dial(ma, { signal: AbortSignal.timeout(10000) });
-							console.log(`   ✓ Connected via ${maStr}`);
-							break;
-						} catch (err: any) {
-							console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
-						}
-					}
-				}
-				// Every 5th status tick (~150 s at 30 s status cadence) promote every
-				// peerStore entry back to bootstrap priority. Re-stamps KEEP_ALIVE tags
-				// and feeds libp2p a concrete multiaddr list to re-dial against, catching
-				// peers whose original dial cached a stale (unreachable) address — these
-				// would otherwise sit idle until they reappeared via identify/PX/announce.
-				this.statusTickCount++;
-				if (this.statusTickCount % 5 === 0) {
-					try {
-						await this.promoteKnownPeersToBootstrap();
-					} catch (err: any) {
-						trace(`[NET] promoteKnownPeersToBootstrap failed: ${err?.message ?? err}`);
-					}
-				}
+				await this.runRedialMaintenance(connectedPeers, allPeers);
+				await this.runZeroConnectionRecovery(connectedPeers);
+				await this.maybePromotePeers();
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
 			}
@@ -1081,6 +864,242 @@ export class Network {
 		// Status interval 30 s. promoteKnownPeersToBootstrap + gossipsub.direct
 		// mutations run on the 5th tick (~150 s) — fast enough to absorb peer
 		// churn at N≈100 without flooding logs or burning CPU on per-second probes.
+	}
+
+	private logStatusDebug(connectedPeers: any[], allPeers: any[]): void {
+		// Detailed connection info per peer
+		const peerDetails = connectedPeers.map(p => {
+			const conns = this.node!.getConnections(p);
+			const types = conns.map(c => {
+				const isRelay = Circuit.matches(c.remoteAddr);
+				const limited = (c as any).limits != null;
+				return `${isRelay ? 'R' : 'D'}${limited ? 'L' : ''}`;
+			});
+			return `${p.toString().slice(0, 12)}[${types.join(',')}]`;
+		});
+		const topicInfo = this.pubsub!.getTopics()
+			.map((t: string) => {
+				const subs = this.pubsub!.getSubscribers(t);
+				const mesh = (this.pubsub as any).getMeshPeers ? (this.pubsub as any).getMeshPeers(t) : [];
+				return `${t.slice(0, 28)}[subs=${subs.length} mesh=${mesh.length}]`;
+			})
+			.join(' ');
+		console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${topicInfo}`);
+		console.debug(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
+		// DEBUG: per-topic mesh members detail
+		for (const t of this.pubsub!.getTopics()) {
+			const subs = this.pubsub!.getSubscribers(t).map((p: any) => p.toString().slice(0, 12));
+			const mesh = (this.pubsub as any).getMeshPeers ? (this.pubsub as any).getMeshPeers(t).map((p: any) => p.toString().slice(0, 12)) : [];
+			console.debug(`   [MESH] ${t.slice(0, 28)} subs=[${subs.join(',')}] mesh=[${mesh.join(',')}]`);
+		}
+		// DEBUG: gossipsub stream state — outbound streams are mesh-graft prerequisite
+		const gs: any = this.pubsub;
+		if (gs?.streamsOutbound && gs?.streamsInbound) {
+			const out = Array.from(gs.streamsOutbound.keys()).map((p: any) => p.toString().slice(0, 12));
+			const inb = Array.from(gs.streamsInbound.keys()).map((p: any) => p.toString().slice(0, 12));
+			const direct = gs.direct ? Array.from(gs.direct).map((p: any) => p.toString().slice(0, 12)) : [];
+			console.debug(`   [GS-STREAMS] out=[${out.join(',')}] in=[${inb.join(',')}] direct=[${direct.join(',')}]`);
+		}
+		// Announced multiaddrs — if /p2p-circuit appears, relay reservation is active
+		const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
+		const circuit = myAddrs.filter(a => a.includes('/p2p-circuit'));
+		console.debug(
+			`   MyAddrs: ${myAddrs.length} total, ${circuit.length} /p2p-circuit${
+				circuit.length > 0
+					? ' (' +
+						circuit
+							.slice(0, 2)
+							.map(a => a.slice(0, 80))
+							.join(' | ') +
+						')'
+					: ''
+			}`
+		);
+	}
+
+	private dumpGossipsubScores(connectedPeers: any[]): void {
+		// Gossipsub peer scoring — dump top/bottom scores + deltas.
+		// INFO: summary (top 3 + bottom 3 + threshold crossings).
+		// DEBUG (trace): per-peer full breakdown when LIBERSHARE_SCORE_DEBUG=1.
+		try {
+			const scoreSvc: any = (this.pubsub as any)?.score;
+			if (scoreSvc && typeof scoreSvc.score === 'function') {
+				const entries: Array<{ id: string; score: number; delta: number }> = [];
+				const pxEligibilityThreshold = parseAcceptPXThreshold(this.settings.list().network.peerExchange?.acceptPXThreshold).value;
+				for (const p of connectedPeers) {
+					const pid = p.toString();
+					const s = Number(scoreSvc.score(pid)) || 0;
+					const prev = this._lastScores.get(pid);
+					const delta = prev === undefined ? 0 : s - prev;
+					entries.push({ id: pid, score: s, delta });
+					// Threshold-crossing INFO logs
+					if (prev !== undefined) {
+						if (prev >= -80 && s < -80) console.warn(`[NET] peer ${pid.slice(0, 12)} entered graylist (score=${s.toFixed(1)})`);
+						else if (prev < -80 && s >= -80) console.log(`[NET] peer ${pid.slice(0, 12)} left graylist (score=${s.toFixed(1)})`);
+						else if (prev < pxEligibilityThreshold && s >= pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} now PX-eligible (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
+						else if (prev >= pxEligibilityThreshold && s < pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} lost PX eligibility (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
+					}
+					this._lastScores.set(pid, s);
+				}
+				// Evict entries for peers no longer connected
+				const connectedSet2 = new Set(connectedPeers.map(p => p.toString()));
+				for (const k of this._lastScores.keys()) if (!connectedSet2.has(k)) this._lastScores.delete(k);
+				if (entries.length > 0) {
+					entries.sort((a, b) => b.score - a.score);
+					const fmt = (e: { id: string; score: number; delta: number }) => `${e.id.slice(0, 12)}=${e.score.toFixed(1)}${e.delta !== 0 ? (e.delta > 0 ? '(+' : '(') + e.delta.toFixed(1) + ')' : ''}`;
+					const top = entries.slice(0, 3).map(fmt).join(' | ');
+					const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
+					console.debug(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
+				}
+				if (process.env[`${productEnvPrefix}_SCORE_DEBUG`] === '1' && entries.length > 0) {
+					const fullDump = entries.map(e => `${e.id.slice(0, 16)}:${e.score.toFixed(2)}`).join(' ');
+					trace(`[NET] full scores: ${fullDump}`);
+				}
+			}
+		} catch (err: any) {
+			trace(`[NET] score dump error: ${err?.message ?? err}`);
+		}
+	}
+
+	private async runRedialMaintenance(connectedPeers: any[], allPeers: any[]): Promise<void> {
+		// Dial known peers not currently connected (maintains relay connections to NATed peers)
+		const connectedSet = new Set(connectedPeers.map(p => p.toString()));
+		const now = Date.now();
+		// Build candidate list: all known peers that are (a) not connected, and
+		// (b) past their backoff window. Bootstrap peers are included so a bootstrap
+		// that drops comes back quickly without needing connectedPeers.length===0.
+		const candidates: Array<{ peer: any; pid: string; addrSummary: string; failCount: number }> = [];
+		let skippedBackoff = 0;
+		let skippedNoReachable = 0;
+		const localCidrs = getLocalCidrs(now);
+		for (const peer of allPeers) {
+			const pid = peer.id.toString();
+			if (connectedSet.has(pid)) {
+				this.redialBackoff.delete(pid); // clear on observed connection
+				continue;
+			}
+			const bo = this.redialBackoff.get(pid);
+			if (bo && bo.nextAttempt > now) {
+				skippedBackoff++;
+				continue;
+			}
+			// Pre-filter peerStore multiaddrs through the dial gater. If every
+			// known address is unreachable from this node (e.g. only LAN addrs
+			// of a foreign subnet), skip the dial entirely — otherwise libp2p
+			// returns "no valid addresses" after still spending a slot on us.
+			const entries = peer.addresses ?? [];
+			const reachable: string[] = [];
+			for (const a of entries) {
+				const ma = a?.multiaddr;
+				if (!ma) continue;
+				if (!shouldDenyDial(ma, localCidrs)) reachable.push(ma.toString());
+			}
+			if (reachable.length === 0) {
+				skippedNoReachable++;
+				continue;
+			}
+			candidates.push({ peer, pid, addrSummary: reachable.join(' | '), failCount: bo?.failCount ?? 0 });
+		}
+		// Parallel dial with concurrency=10 via rolling promise pool; caps worst-case
+		// tick latency at ~5s × ceil(N/10) instead of 5s × N for pre-throttle code.
+		const CONCURRENCY = 10;
+		let redialSuccess = 0;
+		let idx = 0;
+		const worker = async (): Promise<void> => {
+			while (idx < candidates.length) {
+				const c = candidates[idx++]!;
+				console.debug(`   ↻ Re-dial attempt peer=${c.pid} addrs=${c.addrSummary} fails=${c.failCount}`);
+				try {
+					await this.node!.dial(c.peer.id, { signal: AbortSignal.timeout(5000) });
+					const conns = this.node!.getConnections(c.peer.id);
+					const connDetail = conns
+						.map(conn => {
+							const ra = conn.remoteAddr?.toString?.() ?? '?';
+							const type = Circuit.matches(conn.remoteAddr) ? 'RELAY' : 'DIRECT';
+							return `${type}(${ra})`;
+						})
+						.join(',');
+					console.debug(`   ✓ Re-dialed peer=${c.pid} via=${connDetail || '(no conn info)'}`);
+					this.redialBackoff.delete(c.pid);
+					redialSuccess++;
+					// Re-stamp keep-alive-fleet on every successful re-dial so
+					// ReconnectQueue will fire if this peer drops again. Peers may
+					// have lost the tag through peerStore cleanup
+					// (maxAddressAge/maxPeerAge) between earlier tagging events.
+					try {
+						await this.node!.peerStore.merge(c.peer.id, {
+							tags: { 'keep-alive-fleet': { value: 50 } },
+						});
+					} catch {
+						/* non-fatal */
+					}
+				} catch (err: any) {
+					// Exponential backoff: 30s × 2^failCount, capped at 10 min.
+					const nextFailCount = c.failCount + 1;
+					const delayMs = Math.min(30_000 * 2 ** c.failCount, 600_000);
+					this.redialBackoff.set(c.pid, { nextAttempt: Date.now() + delayMs, failCount: nextFailCount });
+					console.debug(`   ✗ Re-dial peer=${c.pid} failed: ${err.message ?? err} (tried: ${c.addrSummary}, next in ${Math.round(delayMs / 1000)}s)`);
+				}
+			}
+		};
+		const workers = Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, () => worker());
+		await Promise.all(workers);
+		if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0) {
+			console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs)`);
+		}
+		// Prune backoff entries for peers that are no longer in peerStore to prevent unbounded growth.
+		const storeSet = new Set(allPeers.map(p => p.id.toString()));
+		for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
+	}
+
+	private async runZeroConnectionRecovery(connectedPeers: any[]): Promise<void> {
+		if (!AUTODIAL_WORKAROUND || connectedPeers.length !== 0 || this.bootstrapMultiaddrs.length === 0) return;
+		console.log(`   ⚠️  No connections - dialing ${this.bootstrapMultiaddrs.length} bootstrap peer(s) directly...`);
+		// [NET-CHURN] dump: who left in the run-up to this zero-connection
+		// state, and what each configured bootstrap entry's last dial outcome
+		// was. Without this we only ever see the recovery dial — never the cause.
+		if (this.recentDisconnects.length > 0) {
+			const now = Date.now();
+			const summary = this.recentDisconnects.map(d => `${d.peerID.slice(0, 16)}(${Math.round((now - d.ts) / 1000)}s${d.wasBootstrap ? ',BS' : ''})`).join(' ');
+			console.log(`   [NET-CHURN] last ${this.recentDisconnects.length} disconnects: ${summary}`);
+		} else {
+			console.log(`   [NET-CHURN] no disconnects recorded — autodial fired without any peer:disconnect event (libp2p internal eviction?)`);
+		}
+		for (const [networkID, peers] of this.bootstrapTracker.entries()) {
+			const counts: Record<string, number> = {};
+			for (const p of peers.values()) counts[p.status] = (counts[p.status] ?? 0) + 1;
+			const parts = Object.entries(counts)
+				.map(([k, v]) => `${k}=${v}`)
+				.join(' ');
+			console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
+		}
+		for (const ma of this.bootstrapMultiaddrs) {
+			const maStr = ma?.toString?.() ?? String(ma);
+			try {
+				console.log(`   → Dialing ${maStr}`);
+				await this.node!.dial(ma, { signal: AbortSignal.timeout(10000) });
+				console.log(`   ✓ Connected via ${maStr}`);
+				break;
+			} catch (err: any) {
+				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
+			}
+		}
+	}
+
+	private async maybePromotePeers(): Promise<void> {
+		// Every 5th status tick (~150 s at 30 s status cadence) promote every
+		// peerStore entry back to bootstrap priority. Re-stamps KEEP_ALIVE tags
+		// and feeds libp2p a concrete multiaddr list to re-dial against, catching
+		// peers whose original dial cached a stale (unreachable) address — these
+		// would otherwise sit idle until they reappeared via identify/PX/announce.
+		this.statusTickCount++;
+		if (this.statusTickCount % 5 === 0) {
+			try {
+				await this.promoteKnownPeersToBootstrap();
+			} catch (err: any) {
+				trace(`[NET] promoteKnownPeersToBootstrap failed: ${err?.message ?? err}`);
+			}
+		}
 	}
 
 	/**
