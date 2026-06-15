@@ -5,6 +5,7 @@ import { LISH_TOPIC_PREFIX, DEFAULT_ACCEPT_PX_THRESHOLD, lishTopic, normalizeTru
 
 const NETWORK_TS = readFileSync(join(__dirname, '../../../src/protocol/network.ts'), 'utf-8');
 const CONFIG_TS = readFileSync(join(__dirname, '../../../src/protocol/network-config.ts'), 'utf-8');
+const GOSSIPSUB_PATCHES_TS = readFileSync(join(__dirname, '../../../src/protocol/gossipsub-patches.ts'), 'utf-8');
 const SETTINGS_TS = readFileSync(join(__dirname, '../../../src/settings.ts'), 'utf-8');
 
 // ---------------------------------------------------------------------------
@@ -118,17 +119,18 @@ describe('network-config.ts — PX trust policy', () => {
 	});
 
 	it('ingress filter unions bootstrap peers into trusted set', () => {
-		// Source-surface check: network.ts must import bootstrapPeerIDs into the trusted
-		// Set so the ingress filter decides the same way as the score callback.
-		const filterSurface = NETWORK_TS.slice(NETWORK_TS.indexOf('patchGossipsubPXIngressPolicyOnce'), NETWORK_TS.indexOf('private addListener'));
-		expect(filterSurface).toContain('this.bootstrapPeerIDs');
+		// Source-surface check: the PX ingress patch (extracted to gossipsub-patches.ts)
+		// must union the bootstrap peers into the trusted Set so the ingress filter
+		// decides the same way as the score callback in network-config.ts.
+		const filterSurface = GOSSIPSUB_PATCHES_TS.slice(GOSSIPSUB_PATCHES_TS.indexOf('applyGossipsubPXIngressPatch'), GOSSIPSUB_PATCHES_TS.indexOf('export function applyGossipsubPatches'));
+		expect(filterSurface).toContain('getBootstrapPeerIDs');
 		expect(filterSurface).toContain('trusted.add');
 	});
 });
 
-describe('network.ts — PX ingress filter (source surface)', () => {
+describe('gossipsub-patches.ts — PX ingress filter (source surface)', () => {
 	it('filters incoming PX before gossipsub handles PRUNE', () => {
-		const filterBlock = NETWORK_TS.slice(NETWORK_TS.indexOf('patchGossipsubPXIngressPolicyOnce'), NETWORK_TS.indexOf('private addListener'));
+		const filterBlock = GOSSIPSUB_PATCHES_TS.slice(GOSSIPSUB_PATCHES_TS.indexOf('applyGossipsubPXIngressPatch'), GOSSIPSUB_PATCHES_TS.indexOf('export function applyGossipsubPatches'));
 		expect(filterBlock).toContain('handleReceivedRpc');
 		expect(filterBlock).toContain('ingressFilterEnabled');
 		expect(filterBlock).toContain('trusted.has(sender)');
@@ -371,7 +373,9 @@ describe('statusInterval — periodic peer count refresh', () => {
 	});
 
 	it('uses console.debug for status log (not console.log)', () => {
-		const startIdx = NETWORK_TS.indexOf('private setupStatusInterval');
+		// The status line moved into the logStatusDebug() helper during the
+		// setupStatusInterval split; the console.debug-not-console.log invariant lives there now.
+		const startIdx = NETWORK_TS.indexOf('private logStatusDebug');
 		const endIdx = NETWORK_TS.indexOf('\n\t}', startIdx + 50);
 		const statusBlock = NETWORK_TS.slice(startIdx, endIdx);
 		expect(statusBlock).toContain('console.debug');
