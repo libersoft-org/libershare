@@ -1,4 +1,5 @@
 import { type Database } from 'bun:sqlite';
+import { type LISHid } from '@shared';
 
 /**
  * Creates the LISH-related tables (lishs, lishs_files, lishs_chunks,
@@ -108,4 +109,15 @@ export function initLISHsTables(db: Database): void {
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_chunks_checksum ON lishs_chunks(checksum)');
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_directories_id_lishs ON lishs_directories(id_lishs)');
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_links_id_lishs ON lishs_links(id_lishs)');
+}
+
+/**
+ * Resolves the internal autoincrement row id for a LISH by its public LISHid.
+ * Lives with the schema (which owns the `lishs` table + its primary key) so the
+ * chunk/verification modules can import it without a back-edge to the `lishs.ts`
+ * barrel. Returns null when no LISH with the given id exists.
+ */
+export function getInternalID(db: Database, lishID: LISHid): number | null {
+	const row = db.query<{ id: number }, [string]>('SELECT id FROM lishs WHERE lish_id = ?').get(lishID);
+	return row?.id ?? null;
 }

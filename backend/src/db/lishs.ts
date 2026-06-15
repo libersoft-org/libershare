@@ -1,7 +1,9 @@
 import { type Database } from 'bun:sqlite';
 import { type IStoredLISH, type LISHid } from '@shared';
+import { getInternalID } from './lishs-schema.ts';
 
-// Schema/DDL + migrations live in lishs-schema.ts; re-exported via the barrel below.
+// Schema/DDL + migrations (and the shared getInternalID resolver) live in
+// lishs-schema.ts; re-exported via the barrel below.
 export * from './lishs-schema.ts';
 
 // Chunk operations live in lishs-chunks.ts; re-exported via this barrel.
@@ -12,16 +14,6 @@ export * from './lishs-verification.ts';
 
 // Read queries and row mappers live in lishs-queries.ts; re-exported via this barrel.
 export * from './lishs-queries.ts';
-
-/**
- * Resolves the internal autoincrement row id for a LISH by its public LISHid.
- * Shared enabler used by the LISH query/mutation functions to scope child-table
- * lookups. Returns null when no LISH with the given id exists.
- */
-export function getInternalID(db: Database, lishID: LISHid): number | null {
-	const row = db.query<{ id: number }, [string]>('SELECT id FROM lishs WHERE lish_id = ?').get(lishID);
-	return row?.id ?? null;
-}
 
 // -- Public API --
 

@@ -1,6 +1,6 @@
 import { type Database } from 'bun:sqlite';
 import { type LISHid } from '@shared';
-import { getInternalID } from './lishs.ts';
+import { getInternalID } from './lishs-schema.ts';
 
 export interface VerificationProgress {
 	verifiedChunks: number;

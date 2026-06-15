@@ -1,6 +1,6 @@
 import { type Database } from 'bun:sqlite';
 import { type LISHid, type ChunkID } from '@shared';
-import { getInternalID } from './lishs.ts';
+import { getInternalID } from './lishs-schema.ts';
 
 export interface MissingChunk {
 	fileIndex: number;
