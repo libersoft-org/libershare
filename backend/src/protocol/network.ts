@@ -211,6 +211,9 @@ export class Network {
 	// score deltas and log threshold crossings (e.g. entered graylist).
 	private _lastScores: Map<string, number> = new Map();
 
+	/** Per-instance dedup set for PX ingress log keys; owned here, passed into gossipsub-patches deps. */
+	private readonly pxIngressLogKeys = new Set<string>();
+
 	/**
 	 * Per-peer re-dial backoff tracker. Re-dial attempts that fail bump the
 	 * per-peer failCount and push nextAttempt forward exponentially (30s × 2^fails
@@ -414,7 +417,7 @@ export class Network {
 		// returned by push() at every call site — intercept via prototype override
 		// on the first OutboundStream instance we observe (all instances share one
 		// prototype).
-		applyGossipsubPatches(this.pubsub, { settings: this.settings, getBootstrapPeerIDs: () => this.bootstrapPeerIDs }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
+		applyGossipsubPatches(this.pubsub, { settings: this.settings, getBootstrapPeerIDs: () => this.bootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
 
 		// Register lish protocol handler
 		await this.node.handle(

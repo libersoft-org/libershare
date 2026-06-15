@@ -2,9 +2,6 @@ import { type Settings } from '../settings.ts';
 import { normalizeTrustedPeerIds, LISH_TOPIC_PREFIX } from './constants.ts';
 import { trace } from '../logger.ts';
 
-/** Module-level set for PX ingress log-key dedup (one-time log per sender+topic+action). */
-const pxIngressLogKeys = new Set<string>();
-
 /**
  * Dependencies consumed by gossipsub patch helpers.
  */
@@ -12,6 +9,12 @@ export interface GossipsubPatchDeps {
 	readonly settings: Settings;
 	/** Returns the current set of known bootstrap peer IDs. Called at filter time, not cached. */
 	getBootstrapPeerIDs(): Set<string>;
+	/**
+	 * Per-Network-instance set for PX ingress log-key dedup (one-time log per sender+topic+action).
+	 * Owned and reset by the caller (Network); passed here to avoid module-global shared state
+	 * across multiple Network instances and to allow garbage collection on Network.stop().
+	 */
+	readonly pxIngressLogKeys: Set<string>;
 }
 
 /**
@@ -146,8 +149,8 @@ export function applyGossipsubPXIngressPatch(pubsub: any, deps: GossipsubPatchDe
 		if (stripped > 0 || allowed > 0) {
 			const topic = prune.find((p: any) => p?.topicID)?.topicID ?? 'unknown';
 			const key = `${allowed > 0 ? 'allow' : 'strip'}:${sender}:${topic}`;
-			if (!pxIngressLogKeys.has(key)) {
-				pxIngressLogKeys.add(key);
+			if (!deps.pxIngressLogKeys.has(key)) {
+				deps.pxIngressLogKeys.add(key);
 				if (allowed > 0) console.debug(`[NET] PX ingress allowed sender=${sender.slice(0, 16)} topic=${String(topic).slice(0, 48)} prunes=${allowed}`);
 				else console.debug(`[NET] PX ingress stripped sender=${sender.slice(0, 16)} topic=${String(topic).slice(0, 48)} prunes=${stripped}`);
 			}
