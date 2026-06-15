@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, spyOn, afterEach } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { LISH_TOPIC_PREFIX, DEFAULT_ACCEPT_PX_THRESHOLD, lishTopic, normalizeTrustedPeerIds, parseAcceptPXThreshold } from '../../../src/protocol/constants.ts';
+import { logStatusDebug } from '../../../src/protocol/status-logger.ts';
 
 const NETWORK_TS = readFileSync(join(__dirname, '../../../src/protocol/network.ts'), 'utf-8');
 const CONFIG_TS = readFileSync(join(__dirname, '../../../src/protocol/network-config.ts'), 'utf-8');
@@ -373,15 +374,37 @@ describe('statusInterval — periodic peer count refresh', () => {
 	});
 
 	it('uses console.debug for status log (not console.log)', () => {
-		// The status line moved into the logStatusDebug() helper during the
-		// setupStatusInterval split; the console.debug-not-console.log invariant lives there now.
-		const startIdx = NETWORK_TS.indexOf('private logStatusDebug');
-		const endIdx = NETWORK_TS.indexOf('\n\t}', startIdx + 50);
-		const statusBlock = NETWORK_TS.slice(startIdx, endIdx);
-		expect(statusBlock).toContain('console.debug');
-		// Should NOT use console.log for status
-		const statusLogLine = statusBlock.match(/console\.log\(`📊 Status/);
-		expect(statusLogLine).toBeNull();
+		// Behavioural test: logStatusDebug() must emit the 📊 Status line via
+		// console.debug, never console.log. We spy on both and call the real function.
+		const debugCalls: string[] = [];
+		const logCalls: string[] = [];
+		const origDebug = console.debug;
+		const origLog = console.log;
+		console.debug = (...args: any[]) => { debugCalls.push(args.join(' ')); };
+		console.log = (...args: any[]) => { logCalls.push(args.join(' ')); };
+		try {
+			const fakeNode = {
+				getConnections: () => [],
+				getMultiaddrs: () => [],
+			};
+			const fakePubsub = {
+				getTopics: () => [],
+				getSubscribers: () => [],
+			};
+			const fakeSettings = {} as any;
+			logStatusDebug(
+				{ node: fakeNode, pubsub: fakePubsub, settings: fakeSettings, lastScores: new Map() },
+				[],
+				[]
+			);
+		} finally {
+			console.debug = origDebug;
+			console.log = origLog;
+		}
+		const hasStatusInDebug = debugCalls.some(c => c.includes('📊 Status'));
+		expect(hasStatusInDebug).toBe(true);
+		const hasStatusInLog = logCalls.some(c => c.includes('📊 Status'));
+		expect(hasStatusInLog).toBe(false);
 	});
 });
 
