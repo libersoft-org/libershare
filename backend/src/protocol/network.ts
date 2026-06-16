@@ -7,12 +7,10 @@ import { type Libp2p } from 'libp2p';
 import { type PeerId as PeerID, type PrivateKey, type Stream } from '@libp2p/interface';
 import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
 import { join } from 'path';
-import { existsSync } from 'fs';
 import { trace } from '../logger.ts';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { LISH_PROTOCOL, LISHClient, handleLISHProtocol, isUploadAdvertisable, isUploadEnabled } from './lish-protocol.ts';
-import { isBusy } from '../api/busy.ts';
+import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
@@ -25,23 +23,10 @@ import { applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
 import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
 import { classifyConnection as classifyConnectionFn, dialProtocol as dialProtocolFn, dialProtocolByPeerId as dialProtocolByPeerIdFn, connectToPeer as connectToPeerFn } from './dial-helpers.ts';
+import { LISHServingHandlers, type SearchLishsMessage } from './lish-handlers.ts';
+export type { SearchLishsMessage } from './lish-handlers.ts';
+export { isSearchAdvertisableLish } from './lish-handlers.ts';
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
-
-/**
- * Pubsub query: "Find LISHs whose name or ID matches `query`".
- * Sent by a peer that opened the "Browse network" page; received by every subscriber to the topic.
- * Match is case-insensitive substring on `id` and (if present) `name`.
- * Responses come back as unicast `searchResult` messages on the LISH protocol (see lish-protocol.ts).
- */
-export interface SearchLishsMessage {
-	type: 'searchLishs';
-	searchID: string;
-	query: string;
-}
-
-export function isSearchAdvertisableLish(lish: import('@shared').IStoredLISH): boolean {
-	return isUploadAdvertisable(lish.id);
-}
 
 /**
  * Per-network entry of the `peers:count` API event. The `count` field is the
@@ -216,6 +201,9 @@ export class Network {
 	/** Per-instance dedup set for PX ingress log keys; owned here, passed into gossipsub-patches deps. */
 	private readonly pxIngressLogKeys = new Set<string>();
 
+	/** Handles incoming LISH-serving pubsub messages (want, searchLishs). */
+	private readonly lishHandlers: LISHServingHandlers;
+
 	/**
 	 * Per-peer re-dial backoff tracker. Re-dial attempts that fail bump the
 	 * per-peer failCount and push nextAttempt forward exponentially (30s × 2^fails
@@ -235,6 +223,14 @@ export class Network {
 
 		this.dataServer = dataServer;
 		this.settings = settings;
+		this.lishHandlers = new LISHServingHandlers({
+			dataServer: this.dataServer,
+			lastWantResponseTime: this.lastWantResponseTime,
+			seenSearchIDs: this.seenSearchIDs,
+			wantResponseCooldownMs: WANT_RESPONSE_COOLDOWN_MS,
+			getNode: () => this.node,
+			dialByPeerId: (peerID, protocol) => this.dialProtocolByPeerId(peerID, protocol),
+		});
 	}
 
 	/**
@@ -1289,7 +1285,7 @@ export class Network {
 		const handler: TopicHandler = (data, from) => {
 			trace(`[NET] pubsub ${topic}: ${data['type']}`);
 			if (data['type'] === 'want') {
-				this.handleWant(data as WantMessage, networkID, from).catch(err => {
+				this.lishHandlers.handleWant(data as WantMessage, networkID, from).catch(err => {
 					trace(`[NET] handleWant failed: ${err?.message ?? err}`);
 				});
 			} else if (data['type'] === 'peer-announce') {
@@ -1297,7 +1293,7 @@ export class Network {
 					trace(`[NET] handlePeerAnnounce failed: ${err?.message ?? err}`);
 				});
 			} else if (data['type'] === 'searchLishs') {
-				this.handleSearchLishs(data as SearchLishsMessage, networkID, from).catch(err => {
+				this.lishHandlers.handleSearchLishs(data as SearchLishsMessage, networkID, from).catch(err => {
 					trace(`[NET] handleSearchLishs failed: ${err?.message ?? err}`);
 				});
 			}
@@ -1430,121 +1426,6 @@ export class Network {
 		} catch (error) {
 			console.error('Error in handleMessage:', error);
 		}
-	}
-
-	// =========================================================================
-	// Want/Have protocol (LISH data exchange)
-	// =========================================================================
-
-	private async handleWant(data: WantMessage, networkID: string, fromPeerID?: string): Promise<void> {
-		if (!fromPeerID) {
-			trace(`[NET] want ignored: no verified sender peerID`);
-			return;
-		}
-		if (!isUploadEnabled(data.lishID)) {
-			trace(`[NET] want ignored: upload disabled for ${data.lishID.slice(0, 8)}`);
-			return;
-		}
-		if (isBusy(data.lishID)) {
-			trace(`[NET] want ignored: busy for ${data.lishID.slice(0, 8)}`);
-			return;
-		}
-		// Per-(peer,lish) rate-limit: ignore want from same peer for same LISH within cooldown.
-		// Without this, an aggressive (or buggy) peer could trigger many redundant HAVE responses.
-		const key = `${fromPeerID}:${data.lishID}`;
-		const last = this.lastWantResponseTime.get(key);
-		if (last !== undefined && Date.now() - last < WANT_RESPONSE_COOLDOWN_MS) {
-			trace(`[NET] want rate-limited: ${fromPeerID.slice(0, 12)} for ${data.lishID.slice(0, 8)} (cooldown)`);
-			return;
-		}
-		// Networks, by referenced networkID, are also checked: the seeder must belong to the same LISH net.
-		// (networkID currently unused beyond routing; future: verify lish.networkIDs.includes(networkID).)
-		void networkID;
-		const lish = this.dataServer.get(data.lishID);
-		if (!lish) return;
-		// Verify data directory exists on disk — prevents false-positive "have"
-		// when DB says have=TRUE but files were lost (e.g. Docker rebuild without volume)
-		if (!lish.directory || !existsSync(lish.directory)) {
-			console.warn(`[NET] want ignored: data directory missing for ${data.lishID.slice(0, 8)} (${lish.directory ?? 'no dir'})`);
-			return;
-		}
-		const haveChunks = this.dataServer.getHaveChunks(data.lishID);
-		if (haveChunks !== 'all' && haveChunks.size === 0) {
-			trace(`[NET] no chunks for ${data.lishID.slice(0, 8)}`);
-			return;
-		}
-		const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
-		const chunksPayload: import('./lish-protocol.ts').HaveChunks = haveChunks === 'all' ? 'all' : Array.from(haveChunks);
-		console.debug(`[NET] sending unicast HAVE to ${fromPeerID.slice(0, 12)} for ${data.lishID.slice(0, 8)}, chunks=${chunksPayload === 'all' ? 'ALL' : chunksPayload.length}`);
-		// Open a fresh LISH protocol stream to the requester and send the HAVE announcement.
-		// Errors are traced (not thrown) — a single unreachable requester mustn't break our own subscription.
-		let client: LISHClient | undefined;
-		try {
-			const { stream } = await this.dialProtocolByPeerId(fromPeerID, LISH_PROTOCOL);
-			client = new LISHClient(stream);
-			await client.announceHave(data.lishID, chunksPayload, myAddrs);
-		} catch (err: any) {
-			trace(`[NET] announceHave to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
-			await client?.close().catch(() => {});
-			return;
-		}
-		await client.close().catch(() => {});
-		// Record send time only after the announcement was sent; cleanup interval drains stale entries.
-		this.lastWantResponseTime.set(key, Date.now());
-	}
-
-	// =========================================================================
-	// Search LISHs (pubsub query, unicast response)
-	// =========================================================================
-
-	/**
-	 * Handle an incoming pubsub `searchLishs` query from a peer browsing the network.
-	 * - Iterates locally shared (upload-enabled) LISHs
-	 * - Filters by case-insensitive substring on `id` and `name`
-	 * - If at least one match → opens a fresh LISH protocol stream to the requester and sends `searchResult`
-	 * Empty result → no response (saves a stream open for non-matching peers).
-	 *
-	 * `seenSearchIDs` deduplicates queries arriving multiple times via the gossipsub mesh
-	 * (same query can hit the same node from several peering paths).
-	 */
-	private async handleSearchLishs(data: SearchLishsMessage, networkID: string, fromPeerID?: string): Promise<void> {
-		void networkID;
-		if (!fromPeerID) {
-			trace(`[NET] searchLishs ignored: no verified sender peerID`);
-			return;
-		}
-		if (typeof data.searchID !== 'string' || typeof data.query !== 'string') return;
-		// Empty / overly long queries are dropped — a defensive bound; UI input is much shorter.
-		if (data.query.length === 0 || data.query.length > 256) return;
-		// Don't reply to our own broadcast (we're a subscriber to the topic too).
-		if (this.node && fromPeerID === this.node.peerId.toString()) return;
-		// Dedup: same searchID arriving multiple times from gossipsub mesh — answer at most once.
-		const lastSeen = this.seenSearchIDs.get(data.searchID);
-		if (lastSeen !== undefined) return;
-		this.seenSearchIDs.set(data.searchID, Date.now());
-		const q = data.query.toLowerCase();
-		const matches: Array<{ id: string; name?: string; totalSize?: number }> = [];
-		for (const lish of this.dataServer.list()) {
-			if (!isSearchAdvertisableLish(lish)) continue;
-			const idLower = lish.id.toLowerCase();
-			const nameLower = lish.name?.toLowerCase() ?? '';
-			if (!idLower.includes(q) && !nameLower.includes(q)) continue;
-			const totalSize = (lish.files ?? []).reduce((sum: number, f: { size: number }) => sum + f.size, 0);
-			const entry: { id: string; name?: string; totalSize?: number } = { id: lish.id, totalSize };
-			if (lish.name !== undefined) entry.name = lish.name;
-			matches.push(entry);
-		}
-		if (matches.length === 0) return;
-		trace(`[NET] searchLishs ${data.searchID.slice(0, 8)} from ${fromPeerID.slice(0, 12)}: ${matches.length} match(es)`);
-		let client: LISHClient | undefined;
-		try {
-			const { stream } = await this.dialProtocolByPeerId(fromPeerID, LISH_PROTOCOL);
-			client = new LISHClient(stream);
-			await client.sendSearchResult(data.searchID, matches);
-		} catch (err: any) {
-			trace(`[NET] sendSearchResult to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
-		}
-		await client?.close().catch(() => {});
 	}
 
 	// =========================================================================
