@@ -1391,6 +1391,7 @@ export class Network {
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
 		this.redialBackoff.clear();
+		this.pxIngressLogKeys.clear();
 		if (this.node) {
 			await this.node.stop();
 			console.log('Network stopped');
