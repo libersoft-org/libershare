@@ -141,7 +141,7 @@ export function extractFirstIPv4(ma: any): string | null {
 		// is a real dotted-quad before accepting it; otherwise shouldDenyDial would
 		// treat the hostname as a malformed IP (ipToUint32 → 0, isPublic → false)
 		// and refuse to dial the entire /dns4/ entry. Caught in production
-		// 2026-05-26 when local node skipped lish1/lish2.libershare.com bootstraps.
+		// 2026-05-26 when a node skipped its /dns4 DNS bootstrap peers.
 		const na = ma?.nodeAddress?.();
 		if (na && (na.family === 4 || na.family === 'IPv4')) {
 			const addr = String(na.address);
