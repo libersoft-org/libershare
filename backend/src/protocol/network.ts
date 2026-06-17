@@ -16,7 +16,7 @@ import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX, normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
-import { CodedError, ErrorCodes, productEnvPrefix, type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { CodedError, ErrorCodes, type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
@@ -263,7 +263,9 @@ export class Network {
 	 */
 	private patchGossipsubOutboundPushOnce(): void {
 		const pubsub = this.pubsub as any;
-		if (!pubsub || pubsub.__libershareOutboundPatched) return;
+		// Idempotency guard: the push() wrap is installed on the shared OutboundStream
+		// prototype, so re-running this must be a no-op once the marker is set.
+		if (!pubsub || pubsub.__p2pfsOutboundPatched) return;
 		const trySetup = () => {
 			try {
 				const streamsOutbound: Map<any, any> | undefined = pubsub.streamsOutbound;
@@ -271,7 +273,7 @@ export class Network {
 				const sample = streamsOutbound.values().next().value;
 				if (!sample) return false;
 				const proto = Object.getPrototypeOf(sample);
-				if (!proto || typeof proto.push !== 'function' || proto.__libershareOutboundPatched) return true;
+				if (!proto || typeof proto.push !== 'function' || proto.__p2pfsOutboundPatched) return true;
 				const original = proto.push;
 				// Forward all arguments via rest+apply so a future upstream signature
 				// extension (e.g. push(data, opts)) is preserved transparently.
@@ -310,7 +312,7 @@ export class Network {
 							}
 							// Rate-limit so a flapping peer (NAT churn / Wi-Fi roam) cannot fill the log
 							// with thousands of identical lines per hour. One warn line per peer per 5 s.
-							const lastLog: Map<string, number> = ((gs as any).__libershareGsPushFailLogged ??= new Map());
+							const lastLog: Map<string, number> = ((gs as any).__p2pfsGsPushFailLogged ??= new Map());
 							const now = Date.now();
 							const key = evicted || 'unknown';
 							if ((lastLog.get(key) ?? 0) + 5000 < now) {
@@ -321,8 +323,8 @@ export class Network {
 					}
 					return result;
 				};
-				proto.__libershareOutboundPatched = true;
-				pubsub.__libershareOutboundPatched = true;
+				proto.__p2pfsOutboundPatched = true;
+				pubsub.__p2pfsOutboundPatched = true;
 				console.log('[NET] gossipsub OutboundStream.push() wrapped (sync-throw-in-async bug mitigation)');
 				return true;
 			} catch (err: any) {
@@ -344,7 +346,8 @@ export class Network {
 	 */
 	private patchGossipsubPXIngressPolicyOnce(): void {
 		const pubsub = this.pubsub as any;
-		if (!pubsub || pubsub.__libersharePXIngressPatched) return;
+		// Idempotency guard: handleReceivedRpc is wrapped only once per pubsub instance.
+		if (!pubsub || pubsub.__p2pfsPXIngressPatched) return;
 		if (typeof pubsub.handleReceivedRpc !== 'function') {
 			throw new Error('PX ingress filter unavailable: gossipsub handleReceivedRpc missing');
 		}
@@ -387,7 +390,7 @@ export class Network {
 
 			return original(from, { ...rpc, control: { ...rpc.control, prune } });
 		};
-		pubsub.__libersharePXIngressPatched = true;
+		pubsub.__p2pfsPXIngressPatched = true;
 		console.log('[NET] gossipsub PX ingress filter enabled');
 	}
 
@@ -1066,7 +1069,7 @@ export class Network {
 				);
 				// Gossipsub peer scoring — dump top/bottom scores + deltas.
 				// INFO: summary (top 3 + bottom 3 + threshold crossings).
-				// DEBUG (trace): per-peer full breakdown when LIBERSHARE_SCORE_DEBUG=1.
+				// DEBUG (trace): per-peer full breakdown when P2PFS_SCORE_DEBUG=1.
 				try {
 					const scoreSvc: any = (this.pubsub as any)?.score;
 					if (scoreSvc && typeof scoreSvc.score === 'function') {
@@ -1097,7 +1100,7 @@ export class Network {
 							const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
 							console.debug(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
 						}
-						if (process.env[`${productEnvPrefix}_SCORE_DEBUG`] === '1' && entries.length > 0) {
+						if (process.env['P2PFS_SCORE_DEBUG'] === '1' && entries.length > 0) {
 							const fullDump = entries.map(e => `${e.id.slice(0, 16)}:${e.score.toFixed(2)}`).join(' ');
 							trace(`[NET] full scores: ${fullDump}`);
 						}
