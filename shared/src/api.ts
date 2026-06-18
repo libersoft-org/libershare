@@ -156,12 +156,13 @@ class SettingsAPI {
 	}
 
 	/**
-	 * Factory reset with per-category selection (each defaults to ON). Wipes the
-	 * selected categories: settings → defaults, identity → new peer ID + cleared
-	 * peerstore, downloads → all LISH records (on-disk files kept), networks → all
-	 * lishnets. The UI should reload afterwards.
+	 * Factory reset with per-category selection (each defaults to ON except
+	 * `peers`). Wipes the selected categories: settings → defaults, identity →
+	 * new peer ID + cleared peerstore, downloads → all LISH records (on-disk
+	 * files kept), networks → all lishnets, peers → discovered peerstore records
+	 * only (identity key preserved). The UI should reload afterwards.
 	 */
-	factoryReset(options?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean }): Promise<FactoryResetResponse> {
+	factoryReset(options?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }): Promise<FactoryResetResponse> {
 		return this.client.call<FactoryResetResponse>('settings.factoryReset', options ?? {});
 	}
 

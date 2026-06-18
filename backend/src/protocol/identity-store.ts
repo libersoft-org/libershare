@@ -78,3 +78,21 @@ export async function clearDatastore(dataDir: string): Promise<void> {
 		ds.close();
 	}
 }
+
+/**
+ * Wipe peerstore-namespaced entries while preserving the identity private key.
+ * Removes all discovered peer records (addresses, protocols, metadata) so the
+ * network starts with a clean peer slate on next start. The identity key at
+ * `/local/privatekey` is kept so the peer ID remains the same.
+ * The network must be stopped.
+ */
+export async function clearPeerstoreOnly(dataDir: string): Promise<void> {
+	const datastorePath = join(dataDir, 'datastore');
+	const ds = new SqliteDatastore(datastorePath);
+	ds.open();
+	try {
+		ds.clearPeerstore();
+	} finally {
+		ds.close();
+	}
+}

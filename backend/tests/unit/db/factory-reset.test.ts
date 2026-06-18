@@ -45,6 +45,21 @@ describe('clearLishData', () => {
 		clearLishData(db);
 		expect(insertLish(db, 'd')).toBe(1); // reset — would be 4 without the sqlite_sequence wipe
 	});
+
+	it('cascade-deletes lishs_files and lishs_chunks when the lishs row is wiped', () => {
+		const db = freshDB();
+		const internalID = insertLish(db, 'cascade-test');
+		// Insert a child file row and a grandchild chunk row.
+		const fileID = Number(db.run('INSERT INTO lishs_files (id_lishs, path, size) VALUES (?, ?, ?)', [internalID, 'file.txt', 100]).lastInsertRowid);
+		db.run('INSERT INTO lishs_chunks (id_lishs_files, checksum, have) VALUES (?, ?, ?)', [fileID, 'sha256:abcd', 0]);
+		expect(rowCount(db, 'lishs_files')).toBe(1);
+		expect(rowCount(db, 'lishs_chunks')).toBe(1);
+		clearLishData(db);
+		// CASCADE must remove orphaned child rows along with the parent.
+		expect(rowCount(db, 'lishs')).toBe(0);
+		expect(rowCount(db, 'lishs_files')).toBe(0);
+		expect(rowCount(db, 'lishs_chunks')).toBe(0);
+	});
 });
 
 describe('clearLishnetData', () => {

@@ -20,10 +20,13 @@
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 
 	// Each category defaults to ON so a plain confirm wipes everything.
+	// "peers" defaults to OFF: it is an advanced-use option and does not
+	// require wiping the identity, so it is opt-in rather than opt-out.
 	let resetSettings = $state(true);
 	let resetIdentity = $state(true);
 	let resetDownloads = $state(true);
 	let resetNetworks = $state(true);
+	let resetPeers = $state(false);
 	let errorMessage = $state('');
 	let showConfirm = $state(false);
 	// View phase: the form, a spinner while wiping, then the per-category results.
@@ -31,7 +34,7 @@
 	// Per-category outcomes shown on the done page — one alert each.
 	let resultAlerts = $state<Array<{ type: 'info' | 'error'; message: string }>>([]);
 
-	let anySelected = $derived(resetSettings || resetIdentity || resetDownloads || resetNetworks);
+	let anySelected = $derived(resetSettings || resetIdentity || resetDownloads || resetNetworks || resetPeers);
 
 	function askReset(): void {
 		errorMessage = '';
@@ -48,9 +51,9 @@
 		resultAlerts = [];
 		phase = 'running';
 		try {
-			const res = await api.settings.factoryReset({ settings: resetSettings, identity: resetIdentity, downloads: resetDownloads, networks: resetNetworks });
+			const res = await api.settings.factoryReset({ settings: resetSettings, identity: resetIdentity, downloads: resetDownloads, networks: resetNetworks, peers: resetPeers });
 			// Each category is wiped independently — one alert per category on the done page.
-			const labelKey: Record<string, string> = { settings: 'optionSettings', identity: 'optionIdentity', downloads: 'optionDownloads', networks: 'optionNetworks' };
+			const labelKey: Record<string, string> = { settings: 'optionSettings', identity: 'optionIdentity', downloads: 'optionDownloads', networks: 'optionNetworks', peers: 'optionPeers' };
 			resultAlerts = res.results.map(r => {
 				const category = tt('settings.factoryReset.' + labelKey[r.category]);
 				return r.ok ? { type: 'info' as const, message: tt('settings.factoryReset.categoryDone', { category }) } : { type: 'error' as const, message: tt('settings.factoryReset.categoryFailed', { category, detail: r.detail ?? '' }) };
@@ -153,12 +156,15 @@
 			<div role="group" data-mouse-activate-area={areaID}>
 				<SwitchRow label={$t('settings.factoryReset.optionNetworks')} checked={resetNetworks} position={[0, 3]} onToggle={() => (resetNetworks = !resetNetworks)} />
 			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.factoryReset.optionPeers')} checked={resetPeers} position={[0, 4]} onToggle={() => (resetPeers = !resetPeers)} />
+			</div>
 			<Alert type="warning" message={$t('settings.factoryReset.warning')} />
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />
 			{/if}
 		</div>
-		<ButtonBar justify="center" basePosition={[0, 4]}>
+		<ButtonBar justify="center" basePosition={[0, 5]}>
 			<Button icon="/img/factory-reset.svg" label={$t('settings.factoryReset.reset')} onConfirm={askReset} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
