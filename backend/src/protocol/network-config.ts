@@ -20,7 +20,6 @@ import { networkInterfaces } from 'os';
 import { isLinkLocalIp } from '@libp2p/utils';
 import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
-import { productEnvPrefix } from '@shared';
 import { trace } from '../logger.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
@@ -216,7 +215,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				const deny = shouldDenyDial(ma, getLocalCidrs());
 				if (deny) {
 					// Bounded debug sample so denied-dial flood does not overwhelm logs.
-					const dbg = ((globalThis as any).__libershareDenyDialDbg ??= new Set<string>());
+					const dbg = ((globalThis as any).__p2pfsDenyDialDbg ??= new Set<string>());
 					if (dbg.size < 50) {
 						const ip = extractFirstIPv4(ma) ?? '?';
 						const addr = ma?.toString?.() ?? String(ma);
@@ -306,9 +305,9 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 						// Optional bounded trace of score callbacks. Off by default to keep production
 						// memory footprint clean — the `seen`/`trustedLogged` Sets would otherwise
 						// grow with every distinct peer encountered for the lifetime of the process.
-						// Enable via `<PREFIX>_TRACE_PX=1` when investigating PX trust decisions.
-						if (process.env[`${productEnvPrefix}_TRACE_PX`] === '1') {
-							const dbg = ((globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
+						// Enable via `P2PFS_TRACE_PX=1` when investigating PX trust decisions.
+						if (process.env['P2PFS_TRACE_PX'] === '1') {
+							const dbg = ((globalThis as any).__p2pfsPXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
 							if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
 								dbg.seen.add(pid);
 								trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} bootstrap=${isBootstrapPeer} trustedSetSize=${trustedPXPeerIDs.size} bootstrapSetSize=${bootstrapPeerIDs.size}`);

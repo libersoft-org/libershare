@@ -35,7 +35,9 @@ export interface GossipsubPatchDeps {
  * once sendRpc/push handles rejected async writes and evicts dead streams itself.
  */
 export function applyGossipsubOutboundPushPatch(pubsub: any): void {
-	if (!pubsub || pubsub.__libershareOutboundPatched) return;
+	// Idempotency guard: the push() wrap is installed on the shared OutboundStream
+	// prototype, so re-running this must be a no-op once the marker is set.
+	if (!pubsub || pubsub.__p2pfsOutboundPatched) return;
 	const trySetup = () => {
 		try {
 			const streamsOutbound: Map<any, any> | undefined = pubsub.streamsOutbound;
@@ -43,7 +45,7 @@ export function applyGossipsubOutboundPushPatch(pubsub: any): void {
 			const sample = streamsOutbound.values().next().value;
 			if (!sample) return false;
 			const proto = Object.getPrototypeOf(sample);
-			if (!proto || typeof proto.push !== 'function' || proto.__libershareOutboundPatched) return true;
+			if (!proto || typeof proto.push !== 'function' || proto.__p2pfsOutboundPatched) return true;
 			const original = proto.push;
 			// Forward all arguments via rest+apply so a future upstream signature
 			// extension (e.g. push(data, opts)) is preserved transparently.
@@ -82,7 +84,7 @@ export function applyGossipsubOutboundPushPatch(pubsub: any): void {
 						}
 						// Rate-limit so a flapping peer (NAT churn / Wi-Fi roam) cannot fill the log
 						// with thousands of identical lines per hour. One warn line per peer per 5 s.
-						const lastLog: Map<string, number> = ((gs as any).__libershareGsPushFailLogged ??= new Map());
+						const lastLog: Map<string, number> = ((gs as any).__p2pfsGsPushFailLogged ??= new Map());
 						const now = Date.now();
 						const key = evicted || 'unknown';
 						if ((lastLog.get(key) ?? 0) + 5000 < now) {
@@ -93,8 +95,8 @@ export function applyGossipsubOutboundPushPatch(pubsub: any): void {
 				}
 				return result;
 			};
-			proto.__libershareOutboundPatched = true;
-			pubsub.__libershareOutboundPatched = true;
+			proto.__p2pfsOutboundPatched = true;
+			pubsub.__p2pfsOutboundPatched = true;
 			console.log('[NET] gossipsub OutboundStream.push() wrapped (sync-throw-in-async bug mitigation)');
 			return true;
 		} catch (err: any) {
@@ -115,7 +117,8 @@ export function applyGossipsubOutboundPushPatch(pubsub: any): void {
  * explicitly trusted by local operator policy. Normal PRUNE/backoff semantics stay intact.
  */
 export function applyGossipsubPXIngressPatch(pubsub: any, deps: GossipsubPatchDeps): void {
-	if (!pubsub || pubsub.__libersharePXIngressPatched) return;
+	// Idempotency guard: handleReceivedRpc is wrapped only once per pubsub instance.
+	if (!pubsub || pubsub.__p2pfsPXIngressPatched) return;
 	if (typeof pubsub.handleReceivedRpc !== 'function') {
 		throw new Error('PX ingress filter unavailable: gossipsub handleReceivedRpc missing');
 	}
@@ -158,7 +161,7 @@ export function applyGossipsubPXIngressPatch(pubsub: any, deps: GossipsubPatchDe
 
 		return original(from, { ...rpc, control: { ...rpc.control, prune } });
 	};
-	pubsub.__libersharePXIngressPatched = true;
+	pubsub.__p2pfsPXIngressPatched = true;
 	console.log('[NET] gossipsub PX ingress filter enabled');
 }
 

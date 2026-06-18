@@ -1,6 +1,5 @@
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { parseAcceptPXThreshold } from './constants.ts';
-import { productEnvPrefix } from '@shared';
 import { trace } from '../logger.ts';
 import { type Settings } from '../settings.ts';
 
@@ -81,7 +80,7 @@ export function dumpGossipsubScores(deps: StatusLoggerDeps, connectedPeers: any[
 	const { pubsub, settings, lastScores } = deps;
 	// Gossipsub peer scoring — dump top/bottom scores + deltas.
 	// INFO: summary (top 3 + bottom 3 + threshold crossings).
-	// DEBUG (trace): per-peer full breakdown when LIBERSHARE_SCORE_DEBUG=1.
+	// DEBUG (trace): per-peer full breakdown when P2PFS_SCORE_DEBUG=1.
 	try {
 		const scoreSvc: any = (pubsub as any)?.score;
 		if (scoreSvc && typeof scoreSvc.score === 'function') {
@@ -112,7 +111,7 @@ export function dumpGossipsubScores(deps: StatusLoggerDeps, connectedPeers: any[
 				const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
 				console.debug(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
 			}
-			if (process.env[`${productEnvPrefix}_SCORE_DEBUG`] === '1' && entries.length > 0) {
+			if (process.env['P2PFS_SCORE_DEBUG'] === '1' && entries.length > 0) {
 				const fullDump = entries.map(e => `${e.id.slice(0, 16)}:${e.score.toFixed(2)}`).join(' ');
 				trace(`[NET] full scores: ${fullDump}`);
 			}
