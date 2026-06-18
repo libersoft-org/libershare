@@ -217,7 +217,14 @@ export interface PeerTrackerDebugEntry {
 	ageSinceLastActivityMs: number;
 }
 
-export function getDebugSnapshot(lishID?: string): { now: number; entries: PeerTrackerDebugEntry[]; cumulativeKeys: string[] } {
+/** Diagnostic snapshot of the peer activity tracker (current time, per-peer entries, and known cumulative-byte keys). */
+export interface IPeerTrackerDebugSnapshot {
+	now: number;
+	entries: PeerTrackerDebugEntry[];
+	cumulativeKeys: string[];
+}
+
+export function getDebugSnapshot(lishID?: string): IPeerTrackerDebugSnapshot {
 	const now = Date.now();
 	const out: PeerTrackerDebugEntry[] = [];
 	for (const [k, entry] of entries) {

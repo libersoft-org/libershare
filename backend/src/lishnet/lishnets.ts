@@ -3,7 +3,7 @@ import { Network } from '../protocol/network.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type BootstrapStatus, CodedError, ErrorCodes } from '@shared';
+import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, CodedError, ErrorCodes } from '@shared';
 import { lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
 
 /**
@@ -186,7 +186,7 @@ export class Networks {
 	/**
 	 * Get peers with connection type info for a specific lishnet.
 	 */
-	getTopicPeersInfo(id: string): { peerID: string; direct: number; relay: number }[] {
+	getTopicPeersInfo(id: string): PeerConnectionInfo[] {
 		return this.network.getTopicPeersInfo(id);
 	}
 
@@ -195,7 +195,7 @@ export class Networks {
 	 * the per-network gossipsub-mesh health snapshot (mesh size, time since
 	 * the last graft/prune, median peer score).
 	 */
-	getMeshHealth(id: string): { meshSize: number; stableSinceMs: number | null; medianScore: number | null } {
+	getMeshHealth(id: string): IMeshHealth {
 		return this.network.getMeshHealth(id);
 	}
 

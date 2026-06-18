@@ -49,6 +49,17 @@ export interface PeerConnectionInfo {
 	relay: number;
 }
 
+/**
+ * Per-network gossipsub mesh health snapshot (mesh size, time since the last
+ * graft/prune, median peer score). Returned by the network/lishnet layer and
+ * surfaced over the `peers:count` event.
+ */
+export interface IMeshHealth {
+	meshSize: number;
+	stableSinceMs: number | null;
+	medianScore: number | null;
+}
+
 export interface PeerListEntry {
 	peerID: string;
 	networks: Array<{ networkID: string; networkName: string }>;
@@ -229,9 +240,27 @@ export interface FsListResult {
 	error?: string | undefined;
 }
 
+// Result of `fs.exists`.
+export interface IPathExistsResult {
+	exists: boolean;
+	type?: 'file' | 'directory';
+}
+
+// Result of file-writing operations (`fs.writeText`, `fs.writeCompressed`, `settings.exportToFile`).
+export interface IWriteResult {
+	success: boolean;
+	error?: string;
+}
+
 // API response wrappers
 export interface SuccessResponse {
 	success: boolean;
+}
+
+// Result of `settings.applyImported`: how many keys were applied vs. skipped.
+export interface ISettingsImportResult {
+	applied: number;
+	skipped: string[];
 }
 
 export interface CreateLISHResponse {

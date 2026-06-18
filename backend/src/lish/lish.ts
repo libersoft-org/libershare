@@ -150,10 +150,17 @@ interface InodeMap {
 	[inode: string]: string; // inode -> first file path encountered
 }
 
+// A regular file discovered during a directory scan, with its size and chunk count.
+export interface ScannedFile {
+	path: string;
+	size: number;
+	chunks: number;
+}
+
 // Scan directory recursively to collect all regular files (without computing checksums)
 // Used to send the complete file list to the frontend before starting checksum computation
-async function scanFiles(dirPath: string, basePath: string, chunkSize: number, inodeMap: { [key: string]: boolean } = {}): Promise<{ path: string; size: number; chunks: number }[]> {
-	const result: { path: string; size: number; chunks: number }[] = [];
+async function scanFiles(dirPath: string, basePath: string, chunkSize: number, inodeMap: { [key: string]: boolean } = {}): Promise<ScannedFile[]> {
+	const result: ScannedFile[] = [];
 	const glob = new Bun.Glob('*');
 	const scannedPaths: string[] = [];
 	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) scannedPaths.push(entry);
