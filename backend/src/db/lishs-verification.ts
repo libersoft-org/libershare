@@ -98,7 +98,15 @@ export function isVerified(db: Database, lishID: LISHid): boolean {
  * Get files with their internal IDs, chunk checksums and chunk row IDs, for verification.
  * Chunk row IDs are used to perform O(1) mark updates without re-scanning chunks per update.
  */
-export function getFilesForVerification(db: Database, lishID: LISHid): Array<{ fileInternalID: number; path: string; checksums: string[]; chunkRowIDs: number[] }> | null {
+/** A file with its internal DB ID, chunk checksums and chunk row IDs, used during verification. */
+export interface FileForVerification {
+	fileInternalID: number;
+	path: string;
+	checksums: string[];
+	chunkRowIDs: number[];
+}
+
+export function getFilesForVerification(db: Database, lishID: LISHid): FileForVerification[] | null {
 	const internalID = getInternalID(db, lishID);
 	if (internalID === null) return null;
 	const files = db.query<{ id: number; path: string }, [number]>('SELECT id, path FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
