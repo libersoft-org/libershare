@@ -22,6 +22,12 @@ export interface AllocationProgress {
 	totalBytes: number;
 }
 
+/** Counts of newly created vs. already-present (skipped) files from an allocation pass. */
+export interface IAllocationResult {
+	created: number;
+	skipped: number;
+}
+
 const ZERO_BUFFER = new Uint8Array(1024 * 1024); // 1MB reusable zero-fill buffer
 const PROGRESS_EMIT_INTERVAL = 50 * 1024 * 1024; // emit progress every 50MB
 
@@ -84,7 +90,7 @@ export class FileAllocator {
 	 *
 	 * @returns counts of newly created and skipped files
 	 */
-	async allocateStructure(lish: IStoredLISH, onProgress?: (p: AllocationProgress) => void, signal?: AbortSignal): Promise<{ created: number; skipped: number }> {
+	async allocateStructure(lish: IStoredLISH, onProgress?: (p: AllocationProgress) => void, signal?: AbortSignal): Promise<IAllocationResult> {
 		const startTime = Date.now();
 		if (lish.directories) {
 			for (const dir of lish.directories) {
@@ -132,7 +138,7 @@ export class FileAllocator {
 
 	// ======== internals ========
 
-	private async allocateFilesInternal(lish: IStoredLISH, fileIndexes: readonly number[], onProgress: ((p: AllocationProgress) => void) | undefined, signal: AbortSignal | undefined): Promise<{ created: number; skipped: number }> {
+	private async allocateFilesInternal(lish: IStoredLISH, fileIndexes: readonly number[], onProgress: ((p: AllocationProgress) => void) | undefined, signal: AbortSignal | undefined): Promise<IAllocationResult> {
 		let created = 0;
 		let skipped = 0;
 		if (!lish.files) return { created, skipped };

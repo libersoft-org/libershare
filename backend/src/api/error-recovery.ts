@@ -11,10 +11,15 @@ export interface RecoveryState {
 	scheduledAt: number;
 }
 
+interface RecoveryLISHRef {
+	directory?: string;
+	id: string;
+}
+
 interface RecoveryDeps {
 	attemptRecover: (lishID: string, downloadWasEnabled: boolean, uploadWasEnabled: boolean) => Promise<boolean>;
 	broadcast: (event: string, data: any) => void;
-	getLISH: (lishID: string) => { directory?: string; id: string } | null;
+	getLISH: (lishID: string) => RecoveryLISHRef | null;
 	checkAccess: (path: string) => Promise<void>;
 }
 
