@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { Key } from 'interface-datastore';
 
 // SqliteDatastore is tested by directly exercising its SQL statements against
 // an in-memory database so no filesystem cleanup is needed.
