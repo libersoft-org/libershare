@@ -304,7 +304,8 @@
 			"autoErrorRecovery": "Automatic error recovery",
 			"autoConnectNewNetworks": "Automatically connect to newly added networks",
 			"mdnsEnabled": "Discover peers on local network (mDNS)",
-			"mdnsInterval": "Local network discovery interval (s)"
+			"mdnsInterval": "Local network discovery interval (s)",
+			"upnpEnabled": "Automatic router port forwarding (UPnP)"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",

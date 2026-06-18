@@ -13,6 +13,7 @@ import { ping } from '@libp2p/ping';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { autoNATv2 } from '@libp2p/autonat-v2';
+import { uPnPNAT } from '@libp2p/upnp-nat';
 import { simpleMetrics } from '@libp2p/simple-metrics';
 import { onLibp2pMetrics } from '../monitoring/libp2p-metrics.ts';
 import { dcutr } from '@libp2p/dcutr';
@@ -391,6 +392,13 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	config.services.autonat = autoNATv2();
 	config.services.dcutr = dcutr();
 	console.log('✓ AutoNAT v2 + DCUtR enabled');
+	// UPnP-NAT asks the local router (via IGD) to open the incoming port and
+	// maps it back to this host, easing inbound reachability behind a NAT.
+	// Gated behind an opt-in flag because it mutates router state — default OFF.
+	if (allSettings.network?.upnpEnabled) {
+		config.services.upnpNAT = uPnPNAT();
+		console.log('✓ UPnP-NAT port forwarding enabled');
+	}
 	// Build peerDiscovery array: bootstrap (if peers provided) + mDNS (if enabled).
 	const peerDiscovery: any[] = [];
 
