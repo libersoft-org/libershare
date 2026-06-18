@@ -1,6 +1,10 @@
 <script lang="ts" module>
+	export interface MenuButtonRegistration {
+		index: number;
+		unregister: () => void;
+	}
 	export type MenuButtonsContext = {
-		register: (button: { onConfirm?: (() => void) | undefined }) => { index: number; unregister: () => void };
+		register: (button: { onConfirm?: (() => void) | undefined }) => MenuButtonRegistration;
 		isSelected: (index: number) => boolean;
 		isPressed: (index: number) => boolean;
 		handleClick: (index: number) => void;

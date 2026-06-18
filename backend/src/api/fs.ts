@@ -66,7 +66,7 @@ interface FsHandlers {
 	mkdir: (p: { path: string }) => Promise<void>;
 	open: (p: { path: string }) => Promise<void>;
 	rename: (p: { path: string; newName: string }) => Promise<void>;
-	exists: (p: { path: string }) => Promise<{ exists: boolean; type?: 'file' | 'directory' }>;
+	exists: (p: { path: string }) => Promise<IPathExistsResult>;
 	writeText: (p: { path: string; content: string }) => Promise<SuccessResponse>;
 	writeCompressed: (p: { path: string; content: string; algorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 }
