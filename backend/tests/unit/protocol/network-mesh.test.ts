@@ -380,8 +380,12 @@ describe('statusInterval — periodic peer count refresh', () => {
 		const logCalls: string[] = [];
 		const origDebug = console.debug;
 		const origLog = console.log;
-		console.debug = (...args: any[]) => { debugCalls.push(args.join(' ')); };
-		console.log = (...args: any[]) => { logCalls.push(args.join(' ')); };
+		console.debug = (...args: any[]) => {
+			debugCalls.push(args.join(' '));
+		};
+		console.log = (...args: any[]) => {
+			logCalls.push(args.join(' '));
+		};
 		try {
 			const fakeNode = {
 				getConnections: () => [],
@@ -392,11 +396,7 @@ describe('statusInterval — periodic peer count refresh', () => {
 				getSubscribers: () => [],
 			};
 			const fakeSettings = {} as any;
-			logStatusDebug(
-				{ node: fakeNode, pubsub: fakePubsub, settings: fakeSettings, lastScores: new Map() },
-				[],
-				[]
-			);
+			logStatusDebug({ node: fakeNode, pubsub: fakePubsub, settings: fakeSettings, lastScores: new Map() }, [], []);
 		} finally {
 			console.debug = origDebug;
 			console.log = origLog;

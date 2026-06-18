@@ -31,7 +31,8 @@ export function logStatusDebug(deps: StatusLoggerDeps, connectedPeers: any[], al
 		});
 		return `${p.toString().slice(0, 12)}[${types.join(',')}]`;
 	});
-	const topicInfo = pubsub!.getTopics()
+	const topicInfo = pubsub!
+		.getTopics()
 		.map((t: string) => {
 			const subs = pubsub!.getSubscribers(t);
 			const mesh = (pubsub as any).getMeshPeers ? (pubsub as any).getMeshPeers(t) : [];
