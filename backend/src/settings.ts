@@ -61,9 +61,9 @@ export interface SettingsData {
 		mdnsEnabled: boolean;
 		mdnsInterval: number;
 		/**
-		 * Opt-in UPnP-NAT port forwarding. When true, libp2p asks the local router
-		 * (IGD) to forward the incoming port to this host. Default false because it
-		 * mutates router state — a more cautious default than mDNS.
+		 * UPnP-NAT port forwarding. When true, libp2p asks the local router (IGD)
+		 * to forward the incoming port to this host. Default true so NAT'd nodes
+		 * become reachable out of the box; set false to leave router state untouched.
 		 */
 		upnpEnabled: boolean;
 		searchTimeout: number; // Browse network → LISH search timeout in milliseconds. Search session ends after this.
@@ -186,8 +186,8 @@ const DEFAULT_SETTINGS: SettingsData = {
 		announceAddresses: [],
 		mdnsEnabled: true,
 		mdnsInterval: 30000,
-		// UPnP changes router state, so opt-in by default unlike mDNS.
-		upnpEnabled: false,
+		// UPnP enabled by default so NAT'd nodes auto-open their port for reachability.
+		upnpEnabled: true,
 		searchTimeout: 30_000,
 		peerExchange: {
 			// Enabled by default: bootstrap peers (operator-configured in lishnet joins)
