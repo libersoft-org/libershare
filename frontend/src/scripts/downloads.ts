@@ -881,11 +881,21 @@ export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
 	{ id: 'delete', icon: '/img/del.svg', getLabel: t => t('common.delete') },
 ];
 
+/** Result of {@link handleDownloadToolbarAction}: whether it was handled internally plus which UI follow-up (if any) the caller must perform. */
+export interface IDownloadToolbarActionResult {
+	handled: boolean;
+	needsBack?: boolean;
+	needsDelete?: boolean;
+	needsExport?: boolean;
+	needsVerify?: boolean;
+	needsMove?: boolean;
+}
+
 /**
  * Handle toolbar action for download detail
  * @returns true if action was handled internally, false if needs UI handling (e.g., onBack)
  */
-export function handleDownloadToolbarAction(actionID: DownloadToolbarActionID): { handled: boolean; needsBack?: boolean; needsDelete?: boolean; needsExport?: boolean; needsVerify?: boolean; needsMove?: boolean } {
+export function handleDownloadToolbarAction(actionID: DownloadToolbarActionID): IDownloadToolbarActionResult {
 	switch (actionID) {
 		case 'back':
 			return { handled: false, needsBack: true };

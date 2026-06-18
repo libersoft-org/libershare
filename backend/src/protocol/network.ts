@@ -15,7 +15,7 @@ import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
-import { CodedError, ErrorCodes, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
@@ -28,6 +28,18 @@ export type { SearchLishsMessage } from './lish-handlers.ts';
 export { isSearchAdvertisableLish } from './lish-handlers.ts';
 import { PeerAnnounceManager, type PeerAnnounceMessage } from './peer-announce.ts';
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
+
+/** Result of dialing a protocol stream: the opened stream plus how the underlying connection is routed. */
+export interface IDialResult {
+	stream: Stream;
+	connectionType: 'DIRECT' | 'RELAY' | 'DCUtR';
+}
+
+/** Exported node identity: peer ID plus the private key in libp2p protobuf format. */
+export interface IExportedIdentity {
+	peerID: string;
+	privateKeyBytes: Uint8Array;
+}
 
 /**
  * Per-network entry of the `peers:count` API event. The `count` field is the
@@ -1161,8 +1173,8 @@ export class Network {
 	 * to interpret it, so the same logic works for a 3-peer LAN and a 300-peer
 	 * fleet.
 	 */
-	getMeshHealth(networkID: string): { meshSize: number; stableSinceMs: number | null; medianScore: number | null } {
-		const empty = { meshSize: 0, stableSinceMs: null, medianScore: null };
+	getMeshHealth(networkID: string): IMeshHealth {
+		const empty: IMeshHealth = { meshSize: 0, stableSinceMs: null, medianScore: null };
 		if (!this.pubsub) return empty;
 		const topic = lishTopic(networkID);
 		// `mesh` and `score` are declared `readonly public` on `GossipSub`
@@ -1264,12 +1276,12 @@ export class Network {
 		await connectToPeerFn(this.node, multiaddr);
 	}
 
-	async dialProtocol(multiaddrs: any[], protocol: string): Promise<{ stream: Stream; connectionType: 'DIRECT' | 'RELAY' | 'DCUtR' }> {
+	async dialProtocol(multiaddrs: any[], protocol: string): Promise<IDialResult> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
 		return dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol);
 	}
 
-	async dialProtocolByPeerId(peerID: string, protocol: string): Promise<{ stream: Stream; connectionType: 'DIRECT' | 'RELAY' | 'DCUtR' }> {
+	async dialProtocolByPeerId(peerID: string, protocol: string): Promise<IDialResult> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
 		return dialProtocolByPeerIdFn(this.node, this.dcutrPeers, peerID, protocol);
 	}
@@ -1277,7 +1289,7 @@ export class Network {
 	/**
 	 * Get node info (peerID, addresses).
 	 */
-	getNodeInfo(): { peerID: string; addresses: string[] } | null {
+	getNodeInfo(): NetworkNodeInfo | null {
 		if (!this.node) return null;
 		return {
 			peerID: this.node.peerId.toString(),
@@ -1290,7 +1302,7 @@ export class Network {
 	 * Works while the network is running (reads from in-memory node).
 	 * Returns null if the node is not running.
 	 */
-	exportIdentity(): { peerID: string; privateKeyBytes: Uint8Array } | null {
+	exportIdentity(): IExportedIdentity | null {
 		if (!this.node || !this.currentPrivateKey) return null;
 		const bytes = privateKeyToProtobuf(this.currentPrivateKey);
 		return { peerID: this.node.peerId.toString(), privateKeyBytes: bytes };
@@ -1335,7 +1347,7 @@ export class Network {
 	/**
 	 * Get topic peers with connection type info (direct vs relay).
 	 */
-	getTopicPeersInfo(networkID: string): { peerID: string; direct: number; relay: number }[] {
+	getTopicPeersInfo(networkID: string): PeerConnectionInfo[] {
 		if (!this.pubsub || !this.node) return [];
 		const topic = lishTopic(networkID);
 		try {

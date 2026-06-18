@@ -116,3 +116,13 @@ export interface ILISHDetail {
 	totalUploadedBytes: number;
 	totalDownloadedBytes: number;
 }
+
+// Result of `lishs.list`: the summaries plus the transient per-LISH activity sets.
+export interface ILISHListResult {
+	items: ILISHSummary[];
+	verifying: string | null;
+	pendingVerification: string[];
+	moving: string[];
+	uploadEnabled: string[];
+	downloadEnabled: string[];
+}
