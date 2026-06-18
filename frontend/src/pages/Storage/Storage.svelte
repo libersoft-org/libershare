@@ -57,8 +57,9 @@
 	}));
 
 	// Open the Create LISH page with the chosen storage path prefilled as the data source.
+	// Pass backPathIDs so that Back in Create LISH returns here instead of to the Downloads page.
 	function handleShare(path: string): void {
-		navigateToAbsolutePath(['downloads', 'create-lish'], { initialDataPath: path });
+		navigateToAbsolutePath(['downloads', 'create-lish'], { initialDataPath: path, backPathIDs: ['localStorage'] });
 	}
 
 	async function handleImportBack(): Promise<void> {
