@@ -2,7 +2,7 @@ import { createLibp2p } from 'libp2p';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { SqliteDatastore } from './datastore.ts';
 import { privateKeyToProtobuf } from '@libp2p/crypto/keys';
-import { loadOrCreatePrivateKey, writeIdentityKey as writeIdentityKeyToDatastore, clearIdentityKey as clearIdentityKeyFromDatastore, clearDatastore as clearDatastoreDir } from './identity-store.ts';
+import { loadOrCreatePrivateKey, writeIdentityKey as writeIdentityKeyToDatastore, clearIdentityKey as clearIdentityKeyFromDatastore, clearDatastore as clearDatastoreDir, clearPeerstoreOnly } from './identity-store.ts';
 import { type Libp2p } from 'libp2p';
 import { type PeerId as PeerID, type PrivateKey, type Stream } from '@libp2p/interface';
 import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
@@ -1334,6 +1334,16 @@ export class Network {
 	async clearDatastore(): Promise<void> {
 		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing datastore');
 		await clearDatastoreDir(this.dataDir);
+	}
+
+	/**
+	 * Wipe only the peerstore entries, preserving the identity private key.
+	 * The network must be stopped. After restart the node keeps its peer ID
+	 * but discovers peers fresh. Used by the factory reset "peers" category.
+	 */
+	async clearPeerstore(): Promise<void> {
+		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing peerstore');
+		await clearPeerstoreOnly(this.dataDir);
 	}
 
 	/**
