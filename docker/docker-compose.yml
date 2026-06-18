@@ -27,8 +27,8 @@ services:
       - DAC_READ_SEARCH
     command: ["--datadir", "/app/config", "--host", "0.0.0.0", "--port", "${BACKEND_PORT:-1158}"]
     environment:
-      LIBERSHARE_MEMTRACE: ${LIBERSHARE_MEMTRACE:-0}
-      LIBERSHARE_STORAGE_ROOT: /app/storage
+      MEMTRACE: ${MEMTRACE:-0}
+      STORAGE_ROOT: /app/storage
       # Read by `--healthcheck` self-flag so the probe targets the same port as
       # the live API server when BACKEND_PORT is overridden via .env.
       BACKEND_PORT: ${BACKEND_PORT:-1158}
@@ -58,8 +58,8 @@ services:
       - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-1158}:${BACKEND_PORT:-1158}"
       - "9091:9090"
     volumes:
-      - ${LIBERSHARE_CONFIG_SOURCE:-./config}:/app/config
-      - ${LIBERSHARE_STORAGE_SOURCE:-./storage}:/app/storage
+      - ${CONFIG_SOURCE:-./config}:/app/config
+      - ${STORAGE_SOURCE:-./storage}:/app/storage
     tmpfs:
       - /tmp
     networks:
