@@ -1,25 +1,32 @@
 import { createLibp2p } from 'libp2p';
 import { KEEP_ALIVE } from '@libp2p/interface';
 import { SqliteDatastore } from './datastore.ts';
-import { generateKeyPair, privateKeyToProtobuf, privateKeyFromProtobuf } from '@libp2p/crypto/keys';
+import { privateKeyToProtobuf } from '@libp2p/crypto/keys';
+import { loadOrCreatePrivateKey, writeIdentityKey as writeIdentityKeyToDatastore, clearIdentityKey as clearIdentityKeyFromDatastore, clearDatastore as clearDatastoreDir } from './identity-store.ts';
 import { type Libp2p } from 'libp2p';
 import { type PeerId as PeerID, type PrivateKey, type Stream } from '@libp2p/interface';
 import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
 import { join } from 'path';
-import { existsSync } from 'fs';
 import { trace } from '../logger.ts';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { LISH_PROTOCOL, LISHClient, handleLISHProtocol, isUploadAdvertisable, isUploadEnabled } from './lish-protocol.ts';
-import { isBusy } from '../api/busy.ts';
+import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
 import { buildLibp2pConfig } from './network-config.ts';
 import { type WantMessage } from './downloader.ts';
-import { lishTopic, LISH_TOPIC_PREFIX, normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
+import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
-import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@chainsafe/libp2p-gossipsub/score';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
+import { applyGossipsubPatches } from './gossipsub-patches.ts';
+import { BootstrapStatusTracker } from './bootstrap-status.ts';
+import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
+import { classifyConnection as classifyConnectionFn, dialProtocol as dialProtocolFn, dialProtocolByPeerId as dialProtocolByPeerIdFn, connectToPeer as connectToPeerFn } from './dial-helpers.ts';
+import { LISHServingHandlers, type SearchLishsMessage } from './lish-handlers.ts';
+export type { SearchLishsMessage } from './lish-handlers.ts';
+export { isSearchAdvertisableLish } from './lish-handlers.ts';
+import { PeerAnnounceManager, type PeerAnnounceMessage } from './peer-announce.ts';
 type PubSub = any; // PubSub type - using any since the exact type isn't exported from @libp2p/interface v3
 
 /** Result of dialing a protocol stream: the opened stream plus how the underlying connection is routed. */
@@ -32,22 +39,6 @@ export interface IDialResult {
 export interface IExportedIdentity {
 	peerID: string;
 	privateKeyBytes: Uint8Array;
-}
-
-/**
- * Pubsub query: "Find LISHs whose name or ID matches `query`".
- * Sent by a peer that opened the "Browse network" page; received by every subscriber to the topic.
- * Match is case-insensitive substring on `id` and (if present) `name`.
- * Responses come back as unicast `searchResult` messages on the LISH protocol (see lish-protocol.ts).
- */
-export interface SearchLishsMessage {
-	type: 'searchLishs';
-	searchID: string;
-	query: string;
-}
-
-export function isSearchAdvertisableLish(lish: import('@shared').IStoredLISH): boolean {
-	return isUploadAdvertisable(lish.id);
 }
 
 /**
@@ -78,52 +69,11 @@ interface PubsubEvent {
 	from?: { toString(): string };
 }
 /**
- * Gossip-based peer-discovery bootstrap.
- *
- * Periodically each node broadcasts its reachable multiaddrs (and a subset of its
- * known peerStore) on every lishnet topic it is subscribed to. Receivers parse the
- * list and pass it through `addBootstrapPeers`, which dedupes against known peers
- * and calls `dial()`. This augments gossipsub PX (which only propagates on PRUNE)
- * and libp2p autodial (which is gated by peerStore) in topologies where bootstrap
- * hubs are few and NATed fleet members rely on relay reservations that expire
- * before libp2p would normally re-dial.
- */
-interface PeerAnnounceMessage {
-	type: 'peer-announce';
-	/** Multiaddrs (as strings) we claim to be reachable on, including /p2p/<peerID>. */
-	multiaddrs: string[];
-}
-/**
- * Adaptive peer-announce interval. Instead of a fixed cadence that spams the network
- * once saturated, the emitter picks an interval based on peerStore size — aggressive
- * when isolated, lazy when near full visibility. Traffic at saturation is reduced
- * roughly 6× compared to a fixed 20s cadence.
- */
-const PEER_ANNOUNCE_INTERVAL_ISOLATED_MS = 15_000; // peerStore < 20 (cold start / edge peer)
-const PEER_ANNOUNCE_INTERVAL_STEADY_MS = 30_000; // peerStore 20..80 (mid-convergence)
-const PEER_ANNOUNCE_INTERVAL_SATURATED_MS = 180_000; // peerStore > 80 (near full visibility)
-const PEER_ANNOUNCE_JITTER_RATIO = 0.25; // ±25% jitter of chosen interval (thunder-herd avoidance)
-/** Minimum peerStore size before we consider ourselves worth advertising. */
-const PEER_ANNOUNCE_MIN_PEER_STORE = 5;
-/** Hard cap on number of multiaddrs we include in a single announce (safety bound). */
-const PEER_ANNOUNCE_MAX_ADDRS = 32;
-/**
- * Cap on TOTAL multiaddrs in a peer-announce (self + peerStore transitive).
- * 128 covers ~half a 100-peer fleet per announce; receivers fill in the rest
- * from their own peerStore + subsequent announce cycles. Halving from 256
- * cuts saturation-time announce bandwidth ~50% with negligible discovery
- * latency cost (sub-2 announce cycles to fill peerStore).
- */
-const PEER_ANNOUNCE_MAX_TOTAL_ADDRS = 128;
-/** Max addrs we take from a single known peer when including transitive list. */
-const PEER_ANNOUNCE_MAX_ADDRS_PER_PEER = 3;
-/**
  * Handler for parsed pubsub topic messages.
  * `from` is the original publisher peer ID (verified by libp2p) when available —
  * used for per-source rate-limiting in handleWant.
  */
 type TopicHandler = (data: Record<string, any>, from?: string) => void;
-const PRIVATE_KEY_PATH = '/local/privatekey';
 const AUTODIAL_WORKAROUND = true;
 /** Minimum interval between two `have` responses sent to the same peer for the same LISH. */
 const WANT_RESPONSE_COOLDOWN_MS = 60_000;
@@ -154,7 +104,6 @@ export class Network {
 	private readonly dataServer: DataServer;
 	private readonly dataDir: string;
 	private statusInterval: NodeJS.Timeout | null = null;
-	private peerAnnounceInterval: NodeJS.Timeout | null = null;
 	/** Monotonic counter for status-interval ticks. Used by the periodic autodial promotion. */
 	private statusTickCount = 0;
 	/**
@@ -203,8 +152,7 @@ export class Network {
 	 * NOT populated for dynamic bootstrap additions from peer-announce gossip
 	 * (those have no single owning network and would dilute per-network stats).
 	 */
-	private bootstrapStats: Map<string, Map<string, BootstrapPeerStatus>> = new Map();
-	private _onBootstrapStatusChange: ((networkID: string, status: BootstrapStatus) => void) | null = null;
+	private readonly bootstrapTracker = new BootstrapStatusTracker();
 
 	/**
 	 * Ring buffer of the most recent peer disconnects. Capacity 10. Dumped at
@@ -221,7 +169,15 @@ export class Network {
 	// Previous gossipsub peer scores — tracked per-peer to detect significant
 	// score deltas and log threshold crossings (e.g. entered graylist).
 	private _lastScores: Map<string, number> = new Map();
+
+	/** Per-instance dedup set for PX ingress log keys; owned here, passed into gossipsub-patches deps. */
 	private readonly pxIngressLogKeys = new Set<string>();
+
+	/** Handles incoming LISH-serving pubsub messages (want, searchLishs). */
+	private readonly lishHandlers: LISHServingHandlers;
+
+	/** Manages periodic peer-announce gossip emission and inbound peer-announce handling. */
+	private readonly peerAnnounce: PeerAnnounceManager;
 
 	/**
 	 * Per-peer re-dial backoff tracker. Re-dial attempts that fail bump the
@@ -242,6 +198,20 @@ export class Network {
 
 		this.dataServer = dataServer;
 		this.settings = settings;
+		this.lishHandlers = new LISHServingHandlers({
+			dataServer: this.dataServer,
+			lastWantResponseTime: this.lastWantResponseTime,
+			seenSearchIDs: this.seenSearchIDs,
+			wantResponseCooldownMs: WANT_RESPONSE_COOLDOWN_MS,
+			getNode: () => this.node,
+			dialByPeerId: (peerID, protocol) => this.dialProtocolByPeerId(peerID, protocol),
+		});
+		this.peerAnnounce = new PeerAnnounceManager({
+			getNode: () => this.node,
+			getPubsub: () => this.pubsub,
+			broadcast: (topic, msg) => this.broadcast(topic, msg),
+			addBootstrapPeers: (multiaddrs, networkID, origin) => this.addBootstrapPeers(multiaddrs, networkID, origin),
+		});
 	}
 
 	/**
@@ -256,155 +226,6 @@ export class Network {
 	 * IMPORTANT: always use this helper instead of calling addEventListener() directly — otherwise
 	 * the handler stays attached after stop() and holds a reference to `this` (memory leak).
 	 */
-	/**
-	 * Runtime patch: wrap @chainsafe/libp2p-gossipsub OutboundStream.push() to swallow
-	 * the rejected Promise it returns when rawStream.send() throws synchronously. Upstream
-	 * sendRpc() does `try { stream.push(rpc) } catch {}` but push() is declared async, so
-	 * the synchronous throw becomes a rejected Promise that the try/catch cannot see.
-	 *
-	 * We cannot import OutboundStream directly (not in package exports, Bun bundler
-	 * refuses `/dist/src/stream.js`). Instead we poll streamsOutbound on the pubsub
-	 * instance after startup — once any peer registers a stream we grab its prototype
-	 * and override .push() for ALL instances (current + future) since they share one
-	 * prototype object.
-	 *
-	 * TODO(upstream): this intentionally reaches into private gossipsub internals
-	 * (`streamsOutbound` and OutboundStream.prototype). Keep it as a temporary
-	 * mitigation only; replace it with an upstream @chainsafe/libp2p-gossipsub fix
-	 * once sendRpc/push handles rejected async writes and evicts dead streams itself.
-	 */
-	private patchGossipsubOutboundPushOnce(): void {
-		const pubsub = this.pubsub as any;
-		// Idempotency guard: the push() wrap is installed on the shared OutboundStream
-		// prototype, so re-running this must be a no-op once the marker is set.
-		if (!pubsub || pubsub.__p2pfsOutboundPatched) return;
-		const trySetup = () => {
-			try {
-				const streamsOutbound: Map<any, any> | undefined = pubsub.streamsOutbound;
-				if (!streamsOutbound || streamsOutbound.size === 0) return false;
-				const sample = streamsOutbound.values().next().value;
-				if (!sample) return false;
-				const proto = Object.getPrototypeOf(sample);
-				if (!proto || typeof proto.push !== 'function' || proto.__p2pfsOutboundPatched) return true;
-				const original = proto.push;
-				// Forward all arguments via rest+apply so a future upstream signature
-				// extension (e.g. push(data, opts)) is preserved transparently.
-				proto.push = function (this: any, ...args: any[]): any {
-					let result: any;
-					try {
-						result = original.apply(this, args);
-					} catch (e) {
-						// Belt & braces — also handle the sync path if upstream ever de-asyncs push()
-						return false;
-					}
-					// Async throw case: attach .catch() so rejection never reaches unhandledRejection.
-					// The underlying stream state (closed) is already tracked by gossipsub; losing
-					// the write is exactly what the existing try/catch around sendRpc assumed.
-					if (result && typeof (result as Promise<unknown>).catch === 'function') {
-						const failedStream = this; // OutboundStream instance
-						(result as Promise<unknown>).catch((e: any) => {
-							// Reverse lookup: find which peerId owns this dead stream and evict it
-							// from streamsOutbound so the next sendRpc call sees null and gossipsub
-							// will reattach a fresh stream when libp2p reconnects to that peer.
-							const gs: any = pubsub;
-							let evicted = '';
-							if (gs?.streamsOutbound instanceof Map) {
-								for (const [pid, stream] of gs.streamsOutbound) {
-									if (stream === failedStream) {
-										try {
-											stream.close?.().catch?.(() => {});
-										} catch {
-											/* ignore */
-										}
-										gs.streamsOutbound.delete(pid);
-										evicted = pid.toString().slice(0, 12);
-										break;
-									}
-								}
-							}
-							// Rate-limit so a flapping peer (NAT churn / Wi-Fi roam) cannot fill the log
-							// with thousands of identical lines per hour. One warn line per peer per 5 s.
-							const lastLog: Map<string, number> = ((gs as any).__p2pfsGsPushFailLogged ??= new Map());
-							const now = Date.now();
-							const key = evicted || 'unknown';
-							if ((lastLog.get(key) ?? 0) + 5000 < now) {
-								lastLog.set(key, now);
-								console.warn('[GS-PUSH-FAIL] async push rejected to', key, ':', e?.code ?? e?.name ?? '', e?.message ?? String(e), '— evicted stream');
-							}
-						});
-					}
-					return result;
-				};
-				proto.__p2pfsOutboundPatched = true;
-				pubsub.__p2pfsOutboundPatched = true;
-				console.log('[NET] gossipsub OutboundStream.push() wrapped (sync-throw-in-async bug mitigation)');
-				return true;
-			} catch (err: any) {
-				trace(`[NET] patchGossipsub retry: ${err?.message ?? err}`);
-				return false;
-			}
-		};
-		// Try immediately, then poll every 2s for up to 60s (streams appear as peers connect)
-		if (trySetup()) return;
-		const start = Date.now();
-		const interval = setInterval(() => {
-			if (trySetup() || Date.now() - start > 60_000) clearInterval(interval);
-		}, 2000);
-	}
-
-	/**
-	 * Strip PX peer lists from incoming PRUNE control messages unless the sender is
-	 * explicitly trusted by local operator policy. Normal PRUNE/backoff semantics stay intact.
-	 */
-	private patchGossipsubPXIngressPolicyOnce(): void {
-		const pubsub = this.pubsub as any;
-		// Idempotency guard: handleReceivedRpc is wrapped only once per pubsub instance.
-		if (!pubsub || pubsub.__p2pfsPXIngressPatched) return;
-		if (typeof pubsub.handleReceivedRpc !== 'function') {
-			throw new Error('PX ingress filter unavailable: gossipsub handleReceivedRpc missing');
-		}
-
-		const original = pubsub.handleReceivedRpc.bind(pubsub);
-		pubsub.handleReceivedRpc = async (from: any, rpc: any): Promise<any> => {
-			const peerExchange = this.settings.list().network.peerExchange;
-			if (!peerExchange?.ingressFilterEnabled || !rpc?.control?.prune?.length) return original(from, rpc);
-
-			const sender = from?.toString?.() ?? '';
-			// Trust union: explicit operator-configured peers + bootstrap peers from the
-			// lishnets the operator has joined (both represent "operator deliberately chose
-			// to trust this peer", see appSpecificScore in network-config.ts for rationale).
-			const trusted = normalizeTrustedPeerIds(peerExchange.trustedPeerIds);
-			for (const bp of this.bootstrapPeerIDs) trusted.add(bp);
-			let allowed = 0;
-			let stripped = 0;
-
-			const prune = rpc.control.prune.map((p: any) => {
-				if (!p?.peers?.length) return p;
-				const topic = p.topicID;
-				const allowPX = peerExchange.enabled === true && trusted.has(sender) && typeof topic === 'string' && topic.startsWith(LISH_TOPIC_PREFIX);
-				if (allowPX) {
-					allowed++;
-					return p;
-				}
-				stripped++;
-				return { ...p, peers: [] };
-			});
-
-			if (stripped > 0 || allowed > 0) {
-				const topic = prune.find((p: any) => p?.topicID)?.topicID ?? 'unknown';
-				const key = `${allowed > 0 ? 'allow' : 'strip'}:${sender}:${topic}`;
-				if (!this.pxIngressLogKeys.has(key)) {
-					this.pxIngressLogKeys.add(key);
-					if (allowed > 0) console.debug(`[NET] PX ingress allowed sender=${sender.slice(0, 16)} topic=${String(topic).slice(0, 48)} prunes=${allowed}`);
-					else console.debug(`[NET] PX ingress stripped sender=${sender.slice(0, 16)} topic=${String(topic).slice(0, 48)} prunes=${stripped}`);
-				}
-			}
-
-			return original(from, { ...rpc, control: { ...rpc.control, prune } });
-		};
-		pubsub.__p2pfsPXIngressPatched = true;
-		console.log('[NET] gossipsub PX ingress filter enabled');
-	}
 
 	private addListener(target: EventTarget, event: string, handler: (evt: any) => void): void {
 		target.addEventListener(event, handler as any);
@@ -495,25 +316,6 @@ export class Network {
 		if (changed) this._onPeerCountChange(counts);
 	}
 
-	private async loadOrCreatePrivateKey(datastore: SqliteDatastore): Promise<PrivateKey> {
-		try {
-			if (await datastore.has(PRIVATE_KEY_PATH as any)) {
-				const bytes = await datastore.get(PRIVATE_KEY_PATH as any);
-				const privateKey = privateKeyFromProtobuf(bytes);
-				console.log('✓ Loaded private key from datastore');
-				return privateKey;
-			}
-		} catch (error) {
-			console.log('Could not load private key:', error);
-		}
-
-		const privateKey = await generateKeyPair('Ed25519');
-		const bytes = privateKeyToProtobuf(privateKey);
-		await datastore.put(PRIVATE_KEY_PATH as any, bytes);
-		console.log('✓ Saved new private key to datastore');
-		return privateKey;
-	}
-
 	/**
 	 * Start the single libp2p node.
 	 * @param bootstrapPeers - merged list of bootstrap peers from all enabled lishnets
@@ -533,7 +335,7 @@ export class Network {
 		this.datastore.open();
 		console.log('✓ Datastore opened at:', datastorePath);
 
-		const privateKey = await this.loadOrCreatePrivateKey(this.datastore);
+		const privateKey = await loadOrCreatePrivateKey(this.datastore);
 		this.currentPrivateKey = privateKey;
 
 		// Build libp2p config via extracted helper
@@ -594,8 +396,7 @@ export class Network {
 		// returned by push() at every call site — intercept via prototype override
 		// on the first OutboundStream instance we observe (all instances share one
 		// prototype).
-		this.patchGossipsubOutboundPushOnce();
-		if (allSettings.network.peerExchange.ingressFilterEnabled === true) this.patchGossipsubPXIngressPolicyOnce();
+		applyGossipsubPatches(this.pubsub, { settings: this.settings, getBootstrapPeerIDs: () => this.bootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
 
 		// Register lish protocol handler
 		await this.node.handle(
@@ -627,7 +428,7 @@ export class Network {
 							}
 						}
 					}
-					const connType = remotePeerID ? this.classifyConnection(remotePeerID, isRelay) : 'DIRECT';
+					const connType = remotePeerID ? classifyConnectionFn(remotePeerID, isRelay, this.dcutrPeers) : 'DIRECT';
 					await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType);
 				} catch (err: any) {
 					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
@@ -659,7 +460,7 @@ export class Network {
 		this.setupBootstrapWorkaround();
 		this.setupStatusInterval();
 		this.setupWantResponseCleanup();
-		this.setupPeerAnnounceEmitter();
+		this.peerAnnounce.start();
 	}
 
 	// =========================================================================
@@ -835,174 +636,6 @@ export class Network {
 		}, WANT_RESPONSE_CLEANUP_INTERVAL_MS);
 	}
 
-	/**
-	 * Periodically broadcast our reachable multiaddrs on every subscribed lishnet topic so
-	 * far-away peers who never encountered us via autodial/PX can still learn about us.
-	 * Gated on peerStore size so a freshly-started isolated node does not flood empty topics.
-	 * See `PeerAnnounceMessage` doc for the broader rationale.
-	 */
-	private setupPeerAnnounceEmitter(): void {
-		const schedule = async () => {
-			if (!this.node || !this.pubsub) return;
-			// Pick base interval from current peerStore saturation.
-			let base: number;
-			try {
-				const storeSize = (await this.node.peerStore.all()).length;
-				if (storeSize < 20) base = PEER_ANNOUNCE_INTERVAL_ISOLATED_MS;
-				else if (storeSize < 80) base = PEER_ANNOUNCE_INTERVAL_STEADY_MS;
-				else base = PEER_ANNOUNCE_INTERVAL_SATURATED_MS;
-			} catch {
-				base = PEER_ANNOUNCE_INTERVAL_STEADY_MS;
-			}
-			const jitter = Math.floor((Math.random() * 2 - 1) * base * PEER_ANNOUNCE_JITTER_RATIO);
-			const delay = Math.max(5_000, base + jitter);
-			this.peerAnnounceInterval = setTimeout(async () => {
-				try {
-					await this.emitPeerAnnounce();
-				} catch (err: any) {
-					trace(`[NET] peer-announce emit error: ${err?.message ?? err}`);
-				}
-				schedule().catch(() => {
-					/* schedule is async but errors handled inline */
-				});
-			}, delay);
-		};
-		schedule().catch(() => {
-			/* first-tick scheduling failure would leave emitter stopped — acceptable fallback */
-		});
-	}
-
-	private async emitPeerAnnounce(): Promise<void> {
-		if (!this.node || !this.pubsub) return;
-		const allPeers = await this.node.peerStore.all();
-		if (allPeers.length < PEER_ANNOUNCE_MIN_PEER_STORE) return;
-		// Include our full known peerStore in addition to our own reachable multiaddrs.
-		// This turns peer-announce into a transitive gossip protocol: edge-of-mesh
-		// peers learn about the whole fleet in one hop instead of waiting for mesh
-		// GRAFT to surface them. Total payload bounded by PEER_ANNOUNCE_MAX_TOTAL_ADDRS.
-		const collected = new Set<string>();
-		const localCidrs = getLocalCidrs();
-		let skippedSelf = 0;
-		let skippedTransitive = 0;
-		// Our own multiaddrs first (priority). Filter loopback (127.0.0.0/8) and
-		// non-local private addresses through shouldDenyDial — a remote peer
-		// receiving our /ip4/127.0.0.1 would otherwise TCP-loop to itself and
-		// hit identity-mismatch on every dial (validated on docker 2026-05-24:
-		// the moment debug logging landed it captured 3× back-to-back loopback
-		// dials from peer-announce intake within 3s of startup).
-		for (const ma of this.node.getMultiaddrs()) {
-			const s = ma.toString();
-			if (s.includes('/p2p-circuit')) continue;
-			if (shouldDenyDial(ma, localCidrs)) {
-				skippedSelf++;
-				continue;
-			}
-			collected.add(s);
-			if (collected.size >= PEER_ANNOUNCE_MAX_ADDRS) break;
-		}
-		// Transitive peerStore addrs.
-		const myID = this.node.peerId.toString();
-		for (const peer of allPeers) {
-			if (collected.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
-			const pid = peer.id.toString();
-			if (pid === myID) continue;
-			let perPeer = 0;
-			for (const addr of peer.addresses) {
-				if (perPeer >= PEER_ANNOUNCE_MAX_ADDRS_PER_PEER) break;
-				if (collected.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
-				const base = addr.multiaddr.toString();
-				if (base.includes('/p2p-circuit')) continue;
-				if (shouldDenyDial(addr.multiaddr, localCidrs)) {
-					skippedTransitive++;
-					continue;
-				}
-				const full = base.includes('/p2p/') ? base : `${base}/p2p/${pid}`;
-				collected.add(full);
-				perPeer++;
-			}
-		}
-		if (skippedSelf > 0 || skippedTransitive > 0) {
-			trace(`[NET] peer-announce filter: skipped ${skippedSelf} self + ${skippedTransitive} transitive non-routable addrs`);
-		}
-		if (collected.size === 0) return;
-		const lishTopics = this.pubsub.getTopics().filter((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
-		if (lishTopics.length === 0) return;
-		const msg: PeerAnnounceMessage = { type: 'peer-announce', multiaddrs: Array.from(collected) };
-		trace(`[NET] peer-announce emit: ${collected.size} addrs (self + ${allPeers.length} known peers)`);
-		for (const topic of lishTopics) {
-			try {
-				await this.broadcast(topic, msg as unknown as Record<string, any>);
-			} catch (err: any) {
-				trace(`[NET] peer-announce publish failed topic=${topic}: ${err?.message ?? err}`);
-			}
-		}
-	}
-
-	/**
-	 * Accept inbound peer-announce: dial each advertised multiaddr through addBootstrapPeers
-	 * (which dedupes against our existing bootstrap set and skips our own peer ID).
-	 */
-	private async handlePeerAnnounce(data: PeerAnnounceMessage, networkID: string, fromPeerID?: string): Promise<void> {
-		if (!Array.isArray(data.multiaddrs) || data.multiaddrs.length === 0) return;
-		// Two-stage filter: shape (non-empty string) THEN routability (drop
-		// loopback + non-local private through shouldDenyDial). Without the
-		// routability stage, broadcasters with buggy emitters can inject their
-		// /ip4/127.0.0.1 into our bootstrap set, causing TCP loop → Noise
-		// identity-mismatch storm. Even though emitPeerAnnounce now filters
-		// these out on our side, we cannot trust older peers in the fleet to
-		// do the same — every receiver must be defensive.
-		const localCidrs = getLocalCidrs();
-		const rawCount = data.multiaddrs.length;
-		const filtered: string[] = [];
-		let droppedNonRoutable = 0;
-		for (const a of data.multiaddrs) {
-			if (typeof a !== 'string' || a.length === 0) continue;
-			if (filtered.length >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
-			try {
-				if (shouldDenyDial(Multiaddr(a), localCidrs)) {
-					droppedNonRoutable++;
-					continue;
-				}
-			} catch {
-				// Unparseable multiaddr → drop (can't safely dial it anyway).
-				droppedNonRoutable++;
-				continue;
-			}
-			filtered.push(a);
-		}
-		if (filtered.length === 0) {
-			if (droppedNonRoutable > 0) trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: dropped all ${droppedNonRoutable}/${rawCount} addrs as non-routable`);
-			return;
-		}
-		trace(`[NET] peer-announce from ${fromPeerID?.slice(0, 16) ?? 'unknown'}: ${filtered.length}/${rawCount} addrs (dropped ${droppedNonRoutable} non-routable, network ${networkID.slice(0, 8)})`);
-		// Pass networkID so per-peer outcomes from gossiped entries surface in the
-		// UI under the network through which they arrived. Identity-mismatch
-		// outcomes inside addBootstrapPeers also trigger purgeStalePeer.
-		await this.addBootstrapPeers(filtered, networkID, 'discovered');
-		// Stamp `keep-alive-fleet` on every peer the announce mentioned. libp2p
-		// ReconnectQueue only acts on peers carrying a tag whose key starts with
-		// `keep-alive`; without this tag, fleet-discovered peers that drop are
-		// not re-dialed automatically. addBootstrapPeers() above tags via KEEP_ALIVE
-		// only for peer IDs it successfully extracts from multiaddrs — this adds
-		// the same treatment for every known peer, driving mesh maintenance.
-		if (this.node) {
-			for (const ma of filtered) {
-				try {
-					const mapath = Multiaddr(ma);
-					const pidComp = mapath.getComponents().find(c => c.code === 421);
-					const pid = pidComp?.value;
-					if (!pid) continue;
-					if (pid === this.node.peerId.toString()) continue;
-					await this.node.peerStore.merge(peerIDFromString(pid), {
-						tags: { 'keep-alive-fleet': { value: 50 } },
-					});
-				} catch {
-					/* invalid multiaddr — skip */
-				}
-			}
-		}
-	}
-
 	private setupBootstrapWorkaround(): void {
 		if (!AUTODIAL_WORKAROUND || this.bootstrapMultiaddrs.length === 0) return;
 		// setTimeout discards the Promise returned by async callbacks, so throws escape
@@ -1031,230 +664,13 @@ export class Network {
 			try {
 				const connectedPeers = this.node!.getPeers();
 				const allPeers = await this.node!.peerStore.all();
-				// Detailed connection info per peer
-				const peerDetails = connectedPeers.map(p => {
-					const conns = this.node!.getConnections(p);
-					const types = conns.map(c => {
-						const isRelay = Circuit.matches(c.remoteAddr);
-						const limited = (c as any).limits != null;
-						return `${isRelay ? 'R' : 'D'}${limited ? 'L' : ''}`;
-					});
-					return `${p.toString().slice(0, 12)}[${types.join(',')}]`;
-				});
-				const topicInfo = this.pubsub!.getTopics()
-					.map((t: string) => {
-						const subs = this.pubsub!.getSubscribers(t);
-						const mesh = (this.pubsub as any).getMeshPeers ? (this.pubsub as any).getMeshPeers(t) : [];
-						return `${t.slice(0, 28)}[subs=${subs.length} mesh=${mesh.length}]`;
-					})
-					.join(' ');
-				console.debug(`📊 Status: ${connectedPeers.length} connected, ${allPeers.length} in store, topics: ${topicInfo}`);
-				console.debug(`   Peers: ${peerDetails.join(' | ') || '(none)'}`);
-				// DEBUG: per-topic mesh members detail
-				for (const t of this.pubsub!.getTopics()) {
-					const subs = this.pubsub!.getSubscribers(t).map((p: any) => p.toString().slice(0, 12));
-					const mesh = (this.pubsub as any).getMeshPeers ? (this.pubsub as any).getMeshPeers(t).map((p: any) => p.toString().slice(0, 12)) : [];
-					console.debug(`   [MESH] ${t.slice(0, 28)} subs=[${subs.join(',')}] mesh=[${mesh.join(',')}]`);
-				}
-				// DEBUG: gossipsub stream state — outbound streams are mesh-graft prerequisite
-				const gs: any = this.pubsub;
-				if (gs?.streamsOutbound && gs?.streamsInbound) {
-					const out = Array.from(gs.streamsOutbound.keys()).map((p: any) => p.toString().slice(0, 12));
-					const inb = Array.from(gs.streamsInbound.keys()).map((p: any) => p.toString().slice(0, 12));
-					const direct = gs.direct ? Array.from(gs.direct).map((p: any) => p.toString().slice(0, 12)) : [];
-					console.debug(`   [GS-STREAMS] out=[${out.join(',')}] in=[${inb.join(',')}] direct=[${direct.join(',')}]`);
-				}
-				// Announced multiaddrs — if /p2p-circuit appears, relay reservation is active
-				const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
-				const circuit = myAddrs.filter(a => a.includes('/p2p-circuit'));
-				console.debug(
-					`   MyAddrs: ${myAddrs.length} total, ${circuit.length} /p2p-circuit${
-						circuit.length > 0
-							? ' (' +
-								circuit
-									.slice(0, 2)
-									.map(a => a.slice(0, 80))
-									.join(' | ') +
-								')'
-							: ''
-					}`
-				);
-				// Gossipsub peer scoring — dump top/bottom scores + deltas.
-				// INFO: summary (top 3 + bottom 3 + threshold crossings).
-				// DEBUG (trace): per-peer full breakdown when P2PFS_SCORE_DEBUG=1.
-				try {
-					const scoreSvc: any = (this.pubsub as any)?.score;
-					if (scoreSvc && typeof scoreSvc.score === 'function') {
-						const entries: Array<{ id: string; score: number; delta: number }> = [];
-						const pxEligibilityThreshold = parseAcceptPXThreshold(this.settings.list().network.peerExchange?.acceptPXThreshold).value;
-						for (const p of connectedPeers) {
-							const pid = p.toString();
-							const s = Number(scoreSvc.score(pid)) || 0;
-							const prev = this._lastScores.get(pid);
-							const delta = prev === undefined ? 0 : s - prev;
-							entries.push({ id: pid, score: s, delta });
-							// Threshold-crossing INFO logs
-							if (prev !== undefined) {
-								if (prev >= -80 && s < -80) console.warn(`[NET] peer ${pid.slice(0, 12)} entered graylist (score=${s.toFixed(1)})`);
-								else if (prev < -80 && s >= -80) console.log(`[NET] peer ${pid.slice(0, 12)} left graylist (score=${s.toFixed(1)})`);
-								else if (prev < pxEligibilityThreshold && s >= pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} now PX-eligible (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
-								else if (prev >= pxEligibilityThreshold && s < pxEligibilityThreshold) console.log(`[NET] peer ${pid.slice(0, 12)} lost PX eligibility (score=${s.toFixed(1)}, threshold=${pxEligibilityThreshold})`);
-							}
-							this._lastScores.set(pid, s);
-						}
-						// Evict entries for peers no longer connected
-						const connectedSet2 = new Set(connectedPeers.map(p => p.toString()));
-						for (const k of this._lastScores.keys()) if (!connectedSet2.has(k)) this._lastScores.delete(k);
-						if (entries.length > 0) {
-							entries.sort((a, b) => b.score - a.score);
-							const fmt = (e: { id: string; score: number; delta: number }) => `${e.id.slice(0, 12)}=${e.score.toFixed(1)}${e.delta !== 0 ? (e.delta > 0 ? '(+' : '(') + e.delta.toFixed(1) + ')' : ''}`;
-							const top = entries.slice(0, 3).map(fmt).join(' | ');
-							const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
-							console.debug(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);
-						}
-						if (process.env['P2PFS_SCORE_DEBUG'] === '1' && entries.length > 0) {
-							const fullDump = entries.map(e => `${e.id.slice(0, 16)}:${e.score.toFixed(2)}`).join(' ');
-							trace(`[NET] full scores: ${fullDump}`);
-						}
-					}
-				} catch (err: any) {
-					trace(`[NET] score dump error: ${err?.message ?? err}`);
-				}
+				logStatusDebug({ node: this.node, pubsub: this.pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers, allPeers);
+				dumpGossipsubScores({ node: this.node, pubsub: this.pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers);
 				// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 				this.checkPeerCounts();
-				// Dial known peers not currently connected (maintains relay connections to NATed peers)
-				const connectedSet = new Set(connectedPeers.map(p => p.toString()));
-				const now = Date.now();
-				// Build candidate list: all known peers that are (a) not connected, and
-				// (b) past their backoff window. Bootstrap peers are included so a bootstrap
-				// that drops comes back quickly without needing connectedPeers.length===0.
-				const candidates: Array<{ peer: any; pid: string; addrSummary: string; failCount: number }> = [];
-				let skippedBackoff = 0;
-				let skippedNoReachable = 0;
-				const localCidrs = getLocalCidrs(now);
-				for (const peer of allPeers) {
-					const pid = peer.id.toString();
-					if (connectedSet.has(pid)) {
-						this.redialBackoff.delete(pid); // clear on observed connection
-						continue;
-					}
-					const bo = this.redialBackoff.get(pid);
-					if (bo && bo.nextAttempt > now) {
-						skippedBackoff++;
-						continue;
-					}
-					// Pre-filter peerStore multiaddrs through the dial gater. If every
-					// known address is unreachable from this node (e.g. only LAN addrs
-					// of a foreign subnet), skip the dial entirely — otherwise libp2p
-					// returns "no valid addresses" after still spending a slot on us.
-					const entries = peer.addresses ?? [];
-					const reachable: string[] = [];
-					for (const a of entries) {
-						const ma = a?.multiaddr;
-						if (!ma) continue;
-						if (!shouldDenyDial(ma, localCidrs)) reachable.push(ma.toString());
-					}
-					if (reachable.length === 0) {
-						skippedNoReachable++;
-						continue;
-					}
-					candidates.push({ peer, pid, addrSummary: reachable.join(' | '), failCount: bo?.failCount ?? 0 });
-				}
-				// Parallel dial with concurrency=10 via rolling promise pool; caps worst-case
-				// tick latency at ~5s × ceil(N/10) instead of 5s × N for pre-throttle code.
-				const CONCURRENCY = 10;
-				let redialSuccess = 0;
-				let idx = 0;
-				const worker = async (): Promise<void> => {
-					while (idx < candidates.length) {
-						const c = candidates[idx++]!;
-						console.debug(`   ↻ Re-dial attempt peer=${c.pid} addrs=${c.addrSummary} fails=${c.failCount}`);
-						try {
-							await this.node!.dial(c.peer.id, { signal: AbortSignal.timeout(5000) });
-							const conns = this.node!.getConnections(c.peer.id);
-							const connDetail = conns
-								.map(conn => {
-									const ra = conn.remoteAddr?.toString?.() ?? '?';
-									const type = Circuit.matches(conn.remoteAddr) ? 'RELAY' : 'DIRECT';
-									return `${type}(${ra})`;
-								})
-								.join(',');
-							console.debug(`   ✓ Re-dialed peer=${c.pid} via=${connDetail || '(no conn info)'}`);
-							this.redialBackoff.delete(c.pid);
-							redialSuccess++;
-							// Re-stamp keep-alive-fleet on every successful re-dial so
-							// ReconnectQueue will fire if this peer drops again. Peers may
-							// have lost the tag through peerStore cleanup
-							// (maxAddressAge/maxPeerAge) between earlier tagging events.
-							try {
-								await this.node!.peerStore.merge(c.peer.id, {
-									tags: { 'keep-alive-fleet': { value: 50 } },
-								});
-							} catch {
-								/* non-fatal */
-							}
-						} catch (err: any) {
-							// Exponential backoff: 30s × 2^failCount, capped at 10 min.
-							const nextFailCount = c.failCount + 1;
-							const delayMs = Math.min(30_000 * 2 ** c.failCount, 600_000);
-							this.redialBackoff.set(c.pid, { nextAttempt: Date.now() + delayMs, failCount: nextFailCount });
-							console.debug(`   ✗ Re-dial peer=${c.pid} failed: ${err.message ?? err} (tried: ${c.addrSummary}, next in ${Math.round(delayMs / 1000)}s)`);
-						}
-					}
-				};
-				const workers = Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, () => worker());
-				await Promise.all(workers);
-				if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0) {
-					console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs)`);
-				}
-				// Prune backoff entries for peers that are no longer in peerStore to prevent unbounded growth.
-				const storeSet = new Set(allPeers.map(p => p.id.toString()));
-				for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
-				if (AUTODIAL_WORKAROUND && connectedPeers.length === 0 && this.bootstrapMultiaddrs.length > 0) {
-					console.log(`   ⚠️  No connections - dialing ${this.bootstrapMultiaddrs.length} bootstrap peer(s) directly...`);
-					// [NET-CHURN] dump: who left in the run-up to this zero-connection
-					// state, and what each configured bootstrap entry's last dial outcome
-					// was. Without this we only ever see the recovery dial — never the cause.
-					if (this.recentDisconnects.length > 0) {
-						const now = Date.now();
-						const summary = this.recentDisconnects.map(d => `${d.peerID.slice(0, 16)}(${Math.round((now - d.ts) / 1000)}s${d.wasBootstrap ? ',BS' : ''})`).join(' ');
-						console.log(`   [NET-CHURN] last ${this.recentDisconnects.length} disconnects: ${summary}`);
-					} else {
-						console.log(`   [NET-CHURN] no disconnects recorded — autodial fired without any peer:disconnect event (libp2p internal eviction?)`);
-					}
-					for (const [networkID, peers] of this.bootstrapStats) {
-						const counts: Record<string, number> = {};
-						for (const p of peers.values()) counts[p.status] = (counts[p.status] ?? 0) + 1;
-						const parts = Object.entries(counts)
-							.map(([k, v]) => `${k}=${v}`)
-							.join(' ');
-						console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
-					}
-					for (const ma of this.bootstrapMultiaddrs) {
-						const maStr = ma?.toString?.() ?? String(ma);
-						try {
-							console.log(`   → Dialing ${maStr}`);
-							await this.node!.dial(ma, { signal: AbortSignal.timeout(10000) });
-							console.log(`   ✓ Connected via ${maStr}`);
-							break;
-						} catch (err: any) {
-							console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
-						}
-					}
-				}
-				// Every 5th status tick (~150 s at 30 s status cadence) promote every
-				// peerStore entry back to bootstrap priority. Re-stamps KEEP_ALIVE tags
-				// and feeds libp2p a concrete multiaddr list to re-dial against, catching
-				// peers whose original dial cached a stale (unreachable) address — these
-				// would otherwise sit idle until they reappeared via identify/PX/announce.
-				this.statusTickCount++;
-				if (this.statusTickCount % 5 === 0) {
-					try {
-						await this.promoteKnownPeersToBootstrap();
-					} catch (err: any) {
-						trace(`[NET] promoteKnownPeersToBootstrap failed: ${err?.message ?? err}`);
-					}
-				}
+				await this.runRedialMaintenance(connectedPeers, allPeers);
+				await this.runZeroConnectionRecovery(connectedPeers);
+				await this.maybePromotePeers();
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
 			}
@@ -1262,6 +678,147 @@ export class Network {
 		// Status interval 30 s. promoteKnownPeersToBootstrap + gossipsub.direct
 		// mutations run on the 5th tick (~150 s) — fast enough to absorb peer
 		// churn at N≈100 without flooding logs or burning CPU on per-second probes.
+	}
+
+	private async runRedialMaintenance(connectedPeers: any[], allPeers: any[]): Promise<void> {
+		// Dial known peers not currently connected (maintains relay connections to NATed peers)
+		const connectedSet = new Set(connectedPeers.map(p => p.toString()));
+		const now = Date.now();
+		// Build candidate list: all known peers that are (a) not connected, and
+		// (b) past their backoff window. Bootstrap peers are included so a bootstrap
+		// that drops comes back quickly without needing connectedPeers.length===0.
+		const candidates: Array<{ peer: any; pid: string; addrSummary: string; failCount: number }> = [];
+		let skippedBackoff = 0;
+		let skippedNoReachable = 0;
+		const localCidrs = getLocalCidrs(now);
+		for (const peer of allPeers) {
+			const pid = peer.id.toString();
+			if (connectedSet.has(pid)) {
+				this.redialBackoff.delete(pid); // clear on observed connection
+				continue;
+			}
+			const bo = this.redialBackoff.get(pid);
+			if (bo && bo.nextAttempt > now) {
+				skippedBackoff++;
+				continue;
+			}
+			// Pre-filter peerStore multiaddrs through the dial gater. If every
+			// known address is unreachable from this node (e.g. only LAN addrs
+			// of a foreign subnet), skip the dial entirely — otherwise libp2p
+			// returns "no valid addresses" after still spending a slot on us.
+			const entries = peer.addresses ?? [];
+			const reachable: string[] = [];
+			for (const a of entries) {
+				const ma = a?.multiaddr;
+				if (!ma) continue;
+				if (!shouldDenyDial(ma, localCidrs)) reachable.push(ma.toString());
+			}
+			if (reachable.length === 0) {
+				skippedNoReachable++;
+				continue;
+			}
+			candidates.push({ peer, pid, addrSummary: reachable.join(' | '), failCount: bo?.failCount ?? 0 });
+		}
+		// Parallel dial with concurrency=10 via rolling promise pool; caps worst-case
+		// tick latency at ~5s × ceil(N/10) instead of 5s × N for pre-throttle code.
+		const CONCURRENCY = 10;
+		let redialSuccess = 0;
+		let idx = 0;
+		const worker = async (): Promise<void> => {
+			while (idx < candidates.length) {
+				const c = candidates[idx++]!;
+				console.debug(`   ↻ Re-dial attempt peer=${c.pid} addrs=${c.addrSummary} fails=${c.failCount}`);
+				try {
+					await this.node!.dial(c.peer.id, { signal: AbortSignal.timeout(5000) });
+					const conns = this.node!.getConnections(c.peer.id);
+					const connDetail = conns
+						.map(conn => {
+							const ra = conn.remoteAddr?.toString?.() ?? '?';
+							const type = Circuit.matches(conn.remoteAddr) ? 'RELAY' : 'DIRECT';
+							return `${type}(${ra})`;
+						})
+						.join(',');
+					console.debug(`   ✓ Re-dialed peer=${c.pid} via=${connDetail || '(no conn info)'}`);
+					this.redialBackoff.delete(c.pid);
+					redialSuccess++;
+					// Re-stamp keep-alive-fleet on every successful re-dial so
+					// ReconnectQueue will fire if this peer drops again. Peers may
+					// have lost the tag through peerStore cleanup
+					// (maxAddressAge/maxPeerAge) between earlier tagging events.
+					try {
+						await this.node!.peerStore.merge(c.peer.id, {
+							tags: { 'keep-alive-fleet': { value: 50 } },
+						});
+					} catch {
+						/* non-fatal */
+					}
+				} catch (err: any) {
+					// Exponential backoff: 30s × 2^failCount, capped at 10 min.
+					const nextFailCount = c.failCount + 1;
+					const delayMs = Math.min(30_000 * 2 ** c.failCount, 600_000);
+					this.redialBackoff.set(c.pid, { nextAttempt: Date.now() + delayMs, failCount: nextFailCount });
+					console.debug(`   ✗ Re-dial peer=${c.pid} failed: ${err.message ?? err} (tried: ${c.addrSummary}, next in ${Math.round(delayMs / 1000)}s)`);
+				}
+			}
+		};
+		const workers = Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, () => worker());
+		await Promise.all(workers);
+		if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0) {
+			console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs)`);
+		}
+		// Prune backoff entries for peers that are no longer in peerStore to prevent unbounded growth.
+		const storeSet = new Set(allPeers.map(p => p.id.toString()));
+		for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
+	}
+
+	private async runZeroConnectionRecovery(connectedPeers: any[]): Promise<void> {
+		if (!AUTODIAL_WORKAROUND || connectedPeers.length !== 0 || this.bootstrapMultiaddrs.length === 0) return;
+		console.log(`   ⚠️  No connections - dialing ${this.bootstrapMultiaddrs.length} bootstrap peer(s) directly...`);
+		// [NET-CHURN] dump: who left in the run-up to this zero-connection
+		// state, and what each configured bootstrap entry's last dial outcome
+		// was. Without this we only ever see the recovery dial — never the cause.
+		if (this.recentDisconnects.length > 0) {
+			const now = Date.now();
+			const summary = this.recentDisconnects.map(d => `${d.peerID.slice(0, 16)}(${Math.round((now - d.ts) / 1000)}s${d.wasBootstrap ? ',BS' : ''})`).join(' ');
+			console.log(`   [NET-CHURN] last ${this.recentDisconnects.length} disconnects: ${summary}`);
+		} else {
+			console.log(`   [NET-CHURN] no disconnects recorded — autodial fired without any peer:disconnect event (libp2p internal eviction?)`);
+		}
+		for (const [networkID, peers] of this.bootstrapTracker.entries()) {
+			const counts: Record<string, number> = {};
+			for (const p of peers.values()) counts[p.status] = (counts[p.status] ?? 0) + 1;
+			const parts = Object.entries(counts)
+				.map(([k, v]) => `${k}=${v}`)
+				.join(' ');
+			console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
+		}
+		for (const ma of this.bootstrapMultiaddrs) {
+			const maStr = ma?.toString?.() ?? String(ma);
+			try {
+				console.log(`   → Dialing ${maStr}`);
+				await this.node!.dial(ma, { signal: AbortSignal.timeout(10000) });
+				console.log(`   ✓ Connected via ${maStr}`);
+				break;
+			} catch (err: any) {
+				console.log(`   ✗ Failed ${maStr}: ${err.message ?? err}`);
+			}
+		}
+	}
+
+	private async maybePromotePeers(): Promise<void> {
+		// Every 5th status tick (~150 s at 30 s status cadence) promote every
+		// peerStore entry back to bootstrap priority. Re-stamps KEEP_ALIVE tags
+		// and feeds libp2p a concrete multiaddr list to re-dial against, catching
+		// peers whose original dial cached a stale (unreachable) address — these
+		// would otherwise sit idle until they reappeared via identify/PX/announce.
+		this.statusTickCount++;
+		if (this.statusTickCount % 5 === 0) {
+			try {
+				await this.promoteKnownPeersToBootstrap();
+			} catch (err: any) {
+				trace(`[NET] promoteKnownPeersToBootstrap failed: ${err?.message ?? err}`);
+			}
+		}
 	}
 
 	/**
@@ -1364,7 +921,7 @@ export class Network {
 					this.bootstrapMultiaddrs.push(ma);
 				}
 				console.debug('Adding bootstrap peer:', peer);
-				this.markBootstrapPending(networkID, peer, peerID, origin);
+				this.bootstrapTracker.markPending(networkID, peer, peerID, origin);
 				try {
 					// Skip re-dialing when libp2p already has an active connection to this peer
 					// (typical when the same bootstrap entry appears in multiple lishnets).
@@ -1378,13 +935,13 @@ export class Network {
 							tags: { [KEEP_ALIVE]: { value: 1 } },
 						});
 					}
-					this.recordBootstrapOutcome(networkID, peer, peerID, 'connected', null, null, origin);
+					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, origin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
 					const message = err?.message ?? String(err);
 					const kind = classifyBootstrapError(message);
 					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
-					this.recordBootstrapOutcome(networkID, peer, peerID, kind, message, actualPeerID, origin);
+					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, kind, message, actualPeerID, origin);
 					// [NET-MISMATCH] richer log for identity-mismatch — single line containing
 					// origin (configured / discovered from peer-announce), multiaddr,
 					// expected peerID and the actual peerID Noise reported. Makes it
@@ -1408,18 +965,12 @@ export class Network {
 						// it visible just adds UI noise. For CONFIGURED entries, keep
 						// it so the user can decide to update or remove the saved row.
 						if (origin === 'discovered' && networkID) {
-							const net = this.bootstrapStats.get(networkID);
-							if (net) {
-								net.delete(peer);
-								if (net.size === 0) this.bootstrapStats.delete(networkID);
-								const snap = this.buildBootstrapStatus(networkID) ?? { networkID, peers: [] };
-								this._onBootstrapStatusChange?.(networkID, snap);
-							}
+							this.bootstrapTracker.deletePeer(networkID, peer);
 						}
 					}
 				}
 			} catch (error: any) {
-				this.recordBootstrapOutcome(networkID, peer, null, 'error', error?.message ?? String(error), null, origin);
+				this.bootstrapTracker.recordOutcome(networkID, peer, null, 'error', error?.message ?? String(error), null, origin);
 				console.log('⚠️  Skipping invalid multiaddr:', peer, '-', error.message);
 			}
 		}
@@ -1430,7 +981,7 @@ export class Network {
 	 * `addBootstrapPeers(_, networkID)` records a new outcome for any entry.
 	 */
 	set onBootstrapStatusChange(cb: ((networkID: string, status: BootstrapStatus) => void) | null) {
-		this._onBootstrapStatusChange = cb;
+		this.bootstrapTracker.setOnChange(cb);
 	}
 
 	/**
@@ -1467,70 +1018,22 @@ export class Network {
 
 	/** Snapshot of all per-network bootstrap statuses. */
 	getAllBootstrapStatuses(): BootstrapStatus[] {
-		return [...this.bootstrapStats.keys()].map(id => this.buildBootstrapStatus(id)!).filter(Boolean);
+		return this.bootstrapTracker.getAllStatuses();
 	}
 
 	/** Snapshot of a single network's bootstrap status, or null if no attempts have been recorded. */
 	getBootstrapStatus(networkID: string): BootstrapStatus | null {
-		return this.buildBootstrapStatus(networkID);
+		return this.bootstrapTracker.getStatus(networkID);
 	}
 
 	/** Drop bootstrap status entries no longer in the configured peer list (after an update). */
 	pruneBootstrapStatus(networkID: string, keepMultiaddrs: string[]): void {
-		const peers = this.bootstrapStats.get(networkID);
-		if (!peers) return;
-		const keep = new Set(keepMultiaddrs);
-		for (const addr of [...peers.keys()]) {
-			if (!keep.has(addr)) peers.delete(addr);
-		}
-		if (peers.size === 0) this.bootstrapStats.delete(networkID);
-		const snapshot = this.buildBootstrapStatus(networkID);
-		if (snapshot) this._onBootstrapStatusChange?.(networkID, snapshot);
+		this.bootstrapTracker.pruneEntries(networkID, keepMultiaddrs);
 	}
 
 	/** Reset the bootstrap status for a single network (used when re-joining). */
 	resetBootstrapStatus(networkID: string): void {
-		this.bootstrapStats.delete(networkID);
-		this._onBootstrapStatusChange?.(networkID, { networkID, peers: [] });
-	}
-
-	private ensureBootstrapNetwork(networkID: string): Map<string, BootstrapPeerStatus> {
-		let net = this.bootstrapStats.get(networkID);
-		if (!net) {
-			net = new Map();
-			this.bootstrapStats.set(networkID, net);
-		}
-		return net;
-	}
-
-	private buildBootstrapStatus(networkID: string): BootstrapStatus | null {
-		const peers = this.bootstrapStats.get(networkID);
-		if (!peers) return null;
-		return { networkID, peers: [...peers.values()].map(p => ({ ...p })) };
-	}
-
-	private markBootstrapPending(networkID: string | null, multiaddr: string, expectedPeerID: string | null, origin: BootstrapPeerOrigin): void {
-		if (!networkID) return;
-		const net = this.ensureBootstrapNetwork(networkID);
-		// Preserve a stronger origin classification — once we know an entry is in
-		// the saved config ('configured'), an inbound peer-announce later restating
-		// the same multiaddr must not downgrade it to 'discovered'.
-		const previous = net.get(multiaddr);
-		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
-		net.set(multiaddr, { multiaddr, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: new Date().toISOString() });
-		const snapshot = this.buildBootstrapStatus(networkID);
-		if (snapshot) this._onBootstrapStatusChange?.(networkID, snapshot);
-	}
-
-	private recordBootstrapOutcome(networkID: string | null, multiaddr: string, expectedPeerID: string | null, status: BootstrapPeerDialStatus, message: string | null, actualPeerID: string | null, origin: BootstrapPeerOrigin): void {
-		if (!networkID) return;
-		const net = this.ensureBootstrapNetwork(networkID);
-		const truncated = message ? (message.length > 200 ? message.slice(0, 200) + '…' : message) : null;
-		const previous = net.get(multiaddr);
-		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
-		net.set(multiaddr, { multiaddr, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString() });
-		const snapshot = this.buildBootstrapStatus(networkID);
-		if (snapshot) this._onBootstrapStatusChange?.(networkID, snapshot);
+		this.bootstrapTracker.resetNetwork(networkID);
 	}
 
 	// =========================================================================
@@ -1595,15 +1098,15 @@ export class Network {
 		const handler: TopicHandler = (data, from) => {
 			trace(`[NET] pubsub ${topic}: ${data['type']}`);
 			if (data['type'] === 'want') {
-				this.handleWant(data as WantMessage, networkID, from).catch(err => {
+				this.lishHandlers.handleWant(data as WantMessage, networkID, from).catch(err => {
 					trace(`[NET] handleWant failed: ${err?.message ?? err}`);
 				});
 			} else if (data['type'] === 'peer-announce') {
-				this.handlePeerAnnounce(data as unknown as PeerAnnounceMessage, networkID, from).catch(err => {
+				this.peerAnnounce.handle(data as unknown as PeerAnnounceMessage, networkID, from).catch(err => {
 					trace(`[NET] handlePeerAnnounce failed: ${err?.message ?? err}`);
 				});
 			} else if (data['type'] === 'searchLishs') {
-				this.handleSearchLishs(data as SearchLishsMessage, networkID, from).catch(err => {
+				this.lishHandlers.handleSearchLishs(data as SearchLishsMessage, networkID, from).catch(err => {
 					trace(`[NET] handleSearchLishs failed: ${err?.message ?? err}`);
 				});
 			}
@@ -1739,121 +1242,6 @@ export class Network {
 	}
 
 	// =========================================================================
-	// Want/Have protocol (LISH data exchange)
-	// =========================================================================
-
-	private async handleWant(data: WantMessage, networkID: string, fromPeerID?: string): Promise<void> {
-		if (!fromPeerID) {
-			trace(`[NET] want ignored: no verified sender peerID`);
-			return;
-		}
-		if (!isUploadEnabled(data.lishID)) {
-			trace(`[NET] want ignored: upload disabled for ${data.lishID.slice(0, 8)}`);
-			return;
-		}
-		if (isBusy(data.lishID)) {
-			trace(`[NET] want ignored: busy for ${data.lishID.slice(0, 8)}`);
-			return;
-		}
-		// Per-(peer,lish) rate-limit: ignore want from same peer for same LISH within cooldown.
-		// Without this, an aggressive (or buggy) peer could trigger many redundant HAVE responses.
-		const key = `${fromPeerID}:${data.lishID}`;
-		const last = this.lastWantResponseTime.get(key);
-		if (last !== undefined && Date.now() - last < WANT_RESPONSE_COOLDOWN_MS) {
-			trace(`[NET] want rate-limited: ${fromPeerID.slice(0, 12)} for ${data.lishID.slice(0, 8)} (cooldown)`);
-			return;
-		}
-		// Networks, by referenced networkID, are also checked: the seeder must belong to the same LISH net.
-		// (networkID currently unused beyond routing; future: verify lish.networkIDs.includes(networkID).)
-		void networkID;
-		const lish = this.dataServer.get(data.lishID);
-		if (!lish) return;
-		// Verify data directory exists on disk — prevents false-positive "have"
-		// when DB says have=TRUE but files were lost (e.g. Docker rebuild without volume)
-		if (!lish.directory || !existsSync(lish.directory)) {
-			console.warn(`[NET] want ignored: data directory missing for ${data.lishID.slice(0, 8)} (${lish.directory ?? 'no dir'})`);
-			return;
-		}
-		const haveChunks = this.dataServer.getHaveChunks(data.lishID);
-		if (haveChunks !== 'all' && haveChunks.size === 0) {
-			trace(`[NET] no chunks for ${data.lishID.slice(0, 8)}`);
-			return;
-		}
-		const myAddrs = this.node!.getMultiaddrs().map(ma => ma.toString());
-		const chunksPayload: import('./lish-protocol.ts').HaveChunks = haveChunks === 'all' ? 'all' : Array.from(haveChunks);
-		console.debug(`[NET] sending unicast HAVE to ${fromPeerID.slice(0, 12)} for ${data.lishID.slice(0, 8)}, chunks=${chunksPayload === 'all' ? 'ALL' : chunksPayload.length}`);
-		// Open a fresh LISH protocol stream to the requester and send the HAVE announcement.
-		// Errors are traced (not thrown) — a single unreachable requester mustn't break our own subscription.
-		let client: LISHClient | undefined;
-		try {
-			const { stream } = await this.dialProtocolByPeerId(fromPeerID, LISH_PROTOCOL);
-			client = new LISHClient(stream);
-			await client.announceHave(data.lishID, chunksPayload, myAddrs);
-		} catch (err: any) {
-			trace(`[NET] announceHave to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
-			await client?.close().catch(() => {});
-			return;
-		}
-		await client.close().catch(() => {});
-		// Record send time only after the announcement was sent; cleanup interval drains stale entries.
-		this.lastWantResponseTime.set(key, Date.now());
-	}
-
-	// =========================================================================
-	// Search LISHs (pubsub query, unicast response)
-	// =========================================================================
-
-	/**
-	 * Handle an incoming pubsub `searchLishs` query from a peer browsing the network.
-	 * - Iterates locally shared (upload-enabled) LISHs
-	 * - Filters by case-insensitive substring on `id` and `name`
-	 * - If at least one match → opens a fresh LISH protocol stream to the requester and sends `searchResult`
-	 * Empty result → no response (saves a stream open for non-matching peers).
-	 *
-	 * `seenSearchIDs` deduplicates queries arriving multiple times via the gossipsub mesh
-	 * (same query can hit the same node from several peering paths).
-	 */
-	private async handleSearchLishs(data: SearchLishsMessage, networkID: string, fromPeerID?: string): Promise<void> {
-		void networkID;
-		if (!fromPeerID) {
-			trace(`[NET] searchLishs ignored: no verified sender peerID`);
-			return;
-		}
-		if (typeof data.searchID !== 'string' || typeof data.query !== 'string') return;
-		// Empty / overly long queries are dropped — a defensive bound; UI input is much shorter.
-		if (data.query.length === 0 || data.query.length > 256) return;
-		// Don't reply to our own broadcast (we're a subscriber to the topic too).
-		if (this.node && fromPeerID === this.node.peerId.toString()) return;
-		// Dedup: same searchID arriving multiple times from gossipsub mesh — answer at most once.
-		const lastSeen = this.seenSearchIDs.get(data.searchID);
-		if (lastSeen !== undefined) return;
-		this.seenSearchIDs.set(data.searchID, Date.now());
-		const q = data.query.toLowerCase();
-		const matches: Array<{ id: string; name?: string; totalSize?: number }> = [];
-		for (const lish of this.dataServer.list()) {
-			if (!isSearchAdvertisableLish(lish)) continue;
-			const idLower = lish.id.toLowerCase();
-			const nameLower = lish.name?.toLowerCase() ?? '';
-			if (!idLower.includes(q) && !nameLower.includes(q)) continue;
-			const totalSize = (lish.files ?? []).reduce((sum: number, f: { size: number }) => sum + f.size, 0);
-			const entry: { id: string; name?: string; totalSize?: number } = { id: lish.id, totalSize };
-			if (lish.name !== undefined) entry.name = lish.name;
-			matches.push(entry);
-		}
-		if (matches.length === 0) return;
-		trace(`[NET] searchLishs ${data.searchID.slice(0, 8)} from ${fromPeerID.slice(0, 12)}: ${matches.length} match(es)`);
-		let client: LISHClient | undefined;
-		try {
-			const { stream } = await this.dialProtocolByPeerId(fromPeerID, LISH_PROTOCOL);
-			client = new LISHClient(stream);
-			await client.sendSearchResult(data.searchID, matches);
-		} catch (err: any) {
-			trace(`[NET] sendSearchResult to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
-		}
-		await client?.close().catch(() => {});
-	}
-
-	// =========================================================================
 	// Public API
 	// =========================================================================
 
@@ -1885,50 +1273,17 @@ export class Network {
 
 	async connectToPeer(multiaddr: string): Promise<void> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		const ma = Multiaddr(multiaddr);
-		await this.node.dial(ma);
-		console.debug('→ Connected to:', multiaddr);
-	}
-
-	/**
-	 * Determine connection type from a specific connection + dcutrPeers set.
-	 * Only dcutr:success event marks a peer as DCUtR — not the presence of both
-	 * relay and direct connections (which can happen during normal discovery).
-	 */
-	private classifyConnection(peerID: string, isRelay: boolean): 'DIRECT' | 'RELAY' | 'DCUtR' {
-		const isDcutr = this.dcutrPeers.has(peerID);
-		const result = isDcutr && !isRelay ? 'DCUtR' : isRelay ? 'RELAY' : 'DIRECT';
-		trace(`[NET] classify ${peerID.slice(0, 12)}: relay=${isRelay} dcutrSet=${isDcutr} → ${result}`);
-		return result;
+		await connectToPeerFn(this.node, multiaddr);
 	}
 
 	async dialProtocol(multiaddrs: any[], protocol: string): Promise<IDialResult> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		trace(`[NET] dial ${protocol} to ${multiaddrs.map(m => m.toString()).join(', ')}`);
-		const connection = await this.node.dial(multiaddrs);
-		const peerID = connection.remotePeer.toString();
-		const isRelay = Circuit.matches(connection.remoteAddr);
-		const connectionType = this.classifyConnection(peerID, isRelay);
-		const limited = (connection as any).limits != null;
-		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}] addr=${connection.remoteAddr.toString().slice(0, 60)}`);
-		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
-		trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
-		return { stream, connectionType };
+		return dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol);
 	}
 
 	async dialProtocolByPeerId(peerID: string, protocol: string): Promise<IDialResult> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		trace(`[NET] dial ${protocol} to ${peerID.slice(0, 16)}`);
-		const { peerIdFromString } = await import('@libp2p/peer-id');
-		const pid = peerIdFromString(peerID);
-		const connection = await this.node.dial(pid);
-		const isRelay = Circuit.matches(connection.remoteAddr);
-		const connectionType = this.classifyConnection(peerID, isRelay);
-		const limited = (connection as any).limits != null;
-		console.debug(`[NET] dial connected: ${peerID.slice(0, 16)} [${connectionType}${limited ? ',LIMITED' : ''}] addr=${connection.remoteAddr.toString().slice(0, 60)}`);
-		const stream = await connection.newStream(protocol, { runOnLimitedConnection: true });
-		trace(`[NET] stream opened: id=${stream.id}, status=${stream.status}`);
-		return { stream, connectionType };
+		return dialProtocolByPeerIdFn(this.node, this.dcutrPeers, peerID, protocol);
 	}
 
 	/**
@@ -1959,16 +1314,7 @@ export class Network {
 	 */
 	async writeIdentityKey(privateKeyBytes: Uint8Array): Promise<void> {
 		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before writing identity key');
-		// Validate first — throws if not a valid libp2p private key protobuf
-		privateKeyFromProtobuf(privateKeyBytes);
-		const datastorePath = join(this.dataDir, 'datastore');
-		const ds = new SqliteDatastore(datastorePath);
-		ds.open();
-		try {
-			ds.put(PRIVATE_KEY_PATH as any, privateKeyBytes);
-		} finally {
-			ds.close();
-		}
+		await writeIdentityKeyToDatastore(this.dataDir, privateKeyBytes);
 	}
 
 	/**
@@ -1977,14 +1323,7 @@ export class Network {
 	 */
 	async clearIdentityKey(): Promise<void> {
 		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing identity key');
-		const datastorePath = join(this.dataDir, 'datastore');
-		const ds = new SqliteDatastore(datastorePath);
-		ds.open();
-		try {
-			if (ds.has(PRIVATE_KEY_PATH as any)) ds.delete(PRIVATE_KEY_PATH as any);
-		} finally {
-			ds.close();
-		}
+		await clearIdentityKeyFromDatastore(this.dataDir);
 	}
 
 	/**
@@ -1994,14 +1333,7 @@ export class Network {
 	 */
 	async clearDatastore(): Promise<void> {
 		if (this.node) throw new CodedError(ErrorCodes.INTERNAL_ERROR, 'Network must be stopped before clearing datastore');
-		const datastorePath = join(this.dataDir, 'datastore');
-		const ds = new SqliteDatastore(datastorePath);
-		ds.open();
-		try {
-			ds.clear();
-		} finally {
-			ds.close();
-		}
+		await clearDatastoreDir(this.dataDir);
 	}
 
 	/**
@@ -2040,10 +1372,7 @@ export class Network {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;
 		}
-		if (this.peerAnnounceInterval) {
-			clearTimeout(this.peerAnnounceInterval);
-			this.peerAnnounceInterval = null;
-		}
+		this.peerAnnounce.stop();
 		if (this.wantResponseCleanupInterval) {
 			clearInterval(this.wantResponseCleanupInterval);
 			this.wantResponseCleanupInterval = null;
@@ -2069,10 +1398,12 @@ export class Network {
 		// Fix C: clear accumulated per-peer/bootstrap state on stop
 		this.dcutrPeers.clear();
 		this.bootstrapPeerIDs.clear();
+		this.bootstrapTracker.clear();
 		this.bootstrapMultiaddrs = [];
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
 		this.redialBackoff.clear();
+		this.pxIngressLogKeys.clear();
 		if (this.node) {
 			await this.node.stop();
 			console.log('Network stopped');
