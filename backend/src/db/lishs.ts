@@ -463,6 +463,13 @@ export function getMissingChunks(db: Database, lishID: LISHid): MissingChunk[] {
 	return missing;
 }
 
+// A single chunk slot: which file and chunk index it occupies, plus its checksum.
+export interface ChunkSlot {
+	fileIndex: number;
+	chunkIndex: number;
+	checksum: ChunkID;
+}
+
 /**
  * Every chunk slot (fileIndex, chunkIndex, checksum) for a LISH, in manifest order.
  * Mirrors getMissingChunks ordering so the indexes line up with DataServer.writeChunk.
@@ -470,11 +477,11 @@ export function getMissingChunks(db: Database, lishID: LISHid): MissingChunk[] {
  * markChunkDownloaded flips `have` for all matching slots, so any slot not also written
  * would be left zero-filled from allocation (silent corruption).
  */
-export function getAllChunkSlots(db: Database, lishID: LISHid): Array<{ fileIndex: number; chunkIndex: number; checksum: ChunkID }> {
+export function getAllChunkSlots(db: Database, lishID: LISHid): ChunkSlot[] {
 	const internalID = getInternalID(db, lishID);
 	if (internalID === null) return [];
 	const files = db.query<{ id: number }, [number]>('SELECT id FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
-	const slots: Array<{ fileIndex: number; chunkIndex: number; checksum: ChunkID }> = [];
+	const slots: ChunkSlot[] = [];
 	for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
 		const chunks = db.query<{ checksum: string }, [number]>('SELECT checksum FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(files[fileIndex]!.id);
 		for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) slots.push({ fileIndex, chunkIndex, checksum: chunks[chunkIndex]!.checksum as ChunkID });
@@ -594,11 +601,19 @@ export function isVerified(db: Database, lishID: LISHid): boolean {
 	return (row?.unverified ?? 1) === 0;
 }
 
+// A file with its internal DB ID, chunk checksums and chunk row IDs, used during verification.
+export interface FileForVerification {
+	fileInternalID: number;
+	path: string;
+	checksums: string[];
+	chunkRowIDs: number[];
+}
+
 /**
  * Get files with their internal IDs, chunk checksums and chunk row IDs, for verification.
  * Chunk row IDs are used to perform O(1) mark updates without re-scanning chunks per update.
  */
-export function getFilesForVerification(db: Database, lishID: LISHid): Array<{ fileInternalID: number; path: string; checksums: string[]; chunkRowIDs: number[] }> | null {
+export function getFilesForVerification(db: Database, lishID: LISHid): FileForVerification[] | null {
 	const internalID = getInternalID(db, lishID);
 	if (internalID === null) return null;
 	const files = db.query<{ id: number; path: string }, [number]>('SELECT id, path FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
@@ -644,8 +659,17 @@ function buildStoredLISH(db: Database, row: LISHRow): IStoredLISH {
 	};
 }
 
-function getFiles(db: Database, internalID: number): Array<{ path: string; size: number; permissions: string | null; modified: string | null; created: string | null }> {
-	return db.query<{ path: string; size: number; permissions: string | null; modified: string | null; created: string | null }, [number]>('SELECT path, size, permissions, modified, created FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
+// A single file row (path, size, permissions, timestamps) as stored in the lishs_files table.
+export interface StoredFileRow {
+	path: string;
+	size: number;
+	permissions: string | null;
+	modified: string | null;
+	created: string | null;
+}
+
+function getFiles(db: Database, internalID: number): StoredFileRow[] {
+	return db.query<StoredFileRow, [number]>('SELECT path, size, permissions, modified, created FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
 }
 
 function getFilesWithChecksums(db: Database, internalID: number): IFileEntry[] {

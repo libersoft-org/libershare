@@ -27,6 +27,12 @@ import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filte
 import { peerIdFromString } from '@libp2p/peer-id';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 
+/** A gossipsub direct-peer entry: a peer id and its multiaddrs. */
+export interface DirectPeer {
+	id: any;
+	addrs: any[];
+}
+
 /**
  * Convert bootstrap multiaddr strings to gossipsub DirectPeer entries
  * ({ id: PeerId, addrs: Multiaddr[] }). Peers that lack a /p2p/<id> component
@@ -34,8 +40,8 @@ const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
  * inside the gossipsub mesh at config time, without waiting for the first
  * peer-announce discovery cycle to surface bootstraps as direct peers.
  */
-function buildDirectPeersFromBootstrap(uniquePeers: string[]): Array<{ id: any; addrs: any[] }> {
-	const direct: Array<{ id: any; addrs: any[] }> = [];
+function buildDirectPeersFromBootstrap(uniquePeers: string[]): DirectPeer[] {
+	const direct: DirectPeer[] = [];
 	for (const ma of uniquePeers) {
 		try {
 			const parsed = Multiaddr(ma);

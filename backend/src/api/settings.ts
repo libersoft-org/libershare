@@ -21,8 +21,14 @@ function validateBackup(data: unknown): asserts data is Record<string, unknown> 
 	if (!hasKnown) throw new CodedError(ErrorCodes.INVALID_SETTINGS_BACKUP);
 }
 
-function flattenSettings(obj: Record<string, unknown>, prefix: string = ''): Array<{ path: string; value: unknown }> {
-	const result: Array<{ path: string; value: unknown }> = [];
+// A single setting flattened to a dotted path and its value.
+export interface FlatSetting {
+	path: string;
+	value: unknown;
+}
+
+function flattenSettings(obj: Record<string, unknown>, prefix: string = ''): FlatSetting[] {
+	const result: FlatSetting[] = [];
 	for (const [key, value] of Object.entries(obj)) {
 		const path = prefix ? `${prefix}.${key}` : key;
 		if (value !== null && typeof value === 'object' && !Array.isArray(value)) result.push(...flattenSettings(value as Record<string, unknown>, path));
