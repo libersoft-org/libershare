@@ -14,6 +14,14 @@ interface LISHRow {
 	final_directory: string | null;
 }
 
+interface LISHFileRow {
+	path: string;
+	size: number;
+	permissions: string | null;
+	modified: string | null;
+	created: string | null;
+}
+
 function buildStoredLISH(db: Database, row: LISHRow): IStoredLISH {
 	const files = getFilesWithChecksums(db, row.id);
 	const directories = getDirectories(db, row.id);
@@ -36,8 +44,8 @@ function buildStoredLISH(db: Database, row: LISHRow): IStoredLISH {
 	};
 }
 
-function getFiles(db: Database, internalID: number): Array<{ path: string; size: number; permissions: string | null; modified: string | null; created: string | null }> {
-	return db.query<{ path: string; size: number; permissions: string | null; modified: string | null; created: string | null }, [number]>('SELECT path, size, permissions, modified, created FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
+function getFiles(db: Database, internalID: number): LISHFileRow[] {
+	return db.query<LISHFileRow, [number]>('SELECT path, size, permissions, modified, created FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
 }
 
 function getFilesWithChecksums(db: Database, internalID: number): IFileEntry[] {

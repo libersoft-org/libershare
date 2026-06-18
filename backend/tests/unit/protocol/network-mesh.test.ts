@@ -152,7 +152,13 @@ type PruneControl = { topicID?: string; peers?: Array<{ peerID?: Uint8Array }> }
 type RPC = { control?: { prune?: PruneControl[] } };
 type FilterSettings = { enabled: boolean; ingressFilterEnabled: boolean; trustedPeerIds: string[] };
 
-function applyPXIngressFilter(peerExchange: FilterSettings, sender: string, rpc: RPC): { prune: PruneControl[]; allowed: number; stripped: number } {
+interface PXIngressFilterResult {
+	prune: PruneControl[];
+	allowed: number;
+	stripped: number;
+}
+
+function applyPXIngressFilter(peerExchange: FilterSettings, sender: string, rpc: RPC): PXIngressFilterResult {
 	const prunes = rpc.control?.prune ?? [];
 	if (!peerExchange.ingressFilterEnabled || prunes.length === 0) return { prune: prunes, allowed: 0, stripped: 0 };
 	const trusted = normalizeTrustedPeerIds(peerExchange.trustedPeerIds);
@@ -380,8 +386,12 @@ describe('statusInterval — periodic peer count refresh', () => {
 		const logCalls: string[] = [];
 		const origDebug = console.debug;
 		const origLog = console.log;
-		console.debug = (...args: any[]) => { debugCalls.push(args.join(' ')); };
-		console.log = (...args: any[]) => { logCalls.push(args.join(' ')); };
+		console.debug = (...args: any[]) => {
+			debugCalls.push(args.join(' '));
+		};
+		console.log = (...args: any[]) => {
+			logCalls.push(args.join(' '));
+		};
 		try {
 			const fakeNode = {
 				getConnections: () => [],
@@ -392,11 +402,7 @@ describe('statusInterval — periodic peer count refresh', () => {
 				getSubscribers: () => [],
 			};
 			const fakeSettings = {} as any;
-			logStatusDebug(
-				{ node: fakeNode, pubsub: fakePubsub, settings: fakeSettings, lastScores: new Map() },
-				[],
-				[]
-			);
+			logStatusDebug({ node: fakeNode, pubsub: fakePubsub, settings: fakeSettings, lastScores: new Map() }, [], []);
 		} finally {
 			console.debug = origDebug;
 			console.log = origLog;
@@ -412,11 +418,21 @@ describe('statusInterval — periodic peer count refresh', () => {
 // checkPeerCounts algorithm — tested in isolation
 // ---------------------------------------------------------------------------
 
+interface NetworkPeerCount {
+	networkID: string;
+	count: number;
+}
+
+interface PeerCountsResult {
+	changed: boolean;
+	counts: NetworkPeerCount[];
+}
+
 describe('checkPeerCounts logic', () => {
-	function checkPeerCountsLogic(topics: string[], getSubscribers: (topic: string) => string[], lastCounts: Map<string, number>): { changed: boolean; counts: { networkID: string; count: number }[] } {
+	function checkPeerCountsLogic(topics: string[], getSubscribers: (topic: string) => string[], lastCounts: Map<string, number>): PeerCountsResult {
 		const prefix = 'lish/';
 		let changed = false;
-		const counts: { networkID: string; count: number }[] = [];
+		const counts: NetworkPeerCount[] = [];
 		for (const topic of topics) {
 			if (!topic.startsWith(prefix)) continue;
 			const networkID = topic.slice(prefix.length);

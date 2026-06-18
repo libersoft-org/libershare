@@ -1,6 +1,12 @@
 import { type Database } from 'bun:sqlite';
 import { type LISHid } from '@shared';
 
+/** Cumulative uploaded/downloaded byte counters for a LISH. */
+export interface TransferStats {
+	uploadedBytes: number;
+	downloadedBytes: number;
+}
+
 // -- Upload/download enabled persistence --
 
 /** Persists the upload-enabled flag for a LISH. */
@@ -46,7 +52,7 @@ export function incrementDownloadedBytes(db: Database, lishID: LISHid, bytes: nu
 }
 
 /** Reads the cumulative uploaded/downloaded byte counters for a LISH (0 when absent). */
-export function getTransferStats(db: Database, lishID: LISHid): { uploadedBytes: number; downloadedBytes: number } {
+export function getTransferStats(db: Database, lishID: LISHid): TransferStats {
 	const row = db.query<{ total_uploaded_bytes: number; total_downloaded_bytes: number }, [string]>('SELECT total_uploaded_bytes, total_downloaded_bytes FROM lishs WHERE lish_id = ?').get(lishID);
 	return { uploadedBytes: row?.total_uploaded_bytes ?? 0, downloadedBytes: row?.total_downloaded_bytes ?? 0 };
 }
