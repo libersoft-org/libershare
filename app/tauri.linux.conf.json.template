@@ -1,0 +1,28 @@
+{
+	"productName": "{{PRODUCT_NAME_LOWER}}",
+	"mainBinaryName": "{{PRODUCT_NAME_LOWER}}",
+	"bundle": {
+		"resources": {
+			"../backend/build/lish-backend": "./lish-backend"
+		},
+		"linux": {
+			"deb": {
+				"desktopTemplate": "desktop-entry.desktop",
+				"files": {
+					"/usr/share/applications/{{PRODUCT_NAME_LOWER}}-debug.desktop": "desktop-entry-debug.desktop"
+				}
+			},
+			"rpm": {
+				"desktopTemplate": "desktop-entry.desktop",
+				"files": {
+					"/usr/share/applications/{{PRODUCT_NAME_LOWER}}-debug.desktop": "desktop-entry-debug.desktop"
+				}
+			},
+			"appimage": {
+				"files": {
+					"usr/share/applications/{{PRODUCT_NAME_LOWER}}-debug.desktop": "desktop-entry-debug.desktop"
+				}
+			}
+		}
+	}
+}

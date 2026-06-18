@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -116,16 +116,16 @@ class FsAPI {
 		return this.client.call<{ success: boolean }>('fs.rename', { path, newName });
 	}
 
-	exists(path: string): Promise<{ exists: boolean; type?: 'file' | 'directory' }> {
-		return this.client.call<{ exists: boolean; type?: 'file' | 'directory' }>('fs.exists', { path });
+	exists(path: string): Promise<IPathExistsResult> {
+		return this.client.call<IPathExistsResult>('fs.exists', { path });
 	}
 
-	writeText(path: string, content: string): Promise<{ success: boolean; error?: string }> {
-		return this.client.call<{ success: boolean; error?: string }>('fs.writeText', { path, content });
+	writeText(path: string, content: string): Promise<IWriteResult> {
+		return this.client.call<IWriteResult>('fs.writeText', { path, content });
 	}
 
-	writeCompressed(path: string, content: string, algorithm: CompressionAlgorithm = 'gzip'): Promise<{ success: boolean; error?: string }> {
-		return this.client.call<{ success: boolean; error?: string }>('fs.writeCompressed', { path, content, algorithm });
+	writeCompressed(path: string, content: string, algorithm: CompressionAlgorithm = 'gzip'): Promise<IWriteResult> {
+		return this.client.call<IWriteResult>('fs.writeCompressed', { path, content, algorithm });
 	}
 }
 
@@ -155,8 +155,18 @@ class SettingsAPI {
 		return this.client.call<T>('settings.reset');
 	}
 
-	exportToFile(filePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<{ success: boolean; error?: string }> {
-		return this.client.call<{ success: boolean; error?: string }>('settings.exportToFile', { filePath, minifyJSON, compress, compressionAlgorithm });
+	/**
+	 * Factory reset with per-category selection (each defaults to ON). Wipes the
+	 * selected categories: settings → defaults, identity → new peer ID + cleared
+	 * peerstore, downloads → all LISH records (on-disk files kept), networks → all
+	 * lishnets. The UI should reload afterwards.
+	 */
+	factoryReset(options?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean }): Promise<FactoryResetResponse> {
+		return this.client.call<FactoryResetResponse>('settings.factoryReset', options ?? {});
+	}
+
+	exportToFile(filePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<IWriteResult> {
+		return this.client.call<IWriteResult>('settings.exportToFile', { filePath, minifyJSON, compress, compressionAlgorithm });
 	}
 
 	parseFromFile<T = Record<string, unknown>>(filePath: string): Promise<T> {
@@ -171,8 +181,8 @@ class SettingsAPI {
 		return this.client.call<T>('settings.parseFromURL', { url });
 	}
 
-	applyImported(data: Record<string, unknown>): Promise<{ applied: number; skipped: string[] }> {
-		return this.client.call<{ applied: number; skipped: string[] }>('settings.applyImported', { data });
+	applyImported(data: Record<string, unknown>): Promise<ISettingsImportResult> {
+		return this.client.call<ISettingsImportResult>('settings.applyImported', { data });
 	}
 }
 
@@ -347,8 +357,8 @@ class LISHsAPI {
 		this.client = client;
 	}
 
-	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[]; uploadEnabled: string[]; downloadEnabled: string[] }> {
-		return this.client.call<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[]; uploadEnabled: string[]; downloadEnabled: string[] }>('lishs.list', { sortBy, sortOrder });
+	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<ILISHListResult> {
+		return this.client.call<ILISHListResult>('lishs.list', { sortBy, sortOrder });
 	}
 
 	get(lishID: string): Promise<ILISHDetail | null> {

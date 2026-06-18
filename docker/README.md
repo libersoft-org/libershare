@@ -173,7 +173,7 @@ Set `TLS_CERT_SAN` before the first frontend start when the self-signed
 certificate must be valid for a LAN IP or DNS name:
 
 ```sh
-TLS_CERT_SAN=DNS:localhost,IP:127.0.0.1,IP:192.168.2.9 docker compose up -d
+TLS_CERT_SAN=DNS:localhost,IP:127.0.0.1,IP:192.168.1.10 docker compose up -d
 ```
 
 To use a real certificate for a hostname, mount a cert directory and point the

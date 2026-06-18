@@ -1,14 +1,14 @@
 import { readdir, stat, access, unlink, mkdir as fsMkdirNode, rename as fsRenameNode } from 'fs/promises';
-import { join, sep, dirname } from 'path';
+import { join, sep, dirname, resolve } from 'path';
 import { homedir, platform } from 'os';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Utils } from '../utils.ts';
-import { CodedError, ErrorCodes, type ErrorCode, type FsInfo, type FsEntry, type FsListResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
+import { CodedError, ErrorCodes, type ErrorCode, type FsInfo, type FsEntry, type FsListResult, type IPathExistsResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
 import { isContainer } from '../container.ts';
 const assert = Utils.assertParams;
 const isWindows = platform() === 'win32';
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // Map Node.js errno codes → CodedError codes for the frontend.
 const ERRNO_MAP: Record<string, ErrorCode> = {
@@ -66,7 +66,7 @@ interface FsHandlers {
 	mkdir: (p: { path: string }) => Promise<void>;
 	open: (p: { path: string }) => Promise<void>;
 	rename: (p: { path: string; newName: string }) => Promise<void>;
-	exists: (p: { path: string }) => Promise<{ exists: boolean; type?: 'file' | 'directory' }>;
+	exists: (p: { path: string }) => Promise<IPathExistsResult>;
 	writeText: (p: { path: string; content: string }) => Promise<SuccessResponse>;
 	writeCompressed: (p: { path: string; content: string; algorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
 }
@@ -162,9 +162,16 @@ export function initFsHandlers(): FsHandlers {
 	async function open(p: { path: string }): Promise<void> {
 		assert(p, ['path']);
 		return fsCall(p.path, async () => {
-			if (isWindows) await execAsync(`start "" "${p.path}"`);
-			else if (platform() === 'darwin') await execAsync(`open "${p.path}"`);
-			else await execAsync(`xdg-open "${p.path}"`);
+			// execFile (no shell) — the path is passed as an argument, never parsed by a shell.
+			// resolve() also neutralizes a leading "-" being read as an option by open/xdg-open.
+			const target = resolve(p.path);
+			if (isWindows) {
+				// cmd's `start` parses metacharacters (&, ^) even via execFile, so use PowerShell.
+				// Single-quoted PS strings have no escapes except '' — and " is illegal in Windows paths.
+				const psPath = target.replace(/'/g, "''");
+				await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', `Invoke-Item -LiteralPath '${psPath}'`]);
+			} else if (platform() === 'darwin') await execFileAsync('open', [target]);
+			else await execFileAsync('xdg-open', [target]);
 		});
 	}
 
@@ -175,7 +182,7 @@ export function initFsHandlers(): FsHandlers {
 		return fsCall(p.path, () => fsRenameNode(p.path, newPath));
 	}
 
-	async function exists(p: { path: string }): Promise<{ exists: boolean; type?: 'file' | 'directory' }> {
+	async function exists(p: { path: string }): Promise<IPathExistsResult> {
 		assert(p, ['path']);
 		try {
 			const s = await stat(p.path);

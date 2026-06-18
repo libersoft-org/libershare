@@ -23,6 +23,12 @@ export interface WantMessage {
 	type: 'want';
 	lishID: LISHid;
 }
+
+/** Error info exposed by a Downloader in the 'error' state: a code and optional human-readable detail. */
+export interface IDownloadError {
+	code: string;
+	detail?: string;
+}
 type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'awaiting-manifest' | 'downloading' | 'downloaded' | 'error';
 
 /**
@@ -129,9 +135,9 @@ export class Downloader {
 		this.state = newState;
 		return true;
 	}
-	getError(): { code: string; detail?: string } | null {
+	getError(): IDownloadError | null {
 		if (this.state !== 'error') return null;
-		const err: { code: string; detail?: string } = { code: this.errorCode! };
+		const err: IDownloadError = { code: this.errorCode! };
 		if (this.errorDetail !== undefined) err.detail = this.errorDetail;
 		return err;
 	}

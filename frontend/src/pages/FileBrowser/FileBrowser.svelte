@@ -44,9 +44,11 @@
 		onSaveError?: ((error: string) => void) | undefined; // Called on save error
 		onDownAtEnd?: (() => boolean) | undefined;
 		specialFileTypes?: { extensions: string[]; onOpen: (path: string) => void }[] | undefined;
+		/** When provided, adds a "Share" action for files and directories that calls back with the selected path. */
+		onShare?: ((path: string) => void) | undefined;
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, position, initialPath = '', initialFile, directoriesOnly = false, filesOnly = false, fileFilter, fileFilterName, showPath = true, selectDirectoryButton: selectDirectoryButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, specialFileTypes }: Props = $props();
+	let { areaID, position, initialPath = '', initialFile, directoriesOnly = false, filesOnly = false, fileFilter, fileFilterName, showPath = true, selectDirectoryButton: selectDirectoryButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, specialFileTypes, onShare }: Props = $props();
 
 	// File filter state
 	let showAllFiles = $state(false);
@@ -138,7 +140,7 @@
 		showActions = false;
 	}
 	// Directory toolbar actions
-	let directoryActions = $derived(buildDirectoryActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectDirectoryButton, customFilter ?? undefined, currentPath, showNameFilter));
+	let directoryActions = $derived(buildDirectoryActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectDirectoryButton, customFilter ?? undefined, currentPath, showNameFilter, !!onShare));
 	let selectedDirectoryActionIndex = $state(0);
 	let directoryActionsActive = $derived($activeArea === `${areaID}-directory-actions`);
 	// Filter panel actions
@@ -358,7 +360,7 @@
 	};
 
 	// File actions from fileBrowser.ts
-	let fileActions = $derived(getFileActions($t, selectFileButton));
+	let fileActions = $derived(getFileActions($t, selectFileButton, !!onShare));
 
 	const actionsAreaHandlers = {
 		up() {
@@ -516,6 +518,9 @@
 			case 'open':
 				handleOpenFile(item);
 				break;
+			case 'share':
+				onShare?.(item.path);
+				break;
 			case 'edit':
 				showEditor(item);
 				return;
@@ -536,6 +541,9 @@
 		switch (actionID) {
 			case 'select':
 				onSelect?.(currentPath);
+				break;
+			case 'share':
+				onShare?.(currentPath);
 				break;
 			case 'new':
 				showNewDirectoryDialog();

@@ -103,7 +103,7 @@ describe('isPublic', () => {
 	});
 	it('rejects private / loopback / multicast / zero', () => {
 		expect(isPublic('192.168.99.28')).toBe(false);
-		expect(isPublic('<redacted-vpn-ip>')).toBe(false);
+		expect(isPublic('10.99.0.10')).toBe(false);
 		expect(isPublic('127.0.0.1')).toBe(false);
 		expect(isPublic('0.0.0.0')).toBe(false);
 		expect(isPublic('224.0.0.1')).toBe(false); // multicast
@@ -158,7 +158,7 @@ function mkMA(ip: string | null): any {
 describe('shouldDenyDial', () => {
 	const lanOnly = ['192.168.99.22/23']; // node lives on a private /23 LAN only
 	const publicOnly = ['203.0.113.10/32']; // node has only a single public IP
-	const mixed = ['203.0.113.10/32', '<redacted-lan-ip>/23', '<redacted-vpn-ip>/24'];
+	const mixed = ['203.0.113.10/32', '192.168.50.10/23', '10.99.0.10/24']; // public + a /23 LAN + a /24 VPN
 
 	it('allows any multiaddr without IPv4 (DNS, circuit-relay)', () => {
 		expect(shouldDenyDial(mkMA(null), publicOnly)).toBe(false);
@@ -188,13 +188,17 @@ describe('shouldDenyDial', () => {
 	});
 
 	it('denies LAN multiaddr from DIFFERENT private subnet even if I have LAN interfaces', () => {
-		// I have 192.168.22.x; peer has 192.168.99.28 → deny (different /23)
-		expect(shouldDenyDial(mkMA('192.168.99.28'), ['<redacted-lan-ip>/23'])).toBe(true);
+		// Node is on a /23 LAN (192.168.50.0/23); peer is in a different /23 → deny.
+		expect(shouldDenyDial(mkMA('192.168.99.28'), ['192.168.50.10/23'])).toBe(true);
+		// Same interface, peer inside the /23 → allow (proves the LAN interface is parsed, not ignored).
+		expect(shouldDenyDial(mkMA('192.168.51.9'), ['192.168.50.10/23'])).toBe(false);
 	});
 
 	it('allows VPN LAN when I share the VPN subnet', () => {
-		// Mixed: public + LAN 22.x + VPN 10.254.x. Peer on <redacted-vpn-ip> → allow.
-		expect(shouldDenyDial(mkMA('<redacted-vpn-ip>'), mixed)).toBe(false);
+		// Mixed: public + a /23 LAN + a /24 VPN. Peer inside the VPN /24 → allow.
+		expect(shouldDenyDial(mkMA('10.99.0.5'), mixed)).toBe(false);
+		// Peer in a different private /24 I am not on → deny (proves the allow is subnet-specific).
+		expect(shouldDenyDial(mkMA('10.88.0.5'), mixed)).toBe(true);
 	});
 
 	it('denies CGNAT peers unless I share the CGNAT range', () => {

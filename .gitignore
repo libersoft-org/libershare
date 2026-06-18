@@ -4,6 +4,9 @@ app/binaries/
 app/icons/
 app/gen/
 app/core
+# Generated from *.template by app/sync-config.ts (source: shared/src/product.json)
+app/tauri.conf.json
+app/tauri.linux.conf.json
 **/*.crt
 **/*.key
 frontend/.svelte-kit/

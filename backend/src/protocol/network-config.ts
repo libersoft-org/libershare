@@ -20,11 +20,18 @@ import { networkInterfaces } from 'os';
 import { isLinkLocalIp } from '@libp2p/utils';
 import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
+import { productEnvPrefix } from '@shared';
 import { trace } from '../logger.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
+
+/** A gossipsub direct-peer entry: a peer id and its multiaddrs. */
+export interface DirectPeer {
+	id: any;
+	addrs: any[];
+}
 
 /**
  * Convert bootstrap multiaddr strings to gossipsub DirectPeer entries
@@ -33,8 +40,8 @@ const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
  * inside the gossipsub mesh at config time, without waiting for the first
  * peer-announce discovery cycle to surface bootstraps as direct peers.
  */
-function buildDirectPeersFromBootstrap(uniquePeers: string[]): Array<{ id: any; addrs: any[] }> {
-	const direct: Array<{ id: any; addrs: any[] }> = [];
+function buildDirectPeersFromBootstrap(uniquePeers: string[]): DirectPeer[] {
+	const direct: DirectPeer[] = [];
 	for (const ma of uniquePeers) {
 		try {
 			const parsed = Multiaddr(ma);
@@ -199,7 +206,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		connectionGater: {
 			denyDialMultiaddr: async (ma: any): Promise<boolean> => {
 				// Bypass gater for trusted peers (bootstrap set ∪ configured trustedPeerIds).
-				// Multi-subnet fleets (e.g. 192.168.2.x + 192.168.3.x) would otherwise have
+				// Multi-subnet fleets (e.g. 192.168.10.x + 192.168.20.x) would otherwise have
 				// trusted peers blocked when their advertised addr lives on a LAN segment
 				// different from our own. Trusted peers are by policy known-good
 				// destinations, so dial them regardless of CIDR match.
@@ -299,8 +306,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 						// Optional bounded trace of score callbacks. Off by default to keep production
 						// memory footprint clean — the `seen`/`trustedLogged` Sets would otherwise
 						// grow with every distinct peer encountered for the lifetime of the process.
-						// Enable via `LIBERSHARE_TRACE_PX=1` when investigating PX trust decisions.
-						if (process.env['LIBERSHARE_TRACE_PX'] === '1') {
+						// Enable via `<PREFIX>_TRACE_PX=1` when investigating PX trust decisions.
+						if (process.env[`${productEnvPrefix}_TRACE_PX`] === '1') {
 							const dbg = ((globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
 							if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
 								dbg.seen.add(pid);

@@ -64,6 +64,12 @@ export interface LISHAnnounceHaveRequest {
  * Each LISH entry contains only public-safe metadata (id, optional name, optional totalSize).
  * Empty `lishs` is allowed (peer matched nothing — sender can use it to count "no result" responses).
  */
+/** Public-safe LISH listing entry (id plus optional name/totalSize) exchanged with peers. */
+export interface LISHListEntry {
+	id: string;
+	name?: string;
+	totalSize?: number;
+}
 export interface LISHSearchResultRequest {
 	type: 'searchResult';
 	searchID: string;
@@ -166,7 +172,7 @@ export class LISHClient {
 	// Request list of shared LISHs from peer. `query` is an optional
 	// case-insensitive substring filter the peer applies server-side; omit it
 	// to retrieve the full list.
-	async requestList(query?: string): Promise<Array<{ id: string; name?: string; totalSize?: number }>> {
+	async requestList(query?: string): Promise<LISHListEntry[]> {
 		const request: LISHGetLishsRequest = { type: 'getLishs', ...(query !== undefined ? { query } : {}) };
 		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLishs: stream ${this.stream.status}`);
@@ -329,6 +335,16 @@ export function getEnabledUploads(): Set<string> {
 export function removeUploadState(lishID: string): void {
 	uploadEnabled.delete(lishID);
 	broadcastFn?.('transfer.upload:disabled', { lishID });
+}
+
+/**
+ * Clear all in-memory upload state (factory reset). Keeps the broadcast and
+ * limiter wiring intact so the module stays usable after the reset.
+ */
+export function clearAllUploads(): void {
+	uploadEnabled.clear();
+	activeUploads.clear();
+	activeStreamCount.clear();
 }
 
 const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload

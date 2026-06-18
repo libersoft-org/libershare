@@ -408,6 +408,24 @@
 			"restartHint": "Some changes will only take effect after restarting the application.",
 			"errorInvalidFormat": "Invalid backup file format"
 		},
+		"factoryReset": {
+			"title": "Factory reset",
+			"intro": "Select what to wipe. The chosen categories return to their default state.",
+			"optionSettings": "Settings",
+			"optionIdentity": "Identity",
+			"optionDownloads": "Downloads & sharing (LISHs)",
+			"optionNetworks": "LISH networks",
+			"nothingSelected": "Select at least one item to wipe.",
+			"warning": "Files of already downloaded and shared LISHs on disk are KEPT untouched. Only the application state is cleared, not your data.",
+			"reset": "Factory reset",
+			"resetting": "Resetting…",
+			"reloadApp": "Reload application",
+			"confirmTitle": "Factory reset",
+			"confirmMessage": "Wipe the selected categories? Files on disk are kept, but this action cannot be undone.",
+			"error": "Factory reset failed: {detail}",
+			"categoryDone": "{category} – reset",
+			"categoryFailed": "{category} – failed: {detail}"
+		},
 		"identity": {
 			"title": "Identity",
 			"regenerate": "Generate new",
@@ -467,6 +485,8 @@
 		"renameDirectory": "Rename directory",
 		"createFile": "Create file",
 		"deleteFile": "Delete file",
+		"shareFile": "Share file",
+		"shareDirectory": "Share directory",
 		"directoryName": "Directory name",
 		"enterDirectoryName": "Enter directory name",
 		"directoryNameRequired": "Directory name is required",

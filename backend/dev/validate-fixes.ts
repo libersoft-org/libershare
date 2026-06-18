@@ -1,7 +1,7 @@
 /**
  * Standalone validation script for audit fixes (C1, C2, C3, H3, H4, M2).
  * Runs without bun:test (which crashes on Windows canary).
- * Usage: bun run backend/tests/validate-fixes.ts
+ * Usage: bun run backend/dev/validate-fixes.ts
  */
 import { Database } from 'bun:sqlite';
 import { ErrorCodes } from '@shared';
@@ -134,8 +134,8 @@ console.log('\n── C3: ErrorRecovery backoff + max retries ──');
 		},
 	});
 
-	recovery.start('<redacted-bootstrap>', ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: false });
-	const state = recovery.getState('<redacted-bootstrap>');
+	recovery.start('sha256:recovery01', ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: false });
+	const state = recovery.getState('sha256:recovery01');
 	assert(state!.nextRetryDelay === 7000, 'Initial delay is 7s');
 
 	// Simulate 6 rapid attempts (manually calling attempt via timer advance)
@@ -144,7 +144,7 @@ console.log('\n── C3: ErrorRecovery backoff + max retries ──');
 	assert(scheduledEvt?.data.delayMs === 7000, 'First scheduled broadcast has 7s delay');
 
 	recovery.stopAll();
-	assert(recovery.getState('<redacted-bootstrap>') === undefined, 'Recovery stopped');
+	assert(recovery.getState('sha256:recovery01') === undefined, 'Recovery stopped');
 }
 
 // ─── M2: checksum index exists ───────────────────────────────────────────

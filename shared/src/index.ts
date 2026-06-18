@@ -1,5 +1,5 @@
 // Product info
-export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, DEFAULT_API_PORT, DEFAULT_API_URL } from './product.ts';
+export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL } from './product.ts';
 
 // Utils
 export { formatBytes, parseBytes, sanitizeFilename } from './utils.ts';
@@ -47,6 +47,17 @@ export interface PeerConnectionInfo {
 	peerID: string;
 	direct: number;
 	relay: number;
+}
+
+/**
+ * Per-network gossipsub mesh health snapshot (mesh size, time since the last
+ * graft/prune, median peer score). Returned by the network/lishnet layer and
+ * surfaced over the `peers:count` event.
+ */
+export interface IMeshHealth {
+	meshSize: number;
+	stableSinceMs: number | null;
+	medianScore: number | null;
 }
 
 export interface PeerListEntry {
@@ -177,6 +188,26 @@ export interface BootstrapStatus {
 	peers: BootstrapPeerStatus[];
 }
 
+/** The independently-wipeable categories of a factory reset. */
+export type FactoryResetCategory = 'settings' | 'identity' | 'downloads' | 'networks';
+
+/** Outcome of one factory-reset category. Each category runs independently — a
+ * failure in one never prevents the others, so the FE can report one notification
+ * per category. */
+export interface FactoryResetResult {
+	category: FactoryResetCategory;
+	ok: boolean;
+	/** Failure reason (error message) when `ok` is false. */
+	detail?: string;
+}
+
+/** Aggregate factory-reset response: `success` is true only when every selected
+ * category succeeded; `results` carries the per-category outcome. */
+export interface FactoryResetResponse {
+	success: boolean;
+	results: FactoryResetResult[];
+}
+
 // Dataset types (derived from ILISH entries that have a directory)
 export interface Dataset {
 	id: string;
@@ -209,9 +240,27 @@ export interface FsListResult {
 	error?: string | undefined;
 }
 
+// Result of `fs.exists`.
+export interface IPathExistsResult {
+	exists: boolean;
+	type?: 'file' | 'directory';
+}
+
+// Result of file-writing operations (`fs.writeText`, `fs.writeCompressed`, `settings.exportToFile`).
+export interface IWriteResult {
+	success: boolean;
+	error?: string;
+}
+
 // API response wrappers
 export interface SuccessResponse {
 	success: boolean;
+}
+
+// Result of `settings.applyImported`: how many keys were applied vs. skipped.
+export interface ISettingsImportResult {
+	applied: number;
+	skipped: string[];
 }
 
 export interface CreateLISHResponse {

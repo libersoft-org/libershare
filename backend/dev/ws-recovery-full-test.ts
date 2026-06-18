@@ -3,11 +3,11 @@
  * Creates an error condition (enables download on LISH with non-existent directory)
  * and verifies recovery:scheduled event arrives.
  *
- * Run: bun run backend/tests/ws-recovery-full-test.ts [ws-url]
+ * Run: bun run backend/dev/ws-recovery-full-test.ts [ws-url]
  */
 export {};
 
-const WS_URL = process.argv[2] || 'ws://<redacted-lan-ip>:1158';
+const WS_URL = process.argv[2] || 'ws://localhost:1158';
 
 interface WSMessage {
 	id?: number;

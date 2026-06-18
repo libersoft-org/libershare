@@ -1,5 +1,5 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, validateLISHStructure, CodedError, ErrorCodes } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, validateLISHStructure, CodedError, ErrorCodes, productName } from '@shared';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
@@ -68,7 +68,7 @@ interface MoveParams {
 	createSubdirectory?: boolean;
 }
 interface LISHsHandlers {
-	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] };
+	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => ILISHListResult;
 	get: (p: { lishID: string }) => ILISHDetail | null;
 	exportToFile: (p: ExportToFileParams) => Promise<SuccessResponse>;
 	exportAllToFile: (p: ExportAllToFileParams) => Promise<SuccessResponse>;
@@ -151,7 +151,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	// Track current creation so it can be aborted
 	let currentCreation: AbortController | null = null;
 
-	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[]; uploadEnabled: string[]; downloadEnabled: string[] } {
+	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): ILISHListResult {
 		return {
 			items: dataServer.listSummaries(p?.sortBy, p?.sortOrder),
 			verifying: currentVerification?.lishID ?? null,
@@ -330,7 +330,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		let finalDirectory: string | undefined;
 		if (enableDownloading) {
 			// Download mode → allocate + write chunks into temp, move to finalDirectory after completion.
-			const tempPath: string = settings.get('storage.tempPath') ?? '~/LiberShare/temp/';
+			const tempPath: string = settings.get('storage.tempPath') ?? `~/${productName}/temp/`;
 			const tempBaseDir = join(Utils.expandHome(tempPath), dirName);
 			directory = await Utils.findUniqueDirectory(tempBaseDir);
 			finalDirectory = finalBaseDir;

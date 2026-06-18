@@ -1,7 +1,7 @@
 import { mkdir } from 'fs/promises';
 import { JSONStorage } from './storage.ts';
 import { Utils } from './utils.ts';
-import { type CompressionAlgorithm } from '@shared';
+import { productName, productEnvPrefix, type CompressionAlgorithm } from '@shared';
 // Default upper bound for chunk size accepted by the app (configurable via settings).
 export const DEFAULT_MAX_CHUNK_SIZE: number = 100 * 1024 * 1024;
 // Default upper bound for a single P2P message on the wire (configurable via settings).
@@ -122,7 +122,7 @@ export interface SettingsData {
 function storagePath(envName: string, defaultRelative: string, fallback: string): string {
 	const explicit = process.env[envName];
 	if (explicit) return explicit;
-	const root = process.env['LIBERSHARE_STORAGE_ROOT'];
+	const root = process.env[`${productEnvPrefix}_STORAGE_ROOT`];
 	if (!root) return fallback;
 	return `${root.replace(/[\\/]+$/, '')}/${defaultRelative}/`;
 }
@@ -155,11 +155,11 @@ const DEFAULT_SETTINGS: SettingsData = {
 		volume: 50,
 	},
 	storage: {
-		downloadPath: storagePath('LIBERSHARE_DOWNLOAD_PATH', 'finished', '~/LiberShare/finished/'),
-		tempPath: storagePath('LIBERSHARE_TEMP_PATH', 'temp', '~/LiberShare/temp/'),
-		lishPath: storagePath('LIBERSHARE_LISH_PATH', 'lish', '~/LiberShare/lish/'),
-		lishnetPath: storagePath('LIBERSHARE_LISHNET_PATH', 'lishnet', '~/LiberShare/lishnet/'),
-		backupPath: storagePath('LIBERSHARE_BACKUP_PATH', 'backup', '~/LiberShare/backup/'),
+		downloadPath: storagePath(`${productEnvPrefix}_DOWNLOAD_PATH`, 'finished', `~/${productName}/finished/`),
+		tempPath: storagePath(`${productEnvPrefix}_TEMP_PATH`, 'temp', `~/${productName}/temp/`),
+		lishPath: storagePath(`${productEnvPrefix}_LISH_PATH`, 'lish', `~/${productName}/lish/`),
+		lishnetPath: storagePath(`${productEnvPrefix}_LISHNET_PATH`, 'lishnet', `~/${productName}/lishnet/`),
+		backupPath: storagePath(`${productEnvPrefix}_BACKUP_PATH`, 'backup', `~/${productName}/backup/`),
 	},
 	network: {
 		incomingPort: 9090,

@@ -1,5 +1,9 @@
 type EmitFn = (client: any, event: string, data: any) => void;
-type GetPeerCountsFn = () => { networkID: string; count: number }[];
+interface PeerCount {
+	networkID: string;
+	count: number;
+}
+type GetPeerCountsFn = () => PeerCount[];
 
 interface EventsHandlers {
 	subscribe: (p: { events?: string[]; event?: string }, client: any) => boolean;

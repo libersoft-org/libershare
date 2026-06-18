@@ -3,13 +3,8 @@ import { Downloader } from '../protocol/downloader.ts';
 import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize } from '../protocol/lish-protocol.ts';
 import { setMaxDownloadPeersPerLISH } from '../protocol/peer-manager.ts';
 import { Utils } from '../utils.ts';
-import { type CompressionAlgorithm, type SuccessResponse, CodedError, ErrorCodes } from '@shared';
+import { type CompressionAlgorithm, type SuccessResponse, type ISettingsImportResult, CodedError, ErrorCodes } from '@shared';
 const assert = Utils.assertParams;
-
-interface SettingsImportResult {
-	applied: number;
-	skipped: string[];
-}
 
 const ALLOWED_ROOT_KEYS = new Set(['language', 'ui', 'audio', 'storage', 'network', 'system', 'export', 'input']);
 
@@ -26,8 +21,14 @@ function validateBackup(data: unknown): asserts data is Record<string, unknown> 
 	if (!hasKnown) throw new CodedError(ErrorCodes.INVALID_SETTINGS_BACKUP);
 }
 
-function flattenSettings(obj: Record<string, unknown>, prefix: string = ''): Array<{ path: string; value: unknown }> {
-	const result: Array<{ path: string; value: unknown }> = [];
+// A single setting flattened to a dotted path and its value.
+export interface FlatSetting {
+	path: string;
+	value: unknown;
+}
+
+function flattenSettings(obj: Record<string, unknown>, prefix: string = ''): FlatSetting[] {
+	const result: FlatSetting[] = [];
 	for (const [key, value] of Object.entries(obj)) {
 		const path = prefix ? `${prefix}.${key}` : key;
 		if (value !== null && typeof value === 'object' && !Array.isArray(value)) result.push(...flattenSettings(value as Record<string, unknown>, path));
@@ -46,7 +47,7 @@ interface SettingsHandlers {
 	parseFromFile: (p: { filePath: string }) => Promise<Record<string, unknown>>;
 	parseFromJSON: (p: { json: string }) => Record<string, unknown>;
 	parseFromURL: (p: { url: string }) => Promise<Record<string, unknown>>;
-	applyImported: (p: { data: Record<string, unknown> }) => Promise<SettingsImportResult>;
+	applyImported: (p: { data: Record<string, unknown> }) => Promise<ISettingsImportResult>;
 }
 
 export function initSettingsHandlers(settings: Settings): SettingsHandlers {
@@ -69,6 +70,11 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 
 	async function set(p: { path: string; value: any }): Promise<boolean> {
 		assert(p, ['path', 'value']);
+		// Confine writes to known top-level settings groups. This rejects unknown
+		// roots and — together with the key guard in JSONStorage.set — blocks
+		// prototype-pollution paths such as "__proto__.x" or "constructor.x".
+		const rootKey = p.path.split('.')[0];
+		if (!rootKey || !ALLOWED_ROOT_KEYS.has(rootKey)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `Unknown settings key: ${p.path}`);
 		await settings.set(p.path, p.value);
 		if (p.path.startsWith('network.maxDownloadSpeed') || p.path.startsWith('network.maxUploadSpeed')) applySpeedLimits();
 		if (p.path.startsWith('network.maxDownloadPeersPerLISH') || p.path.startsWith('network.maxUploadPeersPerLISH')) applyPeerLimits();
@@ -133,7 +139,7 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		return parsed;
 	}
 
-	async function applyImported(p: { data: Record<string, unknown> }): Promise<SettingsImportResult> {
+	async function applyImported(p: { data: Record<string, unknown> }): Promise<ISettingsImportResult> {
 		assert(p, ['data']);
 		validateBackup(p.data);
 		const filtered: Record<string, unknown> = {};

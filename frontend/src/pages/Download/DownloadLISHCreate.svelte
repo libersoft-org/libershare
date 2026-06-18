@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack, onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
@@ -8,6 +8,13 @@
 	import { sanitizeFilename } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
 	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
+
+	/** Basename of a shared file/directory path (last segment, trailing separators stripped). */
+	function shareBaseName(path: string): string {
+		const trimmed = path.replace(/[\\/]+$/, '');
+		const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+		return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
+	}
 
 	function parseChunkSize(value: string): number | null {
 		if (!value.trim()) return null;
@@ -73,8 +80,10 @@
 		areaID: string;
 		position?: Position | undefined;
 		onBack?: (() => void) | undefined;
+		/** Prefill the data path (e.g. when sharing a file/directory from local storage). */
+		initialDataPath?: string | undefined;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack, initialDataPath }: Props = $props();
 	// Browse state
 	let showOverwriteConfirm = $state(false);
 	let pendingCreateParams = $state<Record<string, any>>({});
@@ -82,13 +91,15 @@
 	let browseDirectory = $state('');
 	let browseFile = $state<string | undefined>(undefined);
 	let lishFileName = $state(''); // File name input in LISH file browse dialog
-	// Form state
-	let dataPath = $state($storagePath);
+	// Form state — prefill once from the share path (if any), then user-editable.
+	let dataPath = $state(untrack(() => initialDataPath) ?? $storagePath);
 	let saveToFile = $state(true);
 	let minifyJSON = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
 	let showAdvanced = $state(false);
-	let name = $state('');
+	// Prefill the LISH name from the shared file/directory basename (if any).
+	let name = $state(untrack(() => (initialDataPath ? shareBaseName(initialDataPath) : '')));
+	let nameManuallyEdited = $state(false); // Stop auto-filling the name from the data path once the user types one
 	// LISH file path - editable state, initialized from settings
 	let lishFile = $state($storageLISHPath);
 	let lishFileManuallyEdited = $state(false); // Track if user manually edited the path
@@ -108,6 +119,12 @@
 		}
 	}
 
+	// User typed in the name field — remember it so the data-path picker stops overwriting it.
+	function handleNameInput(newName: string): void {
+		nameManuallyEdited = true;
+		handleNameChange(newName);
+	}
+
 	function handleCompressToggle(): void {
 		compress = !compress;
 		if (lishFile.endsWith('.lish') || lishFile.endsWith('.lish.gz')) {
@@ -115,6 +132,11 @@
 			else if (!compress && lishFile.endsWith('.lish.gz')) lishFile = lishFile.slice(0, -3);
 		}
 	}
+
+	// When the name was prefilled from a shared path, derive the .lish filename from it too.
+	onMount(() => {
+		if (untrack(() => initialDataPath) && name) handleNameChange(name);
+	});
 
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
@@ -228,6 +250,8 @@
 
 	function handleInputPathSelect(path: string): void {
 		dataPath = path;
+		// Mirror the picked file/directory name into the LISH name, unless the user already typed one.
+		if (!nameManuallyEdited) handleNameChange(shareBaseName(path));
 		void inputPathSubPage.exit();
 	}
 
@@ -294,7 +318,7 @@
 	<div class="create">
 		<div class="container">
 			<!-- Name (optional) -->
-			<Input value={name} onchange={handleNameChange} label={`${$t('common.name')} (${$t('common.optional')})`} position={[0, 0]} />
+			<Input value={name} onchange={handleNameInput} label={`${$t('common.name')} (${$t('common.optional')})`} position={[0, 0]} />
 			<!-- Description (optional) -->
 			<Input bind:value={description} label={`${$t('common.description')} (${$t('common.optional')})`} multiline rows={3} position={[0, 1]} />
 			<!-- Data Path (required) -->
