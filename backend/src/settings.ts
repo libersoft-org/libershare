@@ -128,7 +128,7 @@ export interface SettingsData {
 function storagePath(envName: string, defaultRelative: string, fallback: string): string {
 	const explicit = process.env[envName];
 	if (explicit) return explicit;
-	const root = process.env[`${productEnvPrefix}_STORAGE_ROOT`];
+	const root = process.env['STORAGE_ROOT'];
 	if (!root) return fallback;
 	return `${root.replace(/[\\/]+$/, '')}/${defaultRelative}/`;
 }
