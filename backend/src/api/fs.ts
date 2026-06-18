@@ -4,7 +4,7 @@ import { homedir, platform } from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Utils } from '../utils.ts';
-import { CodedError, ErrorCodes, type ErrorCode, type FsInfo, type FsEntry, type FsListResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
+import { CodedError, ErrorCodes, type ErrorCode, type FsInfo, type FsEntry, type FsListResult, type IPathExistsResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
 import { isContainer } from '../container.ts';
 const assert = Utils.assertParams;
 const isWindows = platform() === 'win32';
@@ -182,7 +182,7 @@ export function initFsHandlers(): FsHandlers {
 		return fsCall(p.path, () => fsRenameNode(p.path, newPath));
 	}
 
-	async function exists(p: { path: string }): Promise<{ exists: boolean; type?: 'file' | 'directory' }> {
+	async function exists(p: { path: string }): Promise<IPathExistsResult> {
 		assert(p, ['path']);
 		try {
 			const s = await stat(p.path);

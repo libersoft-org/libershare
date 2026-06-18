@@ -7,6 +7,27 @@ export interface MissingChunk {
 	chunkID: ChunkID;
 }
 
+/** Minimal LISH record (main row only — no files/directories/links). */
+export interface ILISHMeta {
+	internalID: number;
+	lishID: string;
+	chunkSize: number;
+	checksumAlgo: HashAlgorithm;
+	directory: string | null;
+}
+
+/** Location of a chunk on disk: which file holds it and the chunk's index within that file. */
+export interface IChunkLocation {
+	filePath: string;
+	chunkIndex: number;
+}
+
+/** Per-LISH cumulative transfer counters. */
+export interface ITransferStats {
+	uploadedBytes: number;
+	downloadedBytes: number;
+}
+
 export function initLISHsTables(db: Database): void {
 	db.run(`
 		CREATE TABLE IF NOT EXISTS lishs (
@@ -207,7 +228,7 @@ export function getLISH(db: Database, lishID: LISHid): IStoredLISH | null {
  * Get a stored LISH with only the main record (no files/directories/links).
  * Used where only metadata fields are needed (e.g. chunk I/O that only needs directory + chunkSize).
  */
-export function getLISHMeta(db: Database, lishID: LISHid): { internalID: number; lishID: string; chunkSize: number; checksumAlgo: HashAlgorithm; directory: string | null } | null {
+export function getLISHMeta(db: Database, lishID: LISHid): ILISHMeta | null {
 	const row = db.query<{ id: number; lish_id: string; chunk_size: number; checksum_algo: string; directory: string | null }, [string]>('SELECT id, lish_id, chunk_size, checksum_algo, directory FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
 	return { internalID: row.id, lishID: row.lish_id, chunkSize: row.chunk_size, checksumAlgo: row.checksum_algo as HashAlgorithm, directory: row.directory };
@@ -465,7 +486,7 @@ export function getAllChunkSlots(db: Database, lishID: LISHid): Array<{ fileInde
  * Find which file a chunk belongs to and return its index info.
  * Used for reading/writing chunk data from/to disk.
  */
-export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID): { filePath: string; chunkIndex: number } | null {
+export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID): IChunkLocation | null {
 	const internalID = getInternalID(db, lishID);
 	if (internalID === null) return null;
 
@@ -722,7 +743,7 @@ export function incrementDownloadedBytes(db: Database, lishID: LISHid, bytes: nu
 	db.run('UPDATE lishs SET total_downloaded_bytes = total_downloaded_bytes + ? WHERE lish_id = ?', [bytes, lishID]);
 }
 
-export function getTransferStats(db: Database, lishID: LISHid): { uploadedBytes: number; downloadedBytes: number } {
+export function getTransferStats(db: Database, lishID: LISHid): ITransferStats {
 	const row = db.query<{ total_uploaded_bytes: number; total_downloaded_bytes: number }, [string]>('SELECT total_uploaded_bytes, total_downloaded_bytes FROM lishs WHERE lish_id = ?').get(lishID);
 	return { uploadedBytes: row?.total_uploaded_bytes ?? 0, downloadedBytes: row?.total_downloaded_bytes ?? 0 };
 }

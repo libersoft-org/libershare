@@ -7,6 +7,11 @@ import { Utils } from '../utils.ts';
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
 const POLL_INTERVAL_MS = 5000;
+/** A single CPU-times sample: accumulated idle ticks and total ticks across all cores. */
+interface ICpuSample {
+	idle: number;
+	total: number;
+}
 interface SystemHandlers {
 	ram: () => SystemRAMInfo;
 	storage: () => Promise<SystemStorageInfo>;
@@ -91,9 +96,9 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return { used: hostTotal - free, total: hostTotal };
 	}
 
-	let prevCpuTimes: { idle: number; total: number } | null = null;
+	let prevCpuTimes: ICpuSample | null = null;
 
-	function sampleCpuTimes(): { idle: number; total: number } {
+	function sampleCpuTimes(): ICpuSample {
 		const cpus = os.cpus();
 		let idle = 0;
 		let total = 0;

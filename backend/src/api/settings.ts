@@ -3,13 +3,8 @@ import { Downloader } from '../protocol/downloader.ts';
 import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize } from '../protocol/lish-protocol.ts';
 import { setMaxDownloadPeersPerLISH } from '../protocol/peer-manager.ts';
 import { Utils } from '../utils.ts';
-import { type CompressionAlgorithm, type SuccessResponse, CodedError, ErrorCodes } from '@shared';
+import { type CompressionAlgorithm, type SuccessResponse, type ISettingsImportResult, CodedError, ErrorCodes } from '@shared';
 const assert = Utils.assertParams;
-
-interface SettingsImportResult {
-	applied: number;
-	skipped: string[];
-}
 
 const ALLOWED_ROOT_KEYS = new Set(['language', 'ui', 'audio', 'storage', 'network', 'system', 'export', 'input']);
 
@@ -46,7 +41,7 @@ interface SettingsHandlers {
 	parseFromFile: (p: { filePath: string }) => Promise<Record<string, unknown>>;
 	parseFromJSON: (p: { json: string }) => Record<string, unknown>;
 	parseFromURL: (p: { url: string }) => Promise<Record<string, unknown>>;
-	applyImported: (p: { data: Record<string, unknown> }) => Promise<SettingsImportResult>;
+	applyImported: (p: { data: Record<string, unknown> }) => Promise<ISettingsImportResult>;
 }
 
 export function initSettingsHandlers(settings: Settings): SettingsHandlers {
@@ -138,7 +133,7 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		return parsed;
 	}
 
-	async function applyImported(p: { data: Record<string, unknown> }): Promise<SettingsImportResult> {
+	async function applyImported(p: { data: Record<string, unknown> }): Promise<ISettingsImportResult> {
 		assert(p, ['data']);
 		validateBackup(p.data);
 		const filtered: Record<string, unknown> = {};
