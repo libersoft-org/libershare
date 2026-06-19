@@ -50,7 +50,7 @@
 	// Pointer travel (px) before a press counts as a drag instead of a click.
 	const CLICK_DRAG_THRESHOLD = 5;
 
-	function selectPrev() {
+	function selectPrev(): void {
 		if (selectedIndex > 0) {
 			activateArea(areaID);
 			selectedIndex--;
@@ -58,7 +58,7 @@
 		}
 	}
 
-	function selectNext() {
+	function selectNext(): void {
 		if (selectedIndex < buttons.length - 1) {
 			activateArea(areaID);
 			selectedIndex++;
@@ -66,7 +66,7 @@
 		}
 	}
 
-	function handleWheel(e: WheelEvent) {
+	function handleWheel(e: WheelEvent): void {
 		if (e.deltaY > 0 || e.deltaX > 0) {
 			if (selectedIndex < buttons.length - 1) {
 				e.preventDefault();
@@ -80,7 +80,7 @@
 		}
 	}
 
-	function handleDragStart(e: MouseEvent) {
+	function handleDragStart(e: MouseEvent): void {
 		isDragging = true;
 		didDrag = false;
 		dragStartY = e.clientY;
@@ -91,7 +91,7 @@
 		document.addEventListener('mouseup', handleDragEnd);
 	}
 
-	function handleDragMove(e: MouseEvent) {
+	function handleDragMove(e: MouseEvent): void {
 		if (!isDragging) return;
 		if (orientation === 'horizontal') {
 			// Follow the pointer 1:1 so the row moves by exactly the dragged distance.
@@ -111,7 +111,7 @@
 		}
 	}
 
-	function handleDragEnd() {
+	function handleDragEnd(): void {
 		if (!isDragging) return;
 		isDragging = false;
 		document.removeEventListener('mousemove', handleDragMove);
@@ -128,23 +128,23 @@
 	}
 
 	setContext<MenuButtonsContext>('menuButtons', {
-		register(button) {
+		register(button): MenuButtonRegistration {
 			const index = buttons.length;
 			buttons.push(button);
 			return {
 				index,
-				unregister() {
+				unregister(): void {
 					buttons = buttons.filter((_, i) => i !== index);
 				},
 			};
 		},
-		isSelected(index) {
+		isSelected(index): boolean {
 			return active && selectedIndex === index;
 		},
-		isPressed(index) {
+		isPressed(index): boolean {
 			return active && selectedIndex === index && isAPressed;
 		},
-		handleClick(index: number) {
+		handleClick(index: number): void {
 			if (didDrag) {
 				didDrag = false;
 				return;
@@ -194,13 +194,13 @@
 		const handlers =
 			orientation === 'horizontal'
 				? {
-						up() {
+						up(): boolean {
 							return false;
 						},
-						down() {
+						down(): boolean {
 							return false;
 						},
-						left() {
+						left(): boolean {
 							if (selectedIndex > 0) {
 								selectedIndex--;
 								updateTranslateX();
@@ -208,7 +208,7 @@
 							}
 							return false;
 						},
-						right() {
+						right(): boolean {
 							if (selectedIndex < buttons.length - 1) {
 								selectedIndex++;
 								updateTranslateX();
@@ -218,24 +218,24 @@
 						},
 					}
 				: {
-						up() {
+						up(): boolean {
 							if (selectedIndex > 0) {
 								selectedIndex--;
 								return true;
 							}
 							return false;
 						},
-						down() {
+						down(): boolean {
 							if (selectedIndex < buttons.length - 1) {
 								selectedIndex++;
 								return true;
 							}
 							return false;
 						},
-						left() {
+						left(): boolean {
 							return false;
 						},
-						right() {
+						right(): boolean {
 							return false;
 						},
 					};
@@ -243,17 +243,17 @@
 			areaID,
 			{
 				...handlers,
-				confirmDown() {
+				confirmDown(): void {
 					isAPressed = true;
 				},
-				confirmUp() {
+				confirmUp(): void {
 					isAPressed = false;
 					buttons[selectedIndex]?.onConfirm?.();
 				},
-				confirmCancel() {
+				confirmCancel(): void {
 					isAPressed = false;
 				},
-				back() {
+				back(): void {
 					onBack?.();
 				},
 			},

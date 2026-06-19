@@ -12,11 +12,11 @@ interface ConnectivityTarget {
 const TARGETS: ConnectivityTarget[] = [
 	{
 		url: 'http://connectivitycheck.gstatic.com/generate_204',
-		validate: async r => r.status === 204,
+		validate: async (r): Promise<boolean> => r.status === 204,
 	},
 	{
 		url: 'http://www.msftconnecttest.com/connecttest.txt',
-		validate: async r => r.ok && (await r.text()).includes('Microsoft Connect Test'),
+		validate: async (r): Promise<boolean> => r.ok && (await r.text()).includes('Microsoft Connect Test'),
 	},
 ];
 
@@ -42,7 +42,7 @@ export function startConnectivityCheck(broadcast: BroadcastFn): () => void {
 	let interval: ReturnType<typeof setInterval> | undefined;
 	let initialTimeout: ReturnType<typeof setTimeout> | undefined;
 
-	const check = async () => {
+	const check = async (): Promise<void> => {
 		if (running) return;
 		running = true;
 		try {

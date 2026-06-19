@@ -394,12 +394,12 @@ describe('statusInterval — periodic peer count refresh', () => {
 		};
 		try {
 			const fakeNode = {
-				getConnections: () => [],
-				getMultiaddrs: () => [],
+				getConnections: (): any[] => [],
+				getMultiaddrs: (): any[] => [],
 			};
 			const fakePubsub = {
-				getTopics: () => [],
-				getSubscribers: () => [],
+				getTopics: (): string[] => [],
+				getSubscribers: (): string[] => [],
 			};
 			const fakeSettings = {} as any;
 			logStatusDebug({ node: fakeNode, pubsub: fakePubsub, settings: fakeSettings, lastScores: new Map() }, [], []);
@@ -554,7 +554,7 @@ describe('checkPeerCounts logic', () => {
 
 	it('consecutive calls without changes return changed=false', () => {
 		const lastCounts = new Map<string, number>();
-		const getSubscribers = () => ['peerA', 'peerB'];
+		const getSubscribers = (): string[] => ['peerA', 'peerB'];
 		const topics = ['lish/net1'];
 
 		const r1 = checkPeerCountsLogic(topics, getSubscribers, lastCounts);

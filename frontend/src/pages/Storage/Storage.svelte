@@ -49,7 +49,7 @@
 
 	const specialFileTypes = SPECIAL_FILE_TYPES.map(t => ({
 		extensions: t.extensions as unknown as string[],
-		onOpen: (path: string) => {
+		onOpen: (path: string): void => {
 			importFilePath = path;
 			importMode = t.mode;
 			pushBreadcrumb(tt('common.import') + ' ' + t.label);

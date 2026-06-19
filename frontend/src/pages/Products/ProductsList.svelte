@@ -37,7 +37,7 @@
 		position,
 		onBack,
 		activate: true,
-		listRange: () => {
+		listRange: (): [number, number] => {
 			const cols = Math.max(1, getGridColumnsCount(itemElements));
 			const lastRow = Math.max(0, Math.ceil(items.length / cols) - 1);
 			return [0, lastRow];
@@ -48,13 +48,13 @@
 	onMount(() => {
 		const cleanups = items.map((_, idx) => {
 			const item: NavItem = {
-				get pos() {
+				get pos(): NavPos {
 					return getItemPos(idx);
 				},
-				get el() {
+				get el(): HTMLElement | undefined {
 					return itemElements[idx];
 				},
-				onConfirm: () => openItem(idx),
+				onConfirm: (): void => openItem(idx),
 			};
 			return navHandle.controller.register(item);
 		});
