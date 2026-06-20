@@ -123,11 +123,17 @@ export function getAllChunkSlots(db: Database, lishID: LISHid): ChunkSlot[] {
 	return slots;
 }
 
+/** Where a chunk lives on disk: the file path and the chunk's index within that file. */
+export interface ChunkLocation {
+	filePath: string;
+	chunkIndex: number;
+}
+
 /**
  * Find which file a chunk belongs to and return its index info.
  * Used for reading/writing chunk data from/to disk.
  */
-export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID): { filePath: string; chunkIndex: number } | null {
+export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID): ChunkLocation | null {
 	const internalID = getInternalID(db, lishID);
 	if (internalID === null) return null;
 

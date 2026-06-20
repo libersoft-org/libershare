@@ -112,11 +112,20 @@ export function getLISH(db: Database, lishID: LISHid): IStoredLISH | null {
 	return buildStoredLISH(db, row);
 }
 
+/** Lightweight metadata-only view of a LISH (no files/directories/links). */
+export interface LISHMeta {
+	internalID: number;
+	lishID: string;
+	chunkSize: number;
+	checksumAlgo: HashAlgorithm;
+	directory: string | null;
+}
+
 /**
  * Returns a lightweight metadata-only view of a LISH (no files/directories/links).
  * Used by callers that only need directory, chunkSize, and checksumAlgo (e.g. chunk I/O).
  */
-export function getLISHMeta(db: Database, lishID: LISHid): { internalID: number; lishID: string; chunkSize: number; checksumAlgo: HashAlgorithm; directory: string | null } | null {
+export function getLISHMeta(db: Database, lishID: LISHid): LISHMeta | null {
 	const row = db.query<{ id: number; lish_id: string; chunk_size: number; checksum_algo: string; directory: string | null }, [string]>('SELECT id, lish_id, chunk_size, checksum_algo, directory FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
 	return { internalID: row.id, lishID: row.lish_id, chunkSize: row.chunk_size, checksumAlgo: row.checksum_algo as HashAlgorithm, directory: row.directory };

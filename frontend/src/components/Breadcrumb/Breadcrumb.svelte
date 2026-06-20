@@ -24,7 +24,12 @@
 		},
 	}));
 
-	function registerItem(node: HTMLElement, selectableIndex: number): { update: (newIDx: number) => void; destroy: () => void } {
+	interface RegisterItemAction {
+		update: (newIDx: number) => void;
+		destroy: () => void;
+	}
+
+	function registerItem(node: HTMLElement, selectableIndex: number): RegisterItemAction {
 		let cleanup: (() => void) | undefined;
 		function setup(idx: number): void {
 			cleanup?.();
