@@ -4,7 +4,8 @@
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { navigateBack } from '../../scripts/navigation.ts';
+	import { navigateBack, navigateToAbsolutePath } from '../../scripts/navigation.ts';
+	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { sanitizeFilename } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
 	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
@@ -82,8 +83,28 @@
 		onBack?: (() => void) | undefined;
 		/** Prefill the data path (e.g. when sharing a file/directory from local storage). */
 		initialDataPath?: string | undefined;
+		/** When set, Back navigates to this absolute menu path instead of popping one level. */
+		backPathIDs?: string[] | undefined;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack, initialDataPath }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack, initialDataPath, backPathIDs }: Props = $props();
+
+	// Snapshot the origin path once at creation: the dynamicProps store that carries
+	// backPathIDs through the menu navigation is cleared on the next navigation, so it
+	// must be read eagerly (same reason dataPath snapshots initialDataPath below).
+	const backPath = untrack(() => backPathIDs);
+
+	/** Navigate back, respecting a custom origin path when the form was opened from outside the downloads menu. */
+	function goBack(): void {
+		if (backPath) navigateToAbsolutePath(backPath);
+		else if (onBack) onBack();
+		else navigateBack();
+	}
+
+	// The top-bar / menu Back invokes navigation.navigateBack(), which only routes to a
+	// custom target via the focus back stack (executeBackHandler) — the navArea onBack is
+	// not consulted there. Register goBack on that stack so a Create LISH opened from a
+	// shared origin returns to it instead of popping to the parent Downloads menu.
+	onMount(() => (backPath ? pushBackHandler(goBack) : undefined));
 	// Browse state
 	let showOverwriteConfirm = $state(false);
 	let pendingCreateParams = $state<Record<string, any>>({});
@@ -213,7 +234,7 @@
 		activateArea(areaID);
 	}
 
-	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
+	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack: goBack }));
 	const inputPathSubPage = createSubPage(navHandle, () => areaID);
 	const outputPathSubPage = createSubPage(navHandle, () => areaID);
 	const progressSubPage = createSubPage(navHandle, () => areaID);
@@ -238,7 +259,7 @@
 	async function handleProgressDone(): Promise<void> {
 		progressDone = false;
 		await progressSubPage.exit();
-		navigateBack();
+		goBack();
 	}
 
 	function openInputPathBrowse(): void {
@@ -362,7 +383,7 @@
 		</div>
 		<ButtonBar justify="center" basePosition={[0, 11]}>
 			<Button icon="/img/plus.svg" label={$t('common.createLISH')} onConfirm={handleCreate} />
-			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={goBack} />
 		</ButtonBar>
 	</div>
 {/if}
