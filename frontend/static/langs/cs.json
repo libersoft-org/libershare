@@ -416,6 +416,7 @@
 			"optionIdentity": "Identita",
 			"optionDownloads": "Stahování a sdílení (LISHe)",
 			"optionNetworks": "Sítě LISH",
+			"optionPeers": "Úložiště nalezených účastníků",
 			"nothingSelected": "Vyberte alespoň jednu položku ke smazání.",
 			"warning": "Soubory již stažených a sdílených LISHů na disku ZŮSTANOU nedotčené. Maže se pouze stav aplikace, ne vaše data.",
 			"reset": "Obnovit tovární nastavení",

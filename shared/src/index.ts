@@ -189,7 +189,7 @@ export interface BootstrapStatus {
 }
 
 /** The independently-wipeable categories of a factory reset. */
-export type FactoryResetCategory = 'settings' | 'identity' | 'downloads' | 'networks';
+export type FactoryResetCategory = 'settings' | 'identity' | 'downloads' | 'networks' | 'peers';
 
 /** Outcome of one factory-reset category. Each category runs independently — a
  * failure in one never prevents the others, so the FE can report one notification

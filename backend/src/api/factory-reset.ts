@@ -3,7 +3,7 @@ import { type FactoryResetCategory, type FactoryResetResult, type FactoryResetRe
 /**
  * Operations a factory reset performs. `prepare`/`restart` are best-effort
  * infrastructure run around the wipes (logged but never reported as categories);
- * the four category functions are each run INDEPENDENTLY. Omit a function to skip
+ * the five category functions are each run INDEPENDENTLY. Omit a function to skip
  * that step (e.g. an unselected category).
  */
 export interface FactoryResetOps {
@@ -15,11 +15,13 @@ export interface FactoryResetOps {
 	identity?: (() => Promise<void> | void) | undefined;
 	downloads?: (() => Promise<void> | void) | undefined;
 	networks?: (() => Promise<void> | void) | undefined;
+	/** Wipe discovered peerstore records only; the identity private key is preserved. */
+	peers?: (() => Promise<void> | void) | undefined;
 }
 
 // Fixed execution order. Wipes are mutually independent, but a stable order keeps
 // the per-category notifications predictable on the FE.
-const CATEGORY_ORDER: FactoryResetCategory[] = ['downloads', 'networks', 'identity', 'settings'];
+const CATEGORY_ORDER: FactoryResetCategory[] = ['downloads', 'networks', 'peers', 'identity', 'settings'];
 
 function errMsg(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);

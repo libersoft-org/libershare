@@ -416,6 +416,7 @@
 			"optionIdentity": "Identity",
 			"optionDownloads": "Downloads & sharing (LISHs)",
 			"optionNetworks": "LISH networks",
+			"optionPeers": "Discovered peer store",
 			"nothingSelected": "Select at least one item to wipe.",
 			"warning": "Files of already downloaded and shared LISHs on disk are KEPT untouched. Only the application state is cleared, not your data.",
 			"reset": "Factory reset",
