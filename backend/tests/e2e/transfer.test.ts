@@ -32,7 +32,7 @@ async function connectNodes(): Promise<void> {
 	await node3.call('lishnets.connect', { multiaddr });
 
 	// Wait for peer discovery
-	const waitPeers = async (client: TestClient, minPeers: number) => {
+	const waitPeers = async (client: TestClient, minPeers: number): Promise<void> => {
 		const start = Date.now();
 		while (Date.now() - start < PEER_DISCOVERY_TIMEOUT) {
 			const status = await client.call('lishnets.getStatus', {});

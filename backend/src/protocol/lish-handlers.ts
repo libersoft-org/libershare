@@ -4,7 +4,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { LISH_PROTOCOL, LISHClient, type HaveChunks, isUploadEnabled, isUploadAdvertisable } from './lish-protocol.ts';
 import { isBusy } from '../api/busy.ts';
 import { type WantMessage } from './downloader.ts';
-import { type Stream } from '@libp2p/interface';
+import { type IDialResult } from './network.ts';
 import { type Libp2p } from 'libp2p';
 
 /**
@@ -36,7 +36,7 @@ export interface LISHHandlersDeps {
 	/** Returns the current libp2p node (may be null if not started). */
 	getNode(): Libp2p | null;
 	/** Dial a peer by peerID and open the given protocol stream. */
-	dialByPeerId(peerID: string, protocol: string): Promise<{ stream: Stream; connectionType: string }>;
+	dialByPeerId(peerID: string, protocol: string): Promise<IDialResult>;
 }
 
 /**

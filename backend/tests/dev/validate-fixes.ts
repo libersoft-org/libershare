@@ -121,15 +121,15 @@ console.log('\n── C3: ErrorRecovery backoff + max retries ──');
 	const broadcasts: Array<{ event: string; data: any }> = [];
 
 	const recovery = new ErrorRecovery({
-		attemptRecover: async () => {
+		attemptRecover: async (): Promise<boolean> => {
 			attemptCount++;
 			return false;
 		},
-		broadcast: (event, data) => {
+		broadcast: (event, data): void => {
 			broadcasts.push({ event, data });
 		},
-		getLISH: () => ({ directory: '/tmp/test', id: 'x' }) as any,
-		checkAccess: async () => {
+		getLISH: (): any => ({ directory: '/tmp/test', id: 'x' }) as any,
+		checkAccess: async (): Promise<void> => {
 			if (accessShouldFail) throw new Error('ENOENT');
 		},
 	});

@@ -93,7 +93,7 @@ describe('Per-topic scoreParams — NaN regression guard', () => {
 		const params = createPeerScoreParams({
 			topicScoreCap: 10.0,
 			appSpecificWeight: 1.0,
-			appSpecificScore: () => 1,
+			appSpecificScore: (): number => 1,
 			IPColocationFactorWeight: 0,
 			IPColocationFactorThreshold: 50,
 			behaviourPenaltyWeight: -1,

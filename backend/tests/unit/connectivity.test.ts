@@ -35,7 +35,12 @@ interface CheckResult {
 	consecutiveFailures: number;
 }
 
-function createChecker(broadcast: BroadcastFn) {
+interface Checker {
+	readonly state: CheckResult;
+	processResult(isOnline: boolean): Promise<void>;
+}
+
+function createChecker(broadcast: BroadcastFn): Checker {
 	let online = true;
 	let consecutiveFailures = 0;
 	let running = false;
