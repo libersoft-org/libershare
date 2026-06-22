@@ -203,14 +203,14 @@ export class Network {
 			lastWantResponseTime: this.lastWantResponseTime,
 			seenSearchIDs: this.seenSearchIDs,
 			wantResponseCooldownMs: WANT_RESPONSE_COOLDOWN_MS,
-			getNode: () => this.node,
-			dialByPeerId: (peerID, protocol) => this.dialProtocolByPeerId(peerID, protocol),
+			getNode: (): Libp2p | null => this.node,
+			dialByPeerId: (peerID, protocol): Promise<IDialResult> => this.dialProtocolByPeerId(peerID, protocol),
 		});
 		this.peerAnnounce = new PeerAnnounceManager({
-			getNode: () => this.node,
-			getPubsub: () => this.pubsub,
-			broadcast: (topic, msg) => this.broadcast(topic, msg),
-			addBootstrapPeers: (multiaddrs, networkID, origin) => this.addBootstrapPeers(multiaddrs, networkID, origin),
+			getNode: (): Libp2p | null => this.node,
+			getPubsub: (): any => this.pubsub,
+			broadcast: (topic, msg): Promise<void> => this.broadcast(topic, msg),
+			addBootstrapPeers: (multiaddrs, networkID, origin): Promise<void> => this.addBootstrapPeers(multiaddrs, networkID, origin),
 		});
 	}
 
@@ -396,7 +396,7 @@ export class Network {
 		// returned by push() at every call site — intercept via prototype override
 		// on the first OutboundStream instance we observe (all instances share one
 		// prototype).
-		applyGossipsubPatches(this.pubsub, { settings: this.settings, getBootstrapPeerIDs: () => this.bootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
+		applyGossipsubPatches(this.pubsub, { settings: this.settings, getBootstrapPeerIDs: (): Set<string> => this.bootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
 
 		// Register lish protocol handler
 		await this.node.handle(
@@ -1095,7 +1095,7 @@ export class Network {
 		// handleWant is async — a rejection from any async operation inside it (dial failure,
 		// CodedError from closed stream, etc.) would otherwise propagate as unhandledRejection.
 		// Catch here so the pubsub dispatch loop remains isolated from per-handler failures.
-		const handler: TopicHandler = (data, from) => {
+		const handler: TopicHandler = (data, from): void => {
 			trace(`[NET] pubsub ${topic}: ${data['type']}`);
 			if (data['type'] === 'want') {
 				this.lishHandlers.handleWant(data as WantMessage, networkID, from).catch(err => {

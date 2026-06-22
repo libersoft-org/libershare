@@ -107,7 +107,7 @@ export function dumpGossipsubScores(deps: StatusLoggerDeps, connectedPeers: any[
 			for (const k of lastScores.keys()) if (!connectedSet2.has(k)) lastScores.delete(k);
 			if (entries.length > 0) {
 				entries.sort((a, b) => b.score - a.score);
-				const fmt = (e: { id: string; score: number; delta: number }) => `${e.id.slice(0, 12)}=${e.score.toFixed(1)}${e.delta !== 0 ? (e.delta > 0 ? '(+' : '(') + e.delta.toFixed(1) + ')' : ''}`;
+				const fmt = (e: { id: string; score: number; delta: number }): string => `${e.id.slice(0, 12)}=${e.score.toFixed(1)}${e.delta !== 0 ? (e.delta > 0 ? '(+' : '(') + e.delta.toFixed(1) + ')' : ''}`;
 				const top = entries.slice(0, 3).map(fmt).join(' | ');
 				const bot = entries.length > 3 ? entries.slice(-3).reverse().map(fmt).join(' | ') : '';
 				console.debug(`   Scores top: ${top}${bot ? ' | bot: ' + bot : ''}`);

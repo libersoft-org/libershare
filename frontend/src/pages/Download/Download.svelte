@@ -78,7 +78,7 @@
 		position,
 		onBack,
 		activate: true,
-		listRange: () => [2, Math.max(2, filteredDownloads.length + 1)],
+		listRange: (): [number, number] => [2, Math.max(2, filteredDownloads.length + 1)],
 	}));
 
 	function closeVerifyAllDialog(): void {

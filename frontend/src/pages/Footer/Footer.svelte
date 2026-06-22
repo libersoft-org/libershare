@@ -28,7 +28,7 @@
 		{
 			id: 'version',
 			component: Item,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topLabel: $t('common.version'),
 					bottomLabel: productVersion,
@@ -38,7 +38,7 @@
 		{
 			id: 'download',
 			component: Item,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: 'img/download.svg',
 					topIconAlt: $t('common.download'),
@@ -50,7 +50,7 @@
 		{
 			id: 'upload',
 			component: Item,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: 'img/upload.svg',
 					topIconAlt: $t('common.upload'),
@@ -62,7 +62,7 @@
 		{
 			id: 'relay',
 			component: Item,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: 'img/share.svg',
 					topIconAlt: $t('settings.footerWidgets.relay'),
@@ -74,7 +74,7 @@
 		{
 			id: 'cpu',
 			component: Bar,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: 'img/cpu.svg',
 					topIconAlt: $t('settings.footerWidgets.cpu'),
@@ -85,7 +85,7 @@
 		{
 			id: 'ram',
 			component: Bar,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: 'img/ram.svg',
 					topIconAlt: $t('settings.footerWidgets.ram'),
@@ -97,7 +97,7 @@
 		{
 			id: 'storage',
 			component: Bar,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: 'img/storage.svg',
 					topIconAlt: $t('settings.footerWidgets.storage'),
@@ -109,7 +109,7 @@
 		{
 			id: 'lishStatus',
 			component: LISHStatus,
-			props() {
+			props(): Record<string, any> {
 				return {
 					connectedNetworks: $networkSummary.connectedNetworks,
 					totalNetworks: $networkSummary.totalNetworks,
@@ -121,7 +121,7 @@
 		{
 			id: 'gamepad',
 			component: Gamepad,
-			props() {
+			props(): Record<string, any> {
 				return {
 					connected: $gamepadConnected,
 				};
@@ -130,7 +130,7 @@
 		{
 			id: 'connection',
 			component: Connection,
-			props() {
+			props(): Record<string, any> {
 				return {
 					type: 'wifi',
 					connected: true,
@@ -141,7 +141,7 @@
 		{
 			id: 'volume',
 			component: Item,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: `img/${getVolumeIcon($volume)}.svg`,
 					topIconAlt: $t('settings.footerWidgets.volume'),

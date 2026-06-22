@@ -81,8 +81,8 @@
 					get el(): HTMLElement | undefined {
 						return elements[idx];
 					},
-					onConfirm: () => setActive(tab.id),
-					onActivate: () => setActive(tab.id),
+					onConfirm: (): void => setActive(tab.id),
+					onActivate: (): void => setActive(tab.id),
 				})
 			);
 		}

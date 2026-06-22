@@ -13,15 +13,15 @@ describe('ErrorRecovery', () => {
 		broadcastCalls = [];
 		recoverShouldSucceed = false;
 		recovery = new ErrorRecovery({
-			attemptRecover: async (lishID, _dlEnabled, _ulEnabled) => {
+			attemptRecover: async (lishID, _dlEnabled, _ulEnabled): Promise<boolean> => {
 				attemptCalls.push({ lishID });
 				return recoverShouldSucceed;
 			},
-			broadcast: (event, data) => {
+			broadcast: (event, data): void => {
 				broadcastCalls.push({ event, data });
 			},
-			getLISH: lishID => ({ directory: '/tmp/test', id: lishID }) as any,
-			checkAccess: async () => {
+			getLISH: (lishID): any => ({ directory: '/tmp/test', id: lishID }) as any,
+			checkAccess: async (): Promise<void> => {
 				/* succeeds */
 			},
 		});
@@ -123,10 +123,10 @@ describe('ErrorRecovery', () => {
 
 	it('stops recovery when LISH has no directory', async () => {
 		const noDir = new ErrorRecovery({
-			attemptRecover: async (_id, _dl, _ul) => true,
-			broadcast: () => {},
-			getLISH: () => ({ id: 'x' }) as any, // no directory field
-			checkAccess: async () => {},
+			attemptRecover: async (_id, _dl, _ul): Promise<boolean> => true,
+			broadcast: (): void => {},
+			getLISH: (): any => ({ id: 'x' }) as any, // no directory field
+			checkAccess: async (): Promise<void> => {},
 		});
 		noDir.start('<redacted-bootstrap>', ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: false });
 		// Trigger attempt manually by waiting for the timer
@@ -138,10 +138,10 @@ describe('ErrorRecovery', () => {
 	it('stops recovery when LISH is deleted', async () => {
 		let lishExists = true;
 		const rec = new ErrorRecovery({
-			attemptRecover: async (_id, _dl, _ul) => true,
-			broadcast: () => {},
-			getLISH: () => (lishExists ? ({ directory: '/tmp', id: 'x' } as any) : null),
-			checkAccess: async () => {},
+			attemptRecover: async (_id, _dl, _ul): Promise<boolean> => true,
+			broadcast: (): void => {},
+			getLISH: (): any => (lishExists ? ({ directory: '/tmp', id: 'x' } as any) : null),
+			checkAccess: async (): Promise<void> => {},
 		});
 		rec.start('<redacted-bootstrap>', ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: false });
 		lishExists = false;

@@ -11,10 +11,12 @@ import { createTranslationLoader } from '../../src/scripts/language.ts';
 
 type Resolver = (value: any) => void;
 
-function deferredLoader(): {
+interface DeferredLoader {
 	loader: (langID: string) => Promise<any>;
 	resolveAll: (langID: string, value: any) => void;
-} {
+}
+
+function deferredLoader(): DeferredLoader {
 	const queues = new Map<string, Resolver[]>();
 	const loader = (langID: string): Promise<any> =>
 		new Promise<any>(resolve => {

@@ -1,6 +1,6 @@
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
-import { type Stream } from '@libp2p/interface';
+import { type IDialResult } from './network.ts';
 import { trace } from '../logger.ts';
 
 /**
@@ -18,7 +18,7 @@ export function classifyConnection(peerID: string, isRelay: boolean, dcutrPeers:
  * Dial a set of multiaddrs, open a protocol stream, and return the stream
  * together with the resolved connection type.
  */
-export async function dialProtocol(node: any, dcutrPeers: Set<string>, multiaddrs: any[], protocol: string): Promise<{ stream: Stream; connectionType: 'DIRECT' | 'RELAY' | 'DCUtR' }> {
+export async function dialProtocol(node: any, dcutrPeers: Set<string>, multiaddrs: any[], protocol: string): Promise<IDialResult> {
 	trace(`[NET] dial ${protocol} to ${multiaddrs.map((m: any) => m.toString()).join(', ')}`);
 	const connection = await node.dial(multiaddrs);
 	const peerID = connection.remotePeer.toString();
@@ -35,7 +35,7 @@ export async function dialProtocol(node: any, dcutrPeers: Set<string>, multiaddr
  * Dial a peer by its string peer ID, open a protocol stream, and return the
  * stream together with the resolved connection type.
  */
-export async function dialProtocolByPeerId(node: any, dcutrPeers: Set<string>, peerID: string, protocol: string): Promise<{ stream: Stream; connectionType: 'DIRECT' | 'RELAY' | 'DCUtR' }> {
+export async function dialProtocolByPeerId(node: any, dcutrPeers: Set<string>, peerID: string, protocol: string): Promise<IDialResult> {
 	trace(`[NET] dial ${protocol} to ${peerID.slice(0, 16)}`);
 	const { peerIdFromString } = await import('@libp2p/peer-id');
 	const pid = peerIdFromString(peerID);

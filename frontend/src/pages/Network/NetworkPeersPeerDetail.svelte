@@ -89,7 +89,7 @@
 		position,
 		onBack,
 		activate: true,
-		listRange: () => [1, Math.max(1, lishs?.length ?? 0)],
+		listRange: (): [number, number] => [1, Math.max(1, lishs?.length ?? 0)],
 	}));
 	const lishDetailSubPage = createSubPage(navHandle, () => areaID);
 
