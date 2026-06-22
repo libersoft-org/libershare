@@ -44,8 +44,8 @@
 		onSaveError?: ((error: string) => void) | undefined; // Called on save error
 		onDownAtEnd?: (() => boolean) | undefined;
 		specialFileTypes?: { extensions: string[]; onOpen: (path: string) => void }[] | undefined;
-		/** When provided, adds a "Share" action for files and directories that calls back with the selected path. */
-		onShare?: ((path: string) => void) | undefined;
+		/** When provided, adds a "Share" action for files and directories that calls back with the selected path and the directory currently being browsed (so callers can return the user to it). */
+		onShare?: ((path: string, browseDir: string) => void) | undefined;
 	}
 	const columns = '1fr 8vw 12vw';
 	let { areaID, position, initialPath = '', initialFile, directoriesOnly = false, filesOnly = false, fileFilter, fileFilterName, showPath = true, selectDirectoryButton: selectDirectoryButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, specialFileTypes, onShare }: Props = $props();
@@ -519,7 +519,7 @@
 				handleOpenFile(item);
 				break;
 			case 'share':
-				onShare?.(item.path);
+				onShare?.(item.path, currentPath);
 				break;
 			case 'edit':
 				showEditor(item);
@@ -543,7 +543,7 @@
 				onSelect?.(currentPath);
 				break;
 			case 'share':
-				onShare?.(currentPath);
+				onShare?.(currentPath, currentPath);
 				break;
 			case 'new':
 				showNewDirectoryDialog();
