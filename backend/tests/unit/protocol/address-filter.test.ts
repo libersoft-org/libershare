@@ -114,7 +114,7 @@ describe('isPublic', () => {
 describe('extractFirstIPv4', () => {
 	it('extracts from getComponents() code 4 entries', () => {
 		const ma = {
-			getComponents: () => [
+			getComponents: (): ({ code: number; value: string } | { code: number; value: number })[] => [
 				{ code: 4, value: '203.0.113.10' },
 				{ code: 6, value: 9090 },
 			],
@@ -123,7 +123,7 @@ describe('extractFirstIPv4', () => {
 	});
 	it('returns null if no IPv4 component (DNS multiaddr)', () => {
 		const ma = {
-			getComponents: () => [
+			getComponents: (): ({ code: number; value: string } | { code: number; value: number })[] => [
 				{ code: 54, value: 'bootstrap.example.test' },
 				{ code: 6, value: 9090 },
 			],
@@ -135,7 +135,7 @@ describe('extractFirstIPv4', () => {
 		expect(extractFirstIPv4(null)).toBe(null);
 	});
 	it('falls back to nodeAddress()', () => {
-		const ma = { nodeAddress: () => ({ family: 4, address: '192.168.99.11', port: 9090 }) };
+		const ma = { nodeAddress: (): { family: number; address: string; port: number } => ({ family: 4, address: '192.168.99.11', port: 9090 }) };
 		expect(extractFirstIPv4(ma)).toBe('192.168.99.11');
 	});
 });
@@ -146,9 +146,9 @@ describe('extractFirstIPv4', () => {
 
 function mkMA(ip: string | null): any {
 	return ip === null
-		? { getComponents: () => [{ code: 54, value: 'some.dns.name' }] }
+		? { getComponents: (): { code: number; value: string }[] => [{ code: 54, value: 'some.dns.name' }] }
 		: {
-				getComponents: () => [
+				getComponents: (): ({ code: number; value: string } | { code: number; value: number })[] => [
 					{ code: 4, value: ip },
 					{ code: 6, value: 9090 },
 				],

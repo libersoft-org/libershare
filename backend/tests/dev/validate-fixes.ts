@@ -1,13 +1,13 @@
 /**
  * Standalone validation script for audit fixes (C1, C2, C3, H3, H4, M2).
  * Runs without bun:test (which crashes on Windows canary).
- * Usage: bun run backend/dev/validate-fixes.ts
+ * Usage: bun run backend/tests/dev/validate-fixes.ts
  */
 import { Database } from 'bun:sqlite';
 import { ErrorCodes } from '@shared';
 import type { LISHid, ChunkID, IStoredLISH } from '@shared';
-import { initLISHsTables, addLISH, getLISH, isComplete, getMissingChunks, markChunkDownloaded } from '../src/db/lishs.ts';
-import { ErrorRecovery } from '../src/api/error-recovery.ts';
+import { initLISHsTables, addLISH, getLISH, isComplete, getMissingChunks, markChunkDownloaded } from '../../src/db/lishs.ts';
+import { ErrorRecovery } from '../../src/api/error-recovery.ts';
 
 let passed = 0;
 let failed = 0;
@@ -121,15 +121,15 @@ console.log('\n── C3: ErrorRecovery backoff + max retries ──');
 	const broadcasts: Array<{ event: string; data: any }> = [];
 
 	const recovery = new ErrorRecovery({
-		attemptRecover: async () => {
+		attemptRecover: async (): Promise<boolean> => {
 			attemptCount++;
 			return false;
 		},
-		broadcast: (event, data) => {
+		broadcast: (event, data): void => {
 			broadcasts.push({ event, data });
 		},
-		getLISH: () => ({ directory: '/tmp/test', id: 'x' }) as any,
-		checkAccess: async () => {
+		getLISH: (): any => ({ directory: '/tmp/test', id: 'x' }) as any,
+		checkAccess: async (): Promise<void> => {
 			if (accessShouldFail) throw new Error('ENOENT');
 		},
 	});

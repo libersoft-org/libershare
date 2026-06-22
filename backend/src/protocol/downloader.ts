@@ -23,6 +23,12 @@ export interface WantMessage {
 	type: 'want';
 	lishID: LISHid;
 }
+
+/** Error info exposed by a Downloader in the 'error' state: a code and optional human-readable detail. */
+export interface IDownloadError {
+	code: string;
+	detail?: string;
+}
 type State = 'added' | 'initializing' | 'initialized' | 'preparing' | 'awaiting-manifest' | 'downloading' | 'downloaded' | 'error';
 
 /**
@@ -129,9 +135,9 @@ export class Downloader {
 		this.state = newState;
 		return true;
 	}
-	getError(): { code: string; detail?: string } | null {
+	getError(): IDownloadError | null {
 		if (this.state !== 'error') return null;
-		const err: { code: string; detail?: string } = { code: this.errorCode! };
+		const err: IDownloadError = { code: this.errorCode! };
 		if (this.errorDetail !== undefined) err.detail = this.errorDetail;
 		return err;
 	}
@@ -330,12 +336,12 @@ export class Downloader {
 			progressReporter: this.progressReporter,
 			fileAllocator: this.fileAllocator,
 			// lish is lazy — doWork Phase 1 may replace this.lish after manifest fetch.
-			getLish: () => this.lish,
-			isDestroyed: () => this.destroyed,
-			isDisabled: () => this.disabled,
-			onSetError: (code, detail) => this.setError(code, detail),
-			onRetry: info => this.onRetry?.(info),
-			emitAllocProgress: (p, total) => this.emitAllocProgress(p, total),
+			getLish: (): IStoredLISH => this.lish,
+			isDestroyed: (): boolean => this.destroyed,
+			isDisabled: (): boolean => this.disabled,
+			onSetError: (code, detail): void => this.setError(code, detail),
+			onRetry: (info): void => this.onRetry?.(info),
+			emitAllocProgress: (p, total): void => this.emitAllocProgress(p, total),
 		});
 	}
 
@@ -508,7 +514,7 @@ export class Downloader {
 		downloadLimiter.setLimit(kbPerSec);
 	}
 
-	private async callForPeers() {
+	private async callForPeers(): Promise<void> {
 		console.debug(`[DL] callForPeers: ${this.lishID.slice(0, 8)} on ${this.networkIDs.length} networks, peers: ${this.peerManager.size()}`);
 		// GossipSub broadcast — seeders respond with a unicast HAVE over the LISH protocol
 		// (see network.handleWant → LISHClient.announceHave → Downloader.onHaveAnnouncement).

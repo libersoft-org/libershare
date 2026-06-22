@@ -14,6 +14,12 @@ interface RelayHandlers {
 	stopPolling: () => void;
 }
 
+/** Relay byte counters read from libp2p metrics: bytes flowing down (in) and up (out) through the relay. */
+interface IRelayBytes {
+	down: number;
+	up: number;
+}
+
 export function initRelayHandlers(networks: Networks, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn): RelayHandlers {
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	// Previous poll snapshot for computing byte-rate deltas
@@ -50,7 +56,7 @@ export function initRelayHandlers(networks: Networks, broadcast: BroadcastFn, ha
 		return count;
 	}
 
-	function readRelayBytes(): { down: number; up: number } {
+	function readRelayBytes(): IRelayBytes {
 		// simple-metrics tracks per-protocol stream bytes in a private `transferStats` Map
 		// (keys like "/libp2p/circuit-relay/0.2.0/hop sent" and "... received").
 		// The Map is not exposed via onMetrics, but we can read it directly from the metrics instance.

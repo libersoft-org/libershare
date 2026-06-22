@@ -2,9 +2,11 @@ import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { LISH_TOPIC_PREFIX, DEFAULT_ACCEPT_PX_THRESHOLD, lishTopic, normalizeTrustedPeerIds, parseAcceptPXThreshold } from '../../../src/protocol/constants.ts';
+import { logStatusDebug } from '../../../src/protocol/status-logger.ts';
 
 const NETWORK_TS = readFileSync(join(__dirname, '../../../src/protocol/network.ts'), 'utf-8');
 const CONFIG_TS = readFileSync(join(__dirname, '../../../src/protocol/network-config.ts'), 'utf-8');
+const GOSSIPSUB_PATCHES_TS = readFileSync(join(__dirname, '../../../src/protocol/gossipsub-patches.ts'), 'utf-8');
 const SETTINGS_TS = readFileSync(join(__dirname, '../../../src/settings.ts'), 'utf-8');
 
 // ---------------------------------------------------------------------------
@@ -118,17 +120,18 @@ describe('network-config.ts — PX trust policy', () => {
 	});
 
 	it('ingress filter unions bootstrap peers into trusted set', () => {
-		// Source-surface check: network.ts must import bootstrapPeerIDs into the trusted
-		// Set so the ingress filter decides the same way as the score callback.
-		const filterSurface = NETWORK_TS.slice(NETWORK_TS.indexOf('patchGossipsubPXIngressPolicyOnce'), NETWORK_TS.indexOf('private addListener'));
-		expect(filterSurface).toContain('this.bootstrapPeerIDs');
+		// Source-surface check: the PX ingress patch (extracted to gossipsub-patches.ts)
+		// must union the bootstrap peers into the trusted Set so the ingress filter
+		// decides the same way as the score callback in network-config.ts.
+		const filterSurface = GOSSIPSUB_PATCHES_TS.slice(GOSSIPSUB_PATCHES_TS.indexOf('applyGossipsubPXIngressPatch'), GOSSIPSUB_PATCHES_TS.indexOf('export function applyGossipsubPatches'));
+		expect(filterSurface).toContain('getBootstrapPeerIDs');
 		expect(filterSurface).toContain('trusted.add');
 	});
 });
 
-describe('network.ts — PX ingress filter (source surface)', () => {
+describe('gossipsub-patches.ts — PX ingress filter (source surface)', () => {
 	it('filters incoming PX before gossipsub handles PRUNE', () => {
-		const filterBlock = NETWORK_TS.slice(NETWORK_TS.indexOf('patchGossipsubPXIngressPolicyOnce'), NETWORK_TS.indexOf('private addListener'));
+		const filterBlock = GOSSIPSUB_PATCHES_TS.slice(GOSSIPSUB_PATCHES_TS.indexOf('applyGossipsubPXIngressPatch'), GOSSIPSUB_PATCHES_TS.indexOf('export function applyGossipsubPatches'));
 		expect(filterBlock).toContain('handleReceivedRpc');
 		expect(filterBlock).toContain('ingressFilterEnabled');
 		expect(filterBlock).toContain('trusted.has(sender)');
@@ -149,7 +152,13 @@ type PruneControl = { topicID?: string; peers?: Array<{ peerID?: Uint8Array }> }
 type RPC = { control?: { prune?: PruneControl[] } };
 type FilterSettings = { enabled: boolean; ingressFilterEnabled: boolean; trustedPeerIds: string[] };
 
-function applyPXIngressFilter(peerExchange: FilterSettings, sender: string, rpc: RPC): { prune: PruneControl[]; allowed: number; stripped: number } {
+interface PXIngressFilterResult {
+	prune: PruneControl[];
+	allowed: number;
+	stripped: number;
+}
+
+function applyPXIngressFilter(peerExchange: FilterSettings, sender: string, rpc: RPC): PXIngressFilterResult {
 	const prunes = rpc.control?.prune ?? [];
 	if (!peerExchange.ingressFilterEnabled || prunes.length === 0) return { prune: prunes, allowed: 0, stripped: 0 };
 	const trusted = normalizeTrustedPeerIds(peerExchange.trustedPeerIds);
@@ -371,13 +380,37 @@ describe('statusInterval — periodic peer count refresh', () => {
 	});
 
 	it('uses console.debug for status log (not console.log)', () => {
-		const startIdx = NETWORK_TS.indexOf('private setupStatusInterval');
-		const endIdx = NETWORK_TS.indexOf('\n\t}', startIdx + 50);
-		const statusBlock = NETWORK_TS.slice(startIdx, endIdx);
-		expect(statusBlock).toContain('console.debug');
-		// Should NOT use console.log for status
-		const statusLogLine = statusBlock.match(/console\.log\(`📊 Status/);
-		expect(statusLogLine).toBeNull();
+		// Behavioural test: logStatusDebug() must emit the 📊 Status line via
+		// console.debug, never console.log. We spy on both and call the real function.
+		const debugCalls: string[] = [];
+		const logCalls: string[] = [];
+		const origDebug = console.debug;
+		const origLog = console.log;
+		console.debug = (...args: any[]) => {
+			debugCalls.push(args.join(' '));
+		};
+		console.log = (...args: any[]) => {
+			logCalls.push(args.join(' '));
+		};
+		try {
+			const fakeNode = {
+				getConnections: (): any[] => [],
+				getMultiaddrs: (): any[] => [],
+			};
+			const fakePubsub = {
+				getTopics: (): string[] => [],
+				getSubscribers: (): string[] => [],
+			};
+			const fakeSettings = {} as any;
+			logStatusDebug({ node: fakeNode, pubsub: fakePubsub, settings: fakeSettings, lastScores: new Map() }, [], []);
+		} finally {
+			console.debug = origDebug;
+			console.log = origLog;
+		}
+		const hasStatusInDebug = debugCalls.some(c => c.includes('📊 Status'));
+		expect(hasStatusInDebug).toBe(true);
+		const hasStatusInLog = logCalls.some(c => c.includes('📊 Status'));
+		expect(hasStatusInLog).toBe(false);
 	});
 });
 
@@ -385,11 +418,21 @@ describe('statusInterval — periodic peer count refresh', () => {
 // checkPeerCounts algorithm — tested in isolation
 // ---------------------------------------------------------------------------
 
+interface NetworkPeerCount {
+	networkID: string;
+	count: number;
+}
+
+interface PeerCountsResult {
+	changed: boolean;
+	counts: NetworkPeerCount[];
+}
+
 describe('checkPeerCounts logic', () => {
-	function checkPeerCountsLogic(topics: string[], getSubscribers: (topic: string) => string[], lastCounts: Map<string, number>): { changed: boolean; counts: { networkID: string; count: number }[] } {
+	function checkPeerCountsLogic(topics: string[], getSubscribers: (topic: string) => string[], lastCounts: Map<string, number>): PeerCountsResult {
 		const prefix = 'lish/';
 		let changed = false;
-		const counts: { networkID: string; count: number }[] = [];
+		const counts: NetworkPeerCount[] = [];
 		for (const topic of topics) {
 			if (!topic.startsWith(prefix)) continue;
 			const networkID = topic.slice(prefix.length);
@@ -511,7 +554,7 @@ describe('checkPeerCounts logic', () => {
 
 	it('consecutive calls without changes return changed=false', () => {
 		const lastCounts = new Map<string, number>();
-		const getSubscribers = () => ['peerA', 'peerB'];
+		const getSubscribers = (): string[] => ['peerA', 'peerB'];
 		const topics = ['lish/net1'];
 
 		const r1 = checkPeerCountsLogic(topics, getSubscribers, lastCounts);

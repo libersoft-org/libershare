@@ -25,7 +25,7 @@
 	const effectiveAxis: 'x' | 'y' = untrack(() => axis ?? (direction === 'column' ? 'y' : 'x'));
 	let counter = 0;
 	setContext<ButtonBarContext>('buttonBar', {
-		nextPosition() {
+		nextPosition(): NavPos | undefined {
 			if (!basePosition) return undefined;
 			const i = counter++;
 			if (effectiveAxis === 'x') return [basePosition[0] + i, basePosition[1]];

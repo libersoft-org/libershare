@@ -13,6 +13,11 @@ import { MockNetwork } from '../helpers/mock-network.ts';
 type ChunkResult = Uint8Array | null | Error;
 type ManifestResult = IStoredLISH | null;
 
+interface ChunkVerifyResult {
+	valid: boolean;
+	actualHash: string;
+}
+
 class MockLISHClient {
 	requestChunkResult: ChunkResult = new Uint8Array(1024).fill(0xff);
 	requestManifestResult: ManifestResult = null;
@@ -827,7 +832,7 @@ describe('Downloader – chunk integrity verification', () => {
 	}
 
 	// Simulate the inline verification logic extracted from peerLoop
-	function verifyChunk(data: Uint8Array, expectedChunkID: string, algo: string): { valid: boolean; actualHash: string } {
+	function verifyChunk(data: Uint8Array, expectedChunkID: string, algo: string): ChunkVerifyResult {
 		const hasher = new Bun.CryptoHasher(algo as any);
 		hasher.update(data);
 		const actualHash = hasher.digest('hex');
@@ -1065,7 +1070,7 @@ describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
 		return h.digest('hex');
 	}
 
-	function verifyChunk(data: Uint8Array, expectedChunkID: string, algo: string): { valid: boolean; actualHash: string } {
+	function verifyChunk(data: Uint8Array, expectedChunkID: string, algo: string): ChunkVerifyResult {
 		const h = new Bun.CryptoHasher(algo as any);
 		h.update(data);
 		const actualHash = h.digest('hex');

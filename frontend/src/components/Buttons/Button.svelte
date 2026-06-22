@@ -37,7 +37,7 @@
 	let isSelected = $derived(navArea && effectivePosition ? navArea.isSelected(effectivePosition) : menuButtons ? menuButtons.isSelected(index) : selected);
 	let isPressed = $derived(navArea && effectivePosition ? navArea.isPressed(effectivePosition) : menuButtons ? menuButtons.isPressed(index) : pressed);
 
-	function handleClick() {
+	function handleClick(): void {
 		if (disabled) return;
 		// Mirror keyboard: pressing Enter on a focused item plays the confirm sound via
 		// areas.ts `dispatchAction('confirmUp')`. Mouse clicks on Button bypass that flow

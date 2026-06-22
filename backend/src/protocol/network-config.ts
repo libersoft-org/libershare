@@ -13,6 +13,7 @@ import { ping } from '@libp2p/ping';
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
 import { circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { autoNATv2 } from '@libp2p/autonat-v2';
+import { uPnPNAT } from '@libp2p/upnp-nat';
 import { simpleMetrics } from '@libp2p/simple-metrics';
 import { onLibp2pMetrics } from '../monitoring/libp2p-metrics.ts';
 import { dcutr } from '@libp2p/dcutr';
@@ -20,12 +21,17 @@ import { networkInterfaces } from 'os';
 import { isLinkLocalIp } from '@libp2p/utils';
 import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
-import { productEnvPrefix } from '@shared';
 import { trace } from '../logger.ts';
 import { normalizeTrustedPeerIds, parseAcceptPXThreshold } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
+
+/** A gossipsub direct-peer entry: a peer id and its multiaddrs. */
+export interface DirectPeer {
+	id: any;
+	addrs: any[];
+}
 
 /**
  * Convert bootstrap multiaddr strings to gossipsub DirectPeer entries
@@ -34,8 +40,8 @@ const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
  * inside the gossipsub mesh at config time, without waiting for the first
  * peer-announce discovery cycle to surface bootstraps as direct peers.
  */
-function buildDirectPeersFromBootstrap(uniquePeers: string[]): Array<{ id: any; addrs: any[] }> {
-	const direct: Array<{ id: any; addrs: any[] }> = [];
+function buildDirectPeersFromBootstrap(uniquePeers: string[]): DirectPeer[] {
+	const direct: DirectPeer[] = [];
 	for (const ma of uniquePeers) {
 		try {
 			const parsed = Multiaddr(ma);
@@ -210,7 +216,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				const deny = shouldDenyDial(ma, getLocalCidrs());
 				if (deny) {
 					// Bounded debug sample so denied-dial flood does not overwhelm logs.
-					const dbg = ((globalThis as any).__libershareDenyDialDbg ??= new Set<string>());
+					const dbg = ((globalThis as any).__p2pfsDenyDialDbg ??= new Set<string>());
 					if (dbg.size < 50) {
 						const ip = extractFirstIPv4(ma) ?? '?';
 						const addr = ma?.toString?.() ?? String(ma);
@@ -292,7 +298,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				scoreParams: {
 					topicScoreCap: 10.0,
 					appSpecificWeight: 1.0,
-					appSpecificScore: (peerId: any) => {
+					appSpecificScore: (peerId: any): number => {
 						const pid = typeof peerId === 'string' ? peerId : (peerId?.toString?.() ?? '');
 						const isConfiguredTrustedPXPeer = trustedPXPeerIDs.has(pid);
 						const isBootstrapPeer = bootstrapPeerIDs.has(pid);
@@ -300,9 +306,9 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 						// Optional bounded trace of score callbacks. Off by default to keep production
 						// memory footprint clean — the `seen`/`trustedLogged` Sets would otherwise
 						// grow with every distinct peer encountered for the lifetime of the process.
-						// Enable via `<PREFIX>_TRACE_PX=1` when investigating PX trust decisions.
-						if (process.env[`${productEnvPrefix}_TRACE_PX`] === '1') {
-							const dbg = ((globalThis as any).__libersharePXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
+						// Enable via `P2PFS_TRACE_PX=1` when investigating PX trust decisions.
+						if (process.env['P2PFS_TRACE_PX'] === '1') {
+							const dbg = ((globalThis as any).__p2pfsPXScoreDbg ??= { seen: new Set<string>(), trustedLogged: new Set<string>() });
 							if (!dbg.seen.has(pid) && dbg.seen.size < 20) {
 								dbg.seen.add(pid);
 								trace(`[NET] PX trust score check peer=${pid.slice(0, 16)} enabled=${pxEnabled} configuredTrusted=${isConfiguredTrustedPXPeer} bootstrap=${isBootstrapPeer} trustedSetSize=${trustedPXPeerIDs.size} bootstrapSetSize=${bootstrapPeerIDs.size}`);
@@ -386,6 +392,13 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	config.services.autonat = autoNATv2();
 	config.services.dcutr = dcutr();
 	console.log('✓ AutoNAT v2 + DCUtR enabled');
+	// UPnP-NAT asks the local router (via IGD) to open the incoming port and
+	// maps it back to this host, easing inbound reachability behind a NAT.
+	// Gated behind an opt-in flag because it mutates router state — default OFF.
+	if (allSettings.network?.upnpEnabled) {
+		config.services.upnpNAT = uPnPNAT();
+		console.log('✓ UPnP-NAT port forwarding enabled');
+	}
 	// Build peerDiscovery array: bootstrap (if peers provided) + mDNS (if enabled).
 	const peerDiscovery: any[] = [];
 

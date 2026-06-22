@@ -4,7 +4,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
-	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, storageBackupPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, setStorageBackupPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, useRelayClients, maxRelayClients, autoStartSharing, autoStartDownloading, autoErrorRecovery, autoConnectNewNetworks, mdnsEnabled, mdnsInterval, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setUseRelayClients, setMaxRelayClients, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setAutoConnectNewNetworks, setMdnsEnabled, setMdnsInterval, settingsDefaults } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, storageBackupPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, setStorageBackupPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, useRelayClients, maxRelayClients, autoStartSharing, autoStartDownloading, autoErrorRecovery, autoConnectNewNetworks, mdnsEnabled, mdnsInterval, upnpEnabled, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setUseRelayClients, setMaxRelayClients, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setAutoConnectNewNetworks, setMdnsEnabled, setMdnsInterval, setUpnpEnabled, settingsDefaults } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { parseBytes, formatBytes } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -44,6 +44,7 @@
 	let mdns = $state($mdnsEnabled);
 	// UI exposes the interval in whole seconds; backend stores it in milliseconds.
 	let mdnsIntervalSec = $state(Math.round($mdnsInterval / 1000).toString());
+	let upnp = $state($upnpEnabled);
 
 	// Browse functions
 	function openBrowse(type: 'storage' | 'temp' | 'lish' | 'lishnet' | 'backup'): void {
@@ -182,6 +183,11 @@
 	function toggleMdns(): void {
 		mdns = !mdns;
 		setMdnsEnabled(mdns);
+	}
+
+	function toggleUpnp(): void {
+		upnp = !upnp;
+		setUpnpEnabled(upnp);
 	}
 
 	// Reset functions
@@ -367,8 +373,11 @@
 				<Input bind:value={mdnsIntervalSec} label={$t('settings.download.mdnsInterval')} type="number" min={1} position={[0, 21]} flex />
 				<Button icon="/img/restart.svg" position={[1, 21]} onConfirm={resetMdnsInterval} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.upnpEnabled') + ':'} checked={upnp} position={[0, 22]} onToggle={toggleUpnp} />
+			</div>
 		</div>
-		<ButtonBar justify="center" basePosition={[0, 22]}>
+		<ButtonBar justify="center" basePosition={[0, 23]}>
 			<Button icon="/img/save.svg" label={$t('common.save')} onConfirm={handleSave} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>

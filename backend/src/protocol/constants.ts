@@ -36,12 +36,19 @@ export function normalizeTrustedPeerIds(raw: unknown): Set<string> {
 	);
 }
 
+/** Result of parsing a user-supplied acceptPXThreshold: the effective value, whether the raw input was unsafe, and the raw input echoed back. */
+export interface IAcceptPXThreshold {
+	value: number;
+	unsafe: boolean;
+	raw: unknown;
+}
+
 /**
  * Parse a user-supplied acceptPXThreshold. Returns the effective threshold and whether the
  * raw value was unsafe (non-finite, non-number, or <= 1). The effective threshold is always
  * a safe positive number; callers may warn on `unsafe === true`.
  */
-export function parseAcceptPXThreshold(raw: unknown): { value: number; unsafe: boolean; raw: unknown } {
+export function parseAcceptPXThreshold(raw: unknown): IAcceptPXThreshold {
 	const isValid = typeof raw === 'number' && Number.isFinite(raw);
 	const candidate = isValid ? (raw as number) : DEFAULT_ACCEPT_PX_THRESHOLD;
 	const unsafe = !isValid || candidate <= 1;

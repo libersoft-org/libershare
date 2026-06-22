@@ -868,24 +868,34 @@ export interface DownloadToolbarAction {
 	getLabel: (t: (key: string) => string, downloadPaused: boolean, uploadPaused: boolean) => string;
 }
 export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
-	{ id: 'back', icon: '/img/back.svg', getLabel: t => t('common.back') },
-	{ id: 'copy-lish-id', icon: '/img/copy.svg', getLabel: t => t('common.copyLishID') },
-	{ id: 'open-directory', icon: '/img/directory.svg', getLabel: t => t('common.openDirectory') },
-	{ id: 'toggle-download', icon: dp => (dp ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, dp) => (dp ? t('downloads.enableDownload') : t('downloads.disableDownload')) },
-	{ id: 'toggle-upload', icon: (_dp, up) => (up ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, _dp, up) => (up ? t('downloads.enableUpload') : t('downloads.disableUpload')) },
-	{ id: 'find-peers', icon: '/img/search.svg', getLabel: t => t('downloads.findPeers') },
-	{ id: 'verify', icon: '/img/check.svg', getLabel: t => t('downloads.verify') },
-	{ id: 'stop-verify', icon: '/img/cross.svg', getLabel: t => t('downloads.stopVerify') },
-	{ id: 'export', icon: '/img/upload.svg', getLabel: t => t('common.export') },
-	{ id: 'move', icon: '/img/move.svg', getLabel: t => t('downloads.moveData') },
-	{ id: 'delete', icon: '/img/del.svg', getLabel: t => t('common.delete') },
+	{ id: 'back', icon: '/img/back.svg', getLabel: (t): string => t('common.back') },
+	{ id: 'copy-lish-id', icon: '/img/copy.svg', getLabel: (t): string => t('common.copyLishID') },
+	{ id: 'open-directory', icon: '/img/directory.svg', getLabel: (t): string => t('common.openDirectory') },
+	{ id: 'toggle-download', icon: (dp): string => (dp ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, dp): string => (dp ? t('downloads.enableDownload') : t('downloads.disableDownload')) },
+	{ id: 'toggle-upload', icon: (_dp, up): string => (up ? '/img/play.svg' : '/img/pause.svg'), getLabel: (t, _dp, up): string => (up ? t('downloads.enableUpload') : t('downloads.disableUpload')) },
+	{ id: 'find-peers', icon: '/img/search.svg', getLabel: (t): string => t('downloads.findPeers') },
+	{ id: 'verify', icon: '/img/check.svg', getLabel: (t): string => t('downloads.verify') },
+	{ id: 'stop-verify', icon: '/img/cross.svg', getLabel: (t): string => t('downloads.stopVerify') },
+	{ id: 'export', icon: '/img/upload.svg', getLabel: (t): string => t('common.export') },
+	{ id: 'move', icon: '/img/move.svg', getLabel: (t): string => t('downloads.moveData') },
+	{ id: 'delete', icon: '/img/del.svg', getLabel: (t): string => t('common.delete') },
 ];
+
+/** Result of {@link handleDownloadToolbarAction}: whether it was handled internally plus which UI follow-up (if any) the caller must perform. */
+export interface IDownloadToolbarActionResult {
+	handled: boolean;
+	needsBack?: boolean;
+	needsDelete?: boolean;
+	needsExport?: boolean;
+	needsVerify?: boolean;
+	needsMove?: boolean;
+}
 
 /**
  * Handle toolbar action for download detail
  * @returns true if action was handled internally, false if needs UI handling (e.g., onBack)
  */
-export function handleDownloadToolbarAction(actionID: DownloadToolbarActionID): { handled: boolean; needsBack?: boolean; needsDelete?: boolean; needsExport?: boolean; needsVerify?: boolean; needsMove?: boolean } {
+export function handleDownloadToolbarAction(actionID: DownloadToolbarActionID): IDownloadToolbarActionResult {
 	switch (actionID) {
 		case 'back':
 			return { handled: false, needsBack: true };

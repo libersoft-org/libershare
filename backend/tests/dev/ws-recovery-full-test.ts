@@ -3,7 +3,7 @@
  * Creates an error condition (enables download on LISH with non-existent directory)
  * and verifies recovery:scheduled event arrives.
  *
- * Run: bun run backend/dev/ws-recovery-full-test.ts [ws-url]
+ * Run: bun run backend/tests/dev/ws-recovery-full-test.ts [ws-url]
  */
 export {};
 

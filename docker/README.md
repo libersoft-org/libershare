@@ -54,7 +54,7 @@ losing writes:
 [Storage] Fix on the host: chown 0:0 <mounted-dir> && chmod 0700 <mounted-dir>, then restart.
 ```
 
-Docker named volumes (`LIBERSHARE_CONFIG_SOURCE=my-libershare-config`) work
+Docker named volumes (`CONFIG_SOURCE=my-libershare-config`) work
 out of the box without any host-side `mkdir` — the daemon creates the volume
 root-owned.
 
@@ -84,16 +84,16 @@ To put config and storage on specific host disks:
 
 ```sh
 mkdir -p /mnt/ssd/libershare-config /mnt/big/libershare-storage
-LIBERSHARE_CONFIG_SOURCE=/mnt/ssd/libershare-config \
-LIBERSHARE_STORAGE_SOURCE=/mnt/big/libershare-storage \
+CONFIG_SOURCE=/mnt/ssd/libershare-config \
+STORAGE_SOURCE=/mnt/big/libershare-storage \
 docker compose up -d
 ```
 
 To use Docker named volumes instead of local directories:
 
 ```sh
-LIBERSHARE_CONFIG_SOURCE=my-libershare-config \
-LIBERSHARE_STORAGE_SOURCE=my-libershare-storage \
+CONFIG_SOURCE=my-libershare-config \
+STORAGE_SOURCE=my-libershare-storage \
 docker compose up -d
 ```
 
@@ -211,10 +211,10 @@ LOG_MAX_FILE=3
 Backend memory tracing is disabled by default:
 
 ```sh
-LIBERSHARE_MEMTRACE=0
+MEMTRACE=0
 ```
 
-Set `LIBERSHARE_MEMTRACE=1` only while collecting diagnostics. Memory trace
+Set `MEMTRACE=1` only while collecting diagnostics. Memory trace
 output is an application file, not a Docker log, so Docker log rotation does not
 rotate `memory-trace.jsonl`.
 
