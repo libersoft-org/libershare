@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { isMouseActive } from '../../scripts/input/mouse.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
@@ -149,6 +150,13 @@
 	}
 	function scrollToSelected(): void {
 		scrollToElement(itemElements, selectedFileIndex);
+	}
+
+	// Hover-select only while the mouse is active, so a scroll under a stale cursor can't hijack it.
+	function handleFileHover(index: number): void {
+		if (!isMouseActive()) return;
+		activateArea(listAreaID);
+		selectedFileIndex = index;
 	}
 
 	function handleFileClick(index: number): void {
@@ -763,16 +771,7 @@
 							</Header>
 							<div class="items">
 								{#each download.files as file, index (file.id)}
-									<div
-										onclick={() => handleFileClick(index)}
-										onmouseenter={() => {
-											activateArea(listAreaID);
-											selectedFileIndex = index;
-										}}
-										onkeydown={e => e.key === 'Enter' && handleFileClick(index)}
-										role="row"
-										tabindex="-1"
-									>
+									<div onclick={() => handleFileClick(index)} onmouseenter={() => handleFileHover(index)} onkeydown={e => e.key === 'Enter' && handleFileClick(index)} role="row" tabindex="-1">
 										<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
 									</div>
 								{/each}
