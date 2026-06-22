@@ -78,8 +78,8 @@ export class APIServer {
 		this.certFile = options.certFile;
 		this.apiToken = options.apiToken || undefined;
 		this.localAddresses = getLocalAddresses();
-		const emitTo = (client: ClientSocket, event: string, data: any) => this.emit(client, event, data);
-		const broadcastFn = (event: string, data: any) => this.broadcast(event, data);
+		const emitTo = (client: ClientSocket, event: string, data: any): void => this.emit(client, event, data);
+		const broadcastFn = (event: string, data: any): void => this.broadcast(event, data);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _settings = initSettingsHandlers(this.settings);
 		const _datasets = initDatasetsHandlers(this.dataServer);

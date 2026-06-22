@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { getAPIURL } from '../src/scripts/api-url.ts';
 
-function browserWindow(protocol: string, host: string, search = '') {
+function browserWindow(protocol: string, host: string, search = ''): { location: { protocol: string; host: string; search: string } } {
 	return {
 		location: {
 			protocol,

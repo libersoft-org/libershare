@@ -5,17 +5,17 @@ describe('runFactoryReset', () => {
 	it('runs EVERY selected category even when some fail — no category is skipped because a previous one threw', async () => {
 		const ran: string[] = [];
 		const res = await runFactoryReset({
-			downloads: () => {
+			downloads: (): void => {
 				ran.push('downloads');
 			},
-			networks: () => {
+			networks: (): void => {
 				ran.push('networks');
 				throw new Error('networks boom');
 			},
-			identity: async () => {
+			identity: async (): Promise<void> => {
 				ran.push('identity');
 			},
-			settings: () => {
+			settings: (): void => {
 				ran.push('settings');
 				throw new Error('settings boom');
 			},
@@ -33,7 +33,7 @@ describe('runFactoryReset', () => {
 	});
 
 	it('only reports selected categories', async () => {
-		const res = await runFactoryReset({ downloads: () => {} });
+		const res = await runFactoryReset({ downloads: (): void => {} });
 		expect(res.results).toEqual([{ category: 'downloads', ok: true }]);
 		expect(res.success).toBe(true);
 	});
@@ -41,14 +41,14 @@ describe('runFactoryReset', () => {
 	it('runs prepare before the wipes and restart after — both best-effort (their failure neither aborts nor flips success)', async () => {
 		const order: string[] = [];
 		const res = await runFactoryReset({
-			prepare: () => {
+			prepare: (): void => {
 				order.push('prepare');
 				throw new Error('prep boom');
 			},
-			downloads: () => {
+			downloads: (): void => {
 				order.push('downloads');
 			},
-			restart: () => {
+			restart: (): void => {
 				order.push('restart');
 				throw new Error('restart boom');
 			},
@@ -60,7 +60,7 @@ describe('runFactoryReset', () => {
 	});
 
 	it('reports success=true when every selected category passes', async () => {
-		const res = await runFactoryReset({ settings: () => {}, identity: () => {}, downloads: () => {}, networks: () => {} });
+		const res = await runFactoryReset({ settings: (): void => {}, identity: (): void => {}, downloads: (): void => {}, networks: (): void => {} });
 		expect(res.success).toBe(true);
 		expect(res.results.map(r => r.category)).toEqual(['downloads', 'networks', 'identity', 'settings']);
 		expect(res.results.every(r => r.ok)).toBe(true);

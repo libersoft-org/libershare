@@ -38,7 +38,7 @@ export function applyGossipsubOutboundPushPatch(pubsub: any): void {
 	// Idempotency guard: the push() wrap is installed on the shared OutboundStream
 	// prototype, so re-running this must be a no-op once the marker is set.
 	if (!pubsub || pubsub.__p2pfsOutboundPatched) return;
-	const trySetup = () => {
+	const trySetup = (): boolean => {
 		try {
 			const streamsOutbound: Map<any, any> | undefined = pubsub.streamsOutbound;
 			if (!streamsOutbound || streamsOutbound.size === 0) return false;

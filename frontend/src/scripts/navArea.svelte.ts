@@ -30,10 +30,10 @@ export interface NavItemOptions {
 /** Create a NavItem with reactive pos and el getters */
 export function navItem(getPos: () => NavPos, getEl: () => HTMLElement | undefined, onConfirm?: () => void, opts?: NavItemOptions): NavItem {
 	return {
-		get pos() {
+		get pos(): NavPos {
 			return getPos();
 		},
-		get el() {
+		get el(): HTMLElement | undefined {
 			return getEl();
 		},
 		onConfirm,
@@ -257,8 +257,8 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 
 	// Area handlers for useArea
 	const areaHandlers = {
-		up: () => navigate('up'),
-		down() {
+		up: (): boolean => navigate('up'),
+		down(): boolean {
 			if (navigate('down')) return true;
 			if (onDown) {
 				const target = onDown();
@@ -269,36 +269,36 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 			}
 			return trap;
 		},
-		left: () => navigate('left'),
-		right: () => navigate('right'),
-		confirmDown() {
+		left: (): boolean => navigate('left'),
+		right: (): boolean => navigate('right'),
+		confirmDown(): void {
 			pressed = true;
 			currentItem()?.onPress?.();
 		},
-		confirmUp() {
+		confirmUp(): void {
 			pressed = false;
 			currentItem()?.onConfirm?.();
 		},
-		confirmCancel() {
+		confirmCancel(): void {
 			pressed = false;
 			currentItem()?.onRelease?.();
 		},
-		back() {
+		back(): void {
 			onBack?.();
 		},
-		pageUp() {
+		pageUp(): void {
 			jumpBy(-PAGE_SIZE);
 		},
-		pageDown() {
+		pageDown(): void {
 			jumpBy(PAGE_SIZE);
 		},
-		home() {
+		home(): void {
 			jumpEdge('first');
 		},
-		end() {
+		end(): void {
 			jumpEdge('last');
 		},
-		onActivate() {
+		onActivate(): void {
 			onAreaActivate?.();
 			if (!selectedPos && items.length > 0) selectFirst();
 			else if (selectedPos) {
@@ -348,7 +348,7 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		isPressed(pos: NavPos): boolean {
 			return isAreaActive && pressed && selectedPos !== null && pos[0] === selectedPos[0] && pos[1] === selectedPos[1];
 		},
-		get areaID() {
+		get areaID(): string {
 			return areaID;
 		},
 	};
@@ -375,13 +375,13 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 	}
 
 	const handle: NavAreaHandle = {
-		pause() {
+		pause(): void {
 			unregisterArea();
 		},
-		resume() {
+		resume(): void {
 			registerArea();
 		},
-		get controller() {
+		get controller(): NavAreaController {
 			return controller;
 		},
 	};

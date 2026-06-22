@@ -298,7 +298,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				scoreParams: {
 					topicScoreCap: 10.0,
 					appSpecificWeight: 1.0,
-					appSpecificScore: (peerId: any) => {
+					appSpecificScore: (peerId: any): number => {
 						const pid = typeof peerId === 'string' ? peerId : (peerId?.toString?.() ?? '');
 						const isConfiguredTrustedPXPeer = trustedPXPeerIDs.has(pid);
 						const isBootstrapPeer = bootstrapPeerIDs.has(pid);

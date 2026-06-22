@@ -236,10 +236,10 @@
 	}
 
 	const toolbarHandlers = {
-		up() {
+		up(): boolean {
 			return false;
 		},
-		down() {
+		down(): boolean {
 			if (download) {
 				activateArea(infoAreaID);
 				scrollToInfo();
@@ -247,56 +247,56 @@
 			}
 			return false;
 		},
-		left() {
+		left(): boolean {
 			if (selectedToolbarIndex > 0) {
 				selectedToolbarIndex--;
 				return true;
 			}
 			return false;
 		},
-		right() {
+		right(): boolean {
 			if (selectedToolbarIndex < toolbarActions.length - 1) {
 				selectedToolbarIndex++;
 				return true;
 			}
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			const action = toolbarActions[selectedToolbarIndex];
 			if (action) handleToolbarAction(action.id);
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			handleBack();
 		},
 	};
 
 	const infoHandlers = {
-		up() {
+		up(): boolean {
 			activateArea(toolbarAreaID);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			activateArea(tabAreaID);
 			return true;
 		},
-		left() {
+		left(): boolean {
 			return false;
 		},
-		right() {
+		right(): boolean {
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {},
-		confirmCancel() {},
-		back() {
+		confirmDown(): void {},
+		confirmUp(): void {},
+		confirmCancel(): void {},
+		back(): void {
 			handleBack();
 		},
 	};
 
 	const listHandlers = {
-		up() {
+		up(): boolean {
 			if (selectedFileIndex > 0) {
 				selectedFileIndex--;
 				scrollToSelected();
@@ -305,7 +305,7 @@
 			activateArea(tabAreaID);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			if (download && selectedFileIndex < download.files.length - 1) {
 				selectedFileIndex++;
 				scrollToSelected();
@@ -313,48 +313,48 @@
 			}
 			return false;
 		},
-		left() {
+		left(): boolean {
 			return false;
 		},
-		right() {
+		right(): boolean {
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			// TODO: Open file or show file actions
 		},
-		confirmCancel() {},
-		pageUp() {
+		confirmCancel(): void {},
+		pageUp(): void {
 			if (!download || download.files.length === 0) return;
 			selectedFileIndex = Math.max(0, selectedFileIndex - 10);
 			scrollToSelected();
 		},
-		pageDown() {
+		pageDown(): void {
 			if (!download || download.files.length === 0) return;
 			selectedFileIndex = Math.min(download.files.length - 1, selectedFileIndex + 10);
 			scrollToSelected();
 		},
-		home() {
+		home(): void {
 			if (!download || download.files.length === 0) return;
 			selectedFileIndex = 0;
 			scrollToSelected();
 		},
-		end() {
+		end(): void {
 			if (!download || download.files.length === 0) return;
 			selectedFileIndex = download.files.length - 1;
 			scrollToSelected();
 		},
-		back() {
+		back(): void {
 			handleBack();
 		},
 	};
 
 	const tabHandlers = {
-		up() {
+		up(): boolean {
 			activateArea(toolbarAreaID);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			if (activeTab === 'files' && download && download.files.length > 0) {
 				activateArea(listAreaID);
 				scrollToSelected();
@@ -366,7 +366,7 @@
 			}
 			return false;
 		},
-		left() {
+		left(): boolean {
 			if (selectedTabIndex > 0) {
 				selectedTabIndex--;
 				activeTab = 'files';
@@ -374,7 +374,7 @@
 			}
 			return false;
 		},
-		right() {
+		right(): boolean {
 			if (selectedTabIndex < 1) {
 				selectedTabIndex++;
 				activeTab = 'peers';
@@ -382,18 +382,18 @@
 			}
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			activeTab = selectedTabIndex === 0 ? 'files' : 'peers';
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			handleBack();
 		},
 	};
 
 	const peerListHandlers = {
-		up() {
+		up(): boolean {
 			if (selectedPeerIndex > 0) {
 				selectedPeerIndex--;
 				scrollToElement(peerElements, selectedPeerIndex);
@@ -402,7 +402,7 @@
 			activateArea(tabAreaID);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			if (selectedPeerIndex < currentPeers.length - 1) {
 				selectedPeerIndex++;
 				scrollToElement(peerElements, selectedPeerIndex);
@@ -410,36 +410,36 @@
 			}
 			return false;
 		},
-		left() {
+		left(): boolean {
 			return false;
 		},
-		right() {
+		right(): boolean {
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {},
-		confirmCancel() {},
-		pageUp() {
+		confirmDown(): void {},
+		confirmUp(): void {},
+		confirmCancel(): void {},
+		pageUp(): void {
 			if (currentPeers.length === 0) return;
 			selectedPeerIndex = Math.max(0, selectedPeerIndex - 10);
 			scrollToElement(peerElements, selectedPeerIndex);
 		},
-		pageDown() {
+		pageDown(): void {
 			if (currentPeers.length === 0) return;
 			selectedPeerIndex = Math.min(currentPeers.length - 1, selectedPeerIndex + 10);
 			scrollToElement(peerElements, selectedPeerIndex);
 		},
-		home() {
+		home(): void {
 			if (currentPeers.length === 0) return;
 			selectedPeerIndex = 0;
 			scrollToElement(peerElements, selectedPeerIndex);
 		},
-		end() {
+		end(): void {
 			if (currentPeers.length === 0) return;
 			selectedPeerIndex = currentPeers.length - 1;
 			scrollToElement(peerElements, selectedPeerIndex);
 		},
-		back() {
+		back(): void {
 			handleBack();
 		},
 	};

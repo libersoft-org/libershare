@@ -50,7 +50,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 		const wipeIdentity = p?.identity ?? true;
 		const wipeDownloads = p?.downloads ?? true;
 		const wipeNetworks = p?.networks ?? true;
-		const wipePeers = p?.peers ?? false;
+		const wipePeers = p?.peers ?? true;
 
 		// The libp2p node must restart when its identity is regenerated or its joined
 		// networks are removed. A node restart also tears down every live transfer.

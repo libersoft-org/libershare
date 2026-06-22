@@ -48,7 +48,7 @@ class KeyboardManager {
 	start(): void {
 		if (this.keydownHandler) return;
 
-		const clearRepeat = () => {
+		const clearRepeat = (): void => {
 			if (this.repeatTimer) clearTimeout(this.repeatTimer);
 			if (this.repeatInterval) clearInterval(this.repeatInterval);
 			this.repeatTimer = null;
@@ -56,7 +56,7 @@ class KeyboardManager {
 			this.heldKey = null;
 		};
 
-		const setupRepeat = (key: string, action: () => void) => {
+		const setupRepeat = (key: string, action: () => void): void => {
 			if (this.heldKey === key) return;
 			clearRepeat();
 			action();

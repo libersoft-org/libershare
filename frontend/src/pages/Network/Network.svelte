@@ -161,7 +161,7 @@
 		position,
 		onBack,
 		activate: true,
-		listRange: () => {
+		listRange: (): [number, number] => {
 			if (activeTab === 'peers') {
 				return [peersBaseY, Math.max(peersBaseY, peersBaseY + filteredPeers.length)];
 			}
