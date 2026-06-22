@@ -26,7 +26,7 @@
 	let resetIdentity = $state(true);
 	let resetDownloads = $state(true);
 	let resetNetworks = $state(true);
-	let resetPeers = $state(false);
+	let resetPeers = $state(true);
 	let errorMessage = $state('');
 	let showConfirm = $state(false);
 	// View phase: the form, a spinner while wiping, then the per-category results.
