@@ -127,6 +127,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			if (ids.some(id => networks.isJoined(id))) continue;
 			console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, disabling download`);
 			dl.disable();
+			// dl.disable() alone emits nothing over WS — tell the FE the download
+			// stopped. DB enabled flags stay untouched so a re-join can resume it.
+			broadcast?.('transfer.download:disabled', { lishID });
 		}
 	};
 
