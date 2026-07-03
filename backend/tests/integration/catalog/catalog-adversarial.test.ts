@@ -20,6 +20,16 @@ import { handleRemoteOp } from '../../../src/catalog/catalog-validator.ts';
 import { getCatalogEntry, updateCatalogACL } from '../../../src/db/catalog.ts';
 import type { HLC } from '../../../src/catalog/catalog-hlc.ts';
 
+/**
+ * Pick a dialable advertised address. The production connection gater denies
+ * loopback dials (useless for remote peers), so tests must dial one of the
+ * machine's own non-loopback interface addresses with a resolved port.
+ */
+function pickDialAddr(addresses: string[]): string | undefined {
+	return addresses.find(a => !a.includes('/ip4/127.') && /\/tcp\/[1-9]\d*/.test(a));
+}
+
+
 interface TestNode {
 	tmpDir: string;
 	db: Database;
@@ -71,7 +81,7 @@ beforeAll(async () => {
 	}
 
 	// Connect all nodes to node 0 (star topology)
-	const addr0 = nodes[0]!.network.getNodeInfo()!.addresses.find(a => a.includes('127.0.0.1'));
+	const addr0 = pickDialAddr(nodes[0]!.network.getNodeInfo()!.addresses);
 	for (let i = 1; i < NODE_COUNT; i++) {
 		if (addr0) await nodes[i]!.network.connectToPeer(addr0);
 	}
@@ -114,7 +124,7 @@ afterAll(async () => {
 			await rm(node.tmpDir, { recursive: true });
 		} catch {}
 	}
-}, 30_000);
+}, 60_000);
 
 // ================================================================
 // COLLISION TESTS

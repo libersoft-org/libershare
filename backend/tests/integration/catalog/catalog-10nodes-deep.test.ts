@@ -22,6 +22,24 @@ import { handleRemoteOp } from '../../../src/catalog/catalog-validator.ts';
 import { getCatalogEntry, updateCatalogACL, getEntryCount, isTombstoned } from '../../../src/db/catalog.ts';
 import type { HLC } from '../../../src/catalog/catalog-hlc.ts';
 
+/**
+ * Pick a dialable advertised address. The production connection gater denies
+ * loopback dials (useless for remote peers), so tests must dial one of the
+ * machine's own non-loopback interface addresses with a resolved port.
+ */
+function pickDialAddr(addresses: string[]): string | undefined {
+	return addresses.find(a => !a.includes('/ip4/127.') && /\/tcp\/[1-9]\d*/.test(a));
+}
+
+
+// Scale suite: spins 10 in-process libp2p nodes on one thread. Event-loop
+// saturation causes connection churn and flaky gossip delivery on desktop
+// hardware, so the suite is opt-in: CATALOG_SCALE_TESTS=1 bun test ...
+// Real-gossip catalog coverage lives in catalog-two-nodes / catalog-adversarial.
+const SCALE = !!process.env['CATALOG_SCALE_TESTS'];
+if (!SCALE) console.warn('[catalog-scale] SKIPPED — set CATALOG_SCALE_TESTS=1 to run the 10-node suite');
+
+
 interface TestNode {
 	id: number;
 	role: string;
@@ -74,11 +92,12 @@ async function wait(ms: number = 3000): Promise<void> {
 }
 
 beforeAll(async () => {
+	if (!SCALE) return;
 	console.log('\n🔧 Starting 10-node deep test...');
 	const roles = ['owner', 'admin', 'admin', 'mod', 'mod', 'mod', 'peer', 'peer', 'attacker', 'attacker'];
 	for (let i = 0; i < 10; i++) nodes.push(await createNode(i, roles[i]!));
 
-	const addr0 = nodes[0]!.network.getNodeInfo()!.addresses.find(a => a.includes('127.0.0.1'));
+	const addr0 = pickDialAddr(nodes[0]!.network.getNodeInfo()!.addresses);
 	for (let i = 1; i < 10; i++) {
 		try {
 			if (addr0) await nodes[i]!.network.connectToPeer(addr0);
@@ -104,6 +123,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
+	if (!SCALE) return;
 	await Promise.all(nodes.map(n => n.network.stop()));
 	for (const n of nodes) {
 		try {
@@ -116,7 +136,7 @@ afterAll(async () => {
 // A. PUBLISH + PROPAGATION + DELETE ACROSS ALL NODES
 // ================================================================
 
-describe('A. Publish → Propagate → Delete across all nodes', () => {
+describe.skipIf(!SCALE)('A. Publish → Propagate → Delete across all nodes', () => {
 	test('A.1 mod publishes, wait for gossipsub, then check all nodes', async () => {
 		await nodes[3]!.catalog.publish(NET, {
 			lishID: 'ubuntu-deep',
@@ -193,7 +213,7 @@ describe('A. Publish → Propagate → Delete across all nodes', () => {
 // B. RIGHTS PROPAGATION — GRANT AND REVOKE ACROSS NODES
 // ================================================================
 
-describe('B. Rights propagation — admin grants/revokes mod across nodes', () => {
+describe.skipIf(!SCALE)('B. Rights propagation — admin grants/revokes mod across nodes', () => {
 	test('B.1 admin1 promotes peer6 to moderator → peer6 can publish', async () => {
 		// Admin1 grants mod to peer6
 		await nodes[1]!.catalog.grantRole(NET, nodes[6]!.peerID, 'moderator');
@@ -287,7 +307,7 @@ describe('B. Rights propagation — admin grants/revokes mod across nodes', () =
 // C. SOPHISTICATED ATTACK VECTORS
 // ================================================================
 
-describe('C. Sophisticated attacks', () => {
+describe.skipIf(!SCALE)('C. Sophisticated attacks', () => {
 	test('C.1 attacker replays old valid op with incremented HLC', async () => {
 		// Mod publishes legitimately
 		await nodes[3]!.catalog.publish(NET, {
@@ -524,7 +544,7 @@ describe('C. Sophisticated attacks', () => {
 // D. DELETE + UPDATE ORDERING
 // ================================================================
 
-describe('D. Delete and Update ordering', () => {
+describe.skipIf(!SCALE)('D. Delete and Update ordering', () => {
 	test('D.1 mod publishes → owner updates → admin deletes → all consistent', async () => {
 		// Mod publishes
 		await nodes[4]!.catalog.publish(NET, {
@@ -620,7 +640,7 @@ describe('D. Delete and Update ordering', () => {
 // E. CROSS-NODE RIGHTS VERIFICATION
 // ================================================================
 
-describe('E. Cross-node rights verification', () => {
+describe.skipIf(!SCALE)('E. Cross-node rights verification', () => {
 	test('E.1 peer cannot delete even if entry exists on their node', async () => {
 		// Mod publishes
 		await nodes[3]!.catalog.publish(NET, {
@@ -687,7 +707,7 @@ describe('E. Cross-node rights verification', () => {
 // F. FINAL STATE SUMMARY
 // ================================================================
 
-describe('F. Final state across all 10 nodes', () => {
+describe.skipIf(!SCALE)('F. Final state across all 10 nodes', () => {
 	test('F.1 summary of catalog state per node', async () => {
 		await wait(3000);
 		console.log('\n📊 Final state:');

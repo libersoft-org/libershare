@@ -17,6 +17,16 @@ import { CatalogManager } from '../../../src/catalog/catalog-manager.ts';
 import { getCatalogEntry, listCatalogEntries, updateCatalogACL } from '../../../src/db/catalog.ts';
 import type { SignedCatalogOp } from '../../../src/catalog/catalog-signer.ts';
 
+/**
+ * Pick a dialable advertised address. The production connection gater denies
+ * loopback dials (useless for remote peers), so tests must dial one of the
+ * machine's own non-loopback interface addresses with a resolved port.
+ */
+function pickDialAddr(addresses: string[]): string | undefined {
+	return addresses.find(a => !a.includes('/ip4/127.') && /\/tcp\/[1-9]\d*/.test(a));
+}
+
+
 let tmpDir1: string;
 let tmpDir2: string;
 let db1: Database;
@@ -66,7 +76,7 @@ beforeAll(async () => {
 
 	// Connect node2 to node1 via localhost address
 	const info1Full = network1.getNodeInfo();
-	const localAddr = info1Full?.addresses.find(a => a.includes('127.0.0.1'));
+	const localAddr = info1Full ? pickDialAddr(info1Full.addresses) : undefined;
 	if (localAddr) {
 		await network2.connectToPeer(localAddr);
 	}
@@ -121,18 +131,16 @@ beforeAll(async () => {
 afterAll(async () => {
 	catalog1.leave(NET_ID);
 	catalog2.leave(NET_ID);
-	console.log('[teardown] stopping node2 (dialer)...');
-	await network2.stop();
-	console.log('[teardown] node2 stopped, stopping node1...');
-	await network1.stop();
-	console.log('[teardown] node1 stopped');
+	// Parallel stop — each node.stop() is bounded by its own 15 s deadline,
+	// so the hook budget must exceed a single deadline, not their sum.
+	await Promise.all([network1.stop(), network2.stop()]);
 	try {
 		await rm(tmpDir1, { recursive: true });
 	} catch {}
 	try {
 		await rm(tmpDir2, { recursive: true });
 	} catch {}
-}, 30_000);
+}, 60_000);
 
 describe('Two-Node P2P Catalog', () => {
 	test('both nodes are connected', () => {
