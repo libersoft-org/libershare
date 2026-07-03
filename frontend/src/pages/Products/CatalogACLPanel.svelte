@@ -240,12 +240,12 @@
 			</div>
 
 			<div class="restrict-info">
-			{#if acl?.restrict_writes}
-				Catalog is restricted — only owner, admins, and moderators can publish entries.
-			{:else}
-				Catalog is open — any peer can publish entries.
-			{/if}
-		</div>
+				{#if acl?.restrict_writes}
+					Catalog is restricted — only owner, admins, and moderators can publish entries.
+				{:else}
+					Catalog is open — any peer can publish entries.
+				{/if}
+			</div>
 		{/if}
 	</div>
 </div>
