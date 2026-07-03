@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { hlcTick, hlcMerge, hlcCompare, type HLC } from '../catalog-hlc.ts';
+import { hlcTick, hlcMerge, hlcCompare, type HLC } from '../../../src/catalog/catalog-hlc.ts';
 
 describe('hlcCompare', () => {
 	test('higher wallTime wins', () => {

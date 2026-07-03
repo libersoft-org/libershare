@@ -2,10 +2,10 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
-import { initCatalogTables, getCatalogEntry, listCatalogEntries, isTombstoned, getCatalogACL, ensureCatalogACL, searchCatalog, getDeltaEntries, getVectorClock } from '../../db/catalog.ts';
-import { signCatalogOp } from '../catalog-signer.ts';
-import { handleRemoteOp } from '../catalog-validator.ts';
-import type { HLC } from '../catalog-hlc.ts';
+import { initCatalogTables, getCatalogEntry, listCatalogEntries, isTombstoned, getCatalogACL, ensureCatalogACL, searchCatalog, getDeltaEntries, getVectorClock } from '../../../src/db/catalog.ts';
+import { signCatalogOp } from '../../../src/catalog/catalog-signer.ts';
+import { handleRemoteOp } from '../../../src/catalog/catalog-validator.ts';
+import type { HLC } from '../../../src/catalog/catalog-hlc.ts';
 
 let db: Database;
 let ownerKey: Ed25519PrivateKey;

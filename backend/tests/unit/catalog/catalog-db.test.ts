@@ -16,7 +16,7 @@ import {
 	deleteTombstonesOlderThan,
 	getDeltaEntries,
 	type CatalogEntryInput,
-} from '../../db/catalog.ts';
+} from '../../../src/db/catalog.ts';
 
 let db: Database;
 

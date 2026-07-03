@@ -2,10 +2,10 @@ import { describe, test, expect } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import { decode } from 'cbor-x';
-import { initCatalogTables, ensureCatalogACL, listCatalogEntries, getCatalogEntry } from '../../db/catalog.ts';
-import { signCatalogOp, type SignedCatalogOp } from '../catalog-signer.ts';
-import { handleRemoteOp } from '../catalog-validator.ts';
-import type { HLC } from '../catalog-hlc.ts';
+import { initCatalogTables, ensureCatalogACL, listCatalogEntries, getCatalogEntry } from '../../../src/db/catalog.ts';
+import { signCatalogOp, type SignedCatalogOp } from '../../../src/catalog/catalog-signer.ts';
+import { handleRemoteOp } from '../../../src/catalog/catalog-validator.ts';
+import type { HLC } from '../../../src/catalog/catalog-hlc.ts';
 
 function createPeerDB(ownerPeerID: string): Database {
 	const db = new Database(':memory:');

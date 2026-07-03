@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { computeManifestHash } from '../catalog-utils.ts';
+import { computeManifestHash } from '../../../src/catalog/catalog-utils.ts';
 
 describe('computeManifestHash', () => {
 	test('produces deterministic sha256 hash', () => {

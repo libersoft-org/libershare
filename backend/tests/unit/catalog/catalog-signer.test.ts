@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { generateKeyPair } from '@libp2p/crypto/keys';
-import { signCatalogOp, verifyCatalogOp, type SignedCatalogOp } from '../catalog-signer.ts';
-import type { HLC } from '../catalog-hlc.ts';
+import { signCatalogOp, verifyCatalogOp, type SignedCatalogOp } from '../../../src/catalog/catalog-signer.ts';
+import type { HLC } from '../../../src/catalog/catalog-hlc.ts';
 
 describe('signCatalogOp + verifyCatalogOp', () => {
 	test('sign and verify round-trip', async () => {

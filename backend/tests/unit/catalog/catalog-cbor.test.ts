@@ -3,10 +3,10 @@ import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
 import { encode, decode } from 'cbor-x';
-import { initCatalogTables, ensureCatalogACL, getCatalogEntry } from '../../db/catalog.ts';
-import { signCatalogOp, verifyCatalogOp, type SignedCatalogOp } from '../catalog-signer.ts';
-import { handleRemoteOp } from '../catalog-validator.ts';
-import type { HLC } from '../catalog-hlc.ts';
+import { initCatalogTables, ensureCatalogACL, getCatalogEntry } from '../../../src/db/catalog.ts';
+import { signCatalogOp, verifyCatalogOp, type SignedCatalogOp } from '../../../src/catalog/catalog-signer.ts';
+import { handleRemoteOp } from '../../../src/catalog/catalog-validator.ts';
+import type { HLC } from '../../../src/catalog/catalog-hlc.ts';
 
 let db: Database;
 let ownerKey: Ed25519PrivateKey;

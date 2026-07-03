@@ -2,9 +2,9 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
-import { initCatalogTables } from '../../db/catalog.ts';
-import { CatalogManager } from '../catalog-manager.ts';
-import { initCatalogHandlers, type CatalogHandlers } from '../../api/catalog.ts';
+import { initCatalogTables } from '../../../src/db/catalog.ts';
+import { CatalogManager } from '../../../src/catalog/catalog-manager.ts';
+import { initCatalogHandlers, type CatalogHandlers } from '../../../src/api/catalog.ts';
 
 interface ClientData {
 	subscribedEvents: Set<string>;

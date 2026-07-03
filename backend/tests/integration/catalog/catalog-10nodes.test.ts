@@ -16,15 +16,15 @@ import { mkdtemp, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 // import { generateKeyPair } from '@libp2p/crypto/keys';
-import { Network } from '../../protocol/network.ts';
-import { DataServer } from '../../lish/data-server.ts';
-import { Settings } from '../../settings.ts';
-import { openDatabase } from '../../db/database.ts';
-import { CatalogManager } from '../catalog-manager.ts';
-import { signCatalogOp, type SignedCatalogOp } from '../catalog-signer.ts';
-import { handleRemoteOp } from '../catalog-validator.ts';
-import { getCatalogEntry, updateCatalogACL, getEntryCount, isTombstoned } from '../../db/catalog.ts';
-import type { HLC } from '../catalog-hlc.ts';
+import { Network } from '../../../src/protocol/network.ts';
+import { DataServer } from '../../../src/lish/data-server.ts';
+import { Settings } from '../../../src/settings.ts';
+import { openDatabase } from '../../../src/db/database.ts';
+import { CatalogManager } from '../../../src/catalog/catalog-manager.ts';
+import { signCatalogOp, type SignedCatalogOp } from '../../../src/catalog/catalog-signer.ts';
+import { handleRemoteOp } from '../../../src/catalog/catalog-validator.ts';
+import { getCatalogEntry, updateCatalogACL, getEntryCount, isTombstoned } from '../../../src/db/catalog.ts';
+import type { HLC } from '../../../src/catalog/catalog-hlc.ts';
 
 interface TestNode {
 	id: number;

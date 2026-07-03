@@ -2,10 +2,10 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
-import { initCatalogTables, ensureCatalogACL, listCatalogEntries, getCatalogEntry, deleteTombstonesOlderThan } from '../../db/catalog.ts';
-import { signCatalogOp } from '../catalog-signer.ts';
-import { handleRemoteOp } from '../catalog-validator.ts';
-import type { HLC } from '../catalog-hlc.ts';
+import { initCatalogTables, ensureCatalogACL, listCatalogEntries, getCatalogEntry, deleteTombstonesOlderThan } from '../../../src/db/catalog.ts';
+import { signCatalogOp } from '../../../src/catalog/catalog-signer.ts';
+import { handleRemoteOp } from '../../../src/catalog/catalog-validator.ts';
+import type { HLC } from '../../../src/catalog/catalog-hlc.ts';
 
 let db: Database;
 let ownerKey: Ed25519PrivateKey;
@@ -262,7 +262,7 @@ describe('Edge case: ACL cascading revocation', () => {
 		}, oClock);
 		await handleRemoteOp(db, 'net1', ra);
 
-		const acl = await import('../../db/catalog.ts').then(m => m.getCatalogACL(db, 'net1'));
+		const acl = await import('../../../src/db/catalog.ts').then(m => m.getCatalogACL(db, 'net1'));
 		expect(acl!.admins).not.toContain(admin.publicKey.toString());
 		// Note: In current simplified model, moderators granted by revoked admin remain
 		// Full cascading revocation would remove them too (Phase 4 enhancement)

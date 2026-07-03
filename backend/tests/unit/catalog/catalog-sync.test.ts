@@ -2,10 +2,10 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
-import { initCatalogTables, ensureCatalogACL, getCatalogEntry, getEntryCount } from '../../db/catalog.ts';
-import { CatalogManager } from '../catalog-manager.ts';
-import { buildSyncResponse, applySyncResponse, encodeSyncResponse, decodeSyncResponse, encodeSyncRequest, decodeSyncRequest } from '../catalog-sync.ts';
-import type { SyncRequest } from '../catalog-sync.ts';
+import { initCatalogTables, ensureCatalogACL, getCatalogEntry, getEntryCount } from '../../../src/db/catalog.ts';
+import { CatalogManager } from '../../../src/catalog/catalog-manager.ts';
+import { buildSyncResponse, applySyncResponse, encodeSyncResponse, decodeSyncResponse, encodeSyncRequest, decodeSyncRequest } from '../../../src/catalog/catalog-sync.ts';
+import type { SyncRequest } from '../../../src/catalog/catalog-sync.ts';
 
 let ownerKey: Ed25519PrivateKey;
 let ownerPeerID: string;

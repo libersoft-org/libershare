@@ -9,12 +9,12 @@ import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
 import { decode } from 'cbor-x';
-import { initCatalogTables, getCatalogEntry, listCatalogEntries, isTombstoned, getEntryCount, searchCatalog } from '../../db/catalog.ts';
-import { CatalogManager } from '../catalog-manager.ts';
-import { buildSyncResponse, applySyncResponse, encodeSyncResponse, decodeSyncResponse } from '../catalog-sync.ts';
-import { CatalogRateLimiter } from '../catalog-rate-limiter.ts';
-import { computeManifestHash } from '../catalog-utils.ts';
-import { verifyCatalogOp, type SignedCatalogOp } from '../catalog-signer.ts';
+import { initCatalogTables, getCatalogEntry, listCatalogEntries, isTombstoned, getEntryCount, searchCatalog } from '../../../src/db/catalog.ts';
+import { CatalogManager } from '../../../src/catalog/catalog-manager.ts';
+import { buildSyncResponse, applySyncResponse, encodeSyncResponse, decodeSyncResponse } from '../../../src/catalog/catalog-sync.ts';
+import { CatalogRateLimiter } from '../../../src/catalog/catalog-rate-limiter.ts';
+import { computeManifestHash } from '../../../src/catalog/catalog-utils.ts';
+import { verifyCatalogOp, type SignedCatalogOp } from '../../../src/catalog/catalog-signer.ts';
 
 function createDB(): Database {
 	const d = new Database(':memory:');
@@ -240,7 +240,7 @@ describe('Use Case: New peer joins and syncs catalog', () => {
 		// Apply ACL from sync (peer B needs to know about the moderator)
 		const syncACL = JSON.parse(received.aclJSON);
 		if (syncACL) {
-			const { updateCatalogACL } = await import('../../db/catalog.ts');
+			const { updateCatalogACL } = await import('../../../src/db/catalog.ts');
 			updateCatalogACL(dbB, 'community', {
 				admins: syncACL.admins,
 				moderators: syncACL.moderators,

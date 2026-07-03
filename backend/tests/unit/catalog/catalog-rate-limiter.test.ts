@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { CatalogRateLimiter, RATE_LIMITS } from '../catalog-rate-limiter.ts';
+import { CatalogRateLimiter, RATE_LIMITS } from '../../../src/catalog/catalog-rate-limiter.ts';
 
 let limiter: CatalogRateLimiter;
 

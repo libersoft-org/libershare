@@ -18,9 +18,9 @@ import { Database } from 'bun:sqlite';
 import { generateKeyPair } from '@libp2p/crypto/keys';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
 import { decode } from 'cbor-x';
-import { initCatalogTables, getCatalogEntry, isTombstoned } from '../../db/catalog.ts';
-import { CatalogManager } from '../catalog-manager.ts';
-import { verifyCatalogOp, type SignedCatalogOp } from '../catalog-signer.ts';
+import { initCatalogTables, getCatalogEntry, isTombstoned } from '../../../src/db/catalog.ts';
+import { CatalogManager } from '../../../src/catalog/catalog-manager.ts';
+import { verifyCatalogOp, type SignedCatalogOp } from '../../../src/catalog/catalog-signer.ts';
 
 // --- Test infrastructure ---
 
