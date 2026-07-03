@@ -8,15 +8,15 @@
  * (app.ts guards the same noise in production). This runner keeps the full
  * output but derives the exit code from the actual fail count.
  */
-const proc = Bun.spawnSync(['bun', 'test', 'tests/integration/', '--timeout', '120000', '--preload', './tests/integration/preload.ts'], {
+const proc: ReturnType<typeof Bun.spawnSync> = Bun.spawnSync(['bun', 'test', 'tests/integration/', '--timeout', '120000', '--preload', './tests/integration/preload.ts'], {
 	stdout: 'inherit',
 	stderr: 'pipe',
 });
-const stderr = new TextDecoder().decode(proc.stderr);
+const stderr: string = new TextDecoder().decode(proc.stderr);
 process.stderr.write(stderr);
 
-const failMatch = stderr.match(/(\d+) fail\b/);
-const fails = failMatch ? Number(failMatch[1]) : NaN;
+const failMatch: RegExpMatchArray | null = stderr.match(/(\d+) fail\b/);
+const fails: number = failMatch ? Number(failMatch[1]) : NaN;
 if (Number.isNaN(fails)) {
 	console.error('[run-integration] could not parse fail count from bun test output');
 	process.exit(1);
