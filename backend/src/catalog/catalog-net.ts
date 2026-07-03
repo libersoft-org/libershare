@@ -28,6 +28,13 @@ export interface CatalogNetDeps {
  * Extracted from Networks so lishnet management stays free of catalog wire
  * format concerns (mirrors the Downloader → engines composition pattern).
  */
+/** Max size of an inbound sync REQUEST frame — the request is a tiny fixed-shape CBOR message. */
+const SYNC_REQUEST_MAX_BYTES = 4 * 1024;
+/** Max size of an inbound sync RESPONSE frame — bounds a hostile responder; ~50k entries × ~1 KiB fits well below. */
+const SYNC_RESPONSE_MAX_BYTES = 64 * 1024 * 1024;
+/** How many inbound sync requests this node is willing to serve per minute (amplification-DoS bound). */
+const SYNC_SERVE_MAX_PER_MINUTE = 30;
+
 export class CatalogNet {
 	private readonly deps: CatalogNetDeps;
 	private syncProtocolRegistered = false;
@@ -35,6 +42,8 @@ export class CatalogNet {
 	private readonly rateLimiter = new CatalogRateLimiter();
 	// Pending catch-up retry timers, keyed by networkID — cleared on detach
 	private readonly syncRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	// Timestamps of recently served sync requests (sliding 1-minute window)
+	private syncServeWindow: number[] = [];
 
 	constructor(deps: CatalogNetDeps) {
 		this.deps = deps;
@@ -92,7 +101,18 @@ export class CatalogNet {
 	/** Serve one inbound bilateral sync request: decode → build delta response → send. */
 	private async handleSyncStream(stream: Stream): Promise<void> {
 		try {
-			const decoder = lpDecode(stream);
+			// Building a full-catalog response is DB-scan + CBOR-encode work a
+			// hostile peer can request for free — bound how often we serve it.
+			const now = Date.now();
+			this.syncServeWindow = this.syncServeWindow.filter(t => t > now - 60_000);
+			if (this.syncServeWindow.length >= SYNC_SERVE_MAX_PER_MINUTE) {
+				console.warn('[CatalogSync] Sync serve rate limit reached — dropping inbound request');
+				stream.abort(new Error('sync serve rate limit'));
+				return;
+			}
+			this.syncServeWindow.push(now);
+
+			const decoder = lpDecode(stream, { maxDataLength: SYNC_REQUEST_MAX_BYTES });
 			const msg = await decoder.next();
 			if (msg.done || !msg.value) {
 				await stream.close();
@@ -142,7 +162,9 @@ export class CatalogNet {
 					sinceHlcWall: 0, // full sync
 				};
 				for await (const chunk of lpEncode([encodeSyncRequest(req)])) stream.send(chunk);
-				const decoder = lpDecode(stream);
+				// Bound the response frame — an unbounded decode lets a hostile
+				// responder feed an arbitrarily large allocation.
+				const decoder = lpDecode(stream, { maxDataLength: SYNC_RESPONSE_MAX_BYTES });
 				const msg = await decoder.next();
 				if (!msg.done && msg.value) {
 					const raw = msg.value instanceof Uint8ArrayList ? msg.value.subarray() : msg.value;
