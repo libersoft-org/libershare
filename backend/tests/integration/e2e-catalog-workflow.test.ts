@@ -1,7 +1,9 @@
 /**
  * Full A-Z E2E Integration Test: Create LISH → Publish → Download
  *
- * Runs against a REAL backend (Docker at 192.168.2.9:1158).
+ * Runs against a REAL backend. Set BACKEND_URL (and NETWORK_ID) to enable:
+ *   BACKEND_URL=ws://localhost:1158 NETWORK_ID=<uuid> bun test tests/integration/e2e-catalog-workflow.test.ts
+ * The suite is skipped entirely when BACKEND_URL is not set.
  * Tests the complete catalog workflow:
  *   1. Create a test file on the server
  *   2. Create a LISH from that file
@@ -16,8 +18,8 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 
-const BACKEND_URL = process.env['BACKEND_URL'] || 'ws://192.168.2.9:1158';
-const NETWORK_ID = process.env['NETWORK_ID'] || 'e92c238f-15be-49ea-b626-5eef330c1920';
+const BACKEND_URL = process.env['BACKEND_URL'] ?? '';
+const NETWORK_ID = process.env['NETWORK_ID'] ?? '';
 const TEST_FILE_PATH = '/tmp/libershare-e2e-test-file.txt';
 const TEST_FILE_CONTENT = 'LiberShare E2E test — this file is used for the full catalog workflow test. ' + Date.now();
 
@@ -94,7 +96,7 @@ class TestClient {
 	}
 }
 
-describe('Full A-Z Catalog Workflow', () => {
+describe.skipIf(!BACKEND_URL)('Full A-Z Catalog Workflow', () => {
 	let client: TestClient;
 	let createdLishID: string;
 	let lishDetail: any;
