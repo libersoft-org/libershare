@@ -12,7 +12,7 @@ import { decode } from 'cbor-x';
 import { initCatalogTables, getCatalogEntry, listCatalogEntries, isTombstoned, getEntryCount, searchCatalog } from '../../../src/db/catalog.ts';
 import { CatalogManager } from '../../../src/catalog/catalog-manager.ts';
 import { buildSyncResponse, applySyncResponse, encodeSyncResponse, decodeSyncResponse } from '../../../src/catalog/catalog-sync.ts';
-import { CatalogRateLimiter } from '../../../src/catalog/catalog-rate-limiter.ts';
+import { CatalogRateLimiter, RATE_LIMITS } from '../../../src/catalog/catalog-rate-limiter.ts';
 import { computeManifestHash } from '../../../src/catalog/catalog-utils.ts';
 import { verifyCatalogOp, type SignedCatalogOp } from '../../../src/catalog/catalog-signer.ts';
 
@@ -356,11 +356,11 @@ describe('Use Case: Rate limiting prevents spam attack', () => {
 			expect(limiter.check('normal-user')).toBe('allow');
 		}
 
-		// Spammer — burst 10 ops quickly
-		for (let i = 0; i < 10; i++) {
+		// Spammer — burst up to the per-peer limit
+		for (let i = 0; i < RATE_LIMITS.maxOpsPerPeerPerMinute; i++) {
 			limiter.check('spammer');
 		}
-		// 11th should be rejected
+		// One over the limit should be rejected
 		expect(limiter.check('spammer')).toBe('reject');
 
 		// Normal user still works (independent limit)
