@@ -14,6 +14,17 @@ export interface CatalogManagerConfig {
 	emitEvent?: ((event: string, data: any) => void) | undefined;
 }
 
+/** Parse the stored tags JSON column, treating corrupt data as "no tags" instead of throwing. */
+function parseStoredTags(tagsJson: string | null): string[] | undefined {
+	if (!tagsJson) return undefined;
+	try {
+		const parsed = JSON.parse(tagsJson);
+		return Array.isArray(parsed) ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 interface JoinedNetwork {
 	localClock: HLC;
 	ownerPeerID: string;
@@ -199,7 +210,7 @@ export class CatalogManager {
 				fileCount: existing.file_count,
 				manifestHash: existing.manifest_hash,
 				contentType: fields.contentType ?? existing.content_type,
-				tags: fields.tags ?? (existing.tags ? JSON.parse(existing.tags) : undefined),
+				tags: fields.tags ?? parseStoredTags(existing.tags),
 			},
 			net.localClock
 		);
