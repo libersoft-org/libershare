@@ -1416,8 +1416,20 @@ export class Network {
 		this.redialBackoff.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {
-			await this.node.stop();
-			console.log('Network stopped');
+			// Drain active connections before stopping. A remote peer that keeps
+			// re-dialing during shutdown (keep-alive-fleet ReconnectQueue) can
+			// otherwise hold the transport open and node.stop() never resolves —
+			// observed between two in-process nodes in integration tests.
+			try {
+				await Promise.allSettled(this.node.getConnections().map((conn: any) => conn.close().catch(() => {})));
+			} catch {
+				/* best effort */
+			}
+			let stopTimer: ReturnType<typeof setTimeout> | undefined;
+			const stopped = await Promise.race([Promise.resolve(this.node.stop()).then(() => true), new Promise<boolean>(resolve => (stopTimer = setTimeout(() => resolve(false), 15_000)))]);
+			if (stopTimer) clearTimeout(stopTimer);
+			if (stopped) console.log('Network stopped');
+			else console.warn('[NET] node.stop() timed out after 15s — proceeding with shutdown');
 		}
 		if (this.datastore) {
 			await this.datastore.close();
