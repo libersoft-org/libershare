@@ -1,41 +1,72 @@
 /**
- * Global speed limiter using sliding-window token bucket.
- * Shared across all concurrent streams/instances to enforce a total bandwidth cap.
+ * Global speed limiter using a timestamp scheduler (virtual clock / gap buffer).
+ *
+ * How it works:
+ *   `nextAllowedTime` is a shared cursor that advances by (bytes / rate) seconds
+ *   for each caller. Each caller atomically claims a time slot, then sleeps until
+ *   that slot arrives. This serializes bandwidth across all concurrent callers
+ *   without bursting: no shared balance that can be double-consumed.
+ *
+ * Why the old token-bucket was broken with concurrency:
+ *   Two async callers both read `availableBytes` in the synchronous section before
+ *   either hits an `await`. Both see the same (or stale) balance, both deduct the
+ *   full chunk size, both compute the same debt, and both sleep the same duration —
+ *   producing a synchronized burst pattern instead of smooth distribution.
+ *
+ * Timestamp scheduler properties:
+ *   - 2 peers at 200 KB/s limit → each gets ~100 KB/s (slots interleave)
+ *   - No initial burst: cursor starts at `now`, first slot is already in the future
+ *     by one time-slice, so the first caller waits proportionally
+ *   - Limit changes take effect on the next throttle call (cursor is reset)
+ *   - Zero / negative limit means disabled (no throttling)
  */
 export class SpeedLimiter {
 	private maxBytesPerSec = 0;
-	private samples: { time: number; bytes: number }[] = [];
-	private static readonly WINDOW_MS = 1000;
+
+	/** Virtual clock: earliest time (ms) the next caller may proceed. */
+	private nextAllowedTime = 0;
+
+	readonly name: string;
+
+	constructor(name: string) {
+		this.name = name;
+	}
 
 	setLimit(kbPerSec: number): void {
 		this.maxBytesPerSec = Math.max(0, kbPerSec) * 1024;
-		if (this.maxBytesPerSec === 0) this.samples = [];
+		// Reset cursor to now so the new rate takes effect immediately
+		// without inheriting a stale future slot from the old rate.
+		this.nextAllowedTime = Date.now();
+		console.log(`[LIMITER:${this.name}] setLimit ${kbPerSec} KB/s → ${this.maxBytesPerSec} B/s`);
 	}
 
-	getLimit(): number { return this.maxBytesPerSec; }
+	getLimit(): number {
+		return this.maxBytesPerSec;
+	}
 
 	async throttle(bytes: number): Promise<void> {
-		if (this.maxBytesPerSec <= 0) return;
+		if (this.maxBytesPerSec <= 0 || bytes <= 0) return;
+
 		const now = Date.now();
-		this.samples.push({ time: now, bytes });
-		// Prune samples older than window
-		const cutoff = now - SpeedLimiter.WINDOW_MS;
-		this.samples = this.samples.filter(s => s.time > cutoff);
-		// Calculate bytes in current window
-		const windowBytes = this.samples.reduce((sum, s) => sum + s.bytes, 0);
-		if (windowBytes > this.maxBytesPerSec) {
-			// How long to wait until we're under budget
-			const excessBytes = windowBytes - this.maxBytesPerSec;
-			const waitMs = (excessBytes / this.maxBytesPerSec) * 1000;
-			if (waitMs > 5) await new Promise(r => setTimeout(r, waitMs));
-		}
+
+		// Claim a time slot atomically (sync, no await between read and write).
+		// If the cursor has drifted into the past (e.g. no activity for a while),
+		// clamp it to now so we don't carry forward a stale head-start.
+		const slotStart = Math.max(now, this.nextAllowedTime);
+		const slotDurationMs = (bytes / this.maxBytesPerSec) * 1000;
+		this.nextAllowedTime = slotStart + slotDurationMs;
+
+		// Sleep until our slot begins.
+		const waitMs = slotStart - now;
+		if (waitMs > 1) await new Promise<void>(r => setTimeout(r, waitMs));
 	}
 
+	/** Reset the cursor to now (used on disconnect / test teardown). */
 	reset(): void {
-		this.samples = [];
+		this.nextAllowedTime = Date.now();
 	}
 }
 
-// Singleton instances for global upload and download limits
-export const uploadLimiter = new SpeedLimiter();
-export const downloadLimiter = new SpeedLimiter();
+// Singleton instances — shared across all peers and all LISHes.
+export const uploadLimiter: SpeedLimiter = new SpeedLimiter('UL');
+export const downloadLimiter: SpeedLimiter = new SpeedLimiter('DL');

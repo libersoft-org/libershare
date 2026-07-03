@@ -1,12 +1,13 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, CodedError, ErrorCodes } from '@shared';
-import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, resetVerification, runVerification } from '../lish/lish.ts';
+import { type ILISH, type IStoredLISH, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, validateLISHStructure, CodedError, ErrorCodes, productName } from '@shared';
+import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
+import { type Settings, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
 import { setBusy, clearBusy } from './busy.ts';
 import { getEnabledUploads, removeUploadState, enableUpload } from '../protocol/lish-protocol.ts';
-import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, triggerEnableDownload, markDownloadEnabled } from './transfer.ts';
-import { mkdir, readdir, stat, access, unlink, rmdir } from 'fs/promises';
+import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, markDownloadEnabled, stopRecoveryForLISH } from './transfer.ts';
+import { mkdir, readdir, stat, access, unlink, rmdir, rename, rm } from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { join, dirname } from 'path';
 const assert = Utils.assertParams;
@@ -67,7 +68,7 @@ interface MoveParams {
 	createSubdirectory?: boolean;
 }
 interface LISHsHandlers {
-	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[] };
+	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => ILISHListResult;
 	get: (p: { lishID: string }) => ILISHDetail | null;
 	exportToFile: (p: ExportToFileParams) => Promise<SuccessResponse>;
 	exportAllToFile: (p: ExportAllToFileParams) => Promise<SuccessResponse>;
@@ -86,15 +87,33 @@ interface LISHsHandlers {
 	stopVerifyAll: () => Promise<SuccessResponse>;
 	stopCreate: () => Promise<SuccessResponse>;
 	move: (p: MoveParams) => Promise<SuccessResponse>;
+	startVerification: (lishID: string) => void;
+	finalizeDownload: (lishID: string) => Promise<SuccessResponse>; // Move from temp to final directory after download completes
+	importManifest: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>; // Shared import entrypoint (used by peer add-to-downloads)
 }
 
 /**
  * Delete only the files and empty directories that belong to a LISH structure.
  * Files not part of the LISH are left untouched.
  * Directories are removed only if they are empty after file deletion (deepest first).
+ *
+ * Exception: when the LISH is still in its temp download directory (finalDirectory is set),
+ * the whole baseDir is recursively wiped — the temp dir is uniquely allocated per LISH and
+ * may contain partially-allocated files, intermediate parent directories not listed in the
+ * manifest, or other download artifacts. Partial downloads must be fully cleaned up.
  */
 async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 	const baseDir = lish.directory!;
+	// Download in progress — temp dir is unique per LISH, wipe it entirely.
+	if (lish.finalDirectory) {
+		try {
+			await rm(baseDir, { recursive: true, force: true });
+			console.log(`✓ Temp directory removed: ${baseDir}`);
+		} catch (err: any) {
+			console.error(`Failed to remove temp directory: ${baseDir}`, err);
+		}
+		return;
+	}
 	// 1. Delete all files listed in the LISH
 	let deletedFiles = 0;
 	for (const file of lish.files ?? []) {
@@ -128,11 +147,11 @@ async function deleteLISHData(lish: IStoredLISH): Promise<void> {
 	}
 }
 
-export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn): LISHsHandlers {
+export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn, settings: Settings): LISHsHandlers {
 	// Track current creation so it can be aborted
 	let currentCreation: AbortController | null = null;
 
-	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): { items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[]; uploadEnabled: string[]; downloadEnabled: string[] } {
+	function list(p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }): ILISHListResult {
 		return {
 			items: dataServer.listSummaries(p?.sortBy, p?.sortOrder),
 			verifying: currentVerification?.lishID ?? null,
@@ -181,6 +200,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const addToDownloading = p.addToDownloading ?? false;
 		const algorithm = p.algorithm ?? DEFAULT_ALGO;
 		const chunkSize = p.chunkSize ?? DEFAULT_CHUNK_SIZE;
+		// Reject overly large chunkSize before the (potentially long) hashing pass.
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		if (typeof chunkSize !== 'number' || !Number.isFinite(chunkSize) || chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(chunkSize));
+		if (chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${chunkSize} > ${maxChunkSize}`);
 		const threads = p.threads ?? 0; // 0 = all CPU threads
 		const minifyJSON = p.minifyJSON ?? false;
 		const compress = p.compress ?? false;
@@ -232,14 +255,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			await exportLISHToFile(lish, lishFilePath, minifyJSON, compress, compressionAlgorithm);
 			resultLISHFile = lishFilePath;
 		}
-		// 3. Save to data-server if requested
-		if (addToSharing) {
+		// 3. Save to data-server if requested (required for both sharing and downloading)
+		if (addToSharing || addToDownloading) {
 			lish.directory = dataPathStat.isFile() ? dirname(dataPath) : dataPath;
-			dataServer.add(lish);
-			console.log(`✓ Dataset imported: ${lish.id}`);
-			broadcast('lishs:add', dataServer.getDetail(lish.id));
-			startVerification(lish.id);
-			if (addToDownloading) triggerEnableDownload(lish.id);
+			await addLISH(lish, { enableSharing: addToSharing, enableDownloading: addToDownloading });
 		}
 		return { lishID: lish.id, lishFile: resultLISHFile };
 	}
@@ -249,7 +268,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const lish = dataServer.get(p.lishID);
 		if (!lish) return false;
 		if (p.deleteLISH) {
-			// Full deletion — stop transfers, stop verification, clean up, delete DB row
+			// Full deletion — stop transfers, stop verification, stop recovery, clean up, delete DB row
+			stopRecoveryForLISH(p.lishID);
 			removeUploadState(p.lishID);
 			await removeDownloadState(p.lishID);
 			// Stop any running/queued verification for this LISH
@@ -257,9 +277,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			const qIdx = verificationQueue.indexOf(p.lishID);
 			if (qIdx >= 0) verificationQueue.splice(qIdx, 1);
 			clearBusy(p.lishID);
-			if (p.deleteData && lish.directory) {
-				await deleteLISHData(lish);
-			}
+			if (p.deleteData && lish.directory) await deleteLISHData(lish);
 			const deleted = dataServer.delete(p.lishID);
 			if (deleted) {
 				console.log(`✓ LISH deleted: ${p.lishID}`);
@@ -280,25 +298,50 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return true;
 	}
 
+	/**
+	 * Single entry point for adding any LISH (locally created, imported from .lish/JSON/URL,
+	 * or received as a manifest from a peer) into the data-server. Validates structure, persists,
+	 * broadcasts, applies sharing/downloading flags, and starts verification.
+	 * Caller must have already resolved `lish.directory` (and optionally `lish.finalDirectory`).
+	 */
+	async function addLISH(lish: IStoredLISH, opts: { enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined }): Promise<void> {
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		validateLISHStructure(lish, maxChunkSize);
+		dataServer.add(lish);
+		console.log(`✓ LISH added: ${lish.id}${lish.finalDirectory ? ` (temp: ${lish.directory} → final: ${lish.finalDirectory})` : ''}`);
+		broadcast('lishs:add', dataServer.getDetail(lish.id));
+		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
+		// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
+		if (opts.enableSharing) enableUpload(lish.id);
+		if (opts.enableDownloading) markDownloadEnabled(lish.id);
+		startVerification(lish.id);
+	}
+
 	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
+		// Validate structure early to fail fast before any disk operations.
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		validateLISHStructure(lish, maxChunkSize);
 		const existing = dataServer.get(lish.id);
 		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
 		if (existing) dataServer.delete(lish.id);
 		const dirName = sanitizeFilename(lish.name || lish.id) || lish.id;
-		const directory = join(Utils.expandHome(downloadPath), dirName);
+		const finalBaseDir = join(Utils.expandHome(downloadPath), dirName);
+		let directory: string;
+		let finalDirectory: string | undefined;
+		if (enableDownloading) {
+			// Download mode → allocate + write chunks into temp, move to finalDirectory after completion.
+			const tempPath: string = settings.get('storage.tempPath') ?? `~/${productName}/temp/`;
+			const tempBaseDir = join(Utils.expandHome(tempPath), dirName);
+			directory = await Utils.findUniqueDirectory(tempBaseDir);
+			finalDirectory = finalBaseDir;
+		} else directory = finalBaseDir; // Share-only / metadata-only import → files already live at the target location.
 		await mkdir(directory, { recursive: true });
 		const storedLISH: IStoredLISH = {
 			...lish,
 			directory,
+			...(finalDirectory !== undefined ? { finalDirectory } : {}),
 		};
-		dataServer.add(storedLISH);
-		console.log(`✓ LISH imported: ${lish.id}`);
-		broadcast('lishs:add', dataServer.getDetail(lish.id));
-		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
-		// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
-		if (enableSharing) enableUpload(lish.id);
-		if (enableDownloading) markDownloadEnabled(lish.id);
-		startVerification(lish.id);
+		await addLISH(storedLISH, { enableSharing, enableDownloading });
 		return { lishID: lish.id, directory };
 	}
 
@@ -306,9 +349,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['filePath', 'downloadPath']);
 		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) {
-			lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
-		}
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
 		return lastResponse;
 	}
 
@@ -355,6 +396,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	function enqueueVerification(lishID: string): void {
 		if (currentVerification?.lishID === lishID) return;
 		if (verificationQueue.includes(lishID)) return;
+		setBusy(lishID, 'verifying');
 		verificationQueue.push(lishID);
 		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, queued: true });
 		processVerificationQueue();
@@ -394,8 +436,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// Remove from queue if pending
 		const qIDx = verificationQueue.indexOf(p.lishID);
 		if (qIDx >= 0) verificationQueue.splice(qIDx, 1);
-		resetVerification(dataServer, p.lishID);
-		broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, reset: true });
+		broadcast('lishs:verify', { lishID: p.lishID, filePath: '', verifiedChunks: 0, started: true });
 		enqueueVerification(p.lishID);
 		return { success: true };
 	}
@@ -406,8 +447,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			// Skip if already verifying or already in queue
 			if (currentVerification?.lishID === lish.id) continue;
 			if (verificationQueue.includes(lish.id)) continue;
-			resetVerification(dataServer, lish.id);
-			broadcast('lishs:verify', { lishID: lish.id, filePath: '', verifiedChunks: 0, reset: true });
+			broadcast('lishs:verify', { lishID: lish.id, filePath: '', verifiedChunks: 0, started: true });
 			enqueueVerification(lish.id);
 		}
 		return { success: true };
@@ -564,5 +604,147 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		}
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move };
+	async function finalizeDownload(lishID: string): Promise<SuccessResponse> {
+		const lish = dataServer.get(lishID);
+		if (!lish) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, lishID);
+		const finalDir = lish.finalDirectory;
+		if (!finalDir || !lish.directory) return { success: true }; // Nothing to finalize
+		const tempDir = lish.directory;
+		// Conflict check — user asked for fail-on-existing, not auto-suffix
+		try {
+			await access(finalDir);
+			const detail = `final directory already exists: ${finalDir}`;
+			console.warn(`[finalizeDownload] ${lishID.slice(0, 8)}: ${detail}`);
+			broadcast('lishs:finalize:error', { lishID, error: ErrorCodes.LISH_ALREADY_EXISTS, errorDetail: detail });
+			return { success: false };
+		} catch {
+			// Does not exist → OK to move into it
+		}
+		movingLISHs.add(lishID);
+		setBusy(lishID, 'moving');
+		broadcast('lishs:move:status', { lishID, moving: true });
+		try {
+			// Ensure parent directory exists (for both rename and copy fallback)
+			await mkdir(dirname(finalDir), { recursive: true });
+			// Fast path — atomic rename (same filesystem)
+			try {
+				await rename(tempDir, finalDir);
+				dataServer.updateDirectory(lishID, finalDir);
+				dataServer.updateFinalDirectory(lishID, null);
+				console.log(`✓ LISH finalized (rename): ${lishID} → ${finalDir}`);
+				broadcast('lishs:move', { lishID, directory: finalDir });
+				broadcast('lishs:finalize', { lishID, directory: finalDir });
+				return { success: true };
+			} catch (err: any) {
+				if (err.code !== 'EXDEV') throw err;
+				// Cross-device — fall through to copy+verify+delete
+			}
+			// Slow path — copy then delete. During copy, directory still points to tempDir so
+			// uploaders can keep reading from it. Swap only after copy succeeds.
+			const allFiles = lish.files ?? [];
+			const allLinks = lish.links ?? [];
+			const totalFiles = allFiles.length + allLinks.length;
+			const totalBytes = allFiles.reduce((s, f) => s + (f.size ?? 0), 0);
+			let completedFiles = 0;
+			let completedBytes = 0;
+			broadcast('lishs:move:progress', {
+				lishID,
+				type: 'file-list',
+				totalFiles,
+				completedFiles: 0,
+				totalBytes,
+				completedBytes: 0,
+				files: allFiles.map(f => ({ path: f.path, size: f.size ?? 0 })),
+			});
+			await mkdir(finalDir, { recursive: true });
+			const PROGRESS_INTERVAL = 512 * 1024;
+			try {
+				for (const file of allFiles) {
+					const srcPath = join(tempDir, file.path);
+					const dstPath = join(finalDir, file.path);
+					await mkdir(dirname(dstPath), { recursive: true });
+					const fileSize = file.size ?? 0;
+					let fileBytes = 0;
+					let lastReported = 0;
+					await new Promise<void>((resolve, reject) => {
+						const rs = createReadStream(srcPath);
+						const ws = createWriteStream(dstPath);
+						rs.on('data', (chunk: string | Buffer) => {
+							fileBytes += chunk.length;
+							if (fileBytes - lastReported >= PROGRESS_INTERVAL) {
+								lastReported = fileBytes;
+								broadcast('lishs:move:progress', {
+									lishID,
+									type: 'chunk',
+									path: file.path,
+									totalFiles,
+									completedFiles,
+									totalBytes,
+									completedBytes: completedBytes + fileBytes,
+									fileBytes,
+									fileSize,
+								});
+							}
+						});
+						rs.on('error', reject);
+						ws.on('error', reject);
+						ws.on('finish', resolve);
+						rs.pipe(ws);
+					});
+					completedFiles++;
+					completedBytes += fileSize;
+					broadcast('lishs:move:progress', { lishID, type: 'file', path: file.path, totalFiles, completedFiles, totalBytes, completedBytes });
+				}
+				for (const dir of lish.directories ?? []) await mkdir(join(finalDir, dir.path), { recursive: true });
+				for (const link of allLinks) {
+					const srcPath = join(tempDir, link.path);
+					const dstPath = join(finalDir, link.path);
+					await mkdir(dirname(dstPath), { recursive: true });
+					await new Promise<void>((resolve, reject) => {
+						const rs = createReadStream(srcPath);
+						const ws = createWriteStream(dstPath);
+						rs.on('error', reject);
+						ws.on('error', reject);
+						ws.on('finish', resolve);
+						rs.pipe(ws);
+					});
+					completedFiles++;
+					broadcast('lishs:move:progress', { lishID, type: 'file', path: link.path, totalFiles, completedFiles, totalBytes, completedBytes });
+				}
+			} catch (err: any) {
+				// Partial copy failed — clean up the target so user can retry or handle manually
+				console.error(`[finalizeDownload] ${lishID.slice(0, 8)}: copy failed, cleaning partial target: ${finalDir}`, err);
+				try {
+					await deleteLISHData({ ...lish, directory: finalDir });
+				} catch {
+					/* best effort */
+				}
+				const detail = err?.message ?? String(err);
+				broadcast('lishs:finalize:error', { lishID, error: ErrorCodes.IO_NOT_FOUND, errorDetail: detail });
+				return { success: false };
+			}
+			// Copy complete — atomic swap: point directory at the new location before deleting source.
+			dataServer.updateDirectory(lishID, finalDir);
+			dataServer.updateFinalDirectory(lishID, null);
+			// Now remove source files (uploaders will read from finalDir on next request)
+			try {
+				await deleteLISHData({ ...lish, directory: tempDir });
+			} catch (err) {
+				console.warn(`[finalizeDownload] ${lishID.slice(0, 8)}: failed to clean temp ${tempDir}:`, err);
+			}
+			console.log(`✓ LISH finalized (copy): ${lishID} → ${finalDir}`);
+			broadcast('lishs:move', { lishID, directory: finalDir });
+			broadcast('lishs:finalize', { lishID, directory: finalDir });
+			return { success: true };
+		} finally {
+			movingLISHs.delete(lishID);
+			clearBusy(lishID);
+			broadcast('lishs:move:status', { lishID, moving: false });
+		}
+	}
+
+	async function importManifest(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }): Promise<ImportLISHResponse> {
+		return importCommon(lish, downloadPath, opts?.overwrite ?? false, opts?.enableSharing, opts?.enableDownloading);
+	}
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, move, startVerification, finalizeDownload, importManifest };
 }

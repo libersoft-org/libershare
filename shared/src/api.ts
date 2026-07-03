@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerConnectionInfo, type Dataset, type FsInfo, type FsListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHSummary, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
 
 type EventCallback = (data: any) => void;
 
@@ -21,20 +21,24 @@ export class API {
 	readonly datasets: DatasetsAPI;
 	readonly fs: FsAPI;
 	readonly settings: SettingsAPI;
+	readonly identity: IdentityAPI;
 	readonly lishnets: LISHnetsAPI;
 	readonly lishs: LISHsAPI;
 	readonly transfer: TransferAPI;
 	readonly catalog: CatalogAPI;
+	readonly search: SearchAPI;
 
 	constructor(client: IWsClient) {
 		this.client = client;
 		this.datasets = new DatasetsAPI(client);
 		this.fs = new FsAPI(client);
 		this.settings = new SettingsAPI(client);
+		this.identity = new IdentityAPI(client);
 		this.lishnets = new LISHnetsAPI(client);
 		this.lishs = new LISHsAPI(client);
 		this.transfer = new TransferAPI(client);
 		this.catalog = new CatalogAPI(client);
+		this.search = new SearchAPI(client);
 	}
 
 	// Raw call access
@@ -114,16 +118,16 @@ class FsAPI {
 		return this.client.call<{ success: boolean }>('fs.rename', { path, newName });
 	}
 
-	exists(path: string): Promise<{ exists: boolean; type?: 'file' | 'directory' }> {
-		return this.client.call<{ exists: boolean; type?: 'file' | 'directory' }>('fs.exists', { path });
+	exists(path: string): Promise<IPathExistsResult> {
+		return this.client.call<IPathExistsResult>('fs.exists', { path });
 	}
 
-	writeText(path: string, content: string): Promise<{ success: boolean; error?: string }> {
-		return this.client.call<{ success: boolean; error?: string }>('fs.writeText', { path, content });
+	writeText(path: string, content: string): Promise<IWriteResult> {
+		return this.client.call<IWriteResult>('fs.writeText', { path, content });
 	}
 
-	writeCompressed(path: string, content: string, algorithm: CompressionAlgorithm = 'gzip'): Promise<{ success: boolean; error?: string }> {
-		return this.client.call<{ success: boolean; error?: string }>('fs.writeCompressed', { path, content, algorithm });
+	writeCompressed(path: string, content: string, algorithm: CompressionAlgorithm = 'gzip'): Promise<IWriteResult> {
+		return this.client.call<IWriteResult>('fs.writeCompressed', { path, content, algorithm });
 	}
 }
 
@@ -151,6 +155,77 @@ class SettingsAPI {
 
 	reset<T = any>(): Promise<T> {
 		return this.client.call<T>('settings.reset');
+	}
+
+	/**
+	 * Factory reset with per-category selection (each defaults to ON except
+	 * `peers`). Wipes the selected categories: settings → defaults, identity →
+	 * new peer ID + cleared peerstore, downloads → all LISH records (on-disk
+	 * files kept), networks → all lishnets, peers → discovered peerstore records
+	 * only (identity key preserved). The UI should reload afterwards.
+	 */
+	factoryReset(options?: { settings?: boolean; identity?: boolean; downloads?: boolean; networks?: boolean; peers?: boolean }): Promise<FactoryResetResponse> {
+		return this.client.call<FactoryResetResponse>('settings.factoryReset', options ?? {});
+	}
+
+	exportToFile(filePath: string, minifyJSON: boolean = false, compress: boolean = false, compressionAlgorithm: CompressionAlgorithm = 'gzip'): Promise<IWriteResult> {
+		return this.client.call<IWriteResult>('settings.exportToFile', { filePath, minifyJSON, compress, compressionAlgorithm });
+	}
+
+	parseFromFile<T = Record<string, unknown>>(filePath: string): Promise<T> {
+		return this.client.call<T>('settings.parseFromFile', { filePath });
+	}
+
+	parseFromJSON<T = Record<string, unknown>>(json: string): Promise<T> {
+		return this.client.call<T>('settings.parseFromJSON', { json });
+	}
+
+	parseFromURL<T = Record<string, unknown>>(url: string): Promise<T> {
+		return this.client.call<T>('settings.parseFromURL', { url });
+	}
+
+	applyImported(data: Record<string, unknown>): Promise<ISettingsImportResult> {
+		return this.client.call<ISettingsImportResult>('settings.applyImported', { data });
+	}
+}
+
+export interface IdentityBackup {
+	peerID: string;
+	privateKey: string;
+}
+
+class IdentityAPI {
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
+
+	get(): Promise<IdentityBackup> {
+		return this.client.call<IdentityBackup>('identity.get');
+	}
+
+	exportToFile(filePath: string, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('identity.exportToFile', { filePath, minifyJSON, compress, compressionAlgorithm });
+	}
+
+	parseFromFile(filePath: string): Promise<IdentityBackup> {
+		return this.client.call<IdentityBackup>('identity.parseFromFile', { filePath });
+	}
+
+	parseFromJSON(json: string): Promise<IdentityBackup> {
+		return this.client.call<IdentityBackup>('identity.parseFromJSON', { json });
+	}
+
+	parseFromURL(url: string): Promise<IdentityBackup> {
+		return this.client.call<IdentityBackup>('identity.parseFromURL', { url });
+	}
+
+	applyImported(privateKey: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('identity.applyImported', { privateKey });
+	}
+
+	regenerate(): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('identity.regenerate');
 	}
 }
 
@@ -238,8 +313,20 @@ class LISHnetsAPI {
 		return this.client.call<string[]>('lishnets.getAddresses', { networkID });
 	}
 
-	getPeers(networkID: string): Promise<PeerConnectionInfo[]> {
-		return this.client.call<PeerConnectionInfo[]>('lishnets.getPeers', { networkID });
+	getPeers(networkID?: string): Promise<PeerListEntry[]> {
+		return this.client.call<PeerListEntry[]>('lishnets.getPeers', { networkID });
+	}
+
+	getPeerLishs(peerID: string, networkID: string): Promise<{ lishs: PeerLishEntry[] | null }> {
+		return this.client.call<{ lishs: PeerLishEntry[] | null }>('lishnets.getPeerLishs', { peerID, networkID });
+	}
+
+	getPeerLish(lishID: string, peerID: string, networkID: string): Promise<IPeerLishDetail | null> {
+		return this.client.call<IPeerLishDetail | null>('lishnets.getPeerLish', { lishID, peerID, networkID });
+	}
+
+	addPeerLish(lishID: string, peerID: string, networkID: string): Promise<{ lishID: string }> {
+		return this.client.call<{ lishID: string }>('lishnets.addPeerLish', { lishID, peerID, networkID });
 	}
 
 	getNodeInfo(): Promise<NetworkNodeInfo> {
@@ -253,6 +340,18 @@ class LISHnetsAPI {
 	infoAll(): Promise<NetworkInfo[]> {
 		return this.client.call<NetworkInfo[]>('lishnets.infoAll');
 	}
+
+	getBootstrapStatus(networkID: string): Promise<BootstrapStatus | null> {
+		return this.client.call<BootstrapStatus | null>('lishnets.getBootstrapStatus', { networkID });
+	}
+
+	getAllBootstrapStatuses(): Promise<BootstrapStatus[]> {
+		return this.client.call<BootstrapStatus[]>('lishnets.getAllBootstrapStatuses');
+	}
+
+	updateBootstrapPeers(networkID: string, bootstrapPeers: string[]): Promise<LISHNetworkConfig> {
+		return this.client.call<LISHNetworkConfig>('lishnets.updateBootstrapPeers', { networkID, bootstrapPeers });
+	}
 }
 
 class LISHsAPI {
@@ -261,8 +360,8 @@ class LISHsAPI {
 		this.client = client;
 	}
 
-	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[]; uploadEnabled: string[]; downloadEnabled: string[] }> {
-		return this.client.call<{ items: ILISHSummary[]; verifying: string | null; pendingVerification: string[]; moving: string[]; uploadEnabled: string[]; downloadEnabled: string[] }>('lishs.list', { sortBy, sortOrder });
+	list(sortBy?: LISHSortField, sortOrder?: SortOrder): Promise<ILISHListResult> {
+		return this.client.call<ILISHListResult>('lishs.list', { sortBy, sortOrder });
 	}
 
 	get(lishID: string): Promise<ILISHDetail | null> {
@@ -437,3 +536,26 @@ class CatalogAPI {
 		return this.client.call<{ status: string; message: string; downloadDir?: string }>('catalog.startDownload', { networkID, lishID });
 	}
 }
+
+/**
+ * Browse network → LISH search.
+ * `startSearch` returns immediately with a `searchID`; results stream in via the
+ * `search:lishs:update` WebSocket event and end with `search:lishs:complete`.
+ * `LishSearchResult` aggregates one row per LISH with the list of peers offering it.
+ */
+class SearchAPI {
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
+
+	startSearch(query: string): Promise<{ searchID: string }> {
+		return this.client.call<{ searchID: string }>('search.startSearch', { query });
+	}
+
+	cancelSearch(searchID: string): Promise<{ ok: true }> {
+		return this.client.call<{ ok: true }>('search.cancelSearch', { searchID });
+	}
+}
+
+export type { LishSearchResult };

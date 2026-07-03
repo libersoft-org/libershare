@@ -30,7 +30,7 @@
 	let allDownloadDisabled = $derived(!anyDownloadEnabled);
 	let allUploadDisabled = $derived(!anyUploadEnabled);
 
-	const busyStatuses: DownloadStatus[] = ['moving', 'verifying', 'pending-verification'];
+	const busyStatuses: DownloadStatus[] = ['moving', 'verifying', 'pending-verification', 'error', 'retrying'];
 
 	function toggleAllDownloads(): void {
 		if (allDownloadDisabled) {
@@ -73,7 +73,13 @@
 			: $downloads
 	);
 
-	createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	createNavArea(() => ({
+		areaID,
+		position,
+		onBack,
+		activate: true,
+		listRange: (): [number, number] => [2, Math.max(2, filteredDownloads.length + 1)],
+	}));
 
 	function closeVerifyAllDialog(): void {
 		showVerifyAllDialog = false;
@@ -99,28 +105,37 @@
 	.container {
 		flex: 1;
 		min-height: 0;
+		display: flex;
+		flex-direction: column;
 		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
 		overflow: hidden;
 	}
 
+	/* Make .container's only child (Table) a flex item so .items inside can scroll */
+	.container :global(.table) {
+		flex: 1;
+		min-height: 0;
+	}
+
 	.items {
 		flex: 1;
+		min-height: 0;
 		overflow-y: auto;
 		font-size: 1.4vh;
 	}
 </style>
 
 <div class="download">
-	<ButtonBar>
-		<Button icon="/img/plus.svg" label={$t('downloads.createLISH')} position={[0, 0]} onConfirm={() => navigateTo('create-lish')} />
-		<Button icon="/img/download.svg" label={$t('common.import')} position={[1, 0]} onConfirm={() => navigateTo('import-lish')} />
-		<Button icon="/img/upload.svg" label={$t('common.exportAll')} position={[2, 0]} onConfirm={() => navigateTo('export-all-lish')} />
-		<Button icon={allDownloadDisabled ? '/img/play.svg' : '/img/pause.svg'} label={allDownloadDisabled ? $t('downloads.enableDownloadAll') : $t('downloads.disableDownloadAll')} position={[3, 0]} onConfirm={toggleAllDownloads} />
-		<Button icon={allUploadDisabled ? '/img/play.svg' : '/img/pause.svg'} label={allUploadDisabled ? $t('downloads.enableUploadAll') : $t('downloads.disableUploadAll')} position={[4, 0]} onConfirm={toggleAllUploads} />
-		<Button icon="/img/check.svg" label={$t('downloads.verifyAll')} position={[5, 0]} onConfirm={() => (showVerifyAllDialog = true)} />
+	<ButtonBar basePosition={[0, 0]}>
+		<Button icon="/img/plus.svg" label={$t('common.createLISH')} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={() => navigateTo('create-lish')} />
+		<Button icon="/img/download.svg" label={$t('common.import')} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={() => navigateTo('import-lish')} />
+		<Button icon="/img/upload.svg" label={$t('common.exportAll')} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={() => navigateTo('export-all-lish')} />
+		<Button icon={allDownloadDisabled ? '/img/play.svg' : '/img/pause.svg'} label={allDownloadDisabled ? $t('downloads.enableDownloadAll') : $t('downloads.disableDownloadAll')} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={toggleAllDownloads} />
+		<Button icon={allUploadDisabled ? '/img/play.svg' : '/img/pause.svg'} label={allUploadDisabled ? $t('downloads.enableUploadAll') : $t('downloads.disableUploadAll')} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={toggleAllUploads} />
+		<Button icon="/img/check.svg" label={$t('downloads.verifyAll')} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={() => (showVerifyAllDialog = true)} />
 		{#if anyVerifying}
-			<Button icon="/img/cross.svg" label={$t('downloads.stopVerifyAll')} position={[6, 0]} onConfirm={() => api.lishs.stopVerifyAll()} />
+			<Button icon="/img/cross.svg" label={$t('downloads.stopVerifyAll')} padding="1vh" fontSize="1.4vh" iconSize="1.6vh" onConfirm={() => api.lishs.stopVerifyAll()} />
 		{/if}
 	</ButtonBar>
 	<Input bind:value={search} placeholder={$t('common.search') + ' ...'} fontSize="2vh" position={[0, 1]} />
@@ -135,10 +150,10 @@
 					<Cell align="center" desktopOnly>{$t('common.size')}</Cell>
 					<Cell align="center" desktopOnly>{$t('common.progress')}</Cell>
 					<Cell align="center" desktopOnly>{$t('common.status')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.transferred')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.mode')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.peers')}</Cell>
-					<Cell align="center" desktopOnly>{$t('downloads.speed')}</Cell>
+					<Cell align="center" desktopOnly>{$t('common.transferred')}</Cell>
+					<Cell align="center" desktopOnly>{$t('downloads.allowed')}</Cell>
+					<Cell align="center" desktopOnly>{$t('common.connections')}</Cell>
+					<Cell align="center" desktopOnly>{$t('common.speed')}</Cell>
 				</Header>
 				<div class="items">
 					{#each filteredDownloads as download, index (download.id)}

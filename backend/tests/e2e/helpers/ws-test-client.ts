@@ -1,12 +1,20 @@
-import { WsClient } from '../../../../shared/src/client.ts';
+import { WsClient } from '@shared/client.ts';
+
+interface EventHistoryEntry {
+	event: string;
+	data: any;
+	time: number;
+}
 
 export class TestClient {
 	private client: WsClient;
-	private eventHistory: { event: string; data: any; time: number }[] = [];
+	private eventHistory: EventHistoryEntry[] = [];
 	private connected = false;
 
 	constructor(url: string) {
-		this.client = new WsClient(url, (state) => { this.connected = state.connected; });
+		this.client = new WsClient(url, (state: { connected: boolean }) => {
+			this.connected = state.connected;
+		});
 		this.client.on('*', (msg: { event: string; data: any }) => {
 			this.eventHistory.push({ event: msg.event, data: msg.data, time: Date.now() });
 		});
@@ -27,11 +35,7 @@ export class TestClient {
 	}
 
 	subscribeAll(): void {
-		const events = [
-			'transfer.download:progress', 'transfer.download:disabled', 'transfer.download:enabled',
-			'transfer.download:complete', 'transfer.download:error',
-			'transfer.upload:progress', 'transfer.upload:disabled', 'transfer.upload:enabled', 'transfer.upload:stopped',
-		];
+		const events = ['transfer.download:progress', 'transfer.download:disabled', 'transfer.download:enabled', 'transfer.download:complete', 'transfer.download:error', 'transfer.upload:progress', 'transfer.upload:disabled', 'transfer.upload:enabled', 'transfer.upload:stopped'];
 		for (const e of events) this.subscribe(e);
 	}
 
@@ -59,12 +63,14 @@ export class TestClient {
 		return collected;
 	}
 
-	getEventHistory(eventName?: string): { event: string; data: any; time: number }[] {
+	getEventHistory(eventName?: string): EventHistoryEntry[] {
 		if (!eventName) return [...this.eventHistory];
 		return this.eventHistory.filter(e => e.event === eventName);
 	}
 
-	clearHistory(): void { this.eventHistory = []; }
+	clearHistory(): void {
+		this.eventHistory = [];
+	}
 
 	destroy(): void {
 		(this.client as any).ws?.close();

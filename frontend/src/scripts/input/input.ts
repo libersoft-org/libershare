@@ -1,22 +1,33 @@
 import { getKeyboardManager } from './keyboard.ts';
 import { getGamepadManager } from './gamepad.ts';
 import { getMouseManager } from './mouse.ts';
-import { emit, debugAreas } from '../areas.ts';
+import { emit, emitTypedChar } from '../areas.ts';
+import { mouseSupportEnabled } from '../settings.ts';
 
 class InputManager {
 	private keyboardStarted = false;
 	private gamepadStarted = false;
 	private mouseStarted = false;
+	private mouseSupportUnsub: (() => void) | null = null;
 
 	start(): void {
 		this.startKeyboard();
 		this.startGamepad();
-		this.startMouse();
+		// React to the mouseSupportEnabled setting: subscribe once, start/stop
+		// the underlying MouseManager whenever the user flips the toggle.
+		// `subscribe` fires synchronously with the current value, so this also
+		// performs the initial startMouse() (or skips it).
+		this.mouseSupportUnsub = mouseSupportEnabled.subscribe(enabled => {
+			if (enabled) this.startMouse();
+			else this.stopMouse();
+		});
 	}
 
 	stop(): void {
 		this.stopKeyboard();
 		this.stopGamepad();
+		this.mouseSupportUnsub?.();
+		this.mouseSupportUnsub = null;
 		this.stopMouse();
 	}
 
@@ -27,10 +38,14 @@ class InputManager {
 		keyboard.on('down', () => emit('down'));
 		keyboard.on('left', () => emit('left'));
 		keyboard.on('right', () => emit('right'));
+		keyboard.on('pageUp', () => emit('pageUp'));
+		keyboard.on('pageDown', () => emit('pageDown'));
+		keyboard.on('home', () => emit('home'));
+		keyboard.on('end', () => emit('end'));
 		keyboard.on('confirmDown', () => emit('confirmDown'));
 		keyboard.on('confirmUp', () => emit('confirmUp'));
 		keyboard.on('back', () => emit('back'));
-		keyboard.on('debug', () => debugAreas.update(v => !v));
+		keyboard.onTypedChar(char => emitTypedChar(char));
 		keyboard.on('reload', () => window.location.reload());
 		keyboard.start();
 		this.keyboardStarted = true;
@@ -46,7 +61,6 @@ class InputManager {
 		keyboard.off('confirmDown');
 		keyboard.off('confirmUp');
 		keyboard.off('back');
-		keyboard.off('debug');
 		keyboard.off('reload');
 		keyboard.stop();
 		this.keyboardStarted = false;
@@ -62,8 +76,13 @@ class InputManager {
 		gamepad.on('aDown', () => emit('confirmDown'));
 		gamepad.on('aUp', () => emit('confirmUp'));
 		gamepad.on('bDown', () => emit('back'));
-		gamepad.on('select', () => window.location.reload());
-		gamepad.on('start', () => debugAreas.update(v => !v));
+		// SELECT + A/B/X/Y combos (emitted by gamepad manager only when SELECT is held)
+		gamepad.on('pageDown', () => emit('pageDown'));
+		gamepad.on('pageUp', () => emit('pageUp'));
+		gamepad.on('end', () => emit('end'));
+		gamepad.on('home', () => emit('home'));
+		// START + Y = reload
+		gamepad.on('reload', () => window.location.reload());
 		gamepad.start();
 		this.gamepadStarted = true;
 	}
@@ -78,8 +97,11 @@ class InputManager {
 		gamepad.off('aDown');
 		gamepad.off('aUp');
 		gamepad.off('bDown');
-		gamepad.off('select');
-		gamepad.off('start');
+		gamepad.off('pageDown');
+		gamepad.off('pageUp');
+		gamepad.off('end');
+		gamepad.off('home');
+		gamepad.off('reload');
 		gamepad.stop();
 		this.gamepadStarted = false;
 	}
@@ -87,6 +109,7 @@ class InputManager {
 	private startMouse(): void {
 		if (this.mouseStarted) return;
 		const mouse = getMouseManager();
+		mouse.on('back', () => emit('back'));
 		mouse.start();
 		this.mouseStarted = true;
 	}
@@ -94,6 +117,7 @@ class InputManager {
 	private stopMouse(): void {
 		if (!this.mouseStarted) return;
 		const mouse = getMouseManager();
+		mouse.off('back');
 		mouse.stop();
 		this.mouseStarted = false;
 	}

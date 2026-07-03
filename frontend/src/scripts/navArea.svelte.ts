@@ -13,19 +13,62 @@ export interface NavItem {
 	onPress?: (() => void) | undefined;
 	onRelease?: (() => void) | undefined;
 	onActivate?: (() => void) | undefined;
+	/**
+	 * When false, MouseManager delegation skips this item. The component then
+	 * owns its own onclick/onmouseenter logic (e.g. ButtonsGroup index pick,
+	 * Switch toggle). Default true.
+	 */
+	delegateMouse?: boolean;
+}
+
+/** Options for navItem() factory. */
+export interface NavItemOptions {
+	/** Disable mouse-event delegation for this item. Default: false (delegation enabled). */
+	noDelegateMouse?: boolean;
 }
 
 /** Create a NavItem with reactive pos and el getters */
-export function navItem(getPos: () => NavPos, getEl: () => HTMLElement | undefined, onConfirm?: () => void): NavItem {
+export function navItem(getPos: () => NavPos, getEl: () => HTMLElement | undefined, onConfirm?: () => void, opts?: NavItemOptions): NavItem {
 	return {
-		get pos() {
+		get pos(): NavPos {
 			return getPos();
 		},
-		get el() {
+		get el(): HTMLElement | undefined {
 			return getEl();
 		},
 		onConfirm,
+		delegateMouse: !opts?.noDelegateMouse,
 	};
+}
+
+/** Binding stored in the global registry — links a NavItem back to its NavAreaController. */
+export interface NavItemBinding {
+	controller: NavAreaController;
+	item: NavItem;
+}
+
+/**
+ * Module-level registry of every registered NavItem across all NavAreas.
+ * MouseManager queries this via findBindingForElement() to delegate click/hover
+ * events without needing per-component handlers.
+ */
+const allBindings = new Set<NavItemBinding>();
+
+/**
+ * Walk the parentElement chain from `target` and return the first NavItem whose
+ * `el` is on the chain. Items with `delegateMouse: false` are ignored. Returns
+ * null when no match is found.
+ */
+export function findBindingForElement(target: EventTarget | null): NavItemBinding | null {
+	if (!(target instanceof HTMLElement)) return null;
+	let node: HTMLElement | null = target;
+	while (node) {
+		for (const binding of allBindings) {
+			if (binding.item.delegateMouse !== false && binding.item.el === node) return binding;
+		}
+		node = node.parentElement;
+	}
+	return null;
 }
 
 export interface NavAreaController {
@@ -113,6 +156,12 @@ export interface NavAreaOptions {
 	onActivate?: (() => void) | undefined;
 	/** Called when selected item changes */
 	onSelect?: ((pos: NavPos) => void) | undefined;
+	/**
+	 * Y-range of the list/table inside this area, as `[minY, maxY]` (inclusive).
+	 * Only when the currently selected item's Y is within this range will pageUp/pageDown/home/end act,
+	 * and they stay strictly inside the range. Without this option, those actions are no-ops.
+	 */
+	listRange?: (() => [number, number]) | undefined;
 }
 
 /** Handle returned by createNavArea for dynamic area management */
@@ -160,6 +209,42 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		selectItem(best);
 	}
 
+	const PAGE_SIZE = 10;
+
+	/** Get the list's [minY, maxY] range if defined. Items outside this range are not navigated to by page/home/end. */
+	function getListRange(): [number, number] | null {
+		const range = getConfig().listRange?.();
+		return range ?? null;
+	}
+
+	/** Items within the configured listRange, in the currently selected column, sorted by y. */
+	function listColumnItems(): NavItem[] {
+		if (!selectedPos) return [];
+		const range = getListRange();
+		if (!range) return [];
+		const [minY, maxY] = range;
+		// Only act if current selection is inside the list range
+		if (selectedPos[1] < minY || selectedPos[1] > maxY) return [];
+		return items.filter(i => i.pos[0] === selectedPos![0] && i.pos[1] >= minY && i.pos[1] <= maxY).sort((a, b) => a.pos[1] - b.pos[1]);
+	}
+
+	function jumpBy(delta: number): void {
+		const col = listColumnItems();
+		if (col.length === 0) return;
+		const idx = col.findIndex(i => i.pos[1] === selectedPos![1]);
+		if (idx < 0) return;
+		const targetIdx = Math.max(0, Math.min(col.length - 1, idx + delta));
+		const target = col[targetIdx];
+		if (target && target !== col[idx]) selectItem(target);
+	}
+
+	function jumpEdge(edge: 'first' | 'last'): void {
+		const col = listColumnItems();
+		if (col.length === 0) return;
+		const target = edge === 'first' ? col[0] : col[col.length - 1];
+		if (target) selectItem(target);
+	}
+
 	function navigate(direction: Direction): boolean {
 		if (!selectedPos || items.length === 0) return trap;
 		const target = findItemInDirection(items, selectedPos, direction);
@@ -172,8 +257,8 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 
 	// Area handlers for useArea
 	const areaHandlers = {
-		up: () => navigate('up'),
-		down() {
+		up: (): boolean => navigate('up'),
+		down(): boolean {
 			if (navigate('down')) return true;
 			if (onDown) {
 				const target = onDown();
@@ -184,24 +269,36 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 			}
 			return trap;
 		},
-		left: () => navigate('left'),
-		right: () => navigate('right'),
-		confirmDown() {
+		left: (): boolean => navigate('left'),
+		right: (): boolean => navigate('right'),
+		confirmDown(): void {
 			pressed = true;
 			currentItem()?.onPress?.();
 		},
-		confirmUp() {
+		confirmUp(): void {
 			pressed = false;
 			currentItem()?.onConfirm?.();
 		},
-		confirmCancel() {
+		confirmCancel(): void {
 			pressed = false;
 			currentItem()?.onRelease?.();
 		},
-		back() {
+		back(): void {
 			onBack?.();
 		},
-		onActivate() {
+		pageUp(): void {
+			jumpBy(-PAGE_SIZE);
+		},
+		pageDown(): void {
+			jumpBy(PAGE_SIZE);
+		},
+		home(): void {
+			jumpEdge('first');
+		},
+		end(): void {
+			jumpEdge('last');
+		},
+		onActivate(): void {
 			onAreaActivate?.();
 			if (!selectedPos && items.length > 0) selectFirst();
 			else if (selectedPos) {
@@ -218,8 +315,11 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 	const controller: NavAreaController = {
 		register(item: NavItem): () => void {
 			items.push(item);
+			const binding: NavItemBinding = { controller, item };
+			allBindings.add(binding);
 			if (items.length === 1 && !selectedPos) selectedPos = item.pos;
 			return () => {
+				allBindings.delete(binding);
 				const idx = items.indexOf(item);
 				if (idx !== -1) items.splice(idx, 1);
 				if (selectedPos && item.pos[0] === selectedPos[0] && item.pos[1] === selectedPos[1]) {
@@ -248,7 +348,7 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		isPressed(pos: NavPos): boolean {
 			return isAreaActive && pressed && selectedPos !== null && pos[0] === selectedPos[0] && pos[1] === selectedPos[1];
 		},
-		get areaID() {
+		get areaID(): string {
 			return areaID;
 		},
 	};
@@ -275,13 +375,13 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 	}
 
 	const handle: NavAreaHandle = {
-		pause() {
+		pause(): void {
 			unregisterArea();
 		},
-		resume() {
+		resume(): void {
 			registerArea();
 		},
-		get controller() {
+		get controller(): NavAreaController {
 			return controller;
 		},
 	};

@@ -4,8 +4,9 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { downloads, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
-	import ModeBadge from '../../components/Badge/ModeBadge.svelte';
+	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
+	import { copyToClipboard } from '../../scripts/clipboard.ts';
+	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
@@ -17,6 +18,8 @@
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Badge from '../../components/Badge/Badge.svelte';
+	import Icon from '../../components/Icon/Icon.svelte';
+	import Tabs, { type TabDef } from '../../components/Tabs/Tabs.svelte';
 	import DownloadFile from './DownloadFile.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import DownloadDetailDelete from './DownloadDetailDelete.svelte';
@@ -35,14 +38,32 @@
 	// Toolbar state
 	let toolbarAreaID = $derived(`${areaID}-toolbar`);
 	let infoAreaID = $derived(`${areaID}-info`);
+	let tabAreaID = $derived(`${areaID}-tabs`);
 	let listAreaID = $derived(`${areaID}-list`);
+	let peerListAreaID = $derived(`${areaID}-peerlist`);
 	let toolbarActive = $derived($activeArea === toolbarAreaID);
 	let infoActive = $derived($activeArea === infoAreaID);
+	let tabActive = $derived($activeArea === tabAreaID);
 	let listActive = $derived($activeArea === listAreaID);
+	let peerListActive = $derived($activeArea === peerListAreaID);
 	let selectedToolbarIndex = $state(0);
 	let selectedFileIndex = $state(0);
+	let selectedTabIndex = $state(0); // 0=files, 1=peers
+	let activeTab = $state<string>('files');
+	let tabDefs = $derived<TabDef[]>([
+		{ id: 'files', icon: '/img/file.svg', label: $t('common.files') },
+		{ id: 'peers', icon: '/img/share.svg', label: $t('common.connections') },
+	]);
+	function handleTabChange(id: string): void {
+		selectedTabIndex = id === 'files' ? 0 : 1;
+	}
+	let selectedPeerIndex = $state(0);
+	let peerElements: HTMLElement[] = $state([]);
 	let itemElements: HTMLElement[] = $state([]);
 	let infoElement: HTMLElement | null = $state(null);
+	// Per-peer data for this LISH
+	let currentPeers = $derived([...($peerDetails.get(lishID) ?? [])].sort((a, b) => a.peerID.localeCompare(b.peerID)));
+	let peerSnapshotLoaded = $derived($peerSnapshotReceived.get(lishID) === true);
 	// Toolbar actions - adapt to current download state
 	let isVerifying = $derived(download?.status === 'verifying' || download?.status === 'pending-verification');
 	let isMoving = $derived(download?.status === 'moving');
@@ -52,13 +73,13 @@
 	let isUploading = $derived(download?.uploadEnabled ?? false);
 	let downloadPaused = $derived(!isDownloading);
 	let uploadPaused = $derived(!isUploading);
-	let enabledMode = $derived(download ? computeEnabledMode(download.downloadEnabled, download.uploadEnabled) : 'disabled' as const);
+	let enabledMode = $derived(download ? computeEnabledMode(download.downloadEnabled, download.uploadEnabled) : ('disabled' as const));
 	let toolbarActions = $derived(
 		DOWNLOAD_TOOLBAR_ACTIONS.filter(action => {
-			if (action.id === 'toggle-download' && isBusy) return false;
-			if (action.id === 'toggle-upload' && isBusy) return false;
+			if (action.id === 'toggle-download') return true;
+			if (action.id === 'toggle-upload') return true;
 			if (action.id === 'move' && isBusy) return false;
-			if (action.id === 'verify' && !isVerifying && !isDownloading && !isMoving) return true;
+			if (action.id === 'verify' && !isVerifying && !isMoving && !isAllocating) return true;
 			if (action.id === 'stop-verify' && isVerifying) return true;
 			if (action.id === 'verify' || action.id === 'stop-verify') return false;
 			return true;
@@ -69,6 +90,7 @@
 		}))
 	);
 	// Delete dialog state
+	let now = $state(Date.now());
 	let showDeleteDialog = $state(false);
 	let deleteError = $state('');
 	// Export state
@@ -81,22 +103,30 @@
 
 	let unregisterToolbar: (() => void) | null = null;
 	let unregisterInfo: (() => void) | null = null;
+	let unregisterTab: (() => void) | null = null;
 	let unregisterList: (() => void) | null = null;
+	let unregisterPeerList: (() => void) | null = null;
 
 	function registerDetailAreas(): void {
 		unregisterToolbar = useArea(toolbarAreaID, toolbarHandlers, position);
 		unregisterInfo = useArea(infoAreaID, infoHandlers, position);
+		unregisterTab = useArea(tabAreaID, tabHandlers, position);
 		unregisterList = useArea(listAreaID, listHandlers, position);
+		unregisterPeerList = useArea(peerListAreaID, peerListHandlers, position);
 		activateArea(toolbarAreaID);
 	}
 
 	function unregisterDetailAreas(): void {
 		unregisterToolbar?.();
 		unregisterInfo?.();
+		unregisterTab?.();
 		unregisterList?.();
+		unregisterPeerList?.();
 		unregisterToolbar = null;
 		unregisterInfo = null;
+		unregisterTab = null;
 		unregisterList = null;
+		unregisterPeerList = null;
 	}
 
 	function handleExportBack(): void {
@@ -119,6 +149,12 @@
 	}
 	function scrollToSelected(): void {
 		scrollToElement(itemElements, selectedFileIndex);
+	}
+
+	function handleFileClick(index: number): void {
+		activateArea(listAreaID);
+		selectedFileIndex = index;
+		scrollToSelected();
 	}
 
 	function scrollToInfo(): void {
@@ -148,6 +184,14 @@
 		}
 		if (actionID === 'stop-verify' && download) {
 			api.lishs.stopVerify(download.id).catch(err => console.error('Stop verification failed:', err));
+			return;
+		}
+		if (actionID === 'find-peers' && download) {
+			api.call('transfer.findPeers', { lishID: download.id }).catch(err => console.error('Find peers failed:', err));
+			return;
+		}
+		if (actionID === 'copy-lish-id' && download) {
+			copyToClipboard(download.id, $t('common.lishIDCopied'));
 			return;
 		}
 		if (actionID === 'open-directory' && download?.directory) {
@@ -186,16 +230,16 @@
 			handleBack();
 			return;
 		}
-		if (!success) deleteError = $t('downloads.deleteFailed');
+		if (!success) deleteError = $t('common.deleteFailed');
 		// Backend already handles verification after data-only delete (startVerification in del())
 		activateArea(toolbarAreaID);
 	}
 
 	const toolbarHandlers = {
-		up() {
+		up(): boolean {
 			return false;
 		},
-		down() {
+		down(): boolean {
 			if (download) {
 				activateArea(infoAreaID);
 				scrollToInfo();
@@ -203,70 +247,65 @@
 			}
 			return false;
 		},
-		left() {
+		left(): boolean {
 			if (selectedToolbarIndex > 0) {
 				selectedToolbarIndex--;
 				return true;
 			}
 			return false;
 		},
-		right() {
+		right(): boolean {
 			if (selectedToolbarIndex < toolbarActions.length - 1) {
 				selectedToolbarIndex++;
 				return true;
 			}
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			const action = toolbarActions[selectedToolbarIndex];
 			if (action) handleToolbarAction(action.id);
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			handleBack();
 		},
 	};
 
 	const infoHandlers = {
-		up() {
+		up(): boolean {
 			activateArea(toolbarAreaID);
 			return true;
 		},
-		down() {
-			if (download && download.files.length > 0) {
-				activateArea(listAreaID);
-				scrollToSelected();
-				return true;
-			}
+		down(): boolean {
+			activateArea(tabAreaID);
+			return true;
+		},
+		left(): boolean {
 			return false;
 		},
-		left() {
+		right(): boolean {
 			return false;
 		},
-		right() {
-			return false;
-		},
-		confirmDown() {},
-		confirmUp() {},
-		confirmCancel() {},
-		back() {
+		confirmDown(): void {},
+		confirmUp(): void {},
+		confirmCancel(): void {},
+		back(): void {
 			handleBack();
 		},
 	};
 
 	const listHandlers = {
-		up() {
+		up(): boolean {
 			if (selectedFileIndex > 0) {
 				selectedFileIndex--;
 				scrollToSelected();
 				return true;
 			}
-			activateArea(infoAreaID);
-			scrollToInfo();
+			activateArea(tabAreaID);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			if (download && selectedFileIndex < download.files.length - 1) {
 				selectedFileIndex++;
 				scrollToSelected();
@@ -274,27 +313,153 @@
 			}
 			return false;
 		},
-		left() {
+		left(): boolean {
 			return false;
 		},
-		right() {
+		right(): boolean {
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			// TODO: Open file or show file actions
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		pageUp(): void {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = Math.max(0, selectedFileIndex - 10);
+			scrollToSelected();
+		},
+		pageDown(): void {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = Math.min(download.files.length - 1, selectedFileIndex + 10);
+			scrollToSelected();
+		},
+		home(): void {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = 0;
+			scrollToSelected();
+		},
+		end(): void {
+			if (!download || download.files.length === 0) return;
+			selectedFileIndex = download.files.length - 1;
+			scrollToSelected();
+		},
+		back(): void {
+			handleBack();
+		},
+	};
+
+	const tabHandlers = {
+		up(): boolean {
+			activateArea(toolbarAreaID);
+			return true;
+		},
+		down(): boolean {
+			if (activeTab === 'files' && download && download.files.length > 0) {
+				activateArea(listAreaID);
+				scrollToSelected();
+				return true;
+			}
+			if (activeTab === 'peers' && currentPeers.length > 0) {
+				activateArea(peerListAreaID);
+				return true;
+			}
+			return false;
+		},
+		left(): boolean {
+			if (selectedTabIndex > 0) {
+				selectedTabIndex--;
+				activeTab = 'files';
+				return true;
+			}
+			return false;
+		},
+		right(): boolean {
+			if (selectedTabIndex < 1) {
+				selectedTabIndex++;
+				activeTab = 'peers';
+				return true;
+			}
+			return false;
+		},
+		confirmDown(): void {},
+		confirmUp(): void {
+			activeTab = selectedTabIndex === 0 ? 'files' : 'peers';
+		},
+		confirmCancel(): void {},
+		back(): void {
+			handleBack();
+		},
+	};
+
+	const peerListHandlers = {
+		up(): boolean {
+			if (selectedPeerIndex > 0) {
+				selectedPeerIndex--;
+				scrollToElement(peerElements, selectedPeerIndex);
+				return true;
+			}
+			activateArea(tabAreaID);
+			return true;
+		},
+		down(): boolean {
+			if (selectedPeerIndex < currentPeers.length - 1) {
+				selectedPeerIndex++;
+				scrollToElement(peerElements, selectedPeerIndex);
+				return true;
+			}
+			return false;
+		},
+		left(): boolean {
+			return false;
+		},
+		right(): boolean {
+			return false;
+		},
+		confirmDown(): void {},
+		confirmUp(): void {},
+		confirmCancel(): void {},
+		pageUp(): void {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = Math.max(0, selectedPeerIndex - 10);
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
+		pageDown(): void {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = Math.min(currentPeers.length - 1, selectedPeerIndex + 10);
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
+		home(): void {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = 0;
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
+		end(): void {
+			if (currentPeers.length === 0) return;
+			selectedPeerIndex = currentPeers.length - 1;
+			scrollToElement(peerElements, selectedPeerIndex);
+		},
+		back(): void {
 			handleBack();
 		},
 	};
 
 	onMount(() => {
-		setCurrentDetailLISHID(lishID);
+		// Capture the lishID at mount: the prop is cleared when the LISH is deleted and we
+		// navigate back, so reading it lazily in the cleanup would unsubscribe with an empty
+		// lishID (backend MISSING_PARAMETER). The captured value always matches the subscribe.
+		const subscribedLishID = lishID;
+		setCurrentDetailLISHID(subscribedLishID);
 		registerDetailAreas();
+		// Subscribe to per-peer details for this LISH
+		if (subscribedLishID) api.call('transfer.subscribePeers', { lishID: subscribedLishID });
+		const clockInterval = setInterval(() => {
+			now = Date.now();
+		}, 1000);
 		return () => {
+			clearInterval(clockInterval);
 			setCurrentDetailLISHID(null);
+			if (subscribedLishID) api.call('transfer.unsubscribePeers', { lishID: subscribedLishID });
 			unregisterDetailAreas();
 			removeFileBrowserBackHandler?.();
 		};
@@ -355,12 +520,126 @@
 		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
 		overflow: hidden;
+		display: flex;
+		flex-direction: column;
 	}
 
 	.items {
 		flex: 1;
 		overflow-y: auto;
 		font-size: 1.4vh;
+	}
+
+	.empty-peers {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		height: 100%;
+		font-size: 1.6vh;
+		color: var(--secondary-foreground);
+	}
+
+	.peer-id {
+		font-family: var(--font-mono);
+		font-size: 1.5vh;
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.conn-badge {
+		display: inline-block;
+		text-align: center;
+		padding: 0.3vh 0.8vh;
+		border-radius: 0.5vh;
+		font-size: 1.2vh;
+		font-weight: bold;
+		white-space: nowrap;
+	}
+
+	.conn-direct {
+		color: var(--mode-download-fg, #0c0);
+		background-color: var(--mode-download-bg, #142);
+		border: 0.2vh solid var(--mode-download-fg, #0c0);
+	}
+
+	.conn-relay {
+		color: var(--mode-upload-fg, #28f);
+		background-color: var(--mode-upload-bg, #134);
+		border: 0.2vh solid var(--mode-upload-fg, #28f);
+	}
+
+	.conn-dcutr {
+		color: #c8f;
+		background-color: #214;
+		border: 0.2vh solid #c8f;
+	}
+
+	.peer-metric {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.2vh;
+		font-family: var(--font-mono);
+		font-size: 1.5vh;
+		white-space: nowrap;
+	}
+
+	.speed-dl,
+	.speed-ul,
+	.total-dl,
+	.total-ul {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4vh;
+	}
+
+	.speed-dl,
+	.total-dl {
+		color: var(--mode-download-fg, #0c0);
+	}
+
+	.speed-ul,
+	.total-ul {
+		color: var(--mode-upload-fg, #28f);
+	}
+
+	.peer-metric.sel .speed-dl,
+	.peer-metric.sel .speed-ul,
+	.peer-metric.sel .total-dl,
+	.peer-metric.sel .total-ul {
+		color: inherit;
+	}
+
+	.speed-dl,
+	.speed-ul {
+		font-weight: bold;
+	}
+
+	.peer-file {
+		font-size: 1.4vh;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.peer-ago {
+		font-size: 1.4vh;
+		font-family: var(--font-mono);
+		color: var(--secondary-foreground);
+	}
+
+	:global(.row.selected) .peer-ago,
+	:global(.row.selected) .peer-file,
+	:global(.row.selected) .peer-id,
+	:global(.row.selected) .conn-badge {
+		color: var(--primary-background);
+	}
+
+	:global(.row.selected) .conn-badge {
+		background-color: transparent;
+		border-color: var(--primary-background);
 	}
 
 	@media (max-width: 1199px) {
@@ -379,6 +658,10 @@
 			flex-shrink: 0;
 		}
 	}
+
+	.alert-container {
+		padding: 1vh 2vh;
+	}
 </style>
 
 {#if showFileBrowser && download?.directory}
@@ -391,11 +674,18 @@
 	<div class="detail">
 		<div class="toolbar">
 			{#each toolbarActions as action, index (action.id)}
-				<Button icon={action.icon} label={action.label} selected={toolbarActive && selectedToolbarIndex === index} onConfirm={() => handleToolbarAction(action.id)} />
+				<Button icon={action.icon} label={action.label} selected={toolbarActive && selectedToolbarIndex === index} onConfirm={() => handleToolbarAction(action.id)} padding="1.2vh 1.8vh" fontSize="1.6vh" width="auto" />
 			{/each}
 		</div>
 		{#if deleteError}
-			<Alert type="error" message={deleteError} />
+			<div class="alert-container"><Alert type="error" message={deleteError} /></div>
+		{/if}
+		{#if download?.status === 'retrying' && download.retryErrorCode}
+			<div class="alert-container"><Alert type="warning" message={`${$t('downloads.statuses.retrying')}: ${download.retryErrorCode}${download.retryCount ? ` (${download.retryCount}/${download.retryMaxRetries ?? '?'})` : ''}`} /></div>
+		{/if}
+		{#if download?.status === 'error' && (download.errorCode || download.errorMessage)}
+			{@const recoveryText = download.recoveryNextAt === 0 ? $t('downloads.recoveryAttempting') : download.recoveryNextAt ? $t('downloads.recoveryScheduled', { seconds: String(Math.max(1, Math.ceil((download.recoveryNextAt - now) / 1000))) }) : ''}
+			<div class="alert-container"><Alert type="error" message={`${$t('downloads.statuses.error')}: ${download.errorCode ?? ''}${download.errorMessage && download.errorMessage !== download.errorCode ? ' — ' + download.errorMessage : ''}${recoveryText ? ' · ' + recoveryText : ''}`} /></div>
 		{/if}
 		{#if download}
 			<div class="content">
@@ -432,8 +722,8 @@
 							<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} status={download.status} /></Cell>
 						</TableRow>
 						<TableRow>
-							<Cell>{$t('downloads.mode')}:</Cell>
-							<Cell align="right"><ModeBadge mode={enabledMode} size="3vh" /></Cell>
+							<Cell>{$t('downloads.allowed')}:</Cell>
+							<Cell align="right"><AllowedBadge mode={enabledMode} size="3vh" /></Cell>
 						</TableRow>
 						<TableRow>
 							<Cell>{$t('downloads.downloadingFrom')}:</Cell>
@@ -461,20 +751,89 @@
 						</TableRow>
 					</Table>
 				</div>
-				<!-- Files table -->
+				<!-- Tab header + content -->
 				<div class="container">
-					<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
-						<Header fontSize="1.4vh">
-							<Cell>{$t('common.name')}</Cell>
-							<Cell align="center">{$t('common.size')}</Cell>
-							<Cell align="center">{$t('common.progress')}</Cell>
-						</Header>
-						<div class="items">
-							{#each download.files as file, index (file.id)}
-								<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
-							{/each}
-						</div>
-					</Table>
+					<Tabs tabs={tabDefs} bind:activeID={activeTab} selectedIndex={selectedTabIndex} selectionActive={tabActive} compact onChange={handleTabChange} />
+					{#if activeTab === 'files'}
+						<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
+							<Header fontSize="1.4vh">
+								<Cell>{$t('common.name')}</Cell>
+								<Cell align="center">{$t('common.size')}</Cell>
+								<Cell align="center">{$t('common.progress')}</Cell>
+							</Header>
+							<div class="items">
+								{#each download.files as file, index (file.id)}
+									<div
+										onclick={() => handleFileClick(index)}
+										onmouseenter={() => {
+											activateArea(listAreaID);
+											selectedFileIndex = index;
+										}}
+										onkeydown={e => e.key === 'Enter' && handleFileClick(index)}
+										role="row"
+										tabindex="-1"
+									>
+										<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
+									</div>
+								{/each}
+							</div>
+						</Table>
+					{:else if !peerSnapshotLoaded}
+						<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
+					{:else if currentPeers.length === 0}
+						<div class="empty-peers">{$t('downloads.peerList.noPeers')}</div>
+					{:else}
+						<Table columns="2fr 2fr 8vh 6vh 12vh 12vh 8vh" columnsMobile="2fr 2fr 8vh 6vh 12vh 12vh 8vh" noBorder>
+							<Header fontSize="1.3vh">
+								<Cell>{$t('downloads.peerList.currentFile')}</Cell>
+								<Cell>{$t('downloads.peerList.id')}</Cell>
+								<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
+								<Cell align="center">{$t('downloads.peerList.availability')}</Cell>
+								<Cell align="center">{$t('common.speed')}</Cell>
+								<Cell align="center">{$t('common.transferred')}</Cell>
+								<Cell align="center">{$t('downloads.peerList.activity')}</Cell>
+							</Header>
+							<div class="items">
+								{#each currentPeers as peer, index (peer.peerID)}
+									{@const ageSec = peer.lastActivity ? Math.max(0, Math.round((now - peer.lastActivity) / 1000)) : 0}
+									{@const rowSelected = peerListActive && selectedPeerIndex === index}
+									{@const downloadColor = rowSelected ? '--primary-background' : '--mode-download-fg'}
+									{@const uploadColor = rowSelected ? '--primary-background' : '--mode-upload-fg'}
+									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale}>
+										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
+										<Cell><span class="peer-id">{peer.peerID}</span></Cell>
+										<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
+										<Cell align="center"><span class="peer-ago">{peer.havePercent != null ? `${peer.havePercent}%` : '—'}</span></Cell>
+										<Cell align="center">
+											<span class="peer-metric" class:sel={rowSelected}>
+												<span class="speed-dl">
+													<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
+													<span>{formatSize(peer.downloadSpeed || 0)}/s</span>
+												</span>
+												<span class="speed-ul">
+													<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
+													<span>{formatSize(peer.uploadSpeed || 0)}/s</span>
+												</span>
+											</span>
+										</Cell>
+										<Cell align="center">
+											<span class="peer-metric" class:sel={rowSelected}>
+												<span class="total-dl">
+													<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
+													<span>{formatSize(peer.totalDownloaded || 0)}</span>
+												</span>
+												<span class="total-ul">
+													<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
+													<span>{formatSize(peer.totalUploaded || 0)}</span>
+												</span>
+											</span>
+										</Cell>
+										<Cell align="center"><span class="peer-ago">{ageSec}s</span></Cell>
+									</TableRow>
+								{/each}
+							</div>
+						</Table>
+					{/if}
 				</div>
 			</div>
 		{/if}

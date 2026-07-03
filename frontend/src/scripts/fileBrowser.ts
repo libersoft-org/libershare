@@ -14,11 +14,23 @@ export interface FsEntry {
 	hidden?: boolean;
 }
 
+/** A path split into its directory and (optional) file-name parts. */
+export interface ISplitPath {
+	directory: string;
+	fileName: string | undefined;
+}
+
+/** File-system info needed by the browser UI: the path separator and (optionally) the user's home directory. */
+export interface IFileSystemInfo {
+	separator: string;
+	home?: string;
+}
+
 /**
  * Split a path into directory and file name components
  * Handles both forward slashes and backslashes
  */
-export function splitPath(path: string, defaultDirectory: string = ''): { directory: string; fileName: string | undefined } {
+export function splitPath(path: string, defaultDirectory: string = ''): ISplitPath {
 	const trimmed = path.trim();
 	if (!trimmed) return { directory: defaultDirectory, fileName: undefined };
 	// Find last separator (try both / and \)
@@ -52,13 +64,20 @@ export function joinPath(directory: string, fileName: string): string {
 export function getParentPath(path: string, separator: string): string | null {
 	if (!path || path === separator) return null;
 	if (/^[A-Z]:\\?$/i.test(path)) return '';
-	const parts = path.split(separator).filter(Boolean);
+	// On Windows accept both '\' and '/' as separators (paths may be mixed
+	// after user edits / cross-platform settings). On Linux split strictly on
+	// '/' since '\' is a valid filename character.
+	const splitRegex = separator === '/' ? /\// : /[\\/]/;
+	const parts = path.split(splitRegex).filter(Boolean);
 	if (parts.length <= 1) {
 		if (separator === '\\' && /^[A-Z]:/i.test(path)) return parts[0] + '\\';
 		return separator === '/' ? '/' : '';
 	}
 	const parent = parts.slice(0, -1).join(separator);
-	return separator === '/' ? '/' + parent : parent;
+	if (separator === '/') return '/' + parent;
+	// Windows: ensure drive root has trailing backslash (C: → C:\)
+	if (/^[A-Z]:$/i.test(parent)) return parent + '\\';
+	return parent;
 }
 
 /**
@@ -115,6 +134,7 @@ export interface LoadDirectoryResult {
 	parentPath: string | null;
 	items: StorageItemData[];
 	separator: string;
+	permissionDenied?: boolean;
 }
 
 /**
@@ -123,6 +143,11 @@ export interface LoadDirectoryResult {
 export async function loadDirectoryFromAPI(path: string | undefined, separator: string, options: LoadDirectoryOptions = {}): Promise<LoadDirectoryResult> {
 	const { directoriesOnly: directoriesOnly = false, filesOnly = false, fileFilter } = options;
 	const result = await api.fs.list(path);
+	if (result.error) {
+		const currentPath = result.path;
+		const parentPath = getParentPath(currentPath, separator);
+		return { path: currentPath, parentPath, items: [], separator, permissionDenied: true };
+	}
 	const currentPath = result.path;
 	const parentPath = getParentPath(currentPath, separator);
 	let entries: StorageItemData[] = result.entries.map((entry: FsEntry, index: number) => transformFsEntry(entry, index));
@@ -187,10 +212,11 @@ export interface FileBrowserAction {
 /**
  * Get file actions for action panel
  */
-export function getFileActions(t: (key: string) => string, selectFileButton?: boolean): FileBrowserAction[] {
+export function getFileActions(t: (key: string) => string, selectFileButton?: boolean, canShare?: boolean): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	if (selectFileButton) actions.push({ id: 'select', label: t('fileBrowser.selectFile'), icon: '/img/check.svg' });
 	actions.push({ id: 'open', label: t('fileBrowser.openFile'), icon: '/img/directory.svg' });
+	if (canShare) actions.push({ id: 'share', label: t('fileBrowser.shareFile'), icon: '/img/share.svg' });
 	actions.push({ id: 'edit', label: t('fileBrowser.editFile'), icon: '/img/edit.svg' });
 	actions.push({ id: 'rename', label: t('fileBrowser.renameFile'), icon: '/img/edit.svg' });
 	actions.push({ id: 'delete', label: t('fileBrowser.deleteFile'), icon: '/img/del.svg' });
@@ -201,16 +227,19 @@ export function getFileActions(t: (key: string) => string, selectFileButton?: bo
 /**
  * Build directory toolbar actions based on mode
  */
-export function buildDirectoryActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], fileFilterName?: string, selectDirectoryButton?: boolean, customFilter?: string, currentPath?: string): FileBrowserAction[] {
+export function buildDirectoryActions(t: (key: string) => string, filesOnly: boolean, showAllFiles: boolean, fileFilter?: string[], fileFilterName?: string, selectDirectoryButton?: boolean, customFilter?: string, currentPath?: string, showNameFilter?: boolean, canShare?: boolean): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
 	const isDriveList = currentPath === '' || currentPath === undefined;
 	if (!filesOnly && !isDriveList) {
 		if (selectDirectoryButton) actions.push({ id: 'select', label: t('fileBrowser.selectDirectory'), icon: '/img/check.svg' });
-		actions.push({ id: 'new', label: t('fileBrowser.newDirectory'), icon: '/img/plus.svg' });
+		if (canShare) actions.push({ id: 'share', label: t('fileBrowser.shareDirectory'), icon: '/img/share.svg' });
+		actions.push({ id: 'new', label: t('common.newDirectory'), icon: '/img/plus.svg' });
 		actions.push({ id: 'rename', label: t('fileBrowser.renameDirectory'), icon: '/img/edit.svg' });
 		actions.push({ id: 'delete', label: t('fileBrowser.deleteDirectory'), icon: '/img/del.svg' });
 	}
 	if (!isDriveList) actions.push({ id: 'createFile', label: t('fileBrowser.createFile'), icon: '/img/plus.svg' });
+	// Name filter toggle (FE-only filter applied on the loaded list)
+	if (!isDriveList) actions.push({ id: 'toggleNameFilter', label: showNameFilter ? t('fileBrowser.hideNameFilter') : t('fileBrowser.showNameFilter'), icon: '/img/search.svg' });
 	// Filter button always visible, shows current filter state
 	let filterLabel: string;
 	if (customFilter) filterLabel = customFilter;
@@ -252,7 +281,11 @@ export interface PathBreadcrumbItem {
  */
 export function parsePathToBreadcrumbs(path: string, separator: string): PathBreadcrumbItem[] {
 	if (!path) return [{ id: '0', name: separator === '/' ? '/' : 'Drives', path: '', icon: '/img/storage.svg' }];
-	const parts = path.split(separator).filter(Boolean);
+	// On Windows accept both '\' and '/' as separators (paths may be mixed
+	// after user edits / cross-platform settings). On Linux split strictly on
+	// '/' since '\' is a valid filename character.
+	const splitRegex = separator === '/' ? /\// : /[\\/]/;
+	const parts = path.split(splitRegex).filter(Boolean);
 	const items: PathBreadcrumbItem[] = [];
 	if (separator === '/') {
 		// Linux: start with root "/"
@@ -298,7 +331,7 @@ export async function deleteFileOrDirectory(path: string): Promise<FileOperation
 		await api.fs.delete(path);
 		return { success: true };
 	} catch (e: any) {
-		return { success: false, error: withDetail(tt('fileBrowser.deleteFailed'), translateError(e)) };
+		return { success: false, error: withDetail(tt('common.deleteFailed'), translateError(e)) };
 	}
 }
 
@@ -341,7 +374,7 @@ export async function renameFile(path: string, newName: string): Promise<FileOpe
 /**
  * Get file system info (separator, etc.)
  */
-export async function getFileSystemInfo(): Promise<{ separator: string; home?: string }> {
+export async function getFileSystemInfo(): Promise<IFileSystemInfo> {
 	const info = await api.fs.info();
 	return info;
 }

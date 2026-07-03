@@ -44,9 +44,11 @@
 		onSaveError?: ((error: string) => void) | undefined; // Called on save error
 		onDownAtEnd?: (() => boolean) | undefined;
 		specialFileTypes?: { extensions: string[]; onOpen: (path: string) => void }[] | undefined;
+		/** When provided, adds a "Share" action for files and directories that calls back with the selected path. */
+		onShare?: ((path: string) => void) | undefined;
 	}
 	const columns = '1fr 8vw 12vw';
-	let { areaID, position, initialPath = '', initialFile, directoriesOnly = false, filesOnly = false, fileFilter, fileFilterName, showPath = true, selectDirectoryButton: selectDirectoryButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, specialFileTypes }: Props = $props();
+	let { areaID, position, initialPath = '', initialFile, directoriesOnly = false, filesOnly = false, fileFilter, fileFilterName, showPath = true, selectDirectoryButton: selectDirectoryButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, specialFileTypes, onShare }: Props = $props();
 
 	// File filter state
 	let showAllFiles = $state(false);
@@ -55,6 +57,7 @@
 	// Calculate sub-area positions based on base position
 	let pathBreadcrumbPosition = $derived({ x: position.x + CONTENT_OFFSETS.pathBreadcrumb.x, y: position.y + CONTENT_OFFSETS.pathBreadcrumb.y });
 	let directoryActionsPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
+	let nameFilterPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y + 0.05 });
 	let listPosition = $derived({ x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y });
 	let actionsPosition = $derived({ x: position.x + CONTENT_OFFSETS.side.x, y: position.y + CONTENT_OFFSETS.side.y });
 	let listAreaID = $derived(`${areaID}-list`);
@@ -71,6 +74,22 @@
 	let parentPath = $state<string | null>(null);
 	let items = $state<StorageItemData[]>([]);
 	let loading = $state(true);
+	// Type-ahead search
+	let typeAheadBuffer = $state('');
+	let typeAheadTimeout: ReturnType<typeof setTimeout> | null = null;
+	function handleTypedChar(char: string): void {
+		if (typeAheadTimeout) clearTimeout(typeAheadTimeout);
+		typeAheadBuffer += char.toLowerCase();
+		typeAheadTimeout = setTimeout(() => {
+			typeAheadBuffer = '';
+		}, 800);
+		const idx = filteredItems.findIndex(i => i.name !== '..' && i.name.toLowerCase().startsWith(typeAheadBuffer));
+		if (idx >= 0) {
+			selectedIndex = idx;
+			showActions = false;
+			scrollToSelected();
+		}
+	}
 	let error = $state<string | null>(null);
 	let separator = $state('/');
 	let showDeleteConfirm = $state(false);
@@ -94,6 +113,7 @@
 	let unregisterActions: (() => void) | null = null;
 	let unregisterFilter: (() => void) | null = null;
 	let unregisterSaveFileName: (() => void) | null = null;
+	let unregisterNameFilter: (() => void) | null = null;
 	// Save file name mode
 	function getInitialSaveFileName(): string {
 		return saveFileName ?? '';
@@ -102,9 +122,25 @@
 	let saveFileNameInput: ReturnType<typeof Input> | undefined = $state();
 	let saveFileNameActive = $derived($activeArea === `${areaID}-save-filename`);
 	let saveFileNameColumn = $state(0); // 0 = input, 1 = button
-	let selectedItem = $derived(items[selectedIndex]);
+	// Name filter (FE-only): filters items in the current directory by substring match.
+	let nameFilter = $state('');
+	let showNameFilter = $state(false);
+	let nameFilterInput: ReturnType<typeof Input> | undefined = $state();
+	let nameFilterActive = $derived($activeArea === `${areaID}-name-filter`);
+	let filteredItems = $derived.by((): StorageItemData[] => {
+		const q = nameFilter.trim().toLowerCase();
+		if (!q) return items;
+		return items.filter(item => item.name === '..' || item.name.toLowerCase().includes(q));
+	});
+	let selectedItem = $derived(filteredItems[selectedIndex]);
+
+	function handleNameFilterChange(_value: string): void {
+		// nameFilter is bound; just reset selection on filter change
+		selectedIndex = 0;
+		showActions = false;
+	}
 	// Directory toolbar actions
-	let directoryActions = $derived(buildDirectoryActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectDirectoryButton, customFilter ?? undefined, currentPath));
+	let directoryActions = $derived(buildDirectoryActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectDirectoryButton, customFilter ?? undefined, currentPath, showNameFilter, !!onShare));
 	let selectedDirectoryActionIndex = $state(0);
 	let directoryActionsActive = $derived($activeArea === `${areaID}-directory-actions`);
 	// Filter panel actions
@@ -114,6 +150,8 @@
 	async function loadDirectory(path?: string, selectName?: string): Promise<void> {
 		loading = true;
 		error = null;
+		// Reset name filter when navigating to a different directory
+		nameFilter = '';
 		// Set the intended path immediately so it's visible during loading
 		if (path) {
 			currentPath = path;
@@ -122,6 +160,11 @@
 		try {
 			const options: LoadDirectoryOptions = { directoriesOnly: directoriesOnly, filesOnly, fileFilter: activeFilter };
 			const result = await loadDirectoryFromAPI(path, separator, options);
+			if (result.permissionDenied) {
+				addNotification($t('fileBrowser.permissionDenied'));
+				if (parentPath !== null) await loadDirectory(parentPath);
+				return;
+			}
 			currentPath = result.path;
 			parentPath = result.parentPath;
 			items = result.items;
@@ -130,6 +173,8 @@
 				const idx = result.items.findIndex(e => e.name === selectName);
 				selectedIndex = idx >= 0 ? idx : 0;
 			} else selectedIndex = 0;
+			// Scroll to selection after DOM updates (needed when returning to parent dir)
+			tick().then(() => scrollToSelected());
 		} catch (e: any) {
 			error = withDetail($t('fileBrowser.loadDirectoryFailed'), translateError(e));
 			// Even on error, provide ".." entry to navigate up if we have a parent path
@@ -145,6 +190,23 @@
 
 	function scrollToSelected(): void {
 		scrollToElement(itemElements, selectedIndex);
+	}
+
+	function handleItemClick(index: number): void {
+		activateArea(listAreaID);
+		selectedIndex = index;
+		showActions = false;
+		scrollToSelected();
+		const item = filteredItems[index];
+		if (item && (item.type === 'directory' || item.type === 'drive')) navigateInto(item);
+		else if (item?.type === 'file') {
+			if (saveFileName !== undefined) {
+				internalSaveFileName = item.name;
+				onSaveFileNameChange?.(item.name);
+				handleSave();
+			} else if (filesOnly) onSelect?.(item.path);
+			else openActions();
+		}
 	}
 
 	async function navigateInto(item: StorageItemData): Promise<void> {
@@ -171,41 +233,70 @@
 		activateArea(`${areaID}-actions`);
 	}
 
+	const PAGE_SIZE = 10;
+
 	const areaHandlers = {
-		up() {
+		up(): boolean {
 			if (selectedIndex > 0) {
 				selectedIndex--;
-				showActions = false; // Hide actions when selection changes
+				showActions = false;
 				scrollToSelected();
 				return true;
 			}
-			// At top of list - go to save filename input if in save mode, or directory actions
 			if (error) {
 				if (showPath) activateArea(`${areaID}-path`);
 				else return false;
-			} else if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
+			} else if (showNameFilter) activateArea(`${areaID}-name-filter`);
+			else if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
 			else activateArea(`${areaID}-directory-actions`);
 			return true;
 		},
-		down() {
-			if (selectedIndex < items.length - 1) {
+		down(): boolean {
+			if (selectedIndex < filteredItems.length - 1) {
 				selectedIndex++;
-				showActions = false; // Hide actions when selection changes
+				showActions = false;
 				scrollToSelected();
 				return true;
 			}
 			if (onDownAtEnd) return onDownAtEnd();
-			return false; // Allow navigation to other areas
+			return false;
 		},
-		left() {
+		pageUp(): void {
+			if (filteredItems.length === 0) return;
+			selectedIndex = Math.max(0, selectedIndex - PAGE_SIZE);
+			showActions = false;
+			scrollToSelected();
+		},
+		pageDown(): void {
+			if (filteredItems.length === 0) return;
+			selectedIndex = Math.min(filteredItems.length - 1, selectedIndex + PAGE_SIZE);
+			showActions = false;
+			scrollToSelected();
+		},
+		home(): void {
+			if (filteredItems.length === 0) return;
+			selectedIndex = 0;
+			showActions = false;
+			scrollToSelected();
+		},
+		end(): void {
+			if (filteredItems.length === 0) return;
+			selectedIndex = filteredItems.length - 1;
+			showActions = false;
+			scrollToSelected();
+		},
+		typedChar(char: string): void {
+			handleTypedChar(char);
+		},
+		left(): boolean {
 			return false;
 		}, // Allow navigation to other areas
-		right() {
+		right(): boolean {
 			return !showActions;
 		}, // Allow navigation to actions panel only when it's visible
-		confirmDown() {},
-		confirmUp() {
-			const item = items[selectedIndex];
+		confirmDown(): void {},
+		confirmUp(): void {
+			const item = filteredItems[selectedIndex];
 			if (item && (item.type === 'directory' || item.type === 'drive'))
 				navigateInto(item); // Directories/drives - navigate into them
 			else if (item?.type === 'file') {
@@ -218,15 +309,15 @@
 				else openActions(); // Otherwise show actions panel
 			}
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			if (parentPath !== null) navigateUp();
 			else onBack?.();
 		},
 	};
 
 	const directoryActionsAreaHandlers = {
-		up() {
+		up(): boolean {
 			// Go to path breadcrumb if available
 			if (showPath) {
 				activateArea(`${areaID}-path`);
@@ -235,127 +326,159 @@
 			// Otherwise let areaNavigate handle it (go to global breadcrumb)
 			return false;
 		},
-		down() {
-			// Go to save filename input if in save mode, otherwise to file list
-			if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
+		down(): boolean {
+			// If the name filter row is visible, descend into it; else skip to save-filename or list
+			if (showNameFilter) activateArea(`${areaID}-name-filter`);
+			else if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
 			else activateArea(listAreaID);
 			return true;
 		},
-		left() {
+		left(): boolean {
 			if (selectedDirectoryActionIndex > 0) {
 				selectedDirectoryActionIndex--;
 				return true;
 			}
 			return false;
 		},
-		right() {
+		right(): boolean {
 			if (selectedDirectoryActionIndex < directoryActions.length - 1) {
 				selectedDirectoryActionIndex++;
 				return true;
 			}
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			const action = directoryActions[selectedDirectoryActionIndex];
 			if (action) handleDirectoryAction(action.id);
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			if (parentPath !== null) navigateUp();
 			else onBack?.();
 		},
 	};
 
 	// File actions from fileBrowser.ts
-	let fileActions = $derived(getFileActions($t, selectFileButton));
+	let fileActions = $derived(getFileActions($t, selectFileButton, !!onShare));
 
 	const actionsAreaHandlers = {
-		up() {
+		up(): boolean {
 			if (selectedActionIndex > 0) {
 				selectedActionIndex--;
 				return true;
 			}
 			return true; // Block navigation outside actions panel
 		},
-		down() {
+		down(): boolean {
 			if (selectedActionIndex < fileActions.length - 1) {
 				selectedActionIndex++;
 				return true;
 			}
 			return true; // Block navigation outside actions panel
 		},
-		left() {
+		left(): boolean {
 			return true;
 		}, // Block navigation outside actions panel
-		right() {
+		right(): boolean {
 			return true;
 		}, // Block navigation outside actions panel
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			const action = fileActions[selectedActionIndex];
 			if (action) handleAction(action.id);
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			showActions = false;
 			activateArea(listAreaID);
 		},
 	};
 
 	const filterAreaHandlers = {
-		up() {
+		up(): boolean {
 			if (selectedFilterIndex > 0) {
 				selectedFilterIndex--;
 				return true;
 			}
 			return true; // Block navigation outside filter panel
 		},
-		down() {
+		down(): boolean {
 			if (selectedFilterIndex < filterActions.length - 1) {
 				selectedFilterIndex++;
 				return true;
 			}
 			return true; // Block navigation outside filter panel
 		},
-		left() {
+		left(): boolean {
 			return true;
 		}, // Block navigation outside filter panel
-		right() {
+		right(): boolean {
 			return true;
 		}, // Block navigation outside filter panel
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			const action = filterActions[selectedFilterIndex];
 			if (action) handleFilterAction(action.id);
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			closeFilterPanel();
 		},
 	};
 
-	const saveFileNameAreaHandlers = {
-		up() {
-			// Go back to directory actions
-			saveFileNameInput?.blur();
+	const nameFilterAreaHandlers = {
+		up(): boolean {
+			nameFilterInput?.blur();
 			activateArea(`${areaID}-directory-actions`);
 			return true;
 		},
-		down() {
+		down(): boolean {
+			nameFilterInput?.blur();
+			if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
+			else activateArea(listAreaID);
+			return true;
+		},
+		left(): boolean {
+			return true; // stay in input, let it handle cursor
+		},
+		right(): boolean {
+			return true; // stay in input, let it handle cursor
+		},
+		confirmDown(): void {},
+		confirmUp(): void {
+			nameFilterInput?.focus();
+		},
+		confirmCancel(): void {},
+		back(): void {
+			nameFilterInput?.blur();
+			if (parentPath !== null) navigateUp();
+			else onBack?.();
+		},
+	};
+
+	const saveFileNameAreaHandlers = {
+		up(): boolean {
+			// Go back to name-filter if visible, otherwise to directory actions
+			saveFileNameInput?.blur();
+			if (showNameFilter) activateArea(`${areaID}-name-filter`);
+			else activateArea(`${areaID}-directory-actions`);
+			return true;
+		},
+		down(): boolean {
 			// Go to file list
 			saveFileNameInput?.blur();
 			activateArea(listAreaID);
 			return true;
 		},
-		left() {
+		left(): boolean {
 			if (saveFileNameColumn > 0) {
 				saveFileNameColumn--;
 				return true;
 			}
 			return true; // Stay in input, let it handle cursor
 		},
-		right() {
+		right(): boolean {
 			if (saveFileNameColumn < 1) {
 				saveFileNameColumn++;
 				saveFileNameInput?.blur();
@@ -363,8 +486,8 @@
 			}
 			return true;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			if (saveFileNameColumn === 0) {
 				// Input is selected - focus it for editing
 				saveFileNameInput?.focus();
@@ -373,8 +496,8 @@
 				handleSave();
 			}
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			saveFileNameInput?.blur();
 			onBack?.();
 		},
@@ -386,7 +509,7 @@
 	}
 
 	function handleAction(actionID: string): void {
-		const item = items[selectedIndex];
+		const item = filteredItems[selectedIndex];
 		if (!item || item.type !== 'file') return;
 		switch (actionID) {
 			case 'select':
@@ -394,6 +517,9 @@
 				break;
 			case 'open':
 				handleOpenFile(item);
+				break;
+			case 'share':
+				onShare?.(item.path);
 				break;
 			case 'edit':
 				showEditor(item);
@@ -416,6 +542,9 @@
 			case 'select':
 				onSelect?.(currentPath);
 				break;
+			case 'share':
+				onShare?.(currentPath);
+				break;
 			case 'new':
 				showNewDirectoryDialog();
 				break;
@@ -431,6 +560,22 @@
 			case 'filter':
 				openFilterPanel();
 				break;
+			case 'toggleNameFilter':
+				toggleNameFilter();
+				break;
+		}
+	}
+
+	function toggleNameFilter(): void {
+		showNameFilter = !showNameFilter;
+		if (!showNameFilter) {
+			nameFilter = '';
+			selectedIndex = 0;
+		} else {
+			tick().then(() => {
+				activateArea(`${areaID}-name-filter`);
+				nameFilterInput?.focus();
+			});
 		}
 	}
 
@@ -523,7 +668,7 @@
 		const dirName = getCurrentDirName(currentPath, separator);
 		const result = await deleteFileOrDirectory(currentPath);
 		if (result.success) {
-			if (dirName) addNotification($t('fileBrowser.directoryDeleted', { name: dirName }));
+			if (dirName) addNotification($t('fileBrowser.directoryDeleted', { name: dirName }), 'warning');
 			if (parentPath !== null) await loadDirectory(parentPath); // Navigate to parent after deletion
 		} else error = withDetail($t('fileBrowser.deleteDirectoryFailed'), result.error);
 		cancelDeleteDirectory();
@@ -556,7 +701,7 @@
 			unregisterActions();
 			unregisterActions = null;
 		}
-		pushBreadcrumb($t('fileBrowser.newDirectory'));
+		pushBreadcrumb($t('common.newDirectory'));
 	}
 
 	async function confirmNewDirectory(directoryName: string): Promise<void> {
@@ -567,7 +712,7 @@
 		const newPath = joinPathWithSeparator(currentPath, directoryName, separator);
 		const result = await createDirectory(newPath);
 		if (result.success) {
-			addNotification($t('fileBrowser.directoryCreated', { name: directoryName }));
+			addNotification($t('fileBrowser.directoryCreated', { name: directoryName }), 'success');
 			// Reload directory and select the new directory
 			await loadDirectory(currentPath, directoryName);
 			cancelNewDirectory(true); // Pass true to indicate success - focus on list
@@ -614,7 +759,7 @@
 		const filePath = joinPathWithSeparator(currentPath, fileName, separator);
 		const result = await api.fs.writeText(filePath, '');
 		if (result.success) {
-			addNotification($t('fileBrowser.fileCreated', { name: fileName }));
+			addNotification($t('fileBrowser.fileCreated', { name: fileName }), 'success');
 			// Reload directory and select the new file
 			await loadDirectory(currentPath, fileName);
 			cancelCreateFile(true);
@@ -677,7 +822,7 @@
 		if (!fileToDelete) return;
 		const result = await deleteFileOrDirectory(fileToDelete.path);
 		if (result.success) {
-			addNotification($t('fileBrowser.fileDeleted', { name: fileToDelete.name }));
+			addNotification($t('fileBrowser.fileDeleted', { name: fileToDelete.name }), 'warning');
 			// Reload directory
 			await loadDirectory(currentPath);
 		} else error = withDetail($t('fileBrowser.deleteFileFailed'), result.error);
@@ -729,7 +874,7 @@
 		const result = await renameFile(itemToRename.path, newName);
 		if (result.success) {
 			const key = itemToRename.type === 'directory' ? 'fileBrowser.directoryRenamed' : 'fileBrowser.fileRenamed';
-			addNotification($t(key, { name: newName }));
+			addNotification($t(key, { name: newName }), 'success');
 			if (isCurrentDir) {
 				// Current directory was renamed - stay inside the renamed directory
 				const parentPath = getParentPath(currentPath, separator);
@@ -914,6 +1059,7 @@
 	onMount(() => {
 		// Register sub-areas with positions relative to content area
 		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
+		unregisterNameFilter = useArea(`${areaID}-name-filter`, nameFilterAreaHandlers, nameFilterPosition);
 		if (saveFileName !== undefined) unregisterSaveFileName = useArea(`${areaID}-save-filename`, saveFileNameAreaHandlers, directoryActionsPosition);
 		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
 		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
@@ -933,6 +1079,7 @@
 		})();
 		return () => {
 			if (unregisterDirectoryActions) unregisterDirectoryActions();
+			if (unregisterNameFilter) unregisterNameFilter();
 			if (unregisterSaveFileName) unregisterSaveFileName();
 			if (unregisterList) unregisterList();
 			if (unregisterActions) unregisterActions();
@@ -956,6 +1103,7 @@
 		margin: 2vh;
 		flex: 1;
 		min-height: 0;
+		position: relative;
 	}
 
 	.table-row {
@@ -985,6 +1133,22 @@
 		margin: 2vh;
 	}
 
+	.type-ahead-hint {
+		position: absolute;
+		bottom: 1vh;
+		left: 50%;
+		transform: translateX(-50%);
+		background: rgba(0, 0, 0, 0.85);
+		color: var(--primary-foreground);
+		padding: 0.5vh 2vh;
+		border-radius: 0.5vh;
+		font-size: 2vh;
+		font-family: var(--font-mono);
+		pointer-events: none;
+		z-index: 10;
+		border: 1px solid var(--primary-foreground);
+	}
+
 	.actions {
 		display: flex;
 		flex-direction: column;
@@ -1008,6 +1172,13 @@
 	.save-filename-row :global(.input-container) {
 		flex: 1;
 	}
+
+	.name-filter-row {
+		display: flex;
+		flex-direction: row;
+		gap: 1vh;
+		align-items: center;
+	}
 </style>
 
 <div class="browser">
@@ -1023,9 +1194,14 @@
 			{:else}
 				<div class="directory-actions">
 					{#each directoryActions as action, index (action.id)}
-						<Button label={action.label} icon={action.icon} selected={directoryActionsActive && selectedDirectoryActionIndex === index} onConfirm={() => handleDirectoryAction(action.id)} />
+						<Button label={action.label} icon={action.icon} active={action.id === 'toggleNameFilter' && showNameFilter} selected={directoryActionsActive && selectedDirectoryActionIndex === index} onConfirm={() => handleDirectoryAction(action.id)} />
 					{/each}
 				</div>
+				{#if showNameFilter}
+					<div class="name-filter-row">
+						<Input bind:this={nameFilterInput} bind:value={nameFilter} placeholder={$t('fileBrowser.filterByNamePlaceholder')} fontSize="2vh" padding="1vh 1.5vh" selected={nameFilterActive} onchange={handleNameFilterChange} flex />
+					</div>
+				{/if}
 			{/if}
 			{#if saveFileName !== undefined}
 				<div class="save-filename-row">
@@ -1050,28 +1226,77 @@
 									<Spinner size="8vh" />
 								</div>
 							{:else if error}
-								{#each items as item, index (item.id)}
-									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === items.length - 1} />
+								{#each filteredItems as item, index (item.id)}
+									<StorageItem
+										bind:el={itemElements[index]}
+										name={item.name}
+										type={item.type}
+										size={item.size}
+										modified={item.modified}
+										selected={(active || actionsActive) && selectedIndex === index}
+										isLast={index === filteredItems.length - 1}
+										onclick={() => handleItemClick(index)}
+										onmouseenter={() => {
+											activateArea(listAreaID);
+											selectedIndex = index;
+										}}
+										onkeydown={e => e.key === 'Enter' && handleItemClick(index)}
+									/>
 								{/each}
 							{:else}
-								{#each items as item, index (item.id)}
-									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === items.length - 1} />
+								{#each filteredItems as item, index (item.id)}
+									<StorageItem
+										bind:el={itemElements[index]}
+										name={item.name}
+										type={item.type}
+										size={item.size}
+										modified={item.modified}
+										selected={(active || actionsActive) && selectedIndex === index}
+										isLast={index === filteredItems.length - 1}
+										onclick={() => handleItemClick(index)}
+										onmouseenter={() => {
+											activateArea(listAreaID);
+											selectedIndex = index;
+										}}
+										onkeydown={e => e.key === 'Enter' && handleItemClick(index)}
+									/>
 								{/each}
 							{/if}
 						</div>
 					</Table>
+					{#if typeAheadBuffer}
+						<div class="type-ahead-hint">{typeAheadBuffer}</div>
+					{/if}
 				</div>
 				{#if showActions && selectedItem?.type === 'file'}
 					<div class="actions">
 						{#each fileActions as action, index (action.id)}
-							<Button icon={action.icon} label={action.label} selected={actionsActive && selectedActionIndex === index} onConfirm={() => handleAction(action.id)} />
+							<Button
+								icon={action.icon}
+								label={action.label}
+								selected={actionsActive && selectedActionIndex === index}
+								onConfirm={() => {
+									activateArea(`${areaID}-actions`);
+									selectedActionIndex = index;
+									handleAction(action.id);
+								}}
+							/>
 						{/each}
 					</div>
 				{/if}
 				{#if showFilterPanel}
 					<div class="actions">
 						{#each filterActions as action, index (action.id)}
-							<Button icon={action.icon} label={action.label} selected={filterActive && selectedFilterIndex === index} onConfirm={() => handleFilterAction(action.id)} />
+							<Button
+								icon={action.icon}
+								label={action.label}
+								selected={filterActive && selectedFilterIndex === index}
+								onConfirm={() => {
+									activateArea(`${areaID}-filter`);
+									selectedFilterIndex = index;
+									handleFilterAction(action.id);
+								}}
+							/>
 						{/each}
 					</div>
 				{/if}
@@ -1086,7 +1311,7 @@
 	<ConfirmDialog title={$t('fileBrowser.deleteFile')} message={$t('fileBrowser.confirmDeleteFile', { name: fileToDelete.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteFile} onBack={cancelDeleteFile} />
 {/if}
 {#if showNewDirectoryDialogState}
-	<InputDialog title={$t('fileBrowser.newDirectory')} label={$t('fileBrowser.directoryName')} placeholder={$t('fileBrowser.enterDirectoryName')} confirmLabel={$t('common.create')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmNewDirectory} onBack={cancelNewDirectory} />
+	<InputDialog title={$t('common.newDirectory')} label={$t('fileBrowser.directoryName')} placeholder={$t('fileBrowser.enterDirectoryName')} confirmLabel={$t('common.create')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmNewDirectory} onBack={cancelNewDirectory} />
 {/if}
 {#if showCreateFileDialogState}
 	<InputDialog title={$t('fileBrowser.createFile')} label={$t('common.fileName')} placeholder={$t('fileBrowser.enterFileName')} confirmLabel={$t('common.create')} cancelLabel={$t('common.cancel')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" error={dialogError} {position} onConfirm={confirmCreateFile} onBack={cancelCreateFile} />

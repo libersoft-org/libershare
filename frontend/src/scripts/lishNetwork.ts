@@ -21,7 +21,7 @@ export async function addNetwork(network: LISHNetworkConfig): Promise<boolean> {
 
 export async function updateNetwork(network: LISHNetworkConfig): Promise<boolean> {
 	const updated = await api.lishnets.update(network);
-	if (updated) addNotification(tt('settings.lishNetwork.networkUpdated', { name: network.name }));
+	if (updated) addNotification(tt('settings.lishNetwork.networkUpdated', { name: network.name }), 'success');
 	return updated;
 }
 
@@ -40,7 +40,7 @@ export async function addNetworkIfNotExists(network: LISHNetworkDefinition): Pro
 }
 
 function notifyNetworkAdded(name: string): void {
-	addNotification(tt('settings.lishNetwork.networkAdded', { name }));
+	addNotification(tt('settings.lishNetwork.networkAdded', { name }), 'success');
 }
 
 export async function getExistingNetworkIDs(): Promise<Set<string>> {

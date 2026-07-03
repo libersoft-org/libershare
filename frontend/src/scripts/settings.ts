@@ -27,15 +27,25 @@ export const storagePath = writable('');
 export const storageTempPath = writable('');
 export const storageLISHPath = writable('');
 export const storageLISHnetPath = writable('');
+export const storageBackupPath = writable('');
 export const incomingPort = writable(0);
-export const maxDownloadConnections = writable(0);
-export const maxUploadConnections = writable(0);
+export const maxDownloadPeersPerLISH = writable(0);
+export const maxUploadPeersPerLISH = writable(0);
 export const maxDownloadSpeed = writable(0);
 export const maxUploadSpeed = writable(0);
+export const maxChunkSize = writable(0);
+export const maxMessageSize = writable(0);
 export const allowRelay = writable(true);
 export const maxRelayReservations = writable(0);
+export const useRelayClients = writable(true);
+export const maxRelayClients = writable(5);
 export const autoStartSharing = writable(true);
 export const autoStartDownloading = writable(true);
+export const autoErrorRecovery = writable(true);
+export const autoConnectNewNetworks = writable(true);
+export const mdnsEnabled = writable(true);
+export const mdnsInterval = writable(10000);
+export const upnpEnabled = writable(true);
 export const autoStartOnBoot = writable(true);
 export const showInTray = writable(true);
 export const minimizeToTray = writable(true);
@@ -43,6 +53,13 @@ export const notificationTimeout = writable(5);
 export const defaultMinifyJSON = writable(false);
 export const defaultCompress = writable(false);
 export const defaultCompressionAlgorithm = writable('gzip');
+
+/**
+ * Master switch for mouse support. When false, MouseManager skips listener
+ * registration entirely — no cursor tracking, no click/hover delegation, no
+ * right-click-as-back. Defaults to true; UI toggle can be added later.
+ */
+export const mouseSupportEnabled = writable(true);
 
 // Cached defaults from backend (loaded once)
 export let settingsDefaults: any = null;
@@ -70,7 +87,7 @@ export async function loadSettings(): Promise<void> {
 		cursorSize.set(settings.ui.cursorSize);
 		footerVisible.set(settings.ui.footerVisible);
 		footerPosition.set(settings.ui.footerPosition);
-		footerWidgetVisibility.set(settings.ui.footerWidgets);
+		footerWidgetVisibility.set({ ...defaultWidgetVisibility, ...settings.ui.footerWidgets });
 		timeFormat.set(settings.ui.timeFormat24h);
 		showSeconds.set(settings.ui.showSeconds);
 
@@ -83,17 +100,27 @@ export async function loadSettings(): Promise<void> {
 		storageTempPath.set(settings.storage.tempPath);
 		storageLISHPath.set(settings.storage.lishPath);
 		storageLISHnetPath.set(settings.storage.lishnetPath);
+		storageBackupPath.set(settings.storage.backupPath ?? '');
 
 		// Network
 		incomingPort.set(settings.network.incomingPort);
-		maxDownloadConnections.set(settings.network.maxDownloadConnections);
-		maxUploadConnections.set(settings.network.maxUploadConnections);
+		maxDownloadPeersPerLISH.set(settings.network.maxDownloadPeersPerLISH);
+		maxUploadPeersPerLISH.set(settings.network.maxUploadPeersPerLISH);
 		maxDownloadSpeed.set(settings.network.maxDownloadSpeed);
 		maxUploadSpeed.set(settings.network.maxUploadSpeed);
+		maxChunkSize.set(settings.network.maxChunkSize);
+		maxMessageSize.set(settings.network.maxMessageSize);
 		allowRelay.set(settings.network.allowRelay);
 		maxRelayReservations.set(settings.network.maxRelayReservations);
+		useRelayClients.set(settings.network.useRelayClients ?? true);
+		maxRelayClients.set(settings.network.maxRelayClients ?? 5);
 		autoStartSharing.set(settings.network.autoStartSharing);
 		autoStartDownloading.set(settings.network.autoStartDownloading);
+		autoErrorRecovery.set(settings.network.autoErrorRecovery ?? true);
+		autoConnectNewNetworks.set(settings.network.autoConnectNewNetworks ?? true);
+		mdnsEnabled.set(settings.network.mdnsEnabled ?? true);
+		mdnsInterval.set(settings.network.mdnsInterval ?? 10000);
+		upnpEnabled.set(settings.network.upnpEnabled ?? false);
 
 		// System
 		autoStartOnBoot.set(settings.system.autoStartOnBoot);
@@ -164,19 +191,23 @@ export function setStorageLISHnetPath(path: string): void {
 	updateSetting(storageLISHnetPath, 'storage.lishnetPath', path);
 }
 
+export function setStorageBackupPath(path: string): void {
+	updateSetting(storageBackupPath, 'storage.backupPath', path);
+}
+
 export function setIncomingPort(value: number): void {
 	const clampedValue = Math.max(1, Math.min(65535, value || DEFAULT_INCOMING_PORT));
 	updateSetting(incomingPort, 'network.incomingPort', clampedValue);
 }
 
-export function setMaxDownloadConnections(value: number): void {
+export function setMaxDownloadPeersPerLISH(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
-	updateSetting(maxDownloadConnections, 'network.maxDownloadConnections', clampedValue);
+	updateSetting(maxDownloadPeersPerLISH, 'network.maxDownloadPeersPerLISH', clampedValue);
 }
 
-export function setMaxUploadConnections(value: number): void {
+export function setMaxUploadPeersPerLISH(value: number): void {
 	const clampedValue = Math.max(0, value || 0);
-	updateSetting(maxUploadConnections, 'network.maxUploadConnections', clampedValue);
+	updateSetting(maxUploadPeersPerLISH, 'network.maxUploadPeersPerLISH', clampedValue);
 }
 
 export function setMaxDownloadSpeed(value: number): void {
@@ -189,6 +220,16 @@ export function setMaxUploadSpeed(value: number): void {
 	updateSetting(maxUploadSpeed, 'network.maxUploadSpeed', clampedValue);
 }
 
+export function setMaxChunkSize(value: number): void {
+	const clampedValue = Math.max(1, value || 1);
+	updateSetting(maxChunkSize, 'network.maxChunkSize', clampedValue);
+}
+
+export function setMaxMessageSize(value: number): void {
+	const clampedValue = Math.max(1, value || 1);
+	updateSetting(maxMessageSize, 'network.maxMessageSize', clampedValue);
+}
+
 export function setAllowRelay(enabled: boolean): void {
 	updateSetting(allowRelay, 'network.allowRelay', enabled);
 }
@@ -198,12 +239,44 @@ export function setMaxRelayReservations(value: number): void {
 	updateSetting(maxRelayReservations, 'network.maxRelayReservations', clampedValue);
 }
 
+export function setUseRelayClients(enabled: boolean): void {
+	updateSetting(useRelayClients, 'network.useRelayClients', enabled);
+}
+
+export function setMaxRelayClients(value: number): void {
+	// Hard upper bound mirrors network-config.ts cap (20). Each /p2p-circuit slot
+	// adds Multiaddr churn on relay reservation refresh, so silently clamp here.
+	const clampedValue = Math.max(1, Math.min(20, value || 5));
+	updateSetting(maxRelayClients, 'network.maxRelayClients', clampedValue);
+}
+
 export function setAutoStartSharing(enabled: boolean): void {
 	updateSetting(autoStartSharing, 'network.autoStartSharing', enabled);
 }
 
 export function setAutoStartDownloading(enabled: boolean): void {
 	updateSetting(autoStartDownloading, 'network.autoStartDownloading', enabled);
+}
+
+export function setAutoConnectNewNetworks(enabled: boolean): void {
+	updateSetting(autoConnectNewNetworks, 'network.autoConnectNewNetworks', enabled);
+}
+
+export function setAutoErrorRecovery(enabled: boolean): void {
+	updateSetting(autoErrorRecovery, 'network.autoErrorRecovery', enabled);
+}
+
+export function setMdnsEnabled(enabled: boolean): void {
+	updateSetting(mdnsEnabled, 'network.mdnsEnabled', enabled);
+}
+
+export function setMdnsInterval(value: number): void {
+	const clampedValue = Math.max(1000, Math.min(600000, value || 10000));
+	updateSetting(mdnsInterval, 'network.mdnsInterval', clampedValue);
+}
+
+export function setUpnpEnabled(enabled: boolean): void {
+	updateSetting(upnpEnabled, 'network.upnpEnabled', enabled);
 }
 
 export function setAutoStartOnBoot(enabled: boolean): void {

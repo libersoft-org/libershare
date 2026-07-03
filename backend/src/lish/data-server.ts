@@ -1,8 +1,10 @@
 import { open } from 'fs/promises';
 import { join, resolve, sep } from 'path';
 import { type Database } from 'bun:sqlite';
+import { clearLishData, clearLishnetData } from '../db/database.ts';
+import { getDownloadEnabledLishs as dbGetDownloadEnabledLishs, getUploadEnabledLishs as dbGetUploadEnabledLishs, setDownloadEnabled as dbSetDownloadEnabled, setUploadEnabled as dbSetUploadEnabled } from '../db/lishs.ts';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder, CodedError, ErrorCodes } from '@shared';
-import { type MissingChunk, type VerificationProgress, type FileVerificationProgress, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, updateLISHDirectory as dbUpdateLISHDirectory, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, findChunkLocation, getVerificationProgress as dbGetVerificationProgress, getFileVerificationProgress as dbGetFileVerificationProgress, markChunkVerified as dbMarkChunkVerified, markChunkFailed as dbMarkChunkFailed, resetVerification as dbResetVerification, isVerified as dbIsVerified, getFilesForVerification as dbGetFilesForVerification, incrementUploadedBytes as dbIncrementUploadedBytes, incrementDownloadedBytes as dbIncrementDownloadedBytes } from '../db/lishs.ts';
+import { type MissingChunk, type VerificationProgress, type FileVerificationProgress, type ChunkSlot, type FileForVerification, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, updateLISHDirectory as dbUpdateLISHDirectory, updateLISHFinalDirectory as dbUpdateLISHFinalDirectory, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, getAllChunkSlots as dbGetAllChunkSlots, findChunkLocation, getVerificationProgress as dbGetVerificationProgress, getFileVerificationProgress as dbGetFileVerificationProgress, markChunkVerified as dbMarkChunkVerified, markChunkFailed as dbMarkChunkFailed, markAllFileChunksFailed as dbMarkAllFileChunksFailed, resetVerification as dbResetVerification, isVerified as dbIsVerified, getFilesForVerification as dbGetFilesForVerification, incrementUploadedBytes as dbIncrementUploadedBytes, incrementDownloadedBytes as dbIncrementDownloadedBytes, setLISHError as dbSetLISHError, clearLISHError as dbClearLISHError, resetFileChunks as dbResetFileChunks, getFileInternalID as dbGetFileInternalID } from '../db/lishs.ts';
 
 export type { MissingChunk };
 
@@ -44,8 +46,43 @@ export class DataServer {
 		return dbDeleteLISH(this.db, lishID);
 	}
 
+	/**
+	 * Remove every LISH record from the database (downloads category of the
+	 * factory reset). On-disk data files are left untouched.
+	 */
+	clearLishs(): void {
+		clearLishData(this.db);
+	}
+
+	/** Remove every lishnet record (networks category of the factory reset). */
+	clearLishnets(): void {
+		clearLishnetData(this.db);
+	}
+
+	/** LISHs with downloading enabled in the DB (used to resume after a reset). */
+	getDownloadEnabledLishs(): Set<string> {
+		return dbGetDownloadEnabledLishs(this.db);
+	}
+
+	/** LISHs with sharing enabled in the DB (used to resume after a reset). */
+	getUploadEnabledLishs(): Set<string> {
+		return dbGetUploadEnabledLishs(this.db);
+	}
+
+	setDownloadEnabled(lishID: LISHid, enabled: boolean): void {
+		dbSetDownloadEnabled(this.db, lishID, enabled);
+	}
+
+	setUploadEnabled(lishID: LISHid, enabled: boolean): void {
+		dbSetUploadEnabled(this.db, lishID, enabled);
+	}
+
 	updateDirectory(lishID: LISHid, directory: string): boolean {
 		return dbUpdateLISHDirectory(this.db, lishID, directory);
+	}
+
+	updateFinalDirectory(lishID: LISHid, finalDirectory: string | null): boolean {
+		return dbUpdateLISHFinalDirectory(this.db, lishID, finalDirectory);
 	}
 
 	// Chunk state operations
@@ -82,6 +119,10 @@ export class DataServer {
 		return dbGetMissingChunks(this.db, lishID);
 	}
 
+	getAllChunkSlots(lishID: LISHid): ChunkSlot[] {
+		return dbGetAllChunkSlots(this.db, lishID);
+	}
+
 	getAllChunkCount(lishID: LISHid): number {
 		const row = this.db.query<{ c: number }, [number]>('SELECT COUNT(*) as c FROM lishs_chunks WHERE id_lishs_files IN (SELECT id FROM lishs_files WHERE id_lishs = (SELECT id FROM lishs WHERE lish_id = ?))').get(lishID as any);
 		return row?.c ?? 0;
@@ -93,16 +134,25 @@ export class DataServer {
 		return dbGetVerificationProgress(this.db, lishID);
 	}
 
+	findChunkFile(lishID: LISHid, chunkID: import('@shared').ChunkID): string | undefined {
+		const loc = findChunkLocation(this.db, lishID, chunkID);
+		return loc?.filePath;
+	}
+
 	getFileVerificationProgress(lishID: LISHid): FileVerificationProgress[] {
 		return dbGetFileVerificationProgress(this.db, lishID);
 	}
 
-	markChunkVerified(lishID: LISHid, fileInternalID: number, chunkIndex: number): void {
-		dbMarkChunkVerified(this.db, lishID, fileInternalID, chunkIndex);
+	markChunkVerified(chunkRowID: number): void {
+		dbMarkChunkVerified(this.db, chunkRowID);
 	}
 
-	markChunkFailed(lishID: LISHid, fileInternalID: number, chunkIndex: number): void {
-		dbMarkChunkFailed(this.db, lishID, fileInternalID, chunkIndex);
+	markChunkFailed(chunkRowID: number): void {
+		dbMarkChunkFailed(this.db, chunkRowID);
+	}
+
+	markAllFileChunksFailed(fileInternalID: number): void {
+		dbMarkAllFileChunksFailed(this.db, fileInternalID);
 	}
 
 	resetVerification(lishID: LISHid): void {
@@ -113,27 +163,44 @@ export class DataServer {
 		return dbIsVerified(this.db, lishID);
 	}
 
-	getFilesForVerification(lishID: LISHid): Array<{ fileInternalID: number; path: string; checksums: string[] }> | null {
+	getFilesForVerification(lishID: LISHid): FileForVerification[] | null {
 		return dbGetFilesForVerification(this.db, lishID);
+	}
+
+	// Error state
+
+	setError(lishID: LISHid, errorCode: string, errorDetail?: string): void {
+		dbSetLISHError(this.db, lishID, errorCode, errorDetail);
+	}
+
+	clearError(lishID: LISHid): void {
+		dbClearLISHError(this.db, lishID);
+	}
+
+	/** Reset have=FALSE for all chunks of a specific file. Returns count of reset chunks. */
+	resetFileChunks(lishID: LISHid, fileIndex: number): number {
+		const fileInternalID = dbGetFileInternalID(this.db, lishID, fileIndex);
+		if (fileInternalID === null) return 0;
+		return dbResetFileChunks(this.db, fileInternalID);
 	}
 
 	// Chunk I/O
 
-	public async getChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | null> {
+	public async getChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | 'lish_not_found' | 'chunk_not_found' | 'io_error'> {
 		const meta = getLISHMeta(this.db, lishID);
 		if (!meta) {
 			console.log(`LISH not found: ${lishID}`);
-			return null;
+			return 'lish_not_found';
 		}
 		if (!meta.directory) {
 			console.log(`No directory set for LISH: ${lishID}`);
-			return null;
+			return 'lish_not_found';
 		}
 
 		const location = findChunkLocation(this.db, lishID, chunkID);
 		if (!location) {
-			console.warn(`Chunk not found in any file: ${chunkID.slice(0, 8)}...`);
-			return null;
+			console.debug(`Chunk not found in any file: ${chunkID.slice(0, 8)}...`);
+			return 'chunk_not_found';
 		}
 
 		const dataFilePath = join(meta.directory, location.filePath);
@@ -142,11 +209,11 @@ export class DataServer {
 			const fileHandle = Bun.file(dataFilePath);
 			const slice = fileHandle.slice(offset, offset + meta.chunkSize);
 			const arrayBuffer = await slice.arrayBuffer();
-			console.log(`read chunk ${chunkID.slice(0, 8)}... from ${location.filePath} (index ${location.chunkIndex})`);
+			// console.log(`read chunk ${chunkID.slice(0, 8)}... from ${location.filePath} (index ${location.chunkIndex})`);
 			return new Uint8Array(arrayBuffer);
-		} catch (error) {
-			console.log(`Error reading chunk from ${dataFilePath}:`, error);
-			return null;
+		} catch (error: any) {
+			console.error(`Error reading chunk from ${dataFilePath}:`, error.code ?? error.message);
+			return 'io_error';
 		}
 	}
 
@@ -157,7 +224,10 @@ export class DataServer {
 		if (!filePath.startsWith(resolve(downloadDir) + sep)) throw new CodedError(ErrorCodes.INVALID_FILE_INDEX, `Path traversal: ${file.path}`);
 		const offset = chunkIndex * lish.chunkSize;
 		const fd = await open(filePath, 'r+');
-		await fd.write(data, 0, data.length, offset);
-		await fd.close();
+		try {
+			await fd.write(data, 0, data.length, offset);
+		} finally {
+			await fd.close();
+		}
 	}
 }

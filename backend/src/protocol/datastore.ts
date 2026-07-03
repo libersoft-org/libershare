@@ -65,6 +65,26 @@ export class SqliteDatastore extends _BaseDatastore {
 		this.db.close();
 	}
 
+	/** Remove every entry (peerstore records + identity key). Used by factory reset. */
+	clear(): void {
+		this.ensureOpen();
+		this.db.run('DELETE FROM datastore');
+	}
+
+	/**
+	 * Remove only peerstore-namespaced entries, preserving the identity private key.
+	 * libp2p stores peerstore data under keys that start with `/peers/` and other
+	 * non-identity prefixes. The identity key lives at `/local/privatekey` (see
+	 * identity-store.ts). Deleting everything except `/local/*` wipes discovered
+	 * peers and their addresses without forcing a fresh identity on next start.
+	 */
+	clearPeerstore(): void {
+		this.ensureOpen();
+		// Keep /local/* (identity key). All other keys are peerstore records
+		// written by libp2p's peerstore implementation (e.g. /peers/<peerID>/...).
+		this.db.run("DELETE FROM datastore WHERE key NOT LIKE '/local/%'");
+	}
+
 	put(key: Key, val: Uint8Array): Key {
 		this.ensureOpen();
 		this.stmtPut.run(key.toString(), Buffer.from(val));

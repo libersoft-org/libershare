@@ -22,6 +22,17 @@ import LISHNetworkList from '../pages/Settings/SettingsLISHNetworkList.svelte';
 import LISHNetworkImportFile from '../pages/Settings/SettingsLISHNetworkImportFile.svelte';
 import LISHNetworkImportWeb from '../pages/Settings/SettingsLISHNetworkImportWeb.svelte';
 import LISHNetworkImportJSON from '../pages/Settings/SettingsLISHNetworkImportJSON.svelte';
+import SettingsIdentity from '../pages/Settings/SettingsIdentity.svelte';
+import SettingsIdentityImportFile from '../pages/Settings/SettingsIdentityImportFile.svelte';
+import SettingsIdentityImportWeb from '../pages/Settings/SettingsIdentityImportWeb.svelte';
+import SettingsIdentityImportJSON from '../pages/Settings/SettingsIdentityImportJSON.svelte';
+import SettingsBackupExport from '../pages/Settings/SettingsBackupExport.svelte';
+import SettingsBackupImportFile from '../pages/Settings/SettingsBackupImportFile.svelte';
+import SettingsBackupImportWeb from '../pages/Settings/SettingsBackupImportWeb.svelte';
+import SettingsBackupImportJSON from '../pages/Settings/SettingsBackupImportJSON.svelte';
+import SettingsFactoryReset from '../pages/Settings/SettingsFactoryReset.svelte';
+import Network from '../pages/Network/Network.svelte';
+import Help from '../pages/Help/Help.svelte';
 import About from '../pages/About/About.svelte';
 export type MenuAction = 'back' | 'restart' | 'shutdown' | 'quit';
 export interface MenuItem {
@@ -105,7 +116,7 @@ export const menuStructure = derived(
 				submenu: [
 					{
 						id: 'create-lish',
-						label: tt('downloads.createLISH'),
+						label: tt('common.createLISH'),
 						icon: '/img/plus.svg',
 						iconPosition: 'left',
 						iconSize: '2vh',
@@ -166,6 +177,12 @@ export const menuStructure = derived(
 						action: 'back' as const,
 					},
 				],
+			},
+			{
+				id: 'network',
+				label: tt('network.title'),
+				icon: '/img/network.svg',
+				component: Network,
 			},
 			{
 				id: 'localStorage',
@@ -231,6 +248,45 @@ export const menuStructure = derived(
 						],
 					},
 					{
+						id: 'identity',
+						label: tt('settings.identity.title'),
+						icon: '/img/person.svg',
+						component: SettingsIdentity,
+						submenu: [
+							{
+								id: 'import-identity',
+								label: tt('common.import'),
+								icon: '/img/download.svg',
+								submenu: [
+									{
+										id: 'import-identity-file',
+										label: tt('common.fromFile'),
+										icon: '/img/directory.svg',
+										component: SettingsIdentityImportFile,
+									},
+									{
+										id: 'import-identity-web',
+										label: tt('common.fromWeb'),
+										icon: '/img/online.svg',
+										component: SettingsIdentityImportWeb,
+									},
+									{
+										id: 'import-identity-json',
+										label: tt('common.fromJSON'),
+										icon: '/img/json.svg',
+										component: SettingsIdentityImportJSON,
+									},
+									{
+										id: 'back',
+										label: tt('common.back'),
+										icon: '/img/back.svg',
+										action: 'back' as const,
+									},
+								],
+							},
+						],
+					},
+					{
 						id: 'language',
 						label: tt('settings.language'),
 						icon: '/img/language.svg',
@@ -240,8 +296,8 @@ export const menuStructure = derived(
 								label: lang.nativeLabel,
 								icon: getFlagURL(lang.id),
 								noColorFilter: true,
-								selected: () => get(currentLanguage) === lang.id,
-								onSelect: () => setLanguage(lang.id),
+								selected: (): boolean => get(currentLanguage) === lang.id,
+								onSelect: (): void => setLanguage(lang.id),
 							})),
 							{
 								id: 'back',
@@ -266,16 +322,16 @@ export const menuStructure = derived(
 										label: tt('settings.time.24hour'),
 										iconPosition: 'left',
 										iconSize: '2vh',
-										selected: () => get(timeFormat) === true,
-										onSelect: () => setTimeFormat(true),
+										selected: (): boolean => get(timeFormat) === true,
+										onSelect: (): void => setTimeFormat(true),
 									},
 									{
 										id: 'time-format-12',
 										label: tt('settings.time.12hour'),
 										iconPosition: 'left',
 										iconSize: '2vh',
-										selected: () => get(timeFormat) === false,
-										onSelect: () => setTimeFormat(false),
+										selected: (): boolean => get(timeFormat) === false,
+										onSelect: (): void => setTimeFormat(false),
 									},
 									{
 										id: 'back',
@@ -297,16 +353,16 @@ export const menuStructure = derived(
 										label: tt('common.yes'),
 										iconPosition: 'left',
 										iconSize: '2vh',
-										selected: () => get(showSeconds) === true,
-										onSelect: () => setShowSeconds(true),
+										selected: (): boolean => get(showSeconds) === true,
+										onSelect: (): void => setShowSeconds(true),
 									},
 									{
 										id: 'time-seconds-no',
 										label: tt('common.no'),
 										iconPosition: 'left',
 										iconSize: '2vh',
-										selected: () => get(showSeconds) === false,
-										onSelect: () => setShowSeconds(false),
+										selected: (): boolean => get(showSeconds) === false,
+										onSelect: (): void => setShowSeconds(false),
 									},
 									{
 										id: 'back',
@@ -341,24 +397,24 @@ export const menuStructure = derived(
 										label: tt('settings.footerPositions.left'),
 										iconPosition: 'left',
 										iconSize: '2vh',
-										selected: () => get(footerPosition) === 'left',
-										onSelect: () => setFooterPosition('left' as FooterPosition),
+										selected: (): boolean => get(footerPosition) === 'left',
+										onSelect: (): void => setFooterPosition('left' as FooterPosition),
 									},
 									{
 										id: 'footer-pos-center',
 										label: tt('settings.footerPositions.center'),
 										iconPosition: 'left',
 										iconSize: '2vh',
-										selected: () => get(footerPosition) === 'center',
-										onSelect: () => setFooterPosition('center' as FooterPosition),
+										selected: (): boolean => get(footerPosition) === 'center',
+										onSelect: (): void => setFooterPosition('center' as FooterPosition),
 									},
 									{
 										id: 'footer-pos-right',
 										label: tt('settings.footerPositions.right'),
 										iconPosition: 'left',
 										iconSize: '2vh',
-										selected: () => get(footerPosition) === 'right',
-										onSelect: () => setFooterPosition('right' as FooterPosition),
+										selected: (): boolean => get(footerPosition) === 'right',
+										onSelect: (): void => setFooterPosition('right' as FooterPosition),
 									},
 									{
 										id: 'back',
@@ -388,16 +444,16 @@ export const menuStructure = derived(
 								label: tt('common.yes'),
 								iconPosition: 'left',
 								iconSize: '2vh',
-								selected: () => get(audioEnabled) === true,
-								onSelect: () => setAudioEnabled(true),
+								selected: (): boolean => get(audioEnabled) === true,
+								onSelect: (): void => setAudioEnabled(true),
 							},
 							{
 								id: 'audio-off',
 								label: tt('common.no'),
 								iconPosition: 'left',
 								iconSize: '2vh',
-								selected: () => get(audioEnabled) === false,
-								onSelect: () => setAudioEnabled(false),
+								selected: (): boolean => get(audioEnabled) === false,
+								onSelect: (): void => setAudioEnabled(false),
 							},
 							{
 								id: 'back',
@@ -419,24 +475,24 @@ export const menuStructure = derived(
 								label: tt('settings.cursorSize.sizes.small'),
 								iconPosition: 'left',
 								iconSize: '2vh',
-								selected: () => get(cursorSize) === 'small',
-								onSelect: () => setCursorSize('small' as CursorSize),
+								selected: (): boolean => get(cursorSize) === 'small',
+								onSelect: (): void => setCursorSize('small' as CursorSize),
 							},
 							{
 								id: 'cursor-medium',
 								label: tt('settings.cursorSize.sizes.medium'),
 								iconPosition: 'left',
 								iconSize: '2vh',
-								selected: () => get(cursorSize) === 'medium',
-								onSelect: () => setCursorSize('medium' as CursorSize),
+								selected: (): boolean => get(cursorSize) === 'medium',
+								onSelect: (): void => setCursorSize('medium' as CursorSize),
 							},
 							{
 								id: 'cursor-large',
 								label: tt('settings.cursorSize.sizes.large'),
 								iconPosition: 'left',
 								iconSize: '2vh',
-								selected: () => get(cursorSize) === 'large',
-								onSelect: () => setCursorSize('large' as CursorSize),
+								selected: (): boolean => get(cursorSize) === 'large',
+								onSelect: (): void => setCursorSize('large' as CursorSize),
 							},
 							{
 								id: 'back',
@@ -449,12 +505,74 @@ export const menuStructure = derived(
 						],
 					},
 					{
+						id: 'backup',
+						label: tt('settings.backup.title'),
+						icon: '/img/save.svg',
+						submenu: [
+							{
+								id: 'backup-export',
+								label: tt('common.export'),
+								icon: '/img/upload.svg',
+								component: SettingsBackupExport,
+							},
+							{
+								id: 'backup-import',
+								label: tt('common.import'),
+								icon: '/img/download.svg',
+								submenu: [
+									{
+										id: 'backup-import-file',
+										label: tt('common.fromFile'),
+										icon: '/img/directory.svg',
+										component: SettingsBackupImportFile,
+									},
+									{
+										id: 'backup-import-web',
+										label: tt('common.fromWeb'),
+										icon: '/img/online.svg',
+										component: SettingsBackupImportWeb,
+									},
+									{
+										id: 'backup-import-json',
+										label: tt('settings.lishNetworkImport.fromJSON'),
+										icon: '/img/json.svg',
+										component: SettingsBackupImportJSON,
+									},
+									{
+										id: 'back',
+										label: tt('common.back'),
+										icon: '/img/back.svg',
+										action: 'back' as const,
+									},
+								],
+							},
+							{
+								id: 'back',
+								label: tt('common.back'),
+								icon: '/img/back.svg',
+								action: 'back' as const,
+							},
+						],
+					},
+					{
+						id: 'factory-reset',
+						label: tt('settings.factoryReset.title'),
+						icon: '/img/factory-reset.svg',
+						component: SettingsFactoryReset,
+					},
+					{
 						id: 'back',
 						label: tt('common.back'),
 						icon: '/img/back.svg',
 						action: 'back' as const,
 					},
 				],
+			},
+			{
+				id: 'help',
+				label: tt('help.title'),
+				icon: '/img/help.svg',
+				component: Help,
 			},
 			{
 				id: 'about',

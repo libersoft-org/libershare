@@ -6,6 +6,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function getBackendProxyTarget(): string {
+	return process.env['VITE_BACKEND_URL'] || 'ws://localhost:1158';
+}
+
 function getCommitHash(): string {
 	try {
 		return execSync('git rev-parse --short HEAD').toString().trim();
@@ -27,7 +31,7 @@ function countryFlags(): Plugin {
 	const flagsDir = path.resolve(__dirname, 'node_modules/country-flags/svg');
 	return {
 		name: 'country-flags',
-		configureServer(server) {
+		configureServer(server): void {
 			server.middlewares.use('/flags', (req, res, next) => {
 				const file = path.join(flagsDir, req.url || '');
 				if (fs.existsSync(file)) {
@@ -36,7 +40,7 @@ function countryFlags(): Plugin {
 				} else next();
 			});
 		},
-		closeBundle() {
+		closeBundle(): void {
 			// Copy flags to build output during production build
 			const outDir = path.resolve(__dirname, 'build', 'flags');
 			if (fs.existsSync(flagsDir)) {
@@ -67,6 +71,12 @@ export default defineConfig({
 		allowedHosts: true,
 		host: true,
 		port: 6003,
+		proxy: {
+			'/ws': {
+				target: getBackendProxyTarget(),
+				ws: true,
+			},
+		},
 		fs: {
 			allow: [__dirname, path.resolve(__dirname, '..')],
 		},

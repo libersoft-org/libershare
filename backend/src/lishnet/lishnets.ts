@@ -3,7 +3,7 @@ import { Network } from '../protocol/network.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, CodedError, ErrorCodes } from '@shared';
+import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, CodedError, ErrorCodes } from '@shared';
 import { type CatalogManager } from '../catalog/catalog-manager.ts';
 import { SYNC_PROTOCOL, buildSyncResponse, applySyncResponse, encodeSyncRequest, decodeSyncRequest, encodeSyncResponse, decodeSyncResponse, type SyncRequest } from '../catalog/catalog-sync.ts';
 import { decode } from 'it-length-prefixed';
@@ -23,16 +23,22 @@ export class Networks {
 
 	// Callback for peer count changes
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
+	// Callback for bootstrap status changes
+	private _onBootstrapStatusChange: ((networkID: string, status: BootstrapStatus) => void) | null = null;
 
 	// Catalog manager (set after construction via setCatalogManager)
 	private catalogManager: CatalogManager | null = null;
 
-	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings, enablePink: boolean = false) {
+	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.db = db;
-		this.network = new Network(dataDir, dataServer, settings, enablePink);
+		this.network = new Network(dataDir, dataServer, settings);
 		// Forward peer count changes from the network node
 		this.network.onPeerCountChange = counts => {
 			if (this._onPeerCountChange) this._onPeerCountChange(counts);
+		};
+		// Forward bootstrap status changes from the network node
+		this.network.onBootstrapStatusChange = (networkID, status) => {
+			if (this._onBootstrapStatusChange) this._onBootstrapStatusChange(networkID, status);
 		};
 	}
 
@@ -47,8 +53,23 @@ export class Networks {
 		this.catalogManager = cm;
 	}
 
+	/**
+	 * Set a callback to be called whenever the per-peer bootstrap status for
+	 * any joined lishnet changes (dial pending → connected/error/mismatch/timeout).
+	 */
+	set onBootstrapStatusChange(cb: ((networkID: string, status: BootstrapStatus) => void) | null) {
+		this._onBootstrapStatusChange = cb;
+	}
+
 	init(): void {
 		console.log('✓ Networks initialized');
+	}
+
+	/**
+	 * Get the underlying libp2p node (for low-level event listening / stats).
+	 */
+	getLibp2pNode(): any {
+		return this.network.getNode();
 	}
 
 	/**
@@ -58,16 +79,23 @@ export class Networks {
 	async startEnabledNetworks(): Promise<void> {
 		const enabled = this.getEnabled();
 
-		// Collect bootstrap peers from all enabled lishnets (may be empty)
-		const bootstrapPeers = this.collectBootstrapPeers(enabled);
+		// Start the node with no preset bootstrap list — bootstrap dials happen
+		// per-network below via addBootstrapPeers so per-network status tracking
+		// can record which specific peers connected / mismatched / timed out.
+		// (Previous behaviour used a flat preset list that bypassed our tracking.)
+		await this.network.start([]);
 
-		// Always start the node
-		await this.network.start(bootstrapPeers);
-
-		// Subscribe to topics for all enabled lishnets
+		// Subscribe to topics for all enabled lishnets and dial their bootstrap peers
+		// with networkID context so bootstrap status counters get populated.
 		for (const net of enabled) {
 			this.network.subscribeTopic(net.networkID);
 			this.joinedNetworks.add(net.networkID);
+			if (net.bootstrapPeers.length > 0) {
+				// Fire-and-forget so a slow / unreachable network does not delay startup of the others.
+				this.network.addBootstrapPeers(net.bootstrapPeers, net.networkID, 'configured').catch(err => {
+					console.error(`[Networks] addBootstrapPeers for ${net.networkID} failed:`, err?.message ?? err);
+				});
+			}
 			console.log(`✓ Joined lishnet: ${net.name} (${net.networkID})`);
 			// Join catalog if network has ownerPeerID (graceful — errors never block)
 			if (this.catalogManager && net.ownerPeerID) {
@@ -112,7 +140,7 @@ export class Networks {
 		this.joinedNetworks.add(id);
 
 		const net = this.get(id);
-		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers);
+		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers, id, 'configured');
 
 		console.log(`✓ Joined lishnet: ${net?.name ?? id}`);
 
@@ -183,7 +211,7 @@ export class Networks {
 		for (const peerID of peers) {
 			try {
 				console.log(`[CatalogSync] Requesting sync from peer ${peerID.slice(0, 20)}...`);
-				const stream = await this.network.dialProtocolByPeerId(peerID, SYNC_PROTOCOL);
+				const { stream } = await this.network.dialProtocolByPeerId(peerID, SYNC_PROTOCOL);
 				const req: SyncRequest = {
 					command: 'catalog_sync_req',
 					requestID: crypto.randomUUID(),
@@ -275,17 +303,17 @@ export class Networks {
 	/**
 	 * Get peers with connection type info for a specific lishnet.
 	 */
-	getTopicPeersInfo(id: string): { peerID: string; direct: number; relay: number }[] {
+	getTopicPeersInfo(id: string): PeerConnectionInfo[] {
 		return this.network.getTopicPeersInfo(id);
 	}
 
 	/**
-	 * Collect and deduplicate bootstrap peers from a set of network configs.
+	 * Pass-through to {@link Network.getMeshHealth} so the API surface can read
+	 * the per-network gossipsub-mesh health snapshot (mesh size, time since
+	 * the last graft/prune, median peer score).
 	 */
-	private collectBootstrapPeers(configs: LISHNetworkConfig[]): string[] {
-		const allPeers: string[] = [];
-		for (const config of configs) allPeers.push(...config.bootstrapPeers);
-		return [...new Set(allPeers)];
+	getMeshHealth(id: string): IMeshHealth {
+		return this.network.getMeshHealth(id);
 	}
 
 	// Validate a raw network object into a LISHNetworkDefinition (without storing).
@@ -388,5 +416,40 @@ export class Networks {
 
 	replace(networks: LISHNetworkConfig[]): void {
 		replaceLISHnets(this.db, networks);
+	}
+
+	/**
+	 * Return per-peer bootstrap status for one network (or null if no dial
+	 * attempts have been recorded since the node started or the entries were
+	 * last updated).
+	 */
+	getBootstrapStatus(id: string): BootstrapStatus | null {
+		return this.network.getBootstrapStatus(id);
+	}
+
+	/** Return per-peer bootstrap status for every network that has any tracked dials. */
+	getAllBootstrapStatuses(): BootstrapStatus[] {
+		return this.network.getAllBootstrapStatuses();
+	}
+
+	/**
+	 * Replace the bootstrap peer list for an existing network. Resets the
+	 * per-peer status entries that are no longer present in the new list, then
+	 * (if the network is joined) re-dials the new entries so fresh status is
+	 * recorded. Returns the updated config or null if the network is unknown.
+	 */
+	async updateBootstrapPeers(id: string, bootstrapPeers: string[]): Promise<LISHNetworkConfig | null> {
+		const existing = this.get(id);
+		if (!existing) return null;
+		const cleaned = bootstrapPeers.filter(p => typeof p === 'string' && p.trim().length > 0);
+		const next: LISHNetworkConfig = { ...existing, bootstrapPeers: cleaned };
+		updateLISHnet(this.db, next);
+		this.network.pruneBootstrapStatus(id, cleaned);
+		if (this.joinedNetworks.has(id) && cleaned.length > 0) {
+			this.network.addBootstrapPeers(cleaned, id, 'configured').catch(err => {
+				console.error(`[Networks] re-dial after updateBootstrapPeers failed:`, err?.message ?? err);
+			});
+		}
+		return next;
 	}
 }

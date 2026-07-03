@@ -6,15 +6,15 @@ import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from './data-server.ts';
+// Embed worker source as a file asset. Bun bundler copies the file into the
+// compiled binary's bunfs and returns the runtime path (works in dev too,
+// where it returns the absolute source path). Worker must be self-contained
+// and valid plain JS — see checksum-worker.js for details.
+// @ts-expect-error - Bun-specific `with { type: 'file' }` import returns the asset path as a string
+import checksumWorkerPath from './checksum-worker.js' with { type: 'file' };
 
-// Worker URL for checksum-worker. Default works in dev mode (import.meta.url is the actual file URL).
-// In compiled binaries, import.meta.url is always the binary path, so app.ts must call setWorkerUrl()
-// with new URL('./lish/checksum-worker.js', import.meta.url).href before any LISH creation.
-let _workerUrl: string = new URL('./checksum-worker.ts', import.meta.url).href;
-
-/** Override the checksum worker URL. Must be called from the main entrypoint (app.ts) in compiled mode. */
-export function setWorkerUrl(url: string): void {
-	_workerUrl = url;
+function createChecksumWorker(): Worker {
+	return new Worker(checksumWorkerPath);
 }
 
 // Helper to normalize paths to forward slashes
@@ -76,7 +76,7 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 	const workerCount = Math.min(cpuCount, totalChunks);
 	// Create workers
 	const workers: Worker[] = [];
-	for (let i = 0; i < workerCount; i++) workers.push(new Worker(_workerUrl));
+	for (let i = 0; i < workerCount; i++) workers.push(createChecksumWorker());
 	let completedChunks = 0;
 	const results: string[] = new Array(totalChunks);
 	let nextChunk = 0;
@@ -95,6 +95,21 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 			return;
 		}
 		signal?.addEventListener('abort', abortHandler, { once: true });
+		// Attach error listeners so worker startup/runtime failures don't hang silently
+		function failWith(err: Error): void {
+			if (finished) return;
+			finished = true;
+			signal?.removeEventListener('abort', abortHandler);
+			workers.forEach(x => x.terminate());
+			rejectAll(err);
+		}
+		for (const w of workers) {
+			w.addEventListener('error', (e: ErrorEvent) => {
+				const msg = e.message || (e as unknown as { error?: { message?: string } }).error?.message || String(e);
+				failWith(new Error(`Checksum worker failed: ${msg}`));
+			});
+			w.addEventListener('messageerror', () => failWith(new Error('Checksum worker message error')));
+		}
 		function feedWorker(workerIndex: number): void {
 			if (finished) return;
 			if (nextChunk >= totalChunks) return;
@@ -135,10 +150,17 @@ interface InodeMap {
 	[inode: string]: string; // inode -> first file path encountered
 }
 
+// A regular file discovered during a directory scan, with its size and chunk count.
+export interface ScannedFile {
+	path: string;
+	size: number;
+	chunks: number;
+}
+
 // Scan directory recursively to collect all regular files (without computing checksums)
 // Used to send the complete file list to the frontend before starting checksum computation
-async function scanFiles(dirPath: string, basePath: string, chunkSize: number, inodeMap: { [key: string]: boolean } = {}): Promise<{ path: string; size: number; chunks: number }[]> {
-	const result: { path: string; size: number; chunks: number }[] = [];
+async function scanFiles(dirPath: string, basePath: string, chunkSize: number, inodeMap: { [key: string]: boolean } = {}): Promise<ScannedFile[]> {
+	const result: ScannedFile[] = [];
 	const glob = new Bun.Glob('*');
 	const scannedPaths: string[] = [];
 	for await (const entry of glob.scan({ cwd: dirPath, dot: true, onlyFiles: false })) scannedPaths.push(entry);
@@ -427,52 +449,88 @@ export function resetVerification(dataServer: DataServer, lishID: string): void 
  */
 export async function runVerification(dataServer: DataServer, lishID: string, onProgress: (progress: VerifyFileProgress) => void, signal?: AbortSignal): Promise<void> {
 	const meta = dataServer.get(lishID);
-	if (!meta || !meta.directory) return;
+	if (!meta || !meta.directory) {
+		console.debug(`[Verify] SKIP ${lishID.slice(0, 8)}: no meta or directory`);
+		return;
+	}
 	const files = dataServer.getFilesForVerification(lishID);
-	if (!files) return;
+	if (!files) {
+		console.debug(`[Verify] SKIP ${lishID.slice(0, 8)}: getFilesForVerification returned null`);
+		return;
+	}
+	const totalChunks = files.reduce((sum, f) => sum + f.checksums.length, 0);
+	console.log(`[Verify] START ${lishID.slice(0, 8)}: ${files.length} files, ${totalChunks} chunks, dir=${meta.directory}`);
+	const verifyStart = Date.now();
+	let totalVerified = 0;
+	let totalFailed = 0;
+	let totalMissing = 0;
+	let totalBytes = 0;
 	for (const fileEntry of files) {
-		if (signal?.aborted) return;
-		if (!dataServer.get(lishID)) return;
+		if (signal?.aborted) {
+			console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
+			return;
+		}
+		if (!dataServer.get(lishID)) {
+			console.debug(`[Verify] LISH DELETED ${lishID.slice(0, 8)}`);
+			return;
+		}
 		const filePath = join(meta.directory, fileEntry.path);
 		let fileVerified = 0;
+		let fileFailed = 0;
+		const fileStart = Date.now();
 		const file = Bun.file(filePath);
 		const fileExists = await file.exists();
 		if (!fileExists) {
-			// console.log(`[Verify] MISSING ${fileEntry.path} — file does not exist on disk (${fileEntry.checksums.length} chunks skipped)`);
+			console.log(`[Verify] MISSING ${fileEntry.path} (${fileEntry.checksums.length} chunks) at ${filePath}`);
+			dataServer.markAllFileChunksFailed(fileEntry.fileInternalID);
+			totalMissing += fileEntry.checksums.length;
 			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: 0 });
 			continue;
 		}
+		let fileShort = 0;
 		for (let chunkIndex = 0; chunkIndex < fileEntry.checksums.length; chunkIndex++) {
-			if (signal?.aborted) return;
+			if (signal?.aborted) {
+				console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
+				return;
+			}
 			const expectedChecksum = fileEntry.checksums[chunkIndex]!;
+			const chunkRowID = fileEntry.chunkRowIDs[chunkIndex]!;
 			const offset = chunkIndex * meta.chunkSize;
-			// File is smaller than this chunk's offset — data is missing
 			if (offset >= file.size) {
-				if (chunkIndex === 0 || offset === chunkIndex * meta.chunkSize) {
-					// console.log(`[Verify] SHORT ${fileEntry.path} chunk ${chunkIndex}: file size ${file.size} < offset ${offset} — file is smaller than expected`);
-				}
+				dataServer.markChunkFailed(chunkRowID);
+				fileFailed++;
+				fileShort++;
 				onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
 				continue;
 			}
 			try {
 				const actualChecksum = await calculateChecksum(file, offset, meta.chunkSize, meta.checksumAlgo);
 				if (actualChecksum === expectedChecksum) {
-					dataServer.markChunkVerified(lishID, fileEntry.fileInternalID, chunkIndex);
+					dataServer.markChunkVerified(chunkRowID);
 					fileVerified++;
-					// console.log(`[Verify] PASS ${fileEntry.path} chunk ${chunkIndex}: db=${expectedChecksum.slice(0, 16)}… disk=${actualChecksum.slice(0, 16)}…`);
+					totalBytes += Math.min(meta.chunkSize, file.size - offset);
 				} else {
-					dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
-					// console.log(`[Verify] FAIL ${fileEntry.path} chunk ${chunkIndex}: db=${expectedChecksum.slice(0, 16)}… disk=${actualChecksum.slice(0, 16)}…`);
+					dataServer.markChunkFailed(chunkRowID);
+					fileFailed++;
 				}
 			} catch (err: any) {
-				dataServer.markChunkFailed(lishID, fileEntry.fileInternalID, chunkIndex);
-				// console.log(`[Verify] ERROR ${fileEntry.path} chunk ${chunkIndex}: ${err.message}`);
+				dataServer.markChunkFailed(chunkRowID);
+				fileFailed++;
 			}
 			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
 		}
-		// console.log(`[Verify] ${fileEntry.path}: ${fileVerified}/${fileEntry.checksums.length} PASS`);
+		if (fileShort > 0) console.debug(`[Verify] SHORT ${fileEntry.path}: ${fileShort} chunks past EOF`);
+		totalVerified += fileVerified;
+		totalFailed += fileFailed;
+		const fileElapsed = Date.now() - fileStart;
+		const fileSizeMB = (file.size / 1024 / 1024).toFixed(1);
+		const fileMBs = fileElapsed > 0 ? (file.size / 1024 / 1024 / (fileElapsed / 1000)).toFixed(0) : '∞';
+		console.log(`[Verify] FILE ${fileEntry.path}: ${fileVerified}/${fileEntry.checksums.length} pass, ${fileFailed} fail (${fileSizeMB}MB in ${fileElapsed}ms, ${fileMBs}MB/s)`);
 	}
 
+	const elapsed = Date.now() - verifyStart;
+	const totalMB = (totalBytes / 1024 / 1024).toFixed(1);
+	const throughput = elapsed > 0 ? (totalBytes / 1024 / 1024 / (elapsed / 1000)).toFixed(0) : '∞';
+	console.log(`[Verify] DONE ${lishID.slice(0, 8)}: ${totalVerified} pass, ${totalFailed} fail, ${totalMissing} missing (${totalMB}MB in ${(elapsed / 1000).toFixed(1)}s, ${throughput}MB/s)`);
 	onProgress({ lishID, filePath: '', verifiedChunks: 0, done: true });
-	return;
 }

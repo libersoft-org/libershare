@@ -1,4 +1,4 @@
-import { writable, derived, get } from 'svelte/store';
+import { writable, derived, get, type Writable, type Readable } from 'svelte/store';
 import { menuStructure, type MenuItem, type MenuAction, type MenuStructure } from './menu.ts';
 import { executeBackHandler } from './focus.ts';
 import { t } from './language.ts';
@@ -116,7 +116,7 @@ function getItemsAtPath(structure: MenuStructure, pathIDs: string[]): MenuItem[]
 	return (item?.submenu ?? []) as MenuItem[];
 }
 
-export function createNavigation() {
+export function createNavigation(): Navigation {
 	// Store only IDs, not full items
 	const pathIDs = writable<string[]>([]);
 	const selectedID = writable<string | undefined>(undefined);
@@ -233,4 +233,21 @@ export function createNavigation() {
 	};
 }
 
-export type Navigation = ReturnType<typeof createNavigation>;
+// Active component to render, derived from the current menu item with merged dynamic props.
+export interface NavigationComponent extends MenuItem {
+	props: Record<string, any>;
+}
+
+// Public API returned by createNavigation().
+export interface Navigation {
+	path: Writable<string[]>;
+	selectedID: Writable<string | undefined>;
+	currentItems: Readable<MenuItem[]>;
+	currentComponent: Readable<NavigationComponent | null>;
+	currentTitle: Readable<string | undefined>;
+	currentOrientation: Readable<'horizontal' | 'vertical'>;
+	navigate: (id: string, customLabel?: string, props?: Record<string, any>) => void;
+	onBack: () => void;
+	navigateBack: () => void;
+	reset: () => void;
+}

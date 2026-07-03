@@ -1,10 +1,8 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { createNavArea, type NavPos, type NavItem } from '../../scripts/navArea.svelte.ts';
-	import { activateArea } from '../../scripts/areas.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { getGridColumnsCount } from '../../scripts/products.ts';
 	import ProductsItem from './ProductsItem.svelte';
 	import Product from '../Product/Product.svelte';
@@ -28,7 +26,6 @@
 	let { areaID, position, title, items, networkID, onBack }: Props = $props();
 	let selectedItem = $state<CatalogItem | null>(null);
 	let itemElements: HTMLElement[] = $state([]);
-	let removeBackHandler: (() => void) | null = null;
 
 	function getItemPos(index: number): NavPos {
 		const cols = getGridColumnsCount(itemElements);
@@ -37,21 +34,12 @@
 
 	function openItem(index: number): void {
 		selectedItem = items[index]!;
-		pushBreadcrumb(items[index]!.title);
-		navHandle.pause();
-		removeBackHandler = pushBackHandler(closeDetail);
+		detailSubPage.enter(items[index]!.title);
 	}
 
 	async function closeDetail(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
 		selectedItem = null;
-		popBreadcrumb();
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		await detailSubPage.exit();
 	}
 
 	const navHandle = createNavArea(() => ({
@@ -59,18 +47,24 @@
 		position,
 		onBack,
 		activate: true,
+		listRange: (): [number, number] => {
+			const cols = Math.max(1, getGridColumnsCount(itemElements));
+			const lastRow = Math.max(0, Math.ceil(items.length / cols) - 1);
+			return [0, lastRow];
+		},
 	}));
+	const detailSubPage = createSubPage(navHandle, () => areaID);
 
 	onMount(() => {
 		const cleanups = items.map((_, idx) => {
 			const item: NavItem = {
-				get pos() {
+				get pos(): NavPos {
 					return getItemPos(idx);
 				},
-				get el() {
+				get el(): HTMLElement | undefined {
 					return itemElements[idx];
 				},
-				onConfirm: () => openItem(idx),
+				onConfirm: (): void => openItem(idx),
 			};
 			return navHandle.controller.register(item);
 		});

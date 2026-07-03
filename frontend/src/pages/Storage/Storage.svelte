@@ -3,12 +3,14 @@
 	import { type Component } from 'svelte';
 	import { storagePath } from '../../scripts/settings.ts';
 	import { tt } from '../../scripts/language.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
+	import { pushBreadcrumb, popBreadcrumb, navigateToAbsolutePath } from '../../scripts/navigation.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	import DownloadLISHImportJSON from '../Download/DownloadLISHImportJSON.svelte';
 	import SettingsLISHNetworkImportJSON from '../Settings/SettingsLISHNetworkImportJSON.svelte';
+	import SettingsBackupImportJSON from '../Settings/SettingsBackupImportJSON.svelte';
+	import SettingsIdentityImportJSON from '../Settings/SettingsIdentityImportJSON.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -28,6 +30,18 @@
 			extensions: ['.lishnet', '.lishnets', '.lishnet.gz', '.lishnets.gz', '.lishnet.gzip', '.lishnets.gzip'],
 			component: SettingsLISHNetworkImportJSON,
 		},
+		{
+			mode: 'lishset',
+			label: 'LISHSET',
+			extensions: ['.lishset', '.lishset.gz', '.lishset.gzip'],
+			component: SettingsBackupImportJSON,
+		},
+		{
+			mode: 'lishid',
+			label: 'LISHID',
+			extensions: ['.lishid', '.lishid.gz', '.lishid.gzip'],
+			component: SettingsIdentityImportJSON,
+		},
 	] as const;
 	let importMode = $state<string | null>(null);
 	let importFilePath = $state('');
@@ -35,12 +49,18 @@
 
 	const specialFileTypes = SPECIAL_FILE_TYPES.map(t => ({
 		extensions: t.extensions as unknown as string[],
-		onOpen: (path: string) => {
+		onOpen: (path: string): void => {
 			importFilePath = path;
 			importMode = t.mode;
 			pushBreadcrumb(tt('common.import') + ' ' + t.label);
 		},
 	}));
+
+	// Open the Create LISH page with the chosen storage path prefilled as the data source.
+	// Pass backPathIDs so that Back in Create LISH returns here instead of to the Downloads page.
+	function handleShare(path: string): void {
+		navigateToAbsolutePath(['downloads', 'create-lish'], { initialDataPath: path, backPathIDs: ['localStorage'] });
+	}
 
 	async function handleImportBack(): Promise<void> {
 		popBreadcrumb();
@@ -59,5 +79,5 @@
 {#if ImportComponent}
 	<ImportComponent {areaID} {position} initialFilePath={importFilePath} onBack={handleImportBack} onImport={handleImportComplete} />
 {:else}
-	<FileBrowser {areaID} {position} {onBack} initialPath={$storagePath} {specialFileTypes} />
+	<FileBrowser {areaID} {position} {onBack} initialPath={$storagePath} {specialFileTypes} onShare={handleShare} />
 {/if}

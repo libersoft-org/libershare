@@ -1,17 +1,18 @@
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
-import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerConnectionInfo, type CompressionAlgorithm, CodedError, ErrorCodes } from '@shared';
+import { type Settings } from '../settings.ts';
+import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, CodedError, ErrorCodes, productName } from '@shared';
+import { LISHClient, LISH_PROTOCOL } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
-
 interface LISHnetsHandlers {
 	list: () => LISHNetworkConfig[];
 	get: (p: { networkID: string }) => LISHNetworkConfig | undefined;
 	exists: (p: { networkID: string }) => boolean;
-	add: (p: { network: LISHNetworkConfig }) => boolean;
+	add: (p: { network: LISHNetworkConfig }) => Promise<boolean>;
 	update: (p: { network: LISHNetworkConfig }) => boolean;
 	delete: (p: { networkID: string }) => Promise<boolean>;
-	addIfNotExists: (p: { network: LISHNetworkDefinition }) => boolean;
+	addIfNotExists: (p: { network: LISHNetworkDefinition }) => Promise<boolean>;
 	import: (p: { networks: LISHNetworkDefinition[] }) => number;
 	replace: (p: { networks: LISHNetworkConfig[] }) => boolean;
 	exportToFile: (p: { networkID: string; filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }) => Promise<SuccessResponse>;
@@ -24,13 +25,20 @@ interface LISHnetsHandlers {
 	connect: (p: { multiaddr: string }) => Promise<SuccessResponse>;
 	findPeer: (p: { peerID: string }) => Promise<void>;
 	getAddresses: () => string[];
-	getPeers: (p: { networkID: string }) => PeerConnectionInfo[];
+	getPeers: (p: { networkID?: string }) => PeerListEntry[];
+	getPeerLishs: (p: { peerID: string; networkID: string }) => Promise<{ lishs: PeerLishEntry[] }>;
+	getPeerLish: (p: { lishID: string; peerID: string; networkID: string }) => Promise<IPeerLishDetail>;
+	addPeerLish: (p: { lishID: string; peerID: string; networkID: string }) => Promise<{ lishID: string }>;
 	getNodeInfo: () => NetworkNodeInfo | null;
 	getStatus: (p: { networkID: string }) => NetworkStatus;
 	infoAll: () => NetworkInfo[];
+	getBootstrapStatus: (p: { networkID: string }) => BootstrapStatus | null;
+	getAllBootstrapStatuses: () => BootstrapStatus[];
+	updateBootstrapPeers: (p: { networkID: string; bootstrapPeers: string[] }) => Promise<LISHNetworkConfig>;
 }
+type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
 
-export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void): LISHnetsHandlers {
+export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifest: ImportManifestFn): LISHnetsHandlers {
 	function list(): LISHNetworkConfig[] {
 		return networks.list();
 	}
@@ -42,7 +50,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['networkID']);
 		return networks.exists(p.networkID);
 	}
-	function add(p: { network: LISHNetworkConfig }): boolean {
+	async function add(p: { network: LISHNetworkConfig }): Promise<boolean> {
 		assert(p, ['network']);
 		return networks.add(p.network);
 	}
@@ -54,7 +62,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['networkID']);
 		return networks.delete(p.networkID);
 	}
-	function addIfNotExists(p: { network: LISHNetworkDefinition }): boolean {
+	async function addIfNotExists(p: { network: LISHNetworkDefinition }): Promise<boolean> {
 		assert(p, ['network']);
 		return networks.addIfNotExists(p.network);
 	}
@@ -132,10 +140,116 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		const info = network.getNodeInfo();
 		return info?.addresses || [];
 	}
-	function getPeers(p: { networkID: string }): PeerConnectionInfo[] {
-		assert(p, ['networkID']);
-		if (!networks.isJoined(p.networkID)) throw new CodedError(ErrorCodes.NETWORK_NOT_JOINED);
-		return networks.getTopicPeersInfo(p.networkID);
+	function getPeers(p: { networkID?: string }): PeerListEntry[] {
+		if (p.networkID) {
+			// Single network
+			if (!networks.isJoined(p.networkID)) throw new CodedError(ErrorCodes.NETWORK_NOT_JOINED);
+			const net = networks.get(p.networkID);
+			const peers = networks.getTopicPeersInfo(p.networkID);
+			return peers.map(peer => ({
+				peerID: peer.peerID,
+				networks: [{ networkID: p.networkID!, networkName: net?.name ?? p.networkID! }],
+				direct: peer.direct,
+				relay: peer.relay,
+			}));
+		}
+		// All networks — aggregate and deduplicate
+		const allConfigs = networks.list().filter(n => n.enabled);
+		const peerMap = new Map<string, PeerListEntry>();
+		for (const config of allConfigs) {
+			if (!networks.isJoined(config.networkID)) continue;
+			const peers = networks.getTopicPeersInfo(config.networkID);
+			for (const peer of peers) {
+				const existing = peerMap.get(peer.peerID);
+				if (existing) {
+					existing.networks.push({ networkID: config.networkID, networkName: config.name });
+					existing.direct += peer.direct;
+					existing.relay += peer.relay;
+				} else {
+					peerMap.set(peer.peerID, {
+						peerID: peer.peerID,
+						networks: [{ networkID: config.networkID, networkName: config.name }],
+						direct: peer.direct,
+						relay: peer.relay,
+					});
+				}
+			}
+		}
+		return [...peerMap.values()];
+	}
+	async function getPeerLishs(p: { peerID: string; networkID: string }): Promise<{ lishs: PeerLishEntry[] }> {
+		assert(p, ['peerID', 'networkID']);
+		const network = networks.getRunningNetwork();
+		try {
+			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
+			const client = new LISHClient(stream);
+			const lishs = await client.requestList();
+			await client.close();
+			return { lishs };
+		} catch (error: any) {
+			if (error instanceof CodedError) throw error;
+			console.error(`[Peers] Failed to get LISH list from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
+			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
+		}
+	}
+	async function getPeerLish(p: { lishID: string; peerID: string; networkID: string }): Promise<IPeerLishDetail> {
+		assert(p, ['lishID', 'peerID', 'networkID']);
+		const network = networks.getRunningNetwork();
+		try {
+			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
+			const client = new LISHClient(stream);
+			const manifest = await client.requestManifest(p.lishID);
+			await client.close();
+			// Strip checksums from files and compute summary
+			const files = (manifest.files ?? []).map(f => {
+				const entry: { path: string; size: number; permissions?: string; modified?: string; created?: string } = { path: f.path, size: f.size };
+				if (f.permissions !== undefined) entry.permissions = f.permissions;
+				if (f.modified !== undefined) entry.modified = f.modified;
+				if (f.created !== undefined) entry.created = f.created;
+				return entry;
+			});
+			const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+			return {
+				id: manifest.id,
+				name: manifest.name,
+				description: manifest.description,
+				created: manifest.created,
+				chunkSize: manifest.chunkSize,
+				checksumAlgo: manifest.checksumAlgo,
+				totalSize,
+				fileCount: files.length,
+				directoryCount: (manifest.directories ?? []).length,
+				files,
+				directories: manifest.directories ?? [],
+				links: manifest.links ?? [],
+			};
+		} catch (error: any) {
+			if (error instanceof CodedError) throw error;
+			console.error(`[Peers] Failed to get LISH ${p.lishID.slice(0, 8)} from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
+			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
+		}
+	}
+	async function addPeerLish(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
+		assert(p, ['lishID', 'peerID', 'networkID']);
+		const network = networks.getRunningNetwork();
+		let manifest;
+		try {
+			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
+			const client = new LISHClient(stream);
+			manifest = await client.requestManifest(p.lishID);
+			await client.close();
+		} catch (error: any) {
+			if (error instanceof CodedError) throw error;
+			console.error(`[Peers] Failed to add LISH ${p.lishID.slice(0, 8)} from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
+			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
+		}
+		// Delegate to the shared import pipeline — handles temp allocation, finalDirectory wiring,
+		// DB persist, broadcast, verification kick-off and markDownloadEnabled.
+		const downloadPath = settings.get('storage.downloadPath') ?? `~/${productName}/finished/`;
+		const enableSharing = settings.get('network.autoStartSharing') ?? true;
+		const enableDownloading = settings.get('network.autoStartDownloading') ?? true;
+		const result = await importManifest(manifest, downloadPath, { enableSharing, enableDownloading });
+		return { lishID: result.lishID };
 	}
 	function getNodeInfo(): NetworkNodeInfo | null {
 		return networks.getNetwork().getNodeInfo();
@@ -151,6 +265,21 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 			peersInStore: allPeers.length,
 			datasets: dataServer.getDatasets().length,
 		};
+	}
+	function getBootstrapStatus(p: { networkID: string }): BootstrapStatus | null {
+		assert(p, ['networkID']);
+		return networks.getBootstrapStatus(p.networkID);
+	}
+	function getAllBootstrapStatuses(): BootstrapStatus[] {
+		return networks.getAllBootstrapStatuses();
+	}
+	async function updateBootstrapPeers(p: { networkID: string; bootstrapPeers: string[] }): Promise<LISHNetworkConfig> {
+		assert(p, ['networkID', 'bootstrapPeers']);
+		if (!Array.isArray(p.bootstrapPeers)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'bootstrapPeers must be an array');
+		const updated = await networks.updateBootstrapPeers(p.networkID, p.bootstrapPeers);
+		if (!updated) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, p.networkID);
+		broadcast('lishnets:updated', { networkID: updated.networkID });
+		return updated;
 	}
 	function infoAll(): NetworkInfo[] {
 		const configs = networks.list();
@@ -191,8 +320,14 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		findPeer,
 		getAddresses,
 		getPeers,
+		getPeerLishs,
+		getPeerLish,
+		addPeerLish,
 		getNodeInfo,
 		getStatus,
 		infoAll,
+		getBootstrapStatus,
+		getAllBootstrapStatuses,
+		updateBootstrapPeers,
 	};
 }

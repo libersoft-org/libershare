@@ -47,15 +47,19 @@
 
 <div class="content">
 	<div class="inner">
-		<ButtonBar>
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} />
+		<ButtonBar basePosition={[0, 0]}>
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
-		<SwitchRow label={$t('settings.footerVisible')} checked={$footerVisible} position={[0, 1]} onToggle={() => setFooterVisible(!$footerVisible)} />
-		<ButtonBar justify="center">
-			<Button label="{$t('settings.footerPosition')}: {$t('settings.footerPositions.' + $footerPosition)}" position={[0, 2]} onConfirm={openPositionDialog} />
+		<div role="group" data-mouse-activate-area={areaID}>
+			<SwitchRow label={$t('settings.footerVisible')} checked={$footerVisible} position={[0, 1]} onToggle={() => setFooterVisible(!$footerVisible)} />
+		</div>
+		<ButtonBar justify="center" basePosition={[0, 2]}>
+			<Button label="{$t('settings.footerPosition')}: {$t('settings.footerPositions.' + $footerPosition)}" onConfirm={openPositionDialog} />
 		</ButtonBar>
 		{#each footerWidgets as widget, index}
-			<SwitchRow label={getWidgetLabel(widget, $t)} checked={$footerWidgetVisibility[widget]} position={[0, index + 3]} onToggle={() => setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget])} />
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={getWidgetLabel(widget, $t)} checked={$footerWidgetVisibility[widget]} position={[0, index + 3]} onToggle={() => setFooterWidgetVisibility(widget, !$footerWidgetVisibility[widget])} />
+			</div>
 		{/each}
 	</div>
 </div>

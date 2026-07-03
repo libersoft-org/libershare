@@ -3,14 +3,17 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea, type NavPos } from '../../scripts/navArea.svelte.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { type LISHNetworkDefinition } from '@shared';
 	import { productNetworkList } from '@shared';
 	import { fetchPublicNetworks, getExistingNetworkIDs, addNetworkIfNotExists } from '../../scripts/lishNetwork.ts';
+	import { api } from '../../scripts/api.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Row from '../../components/Row/Row.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
+	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -22,6 +25,7 @@
 	let loading = $state(false);
 	let error = $state('');
 	let addedNetworkIDs = $state<Set<string>>(new Set());
+	let pendingConnectNetwork = $state<LISHNetworkDefinition | null>(null);
 	let backPos = $derived<NavPos>([0, publicNetworks.length + 1]);
 
 	async function loadPublicList(): Promise<void> {
@@ -42,7 +46,25 @@
 	}
 
 	async function handleAddNetwork(network: LISHNetworkDefinition): Promise<void> {
-		if (await addNetworkIfNotExists(network)) addedNetworkIDs = new Set([...addedNetworkIDs, network.networkID]);
+		if (await addNetworkIfNotExists(network)) {
+			addedNetworkIDs = new Set([...addedNetworkIDs, network.networkID]);
+			pendingConnectNetwork = network;
+			connectSubPage.enter(`${network.name} - ${$t('common.connect')}`, () => void closeConnect());
+		}
+	}
+
+	async function closeConnect(): Promise<void> {
+		pendingConnectNetwork = null;
+		await connectSubPage.exit();
+	}
+
+	async function confirmConnect(): Promise<void> {
+		if (pendingConnectNetwork) await api.lishnets.setEnabled(pendingConnectNetwork.networkID, true);
+		await closeConnect();
+	}
+
+	function cancelConnect(): void {
+		void closeConnect();
 	}
 
 	function isNetworkAdded(networkID: string): boolean {
@@ -50,6 +72,7 @@
 	}
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const connectSubPage = createSubPage(navHandle, () => areaID);
 </script>
 
 <style>
@@ -112,7 +135,7 @@
 
 	.network-id {
 		font-size: 2vh;
-		font-family: 'Ubuntu Mono';
+		font-family: var(--font-mono);
 		color: var(--secondary-foreground);
 		word-break: break-all;
 		padding: 1vh;
@@ -181,3 +204,6 @@
 		<Button icon="/img/back.svg" label={$t('common.back')} position={backPos} onConfirm={onBack} />
 	</div>
 </div>
+{#if pendingConnectNetwork}
+	<ConfirmDialog title={$t('common.connect')} message={$t('settings.lishNetwork.confirmConnect', { name: pendingConnectNetwork.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="confirm" {position} onConfirm={confirmConnect} onBack={cancelConnect} />
+{/if}

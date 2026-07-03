@@ -53,9 +53,9 @@
 		{#if error}
 			<Alert type="error" message={error} />
 		{/if}
-		<ButtonBar justify="center">
-			<Button icon={confirmIcon} label={confirmLabel} position={[0, 1]} onConfirm={handleConfirm} />
-			<Button icon={cancelIcon} label={cancelLabel} position={[1, 1]} onConfirm={onBack} />
+		<ButtonBar justify="center" basePosition={[0, 1]}>
+			<Button icon={confirmIcon} label={confirmLabel} onConfirm={handleConfirm} />
+			<Button icon={cancelIcon} label={cancelLabel} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 </Dialog>

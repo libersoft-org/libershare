@@ -1,10 +1,13 @@
 import { type ServerWebSocket } from 'bun';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
+import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
 import { CodedError, ErrorCodes } from '@shared';
+import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
+import { initIdentityHandlers } from './identity.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
 import { initLISHsHandlers } from './lishs.ts';
@@ -13,8 +16,13 @@ import { initEventsHandlers } from './events.ts';
 import { initCatalogHandlers } from './catalog.ts';
 import { type CatalogManager } from '../catalog/catalog-manager.ts';
 import { initSystemHandlers } from './system.ts';
+import { initRelayHandlers } from './relay.ts';
+import { initSearchManager } from './search.ts';
+import { buildFactoryResetHandler } from './factory-reset-orchestrator.ts';
+import { getLocalAddresses } from '../container.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
+	isLocalClient: boolean;
 }
 type ClientSocket = ServerWebSocket<ClientData>;
 interface Request {
@@ -28,6 +36,20 @@ export interface APIServerOptions {
 	secure: boolean;
 	keyFile: string | undefined;
 	certFile: string | undefined;
+	apiToken?: string | undefined;
+}
+
+/**
+ * Liveness probe handler used by the docker-compose healthcheck and external
+ * orchestrators. Returns a 200 plain-text response when the URL pathname is
+ * exactly `/health`, or `null` to let the caller fall through to other
+ * routing (WebSocket upgrade, 400 fallback). Pure so it stays unit-testable
+ * without spinning up the full APIServer dependency graph.
+ */
+export function handleHealthProbe(req: globalThis.Request): Response | null {
+	const url = new URL(req.url);
+	if (url.pathname === '/health') return new Response('ok\n', { status: 200, headers: { 'content-type': 'text/plain' } });
+	return null;
 }
 
 export class APIServer {
@@ -36,12 +58,15 @@ export class APIServer {
 	private readonly settings: Settings;
 	private readonly host: string;
 	private readonly port: number;
+	private readonly localAddresses: Set<string>;
 	private readonly secure: boolean;
 	private readonly keyFile?: string | undefined;
 	private readonly certFile?: string | undefined;
+	private readonly apiToken?: string | undefined;
 	private readonly dataDir: string;
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
+	private _search: ReturnType<typeof import('./search.ts').initSearchManager> | null = null;
 
 	constructor(dataDir: string, dataServer: DataServer, networks: Networks, settings: Settings, options: APIServerOptions, catalogManager?: CatalogManager | undefined) {
 		this.dataDir = dataDir;
@@ -53,15 +78,18 @@ export class APIServer {
 		this.secure = options.secure;
 		this.keyFile = options.keyFile;
 		this.certFile = options.certFile;
-		const emitTo = (client: ClientSocket, event: string, data: any) => this.emit(client, event, data);
-		const broadcastFn = (event: string, data: any) => this.broadcast(event, data);
+		this.apiToken = options.apiToken || undefined;
+		this.localAddresses = getLocalAddresses();
+		const emitTo = (client: ClientSocket, event: string, data: any): void => this.emit(client, event, data);
+		const broadcastFn = (event: string, data: any): void => this.broadcast(event, data);
 		const _events = initEventsHandlers(() => this.getCurrentPeerCounts(), emitTo);
 		const _settings = initSettingsHandlers(this.settings);
-		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn);
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
-		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn);
-		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn);
+		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
+		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest);
+		const _identity = initIdentityHandlers(this.networks);
+		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownload);
 		const _catalog = catalogManager ? initCatalogHandlers(catalogManager, {
 			networks: this.networks,
 			dataServer: this.dataServer,
@@ -77,6 +105,25 @@ export class APIServer {
 		};
 		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers);
 		_system.startPolling();
+		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
+		_relay.startPolling();
+		const _search = initSearchManager(this.networks, this.settings, broadcastFn);
+		this._search = _search;
+
+		// Factory reset with per-category selection (each defaults to ON, so a
+		// plain call wipes everything). Wipes happen at table level — never
+		// per-row. On-disk LISH data files are deliberately left untouched, so
+		// downloaded and seeded files survive. Connected clients are told to
+		// reload since identity, networks and state change.
+		const factoryReset = buildFactoryResetHandler({
+			dataServer: this.dataServer,
+			networks: this.networks,
+			settings: this.settings,
+			stopVerifyAll: _lishs.stopVerifyAll,
+			clearAllTransfers: _transfer.clearAll,
+			broadcastFn,
+		});
+
 		this.handlers = {
 			// Events
 			'events.subscribe': _events.subscribe,
@@ -87,6 +134,20 @@ export class APIServer {
 			'settings.list': _settings.list,
 			'settings.getDefaults': _settings.getDefaults,
 			'settings.reset': _settings.reset,
+			'settings.factoryReset': factoryReset,
+			'settings.exportToFile': _settings.exportToFile,
+			'settings.parseFromFile': _settings.parseFromFile,
+			'settings.parseFromJSON': _settings.parseFromJSON,
+			'settings.parseFromURL': _settings.parseFromURL,
+			'settings.applyImported': _settings.applyImported,
+			// Identity
+			'identity.get': _identity.get,
+			'identity.exportToFile': _identity.exportToFile,
+			'identity.parseFromFile': _identity.parseFromFile,
+			'identity.parseFromJSON': _identity.parseFromJSON,
+			'identity.parseFromURL': _identity.parseFromURL,
+			'identity.applyImported': _identity.applyImported,
+			'identity.regenerate': _identity.regenerate,
 			// LISH Networks
 			'lishnets.list': _lishnets.list,
 			'lishnets.get': _lishnets.get,
@@ -108,9 +169,18 @@ export class APIServer {
 			'lishnets.findPeer': _lishnets.findPeer,
 			'lishnets.getAddresses': _lishnets.getAddresses,
 			'lishnets.getPeers': _lishnets.getPeers,
+			'lishnets.getPeerLishs': _lishnets.getPeerLishs,
+			'lishnets.getPeerLish': _lishnets.getPeerLish,
+			'lishnets.addPeerLish': _lishnets.addPeerLish,
 			'lishnets.getNodeInfo': _lishnets.getNodeInfo,
 			'lishnets.getStatus': _lishnets.getStatus,
 			'lishnets.infoAll': _lishnets.infoAll,
+			'lishnets.getBootstrapStatus': _lishnets.getBootstrapStatus,
+			'lishnets.getAllBootstrapStatuses': _lishnets.getAllBootstrapStatuses,
+			'lishnets.updateBootstrapPeers': _lishnets.updateBootstrapPeers,
+			// Browse network — LISH search
+			'search.startSearch': _search.startSearch,
+			'search.cancelSearch': _search.cancelSearch,
 			// LISHs
 			'lishs.list': _lishs.list,
 			'lishs.get': _lishs.get,
@@ -138,6 +208,10 @@ export class APIServer {
 			'transfer.disableUpload': _transfer.disableUpload,
 			'transfer.enableUpload': _transfer.enableUpload,
 			'transfer.getActiveTransfers': _transfer.getActiveTransfers,
+			'transfer.subscribePeers': _transfer.subscribePeers,
+			'transfer.unsubscribePeers': _transfer.unsubscribePeers,
+			'transfer.debugPeers': _transfer.debugPeers,
+			'transfer.findPeers': _transfer.findPeers,
 			// Datasets
 			'datasets.getDatasets': _datasets.getDatasets,
 			'datasets.getDataset': _datasets.getDataset,
@@ -173,6 +247,8 @@ export class APIServer {
 			'system.ram': _system.ram,
 			'system.storage': _system.storage,
 			'system.cpu': _system.cpu,
+			// Relay
+			'relay.stats': _relay.stats,
 		};
 	}
 
@@ -182,9 +258,19 @@ export class APIServer {
 			port: this.port,
 			hostname: this.host,
 			fetch(req, server): Response | undefined {
-				console.log(`[API] Incoming request: ${req.method} ${req.url}`);
+				const url = new URL(req.url);
+				// Liveness probe used by docker-compose healthcheck and external
+				// orchestrators. Placed before auth + per-request log so probes
+				// don't need a token and don't pollute traces at probe cadence.
+				const probe = handleHealthProbe(req);
+				if (probe) return probe;
+				console.log(`[API] Incoming request: ${req.method} ${url.pathname}`);
+				if (req.method === 'OPTIONS' && url.pathname === '/status') return self.statusOptionsResponse();
+				if (url.pathname === '/status') return self.statusResponse(url);
+				if (!self.isAuthorized(url)) return self.unauthorizedResponse();
+				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
-					data: { subscribedEvents: new Set<string>() },
+					data: { subscribedEvents: new Set<string>(), isLocalClient: self.localAddresses.has(clientIP) },
 				});
 				if (upgraded) return undefined;
 				return new Response('Expected WebSocket', { status: 400 });
@@ -196,6 +282,7 @@ export class APIServer {
 				},
 				close(ws): void {
 					self.clients.delete(ws);
+					unsubscribeAllPeers(ws);
 					console.log(`[API] Client disconnected (${self.clients.size} total)`);
 				},
 				async message(ws, message): Promise<void> {
@@ -220,15 +307,69 @@ export class APIServer {
 			for (const client of this.clients) this.emit(client, 'peers:count', counts);
 		};
 
+		// Broadcast per-network bootstrap status updates (per-peer dial outcomes).
+		// Clients use the lishnets:bootstrapStatus event to surface stale-config
+		// warnings (configured peerID does not match actual remote identity) and
+		// offer remediation actions in the LISH networks settings UI.
+		this.networks.onBootstrapStatusChange = (networkID, status) => {
+			this.broadcast('lishnets:bootstrapStatus', { networkID, status });
+		};
+
 		const protocol = this.secure ? 'wss' : 'ws';
+		console.log(`[API] Token authentication ${this.apiToken ? 'enabled' : 'disabled'}`);
 		console.log(`[API] WebSocket server listening on ${protocol}://${this.host}:${actualPort}`);
 	}
 
 	stop(): void {
+		this._search?.stopAll();
 		if (this.server) {
 			this.server.stop();
 			this.server = null;
 		}
+	}
+
+	private isAuthorized(url: URL): boolean {
+		if (!this.apiToken) return true;
+		return url.searchParams.get('token') === this.apiToken;
+	}
+
+	private jsonResponse(data: unknown, status: number = 200): Response {
+		return new Response(JSON.stringify(data), {
+			status,
+			headers: {
+				'content-type': 'application/json; charset=utf-8',
+				'access-control-allow-origin': '*',
+			},
+		});
+	}
+
+	private statusOptionsResponse(): Response {
+		return new Response(null, {
+			status: 204,
+			headers: {
+				'access-control-allow-origin': '*',
+				'access-control-allow-methods': 'GET, OPTIONS',
+				'access-control-allow-headers': 'content-type',
+			},
+		});
+	}
+
+	private unauthorizedResponse(): Response {
+		return this.jsonResponse({ ok: false, authRequired: true, authenticated: false, error: 'UNAUTHORIZED' }, 401);
+	}
+
+	private statusResponse(url: URL): Response {
+		const authRequired = !!this.apiToken;
+		const authenticated = this.isAuthorized(url);
+		return this.jsonResponse(
+			{
+				ok: authenticated,
+				authRequired,
+				authenticated,
+				...(authenticated ? {} : { error: 'UNAUTHORIZED' }),
+			},
+			authenticated ? 200 : 401
+		);
 	}
 
 	private async handleMessage(client: ClientSocket, message: string): Promise<void> {
@@ -265,19 +406,27 @@ export class APIServer {
 		return handler.call(this, params, client);
 	}
 
-	private getCurrentPeerCounts(): { networkID: string; count: number }[] {
+	private getCurrentPeerCounts(): PeerCountEntry[] {
 		const enabled = this.networks.getEnabled();
-		return enabled.map(net => ({
-			networkID: net.networkID,
-			count: this.networks.getTopicPeers(net.networkID).length,
-		}));
+		return enabled.map(net => {
+			const health = this.networks.getMeshHealth(net.networkID);
+			return {
+				networkID: net.networkID,
+				count: this.networks.getTopicPeers(net.networkID).length,
+				meshSize: health.meshSize,
+				stableSinceMs: health.stableSinceMs,
+				medianScore: health.medianScore,
+			};
+		});
 	}
 
 	private emit(client: ClientSocket, event: string, data: any): void {
 		if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) client.send(JSON.stringify({ event, data }));
 	}
 
-	broadcastEvent(event: string, data: any): void { this.broadcast(event, data); }
+	broadcastEvent(event: string, data: any): void {
+		this.broadcast(event, data);
+	}
 
 	private broadcast(event: string, data: any): void {
 		const msg = JSON.stringify({ event, data });
@@ -291,7 +440,7 @@ export class APIServer {
 		if (event.startsWith('transfer.')) {
 			const d = data as any;
 			const extra = d.peers !== undefined ? ` peers=${d.peers}` : '';
-			const speed = d.bytesPerSecond !== undefined ? ` speed=${Math.round(d.bytesPerSecond/1024)}KB/s` : '';
+			const speed = d.bytesPerSecond !== undefined ? ` speed=${Math.round(d.bytesPerSecond / 1024)}KB/s` : '';
 			const chunks = d.downloadedChunks !== undefined ? ` ${d.downloadedChunks}/${d.totalChunks}` : '';
 			console.log(`[TRANSFER] ${event}${chunks}${extra}${speed} → ${sent}/${this.clients.size} clients`);
 		}

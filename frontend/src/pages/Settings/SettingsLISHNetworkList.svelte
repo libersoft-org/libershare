@@ -1,51 +1,42 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import { t, translateError, tt } from '../../scripts/language.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
-	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { pushBreadcrumb, popBreadcrumb, navigateTo } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
+	import { navigateTo } from '../../scripts/navigation.ts';
 	import { type LISHNetworkConfig, type NetworkNodeInfo } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { getNetworks, deleteNetwork as deleteNetworkFromAPI, updateNetwork as updateNetworkFromAPI, addNetwork as addNetworkFromAPI, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
-	import { peerCounts, subscribePeerCounts, unsubscribePeerCounts } from '../../scripts/networks.ts';
+	import { peerCounts, subscribePeerCounts, unsubscribePeerCounts, bootstrapStatuses, subscribeBootstrapStatuses, unsubscribeBootstrapStatuses } from '../../scripts/networks.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	import Row from '../../components/Row/Row.svelte';
-	import Table from '../../components/Table/Table.svelte';
-	import TableRow from '../../components/Table/TableRow.svelte';
-	import TableCell from '../../components/Table/TableCell.svelte';
 	import LISHNetworkAddEdit from './SettingsLISHNetworkAddEdit.svelte';
 	import LISHNetworkExport from './SettingsLISHNetworkExport.svelte';
 	import LISHNetworkExportAll from './SettingsLISHNetworkExportAll.svelte';
 	import LISHNetworkPublic from './SettingsLISHNetworkPublic.svelte';
-	import LISHNetworkPeers from './SettingsLISHNetworkPeers.svelte';
+	import LISHNetworkBootstrap from './SettingsLISHNetworkBootstrap.svelte';
+	import NodeInfoRow from '../../components/NodeInfo/NodeInfoRow.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
-	let showAddEdit = $state(false);
-	let showExport = $state(false);
-	let showExportAll = $state(false);
-	let showPublic = $state(false);
-	let showDeleteConfirm = $state(false);
-	let showPeers = $state(false);
-	let showAddresses = $state(false);
 	let editingNetwork = $state<LISHNetworkConfig | null>(null);
 	let exportingNetwork = $state<LISHNetworkConfig | null>(null);
 	let deletingNetwork = $state<LISHNetworkConfig | null>(null);
-	let peersNetwork = $state<LISHNetworkConfig | null>(null);
+	let pendingConnectNetwork = $state<LISHNetworkConfig | null>(null);
+
 	// Networks loaded from backend
 	let networks = $state<LISHNetworkConfig[]>([]);
 	let globalNodeInfo = $state<NetworkNodeInfo | null>(null);
+	let nodeInfoShowAddresses = $state(false);
 	let networkErrors = $state<Record<string, string>>({});
 
 	async function loadNetworks(): Promise<void> {
@@ -55,35 +46,51 @@
 	}
 
 	// Row offsets for positions
-	let nodeInfoOffset = $derived(globalNodeInfo ? 1 : 0);
+	let nodeInfoOffset = $derived(globalNodeInfo ? 1 + (nodeInfoShowAddresses ? globalNodeInfo.addresses.length : 0) : 0);
 
-	function openPublic(): void {
-		showPublic = true;
-		navHandle.pause();
-		pushBreadcrumb($t('settings.lishNetwork.publicList'));
-		removeBackHandler = pushBackHandler(handlePublicBack);
+	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const publicSubPage = createSubPage(navHandle, () => areaID);
+	const addEditSubPage = createSubPage(navHandle, () => areaID);
+	const exportSubPage = createSubPage(navHandle, () => areaID);
+	const exportAllSubPage = createSubPage(navHandle, () => areaID);
+	const deleteSubPage = createSubPage(navHandle, () => areaID);
+	const connectSubPage = createSubPage(navHandle, () => areaID);
+	const bootstrapSubPage = createSubPage(navHandle, () => areaID);
+	let bootstrapNetwork = $state<LISHNetworkConfig | null>(null);
+
+	function openBootstrap(network: LISHNetworkConfig): void {
+		bootstrapNetwork = network;
+		bootstrapSubPage.enter(`${network.name} - ${$t('settings.lishNetwork.bootstrap.title')}`, () => void closeBootstrap());
+	}
+	async function closeBootstrap(): Promise<void> {
+		bootstrapNetwork = null;
+		await bootstrapSubPage.exit();
 	}
 
-	async function handlePublicBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showPublic = false;
+	function configuredProblems(networkID: string): number {
+		const s = $bootstrapStatuses[networkID];
+		if (!s) return 0;
+		return s.peers.filter(p => p.origin === 'configured' && (p.status === 'identity-mismatch' || p.status === 'timeout' || p.status === 'error')).length;
+	}
+
+	async function closePublic(): Promise<void> {
 		// Reload networks in case new ones were added
 		await loadNetworks();
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		await publicSubPage.exit();
+	}
+
+	function openPublic(): void {
+		publicSubPage.enter($t('settings.lishNetwork.publicList'), () => void closePublic());
+	}
+
+	async function closeAddEdit(): Promise<void> {
+		editingNetwork = null;
+		await addEditSubPage.exit();
 	}
 
 	function openAddNetwork(): void {
 		editingNetwork = null;
-		showAddEdit = true;
-		navHandle.pause();
-		pushBreadcrumb($t('common.add'));
-		removeBackHandler = pushBackHandler(handleAddEditBack);
+		addEditSubPage.enter($t('common.add'), () => void closeAddEdit());
 	}
 
 	function openImport(): void {
@@ -91,22 +98,7 @@
 	}
 
 	function openExportAll(): void {
-		showExportAll = true;
-		navHandle.pause();
-		pushBreadcrumb($t('common.exportAll'));
-		removeBackHandler = pushBackHandler(handleExportAllBack);
-	}
-
-	async function handleExportAllBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showExportAll = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		exportAllSubPage.enter($t('common.exportAll'));
 	}
 
 	async function connectNetwork(network: LISHNetworkConfig): Promise<void> {
@@ -138,61 +130,29 @@
 		await api.lishnets.replace(networks);
 	}
 
-	function openPeers(network: LISHNetworkConfig): void {
-		peersNetwork = network;
-		showPeers = true;
-		navHandle.pause();
-		pushBreadcrumb(`${network.name} - ${$t('settings.lishNetwork.peerList')}`);
-		removeBackHandler = pushBackHandler(handlePeersBack);
-	}
-
-	async function handlePeersBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showPeers = false;
-		peersNetwork = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+	async function closeExport(): Promise<void> {
+		exportingNetwork = null;
+		await exportSubPage.exit();
 	}
 
 	function openExport(network: LISHNetworkConfig): void {
 		exportingNetwork = network;
-		showExport = true;
-		navHandle.pause();
-		pushBreadcrumb(`${network.name} - ${$t('common.export')}`);
-		removeBackHandler = pushBackHandler(handleExportBack);
-	}
-
-	async function handleExportBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showExport = false;
-		exportingNetwork = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		exportSubPage.enter(`${network.name} - ${$t('common.export')}`, () => void closeExport());
 	}
 
 	function openEditNetwork(network: LISHNetworkConfig): void {
 		editingNetwork = network;
-		showAddEdit = true;
-		navHandle.pause();
-		pushBreadcrumb(`${network.name} - ${$t('common.edit')}`);
-		removeBackHandler = pushBackHandler(handleAddEditBack);
+		addEditSubPage.enter(`${network.name} - ${$t('common.edit')}`, () => void closeAddEdit());
+	}
+
+	async function closeDelete(): Promise<void> {
+		deletingNetwork = null;
+		await deleteSubPage.exit();
 	}
 
 	function deleteNetwork(network: LISHNetworkConfig): void {
 		deletingNetwork = network;
-		showDeleteConfirm = true;
-		navHandle.pause();
-		pushBreadcrumb(`${network.name} - ${$t('common.delete')}`);
+		deleteSubPage.enter(`${network.name} - ${$t('common.delete')}`, () => void closeDelete());
 	}
 
 	async function confirmDeleteNetwork(): Promise<void> {
@@ -200,36 +160,13 @@
 			await deleteNetworkFromAPI(deletingNetwork.networkID);
 			const deletedName = deletingNetwork.name;
 			networks = networks.filter(n => n.networkID !== deletingNetwork!.networkID);
-			addNotification(tt('settings.lishNetwork.networkDeleted', { name: deletedName }));
-			deletingNetwork = null;
-			showDeleteConfirm = false;
-			popBreadcrumb();
-			await tick();
-			navHandle.resume();
-			activateArea(areaID);
+			addNotification(tt('settings.lishNetwork.networkDeleted', { name: deletedName }), 'warning');
+			await closeDelete();
 		}
 	}
 
 	async function cancelDelete(): Promise<void> {
-		deletingNetwork = null;
-		showDeleteConfirm = false;
-		popBreadcrumb();
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
-	}
-
-	async function handleAddEditBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showAddEdit = false;
-		editingNetwork = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		await closeDelete();
 	}
 
 	async function handleSave(savedNetwork: NetworkFormData): Promise<void> {
@@ -239,31 +176,51 @@
 			await updateNetworkFromAPI(network);
 			const index = networks.findIndex(n => n.networkID === editingNetwork!.networkID);
 			if (index !== -1) networks[index] = network;
+			await closeAddEdit();
 		} else {
-			// Add new - backend generates networkID and key if empty
+			// Add new - backend generates networkID and key if empty. Detect the new
+			// network by diffing IDs before/after, then prompt the user to connect.
+			const beforeIDs = new Set(networks.map(n => n.networkID));
 			await addNetworkFromAPI(network);
-			// Reload from backend to get the generated values
 			await loadNetworks();
+			const newNet = networks.find(n => !beforeIDs.has(n.networkID));
+			await closeAddEdit();
+			if (newNet) {
+				pendingConnectNetwork = newNet;
+				connectSubPage.enter(`${newNet.name} - ${$t('common.connect')}`, () => void closeConnect());
+			}
 		}
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		showAddEdit = false;
-		editingNetwork = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
 	}
 
-	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	async function closeConnect(): Promise<void> {
+		pendingConnectNetwork = null;
+		await connectSubPage.exit();
+	}
+
+	async function confirmConnect(): Promise<void> {
+		if (pendingConnectNetwork) await connectNetwork(pendingConnectNetwork);
+		await closeConnect();
+	}
+
+	function cancelConnect(): void {
+		void closeConnect();
+	}
+
+	function handleBootstrapUpdated(updated: LISHNetworkConfig): void {
+		const index = networks.findIndex(n => n.networkID === updated.networkID);
+		if (index !== -1) {
+			networks[index] = { ...networks[index]!, ...updated };
+			networks = [...networks];
+		}
+	}
 
 	onMount(() => {
 		loadNetworks();
 		subscribePeerCounts();
+		subscribeBootstrapStatuses();
 		return () => {
 			unsubscribePeerCounts();
+			unsubscribeBootstrapStatuses();
 		};
 	});
 </script>
@@ -288,49 +245,11 @@
 		max-width: 100%;
 	}
 
-	.node-info {
-		display: flex;
-		flex-direction: column;
-		gap: 1.5vh;
-	}
-
-	.node-info .peer-id {
-		font-size: 1.8vh;
-		word-break: break-all;
-	}
-
-	.node-info .peer-id .label {
-		color: var(--disabled-foreground);
-	}
-
-	.node-info .peer-id .value {
-		font-family: monospace;
-		color: var(--primary-foreground);
-	}
-
-	.node-info .buttons {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 1vh;
-	}
-
-	.node-info .address-index {
-		font-size: 1.5vh;
-		font-family: monospace;
-		color: var(--disabled-foreground);
-	}
-
-	.node-info .address-value {
-		font-size: 1.5vh;
-		font-family: monospace;
-		color: var(--disabled-foreground);
-		word-break: break-all;
-	}
-
 	.network {
 		display: flex;
 		flex-direction: column;
 		gap: 2vh;
+		width: 100%;
 	}
 
 	.network .header {
@@ -358,7 +277,7 @@
 
 	.network .network-id {
 		font-size: 2vh;
-		font-family: 'Ubuntu Mono';
+		font-family: var(--font-mono);
 		color: var(--secondary-foreground);
 		word-break: break-all;
 		padding: 1vh;
@@ -384,55 +303,33 @@
 	}
 </style>
 
-{#if showAddEdit}
+{#if addEditSubPage.active}
 	{@const networkForEdit = editingNetwork ? { id: editingNetwork.networkID, name: editingNetwork.name, description: editingNetwork.description, bootstrapServers: editingNetwork.bootstrapPeers.length > 0 ? editingNetwork.bootstrapPeers : [''] } : null}
-	<LISHNetworkAddEdit {areaID} {position} network={networkForEdit} onBack={handleAddEditBack} onSave={handleSave} />
-{:else if showExport}
-	<LISHNetworkExport {areaID} {position} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={handleExportBack} />
-{:else if showExportAll}
-	<LISHNetworkExportAll {areaID} {position} onBack={handleExportAllBack} />
-{:else if showPublic}
-	<LISHNetworkPublic {areaID} {position} onBack={handlePublicBack} />
-{:else if showPeers && peersNetwork}
-	<LISHNetworkPeers {areaID} {position} network={peersNetwork} onBack={handlePeersBack} />
-{:else if showDeleteConfirm && deletingNetwork}
+	<LISHNetworkAddEdit {areaID} {position} network={networkForEdit} onBack={() => void closeAddEdit()} onSave={handleSave} />
+{:else if exportSubPage.active}
+	<LISHNetworkExport {areaID} {position} network={exportingNetwork ? { id: exportingNetwork.networkID, name: exportingNetwork.name } : null} onBack={() => void closeExport()} />
+{:else if exportAllSubPage.active}
+	<LISHNetworkExportAll {areaID} {position} onBack={() => void exportAllSubPage.exit()} />
+{:else if publicSubPage.active}
+	<LISHNetworkPublic {areaID} {position} onBack={() => void closePublic()} />
+{:else if bootstrapSubPage.active && bootstrapNetwork}
+	<LISHNetworkBootstrap {areaID} {position} network={bootstrapNetwork} status={$bootstrapStatuses[bootstrapNetwork.networkID]} onUpdated={handleBootstrapUpdated} onBack={() => void closeBootstrap()} />
+{:else if deleteSubPage.active && deletingNetwork}
 	<ConfirmDialog title={$t('common.delete')} message={$t('settings.lishNetwork.confirmDelete', { name: deletingNetwork.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmDeleteNetwork} onBack={cancelDelete} />
+{:else if connectSubPage.active && pendingConnectNetwork}
+	<ConfirmDialog title={$t('common.connect')} message={$t('settings.lishNetwork.confirmConnect', { name: pendingConnectNetwork.name })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" defaultButton="confirm" {position} onConfirm={confirmConnect} onBack={cancelConnect} />
 {:else}
 	<div class="lish-network-list">
 		<div class="container">
-			<ButtonBar>
-				<Button icon="/img/back.svg" label={$t('common.back')} position={[0, 0]} onConfirm={onBack} />
-				<Button icon="/img/online.svg" label={$t('settings.lishNetwork.publicList')} position={[1, 0]} onConfirm={openPublic} />
-				<Button icon="/img/plus.svg" label={$t('common.add')} position={[2, 0]} onConfirm={openAddNetwork} />
-				<Button icon="/img/import.svg" label={$t('common.import')} position={[3, 0]} onConfirm={openImport} />
-				<Button icon="/img/export.svg" label={$t('common.exportAll')} position={[4, 0]} onConfirm={openExportAll} />
+			<ButtonBar basePosition={[0, 0]}>
+				<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/online.svg" label={$t('settings.lishNetwork.publicList')} onConfirm={openPublic} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/plus.svg" label={$t('common.add')} onConfirm={openAddNetwork} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/import.svg" label={$t('common.import')} onConfirm={openImport} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/export.svg" label={$t('common.exportAll')} onConfirm={openExportAll} padding="1vh 1.5vh" fontSize="1.6vh" />
 			</ButtonBar>
 			{#if globalNodeInfo}
-				<Row selected={navHandle.controller.isYSelected(1)}>
-					<div class="node-info">
-						<div class="peer-id"><span class="label">{$t('settings.lishNetwork.yourPeerID')}:</span> <span class="value">{globalNodeInfo.peerID}</span></div>
-						<div class="buttons">
-							<Button
-								icon={showAddresses ? '/img/up.svg' : '/img/down.svg'}
-								label={showAddresses ? $t('common.hide') + ' ' + $t('settings.lishNetwork.addresses') : $t('common.show') + ' ' + $t('settings.lishNetwork.addresses')}
-								position={[0, 1]}
-								onConfirm={() => {
-									showAddresses = !showAddresses;
-								}}
-							/>
-						</div>
-						{#if showAddresses && globalNodeInfo.addresses.length > 0}
-							<Table columns="auto 1fr">
-								{#each globalNodeInfo.addresses as address, i}
-									<TableRow>
-										<TableCell><span class="address-index">{i + 1}.</span></TableCell>
-										<TableCell wrap><span class="address-value">{address}</span></TableCell>
-									</TableRow>
-								{/each}
-							</Table>
-						{/if}
-					</div>
-				</Row>
+				<NodeInfoRow nodeInfo={globalNodeInfo} rowY={1} bind:showAddresses={nodeInfoShowAddresses} />
 			{/if}
 			{#if networks.length === 0}
 				<Alert type="warning" message={$t('settings.lishNetwork.emptyList')} />
@@ -456,9 +353,15 @@
 							{#if networkErrors[network.networkID]}
 								<Alert type="error" message={networkErrors[network.networkID]!} />
 							{/if}
+							{#if network.enabled && configuredProblems(network.networkID) > 0}
+								{@const probs = configuredProblems(network.networkID)}
+								<Alert type="warning" message={tt(probs === 1 ? 'settings.lishNetwork.bootstrap.warningOne' : 'settings.lishNetwork.bootstrap.warningMany', { count: String(probs), total: String(network.bootstrapPeers.length) })} />
+							{/if}
 							<div class="buttons">
 								<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} position={[0, rowY]} onConfirm={() => connectNetwork(network)} />
-								<Button icon="/img/online.svg" label={$t('settings.lishNetwork.peerList')} position={[1, rowY]} onConfirm={() => openPeers(network)} />
+								{#if network.enabled}
+									<Button icon={configuredProblems(network.networkID) > 0 ? '/img/warning.svg' : '/img/person.svg'} label={$t('settings.lishNetwork.bootstrap.openLabel')} position={[1, rowY]} onConfirm={() => openBootstrap(network)} />
+								{/if}
 								<Button icon="/img/export.svg" label={$t('common.export')} position={[2, rowY]} onConfirm={() => openExport(network)} />
 								<Button icon="/img/edit.svg" label={$t('common.edit')} position={[3, rowY]} onConfirm={() => openEditNetwork(network)} />
 								<Button icon="/img/del.svg" label={$t('common.delete')} position={[4, rowY]} onConfirm={() => deleteNetwork(network)} />

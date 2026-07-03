@@ -4,11 +4,17 @@ app/binaries/
 app/icons/
 app/gen/
 app/core
+# Generated from *.template by app/sync-config.ts (source: shared/src/product.json)
+app/tauri.conf.json
+app/tauri.linux.conf.json
 **/*.crt
 **/*.key
 frontend/.svelte-kit/
 frontend/.vite-cache/
 backend/data
+data/
+data-*/
+.node-*/
 .secret_git
 bun.lockb
 bun.lockb.txt
@@ -24,13 +30,12 @@ vite.config.js.timestamp-*
 **/cert.pem
 **/key.pem
 **/*.orig
-data-*/
-.node-*/
 
 # Editor/IDE local configs
 .[a-z]*/
 !.git/
 !.github/
+!.vs/
 /[A-Z]*.md
 !/README.md
 
@@ -38,3 +43,18 @@ data-*/
 **/test-results/
 **/.playwright-real-data/
 **/playwright-report/
+
+# Large binary files
+**/*.iso
+**/*.mkv
+**/*.avi
+**/*.mp4
+
+# Runtime artifacts
+backend.log
+*.stackdump
+*.bun-build
+nul/
+
+# Temp screenshots
+*.png

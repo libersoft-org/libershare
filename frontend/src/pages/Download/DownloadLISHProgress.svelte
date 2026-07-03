@@ -167,15 +167,15 @@
 
 	.done-info .lish-id {
 		color: var(--primary-foreground);
-		font-family: monospace;
+		font-family: var(--font-mono);
 		word-break: break-all;
 	}
 </style>
 
 <div class="progress-page">
 	<div class="container">
-		<ButtonBar>
-			<Button icon="/img/back.svg" label={status === 'creating' ? $t('common.cancel') : $t('common.back')} position={[0, 0]} onConfirm={handleCancel} />
+		<ButtonBar basePosition={[0, 0]}>
+			<Button icon="/img/back.svg" label={status === 'creating' ? $t('common.cancel') : $t('common.back')} onConfirm={handleCancel} />
 		</ButtonBar>
 		{#if status === 'creating'}
 			<div class="status-label">{$t('lish.create.progress.creating')}</div>

@@ -1,4 +1,37 @@
 import { join } from 'path';
+import { CodedError, ErrorCodes } from '@shared';
+
+/**
+ * Filesystem error codes that signal the data directory cannot be written —
+ * persisting state would silently disappear, so the caller fails fast instead
+ * of limping along with non-persistent in-memory state. Exported so unit tests
+ * can drive the same set the production code uses.
+ */
+export const FATAL_STORAGE_CODES = ['EACCES', 'EROFS', 'EPERM', 'ENOSPC', 'EISDIR'] as const;
+export type FatalStorageCode = (typeof FATAL_STORAGE_CODES)[number];
+
+export function isFatalStorageError(error: unknown): error is NodeJS.ErrnoException & { code: FatalStorageCode } {
+	const code = (error as NodeJS.ErrnoException | null)?.code;
+	return typeof code === 'string' && (FATAL_STORAGE_CODES as readonly string[]).includes(code);
+}
+
+/**
+ * Build the operator-facing message for a fatal storage error. Pure function
+ * so unit tests can assert the exact wording without spawning a real process.
+ */
+export function fatalStorageMessage(filePath: string, code: FatalStorageCode): string[] {
+	const lines = [`[Storage] FATAL: cannot persist ${filePath} (${code}).`];
+	if (code === 'ENOSPC') {
+		lines.push(`[Storage] The filesystem hosting the data directory is full.`);
+	} else if (code === 'EISDIR') {
+		lines.push(`[Storage] A directory exists where a file is expected — remove it before restart.`);
+	} else {
+		lines.push(`[Storage] If running in Docker with cap_drop:ALL, the container loses CAP_DAC_OVERRIDE and`);
+		lines.push(`[Storage] cannot write to a host bind-mount unless its owner matches the container UID.`);
+		lines.push(`[Storage] Fix on the host: chown 0:0 <mounted-dir> && chmod 0700 <mounted-dir>, then restart.`);
+	}
+	return lines;
+}
 
 /**
  * Base class for JSON file storage.
@@ -30,6 +63,18 @@ abstract class BaseStorage<T> {
 		try {
 			await Bun.write(this.filePath, JSON.stringify(data, null, '\t'));
 		} catch (error) {
+			// Permission / read-only filesystem errors at this layer mean every
+			// subsequent write to settings.json (peer identity, joined networks,
+			// user preferences) would silently disappear and the next restart
+			// would regenerate state from defaults. That is much worse than
+			// crashing — fail fast with an operator-actionable hint instead of
+			// limping along. The most common trigger in container deployments is
+			// `cap_drop: ALL` stripping CAP_DAC_OVERRIDE while the bind-mount on
+			// the host is owned by a non-root user.
+			if (isFatalStorageError(error)) {
+				for (const line of fatalStorageMessage(this.filePath, error.code!)) console.error(line);
+				process.exit(74); // sysexits.h EX_IOERR
+			}
 			console.error(`[Storage] Error saving ${this.filePath}:`, error);
 		}
 	}
@@ -78,6 +123,12 @@ export class JSONStorage<T extends Record<string, any>> extends BaseStorage<T> {
 
 	async set(path: string, value: any): Promise<void> {
 		const keys = path.split('.');
+		// Reject prototype-polluting keys at every depth. Without this, a path like
+		// "__proto__.polluted" or "constructor.prototype.polluted" would walk into
+		// Object.prototype and assign to it, affecting every object in the process.
+		for (const key of keys) {
+			if (key === '__proto__' || key === 'prototype' || key === 'constructor') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `Illegal settings key: ${key}`);
+		}
 		let obj: any = this.data;
 		for (let i = 0; i < keys.length - 1; i++) {
 			const key = keys[i]!;

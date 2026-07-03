@@ -1,14 +1,12 @@
 <script lang="ts">
-	import { tick } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
-	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, incomingPort, maxDownloadConnections, maxUploadConnections, maxDownloadSpeed, maxUploadSpeed, allowRelay, maxRelayReservations, autoStartSharing, autoStartDownloading, setIncomingPort, setMaxDownloadConnections, setMaxUploadConnections, setMaxDownloadSpeed, setMaxUploadSpeed, setAllowRelay, setMaxRelayReservations, setAutoStartSharing, setAutoStartDownloading, settingsDefaults } from '../../scripts/settings.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
+	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, storageBackupPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, setStorageBackupPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, useRelayClients, maxRelayClients, autoStartSharing, autoStartDownloading, autoErrorRecovery, autoConnectNewNetworks, mdnsEnabled, mdnsInterval, upnpEnabled, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setUseRelayClients, setMaxRelayClients, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setAutoConnectNewNetworks, setMdnsEnabled, setMdnsInterval, setUpnpEnabled, settingsDefaults } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
+	import { parseBytes, formatBytes } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -20,36 +18,45 @@
 		onBack?: (() => void) | undefined;
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
-	let browsingFor = $state<'storage' | 'temp' | 'lish' | 'lishnet' | null>(null);
+	let browsingFor = $state<'storage' | 'temp' | 'lish' | 'lishnet' | 'backup' | null>(null);
 
 	// Local state for inputs
 	let storagePathValue = $state($storagePath);
 	let tempPathValue = $state($storageTempPath);
 	let lishPathValue = $state($storageLISHPath);
 	let lishnetPathValue = $state($storageLISHnetPath);
+	let backupPathValue = $state($storageBackupPath);
 	let port = $state($incomingPort.toString());
-	let downloadConnections = $state($maxDownloadConnections.toString());
-	let uploadConnections = $state($maxUploadConnections.toString());
+	let downloadConnections = $state($maxDownloadPeersPerLISH.toString());
+	let uploadConnections = $state($maxUploadPeersPerLISH.toString());
 	let downloadSpeed = $state($maxDownloadSpeed.toString());
 	let uploadSpeed = $state($maxUploadSpeed.toString());
+	let chunkSizeLimit = $state(formatBytes($maxChunkSize));
+	let messageSizeLimit = $state(formatBytes($maxMessageSize));
 	let relay = $state($allowRelay);
 	let relayReservations = $state($maxRelayReservations.toString());
+	let useRelayClientsState = $state($useRelayClients);
+	let relayClients = $state($maxRelayClients.toString());
 	let autoStart = $state($autoStartSharing);
 	let autoStartDl = $state($autoStartDownloading);
+	let autoRecovery = $state($autoErrorRecovery);
+	let autoConnectNetworks = $state($autoConnectNewNetworks);
+	let mdns = $state($mdnsEnabled);
+	// UI exposes the interval in whole seconds; backend stores it in milliseconds.
+	let mdnsIntervalSec = $state(Math.round($mdnsInterval / 1000).toString());
+	let upnp = $state($upnpEnabled);
 
 	// Browse functions
-	function openBrowse(type: 'storage' | 'temp' | 'lish' | 'lishnet'): void {
+	function openBrowse(type: 'storage' | 'temp' | 'lish' | 'lishnet' | 'backup'): void {
 		browsingFor = type;
-		navHandle.pause();
 		const labels = {
 			storage: $t('settings.download.directoryDownload'),
 			temp: $t('settings.download.directoryTemp'),
 			lish: $t('settings.download.directoryLISH'),
 			lishnet: $t('settings.download.directoryLISHnet'),
+			backup: $t('settings.download.directoryBackup'),
 		};
-		pushBreadcrumb(labels[type]);
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		browseSubPage.enter(labels[type]);
 	}
 
 	function handleBrowseSelect(path: string): void {
@@ -58,19 +65,8 @@
 		else if (browsingFor === 'temp') tempPathValue = normalizedPath;
 		else if (browsingFor === 'lish') lishPathValue = normalizedPath;
 		else if (browsingFor === 'lishnet') lishnetPathValue = normalizedPath;
-		handleBrowseBack();
-	}
-
-	async function handleBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingFor = null;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		else if (browsingFor === 'backup') backupPathValue = normalizedPath;
+		void browseSubPage.exit();
 	}
 
 	// Save functions
@@ -80,13 +76,13 @@
 	}
 
 	function saveDownloadConnections(): void {
-		setMaxDownloadConnections(parseInt(downloadConnections) || 0);
-		downloadConnections = $maxDownloadConnections.toString();
+		setMaxDownloadPeersPerLISH(parseInt(downloadConnections) || 0);
+		downloadConnections = $maxDownloadPeersPerLISH.toString();
 	}
 
 	function saveUploadConnections(): void {
-		setMaxUploadConnections(parseInt(uploadConnections) || 0);
-		uploadConnections = $maxUploadConnections.toString();
+		setMaxUploadPeersPerLISH(parseInt(uploadConnections) || 0);
+		uploadConnections = $maxUploadPeersPerLISH.toString();
 	}
 
 	function saveDownloadSpeed(): void {
@@ -99,9 +95,37 @@
 		uploadSpeed = $maxUploadSpeed.toString();
 	}
 
+	function parseSizeOrFallback(value: string, fallback: number): number {
+		try {
+			const bytes = parseBytes(value);
+			if (bytes > 0) return bytes;
+		} catch {
+			// fall through
+		}
+		return fallback;
+	}
+
+	function saveChunkSizeLimit(): void {
+		setMaxChunkSize(parseSizeOrFallback(chunkSizeLimit, $maxChunkSize));
+		chunkSizeLimit = formatBytes($maxChunkSize);
+	}
+
+	function saveMessageSizeLimit(): void {
+		setMaxMessageSize(parseSizeOrFallback(messageSizeLimit, $maxMessageSize));
+		messageSizeLimit = formatBytes($maxMessageSize);
+	}
+
 	function saveRelayReservations(): void {
 		setMaxRelayReservations(parseInt(relayReservations) || 100);
 		relayReservations = $maxRelayReservations.toString();
+		setMaxRelayClients(parseInt(relayClients) || 5);
+		relayClients = $maxRelayClients.toString();
+	}
+
+	function saveMdnsInterval(): void {
+		const seconds = parseInt(mdnsIntervalSec);
+		setMdnsInterval(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 10000);
+		mdnsIntervalSec = Math.round($mdnsInterval / 1000).toString();
 	}
 
 	function saveAll(): void {
@@ -109,12 +133,16 @@
 		setStorageTempPath(tempPathValue);
 		setStorageLISHPath(lishPathValue);
 		setStorageLISHnetPath(lishnetPathValue);
+		setStorageBackupPath(backupPathValue);
 		savePort();
 		saveDownloadConnections();
 		saveUploadConnections();
 		saveDownloadSpeed();
 		saveUploadSpeed();
+		saveChunkSizeLimit();
+		saveMessageSizeLimit();
 		saveRelayReservations();
+		saveMdnsInterval();
 	}
 
 	function handleSave(): void {
@@ -127,6 +155,11 @@
 		setAllowRelay(relay);
 	}
 
+	function toggleUseRelayClients(): void {
+		useRelayClientsState = !useRelayClientsState;
+		setUseRelayClients(useRelayClientsState);
+	}
+
 	function toggleAutoStart(): void {
 		autoStart = !autoStart;
 		setAutoStartSharing(autoStart);
@@ -135,6 +168,26 @@
 	function toggleAutoStartDl(): void {
 		autoStartDl = !autoStartDl;
 		setAutoStartDownloading(autoStartDl);
+	}
+
+	function toggleAutoRecovery(): void {
+		autoRecovery = !autoRecovery;
+		setAutoErrorRecovery(autoRecovery);
+	}
+
+	function toggleAutoConnectNetworks(): void {
+		autoConnectNetworks = !autoConnectNetworks;
+		setAutoConnectNewNetworks(autoConnectNetworks);
+	}
+
+	function toggleMdns(): void {
+		mdns = !mdns;
+		setMdnsEnabled(mdns);
+	}
+
+	function toggleUpnp(): void {
+		upnp = !upnp;
+		setUpnpEnabled(upnp);
 	}
 
 	// Reset functions
@@ -154,16 +207,20 @@
 		lishnetPathValue = settingsDefaults?.storage?.lishnetPath ?? '';
 	}
 
+	function resetBackupPath(): void {
+		backupPathValue = settingsDefaults?.storage?.backupPath ?? '';
+	}
+
 	function resetPort(): void {
 		port = String(settingsDefaults?.network?.incomingPort ?? 0);
 	}
 
 	function resetDownloadConnections(): void {
-		downloadConnections = String(settingsDefaults?.network?.maxDownloadConnections ?? 0);
+		downloadConnections = String(settingsDefaults?.network?.maxDownloadPeersPerLISH ?? 0);
 	}
 
 	function resetUploadConnections(): void {
-		uploadConnections = String(settingsDefaults?.network?.maxUploadConnections ?? 0);
+		uploadConnections = String(settingsDefaults?.network?.maxUploadPeersPerLISH ?? 0);
 	}
 
 	function resetDownloadSpeed(): void {
@@ -174,11 +231,28 @@
 		uploadSpeed = String(settingsDefaults?.network?.maxUploadSpeed ?? 0);
 	}
 
+	function resetChunkSizeLimit(): void {
+		chunkSizeLimit = formatBytes(settingsDefaults?.network?.maxChunkSize ?? 0);
+	}
+
+	function resetMessageSizeLimit(): void {
+		messageSizeLimit = formatBytes(settingsDefaults?.network?.maxMessageSize ?? 0);
+	}
+
 	function resetRelayReservations(): void {
 		relayReservations = String(settingsDefaults?.network?.maxRelayReservations ?? 0);
 	}
 
+	function resetRelayClients(): void {
+		relayClients = String(settingsDefaults?.network?.maxRelayClients ?? 5);
+	}
+
+	function resetMdnsInterval(): void {
+		mdnsIntervalSec = String(Math.round((settingsDefaults?.network?.mdnsInterval ?? 10000) / 1000));
+	}
+
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	const browseSubPage = createSubPage(navHandle, () => areaID);
 </script>
 
 <style>
@@ -207,63 +281,105 @@
 	}
 </style>
 
-{#if browsingFor}
-	<SettingsStorageBrowse {areaID} {position} initialPath={browsingFor === 'storage' ? $storagePath : browsingFor === 'temp' ? $storageTempPath : browsingFor === 'lish' ? $storageLISHPath : $storageLISHnetPath} onSelect={handleBrowseSelect} onBack={handleBrowseBack} />
+{#if browseSubPage.active && browsingFor}
+	<SettingsStorageBrowse {areaID} {position} initialPath={browsingFor === 'storage' ? $storagePath : browsingFor === 'temp' ? $storageTempPath : browsingFor === 'lish' ? $storageLISHPath : browsingFor === 'lishnet' ? $storageLISHnetPath : $storageBackupPath} onSelect={handleBrowseSelect} onBack={() => void browseSubPage.exit()} />
 {:else}
 	<div class="settings">
 		<div class="container">
 			<!-- Storage paths -->
-			<div class="row">
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
 				<Input bind:value={storagePathValue} label={$t('settings.download.directoryDownload')} position={[0, 0]} flex />
 				<Button icon="/img/directory.svg" position={[1, 0]} onConfirm={() => openBrowse('storage')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 0]} onConfirm={resetStoragePath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
 				<Input bind:value={tempPathValue} label={$t('settings.download.directoryTemp')} position={[0, 1]} flex />
 				<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={() => openBrowse('temp')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 1]} onConfirm={resetTempPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
 				<Input bind:value={lishPathValue} label={$t('settings.download.directoryLISH')} position={[0, 2]} flex />
 				<Button icon="/img/directory.svg" position={[1, 2]} onConfirm={() => openBrowse('lish')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 2]} onConfirm={resetLISHPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
 				<Input bind:value={lishnetPathValue} label={$t('settings.download.directoryLISHnet')} position={[0, 3]} flex />
 				<Button icon="/img/directory.svg" position={[1, 3]} onConfirm={() => openBrowse('lishnet')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 3]} onConfirm={resetLISHnetPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
-				<Input bind:value={port} label={$t('settings.download.incomingPort')} type="number" position={[0, 4]} flex />
-				<Button icon="/img/restart.svg" position={[1, 4]} onConfirm={resetPort} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={backupPathValue} label={$t('settings.download.directoryBackup')} position={[0, 4]} flex />
+				<Button icon="/img/directory.svg" position={[1, 4]} onConfirm={() => openBrowse('backup')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Button icon="/img/restart.svg" position={[2, 4]} onConfirm={resetBackupPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
-				<Input bind:value={downloadConnections} label={$t('settings.download.maxDownloadConnections')} type="number" position={[0, 5]} flex />
-				<Button icon="/img/restart.svg" position={[1, 5]} onConfirm={resetDownloadConnections} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={port} label={$t('settings.download.incomingPort')} type="number" position={[0, 5]} flex />
+				<Button icon="/img/restart.svg" position={[1, 5]} onConfirm={resetPort} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
-				<Input bind:value={uploadConnections} label={$t('settings.download.maxUploadConnections')} type="number" position={[0, 6]} flex />
-				<Button icon="/img/restart.svg" position={[1, 6]} onConfirm={resetUploadConnections} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={downloadConnections} label={$t('settings.download.maxDownloadPeersPerLISH')} type="number" position={[0, 6]} flex />
+				<Button icon="/img/restart.svg" position={[1, 6]} onConfirm={resetDownloadConnections} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
-				<Input bind:value={downloadSpeed} label={$t('settings.download.maxDownloadSpeed')} type="number" min={0} position={[0, 7]} flex />
-				<Button icon="/img/restart.svg" position={[1, 7]} onConfirm={resetDownloadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={uploadConnections} label={$t('settings.download.maxUploadPeersPerLISH')} type="number" position={[0, 7]} flex />
+				<Button icon="/img/restart.svg" position={[1, 7]} onConfirm={resetUploadConnections} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div class="row">
-				<Input bind:value={uploadSpeed} label={$t('settings.download.maxUploadSpeed')} type="number" min={0} position={[0, 8]} flex />
-				<Button icon="/img/restart.svg" position={[1, 8]} onConfirm={resetUploadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={downloadSpeed} label={$t('settings.download.maxDownloadSpeed')} type="number" min={0} position={[0, 8]} flex />
+				<Button icon="/img/restart.svg" position={[1, 8]} onConfirm={resetDownloadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('settings.download.allowRelay') + ':'} checked={relay} position={[0, 9]} onToggle={toggleAllowRelay} />
-			<div class="row">
-				<Input bind:value={relayReservations} label={$t('settings.download.maxRelayReservations')} type="number" position={[0, 10]} flex />
-				<Button icon="/img/restart.svg" position={[1, 10]} onConfirm={resetRelayReservations} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={uploadSpeed} label={$t('settings.download.maxUploadSpeed')} type="number" min={0} position={[0, 9]} flex />
+				<Button icon="/img/restart.svg" position={[1, 9]} onConfirm={resetUploadSpeed} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} position={[0, 11]} onToggle={toggleAutoStart} />
-			<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 12]} onToggle={toggleAutoStartDl} />
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={chunkSizeLimit} label={$t('settings.download.maxChunkSize')} position={[0, 10]} flex />
+				<Button icon="/img/restart.svg" position={[1, 10]} onConfirm={resetChunkSizeLimit} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={messageSizeLimit} label={$t('settings.download.maxMessageSize')} position={[0, 11]} flex />
+				<Button icon="/img/restart.svg" position={[1, 11]} onConfirm={resetMessageSizeLimit} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.allowRelay') + ':'} checked={relay} position={[0, 12]} onToggle={toggleAllowRelay} />
+			</div>
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={relayReservations} label={$t('settings.download.maxRelayReservations')} type="number" position={[0, 13]} flex />
+				<Button icon="/img/restart.svg" position={[1, 13]} onConfirm={resetRelayReservations} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.useRelayClients') + ':'} checked={useRelayClientsState} position={[0, 14]} onToggle={toggleUseRelayClients} />
+			</div>
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={relayClients} label={$t('settings.download.maxRelayClients')} type="number" position={[0, 15]} flex />
+				<Button icon="/img/restart.svg" position={[1, 15]} onConfirm={resetRelayClients} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} position={[0, 16]} onToggle={toggleAutoStart} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 17]} onToggle={toggleAutoStartDl} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 18]} onToggle={toggleAutoRecovery} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.autoConnectNewNetworks') + ':'} checked={autoConnectNetworks} position={[0, 19]} onToggle={toggleAutoConnectNetworks} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.mdnsEnabled') + ':'} checked={mdns} position={[0, 20]} onToggle={toggleMdns} />
+			</div>
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={mdnsIntervalSec} label={$t('settings.download.mdnsInterval')} type="number" min={1} position={[0, 21]} flex />
+				<Button icon="/img/restart.svg" position={[1, 21]} onConfirm={resetMdnsInterval} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.upnpEnabled') + ':'} checked={upnp} position={[0, 22]} onToggle={toggleUpnp} />
+			</div>
 		</div>
-		<ButtonBar justify="center">
-			<Button icon="/img/save.svg" label={$t('common.save')} position={[0, 13]} onConfirm={handleSave} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 13]} onConfirm={onBack} />
+		<ButtonBar justify="center" basePosition={[0, 23]}>
+			<Button icon="/img/save.svg" label={$t('common.save')} onConfirm={handleSave} />
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 {/if}

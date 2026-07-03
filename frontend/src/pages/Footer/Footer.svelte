@@ -14,6 +14,8 @@
 	import { ramInfo, storageInfo, cpuInfo } from '../../scripts/systemStats.ts';
 	import { formatSize } from '../../scripts/utils.ts';
 	import { transferStats } from '../../scripts/downloads.ts';
+	import { relayStats } from '../../scripts/relayStats.ts';
+	import { networkSummary, meshStatus } from '../../scripts/networks.ts';
 
 	type Widget = {
 		id: FooterWidget;
@@ -26,7 +28,7 @@
 		{
 			id: 'version',
 			component: Item,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topLabel: $t('common.version'),
 					bottomLabel: productVersion,
@@ -36,7 +38,7 @@
 		{
 			id: 'download',
 			component: Item,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: 'img/download.svg',
 					topIconAlt: $t('common.download'),
@@ -48,7 +50,7 @@
 		{
 			id: 'upload',
 			component: Item,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: 'img/upload.svg',
 					topIconAlt: $t('common.upload'),
@@ -58,9 +60,21 @@
 			},
 		},
 		{
+			id: 'relay',
+			component: Item,
+			props(): Record<string, any> {
+				return {
+					topIcon: 'img/share.svg',
+					topIconAlt: $t('settings.footerWidgets.relay'),
+					topLabel: `${$relayStats.activeTunnels} / ${$relayStats.reservations}`,
+					bottomLabel: formatSize($relayStats.downloadSpeed + $relayStats.uploadSpeed) + '/s',
+				};
+			},
+		},
+		{
 			id: 'cpu',
 			component: Bar,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: 'img/cpu.svg',
 					topIconAlt: $t('settings.footerWidgets.cpu'),
@@ -71,7 +85,7 @@
 		{
 			id: 'ram',
 			component: Bar,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: 'img/ram.svg',
 					topIconAlt: $t('settings.footerWidgets.ram'),
@@ -83,7 +97,7 @@
 		{
 			id: 'storage',
 			component: Bar,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: 'img/storage.svg',
 					topIconAlt: $t('settings.footerWidgets.storage'),
@@ -95,18 +109,19 @@
 		{
 			id: 'lishStatus',
 			component: LISHStatus,
-			props() {
+			props(): Record<string, any> {
 				return {
-					networkName: 'Main Network',
-					lishConnected: false,
-					vpnConnected: null,
+					connectedNetworks: $networkSummary.connectedNetworks,
+					totalNetworks: $networkSummary.totalNetworks,
+					totalPeers: $networkSummary.totalPeers,
+					meshState: $meshStatus.state,
 				};
 			},
 		},
 		{
 			id: 'gamepad',
 			component: Gamepad,
-			props() {
+			props(): Record<string, any> {
 				return {
 					connected: $gamepadConnected,
 				};
@@ -115,7 +130,7 @@
 		{
 			id: 'connection',
 			component: Connection,
-			props() {
+			props(): Record<string, any> {
 				return {
 					type: 'wifi',
 					connected: true,
@@ -126,7 +141,7 @@
 		{
 			id: 'volume',
 			component: Item,
-			props() {
+			props(): Record<string, any> {
 				return {
 					topIcon: `img/${getVolumeIcon($volume)}.svg`,
 					topIconAlt: $t('settings.footerWidgets.volume'),

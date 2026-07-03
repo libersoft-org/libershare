@@ -1,14 +1,21 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack, onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
-	import { pushBreadcrumb, popBreadcrumb, navigateBack } from '../../scripts/navigation.ts';
+	import { navigateBack, navigateToAbsolutePath } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { sanitizeFilename } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
-	import { storageLISHPath, storagePath, autoStartSharing, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
+	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress } from '../../scripts/settings.ts';
+
+	/** Basename of a shared file/directory path (last segment, trailing separators stripped). */
+	function shareBaseName(path: string): string {
+		const trimmed = path.replace(/[\\/]+$/, '');
+		const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+		return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
+	}
 
 	function parseChunkSize(value: string): number | null {
 		if (!value.trim()) return null;
@@ -24,7 +31,6 @@
 		dataPath: string;
 		saveToFile?: boolean | undefined;
 		lishFile?: string | undefined;
-		addToSharing?: boolean | undefined;
 		chunkSize?: string | undefined;
 		threads?: string | undefined;
 	}
@@ -62,6 +68,7 @@
 	import { splitPath, joinPath } from '../../scripts/fileBrowser.ts';
 	import { api } from '../../scripts/api.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -74,27 +81,46 @@
 		areaID: string;
 		position?: Position | undefined;
 		onBack?: (() => void) | undefined;
+		/** Prefill the data path (e.g. when sharing a file/directory from local storage). */
+		initialDataPath?: string | undefined;
+		/** When set, Back navigates to this absolute menu path instead of popping one level. */
+		backPathIDs?: string[] | undefined;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack }: Props = $props();
-	let removeBackHandler: (() => void) | null = null;
+	let { areaID, position = CONTENT_POSITIONS.main, onBack, initialDataPath, backPathIDs }: Props = $props();
+
+	// Snapshot the origin path once at creation: the dynamicProps store that carries
+	// backPathIDs through the menu navigation is cleared on the next navigation, so it
+	// must be read eagerly (same reason dataPath snapshots initialDataPath below).
+	const backPath = untrack(() => backPathIDs);
+
+	/** Navigate back, respecting a custom origin path when the form was opened from outside the downloads menu. */
+	function goBack(): void {
+		if (backPath) navigateToAbsolutePath(backPath);
+		else if (onBack) onBack();
+		else navigateBack();
+	}
+
+	// The top-bar / menu Back invokes navigation.navigateBack(), which only routes to a
+	// custom target via the focus back stack (executeBackHandler) — the navArea onBack is
+	// not consulted there. Register goBack on that stack so a Create LISH opened from a
+	// shared origin returns to it instead of popping to the parent Downloads menu.
+	onMount(() => (backPath ? pushBackHandler(goBack) : undefined));
 	// Browse state
-	let browsingInputPath = $state(false);
-	let browsingLISHFile = $state(false);
-	let creating = $state(false);
 	let showOverwriteConfirm = $state(false);
 	let pendingCreateParams = $state<Record<string, any>>({});
 	let createParams = $state<Record<string, any>>({});
 	let browseDirectory = $state('');
 	let browseFile = $state<string | undefined>(undefined);
 	let lishFileName = $state(''); // File name input in LISH file browse dialog
-	// Form state
-	let dataPath = $state($storagePath);
+	// Form state — prefill once from the share path (if any), then user-editable.
+	let dataPath = $state(untrack(() => initialDataPath) ?? $storagePath);
 	let saveToFile = $state(true);
-	let addToSharing = $state($autoStartSharing);
 	let minifyJSON = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
 	let showAdvanced = $state(false);
-	let name = $state('');
+	// Prefill the LISH name from the shared file/directory basename (if any).
+	let name = $state(untrack(() => (initialDataPath ? shareBaseName(initialDataPath) : '')));
+	let nameManuallyEdited = $state(false); // Stop auto-filling the name from the data path once the user types one
 	// LISH file path - editable state, initialized from settings
 	let lishFile = $state($storageLISHPath);
 	let lishFileManuallyEdited = $state(false); // Track if user manually edited the path
@@ -114,6 +140,12 @@
 		}
 	}
 
+	// User typed in the name field — remember it so the data-path picker stops overwriting it.
+	function handleNameInput(newName: string): void {
+		nameManuallyEdited = true;
+		handleNameChange(newName);
+	}
+
 	function handleCompressToggle(): void {
 		compress = !compress;
 		if (lishFile.endsWith('.lish') || lishFile.endsWith('.lish.gz')) {
@@ -121,6 +153,11 @@
 			else if (!compress && lishFile.endsWith('.lish.gz')) lishFile = lishFile.slice(0, -3);
 		}
 	}
+
+	// When the name was prefilled from a shared path, derive the .lish filename from it too.
+	onMount(() => {
+		if (untrack(() => initialDataPath) && name) handleNameChange(name);
+	});
 
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
@@ -130,7 +167,7 @@
 	let errorMessage = $state('');
 
 	async function handleCreate(): Promise<void> {
-		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, addToSharing, chunkSize, threads });
+		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, chunkSize, threads });
 		errorMessage = validationError ? getLISHCreateErrorMessage(validationError, $t) : '';
 		if (!errorMessage) {
 			// Check if data path exists and is not an empty directory
@@ -160,7 +197,9 @@
 				params['minifyJSON'] = minifyJSON;
 				params['compress'] = compress;
 			}
-			if (addToSharing) params['addToSharing'] = addToSharing;
+			// Apply global auto-start settings — controlled in Settings → Download.
+			if ($autoStartSharing) params['addToSharing'] = true;
+			if ($autoStartDownloading) params['addToDownloading'] = true;
 			// Only pass non-default advanced options
 			const parsedChunkSize = parseChunkSize(chunkSize);
 			if (parsedChunkSize !== null && parsedChunkSize !== 1024 * 1024) params['chunkSize'] = parsedChunkSize;
@@ -195,102 +234,60 @@
 		activateArea(areaID);
 	}
 
-	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack }));
-
+	const navHandle = createNavArea(() => ({ areaID, position, activate: true, onBack: goBack }));
+	const inputPathSubPage = createSubPage(navHandle, () => areaID);
+	const outputPathSubPage = createSubPage(navHandle, () => areaID);
+	const progressSubPage = createSubPage(navHandle, () => areaID);
 	let progressDone = false;
 
 	function openProgressPage(params: Record<string, any>): void {
 		createParams = params;
-		creating = true;
 		progressDone = false;
-		navHandle.pause();
-		pushBreadcrumb($t('lish.create.progress.title'));
-		removeBackHandler = pushBackHandler(handleProgressNavBack);
+		progressSubPage.enter($t('lish.create.progress.title'), () => void handleProgressNavBack());
 	}
 
-	function handleProgressNavBack(): void {
-		if (progressDone) handleProgressDone();
-		else handleProgressBack();
+	async function handleProgressNavBack(): Promise<void> {
+		if (progressDone) await handleProgressDone();
+		else await handleProgressBack();
 	}
 
 	async function handleProgressBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		creating = false;
 		progressDone = false;
-		await tick();
-		navHandle.resume();
-		await tick();
-		activateArea(areaID);
+		await progressSubPage.exit();
 	}
 
-	function handleProgressDone(): void {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
+	async function handleProgressDone(): Promise<void> {
 		progressDone = false;
-		navigateBack();
+		await progressSubPage.exit();
+		goBack();
 	}
 
 	function openInputPathBrowse(): void {
 		const { directory, fileName } = splitPath(dataPath.trim(), $storagePath);
 		browseDirectory = directory;
 		browseFile = fileName;
-		browsingInputPath = true;
-		navHandle.pause();
-		pushBreadcrumb($t('lish.create.dataPath'));
-		removeBackHandler = pushBackHandler(handleBrowseBack);
+		inputPathSubPage.enter($t('lish.create.dataPath'));
 	}
 
 	function handleInputPathSelect(path: string): void {
 		dataPath = path;
-		handleBrowseBack();
+		// Mirror the picked file/directory name into the LISH name, unless the user already typed one.
+		if (!nameManuallyEdited) handleNameChange(shareBaseName(path));
+		void inputPathSubPage.exit();
 	}
 
 	function openOutputPathBrowse(): void {
 		const { directory, fileName } = splitPath(lishFile.trim() || $storageLISHPath, $storageLISHPath);
 		browseDirectory = directory;
 		lishFileName = fileName || '';
-		browsingLISHFile = true;
-		navHandle.pause();
-		pushBreadcrumb($t('lish.create.lishFile'));
-		removeBackHandler = pushBackHandler(handleOutputBrowseBack);
+		outputPathSubPage.enter($t('lish.create.lishFile'));
 	}
 
 	function handleOutputPathSelect(directoryPath: string): void {
 		const fileName = lishFileName.trim() || 'output.lish';
 		lishFile = joinPath(directoryPath, fileName);
 		lishFileManuallyEdited = true;
-		handleOutputBrowseBack();
-	}
-
-	async function handleOutputBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingLISHFile = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
-	}
-
-	async function handleBrowseBack(): Promise<void> {
-		if (removeBackHandler) {
-			removeBackHandler();
-			removeBackHandler = null;
-		}
-		popBreadcrumb();
-		browsingInputPath = false;
-		await tick();
-		navHandle.resume();
-		activateArea(areaID);
+		void outputPathSubPage.exit();
 	}
 </script>
 
@@ -332,17 +329,17 @@
 	}
 </style>
 
-{#if browsingInputPath}
-	<FileBrowser {areaID} {position} initialPath={browseDirectory} initialFile={browseFile} showPath selectDirectoryButton selectFileButton onSelect={handleInputPathSelect} onBack={handleBrowseBack} />
-{:else if browsingLISHFile}
-	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton saveFileName={lishFileName} onSaveFileNameChange={v => (lishFileName = v)} onSelect={handleOutputPathSelect} onBack={handleOutputBrowseBack} />
-{:else if creating}
-	<DownloadLISHProgress {areaID} {position} params={createParams} onBack={handleProgressNavBack} onComplete={() => (progressDone = true)} />
+{#if inputPathSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={browseDirectory} initialFile={browseFile} showPath selectDirectoryButton selectFileButton onSelect={handleInputPathSelect} onBack={() => void inputPathSubPage.exit()} />
+{:else if outputPathSubPage.active}
+	<FileBrowser {areaID} {position} initialPath={browseDirectory} showPath directoriesOnly selectDirectoryButton saveFileName={lishFileName} onSaveFileNameChange={v => (lishFileName = v)} onSelect={handleOutputPathSelect} onBack={() => void outputPathSubPage.exit()} />
+{:else if progressSubPage.active}
+	<DownloadLISHProgress {areaID} {position} params={createParams} onBack={() => void handleProgressNavBack()} onComplete={() => (progressDone = true)} />
 {:else}
 	<div class="create">
 		<div class="container">
 			<!-- Name (optional) -->
-			<Input value={name} onchange={handleNameChange} label={`${$t('common.name')} (${$t('common.optional')})`} position={[0, 0]} />
+			<Input value={name} onchange={handleNameInput} label={`${$t('common.name')} (${$t('common.optional')})`} position={[0, 0]} />
 			<!-- Description (optional) -->
 			<Input bind:value={description} label={`${$t('common.description')} (${$t('common.optional')})`} multiline rows={3} position={[0, 1]} />
 			<!-- Data Path (required) -->
@@ -359,36 +356,34 @@
 					<Button icon="/img/directory.svg" position={[1, 4]} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
 			{/if}
-			<!-- Add to Sharing Switch -->
-			<SwitchRow label={$t('lish.import.autoStartSharing') + ':'} checked={addToSharing} position={[0, 5]} onConfirm={() => (addToSharing = !addToSharing)} />
 			<!-- Advanced Settings Toggle -->
-			<Button icon={showAdvanced ? '/img/up.svg' : '/img/down.svg'} label={$t(showAdvanced ? 'lish.create.hideAdvanced' : 'lish.create.showAdvanced')} position={[0, 6]} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+			<Button icon={showAdvanced ? '/img/up.svg' : '/img/down.svg'} label={$t(showAdvanced ? 'lish.create.hideAdvanced' : 'lish.create.showAdvanced')} position={[0, 5]} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 			{#if showAdvanced}
 				{#if saveToFile}
 					<!-- Minify JSON Switch -->
-					<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} position={[0, 7]} onConfirm={() => (minifyJSON = !minifyJSON)} />
+					<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} position={[0, 6]} onConfirm={() => (minifyJSON = !minifyJSON)} />
 					<!-- Compress Switch -->
-					<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 8]} onConfirm={handleCompressToggle} />
+					<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 7]} onConfirm={handleCompressToggle} />
 				{/if}
 				<!-- Chunk Size -->
-				<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 9]} />
+				<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 8]} />
 				<!-- Hash Algorithm -->
 				<div>
 					<div class="label">{$t('lish.create.algorithm')}:</div>
 					<div class="algo-selector">
 						{#each SUPPORTED_ALGOS as algo, i}
-							<Button label={algo} position={[i, 10]} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+							<Button label={algo} position={[i, 9]} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 						{/each}
 					</div>
 				</div>
 				<!-- Threads -->
-				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 11]} />
+				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 10]} />
 			{/if}
 			<Alert type="error" message={errorMessage} />
 		</div>
-		<ButtonBar justify="center">
-			<Button icon="/img/plus.svg" label={$t('lish.create.create')} position={[0, 12]} onConfirm={handleCreate} />
-			<Button icon="/img/back.svg" label={$t('common.back')} position={[1, 12]} onConfirm={onBack} />
+		<ButtonBar justify="center" basePosition={[0, 11]}>
+			<Button icon="/img/plus.svg" label={$t('common.createLISH')} onConfirm={handleCreate} />
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={goBack} />
 		</ButtonBar>
 	</div>
 {/if}

@@ -11,6 +11,7 @@ crate-type = ["lib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+getrandom = "0.3"
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-window-state = "2"
 

@@ -62,7 +62,7 @@
 			const result = await api.fs.writeText(filePath, content);
 			if (result.success) {
 				originalContent = content;
-				addNotification($t('fileBrowser.fileSaved', { name: fileName }));
+				addNotification($t('fileBrowser.fileSaved', { name: fileName }), 'success');
 			} else error = 'Failed to save file';
 		} catch (e) {
 			error = translateError(e);
@@ -83,50 +83,50 @@
 	}
 
 	const toolbarAreaHandlers = {
-		up() {
+		up(): boolean {
 			onUp?.();
 			return true;
 		},
-		down() {
+		down(): boolean {
 			if (!loading && !error) activateArea(editorAreaID);
 			return true;
 		},
-		left() {
+		left(): boolean {
 			if (selectedToolbarIndex > 0) selectedToolbarIndex--;
 			return true;
 		},
-		right() {
+		right(): boolean {
 			if (selectedToolbarIndex < toolbarActions.length - 1) selectedToolbarIndex++;
 			return true;
 		},
-		confirmUp() {
+		confirmUp(): void {
 			const action = toolbarActions[selectedToolbarIndex]!;
 			if (!action.disabled) handleToolbarAction(action.id);
 		},
-		back() {
+		back(): void {
 			onBack();
 		},
 	};
 
 	const editorAreaHandlers = {
-		up() {
+		up(): boolean {
 			inputRef?.blur();
 			activateArea(toolbarAreaID);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			return true;
 		},
-		left() {
+		left(): boolean {
 			return false;
 		},
-		right() {
+		right(): boolean {
 			return false;
 		},
-		confirmUp() {
+		confirmUp(): void {
 			inputRef?.focus();
 		},
-		back() {
+		back(): void {
 			inputRef?.blur();
 			activateArea(toolbarAreaID);
 		},
@@ -193,7 +193,7 @@
 	.editor-wrapper :global(textarea) {
 		flex: 1;
 		resize: none;
-		font-family: 'Ubuntu Mono';
+		font-family: var(--font-mono);
 		overflow-y: auto;
 	}
 </style>

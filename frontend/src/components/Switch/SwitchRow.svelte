@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getContext, onMount } from 'svelte';
+	import { play as playSound } from '../../scripts/audio.ts';
 	import { type NavAreaController, type NavPos, navItem } from '../../scripts/navArea.svelte.ts';
 	import Row from '../Row/Row.svelte';
 	import Switch from './Switch.svelte';
@@ -8,8 +9,8 @@
 		checked: boolean;
 		selected?: boolean;
 		disabled?: boolean;
-		onToggle?: () => void;
-		onConfirm?: () => void;
+		onToggle?: (() => void) | undefined;
+		onConfirm?: (() => void) | undefined;
 		/** Position in NavArea grid [x, y]. When set, registers with parent NavArea. */
 		position?: NavPos | undefined;
 		el?: HTMLElement | undefined;
@@ -24,7 +25,8 @@
 				navItem(
 					() => position!,
 					() => el,
-					onToggle ?? onConfirm
+					onToggle ?? onConfirm,
+					{ noDelegateMouse: true }
 				)
 			);
 		}
@@ -46,7 +48,19 @@
 </style>
 
 <Row selected={isSelected} {disabled} bind:el>
-	<div class="switch-row">
+	<div
+		class="switch-row"
+		onclick={() => {
+			playSound('confirm');
+			(onToggle ?? onConfirm)?.();
+		}}
+		onkeydown={e => {
+			if (e.key === 'Enter') (onToggle ?? onConfirm)?.();
+		}}
+		role="switch"
+		aria-checked={checked}
+		tabindex="-1"
+	>
 		<span class="label">{label}</span>
 		<Switch {checked} selected={isSelected} {disabled} />
 	</div>

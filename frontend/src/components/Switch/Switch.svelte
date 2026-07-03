@@ -82,6 +82,6 @@
 	}
 </style>
 
-<div class="switch">
+<div class="switch" role="switch" aria-checked={checked} tabindex="-1">
 	<span class="slider {mounted ? 'transition' : ''}" class:checked class:selected class:disabled></span>
 </div>

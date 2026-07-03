@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import type { NavAreaController } from '../../scripts/navArea.svelte.ts';
+	import { type NavAreaController } from '../../scripts/navArea.svelte.ts';
 	import Row from '../../components/Row/Row.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	interface Props {

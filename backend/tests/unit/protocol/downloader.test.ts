@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Downloader } from '../../../src/protocol/downloader.ts';
+import { ChunkDownloader } from '../../../src/protocol/chunk-downloader.ts';
 import type { IStoredLISH, LISHid, ChunkID } from '@shared';
+import { CodedError, ErrorCodes } from '@shared';
 import type { MissingChunk } from '../../../src/lish/data-server.ts';
 import { MockNetwork } from '../helpers/mock-network.ts';
 
@@ -10,6 +12,11 @@ import { MockNetwork } from '../helpers/mock-network.ts';
 
 type ChunkResult = Uint8Array | null | Error;
 type ManifestResult = IStoredLISH | null;
+
+interface ChunkVerifyResult {
+	valid: boolean;
+	actualHash: string;
+}
 
 class MockLISHClient {
 	requestChunkResult: ChunkResult = new Uint8Array(1024).fill(0xff);
@@ -62,8 +69,35 @@ class MockDataServer {
 		this.missingChunks = this.missingChunks.filter(c => c.chunkID !== chunkID);
 	}
 
+	writeChunkError: Error | null = null;
+	writeChunkErrorCount = 0; // how many more times to throw before succeeding
 	async writeChunk(_dir: string, _lish: IStoredLISH, fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
+		if (this.writeChunkError && this.writeChunkErrorCount > 0) {
+			this.writeChunkErrorCount--;
+			throw this.writeChunkError;
+		}
 		this.writtenChunks.push({ fileIndex, chunkIndex, data });
+	}
+
+	incrementDownloadedBytes(_lishID: LISHid, _bytes: number): void {
+		/* no-op for tests */
+	}
+
+	resetFileChunks(_lishID: LISHid, fileIndex: number): number {
+		// Re-add all chunks for this fileIndex to missingChunks
+		const lish = [...this.storedLishs.values()][0];
+		if (!lish?.files?.[fileIndex]) return 0;
+		const file = lish.files[fileIndex]!;
+		let resetCount = 0;
+		for (let i = 0; i < file.checksums.length; i++) {
+			const chunkID = file.checksums[i]! as ChunkID;
+			if (this.downloadedChunks.has(chunkID)) {
+				this.downloadedChunks.delete(chunkID);
+				this.missingChunks.push({ chunkID, fileIndex, chunkIndex: i });
+				resetCount++;
+			}
+		}
+		return resetCount;
 	}
 
 	add(lish: IStoredLISH): void {
@@ -153,14 +187,14 @@ describe('Downloader – disable / enable state', () => {
 		expect(downloader.isDisabled()).toBe(true);
 	});
 
-	it('enable() after disable sets isDisabled to false', () => {
+	it('enable() after disable sets isDisabled to false', async () => {
 		downloader.disable();
-		downloader.enable();
+		await downloader.enable();
 		expect(downloader.isDisabled()).toBe(false);
 	});
 
-	it('enable() without prior disable does not throw', () => {
-		expect(() => downloader.enable()).not.toThrow();
+	it('enable() without prior disable does not throw', async () => {
+		await expect(downloader.enable()).resolves.toBeUndefined();
 	});
 
 	it('multiple disable calls keep isDisabled true', () => {
@@ -183,16 +217,23 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		const lish = makeLISH();
 		await dl.initFromManifest(lish);
 
-		const waitIfDisabled = (priv(dl) as any).waitIfDisabled.bind(dl);
+		const pc = priv(dl)['pauseController'] as { waitIfDisabled: () => Promise<void>; enableResolvers: unknown[] };
+		const waitIfDisabled = pc.waitIfDisabled.bind(pc);
 
 		dl.disable();
 
 		// Simulate 3 peerLoops calling waitIfDisabled concurrently
 		const unblocked = [false, false, false];
 		const waiters = [
-			waitIfDisabled().then(() => { unblocked[0] = true; }),
-			waitIfDisabled().then(() => { unblocked[1] = true; }),
-			waitIfDisabled().then(() => { unblocked[2] = true; }),
+			waitIfDisabled().then(() => {
+				unblocked[0] = true;
+			}),
+			waitIfDisabled().then(() => {
+				unblocked[1] = true;
+			}),
+			waitIfDisabled().then(() => {
+				unblocked[2] = true;
+			}),
 		];
 
 		// Give event loop a tick — all should still be blocked
@@ -200,7 +241,7 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		expect(unblocked).toEqual([false, false, false]);
 
 		// Resume — should unblock ALL three
-		dl.enable();
+		await dl.enable();
 		await Promise.all(waiters);
 
 		expect(unblocked).toEqual([true, true, true]);
@@ -213,7 +254,8 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 		await dl.initFromManifest(makeLISH());
 
-		const waitIfDisabled = (priv(dl) as any).waitIfDisabled.bind(dl);
+		const pc = priv(dl)['pauseController'] as { waitIfDisabled: () => Promise<void>; enableResolvers: unknown[] };
+		const waitIfDisabled = pc.waitIfDisabled.bind(pc);
 		dl.disable();
 
 		let countUnblocked = 0;
@@ -223,7 +265,7 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		await new Promise(r => setTimeout(r, 20));
 		expect(countUnblocked).toBe(0);
 
-		dl.enable();
+		await dl.enable();
 		await Promise.all([w1, w2]);
 		expect(countUnblocked).toBe(2);
 	});
@@ -235,7 +277,8 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 		await dl.initFromManifest(makeLISH());
 
-		const waitIfDisabled = (priv(dl) as any).waitIfDisabled.bind(dl);
+		const pc = priv(dl)['pauseController'] as { waitIfDisabled: () => Promise<void>; enableResolvers: unknown[] };
+		const waitIfDisabled = pc.waitIfDisabled.bind(pc);
 		const start = Date.now();
 		await waitIfDisabled();
 		expect(Date.now() - start).toBeLessThan(20);
@@ -248,7 +291,8 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 		await dl.initFromManifest(makeLISH());
 
-		const waitIfDisabled = (priv(dl) as any).waitIfDisabled.bind(dl);
+		const pc = priv(dl)['pauseController'] as { waitIfDisabled: () => Promise<void>; enableResolvers: unknown[] };
+		const waitIfDisabled = pc.waitIfDisabled.bind(pc);
 
 		// Cycle 1
 		dl.disable();
@@ -256,7 +300,7 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		const w1a = waitIfDisabled().then(() => c1++);
 		const w1b = waitIfDisabled().then(() => c1++);
 		await new Promise(r => setTimeout(r, 20));
-		dl.enable();
+		await dl.enable();
 		await Promise.all([w1a, w1b]);
 		expect(c1).toBe(2);
 
@@ -267,7 +311,7 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		const w2b = waitIfDisabled().then(() => c2++);
 		const w2c = waitIfDisabled().then(() => c2++);
 		await new Promise(r => setTimeout(r, 20));
-		dl.enable();
+		await dl.enable();
 		await Promise.all([w2a, w2b, w2c]);
 		expect(c2).toBe(3);
 	});
@@ -279,20 +323,21 @@ describe('Downloader – waitIfDisabled with multiple concurrent waiters', () =>
 		const dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 		await dl.initFromManifest(makeLISH());
 
-		const waitIfDisabled = (priv(dl) as any).waitIfDisabled.bind(dl);
+		const pc = priv(dl)['pauseController'] as { waitIfDisabled: () => Promise<void>; enableResolvers: unknown[] };
+		const waitIfDisabled = pc.waitIfDisabled.bind(pc);
 
 		dl.disable();
 		const w = waitIfDisabled();
 		await new Promise(r => setTimeout(r, 10));
 
 		// Before resume: 1 resolver
-		expect(((priv(dl) as any).enableResolvers as unknown[]).length).toBe(1);
+		expect(pc.enableResolvers.length).toBe(1);
 
 		dl.enable();
 		await w;
 
 		// After resume: cleared (new array)
-		expect(((priv(dl) as any).enableResolvers as unknown[]).length).toBe(0);
+		expect(pc.enableResolvers.length).toBe(0);
 	});
 });
 
@@ -323,14 +368,14 @@ describe('Downloader – speed samples rolling window', () => {
 	});
 
 	it('speedSamples array starts empty', () => {
-		const samples = priv(downloader)['speedSamples'] as Array<{ time: number; bytes: number }>;
+		const samples = (priv(downloader)['progressReporter'] as { speedSamples: Array<{ time: number; bytes: number }> }).speedSamples;
 		expect(samples).toHaveLength(0);
 	});
 
 	it('rolling window keeps only samples within last 10 seconds', () => {
 		const p = priv(downloader);
 		const now = Date.now();
-		const samples = p['speedSamples'] as Array<{ time: number; bytes: number }>;
+		const samples = (p['progressReporter'] as { speedSamples: Array<{ time: number; bytes: number }> }).speedSamples;
 
 		// Inject samples directly (as downloadChunks does internally)
 		samples.push({ time: now - 15000, bytes: 50000 }); // older than 10s
@@ -348,7 +393,7 @@ describe('Downloader – speed samples rolling window', () => {
 	it('bytesPerSecond calculation uses rolling window correctly', () => {
 		const p = priv(downloader);
 		const now = Date.now();
-		const samples = p['speedSamples'] as Array<{ time: number; bytes: number }>;
+		const samples = (p['progressReporter'] as { speedSamples: Array<{ time: number; bytes: number }> }).speedSamples;
 
 		// 200,000 bytes over exactly 2 seconds → 100,000 B/s
 		samples.push({ time: now - 2000, bytes: 100000 });
@@ -366,7 +411,7 @@ describe('Downloader – speed samples rolling window', () => {
 	it('bytesPerSecond is 0 when window is too short', () => {
 		const p = priv(downloader);
 		const now = Date.now();
-		const samples = p['speedSamples'] as Array<{ time: number; bytes: number }>;
+		const samples = (p['progressReporter'] as { speedSamples: Array<{ time: number; bytes: number }> }).speedSamples;
 
 		// Only one sample, so windowSec falls back to elapsed which is 0
 		samples.push({ time: now, bytes: 999999 });
@@ -399,75 +444,74 @@ describe('Downloader – downloadChunk private method', () => {
 		// (priv access is needed to call the private downloadChunk method)
 	});
 
+	// Access pattern: downloadChunk is now a private method on ChunkDownloader (refactored out of Downloader).
+	// Tests reach it via priv(downloader).chunkDownloader with any-cast for TS-private bypass.
+	type DownloadChunkResult = { data: Uint8Array } | 'skip-chunk' | 'drop-peer';
+	type ChunkDownloaderWithPrivates = { downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<DownloadChunkResult> };
+	const getChunkDownloader = (dl: Downloader): ChunkDownloaderWithPrivates => priv(dl)['chunkDownloader'] as ChunkDownloaderWithPrivates;
+
 	it('returns { data } when client returns Uint8Array', async () => {
 		const chunkData = new Uint8Array(512).fill(0x42);
 		mockClient.requestChunkResult = chunkData;
 
-		// Access private method via any-cast
-		const result = await (downloader as never as {
-			downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
-		}).downloadChunk(mockClient, 'chunk-001' as ChunkID);
+		const result = await getChunkDownloader(downloader).downloadChunk(mockClient, 'chunk-001' as ChunkID);
 
-		expect(result).not.toBe('not_available');
-		expect(result).not.toBe('error');
+		expect(result).not.toBe('skip-chunk');
+		expect(result).not.toBe('drop-peer');
 		expect((result as { data: Uint8Array }).data).toEqual(chunkData);
 	});
 
-	it('returns "not_available" when client returns null', async () => {
-		mockClient.requestChunkResult = null;
+	it('returns "skip-chunk" on PEER_BUSY (chunk-specific transient)', async () => {
+		mockClient.requestChunkResult = new CodedError(ErrorCodes.PEER_BUSY, 'test');
 
-		const result = await (downloader as never as {
-			downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
-		}).downloadChunk(mockClient, 'chunk-002' as ChunkID);
+		const result = await getChunkDownloader(downloader).downloadChunk(mockClient, 'chunk-002' as ChunkID);
 
-		expect(result).toBe('not_available');
+		expect(result).toBe('skip-chunk');
 	});
 
-	it('returns "error" when client throws', async () => {
+	it('returns "drop-peer" on generic error', async () => {
 		mockClient.requestChunkResult = new Error('stream reset');
 
-		const result = await (downloader as never as {
-			downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'not_available' | 'error'>;
-		}).downloadChunk(mockClient, 'chunk-003' as ChunkID);
+		const result = await getChunkDownloader(downloader).downloadChunk(mockClient, 'chunk-003' as ChunkID);
 
-		expect(result).toBe('error');
+		expect(result).toBe('drop-peer');
 	});
 });
 
-describe('Downloader – failedPeers Set', () => {
-	it('failedPeers starts empty', () => {
+describe('Downloader – bannedPeers Set', () => {
+	it('bannedPeers starts empty', () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
-		const failedPeers = priv(downloader)['failedPeers'] as Set<string>;
-		expect(failedPeers.size).toBe(0);
+		const bannedPeers = (priv(downloader)['peerManager'] as { bannedPeers: Set<string> }).bannedPeers;
+		expect(bannedPeers.size).toBe(0);
 	});
 
-	it('adding to failedPeers prevents re-use of peer within same cycle', () => {
+	it('adding to bannedPeers prevents re-use of peer within same cycle', () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
-		const failedPeers = priv(downloader)['failedPeers'] as Set<string>;
-		failedPeers.add('peer-bad-001');
-		failedPeers.add('peer-bad-002');
+		const bannedPeers = (priv(downloader)['peerManager'] as { bannedPeers: Set<string> }).bannedPeers;
+		bannedPeers.add('peer-bad-001');
+		bannedPeers.add('peer-bad-002');
 
-		expect(failedPeers.has('peer-bad-001')).toBe(true);
-		expect(failedPeers.has('peer-bad-002')).toBe(true);
-		expect(failedPeers.has('peer-ok-003')).toBe(false);
+		expect(bannedPeers.has('peer-bad-001')).toBe(true);
+		expect(bannedPeers.has('peer-bad-002')).toBe(true);
+		expect(bannedPeers.has('peer-ok-003')).toBe(false);
 	});
 
-	it('clearing failedPeers allows re-probe (simulates retry cycle)', () => {
+	it('clearing bannedPeers allows re-probe (simulates manual unban)', () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
-		const failedPeers = priv(downloader)['failedPeers'] as Set<string>;
-		failedPeers.add('peer-retry');
-		failedPeers.clear();
+		const bannedPeers = (priv(downloader)['peerManager'] as { bannedPeers: Set<string> }).bannedPeers;
+		bannedPeers.add('peer-retry');
+		bannedPeers.clear();
 
-		expect(failedPeers.has('peer-retry')).toBe(false);
+		expect(bannedPeers.has('peer-retry')).toBe(false);
 	});
 });
 
@@ -477,7 +521,7 @@ describe('Downloader – peers Map management', () => {
 		const ds = new MockDataServer();
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
-		const peers = priv(downloader)['peers'] as Map<string, unknown>;
+		const peers = (priv(downloader)['peerManager'] as { peers: Map<string, unknown> }).peers;
 		expect(peers.size).toBe(0);
 	});
 
@@ -486,7 +530,7 @@ describe('Downloader – peers Map management', () => {
 		const ds = new MockDataServer();
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
-		const peers = priv(downloader)['peers'] as Map<string, MockLISHClient>;
+		const peers = (priv(downloader)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
 		const client = new MockLISHClient();
 		peers.set('peer-injected', client);
 
@@ -499,7 +543,7 @@ describe('Downloader – peers Map management', () => {
 		const ds = new MockDataServer();
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
-		const peers = priv(downloader)['peers'] as Map<string, MockLISHClient>;
+		const peers = (priv(downloader)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
 		peers.set('peer-to-remove', new MockLISHClient());
 		peers.delete('peer-to-remove');
 
@@ -514,10 +558,12 @@ describe('Downloader – progress callback', () => {
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
 		let received: unknown = null;
-		downloader.setProgressCallback(info => { received = info; });
+		downloader.setProgressCallback(info => {
+			received = info;
+		});
 
-		// Trigger callback directly via the private field
-		const cb = priv(downloader)['onProgress'] as ((info: unknown) => void) | undefined;
+		// Trigger callback directly via the private field on progressReporter
+		const cb = (priv(downloader)['progressReporter'] as { cb?: (info: unknown) => void }).cb;
 		expect(cb).toBeDefined();
 
 		cb!({ downloadedChunks: 3, totalChunks: 10, peers: 2, bytesPerSecond: 50000 });
@@ -530,7 +576,9 @@ describe('Downloader – progress callback', () => {
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
 
 		let receivedID: string | undefined;
-		downloader.setManifestImportedCallback(id => { receivedID = id; });
+		downloader.setManifestImportedCallback(id => {
+			receivedID = id;
+		});
 
 		const cb = priv(downloader)['onManifestImported'] as ((id: string) => void) | undefined;
 		expect(cb).toBeDefined();
@@ -595,28 +643,16 @@ describe('Downloader – initFromManifest state transitions', () => {
 		expect(priv(downloader)['needsManifest']).toBe(true);
 	});
 
-	it('initFromManifest subscribes to the correct topic', async () => {
-		const net = new MockNetwork();
-		const ds = new MockDataServer();
-		const lish = makeLISH();
-		ds.completeLishs.add(lish.id);
-		ds.storedLishs.set(lish.id, lish);
-
-		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-xyz');
-		await downloader.initFromManifest(lish);
-
-		expect(net.subscribedTopics).toHaveLength(1);
-		expect(net.subscribedTopics[0]!.topic).toBe('lish/net-xyz');
-	});
+	// NOTE: Previously asserted that initFromManifest subscribes on `network.subscribe(lishTopic(networkID))`.
+	// Subscribe ownership moved out of Downloader to the orchestrator (lishnets / DataServer) in the
+	// orchestration refactor, so Downloader no longer talks to Network for pubsub subscriptions. Test
+	// removed; the new contract is covered by the lishnets integration tests.
 
 	it('missingChunks is populated from dataServer after initFromManifest', async () => {
 		const net = new MockNetwork();
 		const ds = new MockDataServer();
 		const lish = makeLISH();
-		ds.missingChunks = [
-			makeMissingChunk('chunk-a' as ChunkID),
-			makeMissingChunk('chunk-b' as ChunkID, 0, 1),
-		];
+		ds.missingChunks = [makeMissingChunk('chunk-a' as ChunkID), makeMissingChunk('chunk-b' as ChunkID, 0, 1)];
 		ds.storedLishs.set(lish.id, lish);
 
 		const downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
@@ -645,7 +681,8 @@ describe('Downloader – path traversal protection', () => {
 	}
 
 	function callSafePath(downloader: Downloader, relativePath: string): string {
-		return (downloader as any).safePath(relativePath);
+		const fa = (downloader as unknown as { fileAllocator: { safePath: (p: string) => string } }).fileAllocator;
+		return fa.safePath(relativePath);
 	}
 
 	// --- Legitimate paths (should pass) ---
@@ -769,7 +806,7 @@ describe('Downloader – path traversal protection', () => {
 	});
 
 	it('allows . (current dir)', () => {
-		const dl = makeDownloader();
+		makeDownloader();
 		// resolve(downloadDir, '.') = downloadDir — but startsWith(downloadDir + sep) fails
 		// because it equals downloadDir exactly, without trailing sep
 		// This is an edge case — '.' as a file path is unusual but harmless
@@ -795,7 +832,7 @@ describe('Downloader – chunk integrity verification', () => {
 	}
 
 	// Simulate the inline verification logic extracted from peerLoop
-	function verifyChunk(data: Uint8Array, expectedChunkID: string, algo: string): { valid: boolean; actualHash: string } {
+	function verifyChunk(data: Uint8Array, expectedChunkID: string, algo: string): ChunkVerifyResult {
 		const hasher = new Bun.CryptoHasher(algo as any);
 		hasher.update(data);
 		const actualHash = hasher.digest('hex');
@@ -840,11 +877,11 @@ describe('Downloader – chunk integrity verification', () => {
 	// --- Attack: bit-flip in chunk data ---
 
 	it('detects single bit flip in chunk data', () => {
-		const data = new Uint8Array(1024).fill(0xAA);
+		const data = new Uint8Array(1024).fill(0xaa);
 		const expected = sha256(data);
 		// Flip one bit
 		const corrupted = new Uint8Array(data);
-		corrupted[512] = 0xAB;
+		corrupted[512] = 0xab;
 		const result = verifyChunk(corrupted, expected, 'sha256');
 		expect(result.valid).toBe(false);
 	});
@@ -875,7 +912,7 @@ describe('Downloader – chunk integrity verification', () => {
 	// --- Attack: peer sends shorter data ---
 
 	it('detects truncated chunk data (peer sends partial chunk)', () => {
-		const fullData = new Uint8Array(1024).fill(0xFF);
+		const fullData = new Uint8Array(1024).fill(0xff);
 		const expected = sha256(fullData);
 		// Peer sends only half
 		const partial = fullData.slice(0, 512);
@@ -926,8 +963,8 @@ describe('Downloader – chunk integrity verification', () => {
 	// --- Corruption counter & peer banning logic ---
 
 	it('MAX_CORRUPT_CHUNKS is 3', () => {
-		// Access static property
-		expect((Downloader as any).MAX_CORRUPT_CHUNKS).toBe(3);
+		// Constant lives on ChunkDownloader after orchestrator refactor
+		expect((ChunkDownloader as any).MAX_CORRUPT_CHUNKS).toBe(3);
 	});
 
 	it('simulates peer ban after 3 corrupt chunks', () => {
@@ -1025,11 +1062,7 @@ describe('Downloader – chunk integrity verification', () => {
 // ---------------------------------------------------------------------------
 
 describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
-	const LISH_ALGOS = [
-		'sha256', 'sha384', 'sha512', 'sha512-256',
-		'sha3-256', 'sha3-384', 'sha3-512',
-		'blake2b256', 'blake2b512', 'blake2s256',
-	] as const;
+	const LISH_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
 
 	function hashWith(algo: string, data: Uint8Array): string {
 		const h = new Bun.CryptoHasher(algo as any);
@@ -1037,7 +1070,7 @@ describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
 		return h.digest('hex');
 	}
 
-	function verifyChunk(data: Uint8Array, expectedChunkID: string, algo: string): { valid: boolean; actualHash: string } {
+	function verifyChunk(data: Uint8Array, expectedChunkID: string, algo: string): ChunkVerifyResult {
 		const h = new Bun.CryptoHasher(algo as any);
 		h.update(data);
 		const actualHash = h.digest('hex');
@@ -1057,7 +1090,7 @@ describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
 		it(`${algo}: rejects wrong data`, () => {
 			const expected = hashWith(algo, testData);
 			const bad = new Uint8Array(testData);
-			bad[0] ^= 0xFF; // flip first byte
+			bad[0] = bad[0]! ^ 0xff; // flip first byte
 			const result = verifyChunk(bad, expected, algo);
 			expect(result.valid).toBe(false);
 		});
@@ -1074,11 +1107,18 @@ describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
 		it(`${algo}: produces correct hash length`, () => {
 			const hash = hashWith(algo, testData);
 			const expectedLengths: Record<string, number> = {
-				'sha256': 64, 'sha384': 96, 'sha512': 128, 'sha512-256': 64,
-				'sha3-256': 64, 'sha3-384': 96, 'sha3-512': 128,
-				'blake2b256': 64, 'blake2b512': 128, 'blake2s256': 64,
+				sha256: 64,
+				sha384: 96,
+				sha512: 128,
+				'sha512-256': 64,
+				'sha3-256': 64,
+				'sha3-384': 96,
+				'sha3-512': 128,
+				blake2b256: 64,
+				blake2b512: 128,
+				blake2s256: 64,
 			};
-			expect(hash.length).toBe(expectedLengths[algo]);
+			expect(hash.length).toBe(expectedLengths[algo]!);
 		});
 	}
 
@@ -1099,5 +1139,143 @@ describe('Downloader – chunk integrity with all LISH hash algorithms', () => {
 			const elapsed = Date.now() - start;
 			expect(elapsed).toBeLessThan(200);
 		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Inline retry tests
+// ---------------------------------------------------------------------------
+
+describe('Downloader — inline ENOENT recovery', () => {
+	let dataServer: MockDataServer;
+	let network: MockNetwork;
+	let downloader: Downloader;
+
+	beforeEach(() => {
+		dataServer = new MockDataServer();
+		network = new MockNetwork();
+		downloader = new Downloader('/tmp/test', network as any, dataServer as any, ['net1']);
+	});
+
+	afterEach(() => {
+		downloader.destroy().catch(() => {});
+	});
+
+	it('retryCallback is set and callable', () => {
+		const calls: any[] = [];
+		downloader.setRetryCallback(info => calls.push(info));
+		expect(calls.length).toBe(0);
+	});
+
+	it('has fileReallocAttempts and writeRetryCount fields', async () => {
+		// chunkDownloader is created in initFromManifest; retry state lives there now
+		await downloader.initFromManifest(makeLISH());
+		const cd = priv(downloader)['chunkDownloader'] as { fileReallocAttempts: Map<number, number>; writeRetryCount: number };
+		expect(cd.fileReallocAttempts).toBeInstanceOf(Map);
+		expect(cd.writeRetryCount).toBe(0);
+	});
+
+	it('MAX_FILE_REALLOC is 3', () => {
+		expect((ChunkDownloader as any).MAX_FILE_REALLOC).toBe(3);
+	});
+
+	it('MAX_WRITE_RETRIES is 5', () => {
+		expect((ChunkDownloader as any).MAX_WRITE_RETRIES).toBe(5);
+	});
+
+	it('enable() resets fileReallocAttempts and writeRetryCount', async () => {
+		const lish = makeLISH();
+		dataServer.add(lish);
+		dataServer.allChunkCount = 1;
+		dataServer.missingChunks = [makeMissingChunk('abc123' as ChunkID)];
+		await downloader.initFromManifest(lish);
+		const cd = priv(downloader)['chunkDownloader'] as { fileReallocAttempts: Map<number, number>; writeRetryCount: number };
+		cd.fileReallocAttempts.set(0, 2);
+		cd.writeRetryCount = 3;
+		await downloader.enable();
+		expect(cd.fileReallocAttempts.size).toBe(0);
+		expect(cd.writeRetryCount).toBe(0);
+	});
+
+	it('writeChunkError in mock triggers error for testing', async () => {
+		dataServer.writeChunkError = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		dataServer.writeChunkErrorCount = 1;
+		await expect(dataServer.writeChunk('/tmp', makeLISH(), 0, 0, new Uint8Array(10))).rejects.toThrow('ENOENT');
+		// Second call succeeds
+		await expect(dataServer.writeChunk('/tmp', makeLISH(), 0, 0, new Uint8Array(10))).resolves.toBeUndefined();
+	});
+
+	it('resetFileChunks mock correctly resets downloaded chunks for a file', () => {
+		const lish = makeLISH({
+			files: [
+				{ path: 'a.bin', size: 1024, checksums: ['chunk-a1' as string, 'chunk-a2' as string] },
+				{ path: 'b.bin', size: 1024, checksums: ['chunk-b1' as string] },
+			],
+		});
+		dataServer.add(lish);
+		dataServer.downloadedChunks.add('chunk-a1' as ChunkID);
+		dataServer.downloadedChunks.add('chunk-a2' as ChunkID);
+		dataServer.downloadedChunks.add('chunk-b1' as ChunkID);
+		const resetCount = dataServer.resetFileChunks(lish.id, 0);
+		expect(resetCount).toBe(2);
+		expect(dataServer.downloadedChunks.has('chunk-a1' as ChunkID)).toBe(false);
+		expect(dataServer.downloadedChunks.has('chunk-a2' as ChunkID)).toBe(false);
+		expect(dataServer.downloadedChunks.has('chunk-b1' as ChunkID)).toBe(true);
+	});
+
+	it('resetFileChunks returns 0 for file with no downloaded chunks', () => {
+		const lish = makeLISH();
+		dataServer.add(lish);
+		const resetCount = dataServer.resetFileChunks(lish.id, 0);
+		expect(resetCount).toBe(0);
+	});
+});
+
+describe('Downloader — inline ENOSPC retry', () => {
+	let dataServer: MockDataServer;
+	let network: MockNetwork;
+	let downloader: Downloader;
+
+	beforeEach(() => {
+		dataServer = new MockDataServer();
+		network = new MockNetwork();
+		downloader = new Downloader('/tmp/test', network as any, dataServer as any, ['net1']);
+	});
+
+	afterEach(() => {
+		downloader.destroy().catch(() => {});
+	});
+
+	it('WRITE_RETRY_DELAY is 60000ms', () => {
+		expect((ChunkDownloader as any).WRITE_RETRY_DELAY).toBe(60000);
+	});
+
+	it('writePaused starts as false', () => {
+		const pc = priv(downloader)['pauseController'] as { writePaused: boolean };
+		expect(pc.writePaused).toBe(false);
+	});
+
+	it('waitIfWritePaused resolves immediately when not paused', async () => {
+		const pc = priv(downloader)['pauseController'] as { waitIfWritePaused: () => Promise<void> };
+		await expect(pc.waitIfWritePaused()).resolves.toBeUndefined();
+	});
+
+	it('resumeWrites resolves all pending waiters', async () => {
+		const pc = priv(downloader)['pauseController'] as {
+			pauseWrites: () => void;
+			resumeWrites: () => void;
+			waitIfWritePaused: () => Promise<void>;
+			writeResolvers: unknown[];
+			writePaused: boolean;
+		};
+		pc.pauseWrites();
+		const promises = [pc.waitIfWritePaused(), pc.waitIfWritePaused()];
+		// Yield a microtask so the awaited Promises register their resolvers before we assert.
+		await new Promise(r => setTimeout(r, 0));
+		expect(pc.writeResolvers.length).toBe(2);
+		pc.resumeWrites();
+		await Promise.all(promises);
+		expect(pc.writePaused).toBe(false);
+		expect(pc.writeResolvers.length).toBe(0);
 	});
 });

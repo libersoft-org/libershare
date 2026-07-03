@@ -40,9 +40,9 @@
 <Dialog {title}>
 	<div class="confirm">
 		<div class="message">{message}</div>
-		<ButtonBar justify="center">
-			<Button icon={confirmIcon} label={confirmLabel} position={[0, 0]} {onConfirm} />
-			<Button icon={cancelIcon} label={cancelLabel} position={[1, 0]} onConfirm={onBack} />
+		<ButtonBar justify="center" basePosition={[0, 0]}>
+			<Button icon={confirmIcon} label={confirmLabel} {onConfirm} />
+			<Button icon={cancelIcon} label={cancelLabel} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
 </Dialog>

@@ -30,14 +30,33 @@ export const t = derived(translations, $translations => {
 	};
 });
 
-// Initialize and update translations when language changes
-currentLanguage.subscribe(async langID => {
-	const data = await loadLanguage(langID);
-	translations.set(data);
-});
+/**
+ * Build a language-change handler that guards against stale fetches.
+ *
+ * `currentLanguage.subscribe` fires for every value the store takes. When the
+ * value changes faster than `loadLanguage()` can resolve (e.g. module-load
+ * default → browser language → backend setting on startup), older fetches may
+ * resolve last and stomp the translations selected by the latest value. The
+ * `pendingLangID` guard captures the most recent target; if a fetch resolves
+ * for a target that is no longer current, its result is discarded.
+ */
+export function createTranslationLoader(loader: (langID: string) => Promise<any>, applyTranslations: (data: any) => void): (langID: string) => Promise<void> {
+	let pendingLangID: string | null = null;
+	return async (langID: string) => {
+		pendingLangID = langID;
+		const data = await loader(langID);
+		if (pendingLangID !== langID) return;
+		applyTranslations(data);
+	};
+}
 
-// Initialize with browser language or default
-initLanguage();
+// Initialize and update translations when language changes. Skipped under
+// non-browser runtimes (e.g. unit-test imports via `bun test`) so loaders
+// don't fire against an unavailable network.
+if (typeof window !== 'undefined') {
+	currentLanguage.subscribe(createTranslationLoader(loadLanguage, data => translations.set(data)));
+	initLanguage();
+}
 
 function initLanguage(): void {
 	const browserLang = navigator.language?.split('-')[0];
@@ -99,10 +118,15 @@ const errorCodeKeys: Record<string, string> = {
 	LISH_MISSING_ID: 'lish.errorMissingID',
 	LISH_MISSING_CREATED: 'lish.errorMissingCreated',
 	LISH_INVALID_CHUNK_SIZE: 'lish.errorInvalidChunkSize',
+	LISH_CHUNK_SIZE_TOO_LARGE: 'lish.errorChunkSizeTooLarge',
+	LISH_INVALID_MANIFEST: 'lish.errorInvalidManifest',
 	LISH_UNSUPPORTED_CHECKSUM: 'lish.errorUnsupportedChecksum',
 	LISH_UNEXPECTED_ARRAY: 'lish.errorUnexpectedArray',
 	PATH_ACCESS_DENIED: 'lish.errorPathAccessDenied',
 	INVALID_FILE_INDEX: 'lish.errorInvalidFileIndex',
+	IO_NOT_FOUND: 'lish.errorIONotFound',
+	DISK_FULL: 'lish.errorDiskFull',
+	DIRECTORY_ACCESS_DENIED: 'lish.errorDirectoryAccessDenied',
 	DOWNLOADER_NOT_INITIALIZED: 'lish.errorDownloaderNotInitialized',
 	DOWNLOAD_ERROR: 'lish.errorDownload',
 	// Network → settings.lishNetwork
@@ -114,6 +138,12 @@ const errorCodeKeys: Record<string, string> = {
 	NO_VALID_NETWORKS: 'settings.lishNetwork.errorNoValidNetworks',
 	NETWORK_NOT_STARTED: 'settings.lishNetwork.errorNotStarted',
 	NETWORK_PORT_IN_USE: 'settings.lishNetwork.errorPortInUse',
+	PEER_UNREACHABLE: 'network.errorUnreachable',
+	PEER_LISH_NOT_SHARED: 'network.errorLishNotShared',
+	PEER_CHUNK_NOT_FOUND: 'network.errorChunkNotFound',
+	PEER_BUSY: 'network.errorBusy',
+	PEER_IO_ERROR: 'network.errorIO',
+	PEER_INVALID_REQUEST: 'network.errorInvalidRequest',
 	// Server → common
 	PARSE_ERROR: 'common.errorParseError',
 	METHOD_REQUIRED: 'common.errorMethodRequired',
@@ -121,11 +151,34 @@ const errorCodeKeys: Record<string, string> = {
 	INTERNAL_ERROR: 'common.errorInternal',
 	// Common
 	INVALID_JSON: 'common.errorInvalidJSON',
+	INVALID_SETTINGS_BACKUP: 'settings.backup.errorInvalidFormat',
+	INVALID_IDENTITY_BACKUP: 'settings.identity.errorInvalidFormat',
 	MISSING_PARAMETER: 'common.errorMissingParameter',
 	UNSUPPORTED_COMPRESSION: 'common.errorUnsupportedCompression',
 	UNSUPPORTED_DECOMPRESSION: 'common.errorUnsupportedDecompression',
 	HTTP_ERROR: 'common.errorHTTP',
 	INVALID_SIZE_FORMAT: 'common.errorInvalidSizeFormat',
+	// Filesystem (FileBrowser) → fileBrowser
+	FS_NOT_FOUND: 'fileBrowser.errorNotFound',
+	FS_ACCESS_DENIED: 'fileBrowser.errorAccessDenied',
+	FS_NOT_PERMITTED: 'fileBrowser.errorNotPermitted',
+	FS_ALREADY_EXISTS: 'fileBrowser.errorAlreadyExists',
+	FS_NOT_EMPTY: 'fileBrowser.errorNotEmpty',
+	FS_IS_DIRECTORY: 'fileBrowser.errorIsDirectory',
+	FS_NOT_DIRECTORY: 'fileBrowser.errorNotDirectory',
+	FS_BUSY: 'fileBrowser.errorBusy',
+	FS_NO_SPACE: 'fileBrowser.errorNoSpace',
+	FS_READ_ONLY: 'fileBrowser.errorReadOnly',
+	FS_NAME_TOO_LONG: 'fileBrowser.errorNameTooLong',
+	FS_TOO_MANY_OPEN: 'fileBrowser.errorTooManyOpen',
+	FS_INVALID: 'fileBrowser.errorInvalid',
+	FS_CROSS_DEVICE: 'fileBrowser.errorCrossDevice',
+	FS_NOT_SUPPORTED: 'fileBrowser.errorNotSupported',
+	FS_IO: 'fileBrowser.errorIO',
+	FS_TOO_MANY_LINKS: 'fileBrowser.errorTooManyLinks',
+	FS_FILE_TOO_LARGE: 'fileBrowser.errorFileTooLarge',
+	FS_TIMEOUT: 'fileBrowser.errorTimeout',
+	FS_ERROR: 'fileBrowser.errorGeneric',
 };
 
 /**

@@ -18,15 +18,20 @@
 		position,
 		onBack,
 		onDown,
-		onActivate() {
+		onActivate(): void {
 			const lastIDx = Math.max(0, items.length - 2);
 			navHandle.controller.select([lastIDx, 0]);
 		},
 	}));
 
-	function registerItem(node: HTMLElement, selectableIndex: number) {
+	interface RegisterItemAction {
+		update: (newIDx: number) => void;
+		destroy: () => void;
+	}
+
+	function registerItem(node: HTMLElement, selectableIndex: number): RegisterItemAction {
 		let cleanup: (() => void) | undefined;
-		function setup(idx: number) {
+		function setup(idx: number): void {
 			cleanup?.();
 			cleanup = undefined;
 			if (idx < 0) return;
@@ -43,10 +48,10 @@
 		}
 		setup(selectableIndex);
 		return {
-			update(newIDx: number) {
+			update(newIDx: number): void {
 				setup(newIDx);
 			},
-			destroy() {
+			destroy(): void {
 				cleanup?.();
 			},
 		};
@@ -82,6 +87,11 @@
 		background-color: var(--primary-foreground);
 		color: var(--secondary-background);
 	}
+
+	.item.clickable:hover:not(.selected) {
+		color: var(--secondary-foreground);
+		background-color: var(--secondary-softer-background);
+	}
 </style>
 
 <div class="breadcrumb">
@@ -90,7 +100,7 @@
 			<Icon img="/img/caret-right.svg" size="2vh" padding="0" colorVariable="--disabled-foreground" />
 		{/if}
 		{@const isSelected = navHandle.controller.isSelected([index, 0])}
-		<div use:registerItem={index < items.length - 1 ? index : -1} class="item" class:current={index === items.length - 1} class:selected={isSelected}>
+		<div use:registerItem={index < items.length - 1 ? index : -1} class="item" class:current={index === items.length - 1} class:selected={isSelected} class:clickable={index < items.length - 1} role={index < items.length - 1 ? 'button' : undefined}>
 			{#if item.icon}
 				<Icon img={item.icon} size="2vh" padding="0" colorVariable={isSelected ? '--primary-background' : '--disabled-foreground'} />
 			{:else}
