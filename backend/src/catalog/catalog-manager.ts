@@ -2,8 +2,8 @@ import type { Database } from 'bun:sqlite';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
 import { signCatalogOp, type SignedCatalogOp } from './catalog-signer.ts';
 import { handleRemoteOp } from './catalog-validator.ts';
-import type { HLC } from './catalog-hlc.ts';
-import { ensureCatalogACL, getCatalogACL, getCatalogEntry, listCatalogEntries, searchCatalog, getVectorClock, deleteTombstonesOlderThan, getEntryCount, getTombstoneCount, type CatalogEntryRow, type CatalogACLRow } from '../db/catalog.ts';
+import { hlcMerge, type HLC } from './catalog-hlc.ts';
+import { ensureCatalogACL, getCatalogACL, getCatalogEntry, listCatalogEntries, searchCatalog, getVectorClock, getAllVectorClocks, deleteTombstonesOlderThan, getEntryCount, getTombstoneCount, type CatalogEntryRow, type CatalogACLRow } from '../db/catalog.ts';
 
 /** Constructor dependencies. Key and peer ID are lazy accessors because the libp2p node starts after the manager is built. */
 export interface CatalogManagerConfig {
@@ -260,7 +260,12 @@ export class CatalogManager {
 		const result = await handleRemoteOp(this.db, networkID, op);
 		if (result.valid) {
 			const net = this.joined.get(networkID);
-			if (net) net.lastSyncAt = new Date().toISOString();
+			if (net) {
+				net.lastSyncAt = new Date().toISOString();
+				// Merge the remote HLC so subsequent local ops stay LWW-competitive
+				// against peers with fast clocks (within the drift tolerance).
+				net.localClock = hlcMerge(net.localClock, op.payload.hlc);
+			}
 			this.emitEventFn?.('catalog:sync', {
 				networkID,
 				newEntries: 1,
@@ -273,7 +278,14 @@ export class CatalogManager {
 	/** Record a completed bilateral sync and notify API subscribers. */
 	emitSyncComplete(networkID: string, newEntries: number): void {
 		const net = this.joined.get(networkID);
-		if (net) net.lastSyncAt = new Date().toISOString();
+		if (net) {
+			net.lastSyncAt = new Date().toISOString();
+			// Bilateral sync applies ops outside this manager — catch the clock up
+			// to the highest watermark stored during the sync.
+			for (const clock of getAllVectorClocks(this.db, networkID)) {
+				net.localClock = hlcMerge(net.localClock, { wallTime: clock.hlc_wall, logical: clock.hlc_logical, nodeID: clock.peer_id });
+			}
+		}
 		this.emitEventFn?.('catalog:sync', { networkID, newEntries, phase: 'complete' });
 	}
 

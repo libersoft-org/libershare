@@ -367,6 +367,30 @@ describe('CatalogManager: Multi-network', () => {
 	});
 });
 
+describe('CatalogManager: HLC merge on receive', () => {
+	test('local ops stay LWW-competitive after receiving an op from a fast clock', async () => {
+		const remoteKey = await generateKeyPair('Ed25519');
+		const remotePeerID = remoteKey.publicKey.toString();
+
+		// Remote peer owns the network; local peer is a plain member with open writes.
+		const localMgr = createManager(ownerKey);
+		localMgr.join('net1', remotePeerID);
+		db.run('UPDATE catalog_acl SET restrict_writes = 0 WHERE network_id = ?', ['net1']);
+
+		// Remote op signed with a clock ~2 minutes ahead (within drift tolerance).
+		const futureWall = Date.now() + 120_000;
+		const { signCatalogOp } = await import('../../../src/catalog/catalog-signer.ts');
+		const { op } = await signCatalogOp(remoteKey, 'add', 'net1', { lishID: 'remote-fast', name: 'Fast Peer Entry', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1, fileCount: 1, manifestHash: 'h' }, { wallTime: futureWall, logical: 0, nodeID: remotePeerID });
+		expect(await localMgr.applyRemoteOp('net1', op)).toBe(true);
+
+		// A subsequent local publish must carry an HLC above the remote's,
+		// otherwise the fast-clock peer wins every LWW conflict for 2 minutes.
+		await localMgr.publish('net1', { lishID: 'local-after', name: 'Local Entry', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1, fileCount: 1, manifestHash: 'h2' });
+		const localEntry = localMgr.get('net1', 'local-after');
+		expect(localEntry!.hlc_wall).toBeGreaterThanOrEqual(futureWall);
+	});
+});
+
 describe('CatalogManager: GC', () => {
 	test('gcTombstones removes old tombstones', async () => {
 		const mgr = createManager(ownerKey);
