@@ -28,7 +28,7 @@ export interface CatalogManagerConfig {
 interface JoinedNetwork {
 	localClock: HLC;
 	ownerPeerID: string;
-	antiEntropyTimer: ReturnType<typeof setInterval> | null;
+	gcTimer: ReturnType<typeof setInterval> | null;
 	lastSyncAt: string | null;
 }
 
@@ -60,12 +60,12 @@ export class CatalogManager {
 				? { wallTime: Math.max(lastClock.hlc_wall, Date.now()), logical: lastClock.hlc_logical, nodeID: peerID }
 				: { wallTime: Date.now(), logical: 0, nodeID: peerID },
 			ownerPeerID,
-			antiEntropyTimer: null,
+			gcTimer: null,
 			lastSyncAt: null,
 		};
 
 		// Start tombstone GC timer (every 6 hours)
-		net.antiEntropyTimer = setInterval(() => {
+		net.gcTimer = setInterval(() => {
 			try {
 				const deleted = deleteTombstonesOlderThan(this.db, networkID, 30);
 				if (deleted > 0) console.log(`[Catalog] GC: removed ${deleted} tombstones from ${networkID}`);
@@ -79,7 +79,7 @@ export class CatalogManager {
 
 	leave(networkID: string): void {
 		const net = this.joined.get(networkID);
-		if (net?.antiEntropyTimer) clearInterval(net.antiEntropyTimer);
+		if (net?.gcTimer) clearInterval(net.gcTimer);
 		this.joined.delete(networkID);
 	}
 
