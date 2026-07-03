@@ -47,10 +47,10 @@ export interface CatalogHandlerDeps {
 	broadcast: BroadcastFn;
 }
 
-// Track active downloaders for pause/resume
-const activeDownloaders = new Map<string, Downloader>();
-
 export function initCatalogHandlers(catalogManager: CatalogManager, deps?: CatalogHandlerDeps): CatalogHandlers {
+	// Track active downloaders for pause/resume — scoped per handler set so two
+	// APIServer instances (tests) never share transfer state.
+	const activeDownloaders = new Map<string, Downloader>();
 	return {
 		list(p) {
 			assert(p, ['networkID']);
