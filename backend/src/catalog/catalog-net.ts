@@ -3,6 +3,7 @@ import type { Stream } from '@libp2p/interface';
 import { encode as lpEncode, decode as lpDecode } from 'it-length-prefixed';
 import { Uint8ArrayList } from 'uint8arraylist';
 import { type CatalogManager } from './catalog-manager.ts';
+import { CatalogRateLimiter } from './catalog-rate-limiter.ts';
 import { SYNC_PROTOCOL, buildSyncResponse, applySyncResponse, encodeSyncRequest, decodeSyncRequest, encodeSyncResponse, decodeSyncResponse, type SyncRequest } from './catalog-sync.ts';
 
 /**
@@ -17,6 +18,8 @@ export interface CatalogNetDeps {
 	readonly registerStreamHandler: (protocol: string, handler: (stream: Stream) => Promise<void>) => Promise<void>;
 	readonly dialProtocolByPeerId: (peerID: string, protocol: string) => Promise<{ stream: Stream }>;
 	readonly getTopicPeers: (networkID: string) => string[];
+	/** Base delay for the no-peers sync retry (tests override; defaults to 5 s). */
+	readonly syncRetryDelayMs?: number;
 }
 
 /**
@@ -28,6 +31,10 @@ export interface CatalogNetDeps {
 export class CatalogNet {
 	private readonly deps: CatalogNetDeps;
 	private syncProtocolRegistered = false;
+	// Per-source ingestion throttle for live GossipSub ops (DoS defence before signature verification)
+	private readonly rateLimiter = new CatalogRateLimiter();
+	// Pending catch-up retry timers, keyed by networkID — cleared on detach
+	private readonly syncRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 	constructor(deps: CatalogNetDeps) {
 		this.deps = deps;
@@ -39,14 +46,22 @@ export class CatalogNet {
 	 * sync from currently connected topic peers.
 	 */
 	async attach(networkID: string): Promise<void> {
-		await this.deps.subscribe(`lish/${networkID}`, async (msg: Record<string, any>) => {
-			if (msg['type'] === 'catalog_op' && this.deps.getCatalogManager()) {
-				if (msg['version'] !== undefined && msg['version'] !== 1) return;
-				try {
-					await this.deps.getCatalogManager()!.applyRemoteOp(networkID, msg as any);
-				} catch (err) {
-					console.warn(`[Catalog] Error applying remote op for ${networkID}:`, (err as Error).message);
-				}
+		await this.deps.subscribe(`lish/${networkID}`, async (msg: Record<string, any>, from?: string) => {
+			if (msg['type'] !== 'catalog_op') return;
+			const manager = this.deps.getCatalogManager();
+			if (!manager) return;
+			if (msg['version'] !== undefined && msg['version'] !== 1) return;
+			// Throttle before signature verification — `from` is the libp2p-verified
+			// publisher; the in-payload signer is the fallback for older peers.
+			const source = from ?? (msg['signer'] as string | undefined);
+			if (source && this.rateLimiter.check(source) === 'reject') {
+				console.warn(`[Catalog] Rate limit exceeded for ${source.slice(0, 20)} — dropping op on ${networkID}`);
+				return;
+			}
+			try {
+				await manager.applyRemoteOp(networkID, msg as any);
+			} catch (err) {
+				console.warn(`[Catalog] Error applying remote op for ${networkID}:`, (err as Error).message);
 			}
 		});
 
@@ -57,6 +72,21 @@ export class CatalogNet {
 		}
 
 		this.requestSync(networkID);
+	}
+
+	/** Cancel the pending catch-up retry for a network (called when the lishnet is left). */
+	detach(networkID: string): void {
+		const timer = this.syncRetryTimers.get(networkID);
+		if (timer) {
+			clearTimeout(timer);
+			this.syncRetryTimers.delete(networkID);
+		}
+	}
+
+	/** Cancel all pending catch-up retries (node shutdown). */
+	detachAll(): void {
+		for (const timer of this.syncRetryTimers.values()) clearTimeout(timer);
+		this.syncRetryTimers.clear();
 	}
 
 	/** Serve one inbound bilateral sync request: decode → build delta response → send. */
@@ -83,13 +113,22 @@ export class CatalogNet {
 	}
 
 	/** Request catch-up sync from connected topic peers; one successful peer is enough. */
-	private async requestSync(networkID: string): Promise<void> {
+	private async requestSync(networkID: string, retryDelayMs: number = this.deps.syncRetryDelayMs ?? 5000): Promise<void> {
+		this.syncRetryTimers.delete(networkID);
 		const catalogManager = this.deps.getCatalogManager();
-		if (!catalogManager) return;
+		// Stop retrying once the catalog is no longer joined (network left mid-retry)
+		if (!catalogManager || !catalogManager.isJoined(networkID)) return;
 		const peers = this.deps.getTopicPeers(networkID);
 		if (peers.length === 0) {
-			// No peers yet — retry after a delay
-			setTimeout(() => this.requestSync(networkID), 5000);
+			// No peers yet — retry with exponential backoff (capped at 60 s), one
+			// pending timer per network so repeated attaches never stack chains.
+			const existing = this.syncRetryTimers.get(networkID);
+			if (existing) clearTimeout(existing);
+			const nextDelay = Math.min(retryDelayMs * 2, 60_000);
+			this.syncRetryTimers.set(
+				networkID,
+				setTimeout(() => void this.requestSync(networkID, nextDelay), retryDelayMs)
+			);
 			return;
 		}
 		for (const peerID of peers) {
