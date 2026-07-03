@@ -495,8 +495,8 @@ describe('Use Case: Third party can verify any catalog operation', () => {
 // ================================================================
 // USE CASE 8: Tombstone prevents re-adding deleted content
 // ================================================================
-describe('Use Case: Deleted content stays deleted until GC', () => {
-	test('re-publish after delete is blocked, but works after GC', async () => {
+describe('Use Case: Deleted content can be re-published (LWW-element-set)', () => {
+	test('re-publish after delete resurrects the entry', async () => {
 		const db = createDB();
 		const owner = await generateKeyPair('Ed25519');
 		const mgr = createManager(owner, db);
@@ -516,7 +516,8 @@ describe('Use Case: Deleted content stays deleted until GC', () => {
 		expect(getCatalogEntry(db, 'net', 'temp')).toBeNull();
 		expect(isTombstoned(db, 'net', 'temp')).toBe(true);
 
-		// Re-publish — blocked by tombstone
+		// Re-publish carries a newer HLC — it resurrects the entry and clears the
+		// tombstone (keeps nodes whose tombstone GC already ran convergent).
 		await mgr.publish('net', {
 			lishID: 'temp',
 			name: 'Revived Content',
@@ -526,23 +527,7 @@ describe('Use Case: Deleted content stays deleted until GC', () => {
 			fileCount: 1,
 			manifestHash: 'h2',
 		});
-		expect(getCatalogEntry(db, 'net', 'temp')).toBeNull(); // still blocked
-
-		// Simulate 60 days passing — GC tombstone
-		db.run("UPDATE catalog_tombstones SET removed_at = datetime('now', '-60 days') WHERE lish_id = 'temp'");
-		mgr.gcTombstones('net', 30);
+		expect(getCatalogEntry(db, 'net', 'temp')!.name).toBe('Revived Content');
 		expect(isTombstoned(db, 'net', 'temp')).toBe(false);
-
-		// Now re-publish works
-		await mgr.publish('net', {
-			lishID: 'temp',
-			name: 'Revived After GC',
-			chunkSize: 1024,
-			checksumAlgo: 'sha256',
-			totalSize: 200,
-			fileCount: 1,
-			manifestHash: 'h3',
-		});
-		expect(getCatalogEntry(db, 'net', 'temp')!.name).toBe('Revived After GC');
 	});
 });

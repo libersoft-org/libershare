@@ -235,17 +235,31 @@ describe('remove operations', () => {
 		expect(isTombstoned(db, 'net1', 'lish1')).toBe(true);
 	});
 
-	test('add after tombstone is skipped', async () => {
-		// Tombstone first
+	test('add with HLC older than the tombstone stays dead', async () => {
+		// Tombstone signed with a clock 10 s ahead of the add attempt
+		const removeClock = { wallTime: Date.now() + 10_000, logical: 0, nodeID: moderatorKey.publicKey.toString() };
+		const { op: removeOp } = await signCatalogOp(moderatorKey, 'remove', 'net1', { lishID: 'lish1' }, removeClock);
+		await handleRemoteOp(db, 'net1', removeOp);
+
+		// The add carries an older HLC — LWW keeps the tombstone
+		const { op: addOp } = await signAdd(moderatorKey, { lishID: 'lish1', name: 'Stale Revive' }, makeClock());
+		await handleRemoteOp(db, 'net1', addOp);
+		expect(getCatalogEntry(db, 'net1', 'lish1')).toBeNull();
+		expect(isTombstoned(db, 'net1', 'lish1')).toBe(true);
+	});
+
+	test('add with HLC newer than the tombstone resurrects the entry (LWW-element-set)', async () => {
 		const clock = makeClock();
 		const { op: removeOp, updatedClock } = await signCatalogOp(moderatorKey, 'remove', 'net1', { lishID: 'lish1' }, clock);
 		await handleRemoteOp(db, 'net1', removeOp);
+		expect(isTombstoned(db, 'net1', 'lish1')).toBe(true);
 
-		// Try to add — should be skipped (tombstoned)
+		// Newer add wins over the tombstone and clears it
 		const { op: addOp } = await signAdd(moderatorKey, { lishID: 'lish1', name: 'Revived' }, updatedClock);
-		await handleRemoteOp(db, 'net1', addOp);
-		const entry = getCatalogEntry(db, 'net1', 'lish1');
-		expect(entry).toBeNull(); // not added because tombstoned
+		const result = await handleRemoteOp(db, 'net1', addOp);
+		expect(result.valid).toBe(true);
+		expect(getCatalogEntry(db, 'net1', 'lish1')!.name).toBe('Revived');
+		expect(isTombstoned(db, 'net1', 'lish1')).toBe(false);
 	});
 });
 

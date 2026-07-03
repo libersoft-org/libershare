@@ -270,10 +270,20 @@ export function upsertTombstone(db: Database, tombstone: TombstoneInput): void {
 	);
 }
 
-/** True when the LISH has been removed on this network (tombstone wins over add/update). */
+/** True when the LISH currently has a removal tombstone on this network. */
 export function isTombstoned(db: Database, networkID: string, lishID: string): boolean {
 	const row = db.query<{ id: number }, [string, string]>('SELECT id FROM catalog_tombstones WHERE network_id = ? AND lish_id = ?').get(networkID, lishID);
 	return row !== null;
+}
+
+/** Fetch the tombstone row for a LISH, or null when none exists. */
+export function getTombstone(db: Database, networkID: string, lishID: string): TombstoneRow | null {
+	return db.query<TombstoneRow, [string, string]>('SELECT * FROM catalog_tombstones WHERE network_id = ? AND lish_id = ?').get(networkID, lishID);
+}
+
+/** Remove a tombstone — a newer add resurrected the element (LWW-element-set semantics). */
+export function deleteTombstone(db: Database, networkID: string, lishID: string): void {
+	db.run('DELETE FROM catalog_tombstones WHERE network_id = ? AND lish_id = ?', [networkID, lishID]);
 }
 
 /** GC tombstones older than `days`. Returns rows removed. */

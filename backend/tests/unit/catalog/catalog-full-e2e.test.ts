@@ -374,7 +374,7 @@ describe('3. Entry CRUD', () => {
 		await expect(reader.manager.remove('net1', 'no-del')).rejects.toThrow();
 	});
 
-	test('3.9 publish after remove blocked by tombstone', async () => {
+	test('3.9 publish after remove resurrects the entry (LWW-element-set)', async () => {
 		await owner.manager.publish('net1', {
 			lishID: 'tomb-test',
 			name: 'Original',
@@ -385,6 +385,10 @@ describe('3. Entry CRUD', () => {
 			manifestHash: 'h1',
 		});
 		await owner.manager.remove('net1', 'tomb-test');
+		expect(owner.manager.get('net1', 'tomb-test')).toBeNull();
+
+		// Re-publish carries a newer HLC — it wins over the tombstone. This keeps
+		// nodes convergent with peers whose tombstone GC already ran.
 		await owner.manager.publish('net1', {
 			lishID: 'tomb-test',
 			name: 'Revived',
@@ -394,8 +398,7 @@ describe('3. Entry CRUD', () => {
 			fileCount: 1,
 			manifestHash: 'h2',
 		});
-		// Entry should NOT exist — tombstone blocks re-add
-		expect(owner.manager.get('net1', 'tomb-test')).toBeNull();
+		expect(owner.manager.get('net1', 'tomb-test')!.name).toBe('Revived');
 	});
 
 	test('3.10 update nonexistent entry throws', async () => {

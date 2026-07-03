@@ -161,7 +161,7 @@ describe('Stress: Rapid updates to same entry', () => {
 });
 
 describe('Edge case: Tombstone interactions', () => {
-	test('remove then re-add with same lishID is blocked by tombstone', async () => {
+	test('remove then newer re-add resurrects the entry (LWW-element-set)', async () => {
 		const mod = await generateKeyPair('Ed25519');
 		const { op: g } = await signCatalogOp(
 			ownerKey,
@@ -202,7 +202,7 @@ describe('Edge case: Tombstone interactions', () => {
 		modClock = c2;
 		await handleRemoteOp(db, 'net1', rem);
 
-		// Re-add — should be blocked by tombstone
+		// Re-add with a newer HLC — resurrects the entry
 		const { op: add2 } = await signCatalogOp(
 			mod,
 			'add',
@@ -221,8 +221,8 @@ describe('Edge case: Tombstone interactions', () => {
 			modClock
 		);
 		await handleRemoteOp(db, 'net1', add2);
-		// Entry should NOT exist (tombstoned)
-		expect(getCatalogEntry(db, 'net1', 'temp')).toBeNull();
+		// Entry exists again — the newer add won over the tombstone
+		expect(getCatalogEntry(db, 'net1', 'temp')!.name).toBe('Revived');
 	});
 
 	test('tombstone GC allows re-add after expiry', async () => {

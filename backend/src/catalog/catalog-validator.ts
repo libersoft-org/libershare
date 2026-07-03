@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { encode as cborEncode } from 'cbor-x';
 import { verifyCatalogOp, type SignedCatalogOp } from './catalog-signer.ts';
-import { upsertCatalogEntry, upsertTombstone, isTombstoned, getCatalogACL, updateCatalogACL, getVectorClock, updateVectorClock, getEntryCount, insertAclOp, type CatalogEntryInput } from '../db/catalog.ts';
+import { upsertCatalogEntry, upsertTombstone, getTombstone, deleteTombstone, getCatalogACL, updateCatalogACL, getVectorClock, updateVectorClock, getEntryCount, insertAclOp, type CatalogEntryInput } from '../db/catalog.ts';
 import { RATE_LIMITS } from './catalog-rate-limiter.ts';
 
 const MAX_DRIFT = 5 * 60 * 1000; // 5 minutes
@@ -174,15 +174,25 @@ function applyOp(db: Database, networkID: string, op: SignedCatalogOp): void {
 	switch (type) {
 		case 'add':
 		case 'update': {
-			if (isTombstoned(db, networkID, data['lishID'] as string)) {
-				return; // skip — entry is tombstoned
+			const lishID = data['lishID'] as string;
+			// LWW-element-set: the tombstone wins only while it is newer. An add
+			// with a higher HLC resurrects the element — this also converges nodes
+			// whose independent 30-day GC already dropped the tombstone (they
+			// would accept the re-publish, so nodes still holding it must too).
+			const tomb = getTombstone(db, networkID, lishID);
+			if (tomb) {
+				const addIsNewer = hlc.wallTime > tomb.hlc_wall || (hlc.wallTime === tomb.hlc_wall && hlc.logical > tomb.hlc_logical) || (hlc.wallTime === tomb.hlc_wall && hlc.logical === tomb.hlc_logical && hlc.nodeID > tomb.hlc_node);
+				if (!addIsNewer) return; // tombstone wins
+				deleteTombstone(db, networkID, lishID);
 			}
 			const entry: CatalogEntryInput = {
 				network_id: networkID,
-				lish_id: data['lishID'] as string,
+				lish_id: lishID,
 				name: (data['name'] as string) ?? null,
 				description: (data['description'] as string) ?? null,
-				publisher_peer_id: (data['publisherPeerID'] as string) ?? op.signer,
+				// The signer is the verified author — a payload-supplied publisher
+				// would let anyone attribute entries to someone else.
+				publisher_peer_id: op.signer,
 				published_at: (data['publishedAt'] as string) ?? new Date().toISOString(),
 				chunk_size: (data['chunkSize'] as number) ?? 0,
 				checksum_algo: (data['checksumAlgo'] as string) ?? 'sha256',
