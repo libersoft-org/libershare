@@ -38,12 +38,22 @@ describe('Bilateral Sync', () => {
 		mgr.join('net1', ownerPeerID);
 
 		await mgr.publish('net1', {
-			lishID: 'a', name: 'Entry A', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			lishID: 'a',
+			name: 'Entry A',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await mgr.publish('net1', {
-			lishID: 'b', name: 'Entry B', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 200, fileCount: 1, manifestHash: 'h2',
+			lishID: 'b',
+			name: 'Entry B',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 200,
+			fileCount: 1,
+			manifestHash: 'h2',
 		});
 
 		const response = buildSyncResponse(db, 'net1', 0);
@@ -64,8 +74,13 @@ describe('Bilateral Sync', () => {
 
 		// Peer A publishes
 		await mgrA.publish('net1', {
-			lishID: 'sync-test', name: 'From Peer A', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 500, fileCount: 1, manifestHash: 'h1',
+			lishID: 'sync-test',
+			name: 'From Peer A',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 500,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		// Build sync response from A
@@ -83,12 +98,22 @@ describe('Bilateral Sync', () => {
 		mgr.join('net1', ownerPeerID);
 
 		await mgr.publish('net1', {
-			lishID: 'a', name: 'Entry A', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			lishID: 'a',
+			name: 'Entry A',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await mgr.publish('net1', {
-			lishID: 'b', name: 'Entry B', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 200, fileCount: 1, manifestHash: 'h2',
+			lishID: 'b',
+			name: 'Entry B',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 200,
+			fileCount: 1,
+			manifestHash: 'h2',
 		});
 
 		// All entries since 0
@@ -106,8 +131,13 @@ describe('Bilateral Sync', () => {
 		mgr.join('net1', ownerPeerID);
 
 		await mgr.publish('net1', {
-			lishID: 'to-remove', name: 'Temp', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			lishID: 'to-remove',
+			name: 'Temp',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await mgr.remove('net1', 'to-remove');
 
@@ -147,8 +177,13 @@ describe('Bilateral Sync', () => {
 		mgr.join('net1', ownerPeerID);
 
 		await mgr.publish('net1', {
-			lishID: 'cbor-sync', name: 'CBOR Sync Test', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			lishID: 'cbor-sync',
+			name: 'CBOR Sync Test',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		const response = buildSyncResponse(db, 'net1', 0);
@@ -172,8 +207,13 @@ describe('Bilateral Sync', () => {
 		// Peer A has 5 entries
 		for (let i = 0; i < 5; i++) {
 			await mgrA.publish('net1', {
-				lishID: `e${i}`, name: `Entry ${i}`, chunkSize: 1024, checksumAlgo: 'sha256',
-				totalSize: 100, fileCount: 1, manifestHash: `h${i}`,
+				lishID: `e${i}`,
+				name: `Entry ${i}`,
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: `h${i}`,
 			});
 		}
 
@@ -214,8 +254,13 @@ describe('Bilateral Sync', () => {
 
 		// Owner publishes directly (no moderator needed — owner has all permissions)
 		await mgrA.publish('net1', {
-			lishID: 'owner-entry', name: 'By Owner', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			lishID: 'owner-entry',
+			name: 'By Owner',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		const response = buildSyncResponse(dbA, 'net1', 0);

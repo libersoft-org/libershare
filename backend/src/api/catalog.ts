@@ -21,11 +21,7 @@ export interface CatalogHandlers {
 	list: (p: { networkID: string; limit?: number }) => CatalogEntryRow[];
 	get: (p: { networkID: string; lishID: string }) => CatalogEntryRow | null;
 	search: (p: { networkID: string; query: string; limit?: number }) => CatalogEntryRow[];
-	publish: (p: {
-		networkID: string; lishID: string; name?: string; description?: string;
-		chunkSize: number; checksumAlgo: string; totalSize: number; fileCount: number;
-		manifestHash: string; contentType?: string; tags?: string[];
-	}) => Promise<void>;
+	publish: (p: { networkID: string; lishID: string; name?: string; description?: string; chunkSize: number; checksumAlgo: string; totalSize: number; fileCount: number; manifestHash: string; contentType?: string; tags?: string[] }) => Promise<void>;
 	update: (p: { networkID: string; lishID: string; name?: string; description?: string; contentType?: string; tags?: string[] }) => Promise<void>;
 	remove: (p: { networkID: string; lishID: string }) => Promise<void>;
 	getAccess: (p: { networkID: string }) => CatalogACLRow | null;

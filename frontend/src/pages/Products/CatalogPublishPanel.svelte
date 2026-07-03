@@ -29,20 +29,36 @@
 		publishSuccess = '';
 		try {
 			const detail = await api.lishs.get(lishID);
-			if (!detail) { publishError = 'LISH not found'; return; }
+			if (!detail) {
+				publishError = 'LISH not found';
+				return;
+			}
 			await publishCatalogEntry(networkID, {
-				lishID, name: name || lishID, description: detail.description ?? undefined,
-				chunkSize: detail.chunkSize, checksumAlgo: detail.checksumAlgo,
-				totalSize: detail.totalSize, fileCount: detail.fileCount,
+				lishID,
+				name: name || lishID,
+				description: detail.description ?? undefined,
+				chunkSize: detail.chunkSize,
+				checksumAlgo: detail.checksumAlgo,
+				totalSize: detail.totalSize,
+				fileCount: detail.fileCount,
 				manifestHash: `sha256:${lishID}`,
 			});
 			publishSuccess = `Published "${name || lishID}"`;
 			onPublished?.();
-		} catch (e: any) { publishError = e.message; }
+		} catch (e: any) {
+			publishError = e.message;
+		}
 	}
 
 	onMount(() => {
-		api.lishs.list().then(r => { localLISHs = r.items.map(l => ({ id: l.id, name: l.name ?? undefined })); }).catch(e => { publishError = e.message; });
+		api.lishs
+			.list()
+			.then(r => {
+				localLISHs = r.items.map(l => ({ id: l.id, name: l.name ?? undefined }));
+			})
+			.catch(e => {
+				publishError = e.message;
+			});
 	});
 </script>
 

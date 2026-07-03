@@ -1,22 +1,6 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import {
-	initCatalogTables,
-	upsertCatalogEntry,
-	getCatalogEntry,
-	listCatalogEntries,
-	upsertTombstone,
-	isTombstoned,
-	getCatalogACL,
-	ensureCatalogACL,
-	updateCatalogACL,
-	getVectorClock,
-	updateVectorClock,
-	searchCatalog,
-	deleteTombstonesOlderThan,
-	getDeltaEntries,
-	type CatalogEntryInput,
-} from '../../../src/db/catalog.ts';
+import { initCatalogTables, upsertCatalogEntry, getCatalogEntry, listCatalogEntries, upsertTombstone, isTombstoned, getCatalogACL, ensureCatalogACL, updateCatalogACL, getVectorClock, updateVectorClock, searchCatalog, deleteTombstonesOlderThan, getDeltaEntries, type CatalogEntryInput } from '../../../src/db/catalog.ts';
 
 let db: Database;
 
@@ -108,9 +92,13 @@ describe('upsertCatalogEntry — LWW merge', () => {
 describe('tombstones', () => {
 	test('insert and check', () => {
 		upsertTombstone(db, {
-			network_id: 'net1', lish_id: 'lish1', removed_by: 'peer1',
+			network_id: 'net1',
+			lish_id: 'lish1',
+			removed_by: 'peer1',
 			removed_at: '2026-01-01T00:00:00Z',
-			hlc_wall: 1000, hlc_logical: 0, hlc_node: 'peer1',
+			hlc_wall: 1000,
+			hlc_logical: 0,
+			hlc_node: 'peer1',
 			signed_op: new Uint8Array([1]),
 		});
 		expect(isTombstoned(db, 'net1', 'lish1')).toBe(true);
@@ -119,9 +107,13 @@ describe('tombstones', () => {
 
 	test('GC deletes old tombstones', () => {
 		upsertTombstone(db, {
-			network_id: 'net1', lish_id: 'lish1', removed_by: 'peer1',
+			network_id: 'net1',
+			lish_id: 'lish1',
+			removed_by: 'peer1',
 			removed_at: '2025-01-01T00:00:00Z',
-			hlc_wall: 1000, hlc_logical: 0, hlc_node: 'peer1',
+			hlc_wall: 1000,
+			hlc_logical: 0,
+			hlc_node: 'peer1',
 			signed_op: new Uint8Array([1]),
 		});
 		const deleted = deleteTombstonesOlderThan(db, 'net1', 30);

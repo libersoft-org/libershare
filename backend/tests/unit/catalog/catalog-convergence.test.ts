@@ -29,22 +29,48 @@ describe('Convergence: Two peers reach same state', () => {
 
 		// Grant both moderators
 		const oClock = clock();
-		const { op: g1, updatedClock: oClock2 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
-			role: 'moderator', delegatee: mod1.publicKey.toString(),
-		}, oClock);
-		const { op: g2 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
-			role: 'moderator', delegatee: mod2.publicKey.toString(),
-		}, oClock2);
+		const { op: g1, updatedClock: oClock2 } = await signCatalogOp(
+			owner,
+			'acl_grant',
+			'net1',
+			{
+				role: 'moderator',
+				delegatee: mod1.publicKey.toString(),
+			},
+			oClock
+		);
+		const { op: g2 } = await signCatalogOp(
+			owner,
+			'acl_grant',
+			'net1',
+			{
+				role: 'moderator',
+				delegatee: mod2.publicKey.toString(),
+			},
+			oClock2
+		);
 
 		// Each mod publishes different entries (different authors → no vector clock conflict)
 		let m1Clock = clock();
 		const mod1Ops: SignedCatalogOp[] = [];
 		for (let i = 0; i < 3; i++) {
-			const { op, updatedClock } = await signCatalogOp(mod1, 'add', 'net1', {
-				lishID: `m1-${i}`, name: `Mod1 Entry ${i}`,
-				publisherPeerID: mod1.publicKey.toString(), publishedAt: new Date().toISOString(),
-				chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: `h1-${i}`,
-			}, m1Clock);
+			const { op, updatedClock } = await signCatalogOp(
+				mod1,
+				'add',
+				'net1',
+				{
+					lishID: `m1-${i}`,
+					name: `Mod1 Entry ${i}`,
+					publisherPeerID: mod1.publicKey.toString(),
+					publishedAt: new Date().toISOString(),
+					chunkSize: 1024,
+					checksumAlgo: 'sha256',
+					totalSize: 100,
+					fileCount: 1,
+					manifestHash: `h1-${i}`,
+				},
+				m1Clock
+			);
 			m1Clock = updatedClock;
 			mod1Ops.push(op);
 		}
@@ -52,11 +78,23 @@ describe('Convergence: Two peers reach same state', () => {
 		let m2Clock = clock();
 		const mod2Ops: SignedCatalogOp[] = [];
 		for (let i = 0; i < 2; i++) {
-			const { op, updatedClock } = await signCatalogOp(mod2, 'add', 'net1', {
-				lishID: `m2-${i}`, name: `Mod2 Entry ${i}`,
-				publisherPeerID: mod2.publicKey.toString(), publishedAt: new Date().toISOString(),
-				chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 200, fileCount: 1, manifestHash: `h2-${i}`,
-			}, m2Clock);
+			const { op, updatedClock } = await signCatalogOp(
+				mod2,
+				'add',
+				'net1',
+				{
+					lishID: `m2-${i}`,
+					name: `Mod2 Entry ${i}`,
+					publisherPeerID: mod2.publicKey.toString(),
+					publishedAt: new Date().toISOString(),
+					chunkSize: 1024,
+					checksumAlgo: 'sha256',
+					totalSize: 200,
+					fileCount: 1,
+					manifestHash: `h2-${i}`,
+				},
+				m2Clock
+			);
 			m2Clock = updatedClock;
 			mod2Ops.push(op);
 		}
@@ -98,28 +136,66 @@ describe('Convergence: Two peers reach same state', () => {
 
 		// Setup: owner grants both mods
 		const oClock = clock();
-		const { op: g1, updatedClock: oClock2 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
-			role: 'moderator', delegatee: mod1.publicKey.toString(),
-		}, oClock);
-		const { op: g2 } = await signCatalogOp(owner, 'acl_grant', 'net1', {
-			role: 'moderator', delegatee: mod2.publicKey.toString(),
-		}, oClock2);
+		const { op: g1, updatedClock: oClock2 } = await signCatalogOp(
+			owner,
+			'acl_grant',
+			'net1',
+			{
+				role: 'moderator',
+				delegatee: mod1.publicKey.toString(),
+			},
+			oClock
+		);
+		const { op: g2 } = await signCatalogOp(
+			owner,
+			'acl_grant',
+			'net1',
+			{
+				role: 'moderator',
+				delegatee: mod2.publicKey.toString(),
+			},
+			oClock2
+		);
 
 		// Mod1 creates entry with lower HLC
 		const lowFuture: HLC = { wallTime: Date.now() + 10_000, logical: 0, nodeID: 'conv' };
-		const { op: mod1Add } = await signCatalogOp(mod1, 'add', 'net1', {
-			lishID: 'shared', name: 'Mod1 Version',
-			publisherPeerID: mod1.publicKey.toString(), publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h1',
-		}, lowFuture);
+		const { op: mod1Add } = await signCatalogOp(
+			mod1,
+			'add',
+			'net1',
+			{
+				lishID: 'shared',
+				name: 'Mod1 Version',
+				publisherPeerID: mod1.publicKey.toString(),
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h1',
+			},
+			lowFuture
+		);
 
 		// Mod2 creates same entry with higher HLC
 		const highFuture: HLC = { wallTime: Date.now() + 20_000, logical: 0, nodeID: 'conv' };
-		const { op: mod2Add } = await signCatalogOp(mod2, 'add', 'net1', {
-			lishID: 'shared', name: 'Mod2 Version',
-			publisherPeerID: mod2.publicKey.toString(), publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 200, fileCount: 1, manifestHash: 'h2',
-		}, highFuture);
+		const { op: mod2Add } = await signCatalogOp(
+			mod2,
+			'add',
+			'net1',
+			{
+				lishID: 'shared',
+				name: 'Mod2 Version',
+				publisherPeerID: mod2.publicKey.toString(),
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 200,
+				fileCount: 1,
+				manifestHash: 'h2',
+			},
+			highFuture
+		);
 
 		// Peer A: sees mod1 first, then mod2
 		const dbA = createPeerDB(ownerID);
@@ -149,16 +225,35 @@ describe('Convergence: Two peers reach same state', () => {
 		const ownerID = owner.publicKey.toString();
 
 		let oClock = clock();
-		const { op: grant, } = await signCatalogOp(owner, 'acl_grant', 'net1', {
-			role: 'moderator', delegatee: mod.publicKey.toString(),
-		}, oClock);
+		const { op: grant } = await signCatalogOp(
+			owner,
+			'acl_grant',
+			'net1',
+			{
+				role: 'moderator',
+				delegatee: mod.publicKey.toString(),
+			},
+			oClock
+		);
 
 		let mClock = clock();
-		const { op: addOp, updatedClock: mc1 } = await signCatalogOp(mod, 'add', 'net1', {
-			lishID: 'to-delete', name: 'Will be removed',
-			publisherPeerID: mod.publicKey.toString(), publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h1',
-		}, mClock);
+		const { op: addOp, updatedClock: mc1 } = await signCatalogOp(
+			mod,
+			'add',
+			'net1',
+			{
+				lishID: 'to-delete',
+				name: 'Will be removed',
+				publisherPeerID: mod.publicKey.toString(),
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h1',
+			},
+			mClock
+		);
 		mClock = mc1;
 
 		const { op: removeOp } = await signCatalogOp(mod, 'remove', 'net1', { lishID: 'to-delete' }, mClock);
@@ -188,18 +283,37 @@ describe('Convergence: Two peers reach same state', () => {
 		// Peer A generates and stores ops
 		const dbA = createPeerDB(ownerID);
 		let oClock = clock();
-		const { op: grant, } = await signCatalogOp(owner, 'acl_grant', 'net1', {
-			role: 'moderator', delegatee: mod.publicKey.toString(),
-		}, oClock);
+		const { op: grant } = await signCatalogOp(
+			owner,
+			'acl_grant',
+			'net1',
+			{
+				role: 'moderator',
+				delegatee: mod.publicKey.toString(),
+			},
+			oClock
+		);
 		await handleRemoteOp(dbA, 'net1', grant);
 
 		let mClock = clock();
 		for (let i = 0; i < 3; i++) {
-			const { op, updatedClock } = await signCatalogOp(mod, 'add', 'net1', {
-				lishID: `sync-${i}`, name: `Sync Entry ${i}`,
-				publisherPeerID: mod.publicKey.toString(), publishedAt: new Date().toISOString(),
-				chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: `h${i}`,
-			}, mClock);
+			const { op, updatedClock } = await signCatalogOp(
+				mod,
+				'add',
+				'net1',
+				{
+					lishID: `sync-${i}`,
+					name: `Sync Entry ${i}`,
+					publisherPeerID: mod.publicKey.toString(),
+					publishedAt: new Date().toISOString(),
+					chunkSize: 1024,
+					checksumAlgo: 'sha256',
+					totalSize: 100,
+					fileCount: 1,
+					manifestHash: `h${i}`,
+				},
+				mClock
+			);
 			mClock = updatedClock;
 			await handleRemoteOp(dbA, 'net1', op);
 		}

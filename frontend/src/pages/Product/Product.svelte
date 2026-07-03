@@ -35,7 +35,11 @@
 	let downloadMessage = $state('');
 
 	async function startDownload(): Promise<void> {
-		if (!networkID || !lishID) { downloadMessage = 'Missing network or LISH ID'; downloadStatus = 'error'; return; }
+		if (!networkID || !lishID) {
+			downloadMessage = 'Missing network or LISH ID';
+			downloadStatus = 'error';
+			return;
+		}
 		downloadStatus = 'starting';
 		downloadMessage = '';
 		try {

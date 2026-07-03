@@ -38,9 +38,15 @@ async function signAdd(key: Ed25519PrivateKey, data: Record<string, unknown>, cl
 describe('handleRemoteOp — full validation chain', () => {
 	test('valid add from moderator succeeds', async () => {
 		const { op } = await signAdd(moderatorKey, {
-			lishID: 'lish1', name: 'Test', publisherPeerID: moderatorKey.publicKey.toString(),
-			publishedAt: '2026-01-01T00:00:00Z', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 5000, fileCount: 3, manifestHash: 'abc',
+			lishID: 'lish1',
+			name: 'Test',
+			publisherPeerID: moderatorKey.publicKey.toString(),
+			publishedAt: '2026-01-01T00:00:00Z',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 5000,
+			fileCount: 3,
+			manifestHash: 'abc',
 		});
 		const result = await handleRemoteOp(db, 'net1', op);
 		expect(result.valid).toBe(true);
@@ -108,9 +114,16 @@ describe('handleRemoteOp — full validation chain', () => {
 describe('ACL operations', () => {
 	test('owner can grant admin', async () => {
 		const newAdmin = await generateKeyPair('Ed25519');
-		const { op } = await signCatalogOp(ownerKey, 'acl_grant', 'net1', {
-			role: 'admin', delegatee: newAdmin.publicKey.toString(),
-		}, makeClock());
+		const { op } = await signCatalogOp(
+			ownerKey,
+			'acl_grant',
+			'net1',
+			{
+				role: 'admin',
+				delegatee: newAdmin.publicKey.toString(),
+			},
+			makeClock()
+		);
 		const result = await handleRemoteOp(db, 'net1', op);
 		expect(result.valid).toBe(true);
 		const acl = getCatalogACL(db, 'net1');
@@ -120,16 +133,30 @@ describe('ACL operations', () => {
 	test('admin can grant moderator', async () => {
 		// First make an admin
 		const adminKey = await generateKeyPair('Ed25519');
-		const { op: grantOp } = await signCatalogOp(ownerKey, 'acl_grant', 'net1', {
-			role: 'admin', delegatee: adminKey.publicKey.toString(),
-		}, makeClock());
+		const { op: grantOp } = await signCatalogOp(
+			ownerKey,
+			'acl_grant',
+			'net1',
+			{
+				role: 'admin',
+				delegatee: adminKey.publicKey.toString(),
+			},
+			makeClock()
+		);
 		await handleRemoteOp(db, 'net1', grantOp);
 
 		// Admin grants moderator
 		const newMod = await generateKeyPair('Ed25519');
-		const { op: modOp } = await signCatalogOp(adminKey, 'acl_grant', 'net1', {
-			role: 'moderator', delegatee: newMod.publicKey.toString(),
-		}, makeClock());
+		const { op: modOp } = await signCatalogOp(
+			adminKey,
+			'acl_grant',
+			'net1',
+			{
+				role: 'moderator',
+				delegatee: newMod.publicKey.toString(),
+			},
+			makeClock()
+		);
 		const result = await handleRemoteOp(db, 'net1', modOp);
 		expect(result.valid).toBe(true);
 		const acl = getCatalogACL(db, 'net1');
@@ -138,9 +165,16 @@ describe('ACL operations', () => {
 
 	test('moderator cannot grant roles (anti-escalation)', async () => {
 		const newMod = await generateKeyPair('Ed25519');
-		const { op } = await signCatalogOp(moderatorKey, 'acl_grant', 'net1', {
-			role: 'moderator', delegatee: newMod.publicKey.toString(),
-		}, makeClock());
+		const { op } = await signCatalogOp(
+			moderatorKey,
+			'acl_grant',
+			'net1',
+			{
+				role: 'moderator',
+				delegatee: newMod.publicKey.toString(),
+			},
+			makeClock()
+		);
 		const result = await handleRemoteOp(db, 'net1', op);
 		expect(result.valid).toBe(false);
 		expect((result as { reason: string }).reason).toBe('UNAUTHORIZED_ACL_CHANGE');
@@ -149,15 +183,29 @@ describe('ACL operations', () => {
 	test('owner can revoke admin', async () => {
 		const adminKey = await generateKeyPair('Ed25519');
 		// Grant admin
-		const { op: grantOp, updatedClock } = await signCatalogOp(ownerKey, 'acl_grant', 'net1', {
-			role: 'admin', delegatee: adminKey.publicKey.toString(),
-		}, makeClock());
+		const { op: grantOp, updatedClock } = await signCatalogOp(
+			ownerKey,
+			'acl_grant',
+			'net1',
+			{
+				role: 'admin',
+				delegatee: adminKey.publicKey.toString(),
+			},
+			makeClock()
+		);
 		await handleRemoteOp(db, 'net1', grantOp);
 
 		// Revoke admin
-		const { op: revokeOp } = await signCatalogOp(ownerKey, 'acl_revoke', 'net1', {
-			role: 'admin', delegatee: adminKey.publicKey.toString(),
-		}, updatedClock);
+		const { op: revokeOp } = await signCatalogOp(
+			ownerKey,
+			'acl_revoke',
+			'net1',
+			{
+				role: 'admin',
+				delegatee: adminKey.publicKey.toString(),
+			},
+			updatedClock
+		);
 		const result = await handleRemoteOp(db, 'net1', revokeOp);
 		expect(result.valid).toBe(true);
 		const acl = getCatalogACL(db, 'net1');
@@ -169,9 +217,15 @@ describe('remove operations', () => {
 	test('moderator can remove entry', async () => {
 		// Add entry first
 		const clock = makeClock();
-		const { op: addOp, updatedClock } = await signAdd(moderatorKey, {
-			lishID: 'lish1', name: 'Test', publisherPeerID: moderatorKey.publicKey.toString(),
-		}, clock);
+		const { op: addOp, updatedClock } = await signAdd(
+			moderatorKey,
+			{
+				lishID: 'lish1',
+				name: 'Test',
+				publisherPeerID: moderatorKey.publicKey.toString(),
+			},
+			clock
+		);
 		await handleRemoteOp(db, 'net1', addOp);
 
 		// Remove it

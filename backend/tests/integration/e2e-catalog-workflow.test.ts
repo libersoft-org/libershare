@@ -33,8 +33,8 @@ class TestClient {
 		return new Promise((resolve, reject) => {
 			this.ws = new WebSocket(url);
 			this.ws.addEventListener('open', () => resolve());
-			this.ws.addEventListener('error', (e) => reject(new Error(`WebSocket error: ${e}`)));
-			this.ws.addEventListener('message', (e) => this.handleMessage(e.data as string));
+			this.ws.addEventListener('error', e => reject(new Error(`WebSocket error: ${e}`)));
+			this.ws.addEventListener('message', e => this.handleMessage(e.data as string));
 		});
 	}
 
@@ -78,7 +78,7 @@ class TestClient {
 	waitForEvent(event: string, timeout = 30_000): Promise<any> {
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => reject(new Error(`Timeout waiting for event: ${event}`)), timeout);
-			this.onEvent(event, (data) => {
+			this.onEvent(event, data => {
 				clearTimeout(timer);
 				resolve(data);
 			});
@@ -114,7 +114,9 @@ describe('Full A-Z Catalog Workflow', () => {
 				await client.call('lishs.delete', { lishID: createdLishID, deleteLISH: true, deleteData: false }).catch(() => {});
 			}
 			await client.call('fs.delete', { path: TEST_FILE_PATH }).catch(() => {});
-		} catch { /* best effort */ }
+		} catch {
+			/* best effort */
+		}
 		client.close();
 	});
 

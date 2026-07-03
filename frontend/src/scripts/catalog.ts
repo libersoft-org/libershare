@@ -18,12 +18,7 @@ export async function getCatalogAccess(networkID: string): Promise<CatalogACLRes
 	return api.catalog.getAccess(networkID);
 }
 
-export function subscribeCatalogEvents(callbacks: {
-	onUpdated?: (data: { networkID: string; entry: CatalogEntryResponse }) => void;
-	onRemoved?: (data: { networkID: string; lishID: string }) => void;
-	onACL?: (data: { networkID: string; access: CatalogACLResponse }) => void;
-	onSync?: (data: { networkID: string; newEntries: number; phase: 'start' | 'complete' }) => void;
-}): () => void {
+export function subscribeCatalogEvents(callbacks: { onUpdated?: (data: { networkID: string; entry: CatalogEntryResponse }) => void; onRemoved?: (data: { networkID: string; lishID: string }) => void; onACL?: (data: { networkID: string; access: CatalogACLResponse }) => void; onSync?: (data: { networkID: string; newEntries: number; phase: 'start' | 'complete' }) => void }): () => void {
 	const unsubs: (() => void)[] = [];
 	if (callbacks.onUpdated) {
 		const u = api.on('catalog:updated', callbacks.onUpdated);
@@ -54,7 +49,11 @@ export function formatSize(bytes: number): string {
 
 export function parseTags(tagsJson: string | null): string[] {
 	if (!tagsJson) return [];
-	try { return JSON.parse(tagsJson) as string[]; } catch { return []; }
+	try {
+		return JSON.parse(tagsJson) as string[];
+	} catch {
+		return [];
+	}
 }
 
 export async function grantCatalogRole(networkID: string, delegatee: string, role: 'admin' | 'moderator'): Promise<void> {
@@ -65,17 +64,34 @@ export async function revokeCatalogRole(networkID: string, delegatee: string, ro
 	return api.catalog.revokeRole(networkID, delegatee, role);
 }
 
-export async function publishCatalogEntry(networkID: string, params: {
-	lishID: string; name?: string | undefined; description?: string | undefined;
-	chunkSize: number; checksumAlgo: string; totalSize: number;
-	fileCount: number; manifestHash: string; contentType?: string | undefined; tags?: string[] | undefined;
-}): Promise<void> {
+export async function publishCatalogEntry(
+	networkID: string,
+	params: {
+		lishID: string;
+		name?: string | undefined;
+		description?: string | undefined;
+		chunkSize: number;
+		checksumAlgo: string;
+		totalSize: number;
+		fileCount: number;
+		manifestHash: string;
+		contentType?: string | undefined;
+		tags?: string[] | undefined;
+	}
+): Promise<void> {
 	return api.catalog.publish(networkID, params);
 }
 
-export async function updateCatalogEntry(networkID: string, lishID: string, fields: {
-	name?: string | undefined; description?: string | undefined; contentType?: string | undefined; tags?: string[] | undefined;
-}): Promise<void> {
+export async function updateCatalogEntry(
+	networkID: string,
+	lishID: string,
+	fields: {
+		name?: string | undefined;
+		description?: string | undefined;
+		contentType?: string | undefined;
+		tags?: string[] | undefined;
+	}
+): Promise<void> {
 	return api.catalog.update(networkID, lishID, fields);
 }
 

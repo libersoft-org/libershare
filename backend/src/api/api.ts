@@ -90,13 +90,15 @@ export class APIServer {
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifest);
 		const _identity = initIdentityHandlers(this.networks);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownload);
-		const _catalog = catalogManager ? initCatalogHandlers(catalogManager, {
-			networks: this.networks,
-			dataServer: this.dataServer,
-			dataDir: this.dataDir,
-			emit: emitTo,
-			broadcast: broadcastFn,
-		}) : null;
+		const _catalog = catalogManager
+			? initCatalogHandlers(catalogManager, {
+					networks: this.networks,
+					dataServer: this.dataServer,
+					dataDir: this.dataDir,
+					emit: emitTo,
+					broadcast: broadcastFn,
+				})
+			: null;
 		const hasSubscribers = (event: string): boolean => {
 			for (const client of this.clients) {
 				if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) return true;
@@ -228,21 +230,23 @@ export class APIServer {
 			'fs.writeText': _fs.writeText,
 			'fs.writeCompressed': _fs.writeCompressed,
 			// Catalog (optional — requires CatalogManager)
-			...(_catalog ? {
-				'catalog.list': _catalog.list,
-				'catalog.get': _catalog.get,
-				'catalog.search': _catalog.search,
-				'catalog.publish': _catalog.publish,
-				'catalog.update': _catalog.update,
-				'catalog.remove': _catalog.remove,
-				'catalog.getAccess': _catalog.getAccess,
-				'catalog.grantRole': _catalog.grantRole,
-				'catalog.revokeRole': _catalog.revokeRole,
-				'catalog.getSyncStatus': _catalog.getSyncStatus,
-				'catalog.startDownload': _catalog.startDownload,
-				'catalog.pauseDownload': _catalog.pauseDownload,
-				'catalog.resumeDownload': _catalog.resumeDownload,
-			} : {}),
+			...(_catalog
+				? {
+						'catalog.list': _catalog.list,
+						'catalog.get': _catalog.get,
+						'catalog.search': _catalog.search,
+						'catalog.publish': _catalog.publish,
+						'catalog.update': _catalog.update,
+						'catalog.remove': _catalog.remove,
+						'catalog.getAccess': _catalog.getAccess,
+						'catalog.grantRole': _catalog.grantRole,
+						'catalog.revokeRole': _catalog.revokeRole,
+						'catalog.getSyncStatus': _catalog.getSyncStatus,
+						'catalog.startDownload': _catalog.startDownload,
+						'catalog.pauseDownload': _catalog.pauseDownload,
+						'catalog.resumeDownload': _catalog.resumeDownload,
+					}
+				: {}),
 			// System
 			'system.ram': _system.ram,
 			'system.storage': _system.storage,

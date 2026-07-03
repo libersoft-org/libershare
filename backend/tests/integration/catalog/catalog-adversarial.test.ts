@@ -55,8 +55,9 @@ async function createNode(index: number): Promise<TestNode> {
 	// Register GossipSub handler
 	await network.subscribe(`lish/${NET}`, async (msg: Record<string, any>) => {
 		if (msg['type'] === 'catalog_op') {
-			try { await catalog.applyRemoteOp(NET, msg as any as SignedCatalogOp); }
-			catch {}
+			try {
+				await catalog.applyRemoteOp(NET, msg as any as SignedCatalogOp);
+			} catch {}
 		}
 	});
 
@@ -109,7 +110,9 @@ beforeAll(async () => {
 afterAll(async () => {
 	for (const node of nodes) {
 		await node.network.stop();
-		try { await rm(node.tmpDir, { recursive: true }); } catch {}
+		try {
+			await rm(node.tmpDir, { recursive: true });
+		} catch {}
 	}
 }, 15_000);
 
@@ -123,7 +126,11 @@ describe('Collision: Same lishID published by two moderators', () => {
 		await nodes[0]!.catalog.publish(NET, {
 			lishID: 'collision-1',
 			name: 'Owner Version',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-owner',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-owner',
 		});
 
 		await new Promise(r => setTimeout(r, 500));
@@ -132,7 +139,11 @@ describe('Collision: Same lishID published by two moderators', () => {
 		await nodes[2]!.catalog.publish(NET, {
 			lishID: 'collision-1',
 			name: 'Moderator Version',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 200, fileCount: 1, manifestHash: 'h-mod',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 200,
+			fileCount: 1,
+			manifestHash: 'h-mod',
 		});
 
 		await new Promise(r => setTimeout(r, 3000));
@@ -153,7 +164,11 @@ describe('Collision: Rapid updates from multiple peers', () => {
 		await nodes[0]!.catalog.publish(NET, {
 			lishID: 'rapid-collision',
 			name: 'Version 0',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-rapid',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-rapid',
 		});
 		await new Promise(r => setTimeout(r, 1000));
 
@@ -182,11 +197,17 @@ describe('Collision: Rapid updates from multiple peers', () => {
 
 describe('Forgery: Untrusted node tries to inject data', () => {
 	test('node3 (no permissions) publish is rejected locally', async () => {
-		await expect(nodes[3]!.catalog.publish(NET, {
-			lishID: 'forged-entry',
-			name: 'Forged by untrusted peer',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 666, fileCount: 1, manifestHash: 'h-forged',
-		})).rejects.toThrow();
+		await expect(
+			nodes[3]!.catalog.publish(NET, {
+				lishID: 'forged-entry',
+				name: 'Forged by untrusted peer',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 666,
+				fileCount: 1,
+				manifestHash: 'h-forged',
+			})
+		).rejects.toThrow();
 
 		// Entry should not exist on any node
 		for (const node of nodes) {
@@ -213,9 +234,16 @@ describe('Forgery: Crafted invalid signed operations', () => {
 	test('operation with tampered payload rejected by all nodes', async () => {
 		const attackerKey = await generateKeyPair('Ed25519');
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'attacker' };
-		const { op } = await signCatalogOp(attackerKey, 'add', NET, {
-			lishID: 'tampered', name: 'Injected',
-		}, clock);
+		const { op } = await signCatalogOp(
+			attackerKey,
+			'add',
+			NET,
+			{
+				lishID: 'tampered',
+				name: 'Injected',
+			},
+			clock
+		);
 
 		// Tamper with data after signing
 		op.payload.data['name'] = 'EVIL DATA';
@@ -231,9 +259,16 @@ describe('Forgery: Crafted invalid signed operations', () => {
 		// Moderator signs op for wrong network
 		const modKey = nodes[2]!.network.getPrivateKey();
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'wrong-net' };
-		const { op } = await signCatalogOp(modKey as any, 'add', 'wrong-network', {
-			lishID: 'wrong-net', name: 'Wrong Network',
-		}, clock);
+		const { op } = await signCatalogOp(
+			modKey as any,
+			'add',
+			'wrong-network',
+			{
+				lishID: 'wrong-net',
+				name: 'Wrong Network',
+			},
+			clock
+		);
 
 		// Apply on our network — should pass signature but fail ACL (not registered for this network context)
 		// The op's networkID doesn't match what we pass to handleRemoteOp
@@ -249,11 +284,23 @@ describe('Forgery: Crafted invalid signed operations', () => {
 		const modKey = nodes[2]!.network.getPrivateKey();
 		const futureTime = Date.now() + 10 * 60 * 1000; // 10 min in future
 		const clock: HLC = { wallTime: futureTime, logical: 0, nodeID: 'drift' };
-		const { op } = await signCatalogOp(modKey as any, 'add', NET, {
-			lishID: 'future-entry', name: 'From The Future',
-			publisherPeerID: nodes[2]!.peerID, publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-future',
-		}, clock);
+		const { op } = await signCatalogOp(
+			modKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'future-entry',
+				name: 'From The Future',
+				publisherPeerID: nodes[2]!.peerID,
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-future',
+			},
+			clock
+		);
 
 		const result = await handleRemoteOp(nodes[0]!.db, NET, op);
 		expect(result.valid).toBe(false);
@@ -265,7 +312,11 @@ describe('Forgery: Crafted invalid signed operations', () => {
 		await nodes[0]!.catalog.publish(NET, {
 			lishID: 'replay-target',
 			name: 'Original',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-replay',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-replay',
 		});
 
 		// Read the stored signed_op
@@ -298,14 +349,22 @@ describe('Partition: Nodes operate independently then merge', () => {
 		await nodes[0]!.catalog.publish(NET, {
 			lishID: 'partition-a1',
 			name: 'From Group A',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-pa1',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-pa1',
 		});
 
 		// Group B: moderator publishes to their own DB
 		await nodes[2]!.catalog.publish(NET, {
 			lishID: 'partition-b1',
 			name: 'From Group B',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 200, fileCount: 1, manifestHash: 'h-pb1',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 200,
+			fileCount: 1,
+			manifestHash: 'h-pb1',
 		});
 
 		await new Promise(r => setTimeout(r, 3000));
@@ -334,11 +393,23 @@ describe('Forgery: Oversized field attack', () => {
 	test('entry with 300-byte name rejected by validator', async () => {
 		const modKey = nodes[2]!.network.getPrivateKey();
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'oversize' };
-		const { op } = await signCatalogOp(modKey as any, 'add', NET, {
-			lishID: 'big-name', name: 'x'.repeat(300),
-			publisherPeerID: nodes[2]!.peerID, publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-big',
-		}, clock);
+		const { op } = await signCatalogOp(
+			modKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'big-name',
+				name: 'x'.repeat(300),
+				publisherPeerID: nodes[2]!.peerID,
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-big',
+			},
+			clock
+		);
 
 		const result = await handleRemoteOp(nodes[0]!.db, NET, op);
 		expect(result.valid).toBe(false);
@@ -348,12 +419,24 @@ describe('Forgery: Oversized field attack', () => {
 	test('entry with 15 tags rejected', async () => {
 		const modKey = nodes[2]!.network.getPrivateKey();
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'tags' };
-		const { op } = await signCatalogOp(modKey as any, 'add', NET, {
-			lishID: 'many-tags', name: 'Too Many Tags',
-			tags: Array.from({ length: 15 }, (_, i) => `tag${i}`),
-			publisherPeerID: nodes[2]!.peerID, publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-tags',
-		}, clock);
+		const { op } = await signCatalogOp(
+			modKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'many-tags',
+				name: 'Too Many Tags',
+				tags: Array.from({ length: 15 }, (_, i) => `tag${i}`),
+				publisherPeerID: nodes[2]!.peerID,
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-tags',
+			},
+			clock
+		);
 
 		const result = await handleRemoteOp(nodes[0]!.db, NET, op);
 		expect(result.valid).toBe(false);
@@ -371,9 +454,16 @@ describe('Forgery: Impersonation — sign with wrong key', () => {
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'impersonator' };
 
 		// Sign with attacker's key
-		const { op } = await signCatalogOp(attackerKey, 'add', NET, {
-			lishID: 'impersonated', name: 'Fake Entry',
-		}, clock);
+		const { op } = await signCatalogOp(
+			attackerKey,
+			'add',
+			NET,
+			{
+				lishID: 'impersonated',
+				name: 'Fake Entry',
+			},
+			clock
+		);
 
 		// op.signer is attacker's peerID — not a moderator
 		const result = await handleRemoteOp(nodes[0]!.db, NET, op);
@@ -386,9 +476,16 @@ describe('Forgery: Impersonation — sign with wrong key', () => {
 		const attackerKey = await generateKeyPair('Ed25519');
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'impersonator2' };
 
-		const { op } = await signCatalogOp(attackerKey, 'add', NET, {
-			lishID: 'spoofed', name: 'Spoofed Signer',
-		}, clock);
+		const { op } = await signCatalogOp(
+			attackerKey,
+			'add',
+			NET,
+			{
+				lishID: 'spoofed',
+				name: 'Spoofed Signer',
+			},
+			clock
+		);
 
 		// Replace signer with moderator's PeerID (forgery attempt)
 		op.signer = nodes[2]!.peerID;

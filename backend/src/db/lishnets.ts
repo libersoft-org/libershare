@@ -25,7 +25,7 @@ export function initLISHnetsTables(db: Database): void {
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishnets_peers_id_lishnets ON lishnets_peers(id_lishnets)');
 
 	// Migration: add owner_peer_id column if missing
-	const cols = db.query<{ name: string }, []>("PRAGMA table_info(lishnets)").all();
+	const cols = db.query<{ name: string }, []>('PRAGMA table_info(lishnets)').all();
 	if (!cols.some(c => c.name === 'owner_peer_id')) {
 		db.run('ALTER TABLE lishnets ADD COLUMN owner_peer_id TEXT');
 	}

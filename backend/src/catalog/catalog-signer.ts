@@ -23,13 +23,7 @@ export interface SignedCatalogOp {
 const encoder = new TextEncoder();
 
 /** Tick the local HLC, wrap `data` in a payload and sign it (RFC 8785 canonical JSON). */
-export async function signCatalogOp(
-	privateKey: Ed25519PrivateKey,
-	type: CatalogOpPayload['type'],
-	networkID: string,
-	data: Record<string, unknown>,
-	localClock: HLC,
-): Promise<{ op: SignedCatalogOp; updatedClock: HLC }> {
+export async function signCatalogOp(privateKey: Ed25519PrivateKey, type: CatalogOpPayload['type'], networkID: string, data: Record<string, unknown>, localClock: HLC): Promise<{ op: SignedCatalogOp; updatedClock: HLC }> {
 	const newClock = hlcTick(localClock);
 	const payload: CatalogOpPayload = {
 		type,

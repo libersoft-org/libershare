@@ -3,19 +3,7 @@ import type { Ed25519PrivateKey } from '@libp2p/interface';
 import { signCatalogOp, type SignedCatalogOp } from './catalog-signer.ts';
 import { handleRemoteOp } from './catalog-validator.ts';
 import type { HLC } from './catalog-hlc.ts';
-import {
-	ensureCatalogACL,
-	getCatalogACL,
-	getCatalogEntry,
-	listCatalogEntries,
-	searchCatalog,
-	getVectorClock,
-	deleteTombstonesOlderThan,
-	getEntryCount,
-	getTombstoneCount,
-	type CatalogEntryRow,
-	type CatalogACLRow,
-} from '../db/catalog.ts';
+import { ensureCatalogACL, getCatalogACL, getCatalogEntry, listCatalogEntries, searchCatalog, getVectorClock, deleteTombstonesOlderThan, getEntryCount, getTombstoneCount, type CatalogEntryRow, type CatalogACLRow } from '../db/catalog.ts';
 
 /** Constructor dependencies. Key and peer ID are lazy accessors because the libp2p node starts after the manager is built. */
 export interface CatalogManagerConfig {
@@ -63,23 +51,24 @@ export class CatalogManager {
 		const lastClock = getVectorClock(this.db, networkID, peerID);
 
 		const net: JoinedNetwork = {
-			localClock: lastClock
-				? { wallTime: Math.max(lastClock.hlc_wall, Date.now()), logical: lastClock.hlc_logical, nodeID: peerID }
-				: { wallTime: Date.now(), logical: 0, nodeID: peerID },
+			localClock: lastClock ? { wallTime: Math.max(lastClock.hlc_wall, Date.now()), logical: lastClock.hlc_logical, nodeID: peerID } : { wallTime: Date.now(), logical: 0, nodeID: peerID },
 			ownerPeerID,
 			gcTimer: null,
 			lastSyncAt: null,
 		};
 
 		// Start tombstone GC timer (every 6 hours)
-		net.gcTimer = setInterval(() => {
-			try {
-				const deleted = deleteTombstonesOlderThan(this.db, networkID, 30);
-				if (deleted > 0) console.log(`[Catalog] GC: removed ${deleted} tombstones from ${networkID}`);
-			} catch (err) {
-				console.warn(`[Catalog] GC error for ${networkID}:`, (err as Error).message);
-			}
-		}, 6 * 60 * 60 * 1000); // 6 hours
+		net.gcTimer = setInterval(
+			() => {
+				try {
+					const deleted = deleteTombstonesOlderThan(this.db, networkID, 30);
+					if (deleted > 0) console.log(`[Catalog] GC: removed ${deleted} tombstones from ${networkID}`);
+				} catch (err) {
+					console.warn(`[Catalog] GC error for ${networkID}:`, (err as Error).message);
+				}
+			},
+			6 * 60 * 60 * 1000
+		); // 6 hours
 
 		this.joined.set(networkID, net);
 	}
@@ -129,25 +118,30 @@ export class CatalogManager {
 
 	// --- Write operations ---
 
-	async publish(networkID: string, data: {
-		lishID: string;
-		name?: string;
-		description?: string;
-		publisherPeerID?: string;
-		publishedAt?: string;
-		chunkSize: number;
-		checksumAlgo: string;
-		totalSize: number;
-		fileCount: number;
-		manifestHash: string;
-		contentType?: string;
-		tags?: string[];
-	}): Promise<void> {
+	async publish(
+		networkID: string,
+		data: {
+			lishID: string;
+			name?: string;
+			description?: string;
+			publisherPeerID?: string;
+			publishedAt?: string;
+			chunkSize: number;
+			checksumAlgo: string;
+			totalSize: number;
+			fileCount: number;
+			manifestHash: string;
+			contentType?: string;
+			tags?: string[];
+		}
+	): Promise<void> {
 		const net = this.getNetwork(networkID);
 		const privateKey = this.getPrivateKey();
 
 		const { op, updatedClock } = await signCatalogOp(
-			privateKey, 'add', networkID,
+			privateKey,
+			'add',
+			networkID,
 			{
 				lishID: data.lishID,
 				name: data.name,
@@ -162,7 +156,7 @@ export class CatalogManager {
 				contentType: data.contentType,
 				tags: data.tags,
 			},
-			net.localClock,
+			net.localClock
 		);
 		net.localClock = updatedClock;
 
@@ -173,12 +167,16 @@ export class CatalogManager {
 		this.emitEventFn?.('catalog:updated', { networkID, entry: getCatalogEntry(this.db, networkID, data.lishID) });
 	}
 
-	async update(networkID: string, lishID: string, fields: {
-		name?: string;
-		description?: string;
-		contentType?: string;
-		tags?: string[];
-	}): Promise<void> {
+	async update(
+		networkID: string,
+		lishID: string,
+		fields: {
+			name?: string;
+			description?: string;
+			contentType?: string;
+			tags?: string[];
+		}
+	): Promise<void> {
 		const net = this.getNetwork(networkID);
 		const privateKey = this.getPrivateKey();
 
@@ -186,7 +184,9 @@ export class CatalogManager {
 		if (!existing) throw new Error(`Entry not found: ${lishID}`);
 
 		const { op, updatedClock } = await signCatalogOp(
-			privateKey, 'update', networkID,
+			privateKey,
+			'update',
+			networkID,
 			{
 				lishID,
 				name: fields.name ?? existing.name,
@@ -201,7 +201,7 @@ export class CatalogManager {
 				contentType: fields.contentType ?? existing.content_type,
 				tags: fields.tags ?? (existing.tags ? JSON.parse(existing.tags) : undefined),
 			},
-			net.localClock,
+			net.localClock
 		);
 		net.localClock = updatedClock;
 
@@ -216,9 +216,7 @@ export class CatalogManager {
 		const net = this.getNetwork(networkID);
 		const privateKey = this.getPrivateKey();
 
-		const { op, updatedClock } = await signCatalogOp(
-			privateKey, 'remove', networkID, { lishID }, net.localClock,
-		);
+		const { op, updatedClock } = await signCatalogOp(privateKey, 'remove', networkID, { lishID }, net.localClock);
 		net.localClock = updatedClock;
 
 		const result = await handleRemoteOp(this.db, networkID, op);
@@ -232,10 +230,7 @@ export class CatalogManager {
 		const net = this.getNetwork(networkID);
 		const privateKey = this.getPrivateKey();
 
-		const { op, updatedClock } = await signCatalogOp(
-			privateKey, 'acl_grant', networkID,
-			{ role, delegatee }, net.localClock,
-		);
+		const { op, updatedClock } = await signCatalogOp(privateKey, 'acl_grant', networkID, { role, delegatee }, net.localClock);
 		net.localClock = updatedClock;
 
 		const result = await handleRemoteOp(this.db, networkID, op);
@@ -249,10 +244,7 @@ export class CatalogManager {
 		const net = this.getNetwork(networkID);
 		const privateKey = this.getPrivateKey();
 
-		const { op, updatedClock } = await signCatalogOp(
-			privateKey, 'acl_revoke', networkID,
-			{ role, delegatee }, net.localClock,
-		);
+		const { op, updatedClock } = await signCatalogOp(privateKey, 'acl_revoke', networkID, { role, delegatee }, net.localClock);
 		net.localClock = updatedClock;
 
 		const result = await handleRemoteOp(this.db, networkID, op);

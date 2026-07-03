@@ -119,9 +119,13 @@ describe('CatalogManager: Update flow', () => {
 		mgr.join('net1', ownerPeerID);
 
 		await mgr.publish('net1', {
-			lishID: 'lish-u', name: 'Original Name',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1000,
-			fileCount: 1, manifestHash: 'hash-1',
+			lishID: 'lish-u',
+			name: 'Original Name',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 1000,
+			fileCount: 1,
+			manifestHash: 'hash-1',
 		});
 
 		await mgr.update('net1', 'lish-u', {
@@ -150,9 +154,13 @@ describe('CatalogManager: Remove flow', () => {
 		mgr.join('net1', ownerPeerID);
 
 		await mgr.publish('net1', {
-			lishID: 'lish-r', name: 'To Remove',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 500,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'lish-r',
+			name: 'To Remove',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 500,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		expect(mgr.get('net1', 'lish-r')).not.toBeNull();
 
@@ -194,9 +202,7 @@ describe('CatalogManager: ACL management', () => {
 		const randomMgr = createManager(randomKey);
 		randomMgr.join('net1', ownerPeerID);
 
-		await expect(
-			randomMgr.grantRole('net1', 'some-peer', 'admin')
-		).rejects.toThrow('Grant failed');
+		await expect(randomMgr.grantRole('net1', 'some-peer', 'admin')).rejects.toThrow('Grant failed');
 	});
 });
 
@@ -211,9 +217,14 @@ describe('CatalogManager: Search', () => {
 			['c', 'Arch Linux', 'Rolling release distro'],
 		] as const) {
 			await mgr.publish('net1', {
-				lishID: id, name, description: desc,
-				chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-				fileCount: 1, manifestHash: `h-${id}`,
+				lishID: id,
+				name,
+				description: desc,
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: `h-${id}`,
 			});
 		}
 
@@ -227,9 +238,14 @@ describe('CatalogManager: Search', () => {
 		mgr.join('net1', ownerPeerID);
 
 		await mgr.publish('net1', {
-			lishID: 'x', name: 'Test',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1', tags: ['linux', 'iso'],
+			lishID: 'x',
+			name: 'Test',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
+			tags: ['linux', 'iso'],
 		});
 
 		expect(mgr.search('net1', '#linux').length).toBe(1);
@@ -251,9 +267,13 @@ describe('CatalogManager: Broadcast callback', () => {
 		mgr.join('net1', ownerPeerID);
 
 		await mgr.publish('net1', {
-			lishID: 'bc', name: 'Broadcast Test',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'bc',
+			name: 'Broadcast Test',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await mgr.update('net1', 'bc', { name: 'Updated' });
 		await mgr.remove('net1', 'bc');
@@ -278,14 +298,20 @@ describe('CatalogManager: Remote op application', () => {
 			db,
 			getPrivateKey: () => ownerKey,
 			getLocalPeerID: () => ownerPeerID,
-			broadcast: (_nid, op) => { capturedOp = op; },
+			broadcast: (_nid, op) => {
+				capturedOp = op;
+			},
 		});
 		mgr1WithBroadcast.join('net1', ownerPeerID);
 
 		await mgr1WithBroadcast.publish('net1', {
-			lishID: 'remote-test', name: 'From Peer 1',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'remote-test',
+			name: 'From Peer 1',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		expect(capturedOp).not.toBeNull();
@@ -315,15 +341,23 @@ describe('CatalogManager: Multi-network', () => {
 		mgr.join('net2', ownerPeerID);
 
 		await mgr.publish('net1', {
-			lishID: 'a', name: 'Net1 Entry',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'a',
+			name: 'Net1 Entry',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		await mgr.publish('net2', {
-			lishID: 'b', name: 'Net2 Entry',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 200,
-			fileCount: 1, manifestHash: 'h2',
+			lishID: 'b',
+			name: 'Net2 Entry',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 200,
+			fileCount: 1,
+			manifestHash: 'h2',
 		});
 
 		expect(mgr.list('net1').length).toBe(1);
@@ -339,9 +373,13 @@ describe('CatalogManager: GC', () => {
 		mgr.join('net1', ownerPeerID);
 
 		await mgr.publish('net1', {
-			lishID: 'gc-entry', name: 'To GC',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'gc-entry',
+			name: 'To GC',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await mgr.remove('net1', 'gc-entry');
 

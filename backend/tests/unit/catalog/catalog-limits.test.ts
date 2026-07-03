@@ -28,9 +28,16 @@ describe('Catalog Size Limits', () => {
 	test('per-publisher quota rejects after limit', async () => {
 		const modKey = await generateKeyPair('Ed25519');
 		// Grant moderator
-		const { op: g } = await signCatalogOp(ownerKey, 'acl_grant', 'net1', {
-			role: 'moderator', delegatee: modKey.publicKey.toString(),
-		}, clock());
+		const { op: g } = await signCatalogOp(
+			ownerKey,
+			'acl_grant',
+			'net1',
+			{
+				role: 'moderator',
+				delegatee: modKey.publicKey.toString(),
+			},
+			clock()
+		);
 		await handleRemoteOp(db, 'net1', g);
 
 		// Publish up to quota (use a small limit for test speed)
@@ -40,8 +47,7 @@ describe('Catalog Size Limits', () => {
 			db.run(
 				`INSERT INTO catalog_entries (network_id, lish_id, name, publisher_peer_id, published_at, chunk_size, checksum_algo, total_size, file_count, manifest_hash, hlc_wall, hlc_logical, hlc_node, signed_op)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				['net1', `quota-${i}`, `Entry ${i}`, modKey.publicKey.toString(), '2026-01-01T00:00:00Z',
-				1024, 'sha256', 100, 1, `h${i}`, 1000 + i, 0, 'limits', new Uint8Array([1])]
+				['net1', `quota-${i}`, `Entry ${i}`, modKey.publicKey.toString(), '2026-01-01T00:00:00Z', 1024, 'sha256', 100, 1, `h${i}`, 1000 + i, 0, 'limits', new Uint8Array([1])]
 			);
 		}
 
@@ -51,8 +57,7 @@ describe('Catalog Size Limits', () => {
 				db.run(
 					`INSERT INTO catalog_entries (network_id, lish_id, name, publisher_peer_id, published_at, chunk_size, checksum_algo, total_size, file_count, manifest_hash, hlc_wall, hlc_logical, hlc_node, signed_op)
 					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-					['net1', `quota-${i}`, `Entry ${i}`, modKey.publicKey.toString(), '2026-01-01T00:00:00Z',
-					1024, 'sha256', 100, 1, `h${i}`, 1000 + i, 0, 'limits', new Uint8Array([1])]
+					['net1', `quota-${i}`, `Entry ${i}`, modKey.publicKey.toString(), '2026-01-01T00:00:00Z', 1024, 'sha256', 100, 1, `h${i}`, 1000 + i, 0, 'limits', new Uint8Array([1])]
 				);
 			}
 		}
@@ -61,11 +66,23 @@ describe('Catalog Size Limits', () => {
 
 		// Next add should be rejected
 		let modClock = clock();
-		const { op } = await signCatalogOp(modKey, 'add', 'net1', {
-			lishID: 'over-quota', name: 'Over Quota',
-			publisherPeerID: modKey.publicKey.toString(), publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-over',
-		}, modClock);
+		const { op } = await signCatalogOp(
+			modKey,
+			'add',
+			'net1',
+			{
+				lishID: 'over-quota',
+				name: 'Over Quota',
+				publisherPeerID: modKey.publicKey.toString(),
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-over',
+			},
+			modClock
+		);
 		const result = await handleRemoteOp(db, 'net1', op);
 		expect(result.valid).toBe(false);
 		expect((result as { reason: string }).reason).toBe('PUBLISHER_QUOTA_EXCEEDED');
@@ -84,8 +101,7 @@ describe('Catalog Size Limits', () => {
 			db.run(
 				`INSERT INTO catalog_entries (network_id, lish_id, name, publisher_peer_id, published_at, chunk_size, checksum_algo, total_size, file_count, manifest_hash, hlc_wall, hlc_logical, hlc_node, signed_op)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				['net1', `global-${i}`, `Entry ${i}`, `publisher-${i}`, '2026-01-01T00:00:00Z',
-				1024, 'sha256', 100, 1, `h${i}`, 1000 + i, 0, 'limits', new Uint8Array([1])]
+				['net1', `global-${i}`, `Entry ${i}`, `publisher-${i}`, '2026-01-01T00:00:00Z', 1024, 'sha256', 100, 1, `h${i}`, 1000 + i, 0, 'limits', new Uint8Array([1])]
 			);
 		}
 
@@ -103,8 +119,7 @@ describe('Catalog Size Limits', () => {
 			db.run(
 				`INSERT INTO catalog_entries (network_id, lish_id, name, publisher_peer_id, published_at, chunk_size, checksum_algo, total_size, file_count, manifest_hash, hlc_wall, hlc_logical, hlc_node, signed_op)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				['net1', `net1-${i}`, `Entry ${i}`, ownerKey.publicKey.toString(), '2026-01-01T00:00:00Z',
-				1024, 'sha256', 100, 1, `h${i}`, 1000 + i, 0, 'limits', new Uint8Array([1])]
+				['net1', `net1-${i}`, `Entry ${i}`, ownerKey.publicKey.toString(), '2026-01-01T00:00:00Z', 1024, 'sha256', 100, 1, `h${i}`, 1000 + i, 0, 'limits', new Uint8Array([1])]
 			);
 		}
 
@@ -113,11 +128,23 @@ describe('Catalog Size Limits', () => {
 
 		// Publish in net2 should work (independent count)
 		let oClock = clock();
-		const { op } = await signCatalogOp(ownerKey, 'add', 'net2', {
-			lishID: 'net2-entry', name: 'Net2 Entry',
-			publisherPeerID: ownerKey.publicKey.toString(), publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h1',
-		}, oClock);
+		const { op } = await signCatalogOp(
+			ownerKey,
+			'add',
+			'net2',
+			{
+				lishID: 'net2-entry',
+				name: 'Net2 Entry',
+				publisherPeerID: ownerKey.publicKey.toString(),
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h1',
+			},
+			oClock
+		);
 		const result = await handleRemoteOp(db, 'net2', op);
 		expect(result.valid).toBe(true);
 	});

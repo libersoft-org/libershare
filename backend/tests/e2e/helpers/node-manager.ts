@@ -14,25 +14,29 @@ const APP_ENTRY = join(ROOT, 'backend', 'src', 'app.ts');
 const nodes: NodeInfo[] = [];
 
 function settingsJSON(p2pPort: number, storageSuffix: string): string {
-	return JSON.stringify({
-		network: {
-			incomingPort: p2pPort,
-			maxDownloadConnections: 200,
-			maxUploadConnections: 200,
-			maxDownloadSpeed: 0,
-			maxUploadSpeed: 0,
-			allowRelay: true,
-			maxRelayReservations: 100,
-			autoStartSharing: true,
-			announceAddresses: [],
+	return JSON.stringify(
+		{
+			network: {
+				incomingPort: p2pPort,
+				maxDownloadConnections: 200,
+				maxUploadConnections: 200,
+				maxDownloadSpeed: 0,
+				maxUploadSpeed: 0,
+				allowRelay: true,
+				maxRelayReservations: 100,
+				autoStartSharing: true,
+				announceAddresses: [],
+			},
+			storage: {
+				downloadPath: `~/LiberShare-Test-${storageSuffix}/finished/`,
+				tempPath: `~/LiberShare-Test-${storageSuffix}/temp/`,
+				lishPath: `~/LiberShare-Test-${storageSuffix}/lish/`,
+				lishnetPath: `~/LiberShare-Test-${storageSuffix}/lishnet/`,
+			},
 		},
-		storage: {
-			downloadPath: `~/LiberShare-Test-${storageSuffix}/finished/`,
-			tempPath: `~/LiberShare-Test-${storageSuffix}/temp/`,
-			lishPath: `~/LiberShare-Test-${storageSuffix}/lish/`,
-			lishnetPath: `~/LiberShare-Test-${storageSuffix}/lishnet/`,
-		},
-	}, null, '\t');
+		null,
+		'\t'
+	);
 }
 
 async function copyDir(src: string, dst: string): Promise<void> {

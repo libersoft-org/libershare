@@ -25,13 +25,13 @@ async function call<T = any>(method: string, params: Record<string, any> = {}): 
 		ws.onopen = () => {
 			ws.send(JSON.stringify({ id, method, params }));
 		};
-		ws.onmessage = (event) => {
+		ws.onmessage = event => {
 			const msg = JSON.parse(event.data as string);
 			ws.close();
 			if (msg.error) reject(new Error(msg.error));
 			else resolve(msg.result as T);
 		};
-		ws.onerror = (e) => reject(e);
+		ws.onerror = e => reject(e);
 	});
 }
 
@@ -112,9 +112,14 @@ describe('E2E via WebSocket: Catalog API', () => {
 
 	test('get single entry via WS', async () => {
 		await call('catalog.publish', {
-			networkID: 'net1', lishID: 'ws-get',
-			name: 'Get Test', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			networkID: 'net1',
+			lishID: 'ws-get',
+			name: 'Get Test',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		const entry = await call<any>('catalog.get', { networkID: 'net1', lishID: 'ws-get' });
@@ -124,14 +129,21 @@ describe('E2E via WebSocket: Catalog API', () => {
 
 	test('update entry via WS', async () => {
 		await call('catalog.publish', {
-			networkID: 'net1', lishID: 'ws-upd',
-			name: 'Before Update', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			networkID: 'net1',
+			lishID: 'ws-upd',
+			name: 'Before Update',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		await call('catalog.update', {
-			networkID: 'net1', lishID: 'ws-upd',
-			name: 'After Update', description: 'Updated via WS',
+			networkID: 'net1',
+			lishID: 'ws-upd',
+			name: 'After Update',
+			description: 'Updated via WS',
 		});
 
 		const entry = await call<any>('catalog.get', { networkID: 'net1', lishID: 'ws-upd' });
@@ -141,9 +153,14 @@ describe('E2E via WebSocket: Catalog API', () => {
 
 	test('remove entry via WS', async () => {
 		await call('catalog.publish', {
-			networkID: 'net1', lishID: 'ws-rem',
-			name: 'To Remove', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			networkID: 'net1',
+			lishID: 'ws-rem',
+			name: 'To Remove',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		await call('catalog.remove', { networkID: 'net1', lishID: 'ws-rem' });
@@ -153,11 +170,20 @@ describe('E2E via WebSocket: Catalog API', () => {
 	});
 
 	test('search via WS', async () => {
-		for (const [id, name] of [['s1', 'Ubuntu Desktop'], ['s2', 'Fedora Server'], ['s3', 'Arch Linux']] as const) {
+		for (const [id, name] of [
+			['s1', 'Ubuntu Desktop'],
+			['s2', 'Fedora Server'],
+			['s3', 'Arch Linux'],
+		] as const) {
 			await call('catalog.publish', {
-				networkID: 'net1', lishID: id, name,
-				chunkSize: 1024, checksumAlgo: 'sha256',
-				totalSize: 100, fileCount: 1, manifestHash: `h-${id}`,
+				networkID: 'net1',
+				lishID: id,
+				name,
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: `h-${id}`,
 			});
 		}
 
@@ -177,14 +203,18 @@ describe('E2E via WebSocket: Catalog API', () => {
 		const modPeerID = modKey.publicKey.toString();
 
 		await call('catalog.grantRole', {
-			networkID: 'net1', delegatee: modPeerID, role: 'moderator',
+			networkID: 'net1',
+			delegatee: modPeerID,
+			role: 'moderator',
 		});
 
 		let acl = await call<any>('catalog.getAccess', { networkID: 'net1' });
 		expect(acl.moderators).toContain(modPeerID);
 
 		await call('catalog.revokeRole', {
-			networkID: 'net1', delegatee: modPeerID, role: 'moderator',
+			networkID: 'net1',
+			delegatee: modPeerID,
+			role: 'moderator',
 		});
 
 		acl = await call<any>('catalog.getAccess', { networkID: 'net1' });
@@ -194,11 +224,17 @@ describe('E2E via WebSocket: Catalog API', () => {
 	test('full lifecycle via WS: publish → update → search → remove → verify gone', async () => {
 		// Publish
 		await call('catalog.publish', {
-			networkID: 'net1', lishID: 'lifecycle',
-			name: 'Lifecycle Test', description: 'Full E2E flow',
-			chunkSize: 2048, checksumAlgo: 'sha256',
-			totalSize: 10000, fileCount: 5, manifestHash: 'hash-life',
-			contentType: 'dataset', tags: ['test', 'e2e'],
+			networkID: 'net1',
+			lishID: 'lifecycle',
+			name: 'Lifecycle Test',
+			description: 'Full E2E flow',
+			chunkSize: 2048,
+			checksumAlgo: 'sha256',
+			totalSize: 10000,
+			fileCount: 5,
+			manifestHash: 'hash-life',
+			contentType: 'dataset',
+			tags: ['test', 'e2e'],
 		});
 
 		// Verify published
@@ -207,8 +243,10 @@ describe('E2E via WebSocket: Catalog API', () => {
 
 		// Update
 		await call('catalog.update', {
-			networkID: 'net1', lishID: 'lifecycle',
-			name: 'Lifecycle Updated', tags: ['test', 'e2e', 'updated'],
+			networkID: 'net1',
+			lishID: 'lifecycle',
+			name: 'Lifecycle Updated',
+			tags: ['test', 'e2e', 'updated'],
 		});
 
 		entry = await call<any>('catalog.get', { networkID: 'net1', lishID: 'lifecycle' });
@@ -237,9 +275,14 @@ describe('E2E via WebSocket: Catalog API', () => {
 	test('multiple rapid publishes via WS', async () => {
 		for (let i = 0; i < 20; i++) {
 			await call('catalog.publish', {
-				networkID: 'net1', lishID: `rapid-${i}`, name: `Rapid ${i}`,
-				chunkSize: 1024, checksumAlgo: 'sha256',
-				totalSize: i * 100, fileCount: 1, manifestHash: `h-${i}`,
+				networkID: 'net1',
+				lishID: `rapid-${i}`,
+				name: `Rapid ${i}`,
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: i * 100,
+				fileCount: 1,
+				manifestHash: `h-${i}`,
 			});
 		}
 

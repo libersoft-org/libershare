@@ -36,23 +36,26 @@
 	let currentView = $state<'catalog' | 'publish' | 'acl'>('catalog');
 	let removeBackHandler: (() => void) | null = null;
 
-	let filteredEntries = $derived(category
-		? entries.filter(e => {
-			const tags = parseTags(e.tags ?? null);
-			return tags.includes(category);
-		})
-		: entries
+	let filteredEntries = $derived(
+		category
+			? entries.filter(e => {
+					const tags = parseTags(e.tags ?? null);
+					return tags.includes(category);
+				})
+			: entries
 	);
 
-	let items = $derived(filteredEntries.map(e => ({
-		id: e.lish_id,
-		title: e.name || e.lish_id,
-		description: e.description,
-		totalSize: e.total_size,
-		fileCount: e.file_count,
-		tags: e.tags,
-		contentType: e.content_type,
-	})));
+	let items = $derived(
+		filteredEntries.map(e => ({
+			id: e.lish_id,
+			title: e.name || e.lish_id,
+			description: e.description,
+			totalSize: e.total_size,
+			fileCount: e.file_count,
+			tags: e.tags,
+			contentType: e.content_type,
+		}))
+	);
 
 	let searchAreaID = $derived(`${areaID}-search`);
 	let listAreaID = $derived(`${areaID}-list`);
@@ -81,9 +84,7 @@
 		loading = true;
 		error = null;
 		try {
-			entries = searchQuery.trim()
-				? await searchCatalog(activeNetworkID, searchQuery)
-				: await listCatalogEntries(activeNetworkID);
+			entries = searchQuery.trim() ? await searchCatalog(activeNetworkID, searchQuery) : await listCatalogEntries(activeNetworkID);
 		} catch (err: any) {
 			error = err.message;
 			entries = [];
@@ -106,7 +107,10 @@
 	}
 
 	async function closePanel(): Promise<void> {
-		if (removeBackHandler) { removeBackHandler(); removeBackHandler = null; }
+		if (removeBackHandler) {
+			removeBackHandler();
+			removeBackHandler = null;
+		}
 		popBreadcrumb();
 		currentView = 'catalog';
 		await tick();
@@ -133,13 +137,20 @@
 	onMount(() => {
 		loadEntries();
 		const unsubSearch = searchNavHandle.controller.register(
-			navItem(() => [0, 0] as NavPos, () => undefined, () => searchBar?.toggleFocus())
+			navItem(
+				() => [0, 0] as NavPos,
+				() => undefined,
+				() => searchBar?.toggleFocus()
+			)
 		);
 		const unsubEvents = subscribeCatalogEvents({
 			onUpdated: () => loadEntries(),
 			onRemoved: () => loadEntries(),
 		});
-		return () => { unsubSearch(); unsubEvents(); };
+		return () => {
+			unsubSearch();
+			unsubEvents();
+		};
 	});
 </script>
 
@@ -171,7 +182,8 @@
 		white-space: nowrap;
 	}
 
-	.loading-center, .empty-center {
+	.loading-center,
+	.empty-center {
 		display: flex;
 		justify-content: center;
 		align-items: center;
@@ -207,10 +219,8 @@
 				<ProductsList areaID={listAreaID} position={listPosition} {title} {items} networkID={activeNetworkID} {onBack} />
 			{/if}
 		</div>
-
 	{:else if currentView === 'publish'}
 		<CatalogPublishPanel areaID={panelAreaID} position={toolbarPosition} networkID={activeNetworkID} onBack={closePanel} onPublished={loadEntries} />
-
 	{:else if currentView === 'acl'}
 		<CatalogACLPanel areaID={panelAreaID} position={toolbarPosition} networkID={activeNetworkID} onBack={closePanel} />
 	{/if}

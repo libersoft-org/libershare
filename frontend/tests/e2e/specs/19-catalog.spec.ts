@@ -194,13 +194,13 @@ test.describe('Catalog — Full Workflow (keyboard only)', () => {
 
 		// Find and click Download button
 		const downloadBtn = page.locator('.button', { hasText: /Stáhnout|Download/ });
-		if (await downloadBtn.count() > 0) {
+		if ((await downloadBtn.count()) > 0) {
 			await downloadBtn.first().click();
 			await page.waitForTimeout(1000);
 
 			// Should show a status alert (warning for not_available, or info for downloading)
 			const alert = page.locator('.alert');
-			if (await alert.count() > 0) {
+			if ((await alert.count()) > 0) {
 				const alertText = await alert.first().textContent();
 				expect(alertText).toBeTruthy();
 			}

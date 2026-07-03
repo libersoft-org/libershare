@@ -56,7 +56,9 @@ async function createNode(index: number, role: string): Promise<TestNode> {
 
 	await network.subscribe(`lish/${NET}`, async (msg: Record<string, any>) => {
 		if (msg['type'] === 'catalog_op') {
-			try { await catalog.applyRemoteOp(NET, msg as any as SignedCatalogOp); } catch {}
+			try {
+				await catalog.applyRemoteOp(NET, msg as any as SignedCatalogOp);
+			} catch {}
 		}
 	});
 
@@ -78,7 +80,9 @@ beforeAll(async () => {
 
 	const addr0 = nodes[0]!.network.getNodeInfo()!.addresses.find(a => a.includes('127.0.0.1'));
 	for (let i = 1; i < 10; i++) {
-		try { if (addr0) await nodes[i]!.network.connectToPeer(addr0); } catch {}
+		try {
+			if (addr0) await nodes[i]!.network.connectToPeer(addr0);
+		} catch {}
 		await new Promise(r => setTimeout(r, 400));
 	}
 
@@ -94,17 +98,18 @@ beforeAll(async () => {
 	await nodes[0]!.catalog.grantRole(NET, nodes[4]!.peerID, 'moderator');
 	await nodes[0]!.catalog.grantRole(NET, nodes[5]!.peerID, 'moderator');
 
-	syncACLToAll(
-		[nodes[1]!.peerID, nodes[2]!.peerID],
-		[nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID],
-	);
+	syncACLToAll([nodes[1]!.peerID, nodes[2]!.peerID], [nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID]);
 	await wait(2000);
 	console.log('✅ 10 nodes ready');
 }, 180_000);
 
 afterAll(async () => {
 	await Promise.all(nodes.map(n => n.network.stop()));
-	for (const n of nodes) { try { await rm(n.tmpDir, { recursive: true }); } catch {} }
+	for (const n of nodes) {
+		try {
+			await rm(n.tmpDir, { recursive: true });
+		} catch {}
+	}
 }, 30_000);
 
 // ================================================================
@@ -114,11 +119,16 @@ afterAll(async () => {
 describe('A. Publish → Propagate → Delete across all nodes', () => {
 	test('A.1 mod publishes, wait for gossipsub, then check all nodes', async () => {
 		await nodes[3]!.catalog.publish(NET, {
-			lishID: 'ubuntu-deep', name: 'Ubuntu 24.04',
+			lishID: 'ubuntu-deep',
+			name: 'Ubuntu 24.04',
 			description: 'Desktop ISO for deep test',
-			chunkSize: 1048576, checksumAlgo: 'sha256', totalSize: 4_500_000_000,
-			fileCount: 1, manifestHash: 'h-ubuntu-deep',
-			contentType: 'software', tags: ['linux', 'ubuntu'],
+			chunkSize: 1048576,
+			checksumAlgo: 'sha256',
+			totalSize: 4_500_000_000,
+			fileCount: 1,
+			manifestHash: 'h-ubuntu-deep',
+			contentType: 'software',
+			tags: ['linux', 'ubuntu'],
 		});
 
 		// Local check
@@ -140,9 +150,13 @@ describe('A. Publish → Propagate → Delete across all nodes', () => {
 		// Owner must have the entry to delete it — if not received via gossipsub, publish locally
 		if (!getCatalogEntry(nodes[0]!.db, NET, 'ubuntu-deep')) {
 			await nodes[0]!.catalog.publish(NET, {
-				lishID: 'ubuntu-deep', name: 'Ubuntu 24.04',
-				chunkSize: 1048576, checksumAlgo: 'sha256', totalSize: 4_500_000_000,
-				fileCount: 1, manifestHash: 'h-ubuntu-deep',
+				lishID: 'ubuntu-deep',
+				name: 'Ubuntu 24.04',
+				chunkSize: 1048576,
+				checksumAlgo: 'sha256',
+				totalSize: 4_500_000_000,
+				fileCount: 1,
+				manifestHash: 'h-ubuntu-deep',
 			});
 		}
 
@@ -162,9 +176,13 @@ describe('A. Publish → Propagate → Delete across all nodes', () => {
 
 	test('A.3 re-add after delete blocked by tombstone on all nodes', async () => {
 		await nodes[3]!.catalog.publish(NET, {
-			lishID: 'ubuntu-deep', name: 'Ubuntu Revived',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-rev',
+			lishID: 'ubuntu-deep',
+			name: 'Ubuntu Revived',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-rev',
 		});
 		// Should be silently skipped (tombstoned)
 		expect(getCatalogEntry(nodes[3]!.db, NET, 'ubuntu-deep')).toBeNull();
@@ -189,9 +207,13 @@ describe('B. Rights propagation — admin grants/revokes mod across nodes', () =
 
 		// Peer6 publishes (should now work)
 		await nodes[6]!.catalog.publish(NET, {
-			lishID: 'peer6-promoted', name: 'Published by promoted peer6',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 500,
-			fileCount: 1, manifestHash: 'h-p6',
+			lishID: 'peer6-promoted',
+			name: 'Published by promoted peer6',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 500,
+			fileCount: 1,
+			manifestHash: 'h-p6',
 			tags: ['promoted'],
 		});
 		expect(getCatalogEntry(nodes[6]!.db, NET, 'peer6-promoted')!.name).toBe('Published by promoted peer6');
@@ -209,57 +231,55 @@ describe('B. Rights propagation — admin grants/revokes mod across nodes', () =
 		});
 
 		// Peer6 tries to publish — should fail
-		await expect(nodes[6]!.catalog.publish(NET, {
-			lishID: 'peer6-after-revoke', name: 'Should Fail',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-fail',
-		})).rejects.toThrow();
+		await expect(
+			nodes[6]!.catalog.publish(NET, {
+				lishID: 'peer6-after-revoke',
+				name: 'Should Fail',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-fail',
+			})
+		).rejects.toThrow();
 		console.log('  ✅ B.2: Revoked peer6 correctly rejected');
 	});
 
 	test('B.3 owner revokes admin1 → admin1 cannot manage roles', async () => {
 		await nodes[0]!.catalog.revokeRole(NET, nodes[1]!.peerID, 'admin');
-		syncACLToAll(
-			[nodes[2]!.peerID],
-			[nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID],
-		);
+		syncACLToAll([nodes[2]!.peerID], [nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID]);
 
 		// Admin1 tries to grant mod — should fail
-		await expect(
-			nodes[1]!.catalog.grantRole(NET, nodes[7]!.peerID, 'moderator')
-		).rejects.toThrow();
+		await expect(nodes[1]!.catalog.grantRole(NET, nodes[7]!.peerID, 'moderator')).rejects.toThrow();
 		console.log('  ✅ B.3: Revoked admin1 cannot grant roles');
 
 		// Restore admin1
 		await nodes[0]!.catalog.grantRole(NET, nodes[1]!.peerID, 'admin');
-		syncACLToAll(
-			[nodes[1]!.peerID, nodes[2]!.peerID],
-			[nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID],
-		);
+		syncACLToAll([nodes[1]!.peerID, nodes[2]!.peerID], [nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID]);
 	});
 
 	test('B.4 revoked admin1 cannot publish anymore', async () => {
 		// Temporarily revoke admin1
 		await nodes[0]!.catalog.revokeRole(NET, nodes[1]!.peerID, 'admin');
-		syncACLToAll(
-			[nodes[2]!.peerID],
-			[nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID],
-		);
+		syncACLToAll([nodes[2]!.peerID], [nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID]);
 
 		// Admin1 tries to publish — should fail (not admin or mod)
-		await expect(nodes[1]!.catalog.publish(NET, {
-			lishID: 'revoked-admin-pub', name: 'Should Fail',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-ra',
-		})).rejects.toThrow();
+		await expect(
+			nodes[1]!.catalog.publish(NET, {
+				lishID: 'revoked-admin-pub',
+				name: 'Should Fail',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-ra',
+			})
+		).rejects.toThrow();
 		console.log('  ✅ B.4: Revoked admin cannot publish');
 
 		// Restore
 		await nodes[0]!.catalog.grantRole(NET, nodes[1]!.peerID, 'admin');
-		syncACLToAll(
-			[nodes[1]!.peerID, nodes[2]!.peerID],
-			[nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID],
-		);
+		syncACLToAll([nodes[1]!.peerID, nodes[2]!.peerID], [nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID]);
 	});
 });
 
@@ -271,9 +291,13 @@ describe('C. Sophisticated attacks', () => {
 	test('C.1 attacker replays old valid op with incremented HLC', async () => {
 		// Mod publishes legitimately
 		await nodes[3]!.catalog.publish(NET, {
-			lishID: 'replay-victim', name: 'Legitimate Entry',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-replay-v',
+			lishID: 'replay-victim',
+			name: 'Legitimate Entry',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-replay-v',
 		});
 
 		// Attacker reads the signed_op blob
@@ -300,12 +324,22 @@ describe('C. Sophisticated attacks', () => {
 		// In reality this would be devastating — but we can test the mechanism
 		const stolenKey = nodes[3]!.network.getPrivateKey();
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'stolen' };
-		const { op } = await signCatalogOp(stolenKey as any, 'add', NET, {
-			lishID: 'stolen-key-entry', name: 'Published with stolen key',
-			publisherPeerID: nodes[3]!.peerID,
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-stolen',
-		}, clock);
+		const { op } = await signCatalogOp(
+			stolenKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'stolen-key-entry',
+				name: 'Published with stolen key',
+				publisherPeerID: nodes[3]!.peerID,
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-stolen',
+			},
+			clock
+		);
 
 		// This SHOULD be accepted — the signature is valid and signer is a moderator
 		// This is the correct behavior: stolen keys are a fundamental compromise
@@ -314,25 +348,26 @@ describe('C. Sophisticated attacks', () => {
 			console.log('  ⚠️ C.2: Stolen key op ACCEPTED (expected — key compromise is total)');
 			// Mitigation: owner revokes the compromised moderator
 			await nodes[0]!.catalog.revokeRole(NET, nodes[3]!.peerID, 'moderator');
-			syncACLToAll(
-				[nodes[1]!.peerID, nodes[2]!.peerID],
-				[nodes[4]!.peerID, nodes[5]!.peerID],
-			);
+			syncACLToAll([nodes[1]!.peerID, nodes[2]!.peerID], [nodes[4]!.peerID, nodes[5]!.peerID]);
 
 			// Now even with the stolen key, new ops are rejected
-			const { op: op2 } = await signCatalogOp(stolenKey as any, 'add', NET, {
-				lishID: 'post-revoke', name: 'After Revoke',
-			}, { wallTime: Date.now(), logical: 0, nodeID: 'stolen2' });
+			const { op: op2 } = await signCatalogOp(
+				stolenKey as any,
+				'add',
+				NET,
+				{
+					lishID: 'post-revoke',
+					name: 'After Revoke',
+				},
+				{ wallTime: Date.now(), logical: 0, nodeID: 'stolen2' }
+			);
 			const r2 = await handleRemoteOp(nodes[0]!.db, NET, op2);
 			expect(r2.valid).toBe(false);
 			console.log('  ✅ C.2: Post-revoke op with stolen key REJECTED');
 
 			// Restore mod3
 			await nodes[0]!.catalog.grantRole(NET, nodes[3]!.peerID, 'moderator');
-			syncACLToAll(
-				[nodes[1]!.peerID, nodes[2]!.peerID],
-				[nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID],
-			);
+			syncACLToAll([nodes[1]!.peerID, nodes[2]!.peerID], [nodes[3]!.peerID, nodes[4]!.peerID, nodes[5]!.peerID]);
 		} else {
 			console.log('  C.2: Stolen key op rejected (anti-replay may have caught it)');
 		}
@@ -362,41 +397,91 @@ describe('C. Sophisticated attacks', () => {
 
 		// Try 256-byte name (boundary — should pass)
 		const clock1: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'flood1' };
-		const { op: validOp } = await signCatalogOp(modKey as any, 'add', NET, {
-			lishID: 'boundary-name', name: 'a'.repeat(256),
-			publisherPeerID: nodes[4]!.peerID, publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-bound',
-		}, clock1);
+		const { op: validOp } = await signCatalogOp(
+			modKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'boundary-name',
+				name: 'a'.repeat(256),
+				publisherPeerID: nodes[4]!.peerID,
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-bound',
+			},
+			clock1
+		);
 		const r1 = await handleRemoteOp(nodes[0]!.db, NET, validOp);
 		expect(r1.valid).toBe(true);
 
 		// Try 257-byte name (over limit — should fail)
 		const clock2: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'flood2' };
-		const { op: invalidOp } = await signCatalogOp(modKey as any, 'add', NET, {
-			lishID: 'over-name', name: 'b'.repeat(257),
-			publisherPeerID: nodes[4]!.peerID, publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-over',
-		}, clock2);
+		const { op: invalidOp } = await signCatalogOp(
+			modKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'over-name',
+				name: 'b'.repeat(257),
+				publisherPeerID: nodes[4]!.peerID,
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-over',
+			},
+			clock2
+		);
 		const r2 = await handleRemoteOp(nodes[0]!.db, NET, invalidOp);
 		expect(r2.valid).toBe(false);
 
 		// Try 4KB description (boundary)
 		const clock3: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'flood3' };
-		const { op: descOp } = await signCatalogOp(modKey as any, 'add', NET, {
-			lishID: 'big-desc', name: 'Big Desc', description: 'x'.repeat(4096),
-			publisherPeerID: nodes[4]!.peerID, publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-bigdesc',
-		}, clock3);
+		const { op: descOp } = await signCatalogOp(
+			modKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'big-desc',
+				name: 'Big Desc',
+				description: 'x'.repeat(4096),
+				publisherPeerID: nodes[4]!.peerID,
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-bigdesc',
+			},
+			clock3
+		);
 		const r3 = await handleRemoteOp(nodes[0]!.db, NET, descOp);
 		expect(r3.valid).toBe(true);
 
 		// Over 4KB description
 		const clock4: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'flood4' };
-		const { op: overDescOp } = await signCatalogOp(modKey as any, 'add', NET, {
-			lishID: 'over-desc', name: 'Over Desc', description: 'y'.repeat(4097),
-			publisherPeerID: nodes[4]!.peerID, publishedAt: new Date().toISOString(),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-overdesc',
-		}, clock4);
+		const { op: overDescOp } = await signCatalogOp(
+			modKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'over-desc',
+				name: 'Over Desc',
+				description: 'y'.repeat(4097),
+				publisherPeerID: nodes[4]!.peerID,
+				publishedAt: new Date().toISOString(),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-overdesc',
+			},
+			clock4
+		);
 		const r4 = await handleRemoteOp(nodes[0]!.db, NET, overDescOp);
 		expect(r4.valid).toBe(false);
 
@@ -407,11 +492,22 @@ describe('C. Sophisticated attacks', () => {
 		// Attacker8 signs with own key
 		const atk8Key = nodes[8]!.network.getPrivateKey();
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'coord' };
-		const { op } = await signCatalogOp(atk8Key as any, 'add', NET, {
-			lishID: 'coordinated-attack', name: 'Coordinated Injection',
-			publisherPeerID: nodes[8]!.peerID,
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-coord',
-		}, clock);
+		const { op } = await signCatalogOp(
+			atk8Key as any,
+			'add',
+			NET,
+			{
+				lishID: 'coordinated-attack',
+				name: 'Coordinated Injection',
+				publisherPeerID: nodes[8]!.peerID,
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-coord',
+			},
+			clock
+		);
 
 		// Attacker9 tries to apply it on all nodes
 		let rejected = 0;
@@ -432,9 +528,13 @@ describe('D. Delete and Update ordering', () => {
 	test('D.1 mod publishes → owner updates → admin deletes → all consistent', async () => {
 		// Mod publishes
 		await nodes[4]!.catalog.publish(NET, {
-			lishID: 'lifecycle-deep', name: 'Lifecycle Original',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1000,
-			fileCount: 1, manifestHash: 'h-lc',
+			lishID: 'lifecycle-deep',
+			name: 'Lifecycle Original',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 1000,
+			fileCount: 1,
+			manifestHash: 'h-lc',
 			tags: ['lifecycle'],
 		});
 		expect(getCatalogEntry(nodes[4]!.db, NET, 'lifecycle-deep')!.name).toBe('Lifecycle Original');
@@ -443,9 +543,13 @@ describe('D. Delete and Update ordering', () => {
 		// So we publish it on owner's node too
 		if (!getCatalogEntry(nodes[0]!.db, NET, 'lifecycle-deep')) {
 			await nodes[0]!.catalog.publish(NET, {
-				lishID: 'lifecycle-deep', name: 'Lifecycle Original',
-				chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1000,
-				fileCount: 1, manifestHash: 'h-lc',
+				lishID: 'lifecycle-deep',
+				name: 'Lifecycle Original',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 1000,
+				fileCount: 1,
+				manifestHash: 'h-lc',
 			});
 		}
 		await nodes[0]!.catalog.update(NET, 'lifecycle-deep', {
@@ -456,9 +560,13 @@ describe('D. Delete and Update ordering', () => {
 
 		// Admin deletes
 		await nodes[2]!.catalog.publish(NET, {
-			lishID: 'lifecycle-deep', name: 'Lifecycle temp',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1000,
-			fileCount: 1, manifestHash: 'h-lc',
+			lishID: 'lifecycle-deep',
+			name: 'Lifecycle temp',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 1000,
+			fileCount: 1,
+			manifestHash: 'h-lc',
 		});
 		await nodes[2]!.catalog.remove(NET, 'lifecycle-deep');
 		expect(getCatalogEntry(nodes[2]!.db, NET, 'lifecycle-deep')).toBeNull();
@@ -470,27 +578,35 @@ describe('D. Delete and Update ordering', () => {
 	test('D.2 multiple mods delete different entries simultaneously', async () => {
 		// Publish 3 entries from different mods
 		await nodes[3]!.catalog.publish(NET, {
-			lishID: 'multi-del-1', name: 'To Delete 1',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-md1',
+			lishID: 'multi-del-1',
+			name: 'To Delete 1',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-md1',
 		});
 		await nodes[4]!.catalog.publish(NET, {
-			lishID: 'multi-del-2', name: 'To Delete 2',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 200,
-			fileCount: 1, manifestHash: 'h-md2',
+			lishID: 'multi-del-2',
+			name: 'To Delete 2',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 200,
+			fileCount: 1,
+			manifestHash: 'h-md2',
 		});
 		await nodes[5]!.catalog.publish(NET, {
-			lishID: 'multi-del-3', name: 'To Delete 3',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 300,
-			fileCount: 1, manifestHash: 'h-md3',
+			lishID: 'multi-del-3',
+			name: 'To Delete 3',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 300,
+			fileCount: 1,
+			manifestHash: 'h-md3',
 		});
 
 		// Delete simultaneously
-		await Promise.all([
-			nodes[3]!.catalog.remove(NET, 'multi-del-1'),
-			nodes[4]!.catalog.remove(NET, 'multi-del-2'),
-			nodes[5]!.catalog.remove(NET, 'multi-del-3'),
-		]);
+		await Promise.all([nodes[3]!.catalog.remove(NET, 'multi-del-1'), nodes[4]!.catalog.remove(NET, 'multi-del-2'), nodes[5]!.catalog.remove(NET, 'multi-del-3')]);
 
 		// All tombstoned on their respective nodes
 		expect(isTombstoned(nodes[3]!.db, NET, 'multi-del-1')).toBe(true);
@@ -508,9 +624,13 @@ describe('E. Cross-node rights verification', () => {
 	test('E.1 peer cannot delete even if entry exists on their node', async () => {
 		// Mod publishes
 		await nodes[3]!.catalog.publish(NET, {
-			lishID: 'no-peer-del', name: 'Peer Cannot Delete This',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-npd',
+			lishID: 'no-peer-del',
+			name: 'Peer Cannot Delete This',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-npd',
 		});
 
 		await wait(3000);
@@ -531,9 +651,13 @@ describe('E. Cross-node rights verification', () => {
 		} else {
 			// Peer didn't receive via gossipsub, but let's test with a local entry
 			await nodes[0]!.catalog.publish(NET, {
-				lishID: 'local-test-e2', name: 'For Test',
-				chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-				fileCount: 1, manifestHash: 'h-lte2',
+				lishID: 'local-test-e2',
+				name: 'For Test',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-lte2',
 			});
 			await expect(nodes[7]!.catalog.update(NET, 'local-test-e2', { name: 'Hacked' })).rejects.toThrow();
 			console.log('  ✅ E.2: Peer cannot update entries');
@@ -541,19 +665,13 @@ describe('E. Cross-node rights verification', () => {
 	});
 
 	test('E.3 attacker cannot grant mod to another attacker', async () => {
-		await expect(
-			nodes[8]!.catalog.grantRole(NET, nodes[9]!.peerID, 'moderator')
-		).rejects.toThrow();
-		await expect(
-			nodes[9]!.catalog.grantRole(NET, nodes[8]!.peerID, 'admin')
-		).rejects.toThrow();
+		await expect(nodes[8]!.catalog.grantRole(NET, nodes[9]!.peerID, 'moderator')).rejects.toThrow();
+		await expect(nodes[9]!.catalog.grantRole(NET, nodes[8]!.peerID, 'admin')).rejects.toThrow();
 		console.log('  ✅ E.3: Attackers cannot cross-grant roles');
 	});
 
 	test('E.4 mod cannot revoke admin', async () => {
-		await expect(
-			nodes[3]!.catalog.revokeRole(NET, nodes[1]!.peerID, 'admin')
-		).rejects.toThrow();
+		await expect(nodes[3]!.catalog.revokeRole(NET, nodes[1]!.peerID, 'admin')).rejects.toThrow();
 		console.log('  ✅ E.4: Moderator cannot revoke admin');
 	});
 

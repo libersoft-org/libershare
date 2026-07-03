@@ -43,12 +43,17 @@
 
 	async function addRole(role: 'admin' | 'moderator'): Promise<void> {
 		actionError = '';
-		if (!newRolePeerID.trim()) { actionError = 'Enter a Peer ID'; return; }
+		if (!newRolePeerID.trim()) {
+			actionError = 'Enter a Peer ID';
+			return;
+		}
 		try {
 			await grantCatalogRole(networkID, newRolePeerID.trim(), role);
 			newRolePeerID = '';
 			acl = await getCatalogAccess(networkID);
-		} catch (e: any) { actionError = e.message; }
+		} catch (e: any) {
+			actionError = e.message;
+		}
 	}
 
 	async function removeRole(peerID: string, role: 'admin' | 'moderator'): Promise<void> {
@@ -56,7 +61,9 @@
 		try {
 			await revokeCatalogRole(networkID, peerID, role);
 			acl = await getCatalogAccess(networkID);
-		} catch (e: any) { actionError = e.message; }
+		} catch (e: any) {
+			actionError = e.message;
+		}
 	}
 
 	onMount(() => {
@@ -232,9 +239,7 @@
 				</div>
 			</div>
 
-			<div class="restrict-info">
-				Catalog is open — any peer can publish entries.
-			</div>
+			<div class="restrict-info">Catalog is open — any peer can publish entries.</div>
 		{/if}
 	</div>
 </div>

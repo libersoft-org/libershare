@@ -68,11 +68,17 @@ const handlers: Record<string, RpcHandler> = {
 	'settings.get': () => structuredClone(DEFAULT_SETTINGS),
 	'settings.set': () => true,
 	'settings.reset': () => structuredClone(DEFAULT_SETTINGS),
-	'lishnets.list': () => [{
-		networkID: 'net-test', name: 'Test Network', description: 'Mock test network',
-		bootstrapPeers: [], enabled: true, created: '2026-01-01T00:00:00Z',
-		ownerPeerID: '12D3KooWTestOwnerPeerID000000000000000000000000',
-	}],
+	'lishnets.list': () => [
+		{
+			networkID: 'net-test',
+			name: 'Test Network',
+			description: 'Mock test network',
+			bootstrapPeers: [],
+			enabled: true,
+			created: '2026-01-01T00:00:00Z',
+			ownerPeerID: '12D3KooWTestOwnerPeerID000000000000000000000000',
+		},
+	],
 	'lishnets.infoAll': () => [],
 	'lishnets.getNodeInfo': () => ({
 		peerID: '12D3KooWTestOwnerPeerID000000000000000000000000',
@@ -86,16 +92,14 @@ const handlers: Record<string, RpcHandler> = {
 	'fs.list': () => ({ path: '/', entries: [] }),
 	// Catalog API handlers
 	'catalog.list': () => MOCK_CATALOG_ENTRIES,
-	'catalog.get': (params) => MOCK_CATALOG_ENTRIES.find(e => e.lish_id === params['lishID']) ?? null,
-	'catalog.search': (params) => {
-		const q = (params['query'] as string || '').toLowerCase();
+	'catalog.get': params => MOCK_CATALOG_ENTRIES.find(e => e.lish_id === params['lishID']) ?? null,
+	'catalog.search': params => {
+		const q = ((params['query'] as string) || '').toLowerCase();
 		if (q.startsWith('#')) {
 			const tag = q.slice(1);
 			return MOCK_CATALOG_ENTRIES.filter(e => e.tags?.includes(tag));
 		}
-		return MOCK_CATALOG_ENTRIES.filter(e =>
-			e.name?.toLowerCase().includes(q) || e.description?.toLowerCase().includes(q)
-		);
+		return MOCK_CATALOG_ENTRIES.filter(e => e.name?.toLowerCase().includes(q) || e.description?.toLowerCase().includes(q));
 	},
 	'catalog.publish': () => undefined,
 	'catalog.update': () => undefined,
@@ -110,7 +114,7 @@ const handlers: Record<string, RpcHandler> = {
 	'catalog.grantRole': () => undefined,
 	'catalog.revokeRole': () => undefined,
 	'catalog.getSyncStatus': () => ({ entryCount: 4, tombstoneCount: 0, lastSyncAt: null }),
-	'catalog.startDownload': (params) => ({
+	'catalog.startDownload': params => ({
 		status: 'not_available',
 		message: `"${(params as any).lishID}" is available in the catalog but the LISH manifest has not been downloaded yet.`,
 	}),
@@ -119,43 +123,71 @@ const handlers: Record<string, RpcHandler> = {
 
 const MOCK_CATALOG_ENTRIES = [
 	{
-		network_id: 'net-test', lish_id: 'ubuntu-24', name: 'Ubuntu 24.04 LTS',
+		network_id: 'net-test',
+		lish_id: 'ubuntu-24',
+		name: 'Ubuntu 24.04 LTS',
 		description: 'Official Ubuntu Desktop ISO with GNOME',
-		publisher_peer_id: 'test-mod-1', published_at: '2026-03-01T10:00:00Z',
-		chunk_size: 1048576, checksum_algo: 'sha256',
-		total_size: 4_500_000_000, file_count: 1,
-		manifest_hash: 'sha256:abc123', content_type: 'software',
-		tags: '["linux","ubuntu","desktop"]', last_edited_by: null,
+		publisher_peer_id: 'test-mod-1',
+		published_at: '2026-03-01T10:00:00Z',
+		chunk_size: 1048576,
+		checksum_algo: 'sha256',
+		total_size: 4_500_000_000,
+		file_count: 1,
+		manifest_hash: 'sha256:abc123',
+		content_type: 'software',
+		tags: '["linux","ubuntu","desktop"]',
+		last_edited_by: null,
 		hlc_wall: 1773000000000,
 	},
 	{
-		network_id: 'net-test', lish_id: 'fedora-41', name: 'Fedora Workstation 41',
+		network_id: 'net-test',
+		lish_id: 'fedora-41',
+		name: 'Fedora Workstation 41',
 		description: 'Fedora with GNOME 47 desktop environment',
-		publisher_peer_id: 'test-mod-1', published_at: '2026-03-05T12:00:00Z',
-		chunk_size: 1048576, checksum_algo: 'sha256',
-		total_size: 3_000_000_000, file_count: 1,
-		manifest_hash: 'sha256:def456', content_type: 'software',
-		tags: '["linux","fedora"]', last_edited_by: null,
+		publisher_peer_id: 'test-mod-1',
+		published_at: '2026-03-05T12:00:00Z',
+		chunk_size: 1048576,
+		checksum_algo: 'sha256',
+		total_size: 3_000_000_000,
+		file_count: 1,
+		manifest_hash: 'sha256:def456',
+		content_type: 'software',
+		tags: '["linux","fedora"]',
+		last_edited_by: null,
 		hlc_wall: 1773100000000,
 	},
 	{
-		network_id: 'net-test', lish_id: 'arch-2026', name: 'Arch Linux 2026.03',
+		network_id: 'net-test',
+		lish_id: 'arch-2026',
+		name: 'Arch Linux 2026.03',
 		description: 'Rolling release Linux distribution',
-		publisher_peer_id: 'test-mod-2', published_at: '2026-03-10T08:00:00Z',
-		chunk_size: 1048576, checksum_algo: 'sha256',
-		total_size: 850_000_000, file_count: 1,
-		manifest_hash: 'sha256:ghi789', content_type: 'software',
-		tags: '["linux","arch"]', last_edited_by: null,
+		publisher_peer_id: 'test-mod-2',
+		published_at: '2026-03-10T08:00:00Z',
+		chunk_size: 1048576,
+		checksum_algo: 'sha256',
+		total_size: 850_000_000,
+		file_count: 1,
+		manifest_hash: 'sha256:ghi789',
+		content_type: 'software',
+		tags: '["linux","arch"]',
+		last_edited_by: null,
 		hlc_wall: 1773200000000,
 	},
 	{
-		network_id: 'net-test', lish_id: 'imagenet', name: 'ImageNet 2026',
+		network_id: 'net-test',
+		lish_id: 'imagenet',
+		name: 'ImageNet 2026',
 		description: 'Machine learning training dataset',
-		publisher_peer_id: 'test-mod-2', published_at: '2026-03-12T14:00:00Z',
-		chunk_size: 4194304, checksum_algo: 'sha256',
-		total_size: 150_000_000_000, file_count: 1281167,
-		manifest_hash: 'sha256:jkl012', content_type: 'dataset',
-		tags: '["ml","dataset","training"]', last_edited_by: null,
+		publisher_peer_id: 'test-mod-2',
+		published_at: '2026-03-12T14:00:00Z',
+		chunk_size: 4194304,
+		checksum_algo: 'sha256',
+		total_size: 150_000_000_000,
+		file_count: 1281167,
+		manifest_hash: 'sha256:jkl012',
+		content_type: 'dataset',
+		tags: '["ml","dataset","training"]',
+		last_edited_by: null,
 		hlc_wall: 1773300000000,
 	},
 ];

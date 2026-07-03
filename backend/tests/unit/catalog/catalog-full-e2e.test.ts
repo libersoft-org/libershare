@@ -55,9 +55,11 @@ function createPeer(key: Ed25519PrivateKey, database: Database, withBroadcast: b
 		db: database,
 		getPrivateKey: () => key,
 		getLocalPeerID: () => peerID,
-		broadcast: withBroadcast ? (networkID, op) => {
-			broadcasts.push({ networkID, op });
-		} : undefined,
+		broadcast: withBroadcast
+			? (networkID, op) => {
+					broadcasts.push({ networkID, op });
+				}
+			: undefined,
 	});
 	return { key, peerID, manager };
 }
@@ -67,11 +69,7 @@ beforeEach(async () => {
 	db2 = createDB();
 	broadcasts.length = 0;
 
-	const [ok, a1k, a2k, m1k, m2k, rk] = await Promise.all([
-		generateKeyPair('Ed25519'), generateKeyPair('Ed25519'),
-		generateKeyPair('Ed25519'), generateKeyPair('Ed25519'),
-		generateKeyPair('Ed25519'), generateKeyPair('Ed25519'),
-	]);
+	const [ok, a1k, a2k, m1k, m2k, rk] = await Promise.all([generateKeyPair('Ed25519'), generateKeyPair('Ed25519'), generateKeyPair('Ed25519'), generateKeyPair('Ed25519'), generateKeyPair('Ed25519'), generateKeyPair('Ed25519')]);
 
 	owner = createPeer(ok, db, true);
 	admin1 = createPeer(a1k, db);
@@ -112,12 +110,22 @@ describe('1. Network Lifecycle', () => {
 		owner.manager.join('net2', owner.peerID);
 
 		await owner.manager.publish('net1', {
-			lishID: 'a', name: 'Net1', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			lishID: 'a',
+			name: 'Net1',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await owner.manager.publish('net2', {
-			lishID: 'b', name: 'Net2', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 200, fileCount: 1, manifestHash: 'h2',
+			lishID: 'b',
+			name: 'Net2',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 200,
+			fileCount: 1,
+			manifestHash: 'h2',
 		});
 
 		expect(owner.manager.list('net1').length).toBe(1);
@@ -129,8 +137,13 @@ describe('1. Network Lifecycle', () => {
 	test('1.5 rejoin after leave preserves data', async () => {
 		owner.manager.join('net1', owner.peerID);
 		await owner.manager.publish('net1', {
-			lishID: 'persist', name: 'Before Leave', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			lishID: 'persist',
+			name: 'Before Leave',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		owner.manager.leave('net1');
 		owner.manager.join('net1', owner.peerID);
@@ -239,9 +252,15 @@ describe('3. Entry CRUD', () => {
 
 	test('3.1 owner publishes entry', async () => {
 		await owner.manager.publish('net1', {
-			lishID: 'entry-1', name: 'Ubuntu 24.04', description: 'Desktop ISO',
-			chunkSize: 1048576, checksumAlgo: 'sha256', totalSize: 4_500_000_000,
-			fileCount: 1, manifestHash: 'sha256:abc', contentType: 'software',
+			lishID: 'entry-1',
+			name: 'Ubuntu 24.04',
+			description: 'Desktop ISO',
+			chunkSize: 1048576,
+			checksumAlgo: 'sha256',
+			totalSize: 4_500_000_000,
+			fileCount: 1,
+			manifestHash: 'sha256:abc',
+			contentType: 'software',
 			tags: ['linux', 'ubuntu'],
 		});
 		const entry = owner.manager.get('net1', 'entry-1');
@@ -252,29 +271,45 @@ describe('3. Entry CRUD', () => {
 
 	test('3.2 moderator publishes entry', async () => {
 		await mod1.manager.publish('net1', {
-			lishID: 'mod-entry', name: 'Fedora 41',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 3000,
-			fileCount: 1, manifestHash: 'h-fed',
+			lishID: 'mod-entry',
+			name: 'Fedora 41',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 3000,
+			fileCount: 1,
+			manifestHash: 'h-fed',
 		});
 		expect(mod1.manager.get('net1', 'mod-entry')!.name).toBe('Fedora 41');
 	});
 
 	test('3.3 reader CANNOT publish in restricted mode', async () => {
-		await expect(reader.manager.publish('net1', {
-			lishID: 'spam', name: 'Spam',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-spam',
-		})).rejects.toThrow();
+		await expect(
+			reader.manager.publish('net1', {
+				lishID: 'spam',
+				name: 'Spam',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-spam',
+			})
+		).rejects.toThrow();
 	});
 
 	test('3.4 update changes metadata', async () => {
 		await owner.manager.publish('net1', {
-			lishID: 'upd', name: 'Original',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1000,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'upd',
+			name: 'Original',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 1000,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await owner.manager.update('net1', 'upd', {
-			name: 'Updated Name', description: 'New description', tags: ['new'],
+			name: 'Updated Name',
+			description: 'New description',
+			tags: ['new'],
 		});
 		const entry = owner.manager.get('net1', 'upd');
 		expect(entry!.name).toBe('Updated Name');
@@ -285,9 +320,13 @@ describe('3. Entry CRUD', () => {
 
 	test('3.5 moderator can update own entry', async () => {
 		await mod1.manager.publish('net1', {
-			lishID: 'mod-edit', name: 'Mod Entry',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 500,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'mod-edit',
+			name: 'Mod Entry',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 500,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await mod1.manager.update('net1', 'mod-edit', { name: 'Edited by Mod' });
 		expect(owner.manager.get('net1', 'mod-edit')!.name).toBe('Edited by Mod');
@@ -295,18 +334,26 @@ describe('3. Entry CRUD', () => {
 
 	test('3.6 reader CANNOT update', async () => {
 		await owner.manager.publish('net1', {
-			lishID: 'no-edit', name: 'Protected',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'no-edit',
+			name: 'Protected',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await expect(reader.manager.update('net1', 'no-edit', { name: 'Hacked' })).rejects.toThrow();
 	});
 
 	test('3.7 remove creates tombstone, entry disappears', async () => {
 		await owner.manager.publish('net1', {
-			lishID: 'del', name: 'To Delete',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'del',
+			name: 'To Delete',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await owner.manager.remove('net1', 'del');
 		expect(owner.manager.get('net1', 'del')).toBeNull();
@@ -316,24 +363,36 @@ describe('3. Entry CRUD', () => {
 
 	test('3.8 reader CANNOT remove', async () => {
 		await owner.manager.publish('net1', {
-			lishID: 'no-del', name: 'Protected',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'no-del',
+			name: 'Protected',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await expect(reader.manager.remove('net1', 'no-del')).rejects.toThrow();
 	});
 
 	test('3.9 publish after remove blocked by tombstone', async () => {
 		await owner.manager.publish('net1', {
-			lishID: 'tomb-test', name: 'Original',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'tomb-test',
+			name: 'Original',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await owner.manager.remove('net1', 'tomb-test');
 		await owner.manager.publish('net1', {
-			lishID: 'tomb-test', name: 'Revived',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h2',
+			lishID: 'tomb-test',
+			name: 'Revived',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h2',
 		});
 		// Entry should NOT exist — tombstone blocks re-add
 		expect(owner.manager.get('net1', 'tomb-test')).toBeNull();
@@ -359,8 +418,14 @@ describe('4. Search', () => {
 			['dataset', 'ImageNet 2026', 'ML training dataset', ['ml', 'dataset']],
 		] as const) {
 			await owner.manager.publish('net1', {
-				lishID: id, name, description: desc, tags: [...tags],
-				chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1000, fileCount: 1,
+				lishID: id,
+				name,
+				description: desc,
+				tags: [...tags],
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 1000,
+				fileCount: 1,
 				manifestHash: `h-${id}`,
 			});
 		}
@@ -407,9 +472,13 @@ describe('5. Multi-Peer — Broadcast and Remote Op Application', () => {
 	test('5.1 broadcast captures signed ops on publish', async () => {
 		owner.manager.join('net1', owner.peerID);
 		await owner.manager.publish('net1', {
-			lishID: 'bc-1', name: 'Broadcast Entry',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'bc-1',
+			name: 'Broadcast Entry',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		expect(broadcasts.length).toBe(1);
 		expect(broadcasts[0]!.op.payload.type).toBe('add');
@@ -419,9 +488,13 @@ describe('5. Multi-Peer — Broadcast and Remote Op Application', () => {
 	test('5.2 peer2 receives and applies remote op', async () => {
 		owner.manager.join('net1', owner.peerID);
 		await owner.manager.publish('net1', {
-			lishID: 'sync-1', name: 'From Owner',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'sync-1',
+			name: 'From Owner',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		// Peer2 on separate DB receives the broadcast
@@ -438,9 +511,13 @@ describe('5. Multi-Peer — Broadcast and Remote Op Application', () => {
 	test('5.3 signed_op blob preserves signature for forwarding', async () => {
 		owner.manager.join('net1', owner.peerID);
 		await owner.manager.publish('net1', {
-			lishID: 'fwd-1', name: 'Forward Test',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'fwd-1',
+			name: 'Forward Test',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		// Read stored blob, decode, verify signature
@@ -457,9 +534,13 @@ describe('5. Multi-Peer — Broadcast and Remote Op Application', () => {
 		await owner.manager.grantRole('net1', mod1.peerID, 'moderator');
 
 		await owner.manager.publish('net1', {
-			lishID: 'multi', name: 'Multi-Peer Entry',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'multi',
+			name: 'Multi-Peer Entry',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		// Peer2 (separate DB) syncs: apply ACL grant + add op
@@ -482,8 +563,13 @@ describe('5. Multi-Peer — Broadcast and Remote Op Application', () => {
 		owner.manager.join('net1', owner.peerID);
 		await owner.manager.grantRole('net1', mod1.peerID, 'admin'); // acl_grant
 		await owner.manager.publish('net1', {
-			lishID: 'ops', name: 'Test', chunkSize: 1024, checksumAlgo: 'sha256',
-			totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			lishID: 'ops',
+			name: 'Test',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		}); // add
 		await owner.manager.update('net1', 'ops', { name: 'Updated' }); // update
 		await owner.manager.revokeRole('net1', mod1.peerID, 'admin'); // acl_revoke
@@ -510,9 +596,13 @@ describe('6. Security — Access Control Enforcement', () => {
 
 		// Mod publishes successfully
 		await mod1.manager.publish('net1', {
-			lishID: 'before', name: 'Before Revoke',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'before',
+			name: 'Before Revoke',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		expect(mod1.manager.get('net1', 'before')).not.toBeNull();
 
@@ -520,11 +610,17 @@ describe('6. Security — Access Control Enforcement', () => {
 		await owner.manager.revokeRole('net1', mod1.peerID, 'moderator');
 
 		// Mod tries to publish again — should fail
-		await expect(mod1.manager.publish('net1', {
-			lishID: 'after', name: 'After Revoke',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h2',
-		})).rejects.toThrow();
+		await expect(
+			mod1.manager.publish('net1', {
+				lishID: 'after',
+				name: 'After Revoke',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h2',
+			})
+		).rejects.toThrow();
 	});
 
 	test('6.2 revoked admin cannot grant moderator', async () => {
@@ -537,30 +633,47 @@ describe('6. Security — Access Control Enforcement', () => {
 	test('6.3 field size limits enforced', async () => {
 		await owner.manager.grantRole('net1', mod1.peerID, 'moderator');
 		// Name > 256 bytes
-		await expect(mod1.manager.publish('net1', {
-			lishID: 'big', name: 'x'.repeat(257),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
-		})).rejects.toThrow();
+		await expect(
+			mod1.manager.publish('net1', {
+				lishID: 'big',
+				name: 'x'.repeat(257),
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h1',
+			})
+		).rejects.toThrow();
 	});
 
 	test('6.4 name at exactly 256 bytes passes', async () => {
 		await owner.manager.grantRole('net1', mod1.peerID, 'moderator');
 		await mod1.manager.publish('net1', {
-			lishID: 'ok', name: 'x'.repeat(256),
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'ok',
+			name: 'x'.repeat(256),
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		expect(mod1.manager.get('net1', 'ok')).not.toBeNull();
 	});
 
 	test('6.5 too many tags rejected', async () => {
 		const tags = Array.from({ length: 11 }, (_, i) => `tag${i}`);
-		await expect(owner.manager.publish('net1', {
-			lishID: 'tags', name: 'Tags', tags,
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
-		})).rejects.toThrow();
+		await expect(
+			owner.manager.publish('net1', {
+				lishID: 'tags',
+				name: 'Tags',
+				tags,
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h1',
+			})
+		).rejects.toThrow();
 	});
 });
 
@@ -573,9 +686,13 @@ describe('7. Tombstone GC', () => {
 		owner.manager.join('net1', owner.peerID);
 
 		await owner.manager.publish('net1', {
-			lishID: 'gc', name: 'GC Test',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'gc',
+			name: 'GC Test',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await owner.manager.remove('net1', 'gc');
 		expect(isTombstoned(db, 'net1', 'gc')).toBe(true);
@@ -590,9 +707,13 @@ describe('7. Tombstone GC', () => {
 
 		// Re-add now works
 		await owner.manager.publish('net1', {
-			lishID: 'gc', name: 'Revived',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 200,
-			fileCount: 1, manifestHash: 'h2',
+			lishID: 'gc',
+			name: 'Revived',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 200,
+			fileCount: 1,
+			manifestHash: 'h2',
 		});
 		expect(owner.manager.get('net1', 'gc')!.name).toBe('Revived');
 	});
@@ -607,9 +728,13 @@ describe('8. LWW Convergence', () => {
 		owner.manager.join('net1', owner.peerID);
 
 		await owner.manager.publish('net1', {
-			lishID: 'lww', name: 'Version 1',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h1',
+			lishID: 'lww',
+			name: 'Version 1',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 
 		await owner.manager.update('net1', 'lww', { name: 'Version 2' });
@@ -629,9 +754,15 @@ describe('9. Bulk Operations', () => {
 		owner.manager.join('net1', owner.peerID);
 		for (let i = 0; i < 50; i++) {
 			await owner.manager.publish('net1', {
-				lishID: `bulk-${i}`, name: `Entry ${i}`, description: `Desc for ${i}`,
-				chunkSize: 1024, checksumAlgo: 'sha256', totalSize: i * 100,
-				fileCount: 1, manifestHash: `h-${i}`, tags: [`group-${i % 5}`],
+				lishID: `bulk-${i}`,
+				name: `Entry ${i}`,
+				description: `Desc for ${i}`,
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: i * 100,
+				fileCount: 1,
+				manifestHash: `h-${i}`,
+				tags: [`group-${i % 5}`],
 			});
 		}
 		expect(owner.manager.list('net1', 100).length).toBe(50);
@@ -660,15 +791,27 @@ describe('10. Complete Lifecycle — Real-World Scenario', () => {
 
 		// Step 4: Moderators publish content
 		await mod1.manager.publish('net1', {
-			lishID: 'ubuntu', name: 'Ubuntu 24.04 LTS', description: 'Desktop ISO',
-			chunkSize: 1048576, checksumAlgo: 'sha256', totalSize: 4_500_000_000,
-			fileCount: 1, manifestHash: 'h-ubuntu', contentType: 'software',
+			lishID: 'ubuntu',
+			name: 'Ubuntu 24.04 LTS',
+			description: 'Desktop ISO',
+			chunkSize: 1048576,
+			checksumAlgo: 'sha256',
+			totalSize: 4_500_000_000,
+			fileCount: 1,
+			manifestHash: 'h-ubuntu',
+			contentType: 'software',
 			tags: ['linux', 'ubuntu', 'desktop'],
 		});
 		await mod2.manager.publish('net1', {
-			lishID: 'fedora', name: 'Fedora 41', description: 'Workstation',
-			chunkSize: 1048576, checksumAlgo: 'sha256', totalSize: 3_000_000_000,
-			fileCount: 1, manifestHash: 'h-fedora', contentType: 'software',
+			lishID: 'fedora',
+			name: 'Fedora 41',
+			description: 'Workstation',
+			chunkSize: 1048576,
+			checksumAlgo: 'sha256',
+			totalSize: 3_000_000_000,
+			fileCount: 1,
+			manifestHash: 'h-fedora',
+			contentType: 'software',
 			tags: ['linux', 'fedora'],
 		});
 
@@ -685,17 +828,29 @@ describe('10. Complete Lifecycle — Real-World Scenario', () => {
 
 		// Step 7: Owner revokes mod1, mod1 can no longer write
 		await owner.manager.revokeRole('net1', mod1.peerID, 'moderator');
-		await expect(mod1.manager.publish('net1', {
-			lishID: 'blocked', name: 'Should Fail',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-blocked',
-		})).rejects.toThrow();
+		await expect(
+			mod1.manager.publish('net1', {
+				lishID: 'blocked',
+				name: 'Should Fail',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-blocked',
+			})
+		).rejects.toThrow();
 
 		// Step 8: Mod2 can still publish (unaffected by mod1 revocation)
 		await mod2.manager.publish('net1', {
-			lishID: 'arch', name: 'Arch Linux', description: 'Rolling release',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2_000_000_000,
-			fileCount: 1, manifestHash: 'h-arch', tags: ['linux', 'arch'],
+			lishID: 'arch',
+			name: 'Arch Linux',
+			description: 'Rolling release',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 2_000_000_000,
+			fileCount: 1,
+			manifestHash: 'h-arch',
+			tags: ['linux', 'arch'],
 		});
 		expect(owner.manager.list('net1').length).toBe(3);
 

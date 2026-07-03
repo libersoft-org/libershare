@@ -61,8 +61,9 @@ async function createNode(index: number, role: string): Promise<TestNode> {
 
 	await network.subscribe(`lish/${NET}`, async (msg: Record<string, any>) => {
 		if (msg['type'] === 'catalog_op') {
-			try { await catalog.applyRemoteOp(NET, msg as any as SignedCatalogOp); }
-			catch {}
+			try {
+				await catalog.applyRemoteOp(NET, msg as any as SignedCatalogOp);
+			} catch {}
 		}
 	});
 
@@ -100,8 +101,11 @@ beforeAll(async () => {
 	const addr0 = nodes[0]!.network.getNodeInfo()!.addresses.find(a => a.includes('127.0.0.1'));
 	for (let i = 1; i < NODE_COUNT; i++) {
 		if (addr0) {
-			try { await nodes[i]!.network.connectToPeer(addr0); }
-			catch (e) { console.warn(`  Connection ${i}→0 failed, retrying...`); }
+			try {
+				await nodes[i]!.network.connectToPeer(addr0);
+			} catch (e) {
+				console.warn(`  Connection ${i}→0 failed, retrying...`);
+			}
 			await new Promise(r => setTimeout(r, 500)); // stagger connections
 		}
 	}
@@ -145,7 +149,9 @@ afterAll(async () => {
 	console.log('\n🛑 Stopping all nodes...');
 	await Promise.all(nodes.map(n => n.network.stop()));
 	for (const n of nodes) {
-		try { await rm(n.tmpDir, { recursive: true }); } catch {}
+		try {
+			await rm(n.tmpDir, { recursive: true });
+		} catch {}
 	}
 }, 30_000);
 
@@ -166,9 +172,13 @@ describe('1. Role Hierarchy', () => {
 			lishID: 'owner-entry',
 			name: 'Published by Owner',
 			description: 'The network owner publishes content',
-			chunkSize: 1048576, checksumAlgo: 'sha256', totalSize: 5_000_000_000,
-			fileCount: 1, manifestHash: 'h-owner',
-			contentType: 'software', tags: ['official'],
+			chunkSize: 1048576,
+			checksumAlgo: 'sha256',
+			totalSize: 5_000_000_000,
+			fileCount: 1,
+			manifestHash: 'h-owner',
+			contentType: 'software',
+			tags: ['official'],
 		});
 		expect(getEntry(0, 'owner-entry')!.name).toBe('Published by Owner');
 	});
@@ -177,8 +187,11 @@ describe('1. Role Hierarchy', () => {
 		await nodes[1]!.catalog.publish(NET, {
 			lishID: 'admin1-entry',
 			name: 'Published by Admin 1',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1000,
-			fileCount: 1, manifestHash: 'h-a1',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 1000,
+			fileCount: 1,
+			manifestHash: 'h-a1',
 		});
 		expect(getEntry(1, 'admin1-entry')).not.toBeNull();
 	});
@@ -188,27 +201,43 @@ describe('1. Role Hierarchy', () => {
 			lishID: 'mod1-entry',
 			name: 'Published by Moderator 1',
 			description: 'Fedora Workstation',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2_200_000_000,
-			fileCount: 1, manifestHash: 'h-m1',
-			contentType: 'software', tags: ['linux', 'fedora'],
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 2_200_000_000,
+			fileCount: 1,
+			manifestHash: 'h-m1',
+			contentType: 'software',
+			tags: ['linux', 'fedora'],
 		});
 		expect(getEntry(3, 'mod1-entry')).not.toBeNull();
 	});
 
 	test('1.5 regular peer CANNOT publish (restricted mode)', async () => {
-		await expect(nodes[6]!.catalog.publish(NET, {
-			lishID: 'peer-spam', name: 'Spam',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-spam',
-		})).rejects.toThrow();
+		await expect(
+			nodes[6]!.catalog.publish(NET, {
+				lishID: 'peer-spam',
+				name: 'Spam',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-spam',
+			})
+		).rejects.toThrow();
 	});
 
 	test('1.6 attacker CANNOT publish', async () => {
-		await expect(nodes[8]!.catalog.publish(NET, {
-			lishID: 'attack-entry', name: 'Malware',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 666,
-			fileCount: 1, manifestHash: 'h-evil',
-		})).rejects.toThrow();
+		await expect(
+			nodes[8]!.catalog.publish(NET, {
+				lishID: 'attack-entry',
+				name: 'Malware',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 666,
+				fileCount: 1,
+				manifestHash: 'h-evil',
+			})
+		).rejects.toThrow();
 	});
 });
 
@@ -219,18 +248,26 @@ describe('1. Role Hierarchy', () => {
 describe('2. Catalog Content', () => {
 	test('2.1 multiple moderators publish different entries', async () => {
 		await nodes[4]!.catalog.publish(NET, {
-			lishID: 'arch-iso', name: 'Arch Linux 2026',
+			lishID: 'arch-iso',
+			name: 'Arch Linux 2026',
 			description: 'Rolling release',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 850_000_000,
-			fileCount: 1, manifestHash: 'h-arch',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 850_000_000,
+			fileCount: 1,
+			manifestHash: 'h-arch',
 			tags: ['linux', 'arch'],
 		});
 
 		await nodes[5]!.catalog.publish(NET, {
-			lishID: 'debian-iso', name: 'Debian 13 Trixie',
+			lishID: 'debian-iso',
+			name: 'Debian 13 Trixie',
 			description: 'Stable release',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 3_500_000_000,
-			fileCount: 1, manifestHash: 'h-debian',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 3_500_000_000,
+			fileCount: 1,
+			manifestHash: 'h-debian',
 			tags: ['linux', 'debian', 'stable'],
 		});
 
@@ -284,8 +321,11 @@ describe('3. GossipSub Propagation across 10 nodes', () => {
 		await nodes[5]!.catalog.publish(NET, {
 			lishID: 'propagation-test',
 			name: 'Propagation Test Entry',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-prop',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-prop',
 		});
 
 		await waitForGossip(4000);
@@ -310,8 +350,11 @@ describe('4. LWW Collisions', () => {
 		await nodes[3]!.catalog.publish(NET, {
 			lishID: 'collision-10n',
 			name: 'Mod1 Version',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-c1',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-c1',
 		});
 		expect(getEntry(3, 'collision-10n')!.name).toBe('Mod1 Version');
 
@@ -321,8 +364,11 @@ describe('4. LWW Collisions', () => {
 		await nodes[4]!.catalog.publish(NET, {
 			lishID: 'collision-10n',
 			name: 'Mod2 Version',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 200,
-			fileCount: 1, manifestHash: 'h-c2',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 200,
+			fileCount: 1,
+			manifestHash: 'h-c2',
 		});
 		expect(getEntry(4, 'collision-10n')!.name).toBe('Mod2 Version');
 
@@ -343,8 +389,11 @@ describe('4. LWW Collisions', () => {
 		await nodes[3]!.catalog.publish(NET, {
 			lishID: 'rapid-10n',
 			name: 'Initial',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-rapid10',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-rapid10',
 		});
 		await nodes[3]!.catalog.update(NET, 'rapid-10n', { name: 'Version 2' });
 		await nodes[3]!.catalog.update(NET, 'rapid-10n', { name: 'Version 3' });
@@ -361,9 +410,16 @@ describe('5. Forgery Attempts from Attackers', () => {
 	test('5.1 attacker crafts signed op with tampered payload', async () => {
 		const attackerKey = nodes[8]!.network.getPrivateKey();
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'attacker' };
-		const { op } = await signCatalogOp(attackerKey as any, 'add', NET, {
-			lishID: 'forged-10n', name: 'FORGED',
-		}, clock);
+		const { op } = await signCatalogOp(
+			attackerKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'forged-10n',
+				name: 'FORGED',
+			},
+			clock
+		);
 		op.payload.data['name'] = 'TAMPERED AFTER SIGNING';
 
 		// Try on every node — all should reject
@@ -379,9 +435,16 @@ describe('5. Forgery Attempts from Attackers', () => {
 	test('5.2 attacker spoofs signer PeerID (impersonation)', async () => {
 		const attackerKey = nodes[9]!.network.getPrivateKey();
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'spoof' };
-		const { op } = await signCatalogOp(attackerKey as any, 'add', NET, {
-			lishID: 'spoofed-10n', name: 'Impersonated Entry',
-		}, clock);
+		const { op } = await signCatalogOp(
+			attackerKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'spoofed-10n',
+				name: 'Impersonated Entry',
+			},
+			clock
+		);
 
 		// Replace signer with moderator's PeerID
 		op.signer = nodes[3]!.peerID;
@@ -399,11 +462,22 @@ describe('5. Forgery Attempts from Attackers', () => {
 	test('5.3 attacker with valid sig but no permissions', async () => {
 		const attackerKey = nodes[8]!.network.getPrivateKey();
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'noauth' };
-		const { op } = await signCatalogOp(attackerKey as any, 'add', NET, {
-			lishID: 'unauth-10n', name: 'No Permission',
-			publisherPeerID: nodes[8]!.peerID,
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-unauth',
-		}, clock);
+		const { op } = await signCatalogOp(
+			attackerKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'unauth-10n',
+				name: 'No Permission',
+				publisherPeerID: nodes[8]!.peerID,
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-unauth',
+			},
+			clock
+		);
 
 		let rejected = 0;
 		for (const node of nodes) {
@@ -418,11 +492,22 @@ describe('5. Forgery Attempts from Attackers', () => {
 		const modKey = nodes[3]!.network.getPrivateKey();
 		const futureTime = Date.now() + 10 * 60 * 1000;
 		const clock: HLC = { wallTime: futureTime, logical: 0, nodeID: 'drift' };
-		const { op } = await signCatalogOp(modKey as any, 'add', NET, {
-			lishID: 'future-10n', name: 'Time Travel Attack',
-			publisherPeerID: nodes[3]!.peerID,
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-future',
-		}, clock);
+		const { op } = await signCatalogOp(
+			modKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'future-10n',
+				name: 'Time Travel Attack',
+				publisherPeerID: nodes[3]!.peerID,
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-future',
+			},
+			clock
+		);
 
 		let rejected = 0;
 		for (const node of nodes) {
@@ -434,22 +519,29 @@ describe('5. Forgery Attempts from Attackers', () => {
 	});
 
 	test('5.5 attacker tries to grant self admin', async () => {
-		await expect(
-			nodes[8]!.catalog.grantRole(NET, nodes[8]!.peerID, 'admin')
-		).rejects.toThrow();
-		await expect(
-			nodes[9]!.catalog.grantRole(NET, nodes[9]!.peerID, 'moderator')
-		).rejects.toThrow();
+		await expect(nodes[8]!.catalog.grantRole(NET, nodes[8]!.peerID, 'admin')).rejects.toThrow();
+		await expect(nodes[9]!.catalog.grantRole(NET, nodes[9]!.peerID, 'moderator')).rejects.toThrow();
 	});
 
 	test('5.6 oversized fields attack', async () => {
 		const modKey = nodes[3]!.network.getPrivateKey();
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'oversize' };
-		const { op } = await signCatalogOp(modKey as any, 'add', NET, {
-			lishID: 'big-10n', name: 'x'.repeat(300),
-			publisherPeerID: nodes[3]!.peerID,
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h-big',
-		}, clock);
+		const { op } = await signCatalogOp(
+			modKey as any,
+			'add',
+			NET,
+			{
+				lishID: 'big-10n',
+				name: 'x'.repeat(300),
+				publisherPeerID: nodes[3]!.peerID,
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-big',
+			},
+			clock
+		);
 
 		let rejected = 0;
 		for (const node of nodes) {
@@ -479,9 +571,13 @@ describe('5b. Admin grants moderator (cross-node)', () => {
 
 		// Node7 (now moderator) should be able to publish
 		await nodes[7]!.catalog.publish(NET, {
-			lishID: 'node7-entry', name: 'Published by promoted peer',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 300,
-			fileCount: 1, manifestHash: 'h-n7',
+			lishID: 'node7-entry',
+			name: 'Published by promoted peer',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 300,
+			fileCount: 1,
+			manifestHash: 'h-n7',
 		});
 		expect(getEntry(7, 'node7-entry')!.name).toBe('Published by promoted peer');
 
@@ -504,9 +600,7 @@ describe('6. ACL Revocation', () => {
 		});
 
 		// Admin 2 tries to grant moderator — should fail
-		await expect(
-			nodes[2]!.catalog.grantRole(NET, nodes[7]!.peerID, 'moderator')
-		).rejects.toThrow();
+		await expect(nodes[2]!.catalog.grantRole(NET, nodes[7]!.peerID, 'moderator')).rejects.toThrow();
 
 		// Restore for next tests
 		await nodes[0]!.catalog.grantRole(NET, nodes[2]!.peerID, 'admin');
@@ -523,11 +617,17 @@ describe('6. ACL Revocation', () => {
 			moderators: [nodes[3]!.peerID, nodes[4]!.peerID],
 		});
 
-		await expect(nodes[5]!.catalog.publish(NET, {
-			lishID: 'revoked-mod', name: 'Should Fail',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100,
-			fileCount: 1, manifestHash: 'h-rev',
-		})).rejects.toThrow();
+		await expect(
+			nodes[5]!.catalog.publish(NET, {
+				lishID: 'revoked-mod',
+				name: 'Should Fail',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'h-rev',
+			})
+		).rejects.toThrow();
 
 		// Restore
 		await nodes[1]!.catalog.grantRole(NET, nodes[5]!.peerID, 'moderator');

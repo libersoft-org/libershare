@@ -504,11 +504,21 @@ class CatalogAPI {
 		return this.client.call<CatalogEntryResponse[]>('catalog.search', { networkID, query, limit });
 	}
 
-	publish(networkID: string, params: {
-		lishID: string; name?: string | undefined; description?: string | undefined;
-		chunkSize: number; checksumAlgo: string; totalSize: number;
-		fileCount: number; manifestHash: string; contentType?: string | undefined; tags?: string[] | undefined;
-	}): Promise<void> {
+	publish(
+		networkID: string,
+		params: {
+			lishID: string;
+			name?: string | undefined;
+			description?: string | undefined;
+			chunkSize: number;
+			checksumAlgo: string;
+			totalSize: number;
+			fileCount: number;
+			manifestHash: string;
+			contentType?: string | undefined;
+			tags?: string[] | undefined;
+		}
+	): Promise<void> {
 		return this.client.call<void>('catalog.publish', { networkID, ...params });
 	}
 

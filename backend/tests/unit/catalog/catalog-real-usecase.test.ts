@@ -43,10 +43,10 @@ describe('Use Case: Linux ISO sharing community', () => {
 
 		// Characters
 		const alice = await generateKeyPair('Ed25519'); // network owner
-		const bob = await generateKeyPair('Ed25519');   // admin
+		const bob = await generateKeyPair('Ed25519'); // admin
 		const carol = await generateKeyPair('Ed25519'); // moderator (added by bob)
-		const dave = await generateKeyPair('Ed25519');  // moderator (added by alice)
-		const eve = await generateKeyPair('Ed25519');   // random user (no permissions)
+		const dave = await generateKeyPair('Ed25519'); // moderator (added by alice)
+		const eve = await generateKeyPair('Ed25519'); // random user (no permissions)
 
 		const aliceMgr = createManager(alice, db, broadcasts);
 		const bobMgr = createManager(bob, db);
@@ -143,15 +143,17 @@ describe('Use Case: Linux ISO sharing community', () => {
 		expect(getCatalogEntry(db, NET, 'ubuntu-24')!.name).toBe('Ubuntu 24.04.1 LTS Desktop');
 
 		// Step 9: Eve (random user) tries to publish — REJECTED
-		await expect(eveMgr.publish(NET, {
-			lishID: 'malware',
-			name: 'Totally Not Malware',
-			chunkSize: 1024,
-			checksumAlgo: 'sha256',
-			totalSize: 100,
-			fileCount: 1,
-			manifestHash: 'sha256:evil',
-		})).rejects.toThrow();
+		await expect(
+			eveMgr.publish(NET, {
+				lishID: 'malware',
+				name: 'Totally Not Malware',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 100,
+				fileCount: 1,
+				manifestHash: 'sha256:evil',
+			})
+		).rejects.toThrow();
 
 		// Step 10: Eve tries to remove Ubuntu — REJECTED
 		await expect(eveMgr.remove(NET, 'ubuntu-24')).rejects.toThrow();
@@ -166,15 +168,17 @@ describe('Use Case: Linux ISO sharing community', () => {
 		await bobMgr.revokeRole(NET, carol.publicKey.toString(), 'moderator');
 
 		// Step 13: Carol tries to publish after revocation — REJECTED
-		await expect(carolMgr.publish(NET, {
-			lishID: 'mint',
-			name: 'Linux Mint',
-			chunkSize: 1024,
-			checksumAlgo: 'sha256',
-			totalSize: 2_000_000_000,
-			fileCount: 1,
-			manifestHash: 'sha256:minthash',
-		})).rejects.toThrow();
+		await expect(
+			carolMgr.publish(NET, {
+				lishID: 'mint',
+				name: 'Linux Mint',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 2_000_000_000,
+				fileCount: 1,
+				manifestHash: 'sha256:minthash',
+			})
+		).rejects.toThrow();
 
 		// Step 14: Verify broadcasts were emitted for all owner operations
 		expect(broadcasts.length).toBeGreaterThan(0);
@@ -291,12 +295,22 @@ describe('Use Case: Multiple moderators editing concurrently', () => {
 		// Both mods publish different entries simultaneously
 		await Promise.all([
 			mod1Mgr.publish('shared', {
-				lishID: 'mod1-file', name: 'Mod1 Upload',
-				chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1000, fileCount: 1, manifestHash: 'h1',
+				lishID: 'mod1-file',
+				name: 'Mod1 Upload',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 1000,
+				fileCount: 1,
+				manifestHash: 'h1',
 			}),
 			mod2Mgr.publish('shared', {
-				lishID: 'mod2-file', name: 'Mod2 Upload',
-				chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2000, fileCount: 1, manifestHash: 'h2',
+				lishID: 'mod2-file',
+				name: 'Mod2 Upload',
+				chunkSize: 1024,
+				checksumAlgo: 'sha256',
+				totalSize: 2000,
+				fileCount: 1,
+				manifestHash: 'h2',
 			}),
 		]);
 
@@ -307,8 +321,13 @@ describe('Use Case: Multiple moderators editing concurrently', () => {
 
 		// Mod2 publishes more
 		await mod2Mgr.publish('shared', {
-			lishID: 'mod2-file-2', name: 'Mod2 Second Upload',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 3000, fileCount: 2, manifestHash: 'h3',
+			lishID: 'mod2-file-2',
+			name: 'Mod2 Second Upload',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 3000,
+			fileCount: 2,
+			manifestHash: 'h3',
 			tags: ['important'],
 		});
 
@@ -359,15 +378,11 @@ describe('Use Case: Manifest hash ensures content integrity', () => {
 			name: 'Ubuntu 24.04',
 			chunkSize: 4194304,
 			checksumAlgo: 'sha256',
-			files: [
-				{ path: 'ubuntu-24.04-desktop-amd64.iso', size: 4500000000, checksums: ['abc', 'def'] },
-			],
+			files: [{ path: 'ubuntu-24.04-desktop-amd64.iso', size: 4500000000, checksums: ['abc', 'def'] }],
 		};
 
 		const manifest2 = {
-			files: [
-				{ path: 'ubuntu-24.04-desktop-amd64.iso', size: 4500000000, checksums: ['abc', 'def'] },
-			],
+			files: [{ path: 'ubuntu-24.04-desktop-amd64.iso', size: 4500000000, checksums: ['abc', 'def'] }],
 			checksumAlgo: 'sha256',
 			name: 'Ubuntu 24.04',
 			id: 'ubuntu-24',
@@ -400,16 +415,26 @@ describe('Use Case: User participates in multiple independent communities', () =
 
 		// Publish in linux-fans
 		await mgr.publish('linux-fans', {
-			lishID: 'ubuntu', name: 'Ubuntu ISO',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 4_500_000_000,
-			fileCount: 1, manifestHash: 'h1', contentType: 'software',
+			lishID: 'ubuntu',
+			name: 'Ubuntu ISO',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 4_500_000_000,
+			fileCount: 1,
+			manifestHash: 'h1',
+			contentType: 'software',
 		});
 
 		// Publish in movie-club
 		await mgr.publish('movie-club', {
-			lishID: 'movie1', name: 'Open Source Documentary',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2_000_000_000,
-			fileCount: 1, manifestHash: 'h2', contentType: 'video',
+			lishID: 'movie1',
+			name: 'Open Source Documentary',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 2_000_000_000,
+			fileCount: 1,
+			manifestHash: 'h2',
+			contentType: 'video',
 		});
 
 		// Each network has only its own entries
@@ -479,8 +504,13 @@ describe('Use Case: Deleted content stays deleted until GC', () => {
 
 		// Publish and delete
 		await mgr.publish('net', {
-			lishID: 'temp', name: 'Temporary Content',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h1',
+			lishID: 'temp',
+			name: 'Temporary Content',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h1',
 		});
 		await mgr.remove('net', 'temp');
 		expect(getCatalogEntry(db, 'net', 'temp')).toBeNull();
@@ -488,8 +518,13 @@ describe('Use Case: Deleted content stays deleted until GC', () => {
 
 		// Re-publish — blocked by tombstone
 		await mgr.publish('net', {
-			lishID: 'temp', name: 'Revived Content',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 100, fileCount: 1, manifestHash: 'h2',
+			lishID: 'temp',
+			name: 'Revived Content',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h2',
 		});
 		expect(getCatalogEntry(db, 'net', 'temp')).toBeNull(); // still blocked
 
@@ -500,8 +535,13 @@ describe('Use Case: Deleted content stays deleted until GC', () => {
 
 		// Now re-publish works
 		await mgr.publish('net', {
-			lishID: 'temp', name: 'Revived After GC',
-			chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 200, fileCount: 1, manifestHash: 'h3',
+			lishID: 'temp',
+			name: 'Revived After GC',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 200,
+			fileCount: 1,
+			manifestHash: 'h3',
 		});
 		expect(getCatalogEntry(db, 'net', 'temp')!.name).toBe('Revived After GC');
 	});

@@ -96,16 +96,26 @@ const catalogManager = new CatalogManager({
 	db,
 	getPrivateKey: () => networks.getRunningNetwork().getPrivateKey() as any,
 	getLocalPeerID: () => {
-		try { return networks.getRunningNetwork().getNodeInfo()?.peerID ?? 'local'; } catch { return 'local'; }
+		try {
+			return networks.getRunningNetwork().getNodeInfo()?.peerID ?? 'local';
+		} catch {
+			return 'local';
+		}
 	},
 	broadcast: (networkID, op) => {
 		try {
 			const net = networks.getRunningNetwork();
 			net.broadcast(`lish/${networkID}`, { type: 'catalog_op', ...op });
-		} catch { /* network not running — skip broadcast */ }
+		} catch {
+			/* network not running — skip broadcast */
+		}
 	},
 	emitEvent: (event, data) => {
-		try { apiServer.broadcastEvent(event, data); } catch { /* server not started */ }
+		try {
+			apiServer.broadcastEvent(event, data);
+		} catch {
+			/* server not started */
+		}
 	},
 });
 networks.setCatalogManager(catalogManager);
@@ -125,14 +135,21 @@ setMaxMessageSize(networkSettings.maxMessageSize);
 initUploadState(getUploadEnabledLishs(db), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 initDownloadState(getDownloadEnabledLishs(db), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
 
-const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
-	host: apiHost,
-	port: apiPort,
-	secure: apiSecure,
-	keyFile: apiKeyFile,
-	certFile: apiCertFile,
-	apiToken,
-}, catalogManager);
+const apiServer = new APIServer(
+	dataDir,
+	dataServer,
+	networks,
+	settings,
+	{
+		host: apiHost,
+		port: apiPort,
+		secure: apiSecure,
+		keyFile: apiKeyFile,
+		certFile: apiCertFile,
+		apiToken,
+	},
+	catalogManager
+);
 
 // Wire upload progress broadcast (after apiServer is created)
 setUploadBroadcast((event, data) => apiServer.broadcastEvent(event, data));

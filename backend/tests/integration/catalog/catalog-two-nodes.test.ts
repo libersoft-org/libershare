@@ -121,8 +121,12 @@ beforeAll(async () => {
 afterAll(async () => {
 	await network1.stop();
 	await network2.stop();
-	try { await rm(tmpDir1, { recursive: true }); } catch {}
-	try { await rm(tmpDir2, { recursive: true }); } catch {}
+	try {
+		await rm(tmpDir1, { recursive: true });
+	} catch {}
+	try {
+		await rm(tmpDir2, { recursive: true });
+	} catch {}
 }, 10_000);
 
 describe('Two-Node P2P Catalog', () => {
@@ -204,7 +208,7 @@ describe('Two-Node P2P Catalog', () => {
 
 	test('registerStreamHandler works on both nodes', async () => {
 		let received = false;
-		await network1.registerStreamHandler('/test/echo/1.0.0', async (_stream) => {
+		await network1.registerStreamHandler('/test/echo/1.0.0', async _stream => {
 			received = true;
 		});
 

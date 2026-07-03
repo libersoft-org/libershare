@@ -102,7 +102,9 @@ export class Networks {
 				try {
 					this.catalogManager.join(net.networkID, net.ownerPeerID);
 					await this.registerCatalogHandler(net.networkID);
-				} catch (err) { console.warn(`[Catalog] Failed to join catalog for ${net.networkID}:`, (err as Error).message); }
+				} catch (err) {
+					console.warn(`[Catalog] Failed to join catalog for ${net.networkID}:`, (err as Error).message);
+				}
 			}
 		}
 	}
@@ -315,7 +317,9 @@ export class Networks {
 				if (nodeInfo?.peerID) {
 					network = { ...network, ownerPeerID: nodeInfo.peerID };
 				}
-			} catch { /* network not started yet */ }
+			} catch {
+				/* network not started yet */
+			}
 		}
 		return addLISHnet(this.db, network);
 	}

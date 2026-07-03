@@ -2,15 +2,7 @@ import type { Database } from 'bun:sqlite';
 import { encode, decode } from 'cbor-x';
 import { type SignedCatalogOp } from './catalog-signer.ts';
 import { handleRemoteOp } from './catalog-validator.ts';
-import {
-	getDeltaEntries,
-	getDeltaTombstones,
-	getAllVectorClocks,
-	clearVectorClocks,
-	getCatalogACL,
-	getEntryCount,
-	getTombstoneCount,
-} from '../db/catalog.ts';
+import { getDeltaEntries, getDeltaTombstones, getAllVectorClocks, clearVectorClocks, getCatalogACL, getEntryCount, getTombstoneCount } from '../db/catalog.ts';
 
 const SYNC_PROTOCOL = '/lish/catalog-sync/1.0.0';
 

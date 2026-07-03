@@ -1287,7 +1287,6 @@ export class Network {
 		return dialProtocolByPeerIdFn(this.node, this.dcutrPeers, peerID, protocol);
 	}
 
-
 	/**
 	 * Get node info (peerID, addresses).
 	 */
@@ -1458,7 +1457,7 @@ export class Network {
 
 	async registerStreamHandler(protocol: string, handler: (stream: Stream) => Promise<void>): Promise<void> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		await this.node.handle(protocol, async (stream) => handler(stream), { runOnLimitedConnection: true });
+		await this.node.handle(protocol, async stream => handler(stream), { runOnLimitedConnection: true });
 	}
 
 	registerTopicValidator(topic: string, validator: (peerID: any, msg: any) => Promise<'accept' | 'reject' | 'ignore'>): void {

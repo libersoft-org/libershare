@@ -38,8 +38,7 @@ describe('signCatalogOp + verifyCatalogOp', () => {
 		const key = await generateKeyPair('Ed25519');
 		const clock: HLC = { wallTime: Date.now(), logical: 0, nodeID: 'test' };
 		const { updatedClock } = await signCatalogOp(key, 'add', 'net1', {}, clock);
-		const isGreater = updatedClock.wallTime > clock.wallTime ||
-			(updatedClock.wallTime === clock.wallTime && updatedClock.logical > clock.logical);
+		const isGreater = updatedClock.wallTime > clock.wallTime || (updatedClock.wallTime === clock.wallTime && updatedClock.logical > clock.logical);
 		expect(isGreater).toBe(true);
 	});
 

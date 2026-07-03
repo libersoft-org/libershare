@@ -1,17 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { encode as cborEncode } from 'cbor-x';
 import { verifyCatalogOp, type SignedCatalogOp } from './catalog-signer.ts';
-import {
-	upsertCatalogEntry,
-	upsertTombstone,
-	isTombstoned,
-	getCatalogACL,
-	updateCatalogACL,
-	getVectorClock,
-	updateVectorClock,
-	getEntryCount,
-	type CatalogEntryInput,
-} from '../db/catalog.ts';
+import { upsertCatalogEntry, upsertTombstone, isTombstoned, getCatalogACL, updateCatalogACL, getVectorClock, updateVectorClock, getEntryCount, type CatalogEntryInput } from '../db/catalog.ts';
 import { RATE_LIMITS } from './catalog-rate-limiter.ts';
 
 const MAX_DRIFT = 5 * 60 * 1000; // 5 minutes
@@ -25,9 +15,7 @@ const FIELD_LIMITS = {
 } as const;
 
 /** Outcome of a validation stage — either accepted or rejected with a machine-readable reason. */
-export type ValidationResult =
-	| { valid: true }
-	| { valid: false; reason: string };
+export type ValidationResult = { valid: true } | { valid: false; reason: string };
 
 /** Enforce per-field size/sanity limits on op data (name, description, tags, numeric fields). */
 export function validateFields(op: SignedCatalogOp): ValidationResult {
@@ -121,8 +109,7 @@ export function checkVectorClock(db: Database, networkID: string, op: SignedCata
 	if (lastSeen) {
 		const incoming = op.payload.hlc;
 		// Compare only wallTime and logical — nodeID is irrelevant for anti-replay
-		if (incoming.wallTime < lastSeen.hlc_wall
-			|| (incoming.wallTime === lastSeen.hlc_wall && incoming.logical <= lastSeen.hlc_logical)) {
+		if (incoming.wallTime < lastSeen.hlc_wall || (incoming.wallTime === lastSeen.hlc_wall && incoming.logical <= lastSeen.hlc_logical)) {
 			return { valid: false, reason: 'REPLAY_DETECTED' };
 		}
 	}
@@ -161,9 +148,7 @@ export async function handleRemoteOp(db: Database, networkID: string, op: Signed
 		if (totalEntries >= RATE_LIMITS.maxCatalogSize) {
 			return { valid: false, reason: 'CATALOG_SIZE_LIMIT' };
 		}
-		const publisherCount = db.query<{ c: number }, [string, string]>(
-			'SELECT COUNT(*) as c FROM catalog_entries WHERE network_id = ? AND publisher_peer_id = ?'
-		).get(networkID, op.signer);
+		const publisherCount = db.query<{ c: number }, [string, string]>('SELECT COUNT(*) as c FROM catalog_entries WHERE network_id = ? AND publisher_peer_id = ?').get(networkID, op.signer);
 		if ((publisherCount?.c ?? 0) >= RATE_LIMITS.maxEntriesPerPublisher) {
 			return { valid: false, reason: 'PUBLISHER_QUOTA_EXCEEDED' };
 		}
