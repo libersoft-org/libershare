@@ -30,7 +30,12 @@ interface JoinedNetwork {
 	ownerPeerID: string;
 	gcTimer: ReturnType<typeof setInterval> | null;
 	lastSyncAt: string | null;
+	/** Authorization-rejected remote ops parked for retry after a later ACL grant lands (bounded). */
+	parkedOps: SignedCatalogOp[];
 }
+
+/** Upper bound on parked out-of-order ops per network — flooding beyond this evicts oldest first. */
+const MAX_PARKED_OPS = 32;
 
 /**
  * Per-network catalog state machine: join/leave lifecycle, signed CRDT write
@@ -66,6 +71,7 @@ export class CatalogManager {
 			ownerPeerID,
 			gcTimer: null,
 			lastSyncAt: null,
+			parkedOps: [],
 		};
 
 		// Start tombstone GC timer (every 6 hours)
@@ -277,13 +283,54 @@ export class CatalogManager {
 				// against peers with fast clocks (within the drift tolerance).
 				net.localClock = hlcMerge(net.localClock, op.payload.hlc);
 			}
+			// A newly applied ACL op may authorize ops that were rejected earlier
+			// (GossipSub delivers out of order) — give the parked ones another go.
+			if (op.payload.type === 'acl_grant' || op.payload.type === 'acl_revoke') await this.retryParkedOps(networkID);
 			this.emitEventFn?.('catalog:sync', {
 				networkID,
 				newEntries: 1,
 				phase: 'complete',
 			});
+		} else if (this.isAuthorizationFailure(result)) {
+			// GossipSub does not guarantee ordering: "A grants moderator B" can
+			// arrive before "owner grants admin A". Park authorization-rejected
+			// ops (bounded) and retry them once a later ACL op lands.
+			this.parkRejectedOp(networkID, op);
 		}
 		return result.valid;
+	}
+
+	private isAuthorizationFailure(result: { valid: boolean }): boolean {
+		const reason = (result as { reason?: string }).reason ?? '';
+		return reason.startsWith('UNAUTHORIZED') || reason === 'ONLY_OWNER_CAN_MANAGE_ADMINS';
+	}
+
+	private parkRejectedOp(networkID: string, op: SignedCatalogOp): void {
+		const net = this.joined.get(networkID);
+		if (!net) return;
+		if (net.parkedOps.length >= MAX_PARKED_OPS) net.parkedOps.shift();
+		net.parkedOps.push(op);
+	}
+
+	/** Re-apply parked ops until a pass makes no progress. Ops that succeed also merge their HLC. */
+	private async retryParkedOps(networkID: string): Promise<void> {
+		const net = this.joined.get(networkID);
+		if (!net || net.parkedOps.length === 0) return;
+		let progress = true;
+		while (progress && net.parkedOps.length > 0) {
+			progress = false;
+			const remaining: SignedCatalogOp[] = [];
+			for (const parked of net.parkedOps) {
+				const result = await handleRemoteOp(this.db, networkID, parked);
+				if (result.valid) {
+					progress = true;
+					net.localClock = hlcMerge(net.localClock, parked.payload.hlc);
+				} else {
+					remaining.push(parked);
+				}
+			}
+			net.parkedOps = remaining;
+		}
 	}
 
 	/** Record a completed bilateral sync and notify API subscribers. */

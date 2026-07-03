@@ -414,3 +414,55 @@ describe('CatalogManager: GC', () => {
 		expect(deleted).toBe(1);
 	});
 });
+
+describe('CatalogManager: out-of-order ACL ops', () => {
+	test('op rejected for missing grant applies after the grant arrives', async () => {
+		const adminKey = await generateKeyPair('Ed25519');
+		const adminPeerID = adminKey.publicKey.toString();
+
+		// Receiver knows only the owner.
+		const receiver = createManager(ownerKey);
+		receiver.join('net1', ownerPeerID);
+
+		// Owner signs "grant admin A" on a separate source DB (as it would arrive from the network).
+		const srcDB = new Database(':memory:');
+		srcDB.run('PRAGMA journal_mode = WAL');
+		initCatalogTables(srcDB);
+		const srcOwner = new CatalogManager({ db: srcDB, getPrivateKey: () => ownerKey, getLocalPeerID: () => ownerPeerID });
+		srcOwner.join('net1', ownerPeerID);
+		let grantOp: SignedCatalogOp | null = null;
+		const srcOwnerCapture = new CatalogManager({
+			db: srcDB,
+			getPrivateKey: () => ownerKey,
+			getLocalPeerID: () => ownerPeerID,
+			broadcast: (_nid, op) => {
+				grantOp = op;
+			},
+		});
+		srcOwnerCapture.join('net1', ownerPeerID);
+		await srcOwnerCapture.grantRole('net1', adminPeerID, 'admin');
+
+		// Admin signs an entry on the source (authorized there).
+		const srcAdmin = new CatalogManager({ db: srcDB, getPrivateKey: () => adminKey, getLocalPeerID: () => adminPeerID });
+		srcAdmin.join('net1', ownerPeerID);
+		let addOp: SignedCatalogOp | null = null;
+		const srcAdminCapture = new CatalogManager({
+			db: srcDB,
+			getPrivateKey: () => adminKey,
+			getLocalPeerID: () => adminPeerID,
+			broadcast: (_nid, op) => {
+				addOp = op;
+			},
+		});
+		srcAdminCapture.join('net1', ownerPeerID);
+		await srcAdminCapture.publish('net1', { lishID: 'ooo-entry', name: 'Out Of Order', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1, fileCount: 1, manifestHash: 'h' });
+
+		// Deliver OUT OF ORDER: entry before the grant → rejected and parked.
+		expect(await receiver.applyRemoteOp('net1', addOp!)).toBe(false);
+		expect(receiver.get('net1', 'ooo-entry')).toBeNull();
+
+		// Grant arrives → parked entry is retried and applied.
+		expect(await receiver.applyRemoteOp('net1', grantOp!)).toBe(true);
+		expect(receiver.get('net1', 'ooo-entry')).not.toBeNull();
+	});
+});
