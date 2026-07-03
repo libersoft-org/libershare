@@ -181,6 +181,7 @@ export class Networks {
 		const net = this.get(id);
 		console.log(`✓ Left lishnet: ${net?.name ?? id}`);
 
+		this.catalogNet?.detach(id);
 		if (this.catalogManager) {
 			this.catalogManager.leave(id);
 		}
@@ -191,6 +192,10 @@ export class Networks {
 	 */
 	async stopAllNetworks(): Promise<void> {
 		this.joinedNetworks.clear();
+		this.catalogNet?.detachAll();
+		if (this.catalogManager) {
+			for (const id of this.catalogManager.getJoinedNetworks()) this.catalogManager.leave(id);
+		}
 		await this.network.stop();
 		console.log('✓ All lishnets left and node stopped');
 	}
