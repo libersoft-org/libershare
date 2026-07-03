@@ -446,6 +446,16 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			} else if (request.type === 'getChunk' || request.type === undefined) {
 				// Chunk request (type may be omitted for legacy compatibility)
 				const chunkReq = request as LISHGetChunkRequest;
+				// Stop serving chunks to peers we no longer share a joined
+				// lishnet with. Without this a downloader re-dials our stored
+				// address after we left its network and the transfer silently
+				// continues over the fresh transport connection.
+				if (sharesNetworkWith && remotePeerID && !sharesNetworkWith(remotePeerID)) {
+					trace(`[PROTO] getChunk from ${remotePeer} refused: no shared joined lishnet`);
+					const gatedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
+					sendLengthPrefixed(stream, codecEncode(gatedResponse));
+					continue;
+				}
 				if (!uploadEnabled.has(chunkReq.lishID)) {
 					const blockedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					sendLengthPrefixed(stream, codecEncode(blockedResponse));
