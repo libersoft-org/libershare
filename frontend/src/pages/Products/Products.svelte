@@ -146,6 +146,9 @@
 		const unsubEvents = subscribeCatalogEvents({
 			onUpdated: () => loadEntries(),
 			onRemoved: () => loadEntries(),
+			// Remote ops and bilateral catch-up sync surface as catalog:sync —
+			// without this, changes made by other peers never refresh the list.
+			onSync: () => loadEntries(),
 		});
 		return () => {
 			unsubSearch();
