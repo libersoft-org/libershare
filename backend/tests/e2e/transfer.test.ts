@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { startNodes, stopNodes, getNodeURL } from './helpers/node-manager.ts';
 import { TestClient } from './helpers/ws-test-client.ts';
 import { LISH_ID, EVENT_TIMEOUT, PEER_DISCOVERY_TIMEOUT } from './helpers/constants.ts';
@@ -56,7 +58,15 @@ async function importLISHToNode(client: TestClient): Promise<void> {
 	await client.call('lishs.importFromJSON', { json: lishData });
 }
 
+// Multi-node transfer e2e needs a prepared `.node1` data directory at the repo
+// root (settings + a seeded test LISH matching LISH_ID). Skip cleanly when the
+// fixture is absent instead of crashing during node startup.
+const FIXTURE_DIR = join(import.meta.dir, '..', '..', '..', '.node1');
+const hasFixture = existsSync(FIXTURE_DIR);
+if (!hasFixture) console.warn(`[transfer.e2e] SKIPPED — fixture directory not found: ${FIXTURE_DIR}`);
+
 beforeAll(async () => {
+	if (!hasFixture) return;
 	await startNodes();
 
 	node1 = new TestClient(getNodeURL(0));
@@ -84,6 +94,7 @@ beforeAll(async () => {
 }, 60000);
 
 afterAll(async () => {
+	if (!hasFixture) return;
 	node1?.destroy();
 	node2?.destroy();
 	node3?.destroy();
@@ -93,7 +104,7 @@ afterAll(async () => {
 // ============================================================================
 // Test 1: Basic download (node2 downloads from node1)
 // ============================================================================
-describe('Basic download', () => {
+describe.skipIf(!hasFixture)('Basic download', () => {
 	it(
 		'node2 starts downloading and receives progress events',
 		async () => {
@@ -124,7 +135,7 @@ describe('Basic download', () => {
 // ============================================================================
 // Test 2+3: Upload pause and resume on node1
 // ============================================================================
-describe('Upload pause/resume', () => {
+describe.skipIf(!hasFixture)('Upload pause/resume', () => {
 	it(
 		'pausing node1 upload stops node2 download progress (peers=0)',
 		async () => {
@@ -161,7 +172,7 @@ describe('Upload pause/resume', () => {
 // ============================================================================
 // Test 4: Upload tracking (node1 sees upload progress)
 // ============================================================================
-describe('Upload tracking', () => {
+describe.skipIf(!hasFixture)('Upload tracking', () => {
 	it(
 		'node1 emits upload:progress when serving chunks',
 		async () => {
@@ -177,7 +188,7 @@ describe('Upload tracking', () => {
 // ============================================================================
 // Test 5: Download pause/resume
 // ============================================================================
-describe('Download pause/resume', () => {
+describe.skipIf(!hasFixture)('Download pause/resume', () => {
 	it(
 		'pausing download stops progress events',
 		async () => {
@@ -209,7 +220,7 @@ describe('Download pause/resume', () => {
 // ============================================================================
 // Test 6: getActiveTransfers state
 // ============================================================================
-describe('getActiveTransfers', () => {
+describe.skipIf(!hasFixture)('getActiveTransfers', () => {
 	it(
 		'returns correct state for active download',
 		async () => {

@@ -8,7 +8,8 @@ interface NodeInfo {
 	dataDir: string;
 }
 
-const ROOT = join(import.meta.dir, '..', '..', '..');
+// Repo root (helpers -> e2e -> tests -> backend -> root) — backend must run with CWD at repo root
+const ROOT = join(import.meta.dir, '..', '..', '..', '..');
 const APP_ENTRY = join(ROOT, 'backend', 'src', 'app.ts');
 
 const nodes: NodeInfo[] = [];
