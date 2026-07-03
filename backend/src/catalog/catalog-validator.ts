@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import { encode as cborEncode } from 'cbor-x';
 import { verifyCatalogOp, type SignedCatalogOp } from './catalog-signer.ts';
-import { upsertCatalogEntry, upsertTombstone, isTombstoned, getCatalogACL, updateCatalogACL, getVectorClock, updateVectorClock, getEntryCount, type CatalogEntryInput } from '../db/catalog.ts';
+import { upsertCatalogEntry, upsertTombstone, isTombstoned, getCatalogACL, updateCatalogACL, getVectorClock, updateVectorClock, getEntryCount, insertAclOp, type CatalogEntryInput } from '../db/catalog.ts';
 import { RATE_LIMITS } from './catalog-rate-limiter.ts';
 
 const MAX_DRIFT = 5 * 60 * 1000; // 5 minutes
@@ -226,6 +226,7 @@ function applyOp(db: Database, networkID: string, op: SignedCatalogOp): void {
 			} else if (role === 'moderator' && !acl.moderators.includes(delegatee)) {
 				updateCatalogACL(db, networkID, { moderators: [...acl.moderators, delegatee] });
 			}
+			persistAclOp(db, networkID, op, signedOpBlob);
 			break;
 		}
 		case 'acl_revoke': {
@@ -240,7 +241,25 @@ function applyOp(db: Database, networkID: string, op: SignedCatalogOp): void {
 			} else if (role === 'moderator') {
 				updateCatalogACL(db, networkID, { moderators: acl.moderators.filter(m => m !== delegatee) });
 			}
+			persistAclOp(db, networkID, op, signedOpBlob);
 			break;
 		}
 	}
+}
+
+/**
+ * Record an applied ACL op so bilateral sync can replay role delegation to
+ * late joiners — entries signed by delegated peers are otherwise rejected as
+ * UNAUTHORIZED on nodes that missed the live grant.
+ */
+function persistAclOp(db: Database, networkID: string, op: SignedCatalogOp, signedOpBlob: Uint8Array): void {
+	insertAclOp(db, {
+		network_id: networkID,
+		op_nonce: op.payload.nonce,
+		signer: op.signer,
+		hlc_wall: op.payload.hlc.wallTime,
+		hlc_logical: op.payload.hlc.logical,
+		hlc_node: op.payload.hlc.nodeID,
+		signed_op: signedOpBlob,
+	});
 }

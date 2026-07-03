@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite';
 import { encode, decode } from 'cbor-x';
 import { type SignedCatalogOp } from './catalog-signer.ts';
 import { handleRemoteOp } from './catalog-validator.ts';
-import { getDeltaEntries, getDeltaTombstones, getAllVectorClocks, clearVectorClocks, getCatalogACL, getEntryCount, getTombstoneCount } from '../db/catalog.ts';
+import { getDeltaEntries, getDeltaTombstones, getDeltaAclOps, getAllVectorClocks, clearVectorClocks, getCatalogACL, getEntryCount, getTombstoneCount } from '../db/catalog.ts';
 
 const SYNC_PROTOCOL = '/lish/catalog-sync/1.0.0';
 
@@ -28,15 +28,21 @@ export interface SyncResponse {
 	tombstoneCount: number;
 }
 
-/** Assemble the delta-state response for a sync request (entries + tombstones as raw signed blobs). */
+/** Assemble the delta-state response for a sync request (ACL ops + entries + tombstones as raw signed blobs). */
 export function buildSyncResponse(db: Database, networkID: string, sinceHlcWall: number): SyncResponse {
 	const entries = getDeltaEntries(db, networkID, sinceHlcWall);
 	const tombstones = getDeltaTombstones(db, networkID, sinceHlcWall);
+	const aclOps = getDeltaAclOps(db, networkID, sinceHlcWall);
 	const acl = getCatalogACL(db, networkID);
 	const clocks = getAllVectorClocks(db, networkID);
 
-	// Collect signed_op blobs — raw bytes, no decode/re-encode
+	// Collect signed_op blobs — raw bytes, no decode/re-encode. Signed ACL ops
+	// ride along so late joiners learn role delegation; without them, entries
+	// signed by delegated admins/moderators fail checkACL on the receiver.
 	const operations: Uint8Array[] = [];
+	for (const aclOp of aclOps) {
+		operations.push(new Uint8Array(aclOp.signed_op));
+	}
 	for (const entry of entries) {
 		operations.push(new Uint8Array(entry.signed_op));
 	}
@@ -51,6 +57,9 @@ export function buildSyncResponse(db: Database, networkID: string, sinceHlcWall:
 		command: 'catalog_sync_res',
 		requestID: crypto.randomUUID(),
 		operations,
+		// Informational only — the authoritative ACL state is reconstructed on
+		// the receiver from the signed acl ops above (never from this snapshot,
+		// which a malicious responder could fabricate).
 		aclJSON: JSON.stringify(acl),
 		vectorClocks: clocks.map(c => ({ peer_id: c.peer_id, hlc_wall: c.hlc_wall, hlc_logical: c.hlc_logical })),
 		gcCutoff,

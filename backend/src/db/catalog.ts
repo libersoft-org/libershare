@@ -170,6 +170,26 @@ export function initCatalogTables(db: Database): void {
 		END
 	`);
 
+	// Signed ACL operations (acl_grant / acl_revoke). Persisted so bilateral
+	// sync can replay role delegation to late joiners — without this, entries
+	// signed by delegated admins/moderators are rejected as UNAUTHORIZED on
+	// peers that missed the live grant. Ops recorded from this schema onward;
+	// grants issued before the table existed must be re-issued to backfill.
+	db.run(`
+		CREATE TABLE IF NOT EXISTS catalog_acl_ops (
+			id                INTEGER PRIMARY KEY AUTOINCREMENT,
+			network_id        TEXT NOT NULL,
+			op_nonce          TEXT NOT NULL,
+			signer            TEXT NOT NULL,
+			hlc_wall          INTEGER NOT NULL,
+			hlc_logical       INTEGER NOT NULL,
+			hlc_node          TEXT NOT NULL,
+			signed_op         BLOB NOT NULL,
+			UNIQUE(network_id, op_nonce)
+		)
+	`);
+	db.run('CREATE INDEX IF NOT EXISTS idx_catalog_acl_ops_hlc ON catalog_acl_ops(network_id, hlc_wall)');
+
 	// Schema version tracking
 	db.run(`
 		CREATE TABLE IF NOT EXISTS catalog_meta (
@@ -378,4 +398,29 @@ export function getEntryCount(db: Database, networkID: string): number {
 export function getTombstoneCount(db: Database, networkID: string): number {
 	const row = db.query<{ c: number }, [string]>('SELECT COUNT(*) as c FROM catalog_tombstones WHERE network_id = ?').get(networkID);
 	return row?.c ?? 0;
+}
+
+/** One persisted signed ACL operation (acl_grant / acl_revoke). */
+export interface AclOpRow {
+	network_id: string;
+	op_nonce: string;
+	signer: string;
+	hlc_wall: number;
+	hlc_logical: number;
+	hlc_node: string;
+	signed_op: Uint8Array;
+}
+
+/** Persist a signed ACL op for later bilateral sync (idempotent per op nonce). */
+export function insertAclOp(db: Database, row: AclOpRow): void {
+	db.run(
+		`INSERT OR IGNORE INTO catalog_acl_ops (network_id, op_nonce, signer, hlc_wall, hlc_logical, hlc_node, signed_op)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		[row.network_id, row.op_nonce, row.signer, row.hlc_wall, row.hlc_logical, row.hlc_node, row.signed_op]
+	);
+}
+
+/** Signed ACL ops newer than the given HLC wall time — delta-state payload for bilateral sync. */
+export function getDeltaAclOps(db: Database, networkID: string, sinceHlcWall: number): AclOpRow[] {
+	return db.query<AclOpRow, [string, number]>('SELECT * FROM catalog_acl_ops WHERE network_id = ? AND hlc_wall > ? ORDER BY hlc_wall ASC').all(networkID, sinceHlcWall);
 }

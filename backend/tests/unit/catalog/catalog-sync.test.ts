@@ -272,3 +272,66 @@ describe('Bilateral Sync', () => {
 		expect(getCatalogEntry(dbB, 'net1', 'owner-entry')!.name).toBe('By Owner');
 	});
 });
+
+describe('Bilateral Sync: ACL delegation replay', () => {
+	test('late joiner learns delegated roles via sync and accepts delegated content', async () => {
+		const adminKey = await generateKeyPair('Ed25519');
+		const adminPeerID = adminKey.publicKey.toString();
+
+		// Source node: owner grants admin to another peer, admin publishes an entry.
+		const srcDB = createDB();
+		const ownerMgr = createManager(ownerKey, srcDB);
+		ownerMgr.join('net1', ownerPeerID);
+		await ownerMgr.grantRole('net1', adminPeerID, 'admin');
+
+		const adminMgr = createManager(adminKey, srcDB);
+		adminMgr.join('net1', ownerPeerID);
+		await adminMgr.publish('net1', {
+			lishID: 'delegated-entry',
+			name: 'Published By Delegated Admin',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			totalSize: 100,
+			fileCount: 1,
+			manifestHash: 'h-delegated',
+		});
+
+		// Late joiner: fresh DB, ACL knows only the owner, writes restricted.
+		const lateDB = createDB();
+		ensureCatalogACL(lateDB, 'net1', ownerPeerID);
+
+		const response = buildSyncResponse(srcDB, 'net1', 0);
+		const applied = await applySyncResponse(lateDB, 'net1', response);
+
+		// Both the ACL grant and the delegated entry must have been accepted.
+		expect(applied).toBeGreaterThanOrEqual(2);
+		const entry = getCatalogEntry(lateDB, 'net1', 'delegated-entry');
+		expect(entry).not.toBeNull();
+		expect(entry!.publisher_peer_id).toBe(adminPeerID);
+
+		const { getCatalogACL } = await import('../../../src/db/catalog.ts');
+		const lateACL = getCatalogACL(lateDB, 'net1');
+		expect(lateACL!.admins).toContain(adminPeerID);
+	});
+
+	test('sync response survives wire encode/decode with ACL ops included', async () => {
+		const modKey = await generateKeyPair('Ed25519');
+		const modPeerID = modKey.publicKey.toString();
+
+		const srcDB = createDB();
+		const ownerMgr = createManager(ownerKey, srcDB);
+		ownerMgr.join('net1', ownerPeerID);
+		await ownerMgr.grantRole('net1', modPeerID, 'moderator');
+
+		const wire = encodeSyncResponse(buildSyncResponse(srcDB, 'net1', 0));
+		const decoded = decodeSyncResponse(wire);
+
+		const lateDB = createDB();
+		ensureCatalogACL(lateDB, 'net1', ownerPeerID);
+		const applied = await applySyncResponse(lateDB, 'net1', decoded);
+		expect(applied).toBeGreaterThanOrEqual(1);
+
+		const { getCatalogACL } = await import('../../../src/db/catalog.ts');
+		expect(getCatalogACL(lateDB, 'net1')!.moderators).toContain(modPeerID);
+	});
+});
