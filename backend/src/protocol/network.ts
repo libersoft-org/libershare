@@ -464,7 +464,7 @@ export class Network {
 						}
 					}
 					const connType = remotePeerID ? classifyConnectionFn(remotePeerID, isRelay, this.dcutrPeers) : 'DIRECT';
-					await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType);
+					await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType, pid => this.sharesJoinedTopicWith(pid));
 				} catch (err: any) {
 					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
 				}
@@ -1071,6 +1071,29 @@ export class Network {
 		} catch {
 			return false;
 		}
+	}
+
+	/**
+	 * True if we currently share at least one joined lishnet topic with the
+	 * given peer — i.e. some lish topic WE are subscribed to lists the peer
+	 * among its subscribers.
+	 *
+	 * Coarse serve-gate for unicast LISH discovery: a peer we no longer
+	 * share any lishnet with must not be able to browse or search our shared
+	 * LISHs just because a transport connection exists (e.g. the peer's
+	 * keep-alive re-dialed us right after we left its network).
+	 */
+	sharesJoinedTopicWith(peerID: string): boolean {
+		if (!this.pubsub) return false;
+		for (const topic of this.pubsub.getTopics()) {
+			if (!topic.startsWith(LISH_TOPIC_PREFIX)) continue;
+			try {
+				if (this.pubsub.getSubscribers(topic).some((p: any) => p.toString() === peerID)) return true;
+			} catch {
+				// topic may be tearing down — treat as not shared
+			}
+		}
+		return false;
 	}
 
 	/**

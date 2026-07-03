@@ -354,7 +354,7 @@ export function clearAllUploads(): void {
 
 const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload
 
-export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType): Promise<void> {
+export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean): Promise<void> {
 	const servedLishIDs = new Set<string>();
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
 	const remotePeer = remotePeerID?.slice(0, 12) ?? 'unknown';
@@ -393,6 +393,15 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 
 			if (request.type === 'getLishs') {
+				// Serve the shared-LISH list only to peers we share a joined
+				// lishnet with. A bare transport connection (e.g. the peer re-dialed
+				// us right after we left its network) must not reveal what we share.
+				if (sharesNetworkWith && remotePeerID && !sharesNetworkWith(remotePeerID)) {
+					trace(`[PROTO] getLishs from ${remotePeer} refused: no shared joined lishnet`);
+					const gated: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
+					sendLengthPrefixed(stream, codecEncode(gated));
+					continue;
+				}
 				// Return list of all shared (upload_enabled) LISHs — id and name only.
 				// Newest first — matches the order shown locally in "Download and Sharing".
 				const allLishs = dataServer.list();
@@ -415,8 +424,9 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				};
 				sendLengthPrefixed(stream, codecEncode(response));
 			} else if (request.type === 'getLish') {
-				// Only return manifest for LISHs with upload enabled
-				if (!isUploadAdvertisable(request.lishID)) {
+				// Only return manifest for LISHs with upload enabled — and only to
+				// peers we share a joined lishnet with (same gate as getLishs).
+				if ((sharesNetworkWith && remotePeerID && !sharesNetworkWith(remotePeerID)) || !isUploadAdvertisable(request.lishID)) {
 					const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					sendLengthPrefixed(stream, codecEncode(response));
 				} else {
