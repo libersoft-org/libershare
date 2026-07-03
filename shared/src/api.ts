@@ -535,6 +535,18 @@ class CatalogAPI {
 	startDownload(networkID: string, lishID: string): Promise<{ status: string; message: string; downloadDir?: string }> {
 		return this.client.call<{ status: string; message: string; downloadDir?: string }>('catalog.startDownload', { networkID, lishID });
 	}
+
+	pauseDownload(lishID: string): Promise<{ success: boolean }> {
+		return this.client.call<{ success: boolean }>('catalog.pauseDownload', { lishID });
+	}
+
+	resumeDownload(lishID: string): Promise<{ success: boolean }> {
+		return this.client.call<{ success: boolean }>('catalog.resumeDownload', { lishID });
+	}
+
+	getSyncStatus(networkID: string): Promise<{ entryCount: number; tombstoneCount: number; lastSyncAt: string | null }> {
+		return this.client.call<{ entryCount: number; tombstoneCount: number; lastSyncAt: string | null }>('catalog.getSyncStatus', { networkID });
+	}
 }
 
 /**
