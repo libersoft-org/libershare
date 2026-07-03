@@ -224,6 +224,15 @@ describe('FTS5 search', () => {
 		expect(searchCatalog(db, 'net1', 'Oldname').length).toBe(0);
 	});
 
+	test('queries with FTS operator characters do not throw', () => {
+		upsertCatalogEntry(db, makeEntry({ lish_id: 'op1', name: 'C++ Compiler Suite' }));
+		expect(() => searchCatalog(db, 'net1', 'C++')).not.toThrow();
+		expect(() => searchCatalog(db, 'net1', 'foo"')).not.toThrow();
+		expect(() => searchCatalog(db, 'net1', 'a:b')).not.toThrow();
+		expect(() => searchCatalog(db, 'net1', '(unbalanced')).not.toThrow();
+		expect(searchCatalog(db, 'net1', 'Compiler').length).toBe(1);
+	});
+
 	test('FTS row is removed when the entry is deleted', () => {
 		upsertCatalogEntry(db, makeEntry({ lish_id: 'd1', name: 'Deleteme ISO' }));
 		db.run('DELETE FROM catalog_entries WHERE network_id = ? AND lish_id = ?', ['net1', 'd1']);

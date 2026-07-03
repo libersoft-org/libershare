@@ -345,7 +345,14 @@ export function searchCatalog(db: Database, networkID: string, query: string, li
 		return db.query<CatalogEntryRow, [string, string, number]>(`SELECT * FROM catalog_entries WHERE network_id = ? AND tags LIKE ? ORDER BY hlc_wall DESC LIMIT ?`).all(networkID, `%"${tag}"%`, limit);
 	}
 
-	// FTS5 fulltext search
+	// FTS5 fulltext search. User input goes into MATCH, whose query language
+	// treats ", :, +, - etc. as operators — raw "C++" or a stray quote is a
+	// syntax error. Quote each whitespace token as a phrase (embedded quotes
+	// doubled) so any input is a valid AND-of-phrases query.
+	const ftsQuery = q
+		.split(/\s+/)
+		.map(token => `"${token.replace(/"/g, '""')}"`)
+		.join(' ');
 	return db
 		.query<CatalogEntryRow, [string, string, number]>(
 			`SELECT e.* FROM catalog_entries e
@@ -353,7 +360,7 @@ export function searchCatalog(db: Database, networkID: string, query: string, li
 		WHERE e.network_id = ? AND catalog_fts MATCH ?
 		ORDER BY rank LIMIT ?`
 		)
-		.all(networkID, q, limit);
+		.all(networkID, ftsQuery, limit);
 }
 
 /** Entries newer than the given HLC wall time — delta-state payload for bilateral sync. */
