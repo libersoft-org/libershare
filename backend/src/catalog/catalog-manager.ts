@@ -14,6 +14,13 @@ export interface CatalogManagerConfig {
 	emitEvent?: ((event: string, data: any) => void) | undefined;
 }
 
+/** Drop storage-only columns (signed_op blob, internal HLC parts) before an entry leaves through an event. */
+function toPublicEntry(row: CatalogEntryRow | null): Omit<CatalogEntryRow, 'signed_op' | 'hlc_logical' | 'hlc_node' | 'id'> | null {
+	if (!row) return null;
+	const { signed_op: _blob, hlc_logical: _l, hlc_node: _n, id: _id, ...publicRow } = row;
+	return publicRow;
+}
+
 /** Parse the stored tags JSON column, treating corrupt data as "no tags" instead of throwing. */
 function parseStoredTags(tagsJson: string | null): string[] | undefined {
 	if (!tagsJson) return undefined;
@@ -181,7 +188,7 @@ export class CatalogManager {
 		if (!result.valid) throw new Error(`Publish failed: ${(result as { reason: string }).reason}`);
 
 		this.broadcastFn?.(networkID, op);
-		this.emitEventFn?.('catalog:updated', { networkID, entry: getCatalogEntry(this.db, networkID, data.lishID) });
+		this.emitEventFn?.('catalog:updated', { networkID, entry: toPublicEntry(getCatalogEntry(this.db, networkID, data.lishID)) });
 	}
 
 	async update(
@@ -226,7 +233,7 @@ export class CatalogManager {
 		if (!result.valid) throw new Error(`Update failed: ${(result as { reason: string }).reason}`);
 
 		this.broadcastFn?.(networkID, op);
-		this.emitEventFn?.('catalog:updated', { networkID, entry: getCatalogEntry(this.db, networkID, lishID) });
+		this.emitEventFn?.('catalog:updated', { networkID, entry: toPublicEntry(getCatalogEntry(this.db, networkID, lishID)) });
 	}
 
 	async remove(networkID: string, lishID: string): Promise<void> {

@@ -16,11 +16,55 @@ export interface StartDownloadResult {
 	downloadDir?: string;
 }
 
+/** Wire shape of a catalog entry — CatalogEntryRow without the signed_op blob and internal HLC columns. */
+export interface CatalogEntryDTO {
+	network_id: string;
+	lish_id: string;
+	name: string | null;
+	description: string | null;
+	publisher_peer_id: string;
+	published_at: string;
+	chunk_size: number;
+	checksum_algo: string;
+	total_size: number;
+	file_count: number;
+	manifest_hash: string;
+	content_type: string | null;
+	tags: string | null;
+	last_edited_by: string | null;
+	hlc_wall: number;
+}
+
+/**
+ * Strip storage-only columns before an entry leaves over WebSocket. The
+ * signed_op BLOB in particular serializes as a {"0":..,"1":..} object and
+ * adds kilobytes per entry for data no client consumes.
+ */
+function toEntryDTO(row: CatalogEntryRow): CatalogEntryDTO {
+	return {
+		network_id: row.network_id,
+		lish_id: row.lish_id,
+		name: row.name,
+		description: row.description,
+		publisher_peer_id: row.publisher_peer_id,
+		published_at: row.published_at,
+		chunk_size: row.chunk_size,
+		checksum_algo: row.checksum_algo,
+		total_size: row.total_size,
+		file_count: row.file_count,
+		manifest_hash: row.manifest_hash,
+		content_type: row.content_type,
+		tags: row.tags,
+		last_edited_by: row.last_edited_by,
+		hlc_wall: row.hlc_wall,
+	};
+}
+
 /** WebSocket API handler set for the catalog domain (dispatched by APIServer). */
 export interface CatalogHandlers {
-	list: (p: { networkID: string; limit?: number }) => CatalogEntryRow[];
-	get: (p: { networkID: string; lishID: string }) => CatalogEntryRow | null;
-	search: (p: { networkID: string; query: string; limit?: number }) => CatalogEntryRow[];
+	list: (p: { networkID: string; limit?: number }) => CatalogEntryDTO[];
+	get: (p: { networkID: string; lishID: string }) => CatalogEntryDTO | null;
+	search: (p: { networkID: string; query: string; limit?: number }) => CatalogEntryDTO[];
 	publish: (p: { networkID: string; lishID: string; name?: string; description?: string; chunkSize: number; checksumAlgo: string; totalSize: number; fileCount: number; manifestHash: string; contentType?: string; tags?: string[] }) => Promise<void>;
 	update: (p: { networkID: string; lishID: string; name?: string; description?: string; contentType?: string; tags?: string[] }) => Promise<void>;
 	remove: (p: { networkID: string; lishID: string }) => Promise<void>;
@@ -54,15 +98,16 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 	return {
 		list(p) {
 			assert(p, ['networkID']);
-			return catalogManager.list(p.networkID, p.limit);
+			return catalogManager.list(p.networkID, p.limit).map(toEntryDTO);
 		},
 		get(p) {
 			assert(p, ['networkID', 'lishID']);
-			return catalogManager.get(p.networkID, p.lishID);
+			const row = catalogManager.get(p.networkID, p.lishID);
+			return row ? toEntryDTO(row) : null;
 		},
 		search(p) {
 			assert(p, ['networkID', 'query']);
-			return catalogManager.search(p.networkID, p.query, p.limit);
+			return catalogManager.search(p.networkID, p.query, p.limit).map(toEntryDTO);
 		},
 		async publish(p) {
 			assert(p, ['networkID', 'lishID', 'chunkSize', 'checksumAlgo', 'totalSize', 'fileCount', 'manifestHash']);
