@@ -126,6 +126,10 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 				const network = deps.networks.getRunningNetwork();
 				const downloadDir = join(deps.dataDir, 'downloads', Date.now().toString());
 				const downloader = new Downloader(downloadDir, network, deps.dataServer, p.networkID);
+				// Claim the slot BEFORE the first await — two concurrent startDownload
+				// calls would otherwise both pass the .has() guard (TOCTOU) and spawn
+				// duplicate downloaders for the same LISH.
+				activeDownloaders.set(entry.lish_id, downloader);
 				await downloader.initFromManifest(stubManifest);
 
 				// Notify ALL clients when manifest is imported (LISH appears in downloads)
@@ -144,9 +148,6 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 						bytesPerSecond: info.bytesPerSecond,
 					});
 				});
-
-				// Track downloader for pause/resume
-				activeDownloaders.set(entry.lish_id, downloader);
 
 				// Start async download — broadcast completion/error to ALL clients
 				downloader
@@ -167,6 +168,8 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 					downloadDir,
 				};
 			} catch (err: any) {
+				// Release the slot claimed above so a later retry can start fresh.
+				activeDownloaders.delete(entry.lish_id);
 				return {
 					status: 'not_available',
 					message: `Cannot start download: ${err.message}`,
