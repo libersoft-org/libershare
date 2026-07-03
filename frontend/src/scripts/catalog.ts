@@ -18,7 +18,7 @@ export async function getCatalogAccess(networkID: string): Promise<CatalogACLRes
 	return api.catalog.getAccess(networkID);
 }
 
-export function subscribeCatalogEvents(callbacks: { onUpdated?: (data: { networkID: string; entry: CatalogEntryResponse }) => void; onRemoved?: (data: { networkID: string; lishID: string }) => void; onACL?: (data: { networkID: string; access: CatalogACLResponse }) => void; onSync?: (data: { networkID: string; newEntries: number; phase: 'start' | 'complete' }) => void }): () => void {
+export function subscribeCatalogEvents(callbacks: { onUpdated?: (data: { networkID: string; entry: CatalogEntryResponse }) => void; onRemoved?: (data: { networkID: string; lishID: string }) => void; onACL?: (data: { networkID: string; access: CatalogACLResponse }) => void; onSync?: (data: { networkID: string; newEntries: number; phase: 'complete' }) => void }): () => void {
 	const unsubs: (() => void)[] = [];
 	if (callbacks.onUpdated) {
 		const u = api.on('catalog:updated', callbacks.onUpdated);

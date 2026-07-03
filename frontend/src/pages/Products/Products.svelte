@@ -143,16 +143,27 @@
 				() => searchBar?.toggleFocus()
 			)
 		);
+		// catalog:sync fires once per applied remote op — a burst of N ops must
+		// coalesce into one list reload, not N round-trips.
+		let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+		const scheduleReload = (): void => {
+			if (reloadTimer) clearTimeout(reloadTimer);
+			reloadTimer = setTimeout(() => {
+				reloadTimer = null;
+				loadEntries();
+			}, 300);
+		};
 		const unsubEvents = subscribeCatalogEvents({
-			onUpdated: () => loadEntries(),
-			onRemoved: () => loadEntries(),
+			onUpdated: scheduleReload,
+			onRemoved: scheduleReload,
 			// Remote ops and bilateral catch-up sync surface as catalog:sync —
 			// without this, changes made by other peers never refresh the list.
-			onSync: () => loadEntries(),
+			onSync: scheduleReload,
 		});
 		return () => {
 			unsubSearch();
 			unsubEvents();
+			if (reloadTimer) clearTimeout(reloadTimer);
 		};
 	});
 </script>
