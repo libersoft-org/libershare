@@ -250,7 +250,7 @@ describe.skipIf(!hasFixture)('getActiveTransfers', () => {
 // ============================================================================
 // Test 7: Node3 downloads from node1
 // ============================================================================
-describe('Multi-node download', () => {
+describe.skipIf(!hasFixture)('Multi-node download', () => {
 	it(
 		'node3 starts downloading and receives progress',
 		async () => {
@@ -269,7 +269,7 @@ describe('Multi-node download', () => {
 // ============================================================================
 // Test 8: Peer exchange (node1 off, node2+node3 exchange chunks)
 // ============================================================================
-describe('Peer exchange', () => {
+describe.skipIf(!hasFixture)('Peer exchange', () => {
 	it('node2 and node3 exchange chunks when node1 is offline', async () => {
 		// Let both download some chunks first
 		await new Promise(r => setTimeout(r, 3000));
@@ -305,7 +305,7 @@ describe('Peer exchange', () => {
 // ============================================================================
 // Test 9: Stale upload state cleanup
 // ============================================================================
-describe('Upload state cleanup', () => {
+describe.skipIf(!hasFixture)('Upload state cleanup', () => {
 	it('upload peers reset to 0 after peer disconnects', async () => {
 		// Ensure node1 is uploading
 		await node1.waitForEvent('transfer.upload:progress', (d: any) => d.lishID === LISH_ID && d.peers >= 1, EVENT_TIMEOUT);
@@ -338,7 +338,7 @@ describe('Upload state cleanup', () => {
 // ============================================================================
 // Test 10: Speed display sanity
 // ============================================================================
-describe('Speed calculation', () => {
+describe.skipIf(!hasFixture)('Speed calculation', () => {
 	it('download speed updates reflect recent activity (not stale average)', async () => {
 		// Collect progress events for 8 seconds
 		const events = await node2.collectEvents('transfer.download:progress', 8000);
