@@ -33,6 +33,8 @@
 				publishError = 'LISH not found';
 				return;
 			}
+			// The manifest hash is computed server-side from the stored LISH —
+			// the detail view does not expose the manifest bytes.
 			await publishCatalogEntry(networkID, {
 				lishID,
 				name: name || lishID,
@@ -41,7 +43,6 @@
 				checksumAlgo: detail.checksumAlgo,
 				totalSize: detail.totalSize,
 				fileCount: detail.fileCount,
-				manifestHash: `sha256:${lishID}`,
 			});
 			publishSuccess = `Published "${name || lishID}"`;
 			onPublished?.();

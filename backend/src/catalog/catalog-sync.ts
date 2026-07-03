@@ -98,6 +98,8 @@ export async function applySyncResponse(db: Database, networkID: string, respons
 
 	// Bilateral sync: clear vector clocks before applying so historical ops aren't rejected as replays.
 	// The vector clock is an anti-replay mechanism for live GossipSub, not for catch-up sync.
+	// A live op racing this async apply loop may slip through the lowered watermark; that is
+	// benign — every op is still signature-checked and the LWW upsert keeps state convergent.
 	clearVectorClocks(db, networkID);
 
 	let applied = 0;

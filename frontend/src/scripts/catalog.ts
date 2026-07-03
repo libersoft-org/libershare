@@ -74,7 +74,7 @@ export async function publishCatalogEntry(
 		checksumAlgo: string;
 		totalSize: number;
 		fileCount: number;
-		manifestHash: string;
+		manifestHash?: string | undefined;
 		contentType?: string | undefined;
 		tags?: string[] | undefined;
 	}

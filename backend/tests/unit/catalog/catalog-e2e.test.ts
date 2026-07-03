@@ -290,3 +290,34 @@ describe('E2E via WebSocket: Catalog API', () => {
 		expect(entries.length).toBe(20);
 	});
 });
+
+describe('Catalog publish: manifest hash', () => {
+	test('hash is computed server-side from the stored LISH, ignoring client value', async () => {
+		const { computeManifestHash } = await import('../../../src/catalog/catalog-utils.ts');
+		const storedLish = {
+			id: 'hash-test',
+			name: 'Hash Test',
+			created: '2026-01-01T00:00:00Z',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			files: [{ path: 'a.bin', size: 10, checksums: ['c1'] }],
+			// Local-only fields must not affect the hash
+			directory: 'C:/somewhere/local',
+			chunks: ['c1'],
+		};
+		const fakeDeps = { dataServer: { get: () => storedLish } } as any;
+		const localHandlers = initCatalogHandlers(catalogManager, fakeDeps);
+
+		await localHandlers.publish({ networkID: 'net1', lishID: 'hash-test', name: 'Hash Test', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 10, fileCount: 1, manifestHash: 'sha256:client-fabricated' });
+
+		const { directory: _d, chunks: _c, ...manifest } = storedLish;
+		const expected = computeManifestHash(manifest as Record<string, unknown>);
+		const entry = localHandlers.get({ networkID: 'net1', lishID: 'hash-test' });
+		expect(entry!.manifest_hash).toBe(expected);
+		expect(entry!.manifest_hash).not.toBe('sha256:client-fabricated');
+	});
+
+	test('publish without manifestHash fails when the LISH is not stored locally', async () => {
+		await expect(handlers.publish({ networkID: 'net1', lishID: 'nonexistent-lish', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 1, fileCount: 1 })).rejects.toThrow('manifestHash is required');
+	});
+});

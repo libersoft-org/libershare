@@ -1,4 +1,5 @@
 import { type CatalogManager } from '../catalog/catalog-manager.ts';
+import { computeManifestHash } from '../catalog/catalog-utils.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { Downloader } from '../protocol/downloader.ts';
@@ -65,7 +66,7 @@ export interface CatalogHandlers {
 	list: (p: { networkID: string; limit?: number }) => CatalogEntryDTO[];
 	get: (p: { networkID: string; lishID: string }) => CatalogEntryDTO | null;
 	search: (p: { networkID: string; query: string; limit?: number }) => CatalogEntryDTO[];
-	publish: (p: { networkID: string; lishID: string; name?: string; description?: string; chunkSize: number; checksumAlgo: string; totalSize: number; fileCount: number; manifestHash: string; contentType?: string; tags?: string[] }) => Promise<void>;
+	publish: (p: { networkID: string; lishID: string; name?: string; description?: string; chunkSize: number; checksumAlgo: string; totalSize: number; fileCount: number; manifestHash?: string; contentType?: string; tags?: string[] }) => Promise<void>;
 	update: (p: { networkID: string; lishID: string; name?: string; description?: string; contentType?: string; tags?: string[] }) => Promise<void>;
 	remove: (p: { networkID: string; lishID: string }) => Promise<void>;
 	getAccess: (p: { networkID: string }) => CatalogACLRow | null;
@@ -110,8 +111,18 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 			return catalogManager.search(p.networkID, p.query, p.limit).map(toEntryDTO);
 		},
 		async publish(p) {
-			assert(p, ['networkID', 'lishID', 'chunkSize', 'checksumAlgo', 'totalSize', 'fileCount', 'manifestHash']);
-			await catalogManager.publish(p.networkID, p);
+			assert(p, ['networkID', 'lishID', 'chunkSize', 'checksumAlgo', 'totalSize', 'fileCount']);
+			// Compute the manifest hash from the locally stored LISH — clients only
+			// see the detail view and cannot produce the real hash themselves.
+			// A client-supplied value is the fallback for headless publishers.
+			let manifestHash = p.manifestHash;
+			const stored = deps?.dataServer.get(p.lishID as any);
+			if (stored) {
+				const { directory: _dir, finalDirectory: _final, chunks: _chunks, ...manifest } = stored;
+				manifestHash = computeManifestHash(manifest as unknown as Record<string, unknown>);
+			}
+			if (!manifestHash) throw new Error('manifestHash is required when the LISH is not stored locally');
+			await catalogManager.publish(p.networkID, { ...p, manifestHash });
 		},
 		async update(p) {
 			assert(p, ['networkID', 'lishID']);
