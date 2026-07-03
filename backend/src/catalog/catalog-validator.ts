@@ -234,9 +234,9 @@ function applyOp(db: Database, networkID: string, op: SignedCatalogOp): void {
 			const role = data['role'] as string;
 			const delegatee = data['delegatee'] as string;
 			if (role === 'admin') {
-				const newAdmins = acl.admins.filter(a => a !== delegatee);
-				// Cascading revocation: remove moderators granted by this admin
-				updateCatalogACL(db, networkID, { admins: newAdmins });
+				// No cascading revocation — grants carry no grantor, so moderators
+				// appointed by a revoked admin stay until revoked explicitly.
+				updateCatalogACL(db, networkID, { admins: acl.admins.filter(a => a !== delegatee) });
 			} else if (role === 'moderator') {
 				updateCatalogACL(db, networkID, { moderators: acl.moderators.filter(m => m !== delegatee) });
 			}
