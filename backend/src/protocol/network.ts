@@ -1426,7 +1426,16 @@ export class Network {
 				/* best effort */
 			}
 			let stopTimer: ReturnType<typeof setTimeout> | undefined;
-			const stopped = await Promise.race([Promise.resolve(this.node.stop()).then(() => true), new Promise<boolean>(resolve => (stopTimer = setTimeout(() => resolve(false), 15_000)))]);
+			// The .catch keeps a deadline-abandoned stop() from surfacing later as an
+			// unhandled rejection (ReconnectQueue aborts its jobs with AbortError).
+			const nodeStopPromise = Promise.resolve(this.node.stop()).then(
+				() => true,
+				(err: any) => {
+					trace(`[NET] node.stop() rejected: ${err?.message ?? err}`);
+					return true;
+				}
+			);
+			const stopped = await Promise.race([nodeStopPromise, new Promise<boolean>(resolve => (stopTimer = setTimeout(() => resolve(false), 15_000)))]);
 			if (stopTimer) clearTimeout(stopTimer);
 			if (stopped) console.log('Network stopped');
 			else console.warn('[NET] node.stop() timed out after 15s — proceeding with shutdown');
