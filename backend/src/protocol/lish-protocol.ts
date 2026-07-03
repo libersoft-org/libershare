@@ -187,6 +187,11 @@ export class LISHClient {
 	}
 
 	// Request a single chunk (can be called multiple times on same stream)
+	// TODO(out of scope): thread an AbortSignal through requestChunk so a
+	// download disabled mid-flight (e.g. by leaving its last lishnet) can cancel
+	// an in-progress chunk read immediately instead of waiting for the stream
+	// read to complete or time out. Requires plumbing the downloader's
+	// abortController.signal down through ChunkDownloader → LISHClient.
 	async requestChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array> {
 		// Bail early if stream is already closed/aborted — treat as transient (peer unreachable),
 		// not as a reason to permanently ban the peer.
