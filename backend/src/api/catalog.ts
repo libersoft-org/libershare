@@ -30,9 +30,9 @@ export interface CatalogHandlers {
 	grantRole: (p: { networkID: string; delegatee: string; role: 'admin' | 'moderator' }) => Promise<void>;
 	revokeRole: (p: { networkID: string; delegatee: string; role: 'admin' | 'moderator' }) => Promise<void>;
 	getSyncStatus: (p: { networkID: string }) => { entryCount: number; tombstoneCount: number; lastSyncAt: string | null };
-	startDownload: (p: { networkID: string; lishID: string }, client: any) => Promise<StartDownloadResult>;
+	startDownload: (p: { networkID: string; lishID: string }) => Promise<StartDownloadResult>;
 	pauseDownload: (p: { lishID: string }) => { success: boolean };
-	resumeDownload: (p: { lishID: string }) => { success: boolean };
+	resumeDownload: (p: { lishID: string }) => Promise<{ success: boolean }>;
 }
 
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -97,7 +97,7 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 			assert(p, ['networkID']);
 			return catalogManager.getSyncStatus(p.networkID);
 		},
-		async startDownload(p, client): Promise<StartDownloadResult> {
+		async startDownload(p): Promise<StartDownloadResult> {
 			assert(p, ['networkID', 'lishID']);
 			const entry = catalogManager.get(p.networkID, p.lishID);
 			if (!entry) {
@@ -174,15 +174,15 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 			assert(p, ['lishID']);
 			const dl = activeDownloaders.get(p.lishID);
 			if (!dl) return { success: false };
-			dl.pause();
+			dl.disable();
 			deps?.broadcast('transfer.download:paused', { lishID: p.lishID });
 			return { success: true };
 		},
-		resumeDownload(p) {
+		async resumeDownload(p) {
 			assert(p, ['lishID']);
 			const dl = activeDownloaders.get(p.lishID);
 			if (!dl) return { success: false };
-			dl.resume();
+			await dl.enable();
 			deps?.broadcast('transfer.download:resumed', { lishID: p.lishID });
 			return { success: true };
 		},

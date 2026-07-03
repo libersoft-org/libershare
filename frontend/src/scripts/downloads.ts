@@ -828,7 +828,7 @@ export function clearError(lishID: string): void {
  * Add a catalog entry to the downloads store as an active "downloading" entry.
  * Called when catalog.startDownload returns status 'downloading'.
  */
-export function addCatalogDownload(entry: { lishID: string; name: string; totalSize?: number; fileCount?: number }): void {
+export function addCatalogDownload(entry: { lishID: string; name: string; totalSize?: number | undefined; fileCount?: number | undefined }): void {
 	activeDownloads.set(entry.lishID, Date.now());
 	const existing = get(downloads);
 	if (existing.some(d => d.id === entry.lishID)) return; // already tracked

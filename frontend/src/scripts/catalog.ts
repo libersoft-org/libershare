@@ -66,15 +66,15 @@ export async function revokeCatalogRole(networkID: string, delegatee: string, ro
 }
 
 export async function publishCatalogEntry(networkID: string, params: {
-	lishID: string; name?: string; description?: string;
+	lishID: string; name?: string | undefined; description?: string | undefined;
 	chunkSize: number; checksumAlgo: string; totalSize: number;
-	fileCount: number; manifestHash: string; contentType?: string; tags?: string[];
+	fileCount: number; manifestHash: string; contentType?: string | undefined; tags?: string[] | undefined;
 }): Promise<void> {
 	return api.catalog.publish(networkID, params);
 }
 
 export async function updateCatalogEntry(networkID: string, lishID: string, fields: {
-	name?: string; description?: string; contentType?: string; tags?: string[];
+	name?: string | undefined; description?: string | undefined; contentType?: string | undefined; tags?: string[] | undefined;
 }): Promise<void> {
 	return api.catalog.update(networkID, lishID, fields);
 }

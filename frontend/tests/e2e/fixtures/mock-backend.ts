@@ -179,9 +179,9 @@ function handleMessage(ws: WebSocket, data: string): void {
 
 const wss = new WebSocketServer({ port: PORT });
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws: import('ws').WebSocket) => {
 	console.log('[MockBackend] Client connected');
-	ws.on('message', (data) => handleMessage(ws, data.toString()));
+	ws.on('message', (data: import('ws').RawData) => handleMessage(ws, data.toString()));
 	ws.on('close', () => console.log('[MockBackend] Client disconnected'));
 });
 

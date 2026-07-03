@@ -5,7 +5,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { type LISHNetworkConfig } from '@shared';
-	import { getCatalogAccess, grantCatalogRole, revokeCatalogRole, subscribeCatalogEvents, type CatalogACLResponse } from '../../scripts/catalog.ts';
+	import { getCatalogAccess, revokeCatalogRole, subscribeCatalogEvents, type CatalogACLResponse } from '../../scripts/catalog.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -56,11 +56,6 @@
 		} catch (e: any) {
 			actionError = translateError(e);
 		}
-	}
-
-	function shortenPeerID(id: string): string {
-		if (id.length <= 20) return id;
-		return `${id.slice(0, 12)}...${id.slice(-8)}`;
 	}
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
@@ -206,7 +201,7 @@
 							<TableCell>Action</TableCell>
 						</TableHeader>
 						{#each acl.admins as admin, i}
-							<TableRow position={[0, i + 1]} odd={i % 2 !== 0}>
+							<TableRow position={[0, i + 1]}>
 								<TableCell desktopOnly>{i + 1}</TableCell>
 								<TableCell wrap><span class="peer-id">{admin}</span></TableCell>
 								<TableCell><button class="remove-btn" onclick={() => removeAdmin(admin)}>Remove</button></TableCell>
@@ -228,7 +223,7 @@
 							<TableCell>Action</TableCell>
 						</TableHeader>
 						{#each acl.moderators as mod, i}
-							<TableRow position={[0, i + 1]} odd={i % 2 !== 0}>
+							<TableRow position={[0, i + 1]}>
 								<TableCell desktopOnly>{i + 1}</TableCell>
 								<TableCell wrap><span class="peer-id">{mod}</span></TableCell>
 								<TableCell><button class="remove-btn" onclick={() => removeModerator(mod)}>Remove</button></TableCell>

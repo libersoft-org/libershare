@@ -19,16 +19,16 @@
 		category?: string;
 		itemTitle?: string;
 		itemId?: number | string;
-		description?: string | null;
-		totalSize?: number;
-		fileCount?: number;
-		tags?: string | null;
-		contentType?: string | null;
-		networkID?: string;
-		lishID?: string;
+		description?: string | null | undefined;
+		totalSize?: number | undefined;
+		fileCount?: number | undefined;
+		tags?: string | null | undefined;
+		contentType?: string | null | undefined;
+		networkID?: string | undefined;
+		lishID?: string | undefined;
 		onBack?: () => void;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, itemTitle = 'Item', itemId = 1, description, totalSize, fileCount, tags, contentType, networkID, lishID, onBack }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, itemTitle = 'Item', description, totalSize, fileCount, tags, contentType, networkID, lishID, onBack }: Props = $props();
 	let parsedTags = $derived(parseTags(tags ?? null));
 	let sizeLabel = $derived(totalSize ? formatSize(totalSize) : null);
 	let downloadStatus = $state<'idle' | 'starting' | 'downloading' | 'not_available' | 'error'>('idle');

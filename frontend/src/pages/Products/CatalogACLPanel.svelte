@@ -27,7 +27,7 @@
 	let actionError = $state('');
 	let newRolePeerID = $state('');
 
-	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 
 	async function loadACL(): Promise<void> {
 		loading = true;
@@ -190,7 +190,7 @@
 							<TableCell>Action</TableCell>
 						</TableHeader>
 						{#each acl.admins as admin, i}
-							<TableRow position={[0, i + 2]} odd={i % 2 !== 0}>
+							<TableRow position={[0, i + 2]}>
 								<TableCell desktopOnly>{i + 1}</TableCell>
 								<TableCell wrap><span class="peer-id">{admin}</span></TableCell>
 								<TableCell><Button label="Remove" position={[1, i + 2]} onConfirm={() => removeRole(admin, 'admin')} width="auto" padding="0.8vh" fontSize="1.4vh" /></TableCell>
@@ -213,7 +213,7 @@
 						</TableHeader>
 						{#each acl.moderators as mod, i}
 							{@const modY = acl.admins.length + 3 + i}
-							<TableRow position={[0, modY]} odd={i % 2 !== 0}>
+							<TableRow position={[0, modY]}>
 								<TableCell desktopOnly>{i + 1}</TableCell>
 								<TableCell wrap><span class="peer-id">{mod}</span></TableCell>
 								<TableCell><Button label="Remove" position={[1, modY]} onConfirm={() => removeRole(mod, 'moderator')} width="auto" padding="0.8vh" fontSize="1.4vh" /></TableCell>

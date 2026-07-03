@@ -505,14 +505,14 @@ class CatalogAPI {
 	}
 
 	publish(networkID: string, params: {
-		lishID: string; name?: string; description?: string;
+		lishID: string; name?: string | undefined; description?: string | undefined;
 		chunkSize: number; checksumAlgo: string; totalSize: number;
-		fileCount: number; manifestHash: string; contentType?: string; tags?: string[];
+		fileCount: number; manifestHash: string; contentType?: string | undefined; tags?: string[] | undefined;
 	}): Promise<void> {
 		return this.client.call<void>('catalog.publish', { networkID, ...params });
 	}
 
-	update(networkID: string, lishID: string, fields: { name?: string; description?: string; contentType?: string; tags?: string[] }): Promise<void> {
+	update(networkID: string, lishID: string, fields: { name?: string | undefined; description?: string | undefined; contentType?: string | undefined; tags?: string[] | undefined }): Promise<void> {
 		return this.client.call<void>('catalog.update', { networkID, lishID, ...fields });
 	}
 

@@ -14,7 +14,7 @@
 	import ProductsList from './ProductsList.svelte';
 	import CatalogPublishPanel from './CatalogPublishPanel.svelte';
 	import CatalogACLPanel from './CatalogACLPanel.svelte';
-	import { listCatalogEntries, searchCatalog, subscribeCatalogEvents, getCatalogAccess, parseTags, type CatalogEntryResponse, type CatalogACLResponse } from '../../scripts/catalog.ts';
+	import { listCatalogEntries, searchCatalog, subscribeCatalogEvents, parseTags, type CatalogEntryResponse } from '../../scripts/catalog.ts';
 	import { api } from '../../scripts/api.ts';
 
 	interface Props {

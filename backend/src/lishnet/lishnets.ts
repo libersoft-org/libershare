@@ -201,7 +201,6 @@ export class Networks {
 
 	private async requestCatalogSync(networkID: string): Promise<void> {
 		if (!this.catalogManager) return;
-		const syncStatus = this.catalogManager.getSyncStatus(networkID);
 		const peers = this.network.getTopicPeers(networkID);
 		if (peers.length === 0) {
 			// No peers yet — retry after a delay

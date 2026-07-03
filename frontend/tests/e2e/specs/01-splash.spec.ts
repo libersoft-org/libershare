@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { PRODUCT_NAME, PRODUCT_VERSION } from '../fixtures/constants.ts';
+import { PRODUCT_NAME } from '../fixtures/constants.ts';
 
 test.describe('Splash Screen', () => {
 	test('shows splash screen with product name and version', async ({ page }) => {
