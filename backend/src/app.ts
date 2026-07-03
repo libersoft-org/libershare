@@ -105,7 +105,9 @@ const catalogManager = new CatalogManager({
 	broadcast: (networkID, op) => {
 		try {
 			const net = networks.getRunningNetwork();
-			net.broadcast(`lish/${networkID}`, { type: 'catalog_op', ...op });
+			// version stamps the wire envelope so receivers can gate incompatible
+			// future formats (the ingestion handler drops version !== 1).
+			net.broadcast(`lish/${networkID}`, { type: 'catalog_op', version: 1, ...op });
 		} catch {
 			/* network not running — skip broadcast */
 		}
