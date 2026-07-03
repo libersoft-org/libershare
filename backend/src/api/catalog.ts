@@ -106,6 +106,9 @@ export function initCatalogHandlers(catalogManager: CatalogManager, deps?: Catal
 			if (!deps) {
 				return { status: 'not_available', message: 'Download infrastructure not available' };
 			}
+			if (activeDownloaders.has(entry.lish_id)) {
+				return { status: 'downloading', message: 'Download already in progress' };
+			}
 
 			// Build a stub LISH manifest from catalog entry metadata.
 			// The downloader will broadcast "want" on GossipSub and peers with the actual
