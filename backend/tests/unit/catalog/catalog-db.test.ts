@@ -207,6 +207,30 @@ describe('FTS5 search', () => {
 		const results = searchCatalog(db, 'net1', '');
 		expect(results.length).toBe(2);
 	});
+
+	test('FTS reflects the LWW winner when a stale update is rejected', () => {
+		upsertCatalogEntry(db, makeEntry({ lish_id: 'w1', name: 'Winner Edition', hlc_wall: 2000 }));
+		// Older HLC arrives second — upsert must be rejected and FTS must keep the winner
+		upsertCatalogEntry(db, makeEntry({ lish_id: 'w1', name: 'Loser Edition', hlc_wall: 1000 }));
+		expect(getCatalogEntry(db, 'net1', 'w1')!.name).toBe('Winner Edition');
+		expect(searchCatalog(db, 'net1', 'Winner').length).toBe(1);
+		expect(searchCatalog(db, 'net1', 'Loser').length).toBe(0);
+	});
+
+	test('FTS drops old tokens after an accepted update', () => {
+		upsertCatalogEntry(db, makeEntry({ lish_id: 'u2', name: 'Oldname Distro', hlc_wall: 1000 }));
+		upsertCatalogEntry(db, makeEntry({ lish_id: 'u2', name: 'Newname Distro', hlc_wall: 2000 }));
+		expect(searchCatalog(db, 'net1', 'Newname').length).toBe(1);
+		expect(searchCatalog(db, 'net1', 'Oldname').length).toBe(0);
+	});
+
+	test('FTS row is removed when the entry is deleted', () => {
+		upsertCatalogEntry(db, makeEntry({ lish_id: 'd1', name: 'Deleteme ISO' }));
+		db.run('DELETE FROM catalog_entries WHERE network_id = ? AND lish_id = ?', ['net1', 'd1']);
+		expect(searchCatalog(db, 'net1', 'Deleteme').length).toBe(0);
+		const ftsCount = db.query<{ c: number }, []>('SELECT COUNT(*) as c FROM catalog_fts').get();
+		expect(ftsCount!.c).toBe(0);
+	});
 });
 
 describe('delta sync', () => {

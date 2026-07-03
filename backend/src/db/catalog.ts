@@ -147,6 +147,29 @@ export function initCatalogTables(db: Database): void {
 		)
 	`);
 
+	// External-content FTS5 must be maintained through triggers — manual writes
+	// desync the token index (rejected LWW upserts, deletes, stale tokens).
+	db.run(`
+		CREATE TRIGGER IF NOT EXISTS catalog_entries_ai AFTER INSERT ON catalog_entries BEGIN
+			INSERT INTO catalog_fts(rowid, name, description, tags)
+			VALUES (new.id, new.name, new.description, new.tags);
+		END
+	`);
+	db.run(`
+		CREATE TRIGGER IF NOT EXISTS catalog_entries_ad AFTER DELETE ON catalog_entries BEGIN
+			INSERT INTO catalog_fts(catalog_fts, rowid, name, description, tags)
+			VALUES ('delete', old.id, old.name, old.description, old.tags);
+		END
+	`);
+	db.run(`
+		CREATE TRIGGER IF NOT EXISTS catalog_entries_au AFTER UPDATE ON catalog_entries BEGIN
+			INSERT INTO catalog_fts(catalog_fts, rowid, name, description, tags)
+			VALUES ('delete', old.id, old.name, old.description, old.tags);
+			INSERT INTO catalog_fts(rowid, name, description, tags)
+			VALUES (new.id, new.name, new.description, new.tags);
+		END
+	`);
+
 	// Schema version tracking
 	db.run(`
 		CREATE TABLE IF NOT EXISTS catalog_meta (
@@ -154,46 +177,44 @@ export function initCatalogTables(db: Database): void {
 			value TEXT NOT NULL
 		)
 	`);
-	db.run("INSERT OR IGNORE INTO catalog_meta (key, value) VALUES ('schema_version', '1')");
+	db.run("INSERT OR IGNORE INTO catalog_meta (key, value) VALUES ('schema_version', '2')");
+
+	// v1 → v2: FTS was maintained by hand and may hold stale/phantom tokens — rebuild once.
+	const version = db.query<{ value: string }, []>("SELECT value FROM catalog_meta WHERE key = 'schema_version'").get();
+	if (version?.value === '1') {
+		db.run("INSERT INTO catalog_fts(catalog_fts) VALUES ('rebuild')");
+		db.run("UPDATE catalog_meta SET value = '2' WHERE key = 'schema_version'");
+	}
 }
 
-/** LWW upsert — the incoming entry wins only if its HLC is newer (wall, logical, node tiebreak). Keeps FTS in sync. */
+/** LWW upsert — the incoming entry wins only if its HLC is newer (wall, logical, node tiebreak). FTS follows via triggers. */
 export function upsertCatalogEntry(db: Database, entry: CatalogEntryInput): void {
-	const tx = db.transaction(() => {
-		db.run(
-			`INSERT INTO catalog_entries (network_id, lish_id, name, description,
-				publisher_peer_id, published_at, chunk_size, checksum_algo,
-				total_size, file_count, manifest_hash, content_type, tags,
-				last_edited_by, hlc_wall, hlc_logical, hlc_node, signed_op)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(network_id, lish_id) DO UPDATE SET
-				name = excluded.name,
-				description = excluded.description,
-				total_size = excluded.total_size,
-				file_count = excluded.file_count,
-				content_type = excluded.content_type,
-				tags = excluded.tags,
-				last_edited_by = excluded.last_edited_by,
-				hlc_wall = excluded.hlc_wall,
-				hlc_logical = excluded.hlc_logical,
-				hlc_node = excluded.hlc_node,
-				signed_op = excluded.signed_op
-			WHERE excluded.hlc_wall > catalog_entries.hlc_wall
-				OR (excluded.hlc_wall = catalog_entries.hlc_wall
-					AND excluded.hlc_logical > catalog_entries.hlc_logical)
-				OR (excluded.hlc_wall = catalog_entries.hlc_wall
-					AND excluded.hlc_logical = catalog_entries.hlc_logical
-					AND excluded.hlc_node > catalog_entries.hlc_node)`,
-			[entry.network_id, entry.lish_id, entry.name, entry.description, entry.publisher_peer_id, entry.published_at, entry.chunk_size, entry.checksum_algo, entry.total_size, entry.file_count, entry.manifest_hash, entry.content_type, entry.tags, entry.last_edited_by, entry.hlc_wall, entry.hlc_logical, entry.hlc_node, entry.signed_op]
-		);
-
-		// Sync FTS5 index
-		const row = db.query<{ id: number }, [string, string]>('SELECT id FROM catalog_entries WHERE network_id = ? AND lish_id = ?').get(entry.network_id, entry.lish_id);
-		if (row) {
-			db.run('INSERT OR REPLACE INTO catalog_fts(rowid, name, description, tags) VALUES (?, ?, ?, ?)', [row.id, entry.name, entry.description, entry.tags]);
-		}
-	});
-	tx();
+	db.run(
+		`INSERT INTO catalog_entries (network_id, lish_id, name, description,
+			publisher_peer_id, published_at, chunk_size, checksum_algo,
+			total_size, file_count, manifest_hash, content_type, tags,
+			last_edited_by, hlc_wall, hlc_logical, hlc_node, signed_op)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(network_id, lish_id) DO UPDATE SET
+			name = excluded.name,
+			description = excluded.description,
+			total_size = excluded.total_size,
+			file_count = excluded.file_count,
+			content_type = excluded.content_type,
+			tags = excluded.tags,
+			last_edited_by = excluded.last_edited_by,
+			hlc_wall = excluded.hlc_wall,
+			hlc_logical = excluded.hlc_logical,
+			hlc_node = excluded.hlc_node,
+			signed_op = excluded.signed_op
+		WHERE excluded.hlc_wall > catalog_entries.hlc_wall
+			OR (excluded.hlc_wall = catalog_entries.hlc_wall
+				AND excluded.hlc_logical > catalog_entries.hlc_logical)
+			OR (excluded.hlc_wall = catalog_entries.hlc_wall
+				AND excluded.hlc_logical = catalog_entries.hlc_logical
+				AND excluded.hlc_node > catalog_entries.hlc_node)`,
+		[entry.network_id, entry.lish_id, entry.name, entry.description, entry.publisher_peer_id, entry.published_at, entry.chunk_size, entry.checksum_algo, entry.total_size, entry.file_count, entry.manifest_hash, entry.content_type, entry.tags, entry.last_edited_by, entry.hlc_wall, entry.hlc_logical, entry.hlc_node, entry.signed_op]
+	);
 }
 
 /** Fetch a single entry, or null when absent. */
