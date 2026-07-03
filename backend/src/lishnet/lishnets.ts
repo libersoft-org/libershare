@@ -5,9 +5,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, CodedError, ErrorCodes } from '@shared';
 import { type CatalogManager } from '../catalog/catalog-manager.ts';
-import { SYNC_PROTOCOL, buildSyncResponse, applySyncResponse, encodeSyncRequest, decodeSyncRequest, encodeSyncResponse, decodeSyncResponse, type SyncRequest } from '../catalog/catalog-sync.ts';
-import { decode } from 'it-length-prefixed';
-import { Uint8ArrayList } from 'uint8arraylist';
+import { CatalogNet } from '../catalog/catalog-net.ts';
 import { lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
 
 /**
@@ -28,6 +26,8 @@ export class Networks {
 
 	// Catalog manager (set after construction via setCatalogManager)
 	private catalogManager: CatalogManager | null = null;
+	// Network-facing catalog wiring (GossipSub ops + bilateral sync) — constructed lazily
+	private catalogNet: CatalogNet | null = null;
 
 	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.db = db;
@@ -155,88 +155,16 @@ export class Networks {
 		}
 	}
 
-	private catalogSyncRegistered = false;
-
 	private async registerCatalogHandler(networkID: string): Promise<void> {
-		// GossipSub handler for live catalog_op messages
-		await this.network.subscribe(`lish/${networkID}`, async (msg: Record<string, any>) => {
-			if (msg['type'] === 'catalog_op' && this.catalogManager) {
-				if (msg['version'] !== undefined && msg['version'] !== 1) return;
-				try {
-					await this.catalogManager.applyRemoteOp(networkID, msg as any);
-				} catch (err) {
-					console.warn(`[Catalog] Error applying remote op for ${networkID}:`, (err as Error).message);
-				}
-			}
+		this.catalogNet ??= new CatalogNet({
+			db: this.db,
+			getCatalogManager: () => this.catalogManager,
+			subscribe: (topic, handler) => this.network.subscribe(topic, handler),
+			registerStreamHandler: (protocol, handler) => this.network.registerStreamHandler(protocol, handler),
+			dialProtocolByPeerId: (peerID, protocol) => this.network.dialProtocolByPeerId(peerID, protocol),
+			getTopicPeers: id => this.network.getTopicPeers(id),
 		});
-
-		// Register bilateral sync protocol handler (once for all networks)
-		if (!this.catalogSyncRegistered) {
-			this.catalogSyncRegistered = true;
-			await this.network.registerStreamHandler(SYNC_PROTOCOL, async (stream) => {
-				try {
-					const decoder = decode(stream);
-					const msg = await decoder.next();
-					if (msg.done || !msg.value) { await stream.close(); return; }
-					const raw = msg.value instanceof Uint8ArrayList ? msg.value.subarray() : msg.value;
-					const req = decodeSyncRequest(new Uint8Array(raw));
-					console.log(`[CatalogSync] Received sync request for ${req.networkID} since ${req.sinceHlcWall}`);
-					const response = buildSyncResponse(this.db, req.networkID, req.sinceHlcWall);
-					console.log(`[CatalogSync] Sending ${response.operations.length} operations, ${response.entryCount} entries`);
-					const encoded = encodeSyncResponse(response);
-					const { encode: lpEncode } = await import('it-length-prefixed');
-					for await (const chunk of lpEncode([encoded])) stream.send(chunk);
-					await stream.close();
-				} catch (err) {
-					console.warn('[CatalogSync] Error handling sync request:', (err as Error).message);
-					stream.abort(err instanceof Error ? err : new Error(String(err)));
-				}
-			});
-			console.log(`✓ Registered ${SYNC_PROTOCOL} protocol handler`);
-		}
-
-		// Request sync from connected peers (catch up on missed history)
-		this.requestCatalogSync(networkID);
-	}
-
-	private async requestCatalogSync(networkID: string): Promise<void> {
-		if (!this.catalogManager) return;
-		const peers = this.network.getTopicPeers(networkID);
-		if (peers.length === 0) {
-			// No peers yet — retry after a delay
-			setTimeout(() => this.requestCatalogSync(networkID), 5000);
-			return;
-		}
-		for (const peerID of peers) {
-			try {
-				console.log(`[CatalogSync] Requesting sync from peer ${peerID.slice(0, 20)}...`);
-				const { stream } = await this.network.dialProtocolByPeerId(peerID, SYNC_PROTOCOL);
-				const req: SyncRequest = {
-					command: 'catalog_sync_req',
-					requestID: crypto.randomUUID(),
-					networkID,
-					sinceHlcWall: 0, // full sync
-				};
-				const { encode: lpEncode } = await import('it-length-prefixed');
-				for await (const chunk of lpEncode([encodeSyncRequest(req)])) stream.send(chunk);
-				// Read response
-				const decoder = decode(stream);
-				const msg = await decoder.next();
-				if (!msg.done && msg.value) {
-					const raw = msg.value instanceof Uint8ArrayList ? msg.value.subarray() : msg.value;
-					const response = decodeSyncResponse(new Uint8Array(raw));
-					const applied = await applySyncResponse(this.db, networkID, response);
-					console.log(`[CatalogSync] Applied ${applied}/${response.operations.length} ops from peer (${response.entryCount} entries, ${response.tombstoneCount} tombstones)`);
-					if (applied > 0) {
-						this.catalogManager.emitSyncComplete(networkID, applied);
-					}
-				}
-				await stream.close();
-				break; // one successful sync is enough
-			} catch (err) {
-				console.warn(`[CatalogSync] Failed to sync from peer ${peerID.slice(0, 20)}:`, (err as Error).message);
-			}
-		}
+		await this.catalogNet.attach(networkID);
 	}
 
 	/**
