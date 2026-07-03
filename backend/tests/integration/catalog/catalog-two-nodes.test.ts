@@ -119,15 +119,20 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
-	await network1.stop();
+	catalog1.leave(NET_ID);
+	catalog2.leave(NET_ID);
+	console.log('[teardown] stopping node2 (dialer)...');
 	await network2.stop();
+	console.log('[teardown] node2 stopped, stopping node1...');
+	await network1.stop();
+	console.log('[teardown] node1 stopped');
 	try {
 		await rm(tmpDir1, { recursive: true });
 	} catch {}
 	try {
 		await rm(tmpDir2, { recursive: true });
 	} catch {}
-}, 10_000);
+}, 30_000);
 
 describe('Two-Node P2P Catalog', () => {
 	test('both nodes are connected', () => {

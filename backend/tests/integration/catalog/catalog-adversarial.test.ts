@@ -108,13 +108,13 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
+	await Promise.all(nodes.map(node => node.network.stop()));
 	for (const node of nodes) {
-		await node.network.stop();
 		try {
 			await rm(node.tmpDir, { recursive: true });
 		} catch {}
 	}
-}, 15_000);
+}, 30_000);
 
 // ================================================================
 // COLLISION TESTS
