@@ -31,14 +31,12 @@ function pickDialAddr(addresses: string[]): string | undefined {
 	return addresses.find(a => !a.includes('/ip4/127.') && /\/tcp\/[1-9]\d*/.test(a));
 }
 
-
 // Scale suite: spins 10 in-process libp2p nodes on one thread. Event-loop
 // saturation causes connection churn and flaky gossip delivery on desktop
 // hardware, so the suite is opt-in: CATALOG_SCALE_TESTS=1 bun test ...
 // Real-gossip catalog coverage lives in catalog-two-nodes / catalog-adversarial.
 const SCALE = !!process.env['CATALOG_SCALE_TESTS'];
 if (!SCALE) console.warn('[catalog-scale] SKIPPED — set CATALOG_SCALE_TESTS=1 to run the 10-node suite');
-
 
 interface TestNode {
 	id: number;

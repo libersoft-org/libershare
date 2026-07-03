@@ -26,7 +26,6 @@ function pickDialAddr(addresses: string[]): string | undefined {
 	return addresses.find(a => !a.includes('/ip4/127.') && /\/tcp\/[1-9]\d*/.test(a));
 }
 
-
 let tmpDir1: string;
 let tmpDir2: string;
 let db1: Database;
