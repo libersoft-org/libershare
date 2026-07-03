@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 
+/** One catalog entry as stored — LWW winner for (network_id, lish_id), including the raw signed op blob. */
 export interface CatalogEntryRow {
 	id: number;
 	network_id: string;
@@ -22,6 +23,7 @@ export interface CatalogEntryRow {
 	signed_op: Uint8Array;
 }
 
+/** Insert/update payload for a catalog entry (CatalogEntryRow minus the autoincrement id). */
 export interface CatalogEntryInput {
 	network_id: string;
 	lish_id: string;
@@ -43,6 +45,7 @@ export interface CatalogEntryInput {
 	signed_op: Uint8Array;
 }
 
+/** Insert payload for a removal tombstone (2P-Set remove side). */
 export interface TombstoneInput {
 	network_id: string;
 	lish_id: string;
@@ -54,6 +57,7 @@ export interface TombstoneInput {
 	signed_op: Uint8Array;
 }
 
+/** Per-network catalog ACL: owner, delegated roles and the write-restriction flag. */
 export interface CatalogACLRow {
 	network_id: string;
 	owner: string;
@@ -62,6 +66,7 @@ export interface CatalogACLRow {
 	restrict_writes: number;
 }
 
+/** Last HLC seen from a peer on a network — anti-replay watermark for live ops. */
 export interface VectorClockRow {
 	network_id: string;
 	peer_id: string;
@@ -69,6 +74,7 @@ export interface VectorClockRow {
 	hlc_logical: number;
 }
 
+/** Create catalog tables, indexes and the FTS5 mirror (idempotent). */
 export function initCatalogTables(db: Database): void {
 	db.run(`
 		CREATE TABLE IF NOT EXISTS catalog_entries (
@@ -151,6 +157,7 @@ export function initCatalogTables(db: Database): void {
 	db.run("INSERT OR IGNORE INTO catalog_meta (key, value) VALUES ('schema_version', '1')");
 }
 
+/** LWW upsert — the incoming entry wins only if its HLC is newer (wall, logical, node tiebreak). Keeps FTS in sync. */
 export function upsertCatalogEntry(db: Database, entry: CatalogEntryInput): void {
 	const tx = db.transaction(() => {
 		db.run(
@@ -198,18 +205,21 @@ export function upsertCatalogEntry(db: Database, entry: CatalogEntryInput): void
 	tx();
 }
 
+/** Fetch a single entry, or null when absent. */
 export function getCatalogEntry(db: Database, networkID: string, lishID: string): CatalogEntryRow | null {
 	return db.query<CatalogEntryRow, [string, string]>(
 		'SELECT * FROM catalog_entries WHERE network_id = ? AND lish_id = ?'
 	).get(networkID, lishID);
 }
 
+/** Newest-first listing for a network. */
 export function listCatalogEntries(db: Database, networkID: string, limit: number = 100): CatalogEntryRow[] {
 	return db.query<CatalogEntryRow, [string, number]>(
 		'SELECT * FROM catalog_entries WHERE network_id = ? ORDER BY hlc_wall DESC LIMIT ?'
 	).all(networkID, limit);
 }
 
+/** LWW upsert of a removal tombstone (same HLC comparison as entries). */
 export function upsertTombstone(db: Database, tombstone: TombstoneInput): void {
 	db.run(
 		`INSERT INTO catalog_tombstones (network_id, lish_id, removed_by, removed_at,
@@ -235,6 +245,7 @@ export function upsertTombstone(db: Database, tombstone: TombstoneInput): void {
 	);
 }
 
+/** True when the LISH has been removed on this network (tombstone wins over add/update). */
 export function isTombstoned(db: Database, networkID: string, lishID: string): boolean {
 	const row = db.query<{ id: number }, [string, string]>(
 		'SELECT id FROM catalog_tombstones WHERE network_id = ? AND lish_id = ?'
@@ -242,6 +253,7 @@ export function isTombstoned(db: Database, networkID: string, lishID: string): b
 	return row !== null;
 }
 
+/** GC tombstones older than `days`. Returns rows removed. */
 export function deleteTombstonesOlderThan(db: Database, networkID: string, days: number): number {
 	const result = db.run(
 		"DELETE FROM catalog_tombstones WHERE network_id = ? AND removed_at < datetime('now', ?)",
@@ -250,6 +262,7 @@ export function deleteTombstonesOlderThan(db: Database, networkID: string, days:
 	return result.changes;
 }
 
+/** Insert the initial ACL for a network if none exists (owner only, writes restricted). */
 export function ensureCatalogACL(db: Database, networkID: string, ownerPeerID: string): void {
 	db.run(
 		`INSERT OR IGNORE INTO catalog_acl (network_id, owner, admins, moderators, restrict_writes)
@@ -258,6 +271,7 @@ export function ensureCatalogACL(db: Database, networkID: string, ownerPeerID: s
 	);
 }
 
+/** Load the ACL with admins/moderators JSON columns parsed to arrays. */
 export function getCatalogACL(db: Database, networkID: string): CatalogACLRow | null {
 	const row = db.query<{ network_id: string; owner: string; admins: string; moderators: string; restrict_writes: number }, [string]>(
 		'SELECT * FROM catalog_acl WHERE network_id = ?'
@@ -272,6 +286,7 @@ export function getCatalogACL(db: Database, networkID: string): CatalogACLRow | 
 	};
 }
 
+/** Persist any subset of ACL fields. */
 export function updateCatalogACL(db: Database, networkID: string, changes: Partial<{ admins: string[]; moderators: string[]; restrict_writes: number }>): void {
 	if (changes.admins !== undefined) {
 		db.run('UPDATE catalog_acl SET admins = ? WHERE network_id = ?', [JSON.stringify(changes.admins), networkID]);
@@ -284,12 +299,14 @@ export function updateCatalogACL(db: Database, networkID: string, changes: Parti
 	}
 }
 
+/** Last HLC watermark stored for a peer, or null when never seen. */
 export function getVectorClock(db: Database, networkID: string, peerID: string): VectorClockRow | null {
 	return db.query<VectorClockRow, [string, string]>(
 		'SELECT * FROM catalog_clocks WHERE network_id = ? AND peer_id = ?'
 	).get(networkID, peerID);
 }
 
+/** Store the newest HLC seen from a peer (unconditional overwrite — caller validates ordering). */
 export function updateVectorClock(db: Database, networkID: string, peerID: string, hlcWall: number, hlcLogical: number): void {
 	db.run(
 		`INSERT INTO catalog_clocks (network_id, peer_id, hlc_wall, hlc_logical)
@@ -301,6 +318,7 @@ export function updateVectorClock(db: Database, networkID: string, peerID: strin
 	);
 }
 
+/** Search entries: a `#tag` query does an exact tag match, anything else goes through FTS5. Empty query lists newest. */
 export function searchCatalog(db: Database, networkID: string, query: string, limit: number = 100): CatalogEntryRow[] {
 	const q = query.trim();
 	if (!q) return listCatalogEntries(db, networkID, limit);
@@ -322,12 +340,14 @@ export function searchCatalog(db: Database, networkID: string, query: string, li
 	).all(networkID, q, limit);
 }
 
+/** Entries newer than the given HLC wall time — delta-state payload for bilateral sync. */
 export function getDeltaEntries(db: Database, networkID: string, sinceHlcWall: number): CatalogEntryRow[] {
 	return db.query<CatalogEntryRow, [string, number]>(
 		'SELECT * FROM catalog_entries WHERE network_id = ? AND hlc_wall > ? ORDER BY hlc_wall ASC'
 	).all(networkID, sinceHlcWall);
 }
 
+/** One stored tombstone row. */
 export interface TombstoneRow {
 	network_id: string;
 	lish_id: string;
@@ -339,27 +359,32 @@ export interface TombstoneRow {
 	signed_op: Uint8Array;
 }
 
+/** Tombstones newer than the given HLC wall time — delta-state payload for bilateral sync. */
 export function getDeltaTombstones(db: Database, networkID: string, sinceHlcWall: number): TombstoneRow[] {
 	return db.query<TombstoneRow, [string, number]>(
 		'SELECT * FROM catalog_tombstones WHERE network_id = ? AND hlc_wall > ? ORDER BY hlc_wall ASC'
 	).all(networkID, sinceHlcWall);
 }
 
+/** All per-peer HLC watermarks for a network. */
 export function getAllVectorClocks(db: Database, networkID: string): VectorClockRow[] {
 	return db.query<VectorClockRow, [string]>(
 		'SELECT * FROM catalog_clocks WHERE network_id = ?'
 	).all(networkID);
 }
 
+/** Drop all watermarks for a network — used before applying a full bilateral sync. */
 export function clearVectorClocks(db: Database, networkID: string): void {
 	db.run('DELETE FROM catalog_clocks WHERE network_id = ?', [networkID]);
 }
 
+/** Number of live entries on a network. */
 export function getEntryCount(db: Database, networkID: string): number {
 	const row = db.query<{ c: number }, [string]>('SELECT COUNT(*) as c FROM catalog_entries WHERE network_id = ?').get(networkID);
 	return row?.c ?? 0;
 }
 
+/** Number of tombstones on a network. */
 export function getTombstoneCount(db: Database, networkID: string): number {
 	const row = db.query<{ c: number }, [string]>('SELECT COUNT(*) as c FROM catalog_tombstones WHERE network_id = ?').get(networkID);
 	return row?.c ?? 0;

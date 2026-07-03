@@ -1,3 +1,4 @@
+/** Hard limits for catalog ingestion — ops throughput and per-network size quotas. */
 export const RATE_LIMITS = {
 	maxOpsPerPeerPerMinute: 10,
 	maxOpsGlobalPerMinute: 100,
@@ -5,6 +6,7 @@ export const RATE_LIMITS = {
 	maxCatalogSize: 50_000,
 } as const;
 
+/** Sliding-window rate limiter for inbound catalog ops (per-peer and global 1-minute windows). */
 export class CatalogRateLimiter {
 	private windows: Map<string, number[]> = new Map();
 	private globalWindow: number[] = [];

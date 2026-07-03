@@ -3,6 +3,7 @@ import { peerIdFromString } from '@libp2p/peer-id';
 import type { Ed25519PrivateKey } from '@libp2p/interface';
 import { hlcTick, type HLC } from './catalog-hlc.ts';
 
+/** Unsigned body of a catalog operation — the exact bytes that get canonicalized and signed. */
 export interface CatalogOpPayload {
 	type: 'add' | 'update' | 'remove' | 'acl_grant' | 'acl_revoke';
 	networkID: string;
@@ -11,6 +12,7 @@ export interface CatalogOpPayload {
 	data: Record<string, unknown>;
 }
 
+/** A catalog operation with its Ed25519 signature and the signer's peer ID. */
 export interface SignedCatalogOp {
 	payload: CatalogOpPayload;
 	signature: string;
@@ -20,6 +22,7 @@ export interface SignedCatalogOp {
 
 const encoder = new TextEncoder();
 
+/** Tick the local HLC, wrap `data` in a payload and sign it (RFC 8785 canonical JSON). */
 export async function signCatalogOp(
 	privateKey: Ed25519PrivateKey,
 	type: CatalogOpPayload['type'],
@@ -49,6 +52,7 @@ export async function signCatalogOp(
 	};
 }
 
+/** Verify a signed catalog op against the Ed25519 public key embedded in the signer peer ID. */
 export async function verifyCatalogOp(op: SignedCatalogOp): Promise<boolean> {
 	try {
 		const peerId = peerIdFromString(op.signer);

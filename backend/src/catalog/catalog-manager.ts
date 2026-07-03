@@ -17,6 +17,7 @@ import {
 	type CatalogACLRow,
 } from '../db/catalog.ts';
 
+/** Constructor dependencies. Key and peer ID are lazy accessors because the libp2p node starts after the manager is built. */
 export interface CatalogManagerConfig {
 	db: Database;
 	getPrivateKey: () => Ed25519PrivateKey;
@@ -32,6 +33,11 @@ interface JoinedNetwork {
 	lastSyncAt: string | null;
 }
 
+/**
+ * Per-network catalog state machine: join/leave lifecycle, signed CRDT write
+ * operations (publish/update/remove/ACL), and read access over the SQLite
+ * store. Network transport is deliberately outside (see CatalogNet).
+ */
 export class CatalogManager {
 	private readonly db: Database;
 	private readonly getPrivateKey: () => Ed25519PrivateKey;
@@ -48,6 +54,7 @@ export class CatalogManager {
 		this.emitEventFn = config.emitEvent ?? null;
 	}
 
+	/** Join a network's catalog: seed the ACL with the owner, restore the local HLC and start tombstone GC. */
 	join(networkID: string, ownerPeerID: string): void {
 		if (this.joined.has(networkID)) return;
 		ensureCatalogACL(this.db, networkID, ownerPeerID);
@@ -77,6 +84,7 @@ export class CatalogManager {
 		this.joined.set(networkID, net);
 	}
 
+	/** Leave a network's catalog and stop its GC timer. Stored entries stay in the DB. */
 	leave(networkID: string): void {
 		const net = this.joined.get(networkID);
 		if (net?.gcTimer) clearInterval(net.gcTimer);
@@ -254,6 +262,7 @@ export class CatalogManager {
 		this.emitEventFn?.('catalog:acl', { networkID, access: getCatalogACL(this.db, networkID) });
 	}
 
+	/** Validate and apply an op received from the network (GossipSub). Returns true when accepted. */
 	async applyRemoteOp(networkID: string, op: SignedCatalogOp): Promise<boolean> {
 		if (!this.joined.has(networkID)) return false;
 		const result = await handleRemoteOp(this.db, networkID, op);
@@ -269,16 +278,19 @@ export class CatalogManager {
 		return result.valid;
 	}
 
+	/** Record a completed bilateral sync and notify API subscribers. */
 	emitSyncComplete(networkID: string, newEntries: number): void {
 		const net = this.joined.get(networkID);
 		if (net) net.lastSyncAt = new Date().toISOString();
 		this.emitEventFn?.('catalog:sync', { networkID, newEntries, phase: 'complete' });
 	}
 
+	/** Delete tombstones older than `days`. Returns the number of rows removed. */
 	gcTombstones(networkID: string, days: number = 30): number {
 		return deleteTombstonesOlderThan(this.db, networkID, days);
 	}
 
+	/** Entry/tombstone counts plus the time of the last applied remote op or sync. */
 	getSyncStatus(networkID: string): { entryCount: number; tombstoneCount: number; lastSyncAt: string | null } {
 		const net = this.getNetwork(networkID);
 		return {

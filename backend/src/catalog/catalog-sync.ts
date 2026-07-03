@@ -16,6 +16,7 @@ const SYNC_PROTOCOL = '/lish/catalog-sync/1.0.0';
 
 export { SYNC_PROTOCOL };
 
+/** Bilateral sync request — asks a peer for everything newer than `sinceHlcWall`. */
 export interface SyncRequest {
 	command: 'catalog_sync_req';
 	requestID: string;
@@ -23,6 +24,7 @@ export interface SyncRequest {
 	sinceHlcWall: number;
 }
 
+/** Bilateral sync response — raw signed op blobs plus ACL/clock context for the requester. */
 export interface SyncResponse {
 	command: 'catalog_sync_res';
 	requestID: string;
@@ -34,6 +36,7 @@ export interface SyncResponse {
 	tombstoneCount: number;
 }
 
+/** Assemble the delta-state response for a sync request (entries + tombstones as raw signed blobs). */
 export function buildSyncResponse(db: Database, networkID: string, sinceHlcWall: number): SyncResponse {
 	const entries = getDeltaEntries(db, networkID, sinceHlcWall);
 	const tombstones = getDeltaTombstones(db, networkID, sinceHlcWall);
@@ -64,6 +67,7 @@ export function buildSyncResponse(db: Database, networkID: string, sinceHlcWall:
 	};
 }
 
+/** Decode, order (ACL ops first, then by HLC) and apply a sync response. Returns how many ops were accepted. */
 export async function applySyncResponse(db: Database, networkID: string, response: SyncResponse): Promise<number> {
 	// Decode all operations first
 	const ops: SignedCatalogOp[] = [];
@@ -107,18 +111,22 @@ export async function applySyncResponse(db: Database, networkID: string, respons
 	return applied;
 }
 
+/** CBOR-encode a sync request for the wire. */
 export function encodeSyncRequest(req: SyncRequest): Uint8Array {
 	return encode(req);
 }
 
+/** Decode a CBOR sync request. */
 export function decodeSyncRequest(bytes: Uint8Array): SyncRequest {
 	return decode(bytes) as SyncRequest;
 }
 
+/** CBOR-encode a sync response for the wire. */
 export function encodeSyncResponse(res: SyncResponse): Uint8Array {
 	return encode(res);
 }
 
+/** Decode a CBOR sync response. */
 export function decodeSyncResponse(bytes: Uint8Array): SyncResponse {
 	return decode(bytes) as SyncResponse;
 }

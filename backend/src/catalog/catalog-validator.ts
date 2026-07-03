@@ -24,10 +24,12 @@ const FIELD_LIMITS = {
 	contentType: 32,
 } as const;
 
+/** Outcome of a validation stage — either accepted or rejected with a machine-readable reason. */
 export type ValidationResult =
 	| { valid: true }
 	| { valid: false; reason: string };
 
+/** Enforce per-field size/sanity limits on op data (name, description, tags, numeric fields). */
 export function validateFields(op: SignedCatalogOp): ValidationResult {
 	const data = op.payload.data;
 	if (typeof data['name'] === 'string' && Buffer.byteLength(data['name']) > FIELD_LIMITS.name) {
@@ -70,6 +72,7 @@ function isOwnerOrAdminOrModerator(peerID: string, owner: string, admins: string
 	return peerID === owner || admins.includes(peerID) || moderators.includes(peerID);
 }
 
+/** Authorize the op signer against the network ACL for the requested op type. */
 export function checkACL(db: Database, networkID: string, op: SignedCatalogOp): ValidationResult {
 	const acl = getCatalogACL(db, networkID);
 	if (!acl) return { valid: false, reason: 'NO_ACL' };
@@ -112,6 +115,7 @@ export function checkACL(db: Database, networkID: string, op: SignedCatalogOp): 
 	return { valid: true };
 }
 
+/** Reject ops at or below the last HLC watermark seen from this signer (replay defence). */
 export function checkVectorClock(db: Database, networkID: string, op: SignedCatalogOp): ValidationResult {
 	const lastSeen = getVectorClock(db, networkID, op.signer);
 	if (lastSeen) {
@@ -125,6 +129,7 @@ export function checkVectorClock(db: Database, networkID: string, op: SignedCata
 	return { valid: true };
 }
 
+/** Full validation pipeline (signature, ACL, drift, content, quota, replay), then apply. */
 export async function handleRemoteOp(db: Database, networkID: string, op: SignedCatalogOp): Promise<ValidationResult> {
 	// 1. SIGNATURE
 	const sigValid = await verifyCatalogOp(op);

@@ -9,12 +9,14 @@ import type { CatalogEntryRow, CatalogACLRow } from '../db/catalog.ts';
 
 const assert = Utils.assertParams;
 
+/** Result of catalog.startDownload — whether a transfer began and a user-facing message. */
 export interface StartDownloadResult {
 	status: 'downloading' | 'not_available';
 	message: string;
 	downloadDir?: string;
 }
 
+/** WebSocket API handler set for the catalog domain (dispatched by APIServer). */
 export interface CatalogHandlers {
 	list: (p: { networkID: string; limit?: number }) => CatalogEntryRow[];
 	get: (p: { networkID: string; lishID: string }) => CatalogEntryRow | null;
@@ -39,6 +41,7 @@ type EmitFn = (client: any, event: string, data: any) => void;
 
 type BroadcastFn = (event: string, data: any) => void;
 
+/** Download infrastructure dependencies — optional so catalog reads work without transfer wiring (tests). */
 export interface CatalogHandlerDeps {
 	networks: Networks;
 	dataServer: DataServer;
@@ -47,6 +50,7 @@ export interface CatalogHandlerDeps {
 	broadcast: BroadcastFn;
 }
 
+/** Build the catalog API handler set around a CatalogManager (+ optional download deps). */
 export function initCatalogHandlers(catalogManager: CatalogManager, deps?: CatalogHandlerDeps): CatalogHandlers {
 	// Track active downloaders for pause/resume — scoped per handler set so two
 	// APIServer instances (tests) never share transfer state.
