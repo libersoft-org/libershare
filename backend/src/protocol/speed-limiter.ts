@@ -33,7 +33,11 @@ export class SpeedLimiter {
 	}
 
 	setLimit(kbPerSec: number): void {
-		this.maxBytesPerSec = Math.max(0, kbPerSec) * 1024;
+		const maxBytesPerSec = Math.max(0, kbPerSec) * 1024;
+		// No-op on unchanged rate: callers re-push all limits on any network
+		// settings write, and an unchanged rate must not reset the throttle cursor.
+		if (maxBytesPerSec === this.maxBytesPerSec) return;
+		this.maxBytesPerSec = maxBytesPerSec;
 		// Reset cursor to now so the new rate takes effect immediately
 		// without inheriting a stale future slot from the old rate.
 		this.nextAllowedTime = Date.now();
