@@ -75,7 +75,10 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		return settings.getDefaults();
 	}
 	async function reset(): Promise<SettingsData> {
-		return settings.reset();
+		const data = await settings.reset();
+		// Without this the module-level limits keep the pre-reset values.
+		applyNetworkLimits(data.network);
+		return data;
 	}
 
 	async function exportToFile(p: { filePath: string; minifyJSON?: boolean; compress?: boolean; compressionAlgorithm?: CompressionAlgorithm }): Promise<SuccessResponse> {
