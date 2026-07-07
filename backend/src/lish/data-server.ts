@@ -212,6 +212,13 @@ export class DataServer {
 			// console.log(`read chunk ${chunkID.slice(0, 8)}... from ${location.filePath} (index ${location.chunkIndex})`);
 			return new Uint8Array(arrayBuffer);
 		} catch (error: any) {
+			if (error.code === 'ENOENT') {
+				// The backing file vanished from disk. Stop claiming its chunks: reset them so
+				// further requests answer chunk_not_found (honest partial seeder) instead of
+				// erroring forever, and a later verify/enable pass re-downloads the file.
+				const reset = dbResetFileChunks(this.db, location.fileInternalID);
+				console.warn(`[DataServer] ${location.filePath} missing on disk — reset ${reset} chunks of ${lishID.slice(0, 8)} for re-download`);
+			}
 			console.error(`Error reading chunk from ${dataFilePath}:`, error.code ?? error.message);
 			return 'io_error';
 		}
