@@ -46,6 +46,7 @@ export const autoConnectNewNetworks = writable(true);
 export const mdnsEnabled = writable(true);
 export const mdnsInterval = writable(10000);
 export const upnpEnabled = writable(true);
+export const searchTimeout = writable(30000);
 export const autoStartOnBoot = writable(true);
 export const showInTray = writable(true);
 export const minimizeToTray = writable(true);
@@ -121,6 +122,7 @@ export async function loadSettings(): Promise<void> {
 		mdnsEnabled.set(settings.network.mdnsEnabled ?? true);
 		mdnsInterval.set(settings.network.mdnsInterval ?? 10000);
 		upnpEnabled.set(settings.network.upnpEnabled ?? false);
+		searchTimeout.set(settings.network.searchTimeout ?? 30000);
 
 		// System
 		autoStartOnBoot.set(settings.system.autoStartOnBoot);

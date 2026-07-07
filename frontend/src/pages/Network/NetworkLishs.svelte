@@ -1,11 +1,14 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { type LishSearchResult } from '@shared';
 	import { formatSize } from '../../scripts/utils.ts';
 	import { type LishSearchSession } from '../../scripts/lishSearch.svelte.ts';
 	import { networkSummary } from '../../scripts/networks.ts';
+	import { searchTimeout } from '../../scripts/settings.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
+	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import TableHeader from '../../components/Table/TableHeader.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
@@ -18,6 +21,27 @@
 		onOpenLishPeers: (row: LishSearchResult) => void;
 	}
 	let { baseY, search, onOpenLishPeers }: Props = $props();
+
+	// Elapsed-time progress of the current search window. The backend ends a search after
+	// `network.searchTimeout` ms and emits `search:lishs:complete`; we drive the bar from the
+	// local start timestamp so it advances smoothly without a per-tick backend signal.
+	let nowTick = $state(performance.now());
+	let ticker: ReturnType<typeof setInterval> | null = null;
+	$effect(() => {
+		if (search.searching && ticker === null) {
+			ticker = setInterval(() => (nowTick = performance.now()), 200);
+		} else if (!search.searching && ticker !== null) {
+			clearInterval(ticker);
+			ticker = null;
+		}
+	});
+	onDestroy(() => {
+		if (ticker !== null) clearInterval(ticker);
+	});
+	let searchProgress = $derived.by((): number => {
+		if (!search.searching || search.startedAt === null || $searchTimeout <= 0) return 0;
+		return Math.min(100, ((nowTick - search.startedAt) / $searchTimeout) * 100);
+	});
 
 	function handleStart(): void {
 		void search.start();
@@ -72,6 +96,10 @@
 		padding: 4vh 0;
 		font-size: 2vh;
 	}
+
+	.search-progress {
+		width: 100%;
+	}
 </style>
 
 <div class="filters">
@@ -85,9 +113,12 @@
 	<Alert type="error" message={search.error} />
 {:else}
 	{#if search.searching}
-		<!-- Same big spinner whether 0 or N results: keeps the visual centre of attention
-		     stable while incremental results stream in below. Older code used a tiny inline
-		     spinner once results arrived, which made the search look "done" prematurely. -->
+		<!-- Elapsed-time progress bar above the results table, plus a spinner + live count.
+		     The bar tracks how far into the search window we are; incremental results still
+		     stream into the table below as peers answer. -->
+		<div class="search-progress">
+			<ProgressBar progress={searchProgress} showText={false} height="1.2vh" animated />
+		</div>
 		<div class="search-status stacked">
 			<Spinner size="8vh" />
 			<span
