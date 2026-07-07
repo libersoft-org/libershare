@@ -1,11 +1,15 @@
 <script lang="ts">
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
-	import { type LishSearchResult, type LISHNetworkConfig } from '@shared';
+	import { addNotification } from '../../scripts/notifications.ts';
+	import { formatSize } from '../../scripts/utils.ts';
+	import { api } from '../../scripts/api.ts';
+	import { type LishSearchResult, type LISHNetworkConfig, type IPeerLishDetail } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
+	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import TableHeader from '../../components/Table/TableHeader.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
@@ -20,6 +24,10 @@
 	}
 	let { areaID, position = LAYOUT.content, row, networks, onBack, onOpenPeer }: Props = $props();
 
+	let adding = $state(false);
+	let loadingDetail = $state(false);
+	let detail = $state<IPeerLishDetail | null>(null);
+
 	function networkName(networkID: string): string {
 		return networks.find(n => n.networkID === networkID)?.name ?? networkID;
 	}
@@ -28,7 +36,53 @@
 		return () => onOpenPeer(peerID, networkID, row.id);
 	}
 
-	// y=0 — top bar (Back)
+	/**
+	 * Try each peer offering this LISH in turn until one answers, returning its result.
+	 * Realises the card's "take it from the first peer; if it times out, the next, and so on"
+	 * fallback: `getPeerLish` / `addPeerLish` target a single peer, so the loop provides the
+	 * resilience. Throws the last error only if every peer failed.
+	 */
+	async function withPeerFallback<T>(op: (peerID: string, networkID: string) => Promise<T>): Promise<T> {
+		let lastErr: unknown = new Error('no peers');
+		for (const p of row.peers) {
+			try {
+				return await op(p.peerID, p.networkID);
+			} catch (e) {
+				lastErr = e;
+			}
+		}
+		throw lastErr;
+	}
+
+	async function handleAddToSharing(): Promise<void> {
+		if (adding || row.peers.length === 0) return;
+		adding = true;
+		try {
+			await withPeerFallback((peerID, networkID) => api.lishnets.addPeerLish(row.id, peerID, networkID));
+			addNotification($t('network.lishAdded', { name: row.name || row.id }), 'success');
+		} catch (e: any) {
+			addNotification(translateError(e), 'error');
+		}
+		adding = false;
+	}
+
+	async function handleShowDetail(): Promise<void> {
+		if (loadingDetail || row.peers.length === 0) return;
+		if (detail) {
+			detail = null;
+			return;
+		}
+		loadingDetail = true;
+		try {
+			detail = await withPeerFallback((peerID, networkID) => api.lishnets.getPeerLish(row.id, peerID, networkID));
+			if (!detail) addNotification($t('network.noResults'), 'error');
+		} catch (e: any) {
+			addNotification(translateError(e), 'error');
+		}
+		loadingDetail = false;
+	}
+
+	// y=0 — top bar (Back, Add to sharing, Details)
 	// y=1 — title block (no nav items)
 	// y=2+i — peer rows
 	createNavArea(() => ({
@@ -93,6 +147,21 @@
 		font-family: var(--font-mono);
 	}
 
+	.detail-loading {
+		display: flex;
+		justify-content: center;
+		padding: 1vh 0;
+	}
+
+	.detail-extra {
+		display: flex;
+		flex-direction: column;
+		gap: 1vh;
+		margin-top: 1vh;
+		padding-top: 1vh;
+		border-top: 0.3vh solid var(--secondary-softer-background);
+	}
+
 	.button-bar-wrap {
 		width: 100%;
 	}
@@ -121,11 +190,25 @@
 		<div class="button-bar-wrap">
 			<ButtonBar basePosition={[0, 0]}>
 				<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
+				<Button icon="/img/download.svg" label={$t('network.addToDownloads')} onConfirm={handleAddToSharing} width="auto" disabled={adding || row.peers.length === 0} />
+				<Button icon="/img/info.svg" label={$t('network.details')} onConfirm={handleShowDetail} width="auto" disabled={loadingDetail || row.peers.length === 0} />
 			</ButtonBar>
 		</div>
 		<div class="lish-info">
 			<div><span class="label">{$t('common.name')}:</span> <span class="value">{row.name ?? $t('network.unnamed')}</span></div>
 			<div><span class="label">{$t('network.lishID')}:</span> <span class="value value-mono">{row.id}</span></div>
+			{#if loadingDetail}
+				<div class="detail-loading"><Spinner size="3vh" /></div>
+			{:else if detail}
+				<div class="detail-extra">
+					{#if detail.description}
+						<div><span class="label">{$t('common.description')}:</span> <span class="value">{detail.description}</span></div>
+					{/if}
+					<div><span class="label">{$t('network.totalSize')}:</span> <span class="value">{formatSize(detail.totalSize)}</span></div>
+					<div><span class="label">{$t('common.files')}:</span> <span class="value">{detail.fileCount}</span></div>
+					<div><span class="label">{$t('network.directories')}:</span> <span class="value">{detail.directoryCount}</span></div>
+				</div>
+			{/if}
 		</div>
 
 		<Table columns="auto 1fr 12vh">
