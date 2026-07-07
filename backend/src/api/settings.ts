@@ -1,7 +1,5 @@
 import { type Settings, type SettingsData } from '../settings.ts';
-import { Downloader } from '../protocol/downloader.ts';
-import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize } from '../protocol/lish-protocol.ts';
-import { setMaxDownloadPeersPerLISH } from '../protocol/peer-manager.ts';
+import { applyNetworkLimits } from '../protocol/network-limits.ts';
 import { Utils } from '../utils.ts';
 import { type CompressionAlgorithm, type SuccessResponse, type ISettingsImportResult, CodedError, ErrorCodes } from '@shared';
 const assert = Utils.assertParams;
@@ -56,18 +54,6 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		return settings.get(p.path);
 	}
 
-	function applySpeedLimits(): void {
-		const net = settings.get().network;
-		Downloader.setMaxDownloadSpeed(net.maxDownloadSpeed);
-		setMaxUploadSpeed(net.maxUploadSpeed);
-	}
-
-	function applyPeerLimits(): void {
-		const net = settings.get().network;
-		setMaxDownloadPeersPerLISH(net.maxDownloadPeersPerLISH);
-		setMaxUploadPeersPerLISH(net.maxUploadPeersPerLISH);
-	}
-
 	async function set(p: { path: string; value: any }): Promise<boolean> {
 		assert(p, ['path', 'value']);
 		// Confine writes to known top-level settings groups. This rejects unknown
@@ -76,9 +62,9 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		const rootKey = p.path.split('.')[0];
 		if (!rootKey || !ALLOWED_ROOT_KEYS.has(rootKey)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `Unknown settings key: ${p.path}`);
 		await settings.set(p.path, p.value);
-		if (p.path.startsWith('network.maxDownloadSpeed') || p.path.startsWith('network.maxUploadSpeed')) applySpeedLimits();
-		if (p.path.startsWith('network.maxDownloadPeersPerLISH') || p.path.startsWith('network.maxUploadPeersPerLISH')) applyPeerLimits();
-		if (p.path === 'network.maxMessageSize' || p.path === 'network') setMaxMessageSize(settings.get('network.maxMessageSize'));
+		// Re-push all runtime limits on any network write (idempotent). Path-by-path
+		// matching used to miss whole-object writes such as path === 'network'.
+		if (rootKey === 'network') applyNetworkLimits(settings.get().network);
 		return true;
 	}
 
@@ -158,9 +144,7 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 				skipped.push(entry.path);
 			}
 		}
-		applySpeedLimits();
-		applyPeerLimits();
-		setMaxMessageSize(settings.get('network.maxMessageSize'));
+		applyNetworkLimits(settings.get().network);
 		console.log(`✓ Settings restored: ${applied} applied, ${skipped.length} skipped`);
 		return { applied, skipped };
 	}
