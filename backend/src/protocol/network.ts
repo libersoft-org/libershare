@@ -181,6 +181,12 @@ export class Network {
 	/** Per-instance dedup set for PX ingress log keys; owned here, passed into gossipsub-patches deps. */
 	private readonly pxIngressLogKeys = new Set<string>();
 
+	/**
+	 * Handlers subscribed via {@link onPeerDisconnect}. Held at Network level
+	 * (not bound to a node instance) so subscriptions survive node restarts.
+	 */
+	private readonly peerDisconnectHandlers = new Set<(peerID: string) => void>();
+
 	/** Handles incoming LISH-serving pubsub messages (want, searchLishs). */
 	private readonly lishHandlers: LISHServingHandlers;
 
@@ -275,38 +281,20 @@ export class Network {
 	}
 
 	/**
-	 * Subscribe to libp2p `peer:disconnect` events for the duration of the
-	 * returned disposer. The handler receives the disconnected peer's ID as a
-	 * string.
+	 * Subscribe to peer disconnects for the duration of the returned disposer.
+	 * The handler receives the disconnected peer's ID as a string.
 	 *
-	 * Registered via {@link addListener} (memory hygiene — never call
-	 * `addEventListener` directly) so a forgotten disposer is still cleaned up by
-	 * {@link stop}. The returned disposer removes the listener from the tracked
-	 * list so short-lived subscribers (e.g. a Downloader) do not leak across
-	 * their own lifecycle. Used by downloads to drop a vanished peer from their
-	 * per-LISH peer manager immediately, instead of waiting for the next failed
-	 * dial/probe to notice the dead connection.
+	 * Handlers live at Network level, NOT on the current libp2p node: the
+	 * permanent `peer:disconnect` listener installed by {@link start} fans out
+	 * to this set, so subscriptions survive a node restart (identity
+	 * import/regenerate) that would otherwise silently drop them together with
+	 * the old node's listeners. Used by downloads to drop a vanished peer from
+	 * their per-LISH peer manager immediately, instead of waiting for the next
+	 * failed dial/probe to notice the dead connection.
 	 */
 	onPeerDisconnect(handler: (peerID: string) => void): () => void {
-		if (!this.node) return () => {};
-		const node = this.node;
-		const listener = (evt: any): void => {
-			const pid = evt.detail?.toString?.();
-			if (pid) handler(pid);
-		};
-		this.addListener(node, 'peer:disconnect', listener);
-		let disposed = false;
-		return () => {
-			if (disposed) return;
-			disposed = true;
-			try {
-				node.removeEventListener('peer:disconnect', listener as any);
-			} catch {
-				// Node may already be stopped — stop() walked the tracked list already.
-			}
-			const idx = this.listeners.findIndex(l => l.target === node && l.event === 'peer:disconnect' && l.handler === listener);
-			if (idx >= 0) this.listeners.splice(idx, 1);
-		};
+		this.peerDisconnectHandlers.add(handler);
+		return () => this.peerDisconnectHandlers.delete(handler);
 	}
 
 	/**
@@ -602,6 +590,14 @@ export class Network {
 				const now = Date.now();
 				for (const topic of this.pubsub.getTopics()) {
 					if (topic.startsWith(LISH_TOPIC_PREFIX)) this.lastMeshChange.set(topic, now);
+				}
+			}
+			// Fan out to Network-level subscribers (see onPeerDisconnect).
+			for (const h of this.peerDisconnectHandlers) {
+				try {
+					h(peerID);
+				} catch (err: any) {
+					trace(`[NET] peer-disconnect subscriber error: ${err?.message ?? err}`);
 				}
 			}
 			this.schedulePeerCountCheck();
