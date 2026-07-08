@@ -171,6 +171,19 @@
 		scrollToSelected();
 	}
 
+	// Mouse counterpart of the peer-list keyboard flow: hover selects, click opens the dialog.
+	function handlePeerHover(index: number): void {
+		if (!isMouseActive()) return;
+		activateArea(peerListAreaID);
+		selectedPeerIndex = index;
+	}
+
+	function handlePeerClick(index: number): void {
+		activateArea(peerListAreaID);
+		selectedPeerIndex = index;
+		openPeerDialog();
+	}
+
 	function scrollToInfo(): void {
 		if (infoElement) infoElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
@@ -822,7 +835,7 @@
 									{@const rowSelected = peerListActive && selectedPeerIndex === index}
 									{@const downloadColor = rowSelected ? '--primary-background' : '--mode-download-fg'}
 									{@const uploadColor = rowSelected ? '--primary-background' : '--mode-upload-fg'}
-									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale}>
+									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale} onclick={() => handlePeerClick(index)} onmouseenter={() => handlePeerHover(index)}>
 										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
 										<Cell><span class="peer-id">{peer.peerID}</span></Cell>
 										<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
