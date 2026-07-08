@@ -198,8 +198,10 @@
 	// selectedItem, so a stray hover would re-target it — or unmount it entirely when the hover
 	// lands on a directory or "..". Selecting a different item is still possible by clicking,
 	// which closes the panel first (handleItemClick), matching the keyboard semantics.
+	// The filter panel gets the same guard: its area owns the arrows while open, and a stray
+	// hover would steal the active area back to the list without closing the panel.
 	function handleItemHover(index: number): void {
-		if (!isMouseActive() || showActions) return;
+		if (!isMouseActive() || showActions || showFilterPanel) return;
 		activateArea(listAreaID);
 		selectedIndex = index;
 	}
