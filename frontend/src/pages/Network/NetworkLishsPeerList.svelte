@@ -74,8 +74,12 @@
 		}
 		loadingDetail = true;
 		try {
-			detail = await withPeerFallback((peerID, networkID) => api.lishnets.getPeerLish(row.id, peerID, networkID));
-			if (!detail) addNotification($t('network.noResults'), 'error');
+			detail = await withPeerFallback(async (peerID, networkID) => {
+				const d = await api.lishnets.getPeerLish(row.id, peerID, networkID);
+				// A null answer means this peer had nothing for us — throw so the next peer is tried.
+				if (!d) throw new Error($t('network.peerDeclined'));
+				return d;
+			});
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
 		}
