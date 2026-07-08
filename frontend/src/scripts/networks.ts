@@ -55,8 +55,14 @@ export const networkSummary: Readable<NetworkSummary> = derived(peerCounts, $cou
  * colour the network icon — one bad network drags the indicator. The state
  * is intentionally fleet-size-agnostic: it inspects mesh stability through
  * time-since-last-graft/prune and median score, not absolute peer counts.
+ *
+ * `unknown` is an aggregate-only state (no networks joined at all). A single
+ * network that carries no mesh-health snapshot — because it is disabled or
+ * has not subscribed to any topic yet — is reported as `disabled` instead so
+ * the per-network indicator can render a neutral colour rather than borrowing
+ * the aggregate "nothing joined" meaning.
  */
-export type MeshState = 'unknown' | 'forming' | 'unstable' | 'stable';
+export type MeshState = 'unknown' | 'disabled' | 'forming' | 'unstable' | 'stable';
 export interface MeshStatusOverview {
 	state: MeshState;
 	worstStableSinceMs: number;
@@ -72,6 +78,43 @@ const STABILITY_THRESHOLD_MS = 5000; // ≥ 5 heartbeats with no graft/prune
  */
 const _meshTick = writable<number>(typeof performance !== 'undefined' ? performance.now() : 0);
 if (typeof window !== 'undefined') setInterval(() => _meshTick.set(performance.now()), 1000);
+
+/**
+ * Evaluate the mesh state of a single network. Unlike the aggregate footer
+ * indicator this never inspects how many networks exist — it looks only at the
+ * one network's peer count and its mesh-health snapshot, so each row in the
+ * settings list can be coloured independently.
+ *
+ * Resolution order (mirrors the aggregate evaluator so colours stay
+ * consistent):
+ *   1. No health snapshot ⇒ `disabled` — the network is off, or has not
+ *      joined any topic yet, so there is no mesh to grade.
+ *   2. `medianScore < 0` ⇒ `unstable` — the heartbeat is about to prune; a
+ *      degraded mesh needs attention before a still-forming one, which heals
+ *      on its own.
+ *   3. Empty mesh, no graft/prune yet, or last change within
+ *      {@link STABILITY_THRESHOLD_MS} ⇒ `forming`.
+ *   4. Otherwise ⇒ `stable`.
+ *
+ * @param networkID Network whose state to evaluate.
+ * @param health Latest per-network mesh-health snapshots.
+ * @param now Browser monotonic time (`performance.now()`) used to age the
+ *   snapshot's `stableSinceMs` since its `anchor`.
+ */
+export function evaluateNetworkMeshState(networkID: string, health: Record<string, MeshHealthEntry>, now: number): MeshState {
+	const entry = health[networkID];
+	// No mesh-health snapshot ⇒ the network is disabled or has not subscribed
+	// to any topic yet; there is nothing to grade.
+	if (!entry) return 'disabled';
+	const elapsedSinceAnchor = Math.max(0, now - entry.anchor);
+	// `stableSinceMs === null` ⇒ no graft/prune ever observed for this topic.
+	const live = entry.stableSinceMs === null ? null : entry.stableSinceMs + elapsedSinceAnchor;
+	// A negative median score means routing is already degraded — that trumps
+	// "still forming", which recovers on its own.
+	if (entry.medianScore !== null && entry.medianScore < 0) return 'unstable';
+	if (entry.meshSize === 0 || live === null || live < STABILITY_THRESHOLD_MS) return 'forming';
+	return 'stable';
+}
 
 function evaluateMeshStatus(health: Record<string, MeshHealthEntry>, counts: Record<string, number>, now: number): MeshStatusOverview {
 	const networkIDs = Object.keys(counts);
@@ -116,6 +159,19 @@ function evaluateMeshStatus(health: Record<string, MeshHealthEntry>, counts: Rec
  * `stableSinceMs` ticks forward without backend events.
  */
 export const meshStatus: Readable<MeshStatusOverview> = derived([peerCounts, meshHealth, _meshTick], ([$counts, $health, $tick]) => evaluateMeshStatus($health, $counts, $tick));
+
+/**
+ * Per-network mesh state keyed by networkID, refreshed every second via
+ * {@link _meshTick} so a forming→stable transition lights up without waiting
+ * for the next backend push. The settings network list colours each row from
+ * this map. Networks present in `peerCounts` but without a mesh-health
+ * snapshot resolve to `disabled`.
+ */
+export const networkMeshStates: Readable<Record<string, MeshState>> = derived([peerCounts, meshHealth, _meshTick], ([$counts, $health, $tick]) => {
+	const out: Record<string, MeshState> = {};
+	for (const id of Object.keys($counts)) out[id] = evaluateNetworkMeshState(id, $health, $tick);
+	return out;
+});
 
 let handlersRegistered = false;
 let unsubListener: (() => void) | null = null;

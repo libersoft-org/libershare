@@ -346,6 +346,12 @@
 				"unstable": "Mesh peers have low scores — degraded routing",
 				"stable": "Mesh is stable — broadcasts will reach the fleet"
 			},
+			"meshStateNetwork": {
+				"disabled": "Not connected — mesh inactive",
+				"forming": "Mesh is still forming — searches may be incomplete",
+				"unstable": "Mesh peers have low scores — degraded routing",
+				"stable": "Mesh is stable — broadcasts will reach the fleet"
+			},
 			"bootstrap": {
 				"title": "Bootstrap peers",
 				"discoveredShort": "gossip",
