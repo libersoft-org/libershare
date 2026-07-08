@@ -186,7 +186,7 @@ export class DataServer {
 
 	// Chunk I/O
 
-	public async getChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | 'lish_not_found' | 'chunk_not_found' | 'io_error'> {
+	public async getChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | 'lish_not_found' | 'chunk_not_found' | 'file_missing' | 'io_error'> {
 		const meta = getLISHMeta(this.db, lishID);
 		if (!meta) {
 			console.log(`LISH not found: ${lishID}`);
@@ -214,10 +214,12 @@ export class DataServer {
 		} catch (error: any) {
 			if (error.code === 'ENOENT') {
 				// The backing file vanished from disk. Stop claiming its chunks: reset them so
-				// further requests answer chunk_not_found (honest partial seeder) instead of
-				// erroring forever, and a later verify/enable pass re-downloads the file.
+				// further requests answer chunk_not_found (honest partial seeder). Report
+				// file_missing so the protocol layer can kick verify/recovery right away —
+				// the consecutive-io_error threshold would never fire after the reset.
 				const reset = dbResetFileChunks(this.db, location.fileInternalID);
 				console.warn(`[DataServer] ${location.filePath} missing on disk — reset ${reset} chunks of ${lishID.slice(0, 8)} for re-download`);
+				return 'file_missing';
 			}
 			console.error(`Error reading chunk from ${dataFilePath}:`, error.code ?? error.message);
 			return 'io_error';

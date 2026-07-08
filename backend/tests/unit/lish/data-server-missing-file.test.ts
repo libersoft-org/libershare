@@ -52,10 +52,10 @@ describe('DataServer.getChunk — file missing on disk', () => {
 		expect(new TextDecoder().decode(data as Uint8Array)).toBe('AAAA');
 	});
 
-	it('resets all chunks of a file that vanished from disk and reports io_error once', async () => {
+	it('resets all chunks of a file that vanished from disk and reports file_missing once', async () => {
 		unlinkSync(join(dir, 'file-a.bin'));
 		const result = await dataServer.getChunk(LISH_ID, FILE_A_CHUNKS[0]!);
-		expect(result).toBe('io_error');
+		expect(result).toBe('file_missing');
 		// Both chunks of file-a are reset in DB — listed as missing again.
 		const missing = getMissingChunks(db, LISH_ID).map(m => m.chunkID);
 		expect(missing).toEqual(FILE_A_CHUNKS);

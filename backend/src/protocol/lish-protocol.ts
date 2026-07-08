@@ -462,6 +462,18 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					sendLengthPrefixed(stream, codecEncode(response));
 					continue;
 				}
+				if (chunkResult === 'file_missing') {
+					// A backing file vanished and its chunks were just reset — we honestly no longer
+					// have the chunk, so answer chunk_not_found. Kick verify/recovery immediately:
+					// subsequent requests return chunk_not_found, so the consecutive-io_error
+					// auto-disable path below would never reach its threshold for this case.
+					const response: LISHGetChunkResponse = { error: ErrorCodes.PEER_CHUNK_NOT_FOUND };
+					sendLengthPrefixed(stream, codecEncode(response));
+					const wasDownloadEnabled = isDownloadEnabled?.(chunkReq.lishID) ?? false;
+					if (wasDownloadEnabled && startRecoveryFn) startRecoveryFn(chunkReq.lishID, ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: uploadEnabled.has(chunkReq.lishID) });
+					if (triggerVerifyFn) triggerVerifyFn(chunkReq.lishID);
+					continue;
+				}
 				if (chunkResult === 'io_error') {
 					// Track consecutive I/O errors per LISH
 					const count = (ioErrorCounts.get(chunkReq.lishID) ?? 0) + 1;
