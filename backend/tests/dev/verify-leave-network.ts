@@ -220,13 +220,12 @@ try {
 	const gotDisabled = await disabledEvt;
 	let disabledViaPoll = false;
 	if (gotDisabled === undefined) {
-		// fallback: poll the transfer list for the disabled flag
+		// fallback: poll lishs.list until the LISH drops out of the downloadEnabled set
 		disabledViaPoll =
 			(await poll('download disabled', 15000, 1000, async () => {
-				const list = await node2.call('transfer.getActiveTransfers');
-				const item = (Array.isArray(list) ? list : (list?.items ?? [])).find((t: any) => t.lishID === lishID || t.id === lishID);
-				if (!item) return true; // downloader torn down entirely also counts
-				return item.downloadDisabled === true || item.disabled === true ? true : undefined;
+				const list = await node2.call('lishs.list');
+				const enabled: string[] = list?.downloadEnabled ?? [];
+				return enabled.includes(lishID) ? undefined : true;
 			})) === true;
 	}
 	check('download bound to the left lishnet is disabled on the downloader side', gotDisabled !== undefined || disabledViaPoll);
