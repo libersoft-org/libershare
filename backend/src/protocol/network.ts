@@ -119,6 +119,14 @@ export class Network {
 	 */
 	private readonly seenSearchIDs = new Map<string, number>();
 	private bootstrapPeerIDs: Set<string> = new Set();
+	/**
+	 * Peer IDs whose bootstrap entries came from explicit network config
+	 * ('configured' origin — startup config or a manual bootstrap edit). Kept
+	 * separate from bootstrapPeerIDs, which also collects peer-announce
+	 * discoveries: those are plain content peers and must remain
+	 * disconnectable by lishnet leave (isBootstrapOrRelayPeer).
+	 */
+	private configuredBootstrapPeerIDs: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
 	private bootstrapMultiaddrs: any[] = [];
 
@@ -387,6 +395,8 @@ export class Network {
 			myPeerID: privateKey.publicKey.toString(),
 		});
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
+		// Config-time bootstrap entries are by definition 'configured'.
+		this.configuredBootstrapPeerIDs = new Set(bootstrapPeerIDs);
 		this.bootstrapMultiaddrs = bootstrapMultiaddrs;
 
 		console.log('Creating libp2p node...');
@@ -950,6 +960,7 @@ export class Network {
 					continue;
 				}
 				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
+				if (peerID && origin === 'configured') this.configuredBootstrapPeerIDs.add(peerID);
 				const alreadyKnown = !!peerID && this.bootstrapPeerIDs.has(peerID);
 				if (peerID && !alreadyKnown) {
 					this.bootstrapPeerIDs.add(peerID);
@@ -1053,21 +1064,31 @@ export class Network {
 
 	/**
 	 * True if the peer is one we must never voluntarily disconnect because it
-	 * provides infrastructure rather than being a plain content peer: a
-	 * configured/known bootstrap peer, or a peer we are currently reaching over a
-	 * circuit-relay connection (dropping the relay would also kill transit for
-	 * any NAT'd siblings reachable only through it).
+	 * provides infrastructure rather than being a plain content peer: an
+	 * explicitly configured bootstrap peer, or a relay some of our circuit
+	 * connections are routed THROUGH (dropping it would also kill transit for
+	 * any NAT'd peers reachable only via that relay).
+	 *
+	 * Peer-announce-discovered bootstrap entries and peers merely REACHED over
+	 * a relay are plain content peers — hanging those up touches only their own
+	 * connection, so lishnet leave may disconnect them.
 	 *
 	 * Used by lishnet leave to decide which topic peers are safe to hang up —
 	 * leaving an empty lishnet must not tear down shared bootstrap/relay links
 	 * that other still-joined lishnets depend on.
 	 */
 	isBootstrapOrRelayPeer(peerID: string): boolean {
-		if (this.bootstrapPeerIDs.has(peerID)) return true;
+		if (this.configuredBootstrapPeerIDs.has(peerID)) return true;
 		if (!this.node) return false;
 		try {
-			const conns = this.node.getConnections(peerIDFromString(peerID));
-			return conns.some(c => Circuit.matches(c.remoteAddr));
+			// A relay's ID is the hop right before /p2p-circuit in a circuit address:
+			// /ip4/../tcp/../p2p/<relayID>/p2p-circuit/p2p/<targetID>
+			for (const c of this.node.getConnections()) {
+				if (!Circuit.matches(c.remoteAddr)) continue;
+				const relayPrefix = c.remoteAddr.toString().split('/p2p-circuit')[0]!;
+				if (relayPrefix.endsWith(`/p2p/${peerID}`)) return true;
+			}
+			return false;
 		} catch {
 			return false;
 		}
