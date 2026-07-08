@@ -4,7 +4,7 @@
 	import { t } from '../../scripts/language.ts';
 	import { peerDetails, type PeerDetail } from '../../scripts/downloads.ts';
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
-	import { formatSize } from '../../scripts/utils.ts';
+	import { formatSize, formatDuration } from '../../scripts/utils.ts';
 	import { onMount } from 'svelte';
 	import Dialog from '../../components/Dialog/Dialog.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -171,7 +171,7 @@
 			</div>
 			<div class="row">
 				<span class="label">{$t('downloads.peerDetail.connectedAt')}</span>
-				<span class="value">{$t('downloads.peerDetail.secondsAgo', { seconds: String(connectedAgo) })}</span>
+				<span class="value">{formatDuration(connectedAgo)}</span>
 			</div>
 			<div class="row">
 				<span class="label">{$t('downloads.peerDetail.lastActivity')}</span>
