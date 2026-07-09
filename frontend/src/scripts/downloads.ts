@@ -20,6 +20,10 @@ export interface DownloadFileData {
 	verifiedChunks: number;
 	downloadedSize?: string;
 	linkTarget?: string;
+	// Per-file ALLOCATION progress — shown instead of `progress` only while the LISH
+	// status is 'allocating'. Kept separate so allocation display never destroys the
+	// real download progress of files that receive no further progress events.
+	allocProgress?: number;
 }
 export interface PeerDetail {
 	peerID: string;
@@ -426,7 +430,9 @@ export async function initDownloads(): Promise<void> {
 						if (d.id !== data.lishID) return d;
 						if (d.status !== 'allocating' && d.status !== 'retrying' && isStatusLocked(d.status)) return d;
 						const allocProgress = data.fileDownloadedChunks ?? 0;
-						// Update per-file allocation progress — skip if resetFiles refresh is still in-flight
+						// Track per-file allocation progress in the separate allocProgress field —
+						// never overwrite the real download `progress`, or files that receive no
+						// further progress events keep allocation placeholders (e.g. "0 B — 100%").
 						let files = d.files;
 						if (data.allocatingFile) {
 							let pastCurrent = false;
@@ -434,10 +440,10 @@ export async function initDownloads(): Promise<void> {
 								if (f.type !== 'file') return f;
 								if (f.name === data.allocatingFile) {
 									pastCurrent = true;
-									return { ...f, progress: data.allocatingFileProgress ?? 0 };
+									return { ...f, allocProgress: data.allocatingFileProgress ?? 0 };
 								}
-								if (!pastCurrent) return { ...f, progress: 100 }; // already allocated
-								return { ...f, progress: 0 }; // not yet allocated
+								if (!pastCurrent) return { ...f, allocProgress: 100 }; // already allocated
+								return { ...f, allocProgress: 0 }; // not yet allocated
 							});
 						}
 						return { ...d, status: 'allocating' as DownloadStatus, progress: allocProgress, files };
@@ -481,6 +487,13 @@ export async function initDownloads(): Promise<void> {
 					const status = computeStatus(hasPeers, activeUploadLishs.has(data.lishID));
 					const totalDownloadedBytes = d.totalDownloadedBytes + (deltaChunks > 0 && d.chunkSize > 0 ? deltaChunks * d.chunkSize : 0);
 					let files = d.files;
+					// Leaving allocation — drop the per-file allocation overlay so rows show real progress again.
+					if (d.status === 'allocating')
+						files = files.map(f => {
+							if (f.allocProgress == null) return f;
+							const { allocProgress: _alloc, ...rest } = f;
+							return rest;
+						});
 					if (data.filePath && data.fileDownloadedChunks != null) {
 						files = files.map(f => {
 							if (f.name !== data.filePath) return f;
@@ -494,6 +507,21 @@ export async function initDownloads(): Promise<void> {
 					return { ...d, status, progress, downloadedSize, downloadPeers: data.peers, downloadSpeed, rawDownloadSpeed, totalChunks: data.totalChunks, verifiedChunks: data.downloadedChunks, totalDownloadedBytes, files };
 				})
 			);
+			// Session boundary (peers gone — final emit of a download session): per-file events
+			// only cover the file being downloaded at each reporter tick, so a file that completes
+			// entirely between two ticks keeps a stale row. Resync rows from the DB snapshot now —
+			// the session is idle, so no live per-file event can race this fetch.
+			if (data.peers === 0) {
+				const entry = get(downloads).find(d => d.id === data.lishID);
+				const rowSum = entry?.files.reduce((s, f) => s + (f.type === 'file' ? f.verifiedChunks : 0), 0);
+				if (entry && !isStatusLocked(entry.status) && rowSum !== data.downloadedChunks) {
+					api.lishs.get(data.lishID).then(detail => {
+						if (!detail) return;
+						const fresh = detailToDownload(detail);
+						downloads.update(list => list.map(d => (d.id === data.lishID && !isStatusLocked(d.status) ? { ...d, files: fresh.files } : d)));
+					});
+				}
+			}
 			// Reset stale timer — if no progress in 10s, clear speed/peers
 			const prev = downloadStaleTimeouts.get(data.lishID);
 			if (prev) clearTimeout(prev);
