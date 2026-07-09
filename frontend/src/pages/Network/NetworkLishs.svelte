@@ -7,7 +7,6 @@
 	import { networkSummary } from '../../scripts/networks.ts';
 	import { searchTimeout } from '../../scripts/settings.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
-	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import TableHeader from '../../components/Table/TableHeader.svelte';
@@ -41,6 +40,11 @@
 	let searchProgress = $derived.by((): number => {
 		if (!search.searching || search.startedAt === null || $searchTimeout <= 0) return 0;
 		return Math.min(100, ((nowTick - search.startedAt) / $searchTimeout) * 100);
+	});
+	let searchTimeText = $derived.by((): string => {
+		if (!search.searching || search.startedAt === null || $searchTimeout <= 0) return '';
+		const elapsed = Math.min(nowTick - search.startedAt, $searchTimeout);
+		return `${Math.floor(elapsed / 1000)} s / ${Math.round($searchTimeout / 1000)} s`;
 	});
 
 	function handleStart(): void {
@@ -90,15 +94,15 @@
 		gap: 1vh;
 	}
 
-	.search-status.stacked {
-		flex-direction: column;
-		gap: 2vh;
-		padding: 4vh 0;
-		font-size: 2vh;
-	}
-
 	.search-progress {
 		width: 100%;
+	}
+
+	.search-time {
+		margin-top: 0.5vh;
+		font-size: 1.4vh;
+		color: var(--secondary-foreground);
+		text-align: right;
 	}
 </style>
 
@@ -113,14 +117,14 @@
 	<Alert type="error" message={search.error} />
 {:else}
 	{#if search.searching}
-		<!-- Elapsed-time progress bar above the results table, plus a spinner + live count.
-		     The bar tracks how far into the search window we are; incremental results still
-		     stream into the table below as peers answer. -->
+		<!-- Elapsed-time progress bar above the results table with the elapsed / total time
+		     underneath. The bar tracks how far into the search window we are; incremental
+		     results still stream into the table below as peers answer. -->
 		<div class="search-progress">
 			<ProgressBar progress={searchProgress} showText={false} height="1.2vh" animated />
+			<div class="search-time">{searchTimeText}</div>
 		</div>
-		<div class="search-status stacked">
-			<Spinner size="8vh" />
+		<div class="search-status">
 			<span
 				>{$t('network.searching')}{#if search.results.length > 0}
 					— {$t('network.lishCount', { count: String(search.results.length) })}{/if}</span
