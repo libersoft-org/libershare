@@ -4,7 +4,6 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
-	import { formatSize, formatDate } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { type LishSearchResult, type LISHNetworkConfig, type IPeerLishDetail } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -14,6 +13,7 @@
 	import TableHeader from '../../components/Table/TableHeader.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import TableCell from '../../components/Table/TableCell.svelte';
+	import NetworkLishDetailView from './NetworkLishDetailView.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -157,35 +157,6 @@
 		padding: 1vh 0;
 	}
 
-	.detail-extra {
-		display: flex;
-		flex-direction: column;
-		gap: 1vh;
-		margin-top: 1vh;
-		padding-top: 1vh;
-		border-top: 0.3vh solid var(--secondary-softer-background);
-	}
-
-	.file-list {
-		display: flex;
-		flex-direction: column;
-		gap: 0.6vh;
-		margin-top: 0.6vh;
-		padding-top: 0.6vh;
-		border-top: 0.2vh solid var(--secondary-softer-background);
-	}
-
-	.file-row {
-		display: flex;
-		justify-content: space-between;
-		gap: 2vh;
-	}
-
-	.file-row .file-size {
-		white-space: nowrap;
-		color: var(--disabled-foreground);
-	}
-
 	.button-bar-wrap {
 		width: 100%;
 	}
@@ -218,33 +189,17 @@
 				<Button icon="/img/info.svg" label={$t('network.details')} onConfirm={handleShowDetail} width="auto" disabled={loadingDetail || row.peers.length === 0} />
 			</ButtonBar>
 		</div>
-		<div class="lish-info">
-			<div><span class="label">{$t('common.name')}:</span> <span class="value">{row.name ?? $t('network.unnamed')}</span></div>
-			<div><span class="label">{$t('network.lishID')}:</span> <span class="value value-mono">{row.id}</span></div>
-			{#if loadingDetail}
-				<div class="detail-loading"><Spinner size="3vh" /></div>
-			{:else if detail}
-				<div class="detail-extra">
-					{#if detail.description}
-						<div><span class="label">{$t('common.description')}:</span> <span class="value">{detail.description}</span></div>
-					{/if}
-					<div><span class="label">{$t('network.created')}:</span> <span class="value">{formatDate(detail.created)}</span></div>
-					<div><span class="label">{$t('network.totalSize')}:</span> <span class="value">{formatSize(detail.totalSize)}</span></div>
-					<div><span class="label">{$t('network.chunkSize')}:</span> <span class="value">{formatSize(detail.chunkSize)}</span></div>
-					<div><span class="label">{$t('network.checksumAlgo')}:</span> <span class="value">{detail.checksumAlgo}</span></div>
-					<div><span class="label">{$t('common.files')}:</span> <span class="value">{detail.fileCount}</span></div>
-					<div><span class="label">{$t('network.directories')}:</span> <span class="value">{detail.directoryCount}</span></div>
-					{#if detail.files.length > 0}
-						<div class="file-list">
-							<div class="label">{$t('common.files')}:</div>
-							{#each detail.files as f}
-								<div class="file-row"><span class="value value-mono">{f.path}</span><span class="value file-size">{formatSize(f.size)}</span></div>
-							{/each}
-						</div>
-					{/if}
-				</div>
-			{/if}
-		</div>
+		{#if detail}
+			<NetworkLishDetailView {detail} />
+		{:else}
+			<div class="lish-info">
+				<div><span class="label">{$t('common.name')}:</span> <span class="value">{row.name ?? $t('network.unnamed')}</span></div>
+				<div><span class="label">{$t('network.lishID')}:</span> <span class="value value-mono">{row.id}</span></div>
+				{#if loadingDetail}
+					<div class="detail-loading"><Spinner size="3vh" /></div>
+				{/if}
+			</div>
+		{/if}
 
 		<Table columns="auto 1fr 12vh">
 			<TableHeader>
