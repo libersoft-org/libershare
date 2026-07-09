@@ -27,6 +27,7 @@
 	let adding = $state(false);
 	let loadingDetail = $state(false);
 	let detail = $state<IPeerLishDetail | null>(null);
+	let tryingPeer = $state<{ tail: string; current: number; total: number } | null>(null);
 
 	function networkName(networkID: string): string {
 		return networks.find(n => n.networkID === networkID)?.name ?? networkID;
@@ -36,22 +37,37 @@
 		return () => onOpenPeer(peerID, networkID, row.id);
 	}
 
+	// Overall cap on the fallback loop — with many dead peers each attempt can take
+	// ~10s dial + up to 30s manifest timeout, so stop starting new attempts after this long.
+	const FALLBACK_DEADLINE_MS = 5 * 60 * 1000;
+
 	/**
 	 * Try each peer offering this LISH in turn until one answers, returning its result.
 	 * Realises the card's "take it from the first peer; if it times out, the next, and so on"
 	 * fallback: `getPeerLish` / `addPeerLish` target a single peer, so the loop provides the
-	 * resilience. Throws the last error only if every peer failed.
+	 * resilience. Only peer-side failures (PEER_UNREACHABLE or errors flagged `tryNextPeer`)
+	 * move on to the next peer — local errors (e.g. LISH already added) surface immediately.
+	 * Throws the last error only if every peer failed.
 	 */
 	async function withPeerFallback<T>(op: (peerID: string, networkID: string) => Promise<T>): Promise<T> {
 		let lastErr: unknown = new Error('no peers');
-		for (const p of row.peers) {
-			try {
-				return await op(p.peerID, p.networkID);
-			} catch (e) {
-				lastErr = e;
+		const deadline = performance.now() + FALLBACK_DEADLINE_MS;
+		try {
+			for (let i = 0; i < row.peers.length; i++) {
+				if (i > 0 && performance.now() >= deadline) break;
+				const p = row.peers[i]!;
+				tryingPeer = { tail: '…' + p.peerID.slice(-6), current: i + 1, total: row.peers.length };
+				try {
+					return await op(p.peerID, p.networkID);
+				} catch (e) {
+					if ((e as any)?.code !== 'PEER_UNREACHABLE' && !(e as any)?.tryNextPeer) throw e;
+					lastErr = e;
+				}
 			}
+			throw lastErr;
+		} finally {
+			tryingPeer = null;
 		}
-		throw lastErr;
 	}
 
 	async function handleAddToSharing(): Promise<void> {
@@ -76,8 +92,8 @@
 		try {
 			detail = await withPeerFallback(async (peerID, networkID) => {
 				const d = await api.lishnets.getPeerLish(row.id, peerID, networkID);
-				// A null answer means this peer had nothing for us — throw so the next peer is tried.
-				if (!d) throw new Error($t('network.peerDeclined'));
+				// A null answer means this peer had nothing for us — flag it so the next peer is tried.
+				if (!d) throw Object.assign(new Error($t('network.peerDeclined')), { tryNextPeer: true });
 				return d;
 			});
 		} catch (e: any) {
@@ -151,10 +167,17 @@
 		font-family: var(--font-mono);
 	}
 
-	.detail-loading {
+	.trying-peer {
 		display: flex;
 		justify-content: center;
-		padding: 1vh 0;
+		align-items: center;
+		gap: 1vh;
+		font-size: 1.8vh;
+		color: var(--secondary-foreground);
+	}
+
+	.trying-peer .peer-tail {
+		font-family: var(--font-mono);
 	}
 
 	.button-bar-wrap {
@@ -189,15 +212,18 @@
 				<Button icon="/img/info.svg" label={$t('network.details')} onConfirm={handleShowDetail} width="auto" disabled={loadingDetail || row.peers.length === 0} />
 			</ButtonBar>
 		</div>
+		{#if tryingPeer}
+			<div class="trying-peer">
+				<Spinner size="3vh" />
+				<span>{$t('network.tryingPeer')} <span class="peer-tail">{tryingPeer.tail}</span> ({tryingPeer.current}/{tryingPeer.total})</span>
+			</div>
+		{/if}
 		{#if detail}
 			<NetworkLishDetailView {detail} />
 		{:else}
 			<div class="lish-info">
 				<div><span class="label">{$t('common.name')}:</span> <span class="value">{row.name ?? $t('network.unnamed')}</span></div>
 				<div><span class="label">{$t('network.lishID')}:</span> <span class="value value-mono">{row.id}</span></div>
-				{#if loadingDetail}
-					<div class="detail-loading"><Spinner size="3vh" /></div>
-				{/if}
 			</div>
 		{/if}
 
