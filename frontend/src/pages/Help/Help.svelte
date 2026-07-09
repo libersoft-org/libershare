@@ -63,7 +63,7 @@
 		position,
 		onBack,
 		activate: true,
-		listRange: () => [keyboardStartY, lastRowY],
+		listRange: (): [number, number] => [keyboardStartY, lastRowY],
 	}));
 </script>
 

@@ -53,7 +53,7 @@
 		position,
 		activate: true,
 		trap: true,
-		onBack: () => {
+		onBack: (): void => {
 			if (!deleting) onBack();
 		},
 	}));

@@ -37,7 +37,7 @@
 	let isSelected = $derived(navArea && effectivePosition ? navArea.isSelected(effectivePosition) : menuButtons ? menuButtons.isSelected(index) : selected);
 	let isPressed = $derived(navArea && effectivePosition ? navArea.isPressed(effectivePosition) : menuButtons ? menuButtons.isPressed(index) : pressed);
 
-	function handleClick() {
+	function handleClick(): void {
 		if (disabled) return;
 		// Mirror keyboard: pressing Enter on a focused item plays the confirm sound via
 		// areas.ts `dispatchAction('confirmUp')`. Mouse clicks on Button bypass that flow
@@ -116,8 +116,19 @@
 	}
 
 	.button:hover:not(.selected) {
-		opacity: 0.85;
-		border-color: var(--secondary-foreground);
+		background-color: var(--primary-background);
+		color: var(--primary-foreground);
+		border-color: var(--primary-foreground);
+		box-shadow: 0 0 1.5vh var(--primary-foreground);
+		opacity: 1;
+	}
+
+	/* Hover is CSS-only, so the icon's colorVariable (bound to the JS `isSelected` state) can't
+	   follow it — recolor the masked icon to match the hovered text, same as the selected state.
+	   !important overrides the inline background-color the Icon component sets from colorVariable. */
+	.button:hover:not(.selected) :global(.icon-img),
+	.button:hover:not(.selected) :global(.badge-img) {
+		background-color: var(--primary-foreground) !important;
 	}
 
 	.button:active:not(.selected) {
@@ -125,7 +136,8 @@
 	}
 </style>
 
-<div bind:this={el} class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:active class:disabled class:icon-only={icon && !label} class:icon-top={iconPosition === 'top'} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}" onclick={handleClick} onkeydown={e => e.key === 'Enter' && handleClick()} role="button" tabindex="-1">
+<!-- svelte-ignore a11y_click_events_have_key_events -- keyboard activation is handled centrally by the input system (keyboard.ts → areas.ts confirmUp → navArea.onConfirm), not via an element-level onkeydown which would double-fire on focused fullscreen items. -->
+<div bind:this={el} class="button" class:selected={isSelected} class:pressed={isSelected && isPressed} class:active class:disabled class:icon-only={icon && !label} class:icon-top={iconPosition === 'top'} style="padding: {padding}; font-size: {fontSize}; border-radius: {borderRadius}; min-width: {width ?? '16vh'};{height ? ` height: ${height};` : ''}" onclick={handleClick} role="button" tabindex="-1">
 	{#if icon}
 		<Icon img={icon} {alt} size={iconSize ?? fontSize} padding="0" colorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} {noColorFilter} {badgeIcon} badgeColorVariable={isSelected ? '--primary-foreground' : '--disabled-foreground'} />
 	{/if}

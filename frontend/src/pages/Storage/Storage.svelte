@@ -15,8 +15,12 @@
 		areaID: string;
 		position?: Position | undefined;
 		onBack?: (() => void) | undefined;
+		/** Override the file-browser start directory — set when returning from Create LISH so the user lands back where they were. Falls back to the configured storage path. */
+		initialPath?: string | undefined;
+		/** Name of the file to re-select in {@link initialPath} — the file the user shared, so Back lands on it highlighted. */
+		initialFile?: string | undefined;
 	}
-	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, onBack, initialPath, initialFile }: Props = $props();
 	const SPECIAL_FILE_TYPES = [
 		{
 			mode: 'lish',
@@ -49,7 +53,7 @@
 
 	const specialFileTypes = SPECIAL_FILE_TYPES.map(t => ({
 		extensions: t.extensions as unknown as string[],
-		onOpen: (path: string) => {
+		onOpen: (path: string): void => {
 			importFilePath = path;
 			importMode = t.mode;
 			pushBreadcrumb(tt('common.import') + ' ' + t.label);
@@ -57,8 +61,12 @@
 	}));
 
 	// Open the Create LISH page with the chosen storage path prefilled as the data source.
-	function handleShare(path: string): void {
-		navigateToAbsolutePath(['downloads', 'create-lish'], { initialDataPath: path });
+	// Pass backPathIDs so that Back in Create LISH returns here instead of to the Downloads page,
+	// and backInitialPath (the directory being browsed) so it lands back on that folder, not the default.
+	function handleShare(sharePath: string, browseDir: string): void {
+		// For a file share, remember the file name so Back re-selects it; a directory share has no specific file to highlight.
+		const backInitialFile = sharePath !== browseDir ? sharePath.split(/[\\/]/).filter(Boolean).pop() : undefined;
+		navigateToAbsolutePath(['downloads', 'create-lish'], { initialDataPath: sharePath, backPathIDs: ['localStorage'], backInitialPath: browseDir, backInitialFile });
 	}
 
 	async function handleImportBack(): Promise<void> {
@@ -78,5 +86,5 @@
 {#if ImportComponent}
 	<ImportComponent {areaID} {position} initialFilePath={importFilePath} onBack={handleImportBack} onImport={handleImportComplete} />
 {:else}
-	<FileBrowser {areaID} {position} {onBack} initialPath={$storagePath} {specialFileTypes} onShare={handleShare} />
+	<FileBrowser {areaID} {position} {onBack} initialPath={initialPath ?? $storagePath} {initialFile} {specialFileTypes} onShare={handleShare} />
 {/if}

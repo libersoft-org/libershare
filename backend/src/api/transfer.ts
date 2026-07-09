@@ -117,7 +117,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	// Error recovery: auto-retry when IO conditions clear
 	const recovery = new ErrorRecovery({
-		attemptRecover: async (lishID, downloadWasEnabled, uploadWasEnabled) => {
+		attemptRecover: async (lishID, downloadWasEnabled, uploadWasEnabled): Promise<boolean> => {
 			let ok = true;
 			if (downloadWasEnabled) {
 				const result = await enableDownload({ lishID });
@@ -126,11 +126,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			if (uploadWasEnabled && ok) enableUploadHandler({ lishID });
 			return ok;
 		},
-		broadcast: (event, data) => {
+		broadcast: (event, data): void => {
 			broadcast?.(event, data);
 		},
-		getLISH: lishID => dataServer.get(lishID) ?? (undefined as any),
-		checkAccess: async path => {
+		getLISH: (lishID): any => dataServer.get(lishID) ?? (undefined as any),
+		checkAccess: async (path): Promise<void> => {
 			await access(path, constants.R_OK | constants.W_OK);
 		},
 	});

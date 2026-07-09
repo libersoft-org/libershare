@@ -142,6 +142,25 @@
 			"availability": "Avail",
 			"activity": "Last seen"
 		},
+		"peerDetail": {
+			"title": "Peer detail",
+			"peerID": "Peer ID",
+			"connection": "Connection type",
+			"availability": "Availability",
+			"currentFile": "Current file",
+			"downloadSpeed": "Download speed",
+			"uploadSpeed": "Upload speed",
+			"downloaded": "Downloaded",
+			"uploaded": "Uploaded",
+			"connectedAt": "Connected",
+			"lastActivity": "Last activity",
+			"secondsAgo": "{seconds}s ago",
+			"stale": "This peer is currently inactive.",
+			"disconnected": "This peer has disconnected.",
+			"copyID": "Copy peer ID",
+			"close": "Close",
+			"peerIDCopied": "Peer ID copied to clipboard"
+		},
 		"uploaded": "Uploaded",
 		"downloaded": "Downloaded",
 		"downloadSpeed": "Download speed",
@@ -304,7 +323,8 @@
 			"autoErrorRecovery": "Automatic error recovery",
 			"autoConnectNewNetworks": "Automatically connect to newly added networks",
 			"mdnsEnabled": "Discover peers on local network (mDNS)",
-			"mdnsInterval": "Local network discovery interval (s)"
+			"mdnsInterval": "Local network discovery interval (s)",
+			"upnpEnabled": "Automatic router port forwarding (UPnP)"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",
@@ -341,6 +361,12 @@
 			"allNetworksExported": "All LISH networks were exported",
 			"meshState": {
 				"unknown": "No LISH networks joined",
+				"forming": "Mesh is still forming — searches may be incomplete",
+				"unstable": "Mesh peers have low scores — degraded routing",
+				"stable": "Mesh is stable — broadcasts will reach the fleet"
+			},
+			"meshStateNetwork": {
+				"disabled": "Not connected — mesh inactive",
 				"forming": "Mesh is still forming — searches may be incomplete",
 				"unstable": "Mesh peers have low scores — degraded routing",
 				"stable": "Mesh is stable — broadcasts will reach the fleet"
@@ -415,6 +441,7 @@
 			"optionIdentity": "Identity",
 			"optionDownloads": "Downloads & sharing (LISHs)",
 			"optionNetworks": "LISH networks",
+			"optionPeers": "Discovered peer store",
 			"nothingSelected": "Select at least one item to wipe.",
 			"warning": "Files of already downloaded and shared LISHs on disk are KEPT untouched. Only the application state is cleared, not your data.",
 			"reset": "Factory reset",

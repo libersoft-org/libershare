@@ -36,7 +36,7 @@
 		position,
 		onBack,
 		activate: true,
-		listRange: () => [2, Math.max(2, 2 + row.peers.length)],
+		listRange: (): [number, number] => [2, Math.max(2, 2 + row.peers.length)],
 	}));
 </script>
 

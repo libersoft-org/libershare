@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { isMouseActive } from '../../scripts/input/mouse.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { t, withDetail, translateError } from '../../scripts/language.ts';
@@ -44,8 +45,8 @@
 		onSaveError?: ((error: string) => void) | undefined; // Called on save error
 		onDownAtEnd?: (() => boolean) | undefined;
 		specialFileTypes?: { extensions: string[]; onOpen: (path: string) => void }[] | undefined;
-		/** When provided, adds a "Share" action for files and directories that calls back with the selected path. */
-		onShare?: ((path: string) => void) | undefined;
+		/** When provided, adds a "Share" action for files and directories that calls back with the selected path and the directory currently being browsed (so callers can return the user to it). */
+		onShare?: ((path: string, browseDir: string) => void) | undefined;
 	}
 	const columns = '1fr 8vw 12vw';
 	let { areaID, position, initialPath = '', initialFile, directoriesOnly = false, filesOnly = false, fileFilter, fileFilterName, showPath = true, selectDirectoryButton: selectDirectoryButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, specialFileTypes, onShare }: Props = $props();
@@ -192,7 +193,14 @@
 		scrollToElement(itemElements, selectedIndex);
 	}
 
-	function handleItemClick(index: number) {
+	// Hover-select only while the mouse is active, so a scroll under a stale cursor can't hijack it.
+	function handleItemHover(index: number): void {
+		if (!isMouseActive()) return;
+		activateArea(listAreaID);
+		selectedIndex = index;
+	}
+
+	function handleItemClick(index: number): void {
 		activateArea(listAreaID);
 		selectedIndex = index;
 		showActions = false;
@@ -236,7 +244,7 @@
 	const PAGE_SIZE = 10;
 
 	const areaHandlers = {
-		up() {
+		up(): boolean {
 			if (selectedIndex > 0) {
 				selectedIndex--;
 				showActions = false;
@@ -251,7 +259,7 @@
 			else activateArea(`${areaID}-directory-actions`);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			if (selectedIndex < filteredItems.length - 1) {
 				selectedIndex++;
 				showActions = false;
@@ -261,41 +269,41 @@
 			if (onDownAtEnd) return onDownAtEnd();
 			return false;
 		},
-		pageUp() {
+		pageUp(): void {
 			if (filteredItems.length === 0) return;
 			selectedIndex = Math.max(0, selectedIndex - PAGE_SIZE);
 			showActions = false;
 			scrollToSelected();
 		},
-		pageDown() {
+		pageDown(): void {
 			if (filteredItems.length === 0) return;
 			selectedIndex = Math.min(filteredItems.length - 1, selectedIndex + PAGE_SIZE);
 			showActions = false;
 			scrollToSelected();
 		},
-		home() {
+		home(): void {
 			if (filteredItems.length === 0) return;
 			selectedIndex = 0;
 			showActions = false;
 			scrollToSelected();
 		},
-		end() {
+		end(): void {
 			if (filteredItems.length === 0) return;
 			selectedIndex = filteredItems.length - 1;
 			showActions = false;
 			scrollToSelected();
 		},
-		typedChar(char: string) {
+		typedChar(char: string): void {
 			handleTypedChar(char);
 		},
-		left() {
+		left(): boolean {
 			return false;
 		}, // Allow navigation to other areas
-		right() {
+		right(): boolean {
 			return !showActions;
 		}, // Allow navigation to actions panel only when it's visible
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			const item = filteredItems[selectedIndex];
 			if (item && (item.type === 'directory' || item.type === 'drive'))
 				navigateInto(item); // Directories/drives - navigate into them
@@ -309,15 +317,15 @@
 				else openActions(); // Otherwise show actions panel
 			}
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			if (parentPath !== null) navigateUp();
 			else onBack?.();
 		},
 	};
 
 	const directoryActionsAreaHandlers = {
-		up() {
+		up(): boolean {
 			// Go to path breadcrumb if available
 			if (showPath) {
 				activateArea(`${areaID}-path`);
@@ -326,34 +334,34 @@
 			// Otherwise let areaNavigate handle it (go to global breadcrumb)
 			return false;
 		},
-		down() {
+		down(): boolean {
 			// If the name filter row is visible, descend into it; else skip to save-filename or list
 			if (showNameFilter) activateArea(`${areaID}-name-filter`);
 			else if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
 			else activateArea(listAreaID);
 			return true;
 		},
-		left() {
+		left(): boolean {
 			if (selectedDirectoryActionIndex > 0) {
 				selectedDirectoryActionIndex--;
 				return true;
 			}
 			return false;
 		},
-		right() {
+		right(): boolean {
 			if (selectedDirectoryActionIndex < directoryActions.length - 1) {
 				selectedDirectoryActionIndex++;
 				return true;
 			}
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			const action = directoryActions[selectedDirectoryActionIndex];
 			if (action) handleDirectoryAction(action.id);
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			if (parentPath !== null) navigateUp();
 			else onBack?.();
 		},
@@ -363,94 +371,94 @@
 	let fileActions = $derived(getFileActions($t, selectFileButton, !!onShare));
 
 	const actionsAreaHandlers = {
-		up() {
+		up(): boolean {
 			if (selectedActionIndex > 0) {
 				selectedActionIndex--;
 				return true;
 			}
 			return true; // Block navigation outside actions panel
 		},
-		down() {
+		down(): boolean {
 			if (selectedActionIndex < fileActions.length - 1) {
 				selectedActionIndex++;
 				return true;
 			}
 			return true; // Block navigation outside actions panel
 		},
-		left() {
+		left(): boolean {
 			return true;
 		}, // Block navigation outside actions panel
-		right() {
+		right(): boolean {
 			return true;
 		}, // Block navigation outside actions panel
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			const action = fileActions[selectedActionIndex];
 			if (action) handleAction(action.id);
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			showActions = false;
 			activateArea(listAreaID);
 		},
 	};
 
 	const filterAreaHandlers = {
-		up() {
+		up(): boolean {
 			if (selectedFilterIndex > 0) {
 				selectedFilterIndex--;
 				return true;
 			}
 			return true; // Block navigation outside filter panel
 		},
-		down() {
+		down(): boolean {
 			if (selectedFilterIndex < filterActions.length - 1) {
 				selectedFilterIndex++;
 				return true;
 			}
 			return true; // Block navigation outside filter panel
 		},
-		left() {
+		left(): boolean {
 			return true;
 		}, // Block navigation outside filter panel
-		right() {
+		right(): boolean {
 			return true;
 		}, // Block navigation outside filter panel
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			const action = filterActions[selectedFilterIndex];
 			if (action) handleFilterAction(action.id);
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			closeFilterPanel();
 		},
 	};
 
 	const nameFilterAreaHandlers = {
-		up() {
+		up(): boolean {
 			nameFilterInput?.blur();
 			activateArea(`${areaID}-directory-actions`);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			nameFilterInput?.blur();
 			if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
 			else activateArea(listAreaID);
 			return true;
 		},
-		left() {
+		left(): boolean {
 			return true; // stay in input, let it handle cursor
 		},
-		right() {
+		right(): boolean {
 			return true; // stay in input, let it handle cursor
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			nameFilterInput?.focus();
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			nameFilterInput?.blur();
 			if (parentPath !== null) navigateUp();
 			else onBack?.();
@@ -458,27 +466,27 @@
 	};
 
 	const saveFileNameAreaHandlers = {
-		up() {
+		up(): boolean {
 			// Go back to name-filter if visible, otherwise to directory actions
 			saveFileNameInput?.blur();
 			if (showNameFilter) activateArea(`${areaID}-name-filter`);
 			else activateArea(`${areaID}-directory-actions`);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			// Go to file list
 			saveFileNameInput?.blur();
 			activateArea(listAreaID);
 			return true;
 		},
-		left() {
+		left(): boolean {
 			if (saveFileNameColumn > 0) {
 				saveFileNameColumn--;
 				return true;
 			}
 			return true; // Stay in input, let it handle cursor
 		},
-		right() {
+		right(): boolean {
 			if (saveFileNameColumn < 1) {
 				saveFileNameColumn++;
 				saveFileNameInput?.blur();
@@ -486,8 +494,8 @@
 			}
 			return true;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			if (saveFileNameColumn === 0) {
 				// Input is selected - focus it for editing
 				saveFileNameInput?.focus();
@@ -496,8 +504,8 @@
 				handleSave();
 			}
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			saveFileNameInput?.blur();
 			onBack?.();
 		},
@@ -519,7 +527,7 @@
 				handleOpenFile(item);
 				break;
 			case 'share':
-				onShare?.(item.path);
+				onShare?.(item.path, currentPath);
 				break;
 			case 'edit':
 				showEditor(item);
@@ -543,7 +551,7 @@
 				onSelect?.(currentPath);
 				break;
 			case 'share':
-				onShare?.(currentPath);
+				onShare?.(currentPath, currentPath);
 				break;
 			case 'new':
 				showNewDirectoryDialog();
@@ -1227,39 +1235,11 @@
 								</div>
 							{:else if error}
 								{#each filteredItems as item, index (item.id)}
-									<StorageItem
-										bind:el={itemElements[index]}
-										name={item.name}
-										type={item.type}
-										size={item.size}
-										modified={item.modified}
-										selected={(active || actionsActive) && selectedIndex === index}
-										isLast={index === filteredItems.length - 1}
-										onclick={() => handleItemClick(index)}
-										onmouseenter={() => {
-											activateArea(listAreaID);
-											selectedIndex = index;
-										}}
-										onkeydown={e => e.key === 'Enter' && handleItemClick(index)}
-									/>
+									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
 								{/each}
 							{:else}
 								{#each filteredItems as item, index (item.id)}
-									<StorageItem
-										bind:el={itemElements[index]}
-										name={item.name}
-										type={item.type}
-										size={item.size}
-										modified={item.modified}
-										selected={(active || actionsActive) && selectedIndex === index}
-										isLast={index === filteredItems.length - 1}
-										onclick={() => handleItemClick(index)}
-										onmouseenter={() => {
-											activateArea(listAreaID);
-											selectedIndex = index;
-										}}
-										onkeydown={e => e.key === 'Enter' && handleItemClick(index)}
-									/>
+									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
 								{/each}
 							{/if}
 						</div>

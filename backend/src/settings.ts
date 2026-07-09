@@ -60,6 +60,12 @@ export interface SettingsData {
 		announceAddresses: string[];
 		mdnsEnabled: boolean;
 		mdnsInterval: number;
+		/**
+		 * UPnP-NAT port forwarding. When true, libp2p asks the local router (IGD)
+		 * to forward the incoming port to this host. Default true so NAT'd nodes
+		 * become reachable out of the box; set false to leave router state untouched.
+		 */
+		upnpEnabled: boolean;
 		searchTimeout: number; // Browse network → LISH search timeout in milliseconds. Search session ends after this.
 		/**
 		 * GossipSub Peer Exchange (PX) local operator policy.
@@ -122,7 +128,7 @@ export interface SettingsData {
 function storagePath(envName: string, defaultRelative: string, fallback: string): string {
 	const explicit = process.env[envName];
 	if (explicit) return explicit;
-	const root = process.env[`${productEnvPrefix}_STORAGE_ROOT`];
+	const root = process.env['STORAGE_ROOT'];
 	if (!root) return fallback;
 	return `${root.replace(/[\\/]+$/, '')}/${defaultRelative}/`;
 }
@@ -180,6 +186,8 @@ const DEFAULT_SETTINGS: SettingsData = {
 		announceAddresses: [],
 		mdnsEnabled: true,
 		mdnsInterval: 30000,
+		// UPnP enabled by default so NAT'd nodes auto-open their port for reachability.
+		upnpEnabled: true,
 		searchTimeout: 30_000,
 		peerExchange: {
 			// Enabled by default: bootstrap peers (operator-configured in lishnet joins)

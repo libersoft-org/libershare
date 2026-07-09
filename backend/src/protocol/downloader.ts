@@ -341,12 +341,12 @@ export class Downloader {
 			progressReporter: this.progressReporter,
 			fileAllocator: this.fileAllocator,
 			// lish is lazy — doWork Phase 1 may replace this.lish after manifest fetch.
-			getLish: () => this.lish,
-			isDestroyed: () => this.destroyed,
-			isDisabled: () => this.disabled,
-			onSetError: (code, detail) => this.setError(code, detail),
-			onRetry: info => this.onRetry?.(info),
-			emitAllocProgress: (p, total) => this.emitAllocProgress(p, total),
+			getLish: (): IStoredLISH => this.lish,
+			isDestroyed: (): boolean => this.destroyed,
+			isDisabled: (): boolean => this.disabled,
+			onSetError: (code, detail): void => this.setError(code, detail),
+			onRetry: (info): void => this.onRetry?.(info),
+			emitAllocProgress: (p, total): void => this.emitAllocProgress(p, total),
 		});
 	}
 
@@ -519,7 +519,7 @@ export class Downloader {
 		downloadLimiter.setLimit(kbPerSec);
 	}
 
-	private async callForPeers() {
+	private async callForPeers(): Promise<void> {
 		console.debug(`[DL] callForPeers: ${this.lishID.slice(0, 8)} on ${this.networkIDs.length} networks, peers: ${this.peerManager.size()}`);
 		// GossipSub broadcast — seeders respond with a unicast HAVE over the LISH protocol
 		// (see network.handleWant → LISHClient.announceHave → Downloader.onHaveAnnouncement).

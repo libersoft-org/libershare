@@ -1,8 +1,14 @@
 import { WsClient } from '@shared/client.ts';
 
+interface EventHistoryEntry {
+	event: string;
+	data: any;
+	time: number;
+}
+
 export class TestClient {
 	private client: WsClient;
-	private eventHistory: { event: string; data: any; time: number }[] = [];
+	private eventHistory: EventHistoryEntry[] = [];
 	private connected = false;
 
 	constructor(url: string) {
@@ -57,7 +63,7 @@ export class TestClient {
 		return collected;
 	}
 
-	getEventHistory(eventName?: string): { event: string; data: any; time: number }[] {
+	getEventHistory(eventName?: string): EventHistoryEntry[] {
 		if (!eventName) return [...this.eventHistory];
 		return this.eventHistory.filter(e => e.event === eventName);
 	}

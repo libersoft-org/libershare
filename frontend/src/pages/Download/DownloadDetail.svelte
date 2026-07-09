@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { isMouseActive } from '../../scripts/input/mouse.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
+	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, type PeerDetail, computeEnabledMode } from '../../scripts/downloads.ts';
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
@@ -23,6 +24,7 @@
 	import DownloadFile from './DownloadFile.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import DownloadDetailDelete from './DownloadDetailDelete.svelte';
+	import DownloadDetailPeer from './DownloadDetailPeer.svelte';
 	import DownloadLISHExport from './DownloadLISHExport.svelte';
 	import DownloadDetailMove from './DownloadDetailMove.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
@@ -93,6 +95,11 @@
 	let now = $state(Date.now());
 	let showDeleteDialog = $state(false);
 	let deleteError = $state('');
+	// Peer detail dialog state
+	let showPeerDialog = $state(false);
+	let selectedPeerID = $state('');
+	// Snapshot captured at open time — shown if the peer is pruned from the store while the dialog is open.
+	let selectedPeerSnapshot = $state<PeerDetail | null>(null);
 	// Export state
 	let showExport = $state(false);
 	// Move state
@@ -151,10 +158,30 @@
 		scrollToElement(itemElements, selectedFileIndex);
 	}
 
+	// Hover-select only while the mouse is active, so a scroll under a stale cursor can't hijack it.
+	function handleFileHover(index: number): void {
+		if (!isMouseActive()) return;
+		activateArea(listAreaID);
+		selectedFileIndex = index;
+	}
+
 	function handleFileClick(index: number): void {
 		activateArea(listAreaID);
 		selectedFileIndex = index;
 		scrollToSelected();
+	}
+
+	// Mouse counterpart of the peer-list keyboard flow: hover selects, click opens the dialog.
+	function handlePeerHover(index: number): void {
+		if (!isMouseActive()) return;
+		activateArea(peerListAreaID);
+		selectedPeerIndex = index;
+	}
+
+	function handlePeerClick(index: number): void {
+		activateArea(peerListAreaID);
+		selectedPeerIndex = index;
+		openPeerDialog();
 	}
 
 	function scrollToInfo(): void {
@@ -235,11 +262,27 @@
 		activateArea(toolbarAreaID);
 	}
 
+	function openPeerDialog(): void {
+		// Capture the peerID VALUE (not the index): sorting/pruning can reorder currentPeers,
+		// so the index is not stable while the dialog is open.
+		const peer = currentPeers[selectedPeerIndex];
+		if (!peer) return;
+		selectedPeerID = peer.peerID;
+		selectedPeerSnapshot = peer;
+		showPeerDialog = true;
+	}
+
+	function handlePeerDialogBack(): void {
+		showPeerDialog = false;
+		selectedPeerSnapshot = null;
+		activateArea(peerListAreaID);
+	}
+
 	const toolbarHandlers = {
-		up() {
+		up(): boolean {
 			return false;
 		},
-		down() {
+		down(): boolean {
 			if (download) {
 				activateArea(infoAreaID);
 				scrollToInfo();
@@ -247,56 +290,56 @@
 			}
 			return false;
 		},
-		left() {
+		left(): boolean {
 			if (selectedToolbarIndex > 0) {
 				selectedToolbarIndex--;
 				return true;
 			}
 			return false;
 		},
-		right() {
+		right(): boolean {
 			if (selectedToolbarIndex < toolbarActions.length - 1) {
 				selectedToolbarIndex++;
 				return true;
 			}
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			const action = toolbarActions[selectedToolbarIndex];
 			if (action) handleToolbarAction(action.id);
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			handleBack();
 		},
 	};
 
 	const infoHandlers = {
-		up() {
+		up(): boolean {
 			activateArea(toolbarAreaID);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			activateArea(tabAreaID);
 			return true;
 		},
-		left() {
+		left(): boolean {
 			return false;
 		},
-		right() {
+		right(): boolean {
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {},
-		confirmCancel() {},
-		back() {
+		confirmDown(): void {},
+		confirmUp(): void {},
+		confirmCancel(): void {},
+		back(): void {
 			handleBack();
 		},
 	};
 
 	const listHandlers = {
-		up() {
+		up(): boolean {
 			if (selectedFileIndex > 0) {
 				selectedFileIndex--;
 				scrollToSelected();
@@ -305,7 +348,7 @@
 			activateArea(tabAreaID);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			if (download && selectedFileIndex < download.files.length - 1) {
 				selectedFileIndex++;
 				scrollToSelected();
@@ -313,48 +356,48 @@
 			}
 			return false;
 		},
-		left() {
+		left(): boolean {
 			return false;
 		},
-		right() {
+		right(): boolean {
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			// TODO: Open file or show file actions
 		},
-		confirmCancel() {},
-		pageUp() {
+		confirmCancel(): void {},
+		pageUp(): void {
 			if (!download || download.files.length === 0) return;
 			selectedFileIndex = Math.max(0, selectedFileIndex - 10);
 			scrollToSelected();
 		},
-		pageDown() {
+		pageDown(): void {
 			if (!download || download.files.length === 0) return;
 			selectedFileIndex = Math.min(download.files.length - 1, selectedFileIndex + 10);
 			scrollToSelected();
 		},
-		home() {
+		home(): void {
 			if (!download || download.files.length === 0) return;
 			selectedFileIndex = 0;
 			scrollToSelected();
 		},
-		end() {
+		end(): void {
 			if (!download || download.files.length === 0) return;
 			selectedFileIndex = download.files.length - 1;
 			scrollToSelected();
 		},
-		back() {
+		back(): void {
 			handleBack();
 		},
 	};
 
 	const tabHandlers = {
-		up() {
+		up(): boolean {
 			activateArea(toolbarAreaID);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			if (activeTab === 'files' && download && download.files.length > 0) {
 				activateArea(listAreaID);
 				scrollToSelected();
@@ -366,7 +409,7 @@
 			}
 			return false;
 		},
-		left() {
+		left(): boolean {
 			if (selectedTabIndex > 0) {
 				selectedTabIndex--;
 				activeTab = 'files';
@@ -374,7 +417,7 @@
 			}
 			return false;
 		},
-		right() {
+		right(): boolean {
 			if (selectedTabIndex < 1) {
 				selectedTabIndex++;
 				activeTab = 'peers';
@@ -382,18 +425,18 @@
 			}
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
 			activeTab = selectedTabIndex === 0 ? 'files' : 'peers';
 		},
-		confirmCancel() {},
-		back() {
+		confirmCancel(): void {},
+		back(): void {
 			handleBack();
 		},
 	};
 
 	const peerListHandlers = {
-		up() {
+		up(): boolean {
 			if (selectedPeerIndex > 0) {
 				selectedPeerIndex--;
 				scrollToElement(peerElements, selectedPeerIndex);
@@ -402,7 +445,7 @@
 			activateArea(tabAreaID);
 			return true;
 		},
-		down() {
+		down(): boolean {
 			if (selectedPeerIndex < currentPeers.length - 1) {
 				selectedPeerIndex++;
 				scrollToElement(peerElements, selectedPeerIndex);
@@ -410,36 +453,38 @@
 			}
 			return false;
 		},
-		left() {
+		left(): boolean {
 			return false;
 		},
-		right() {
+		right(): boolean {
 			return false;
 		},
-		confirmDown() {},
-		confirmUp() {},
-		confirmCancel() {},
-		pageUp() {
+		confirmDown(): void {},
+		confirmUp(): void {
+			openPeerDialog();
+		},
+		confirmCancel(): void {},
+		pageUp(): void {
 			if (currentPeers.length === 0) return;
 			selectedPeerIndex = Math.max(0, selectedPeerIndex - 10);
 			scrollToElement(peerElements, selectedPeerIndex);
 		},
-		pageDown() {
+		pageDown(): void {
 			if (currentPeers.length === 0) return;
 			selectedPeerIndex = Math.min(currentPeers.length - 1, selectedPeerIndex + 10);
 			scrollToElement(peerElements, selectedPeerIndex);
 		},
-		home() {
+		home(): void {
 			if (currentPeers.length === 0) return;
 			selectedPeerIndex = 0;
 			scrollToElement(peerElements, selectedPeerIndex);
 		},
-		end() {
+		end(): void {
 			if (currentPeers.length === 0) return;
 			selectedPeerIndex = currentPeers.length - 1;
 			scrollToElement(peerElements, selectedPeerIndex);
 		},
-		back() {
+		back(): void {
 			handleBack();
 		},
 	};
@@ -763,16 +808,7 @@
 							</Header>
 							<div class="items">
 								{#each download.files as file, index (file.id)}
-									<div
-										onclick={() => handleFileClick(index)}
-										onmouseenter={() => {
-											activateArea(listAreaID);
-											selectedFileIndex = index;
-										}}
-										onkeydown={e => e.key === 'Enter' && handleFileClick(index)}
-										role="row"
-										tabindex="-1"
-									>
+									<div onclick={() => handleFileClick(index)} onmouseenter={() => handleFileHover(index)} onkeydown={e => e.key === 'Enter' && handleFileClick(index)} role="row" tabindex="-1">
 										<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
 									</div>
 								{/each}
@@ -799,7 +835,7 @@
 									{@const rowSelected = peerListActive && selectedPeerIndex === index}
 									{@const downloadColor = rowSelected ? '--primary-background' : '--mode-download-fg'}
 									{@const uploadColor = rowSelected ? '--primary-background' : '--mode-upload-fg'}
-									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale}>
+									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale} onclick={() => handlePeerClick(index)} onmouseenter={() => handlePeerHover(index)}>
 										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
 										<Cell><span class="peer-id">{peer.peerID}</span></Cell>
 										<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
@@ -840,5 +876,8 @@
 	</div>
 	{#if showDeleteDialog && download}
 		<DownloadDetailDelete lishID={download.id} lishName={download.name} {position} onResult={handleDeleteResult} onBack={handleDeleteCancel} />
+	{/if}
+	{#if showPeerDialog && download && selectedPeerSnapshot}
+		<DownloadDetailPeer lishID={download.id} peerID={selectedPeerID} initialPeer={selectedPeerSnapshot} {position} onBack={handlePeerDialogBack} />
 	{/if}
 {/if}

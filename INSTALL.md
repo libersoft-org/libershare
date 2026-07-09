@@ -220,12 +220,12 @@ The backend respects a few environment variables for verbose diagnostic output. 
 | --------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `DEBUG`                           | External (`libp2p` / `weald` / `debug`) | Enables namespace-based debug logs from the libp2p stack. Standard `debug`-style pattern syntax (wildcards, `-` excludes). |
 | `LOG_PREFIX`                      | LiberShare-specific                     | Adds a prefix to backend log lines, useful when comparing logs from multiple backend instances.                            |
-| `LIBERSHARE_SCORE_DEBUG`          | LiberShare-specific                     | Set to `1` to print a per-peer breakdown of the peer scoring algorithm.                                                    |
-| `LIBERSHARE_TRACE_PX`             | LiberShare-specific                     | Set to `1` to trace PX trust score decisions for a small bounded set of peers.                                             |
-| `LIBERSHARE_MEMTRACE`             | LiberShare-specific                     | Set to `0` to disable periodic memory trace logging.                                                                       |
-| `LIBERSHARE_MEMTRACE_INTERVAL_MS` | LiberShare-specific                     | Memory trace interval in milliseconds. Defaults to `30000`.                                                                |
-| `LIBERSHARE_MEMTRACE_FILE`        | LiberShare-specific                     | Memory trace output file. Defaults to `memory-trace.jsonl` in the data directory.                                          |
-| `LIBERSHARE_HEAP_TRIGGER`         | LiberShare-specific                     | Set to `0` to disable heap snapshot trigger support.                                                                       |
+| `P2PFS_SCORE_DEBUG`               | LiberShare-specific                     | Set to `1` to print a full per-peer breakdown of the gossipsub peer-scoring algorithm on each score-dump cycle. Off by default. |
+| `P2PFS_TRACE_PX`                  | LiberShare-specific                     | Set to `1` to trace Peer-Exchange (PX) trust-score decisions for a small bounded set of peers (max 20). Off by default.         |
+| `MEMTRACE`             | LiberShare-specific                     | Set to `0` to disable periodic memory trace logging.                                                                       |
+| `MEMTRACE_INTERVAL_MS` | LiberShare-specific                     | Memory trace interval in milliseconds. Defaults to `30000`.                                                                |
+| `MEMTRACE_FILE`        | LiberShare-specific                     | Memory trace output file. Defaults to `memory-trace.jsonl` in the data directory.                                          |
+| `HEAP_TRIGGER`         | LiberShare-specific                     | Set to `0` to disable heap snapshot trigger support.                                                                       |
 
 `DEBUG` is **not** a LiberShare-defined variable — it comes from the [`debug`](https://www.npmjs.com/package/debug) convention used by libp2p (via the `weald` library). Common patterns:
 
