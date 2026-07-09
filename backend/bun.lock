@@ -40,6 +40,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@achingbrain/ssdp@4.2.4": "patches/@achingbrain%2Fssdp@4.2.4.patch",
+  },
   "overrides": {
     "@multiformats/multiaddr": "^12.1.14",
   },
