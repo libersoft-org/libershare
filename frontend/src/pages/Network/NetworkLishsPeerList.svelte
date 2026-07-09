@@ -4,7 +4,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
-	import { formatSize } from '../../scripts/utils.ts';
+	import { formatSize, formatDate } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { type LishSearchResult, type LISHNetworkConfig, type IPeerLishDetail } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -166,6 +166,26 @@
 		border-top: 0.3vh solid var(--secondary-softer-background);
 	}
 
+	.file-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.6vh;
+		margin-top: 0.6vh;
+		padding-top: 0.6vh;
+		border-top: 0.2vh solid var(--secondary-softer-background);
+	}
+
+	.file-row {
+		display: flex;
+		justify-content: space-between;
+		gap: 2vh;
+	}
+
+	.file-row .file-size {
+		white-space: nowrap;
+		color: var(--disabled-foreground);
+	}
+
 	.button-bar-wrap {
 		width: 100%;
 	}
@@ -208,9 +228,20 @@
 					{#if detail.description}
 						<div><span class="label">{$t('common.description')}:</span> <span class="value">{detail.description}</span></div>
 					{/if}
+					<div><span class="label">{$t('network.created')}:</span> <span class="value">{formatDate(detail.created)}</span></div>
 					<div><span class="label">{$t('network.totalSize')}:</span> <span class="value">{formatSize(detail.totalSize)}</span></div>
+					<div><span class="label">{$t('network.chunkSize')}:</span> <span class="value">{formatSize(detail.chunkSize)}</span></div>
+					<div><span class="label">{$t('network.checksumAlgo')}:</span> <span class="value">{detail.checksumAlgo}</span></div>
 					<div><span class="label">{$t('common.files')}:</span> <span class="value">{detail.fileCount}</span></div>
 					<div><span class="label">{$t('network.directories')}:</span> <span class="value">{detail.directoryCount}</span></div>
+					{#if detail.files.length > 0}
+						<div class="file-list">
+							<div class="label">{$t('common.files')}:</div>
+							{#each detail.files as f}
+								<div class="file-row"><span class="value value-mono">{f.path}</span><span class="value file-size">{formatSize(f.size)}</span></div>
+							{/each}
+						</div>
+					{/if}
 				</div>
 			{/if}
 		</div>
