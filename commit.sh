@@ -15,8 +15,7 @@ else
 	git remote set-url origin https://$USER:$PASS@github.com/$USER/$REPO
 fi
 
-bun i -g prettier prettier-plugin-svelte
-./prettier-all.sh
+bun i -g prettier
 
 git config user.name "$NAME"
 git config user.email "$EMAIL"
