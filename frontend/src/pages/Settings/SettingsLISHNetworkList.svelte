@@ -10,9 +10,10 @@
 	import { type LISHNetworkConfig, type NetworkNodeInfo } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { getNetworks, deleteNetwork as deleteNetworkFromAPI, updateNetwork as updateNetworkFromAPI, addNetwork as addNetworkFromAPI, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
-	import { peerCounts, subscribePeerCounts, unsubscribePeerCounts, bootstrapStatuses, subscribeBootstrapStatuses, unsubscribeBootstrapStatuses } from '../../scripts/networks.ts';
+	import { peerCounts, subscribePeerCounts, unsubscribePeerCounts, bootstrapStatuses, subscribeBootstrapStatuses, unsubscribeBootstrapStatuses, networkMeshStates, type MeshState } from '../../scripts/networks.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
+	import Icon from '../../components/Icon/Icon.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	import Row from '../../components/Row/Row.svelte';
@@ -71,6 +72,20 @@
 		const s = $bootstrapStatuses[networkID];
 		if (!s) return 0;
 		return s.peers.filter(p => p.origin === 'configured' && (p.status === 'identity-mismatch' || p.status === 'timeout' || p.status === 'error')).length;
+	}
+
+	/**
+	 * Resolve the per-network mesh state for a row. A disabled network has no
+	 * live mesh regardless of any stale snapshot, so it always renders neutral.
+	 */
+	function meshStateFor(network: LISHNetworkConfig): MeshState {
+		if (!network.enabled) return 'disabled';
+		return $networkMeshStates[network.networkID] ?? 'disabled';
+	}
+
+	/** CSS colour variable matching the footer LISH indicator (red/orange/green, else neutral). */
+	function meshStateColorVar(state: MeshState): string {
+		return state === 'stable' ? '--mesh-state-stable' : state === 'forming' ? '--mesh-state-forming' : state === 'unstable' ? '--mesh-state-unstable' : '--primary-foreground';
 	}
 
 	async function closePublic(): Promise<void> {
@@ -259,6 +274,19 @@
 		gap: 2vh;
 	}
 
+	.network .title {
+		display: flex;
+		align-items: center;
+		gap: 1vh;
+		min-width: 0;
+	}
+
+	.network .mesh-indicator {
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+	}
+
 	.network .name {
 		font-size: 2.5vh;
 		font-weight: bold;
@@ -336,10 +364,16 @@
 			{:else}
 				{#each networks as network, i}
 					{@const rowY = i + 1 + nodeInfoOffset}
+					{@const meshState = meshStateFor(network)}
 					<Row selected={navHandle.controller.isYSelected(rowY)}>
 						<div class="network">
 							<div class="header">
-								<div class="name">{network.name}</div>
+								<div class="title">
+									<div class="mesh-indicator" title={$t(`settings.lishNetwork.meshStateNetwork.${meshState}`)}>
+										<Icon img="/img/network.svg" alt={$t(`settings.lishNetwork.meshStateNetwork.${meshState}`)} size="2.5vh" padding="0" colorVariable={meshStateColorVar(meshState)} />
+									</div>
+									<div class="name">{network.name}</div>
+								</div>
 								{#if network.enabled && $peerCounts[network.networkID] !== undefined}
 									<div class="peer-count">{$t('settings.lishNetwork.connectedPeers', { count: String($peerCounts[network.networkID]!) })}</div>
 								{/if}
