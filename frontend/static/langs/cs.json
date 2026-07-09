@@ -142,6 +142,25 @@
 			"availability": "Dost.",
 			"activity": "Naposledy"
 		},
+		"peerDetail": {
+			"title": "Detail účastníka",
+			"peerID": "ID účastníka",
+			"connection": "Typ spojení",
+			"availability": "Dostupnost",
+			"currentFile": "Aktuální soubor",
+			"downloadSpeed": "Rychlost stahování",
+			"uploadSpeed": "Rychlost odesílání",
+			"downloaded": "Staženo",
+			"uploaded": "Odesláno",
+			"connectedAt": "Připojeno",
+			"lastActivity": "Poslední aktivita",
+			"secondsAgo": "před {seconds}s",
+			"stale": "Tento účastník je momentálně neaktivní.",
+			"disconnected": "Tento účastník se odpojil.",
+			"copyID": "Kopírovat ID účastníka",
+			"close": "Zavřít",
+			"peerIDCopied": "ID účastníka zkopírováno do schránky"
+		},
 		"uploaded": "Odesláno",
 		"downloaded": "Staženo",
 		"downloadSpeed": "Rychlost stahování",
@@ -342,6 +361,12 @@
 			"allNetworksExported": "Všechny sítě LISH byly exportovány",
 			"meshState": {
 				"unknown": "Žádná LISH síť není připojena",
+				"forming": "Síť se ještě staví - vyhledávání může být neúplné",
+				"unstable": "Účastníci v síti mají nízké skóre - degradované směrování",
+				"stable": "Síť je stabilní - broadcasty dorazí k fleetu"
+			},
+			"meshStateNetwork": {
+				"disabled": "Nepřipojeno - síť je neaktivní",
 				"forming": "Síť se ještě staví - vyhledávání může být neúplné",
 				"unstable": "Účastníci v síti mají nízké skóre - degradované směrování",
 				"stable": "Síť je stabilní - broadcasty dorazí k fleetu"
