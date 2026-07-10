@@ -28,6 +28,9 @@
 	let ticker: ReturnType<typeof setInterval> | null = null;
 	$effect(() => {
 		if (search.searching && ticker === null) {
+			// Refresh the tick before the first interval fires — a stale value from a
+			// previous search would make `nowTick - startedAt` negative for up to 200 ms.
+			nowTick = performance.now();
 			ticker = setInterval(() => (nowTick = performance.now()), 200);
 		} else if (!search.searching && ticker !== null) {
 			clearInterval(ticker);
@@ -37,14 +40,17 @@
 	onDestroy(() => {
 		if (ticker !== null) clearInterval(ticker);
 	});
-	let searchProgress = $derived.by((): number => {
+	let searchElapsed = $derived.by((): number => {
 		if (!search.searching || search.startedAt === null || $searchTimeout <= 0) return 0;
-		return Math.min(100, ((nowTick - search.startedAt) / $searchTimeout) * 100);
+		return Math.max(0, Math.min(nowTick - search.startedAt, $searchTimeout));
+	});
+	let searchProgress = $derived.by((): number => {
+		if (!search.searching || $searchTimeout <= 0) return 0;
+		return (searchElapsed / $searchTimeout) * 100;
 	});
 	let searchTimeText = $derived.by((): string => {
 		if (!search.searching || search.startedAt === null || $searchTimeout <= 0) return '';
-		const elapsed = Math.min(nowTick - search.startedAt, $searchTimeout);
-		return `${Math.floor(elapsed / 1000)} s / ${Math.round($searchTimeout / 1000)} s`;
+		return `${Math.floor(searchElapsed / 1000)} s / ${Math.round($searchTimeout / 1000)} s`;
 	});
 
 	function handleStart(): void {
