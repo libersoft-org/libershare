@@ -85,17 +85,23 @@
 		initialDataPath?: string | undefined;
 		/** When set, Back navigates to this absolute menu path instead of popping one level. */
 		backPathIDs?: string[] | undefined;
+		/** Optional file-browser directory to restore on the Back target (the folder the share originated from). */
+		backInitialPath?: string | undefined;
+		/** Optional file name to re-select in the Back target's file browser (the shared file). */
+		backInitialFile?: string | undefined;
 	}
-	let { areaID, position = CONTENT_POSITIONS.main, onBack, initialDataPath, backPathIDs }: Props = $props();
+	let { areaID, position = CONTENT_POSITIONS.main, onBack, initialDataPath, backPathIDs, backInitialPath, backInitialFile }: Props = $props();
 
 	// Snapshot the origin path once at creation: the dynamicProps store that carries
 	// backPathIDs through the menu navigation is cleared on the next navigation, so it
 	// must be read eagerly (same reason dataPath snapshots initialDataPath below).
 	const backPath = untrack(() => backPathIDs);
+	const backInit = untrack(() => backInitialPath);
+	const backFile = untrack(() => backInitialFile);
 
 	/** Navigate back, respecting a custom origin path when the form was opened from outside the downloads menu. */
 	function goBack(): void {
-		if (backPath) navigateToAbsolutePath(backPath);
+		if (backPath) navigateToAbsolutePath(backPath, backInit ? { initialPath: backInit, initialFile: backFile } : undefined);
 		else if (onBack) onBack();
 		else navigateBack();
 	}

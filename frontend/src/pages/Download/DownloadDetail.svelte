@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { isMouseActive } from '../../scripts/input/mouse.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
+	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, type PeerDetail, computeEnabledMode } from '../../scripts/downloads.ts';
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
@@ -23,6 +24,7 @@
 	import DownloadFile from './DownloadFile.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import DownloadDetailDelete from './DownloadDetailDelete.svelte';
+	import DownloadDetailPeer from './DownloadDetailPeer.svelte';
 	import DownloadLISHExport from './DownloadLISHExport.svelte';
 	import DownloadDetailMove from './DownloadDetailMove.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
@@ -93,6 +95,11 @@
 	let now = $state(Date.now());
 	let showDeleteDialog = $state(false);
 	let deleteError = $state('');
+	// Peer detail dialog state
+	let showPeerDialog = $state(false);
+	let selectedPeerID = $state('');
+	// Snapshot captured at open time — shown if the peer is pruned from the store while the dialog is open.
+	let selectedPeerSnapshot = $state<PeerDetail | null>(null);
 	// Export state
 	let showExport = $state(false);
 	// Move state
@@ -151,10 +158,30 @@
 		scrollToElement(itemElements, selectedFileIndex);
 	}
 
+	// Hover-select only while the mouse is active, so a scroll under a stale cursor can't hijack it.
+	function handleFileHover(index: number): void {
+		if (!isMouseActive()) return;
+		activateArea(listAreaID);
+		selectedFileIndex = index;
+	}
+
 	function handleFileClick(index: number): void {
 		activateArea(listAreaID);
 		selectedFileIndex = index;
 		scrollToSelected();
+	}
+
+	// Mouse counterpart of the peer-list keyboard flow: hover selects, click opens the dialog.
+	function handlePeerHover(index: number): void {
+		if (!isMouseActive()) return;
+		activateArea(peerListAreaID);
+		selectedPeerIndex = index;
+	}
+
+	function handlePeerClick(index: number): void {
+		activateArea(peerListAreaID);
+		selectedPeerIndex = index;
+		openPeerDialog();
 	}
 
 	function scrollToInfo(): void {
@@ -233,6 +260,22 @@
 		if (!success) deleteError = $t('common.deleteFailed');
 		// Backend already handles verification after data-only delete (startVerification in del())
 		activateArea(toolbarAreaID);
+	}
+
+	function openPeerDialog(): void {
+		// Capture the peerID VALUE (not the index): sorting/pruning can reorder currentPeers,
+		// so the index is not stable while the dialog is open.
+		const peer = currentPeers[selectedPeerIndex];
+		if (!peer) return;
+		selectedPeerID = peer.peerID;
+		selectedPeerSnapshot = peer;
+		showPeerDialog = true;
+	}
+
+	function handlePeerDialogBack(): void {
+		showPeerDialog = false;
+		selectedPeerSnapshot = null;
+		activateArea(peerListAreaID);
 	}
 
 	const toolbarHandlers = {
@@ -417,7 +460,9 @@
 			return false;
 		},
 		confirmDown(): void {},
-		confirmUp(): void {},
+		confirmUp(): void {
+			openPeerDialog();
+		},
 		confirmCancel(): void {},
 		pageUp(): void {
 			if (currentPeers.length === 0) return;
@@ -763,16 +808,7 @@
 							</Header>
 							<div class="items">
 								{#each download.files as file, index (file.id)}
-									<div
-										onclick={() => handleFileClick(index)}
-										onmouseenter={() => {
-											activateArea(listAreaID);
-											selectedFileIndex = index;
-										}}
-										onkeydown={e => e.key === 'Enter' && handleFileClick(index)}
-										role="row"
-										tabindex="-1"
-									>
+									<div onclick={() => handleFileClick(index)} onmouseenter={() => handleFileHover(index)} onkeydown={e => e.key === 'Enter' && handleFileClick(index)} role="row" tabindex="-1">
 										<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
 									</div>
 								{/each}
@@ -799,7 +835,7 @@
 									{@const rowSelected = peerListActive && selectedPeerIndex === index}
 									{@const downloadColor = rowSelected ? '--primary-background' : '--mode-download-fg'}
 									{@const uploadColor = rowSelected ? '--primary-background' : '--mode-upload-fg'}
-									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale}>
+									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale} onclick={() => handlePeerClick(index)} onmouseenter={() => handlePeerHover(index)}>
 										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
 										<Cell><span class="peer-id">{peer.peerID}</span></Cell>
 										<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
@@ -840,5 +876,8 @@
 	</div>
 	{#if showDeleteDialog && download}
 		<DownloadDetailDelete lishID={download.id} lishName={download.name} {position} onResult={handleDeleteResult} onBack={handleDeleteCancel} />
+	{/if}
+	{#if showPeerDialog && download && selectedPeerSnapshot}
+		<DownloadDetailPeer lishID={download.id} peerID={selectedPeerID} initialPeer={selectedPeerSnapshot} {position} onBack={handlePeerDialogBack} />
 	{/if}
 {/if}

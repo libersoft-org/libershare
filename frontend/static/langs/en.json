@@ -142,6 +142,25 @@
 			"availability": "Avail",
 			"activity": "Last seen"
 		},
+		"peerDetail": {
+			"title": "Peer detail",
+			"peerID": "Peer ID",
+			"connection": "Connection type",
+			"availability": "Availability",
+			"currentFile": "Current file",
+			"downloadSpeed": "Download speed",
+			"uploadSpeed": "Upload speed",
+			"downloaded": "Downloaded",
+			"uploaded": "Uploaded",
+			"connectedAt": "Connected",
+			"lastActivity": "Last activity",
+			"secondsAgo": "{seconds}s ago",
+			"stale": "This peer is currently inactive.",
+			"disconnected": "This peer has disconnected.",
+			"copyID": "Copy peer ID",
+			"close": "Close",
+			"peerIDCopied": "Peer ID copied to clipboard"
+		},
 		"uploaded": "Uploaded",
 		"downloaded": "Downloaded",
 		"downloadSpeed": "Download speed",
@@ -342,6 +361,12 @@
 			"allNetworksExported": "All LISH networks were exported",
 			"meshState": {
 				"unknown": "No LISH networks joined",
+				"forming": "Mesh is still forming — searches may be incomplete",
+				"unstable": "Mesh peers have low scores — degraded routing",
+				"stable": "Mesh is stable — broadcasts will reach the fleet"
+			},
+			"meshStateNetwork": {
+				"disabled": "Not connected — mesh inactive",
 				"forming": "Mesh is still forming — searches may be incomplete",
 				"unstable": "Mesh peers have low scores — degraded routing",
 				"stable": "Mesh is stable — broadcasts will reach the fleet"

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { isMouseActive } from '../../scripts/input/mouse.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { t, withDetail, translateError } from '../../scripts/language.ts';
@@ -44,8 +45,8 @@
 		onSaveError?: ((error: string) => void) | undefined; // Called on save error
 		onDownAtEnd?: (() => boolean) | undefined;
 		specialFileTypes?: { extensions: string[]; onOpen: (path: string) => void }[] | undefined;
-		/** When provided, adds a "Share" action for files and directories that calls back with the selected path. */
-		onShare?: ((path: string) => void) | undefined;
+		/** When provided, adds a "Share" action for files and directories that calls back with the selected path and the directory currently being browsed (so callers can return the user to it). */
+		onShare?: ((path: string, browseDir: string) => void) | undefined;
 	}
 	const columns = '1fr 8vw 12vw';
 	let { areaID, position, initialPath = '', initialFile, directoriesOnly = false, filesOnly = false, fileFilter, fileFilterName, showPath = true, selectDirectoryButton: selectDirectoryButton = false, selectFileButton = false, saveFileName, saveContent, useGzip = false, onBack, onSelect, onSaveFileNameChange, onSaveComplete, onSaveError, onDownAtEnd, specialFileTypes, onShare }: Props = $props();
@@ -190,6 +191,13 @@
 
 	function scrollToSelected(): void {
 		scrollToElement(itemElements, selectedIndex);
+	}
+
+	// Hover-select only while the mouse is active, so a scroll under a stale cursor can't hijack it.
+	function handleItemHover(index: number): void {
+		if (!isMouseActive()) return;
+		activateArea(listAreaID);
+		selectedIndex = index;
 	}
 
 	function handleItemClick(index: number): void {
@@ -519,7 +527,7 @@
 				handleOpenFile(item);
 				break;
 			case 'share':
-				onShare?.(item.path);
+				onShare?.(item.path, currentPath);
 				break;
 			case 'edit':
 				showEditor(item);
@@ -543,7 +551,7 @@
 				onSelect?.(currentPath);
 				break;
 			case 'share':
-				onShare?.(currentPath);
+				onShare?.(currentPath, currentPath);
 				break;
 			case 'new':
 				showNewDirectoryDialog();
@@ -1227,39 +1235,11 @@
 								</div>
 							{:else if error}
 								{#each filteredItems as item, index (item.id)}
-									<StorageItem
-										bind:el={itemElements[index]}
-										name={item.name}
-										type={item.type}
-										size={item.size}
-										modified={item.modified}
-										selected={(active || actionsActive) && selectedIndex === index}
-										isLast={index === filteredItems.length - 1}
-										onclick={() => handleItemClick(index)}
-										onmouseenter={() => {
-											activateArea(listAreaID);
-											selectedIndex = index;
-										}}
-										onkeydown={e => e.key === 'Enter' && handleItemClick(index)}
-									/>
+									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
 								{/each}
 							{:else}
 								{#each filteredItems as item, index (item.id)}
-									<StorageItem
-										bind:el={itemElements[index]}
-										name={item.name}
-										type={item.type}
-										size={item.size}
-										modified={item.modified}
-										selected={(active || actionsActive) && selectedIndex === index}
-										isLast={index === filteredItems.length - 1}
-										onclick={() => handleItemClick(index)}
-										onmouseenter={() => {
-											activateArea(listAreaID);
-											selectedIndex = index;
-										}}
-										onkeydown={e => e.key === 'Enter' && handleItemClick(index)}
-									/>
+									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
 								{/each}
 							{/if}
 						</div>
