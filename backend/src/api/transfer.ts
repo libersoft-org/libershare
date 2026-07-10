@@ -115,6 +115,24 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	const activeDownloaders = new Map<string, Downloader>();
 	setActiveDownloadersRef(activeDownloaders);
 
+	// When a lishnet is left, stop any download bound EXCLUSIVELY to it: a
+	// downloader keeps running as long as at least one of its networks is still
+	// joined (multi-network downloads can still source chunks elsewhere). Only
+	// when none of its networks remain joined is there no peer source left, so we
+	// disable it (leaving DB/enabled flags untouched — a re-join can resume it).
+	networks.onNetworkLeft = (networkID: string) => {
+		for (const [lishID, dl] of activeDownloaders) {
+			const ids = dl.getNetworkIDs?.() ?? [];
+			if (!ids.includes(networkID)) continue;
+			if (ids.some(id => networks.isJoined(id))) continue;
+			console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, disabling download`);
+			dl.disable();
+			// dl.disable() alone emits nothing over WS — tell the FE the download
+			// stopped. DB enabled flags stay untouched so a re-join can resume it.
+			broadcast?.('transfer.download:disabled', { lishID });
+		}
+	};
+
 	// Error recovery: auto-retry when IO conditions clear
 	const recovery = new ErrorRecovery({
 		attemptRecover: async (lishID, downloadWasEnabled, uploadWasEnabled): Promise<boolean> => {

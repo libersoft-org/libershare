@@ -119,6 +119,14 @@ export class Network {
 	 */
 	private readonly seenSearchIDs = new Map<string, number>();
 	private bootstrapPeerIDs: Set<string> = new Set();
+	/**
+	 * Peer IDs whose bootstrap entries came from explicit network config
+	 * ('configured' origin — startup config or a manual bootstrap edit). Kept
+	 * separate from bootstrapPeerIDs, which also collects peer-announce
+	 * discoveries: those are plain content peers and must remain
+	 * disconnectable by lishnet leave (isBootstrapOrRelayPeer).
+	 */
+	private configuredBootstrapPeerIDs: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
 	private bootstrapMultiaddrs: any[] = [];
 
@@ -172,6 +180,12 @@ export class Network {
 
 	/** Per-instance dedup set for PX ingress log keys; owned here, passed into gossipsub-patches deps. */
 	private readonly pxIngressLogKeys = new Set<string>();
+
+	/**
+	 * Handlers subscribed via {@link onPeerDisconnect}. Held at Network level
+	 * (not bound to a node instance) so subscriptions survive node restarts.
+	 */
+	private readonly peerDisconnectHandlers = new Set<(peerID: string) => void>();
 
 	/** Handles incoming LISH-serving pubsub messages (want, searchLishs). */
 	private readonly lishHandlers: LISHServingHandlers;
@@ -267,6 +281,23 @@ export class Network {
 	}
 
 	/**
+	 * Subscribe to peer disconnects for the duration of the returned disposer.
+	 * The handler receives the disconnected peer's ID as a string.
+	 *
+	 * Handlers live at Network level, NOT on the current libp2p node: the
+	 * permanent `peer:disconnect` listener installed by {@link start} fans out
+	 * to this set, so subscriptions survive a node restart (identity
+	 * import/regenerate) that would otherwise silently drop them together with
+	 * the old node's listeners. Used by downloads to drop a vanished peer from
+	 * their per-LISH peer manager immediately, instead of waiting for the next
+	 * failed dial/probe to notice the dead connection.
+	 */
+	onPeerDisconnect(handler: (peerID: string) => void): () => void {
+		this.peerDisconnectHandlers.add(handler);
+		return () => this.peerDisconnectHandlers.delete(handler);
+	}
+
+	/**
 	 * Schedule a debounced check of peer counts for all subscribed topics.
 	 */
 	private schedulePeerCountCheck(): void {
@@ -352,6 +383,8 @@ export class Network {
 			myPeerID: privateKey.publicKey.toString(),
 		});
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
+		// Config-time bootstrap entries are by definition 'configured'.
+		this.configuredBootstrapPeerIDs = new Set(bootstrapPeerIDs);
 		this.bootstrapMultiaddrs = bootstrapMultiaddrs;
 
 		console.log('Creating libp2p node...');
@@ -429,7 +462,7 @@ export class Network {
 						}
 					}
 					const connType = remotePeerID ? classifyConnectionFn(remotePeerID, isRelay, this.dcutrPeers) : 'DIRECT';
-					await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType);
+					await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType, pid => this.sharesJoinedTopicWith(pid));
 				} catch (err: any) {
 					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
 				}
@@ -557,6 +590,14 @@ export class Network {
 				const now = Date.now();
 				for (const topic of this.pubsub.getTopics()) {
 					if (topic.startsWith(LISH_TOPIC_PREFIX)) this.lastMeshChange.set(topic, now);
+				}
+			}
+			// Fan out to Network-level subscribers (see onPeerDisconnect).
+			for (const h of this.peerDisconnectHandlers) {
+				try {
+					h(peerID);
+				} catch (err: any) {
+					trace(`[NET] peer-disconnect subscriber error: ${err?.message ?? err}`);
 				}
 			}
 			this.schedulePeerCountCheck();
@@ -915,6 +956,7 @@ export class Network {
 					continue;
 				}
 				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
+				if (peerID && origin === 'configured') this.configuredBootstrapPeerIDs.add(peerID);
 				const alreadyKnown = !!peerID && this.bootstrapPeerIDs.has(peerID);
 				if (peerID && !alreadyKnown) {
 					this.bootstrapPeerIDs.add(peerID);
@@ -1013,6 +1055,101 @@ export class Network {
 			console.log(`[NET] purged stale peerStore entry ${peerID.slice(0, 16)}… (reason: ${reason})`);
 		} catch (err: any) {
 			trace(`[NET] purgeStalePeer ${peerID.slice(0, 16)} failed: ${err?.message ?? err}`);
+		}
+	}
+
+	/**
+	 * True if the peer is one we must never voluntarily disconnect because it
+	 * provides infrastructure rather than being a plain content peer: an
+	 * explicitly configured bootstrap peer, or a relay some of our circuit
+	 * connections are routed THROUGH (dropping it would also kill transit for
+	 * any NAT'd peers reachable only via that relay).
+	 *
+	 * Peer-announce-discovered bootstrap entries and peers merely REACHED over
+	 * a relay are plain content peers — hanging those up touches only their own
+	 * connection, so lishnet leave may disconnect them.
+	 *
+	 * Used by lishnet leave to decide which topic peers are safe to hang up —
+	 * leaving an empty lishnet must not tear down shared bootstrap/relay links
+	 * that other still-joined lishnets depend on.
+	 */
+	isBootstrapOrRelayPeer(peerID: string): boolean {
+		if (this.configuredBootstrapPeerIDs.has(peerID)) return true;
+		if (!this.node) return false;
+		try {
+			// A relay's ID is the hop right before /p2p-circuit in a circuit address:
+			// /ip4/../tcp/../p2p/<relayID>/p2p-circuit/p2p/<targetID>
+			for (const c of this.node.getConnections()) {
+				if (!Circuit.matches(c.remoteAddr)) continue;
+				const relayPrefix = c.remoteAddr.toString().split('/p2p-circuit')[0]!;
+				if (relayPrefix.endsWith(`/p2p/${peerID}`)) return true;
+			}
+			return false;
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * True if we currently share at least one joined lishnet topic with the
+	 * given peer — i.e. some lish topic WE are subscribed to lists the peer
+	 * among its subscribers.
+	 *
+	 * Coarse serve-gate for unicast LISH discovery: a peer we no longer
+	 * share any lishnet with must not be able to browse or search our shared
+	 * LISHs just because a transport connection exists (e.g. the peer's
+	 * keep-alive re-dialed us right after we left its network).
+	 */
+	sharesJoinedTopicWith(peerID: string): boolean {
+		if (!this.pubsub) return false;
+		for (const topic of this.pubsub.getTopics()) {
+			if (!topic.startsWith(LISH_TOPIC_PREFIX)) continue;
+			try {
+				if (this.pubsub.getSubscribers(topic).some((p: any) => p.toString() === peerID)) return true;
+			} catch {
+				// topic may be tearing down — treat as not shared
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Gracefully disconnect from a single peer and stop libp2p from immediately
+	 * re-dialing it. This is the ONLY place that should call `node.hangUp()` so
+	 * the accompanying ReconnectQueue cleanup (removing the `keep-alive-fleet`
+	 * tag) is never forgotten — without dropping that tag, `peer:discovery` /
+	 * ReconnectQueue would re-dial the peer within seconds and the disconnect
+	 * would be pointless.
+	 *
+	 * Unlike {@link purgeStalePeer} this does NOT delete the peerStore entry: the
+	 * peer is legitimate (we just no longer have a reason to stay connected after
+	 * leaving its lishnet), so we keep its addresses cached for cheap re-dial if
+	 * the user re-joins. Best-effort: failures are logged at trace, never thrown.
+	 */
+	async disconnectPeer(peerID: string): Promise<void> {
+		if (!this.node) return;
+		let pid: PeerID;
+		try {
+			pid = peerIDFromString(peerID);
+		} catch (err: any) {
+			trace(`[NET] disconnectPeer: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			return;
+		}
+		// Remove the fleet keep-alive tag FIRST so the imminent hangUp does not
+		// race the ReconnectQueue back into a re-dial. Passing undefined as the
+		// tag value removes it (per @libp2p/interface PeerStore merge semantics).
+		try {
+			await this.node.peerStore.merge(pid, {
+				tags: { 'keep-alive-fleet': undefined },
+			});
+		} catch (err: any) {
+			trace(`[NET] disconnectPeer: tag removal failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+		}
+		try {
+			await this.node.hangUp(pid);
+			trace(`[NET] disconnectPeer: hung up ${peerID.slice(0, 16)}`);
+		} catch (err: any) {
+			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
 	}
 

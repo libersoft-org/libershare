@@ -77,6 +77,8 @@ export class Downloader {
 	 */
 	private peerDiscoveryTimer: ReturnType<typeof setTimeout> | undefined;
 	private retryTimer: ReturnType<typeof setTimeout> | undefined;
+	// Disposer for the network `peer:disconnect` subscription; called in destroy().
+	private peerDisconnectDisposer: (() => void) | undefined;
 	private needsManifest = false;
 	private disabled = false;
 	private destroyed = false;
@@ -106,6 +108,15 @@ export class Downloader {
 
 	getLISHID(): string {
 		return this.lishID;
+	}
+
+	/**
+	 * The lishnet network IDs this download is bound to (the networks across
+	 * which it searches for and dials peers). Returned as a defensive copy so
+	 * callers cannot mutate the downloader's internal list.
+	 */
+	getNetworkIDs(): string[] {
+		return [...this.networkIDs];
 	}
 
 	/**
@@ -264,6 +275,8 @@ export class Downloader {
 		this.abortController.abort();
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
+		this.peerDisconnectDisposer?.();
+		this.peerDisconnectDisposer = undefined;
 		if (this.lishID) unregisterHaveAnnouncementHandler(this.lishID);
 		await this.peerManager.closeAllAwait('destroy');
 		// Notify frontend to reset peers/speed immediately
@@ -288,6 +301,30 @@ export class Downloader {
 		});
 	}
 
+	/**
+	 * Subscribe to network-wide peer disconnects so a vanished peer is removed
+	 * from our per-LISH peer manager immediately, rather than lingering until the
+	 * next probe/dial fails. Idempotent — a stale subscription is disposed first.
+	 * The disposer is released in {@link destroy}.
+	 */
+	private registerPeerDisconnectHandler(): void {
+		this.peerDisconnectDisposer?.();
+		this.peerDisconnectDisposer = this.network.onPeerDisconnect(peerID => this.dropPeer(peerID));
+	}
+
+	/**
+	 * Remove a peer from this download's peer manager because the underlying
+	 * libp2p connection dropped. Plain 'disconnect' disposition (not a punitive
+	 * drop/ban) — the peer may reconnect and be re-discovered normally. No-op if
+	 * the peer is not currently a member.
+	 */
+	dropPeer(peerID: string): void {
+		if (this.destroyed) return;
+		if (!this.peerManager.has(peerID)) return;
+		trace(`[DL] ${this.lishID?.slice(0, 8) ?? '?'}: dropping disconnected peer ${peerID.slice(0, 12)}`);
+		this.peerManager.remove(peerID, 'disconnect');
+	}
+
 	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkIDs: string | string[]) {
 		this.downloadDir = downloadDir;
 		this.network = network;
@@ -307,6 +344,7 @@ export class Downloader {
 		console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), ${this.dataServer.getMissingChunks(this.lishID).length} chunks to download`);
 		this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 		this.registerAnnouncementHandler();
+		this.registerPeerDisconnectHandler();
 		this.transitionTo('initialized', 'init() done');
 	}
 
@@ -326,6 +364,7 @@ export class Downloader {
 			console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), awaiting manifest from peer`);
 		}
 		this.registerAnnouncementHandler();
+		this.registerPeerDisconnectHandler();
 		this.transitionTo('initialized', 'initFromManifest() done');
 	}
 
