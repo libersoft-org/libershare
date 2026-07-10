@@ -231,10 +231,13 @@ export async function initDownloads(): Promise<void> {
 					const mine = transfers.filter(t => t.lishID === d.id);
 					const ul = mine.find(t => t.type === 'uploading');
 					const dl = mine.find(t => t.type === 'downloading');
+					// A download still zero-filling files reports 'allocating' (no peers yet) — surface it
+					// directly so a reconnect during allocation shows "allocating", not idle.
+					const isAllocating = mine.some(t => t.type === 'allocating');
 					// Only show as active when peers are actually connected
 					const isActiveDown = !!dl && dl.peers > 0;
 					const isActiveUp = !!ul && ul.peers > 0;
-					const status: DownloadStatus = computeStatus(isActiveDown, isActiveUp);
+					const status: DownloadStatus = isAllocating ? 'allocating' : computeStatus(isActiveDown, isActiveUp);
 					return {
 						...d,
 						...(status !== 'idling' && !isStatusLocked(d.status) ? { status } : {}),
