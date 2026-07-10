@@ -27,6 +27,9 @@
 
 	let adding = $state(false);
 	let loadingDetail = $state(false);
+	// Add and Details share the peer-fallback loop and its `tryingPeer` indicator, so they
+	// must not run concurrently — one finishing would clear/overwrite the other's state.
+	let busy = $derived(adding || loadingDetail);
 	let detail = $state<IPeerLishDetail | null>(null);
 	let tryingPeer = $state<TryingPeerInfo | null>(null);
 
@@ -44,7 +47,7 @@
 	}
 
 	async function handleAddToSharing(): Promise<void> {
-		if (adding || row.peers.length === 0) return;
+		if (busy || row.peers.length === 0) return;
 		adding = true;
 		try {
 			await tryPeers((peerID, networkID) => api.lishnets.addPeerLish(row.id, peerID, networkID));
@@ -57,11 +60,12 @@
 	}
 
 	async function handleShowDetail(): Promise<void> {
-		if (loadingDetail || row.peers.length === 0) return;
+		// Closing an already-loaded detail is a pure UI toggle — allow it even while Add runs.
 		if (detail) {
 			detail = null;
 			return;
 		}
+		if (busy || row.peers.length === 0) return;
 		loadingDetail = true;
 		try {
 			detail = await tryPeers(async (peerID, networkID) => {
@@ -183,8 +187,8 @@
 		<div class="button-bar-wrap">
 			<ButtonBar basePosition={[0, 0]}>
 				<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
-				<Button icon="/img/download.svg" label={$t('network.addToDownloads')} onConfirm={handleAddToSharing} width="auto" disabled={adding || row.peers.length === 0} />
-				<Button icon="/img/info.svg" label={$t('network.details')} onConfirm={handleShowDetail} width="auto" disabled={loadingDetail || row.peers.length === 0} />
+				<Button icon="/img/download.svg" label={$t('network.addToDownloads')} onConfirm={handleAddToSharing} width="auto" disabled={busy || row.peers.length === 0} />
+				<Button icon="/img/info.svg" label={$t('network.details')} onConfirm={handleShowDetail} width="auto" disabled={detail ? loadingDetail : busy || row.peers.length === 0} />
 			</ButtonBar>
 		</div>
 		{#if tryingPeer}
