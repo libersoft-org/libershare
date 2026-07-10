@@ -5,6 +5,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { api } from '../../scripts/api.ts';
+	import { withPeerFallback, type TryingPeerInfo } from '../../scripts/peerFallback.ts';
 	import { type LishSearchResult, type LISHNetworkConfig, type IPeerLishDetail } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -27,7 +28,7 @@
 	let adding = $state(false);
 	let loadingDetail = $state(false);
 	let detail = $state<IPeerLishDetail | null>(null);
-	let tryingPeer = $state<{ tail: string; current: number; total: number } | null>(null);
+	let tryingPeer = $state<TryingPeerInfo | null>(null);
 
 	function networkName(networkID: string): string {
 		return networks.find(n => n.networkID === networkID)?.name ?? networkID;
@@ -37,49 +38,22 @@
 		return () => onOpenPeer(peerID, networkID, row.id);
 	}
 
-	// Overall cap on the fallback loop — with many dead peers each attempt can take
-	// ~10s dial + up to 30s manifest timeout, so stop starting new attempts after this long.
-	const FALLBACK_DEADLINE_MS = 5 * 60 * 1000;
-
-	/**
-	 * Try each peer offering this LISH in turn until one answers, returning its result.
-	 * Realises the card's "take it from the first peer; if it times out, the next, and so on"
-	 * fallback: `getPeerLish` / `addPeerLish` target a single peer, so the loop provides the
-	 * resilience. Only peer-side failures (PEER_UNREACHABLE or errors flagged `tryNextPeer`)
-	 * move on to the next peer — local errors (e.g. LISH already added) surface immediately.
-	 * Throws the last error only if every peer failed.
-	 */
-	async function withPeerFallback<T>(op: (peerID: string, networkID: string) => Promise<T>): Promise<T> {
-		let lastErr: unknown = new Error('no peers');
-		const deadline = performance.now() + FALLBACK_DEADLINE_MS;
-		try {
-			for (let i = 0; i < row.peers.length; i++) {
-				if (i > 0 && performance.now() >= deadline) break;
-				const p = row.peers[i]!;
-				tryingPeer = { tail: '…' + p.peerID.slice(-6), current: i + 1, total: row.peers.length };
-				try {
-					return await op(p.peerID, p.networkID);
-				} catch (e) {
-					if ((e as any)?.code !== 'PEER_UNREACHABLE' && !(e as any)?.tryNextPeer) throw e;
-					lastErr = e;
-				}
-			}
-			throw lastErr;
-		} finally {
-			tryingPeer = null;
-		}
+	/** Run the shared peer-fallback loop over this row's peers, driving the indicator. */
+	function tryPeers<T>(op: (peerID: string, networkID: string) => Promise<T>): Promise<T> {
+		return withPeerFallback(row.peers, op, info => (tryingPeer = info));
 	}
 
 	async function handleAddToSharing(): Promise<void> {
 		if (adding || row.peers.length === 0) return;
 		adding = true;
 		try {
-			await withPeerFallback((peerID, networkID) => api.lishnets.addPeerLish(row.id, peerID, networkID));
+			await tryPeers((peerID, networkID) => api.lishnets.addPeerLish(row.id, peerID, networkID));
 			addNotification($t('network.lishAdded', { name: row.name || row.id }), 'success');
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
+		} finally {
+			adding = false;
 		}
-		adding = false;
 	}
 
 	async function handleShowDetail(): Promise<void> {
@@ -90,7 +64,7 @@
 		}
 		loadingDetail = true;
 		try {
-			detail = await withPeerFallback(async (peerID, networkID) => {
+			detail = await tryPeers(async (peerID, networkID) => {
 				const d = await api.lishnets.getPeerLish(row.id, peerID, networkID);
 				// A null answer means this peer had nothing for us — flag it so the next peer is tried.
 				if (!d) throw Object.assign(new Error($t('network.peerDeclined')), { tryNextPeer: true });
@@ -98,8 +72,9 @@
 			});
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
+		} finally {
+			loadingDetail = false;
 		}
-		loadingDetail = false;
 	}
 
 	// y=0 — top bar (Back, Add to sharing, Details)

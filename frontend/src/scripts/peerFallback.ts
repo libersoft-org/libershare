@@ -1,0 +1,53 @@
+/**
+ * Peer fallback loop shared by the search-result actions (add to sharing, load detail).
+ * Pure module — no Svelte imports — so the retry behaviour is unit-testable.
+ */
+
+/** A single peer offering a LISH, as listed in a search result. */
+export interface PeerRef {
+	peerID: string;
+	networkID: string;
+}
+
+/** Progress info for the "trying peer X (n/m)" indicator; null clears it. */
+export interface TryingPeerInfo {
+	tail: string;
+	current: number;
+	total: number;
+}
+
+/**
+ * Overall cap on the fallback loop — with many dead peers each attempt can take
+ * ~10s dial + up to 30s manifest timeout, so stop starting new attempts after this long.
+ */
+export const FALLBACK_DEADLINE_MS = 5 * 60 * 1000;
+
+/**
+ * Try each peer offering a LISH in turn until one answers, returning its result.
+ * Realises the card's "take it from the first peer; if it times out, the next, and so on"
+ * fallback: `getPeerLish` / `addPeerLish` target a single peer, so the loop provides the
+ * resilience. Only peer-side failures (PEER_UNREACHABLE or errors flagged `tryNextPeer`)
+ * move on to the next peer — local errors (e.g. LISH already added) surface immediately.
+ * Throws the last error if every peer failed; an empty peer list rejects immediately,
+ * so callers should guard it with their own UX.
+ */
+export async function withPeerFallback<T>(peers: readonly PeerRef[], op: (peerID: string, networkID: string) => Promise<T>, onTrying?: (info: TryingPeerInfo | null) => void, deadlineMs: number = FALLBACK_DEADLINE_MS): Promise<T> {
+	let lastErr: unknown = new Error('no peers');
+	const deadline = performance.now() + deadlineMs;
+	try {
+		for (let i = 0; i < peers.length; i++) {
+			if (i > 0 && performance.now() >= deadline) break;
+			const p = peers[i]!;
+			onTrying?.({ tail: '…' + p.peerID.slice(-6), current: i + 1, total: peers.length });
+			try {
+				return await op(p.peerID, p.networkID);
+			} catch (e) {
+				if ((e as any)?.code !== 'PEER_UNREACHABLE' && !(e as any)?.tryNextPeer) throw e;
+				lastErr = e;
+			}
+		}
+		throw lastErr;
+	} finally {
+		onTrying?.(null);
+	}
+}
