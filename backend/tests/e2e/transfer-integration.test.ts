@@ -526,7 +526,7 @@ describe('Downloader — download behavior with mocked peers', () => {
 
 		const result = await (
 			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'drop-peer'>;
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'drop-peer'>;
 			}
 		).downloadChunk(client, CHUNK_A);
 
@@ -546,7 +546,7 @@ describe('Downloader — download behavior with mocked peers', () => {
 
 		const result = await (
 			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'drop-peer'>;
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'drop-peer'>;
 			}
 		).downloadChunk(client, CHUNK_A);
 
@@ -564,7 +564,7 @@ describe('Downloader — download behavior with mocked peers', () => {
 
 		const result = await (
 			downloader as never as {
-				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'drop-peer'>;
+				downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'drop-peer'>;
 			}
 		).downloadChunk(client, CHUNK_A);
 

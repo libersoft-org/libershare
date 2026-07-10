@@ -154,22 +154,43 @@ export class ChunkDownloader {
 			peerManager.markActive(peerID);
 			let skippedChunks = 0;
 			let consecutiveNotAvailable = 0;
+			// Chunks this peer answered PEER_CHUNK_NOT_FOUND for — never re-request them from
+			// the same peer within this session (they stay in the shared queue for other peers).
+			// Without this, a partial seeder missing ≥10 consecutive chunks ahead of one it HAS
+			// gets dropped before the queue cursor ever reaches the servable chunk (starvation).
+			const notFound = new Set<string>();
 			while (true) {
 				if (this.deps.isDestroyed() || this.deps.isDisabled()) break;
 				await pauseController.waitIfDisabled();
 				await pauseController.waitIfWritePaused();
 				let chunk: MissingChunk | undefined;
+				let onlyNotFoundLeft = false;
 				await lock.runExclusive(() => {
+					const unservable: MissingChunk[] = [];
 					while (queueIdx < queue.length) {
-						const candidate = queue[queueIdx++];
+						const candidate = queue[queueIdx++]!;
 						// Skip chunks already downloaded (dedup re-queued entries)
-						if (!dataServer.isChunkDownloaded(lishID, candidate!.chunkID)) {
-							chunk = candidate;
-							break;
+						if (dataServer.isChunkDownloaded(lishID, candidate.chunkID)) continue;
+						if (notFound.has(candidate.chunkID)) {
+							unservable.push(candidate);
+							continue;
 						}
+						chunk = candidate;
+						break;
 					}
+					// Chunks this peer can't serve go back to the queue for other peers.
+					if (unservable.length > 0) queue.push(...unservable);
+					if (!chunk && unservable.length > 0) onlyNotFoundLeft = true;
 				});
-				if (!chunk) break;
+				if (!chunk) {
+					if (onlyNotFoundLeft) {
+						// Every remaining chunk is one this peer doesn't have — nothing useful.
+						// Same soft drop as before; peer can come back via HAVE broadcast or retry session.
+						console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped: has none of the remaining chunks (${notFound.size} not-found)`);
+						await peerManager.removeAwait(peerID, 'drop');
+					}
+					break;
+				}
 
 				// Throttle BEFORE downloading \u2014 ensures bandwidth is reserved before network transfer
 				touchPeer(lishID, peerID, 'download');
@@ -185,6 +206,23 @@ export class ChunkDownloader {
 					});
 					break;
 				}
+				if (result === 'chunk-not-found') {
+					// Definitive per-chunk answer — remember it and never re-ask this peer.
+					// Does NOT count toward the consecutive-skip drop: a partial seeder is
+					// still useful for the chunks it does have (pull skips not-found ones).
+					notFound.add(chunk.chunkID);
+					skippedChunks++;
+					globalNotAvailable++;
+					await lock.runExclusive(() => {
+						queue.push(chunk!);
+					});
+					if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
+					if (globalNotAvailable > queue.length) {
+						console.debug(`[DL] Peer ${peerID.slice(0, 12)} exhausted (${globalNotAvailable} skip-chunk)`);
+						break;
+					}
+					continue;
+				}
 				if (result === 'skip-chunk') {
 					skippedChunks++;
 					globalNotAvailable++;
@@ -194,7 +232,7 @@ export class ChunkDownloader {
 						queue.push(chunk!);
 					});
 					if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
-					// Per-peer: disconnect if peer has nothing useful (10 consecutive skip-chunk)
+					// Per-peer: disconnect if peer keeps failing transiently (10 consecutive busy/IO skips)
 					if (consecutiveNotAvailable >= 10) {
 						console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped: ${consecutiveNotAvailable} consecutive skip-chunk`);
 						await peerManager.removeAwait(peerID, 'drop');
@@ -458,26 +496,36 @@ export class ChunkDownloader {
 	/**
 	 * Request a single chunk from a peer over an existing client.
 	 * Result semantics:
-	 *   - { data }       \u2192 success, chunk received
-	 *   - 'skip-chunk'   \u2192 peer has the LISH but can't serve THIS chunk right now
-	 *                      (busy / missing / transient IO). Caller requeues and
-	 *                      counts consecutive skips (10\u00d7 \u2192 droppedPeers).
-	 *   - 'drop-peer'    \u2192 peer not useful now (no LISH, unreachable, invalid, unknown).
-	 *                      Caller requeues the chunk, moves peer to droppedPeers (soft
-	 *                      quarantine with auto-recovery via pubsub 'have' or the
-	 *                      ~5min cyclic reset). Never bans the peer permanently.
+	 *   - { data }           \u2192 success, chunk received
+	 *   - 'chunk-not-found'  \u2192 peer has the LISH but not THIS chunk (partial seeder).
+	 *                          Caller requeues for other peers and stops asking this
+	 *                          peer for the chunk within the session.
+	 *   - 'skip-chunk'       \u2192 transient failure for THIS chunk (busy / IO). Caller
+	 *                          requeues and counts consecutive skips (10\u00d7 \u2192 droppedPeers).
+	 *   - 'drop-peer'        \u2192 peer not useful now (no LISH, unreachable, invalid, unknown).
+	 *                          Caller requeues the chunk, moves peer to droppedPeers (soft
+	 *                          quarantine with auto-recovery via pubsub 'have' or the
+	 *                          ~5min cyclic reset). Never bans the peer permanently.
 	 * Permanent bans (bannedPeers) are reserved for actively malicious behavior
 	 * (corrupt chunks) and are handled by the caller above.
 	 */
-	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string): Promise<{ data: Uint8Array } | 'skip-chunk' | 'drop-peer'> {
+	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string): Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'drop-peer'> {
 		if (this.deps.isDisabled() || this.deps.isDestroyed()) return 'drop-peer';
 		try {
 			const data = await client.requestChunk(this.deps.lishID, chunkID);
 			return { data };
 		} catch (err) {
 			const code = (err as { code?: string }).code;
+			// Definitive per-chunk answer \u2014 the peer is an honest partial seeder.
+			if (code === ErrorCodes.PEER_CHUNK_NOT_FOUND) {
+				if (peerID && !this.notAvailableLoggedPeers.has(peerID)) {
+					this.notAvailableLoggedPeers.add(peerID);
+					console.debug(`[DL] first chunk-not-found from ${peerID.slice(0, 12)}`);
+				}
+				return 'chunk-not-found';
+			}
 			// Chunk-specific transient \u2014 peer has the LISH, but this particular chunk isn't servable right now.
-			if (code === ErrorCodes.PEER_BUSY || code === ErrorCodes.PEER_CHUNK_NOT_FOUND || code === ErrorCodes.PEER_IO_ERROR) {
+			if (code === ErrorCodes.PEER_BUSY || code === ErrorCodes.PEER_IO_ERROR) {
 				if (peerID && !this.notAvailableLoggedPeers.has(peerID)) {
 					this.notAvailableLoggedPeers.add(peerID);
 					console.debug(`[DL] first skip-chunk from ${peerID.slice(0, 12)}: ${code}`);
