@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
 	import { type IPeerLishDetail } from '@shared';
-	import { formatSize, formatDate } from '../../scripts/utils.ts';
+	import { formatSize, formatDateTime } from '../../scripts/utils.ts';
 	import Icon from '../../components/Icon/Icon.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import PeerDetailLishFileRow from './NetworkPeersPeerDetailLishFileRow.svelte';
@@ -192,7 +192,7 @@
 		{#if detail.description}
 			<div class="info-row"><span class="label">{$t('common.description')}:</span> <span class="value description">{detail.description}</span></div>
 		{/if}
-		<div class="info-row"><span class="label">{$t('network.created')}:</span> <span class="value">{formatDate(detail.created)}</span></div>
+		<div class="info-row"><span class="label">{$t('network.created')}:</span> <span class="value">{formatDateTime(detail.created)}</span></div>
 		<div class="info-row"><span class="label">{$t('network.totalSize')}:</span> <span class="value">{formatSize(detail.totalSize)}</span></div>
 		<div class="info-row"><span class="label">{$t('network.chunkSize')}:</span> <span class="value">{formatSize(detail.chunkSize)}</span></div>
 		<div class="info-row"><span class="label">{$t('network.checksumAlgo')}:</span> <span class="value">{detail.checksumAlgo}</span></div>
