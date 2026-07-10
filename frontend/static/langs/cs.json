@@ -105,6 +105,7 @@
 		"relayed": "{count} přes předávače",
 		"noPeers": "Žádní připojení účastníci.",
 		"peerDeclined": "Účastník odmítl sdílet svůj seznam nebo neodpověděl.",
+		"tryingPeer": "Zkouším účastníka",
 		"noSharedLishs": "Tento účastník nesdílí žádné LISHe.",
 		"addToDownloads": "Přidat ke stahování",
 		"details": "Podrobnosti",

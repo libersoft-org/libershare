@@ -105,6 +105,7 @@
 		"relayed": "{count} relayed",
 		"noPeers": "No connected peers found.",
 		"peerDeclined": "Peer declined to share their list or did not respond.",
+		"tryingPeer": "Trying peer",
 		"noSharedLishs": "This peer is not sharing any LISHs.",
 		"addToDownloads": "Add to Downloads",
 		"details": "Details",
