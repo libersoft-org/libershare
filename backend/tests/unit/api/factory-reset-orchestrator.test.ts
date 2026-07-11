@@ -276,7 +276,7 @@ describe('buildFactoryResetHandler — peers category', () => {
 		expect(called).not.toContain('clearDatastore');
 	});
 
-	it('peers defaults to false when no options are given (does not wipe by default)', async () => {
+	it('peers defaults to true when no options are given (wipes by default)', async () => {
 		const called: string[] = [];
 		const deps = makeDeps({
 			networkOverride: {
@@ -289,7 +289,7 @@ describe('buildFactoryResetHandler — peers category', () => {
 		const handler = buildFactoryResetHandler(deps);
 		// Call with explicit all-true for the four original categories only
 		await handler({ settings: true, identity: true, downloads: true, networks: true });
-		expect(called).not.toContain('clearPeerstore');
+		expect(called).toContain('clearPeerstore');
 	});
 });
 
