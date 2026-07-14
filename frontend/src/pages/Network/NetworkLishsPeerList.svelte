@@ -5,11 +5,12 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { api } from '../../scripts/api.ts';
-	import { withPeerFallback, type TryingPeerInfo } from '../../scripts/peerFallback.ts';
+	import { withPeerFallback, type PeerAttemptStatus } from '../../scripts/peerFallback.ts';
 	import { type LishSearchResult, type LISHNetworkConfig, type IPeerLishDetail } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Spinner from '../../components/Spinner/Spinner.svelte';
+	import Icon from '../../components/Icon/Icon.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import TableHeader from '../../components/Table/TableHeader.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
@@ -27,11 +28,12 @@
 
 	let adding = $state(false);
 	let loadingDetail = $state(false);
-	// Add and Details share the peer-fallback loop and its `tryingPeer` indicator, so they
+	// Add and Details share the peer-fallback loop and its per-row status column, so they
 	// must not run concurrently — one finishing would clear/overwrite the other's state.
 	let busy = $derived(adding || loadingDetail);
 	let detail = $state<IPeerLishDetail | null>(null);
-	let tryingPeer = $state<TryingPeerInfo | null>(null);
+	// Fallback progress per peer row (indexed like row.peers); outcomes persist until the next run.
+	let peerStatuses = $state<Array<PeerAttemptStatus | null>>([]);
 
 	function networkName(networkID: string): string {
 		return networks.find(n => n.networkID === networkID)?.name ?? networkID;
@@ -41,9 +43,10 @@
 		return () => onOpenPeer(peerID, networkID, row.id);
 	}
 
-	/** Run the shared peer-fallback loop over this row's peers, driving the indicator. */
+	/** Run the shared peer-fallback loop over this row's peers, driving the per-row statuses. */
 	function tryPeers<T>(op: (peerID: string, networkID: string) => Promise<T>): Promise<T> {
-		return withPeerFallback(row.peers, op, info => (tryingPeer = info));
+		peerStatuses = [];
+		return withPeerFallback(row.peers, op, (index, status) => (peerStatuses[index] = status));
 	}
 
 	async function handleAddToSharing(): Promise<void> {
@@ -146,17 +149,13 @@
 		font-family: var(--font-mono);
 	}
 
-	.trying-peer {
+	.peer-status {
 		display: flex;
 		justify-content: center;
 		align-items: center;
-		gap: 1vh;
+		gap: 0.8vh;
 		font-size: 1.8vh;
-		color: var(--secondary-foreground);
-	}
-
-	.trying-peer .peer-tail {
-		font-family: var(--font-mono);
+		white-space: nowrap;
 	}
 
 	.button-bar-wrap {
@@ -191,12 +190,6 @@
 				<Button icon="/img/info.svg" label={$t('network.details')} onConfirm={handleShowDetail} width="auto" disabled={detail ? loadingDetail : busy || row.peers.length === 0} />
 			</ButtonBar>
 		</div>
-		{#if tryingPeer}
-			<div class="trying-peer">
-				<Spinner size="3vh" />
-				<span>{$t('network.tryingPeer')} <span class="peer-tail">{tryingPeer.tail}</span> ({tryingPeer.current}/{tryingPeer.total})</span>
-			</div>
-		{/if}
 		{#if detail}
 			<NetworkLishDetailView {detail} />
 		{:else}
@@ -206,17 +199,27 @@
 			</div>
 		{/if}
 
-		<Table columns="auto 1fr 12vh">
+		<Table columns="auto 1fr 12vh 18vh">
 			<TableHeader>
 				<TableCell desktopOnly>#</TableCell>
 				<TableCell>{$t('network.peerID')}</TableCell>
 				<TableCell align="center">{$t('network.network')}</TableCell>
+				<TableCell align="center">{$t('common.status')}</TableCell>
 			</TableHeader>
 			{#each row.peers as p, i}
 				<TableRow position={[0, 2 + i]} onConfirm={makeOpenHandler(p.peerID, p.networkID)}>
 					<TableCell desktopOnly>{i + 1}</TableCell>
 					<TableCell><span class="peer-id">{p.peerID}</span></TableCell>
 					<TableCell align="center">{networkName(p.networkID)}</TableCell>
+					<TableCell align="center">
+						{#if peerStatuses[i] === 'downloading'}
+							<span class="peer-status"><Spinner size="2vh" />{$t('network.statusDownloading')}</span>
+						{:else if peerStatuses[i] === 'downloaded'}
+							<span class="peer-status"><Icon img="/img/check.svg" size="2vh" padding="0" colorVariable="--color-success" />{$t('network.statusDownloaded')}</span>
+						{:else if peerStatuses[i] === 'unavailable'}
+							<span class="peer-status"><Icon img="/img/cross.svg" size="2vh" padding="0" colorVariable="--color-error" />{$t('network.statusUnavailable')}</span>
+						{/if}
+					</TableCell>
 				</TableRow>
 			{/each}
 		</Table>

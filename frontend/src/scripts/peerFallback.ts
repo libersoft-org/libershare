@@ -9,12 +9,8 @@ export interface PeerRef {
 	networkID: string;
 }
 
-/** Progress info for the "trying peer X (n/m)" indicator; null clears it. */
-export interface TryingPeerInfo {
-	tail: string;
-	current: number;
-	total: number;
-}
+/** Per-peer attempt outcome shown in the peer table row; null clears an in-flight state. */
+export type PeerAttemptStatus = 'downloading' | 'downloaded' | 'unavailable';
 
 /**
  * Overall cap on the fallback loop — with many dead peers each attempt can take
@@ -41,24 +37,32 @@ export function isRetryablePeerError(error: unknown): boolean {
  * resilience. Only retryable failures (see {@link isRetryablePeerError}) move on to the
  * next peer — local errors surface immediately. Throws the last error if every peer failed;
  * an empty peer list rejects immediately, so callers should guard it with their own UX.
+ *
+ * `onStatus` reports per-peer progress for the peer table rows: `downloading` when an
+ * attempt starts, then `downloaded` or `unavailable` with its outcome. Statuses are not
+ * cleared when the loop ends — the outcome stays visible — except after a non-retryable
+ * error, where the in-flight peer gets `null`: the failure is local, so branding the peer
+ * unavailable would be wrong. Callers reset all statuses when they start a new run.
  */
-export async function withPeerFallback<T>(peers: readonly PeerRef[], op: (peerID: string, networkID: string) => Promise<T>, onTrying?: (info: TryingPeerInfo | null) => void, deadlineMs: number = FALLBACK_DEADLINE_MS): Promise<T> {
+export async function withPeerFallback<T>(peers: readonly PeerRef[], op: (peerID: string, networkID: string) => Promise<T>, onStatus?: (index: number, status: PeerAttemptStatus | null) => void, deadlineMs: number = FALLBACK_DEADLINE_MS): Promise<T> {
 	let lastErr: unknown = new Error('no peers');
 	const deadline = performance.now() + deadlineMs;
-	try {
-		for (let i = 0; i < peers.length; i++) {
-			if (i > 0 && performance.now() >= deadline) break;
-			const p = peers[i]!;
-			onTrying?.({ tail: '…' + p.peerID.slice(-6), current: i + 1, total: peers.length });
-			try {
-				return await op(p.peerID, p.networkID);
-			} catch (e) {
-				if (!isRetryablePeerError(e)) throw e;
-				lastErr = e;
+	for (let i = 0; i < peers.length; i++) {
+		if (i > 0 && performance.now() >= deadline) break;
+		const p = peers[i]!;
+		onStatus?.(i, 'downloading');
+		try {
+			const result = await op(p.peerID, p.networkID);
+			onStatus?.(i, 'downloaded');
+			return result;
+		} catch (e) {
+			if (!isRetryablePeerError(e)) {
+				onStatus?.(i, null);
+				throw e;
 			}
+			onStatus?.(i, 'unavailable');
+			lastErr = e;
 		}
-		throw lastErr;
-	} finally {
-		onTrying?.(null);
 	}
+	throw lastErr;
 }

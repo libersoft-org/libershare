@@ -9,7 +9,7 @@
  * `bun test` without the Svelte runtime.
  */
 import { test, expect } from 'bun:test';
-import { withPeerFallback, isRetryablePeerError, type PeerRef, type TryingPeerInfo } from '../../src/scripts/peerFallback.ts';
+import { withPeerFallback, isRetryablePeerError, type PeerRef, type PeerAttemptStatus } from '../../src/scripts/peerFallback.ts';
 
 const PEERS: PeerRef[] = [
 	{ peerID: 'peer-one-aaaaaa', networkID: 'net-1' },
@@ -72,35 +72,62 @@ test('throws the last peer error when every peer fails', async () => {
 	).rejects.toThrow('PEER_BUSY');
 });
 
-test('reports each tried peer and clears the indicator at the end', async () => {
-	const seen: Array<TryingPeerInfo | null> = [];
+test('reports per-peer statuses across the fallback', async () => {
+	const seen: Array<[number, PeerAttemptStatus | null]> = [];
 	await withPeerFallback(
 		PEERS,
 		async peerID => {
 			if (peerID === PEERS[0]!.peerID) throw codedError('PEER_UNREACHABLE');
 			return 'ok';
 		},
-		info => seen.push(info)
+		(index, status) => seen.push([index, status])
 	);
-	expect(seen).toEqual([{ tail: '…aaaaaa', current: 1, total: 2 }, { tail: '…bbbbbb', current: 2, total: 2 }, null]);
+	expect(seen).toEqual([
+		[0, 'downloading'],
+		[0, 'unavailable'],
+		[1, 'downloading'],
+		[1, 'downloaded'],
+	]);
 });
 
 test('rejects immediately on an empty peer list', async () => {
 	await expect(withPeerFallback([], async () => 'never')).rejects.toThrow('no peers');
 });
 
-test('clears the indicator even when every peer fails', async () => {
-	const seen: Array<TryingPeerInfo | null> = [];
+test('marks every peer unavailable when all fail', async () => {
+	const seen: Array<[number, PeerAttemptStatus | null]> = [];
 	await expect(
 		withPeerFallback(
 			PEERS,
 			async () => {
 				throw codedError('PEER_UNREACHABLE');
 			},
-			info => seen.push(info)
+			(index, status) => seen.push([index, status])
 		)
 	).rejects.toThrow('PEER_UNREACHABLE');
-	expect(seen[seen.length - 1]).toBeNull();
+	expect(seen).toEqual([
+		[0, 'downloading'],
+		[0, 'unavailable'],
+		[1, 'downloading'],
+		[1, 'unavailable'],
+	]);
+});
+
+test('clears the in-flight status on a local error', async () => {
+	const seen: Array<[number, PeerAttemptStatus | null]> = [];
+	await expect(
+		withPeerFallback(
+			PEERS,
+			async () => {
+				throw codedError('LISH_ALREADY_EXISTS');
+			},
+			(index, status) => seen.push([index, status])
+		)
+	).rejects.toThrow('LISH_ALREADY_EXISTS');
+	expect(seen).toEqual([
+		[0, 'downloading'],
+		[0, null],
+	]);
 });
 
 test('stops starting new attempts once the deadline has passed', async () => {
