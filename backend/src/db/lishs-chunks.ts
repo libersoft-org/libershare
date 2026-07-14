@@ -127,6 +127,8 @@ export function getAllChunkSlots(db: Database, lishID: LISHid): ChunkSlot[] {
 export interface ChunkLocation {
 	filePath: string;
 	chunkIndex: number;
+	/** DB row id of the owning lishs_files record — lets callers reset that file's chunks. */
+	fileInternalID: number;
 }
 
 /**
@@ -142,7 +144,7 @@ export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID
 	for (const file of files) {
 		const chunks = db.query<{ checksum: string; have: number }, [number]>('SELECT checksum, have FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(file.id);
 		const chunkIndex = chunks.findIndex(c => c.checksum === chunkID);
-		if (chunkIndex !== -1 && chunks[chunkIndex]!.have) return { filePath: file.path, chunkIndex };
+		if (chunkIndex !== -1 && chunks[chunkIndex]!.have) return { filePath: file.path, chunkIndex, fileInternalID: file.id };
 	}
 	return null;
 }
