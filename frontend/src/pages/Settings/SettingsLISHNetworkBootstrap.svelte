@@ -51,6 +51,21 @@
 		timeout: '--color-error',
 		error: '--color-error',
 	};
+	/** Lower rank = healthier; a group of addresses reports its healthiest status. */
+	const STATUS_RANK: Record<BootstrapPeerStatus['status'], number> = {
+		connected: 0,
+		pending: 1,
+		'identity-mismatch': 2,
+		timeout: 3,
+		error: 4,
+	};
+
+	/** One table row: all address entries observed for the same peer identity. */
+	interface PeerGroup {
+		key: string;
+		peerID: string | null;
+		entries: BootstrapPeerStatus[];
+	}
 
 	function isProblem(p: BootstrapPeerStatus): boolean {
 		return p.status === 'identity-mismatch' || p.status === 'timeout' || p.status === 'error';
@@ -69,10 +84,28 @@
 		if (q) out = out.filter(p => p.multiaddr.toLowerCase().includes(q) || (p.expectedPeerID ?? '').toLowerCase().includes(q) || (p.actualPeerID ?? '').toLowerCase().includes(q));
 		return out;
 	});
-	let pagedPeers = $derived(filteredPeers.slice(0, pageSize));
-	let hasMore = $derived(filteredPeers.length > pageSize);
-	let showMorePos = $derived<NavPos>([0, pagedPeers.length + 2]);
-	let backPos = $derived<NavPos>([0, pagedPeers.length + 2 + (hasMore ? 1 : 0)]);
+	let groupedPeers = $derived.by(() => {
+		const groups = new Map<string, PeerGroup>();
+		for (const p of filteredPeers) {
+			const key = p.expectedPeerID ?? p.actualPeerID ?? p.multiaddr;
+			let g = groups.get(key);
+			if (!g) groups.set(key, (g = { key, peerID: p.expectedPeerID ?? p.actualPeerID, entries: [] }));
+			g.entries.push(p);
+		}
+		return [...groups.values()];
+	});
+	let pagedGroups = $derived(groupedPeers.slice(0, pageSize));
+	let hasMore = $derived(groupedPeers.length > pageSize);
+	let showMorePos = $derived<NavPos>([0, pagedGroups.length + 2]);
+	let backPos = $derived<NavPos>([0, pagedGroups.length + 2 + (hasMore ? 1 : 0)]);
+
+	function groupStatus(g: PeerGroup): BootstrapPeerStatus['status'] {
+		return g.entries.reduce((best, p) => (STATUS_RANK[p.status] < STATUS_RANK[best] ? p.status : best), g.entries[0]!.status);
+	}
+
+	function groupOrigins(g: PeerGroup): BootstrapPeerStatus['origin'][] {
+		return [...new Set(g.entries.map(p => p.origin))];
+	}
 
 	function short(s: string | null | undefined, head: number = 14, tail: number = 6): string {
 		if (!s) return '—';
@@ -80,8 +113,8 @@
 		return `${s.slice(0, head)}…${s.slice(-tail)}`;
 	}
 
-	function statusLabel(p: BootstrapPeerStatus): string {
-		switch (p.status) {
+	function statusLabel(status: BootstrapPeerStatus['status']): string {
+		switch (status) {
 			case 'connected':
 				return $t('settings.lishNetwork.bootstrap.connected');
 			case 'pending':
@@ -121,15 +154,15 @@
 
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
 	const peerSubPage = createSubPage(navHandle, () => areaID);
-	let selectedPeer = $state<BootstrapPeerStatus | null>(null);
+	let selectedGroup = $state<PeerGroup | null>(null);
 
-	function openPeerDetail(peer: BootstrapPeerStatus): void {
-		selectedPeer = peer;
-		peerSubPage.enter(short(peer.expectedPeerID), () => void closePeerDetail());
+	function openPeerDetail(group: PeerGroup): void {
+		selectedGroup = group;
+		peerSubPage.enter(short(group.peerID), () => void closePeerDetail());
 	}
 
 	async function closePeerDetail(): Promise<void> {
-		selectedPeer = null;
+		selectedGroup = null;
 		await peerSubPage.exit();
 	}
 </script>
@@ -200,10 +233,29 @@
 		white-space: nowrap;
 		display: block;
 	}
+
+	.addresses {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3vh;
+		min-width: 0;
+	}
+
+	.address-line {
+		display: flex;
+		align-items: center;
+		gap: 0.6vh;
+		min-width: 0;
+	}
+
+	.address-line .host {
+		flex: 1;
+		min-width: 0;
+	}
 </style>
 
-{#if peerSubPage.active && selectedPeer}
-	<LISHNetworkBootstrapPeer {areaID} {position} {network} peer={selectedPeer} {onUpdated} onBack={() => void closePeerDetail()} />
+{#if peerSubPage.active && selectedGroup}
+	<LISHNetworkBootstrapPeer {areaID} {position} {network} peers={selectedGroup.entries} {onUpdated} onBack={() => void closePeerDetail()} />
 {:else}
 	<div class="page" data-testid="bootstrap-page-{network.networkID}">
 		<div class="container">
@@ -232,23 +284,36 @@
 						<TableCell>{$t('settings.lishNetwork.bootstrap.colAddress')}</TableCell>
 						<TableCell align="center">{$t('settings.lishNetwork.bootstrap.colOrigin')}</TableCell>
 					</TableHeader>
-					{#each pagedPeers as peer, i (peer.multiaddr)}
-						<TableRow position={[0, i + 2]} onConfirm={() => openPeerDetail(peer)}>
+					{#each pagedGroups as group, i (group.key)}
+						<TableRow position={[0, i + 2]} onConfirm={() => openPeerDetail(group)}>
 							<TableCell>
-								<Icon img={STATUS_ICONS[peer.status]} size="2vh" padding="0" colorVariable={STATUS_COLORS[peer.status]} alt={statusLabel(peer)} />
+								<Icon img={STATUS_ICONS[groupStatus(group)]} size="2vh" padding="0" colorVariable={STATUS_COLORS[groupStatus(group)]} alt={statusLabel(groupStatus(group))} />
 							</TableCell>
 							<TableCell>
-								<span class="peer-id" title={peer.expectedPeerID ?? ''} data-testid="bootstrap-peer-{network.networkID}-{peer.expectedPeerID ?? peer.multiaddr}" data-status={peer.status} data-origin={peer.origin}>{short(peer.expectedPeerID)}</span>
+								<span class="peer-id" title={group.peerID ?? ''} data-testid="bootstrap-peer-{network.networkID}-{group.key}" data-status={groupStatus(group)} data-origin={groupOrigins(group).join(',')}>{short(group.peerID)}</span>
 							</TableCell>
 							<TableCell>
-								<span class="host" title={peer.multiaddr}>{peer.multiaddr.replace(/\/p2p\/.*$/, '')}</span>
+								<div class="addresses">
+									{#each group.entries as peer (peer.multiaddr)}
+										<div class="address-line">
+											{#if group.entries.length > 1}
+												<Icon img={STATUS_ICONS[peer.status]} size="1.6vh" padding="0" colorVariable={STATUS_COLORS[peer.status]} alt={statusLabel(peer.status)} />
+											{/if}
+											<span class="host" title={peer.multiaddr}>{peer.multiaddr.replace(/\/p2p\/.*$/, '')}</span>
+										</div>
+									{/each}
+								</div>
 							</TableCell>
-							<TableCell align="center">{peer.origin === 'configured' ? $t('settings.lishNetwork.bootstrap.originConfigured') : $t('settings.lishNetwork.bootstrap.originDiscovered')}</TableCell>
+							<TableCell align="center"
+								>{groupOrigins(group)
+									.map(origin => (origin === 'configured' ? $t('settings.lishNetwork.bootstrap.originConfigured') : $t('settings.lishNetwork.bootstrap.originDiscovered')))
+									.join(', ')}</TableCell
+							>
 						</TableRow>
 					{/each}
 				</Table>
 				{#if hasMore}
-					<Button icon="/img/down.svg" label={tt('settings.lishNetwork.bootstrap.showMore', { count: String(Math.min(PAGE_SIZE, filteredPeers.length - pageSize)), total: String(filteredPeers.length - pageSize) })} padding="1vh 1.5vh" fontSize="1.6vh" position={showMorePos} onConfirm={() => (pageSize += PAGE_SIZE)} />
+					<Button icon="/img/down.svg" label={tt('settings.lishNetwork.bootstrap.showMore', { count: String(Math.min(PAGE_SIZE, groupedPeers.length - pageSize)), total: String(groupedPeers.length - pageSize) })} padding="1vh 1.5vh" fontSize="1.6vh" position={showMorePos} onConfirm={() => (pageSize += PAGE_SIZE)} />
 				{/if}
 			{/if}
 			<Button icon="/img/back.svg" label={$t('common.back')} position={backPos} onConfirm={onBack} />
