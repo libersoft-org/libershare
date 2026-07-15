@@ -759,6 +759,10 @@
 							<Cell align="right">{download.downloadedSize ? `${download.downloadedSize} / ${download.size}` : download.size}</Cell>
 						</TableRow>
 						<TableRow>
+							<Cell>{$t('downloads.chunkSize')}:</Cell>
+							<Cell align="right">{formatSize(download.chunkSize)}</Cell>
+						</TableRow>
+						<TableRow>
 							<Cell>{$t('common.progress')}:</Cell>
 							<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating'} /></span></Cell>
 						</TableRow>

@@ -130,6 +130,7 @@
 	"downloads": {
 		"title": "Stahování a sdílení",
 		"id": "ID",
+		"chunkSize": "Velikost části",
 		"targetDirectory": "Cílový adresář",
 		"downloadingFrom": "Stahování od",
 		"uploadingTo": "Odesílání k",
