@@ -5,7 +5,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, type PeerDetail, computeEnabledMode } from '../../scripts/downloads.ts';
+	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, type PeerDetail, type DownloadFileData, computeEnabledMode } from '../../scripts/downloads.ts';
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
@@ -71,6 +71,8 @@
 	let isMoving = $derived(download?.status === 'moving');
 	let isAllocating = $derived(download?.status === 'allocating');
 	let isBusy = $derived(isVerifying || isMoving || isAllocating);
+	// While allocating, file rows show the allocation overlay; real download progress otherwise.
+	const fileDisplayProgress = (file: DownloadFileData): number => (isAllocating && file.allocProgress != null ? file.allocProgress : file.progress);
 	let isDownloading = $derived(download?.downloadEnabled ?? false);
 	let isUploading = $derived(download?.uploadEnabled ?? false);
 	let downloadPaused = $derived(!isDownloading);
@@ -813,7 +815,7 @@
 							<div class="items">
 								{#each download.files as file, index (file.id)}
 									<div onclick={() => handleFileClick(index)} onmouseenter={() => handleFileHover(index)} onkeydown={e => e.key === 'Enter' && handleFileClick(index)} role="row" tabindex="-1">
-										<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
+										<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={fileDisplayProgress(file)} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && fileDisplayProgress(file) < 100} />
 									</div>
 								{/each}
 							</div>
