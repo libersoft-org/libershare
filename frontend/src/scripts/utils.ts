@@ -24,6 +24,12 @@ export function formatDate(isoDate?: string): string {
 	return new Date(isoDate).toLocaleDateString();
 }
 
+// Format ISO date to localized date + time string
+export function formatDateTime(isoDate?: string): string {
+	if (!isoDate) return '—';
+	return new Date(isoDate).toLocaleString();
+}
+
 // Format an elapsed duration in seconds as zero-padded hh:mm:ss
 // @param seconds - Elapsed seconds (negative values clamp to 0)
 export function formatDuration(seconds: number): string {
