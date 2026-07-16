@@ -398,7 +398,7 @@
 				"replaceShort": "Fix ID",
 				"removeEntry": "Remove this peer",
 				"removeShort": "Remove",
-				"openLabel": "Peers",
+				"openLabel": "Bootstrap peers",
 				"filterAll": "All",
 				"filterConfigured": "Saved",
 				"filterDiscovered": "Discovered",
