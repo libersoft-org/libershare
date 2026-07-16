@@ -104,7 +104,17 @@ export class ChunkDownloader {
 		// non-zero \u2014 an in-flight failure requeues the chunk, possibly one that
 		// only the scanning peer can serve.
 		let inFlight = 0;
+		// Changes only when an in-flight request puts potentially useful work back
+		// into the queue. Idle peers watch this instead of repeatedly rotating the
+		// same per-peer notFound entries while nothing has settled.
+		let requeueVersion = 0;
 		const lock = new Mutex();
+		const requeueChunk = async (chunk: MissingChunk): Promise<void> => {
+			await lock.runExclusive(() => {
+				queue.push(chunk);
+				requeueVersion++;
+			});
+		};
 		// Track all peerLoop promises so we can await dynamically spawned ones
 		const peerLoopPromises = new Map<string, Promise<void>>();
 
@@ -173,6 +183,7 @@ export class ChunkDownloader {
 				await pauseController.waitIfWritePaused();
 				let chunk: MissingChunk | undefined;
 				let onlyNotFoundLeft = false;
+				let observedRequeueVersion = 0;
 				await lock.runExclusive(() => {
 					// Compact the consumed prefix — every requeue/rotation appends, so without
 					// this the array grows by O(requeues) and the dead slots are never reclaimed.
@@ -197,13 +208,16 @@ export class ChunkDownloader {
 					for (const u of unservable) queue.push(u);
 					if (!chunk && unservable.length > 0) onlyNotFoundLeft = true;
 					if (chunk) inFlight++;
+					observedRequeueVersion = requeueVersion;
 				});
 				if (!chunk) {
 					if (inFlight > 0) {
-						// Chunks are checked out by other peer loops — a failure there requeues
-						// them, possibly with one only this peer has. Re-scan shortly instead of
-						// exiting (or dropping) while work is still in flight.
-						await new Promise(r => setTimeout(r, 150));
+						// Chunks are checked out by other peer loops. Poll only the cheap
+						// counters until one is requeued or all in-flight work settles; do not
+						// re-scan and rotate an unchanged large queue every 150ms.
+						while (inFlight > 0 && requeueVersion === observedRequeueVersion && !this.deps.isDisabled() && !this.deps.isDestroyed()) {
+							await new Promise(r => setTimeout(r, 150));
+						}
 						continue;
 					}
 					if (onlyNotFoundLeft) {
@@ -218,20 +232,18 @@ export class ChunkDownloader {
 				try {
 					// Throttle BEFORE downloading \u2014 ensures bandwidth is reserved before network transfer
 					touchPeer(lishID, peerID, 'download');
-					await downloadLimiter.throttle(lish.chunkSize);
+					const limiterReservation = await downloadLimiter.throttle(lish.chunkSize);
 					const result = await this.downloadChunk(client, chunk.chunkID, peerID);
 					// Non-data results transferred no payload \u2014 return the reservation so failed
 					// probes (an unbounded number for a partial seeder) don't accumulate phantom
 					// debt on the shared limiter and starve real transfers.
-					if (typeof result === 'string') downloadLimiter.refund(lish.chunkSize);
+					if (typeof result === 'string') downloadLimiter.refund(limiterReservation);
 					if (result === 'drop-peer') {
 						// Peer unusable for this session (no LISH / unreachable / invalid / unknown error).
 						// Soft quarantine in droppedPeers \u2014 peer can come back via pubsub 'have' or ~5min cyclic reset.
 						console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped to droppedPeers`);
 						await peerManager.removeAwait(peerID, 'drop');
-						await lock.runExclusive(() => {
-							queue.push(chunk!);
-						});
+						await requeueChunk(chunk);
 						break;
 					}
 					if (result === 'chunk-not-found') {
@@ -245,9 +257,7 @@ export class ChunkDownloader {
 						skippedChunks++;
 						globalNotAvailable++;
 						consecutiveNotAvailable = 0;
-						await lock.runExclusive(() => {
-							queue.push(chunk!);
-						});
+						await requeueChunk(chunk);
 						if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
 						continue;
 					}
@@ -256,9 +266,7 @@ export class ChunkDownloader {
 						globalNotAvailable++;
 						consecutiveNotAvailable++;
 						if (skippedChunks % 500 === 0) trace(`[DL] Peer ${peerID.slice(0, 12)} skipped ${skippedChunks} chunks (skip-chunk, consecutive: ${consecutiveNotAvailable}, global: ${globalNotAvailable}/${queue.length})`);
-						await lock.runExclusive(() => {
-							queue.push(chunk!);
-						});
+						await requeueChunk(chunk);
 						if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
 						// Per-peer: disconnect if peer keeps failing transiently (10 consecutive busy/IO skips)
 						if (consecutiveNotAvailable >= 10) {
@@ -277,9 +285,7 @@ export class ChunkDownloader {
 						const count = (corruptCount.get(peerID) ?? 0) + 1;
 						corruptCount.set(peerID, count);
 						console.log(`[DL] Corrupt chunk from ${peerID.slice(0, 12)}: expected ${chunk.chunkID.slice(0, 12)}, got ${actualHash.slice(0, 12)} (${count}/${ChunkDownloader.MAX_CORRUPT_CHUNKS})`);
-						await lock.runExclusive(() => {
-							queue.push(chunk!);
-						});
+						await requeueChunk(chunk);
 						if (count >= ChunkDownloader.MAX_CORRUPT_CHUNKS) {
 							console.log(`[DL] Peer ${peerID.slice(0, 12)} banned: ${count} corrupt chunks`);
 							await peerManager.removeAwait(peerID, 'ban');
@@ -300,9 +306,7 @@ export class ChunkDownloader {
 							if (this.fileReallocInProgress.size > 0) {
 								// Another peer is already handling recovery \u2014 wait and re-queue
 								await pauseController.waitIfWritePaused();
-								await lock.runExclusive(() => {
-									queue.push(chunk!);
-								});
+								await requeueChunk(chunk);
 								continue;
 							}
 							const globalAttempts = (this.fileReallocAttempts.get(-1) ?? 0) + 1;
@@ -385,6 +389,7 @@ export class ChunkDownloader {
 								await lock.runExclusive(() => {
 									queue.length = queueIdx;
 									for (const mc of allMissing) queue.push(mc);
+									requeueVersion++;
 								});
 								progressReporter.emit({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: peerManager.size(), bytesPerSecond: 0 });
 								console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
@@ -407,9 +412,7 @@ export class ChunkDownloader {
 							if (pauseController.writePaused) {
 								// Another peer already handling the write error \u2014 just wait and re-queue
 								await pauseController.waitIfWritePaused();
-								await lock.runExclusive(() => {
-									queue.push(chunk!);
-								});
+								await requeueChunk(chunk);
 								continue;
 							}
 							this.writeRetryCount++;
@@ -455,9 +458,7 @@ export class ChunkDownloader {
 							}
 							if (writeAborted) break;
 							if (writeRequeue) {
-								await lock.runExclusive(() => {
-									queue.push(chunk!);
-								});
+								await requeueChunk(chunk);
 								continue;
 							}
 						} else {

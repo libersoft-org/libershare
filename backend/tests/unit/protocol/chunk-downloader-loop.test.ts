@@ -26,7 +26,8 @@ function makeChunks(count: number): { missing: MissingChunk[]; data: Map<ChunkID
 	const missing: MissingChunk[] = [];
 	const data = new Map<ChunkID, Uint8Array>();
 	for (let i = 0; i < count; i++) {
-		const payload = new Uint8Array(CHUNK_SIZE).fill(i + 1);
+		const payload = new Uint8Array(CHUNK_SIZE).fill((i + 1) & 0xff);
+		new DataView(payload.buffer).setUint32(0, i + 1, true);
 		const id = sha256hex(payload) as ChunkID;
 		missing.push({ fileIndex: 0, chunkIndex: i, chunkID: id });
 		data.set(id, payload);
@@ -36,6 +37,7 @@ function makeChunks(count: number): { missing: MissingChunk[]; data: Map<ChunkID
 
 class FakeDataServer {
 	downloadedChunks = new Set<ChunkID>();
+	isChunkDownloadedCalls = 0;
 	private missing: MissingChunk[];
 	constructor(missing: MissingChunk[]) {
 		this.missing = missing;
@@ -50,6 +52,7 @@ class FakeDataServer {
 		return [];
 	}
 	isChunkDownloaded(_l: LISHid, c: ChunkID): boolean {
+		this.isChunkDownloadedCalls++;
 		return this.downloadedChunks.has(c);
 	}
 	markChunkDownloaded(_l: LISHid, c: ChunkID): void {
@@ -69,14 +72,16 @@ class ScriptedClient {
 	requests: ChunkID[] = [];
 	private replies: Map<ChunkID, Reply>;
 	private delayMs: number;
-	constructor(replies: Map<ChunkID, Reply>, delayMs = 0) {
+	private delaySuccessOnly: boolean;
+	constructor(replies: Map<ChunkID, Reply>, delayMs = 0, delaySuccessOnly = false) {
 		this.replies = replies;
 		this.delayMs = delayMs;
+		this.delaySuccessOnly = delaySuccessOnly;
 	}
 	async requestChunk(_l: LISHid, c: ChunkID): Promise<Uint8Array> {
 		this.requests.push(c);
-		if (this.delayMs > 0) await new Promise(r => setTimeout(r, this.delayMs));
 		const reply = this.replies.get(c) ?? 'nf';
+		if (this.delayMs > 0 && (!this.delaySuccessOnly || reply instanceof Uint8Array)) await new Promise(r => setTimeout(r, this.delayMs));
 		if (reply === 'nf') throw new CodedError(ErrorCodes.PEER_CHUNK_NOT_FOUND, 'not found');
 		if (reply === 'busy') throw new CodedError(ErrorCodes.PEER_BUSY, 'busy');
 		return reply;
@@ -176,5 +181,41 @@ describe('ChunkDownloader peerLoop — partial seeder behavior', () => {
 		await cd.run();
 
 		expect(ds.downloadedChunks.has(onlyID)).toBe(true);
+	}, 15000);
+
+	it('does not repeatedly rotate an unchanged not-found queue while another chunk is in flight', async () => {
+		// The empty peer quickly learns that it cannot serve every chunk except the
+		// one held by the slow peer. Once it reaches only known-not-found entries it
+		// must wait for that request to settle without rescanning the whole queue on
+		// every 150ms poll.
+		const chunkCount = 1500;
+		const { missing, data } = makeChunks(chunkCount);
+		const slowChunkID = missing[1]!.chunkID;
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const empty = new ScriptedClient(new Map());
+		const slowHasOne = new ScriptedClient(new Map<ChunkID, Reply>([[slowChunkID, data.get(slowChunkID)!]]), 3000, true);
+		const cd = makeDownloader(ds, pm, chunkCount);
+		pm.tryAdd('peer-empty-fast0', empty as never, 'DIRECT');
+		pm.tryAdd('peer-slow-has01', slowHasOne as never, 'DIRECT');
+
+		const runPromise = cd.run();
+		const readyDeadline = Date.now() + 2000;
+		while ((!slowHasOne.requests.includes(slowChunkID) || empty.requests.length < chunkCount - 1) && Date.now() < readyDeadline) {
+			await new Promise(r => setTimeout(r, 10));
+		}
+		expect(slowHasOne.requests.includes(slowChunkID)).toBe(true);
+		expect(empty.requests.length).toBeGreaterThanOrEqual(chunkCount - 1);
+
+		const checksBeforeSteadyWait = ds.isChunkDownloadedCalls;
+		await new Promise(r => setTimeout(r, 600));
+		const checksDuringSteadyWait = ds.isChunkDownloadedCalls - checksBeforeSteadyWait;
+		// Counter polling performs no queue scan. The old loop added roughly one
+		// complete-manifest scan every 150ms during this stable interval.
+		expect(checksDuringSteadyWait).toBeLessThan(100);
+
+		await runPromise;
+
+		expect(ds.downloadedChunks.has(slowChunkID)).toBe(true);
 	}, 15000);
 });

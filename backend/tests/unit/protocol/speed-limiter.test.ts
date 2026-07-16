@@ -119,26 +119,52 @@ describe('SpeedLimiter', () => {
 
 	it('refund returns the claimed slot — next call does not wait', async () => {
 		limiter.setLimit(100); // 100KB/s
-		await limiter.throttle(102400); // claims a ~1s slot for the next caller
-		limiter.refund(102400); // request failed — give the slot back
+		const reservation = await limiter.throttle(102400); // claims a ~1s slot for the next caller
+		limiter.refund(reservation); // request failed — give the slot back
 		const start = Date.now();
 		await limiter.throttle(51200); // should proceed without the phantom debt
 		expect(Date.now() - start).toBeLessThan(600);
 	});
 
-	it('refund never moves the cursor into the past (no free head-start)', async () => {
+	it('refund keeps later queued callers serialized without overlapping slots', async () => {
 		limiter.setLimit(100); // 100KB/s
-		limiter.refund(10 * 1024 * 1024); // refund without a prior claim
-		await limiter.throttle(102400); // primes the cursor to ~now+1s
+		const failed = await limiter.throttle(102400);
 		const start = Date.now();
-		await limiter.throttle(102400); // must still wait for the primed slot
+		const second = limiter.throttle(102400).then(() => Date.now() - start);
+		limiter.refund(failed); // second may move forward because it has not started yet
+		const third = limiter.throttle(102400).then(() => Date.now() - start);
+
+		const [secondStarted, thirdStarted] = await Promise.all([second, third]);
+		expect(secondStarted).toBeLessThan(600);
+		expect(thirdStarted - secondStarted).toBeGreaterThan(400);
+	});
+
+	it('stale or repeated refunds cannot rewind a newer started slot', async () => {
+		limiter.setLimit(100); // 100KB/s
+		const first = await limiter.throttle(102400);
+		limiter.refund(first);
+		const second = await limiter.throttle(102400);
+		limiter.refund(first); // stale: second is now the newest started slot
+
+		const start = Date.now();
+		await limiter.throttle(102400);
 		expect(Date.now() - start).toBeGreaterThan(400);
+		limiter.refund(second); // also stale after the third slot started
 	});
 
 	it('refund with limit disabled is a no-op', () => {
 		limiter.setLimit(0);
-		limiter.refund(102400); // must not throw
+		limiter.refund(undefined); // must not throw
 		expect(limiter.getLimit()).toBe(0);
+	});
+
+	it('disabling the limit releases callers already waiting in the queue', async () => {
+		limiter.setLimit(1); // 1KB/s
+		await limiter.throttle(1024); // next caller would wait ~1s
+		const waiting = limiter.throttle(1024);
+		limiter.setLimit(0);
+
+		expect(await waiting).toBeUndefined();
 	});
 
 	// --- Pause/resume scenario ---
