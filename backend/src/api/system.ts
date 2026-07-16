@@ -1,9 +1,11 @@
 import os from 'os';
 import { statfs } from 'fs/promises';
 import { readFileSync } from 'fs';
-import type { SystemRAMInfo, SystemStorageInfo, SystemCPUInfo } from '@shared';
+import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
+import { setSystemVolume, getSystemVolume } from '../system-volume.ts';
+const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
 const POLL_INTERVAL_MS = 5000;
@@ -16,12 +18,38 @@ interface SystemHandlers {
 	ram: () => SystemRAMInfo;
 	storage: () => Promise<SystemStorageInfo>;
 	cpu: () => SystemCPUInfo;
+	setVolume: (p: { volume: number }) => Promise<number>;
+	getVolume: () => Promise<number>;
 	startPolling: () => void;
 	stopPolling: () => void;
 }
 
 export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn): SystemHandlers {
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+	/**
+	 * Persist the volume and push it to the OS mixer. Returns the clamped value
+	 * that was applied. OS application never throws (it warns on headless boxes),
+	 * so persistence still succeeds even where no mixer exists.
+	 */
+	async function setVolume(p: { volume: number }): Promise<number> {
+		assert(p, ['volume']);
+		if (typeof p.volume !== 'number' || !Number.isFinite(p.volume)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'volume must be a number');
+		const pct = Math.min(100, Math.max(0, Math.round(p.volume)));
+		await settings.set('audio.volume', pct);
+		await setSystemVolume(pct);
+		return pct;
+	}
+
+	/** Read the live OS volume, falling back to the persisted setting when unavailable. */
+	async function getVolume(): Promise<number> {
+		const live = await getSystemVolume();
+		return live ?? (settings.get('audio.volume') as number);
+	}
+
+	// Align the OS mixer with the persisted volume on startup so the device matches
+	// the last saved value after a reboot. Fire-and-forget: warns on failure.
+	void setSystemVolume(settings.get('audio.volume') as number);
 
 	function getLinuxAvailableMem(): number | null {
 		try {
@@ -152,5 +180,5 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		}
 	}
 
-	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, startPolling, stopPolling };
+	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, startPolling, stopPolling };
 }
