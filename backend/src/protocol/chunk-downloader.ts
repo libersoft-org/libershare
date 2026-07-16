@@ -104,6 +104,9 @@ export class ChunkDownloader {
 		const peerLoopPromises = new Map<string, Promise<void>>();
 
 		const corruptCount = new Map<string, number>(); // per-peer corruption counter
+		// Diagnostic only (skip trace log). The former `globalNotAvailable > queue.length`
+		// exhaustion guard was unreachable: every failure that increments the counter also
+		// requeues the chunk, so queue.length always grows in lockstep or faster.
 		let globalNotAvailable = 0; // consecutive not_available across all peers \u2014 reset on any success
 		// Seed per-file counters from DB verification state. Reporter owns the fileDownloadedChunks map,
 		// lastFilePath/lastFileChunks pointers, sliding speed window and the 1s ticker.
@@ -225,10 +228,6 @@ export class ChunkDownloader {
 						queue.push(chunk!);
 					});
 					if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
-					if (globalNotAvailable > queue.length) {
-						console.debug(`[DL] Peer ${peerID.slice(0, 12)} exhausted (${globalNotAvailable} skip-chunk)`);
-						break;
-					}
 					continue;
 				}
 				if (result === 'skip-chunk') {
@@ -244,10 +243,6 @@ export class ChunkDownloader {
 					if (consecutiveNotAvailable >= 10) {
 						console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped: ${consecutiveNotAvailable} consecutive skip-chunk`);
 						await peerManager.removeAwait(peerID, 'drop');
-						break;
-					}
-					if (globalNotAvailable > queue.length) {
-						console.debug(`[DL] Peer ${peerID.slice(0, 12)} exhausted (${globalNotAvailable} skip-chunk)`);
 						break;
 					}
 					continue;
