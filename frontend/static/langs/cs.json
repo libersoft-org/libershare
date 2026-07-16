@@ -486,6 +486,7 @@
 			"right": "Vpravo"
 		},
 		"footerWidgets": {
+			"peerId": "ID účastníka",
 			"lishStatus": "Stav LISH sítě",
 			"gamepad": "Ovladač",
 			"connection": "Připojení",
