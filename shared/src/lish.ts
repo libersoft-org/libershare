@@ -29,6 +29,21 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 	}
 }
 
+/**
+ * Exact byte length of a single chunk as fixed by the manifest.
+ * The last chunk of a file may be shorter than `chunkSize`. Returns -1 when the length
+ * cannot be determined (no file metadata, invalid chunkSize/size, or out-of-range indices).
+ */
+export function expectedChunkLength(lish: ILISH, fileIndex: number, chunkIndex: number): number {
+	if (!lish.files || fileIndex < 0 || fileIndex >= lish.files.length) return -1;
+	if (typeof lish.chunkSize !== 'number' || !Number.isFinite(lish.chunkSize) || lish.chunkSize <= 0) return -1;
+	const size = lish.files[fileIndex]!.size;
+	if (typeof size !== 'number' || !Number.isFinite(size) || size < 0) return -1;
+	const numChunks = size === 0 ? 0 : Math.ceil(size / lish.chunkSize);
+	if (chunkIndex < 0 || chunkIndex >= numChunks) return -1;
+	return Math.min(lish.chunkSize, size - chunkIndex * lish.chunkSize);
+}
+
 export interface ILISH {
 	id: string;
 	name?: string | undefined;
