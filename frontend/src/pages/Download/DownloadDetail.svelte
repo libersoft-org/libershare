@@ -207,6 +207,27 @@
 		if (containerElement) containerElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
+	// The files/peers panel sits to the RIGHT of the info table on desktop, so
+	// left/right arrows switch between the two panels from any row. Enters the
+	// active tab's table directly; falls back to the tab bar when it's empty.
+	function activateRightPanel(): void {
+		if (activeTab === 'files' && download && download.files.length > 0) {
+			activateArea(listAreaID);
+			scrollToSelected();
+			return;
+		}
+		if (activeTab === 'peers' && currentPeers.length > 0) {
+			activateArea(peerListAreaID);
+			return;
+		}
+		activateArea(tabAreaID);
+	}
+
+	function activateInfoPanel(): void {
+		activateArea(infoAreaID);
+		scrollToSelectedInfoRow();
+	}
+
 	function handleInfoRowHover(index: number): void {
 		if (!isMouseActive()) return;
 		activateArea(infoAreaID);
@@ -371,7 +392,8 @@
 			return false;
 		},
 		right(): boolean {
-			return false;
+			activateRightPanel();
+			return true;
 		},
 		confirmDown(): void {},
 		confirmUp(): void {},
@@ -420,7 +442,8 @@
 			return false;
 		},
 		left(): boolean {
-			return false;
+			activateInfoPanel();
+			return true;
 		},
 		right(): boolean {
 			return false;
@@ -484,7 +507,8 @@
 				activeTab = 'files';
 				return true;
 			}
-			return false;
+			activateInfoPanel();
+			return true;
 		},
 		right(): boolean {
 			if (selectedTabIndex < 1) {
@@ -523,7 +547,8 @@
 			return false;
 		},
 		left(): boolean {
-			return false;
+			activateInfoPanel();
+			return true;
 		},
 		right(): boolean {
 			return false;
