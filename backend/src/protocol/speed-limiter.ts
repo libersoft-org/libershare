@@ -61,6 +61,20 @@ export class SpeedLimiter {
 		if (waitMs > 1) await new Promise<void>(r => setTimeout(r, waitMs));
 	}
 
+	/**
+	 * Return a previously claimed slot to the schedule. Used when a throttled
+	 * request turns out to transfer no payload (e.g. the peer answers
+	 * chunk-not-found) — without the refund, failed probes accumulate phantom
+	 * debt that delays real transfers on the shared limiter. Best-effort:
+	 * callers that already claimed later slots keep their computed waits;
+	 * only future claims benefit.
+	 */
+	refund(bytes: number): void {
+		if (this.maxBytesPerSec <= 0 || bytes <= 0) return;
+		const slotDurationMs = (bytes / this.maxBytesPerSec) * 1000;
+		this.nextAllowedTime = Math.max(Date.now(), this.nextAllowedTime - slotDurationMs);
+	}
+
 	/** Reset the cursor to now (used on disconnect / test teardown). */
 	reset(): void {
 		this.nextAllowedTime = Date.now();

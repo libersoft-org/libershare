@@ -196,6 +196,10 @@ export class ChunkDownloader {
 				touchPeer(lishID, peerID, 'download');
 				await downloadLimiter.throttle(lish.chunkSize);
 				const result = await this.downloadChunk(client, chunk.chunkID, peerID);
+				// Non-data results transferred no payload \u2014 return the reservation so failed
+				// probes (an unbounded number for a partial seeder) don't accumulate phantom
+				// debt on the shared limiter and starve real transfers.
+				if (typeof result === 'string') downloadLimiter.refund(lish.chunkSize);
 				if (result === 'drop-peer') {
 					// Peer unusable for this session (no LISH / unreachable / invalid / unknown error).
 					// Soft quarantine in droppedPeers \u2014 peer can come back via pubsub 'have' or ~5min cyclic reset.

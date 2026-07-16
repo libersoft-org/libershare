@@ -115,6 +115,32 @@ describe('SpeedLimiter', () => {
 		expect(limiter.getLimit()).toBe(0);
 	});
 
+	// --- Refund: failed requests return their reservation ---
+
+	it('refund returns the claimed slot — next call does not wait', async () => {
+		limiter.setLimit(100); // 100KB/s
+		await limiter.throttle(102400); // claims a ~1s slot for the next caller
+		limiter.refund(102400); // request failed — give the slot back
+		const start = Date.now();
+		await limiter.throttle(51200); // should proceed without the phantom debt
+		expect(Date.now() - start).toBeLessThan(600);
+	});
+
+	it('refund never moves the cursor into the past (no free head-start)', async () => {
+		limiter.setLimit(100); // 100KB/s
+		limiter.refund(10 * 1024 * 1024); // refund without a prior claim
+		await limiter.throttle(102400); // primes the cursor to ~now+1s
+		const start = Date.now();
+		await limiter.throttle(102400); // must still wait for the primed slot
+		expect(Date.now() - start).toBeGreaterThan(400);
+	});
+
+	it('refund with limit disabled is a no-op', () => {
+		limiter.setLimit(0);
+		limiter.refund(102400); // must not throw
+		expect(limiter.getLimit()).toBe(0);
+	});
+
 	// --- Pause/resume scenario ---
 
 	it('does not drift after pause — window expires naturally', async () => {
