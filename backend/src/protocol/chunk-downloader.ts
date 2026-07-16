@@ -1,7 +1,7 @@
 import { Mutex } from 'async-mutex';
 import { type ChunkID, type IStoredLISH, type LISHid, ErrorCodes } from '@shared';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
-import { LISHClient } from './lish-protocol.ts';
+import { LISHClient, type HaveChunks } from './lish-protocol.ts';
 import { downloadLimiter } from './speed-limiter.ts';
 import { recordDownloadBytes, touchPeer } from './peer-tracker.ts';
 import { trace } from '../logger.ts';
@@ -61,6 +61,7 @@ export class ChunkDownloader {
 	private fileReallocInProgress = new Set<number>();
 	private writeRetryCount = 0;
 	private notAvailableLoggedPeers = new Set<string>(); // debug: track first not_available per peer
+	private peerHaveUpdates = new Map<string, { version: number; chunks: HaveChunks }>();
 
 	private static readonly MAX_CORRUPT_CHUNKS = 3; // max corrupted chunks before banning peer
 	private static readonly MAX_FILE_REALLOC = 3;
@@ -75,6 +76,16 @@ export class ChunkDownloader {
 	resetRetryState(): void {
 		this.fileReallocAttempts.clear();
 		this.writeRetryCount = 0;
+	}
+
+	/**
+	 * Record a fresh HAVE snapshot for an already-connected peer. Active peer
+	 * loops use it to invalidate definitive misses for chunks the peer now
+	 * advertises, without forgetting misses for chunks still absent.
+	 */
+	notifyPeerHave(peerID: string, chunks: HaveChunks): void {
+		const version = (this.peerHaveUpdates.get(peerID)?.version ?? 0) + 1;
+		this.peerHaveUpdates.set(peerID, { version, chunks: chunks === 'all' ? 'all' : [...chunks] });
 	}
 
 	/**
@@ -177,6 +188,14 @@ export class ChunkDownloader {
 			// Without this, a partial seeder missing ≥10 consecutive chunks ahead of one it HAS
 			// gets dropped before the queue cursor ever reaches the servable chunk (starvation).
 			const notFound = new Set<string>();
+			let observedHaveVersion = this.peerHaveUpdates.get(peerID)?.version ?? 0;
+			const applyHaveUpdate = (): void => {
+				const update = this.peerHaveUpdates.get(peerID);
+				if (!update || update.version === observedHaveVersion) return;
+				if (update.chunks === 'all') notFound.clear();
+				else for (const chunkID of update.chunks) notFound.delete(chunkID);
+				observedHaveVersion = update.version;
+			};
 			while (true) {
 				if (this.deps.isDestroyed() || this.deps.isDisabled()) break;
 				await pauseController.waitIfDisabled();
@@ -185,6 +204,7 @@ export class ChunkDownloader {
 				let onlyNotFoundLeft = false;
 				let observedRequeueVersion = 0;
 				await lock.runExclusive(() => {
+					applyHaveUpdate();
 					// Compact the consumed prefix — every requeue/rotation appends, so without
 					// this the array grows by O(requeues) and the dead slots are never reclaimed.
 					if (queueIdx > 1024) {
@@ -215,11 +235,14 @@ export class ChunkDownloader {
 						// Chunks are checked out by other peer loops. Poll only the cheap
 						// counters until one is requeued or all in-flight work settles; do not
 						// re-scan and rotate an unchanged large queue every 150ms.
-						while (inFlight > 0 && requeueVersion === observedRequeueVersion && !this.deps.isDisabled() && !this.deps.isDestroyed()) {
+						while (inFlight > 0 && requeueVersion === observedRequeueVersion && (this.peerHaveUpdates.get(peerID)?.version ?? 0) === observedHaveVersion && !this.deps.isDisabled() && !this.deps.isDestroyed()) {
 							await new Promise(r => setTimeout(r, 150));
 						}
 						continue;
 					}
+					// A HAVE may have arrived after the queue scan but before this decision.
+					// Re-scan once so newly advertised chunks are not hidden by stale misses.
+					if ((this.peerHaveUpdates.get(peerID)?.version ?? 0) !== observedHaveVersion) continue;
 					if (onlyNotFoundLeft) {
 						// Every remaining chunk is one this peer doesn't have — nothing useful.
 						// Same soft drop as before; peer can come back via HAVE broadcast or retry session.

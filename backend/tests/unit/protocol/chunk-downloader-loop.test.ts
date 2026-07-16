@@ -78,6 +78,9 @@ class ScriptedClient {
 		this.delayMs = delayMs;
 		this.delaySuccessOnly = delaySuccessOnly;
 	}
+	setReply(chunkID: ChunkID, reply: Reply): void {
+		this.replies.set(chunkID, reply);
+	}
 	async requestChunk(_l: LISHid, c: ChunkID): Promise<Uint8Array> {
 		this.requests.push(c);
 		const reply = this.replies.get(c) ?? 'nf';
@@ -217,5 +220,30 @@ describe('ChunkDownloader peerLoop — partial seeder behavior', () => {
 		await runPromise;
 
 		expect(ds.downloadedChunks.has(slowChunkID)).toBe(true);
+	}, 15000);
+
+	it('retries a cached miss when a connected peer announces the chunk in a new HAVE', async () => {
+		const { missing, data } = makeChunks(2);
+		const newlyAvailableID = missing[0]!.chunkID;
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const dynamic = new ScriptedClient(new Map());
+		const slowEmpty = new ScriptedClient(new Map(), 600);
+		const cd = makeDownloader(ds, pm, 2);
+		pm.tryAdd('peer-dynamic-00', dynamic as never, 'DIRECT');
+		pm.tryAdd('peer-slow-empty1', slowEmpty as never, 'DIRECT');
+
+		const runPromise = cd.run();
+		const waitingDeadline = Date.now() + 2000;
+		while ((!dynamic.requests.includes(newlyAvailableID) || slowEmpty.requests.length === 0) && Date.now() < waitingDeadline) await new Promise(r => setTimeout(r, 10));
+		expect(dynamic.requests.includes(newlyAvailableID)).toBe(true);
+		expect(slowEmpty.requests.length).toBeGreaterThan(0);
+
+		dynamic.setReply(newlyAvailableID, data.get(newlyAvailableID)!);
+		cd.notifyPeerHave('peer-dynamic-00', [newlyAvailableID]);
+
+		await runPromise;
+		expect(ds.downloadedChunks.has(newlyAvailableID)).toBe(true);
+		expect(dynamic.requests.filter(id => id === newlyAvailableID).length).toBe(2);
 	}, 15000);
 });
