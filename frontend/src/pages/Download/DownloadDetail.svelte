@@ -62,7 +62,6 @@
 	let selectedPeerIndex = $state(0);
 	let peerElements: HTMLElement[] = $state([]);
 	let itemElements: HTMLElement[] = $state([]);
-	let infoElement: HTMLElement | null = $state(null);
 	let containerElement: HTMLElement | null = $state(null);
 	let selectedInfoIndex = $state(0);
 	let infoRowElements: HTMLElement[] = $state([]);
@@ -192,10 +191,6 @@
 		activateArea(peerListAreaID);
 		selectedPeerIndex = index;
 		openPeerDialog();
-	}
-
-	function scrollToInfo(): void {
-		if (infoElement) infoElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
 	function scrollToSelectedInfoRow(): void {
@@ -337,8 +332,7 @@
 		down(): boolean {
 			if (download) {
 				selectedInfoIndex = 0;
-				activateArea(infoAreaID);
-				scrollToInfo();
+				activateInfoPanel();
 				return true;
 			}
 			return false;
@@ -841,7 +835,7 @@
 		{/if}
 		{#if download}
 			<div class="content">
-				<div class="info" class:selected={infoActive} bind:this={infoElement}>
+				<div class="info" class:selected={infoActive}>
 					<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
 						{#each infoRows as row, index (row.label)}
 							{@const rowSelected = infoActive && selectedInfoIndex === index}
