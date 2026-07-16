@@ -169,6 +169,12 @@ export class ChunkDownloader {
 				let chunk: MissingChunk | undefined;
 				let onlyNotFoundLeft = false;
 				await lock.runExclusive(() => {
+					// Compact the consumed prefix — every requeue/rotation appends, so without
+					// this the array grows by O(requeues) and the dead slots are never reclaimed.
+					if (queueIdx > 1024) {
+						queue.splice(0, queueIdx);
+						queueIdx = 0;
+					}
 					const unservable: MissingChunk[] = [];
 					while (queueIdx < queue.length) {
 						const candidate = queue[queueIdx++]!;
@@ -182,7 +188,8 @@ export class ChunkDownloader {
 						break;
 					}
 					// Chunks this peer can't serve go back to the queue for other peers.
-					if (unservable.length > 0) queue.push(...unservable);
+					// Loop push — a spread would blow the argument limit on huge manifests.
+					for (const u of unservable) queue.push(u);
 					if (!chunk && unservable.length > 0) onlyNotFoundLeft = true;
 				});
 				if (!chunk) {
