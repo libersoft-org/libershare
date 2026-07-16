@@ -311,11 +311,23 @@ export function setDefaultCompressionAlgorithm(algorithm: string): void {
 	updateSetting(defaultCompressionAlgorithm, 'export.compressionAlgorithm', algorithm);
 }
 
-// Volume helpers
+// Volume helpers. The +/- controls update the local store immediately (drives
+// the footer widget and local sound cues) and push the value to the backend,
+// which persists it and sets the OS master volume. The backend call is debounced
+// so holding a repeat key/button down does not spam the WebSocket.
+let volumeSyncTimer: ReturnType<typeof setTimeout> | undefined;
+
+function syncVolumeToBackend(value: number): void {
+	clearTimeout(volumeSyncTimer);
+	volumeSyncTimer = setTimeout(() => {
+		api.call('system.setVolume', { volume: value }).catch((err: unknown) => console.error('[Settings] Error saving volume:', err));
+	}, 150);
+}
+
 export function increaseVolume(): void {
 	volume.update(v => {
 		const newVal = Math.min(100, v + 1);
-		api.settings.set('audio.volume', newVal).catch((err: unknown) => console.error('[Settings] Error saving volume:', err));
+		syncVolumeToBackend(newVal);
 		return newVal;
 	});
 }
@@ -323,7 +335,7 @@ export function increaseVolume(): void {
 export function decreaseVolume(): void {
 	volume.update(v => {
 		const newVal = Math.max(0, v - 1);
-		api.settings.set('audio.volume', newVal).catch((err: unknown) => console.error('[Settings] Error saving volume:', err));
+		syncVolumeToBackend(newVal);
 		return newVal;
 	});
 }
