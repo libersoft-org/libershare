@@ -15,6 +15,8 @@ const PA_ID = 'PeerAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const PA_ADDR = '/ip4/192.0.2.10/tcp/9090';
 const PB_ID = 'PeerBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
 const PB_ADDR = '/ip4/192.0.2.20/tcp/9090';
+const PC_ID = 'PeerCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
+const PC_ADDR = '/ip4/192.0.2.30/tcp/9090';
 
 const TOPIC_A = `${LISH_TOPIC_PREFIX}netAAAA`;
 const TOPIC_B = `${LISH_TOPIC_PREFIX}netBBBB`;
@@ -27,6 +29,28 @@ function fakePeer(id: string, addr: string) {
 /** A pubsub subscriber handle whose toString() is the peerID (matches gossipsub). */
 function fakeSubscriber(id: string) {
 	return { toString: () => id };
+}
+
+/** Wire a manager to a fake node + pubsub and capture every broadcast. */
+function buildManager(node: any, pubsub: any) {
+	const broadcasts: Array<{ topic: string; msg: PeerAnnounceMessage }> = [];
+	const mgr = new PeerAnnounceManager({
+		getNode: () => node,
+		getPubsub: () => pubsub,
+		broadcast: async (topic, msg) => {
+			broadcasts.push({ topic, msg: msg as unknown as PeerAnnounceMessage });
+		},
+		addBootstrapPeers: async () => {},
+	});
+	return { mgr, broadcasts };
+}
+
+/** peerStore.all() fixture padded past PEER_ANNOUNCE_MIN_PEER_STORE (5) with non-subscriber fillers. */
+function peersWithFillers(...peers: ReturnType<typeof fakePeer>[]) {
+	const fillers = ['Filler1111111111111111111111111111111111111111111', 'Filler2222222222222222222222222222222222222222222', 'Filler3333333333333333333333333333333333333333333', 'Filler4444444444444444444444444444444444444444444'];
+	const out = [...peers];
+	for (let i = 0; out.length < 5; i++) out.push(fakePeer(fillers[i]!, `/ip4/192.0.2.${101 + i}/tcp/9090`));
+	return out;
 }
 
 describe('PeerAnnounceManager.emit topic scoping', () => {
@@ -135,5 +159,73 @@ describe('PeerAnnounceManager.emit topic scoping', () => {
 		expect(broadcasts[0]!.topic).toBe(TOPIC_A);
 		expect(broadcasts[0]!.msg.multiaddrs.join(' ')).toContain('192.0.2.1/'); // self present
 		expect(broadcasts[0]!.msg.multiaddrs.some(a => a.includes('/p2p-circuit'))).toBe(false);
+	});
+});
+
+describe('PeerAnnounceManager.emit recently-seen membership', () => {
+	it('keeps advertising a same-network peer that just dropped from getSubscribers', async () => {
+		// P_A and P_C both subscribe to topic A; peerStore always holds both. After P_A
+		// drops from the live subscriber list it must still be advertised to P_C (who is
+		// still listening) so P_C can re-dial it — that is the reconnect path.
+		const allPeers = peersWithFillers(fakePeer(PA_ID, PA_ADDR), fakePeer(PC_ID, PC_ADDR));
+		let aSubs = [PA_ID, PC_ID];
+		const node = { peerId: { toString: () => SELF_ID }, getMultiaddrs: () => [Multiaddr(SELF_ADDR)], peerStore: { all: async () => allPeers } };
+		const pubsub = { getTopics: () => [TOPIC_A], getSubscribers: (t: string) => (t === TOPIC_A ? aSubs.map(fakeSubscriber) : []) };
+		const { mgr, broadcasts } = buildManager(node, pubsub);
+
+		await (mgr as any).emit(); // records P_A + P_C as recently-seen members of A
+		aSubs = [PC_ID]; // P_A drops from the live snapshot but stays in peerStore + TTL
+		broadcasts.length = 0;
+		await (mgr as any).emit();
+
+		const a = broadcasts.find(b => b.topic === TOPIC_A);
+		expect(a).toBeDefined();
+		const addrs = a!.msg.multiaddrs.join(' ');
+		expect(addrs).toContain('192.0.2.10/'); // dropped P_A still advertised for reconnect
+		expect(addrs).toContain('192.0.2.30/'); // P_C still current
+		expect(addrs).toContain('192.0.2.1/'); // self
+	});
+
+	it('never advertises a peer of another network, even across repeated emits', async () => {
+		// P_A only ever subscribes to A, P_B only to B. The recently-seen cache must
+		// never let P_B into A's announce, no matter how many cycles run.
+		const allPeers = peersWithFillers(fakePeer(PA_ID, PA_ADDR), fakePeer(PB_ID, PB_ADDR));
+		const node = { peerId: { toString: () => SELF_ID }, getMultiaddrs: () => [Multiaddr(SELF_ADDR)], peerStore: { all: async () => allPeers } };
+		const pubsub = { getTopics: () => [TOPIC_A, TOPIC_B], getSubscribers: (t: string) => (t === TOPIC_A ? [fakeSubscriber(PA_ID)] : t === TOPIC_B ? [fakeSubscriber(PB_ID)] : []) };
+		const { mgr, broadcasts } = buildManager(node, pubsub);
+
+		await (mgr as any).emit();
+		await (mgr as any).emit();
+
+		const aBroadcasts = broadcasts.filter(b => b.topic === TOPIC_A);
+		expect(aBroadcasts.length).toBeGreaterThan(0);
+		for (const bc of aBroadcasts) expect(bc.msg.multiaddrs.join(' ')).not.toContain('192.0.2.20/'); // P_B never leaks into A
+	});
+
+	it('prunes a member whose last-seen exceeds the TTL', async () => {
+		const realNow = Date.now;
+		try {
+			let clock = 1_000_000;
+			Date.now = () => clock;
+			const allPeers = peersWithFillers(fakePeer(PA_ID, PA_ADDR), fakePeer(PC_ID, PC_ADDR));
+			let aSubs = [PA_ID, PC_ID];
+			const node = { peerId: { toString: () => SELF_ID }, getMultiaddrs: () => [Multiaddr(SELF_ADDR)], peerStore: { all: async () => allPeers } };
+			const pubsub = { getTopics: () => [TOPIC_A], getSubscribers: (t: string) => (t === TOPIC_A ? aSubs.map(fakeSubscriber) : []) };
+			const { mgr, broadcasts } = buildManager(node, pubsub);
+
+			await (mgr as any).emit(); // t=clock, records P_A + P_C
+			clock += 600_000; // advance past PEER_ANNOUNCE_MEMBER_TTL_MS (180s * 3 = 540s)
+			aSubs = [PC_ID]; // P_A no longer live; its last-seen is now stale
+			broadcasts.length = 0;
+			await (mgr as any).emit();
+
+			const a = broadcasts.find(b => b.topic === TOPIC_A);
+			expect(a).toBeDefined();
+			const addrs = a!.msg.multiaddrs.join(' ');
+			expect(addrs).not.toContain('192.0.2.10/'); // P_A pruned (last-seen > TTL)
+			expect(addrs).toContain('192.0.2.30/'); // P_C refreshed this cycle
+		} finally {
+			Date.now = realNow;
+		}
 	});
 });

@@ -49,6 +49,17 @@ const PEER_ANNOUNCE_MAX_ADDRS = 32;
 const PEER_ANNOUNCE_MAX_TOTAL_ADDRS = 128;
 /** Max addrs we take from a single known peer when including transitive list. */
 const PEER_ANNOUNCE_MAX_ADDRS_PER_PEER = 3;
+/**
+ * How long a peer stays an eligible transitive-announce target for a topic after
+ * we last saw it in that topic's subscriber list. gossipsub drops a peer from
+ * getSubscribers the moment it disconnects — but that is exactly when the peer
+ * needs its addrs re-advertised so others can re-dial it (NAT / relay reservations
+ * expire on drop). We keep it eligible (scoped to peers of its OWN topic, so no
+ * cross-network leak) until this TTL lapses. Sized to a few saturated announce
+ * cycles + relay-reservation churn; the real ceiling is peerStore eviction — once
+ * its addrs are gone we cannot advertise it regardless.
+ */
+const PEER_ANNOUNCE_MEMBER_TTL_MS = PEER_ANNOUNCE_INTERVAL_SATURATED_MS * 3;
 
 /** Dependencies for PeerAnnounceManager. */
 export interface PeerAnnounceManagerDeps {
@@ -74,6 +85,14 @@ export class PeerAnnounceManager {
 	private readonly deps: PeerAnnounceManagerDeps;
 	private timer: NodeJS.Timeout | null = null;
 	private stopped = false;
+	/**
+	 * Per-topic recently-seen subscribers (peerID → last-seen ms). Lets a
+	 * momentarily-disconnected same-network peer stay an eligible transitive-announce
+	 * target (see PEER_ANNOUNCE_MEMBER_TTL_MS) without ever admitting a peer of
+	 * another network — a peerID only enters a topic's map via that topic's own
+	 * getSubscribers, so the cross-network leak stays closed. Pruned each emit().
+	 */
+	private readonly topicMembers = new Map<string, Map<string, number>>();
 
 	constructor(deps: PeerAnnounceManagerDeps) {
 		this.deps = deps;
@@ -223,25 +242,38 @@ export class PeerAnnounceManager {
 			if (selfAddrs.length >= PEER_ANNOUNCE_MAX_ADDRS) break;
 		}
 		// Broadcast per topic. The transitive peerStore addrs are scoped to the
-		// subscribers of THAT topic (getSubscribers, same source as the participant
-		// count badge) so peers of one network are never advertised into another.
-		// This keeps peer-announce a transitive gossip protocol — edge-of-mesh peers
-		// learn the rest of their OWN network in one hop — without cross-network leak.
+		// recently-seen subscribers of THAT topic so peers of one network are never
+		// advertised into another. Membership is the union of this topic's
+		// getSubscribers over the last PEER_ANNOUNCE_MEMBER_TTL_MS (same source as the
+		// participant count badge), not just the live snapshot — a peer that just
+		// dropped is still re-advertised so others can re-dial it, while a peer of
+		// another network never enters this topic's set. Edge-of-mesh peers thus learn
+		// the rest of their OWN network in one hop, without cross-network leak.
+		const now = Date.now();
+		for (const t of this.topicMembers.keys()) if (!lishTopics.includes(t)) this.topicMembers.delete(t);
 		let skippedTransitive = 0;
 		for (const topic of lishTopics) {
-			const subscribers = new Set<string>();
+			const current = new Set<string>();
 			try {
-				for (const p of pubsub.getSubscribers(topic)) subscribers.add(p.toString());
+				for (const p of pubsub.getSubscribers(topic)) current.add(p.toString());
 			} catch {}
-			// No subscribers → the announce would reach nobody, skip it.
-			if (subscribers.size === 0) continue;
+			// Refresh recently-seen membership from the live snapshot, then prune stale.
+			let members = this.topicMembers.get(topic);
+			if (!members) {
+				members = new Map<string, number>();
+				this.topicMembers.set(topic, members);
+			}
+			for (const pid of current) members.set(pid, now);
+			for (const [pid, seen] of members) if (now - seen > PEER_ANNOUNCE_MEMBER_TTL_MS) members.delete(pid);
+			// No one currently subscribed → the broadcast would reach nobody, skip it.
+			if (current.size === 0) continue;
 			const collected = new Set<string>(selfAddrs);
 			let transitiveAdded = 0;
 			for (const peer of allPeers) {
 				if (collected.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
 				const pid = peer.id.toString();
 				if (pid === myID) continue;
-				if (!subscribers.has(pid)) continue;
+				if (!members.has(pid)) continue;
 				let perPeer = 0;
 				for (const addr of peer.addresses) {
 					if (perPeer >= PEER_ANNOUNCE_MAX_ADDRS_PER_PEER) break;
