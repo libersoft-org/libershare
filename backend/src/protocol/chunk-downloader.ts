@@ -99,6 +99,11 @@ export class ChunkDownloader {
 		// Shared queue \u2014 peers pull chunks concurrently
 		const queue = [...missingChunks];
 		let queueIdx = 0;
+		// Chunks checked out by a peer loop (pulled, not yet resolved or requeued).
+		// A peer that finds nothing servable must NOT exit or drop while this is
+		// non-zero \u2014 an in-flight failure requeues the chunk, possibly one that
+		// only the scanning peer can serve.
+		let inFlight = 0;
 		const lock = new Mutex();
 		// Track all peerLoop promises so we can await dynamically spawned ones
 		const peerLoopPromises = new Map<string, Promise<void>>();
@@ -191,8 +196,16 @@ export class ChunkDownloader {
 					// Loop push — a spread would blow the argument limit on huge manifests.
 					for (const u of unservable) queue.push(u);
 					if (!chunk && unservable.length > 0) onlyNotFoundLeft = true;
+					if (chunk) inFlight++;
 				});
 				if (!chunk) {
+					if (inFlight > 0) {
+						// Chunks are checked out by other peer loops — a failure there requeues
+						// them, possibly with one only this peer has. Re-scan shortly instead of
+						// exiting (or dropping) while work is still in flight.
+						await new Promise(r => setTimeout(r, 150));
+						continue;
+					}
 					if (onlyNotFoundLeft) {
 						// Every remaining chunk is one this peer doesn't have — nothing useful.
 						// Same soft drop as before; peer can come back via HAVE broadcast or retry session.
@@ -202,265 +215,271 @@ export class ChunkDownloader {
 					break;
 				}
 
-				// Throttle BEFORE downloading \u2014 ensures bandwidth is reserved before network transfer
-				touchPeer(lishID, peerID, 'download');
-				await downloadLimiter.throttle(lish.chunkSize);
-				const result = await this.downloadChunk(client, chunk.chunkID, peerID);
-				// Non-data results transferred no payload \u2014 return the reservation so failed
-				// probes (an unbounded number for a partial seeder) don't accumulate phantom
-				// debt on the shared limiter and starve real transfers.
-				if (typeof result === 'string') downloadLimiter.refund(lish.chunkSize);
-				if (result === 'drop-peer') {
-					// Peer unusable for this session (no LISH / unreachable / invalid / unknown error).
-					// Soft quarantine in droppedPeers \u2014 peer can come back via pubsub 'have' or ~5min cyclic reset.
-					console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped to droppedPeers`);
-					await peerManager.removeAwait(peerID, 'drop');
-					await lock.runExclusive(() => {
-						queue.push(chunk!);
-					});
-					break;
-				}
-				if (result === 'chunk-not-found') {
-					// Definitive per-chunk answer — remember it and never re-ask this peer.
-					// Does NOT count toward the consecutive-skip drop: a partial seeder is
-					// still useful for the chunks it does have (pull skips not-found ones).
-					// It also BREAKS the transient streak — the peer just proved it's alive
-					// and answering, so interleaved busy/not-found must not add up to a
-					// spurious "10 consecutive" drop.
-					notFound.add(chunk.chunkID);
-					skippedChunks++;
-					globalNotAvailable++;
-					consecutiveNotAvailable = 0;
-					await lock.runExclusive(() => {
-						queue.push(chunk!);
-					});
-					if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
-					continue;
-				}
-				if (result === 'skip-chunk') {
-					skippedChunks++;
-					globalNotAvailable++;
-					consecutiveNotAvailable++;
-					if (skippedChunks % 500 === 0) trace(`[DL] Peer ${peerID.slice(0, 12)} skipped ${skippedChunks} chunks (skip-chunk, consecutive: ${consecutiveNotAvailable}, global: ${globalNotAvailable}/${queue.length})`);
-					await lock.runExclusive(() => {
-						queue.push(chunk!);
-					});
-					if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
-					// Per-peer: disconnect if peer keeps failing transiently (10 consecutive busy/IO skips)
-					if (consecutiveNotAvailable >= 10) {
-						console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped: ${consecutiveNotAvailable} consecutive skip-chunk`);
-						await peerManager.removeAwait(peerID, 'drop');
-						break;
-					}
-					continue;
-				}
-				// Verify chunk integrity before writing
-				const data = result.data;
-				const hasher = new Bun.CryptoHasher(lish.checksumAlgo as any);
-				hasher.update(data);
-				const actualHash = hasher.digest('hex');
-				if (actualHash !== chunk.chunkID) {
-					const count = (corruptCount.get(peerID) ?? 0) + 1;
-					corruptCount.set(peerID, count);
-					console.log(`[DL] Corrupt chunk from ${peerID.slice(0, 12)}: expected ${chunk.chunkID.slice(0, 12)}, got ${actualHash.slice(0, 12)} (${count}/${ChunkDownloader.MAX_CORRUPT_CHUNKS})`);
-					await lock.runExclusive(() => {
-						queue.push(chunk!);
-					});
-					if (count >= ChunkDownloader.MAX_CORRUPT_CHUNKS) {
-						console.log(`[DL] Peer ${peerID.slice(0, 12)} banned: ${count} corrupt chunks`);
-						await peerManager.removeAwait(peerID, 'ban');
-						break;
-					}
-					continue;
-				}
-				// Integrity OK \u2014 write chunk
-				skippedChunks = 0;
-				consecutiveNotAvailable = 0;
-				globalNotAvailable = 0;
-
 				try {
-					await writeChunkToAllSlots(chunk, data);
-				} catch (err: any) {
-					if (err.code === 'ENOENT') {
-						// File deleted \u2014 pause ALL peers, verify ALL files, re-allocate missing, reset chunks, resume
-						if (this.fileReallocInProgress.size > 0) {
-							// Another peer is already handling recovery \u2014 wait and re-queue
-							await pauseController.waitIfWritePaused();
-							await lock.runExclusive(() => {
-								queue.push(chunk!);
-							});
-							continue;
-						}
-						const globalAttempts = (this.fileReallocAttempts.get(-1) ?? 0) + 1;
-						this.fileReallocAttempts.set(-1, globalAttempts);
-						if (globalAttempts > ChunkDownloader.MAX_FILE_REALLOC) {
-							console.error(`[DL] Global file recovery limit (${ChunkDownloader.MAX_FILE_REALLOC}) exceeded`);
-							this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
+					// Throttle BEFORE downloading \u2014 ensures bandwidth is reserved before network transfer
+					touchPeer(lishID, peerID, 'download');
+					await downloadLimiter.throttle(lish.chunkSize);
+					const result = await this.downloadChunk(client, chunk.chunkID, peerID);
+					// Non-data results transferred no payload \u2014 return the reservation so failed
+					// probes (an unbounded number for a partial seeder) don't accumulate phantom
+					// debt on the shared limiter and starve real transfers.
+					if (typeof result === 'string') downloadLimiter.refund(lish.chunkSize);
+					if (result === 'drop-peer') {
+						// Peer unusable for this session (no LISH / unreachable / invalid / unknown error).
+						// Soft quarantine in droppedPeers \u2014 peer can come back via pubsub 'have' or ~5min cyclic reset.
+						console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped to droppedPeers`);
+						await peerManager.removeAwait(peerID, 'drop');
+						await lock.runExclusive(() => {
+							queue.push(chunk!);
+						});
+						break;
+					}
+					if (result === 'chunk-not-found') {
+						// Definitive per-chunk answer — remember it and never re-ask this peer.
+						// Does NOT count toward the consecutive-skip drop: a partial seeder is
+						// still useful for the chunks it does have (pull skips not-found ones).
+						// It also BREAKS the transient streak — the peer just proved it's alive
+						// and answering, so interleaved busy/not-found must not add up to a
+						// spurious "10 consecutive" drop.
+						notFound.add(chunk.chunkID);
+						skippedChunks++;
+						globalNotAvailable++;
+						consecutiveNotAvailable = 0;
+						await lock.runExclusive(() => {
+							queue.push(chunk!);
+						});
+						if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
+						continue;
+					}
+					if (result === 'skip-chunk') {
+						skippedChunks++;
+						globalNotAvailable++;
+						consecutiveNotAvailable++;
+						if (skippedChunks % 500 === 0) trace(`[DL] Peer ${peerID.slice(0, 12)} skipped ${skippedChunks} chunks (skip-chunk, consecutive: ${consecutiveNotAvailable}, global: ${globalNotAvailable}/${queue.length})`);
+						await lock.runExclusive(() => {
+							queue.push(chunk!);
+						});
+						if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
+						// Per-peer: disconnect if peer keeps failing transiently (10 consecutive busy/IO skips)
+						if (consecutiveNotAvailable >= 10) {
+							console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped: ${consecutiveNotAvailable} consecutive skip-chunk`);
+							await peerManager.removeAwait(peerID, 'drop');
 							break;
 						}
-						// Mark recovery in progress, pause all peer writes AND progress emissions.
-						// Everything below this line MUST run inside try/finally so destroy/disable
-						// during the 10s sleep can't leak pause state or the fileReallocInProgress flag.
-						this.fileReallocInProgress.add(-1);
-						pauseController.pauseWrites();
-						pauseController.pauseProgress();
-						progressReporter.resetLastFile();
-						console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${ChunkDownloader.MAX_FILE_REALLOC})`);
-						this.deps.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: downloadDir, retryCount: globalAttempts, maxRetries: ChunkDownloader.MAX_FILE_REALLOC });
-						let aborted = false;
-						try {
-							// FE shows retrying badge during the 10s pause — no progress override
-							// 10s delay — let the user finish deleting files before we scan
-							await new Promise<void>(resolve => {
-								const timer = setTimeout(resolve, 10_000);
-								const check = setInterval(() => {
-									if (this.deps.isDestroyed() || this.deps.isDisabled()) {
-										clearTimeout(timer);
-										clearInterval(check);
-										resolve();
-									}
-								}, 1000);
-								setTimeout(() => clearInterval(check), 10_100);
-							});
-							if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+						continue;
+					}
+					// Verify chunk integrity before writing
+					const data = result.data;
+					const hasher = new Bun.CryptoHasher(lish.checksumAlgo as any);
+					hasher.update(data);
+					const actualHash = hasher.digest('hex');
+					if (actualHash !== chunk.chunkID) {
+						const count = (corruptCount.get(peerID) ?? 0) + 1;
+						corruptCount.set(peerID, count);
+						console.log(`[DL] Corrupt chunk from ${peerID.slice(0, 12)}: expected ${chunk.chunkID.slice(0, 12)}, got ${actualHash.slice(0, 12)} (${count}/${ChunkDownloader.MAX_CORRUPT_CHUNKS})`);
+						await lock.runExclusive(() => {
+							queue.push(chunk!);
+						});
+						if (count >= ChunkDownloader.MAX_CORRUPT_CHUNKS) {
+							console.log(`[DL] Peer ${peerID.slice(0, 12)} banned: ${count} corrupt chunks`);
+							await peerManager.removeAwait(peerID, 'ban');
+							break;
+						}
+						continue;
+					}
+					// Integrity OK \u2014 write chunk
+					skippedChunks = 0;
+					consecutiveNotAvailable = 0;
+					globalNotAvailable = 0;
+
+					try {
+						await writeChunkToAllSlots(chunk, data);
+					} catch (err: any) {
+						if (err.code === 'ENOENT') {
+							// File deleted \u2014 pause ALL peers, verify ALL files, re-allocate missing, reset chunks, resume
+							if (this.fileReallocInProgress.size > 0) {
+								// Another peer is already handling recovery \u2014 wait and re-queue
+								await pauseController.waitIfWritePaused();
+								await lock.runExclusive(() => {
+									queue.push(chunk!);
+								});
+								continue;
+							}
+							const globalAttempts = (this.fileReallocAttempts.get(-1) ?? 0) + 1;
+							this.fileReallocAttempts.set(-1, globalAttempts);
+							if (globalAttempts > ChunkDownloader.MAX_FILE_REALLOC) {
+								console.error(`[DL] Global file recovery limit (${ChunkDownloader.MAX_FILE_REALLOC}) exceeded`);
+								this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
+								break;
+							}
+							// Mark recovery in progress, pause all peer writes AND progress emissions.
+							// Everything below this line MUST run inside try/finally so destroy/disable
+							// during the 10s sleep can't leak pause state or the fileReallocInProgress flag.
+							this.fileReallocInProgress.add(-1);
+							pauseController.pauseWrites();
+							pauseController.pauseProgress();
+							progressReporter.resetLastFile();
+							console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${ChunkDownloader.MAX_FILE_REALLOC})`);
+							this.deps.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: downloadDir, retryCount: globalAttempts, maxRetries: ChunkDownloader.MAX_FILE_REALLOC });
+							let aborted = false;
+							try {
+								// FE shows retrying badge during the 10s pause — no progress override
+								// 10s delay — let the user finish deleting files before we scan
+								await new Promise<void>(resolve => {
+									const timer = setTimeout(resolve, 10_000);
+									const check = setInterval(() => {
+										if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+											clearTimeout(timer);
+											clearInterval(check);
+											resolve();
+										}
+									}, 1000);
+									setTimeout(() => clearInterval(check), 10_100);
+								});
+								if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+									aborted = true;
+									break;
+								}
+								console.log(`[DL] Recovery: verifying all files`);
+
+								// Step 2: Find and re-allocate missing files with progress
+								const missingFiles = await fileAllocator.findMissingFiles(lish);
+								if (missingFiles.length > 0) {
+									const totalMissingBytes = missingFiles.reduce((sum, fi) => sum + (lish.files?.[fi]?.size ?? 0), 0);
+									console.log(`[DL] ${missingFiles.length} files missing (${Math.round(totalMissingBytes / 1024 / 1024)}MB), allocating`);
+									progressReporter.emit({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: 0 });
+									await fileAllocator.allocateFiles(lish, missingFiles, (p: AllocationProgress) => this.deps.emitAllocProgress(p, totalChunks), this.deps.abortSignal);
+								}
+
+								// Step 3: Full verification of ALL files \u2014 checksum every chunk
+								if (lish.files && !this.deps.isDestroyed()) {
+									console.log(`[DL] Verifying ALL file checksums...`);
+									progressReporter.emit({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
+									const { runVerification } = await import('../lish/lish.ts');
+									const ac = new AbortController();
+									let lastVerified = 0;
+									let lastVerifyEmit = 0;
+									await runVerification(
+										dataServer,
+										lishID,
+										progress => {
+											lastVerified = progress.verifiedChunks ?? 0;
+											const now = Date.now();
+											if (now - lastVerifyEmit >= 1000) {
+												lastVerifyEmit = now;
+												progressReporter.emit({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
+											}
+										},
+										ac.signal
+									);
+									progressReporter.emit({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
+									console.log(`[DL] Verification done: ${lastVerified}/${totalChunks} chunks valid`);
+								}
+
+								// Step 4: Rebuild queue from verified state
+								const allMissing = dataServer.getMissingChunks(lishID);
+								const allTotal = dataServer.getAllChunkCount(lishID) || totalChunks;
+								downloadedCount = allTotal - allMissing.length;
+								// Re-initialize per-file counters from verified DB state
+								progressReporter.loadFileProgress(this.buildFileProgressEntries());
+								await lock.runExclusive(() => {
+									queue.length = queueIdx;
+									for (const mc of allMissing) queue.push(mc);
+								});
+								progressReporter.emit({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: peerManager.size(), bytesPerSecond: 0 });
+								console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
+							} catch (allocErr: any) {
+								console.error(`[DL] File recovery failed: ${allocErr.message}`);
+								this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
 								aborted = true;
 								break;
+							} finally {
+								this.fileReallocInProgress.delete(-1);
+								pauseController.resumeProgress();
+								pauseController.resumeWrites();
 							}
-							console.log(`[DL] Recovery: verifying all files`);
-
-							// Step 2: Find and re-allocate missing files with progress
-							const missingFiles = await fileAllocator.findMissingFiles(lish);
-							if (missingFiles.length > 0) {
-								const totalMissingBytes = missingFiles.reduce((sum, fi) => sum + (lish.files?.[fi]?.size ?? 0), 0);
-								console.log(`[DL] ${missingFiles.length} files missing (${Math.round(totalMissingBytes / 1024 / 1024)}MB), allocating`);
-								progressReporter.emit({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__allocating__', fileDownloadedChunks: 0 });
-								await fileAllocator.allocateFiles(lish, missingFiles, (p: AllocationProgress) => this.deps.emitAllocProgress(p, totalChunks), this.deps.abortSignal);
-							}
-
-							// Step 3: Full verification of ALL files \u2014 checksum every chunk
-							if (lish.files && !this.deps.isDestroyed()) {
-								console.log(`[DL] Verifying ALL file checksums...`);
-								progressReporter.emit({ downloadedChunks: 0, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
-								const { runVerification } = await import('../lish/lish.ts');
-								const ac = new AbortController();
-								let lastVerified = 0;
-								let lastVerifyEmit = 0;
-								await runVerification(
-									dataServer,
-									lishID,
-									progress => {
-										lastVerified = progress.verifiedChunks ?? 0;
-										const now = Date.now();
-										if (now - lastVerifyEmit >= 1000) {
-											lastVerifyEmit = now;
-											progressReporter.emit({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
-										}
-									},
-									ac.signal
-								);
-								progressReporter.emit({ downloadedChunks: lastVerified, totalChunks, peers: 0, bytesPerSecond: 0, filePath: '__verifying__' });
-								console.log(`[DL] Verification done: ${lastVerified}/${totalChunks} chunks valid`);
-							}
-
-							// Step 4: Rebuild queue from verified state
-							const allMissing = dataServer.getMissingChunks(lishID);
-							const allTotal = dataServer.getAllChunkCount(lishID) || totalChunks;
-							downloadedCount = allTotal - allMissing.length;
-							// Re-initialize per-file counters from verified DB state
-							progressReporter.loadFileProgress(this.buildFileProgressEntries());
-							await lock.runExclusive(() => {
-								queue.length = queueIdx;
-								for (const mc of allMissing) queue.push(mc);
-							});
-							progressReporter.emit({ downloadedChunks: downloadedCount, totalChunks: allTotal, peers: peerManager.size(), bytesPerSecond: 0 });
-							console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
-						} catch (allocErr: any) {
-							console.error(`[DL] File recovery failed: ${allocErr.message}`);
-							this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
-							aborted = true;
-							break;
-						} finally {
-							this.fileReallocInProgress.delete(-1);
-							pauseController.resumeProgress();
-							pauseController.resumeWrites();
-						}
-						if (aborted) break;
-						this.deps.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: downloadDir, retryCount: globalAttempts, maxRetries: ChunkDownloader.MAX_FILE_REALLOC, resolved: true });
-						continue;
-					} else if (err.code === 'ENOSPC' || err.code === 'EACCES' || err.code === 'EPERM') {
-						// Disk full or permission denied \u2014 inline retry with pause
-						const code = err.code === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
-						if (pauseController.writePaused) {
-							// Another peer already handling the write error \u2014 just wait and re-queue
-							await pauseController.waitIfWritePaused();
-							await lock.runExclusive(() => {
-								queue.push(chunk!);
-							});
+							if (aborted) break;
+							this.deps.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: downloadDir, retryCount: globalAttempts, maxRetries: ChunkDownloader.MAX_FILE_REALLOC, resolved: true });
 							continue;
-						}
-						this.writeRetryCount++;
-						if (this.writeRetryCount > ChunkDownloader.MAX_WRITE_RETRIES) {
-							console.error(`[DL] Write retry limit (${ChunkDownloader.MAX_WRITE_RETRIES}) exceeded for ${lishID.slice(0, 8)}`);
-							this.deps.onSetError(code, downloadDir);
-							break;
-						}
-						console.warn(`[DL] ${lishID.slice(0, 8)}: write failed (${err.code}), pausing ${ChunkDownloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES})`);
-						this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: this.writeRetryCount, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES });
-						// Everything below MUST run inside try/finally so destroy/disable during the 60s
-						// sleep can't leak _writePaused=true, which would hang all peer loops on the next enable().
-						pauseController.pauseWrites();
-						let writeAborted = false;
-						let writeRequeue = false;
-						try {
-							await new Promise<void>(resolve => {
-								const timer = setTimeout(resolve, ChunkDownloader.WRITE_RETRY_DELAY);
-								const check = setInterval(() => {
-									if (this.deps.isDestroyed() || this.deps.isDisabled()) {
-										clearTimeout(timer);
-										clearInterval(check);
-										resolve();
-									}
-								}, 1000);
-								setTimeout(() => clearInterval(check), ChunkDownloader.WRITE_RETRY_DELAY + 100);
-							});
-							if (this.deps.isDestroyed() || this.deps.isDisabled()) {
-								writeAborted = true;
+						} else if (err.code === 'ENOSPC' || err.code === 'EACCES' || err.code === 'EPERM') {
+							// Disk full or permission denied \u2014 inline retry with pause
+							const code = err.code === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
+							if (pauseController.writePaused) {
+								// Another peer already handling the write error \u2014 just wait and re-queue
+								await pauseController.waitIfWritePaused();
+								await lock.runExclusive(() => {
+									queue.push(chunk!);
+								});
+								continue;
+							}
+							this.writeRetryCount++;
+							if (this.writeRetryCount > ChunkDownloader.MAX_WRITE_RETRIES) {
+								console.error(`[DL] Write retry limit (${ChunkDownloader.MAX_WRITE_RETRIES}) exceeded for ${lishID.slice(0, 8)}`);
+								this.deps.onSetError(code, downloadDir);
 								break;
 							}
+							console.warn(`[DL] ${lishID.slice(0, 8)}: write failed (${err.code}), pausing ${ChunkDownloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES})`);
+							this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: this.writeRetryCount, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES });
+							// Everything below MUST run inside try/finally so destroy/disable during the 60s
+							// sleep can't leak _writePaused=true, which would hang all peer loops on the next enable().
+							pauseController.pauseWrites();
+							let writeAborted = false;
+							let writeRequeue = false;
 							try {
-								await writeChunkToAllSlots(chunk, data);
-								console.log(`[DL] Write retry succeeded for ${lishID.slice(0, 8)}`);
-								this.writeRetryCount = 0;
-								this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
-							} catch (retryErr: any) {
-								console.warn(`[DL] ${lishID.slice(0, 8)}: write retry still failed (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES}): ${retryErr.code ?? retryErr.message}`);
-								writeRequeue = true;
+								await new Promise<void>(resolve => {
+									const timer = setTimeout(resolve, ChunkDownloader.WRITE_RETRY_DELAY);
+									const check = setInterval(() => {
+										if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+											clearTimeout(timer);
+											clearInterval(check);
+											resolve();
+										}
+									}, 1000);
+									setTimeout(() => clearInterval(check), ChunkDownloader.WRITE_RETRY_DELAY + 100);
+								});
+								if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+									writeAborted = true;
+									break;
+								}
+								try {
+									await writeChunkToAllSlots(chunk, data);
+									console.log(`[DL] Write retry succeeded for ${lishID.slice(0, 8)}`);
+									this.writeRetryCount = 0;
+									this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
+								} catch (retryErr: any) {
+									console.warn(`[DL] ${lishID.slice(0, 8)}: write retry still failed (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES}): ${retryErr.code ?? retryErr.message}`);
+									writeRequeue = true;
+								}
+							} finally {
+								pauseController.resumeWrites();
 							}
-						} finally {
-							pauseController.resumeWrites();
+							if (writeAborted) break;
+							if (writeRequeue) {
+								await lock.runExclusive(() => {
+									queue.push(chunk!);
+								});
+								continue;
+							}
+						} else {
+							this.deps.onSetError(ErrorCodes.DOWNLOAD_ERROR, err.message);
+							break;
 						}
-						if (writeAborted) break;
-						if (writeRequeue) {
-							await lock.runExclusive(() => {
-								queue.push(chunk!);
-							});
-							continue;
-						}
-					} else {
-						this.deps.onSetError(ErrorCodes.DOWNLOAD_ERROR, err.message);
-						break;
 					}
-				}
-				dataServer.markChunkDownloaded(lishID, chunk.chunkID);
-				dataServer.incrementDownloadedBytes(lishID, data.length);
-				recordDownloadBytes(lishID, peerID, data.length, lish.files?.[chunk.fileIndex]?.path);
-				downloadedCount++;
-				if (this.writeRetryCount > 0) this.writeRetryCount = 0;
-				const fIdx = chunk.fileIndex;
-				progressReporter.recordChunk(data.length, fIdx, lish.files?.[fIdx]?.path);
-				if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
-					const bytesPerSecond = progressReporter.bytesPerSecond();
-					console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${peerManager.size()} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
+					dataServer.markChunkDownloaded(lishID, chunk.chunkID);
+					dataServer.incrementDownloadedBytes(lishID, data.length);
+					recordDownloadBytes(lishID, peerID, data.length, lish.files?.[chunk.fileIndex]?.path);
+					downloadedCount++;
+					if (this.writeRetryCount > 0) this.writeRetryCount = 0;
+					const fIdx = chunk.fileIndex;
+					progressReporter.recordChunk(data.length, fIdx, lish.files?.[fIdx]?.path);
+					if (downloadedCount % 50 === 0 || downloadedCount === totalChunks) {
+						const bytesPerSecond = progressReporter.bytesPerSecond();
+						console.log(`[DL] ${downloadedCount}/${totalChunks} verified, ${peerManager.size()} peers, ${Math.round(bytesPerSecond / 1024)}KB/s`);
+					}
+				} finally {
+					// The chunk's fate is settled (downloaded, requeued, or fatal) — release
+					// the in-flight claim so idle peers can make their exit/drop decision.
+					inFlight--;
 				}
 			}
 			peerManager.markInactive(peerID);
