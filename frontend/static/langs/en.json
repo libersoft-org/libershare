@@ -130,7 +130,7 @@
 	"downloads": {
 		"title": "Downloads and sharing",
 		"id": "ID",
-		"chunkSize": "Chunk size",
+		"chunks": "Chunks",
 		"targetDirectory": "Target directory",
 		"downloadingFrom": "Downloading from",
 		"uploadingTo": "Uploading to",
