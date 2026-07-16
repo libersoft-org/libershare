@@ -33,4 +33,11 @@ describe('validateLISHStructure', () => {
 	it('rejects file with too many checksums', () => expect(() => validateLISHStructure(makeLish({ chunkSize: 1024, files: [{ path: 'a.bin', size: 1024, checksums: ['h1', 'h2'] }] }), MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST)); // expected 1
 	it('rejects non-empty file with empty checksums', () => expect(() => validateLISHStructure(makeLish({ chunkSize: 1024, files: [{ path: 'a.bin', size: 1, checksums: [] }] }), MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
 	it('rejects empty file with non-empty checksums', () => expect(() => validateLISHStructure(makeLish({ chunkSize: 1024, files: [{ path: 'empty', size: 0, checksums: ['h1'] }] }), MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+
+	// Untrusted peer input: malformed shapes must yield a CodedError, never a native TypeError.
+	// toThrow(<code>) also guards the regression — a TypeError message would not contain the code.
+	it('rejects a null manifest', () => expect(() => validateLISHStructure(null as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	it('rejects a non-object manifest', () => expect(() => validateLISHStructure(42 as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	it('rejects files that is not an array', () => expect(() => validateLISHStructure({ ...makeLish(), files: 5 } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	it('rejects a null file entry', () => expect(() => validateLISHStructure({ ...makeLish(), files: [null] } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
 });

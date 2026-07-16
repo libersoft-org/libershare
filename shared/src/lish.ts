@@ -16,10 +16,15 @@ export const DEFAULT_CHUNK_SIZE: number = 1024 * 1024;
  *    (zero-size files have zero checksums)
  */
 export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
+	// `lish` may come straight off the wire from an untrusted peer — reject malformed shapes with
+	// a coded error rather than letting a raw property access throw a native TypeError.
+	if (!lish || typeof lish !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'manifest is not an object');
 	if (typeof lish.chunkSize !== 'number' || !Number.isFinite(lish.chunkSize) || lish.chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(lish.chunkSize));
 	if (lish.chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${lish.chunkSize} > ${maxChunkSize}`);
 	if (lish.files) {
+		if (!Array.isArray(lish.files)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'files is not an array');
 		for (const file of lish.files) {
+			if (!file || typeof file !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'file entry is not an object');
 			const expected = file.size === 0 ? 0 : Math.ceil(file.size / lish.chunkSize);
 			if (!Array.isArray(file.checksums) || file.checksums.length !== expected) {
 				const got = Array.isArray(file.checksums) ? file.checksums.length : 'invalid';
