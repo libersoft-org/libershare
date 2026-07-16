@@ -1,8 +1,8 @@
 import { decode as lpDecode } from 'it-length-prefixed';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { type Stream } from '@libp2p/interface';
-import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError } from '@shared';
-import { DEFAULT_MAX_MESSAGE_SIZE } from '../settings.ts';
+import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError, validateLISHStructure } from '@shared';
+import { DEFAULT_MAX_MESSAGE_SIZE, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
 import { uploadLimiter } from './speed-limiter.ts';
@@ -24,6 +24,21 @@ export function setMaxMessageSize(size: number): void {
 
 export function getMaxMessageSize(): number {
 	return maxMessageSize;
+}
+
+/**
+ * Maximum chunk size accepted in a manifest received from a peer, in bytes.
+ * Mirrors the `network.maxChunkSize` bound enforced on locally created/imported LISHs so a
+ * malicious or malformed manifest can't push an oversized chunk size into the app. Read live
+ * on every manifest so settings changes take effect without a peer restart.
+ */
+let maxChunkSize: number = DEFAULT_MAX_CHUNK_SIZE;
+export function setMaxChunkSize(size: number): void {
+	if (typeof size === 'number' && Number.isFinite(size) && size > 0) maxChunkSize = size;
+}
+
+export function getMaxChunkSize(): number {
+	return maxChunkSize;
 }
 
 export type LISHRequest = LISHGetChunkRequest | LISHGetLishRequest | LISHGetLishsRequest | LISHAnnounceHaveRequest | LISHSearchResultRequest;
@@ -166,6 +181,9 @@ export class LISHClient {
 		const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
 		if ('error' in response) throw new CodedError(response.error, lishID);
 		if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
+		// A manifest from the network is untrusted input — validate chunk-size bounds and
+		// manifest consistency before it can reach any caller (DB persist / import / probe).
+		validateLISHStructure(response.manifest, maxChunkSize);
 		return response.manifest;
 	}
 
