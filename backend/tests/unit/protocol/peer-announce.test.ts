@@ -9,7 +9,7 @@ import { LISH_TOPIC_PREFIX } from '../../../src/protocol/constants.ts';
 // of each one we publish on). PeerIDs below are fake placeholders and the multiaddrs
 // use RFC5737 TEST-NET-1 (192.0.2.0/24), which shouldDenyDial treats as routable.
 
-const SELF_ID = '12D3KooWSelfSelfSelfSelfSelfSelfSelfSelfSelfSelfAA';
+const SELF_ID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
 const SELF_ADDR = '/ip4/192.0.2.1/tcp/9090';
 const PA_ID = 'PeerAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const PA_ADDR = '/ip4/192.0.2.10/tcp/9090';
