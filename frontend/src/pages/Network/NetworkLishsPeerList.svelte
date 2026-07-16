@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -9,8 +10,8 @@
 	import { type LishSearchResult, type LISHNetworkConfig, type IPeerLishDetail } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
-	import Spinner from '../../components/Spinner/Spinner.svelte';
 	import Icon from '../../components/Icon/Icon.svelte';
+	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import TableHeader from '../../components/Table/TableHeader.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
@@ -35,6 +36,32 @@
 	// Fallback progress per peer row (indexed like row.peers); outcomes persist until the next run.
 	let peerStatuses = $state<Array<PeerAttemptStatus | null>>([]);
 
+	// Worst-case duration of one fallback attempt: libp2p dial (~10 s default)
+	// + the backend's manifest-receive timeout (30 s). The bar tracks elapsed time
+	// against this budget — same time-driven approach as the search progress bar.
+	const ATTEMPT_BUDGET_MS = 40_000;
+	let attemptStartedAt = $state<number | null>(null);
+	let nowTick = $state(performance.now());
+	let ticker: ReturnType<typeof setInterval> | null = null;
+	$effect(() => {
+		if (busy && ticker === null) {
+			// Refresh the tick before the first interval fires — a stale value from a
+			// previous run would make `nowTick - attemptStartedAt` negative for up to 200 ms.
+			nowTick = performance.now();
+			ticker = setInterval(() => (nowTick = performance.now()), 200);
+		} else if (!busy && ticker !== null) {
+			clearInterval(ticker);
+			ticker = null;
+		}
+	});
+	onDestroy(() => {
+		if (ticker !== null) clearInterval(ticker);
+	});
+	let attemptProgress = $derived.by((): number => {
+		if (attemptStartedAt === null) return 0;
+		return Math.min(100, (Math.max(0, nowTick - attemptStartedAt) / ATTEMPT_BUDGET_MS) * 100);
+	});
+
 	function networkName(networkID: string): string {
 		return networks.find(n => n.networkID === networkID)?.name ?? networkID;
 	}
@@ -46,7 +73,11 @@
 	/** Run the shared peer-fallback loop over this row's peers, driving the per-row statuses. */
 	function tryPeers<T>(op: (peerID: string, networkID: string) => Promise<T>): Promise<T> {
 		peerStatuses = [];
-		return withPeerFallback(row.peers, op, (index, status) => (peerStatuses[index] = status));
+		return withPeerFallback(row.peers, op, (index, status) => {
+			peerStatuses[index] = status;
+			// Restart the row progress bar with each new attempt.
+			if (status === 'downloading') attemptStartedAt = performance.now();
+		});
 	}
 
 	async function handleAddToSharing(): Promise<void> {
@@ -158,6 +189,18 @@
 		white-space: nowrap;
 	}
 
+	.peer-progress {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0.4vh;
+		width: 100%;
+	}
+
+	.peer-progress .peer-status {
+		justify-content: center;
+	}
+
 	.button-bar-wrap {
 		width: 100%;
 	}
@@ -213,7 +256,10 @@
 					<TableCell align="center">{networkName(p.networkID)}</TableCell>
 					<TableCell align="center">
 						{#if peerStatuses[i] === 'downloading'}
-							<span class="peer-status"><Spinner size="2vh" />{$t('network.statusDownloading')}</span>
+							<div class="peer-progress">
+								<span class="peer-status">{$t('network.statusDownloading')}</span>
+								<ProgressBar progress={attemptProgress} showText={false} height="1.2vh" animated />
+							</div>
 						{:else if peerStatuses[i] === 'downloaded'}
 							<span class="peer-status"><Icon img="/img/check.svg" size="2vh" padding="0" colorVariable="--color-success" />{$t('network.statusDownloaded')}</span>
 						{:else if peerStatuses[i] === 'unavailable'}
