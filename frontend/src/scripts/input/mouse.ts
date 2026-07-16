@@ -39,10 +39,12 @@ class MouseManager {
 	private pendingHoverTarget: EventTarget | null = null;
 	private lastHoveredItem: NavItem | null = null;
 	private lastActivatedAreaID: string | null = null;
+	private lastClientX = -1;
+	private lastClientY = -1;
 
 	start(): void {
 		if (this.mouseMoveHandler) return;
-		this.mouseMoveHandler = () => this.handleMouseMove();
+		this.mouseMoveHandler = (e: MouseEvent) => this.handleMouseMove(e);
 		this.mouseDownHandler = () => this.handleMouseDown();
 		this.clickHandler = (e: MouseEvent) => this.handleDelegatedClick(e);
 		this.mouseOverHandler = (e: MouseEvent) => this.handleDelegatedMouseOver(e);
@@ -113,7 +115,14 @@ class MouseManager {
 		if (callback) callback();
 	}
 
-	private handleMouseMove(): void {
+	private handleMouseMove(e: MouseEvent): void {
+		// Chromium re-fires mousemove when content scrolls under a stationary cursor
+		// (e.g. keyboard-driven scrollIntoView). Same coordinates = the user did not
+		// move the mouse, so it must not flip input back to mouse mode and let hover
+		// steal the keyboard selection.
+		if (e.clientX === this.lastClientX && e.clientY === this.lastClientY) return;
+		this.lastClientX = e.clientX;
+		this.lastClientY = e.clientY;
 		mouseActive = true;
 		cursorVisible.set(true);
 		this.scheduleHide();
