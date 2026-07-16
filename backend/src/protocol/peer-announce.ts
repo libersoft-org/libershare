@@ -233,6 +233,8 @@ export class PeerAnnounceManager {
 			try {
 				for (const p of pubsub.getSubscribers(topic)) subscribers.add(p.toString());
 			} catch {}
+			// No subscribers → the announce would reach nobody, skip it.
+			if (subscribers.size === 0) continue;
 			const collected = new Set<string>(selfAddrs);
 			let transitiveAdded = 0;
 			for (const peer of allPeers) {
@@ -256,9 +258,10 @@ export class PeerAnnounceManager {
 					perPeer++;
 				}
 			}
-			// Nothing to add beyond self (no scoped subscribers contributed addrs) —
-			// skip rather than spam a self-only announce on every idle topic.
-			if (transitiveAdded === 0) continue;
+			// Broadcast even if only self made it in — subscribers with unusable
+			// (e.g. /p2p-circuit-only) addresses still need our self addrs to
+			// reconnect to us. Only skip the edge where nothing routable exists.
+			if (collected.size === 0) continue;
 			const msg: PeerAnnounceMessage = { type: 'peer-announce', multiaddrs: Array.from(collected) };
 			trace(`[NET] peer-announce emit topic=${topic.slice(0, 16)}: ${collected.size} addrs (self + ${transitiveAdded} scoped transitive)`);
 			try {

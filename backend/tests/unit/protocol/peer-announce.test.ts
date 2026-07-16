@@ -77,7 +77,7 @@ describe('PeerAnnounceManager.emit topic scoping', () => {
 		expect(bAddrs).not.toContain('192.0.2.10/'); // P_A leaked in from network A
 	});
 
-	it('skips a topic whose only content would be self (no scoped subscribers)', async () => {
+	it('skips a topic with no subscribers (announce would reach nobody)', async () => {
 		const allPeers = [fakePeer(PA_ID, PA_ADDR), fakePeer('Filler1111111111111111111111111111111111111111111', '/ip4/192.0.2.101/tcp/9090'), fakePeer('Filler2222222222222222222222222222222222222222222', '/ip4/192.0.2.102/tcp/9090'), fakePeer('Filler3333333333333333333333333333333333333333333', '/ip4/192.0.2.103/tcp/9090'), fakePeer('Filler4444444444444444444444444444444444444444444', '/ip4/192.0.2.104/tcp/9090')];
 		const node = {
 			peerId: { toString: () => SELF_ID },
@@ -102,5 +102,38 @@ describe('PeerAnnounceManager.emit topic scoping', () => {
 		await (mgr as any).emit();
 
 		expect(broadcasts).toEqual([TOPIC_A]);
+	});
+
+	it('still announces self when a subscriber contributes no routable addr (circuit-only)', async () => {
+		// P_A subscribes to topic A but is reachable only via /p2p-circuit — it adds
+		// no transitive addr, yet still needs our self addrs to reconnect, so the
+		// announce must go out with self.
+		const circuitPeer = { id: { toString: () => PA_ID }, addresses: [{ multiaddr: Multiaddr(`/p2p-circuit/p2p/${SELF_ID}`) }] };
+		const allPeers = [circuitPeer, fakePeer('Filler1111111111111111111111111111111111111111111', '/ip4/192.0.2.101/tcp/9090'), fakePeer('Filler2222222222222222222222222222222222222222222', '/ip4/192.0.2.102/tcp/9090'), fakePeer('Filler3333333333333333333333333333333333333333333', '/ip4/192.0.2.103/tcp/9090'), fakePeer('Filler4444444444444444444444444444444444444444444', '/ip4/192.0.2.104/tcp/9090')];
+		const node = {
+			peerId: { toString: () => SELF_ID },
+			getMultiaddrs: () => [Multiaddr(SELF_ADDR)],
+			peerStore: { all: async () => allPeers },
+		};
+		const pubsub = {
+			getTopics: () => [TOPIC_A],
+			getSubscribers: (topic: string) => (topic === TOPIC_A ? [fakeSubscriber(PA_ID)] : []),
+		};
+		const broadcasts: Array<{ topic: string; msg: PeerAnnounceMessage }> = [];
+		const mgr = new PeerAnnounceManager({
+			getNode: () => node as any,
+			getPubsub: () => pubsub as any,
+			broadcast: async (topic, msg) => {
+				broadcasts.push({ topic, msg: msg as unknown as PeerAnnounceMessage });
+			},
+			addBootstrapPeers: async () => {},
+		});
+
+		await (mgr as any).emit();
+
+		expect(broadcasts.length).toBe(1);
+		expect(broadcasts[0]!.topic).toBe(TOPIC_A);
+		expect(broadcasts[0]!.msg.multiaddrs.join(' ')).toContain('192.0.2.1/'); // self present
+		expect(broadcasts[0]!.msg.multiaddrs.some(a => a.includes('/p2p-circuit'))).toBe(false);
 	});
 });
