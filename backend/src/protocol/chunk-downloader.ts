@@ -214,9 +214,13 @@ export class ChunkDownloader {
 					// Definitive per-chunk answer — remember it and never re-ask this peer.
 					// Does NOT count toward the consecutive-skip drop: a partial seeder is
 					// still useful for the chunks it does have (pull skips not-found ones).
+					// It also BREAKS the transient streak — the peer just proved it's alive
+					// and answering, so interleaved busy/not-found must not add up to a
+					// spurious "10 consecutive" drop.
 					notFound.add(chunk.chunkID);
 					skippedChunks++;
 					globalNotAvailable++;
+					consecutiveNotAvailable = 0;
 					await lock.runExclusive(() => {
 						queue.push(chunk!);
 					});
