@@ -340,63 +340,76 @@ export class ChunkDownloader {
 						this.deps.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: downloadDir, retryCount: globalAttempts, maxRetries: ChunkDownloader.MAX_FILE_REALLOC, resolved: true });
 						continue;
 					} else if (err.code === 'ENOSPC' || err.code === 'EACCES' || err.code === 'EPERM') {
-						// Disk full or permission denied \u2014 inline retry with pause
+						// Disk full or permission denied. `data` is already length+hash verified, so we
+						// hold it in memory (closure-scoped, no global cache) and retry the SAME bytes
+						// after a pause instead of dropping it and re-downloading the chunk from the network.
 						const code = err.code === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
 						if (pauseController.writePaused) {
-							// Another peer already handling the write error \u2014 just wait and re-queue
+							// Another peer owns the retry cycle for this LISH. Wait for it to lift the pause,
+							// then retry OUR retained buffer once \u2014 if that peer freed the disk the write now
+							// lands with no re-download. Re-queue (and re-download later) only as a last resort.
 							await pauseController.waitIfWritePaused();
-							await lock.runExclusive(() => {
-								queue.push(chunk!);
-							});
-							continue;
-						}
-						this.writeRetryCount++;
-						if (this.writeRetryCount > ChunkDownloader.MAX_WRITE_RETRIES) {
-							console.error(`[DL] Write retry limit (${ChunkDownloader.MAX_WRITE_RETRIES}) exceeded for ${lishID.slice(0, 8)}`);
-							this.deps.onSetError(code, downloadDir);
-							break;
-						}
-						console.warn(`[DL] ${lishID.slice(0, 8)}: write failed (${err.code}), pausing ${ChunkDownloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES})`);
-						this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: this.writeRetryCount, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES });
-						// Everything below MUST run inside try/finally so destroy/disable during the 60s
-						// sleep can't leak _writePaused=true, which would hang all peer loops on the next enable().
-						pauseController.pauseWrites();
-						let writeAborted = false;
-						let writeRequeue = false;
-						try {
-							await new Promise<void>(resolve => {
-								const timer = setTimeout(resolve, ChunkDownloader.WRITE_RETRY_DELAY);
-								const check = setInterval(() => {
-									if (this.deps.isDestroyed() || this.deps.isDisabled()) {
-										clearTimeout(timer);
-										clearInterval(check);
-										resolve();
-									}
-								}, 1000);
-								setTimeout(() => clearInterval(check), ChunkDownloader.WRITE_RETRY_DELAY + 100);
-							});
-							if (this.deps.isDestroyed() || this.deps.isDisabled()) {
-								writeAborted = true;
-								break;
-							}
+							if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
 							try {
 								await writeChunkToAllSlots(chunk, data);
-								console.log(`[DL] Write retry succeeded for ${lishID.slice(0, 8)}`);
-								this.writeRetryCount = 0;
-								this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
-							} catch (retryErr: any) {
-								console.warn(`[DL] ${lishID.slice(0, 8)}: write retry still failed (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES}): ${retryErr.code ?? retryErr.message}`);
-								writeRequeue = true;
+							} catch {
+								await lock.runExclusive(() => {
+									queue.push(chunk!);
+								});
+								continue;
 							}
-						} finally {
-							pauseController.resumeWrites();
-						}
-						if (writeAborted) break;
-						if (writeRequeue) {
-							await lock.runExclusive(() => {
-								queue.push(chunk!);
-							});
-							continue;
+							// fall through to markChunkDownloaded \u2014 chunk written from retained memory
+						} else {
+							// We own the retry cycle: pause all writers for this LISH and re-attempt our
+							// retained buffer every WRITE_RETRY_DELAY. The buffer stays in memory across the
+							// whole cycle and is released only when the write lands, the retry limit is hit
+							// (onSetError), or the download is disabled/destroyed. The try/finally guarantees
+							// resumeWrites so destroy/disable during the 60s sleep can't leak _writePaused=true.
+							pauseController.pauseWrites();
+							let writeAborted = false;
+							let writeSucceeded = false;
+							try {
+								while (!writeSucceeded) {
+									this.writeRetryCount++;
+									if (this.writeRetryCount > ChunkDownloader.MAX_WRITE_RETRIES) {
+										console.error(`[DL] Write retry limit (${ChunkDownloader.MAX_WRITE_RETRIES}) exceeded for ${lishID.slice(0, 8)}`);
+										this.deps.onSetError(code, downloadDir);
+										writeAborted = true;
+										break;
+									}
+									console.warn(`[DL] ${lishID.slice(0, 8)}: write failed (${err.code}), pausing ${ChunkDownloader.WRITE_RETRY_DELAY / 1000}s (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES})`);
+									this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: this.writeRetryCount, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES });
+									await new Promise<void>(resolve => {
+										const timer = setTimeout(resolve, ChunkDownloader.WRITE_RETRY_DELAY);
+										const check = setInterval(() => {
+											if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+												clearTimeout(timer);
+												clearInterval(check);
+												resolve();
+											}
+										}, 1000);
+										setTimeout(() => clearInterval(check), ChunkDownloader.WRITE_RETRY_DELAY + 100);
+									});
+									if (this.deps.isDestroyed() || this.deps.isDisabled()) {
+										writeAborted = true;
+										break;
+									}
+									try {
+										await writeChunkToAllSlots(chunk, data);
+										console.log(`[DL] Write retry succeeded for ${lishID.slice(0, 8)}`);
+										this.writeRetryCount = 0;
+										this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
+										writeSucceeded = true;
+									} catch (retryErr: any) {
+										// Keep `data` in memory and loop \u2014 never re-download the chunk.
+										console.warn(`[DL] ${lishID.slice(0, 8)}: write retry still failed (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES}): ${retryErr.code ?? retryErr.message}`);
+									}
+								}
+							} finally {
+								pauseController.resumeWrites();
+							}
+							if (writeAborted) break;
+							// fall through to markChunkDownloaded \u2014 chunk written from retained memory
 						}
 					} else {
 						this.deps.onSetError(ErrorCodes.DOWNLOAD_ERROR, err.message);
