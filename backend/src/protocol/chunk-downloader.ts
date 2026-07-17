@@ -343,7 +343,7 @@ export class ChunkDownloader {
 						// Disk full or permission denied. `data` is already length+hash verified, so we
 						// hold it in memory (closure-scoped, no global cache) and retry the SAME bytes
 						// after a pause instead of dropping it and re-downloading the chunk from the network.
-						const code = err.code === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
+						let code = err.code === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
 						if (pauseController.writePaused) {
 							// Another peer owns the retry cycle for this LISH. Wait for it to lift the pause,
 							// then retry OUR retained buffer once \u2014 if that peer freed the disk the write now
@@ -368,6 +368,7 @@ export class ChunkDownloader {
 							pauseController.pauseWrites();
 							let writeAborted = false;
 							let writeSucceeded = false;
+							let writeRequeue = false;
 							try {
 								while (!writeSucceeded) {
 									this.writeRetryCount++;
@@ -401,14 +402,39 @@ export class ChunkDownloader {
 										this.deps.onRetry?.({ errorCode: code, errorDetail: downloadDir, retryCount: 0, maxRetries: ChunkDownloader.MAX_WRITE_RETRIES, resolved: true });
 										writeSucceeded = true;
 									} catch (retryErr: any) {
-										// Keep `data` in memory and loop \u2014 never re-download the chunk.
-										console.warn(`[DL] ${lishID.slice(0, 8)}: write retry still failed (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES}): ${retryErr.code ?? retryErr.message}`);
+										const retryCode = retryErr?.code;
+										if (retryCode === 'ENOSPC' || retryCode === 'EACCES' || retryCode === 'EPERM') {
+											// Still the disk-full class \u2014 keep the SAME buffer and loop. Track the
+											// (possibly switched, e.g. EACCES\u2192ENOSPC) code so the next notification and
+											// any final onSetError report the current cause, not the original one.
+											code = retryCode === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
+											console.warn(`[DL] ${lishID.slice(0, 8)}: write retry still failed (attempt ${this.writeRetryCount}/${ChunkDownloader.MAX_WRITE_RETRIES}): ${retryCode}`);
+										} else if (retryCode === 'ENOENT') {
+											// The file was deleted during the pause. Leave the disk-full loop and re-queue
+											// so the chunk re-enters the normal write path and hits the existing ENOENT
+											// re-allocation recovery (which re-allocates + re-downloads anyway).
+											console.warn(`[DL] ${lishID.slice(0, 8)}: file vanished during write retry, routing to ENOENT recovery`);
+											writeRequeue = true;
+											break;
+										} else {
+											// Error changed to something unexpected \u2014 don't keep blindly retrying the
+											// disk-full cycle (that would mis-report DISK_FULL); fail with the real cause.
+											this.deps.onSetError(ErrorCodes.DOWNLOAD_ERROR, retryErr?.message ?? String(retryErr));
+											writeAborted = true;
+											break;
+										}
 									}
 								}
 							} finally {
 								pauseController.resumeWrites();
 							}
 							if (writeAborted) break;
+							if (writeRequeue) {
+								await lock.runExclusive(() => {
+									queue.push(chunk!);
+								});
+								continue;
+							}
 							// fall through to markChunkDownloaded \u2014 chunk written from retained memory
 						}
 					} else {

@@ -87,7 +87,14 @@ class MockDataServer {
 
 	writeChunkError: Error | null = null;
 	writeChunkErrorCount = 0; // how many more times to throw before succeeding
+	writeChunkOutcomes: Array<Error | null> | null = null; // per-call script (shift); null entry = success
 	async writeChunk(_dir: string, _lish: IStoredLISH, fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
+		if (this.writeChunkOutcomes) {
+			const outcome = this.writeChunkOutcomes.shift() ?? null;
+			if (outcome) throw outcome;
+			this.writtenChunks.push({ fileIndex, chunkIndex, data });
+			return;
+		}
 		if (this.writeChunkError && this.writeChunkErrorCount > 0) {
 			this.writeChunkErrorCount--;
 			throw this.writeChunkError;
@@ -1409,6 +1416,34 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(h.client.requestChunkCalls).toBe(1); // buffer dropped only after giving up — never re-fetched
 		expect(h.errors).toHaveLength(1);
 		expect(h.errors[0]!.code).toBe(ErrorCodes.DISK_FULL);
+		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(false);
+	});
+
+	it('error changes to ENOENT mid-retry → re-queues (re-downloads), never mis-reports DISK_FULL', async () => {
+		const h = harness(0);
+		h.ds.writeChunkOutcomes = [
+			Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }), // initial write: disk full
+			Object.assign(new Error('ENOENT'), { code: 'ENOENT' }), // retry: file vanished during pause
+			null, // re-queued chunk re-downloaded, write now lands
+		];
+		await h.cd.run();
+
+		expect(h.client.requestChunkCalls).toBe(2); // re-queued → one extra fetch (blind retry would stay at 1)
+		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(true);
+		expect(h.errors).toHaveLength(0); // never burned through 5 retries reporting DISK_FULL
+	});
+
+	it('error changes to an unknown code mid-retry → fails with real cause, not DISK_FULL', async () => {
+		const h = harness(0);
+		h.ds.writeChunkOutcomes = [
+			Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }), // initial write: disk full
+			new Error('disk controller exploded'), // retry: unexpected error, no code
+		];
+		await h.cd.run();
+
+		expect(h.client.requestChunkCalls).toBe(1); // aborted immediately, no re-download
+		expect(h.errors).toHaveLength(1);
+		expect(h.errors[0]!.code).toBe(ErrorCodes.DOWNLOAD_ERROR); // real cause surfaced, not DISK_FULL
 		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(false);
 	});
 });
