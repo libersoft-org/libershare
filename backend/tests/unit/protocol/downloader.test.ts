@@ -29,9 +29,11 @@ class MockLISHClient {
 	closeCalled = false;
 	haveChunks: 'all' | ChunkID[] = 'all';
 	requestChunkCalls = 0;
+	chunkData: Map<ChunkID, Uint8Array> | null = null; // if set, serve per-chunkID (multi-chunk tests)
 
-	async requestChunk(_lishID: LISHid, _chunkID: ChunkID): Promise<Uint8Array | null> {
+	async requestChunk(_lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | null> {
 		this.requestChunkCalls++;
+		if (this.chunkData) return this.chunkData.get(chunkID) ?? null;
 		if (this.requestChunkResult instanceof Error) throw this.requestChunkResult;
 		return this.requestChunkResult;
 	}
@@ -1445,5 +1447,75 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(h.errors).toHaveLength(1);
 		expect(h.errors[0]!.code).toBe(ErrorCodes.DOWNLOAD_ERROR); // real cause surfaced, not DISK_FULL
 		expect(h.ds.downloadedChunks.has(h.chunkID)).toBe(false);
+	});
+
+	it('two concurrent peers both hit ENOSPC → both write from memory, no extra fetches', async () => {
+		const mk = (seed: number) => {
+			const d = new Uint8Array(1024);
+			for (let i = 0; i < d.length; i++) d[i] = (i * seed + 7) & 0xff;
+			return d;
+		};
+		const dataA = mk(3);
+		const dataB = mk(11);
+		const idA = sha256Hex(dataA) as ChunkID;
+		const idB = sha256Hex(dataB) as ChunkID;
+
+		const ds = new MockDataServer();
+		const lish = makeLISH({ files: [{ path: 'f.bin', size: dataA.length + dataB.length, checksums: [idA, idB] }] });
+		ds.add(lish);
+		ds.allChunkCount = 2;
+		ds.missingChunks = [makeMissingChunk(idA, 0, 0), makeMissingChunk(idB, 0, 1)];
+		// Disk full for the first 3 write attempts (2 initial + 1 owner retry), then it frees.
+		ds.writeChunkError = Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+		ds.writeChunkErrorCount = 3;
+
+		const chunkData = new Map<ChunkID, Uint8Array>([
+			[idA, dataA],
+			[idB, dataB],
+		]);
+		const c1 = new MockLISHClient();
+		c1.chunkData = chunkData;
+		const c2 = new MockLISHClient();
+		c2.chunkData = chunkData;
+
+		const peerManager = new PeerManager();
+		peerManager.setLishID(lish.id);
+		peerManager.tryAdd('peer-1', c1 as never, 'DIRECT');
+		peerManager.tryAdd('peer-2', c2 as never, 'DIRECT');
+
+		const state = { disabled: false, destroyed: false };
+		const pauseController = new PauseController(
+			() => state.disabled,
+			() => state.destroyed
+		);
+		const errors: Array<{ code: string; detail: string | undefined }> = [];
+		const deps: ChunkDownloaderDeps = {
+			lishID: lish.id,
+			downloadDir: '/tmp/test-dl',
+			abortSignal: new AbortController().signal,
+			dataServer: ds as never,
+			peerManager,
+			pauseController,
+			progressReporter: new ProgressReporter(),
+			fileAllocator: {} as never,
+			getLish: () => lish,
+			isDestroyed: () => state.destroyed,
+			isDisabled: () => state.disabled,
+			onSetError: (code, detail) => {
+				errors.push({ code, detail });
+				state.disabled = true;
+			},
+			onRetry: () => {},
+			emitAllocProgress: () => {},
+		};
+
+		await new ChunkDownloader(deps).run();
+
+		// Both chunks fetched exactly once total — the waiting peer wrote from its retained buffer.
+		expect(c1.requestChunkCalls + c2.requestChunkCalls).toBe(2);
+		expect(ds.downloadedChunks.has(idA)).toBe(true);
+		expect(ds.downloadedChunks.has(idB)).toBe(true);
+		expect(ds.writtenChunks).toHaveLength(2);
+		expect(errors).toHaveLength(0);
 	});
 });
