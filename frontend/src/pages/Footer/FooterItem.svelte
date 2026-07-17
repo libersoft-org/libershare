@@ -7,9 +7,10 @@
 		bottomIcon?: string;
 		bottomIconAlt?: string;
 		bottomLabel?: string;
+		title?: string;
 	}
 
-	const { topLabel, topIcon, topIconAlt = '', bottomLabel, bottomIcon, bottomIconAlt = '' }: Props = $props();
+	const { topLabel, topIcon, topIconAlt = '', bottomLabel, bottomIcon, bottomIconAlt = '', title }: Props = $props();
 </script>
 
 <style>
@@ -29,7 +30,7 @@
 	}
 </style>
 
-<div class="item">
+<div class="item" {title}>
 	<div class="top">
 		{#if topIcon}<Icon img={topIcon} alt={topIconAlt} size="2vh" padding="0" colorVariable="--primary-foreground" />{/if}
 		{#if topLabel}<span class="value">{topLabel}</span>{/if}

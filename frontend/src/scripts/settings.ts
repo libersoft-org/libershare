@@ -18,6 +18,9 @@ export const inputInitialDelay = writable(400);
 export const inputRepeatDelay = writable(150);
 export const gamepadDeadzone = writable(0.5);
 export const volume = writable(50);
+// Whether the OS exposes a controllable audio device. False on headless/device-less
+// systems — the footer widget then shows an "unavailable" state instead of a level.
+export const volumeAvailable = writable(true);
 export const footerVisible = writable(true);
 export const footerPosition = writable<FooterPosition>('right');
 export const footerWidgetVisibility = writable<Record<FooterWidget, boolean>>(defaultWidgetVisibility);
@@ -95,6 +98,15 @@ export async function loadSettings(): Promise<void> {
 		// Audio
 		audioEnabled.set(settings.audio.enabled);
 		volume.set(settings.audio.volume);
+		// Reconcile with the OS: use the live volume when a device is present,
+		// otherwise flag it unavailable so the widget shows no fabricated level.
+		try {
+			const status = await api.call<{ volume: number | null; available: boolean }>('system.getVolume');
+			volumeAvailable.set(status.available);
+			if (status.available && status.volume !== null) volume.set(status.volume);
+		} catch {
+			// Leave the persisted value on error; availability stays as-is.
+		}
 
 		// Storage
 		storagePath.set(settings.storage.downloadPath);
@@ -320,7 +332,12 @@ let volumeSyncTimer: ReturnType<typeof setTimeout> | undefined;
 function syncVolumeToBackend(value: number): void {
 	clearTimeout(volumeSyncTimer);
 	volumeSyncTimer = setTimeout(() => {
-		api.call('system.setVolume', { volume: value }).catch((err: unknown) => console.error('[Settings] Error saving volume:', err));
+		// The backend persists the preference even with no audio device; we refresh
+		// availability from its answer and never surface a per-keystroke error.
+		api
+			.call<{ success: boolean; available: boolean }>('system.setVolume', { volume: value })
+			.then(res => volumeAvailable.set(res.available))
+			.catch((err: unknown) => console.error('[Settings] Error saving volume:', err));
 	}, 150);
 }
 

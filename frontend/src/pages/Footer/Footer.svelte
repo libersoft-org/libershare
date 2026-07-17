@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
 	import { productVersion } from '@shared';
-	import { volume, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
+	import { volume, volumeAvailable, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
 	import { type FooterWidget, getVolumeIcon } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
 	import LISHStatus from './FooterLISHStatus.svelte';
@@ -142,6 +142,15 @@
 			id: 'volume',
 			component: Item,
 			props(): Record<string, any> {
+				if (!$volumeAvailable) {
+					const label = $t('settings.footerWidgets.volumeUnavailable');
+					return {
+						topIcon: 'img/volumeOff.svg',
+						topIconAlt: label,
+						title: label,
+						bottomLabel: '—',
+					};
+				}
 				return {
 					topIcon: `img/${getVolumeIcon($volume)}.svg`,
 					topIconAlt: $t('settings.footerWidgets.volume'),

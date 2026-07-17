@@ -494,6 +494,7 @@
 			"ram": "Využití RAM",
 			"storage": "Využití úložiště",
 			"volume": "Hlasitost",
+			"volumeUnavailable": "Zvukové zařízení není k dispozici",
 			"clock": "Hodiny"
 		},
 		"audio": "Zvukové efekty",
