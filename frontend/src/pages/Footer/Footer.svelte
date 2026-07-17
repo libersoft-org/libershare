@@ -42,7 +42,9 @@
 				return {
 					topIcon: 'img/person.svg',
 					topIconAlt: $t('settings.footerWidgets.peerId'),
-					bottomLabel: shortenPeerID($nodeInfo?.peerID),
+					// Footer space is scarce and every peer ID shares the same multibase
+					// prefix, so a short head + tail is enough to recognize the identity.
+					bottomLabel: shortenPeerID($nodeInfo?.peerID, 4, 6),
 				};
 			},
 		},
