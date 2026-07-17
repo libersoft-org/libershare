@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
-import { setSystemVolume, getSystemVolume } from '../system-volume.ts';
+import { setSystemVolume, getSystemVolumeStatus } from '../system-volume.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -18,8 +18,8 @@ interface SystemHandlers {
 	ram: () => SystemRAMInfo;
 	storage: () => Promise<SystemStorageInfo>;
 	cpu: () => SystemCPUInfo;
-	setVolume: (p: { volume: number }) => Promise<number>;
-	getVolume: () => Promise<number>;
+	setVolume: (p: { volume: number }) => Promise<{ success: boolean; available: boolean }>;
+	getVolume: () => Promise<{ volume: number | null; available: boolean }>;
 	startPolling: () => void;
 	stopPolling: () => void;
 }
@@ -28,28 +28,35 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 
 	/**
-	 * Persist the volume and push it to the OS mixer. Returns the clamped value
-	 * that was applied. OS application never throws (it warns on headless boxes),
-	 * so persistence still succeeds even where no mixer exists.
+	 * Persist the volume (the user's preference is kept even with no audio device)
+	 * and push it to the OS mixer. Returns whether the OS volume actually changed
+	 * and whether a controllable device exists.
 	 */
-	async function setVolume(p: { volume: number }): Promise<number> {
+	async function setVolume(p: { volume: number }): Promise<{ success: boolean; available: boolean }> {
 		assert(p, ['volume']);
 		if (typeof p.volume !== 'number' || !Number.isFinite(p.volume)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'volume must be a number');
 		const pct = Math.min(100, Math.max(0, Math.round(p.volume)));
 		await settings.set('audio.volume', pct);
-		await setSystemVolume(pct);
-		return pct;
+		return await setSystemVolume(pct);
 	}
 
-	/** Read the live OS volume, falling back to the persisted setting when unavailable. */
-	async function getVolume(): Promise<number> {
-		const live = await getSystemVolume();
-		return live ?? (settings.get('audio.volume') as number);
+	/**
+	 * Report the live OS volume and whether a controllable audio device exists.
+	 * Volume is the live reading (falling back to the persisted setting) only when
+	 * available; on a device-less system it is null so the UI shows no fake value.
+	 */
+	async function getVolume(): Promise<{ volume: number | null; available: boolean }> {
+		const status = await getSystemVolumeStatus();
+		if (!status.available) return { volume: null, available: false };
+		return { volume: status.volume ?? (settings.get('audio.volume') as number), available: true };
 	}
 
 	// Align the OS mixer with the persisted volume on startup so the device matches
-	// the last saved value after a reboot. Fire-and-forget: warns on failure.
-	void setSystemVolume(settings.get('audio.volume') as number);
+	// the last saved value after a reboot. Fire-and-forget; a device-less host logs
+	// a single info line rather than repeating warnings.
+	void setSystemVolume(settings.get('audio.volume') as number).then(res => {
+		if (!res.available) console.log('[system-volume] No controllable audio device detected; OS volume control disabled.');
+	});
 
 	function getLinuxAvailableMem(): number | null {
 		try {

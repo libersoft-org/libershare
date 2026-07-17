@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { parseAlsaVolume, parseMacVolume, parseWindowsVolume } from '../../src/system-volume.ts';
+import { parseAlsaVolume, parseMacVolume, parseWindowsVolume, interpretWindowsRead, interpretWindowsWrite, classifyMixerReadings } from '../../src/system-volume.ts';
 
 describe('parseAlsaVolume', () => {
 	it('extracts the percentage from an amixer mixer line', () => {
@@ -17,6 +17,10 @@ describe('parseAlsaVolume', () => {
 
 	it('returns null when no percentage is present', () => {
 		expect(parseAlsaVolume('no volume here')).toBeNull();
+	});
+
+	it('returns null for pactl failure on a host with no sink', () => {
+		expect(parseAlsaVolume('Failure: No such entity')).toBeNull();
 	});
 });
 
@@ -40,5 +44,48 @@ describe('parseWindowsVolume', () => {
 	it('returns null for unparseable output', () => {
 		expect(parseWindowsVolume('')).toBeNull();
 		expect(parseWindowsVolume('nope')).toBeNull();
+	});
+});
+
+describe('interpretWindowsRead', () => {
+	it('maps the sentinel to no-device', () => {
+		expect(interpretWindowsRead('NO_AUDIO_DEVICE\n')).toEqual({ kind: 'no-device' });
+	});
+
+	it('maps a scalar to ok with a percentage', () => {
+		expect(interpretWindowsRead('0.30')).toEqual({ kind: 'ok', volume: 30 });
+	});
+
+	it('maps garbage to a transient error', () => {
+		expect(interpretWindowsRead('boom')).toEqual({ kind: 'error' });
+	});
+});
+
+describe('interpretWindowsWrite', () => {
+	it('maps OK to ok', () => {
+		expect(interpretWindowsWrite('OK\n')).toEqual({ kind: 'ok', volume: null });
+	});
+
+	it('maps the sentinel to no-device', () => {
+		expect(interpretWindowsWrite('NO_AUDIO_DEVICE')).toEqual({ kind: 'no-device' });
+	});
+
+	it('maps anything else to a transient error', () => {
+		expect(interpretWindowsWrite('')).toEqual({ kind: 'error' });
+	});
+});
+
+describe('classifyMixerReadings', () => {
+	it('returns ok from the first parseable reading (amixer)', () => {
+		expect(classifyMixerReadings(['Mono: Playback 200 [65%] [on]', null])).toEqual({ kind: 'ok', volume: 65 });
+	});
+
+	it('falls back to pactl when amixer is absent', () => {
+		expect(classifyMixerReadings([null, 'Volume: front-left: 40000 / 55% / -13 dB'])).toEqual({ kind: 'ok', volume: 55 });
+	});
+
+	it('reports no-device when no binary yields a percentage', () => {
+		expect(classifyMixerReadings([null, null])).toEqual({ kind: 'no-device' });
+		expect(classifyMixerReadings([null, 'Failure: No such entity'])).toEqual({ kind: 'no-device' });
 	});
 });
