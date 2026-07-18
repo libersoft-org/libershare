@@ -42,6 +42,11 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		// Seed the watcher with the value the mixer ACTUALLY ended on (res.volume,
 		// which under latest-wins may differ from pct) so its poll does not echo it.
 		volumeWatcher.remember({ volume: res.volume, available: res.available });
+		// The watcher now suppresses this write's echo, so other connected clients
+		// (a second window/tab) would never hear about it — tell them directly.
+		// The originating client ignores the level while its own adjustment is
+		// fresh, so this cannot fight the user's in-progress input.
+		if (res.success) broadcast('system:volumeChanged', { volume: res.volume, available: res.available });
 		return { success: res.success, available: res.available };
 	}
 
