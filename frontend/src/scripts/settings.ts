@@ -336,13 +336,23 @@ export function setDefaultCompressionAlgorithm(algorithm: string): void {
 // which persists it and sets the OS master volume. The backend call is debounced
 // so holding a repeat key/button down does not spam the WebSocket.
 let volumeSyncTimer: ReturnType<typeof setTimeout> | undefined;
-// Timestamp of the last local +/- change. Used to ignore OS→FE volume events
+// Timestamp of the last local +/- change. Used to hold back OS→FE volume events
 // that arrive while the user is actively adjusting, so their in-progress value
 // is not clobbered by a slightly stale poll.
 let lastLocalVolumeChange = 0;
+/** How long after a local +/- press incoming OS volume events are deferred instead of applied. */
+const LOCAL_EDIT_GUARD_MS = 1000;
+// The newest OS-side level that arrived inside the guard window — replayed once
+// the window expires (the backend suppresses its echo, so a dropped event would
+// otherwise never be re-delivered and this client would stay stale).
+let deferredVolume: number | null = null;
+let deferredVolumeTimer: ReturnType<typeof setTimeout> | undefined;
 
 function syncVolumeToBackend(value: number): void {
 	lastLocalVolumeChange = Date.now();
+	// A newer local edit supersedes any OS-side level captured before it — the
+	// backend write that follows will leave the mixer on the local value.
+	deferredVolume = null;
 	clearTimeout(volumeSyncTimer);
 	volumeSyncTimer = setTimeout(() => {
 		// The backend persists the preference even with no audio device; we refresh
@@ -378,10 +388,26 @@ function subscribeVolumeChanges(): void {
 	if (!volumeChangeSubscribed) {
 		volumeChangeSubscribed = true;
 		api.on('system:volumeChanged', (data: { volume: number | null; available: boolean }) => {
-			// Availability (device plug/unplug) always applies; the level is skipped
-			// while the user is mid-adjustment so a stale poll cannot fight their input.
+			// Availability (device plug/unplug) always applies; the level is held
+			// back while the user is mid-adjustment so a stale poll cannot fight
+			// their input — but deferred, not dropped, or this client would keep
+			// showing its local value forever (the backend suppresses the echo).
 			volumeAvailable.set(data.available);
-			if (Date.now() - lastLocalVolumeChange > 1000 && data.available && data.volume !== null) volume.set(data.volume);
+			if (!data.available || data.volume === null) return;
+			const remaining = LOCAL_EDIT_GUARD_MS - (Date.now() - lastLocalVolumeChange);
+			if (remaining <= 0) {
+				volume.set(data.volume);
+				return;
+			}
+			deferredVolume = data.volume;
+			clearTimeout(deferredVolumeTimer);
+			deferredVolumeTimer = setTimeout(() => {
+				// Only replay when no newer local edit re-armed the guard meanwhile.
+				if (deferredVolume !== null && Date.now() - lastLocalVolumeChange >= LOCAL_EDIT_GUARD_MS) {
+					volume.set(deferredVolume);
+					deferredVolume = null;
+				}
+			}, remaining + 50);
 		});
 	}
 	api.subscribe('system:volumeChanged');
