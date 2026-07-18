@@ -61,11 +61,20 @@ async function run(cmd: string, args: string[]): Promise<string> {
 	return stdout.toString();
 }
 
-/** Run a binary, returning its stdout or null when the binary is missing/fails. */
+/**
+ * Run a binary, returning its stdout, or null when the binary is missing or
+ * exits non-zero — both definitive "this mixer path yields nothing" answers
+ * (e.g. pactl's `Failure: No such entity` on a sink-less host). A TIMEOUT kill
+ * is different: the helper exists and may just be wedged, so it is rethrown and
+ * the caller's catch classifies it as a transient `error` (indeterminate), never
+ * as `no-device` — see the getSystemVolumeStatus contract.
+ */
 async function tryRun(cmd: string, args: string[]): Promise<string | null> {
 	try {
 		return await run(cmd, args);
-	} catch {
+	} catch (err) {
+		const e = err as { killed?: boolean; signal?: string | null };
+		if (e?.killed || e?.signal) throw err;
 		return null;
 	}
 }
@@ -74,8 +83,9 @@ async function readMixer(): Promise<MixerResult> {
 	try {
 		if (process.platform === 'win32') return readWindowsVolume();
 		if (process.platform === 'darwin') {
-			// macOS has no clean "no device" signal — treat any osascript read failure
-			// as unavailable (documented on getSystemVolumeStatus).
+			// macOS has no clean "no device" signal — treat a failing osascript as
+			// unavailable (documented on getSystemVolumeStatus). A timeout is
+			// rethrown by tryRun and lands in the transient-error catch below.
 			const out = await tryRun('osascript', ['-e', 'output volume of (get volume settings)']);
 			if (out === null) return { kind: 'no-device' };
 			const v = parseMacVolume(out);
