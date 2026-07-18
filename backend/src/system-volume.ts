@@ -1,5 +1,6 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createInterface } from 'node:readline';
 
 const execFileAsync = promisify(execFile);
 
@@ -364,13 +365,30 @@ export function setSystemVolume(percent: number): Promise<VolumeResult> {
  */
 export interface VolumeWatcher {
 	poll: () => Promise<void>;
+	/** Feed a known status (from the instant push monitor) through the same diff/broadcast path as poll. */
+	ingest: (status: VolumeStatus) => void;
 	remember: (status: VolumeStatus) => void;
+	/** Last observed availability (true until the first reading), used to gate the push monitor. */
+	available: () => boolean;
 }
 
 export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatus | null>; broadcast: (status: VolumeStatus) => void; persist: (volume: number) => void; isBusy: () => boolean }): VolumeWatcher {
 	let last: VolumeStatus | null = null;
 	let polling = false;
+
+	// Diff a fresh status against the last one seen; on a real change persist and
+	// broadcast it. Shared by poll (fallback) and the instant push monitor.
+	function ingest(status: VolumeStatus): void {
+		if (last !== null && last.volume === status.volume && last.available === status.available) return;
+		last = status;
+		// The user changed the level via the OS — keep the persisted preference in sync.
+		if (status.available && status.volume !== null) deps.persist(status.volume);
+		deps.broadcast(status);
+	}
+
 	return {
+		ingest,
+		available: () => (last === null ? true : last.available),
 		remember(status: VolumeStatus): void {
 			last = status;
 		},
@@ -386,14 +404,151 @@ export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatu
 				// Transient read error (indeterminate) — keep the last known state, do
 				// not broadcast, so a hiccup never reports a present device as gone.
 				if (status === null) return;
-				if (last !== null && last.volume === status.volume && last.available === status.available) return;
-				last = status;
-				// The user changed the level via the OS — keep the persisted preference in sync.
-				if (status.available && status.volume !== null) deps.persist(status.volume);
-				deps.broadcast(status);
+				ingest(status);
 			} finally {
 				polling = false;
 			}
 		},
 	};
+}
+
+/** Handle to a running instant-volume monitor process. */
+export interface VolumeMonitor {
+	stop: () => void;
+}
+
+/** How often the persistent Windows monitor re-reads the endpoint (sub-second push latency). */
+const WINDOWS_MONITOR_POLL_MS = 150;
+
+/**
+ * Windows CoreAudio push monitor. ONE long-running PowerShell process activates
+ * the default render endpoint once and then tight-loops `GetMasterVolumeLevel-
+ * Scalar` every {@link WINDOWS_MONITOR_POLL_MS} in-process, printing the new
+ * level (0–100, invariant) to stdout whenever it changes. This is a persistent
+ * process, not a per-check spawn: each read is a cheap in-process COM call, so
+ * latency is sub-second without repeatedly launching PowerShell.
+ *
+ * ponytail: chosen over IAudioEndpointVolumeCallback — that COM callback proved
+ * unreliable here (the host process died with exit code 5 after the first
+ * notification, a fragile CCW/apartment interaction). A 150 ms in-process loop
+ * gives the same sub-second result robustly. It binds the default endpoint at
+ * spawn; a device switch is caught by the 5 s poll fallback and a monitor
+ * respawn on availability flip (see the poll-driven lifecycle in system.ts).
+ */
+const WINDOWS_MONITOR_CSHARP = `
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Globalization;
+using System.Threading;
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioEndpointVolume {
+  int f(); int g(); int h(); int i();
+  int SetMasterVolumeLevelScalar(float fLevel, Guid ctx);
+  int j();
+  int GetMasterVolumeLevelScalar(out float pfLevel);
+}
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDevice { int Activate(ref Guid iid, int ctx, int p, out IAudioEndpointVolume aev); }
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumerator { int f(); int GetDefaultAudioEndpoint(int flow, int role, out IMMDevice ep); }
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject { }
+public class VolMonitor {
+  public static void Start() {
+    var en = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
+    IMMDevice dev;
+    if (en.GetDefaultAudioEndpoint(0, 1, out dev) != 0) return;
+    IAudioEndpointVolume epv;
+    var iid = typeof(IAudioEndpointVolume).GUID;
+    if (dev.Activate(ref iid, 23, 0, out epv) != 0) return;
+    int last = -1;
+    int errors = 0;
+    while (true) {
+      float v;
+      if (epv.GetMasterVolumeLevelScalar(out v) == 0) {
+        errors = 0;
+        int pct = (int)Math.Round(v * 100);
+        if (pct != last) {
+          last = pct;
+          Console.WriteLine(pct.ToString(CultureInfo.InvariantCulture));
+          Console.Out.Flush();
+        }
+      } else if (++errors >= 5) {
+        return; // endpoint likely gone — exit so the parent respawns on the new default
+      }
+      Thread.Sleep(${WINDOWS_MONITOR_POLL_MS});
+    }
+  }
+}
+'@
+[VolMonitor]::Start()
+`;
+
+function startWindowsMonitor(emit: (status: VolumeStatus) => void, onExit: () => void): VolumeMonitor {
+	const proc = spawn('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowershell(WINDOWS_MONITOR_CSHARP)], { windowsHide: true });
+	const rl = createInterface({ input: proc.stdout });
+	rl.on('line', line => {
+		const v = parseMonitorVolume(line);
+		if (v !== null) emit({ volume: v, available: true });
+	});
+	let stopped = false;
+	const exit = (): void => {
+		if (!stopped) onExit();
+	};
+	proc.on('exit', exit);
+	proc.on('error', exit);
+	return {
+		stop: () => {
+			stopped = true;
+			rl.close();
+			proc.kill();
+		},
+	};
+}
+
+function startLinuxMonitor(emit: (status: VolumeStatus) => void, onExit: () => void): VolumeMonitor {
+	// pactl streams events; a sink change means the default sink volume may have
+	// moved — re-read it and diff. (amixer has no push; that path stays on poll.)
+	const proc = spawn('pactl', ['subscribe']);
+	const rl = createInterface({ input: proc.stdout });
+	rl.on('line', async line => {
+		if (!/on sink #|on sink\b/i.test(line)) return;
+		const status = await getSystemVolumeStatus();
+		if (status) emit(status);
+	});
+	let stopped = false;
+	const exit = (): void => {
+		if (!stopped) onExit();
+	};
+	proc.on('exit', exit);
+	proc.on('error', exit);
+	return {
+		stop: () => {
+			stopped = true;
+			rl.close();
+			proc.kill();
+		},
+	};
+}
+
+/** Parse one stdout line from the Windows monitor: a bare integer percentage. */
+export function parseMonitorVolume(line: string): number | null {
+	return parseMacVolume(line);
+}
+
+/**
+ * Start the platform's instant OS→FE volume monitor, calling `emit` the moment
+ * the OS volume changes and `onExit` if the process dies (so the caller can
+ * respawn). Returns a `stop()` handle. On platforms without a push source
+ * (macOS, or Linux without pactl) returns a no-op monitor — the caller then
+ * relies on the 5s poll fallback alone.
+ */
+export function startVolumeMonitor(emit: (status: VolumeStatus) => void, onExit: () => void): VolumeMonitor {
+	try {
+		if (process.platform === 'win32') return startWindowsMonitor(emit, onExit);
+		if (process.platform === 'linux') return startLinuxMonitor(emit, onExit);
+	} catch (err) {
+		console.warn('[system-volume] Failed to start volume monitor:', (err as Error).message);
+	}
+	return { stop: () => {} };
 }

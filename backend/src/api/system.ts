@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
-import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy } from '../system-volume.ts';
+import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -26,6 +26,7 @@ interface SystemHandlers {
 
 export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn): SystemHandlers {
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let volumeMonitor: VolumeMonitor | null = null;
 
 	/**
 	 * Persist the volume (the user's preference is kept even with no audio device)
@@ -207,9 +208,23 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 					broadcast('system:storage', await getStorageInfo());
 				} catch {}
 			}
-			// Only poll the OS mixer while a client is listening — on Windows each
+			const volumeWanted = hasSubscribers('system:volumeChanged');
+			// Run the instant push monitor while a client listens and a device is
+			// present; (re)spawn on crash or when a device reappears, stop otherwise.
+			if (volumeWanted && volumeWatcher.available() && !volumeMonitor) {
+				volumeMonitor = startVolumeMonitor(
+					status => volumeWatcher.ingest(status),
+					() => {
+						volumeMonitor = null;
+					}
+				);
+			} else if ((!volumeWanted || !volumeWatcher.available()) && volumeMonitor) {
+				volumeMonitor.stop();
+				volumeMonitor = null;
+			}
+			// The 5s poll is the fallback and drives availability; on Windows each
 			// poll spawns a short-lived PowerShell process (~hundreds of ms CPU).
-			if (hasSubscribers('system:volumeChanged')) await volumeWatcher.poll();
+			if (volumeWanted) await volumeWatcher.poll();
 		}, POLL_INTERVAL_MS);
 	}
 
@@ -217,6 +232,10 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		if (pollInterval) {
 			clearInterval(pollInterval);
 			pollInterval = null;
+		}
+		if (volumeMonitor) {
+			volumeMonitor.stop();
+			volumeMonitor = null;
 		}
 	}
 

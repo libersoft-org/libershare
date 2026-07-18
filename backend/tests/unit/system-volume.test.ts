@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { parseAlsaVolume, parseMacVolume, parseWindowsVolume, interpretWindowsRead, interpretWindowsWrite, classifyMixerReadings, createSerializedWriter, createVolumeWatcher, type VolumeStatus } from '../../src/system-volume.ts';
+import { parseAlsaVolume, parseMacVolume, parseWindowsVolume, interpretWindowsRead, interpretWindowsWrite, classifyMixerReadings, createSerializedWriter, createVolumeWatcher, parseMonitorVolume, type VolumeStatus } from '../../src/system-volume.ts';
 
 /** Resolve pending microtasks + timers so the serializer can advance. */
 const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0));
@@ -144,6 +144,19 @@ describe('createSerializedWriter', () => {
 	});
 });
 
+describe('parseMonitorVolume', () => {
+	it('parses a bare integer line from the push monitor', () => {
+		expect(parseMonitorVolume('55')).toBe(55);
+		expect(parseMonitorVolume('100\r')).toBe(100);
+		expect(parseMonitorVolume('0')).toBe(0);
+	});
+
+	it('ignores malformed lines', () => {
+		expect(parseMonitorVolume('')).toBeNull();
+		expect(parseMonitorVolume('abc')).toBeNull();
+	});
+});
+
 describe('createVolumeWatcher', () => {
 	function setup(statuses: Array<VolumeStatus | null>, isBusy: () => boolean = () => false) {
 		let i = 0;
@@ -157,6 +170,29 @@ describe('createVolumeWatcher', () => {
 		});
 		return { watcher, broadcasts, persisted };
 	}
+
+	it('ingests an instant push, broadcasting and persisting on change', () => {
+		const { watcher, broadcasts, persisted } = setup([]);
+		watcher.ingest({ volume: 55, available: true });
+		expect(broadcasts).toEqual([{ volume: 55, available: true }]);
+		expect(persisted).toEqual([55]);
+	});
+
+	it('suppresses an ingested push that echoes our own write', () => {
+		const { watcher, broadcasts } = setup([]);
+		watcher.remember({ volume: 55, available: true });
+		watcher.ingest({ volume: 55, available: true });
+		expect(broadcasts).toEqual([]);
+	});
+
+	it('exposes last known availability to gate the push monitor', () => {
+		const { watcher } = setup([]);
+		expect(watcher.available()).toBe(true); // optimistic before the first reading
+		watcher.ingest({ volume: 0, available: false });
+		expect(watcher.available()).toBe(false);
+		watcher.ingest({ volume: 30, available: true });
+		expect(watcher.available()).toBe(true);
+	});
 
 	it('broadcasts and persists when the level changes', async () => {
 		const { watcher, broadcasts, persisted } = setup([
