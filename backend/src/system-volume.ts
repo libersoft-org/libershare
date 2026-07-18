@@ -220,22 +220,22 @@ async function writeMixer(pct: number): Promise<MixerResult> {
 }
 
 /**
- * Report whether the OS has a controllable audio device and, if so, its current
- * master volume (0–100).
- *
- * `available` is true only when a device actually answered — a headless box,
- * a system with no ALSA/PulseAudio mixer, or a Windows host with no active
- * endpoint reports `{ available: false, volume: null }` so callers never show a
- * fabricated level. Detection per platform:
- * - Windows: CoreAudio `GetDefaultAudioEndpoint` returning ELEMENT_NOT_FOUND.
- * - Linux: neither `amixer` nor `pactl` yields a percentage (missing binaries,
- *   or `pactl` failing with `No such entity` on a host with no default sink).
- * - macOS: any `osascript` read failure (the platform gives no finer signal, so
- *   a transient read error is also reported as unavailable).
+ * Read the OS volume, distinguishing three outcomes:
+ * - `{ available: true, volume }` — a device answered.
+ * - `{ available: false, volume: null }` — the OS confirms there is NO
+ *   controllable device (verified absence): a headless box, no ALSA/PulseAudio
+ *   mixer, a Windows host whose `GetDefaultAudioEndpoint` returns
+ *   ELEMENT_NOT_FOUND, or a macOS `osascript` read that fails.
+ * - `null` — a transient failure (PowerShell timeout, a passing CoreAudio
+ *   error): availability is INDETERMINATE, the device likely still exists.
+ *   Callers MUST keep their last known availability instead of treating this as
+ *   device-less, so a hiccup never flips a present device to "unavailable".
  */
-export async function getSystemVolumeStatus(): Promise<VolumeStatus> {
+export async function getSystemVolumeStatus(): Promise<VolumeStatus | null> {
 	const r = await readMixer();
-	return r.kind === 'ok' ? { available: true, volume: r.volume } : { available: false, volume: null };
+	if (r.kind === 'ok') return { available: true, volume: r.volume };
+	if (r.kind === 'no-device') return { available: false, volume: null };
+	return null; // transient error — indeterminate
 }
 
 /** A snapshot of the OS volume: the level (0–100, or null when unavailable) and whether a device exists. */
@@ -359,7 +359,7 @@ export interface VolumeWatcher {
 	remember: (status: VolumeStatus) => void;
 }
 
-export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatus>; broadcast: (status: VolumeStatus) => void; persist: (volume: number) => void; isBusy: () => boolean }): VolumeWatcher {
+export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatus | null>; broadcast: (status: VolumeStatus) => void; persist: (volume: number) => void; isBusy: () => boolean }): VolumeWatcher {
 	let last: VolumeStatus | null = null;
 	return {
 		remember(status: VolumeStatus): void {
@@ -369,6 +369,9 @@ export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatu
 			// A mixer write is in flight or settling — reading now could race it.
 			if (deps.isBusy()) return;
 			const status = await deps.getStatus();
+			// Transient read error (indeterminate) — keep the last known state, do
+			// not broadcast, so a hiccup never reports a present device as gone.
+			if (status === null) return;
 			if (last !== null && last.volume === status.volume && last.available === status.available) return;
 			last = status;
 			// The user changed the level via the OS — keep the persisted preference in sync.

@@ -145,7 +145,7 @@ describe('createSerializedWriter', () => {
 });
 
 describe('createVolumeWatcher', () => {
-	function setup(statuses: VolumeStatus[], isBusy: () => boolean = () => false) {
+	function setup(statuses: Array<VolumeStatus | null>, isBusy: () => boolean = () => false) {
 		let i = 0;
 		const broadcasts: VolumeStatus[] = [];
 		const persisted: number[] = [];
@@ -201,6 +201,22 @@ describe('createVolumeWatcher', () => {
 			{ volume: 60, available: true },
 			{ volume: null, available: false },
 		]);
+	});
+
+	it('keeps availability across a transient read error', async () => {
+		// ok(50) → transient(null) → ok(50): no availability flip, one broadcast.
+		const { watcher, broadcasts } = setup([{ volume: 50, available: true }, null, { volume: 50, available: true }]);
+		await watcher.poll(); // ok → broadcast {50,true}
+		await watcher.poll(); // transient → skipped, last kept
+		await watcher.poll(); // ok, equals last → no broadcast
+		expect(broadcasts).toEqual([{ volume: 50, available: true }]);
+	});
+
+	it('does not broadcast unavailable on a transient error as the first read', async () => {
+		const { watcher, broadcasts, persisted } = setup([null]);
+		await watcher.poll();
+		expect(broadcasts).toEqual([]);
+		expect(persisted).toEqual([]);
 	});
 
 	it('skips while a write is active, then resumes for genuine changes', async () => {

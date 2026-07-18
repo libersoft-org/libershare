@@ -43,13 +43,22 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return res;
 	}
 
+	// Last availability we determined from an unambiguous read/write. A transient
+	// read error must never flip this to false, so getVolume reuses it as the
+	// fallback rather than reporting a present device as unavailable.
+	let lastKnownAvailable = true;
+
 	/**
 	 * Report the live OS volume and whether a controllable audio device exists.
-	 * Volume is the live reading (falling back to the persisted setting) only when
-	 * available; on a device-less system it is null so the UI shows no fake value.
+	 * On a confirmed device-less system volume is null and available false. On a
+	 * transient read error (getSystemVolumeStatus returns null) availability is
+	 * indeterminate, so we keep the last known availability and fall back to the
+	 * persisted level instead of falsely reporting "unavailable".
 	 */
 	async function getVolume(): Promise<{ volume: number | null; available: boolean }> {
 		const status = await getSystemVolumeStatus();
+		if (status === null) return { volume: lastKnownAvailable ? (settings.get('audio.volume') as number) : null, available: lastKnownAvailable };
+		lastKnownAvailable = status.available;
 		if (!status.available) return { volume: null, available: false };
 		return { volume: status.volume ?? (settings.get('audio.volume') as number), available: true };
 	}
@@ -64,11 +73,12 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	});
 
 	// Align the OS mixer with the persisted volume on startup so the device matches
-	// the last saved value after a reboot, then seed the watcher so this initial
-	// write is not reported as an external change. Fire-and-forget; a device-less
-	// host logs a single info line rather than repeating warnings.
+	// the last saved value after a reboot, then seed the watcher + last-known
+	// availability so this initial write is not reported as an external change.
+	// Fire-and-forget; a device-less host logs a single info line.
 	const startupVolume = settings.get('audio.volume') as number;
 	void setSystemVolume(startupVolume).then(res => {
+		lastKnownAvailable = res.available;
 		volumeWatcher.remember({ volume: res.available ? startupVolume : null, available: res.available });
 		if (!res.available) console.log('[system-volume] No controllable audio device detected; OS volume control disabled.');
 	});
