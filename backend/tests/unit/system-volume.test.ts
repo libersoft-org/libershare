@@ -115,7 +115,7 @@ describe('createSerializedWriter', () => {
 
 		releases[1]!(); // finish write(80)
 		expect(await p2).toBe(80); // coalesced caller gets the final write's result
-		await p1;
+		expect(await p1).toBe(80); // first (startup-style) caller also resolves to the final written value
 		expect(started).toEqual([30, 80]); // exactly two real writes for two requests
 	});
 
@@ -242,5 +242,29 @@ describe('createVolumeWatcher', () => {
 		await watcher.poll(); // reads 40 → genuine external change → event + persist
 		expect(broadcasts).toEqual([{ volume: 40, available: true }]);
 		expect(persisted).toEqual([40]);
+	});
+
+	it('does not start a second poll while one is in flight', async () => {
+		let resolveRead!: (s: VolumeStatus | null) => void;
+		let reads = 0;
+		const broadcasts: VolumeStatus[] = [];
+		const watcher = createVolumeWatcher({
+			getStatus: () => {
+				reads++;
+				return new Promise<VolumeStatus | null>(res => (resolveRead = res));
+			},
+			broadcast: s => broadcasts.push(s),
+			persist: () => {},
+			isBusy: () => false,
+		});
+
+		const p1 = watcher.poll(); // read #1 in flight
+		const p2 = watcher.poll(); // reentrant tick → no-op, no second read
+		expect(reads).toBe(1);
+
+		resolveRead({ volume: 30, available: true });
+		await Promise.all([p1, p2]);
+		expect(reads).toBe(1); // still exactly one read
+		expect(broadcasts).toEqual([{ volume: 30, available: true }]);
 	});
 });

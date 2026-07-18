@@ -38,9 +38,10 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		const pct = Math.min(100, Math.max(0, Math.round(p.volume)));
 		await settings.set('audio.volume', pct);
 		const res = await setSystemVolume(pct);
-		// Record the value we just set so the watcher poll does not echo it back.
-		volumeWatcher.remember({ volume: res.available ? pct : null, available: res.available });
-		return res;
+		// Seed the watcher with the value the mixer ACTUALLY ended on (res.volume,
+		// which under latest-wins may differ from pct) so its poll does not echo it.
+		volumeWatcher.remember({ volume: res.volume, available: res.available });
+		return { success: res.success, available: res.available };
 	}
 
 	// Last availability we determined from an unambiguous read/write. A transient
@@ -79,7 +80,11 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	const startupVolume = settings.get('audio.volume') as number;
 	void setSystemVolume(startupVolume).then(res => {
 		lastKnownAvailable = res.available;
-		volumeWatcher.remember({ volume: res.available ? startupVolume : null, available: res.available });
+		// Seed with the value actually written last: a client setVolume during this
+		// startup write wins (latest-wins), so res.volume — not startupVolume — is
+		// what the mixer ended on, and re-seeding the old value would let the next
+		// poll classify our own write as an external change.
+		volumeWatcher.remember({ volume: res.volume, available: res.available });
 		if (!res.available) console.log('[system-volume] No controllable audio device detected; OS volume control disabled.');
 	});
 

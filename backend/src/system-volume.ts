@@ -244,16 +244,24 @@ export interface VolumeStatus {
 	available: boolean;
 }
 
-/** The public shape returned by {@link setSystemVolume}. */
+/**
+ * The public shape returned by {@link setSystemVolume}. `volume` is the level
+ * actually applied to the mixer (null when nothing was written) — under the
+ * latest-wins serializer this is the final written value, which may differ from
+ * the value an individual (coalesced) caller requested. Callers seeding the
+ * watcher must use this, not their requested value, or they re-seed with a stale
+ * level and the next poll misreads their own write as an external change.
+ */
 export interface VolumeResult {
 	success: boolean;
 	available: boolean;
+	volume: number | null;
 }
 
-function mapWrite(r: MixerResult): VolumeResult {
-	if (r.kind === 'ok') return { success: true, available: true };
-	if (r.kind === 'no-device') return { success: false, available: false };
-	return { success: false, available: true };
+function mapWrite(r: MixerResult, pct: number): VolumeResult {
+	if (r.kind === 'ok') return { success: true, available: true, volume: pct };
+	if (r.kind === 'no-device') return { success: false, available: false, volume: null };
+	return { success: false, available: true, volume: null };
 }
 
 /**
@@ -315,7 +323,7 @@ export function createSerializedWriter<R>(write: (value: number) => Promise<R>):
 	return { run, isBusy: () => running || Date.now() - lastWriteEnd < WRITE_SETTLE_MS };
 }
 
-const serializedWrite = createSerializedWriter<VolumeResult>(async pct => mapWrite(await writeMixer(pct)));
+const serializedWrite = createSerializedWriter<VolumeResult>(async pct => mapWrite(await writeMixer(pct), pct));
 
 /** True while a mixer write is in flight or still settling — the watcher skips its poll then. */
 export function isMixerWriteBusy(): boolean {
@@ -361,6 +369,7 @@ export interface VolumeWatcher {
 
 export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatus | null>; broadcast: (status: VolumeStatus) => void; persist: (volume: number) => void; isBusy: () => boolean }): VolumeWatcher {
 	let last: VolumeStatus | null = null;
+	let polling = false;
 	return {
 		remember(status: VolumeStatus): void {
 			last = status;
@@ -368,15 +377,23 @@ export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatu
 		async poll(): Promise<void> {
 			// A mixer write is in flight or settling — reading now could race it.
 			if (deps.isBusy()) return;
-			const status = await deps.getStatus();
-			// Transient read error (indeterminate) — keep the last known state, do
-			// not broadcast, so a hiccup never reports a present device as gone.
-			if (status === null) return;
-			if (last !== null && last.volume === status.volume && last.available === status.available) return;
-			last = status;
-			// The user changed the level via the OS — keep the persisted preference in sync.
-			if (status.available && status.volume !== null) deps.persist(status.volume);
-			deps.broadcast(status);
+			// A previous poll is still reading (a slow getter can outlast the poll
+			// interval) — skip so reads never overlap or resolve out of order.
+			if (polling) return;
+			polling = true;
+			try {
+				const status = await deps.getStatus();
+				// Transient read error (indeterminate) — keep the last known state, do
+				// not broadcast, so a hiccup never reports a present device as gone.
+				if (status === null) return;
+				if (last !== null && last.volume === status.volume && last.available === status.available) return;
+				last = status;
+				// The user changed the level via the OS — keep the persisted preference in sync.
+				if (status.available && status.volume !== null) deps.persist(status.volume);
+				deps.broadcast(status);
+			} finally {
+				polling = false;
+			}
 		},
 	};
 }
