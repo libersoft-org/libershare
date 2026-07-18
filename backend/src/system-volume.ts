@@ -182,28 +182,46 @@ export function createSerializedWriter<R>(write: (value: number) => Promise<R>):
 	let lastWriteEnd = 0;
 	let queued: number | null = null;
 	let queuedResult: Promise<R> | null = null;
-	let resolveQueued: ((r: R) => void) | null = null;
+	let settleQueued: { resolve: (r: R) => void; reject: (e: unknown) => void } | null = null;
 
 	async function run(value: number): Promise<R> {
 		if (running) {
 			queued = value;
-			if (!queuedResult) queuedResult = new Promise<R>(res => (resolveQueued = res));
+			if (!queuedResult) queuedResult = new Promise<R>((resolve, reject) => (settleQueued = { resolve, reject }));
 			return queuedResult;
 		}
 		running = true;
-		let result = await write(value);
-		while (queued !== null) {
-			const next = queued;
+		// A throwing writer must not leave the serializer locked forever or a
+		// queued caller hanging: the catch settles any waiter, the finally always
+		// releases the lock. (The production writer never throws — this guards the
+		// primitive itself against future refactors.)
+		try {
+			let result = await write(value);
+			while (queued !== null) {
+				const next = queued;
+				queued = null;
+				const settle = settleQueued!;
+				queuedResult = null;
+				settleQueued = null;
+				try {
+					result = await write(next);
+				} catch (err) {
+					settle.reject(err);
+					throw err;
+				}
+				settle.resolve(result);
+			}
+			return result;
+		} catch (err) {
+			if (settleQueued) settleQueued.reject(err);
 			queued = null;
-			const resolve = resolveQueued!;
 			queuedResult = null;
-			resolveQueued = null;
-			result = await write(next);
-			resolve(result);
+			settleQueued = null;
+			throw err;
+		} finally {
+			running = false;
+			lastWriteEnd = Date.now();
 		}
-		running = false;
-		lastWriteEnd = Date.now();
-		return result;
 	}
 
 	return { run, isBusy: () => running || Date.now() - lastWriteEnd < WRITE_SETTLE_MS };

@@ -155,6 +155,45 @@ describe('createSerializedWriter', () => {
 		await flush();
 		expect(started).toEqual([10, 40]); // intermediates skipped, ends on the latest
 	});
+
+	it('recovers after a write failure instead of staying locked', async () => {
+		let fail = true;
+		const written: number[] = [];
+		const s = createSerializedWriter(async (v: number) => {
+			if (fail) throw new Error('boom');
+			written.push(v);
+			return v;
+		});
+
+		await expect(s.run(10)).rejects.toThrow('boom');
+		await flush();
+		fail = false;
+		expect(await s.run(20)).toBe(20); // a stuck `running` flag would queue this forever
+		expect(written).toEqual([20]);
+	});
+
+	it('rejects a queued caller when the write serving it fails', async () => {
+		const releases: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
+		const s = createSerializedWriter(
+			(v: number) =>
+				new Promise<number>((resolve, reject) => {
+					releases.push({ resolve: () => resolve(v), reject });
+				})
+		);
+
+		// Attach rejection handlers up front so the runner never sees an unhandled rejection.
+		const p1 = s.run(10).catch((e: Error) => `rejected:${e.message}`);
+		const p2 = s.run(20).catch((e: Error) => `rejected:${e.message}`); // queued behind 10
+		await flush();
+		releases[0]!.reject(new Error('boom')); // the running write fails
+		expect(await p1).toBe('rejected:boom');
+		expect(await p2).toBe('rejected:boom'); // the queued caller must not hang
+
+		const p3 = s.run(30); // still usable afterwards
+		await flush();
+		releases[1]!.resolve();
+		expect(await p3).toBe(30);
+	});
 });
 
 describe('createVolumeWatcher', () => {
