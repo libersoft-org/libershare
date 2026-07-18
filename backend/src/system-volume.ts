@@ -42,8 +42,8 @@ export function parseMacVolume(output: string): number | null {
 }
 
 /**
- * Pick the first parseable volume from a set of mixer readings (amixer, then
- * pactl). `null` entries are binaries that were absent or failed. When nothing
+ * Pick the first parseable volume from a set of mixer readings (pactl, then
+ * amixer). `null` entries are binaries that were absent or failed. When nothing
  * yields a percentage the system has no controllable audio device.
  */
 export function classifyMixerReadings(outputs: Array<string | null>): MixerResult {
@@ -81,10 +81,13 @@ async function readMixer(): Promise<MixerResult> {
 			const v = parseMacVolume(out);
 			return v === null ? { kind: 'no-device' } : { kind: 'ok', volume: v };
 		}
-		// Linux: try ALSA's amixer, then PulseAudio/PipeWire's pactl.
-		const amixer = await tryRun('amixer', ['get', 'Master']);
-		const pactl = amixer !== null && parseAlsaVolume(amixer) !== null ? null : await tryRun('pactl', ['get-sink-volume', '@DEFAULT_SINK@']);
-		return classifyMixerReadings([amixer, pactl]);
+		// Linux: prefer PulseAudio/PipeWire's default sink — that is the mixer the
+		// tray, media keys and our pactl monitor act on. Raw ALSA `Master` can be a
+		// different (decoupled) control on such systems, so amixer is only the
+		// fallback for pure-ALSA setups without a sound server.
+		const pactl = await tryRun('pactl', ['get-sink-volume', '@DEFAULT_SINK@']);
+		const amixer = pactl !== null && parseAlsaVolume(pactl) !== null ? null : await tryRun('amixer', ['get', 'Master']);
+		return classifyMixerReadings([pactl, amixer]);
 	} catch {
 		return { kind: 'error' };
 	}
@@ -96,9 +99,10 @@ async function writeMixer(pct: number): Promise<MixerResult> {
 		if (process.platform === 'darwin') {
 			return (await tryRun('osascript', ['-e', `set volume output volume ${pct}`])) === null ? { kind: 'no-device' } : { kind: 'ok', volume: null };
 		}
-		// Linux: prefer ALSA's amixer, fall back to PulseAudio/PipeWire's pactl.
-		if ((await tryRun('amixer', ['set', 'Master', `${pct}%`])) !== null) return { kind: 'ok', volume: null };
+		// Linux: write where we read — the Pulse/PipeWire default sink first,
+		// raw ALSA `Master` only as the pure-ALSA fallback.
 		if ((await tryRun('pactl', ['set-sink-volume', '@DEFAULT_SINK@', `${pct}%`])) !== null) return { kind: 'ok', volume: null };
+		if ((await tryRun('amixer', ['set', 'Master', `${pct}%`])) !== null) return { kind: 'ok', volume: null };
 		return { kind: 'no-device' };
 	} catch {
 		return { kind: 'error' };
@@ -112,7 +116,7 @@ async function writeMixer(pct: number): Promise<MixerResult> {
  *   controllable device (verified absence): a headless box, no ALSA/PulseAudio
  *   mixer, a Windows host whose `GetDefaultAudioEndpoint` returns
  *   ELEMENT_NOT_FOUND, or a macOS `osascript` read that fails.
- * - `null` — a transient failure (PowerShell timeout, a passing CoreAudio
+ * - `null` — a transient failure (a CLI helper timing out, a passing CoreAudio
  *   error): availability is INDETERMINATE, the device likely still exists.
  *   Callers MUST keep their last known availability instead of treating this as
  *   device-less, so a hiccup never flips a present device to "unavailable".
@@ -237,7 +241,7 @@ export function isMixerWriteBusy(): boolean {
 /**
  * Set the OS master output volume. `percent` is clamped to 0–100. Applied via
  * built-in OS facilities only (no shipped native addons): Windows CoreAudio COM
- * in-process via FFI, macOS `osascript`, Linux `amixer` with a `pactl` fallback.
+ * in-process via FFI, macOS `osascript`, Linux `pactl` with an `amixer` fallback.
  *
  * A single node process owns the OS mixer, so writes are serialized latest-wins
  * (see {@link createSerializedWriter}): concurrent calls never overlap and the

@@ -92,12 +92,12 @@ describe('isSinkEvent', () => {
 });
 
 describe('classifyMixerReadings', () => {
-	it('returns ok from the first parseable reading (amixer)', () => {
-		expect(classifyMixerReadings(['Mono: Playback 200 [65%] [on]', null])).toEqual({ kind: 'ok', volume: 65 });
+	it('returns ok from the first parseable reading (pactl)', () => {
+		expect(classifyMixerReadings(['Volume: front-left: 40000 / 55% / -13 dB', null])).toEqual({ kind: 'ok', volume: 55 });
 	});
 
-	it('falls back to pactl when amixer is absent', () => {
-		expect(classifyMixerReadings([null, 'Volume: front-left: 40000 / 55% / -13 dB'])).toEqual({ kind: 'ok', volume: 55 });
+	it('falls back to amixer when pactl is absent', () => {
+		expect(classifyMixerReadings([null, 'Mono: Playback 200 [65%] [on]'])).toEqual({ kind: 'ok', volume: 65 });
 	});
 
 	it('reports no-device when no binary yields a percentage', () => {
