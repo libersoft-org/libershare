@@ -74,19 +74,21 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		isBusy: isMixerWriteBusy,
 	});
 
-	// Align the OS mixer with the persisted volume on startup so the device matches
-	// the last saved value after a reboot, then seed the watcher + last-known
-	// availability so this initial write is not reported as an external change.
+	// Adopt the OS state on startup: read the current volume and take it over as
+	// the initial value (watcher seed + persisted preference). The backend must
+	// NEVER write to the OS mixer on start — launching the app while the user had
+	// set a level via the tray must not yank it back to a stale persisted value.
 	// Fire-and-forget; a device-less host logs a single info line.
-	const startupVolume = settings.get('audio.volume') as number;
-	void setSystemVolume(startupVolume).then(res => {
-		lastKnownAvailable = res.available;
-		// Seed with the value actually written last: a client setVolume during this
-		// startup write wins (latest-wins), so res.volume — not startupVolume — is
-		// what the mixer ended on, and re-seeding the old value would let the next
-		// poll classify our own write as an external change.
-		volumeWatcher.remember({ volume: res.volume, available: res.available });
-		if (!res.available) console.log('[system-volume] No controllable audio device detected; OS volume control disabled.');
+	void getSystemVolumeStatus().then(status => {
+		// Transient read error — leave seeding to the first successful poll.
+		if (status === null) return;
+		// A client write that landed while we were reading is authoritative and has
+		// already seeded the watcher — do not clobber it with a pre-write reading.
+		if (isMixerWriteBusy()) return;
+		lastKnownAvailable = status.available;
+		volumeWatcher.remember(status);
+		if (status.available && status.volume !== null) void settings.set('audio.volume', status.volume);
+		if (!status.available) console.log('[system-volume] No controllable audio device detected; OS volume control disabled.');
 	});
 
 	function getLinuxAvailableMem(): number | null {
