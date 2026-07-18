@@ -28,6 +28,14 @@ type MixerResult = { kind: 'ok'; volume: number | null } | { kind: 'no-device' }
  * translate HRESULT 0x80070490 (ELEMENT_NOT_FOUND from GetDefaultAudioEndpoint,
  * i.e. no active output device) into the NO_AUDIO_DEVICE sentinel so the caller
  * can distinguish "no device" from a transient COM error.
+ *
+ * RDP note: in a Remote Desktop session the only render endpoint is "Remote
+ * Audio", whose endpoint master is the real per-session knob attenuating the
+ * audio stream — this is what we read and write. The tray slider in that session
+ * instead drives client-side RDP dynamic volume and is decoupled from the
+ * endpoint master (verified: setting master to 30 leaves the tray unchanged, and
+ * moving the tray to 81 leaves master at 30). On a physical console the tray and
+ * the endpoint master are the same control.
  */
 const WINDOWS_AUDIO_CSHARP = `
 Add-Type -TypeDefinition @'
