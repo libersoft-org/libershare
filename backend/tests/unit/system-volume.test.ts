@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { parseAlsaVolume, parseMacVolume, parseWindowsVolume, interpretWindowsRead, interpretWindowsWrite, classifyMixerReadings, createSerializedWriter } from '../../src/system-volume.ts';
+import { parseAlsaVolume, parseMacVolume, parseWindowsVolume, interpretWindowsRead, interpretWindowsWrite, classifyMixerReadings, createSerializedWriter, createVolumeWatcher, type VolumeStatus } from '../../src/system-volume.ts';
 
 /** Resolve pending microtasks + timers so the serializer can advance. */
 const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0));
@@ -141,5 +141,64 @@ describe('createSerializedWriter', () => {
 		releases[1]!();
 		await flush();
 		expect(started).toEqual([10, 40]); // intermediates skipped, ends on the latest
+	});
+});
+
+describe('createVolumeWatcher', () => {
+	function setup(statuses: VolumeStatus[]) {
+		let i = 0;
+		const broadcasts: VolumeStatus[] = [];
+		const persisted: number[] = [];
+		const watcher = createVolumeWatcher({
+			getStatus: async () => statuses[Math.min(i++, statuses.length - 1)]!,
+			broadcast: s => broadcasts.push(s),
+			persist: v => persisted.push(v),
+		});
+		return { watcher, broadcasts, persisted };
+	}
+
+	it('broadcasts and persists when the level changes', async () => {
+		const { watcher, broadcasts, persisted } = setup([
+			{ volume: 40, available: true },
+			{ volume: 70, available: true },
+		]);
+		await watcher.poll();
+		await watcher.poll();
+		expect(broadcasts).toEqual([
+			{ volume: 40, available: true },
+			{ volume: 70, available: true },
+		]);
+		expect(persisted).toEqual([40, 70]);
+	});
+
+	it('stays silent when the status is unchanged', async () => {
+		const { watcher, broadcasts } = setup([
+			{ volume: 40, available: true },
+			{ volume: 40, available: true },
+		]);
+		await watcher.poll();
+		await watcher.poll();
+		expect(broadcasts).toEqual([{ volume: 40, available: true }]);
+	});
+
+	it('does not echo a value we just wrote', async () => {
+		const { watcher, broadcasts, persisted } = setup([{ volume: 55, available: true }]);
+		watcher.remember({ volume: 55, available: true });
+		await watcher.poll();
+		expect(broadcasts).toEqual([]);
+		expect(persisted).toEqual([]);
+	});
+
+	it('broadcasts when availability flips', async () => {
+		const { watcher, broadcasts } = setup([
+			{ volume: 60, available: true },
+			{ volume: null, available: false },
+		]);
+		await watcher.poll();
+		await watcher.poll();
+		expect(broadcasts).toEqual([
+			{ volume: 60, available: true },
+			{ volume: null, available: false },
+		]);
 	});
 });

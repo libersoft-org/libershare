@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
-import { setSystemVolume, getSystemVolumeStatus } from '../system-volume.ts';
+import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher } from '../system-volume.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -37,7 +37,10 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		if (typeof p.volume !== 'number' || !Number.isFinite(p.volume)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'volume must be a number');
 		const pct = Math.min(100, Math.max(0, Math.round(p.volume)));
 		await settings.set('audio.volume', pct);
-		return await setSystemVolume(pct);
+		const res = await setSystemVolume(pct);
+		// Record the value we just set so the watcher poll does not echo it back.
+		volumeWatcher.remember({ volume: res.available ? pct : null, available: res.available });
+		return res;
 	}
 
 	/**
@@ -51,10 +54,21 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return { volume: status.volume ?? (settings.get('audio.volume') as number), available: true };
 	}
 
+	// Detect OS-side volume changes (system tray, media keys, device plug/unplug)
+	// and broadcast them to connected clients so the UI stays in sync both ways.
+	const volumeWatcher = createVolumeWatcher({
+		getStatus: getSystemVolumeStatus,
+		broadcast: status => broadcast('system:volumeChanged', status),
+		persist: v => void settings.set('audio.volume', v),
+	});
+
 	// Align the OS mixer with the persisted volume on startup so the device matches
-	// the last saved value after a reboot. Fire-and-forget; a device-less host logs
-	// a single info line rather than repeating warnings.
-	void setSystemVolume(settings.get('audio.volume') as number).then(res => {
+	// the last saved value after a reboot, then seed the watcher so this initial
+	// write is not reported as an external change. Fire-and-forget; a device-less
+	// host logs a single info line rather than repeating warnings.
+	const startupVolume = settings.get('audio.volume') as number;
+	void setSystemVolume(startupVolume).then(res => {
+		volumeWatcher.remember({ volume: res.available ? startupVolume : null, available: res.available });
 		if (!res.available) console.log('[system-volume] No controllable audio device detected; OS volume control disabled.');
 	});
 
@@ -177,6 +191,9 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 					broadcast('system:storage', await getStorageInfo());
 				} catch {}
 			}
+			// Only poll the OS mixer while a client is listening — on Windows each
+			// poll spawns a short-lived PowerShell process (~hundreds of ms CPU).
+			if (hasSubscribers('system:volumeChanged')) await volumeWatcher.poll();
 		}, POLL_INTERVAL_MS);
 	}
 

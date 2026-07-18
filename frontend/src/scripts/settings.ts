@@ -107,6 +107,8 @@ export async function loadSettings(): Promise<void> {
 		} catch {
 			// Leave the persisted value on error; availability stays as-is.
 		}
+		// Keep the UI in sync when the volume changes on the OS side.
+		subscribeVolumeChanges();
 
 		// Storage
 		storagePath.set(settings.storage.downloadPath);
@@ -328,8 +330,13 @@ export function setDefaultCompressionAlgorithm(algorithm: string): void {
 // which persists it and sets the OS master volume. The backend call is debounced
 // so holding a repeat key/button down does not spam the WebSocket.
 let volumeSyncTimer: ReturnType<typeof setTimeout> | undefined;
+// Timestamp of the last local +/- change. Used to ignore OS→FE volume events
+// that arrive while the user is actively adjusting, so their in-progress value
+// is not clobbered by a slightly stale poll.
+let lastLocalVolumeChange = 0;
 
 function syncVolumeToBackend(value: number): void {
+	lastLocalVolumeChange = Date.now();
 	clearTimeout(volumeSyncTimer);
 	volumeSyncTimer = setTimeout(() => {
 		// The backend persists the preference even with no audio device; we refresh
@@ -355,4 +362,21 @@ export function decreaseVolume(): void {
 		syncVolumeToBackend(newVal);
 		return newVal;
 	});
+}
+
+// Subscribe once to OS→FE volume changes (external tray/media-key adjustments or
+// a device being plugged/unplugged). Purely reflects backend state — never calls
+// setVolume back, so there is no feedback loop.
+let volumeChangeSubscribed = false;
+function subscribeVolumeChanges(): void {
+	if (!volumeChangeSubscribed) {
+		volumeChangeSubscribed = true;
+		api.on('system:volumeChanged', (data: { volume: number | null; available: boolean }) => {
+			// Availability (device plug/unplug) always applies; the level is skipped
+			// while the user is mid-adjustment so a stale poll cannot fight their input.
+			volumeAvailable.set(data.available);
+			if (Date.now() - lastLocalVolumeChange > 1000 && data.available && data.volume !== null) volume.set(data.volume);
+		});
+	}
+	api.subscribe('system:volumeChanged');
 }

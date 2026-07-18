@@ -225,9 +225,15 @@ async function writeMixer(pct: number): Promise<MixerResult> {
  * - macOS: any `osascript` read failure (the platform gives no finer signal, so
  *   a transient read error is also reported as unavailable).
  */
-export async function getSystemVolumeStatus(): Promise<{ available: boolean; volume: number | null }> {
+export async function getSystemVolumeStatus(): Promise<VolumeStatus> {
 	const r = await readMixer();
 	return r.kind === 'ok' ? { available: true, volume: r.volume } : { available: false, volume: null };
+}
+
+/** A snapshot of the OS volume: the level (0–100, or null when unavailable) and whether a device exists. */
+export interface VolumeStatus {
+	volume: number | null;
+	available: boolean;
 }
 
 /** The public shape returned by {@link setSystemVolume}. */
@@ -299,4 +305,36 @@ const serializedWrite = createSerializedWriter<VolumeResult>(async pct => mapWri
  */
 export function setSystemVolume(percent: number): Promise<VolumeResult> {
 	return serializedWrite(clampPercent(percent));
+}
+
+/**
+ * Watch for OS-side volume changes (system tray, media keys, a device being
+ * plugged/unplugged) and surface them. Each {@link VolumeWatcher.poll} reads the
+ * current status and, when it differs from the last one seen, persists the new
+ * level and broadcasts it. `remember` is called after our own writes so a
+ * self-initiated change does not echo back as an external one.
+ *
+ * Deps are injected so the diff/echo logic is testable without spawning the OS
+ * mixer tooling.
+ */
+export interface VolumeWatcher {
+	poll: () => Promise<void>;
+	remember: (status: VolumeStatus) => void;
+}
+
+export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatus>; broadcast: (status: VolumeStatus) => void; persist: (volume: number) => void }): VolumeWatcher {
+	let last: VolumeStatus | null = null;
+	return {
+		remember(status: VolumeStatus): void {
+			last = status;
+		},
+		async poll(): Promise<void> {
+			const status = await deps.getStatus();
+			if (last !== null && last.volume === status.volume && last.available === status.available) return;
+			last = status;
+			// The user changed the level via the OS — keep the persisted preference in sync.
+			if (status.available && status.volume !== null) deps.persist(status.volume);
+			deps.broadcast(status);
+		},
+	};
 }
