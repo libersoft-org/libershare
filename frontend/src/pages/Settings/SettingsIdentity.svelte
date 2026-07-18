@@ -9,6 +9,7 @@
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
+	import { refreshNodeInfo } from '../../scripts/networks.ts';
 	import { type NetworkNodeInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -69,6 +70,7 @@
 			await api.identity.regenerate();
 			addNotification(tt('settings.identity.regenerated'), 'success');
 			await loadNodeInfo();
+			await refreshNodeInfo();
 		} catch (e) {
 			errorMessage = translateError(e);
 		} finally {

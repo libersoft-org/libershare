@@ -14,7 +14,7 @@
 	import { initDownloads } from '../scripts/downloads.ts';
 	import { initSystemStats } from '../scripts/systemStats.ts';
 	import { initRelayStats } from '../scripts/relayStats.ts';
-	import { initNetworkEvents, subscribePeerCounts } from '../scripts/networks.ts';
+	import { initNetworkEvents, subscribePeerCounts, refreshNodeInfo } from '../scripts/networks.ts';
 	import { detectLocalFilesystem } from '../scripts/localFilesystem.ts';
 	const { currentItems, currentComponent, currentTitle, currentOrientation, selectedID: selectedID, navigate, onBack: onBack } = createNavigation();
 	import NotificationContainer from '../components/Notification/NotificationContainer.svelte';
@@ -85,6 +85,7 @@
 			}
 			initSystemStats(); // Subscribe to system stats (RAM, etc.)
 			initRelayStats(); // Subscribe to relay server stats
+			refreshNodeInfo(); // Load own peerID for the Footer peer-ID widget
 			detectLocalFilesystem(); // Detect if browser and backend share filesystem
 			play('welcome'); //	Play welcome sound on connect
 		} catch (error) {

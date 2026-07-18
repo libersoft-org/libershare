@@ -486,6 +486,7 @@
 			"right": "Right"
 		},
 		"footerWidgets": {
+			"peerId": "Peer ID",
 			"lishStatus": "LISH network status",
 			"gamepad": "Gamepad",
 			"connection": "Connection",
