@@ -12,7 +12,7 @@
 	import Clock from './FooterClock.svelte';
 	import { gamepadConnected } from '../../scripts/input/gamepad.ts';
 	import { ramInfo, storageInfo, cpuInfo } from '../../scripts/systemStats.ts';
-	import { formatSize, shortenPeerID } from '../../scripts/utils.ts';
+	import { formatSize, splitPeerID } from '../../scripts/utils.ts';
 	import { transferStats } from '../../scripts/downloads.ts';
 	import { relayStats } from '../../scripts/relayStats.ts';
 	import { networkSummary, meshStatus, nodeInfo } from '../../scripts/networks.ts';
@@ -42,9 +42,8 @@
 				return {
 					topIcon: 'img/person.svg',
 					topIconAlt: $t('settings.footerWidgets.peerId'),
-					// Footer space is scarce and every peer ID shares the same multibase
-					// prefix, so a short head + tail is enough to recognize the identity.
-					bottomLabel: shortenPeerID($nodeInfo?.peerID, 4, 6),
+					topLabel: splitPeerID($nodeInfo?.peerID).head,
+					bottomLabel: splitPeerID($nodeInfo?.peerID).tail,
 				};
 			},
 		},
