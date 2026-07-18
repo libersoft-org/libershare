@@ -104,8 +104,8 @@ describe('createSerializedWriter', () => {
 			});
 		const s = createSerializedWriter(write);
 
-		const p1 = s(30);
-		const p2 = s(80);
+		const p1 = s.run(30);
+		const p2 = s.run(80);
 		await flush();
 		expect(started).toEqual([30]); // 80 is queued, not written while 30 runs
 
@@ -129,10 +129,10 @@ describe('createSerializedWriter', () => {
 			});
 		const s = createSerializedWriter(write);
 
-		void s(10);
-		void s(20);
-		void s(30);
-		void s(40);
+		void s.run(10);
+		void s.run(20);
+		void s.run(30);
+		void s.run(40);
 		await flush();
 		expect(started).toEqual([10]); // only the first started; 20/30 superseded by 40
 
@@ -145,7 +145,7 @@ describe('createSerializedWriter', () => {
 });
 
 describe('createVolumeWatcher', () => {
-	function setup(statuses: VolumeStatus[]) {
+	function setup(statuses: VolumeStatus[], isBusy: () => boolean = () => false) {
 		let i = 0;
 		const broadcasts: VolumeStatus[] = [];
 		const persisted: number[] = [];
@@ -153,6 +153,7 @@ describe('createVolumeWatcher', () => {
 			getStatus: async () => statuses[Math.min(i++, statuses.length - 1)]!,
 			broadcast: s => broadcasts.push(s),
 			persist: v => persisted.push(v),
+			isBusy,
 		});
 		return { watcher, broadcasts, persisted };
 	}
@@ -200,5 +201,30 @@ describe('createVolumeWatcher', () => {
 			{ volume: 60, available: true },
 			{ volume: null, available: false },
 		]);
+	});
+
+	it('skips while a write is active, then resumes for genuine changes', async () => {
+		let busy = true;
+		const { watcher, broadcasts, persisted } = setup(
+			[
+				{ volume: 80, available: true }, // the value we wrote (read once settled)
+				{ volume: 40, available: true }, // a later genuine external change
+			],
+			() => busy
+		);
+
+		await watcher.poll(); // write active → skipped, nothing read
+		expect(broadcasts).toEqual([]);
+		expect(persisted).toEqual([]);
+
+		watcher.remember({ volume: 80, available: true }); // our own write settled
+		busy = false;
+		await watcher.poll(); // reads 80 == remembered → no echo
+		expect(broadcasts).toEqual([]);
+		expect(persisted).toEqual([]);
+
+		await watcher.poll(); // reads 40 → genuine external change → event + persist
+		expect(broadcasts).toEqual([{ volume: 40, available: true }]);
+		expect(persisted).toEqual([40]);
 	});
 });

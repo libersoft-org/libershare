@@ -257,6 +257,20 @@ function mapWrite(r: MixerResult): VolumeResult {
 }
 
 /**
+ * Grace period after a write finishes during which the mixer is still treated as
+ * busy. Covers the micro-window where the OS getter can still report the old
+ * level for a moment after `Set...` returns (propagation latency), which would
+ * otherwise be misread as an external change.
+ */
+const WRITE_SETTLE_MS = 1000;
+
+/** A serialized writer plus a flag telling whether a write is active or still settling. */
+export interface SerializedWriter<R> {
+	run: (value: number) => Promise<R>;
+	isBusy: () => boolean;
+}
+
+/**
  * Wrap an async writer so calls never overlap and only the newest queued value
  * is applied (latest-wins, queue depth 1). While a write runs, every new call
  * records only the most recent value and shares one promise; when the running
@@ -264,14 +278,19 @@ function mapWrite(r: MixerResult): VolumeResult {
  * intermediates are skipped. So N rapid calls cause at most two real writes and
  * the target always ends on the last requested value. Callers whose value was
  * coalesced resolve with the result of the write that superseded them.
+ *
+ * `isBusy()` is true while a write is in flight or within {@link WRITE_SETTLE_MS}
+ * of the last one finishing, so a concurrent reader (the volume watcher) can skip
+ * and avoid racing a not-yet-settled write.
  */
-export function createSerializedWriter<R>(write: (value: number) => Promise<R>): (value: number) => Promise<R> {
+export function createSerializedWriter<R>(write: (value: number) => Promise<R>): SerializedWriter<R> {
 	let running = false;
+	let lastWriteEnd = 0;
 	let queued: number | null = null;
 	let queuedResult: Promise<R> | null = null;
 	let resolveQueued: ((r: R) => void) | null = null;
 
-	return async function serialized(value: number): Promise<R> {
+	async function run(value: number): Promise<R> {
 		if (running) {
 			queued = value;
 			if (!queuedResult) queuedResult = new Promise<R>(res => (resolveQueued = res));
@@ -289,11 +308,19 @@ export function createSerializedWriter<R>(write: (value: number) => Promise<R>):
 			resolve(result);
 		}
 		running = false;
+		lastWriteEnd = Date.now();
 		return result;
-	};
+	}
+
+	return { run, isBusy: () => running || Date.now() - lastWriteEnd < WRITE_SETTLE_MS };
 }
 
 const serializedWrite = createSerializedWriter<VolumeResult>(async pct => mapWrite(await writeMixer(pct)));
+
+/** True while a mixer write is in flight or still settling — the watcher skips its poll then. */
+export function isMixerWriteBusy(): boolean {
+	return serializedWrite.isBusy();
+}
 
 /**
  * Set the OS master output volume. `percent` is clamped to 0–100. Applied via
@@ -312,7 +339,7 @@ const serializedWrite = createSerializedWriter<VolumeResult>(async pct => mapWri
  * throws, so a headless host cannot crash the backend.
  */
 export function setSystemVolume(percent: number): Promise<VolumeResult> {
-	return serializedWrite(clampPercent(percent));
+	return serializedWrite.run(clampPercent(percent));
 }
 
 /**
@@ -322,21 +349,25 @@ export function setSystemVolume(percent: number): Promise<VolumeResult> {
  * level and broadcasts it. `remember` is called after our own writes so a
  * self-initiated change does not echo back as an external one.
  *
- * Deps are injected so the diff/echo logic is testable without spawning the OS
- * mixer tooling.
+ * `isBusy` lets the poll skip entirely while a mixer write is active or settling,
+ * so a poll cannot read a not-yet-applied value and mistake it for an external
+ * change. Deps are injected so the diff/echo logic is testable without spawning
+ * the OS mixer tooling.
  */
 export interface VolumeWatcher {
 	poll: () => Promise<void>;
 	remember: (status: VolumeStatus) => void;
 }
 
-export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatus>; broadcast: (status: VolumeStatus) => void; persist: (volume: number) => void }): VolumeWatcher {
+export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatus>; broadcast: (status: VolumeStatus) => void; persist: (volume: number) => void; isBusy: () => boolean }): VolumeWatcher {
 	let last: VolumeStatus | null = null;
 	return {
 		remember(status: VolumeStatus): void {
 			last = status;
 		},
 		async poll(): Promise<void> {
+			// A mixer write is in flight or settling — reading now could race it.
+			if (deps.isBusy()) return;
 			const status = await deps.getStatus();
 			if (last !== null && last.volume === status.volume && last.available === status.available) return;
 			last = status;

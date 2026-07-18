@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
-import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher } from '../system-volume.ts';
+import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy } from '../system-volume.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -60,6 +60,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		getStatus: getSystemVolumeStatus,
 		broadcast: status => broadcast('system:volumeChanged', status),
 		persist: v => void settings.set('audio.volume', v),
+		isBusy: isMixerWriteBusy,
 	});
 
 	// Align the OS mixer with the persisted volume on startup so the device matches
