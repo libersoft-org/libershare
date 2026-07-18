@@ -222,8 +222,8 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 				volumeMonitor.stop();
 				volumeMonitor = null;
 			}
-			// The 5s poll is the fallback and drives availability; on Windows each
-			// poll spawns a short-lived PowerShell process (~hundreds of ms CPU).
+			// The 5s poll is the fallback and drives availability; on Windows it is
+			// a few in-process COM calls, on macOS/Linux a short-lived CLI helper.
 			if (volumeWanted) await volumeWatcher.poll();
 		}, POLL_INTERVAL_MS);
 	}

@@ -1,14 +1,12 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createInterface } from 'node:readline';
+import { readWindowsVolume, writeWindowsVolume } from './system-volume-windows.ts';
 
 const execFileAsync = promisify(execFile);
 
 /** Hard cap on how long any volume child process may run before we give up. */
 const EXEC_TIMEOUT_MS = 5000;
-
-/** Sentinel printed by the Windows helper when there is no active audio endpoint. */
-const NO_AUDIO_DEVICE = 'NO_AUDIO_DEVICE';
 
 /**
  * Outcome of talking to the OS mixer.
@@ -16,72 +14,7 @@ const NO_AUDIO_DEVICE = 'NO_AUDIO_DEVICE';
  * - `no-device`: the OS reported there is no controllable audio device.
  * - `error`: a transient/unexpected failure — a device may still exist.
  */
-type MixerResult = { kind: 'ok'; volume: number | null } | { kind: 'no-device' } | { kind: 'error' };
-
-/**
- * Windows lacks a built-in command-line volume control, so we drive the
- * CoreAudio `IAudioEndpointVolume` COM interface from an inline C# type compiled
- * at runtime via PowerShell `Add-Type`. The scalar API (Get/SetMasterVolume-
- * LevelScalar) works on a 0.0–1.0 float. The single-letter method stubs are
- * unused vtable slots kept only to preserve the COM interface layout — the
- * ordering matches `endpointvolume.h`, so `SetMasterVolumeLevelScalar` lands at
- * slot 5 and `GetMasterVolumeLevelScalar` at slot 7. `GetStatus`/`SetStatus`
- * translate HRESULT 0x80070490 (ELEMENT_NOT_FOUND from GetDefaultAudioEndpoint,
- * i.e. no active output device) into the NO_AUDIO_DEVICE sentinel so the caller
- * can distinguish "no device" from a transient COM error.
- *
- * RDP note: in a Remote Desktop session the only render endpoint is "Remote
- * Audio", whose endpoint master is the real per-session knob attenuating the
- * audio stream — this is what we read and write. The tray slider in that session
- * instead drives client-side RDP dynamic volume and is decoupled from the
- * endpoint master (verified: setting master to 30 leaves the tray unchanged, and
- * moving the tray to 81 leaves master at 30). On a physical console the tray and
- * the endpoint master are the same control.
- */
-const WINDOWS_AUDIO_CSHARP = `
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-using System.Globalization;
-[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioEndpointVolume {
-  int f(); int g(); int h(); int i();
-  int SetMasterVolumeLevelScalar(float fLevel, Guid pguidEventContext);
-  int j();
-  int GetMasterVolumeLevelScalar(out float pfLevel);
-}
-[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDevice {
-  int Activate(ref Guid iid, int dwClsCtx, int pActivationParams, out IAudioEndpointVolume aev);
-}
-[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDeviceEnumerator {
-  int f();
-  int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
-}
-[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject { }
-public class AudioEndpoint {
-  const uint E_NOTFOUND = 0x80070490;
-  static IAudioEndpointVolume Endpoint() {
-    var enumerator = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
-    IMMDevice dev = null;
-    Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out dev));
-    IAudioEndpointVolume epv = null;
-    var epvGuid = typeof(IAudioEndpointVolume).GUID;
-    Marshal.ThrowExceptionForHR(dev.Activate(ref epvGuid, 23, 0, out epv));
-    return epv;
-  }
-  public static string GetStatus() {
-    try { float v = 0; Marshal.ThrowExceptionForHR(Endpoint().GetMasterVolumeLevelScalar(out v)); return v.ToString(CultureInfo.InvariantCulture); }
-    catch (COMException e) { if ((uint)e.HResult == E_NOTFOUND) return "${NO_AUDIO_DEVICE}"; throw; }
-  }
-  public static string SetStatus(float v) {
-    try { Marshal.ThrowExceptionForHR(Endpoint().SetMasterVolumeLevelScalar(v, Guid.Empty)); return "OK"; }
-    catch (COMException e) { if ((uint)e.HResult == E_NOTFOUND) return "${NO_AUDIO_DEVICE}"; throw; }
-  }
-}
-'@
-`;
+export type MixerResult = { kind: 'ok'; volume: number | null } | { kind: 'no-device' } | { kind: 'error' };
 
 /** Clamp to the 0–100 integer range every platform expects. */
 function clampPercent(percent: number): number {
@@ -106,28 +39,6 @@ export function parseMacVolume(output: string): number | null {
 	const match = output.trim().match(/^(\d{1,3})$/);
 	if (!match || !match[1]) return null;
 	return clampPercent(parseInt(match[1], 10));
-}
-
-/** Parse the `0.0`–`1.0` scalar printed by the Windows CoreAudio getter. */
-export function parseWindowsVolume(output: string): number | null {
-	const scalar = parseFloat(output.trim());
-	if (!Number.isFinite(scalar)) return null;
-	return clampPercent(scalar * 100);
-}
-
-/** Classify the Windows `GetStatus` output into a mixer result. */
-export function interpretWindowsRead(output: string): MixerResult {
-	const out = output.trim();
-	if (out === NO_AUDIO_DEVICE) return { kind: 'no-device' };
-	const v = parseWindowsVolume(out);
-	return v === null ? { kind: 'error' } : { kind: 'ok', volume: v };
-}
-
-/** Classify the Windows `SetStatus` output into a mixer result. */
-export function interpretWindowsWrite(output: string): MixerResult {
-	const out = output.trim();
-	if (out === NO_AUDIO_DEVICE) return { kind: 'no-device' };
-	return out === 'OK' ? { kind: 'ok', volume: null } : { kind: 'error' };
 }
 
 /**
@@ -159,33 +70,9 @@ async function tryRun(cmd: string, args: string[]): Promise<string | null> {
 	}
 }
 
-/**
- * Build the base64 payload for PowerShell `-EncodedCommand`, which expects the
- * script encoded as UTF-16LE. Using an encoded command sidesteps all shell
- * quoting concerns with the inline C#.
- */
-function encodePowershell(script: string): string {
-	return Buffer.from(script, 'utf16le').toString('base64');
-}
-
-async function runPowershell(script: string): Promise<string> {
-	const args = ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowershell(script)];
-	try {
-		return await run('powershell', args);
-	} catch {
-		// Activating the default audio endpoint can transiently fail with
-		// ELEMENT_NOT_FOUND (0x80070490) when the device is momentarily busy —
-		// retry once after a short delay before surfacing the error.
-		await new Promise(r => setTimeout(r, 200));
-		return run('powershell', args);
-	}
-}
-
 async function readMixer(): Promise<MixerResult> {
 	try {
-		if (process.platform === 'win32') {
-			return interpretWindowsRead(await runPowershell(`${WINDOWS_AUDIO_CSHARP}\n[System.Console]::WriteLine([AudioEndpoint]::GetStatus())`));
-		}
+		if (process.platform === 'win32') return readWindowsVolume();
 		if (process.platform === 'darwin') {
 			// macOS has no clean "no device" signal — treat any osascript read failure
 			// as unavailable (documented on getSystemVolumeStatus).
@@ -205,9 +92,7 @@ async function readMixer(): Promise<MixerResult> {
 
 async function writeMixer(pct: number): Promise<MixerResult> {
 	try {
-		if (process.platform === 'win32') {
-			return interpretWindowsWrite(await runPowershell(`${WINDOWS_AUDIO_CSHARP}\n[System.Console]::WriteLine([AudioEndpoint]::SetStatus(${(pct / 100).toFixed(4)}))`));
-		}
+		if (process.platform === 'win32') return writeWindowsVolume(pct);
 		if (process.platform === 'darwin') {
 			return (await tryRun('osascript', ['-e', `set volume output volume ${pct}`])) === null ? { kind: 'no-device' } : { kind: 'ok', volume: null };
 		}
@@ -333,8 +218,8 @@ export function isMixerWriteBusy(): boolean {
 
 /**
  * Set the OS master output volume. `percent` is clamped to 0–100. Applied via
- * built-in tooling only (no native addons): Windows CoreAudio COM, macOS
- * `osascript`, Linux `amixer` with a `pactl` fallback.
+ * built-in OS facilities only (no shipped native addons): Windows CoreAudio COM
+ * in-process via FFI, macOS `osascript`, Linux `amixer` with a `pactl` fallback.
  *
  * A single node process owns the OS mixer, so writes are serialized latest-wins
  * (see {@link createSerializedWriter}): concurrent calls never overlap and the
@@ -417,93 +302,42 @@ export interface VolumeMonitor {
 	stop: () => void;
 }
 
-/** How often the persistent Windows monitor re-reads the endpoint (sub-second push latency). */
+/** How often the in-process Windows monitor re-reads the endpoint (sub-second push latency). */
 const WINDOWS_MONITOR_POLL_MS = 150;
 
-/**
- * Windows CoreAudio push monitor. ONE long-running PowerShell process activates
- * the default render endpoint once and then tight-loops `GetMasterVolumeLevel-
- * Scalar` every {@link WINDOWS_MONITOR_POLL_MS} in-process, printing the new
- * level (0–100, invariant) to stdout whenever it changes. This is a persistent
- * process, not a per-check spawn: each read is a cheap in-process COM call, so
- * latency is sub-second without repeatedly launching PowerShell.
- *
- * ponytail: chosen over IAudioEndpointVolumeCallback — that COM callback proved
- * unreliable here (the host process died with exit code 5 after the first
- * notification, a fragile CCW/apartment interaction). A 150 ms in-process loop
- * gives the same sub-second result robustly. It binds the default endpoint at
- * spawn; a device switch is caught by the 5 s poll fallback and a monitor
- * respawn on availability flip (see the poll-driven lifecycle in system.ts).
- */
-const WINDOWS_MONITOR_CSHARP = `
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-using System.Globalization;
-using System.Threading;
-[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioEndpointVolume {
-  int f(); int g(); int h(); int i();
-  int SetMasterVolumeLevelScalar(float fLevel, Guid ctx);
-  int j();
-  int GetMasterVolumeLevelScalar(out float pfLevel);
-}
-[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDevice { int Activate(ref Guid iid, int ctx, int p, out IAudioEndpointVolume aev); }
-[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDeviceEnumerator { int f(); int GetDefaultAudioEndpoint(int flow, int role, out IMMDevice ep); }
-[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject { }
-public class VolMonitor {
-  public static void Start() {
-    var en = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
-    IMMDevice dev;
-    if (en.GetDefaultAudioEndpoint(0, 1, out dev) != 0) return;
-    IAudioEndpointVolume epv;
-    var iid = typeof(IAudioEndpointVolume).GUID;
-    if (dev.Activate(ref iid, 23, 0, out epv) != 0) return;
-    int last = -1;
-    int errors = 0;
-    while (true) {
-      float v;
-      if (epv.GetMasterVolumeLevelScalar(out v) == 0) {
-        errors = 0;
-        int pct = (int)Math.Round(v * 100);
-        if (pct != last) {
-          last = pct;
-          Console.WriteLine(pct.ToString(CultureInfo.InvariantCulture));
-          Console.Out.Flush();
-        }
-      } else if (++errors >= 5) {
-        return; // endpoint likely gone — exit so the parent respawns on the new default
-      }
-      Thread.Sleep(${WINDOWS_MONITOR_POLL_MS});
-    }
-  }
-}
-'@
-[VolMonitor]::Start()
-`;
+/** Consecutive failed reads after which the Windows monitor gives up and hands availability back to the 5 s poll. */
+const WINDOWS_MONITOR_MAX_ERRORS = 5;
 
+/**
+ * Windows push monitor: an in-process timer reading the endpoint master via the
+ * CoreAudio FFI every {@link WINDOWS_MONITOR_POLL_MS} — each read is a few
+ * microseconds of COM calls, no child process. The default endpoint is
+ * re-resolved on every read, so a default-device switch is picked up
+ * immediately. After {@link WINDOWS_MONITOR_MAX_ERRORS} consecutive failed
+ * reads (device gone, transient COM trouble) it stops and calls `onExit`,
+ * letting the 5 s poll drive availability and respawn it when a device is back.
+ *
+ * ponytail: a fixed 150 ms poll instead of RegisterControlChangeNotify — a
+ * COM callback would need a hand-built vtable of JSCallbacks for the same
+ * sub-second result; upgrade only if the poll ever shows up in profiles.
+ */
 function startWindowsMonitor(emit: (status: VolumeStatus) => void, onExit: () => void): VolumeMonitor {
-	const proc = spawn('powershell', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowershell(WINDOWS_MONITOR_CSHARP)], { windowsHide: true });
-	const rl = createInterface({ input: proc.stdout });
-	rl.on('line', line => {
-		const v = parseMonitorVolume(line);
-		if (v !== null) emit({ volume: v, available: true });
-	});
-	let stopped = false;
-	const exit = (): void => {
-		if (!stopped) onExit();
-	};
-	proc.on('exit', exit);
-	proc.on('error', exit);
-	return {
-		stop: () => {
-			stopped = true;
-			rl.close();
-			proc.kill();
-		},
-	};
+	let last: number | null = null;
+	let errors = 0;
+	const timer = setInterval(() => {
+		const r = readWindowsVolume();
+		if (r.kind === 'ok' && r.volume !== null) {
+			errors = 0;
+			if (r.volume !== last) {
+				last = r.volume;
+				emit({ volume: r.volume, available: true });
+			}
+		} else if (++errors >= WINDOWS_MONITOR_MAX_ERRORS) {
+			clearInterval(timer);
+			onExit();
+		}
+	}, WINDOWS_MONITOR_POLL_MS);
+	return { stop: () => clearInterval(timer) };
 }
 
 function startLinuxMonitor(emit: (status: VolumeStatus) => void, onExit: () => void): VolumeMonitor {
@@ -529,11 +363,6 @@ function startLinuxMonitor(emit: (status: VolumeStatus) => void, onExit: () => v
 			proc.kill();
 		},
 	};
-}
-
-/** Parse one stdout line from the Windows monitor: a bare integer percentage. */
-export function parseMonitorVolume(line: string): number | null {
-	return parseMacVolume(line);
 }
 
 /**

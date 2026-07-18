@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { parseAlsaVolume, parseMacVolume, parseWindowsVolume, interpretWindowsRead, interpretWindowsWrite, classifyMixerReadings, createSerializedWriter, createVolumeWatcher, parseMonitorVolume, type VolumeStatus } from '../../src/system-volume.ts';
+import { parseAlsaVolume, parseMacVolume, classifyMixerReadings, createSerializedWriter, createVolumeWatcher, type VolumeStatus } from '../../src/system-volume.ts';
+import { classifyHresult, readWindowsVolume, writeWindowsVolume } from '../../src/system-volume-windows.ts';
 
 /** Resolve pending microtasks + timers so the serializer can advance. */
 const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0));
@@ -37,44 +38,40 @@ describe('parseMacVolume', () => {
 	});
 });
 
-describe('parseWindowsVolume', () => {
-	it('converts a 0..1 scalar to a 0..100 percentage', () => {
-		expect(parseWindowsVolume('0.42\n')).toBe(42);
-		expect(parseWindowsVolume('1')).toBe(100);
-		expect(parseWindowsVolume('0')).toBe(0);
+describe('classifyHresult', () => {
+	it('maps S_OK to ok', () => {
+		expect(classifyHresult(0)).toBe('ok');
 	});
 
-	it('returns null for unparseable output', () => {
-		expect(parseWindowsVolume('')).toBeNull();
-		expect(parseWindowsVolume('nope')).toBeNull();
-	});
-});
-
-describe('interpretWindowsRead', () => {
-	it('maps the sentinel to no-device', () => {
-		expect(interpretWindowsRead('NO_AUDIO_DEVICE\n')).toEqual({ kind: 'no-device' });
+	it('maps ELEMENT_NOT_FOUND to no-device, signed or unsigned', () => {
+		expect(classifyHresult(0x80070490)).toBe('no-device');
+		expect(classifyHresult(0x80070490 | 0)).toBe('no-device'); // as returned by an i32 FFI call
 	});
 
-	it('maps a scalar to ok with a percentage', () => {
-		expect(interpretWindowsRead('0.30')).toEqual({ kind: 'ok', volume: 30 });
-	});
-
-	it('maps garbage to a transient error', () => {
-		expect(interpretWindowsRead('boom')).toEqual({ kind: 'error' });
+	it('maps any other failure to a transient error', () => {
+		expect(classifyHresult(0x80004005 | 0)).toBe('error'); // E_FAIL
+		expect(classifyHresult(1)).toBe('error'); // S_FALSE is not a valid mixer answer either
 	});
 });
 
-describe('interpretWindowsWrite', () => {
-	it('maps OK to ok', () => {
-		expect(interpretWindowsWrite('OK\n')).toEqual({ kind: 'ok', volume: null });
+// Live CoreAudio FFI checks — real COM calls against the machine's default
+// render endpoint. Read-only except for writing back the exact level that was
+// just read, so the system volume is never actually changed.
+describe.skipIf(process.platform !== 'win32')('windows CoreAudio FFI (live)', () => {
+	it('reads the master volume or reports a verified device absence', () => {
+		const r = readWindowsVolume();
+		expect(r.kind).not.toBe('error'); // a healthy host answers ok or no-device
+		if (r.kind === 'ok') {
+			expect(r.volume).toBeGreaterThanOrEqual(0);
+			expect(r.volume).toBeLessThanOrEqual(100);
+		}
 	});
 
-	it('maps the sentinel to no-device', () => {
-		expect(interpretWindowsWrite('NO_AUDIO_DEVICE')).toEqual({ kind: 'no-device' });
-	});
-
-	it('maps anything else to a transient error', () => {
-		expect(interpretWindowsWrite('')).toEqual({ kind: 'error' });
+	it('writes the current level back and reads the same value again', () => {
+		const before = readWindowsVolume();
+		if (before.kind !== 'ok' || before.volume === null) return; // no device — nothing to write
+		expect(writeWindowsVolume(before.volume)).toEqual({ kind: 'ok', volume: null });
+		expect(readWindowsVolume()).toEqual({ kind: 'ok', volume: before.volume });
 	});
 });
 
@@ -141,19 +138,6 @@ describe('createSerializedWriter', () => {
 		releases[1]!();
 		await flush();
 		expect(started).toEqual([10, 40]); // intermediates skipped, ends on the latest
-	});
-});
-
-describe('parseMonitorVolume', () => {
-	it('parses a bare integer line from the push monitor', () => {
-		expect(parseMonitorVolume('55')).toBe(55);
-		expect(parseMonitorVolume('100\r')).toBe(100);
-		expect(parseMonitorVolume('0')).toBe(0);
-	});
-
-	it('ignores malformed lines', () => {
-		expect(parseMonitorVolume('')).toBeNull();
-		expect(parseMonitorVolume('abc')).toBeNull();
 	});
 });
 
