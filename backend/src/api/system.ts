@@ -44,9 +44,11 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		volumeWatcher.remember({ volume: res.volume, available: res.available });
 		// The watcher now suppresses this write's echo, so other connected clients
 		// (a second window/tab) would never hear about it — tell them directly.
-		// The originating client ignores the level while its own adjustment is
-		// fresh, so this cannot fight the user's in-progress input.
-		if (res.success) broadcast('system:volumeChanged', { volume: res.volume, available: res.available });
+		// Unconditional: a failed write still carries news (a device that vanished
+		// mid-write reports available:false, which the suppressed poll would never
+		// re-deliver). The originating client ignores the level while its own
+		// adjustment is fresh, so this cannot fight the user's in-progress input.
+		broadcast('system:volumeChanged', { volume: res.volume, available: res.available });
 		return { success: res.success, available: res.available };
 	}
 
