@@ -217,6 +217,17 @@ describe('createVolumeWatcher', () => {
 		expect(persisted).toEqual([55]);
 	});
 
+	it('drops an ingested push while a mixer write is active or settling', () => {
+		let busy = true;
+		const { watcher, broadcasts, persisted } = setup([], () => busy);
+		watcher.ingest({ volume: 20, available: true }); // intermediate level mid-write
+		expect(broadcasts).toEqual([]);
+		expect(persisted).toEqual([]);
+		busy = false;
+		watcher.ingest({ volume: 20, available: true });
+		expect(broadcasts).toEqual([{ volume: 20, available: true }]);
+	});
+
 	it('suppresses an ingested push that echoes our own write', () => {
 		const { watcher, broadcasts } = setup([]);
 		watcher.remember({ volume: 55, available: true });

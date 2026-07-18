@@ -286,6 +286,10 @@ export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatu
 	// Diff a fresh status against the last one seen; on a real change persist and
 	// broadcast it. Shared by poll (fallback) and the instant push monitor.
 	function ingest(status: VolumeStatus): void {
+		// A push observed while our own write is in flight or settling reflects an
+		// intermediate level, not an external change — drop it. The write seeds
+		// the final state via remember() and the poll catches real changes later.
+		if (deps.isBusy()) return;
 		if (last !== null && last.volume === status.volume && last.available === status.available) return;
 		last = status;
 		// The user changed the level via the OS — keep the persisted preference in sync.
