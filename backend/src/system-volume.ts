@@ -340,15 +340,39 @@ function startWindowsMonitor(emit: (status: VolumeStatus) => void, onExit: () =>
 	return { stop: () => clearInterval(timer) };
 }
 
+/** True for a pactl `subscribe` line about a sink (`Event 'change' on sink #3`). Deliberately not matching `sink-input` — per-stream events fire constantly during playback and say nothing about the master volume. */
+export function isSinkEvent(line: string): boolean {
+	return /on sink #/i.test(line);
+}
+
 function startLinuxMonitor(emit: (status: VolumeStatus) => void, onExit: () => void): VolumeMonitor {
 	// pactl streams events; a sink change means the default sink volume may have
 	// moved — re-read it and diff. (amixer has no push; that path stays on poll.)
-	const proc = spawn('pactl', ['subscribe']);
-	const rl = createInterface({ input: proc.stdout });
-	rl.on('line', async line => {
-		if (!/on sink #|on sink\b/i.test(line)) return;
-		const status = await getSystemVolumeStatus();
-		if (status) emit(status);
+	const proc = spawn('pactl', ['subscribe'], { stdio: ['ignore', 'pipe', 'ignore'] });
+	const rl = createInterface({ input: proc.stdout! });
+	// Sink events arrive in bursts (dragging a tray slider emits dozens); run one
+	// mixer read at a time and a single trailing re-read after a burst instead of
+	// spawning a reader process per event.
+	let reading = false;
+	let pending = false;
+	async function refresh(): Promise<void> {
+		if (reading) {
+			pending = true;
+			return;
+		}
+		reading = true;
+		try {
+			do {
+				pending = false;
+				const status = await getSystemVolumeStatus();
+				if (status) emit(status);
+			} while (pending);
+		} finally {
+			reading = false;
+		}
+	}
+	rl.on('line', line => {
+		if (isSinkEvent(line)) void refresh();
 	});
 	let stopped = false;
 	const exit = (): void => {

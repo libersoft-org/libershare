@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { parseAlsaVolume, parseMacVolume, classifyMixerReadings, createSerializedWriter, createVolumeWatcher, type VolumeStatus } from '../../src/system-volume.ts';
+import { parseAlsaVolume, parseMacVolume, classifyMixerReadings, createSerializedWriter, createVolumeWatcher, isSinkEvent, type VolumeStatus } from '../../src/system-volume.ts';
 import { classifyHresult, readWindowsVolume, writeWindowsVolume } from '../../src/system-volume-windows.ts';
 
 /** Resolve pending microtasks + timers so the serializer can advance. */
@@ -72,6 +72,22 @@ describe.skipIf(process.platform !== 'win32')('windows CoreAudio FFI (live)', ()
 		if (before.kind !== 'ok' || before.volume === null) return; // no device — nothing to write
 		expect(writeWindowsVolume(before.volume)).toEqual({ kind: 'ok', volume: null });
 		expect(readWindowsVolume()).toEqual({ kind: 'ok', volume: before.volume });
+	});
+});
+
+describe('isSinkEvent', () => {
+	it('matches sink change events', () => {
+		expect(isSinkEvent("Event 'change' on sink #3")).toBe(true);
+	});
+
+	it('ignores per-application sink-input events', () => {
+		expect(isSinkEvent("Event 'new' on sink-input #87")).toBe(false);
+		expect(isSinkEvent("Event 'change' on sink-input #87")).toBe(false);
+	});
+
+	it('ignores unrelated events', () => {
+		expect(isSinkEvent("Event 'change' on client #5")).toBe(false);
+		expect(isSinkEvent("Event 'change' on source #1")).toBe(false);
 	});
 });
 
