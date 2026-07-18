@@ -230,10 +230,66 @@ export async function getSystemVolumeStatus(): Promise<{ available: boolean; vol
 	return r.kind === 'ok' ? { available: true, volume: r.volume } : { available: false, volume: null };
 }
 
+/** The public shape returned by {@link setSystemVolume}. */
+export interface VolumeResult {
+	success: boolean;
+	available: boolean;
+}
+
+function mapWrite(r: MixerResult): VolumeResult {
+	if (r.kind === 'ok') return { success: true, available: true };
+	if (r.kind === 'no-device') return { success: false, available: false };
+	return { success: false, available: true };
+}
+
+/**
+ * Wrap an async writer so calls never overlap and only the newest queued value
+ * is applied (latest-wins, queue depth 1). While a write runs, every new call
+ * records only the most recent value and shares one promise; when the running
+ * write finishes, the newest queued value (if any) is written next and the
+ * intermediates are skipped. So N rapid calls cause at most two real writes and
+ * the target always ends on the last requested value. Callers whose value was
+ * coalesced resolve with the result of the write that superseded them.
+ */
+export function createSerializedWriter<R>(write: (value: number) => Promise<R>): (value: number) => Promise<R> {
+	let running = false;
+	let queued: number | null = null;
+	let queuedResult: Promise<R> | null = null;
+	let resolveQueued: ((r: R) => void) | null = null;
+
+	return async function serialized(value: number): Promise<R> {
+		if (running) {
+			queued = value;
+			if (!queuedResult) queuedResult = new Promise<R>(res => (resolveQueued = res));
+			return queuedResult;
+		}
+		running = true;
+		let result = await write(value);
+		while (queued !== null) {
+			const next = queued;
+			queued = null;
+			const resolve = resolveQueued!;
+			queuedResult = null;
+			resolveQueued = null;
+			result = await write(next);
+			resolve(result);
+		}
+		running = false;
+		return result;
+	};
+}
+
+const serializedWrite = createSerializedWriter<VolumeResult>(async pct => mapWrite(await writeMixer(pct)));
+
 /**
  * Set the OS master output volume. `percent` is clamped to 0–100. Applied via
  * built-in tooling only (no native addons): Windows CoreAudio COM, macOS
  * `osascript`, Linux `amixer` with a `pactl` fallback.
+ *
+ * A single node process owns the OS mixer, so writes are serialized latest-wins
+ * (see {@link createSerializedWriter}): concurrent calls never overlap and the
+ * mixer always ends on the newest requested value. A call whose value was
+ * superseded before it ran resolves with the result of the coalescing write.
  *
  * Returns `{ success, available }`: `success` is whether the OS volume actually
  * changed; `available` is whether a controllable device exists. They differ only
@@ -241,9 +297,6 @@ export async function getSystemVolumeStatus(): Promise<{ available: boolean; vol
  * device-less system returns `{ success: false, available: false }`. Never
  * throws, so a headless host cannot crash the backend.
  */
-export async function setSystemVolume(percent: number): Promise<{ success: boolean; available: boolean }> {
-	const r = await writeMixer(clampPercent(percent));
-	if (r.kind === 'ok') return { success: true, available: true };
-	if (r.kind === 'no-device') return { success: false, available: false };
-	return { success: false, available: true };
+export function setSystemVolume(percent: number): Promise<VolumeResult> {
+	return serializedWrite(clampPercent(percent));
 }

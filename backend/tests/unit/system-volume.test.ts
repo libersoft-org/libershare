@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import { parseAlsaVolume, parseMacVolume, parseWindowsVolume, interpretWindowsRead, interpretWindowsWrite, classifyMixerReadings } from '../../src/system-volume.ts';
+import { parseAlsaVolume, parseMacVolume, parseWindowsVolume, interpretWindowsRead, interpretWindowsWrite, classifyMixerReadings, createSerializedWriter } from '../../src/system-volume.ts';
+
+/** Resolve pending microtasks + timers so the serializer can advance. */
+const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0));
 
 describe('parseAlsaVolume', () => {
 	it('extracts the percentage from an amixer mixer line', () => {
@@ -87,5 +90,56 @@ describe('classifyMixerReadings', () => {
 	it('reports no-device when no binary yields a percentage', () => {
 		expect(classifyMixerReadings([null, null])).toEqual({ kind: 'no-device' });
 		expect(classifyMixerReadings([null, 'Failure: No such entity'])).toEqual({ kind: 'no-device' });
+	});
+});
+
+describe('createSerializedWriter', () => {
+	it('serializes overlapping writes and ends on the latest value', async () => {
+		const started: number[] = [];
+		const releases: Array<() => void> = [];
+		const write = (v: number) =>
+			new Promise<number>(res => {
+				started.push(v);
+				releases.push(() => res(v));
+			});
+		const s = createSerializedWriter(write);
+
+		const p1 = s(30);
+		const p2 = s(80);
+		await flush();
+		expect(started).toEqual([30]); // 80 is queued, not written while 30 runs
+
+		releases[0]!(); // finish write(30)
+		await flush();
+		expect(started).toEqual([30, 80]); // drain applies the newest queued value
+
+		releases[1]!(); // finish write(80)
+		expect(await p2).toBe(80); // coalesced caller gets the final write's result
+		await p1;
+		expect(started).toEqual([30, 80]); // exactly two real writes for two requests
+	});
+
+	it('coalesces a burst to at most two writes', async () => {
+		const started: number[] = [];
+		const releases: Array<() => void> = [];
+		const write = (v: number) =>
+			new Promise<number>(res => {
+				started.push(v);
+				releases.push(() => res(v));
+			});
+		const s = createSerializedWriter(write);
+
+		void s(10);
+		void s(20);
+		void s(30);
+		void s(40);
+		await flush();
+		expect(started).toEqual([10]); // only the first started; 20/30 superseded by 40
+
+		releases[0]!();
+		await flush();
+		releases[1]!();
+		await flush();
+		expect(started).toEqual([10, 40]); // intermediates skipped, ends on the latest
 	});
 });
