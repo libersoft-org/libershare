@@ -21,6 +21,9 @@ export const volume = writable(50);
 // Whether the OS exposes a controllable audio device. False on headless/device-less
 // systems — the footer widget then shows an "unavailable" state instead of a level.
 export const volumeAvailable = writable(true);
+// False until the first live getVolume settles. Keeps the widget from briefly
+// painting the persisted value as if it were the OS state on refresh (flicker).
+export const volumeKnown = writable(false);
 export const footerVisible = writable(true);
 export const footerPosition = writable<FooterPosition>('right');
 export const footerWidgetVisibility = writable<Record<FooterWidget, boolean>>(defaultWidgetVisibility);
@@ -106,6 +109,9 @@ export async function loadSettings(): Promise<void> {
 			if (status.available && status.volume !== null) volume.set(status.volume);
 		} catch {
 			// Leave the persisted value on error; availability stays as-is.
+		} finally {
+			// First live fetch settled — the widget may now render the real state.
+			volumeKnown.set(true);
 		}
 		// Keep the UI in sync when the volume changes on the OS side.
 		subscribeVolumeChanges();

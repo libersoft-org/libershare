@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
 	import { productVersion } from '@shared';
-	import { volume, volumeAvailable, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
+	import { volume, volumeAvailable, volumeKnown, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
 	import { type FooterWidget, getVolumeIcon } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
 	import LISHStatus from './FooterLISHStatus.svelte';
@@ -142,6 +142,15 @@
 			id: 'volume',
 			component: Item,
 			props(): Record<string, any> {
+				// Until the first live reading arrives, show a neutral placeholder
+				// rather than the persisted value (which would flicker to the OS value).
+				if (!$volumeKnown) {
+					return {
+						topIcon: `img/${getVolumeIcon($volume)}.svg`,
+						topIconAlt: $t('settings.footerWidgets.volume'),
+						bottomLabel: '—',
+					};
+				}
 				if (!$volumeAvailable) {
 					const label = $t('settings.footerWidgets.volumeUnavailable');
 					return {
