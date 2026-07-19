@@ -133,12 +133,26 @@ export function unregisterSearchResultHandler(searchID: string): void {
 export class LISHClient {
 	private stream: Stream;
 	private decoder: AsyncGenerator<Uint8Array | Uint8ArrayList>;
+	// Per-call progress hooks, set only for the duration of a request that opts into progress
+	// (currently requestManifest). The decoder is shared across requests, so scoping the hooks
+	// per call keeps requestList/requestChunk unaffected — a null sink is a no-op.
+	private byteSink: ((n: number) => void) | null = null;
+	private lengthSink: ((total: number) => void) | null = null;
 	// TODO: is haveChunks still used? review whether this belongs here
 	public haveChunks!: HaveChunks;
 	constructor(stream: Stream) {
 		this.stream = stream;
 		// Chunk response ≈ chunkSize + small msgpack overhead; manifest can be large for many-file LISHs.
-		this.decoder = lpDecode(stream, { maxDataLength: maxMessageSize });
+		// Counting passthrough + onLength feed the per-call progress sinks (byteSink/lengthSink).
+		this.decoder = lpDecode(this.countingSource(stream), { maxDataLength: maxMessageSize, onLength: len => this.lengthSink?.(len) });
+	}
+
+	/** Passthrough over the raw stream that reports each chunk's byte length to the active byteSink. */
+	private async *countingSource(src: AsyncIterable<Uint8Array | Uint8ArrayList>): AsyncGenerator<Uint8Array | Uint8ArrayList> {
+		for await (const chunk of src) {
+			this.byteSink?.((chunk as Uint8ArrayList).byteLength ?? (chunk as Uint8Array).length);
+			yield chunk;
+		}
 	}
 
 	// Safely parse a peer response. Maps malformed wire bytes / incompatible-protocol responses
@@ -154,19 +168,43 @@ export class LISHClient {
 		return parsed as T;
 	}
 
-	// Request full LISH manifest from peer
-	async requestManifest(lishID: LISHid): Promise<import('@shared').IStoredLISH> {
+	// Request full LISH manifest from peer. When `onProgress` is given it reports manifest
+	// transfer bytes: `total` comes from the length prefix (onLength), `received` counts bytes
+	// flowing off the stream. Emits are throttled to ~100ms and a final (total, total) is
+	// guaranteed on completion. `received` includes the varint prefix, hence Math.min(received, total).
+	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void): Promise<import('@shared').IStoredLISH> {
 		const request: LISHGetLishRequest = { type: 'getLish', lishID };
 		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLish ${lishID}: stream ${this.stream.status}`);
 		}
-		const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(30000, 'manifest-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
-		if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, lishID);
-		const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
-		const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
-		if ('error' in response) throw new CodedError(response.error, lishID);
-		if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
-		return response.manifest;
+		let total = 0;
+		let received = 0;
+		let lastEmit = 0;
+		this.lengthSink = len => {
+			total = len;
+		};
+		this.byteSink = n => {
+			if (!onProgress) return;
+			received += n;
+			const now = Date.now();
+			if (total > 0 && (now - lastEmit >= 100 || received >= total)) {
+				lastEmit = now;
+				onProgress(Math.min(received, total), total);
+			}
+		};
+		try {
+			const responseMsg = (await Promise.race([this.decoder.next(), rejectAfterTimeout(30000, 'manifest-receive')])) as IteratorResult<Uint8Array | Uint8ArrayList>;
+			if (responseMsg.done || !responseMsg.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, lishID);
+			const responseData = responseMsg.value instanceof Uint8ArrayList ? responseMsg.value.subarray() : responseMsg.value;
+			const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
+			if ('error' in response) throw new CodedError(response.error, lishID);
+			if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
+			return response.manifest;
+		} finally {
+			this.lengthSink = null;
+			this.byteSink = null;
+			if (onProgress && total > 0) onProgress(total, total);
+		}
 	}
 
 	// Request list of shared LISHs from peer. `query` is an optional
