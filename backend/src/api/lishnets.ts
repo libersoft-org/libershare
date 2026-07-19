@@ -1,7 +1,7 @@
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, CodedError, ErrorCodes, productName } from '@shared';
+import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, CodedError, ErrorCodes, productName } from '@shared';
 import { LISHClient, LISH_PROTOCOL } from '../protocol/lish-protocol.ts';
 import { Utils } from '../utils.ts';
 const assert = Utils.assertParams;
@@ -198,7 +198,8 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		try {
 			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
 			const client = new LISHClient(stream);
-			const manifest = await client.requestManifest(p.lishID);
+			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
+			const manifest = await client.requestManifest(p.lishID, onProgress);
 			await client.close();
 			// Strip checksums from files and compute summary
 			const files = (manifest.files ?? []).map(f => {
@@ -236,7 +237,8 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		try {
 			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
 			const client = new LISHClient(stream);
-			manifest = await client.requestManifest(p.lishID);
+			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
+			manifest = await client.requestManifest(p.lishID, onProgress);
 			await client.close();
 		} catch (error: any) {
 			if (error instanceof CodedError) throw error;

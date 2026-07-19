@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -7,7 +7,7 @@
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { api } from '../../scripts/api.ts';
 	import { withPeerFallback, type PeerAttemptStatus } from '../../scripts/peerFallback.ts';
-	import { type LishSearchResult, type LISHNetworkConfig, type IPeerLishDetail } from '@shared';
+	import { type LishSearchResult, type LISHNetworkConfig, type IPeerLishDetail, type ManifestProgressEvent } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Icon from '../../components/Icon/Icon.svelte';
@@ -35,31 +35,22 @@
 	let detail = $state<IPeerLishDetail | null>(null);
 	// Fallback progress per peer row (indexed like row.peers); outcomes persist until the next run.
 	let peerStatuses = $state<Array<PeerAttemptStatus | null>>([]);
+	// Real manifest-transfer progress (0–100) per peer row, fed by the backend
+	// `lishnets:manifestProgress` event and shown only while the row is 'downloading'.
+	let peerProgress = $state<Array<number>>([]);
 
-	// Worst-case duration of one fallback attempt: libp2p dial (~10 s default)
-	// + the backend's manifest-receive timeout (30 s). The bar tracks elapsed time
-	// against this budget — same time-driven approach as the search progress bar.
-	const ATTEMPT_BUDGET_MS = 40_000;
-	let attemptStartedAt = $state<number | null>(null);
-	let nowTick = $state(performance.now());
-	let ticker: ReturnType<typeof setInterval> | null = null;
-	$effect(() => {
-		if (busy && ticker === null) {
-			// Refresh the tick before the first interval fires — a stale value from a
-			// previous run would make `nowTick - attemptStartedAt` negative for up to 200 ms.
-			nowTick = performance.now();
-			ticker = setInterval(() => (nowTick = performance.now()), 200);
-		} else if (!busy && ticker !== null) {
-			clearInterval(ticker);
-			ticker = null;
-		}
+	let offManifestProgress: (() => void) | void;
+	onMount(() => {
+		api.subscribe('lishnets:manifestProgress');
+		offManifestProgress = api.on('lishnets:manifestProgress', (d: ManifestProgressEvent) => {
+			if (d.lishID !== row.id) return;
+			const idx = row.peers.findIndex(p => p.peerID === d.peerID);
+			if (idx >= 0 && peerStatuses[idx] === 'downloading') peerProgress[idx] = d.total > 0 ? Math.min(100, (d.received / d.total) * 100) : 0;
+		});
 	});
 	onDestroy(() => {
-		if (ticker !== null) clearInterval(ticker);
-	});
-	let attemptProgress = $derived.by((): number => {
-		if (attemptStartedAt === null) return 0;
-		return Math.min(100, (Math.max(0, nowTick - attemptStartedAt) / ATTEMPT_BUDGET_MS) * 100);
+		offManifestProgress?.();
+		api.unsubscribe('lishnets:manifestProgress');
 	});
 
 	function networkName(networkID: string): string {
@@ -73,10 +64,11 @@
 	/** Run the shared peer-fallback loop over this row's peers, driving the per-row statuses. */
 	function tryPeers<T>(op: (peerID: string, networkID: string) => Promise<T>): Promise<T> {
 		peerStatuses = [];
+		peerProgress = [];
 		return withPeerFallback(row.peers, op, (index, status) => {
 			peerStatuses[index] = status;
-			// Restart the row progress bar with each new attempt.
-			if (status === 'downloading') attemptStartedAt = performance.now();
+			// Reset the row's real progress bar as each new attempt starts.
+			if (status === 'downloading') peerProgress[index] = 0;
 		});
 	}
 
@@ -258,7 +250,7 @@
 						{#if peerStatuses[i] === 'downloading'}
 							<div class="peer-progress">
 								<span class="peer-status">{$t('network.statusDownloading')}</span>
-								<ProgressBar progress={attemptProgress} showText={false} height="1.2vh" animated />
+								<ProgressBar progress={peerProgress[i] ?? 0} showText={false} height="1.2vh" animated />
 							</div>
 						{:else if peerStatuses[i] === 'downloaded'}
 							<span class="peer-status"><Icon img="/img/check.svg" size="2vh" padding="0" colorVariable="--color-success" />{$t('network.statusDownloaded')}</span>
