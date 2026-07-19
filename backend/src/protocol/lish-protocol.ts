@@ -651,6 +651,10 @@ function rejectAfterTimeout(ms: number, label: string): Promise<never> {
 // break out of its processing loop in that case).
 function sendLengthPrefixed(stream: Stream, data: Uint8Array): boolean {
 	if (stream.status !== 'open') return false;
-	stream.send(lpEncode.single(data));
+	// Match the encoder's frame limit to the decoder's `maxDataLength`. Without an explicit
+	// limit, it-length-prefixed caps a single frame at its 4 MB default, so large manifests
+	// and large chunks (both bounded by maxMessageSize on receive) would throw on send and
+	// reset the stream, surfacing as PEER_UNREACHABLE.
+	stream.send(lpEncode.single(data, { maxDataLength: maxMessageSize }));
 	return true;
 }
