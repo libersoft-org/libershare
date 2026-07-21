@@ -57,7 +57,7 @@ export class Downloader {
 	private readonly dataServer: DataServer;
 	private network: Network;
 	private readonly downloadDir: string;
-	private readonly networkIDs: string[];
+	private networkIDs: string[];
 	private lishID!: LISHid;
 	private state: State = 'added';
 	private workMutex = new Mutex();
@@ -117,6 +117,18 @@ export class Downloader {
 	 */
 	getNetworkIDs(): string[] {
 		return [...this.networkIDs];
+	}
+
+	/**
+	 * Stop sourcing this download from a lishnet the node just left. Removes the
+	 * network from the set so subsequent WANT broadcasts and topic-peer probes no
+	 * longer reach the left lishnet; peers exclusive to it are hung up separately
+	 * by the leave path. No-op if it was not one of this download's networks or if
+	 * it is the only one left (the caller disables the whole download in that case).
+	 */
+	removeNetwork(networkID: string): void {
+		if (this.networkIDs.length <= 1 || !this.networkIDs.includes(networkID)) return;
+		this.networkIDs = this.networkIDs.filter(id => id !== networkID);
 	}
 
 	/**

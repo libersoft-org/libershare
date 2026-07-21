@@ -124,7 +124,14 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		for (const [lishID, dl] of activeDownloaders) {
 			const ids = dl.getNetworkIDs?.() ?? [];
 			if (!ids.includes(networkID)) continue;
-			if (ids.some(id => networks.isJoined(id))) continue;
+			if (ids.some(id => networks.isJoined(id))) {
+				// Another joined lishnet can still source this download — keep it
+				// running but stop using the network we just left, otherwise the
+				// downloader keeps broadcasting WANTs and probing peers on a topic
+				// we are no longer part of.
+				dl.removeNetwork?.(networkID);
+				continue;
+			}
 			console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, disabling download`);
 			dl.disable();
 			// Drop the runtime enabled flag (no DB persist) so `lishs.list` reports
@@ -133,6 +140,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			// DB flag stays untouched, so an app restart with the lishnet re-joined
 			// resumes the download.
 			downloadEnabledLishs.delete(lishID);
+			// Cancel any pending error-recovery timer for this LISH — otherwise
+			// ErrorRecovery, holding the captured downloadWasEnabled=true, could
+			// re-enable the download once the IO condition clears even though the
+			// user just stopped it by leaving the network.
+			recovery.stop(lishID);
 			// dl.disable() alone emits nothing over WS — tell the FE the download
 			// stopped.
 			broadcast?.('transfer.download:disabled', { lishID });
