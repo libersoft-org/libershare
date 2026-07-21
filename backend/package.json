@@ -28,11 +28,15 @@
 		"@libp2p/utils": "^7.2.2",
 		"@multiformats/multiaddr-matcher": "^3.0.2",
 		"async-mutex": "^0.5.0",
+		"cbor-x": "^1.6.0",
 		"consola": "^3.4.2",
 		"datastore-core": "^12.0.1",
 		"interface-datastore": "^10.0.1",
+		"it-length-prefixed": "^10.0.1",
+		"json-canonicalize": "^2.0.0",
 		"libp2p": "^3.3.3",
 		"msgpackr": "^2.0.4",
+		"uint8arraylist": "^2.4.8",
 		"uint8arrays": "^6.1.1"
 	},
 	"overrides": {
@@ -41,8 +45,9 @@
 	"scripts": {
 		"typecheck": "tsc --noEmit",
 		"test": "bun test tests/unit/",
+		"test:integration": "bun tests/integration/run-integration.ts",
 		"test:e2e": "bun test tests/e2e/ --timeout 300000",
-		"test:all": "bun test tests/unit/ && bun test tests/e2e/ --timeout 300000",
+		"test:all": "bun test tests/unit/ && bun tests/integration/run-integration.ts && bun test tests/e2e/ --timeout 300000",
 		"postinstall": "cd node_modules/@chainsafe/libp2p-gossipsub && bun install && bun run build"
 	}
 }

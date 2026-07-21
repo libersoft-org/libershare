@@ -4,6 +4,8 @@ import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, CodedError, ErrorCodes } from '@shared';
+import { type CatalogManager } from '../catalog/catalog-manager.ts';
+import { CatalogNet } from '../catalog/catalog-net.ts';
 import { lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
 
 /**
@@ -21,6 +23,11 @@ export class Networks {
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
 	// Callback for bootstrap status changes
 	private _onBootstrapStatusChange: ((networkID: string, status: BootstrapStatus) => void) | null = null;
+
+	// Catalog manager (set after construction via setCatalogManager)
+	private catalogManager: CatalogManager | null = null;
+	// Network-facing catalog wiring (GossipSub ops + bilateral sync) — constructed lazily
+	private catalogNet: CatalogNet | null = null;
 
 	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.db = db;
@@ -40,6 +47,10 @@ export class Networks {
 	 */
 	set onPeerCountChange(cb: ((counts: { networkID: string; count: number }[]) => void) | null) {
 		this._onPeerCountChange = cb;
+	}
+
+	setCatalogManager(cm: CatalogManager): void {
+		this.catalogManager = cm;
 	}
 
 	/**
@@ -86,6 +97,15 @@ export class Networks {
 				});
 			}
 			console.log(`✓ Joined lishnet: ${net.name} (${net.networkID})`);
+			// Join catalog if network has ownerPeerID (graceful — errors never block)
+			if (this.catalogManager && net.ownerPeerID) {
+				try {
+					this.catalogManager.join(net.networkID, net.ownerPeerID);
+					await this.registerCatalogHandler(net.networkID);
+				} catch (err) {
+					console.warn(`[Catalog] Failed to join catalog for ${net.networkID}:`, (err as Error).message);
+				}
+			}
 		}
 	}
 
@@ -125,6 +145,28 @@ export class Networks {
 		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers, id, 'configured');
 
 		console.log(`✓ Joined lishnet: ${net?.name ?? id}`);
+
+		// Join catalog if network has ownerPeerID (graceful — errors never block file sharing)
+		if (this.catalogManager && net?.ownerPeerID) {
+			try {
+				this.catalogManager.join(id, net.ownerPeerID);
+				await this.registerCatalogHandler(id);
+			} catch (err) {
+				console.warn(`[Catalog] Failed to join catalog for ${id}:`, (err as Error).message);
+			}
+		}
+	}
+
+	private async registerCatalogHandler(networkID: string): Promise<void> {
+		this.catalogNet ??= new CatalogNet({
+			db: this.db,
+			getCatalogManager: () => this.catalogManager,
+			subscribe: (topic, handler) => this.network.subscribe(topic, handler),
+			registerStreamHandler: (protocol, handler) => this.network.registerStreamHandler(protocol, handler),
+			dialProtocolByPeerId: (peerID, protocol) => this.network.dialProtocolByPeerId(peerID, protocol),
+			getTopicPeers: id => this.network.getTopicPeers(id),
+		});
+		await this.catalogNet.attach(networkID);
 	}
 
 	/**
@@ -138,6 +180,11 @@ export class Networks {
 
 		const net = this.get(id);
 		console.log(`✓ Left lishnet: ${net?.name ?? id}`);
+
+		this.catalogNet?.detach(id);
+		if (this.catalogManager) {
+			this.catalogManager.leave(id);
+		}
 	}
 
 	/**
@@ -145,6 +192,10 @@ export class Networks {
 	 */
 	async stopAllNetworks(): Promise<void> {
 		this.joinedNetworks.clear();
+		this.catalogNet?.detachAll();
+		if (this.catalogManager) {
+			for (const id of this.catalogManager.getJoinedNetworks()) this.catalogManager.leave(id);
+		}
 		await this.network.stop();
 		console.log('✓ All lishnets left and node stopped');
 	}
@@ -202,13 +253,21 @@ export class Networks {
 	// Validate a raw network object into a LISHNetworkDefinition (without storing).
 	validateNetwork(data: ILISHNetwork): LISHNetworkDefinition {
 		if (!data.networkID || !data.name) throw new CodedError(ErrorCodes.NETWORK_INVALID);
-		return {
+		const def: LISHNetworkDefinition = {
 			networkID: data.networkID,
 			name: data.name,
 			description: data.description || '',
 			bootstrapPeers: Array.isArray(data.bootstrapPeers) ? data.bootstrapPeers.filter(p => typeof p === 'string' && p.trim()) : [],
 			created: data.created || new Date().toISOString(),
 		};
+		if (data.ownerPeerID) {
+			if (!data.ownerPeerID.startsWith('12D3KooW')) {
+				console.warn(`[Networks] Invalid ownerPeerID format: ${data.ownerPeerID} (expected Ed25519 PeerID starting with 12D3KooW)`);
+			} else {
+				def.ownerPeerID = data.ownerPeerID;
+			}
+		}
+		return def;
 	}
 
 	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
@@ -256,6 +315,17 @@ export class Networks {
 	}
 
 	add(network: LISHNetworkConfig): boolean {
+		// Auto-assign ownerPeerID to local peer if creating new network without one
+		if (!network.ownerPeerID && this.network.isRunning()) {
+			try {
+				const nodeInfo = this.network.getNodeInfo();
+				if (nodeInfo?.peerID) {
+					network = { ...network, ownerPeerID: nodeInfo.peerID };
+				}
+			} catch {
+				/* network not started yet */
+			}
+		}
 		return addLISHnet(this.db, network);
 	}
 

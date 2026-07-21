@@ -25,6 +25,7 @@ export class API {
 	readonly lishnets: LISHnetsAPI;
 	readonly lishs: LISHsAPI;
 	readonly transfer: TransferAPI;
+	readonly catalog: CatalogAPI;
 	readonly search: SearchAPI;
 
 	constructor(client: IWsClient) {
@@ -36,6 +37,7 @@ export class API {
 		this.lishnets = new LISHnetsAPI(client);
 		this.lishs = new LISHsAPI(client);
 		this.transfer = new TransferAPI(client);
+		this.catalog = new CatalogAPI(client);
 		this.search = new SearchAPI(client);
 	}
 
@@ -456,6 +458,104 @@ class TransferAPI {
 
 	download(networkID: string, lishPath: string): Promise<DownloadResponse> {
 		return this.client.call<DownloadResponse>('transfer.download', { networkID, lishPath });
+	}
+}
+
+export interface CatalogEntryResponse {
+	network_id: string;
+	lish_id: string;
+	name: string | null;
+	description: string | null;
+	publisher_peer_id: string;
+	published_at: string;
+	chunk_size: number;
+	checksum_algo: string;
+	total_size: number;
+	file_count: number;
+	manifest_hash: string;
+	content_type: string | null;
+	tags: string | null;
+	last_edited_by: string | null;
+	hlc_wall: number;
+}
+
+export interface CatalogACLResponse {
+	owner: string;
+	admins: string[];
+	moderators: string[];
+	restrict_writes: number;
+}
+
+class CatalogAPI {
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
+
+	list(networkID: string, limit?: number): Promise<CatalogEntryResponse[]> {
+		return this.client.call<CatalogEntryResponse[]>('catalog.list', { networkID, limit });
+	}
+
+	get(networkID: string, lishID: string): Promise<CatalogEntryResponse | null> {
+		return this.client.call<CatalogEntryResponse | null>('catalog.get', { networkID, lishID });
+	}
+
+	search(networkID: string, query: string, limit?: number): Promise<CatalogEntryResponse[]> {
+		return this.client.call<CatalogEntryResponse[]>('catalog.search', { networkID, query, limit });
+	}
+
+	publish(
+		networkID: string,
+		params: {
+			lishID: string;
+			name?: string | undefined;
+			description?: string | undefined;
+			chunkSize: number;
+			checksumAlgo: string;
+			totalSize: number;
+			fileCount: number;
+			manifestHash?: string | undefined;
+			contentType?: string | undefined;
+			tags?: string[] | undefined;
+		}
+	): Promise<void> {
+		return this.client.call<void>('catalog.publish', { networkID, ...params });
+	}
+
+	update(networkID: string, lishID: string, fields: { name?: string | undefined; description?: string | undefined; contentType?: string | undefined; tags?: string[] | undefined }): Promise<void> {
+		return this.client.call<void>('catalog.update', { networkID, lishID, ...fields });
+	}
+
+	remove(networkID: string, lishID: string): Promise<void> {
+		return this.client.call<void>('catalog.remove', { networkID, lishID });
+	}
+
+	getAccess(networkID: string): Promise<CatalogACLResponse | null> {
+		return this.client.call<CatalogACLResponse | null>('catalog.getAccess', { networkID });
+	}
+
+	grantRole(networkID: string, delegatee: string, role: 'admin' | 'moderator'): Promise<void> {
+		return this.client.call<void>('catalog.grantRole', { networkID, delegatee, role });
+	}
+
+	revokeRole(networkID: string, delegatee: string, role: 'admin' | 'moderator'): Promise<void> {
+		return this.client.call<void>('catalog.revokeRole', { networkID, delegatee, role });
+	}
+
+	startDownload(networkID: string, lishID: string): Promise<{ status: string; message: string; downloadDir?: string }> {
+		return this.client.call<{ status: string; message: string; downloadDir?: string }>('catalog.startDownload', { networkID, lishID });
+	}
+
+	pauseDownload(lishID: string): Promise<{ success: boolean }> {
+		return this.client.call<{ success: boolean }>('catalog.pauseDownload', { lishID });
+	}
+
+	resumeDownload(lishID: string): Promise<{ success: boolean }> {
+		return this.client.call<{ success: boolean }>('catalog.resumeDownload', { lishID });
+	}
+
+	getSyncStatus(networkID: string): Promise<{ entryCount: number; tombstoneCount: number; lastSyncAt: string | null }> {
+		return this.client.call<{ entryCount: number; tombstoneCount: number; lastSyncAt: string | null }>('catalog.getSyncStatus', { networkID });
 	}
 }
 

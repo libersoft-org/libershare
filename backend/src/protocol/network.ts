@@ -72,8 +72,9 @@ interface PubsubEvent {
  * Handler for parsed pubsub topic messages.
  * `from` is the original publisher peer ID (verified by libp2p) when available —
  * used for per-source rate-limiting in handleWant.
+ * Handlers may be async (e.g. catalog op application) — dispatch awaits them.
  */
-type TopicHandler = (data: Record<string, any>, from?: string) => void;
+type TopicHandler = (data: Record<string, any>, from?: string) => void | Promise<void>;
 const AUTODIAL_WORKAROUND = true;
 /** Minimum interval between two `have` responses sent to the same peer for the same LISH. */
 const WANT_RESPONSE_COOLDOWN_MS = 60_000;
@@ -1221,7 +1222,7 @@ export class Network {
 	// Pubsub dispatch
 	// =========================================================================
 
-	private handleMessage(msgEvent: PubsubEvent): void {
+	private async handleMessage(msgEvent: PubsubEvent): Promise<void> {
 		try {
 			const topic = msgEvent.topic;
 			// Reject oversize payloads before decoding — cheap DoS guard.
@@ -1238,7 +1239,7 @@ export class Network {
 
 			// Dispatch to registered topic handlers
 			const handlers = this.topicHandlers.get(topic);
-			if (handlers) for (const handler of handlers) handler(message, from);
+			if (handlers) for (const handler of handlers) await handler(message, from);
 		} catch (error) {
 			console.error('Error in handleMessage:', error);
 		}
@@ -1418,8 +1419,29 @@ export class Network {
 		this.redialBackoff.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {
-			await this.node.stop();
-			console.log('Network stopped');
+			// Drain active connections before stopping. A remote peer that keeps
+			// re-dialing during shutdown (keep-alive-fleet ReconnectQueue) can
+			// otherwise hold the transport open and node.stop() never resolves —
+			// observed between two in-process nodes in integration tests.
+			try {
+				await Promise.allSettled(this.node.getConnections().map((conn: any) => conn.close().catch(() => {})));
+			} catch {
+				/* best effort */
+			}
+			let stopTimer: ReturnType<typeof setTimeout> | undefined;
+			// The .catch keeps a deadline-abandoned stop() from surfacing later as an
+			// unhandled rejection (ReconnectQueue aborts its jobs with AbortError).
+			const nodeStopPromise = Promise.resolve(this.node.stop()).then(
+				() => true,
+				(err: any) => {
+					trace(`[NET] node.stop() rejected: ${err?.message ?? err}`);
+					return true;
+				}
+			);
+			const stopped = await Promise.race([nodeStopPromise, new Promise<boolean>(resolve => (stopTimer = setTimeout(() => resolve(false), 15_000)))]);
+			if (stopTimer) clearTimeout(stopTimer);
+			if (stopped) console.log('Network stopped');
+			else console.warn('[NET] node.stop() timed out after 15s — proceeding with shutdown');
 		}
 		if (this.datastore) {
 			await this.datastore.close();
@@ -1447,6 +1469,32 @@ export class Network {
 			match.addresses.forEach(a => console.log(a.multiaddr.toString()));
 		} else {
 			console.log('Peer not in peerStore');
+		}
+	}
+
+	// --- Catalog extensions ---
+
+	getPrivateKey(): PrivateKey {
+		if (!this.currentPrivateKey) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		return this.currentPrivateKey;
+	}
+
+	async registerStreamHandler(protocol: string, handler: (stream: Stream) => Promise<void>): Promise<void> {
+		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		await this.node.handle(protocol, async stream => handler(stream), { runOnLimitedConnection: true });
+	}
+
+	registerTopicValidator(topic: string, validator: (peerID: any, msg: any) => Promise<'accept' | 'reject' | 'ignore'>): void {
+		if (!this.pubsub) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
+		const pubsub = this.pubsub as any;
+		if (typeof pubsub.topicValidators?.set === 'function') {
+			pubsub.topicValidators.set(topic, async (peerID: any, msg: any) => {
+				const result = await validator(peerID, msg);
+				// Map string results to gossipsub TopicValidatorResult enum values
+				if (result === 'reject') return 'reject';
+				if (result === 'ignore') return 'ignore';
+				return 'accept';
+			});
 		}
 	}
 }

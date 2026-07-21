@@ -3,6 +3,7 @@ import { join } from 'path';
 import { productName } from '@shared';
 import { initLISHsTables } from './lishs.ts';
 import { initLISHnetsTables } from './lishnets.ts';
+import { initCatalogTables } from './catalog.ts';
 const DB_FILENAME = `${productName.toLowerCase()}.db`;
 let db: Database;
 
@@ -14,6 +15,7 @@ export function openDatabase(dataDir: string): Database {
 	console.log(`[DB] ${dbPath}`);
 	initLISHsTables(db);
 	initLISHnetsTables(db);
+	initCatalogTables(db);
 	return db;
 }
 

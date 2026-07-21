@@ -13,6 +13,8 @@ frontend/.svelte-kit/
 frontend/.vite-cache/
 backend/data
 data/
+data-*/
+.node-*/
 .secret_git
 bun.lockb
 bun.lockb.txt
@@ -34,6 +36,13 @@ vite.config.js.timestamp-*
 !.git/
 !.github/
 !.vs/
+/[A-Z]*.md
+!/README.md
+
+# Test artifacts
+**/test-results/
+**/.playwright-real-data/
+**/playwright-report/
 
 # Large binary files
 **/*.iso

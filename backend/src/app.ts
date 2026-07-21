@@ -7,6 +7,7 @@ import { DataServer } from './lish/data-server.ts';
 import { openDatabase } from './db/database.ts';
 import { APIServer } from './api/api.ts';
 import { Settings } from './settings.ts';
+import { CatalogManager } from './catalog/catalog-manager.ts';
 import { startMemoryTrace } from './monitoring/memory-trace.ts';
 import { startHeapSnapshotTrigger } from './monitoring/heap-snapshot.ts';
 
@@ -91,6 +92,36 @@ const dataServer = new DataServer(db);
 const networks = new Networks(db, dataDir, dataServer, settings);
 networks.init();
 
+const catalogManager = new CatalogManager({
+	db,
+	getPrivateKey: () => networks.getRunningNetwork().getPrivateKey() as any,
+	getLocalPeerID: () => {
+		try {
+			return networks.getRunningNetwork().getNodeInfo()?.peerID ?? 'local';
+		} catch {
+			return 'local';
+		}
+	},
+	broadcast: (networkID, op) => {
+		try {
+			const net = networks.getRunningNetwork();
+			// version stamps the wire envelope so receivers can gate incompatible
+			// future formats (the ingestion handler drops version !== 1).
+			net.broadcast(`lish/${networkID}`, { type: 'catalog_op', version: 1, ...op });
+		} catch {
+			/* network not running — skip broadcast */
+		}
+	},
+	emitEvent: (event, data) => {
+		try {
+			apiServer.broadcastEvent(event, data);
+		} catch {
+			/* server not started */
+		}
+	},
+});
+networks.setCatalogManager(catalogManager);
+
 // Apply speed limits from settings
 import { setUploadBroadcast, initUploadState } from './protocol/lish-protocol.ts';
 import { applyNetworkLimits } from './protocol/network-limits.ts';
@@ -100,14 +131,21 @@ applyNetworkLimits(settings.get().network);
 initUploadState(getUploadEnabledLishs(db), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 initDownloadState(getDownloadEnabledLishs(db), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
 
-const apiServer = new APIServer(dataDir, dataServer, networks, settings, {
-	host: apiHost,
-	port: apiPort,
-	secure: apiSecure,
-	keyFile: apiKeyFile,
-	certFile: apiCertFile,
-	apiToken,
-});
+const apiServer = new APIServer(
+	dataDir,
+	dataServer,
+	networks,
+	settings,
+	{
+		host: apiHost,
+		port: apiPort,
+		secure: apiSecure,
+		keyFile: apiKeyFile,
+		certFile: apiCertFile,
+		apiToken,
+	},
+	catalogManager
+);
 
 // Wire upload progress broadcast (after apiServer is created)
 setUploadBroadcast((event, data) => apiServer.broadcastEvent(event, data));
