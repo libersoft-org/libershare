@@ -171,7 +171,8 @@ export class LISHClient {
 	// Request full LISH manifest from peer. When `onProgress` is given it reports manifest
 	// transfer bytes: `total` comes from the length prefix (onLength), `received` counts bytes
 	// flowing off the stream. Emits are throttled to ~100ms and a final (total, total) is
-	// guaranteed on completion. `received` includes the varint prefix, hence Math.min(received, total).
+	// guaranteed on SUCCESS only — a failed transfer must not report 100%. `received`
+	// includes the varint prefix, hence Math.min(received, total).
 	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void): Promise<import('@shared').IStoredLISH> {
 		const request: LISHGetLishRequest = { type: 'getLish', lishID };
 		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
@@ -199,11 +200,11 @@ export class LISHClient {
 			const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
 			if ('error' in response) throw new CodedError(response.error, lishID);
 			if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
+			if (onProgress && total > 0) onProgress(total, total);
 			return response.manifest;
 		} finally {
 			this.lengthSink = null;
 			this.byteSink = null;
-			if (onProgress && total > 0) onProgress(total, total);
 		}
 	}
 
