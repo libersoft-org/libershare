@@ -143,6 +143,31 @@ export class Networks {
 	/**
 	 * Leave a lishnet (unsubscribe from its topic).
 	 */
+	/** Peer IDs (the /p2p/<id> component) of a list of bootstrap multiaddr strings. */
+	private static bootstrapPeerIDsOf(bootstrapPeers: string[]): string[] {
+		const ids: string[] = [];
+		for (const addr of bootstrapPeers) {
+			const m = addr.match(/\/p2p\/([^/]+)/);
+			if (m) ids.push(m[1]!);
+		}
+		return ids;
+	}
+
+	/** Configured-bootstrap peer IDs of a single network. */
+	private configuredBootstrapPeerIDsOf(networkID: string): Set<string> {
+		return new Set(Networks.bootstrapPeerIDsOf(this.get(networkID)?.bootstrapPeers ?? []));
+	}
+
+	/** Configured-bootstrap peer IDs of every joined network except `exceptID`. */
+	private configuredBootstrapPeerIDsElsewhere(exceptID: string): Set<string> {
+		const out = new Set<string>();
+		for (const nid of this.joinedNetworks) {
+			if (nid === exceptID) continue;
+			for (const pid of Networks.bootstrapPeerIDsOf(this.get(nid)?.bootstrapPeers ?? [])) out.add(pid);
+		}
+		return out;
+	}
+
 	private async leaveNetwork(id: string): Promise<void> {
 		if (!this.joinedNetworks.has(id)) return;
 
@@ -152,6 +177,14 @@ export class Networks {
 
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
+
+		// Drop the bootstrap-exemption for peers configured only for the lishnet we
+		// just left. Without this a stale exemption would make the disconnect loop
+		// below skip a peer that is no longer shared with any joined network.
+		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
+		for (const pid of this.configuredBootstrapPeerIDsOf(id)) {
+			if (!stillConfigured.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid);
+		}
 
 		// Disconnect peers that belonged exclusively to the lishnet we just left.
 		// A peer is kept connected if it is still a subscriber of any OTHER joined
@@ -346,6 +379,15 @@ export class Networks {
 		const existing = this.get(id);
 		if (!existing) return null;
 		const cleaned = bootstrapPeers.filter(p => typeof p === 'string' && p.trim().length > 0);
+		// Drop the bootstrap-exemption for peer IDs removed from this network's
+		// config, unless still configured for another joined network. Prevents a
+		// removed bootstrap entry from lingering as infrastructure that a later
+		// leave-network would refuse to disconnect.
+		const nextIDs = new Set(Networks.bootstrapPeerIDsOf(cleaned));
+		const elsewhere = this.configuredBootstrapPeerIDsElsewhere(id);
+		for (const pid of Networks.bootstrapPeerIDsOf(existing.bootstrapPeers)) {
+			if (!nextIDs.has(pid) && !elsewhere.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid);
+		}
 		const next: LISHNetworkConfig = { ...existing, bootstrapPeers: cleaned };
 		updateLISHnet(this.db, next);
 		this.network.pruneBootstrapStatus(id, cleaned);

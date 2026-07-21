@@ -1073,6 +1073,17 @@ export class Network {
 	 * leaving an empty lishnet must not tear down shared bootstrap/relay links
 	 * that other still-joined lishnets depend on.
 	 */
+	/**
+	 * Drop a peer from the configured-bootstrap exemption set. Called by the
+	 * lishnet layer when a bootstrap entry is removed from config or belongs only
+	 * to a lishnet being left, so `isBootstrapOrRelayPeer` stops treating a peer
+	 * that is no longer configured (nor shared with another joined network) as
+	 * infrastructure that leave-network must keep connected.
+	 */
+	pruneConfiguredBootstrapPeer(peerID: string): void {
+		this.configuredBootstrapPeerIDs.delete(peerID);
+	}
+
 	isBootstrapOrRelayPeer(peerID: string): boolean {
 		if (this.configuredBootstrapPeerIDs.has(peerID)) return true;
 		if (!this.node) return false;

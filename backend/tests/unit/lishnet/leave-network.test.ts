@@ -14,10 +14,12 @@ interface MockNet {
 	unsubscribed: string[];
 	disconnected: string[];
 	bootstrapOrRelay: Set<string>;
+	prunedBootstrap: string[];
 	getTopicPeers(id: string): string[];
 	unsubscribeTopic(id: string): void;
 	isBootstrapOrRelayPeer(pid: string): boolean;
 	disconnectPeer(pid: string): Promise<void>;
+	pruneConfiguredBootstrapPeer(pid: string): void;
 }
 
 function makeMockNet(): MockNet {
@@ -26,6 +28,7 @@ function makeMockNet(): MockNet {
 		unsubscribed: [],
 		disconnected: [],
 		bootstrapOrRelay: new Set(),
+		prunedBootstrap: [],
 		getTopicPeers(id) {
 			return this.topicPeers.get(id) ?? [];
 		},
@@ -40,16 +43,19 @@ function makeMockNet(): MockNet {
 		async disconnectPeer(pid) {
 			this.disconnected.push(pid);
 		},
+		pruneConfiguredBootstrapPeer(pid) {
+			this.prunedBootstrap.push(pid);
+		},
 	};
 }
 
-function makeNetworks(net: MockNet, joined: string[]): Networks {
+// bootstrapPeers per network id, exposed to the class via `get`.
+function makeNetworks(net: MockNet, joined: string[], configs: Record<string, string[]> = {}): Networks {
 	const networks = Object.create(Networks.prototype) as Networks;
 	(networks as any).network = net;
 	(networks as any).joinedNetworks = new Set(joined);
 	(networks as any)._onNetworkLeft = null;
-	// leaveNetwork resolves the lishnet name only for logging — no DB here.
-	(networks as any).get = () => undefined;
+	(networks as any).get = (id: string) => (configs[id] ? { networkID: id, bootstrapPeers: configs[id] } : undefined);
 	return networks;
 }
 
@@ -107,5 +113,17 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		await leave(networks, 'net-a');
 		expect(leftIDs).toEqual(['net-a']);
 		expect((networks as any).joinedNetworks.has('net-a')).toBe(false);
+	});
+
+	it('prunes bootstrap exemption for peers configured only for the left lishnet', async () => {
+		net.topicPeers.set('net-a', []);
+		const networks = makeNetworks(net, ['net-a', 'net-b'], {
+			'net-a': ['/ip4/192.0.2.1/tcp/9090/p2p/pOnlyA', '/ip4/192.0.2.2/tcp/9090/p2p/pShared'],
+			'net-b': ['/ip4/192.0.2.3/tcp/9090/p2p/pShared'],
+		});
+		await leave(networks, 'net-a');
+		// pOnlyA is bootstrap only for the left network → exemption pruned.
+		// pShared is still bootstrap for the joined net-b → exemption kept.
+		expect(net.prunedBootstrap).toEqual(['pOnlyA']);
 	});
 });
