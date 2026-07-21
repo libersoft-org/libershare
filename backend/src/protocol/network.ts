@@ -1135,12 +1135,17 @@ export class Network {
 			trace(`[NET] disconnectPeer: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 			return;
 		}
-		// Remove the fleet keep-alive tag FIRST so the imminent hangUp does not
-		// race the ReconnectQueue back into a re-dial. Passing undefined as the
-		// tag value removes it (per @libp2p/interface PeerStore merge semantics).
+		// Remove the keep-alive tags FIRST so the imminent hangUp does not race
+		// the ReconnectQueue back into a re-dial. Both tags matter: the custom
+		// 'keep-alive-fleet' tag (peer-announce intake) and the native KEEP_ALIVE
+		// tag (stamped by addBootstrapPeers on every successfully dialed entry,
+		// including discovered ones) — libp2p itself re-dials any peer carrying a
+		// keep-alive tag, which would silently undo this disconnect. Passing
+		// undefined as the tag value removes it (per @libp2p/interface PeerStore
+		// merge semantics).
 		try {
 			await this.node.peerStore.merge(pid, {
-				tags: { 'keep-alive-fleet': undefined },
+				tags: { 'keep-alive-fleet': undefined, [KEEP_ALIVE]: undefined },
 			});
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: tag removal failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
