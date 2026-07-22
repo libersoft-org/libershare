@@ -202,7 +202,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const chunkSize = p.chunkSize ?? DEFAULT_CHUNK_SIZE;
 		// Reject overly large chunkSize before the (potentially long) hashing pass.
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
-		if (typeof chunkSize !== 'number' || !Number.isFinite(chunkSize) || chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(chunkSize));
+		// Match validateLISHStructure's contract (integer chunkSize) so a LISH this
+		// version creates is always one it can also import — a fractional size would
+		// pass creation/export but be rejected on import.
+		if (typeof chunkSize !== 'number' || !Number.isInteger(chunkSize) || chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(chunkSize));
 		if (chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${formatBytes(chunkSize)} > ${formatBytes(maxChunkSize)}`);
 		const threads = p.threads ?? 0; // 0 = all CPU threads
 		const minifyJSON = p.minifyJSON ?? false;
