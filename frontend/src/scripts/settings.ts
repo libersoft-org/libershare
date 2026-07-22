@@ -1,4 +1,4 @@
-import { writable, type Writable } from 'svelte/store';
+import { get, writable, type Writable } from 'svelte/store';
 import { api } from './api.ts';
 import { defaultWidgetVisibility, type FooterPosition, type FooterWidget } from './footerWidgets.ts';
 import { currentLanguage, languages } from './language.ts';
@@ -371,6 +371,9 @@ function syncVolumeToBackend(value: number): void {
 }
 
 export function increaseVolume(): void {
+	// Until the live OS level is known the store holds the persisted value —
+	// adjusting from it would yank the mixer away from its actual current level.
+	if (!get(volumeKnown)) return;
 	volume.update(v => {
 		const newVal = Math.min(100, v + 1);
 		syncVolumeToBackend(newVal);
@@ -379,6 +382,7 @@ export function increaseVolume(): void {
 }
 
 export function decreaseVolume(): void {
+	if (!get(volumeKnown)) return; // see increaseVolume — no adjusting from a stale level
 	volume.update(v => {
 		const newVal = Math.max(0, v - 1);
 		syncVolumeToBackend(newVal);
