@@ -1,5 +1,5 @@
 import { Mutex } from 'async-mutex';
-import { type ChunkID, type IStoredLISH, type LISHid, ErrorCodes } from '@shared';
+import { type ChunkID, type IStoredLISH, type LISHid, ErrorCodes, expectedChunkLength } from '@shared';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { LISHClient, type HaveChunks } from './lish-protocol.ts';
 import { downloadLimiter } from './speed-limiter.ts';
