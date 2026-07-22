@@ -444,8 +444,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	function getActiveTransfers(): ActiveTransfer[] {
 		const transfers: ActiveTransfer[] = [];
 		const enabled = getEnabledUploads();
-		// Active downloads
+		// Active downloads. A downloader disabled by leaving its last lishnet stays
+		// in the map (retained for resume on rejoin) but is stopped — skip it so the
+		// LISH is not reported as still downloading after transfer.download:disabled.
 		for (const [lishID, dl] of activeDownloaders) {
+			if (dl.isDisabled?.()) continue;
 			transfers.push({ lishID, type: 'downloading', peers: dl.getPeerCount?.() ?? 0, bytesPerSecond: 0 });
 		}
 		// Active uploads
