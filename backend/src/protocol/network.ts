@@ -731,6 +731,15 @@ export class Network {
 		// churn at N≈100 without flooding logs or burning CPU on per-second probes.
 	}
 
+	/**
+	 * Whether a peer was deliberately hung up by leave-network (via disconnectPeer)
+	 * and must NOT be proactively re-dialed by any maintenance path — redial loop,
+	 * zero-connection recovery, or periodic promote — until it reconnects on its own.
+	 */
+	private isRedialSuppressed(peerID: string): boolean {
+		return this.redialSuppressed.has(peerID);
+	}
+
 	private async runRedialMaintenance(connectedPeers: any[], allPeers: any[]): Promise<void> {
 		// Dial known peers not currently connected (maintains relay connections to NATed peers)
 		const connectedSet = new Set(connectedPeers.map(p => p.toString()));
@@ -752,7 +761,7 @@ export class Network {
 			}
 			// Skip peers we deliberately left (leave-network) so maintenance does not
 			// silently re-dial them; cleared above once they reconnect on their own.
-			if (this.redialSuppressed.has(pid)) {
+			if (this.isRedialSuppressed(pid)) {
 				skippedSuppressed++;
 				continue;
 			}
@@ -853,6 +862,9 @@ export class Network {
 			console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
 		}
 		for (const ma of this.bootstrapMultiaddrs) {
+			const p2pComponents = ma.getComponents().filter((c: { code: number; value?: string }) => c.code === 421);
+			const pid: string | undefined = p2pComponents.length > 0 ? p2pComponents[p2pComponents.length - 1].value : undefined;
+			if (pid && this.isRedialSuppressed(pid)) continue; // deliberately left — don't resurrect it here
 			const maStr = ma?.toString?.() ?? String(ma);
 			try {
 				console.log(`   → Dialing ${maStr}`);
@@ -895,6 +907,7 @@ export class Network {
 		for (const peer of allPeers) {
 			const pid = peer.id.toString();
 			if (pid === myID) continue;
+			if (this.isRedialSuppressed(pid)) continue; // deliberately left — don't promote it back to bootstrap
 			if (this.bootstrapPeerIDs.has(pid)) continue;
 			if (peer.addresses.length === 0) continue;
 			const addr = peer.addresses[0]!;

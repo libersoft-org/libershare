@@ -104,3 +104,41 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 		expect((network as any).redialSuppressed.has('pBack')).toBe(false);
 	});
 });
+
+/**
+ * Zero-connection recovery dials bootstrapMultiaddrs when the node has no
+ * connections. It must skip peers leave-network deliberately hung up, or a left
+ * bootstrap comes straight back the moment connections briefly hit zero.
+ */
+describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
+	function bareNetwork(suppressed: string[], bootstrapMaStrs: string[]) {
+		const dialed: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).redialSuppressed = new Set<string>(suppressed);
+		(network as any).bootstrapMultiaddrs = bootstrapMaStrs.map(s => multiaddr(s));
+		(network as any).recentDisconnects = [];
+		(network as any).bootstrapTracker = { entries: () => [] };
+		(network as any).node = {
+			async dial(ma: { toString(): string }): Promise<void> {
+				dialed.push(ma.toString());
+			},
+		};
+		return { network, dialed };
+	}
+
+	const run = (network: Network, connected: any[]): Promise<void> => (network as any).runZeroConnectionRecovery(connected);
+
+	it('does not dial a bootstrap peer suppressed by leave-network', async () => {
+		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
+		const { network, dialed } = bareNetwork([PEER_ID], [ma]);
+		await run(network, []);
+		expect(dialed).toEqual([]);
+	});
+
+	it('still dials a non-suppressed bootstrap peer', async () => {
+		const ma = `/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`;
+		const { network, dialed } = bareNetwork([], [ma]);
+		await run(network, []);
+		expect(dialed).toEqual([multiaddr(ma).toString()]);
+	});
+});
