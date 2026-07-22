@@ -170,6 +170,17 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		expect(net.prunedBootstrap).toEqual([]);
 	});
 
+	it('keeps a left-lishnet bootstrap peer that still subscribes another joined lishnet', async () => {
+		net.topicPeers.set('net-a', []);
+		net.topicPeers.set('net-b', ['pBootA']); // pBootA is a live subscriber of net-b
+		const networks = makeNetworks(net, ['net-a', 'net-b'], {
+			'net-a': ['/ip4/192.0.2.5/tcp/9090/p2p/pBootA'],
+		});
+		await leave(networks, 'net-a');
+		expect(net.disconnected).toEqual([]); // kept — subscriber of joined net-b
+		expect(net.prunedBootstrap).toEqual(['pBootA']); // exemption still pruned
+	});
+
 	it('keeps a left-lishnet bootstrap peer that is still an active circuit relay', async () => {
 		net.topicPeers.set('net-a', []);
 		net.bootstrapOrRelay.add('pRelayNode'); // still relaying another connection

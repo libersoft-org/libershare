@@ -200,18 +200,28 @@ export class Networks {
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
 
+		// Subscribers of any OTHER joined lishnet must stay connected (shared
+		// infrastructure). Compute this set BEFORE the bootstrap cleanup so that loop
+		// can skip them too — a bootstrap of the left net that also subscribes another
+		// joined net would otherwise be hung up here.
+		const stillJoinedPeers = new Set<string>();
+		for (const otherID of this.joinedNetworks) {
+			for (const pid of this.network.getTopicPeers(otherID)) stillJoinedPeers.add(pid);
+		}
+
 		// Drop the exemption AND actively disconnect every configured bootstrap peer
 		// exclusive to the left lishnet — including ones offline at leave time. Such
 		// a peer never appears in leftPeers (the topic-subscriber snapshot), so the
 		// content-peer loop below would miss it: its keep-alive tag would survive and
-		// redial maintenance / ReconnectQueue would reconnect it within ~30s. After
-		// pruning, isBootstrapOrRelayPeer is true only for an active circuit relay we
-		// still depend on — keep those. disconnectPeer is a safe no-op hangUp for an
-		// unconnected peer and always strips keep-alive + suppresses redial.
+		// redial maintenance / ReconnectQueue would reconnect it within ~30s. Keep it
+		// if it still subscribes another joined lishnet, or if it is an active circuit
+		// relay we depend on. disconnectPeer is a safe no-op hangUp for an unconnected
+		// peer and always strips keep-alive + suppresses redial.
 		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of this.configuredBootstrapPeerIDsOf(id)) {
 			if (stillConfigured.has(pid)) continue;
 			this.network.pruneConfiguredBootstrapPeer(pid);
+			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
 			await this.network.disconnectPeer(pid);
 		}
@@ -223,10 +233,6 @@ export class Networks {
 		// remaining reason to stay connected, so hang it up via the single
 		// Network.disconnectPeer entry point (which also clears the keep-alive tag
 		// so ReconnectQueue does not immediately re-dial it).
-		const stillJoinedPeers = new Set<string>();
-		for (const otherID of this.joinedNetworks) {
-			for (const pid of this.network.getTopicPeers(otherID)) stillJoinedPeers.add(pid);
-		}
 		for (const pid of leftPeers) {
 			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
