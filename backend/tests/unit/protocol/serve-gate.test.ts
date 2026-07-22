@@ -37,7 +37,7 @@ describe('serveGateBlocks', () => {
 describe('Network.canListSharesTo', () => {
 	function bareNetwork(suppressed: string[], topics: string[]) {
 		const network = Object.create(Network.prototype) as Network;
-		(network as any).redialSuppressed = new Set<string>(suppressed);
+		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		(network as any).pubsub = { getTopics: () => topics };
 		return network;
 	}

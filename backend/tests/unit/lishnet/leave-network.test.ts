@@ -20,10 +20,10 @@ interface MockNet {
 	unsubscribeTopic(id: string): void;
 	subscribeTopic(id: string): void;
 	isBootstrapOrRelayPeer(pid: string): boolean;
-	disconnectPeer(pid: string): Promise<void>;
+	disconnectPeer(pid: string, networkID: string): Promise<void>;
 	pruneConfiguredBootstrapPeer(pid: string): void;
-	clearRedialSuppression(): void;
-	suppressionCleared: number;
+	clearRedialSuppressionForNetwork(networkID: string): void;
+	suppressionClearedFor: string[];
 }
 
 function makeMockNet(): MockNet {
@@ -34,7 +34,7 @@ function makeMockNet(): MockNet {
 		disconnected: [],
 		bootstrapOrRelay: new Set(),
 		prunedBootstrap: [],
-		suppressionCleared: 0,
+		suppressionClearedFor: [],
 		getTopicPeers(id) {
 			return this.topicPeers.get(id) ?? [];
 		},
@@ -55,8 +55,8 @@ function makeMockNet(): MockNet {
 		pruneConfiguredBootstrapPeer(pid) {
 			this.prunedBootstrap.push(pid);
 		},
-		clearRedialSuppression() {
-			this.suppressionCleared++;
+		clearRedialSuppressionForNetwork(networkID) {
+			this.suppressionClearedFor.push(networkID);
 		},
 	};
 }
@@ -226,9 +226,9 @@ describe('Networks.joinNetwork — onNetworkJoined notification', () => {
 		expect(net.subscribed).toEqual([]);
 	});
 
-	it('lifts redial suppression on join so left peers can reconnect', async () => {
+	it('lifts redial suppression for the joined lishnet so its left peers can reconnect', async () => {
 		const networks = makeNetworks(net, []);
 		await join(networks, 'net-a');
-		expect(net.suppressionCleared).toBe(1);
+		expect(net.suppressionClearedFor).toEqual(['net-a']);
 	});
 });

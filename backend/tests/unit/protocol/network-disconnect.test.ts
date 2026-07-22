@@ -11,13 +11,14 @@ import { Network } from '../../../src/protocol/network.ts';
  */
 
 const PEER_ID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+const NET = 'net-a';
 
 function makeNetwork() {
 	const merges: Array<{ tags: Record<string, unknown> }> = [];
 	const hungUp: string[] = [];
 	const deleted: string[] = [];
 	const network = Object.create(Network.prototype) as Network;
-	(network as any).redialSuppressed = new Set<string>();
+	(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
 	(network as any).bootstrapPeerIDs = new Set<string>();
 	(network as any).node = {
 		getConnections: () => [],
@@ -33,13 +34,14 @@ function makeNetwork() {
 			hungUp.push(pid.toString());
 		},
 	};
-	return { network, merges, hungUp, deleted };
+	const suppressed = (pid: string): boolean => (network as any).isRedialSuppressed(pid);
+	return { network, merges, hungUp, deleted, suppressed };
 }
 
 describe('Network.disconnectPeer — keep-alive tag removal', () => {
 	it('clears both keep-alive-fleet and native KEEP_ALIVE tags before hanging up', async () => {
 		const { network, merges, hungUp } = makeNetwork();
-		await network.disconnectPeer(PEER_ID);
+		await network.disconnectPeer(PEER_ID, NET);
 		expect(merges.length).toBe(1);
 		const tags = merges[0]!.tags;
 		expect(Object.keys(tags)).toContain('keep-alive-fleet');
@@ -54,41 +56,71 @@ describe('Network.disconnectPeer — keep-alive tag removal', () => {
 		(network as any).node.peerStore.merge = async (): Promise<void> => {
 			throw new Error('merge failed');
 		};
-		await network.disconnectPeer(PEER_ID);
+		await network.disconnectPeer(PEER_ID, NET);
 		expect(hungUp).toEqual([PEER_ID]);
 	});
 
 	it('is a no-op for an invalid peer id', async () => {
 		const { network, merges, hungUp } = makeNetwork();
-		await network.disconnectPeer('not-a-peer-id');
+		await network.disconnectPeer('not-a-peer-id', NET);
 		expect(merges).toEqual([]);
 		expect(hungUp).toEqual([]);
 	});
 
 	it('suppresses the hung-up peer from redial maintenance', async () => {
-		const { network } = makeNetwork();
-		await network.disconnectPeer(PEER_ID);
-		expect((network as any).redialSuppressed.has(PEER_ID)).toBe(true);
+		const { network, suppressed } = makeNetwork();
+		await network.disconnectPeer(PEER_ID, NET);
+		expect(suppressed(PEER_ID)).toBe(true);
 	});
 
 	it('forgets the peerStore entry so the disconnect survives a restart', async () => {
 		const { network, deleted } = makeNetwork();
-		await network.disconnectPeer(PEER_ID);
+		await network.disconnectPeer(PEER_ID, NET);
 		expect(deleted).toEqual([PEER_ID]);
 	});
 });
 
 /**
- * runRedialMaintenance must not re-dial peers that leave-network just hung up
- * (they sit in redialSuppressed), and must drop that suppression the moment the
- * peer is observed connected again so normal maintenance resumes.
+ * Per-network suppression: rejoining one lishnet must lift only ITS left peers,
+ * a legitimate reconnect lifts a peer from all lishnets.
+ */
+describe('Network per-network redial suppression', () => {
+	function bareNetwork() {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).redialSuppressedByNet = new Map<string, Set<string>>();
+		return network;
+	}
+
+	it('rejoin of one lishnet lifts only its suppressed peers', () => {
+		const net = bareNetwork();
+		(net as any).addRedialSuppression('net-a', 'pA');
+		(net as any).addRedialSuppression('net-b', 'pB');
+		expect((net as any).isRedialSuppressed('pA')).toBe(true);
+		expect((net as any).isRedialSuppressed('pB')).toBe(true);
+		net.clearRedialSuppressionForNetwork('net-a');
+		expect((net as any).isRedialSuppressed('pA')).toBe(false);
+		expect((net as any).isRedialSuppressed('pB')).toBe(true); // still-left net-b unaffected
+	});
+
+	it('observed reconnect lifts the peer from every lishnet', () => {
+		const net = bareNetwork();
+		(net as any).addRedialSuppression('net-a', 'pX');
+		(net as any).addRedialSuppression('net-b', 'pX');
+		(net as any).clearRedialSuppressionForPeer('pX');
+		expect((net as any).isRedialSuppressed('pX')).toBe(false);
+	});
+});
+
+/**
+ * runRedialMaintenance must not re-dial peers that leave-network just hung up,
+ * and must drop that suppression the moment the peer is observed connected again.
  */
 describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 	function bareNetwork(suppressed: string[]) {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialBackoff = new Map();
-		(network as any).redialSuppressed = new Set<string>(suppressed);
+		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		(network as any).node = {
 			async dial(id: { toString(): string }): Promise<void> {
 				dialed.push(id.toString());
@@ -105,7 +137,7 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 		const peer = { id: { toString: () => 'pLeft' }, addresses: [{ multiaddr: multiaddr('/ip4/203.0.113.5/tcp/9090') }] };
 		await run(network, [], [peer]);
 		expect(dialed).toEqual([]);
-		expect((network as any).redialSuppressed.has('pLeft')).toBe(true);
+		expect((network as any).isRedialSuppressed('pLeft')).toBe(true);
 	});
 
 	it('clears suppression once the peer is observed connected again', async () => {
@@ -113,7 +145,7 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 		const peer = { id: { toString: () => 'pBack' } };
 		await run(network, [{ toString: () => 'pBack' }], [peer]);
 		expect(dialed).toEqual([]);
-		expect((network as any).redialSuppressed.has('pBack')).toBe(false);
+		expect((network as any).isRedialSuppressed('pBack')).toBe(false);
 	});
 });
 
@@ -126,7 +158,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 	function bareNetwork(suppressed: string[], bootstrapMaStrs: string[]) {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
-		(network as any).redialSuppressed = new Set<string>(suppressed);
+		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
 		(network as any).bootstrapMultiaddrs = bootstrapMaStrs.map(s => multiaddr(s));
 		(network as any).recentDisconnects = [];
 		(network as any).bootstrapTracker = { entries: () => [] };
@@ -163,7 +195,7 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 	function bareNetwork(suppressed: string[]) {
 		const network = Object.create(Network.prototype) as Network;
-		(network as any).redialSuppressed = new Set<string>(suppressed);
+		(network as any).redialSuppressedByNet = new Map([['net-a', new Set<string>(suppressed)]]);
 		(network as any).configuredBootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapPeerIDs = new Set<string>();
 		(network as any).bootstrapMultiaddrs = [];
@@ -180,12 +212,12 @@ describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
 	it('lifts suppression for a re-configured bootstrap peer', async () => {
 		const network = bareNetwork([PEER_ID]);
 		await (network as any).addBootstrapPeers([`/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`], 'net-a', 'configured');
-		expect((network as any).redialSuppressed.has(PEER_ID)).toBe(false);
+		expect((network as any).isRedialSuppressed(PEER_ID)).toBe(false);
 	});
 
 	it('does not lift suppression for a discovered (non-configured) re-add', async () => {
 		const network = bareNetwork([PEER_ID]);
 		await (network as any).addBootstrapPeers([`/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`], 'net-a', 'discovered');
-		expect((network as any).redialSuppressed.has(PEER_ID)).toBe(true);
+		expect((network as any).isRedialSuppressed(PEER_ID)).toBe(true);
 	});
 });

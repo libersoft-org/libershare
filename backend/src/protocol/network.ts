@@ -202,14 +202,18 @@ export class Network {
 	private readonly redialBackoff = new Map<string, { nextAttempt: number; failCount: number }>();
 
 	/**
-	 * Peers deliberately hung up by {@link disconnectPeer} (leave-network) that
-	 * redial maintenance must NOT proactively re-dial — otherwise a peer we just
-	 * left is re-connected within one status tick (~30s), defeating the leave.
-	 * Cleared the moment the peer is observed connected again by any legitimate
-	 * path (its own re-dial, or mesh reconnection after we re-join). Pruned when
-	 * the peer leaves the peerStore so the set stays bounded.
+	 * Peers deliberately hung up by {@link disconnectPeer} (leave-network), keyed by
+	 * the lishnet they were left with. Redial maintenance / discovery must NOT
+	 * proactively re-dial them — otherwise a peer we just left is re-connected within
+	 * one status tick (~30s), defeating the leave. Per-network so rejoining lishnet A
+	 * lifts only A's peers (not still-left B's — {@link clearRedialSuppressionForNetwork}).
+	 * A peer observed reconnecting by any path is lifted from ALL sets
+	 * ({@link clearRedialSuppressionForPeer}). Bounded by peers of currently-left
+	 * lishnets; drained on rejoin/reconnect and cleared in stop(). NOT pruned against
+	 * the peerStore: leave purges the peer from the store, which would drop the
+	 * suppression and let mDNS rediscovery reconnect within a tick.
 	 */
-	private readonly redialSuppressed = new Set<string>();
+	private readonly redialSuppressedByNet = new Map<string, Set<string>>();
 
 	// Tracked libp2p/pubsub event listeners for clean removal in stop().
 	// Each entry captures the exact handler reference so removeEventListener can unhook it.
@@ -571,6 +575,9 @@ export class Network {
 					});
 					console.debug('   Tagged as KEEP_ALIVE (bootstrap peer)');
 				}
+				// A peer that reconnects (inbound or otherwise) is legitimately back —
+				// lift any leave-network redial suppression so maintenance resumes for it.
+				this.clearRedialSuppressionForPeer(peerID);
 				this.schedulePeerCountCheck();
 			} catch (err: any) {
 				trace(`[NET] peer:connect handler error: ${err?.message ?? err}`);
@@ -736,24 +743,37 @@ export class Network {
 	}
 
 	/**
-	 * Whether a peer was deliberately hung up by leave-network (via disconnectPeer)
-	 * and must NOT be proactively re-dialed by any maintenance path — redial loop,
-	 * zero-connection recovery, or periodic promote — until it reconnects on its own.
+	 * Flat view over the per-network sets: whether a peer was deliberately hung up by
+	 * leave-network (via disconnectPeer) for ANY left lishnet, so no maintenance path
+	 * (redial loop, zero-connection recovery, promote, discovery) re-dials it.
 	 */
 	private isRedialSuppressed(peerID: string): boolean {
-		return this.redialSuppressed.has(peerID);
+		for (const set of this.redialSuppressedByNet.values()) if (set.has(peerID)) return true;
+		return false;
+	}
+
+	/** Record a peer as left with a specific lishnet so maintenance won't re-dial it. */
+	private addRedialSuppression(networkID: string, peerID: string): void {
+		let set = this.redialSuppressedByNet.get(networkID);
+		if (!set) {
+			set = new Set();
+			this.redialSuppressedByNet.set(networkID, set);
+		}
+		set.add(peerID);
 	}
 
 	/**
-	 * Lift ALL redial suppression — called on any network (re)join. A rejoin is an
-	 * explicit "I want peers back", and suppression is a flat set with no per-network
-	 * tracking, so we clear it wholesale rather than only the configured-bootstrap IDs
-	 * (which left content peers — mDNS/peer-announce — permanently maintenance-blocked).
-	 * Trade-off: leave A + leave B + rejoin A also unblocks B's peers, but B stays
-	 * unsubscribed and its content is serve-gated, so this is a benign over-clear.
+	 * Lift suppression for one lishnet's peers — called on (re)join of that lishnet.
+	 * Scoped: rejoining A does not unblock still-left B's peers (nor lift the
+	 * canListSharesTo browse-privacy protecting B).
 	 */
-	clearRedialSuppression(): void {
-		this.redialSuppressed.clear();
+	clearRedialSuppressionForNetwork(networkID: string): void {
+		this.redialSuppressedByNet.delete(networkID);
+	}
+
+	/** Lift suppression for one peer across ALL left lishnets — a legitimate reconnect. */
+	private clearRedialSuppressionForPeer(peerID: string): void {
+		for (const set of this.redialSuppressedByNet.values()) set.delete(peerID);
 	}
 
 	private async runRedialMaintenance(connectedPeers: any[], allPeers: any[]): Promise<void> {
@@ -772,7 +792,7 @@ export class Network {
 			const pid = peer.id.toString();
 			if (connectedSet.has(pid)) {
 				this.redialBackoff.delete(pid); // clear on observed connection
-				this.redialSuppressed.delete(pid); // legitimately reconnected → resume maintenance
+				this.clearRedialSuppressionForPeer(pid); // legitimately reconnected → resume maintenance
 				continue;
 			}
 			// Skip peers we deliberately left (leave-network) so maintenance does not
@@ -850,10 +870,13 @@ export class Network {
 		if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0 || skippedSuppressed > 0) {
 			console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs, ${skippedSuppressed} skipped left-peer)`);
 		}
-		// Prune backoff / suppression entries for peers no longer in peerStore to prevent unbounded growth.
+		// Prune backoff entries for peers no longer in peerStore to prevent unbounded growth.
+		// Suppression is NOT pruned this way: leave-network purges the peer from the
+		// peerStore, so pruning against it would drop the suppression and let mDNS
+		// rediscovery reconnect the left peer within a tick. Suppression is instead
+		// bounded by clear-on-rejoin / clear-on-reconnect / stop().
 		const storeSet = new Set(allPeers.map(p => p.id.toString()));
 		for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
-		for (const pid of this.redialSuppressed) if (!storeSet.has(pid)) this.redialSuppressed.delete(pid);
 	}
 
 	private async runZeroConnectionRecovery(connectedPeers: any[]): Promise<void> {
@@ -1015,7 +1038,7 @@ export class Network {
 					// is no longer "left", so lift any redial suppression left by a prior
 					// leaveNetwork, otherwise maintenance would skip it forever if this one
 					// explicit dial fails or the connection drops before the next tick.
-					this.redialSuppressed.delete(peerID);
+					this.clearRedialSuppressionForPeer(peerID);
 				}
 				const alreadyKnown = !!peerID && this.bootstrapPeerIDs.has(peerID);
 				if (peerID && !alreadyKnown) {
@@ -1214,8 +1237,11 @@ export class Network {
 	 * the left peer straight back. The sole caller (leaveNetwork) only passes peers
 	 * with no remaining reason to stay, and rejoin re-acquires the entry via
 	 * bootstrap/discovery. Best-effort: failures are logged at trace, never thrown.
+	 *
+	 * `networkID` is the lishnet the peer is being left with — the peer is suppressed
+	 * under it so rejoining that lishnet lifts exactly its peers.
 	 */
-	async disconnectPeer(peerID: string): Promise<void> {
+	async disconnectPeer(peerID: string, networkID: string): Promise<void> {
 		if (!this.node) return;
 		let pid: PeerID;
 		try {
@@ -1246,8 +1272,9 @@ export class Network {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
 		// Keep redial maintenance from re-dialing this just-left peer on the next
-		// status tick. Cleared automatically once it reconnects legitimately.
-		this.redialSuppressed.add(peerID);
+		// status tick. Keyed by the left lishnet so rejoin lifts exactly its peers;
+		// cleared automatically once it reconnects legitimately.
+		this.addRedialSuppression(networkID, peerID);
 		// Forget the persisted peerStore entry so the disconnect survives a restart —
 		// suppression is in-memory only, but the peerStore is on disk.
 		await this.purgeStalePeer(peerID, 'left-network exclusive peer');
@@ -1650,7 +1677,7 @@ export class Network {
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
 		this.redialBackoff.clear();
-		this.redialSuppressed.clear();
+		this.redialSuppressedByNet.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {
 			await this.node.stop();

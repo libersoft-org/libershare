@@ -147,10 +147,10 @@ export class Networks {
 		// ordering — the process-level error handlers in app.ts are the safety net.
 		this.network.subscribeTopic(id);
 		this.joinedNetworks.add(id);
-		// Rejoin is an explicit "I want peers back" — lift any leave-network redial
-		// suppression so maintenance and discovery may reconnect this network's peers
-		// (both bootstrap and content peers), not just the re-dialed bootstrap IDs.
-		this.network.clearRedialSuppression();
+		// Rejoin is an explicit "I want peers back" — lift the redial suppression for
+		// THIS lishnet's left peers (bootstrap and content) so maintenance and discovery
+		// may reconnect them. Scoped per-network: still-left lishnets stay suppressed.
+		this.network.clearRedialSuppressionForNetwork(id);
 
 		const net = this.get(id);
 		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers, id, 'configured');
@@ -227,7 +227,7 @@ export class Networks {
 			this.network.pruneConfiguredBootstrapPeer(pid);
 			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
-			await this.network.disconnectPeer(pid);
+			await this.network.disconnectPeer(pid, id);
 		}
 
 		// Disconnect peers that belonged exclusively to the lishnet we just left.
@@ -240,7 +240,7 @@ export class Networks {
 		for (const pid of leftPeers) {
 			if (stillJoinedPeers.has(pid)) continue;
 			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
-			await this.network.disconnectPeer(pid);
+			await this.network.disconnectPeer(pid, id);
 		}
 
 		const net = this.get(id);
