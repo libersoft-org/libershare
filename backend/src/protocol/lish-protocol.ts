@@ -181,6 +181,10 @@ export class LISHClient {
 		const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
 		if ('error' in response) throw new CodedError(response.error, lishID);
 		if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
+		// The manifest must be for the LISH we asked for — a peer returning a different id
+		// would let a spoofing peer win the fallback loop and could import the wrong LISH
+		// under the requested id. Treat a mismatch as this peer's fault so fallback tries the next.
+		if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: manifest id mismatch (${String(response.manifest?.id)})`);
 		// A manifest from the network is untrusted input — validate chunk-size bounds and
 		// manifest consistency before it can reach any caller (DB persist / import / probe).
 		try {

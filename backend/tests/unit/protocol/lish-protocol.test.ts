@@ -419,6 +419,12 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
 	});
 
+	it('rejects a manifest whose id does not match the requested LISH', async () => {
+		// A spoofing peer answering with a different LISH must not win the fallback.
+		const client = new LISHClient(fakeStream({ ...makeManifest(1024), id: 'some-other-lish' }));
+		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+	});
+
 	it('keeps chunk-size-too-large terminal (not a peer error)', async () => {
 		setMaxChunkSize(1024 * 1024);
 		const client = new LISHClient(fakeStream(makeManifest(2 * 1024 * 1024)));
