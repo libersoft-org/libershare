@@ -330,14 +330,14 @@ describe('createVolumeWatcher', () => {
 		expect(persisted).toEqual([40]);
 	});
 
-	it('does not start a second poll while one is in flight', async () => {
-		let resolveRead!: (s: VolumeStatus | null) => void;
+	it('coalesces a reentrant poll into a single trailing re-read', async () => {
+		const resolvers: Array<(s: VolumeStatus | null) => void> = [];
 		let reads = 0;
 		const broadcasts: VolumeStatus[] = [];
 		const watcher = createVolumeWatcher({
 			getStatus: () => {
 				reads++;
-				return new Promise<VolumeStatus | null>(res => (resolveRead = res));
+				return new Promise<VolumeStatus | null>(res => resolvers.push(res));
 			},
 			broadcast: s => broadcasts.push(s),
 			persist: () => {},
@@ -345,12 +345,40 @@ describe('createVolumeWatcher', () => {
 		});
 
 		const p1 = watcher.poll(); // read #1 in flight
-		const p2 = watcher.poll(); // reentrant tick → no-op, no second read
+		const p2 = watcher.poll(); // reentrant tick → queues ONE trailing re-read, no immediate 2nd read
 		expect(reads).toBe(1);
 
-		resolveRead({ volume: 30, available: true });
+		resolvers[0]!({ volume: 30, available: true }); // read #1 resolves → trailing read #2 starts
+		await new Promise(r => setTimeout(r, 0));
+		expect(reads).toBe(2); // exactly one trailing re-read, not a per-call read
+
+		resolvers[1]!({ volume: 30, available: true }); // read #2: same value → no second broadcast
 		await Promise.all([p1, p2]);
-		expect(reads).toBe(1); // still exactly one read
+		expect(reads).toBe(2);
 		expect(broadcasts).toEqual([{ volume: 30, available: true }]);
+	});
+
+	it('re-reads once more when a change is signalled mid-read', async () => {
+		// A monitor push (or another poll) during an in-flight read must not be lost:
+		// the trailing re-read picks up the newer level.
+		const resolvers: Array<(s: VolumeStatus | null) => void> = [];
+		const broadcasts: VolumeStatus[] = [];
+		const watcher = createVolumeWatcher({
+			getStatus: () => new Promise<VolumeStatus | null>(res => resolvers.push(res)),
+			broadcast: s => broadcasts.push(s),
+			persist: () => {},
+			isBusy: () => false,
+		});
+
+		const p1 = watcher.poll(); // read #1 in flight
+		void watcher.poll(); // signals a pending trailing re-read
+		resolvers[0]!({ volume: 30, available: true }); // read #1 → broadcast 30, trailing read starts
+		await new Promise(r => setTimeout(r, 0));
+		resolvers[1]!({ volume: 55, available: true }); // trailing read sees a newer level
+		await p1;
+		expect(broadcasts).toEqual([
+			{ volume: 30, available: true },
+			{ volume: 55, available: true },
+		]);
 	});
 });
