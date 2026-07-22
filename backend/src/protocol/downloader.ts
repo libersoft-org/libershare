@@ -394,14 +394,24 @@ export class Downloader {
 				// the whole download while another peer could serve a valid one: drop that peer,
 				// remember the reason, and try the rest. Only when every peer is gone this way
 				// (the LISH truly exceeds the limit) is it terminal — handled after the loop.
+				// LIVE iteration on purpose (Map iterators tolerate deletes and visit entries
+				// added mid-loop): a peer joining via HAVE while we await another's manifest
+				// gets its turn in THIS pass — its doWork() trigger no-ops on the locked mutex.
 				let oversized: { code: ErrorCode; detail: string | undefined } | null = null;
-				for (const [peerID, client] of [...this.peerManager.entries()]) {
+				for (const [peerID, client] of this.peerManager.entries()) {
 					let manifest: import('@shared').IStoredLISH | null = null;
 					try {
 						manifest = await client.requestManifest(this.lishID);
 					} catch (error: any) {
 						if (error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
 							oversized = { code: error.code, detail: error.detail };
+							this.peerManager.remove(peerID, 'drop');
+							continue;
+						}
+						// A structurally malformed manifest (mapped to PEER_INVALID_REQUEST) is this
+						// peer's fault — keeping it would leave the download stuck asking the same
+						// bad peer forever while discovery skips it as "connected".
+						if (error instanceof CodedError && error.code === ErrorCodes.PEER_INVALID_REQUEST) {
 							this.peerManager.remove(peerID, 'drop');
 							continue;
 						}
@@ -557,6 +567,9 @@ export class Downloader {
 		}
 		console.debug(`[DL] probeTopicPeers: ${topicPeers.size} topic, ${this.peerManager.size()} connected, ${this.peerManager.bannedSize()} banned`);
 		let foundNew = false;
+		// Over-limit manifest seen during this probe pass — probed peers never reach
+		// peerManager, so only this local record can surface the terminal error below.
+		let probeOversized: { code: ErrorCode; detail: string | undefined } | null = null;
 		for (const peerID of topicPeers) {
 			if (this.destroyed) return;
 			if (!this.peerManager.hasCapacity()) {
@@ -588,8 +601,10 @@ export class Downloader {
 					manifest = await probeClient.requestManifest(this.lishID);
 				} catch (error: any) {
 					// Any manifest error (unreachable, forged/over-limit, malformed) → drop this peer
-					// and let another serve it; doWork surfaces the terminal over-limit case once no
-					// peer can provide a valid manifest.
+					// and let another serve it. Over-limit is remembered: probed peers never enter
+					// peerManager, so Phase 1's terminal check cannot see them — the check after
+					// this loop surfaces the error when probes were the only discovery source.
+					if (error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) probeOversized = { code: error.code, detail: error.detail };
 					console.debug(`[DL] probe ${peerID.slice(0, 12)}: manifest error ${error.code ?? error.message?.slice(0, 60) ?? error}`);
 					this.peerManager.remove(peerID, 'drop');
 				}
@@ -634,6 +649,13 @@ export class Downloader {
 			} catch (err: any) {
 				console.debug(`[DL] probe ${peerID.slice(0, 12)} unreachable: ${err.message?.slice(0, 80)}`);
 			}
+		}
+		// Probes were the only discovery source and every answering peer served an
+		// over-limit manifest, with nobody connected to try instead — terminal, mirror
+		// Phase 1's check so the download shows the error instead of re-probing forever.
+		if (this.needsManifest && probeOversized && !foundNew && this.peerManager.size() === 0 && !this.destroyed) {
+			this.setError(probeOversized.code, probeOversized.detail);
+			return;
 		}
 		if (foundNew && !this.downloadActive && !this.destroyed) {
 			this.doWork().catch(e => {

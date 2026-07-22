@@ -1352,3 +1352,27 @@ describe('Downloader – oversized manifest across peers', () => {
 		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
 	});
 });
+
+describe('Downloader – malformed manifest peer handling', () => {
+	it('drops a peer whose manifest is malformed and imports from the next peer', async () => {
+		const ds = new MockDataServer();
+		const dl = new Downloader('/tmp/dl-malformed', new MockNetwork() as never, ds as never, 'net-001');
+		const p = priv(dl);
+		p['state'] = 'awaiting-manifest';
+		p['needsManifest'] = true;
+		p['lish'] = null;
+		p['lishID'] = 'test-malformed-lish';
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const bad = new MockLISHClient();
+		bad.requestManifestError = new CodedError(ErrorCodes.PEER_INVALID_REQUEST, 'getLish: LISH_INVALID_MANIFEST');
+		const good = new MockLISHClient();
+		good.requestManifestResult = makeLISH();
+		peers.set('peer-malformed-1', bad);
+		peers.set('peer-valid-00001', good);
+
+		await dl.doWork();
+
+		expect(ds.addedLishs.length).toBe(1); // imported from the valid peer
+		expect(peers.has('peer-malformed-1')).toBe(false); // bad peer dropped, not stuck
+	});
+});
