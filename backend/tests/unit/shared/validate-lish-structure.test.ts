@@ -91,3 +91,9 @@ describe('validateLISHStructure — optional arrays', () => {
 	it('rejects links that is not an array', () => expect(() => validateLISHStructure({ ...makeLish(), links: {} } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
 	it('accepts absent directories and links', () => expect(() => validateLISHStructure(makeLish(), MAX)).not.toThrow());
 });
+
+describe('validateLISHStructure — untrusted field types', () => {
+	it('rejects an unsupported checksumAlgo', () => expect(() => validateLISHStructure(makeLish({ checksumAlgo: 'md5' as never }), MAX)).toThrow(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM));
+	it('rejects a non-string file path', () => expect(() => validateLISHStructure({ ...makeLish({ chunkSize: 1024 }), files: [{ path: {}, size: 1024, checksums: ['h1'] }] } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	it('rejects a non-string checksum entry', () => expect(() => validateLISHStructure({ ...makeLish({ chunkSize: 1024 }), files: [{ path: 'a.bin', size: 1024, checksums: [{}] }] } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+});

@@ -22,6 +22,9 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 	if (!lish || typeof lish !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'manifest is not an object');
 	if (typeof lish.chunkSize !== 'number' || !Number.isInteger(lish.chunkSize) || lish.chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(lish.chunkSize));
 	if (lish.chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${formatBytes(lish.chunkSize)} > ${formatBytes(maxChunkSize)}`);
+	// An unsupported checksumAlgo would later crash `new Bun.CryptoHasher(algo)` during
+	// download/verify — reject the peer manifest here instead, matching validateImportedLISH.
+	if (typeof lish.checksumAlgo !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(lish.checksumAlgo)) throw new CodedError(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM, String(lish.checksumAlgo));
 	// Optional arrays get the same presence check as `files`: a truthy non-array
 	// (e.g. `directories: {}`) would crash downstream for..of iteration in
 	// dataServer.add with a raw TypeError instead of a coded rejection.
@@ -33,6 +36,9 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 		if (!Array.isArray(lish.files)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'files is not an array');
 		for (const file of lish.files) {
 			if (!file || typeof file !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'file entry is not an object');
+			// path must be a string — a non-string (e.g. {}) would blow up the SQLite bind
+			// in dataServer.add with a raw error instead of a coded peer rejection.
+			if (typeof file.path !== 'string') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `file path is not a string: ${String(file.path)}`);
 			// Explicit size validation — the checksum-count equation alone lets adversarial
 			// sizes through (e.g. size -5 with 0 checksums: ceil(-5/cs) is -0 and 0 !== -0 is
 			// false) and a float size makes every chunk "wrong length", banning honest peers.
@@ -42,6 +48,9 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 				const got = Array.isArray(file.checksums) ? file.checksums.length : 'invalid';
 				throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `${file.path}: expected ${expected} checksums for size ${file.size} / chunkSize ${lish.chunkSize}, got ${got}`);
 			}
+			// Each checksum must be a string too — the download path compares it to a hex
+			// digest and the DB binds it; a non-string entry would corrupt both.
+			for (const cs of file.checksums) if (typeof cs !== 'string') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `${file.path}: non-string checksum`);
 		}
 		// A checksum names exact content, so every slot sharing it must expect the same byte
 		// length — otherwise one verified payload cannot satisfy all its slots and the
