@@ -1376,3 +1376,34 @@ describe('Downloader – malformed manifest peer handling', () => {
 		expect(peers.has('peer-malformed-1')).toBe(false); // bad peer dropped, not stuck
 	});
 });
+
+describe('Downloader – mixed manifest failures are not terminal', () => {
+	function awaitingDl(ds: MockDataServer): Downloader {
+		const dl = new Downloader('/tmp/dl-mixed', new MockNetwork() as never, ds as never, 'net-001');
+		const p = priv(dl);
+		p['state'] = 'awaiting-manifest';
+		p['needsManifest'] = true;
+		p['lish'] = null;
+		p['lishID'] = 'test-mixed-lish';
+		return dl;
+	}
+
+	it('one oversized + one malformed peer does not error the download', async () => {
+		const ds = new MockDataServer();
+		const dl = awaitingDl(ds);
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const oversized = new MockLISHClient();
+		oversized.requestManifestError = new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, '4.00 MB > 1.00 MB');
+		const malformed = new MockLISHClient();
+		malformed.requestManifestError = new CodedError(ErrorCodes.PEER_INVALID_REQUEST, 'getLish: malformed');
+		peers.set('peer-oversized-1', oversized);
+		peers.set('peer-malformed-1', malformed);
+
+		await dl.doWork();
+
+		// Both dropped, but the evidence is mixed — keep awaiting discovery, no terminal error.
+		expect(peers.size).toBe(0);
+		expect(priv(dl)['state']).toBe('awaiting-manifest');
+		expect(priv(dl)['errorCode']).toBeUndefined();
+	});
+});
