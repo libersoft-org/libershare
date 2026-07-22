@@ -76,13 +76,18 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 * transient read error (getSystemVolumeStatus returns null) availability is
 	 * indeterminate, so we keep the last known availability and fall back to the
 	 * persisted level instead of falsely reporting "unavailable".
+	 *
+	 * `known` is false only for that transient fallback: the returned level is the
+	 * persisted preference, not a live reading, so the UI must not open its +/- gate
+	 * on it (adjusting from a stale value would move the OS volume once the helper
+	 * recovers). A definitive read (device present or confirmed absent) sets known true.
 	 */
-	async function getVolume(): Promise<{ volume: number | null; available: boolean }> {
+	async function getVolume(): Promise<{ volume: number | null; available: boolean; known: boolean }> {
 		const status = await getSystemVolumeStatus();
-		if (status === null) return { volume: lastKnownAvailable ? (settings.get('audio.volume') as number) : null, available: lastKnownAvailable };
+		if (status === null) return { volume: lastKnownAvailable ? (settings.get('audio.volume') as number) : null, available: lastKnownAvailable, known: false };
 		lastKnownAvailable = status.available;
-		if (!status.available) return { volume: null, available: false };
-		return { volume: status.volume ?? (settings.get('audio.volume') as number), available: true };
+		if (!status.available) return { volume: null, available: false, known: true };
+		return { volume: status.volume ?? (settings.get('audio.volume') as number), available: true, known: true };
 	}
 
 	// Detect OS-side volume changes (system tray, media keys, device plug/unplug)

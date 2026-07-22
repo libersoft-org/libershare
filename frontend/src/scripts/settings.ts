@@ -103,32 +103,36 @@ export async function loadSettings(): Promise<void> {
 		volume.set(settings.audio.volume);
 		// Reconcile with the OS: use the live volume when a device is present,
 		// otherwise flag it unavailable so the widget shows no fabricated level.
-		// Fire-and-forget — a wedged mixer helper (backend read can take seconds)
-		// must not hold loadSettings() and with it the rest of app initialization;
-		// the widget renders the persisted value until the live fetch settles.
 		// Re-arm the gate on every (re)connect — the backend may have restarted or
 		// the OS level changed while disconnected, so +/- must wait for the fresh
 		// live read again instead of adjusting from the stale persisted value.
 		volumeKnown.set(false);
+		// Subscribe BEFORE taking the one-shot snapshot so this tab is already in the
+		// broadcast set: an OS/other-client change between the snapshot and the subscribe
+		// arrives as an event rather than being missed (the watcher would otherwise
+		// remember it and suppress later identical polls, stranding this tab).
+		subscribeVolumeChanges();
 		const volumeReadGen = volumeGeneration;
+		// Fire-and-forget — a wedged mixer helper (backend read can take seconds) must not
+		// hold loadSettings() and the rest of app init; the widget shows the persisted
+		// value until the live fetch settles.
 		void api
-			.call<{ volume: number | null; available: boolean }>('system.getVolume')
+			.call<{ volume: number | null; available: boolean; known: boolean }>('system.getVolume')
 			.then(status => {
+				// A newer OS event / local edit moved the store while this read was in flight
+				// (its generation advanced) — its level AND availability are stale, drop both.
+				if (volumeGeneration !== volumeReadGen) return;
 				volumeAvailable.set(status.available);
-				// Discard a stale level if a newer OS event / local edit already moved the
-				// store while this read was in flight (its generation would have advanced).
-				if (volumeGeneration === volumeReadGen && status.available && status.volume !== null) volume.set(status.volume);
-				// Open the +/- gate only on a successful read — we now know the live level.
-				// On rejection the gate stays closed so a key press cannot adjust from the
-				// stale persisted value before the next read settles.
-				volumeKnown.set(true);
+				if (status.available && status.volume !== null) volume.set(status.volume);
+				// Open the +/- gate only on a definitive live read (known). A transient
+				// fallback (known:false) returns the persisted value, not a real level, so the
+				// gate stays closed until a real read or an OS event provides the live level.
+				if (status.known) volumeKnown.set(true);
 			})
 			.catch(() => {
 				// Leave the persisted value and keep the gate closed; a newer event or the
 				// next reconnect's read will open it once a live level is actually known.
 			});
-		// Keep the UI in sync when the volume changes on the OS side.
-		subscribeVolumeChanges();
 
 		// Storage
 		storagePath.set(settings.storage.downloadPath);
@@ -413,16 +417,18 @@ function subscribeVolumeChanges(): void {
 	if (!volumeChangeSubscribed) {
 		volumeChangeSubscribed = true;
 		api.on('system:volumeChanged', (data: { volume: number | null; available: boolean }) => {
+			// Every event is authoritative OS state (a level move OR a device plug/unplug):
+			// supersede any in-flight startup getVolume read BEFORE the availability-only
+			// early return, or a stale read could roll availability back. The gate opens
+			// too — the live state is known even mid-startup.
+			volumeGeneration++;
+			volumeKnown.set(true);
 			// Availability (device plug/unplug) always applies; the level is held
 			// back while the user is mid-adjustment so a stale poll cannot fight
 			// their input — but deferred, not dropped, or this client would keep
 			// showing its local value forever (the backend suppresses the echo).
 			volumeAvailable.set(data.available);
 			if (!data.available || data.volume === null) return;
-			// Authoritative OS level: supersede any in-flight startup getVolume read and
-			// open the +/- gate — we now know the live level even mid-startup.
-			volumeGeneration++;
-			volumeKnown.set(true);
 			const remaining = LOCAL_EDIT_GUARD_MS - (Date.now() - lastLocalVolumeChange);
 			if (remaining <= 0) {
 				// A newer event supersedes any still-pending deferred level — drop it,
