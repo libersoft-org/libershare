@@ -183,9 +183,14 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		try {
 			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
 			const client = new LISHClient(stream);
-			const lishs = await client.requestList();
-			await client.close();
-			return { lishs };
+			try {
+				const lishs = await client.requestList();
+				return { lishs };
+			} finally {
+				// Close in finally so a throwing request (peer error, validation) cannot leak
+				// the stream; swallow close errors so they never mask the request error.
+				await client.close().catch(() => {});
+			}
 		} catch (error: any) {
 			if (error instanceof CodedError) throw error;
 			console.error(`[Peers] Failed to get LISH list from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
@@ -198,8 +203,13 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		try {
 			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
 			const client = new LISHClient(stream);
-			const manifest = await client.requestManifest(p.lishID);
-			await client.close();
+			let manifest;
+			try {
+				manifest = await client.requestManifest(p.lishID);
+			} finally {
+				// Close in finally — a rejected manifest (validation, peer error) must not leak the stream.
+				await client.close().catch(() => {});
+			}
 			// Strip checksums from files and compute summary
 			const files = (manifest.files ?? []).map(f => {
 				const entry: { path: string; size: number; permissions?: string; modified?: string; created?: string } = { path: f.path, size: f.size };
@@ -236,8 +246,12 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		try {
 			const { stream } = await network.dialProtocolByPeerId(p.peerID, LISH_PROTOCOL);
 			const client = new LISHClient(stream);
-			manifest = await client.requestManifest(p.lishID);
-			await client.close();
+			try {
+				manifest = await client.requestManifest(p.lishID);
+			} finally {
+				// Close in finally — a rejected manifest (validation, peer error) must not leak the stream.
+				await client.close().catch(() => {});
+			}
 		} catch (error: any) {
 			if (error instanceof CodedError) throw error;
 			console.error(`[Peers] Failed to add LISH ${p.lishID.slice(0, 8)} from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
