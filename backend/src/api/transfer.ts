@@ -167,6 +167,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	// pre-leave state without waiting for an app restart. Only downloads still bound
 	// to the re-joined network and still suspended are resumed.
 	networks.onNetworkJoined = (networkID: string) => {
+		// Re-attach the rejoined network to still-running multi-network downloaders
+		// that dropped it when it was left (no-op if never bound to it or already active).
+		for (const dl of activeDownloaders.values()) dl.addNetwork?.(networkID);
 		// Drop the suspension ONLY once the resume actually succeeds — a transient
 		// failure (busy verifying, still no joined lishnet) must be retried on the next
 		// join, otherwise the resume is lost forever. A retained (disabled) downloader

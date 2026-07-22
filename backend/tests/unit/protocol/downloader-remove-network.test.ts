@@ -11,6 +11,7 @@ import { Downloader } from '../../../src/protocol/downloader.ts';
 function makeDownloader(networkIDs: string[]): Downloader {
 	const dl = Object.create(Downloader.prototype) as Downloader;
 	(dl as any).networkIDs = [...networkIDs];
+	(dl as any).originalNetworkIDs = [...networkIDs];
 	return dl;
 }
 
@@ -30,6 +31,28 @@ describe('Downloader.removeNetwork', () => {
 	it('is a no-op for a network the download is not bound to', () => {
 		const dl = makeDownloader(['net-a', 'net-b']);
 		dl.removeNetwork('net-c');
+		expect(dl.getNetworkIDs()).toEqual(['net-a', 'net-b']);
+	});
+});
+
+describe('Downloader.addNetwork', () => {
+	it('re-adds a network that was previously removed', () => {
+		const dl = makeDownloader(['net-a', 'net-b']);
+		dl.removeNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-b']);
+		dl.addNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-b', 'net-a']);
+	});
+
+	it('is a no-op for a network never in the original set', () => {
+		const dl = makeDownloader(['net-a', 'net-b']);
+		dl.addNetwork('net-c');
+		expect(dl.getNetworkIDs()).toEqual(['net-a', 'net-b']);
+	});
+
+	it('is a no-op when the network is already active', () => {
+		const dl = makeDownloader(['net-a', 'net-b']);
+		dl.addNetwork('net-a');
 		expect(dl.getNetworkIDs()).toEqual(['net-a', 'net-b']);
 	});
 });

@@ -58,6 +58,10 @@ export class Downloader {
 	private network: Network;
 	private readonly downloadDir: string;
 	private networkIDs: string[];
+	// Immutable snapshot of the networks this download was created with. removeNetwork
+	// mutates networkIDs when a lishnet is left; addNetwork consults this to re-attach
+	// only networks the download was originally bound to when they are re-joined.
+	private readonly originalNetworkIDs: string[];
 	private lishID!: LISHid;
 	private state: State = 'added';
 	private workMutex = new Mutex();
@@ -129,6 +133,18 @@ export class Downloader {
 	removeNetwork(networkID: string): void {
 		if (this.networkIDs.length <= 1 || !this.networkIDs.includes(networkID)) return;
 		this.networkIDs = this.networkIDs.filter(id => id !== networkID);
+	}
+
+	/**
+	 * Re-attach a lishnet dropped by {@link removeNetwork} when it was left, now that
+	 * it is joined again — so WANT broadcasts and topic probes reach it once more on
+	 * the next discovery cycle. No-op if the download was never bound to it (not in
+	 * the original set) or it is already active.
+	 */
+	addNetwork(networkID: string): void {
+		if (!this.originalNetworkIDs.includes(networkID)) return;
+		if (this.networkIDs.includes(networkID)) return;
+		this.networkIDs = [...this.networkIDs, networkID];
 	}
 
 	/**
@@ -347,7 +363,9 @@ export class Downloader {
 		this.downloadDir = downloadDir;
 		this.network = network;
 		this.dataServer = dataServer;
-		this.networkIDs = Array.isArray(networkIDs) ? networkIDs : [networkIDs];
+		const ids = Array.isArray(networkIDs) ? [...networkIDs] : [networkIDs];
+		this.networkIDs = ids;
+		this.originalNetworkIDs = [...ids];
 		this.fileAllocator = new FileAllocator(downloadDir);
 	}
 
