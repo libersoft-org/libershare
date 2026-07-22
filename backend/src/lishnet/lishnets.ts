@@ -147,8 +147,12 @@ export class Networks {
 	private static bootstrapPeerIDsOf(bootstrapPeers: string[]): string[] {
 		const ids: string[] = [];
 		for (const addr of bootstrapPeers) {
-			const m = addr.match(/\/p2p\/([^/]+)/);
-			if (m) ids.push(m[1]!);
+			// Relayed multiaddrs (.../p2p/<relay>/p2p-circuit/p2p/<target>) carry two
+			// /p2p components; the bootstrap peer identity is the FINAL one (the target),
+			// not the relay. Match all and take the last.
+			const matches = [...addr.matchAll(/\/p2p\/([^/]+)/g)];
+			const last = matches[matches.length - 1];
+			if (last) ids.push(last[1]!);
 		}
 		return ids;
 	}

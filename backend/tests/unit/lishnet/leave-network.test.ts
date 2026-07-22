@@ -126,4 +126,15 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		// pShared is still bootstrap for the joined net-b → exemption kept.
 		expect(net.prunedBootstrap).toEqual(['pOnlyA']);
 	});
+
+	it('prunes the final /p2p target id for a relayed bootstrap multiaddr, not the relay', async () => {
+		net.topicPeers.set('net-a', []);
+		const networks = makeNetworks(net, ['net-a'], {
+			// Relayed entry: /p2p/<relay>/p2p-circuit/p2p/<target>. The bootstrap
+			// identity is the target (final /p2p), never the relay.
+			'net-a': ['/ip4/192.0.2.10/tcp/9090/p2p/pRelay/p2p-circuit/p2p/pTarget'],
+		});
+		await leave(networks, 'net-a');
+		expect(net.prunedBootstrap).toEqual(['pTarget']);
+	});
 });

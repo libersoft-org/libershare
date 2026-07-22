@@ -955,7 +955,12 @@ export class Network {
 					trace(`[NET] addBootstrapPeers skip non-routable: ${peer}`);
 					continue;
 				}
-				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
+				// A relayed bootstrap multiaddr (.../p2p/<relay>/p2p-circuit/p2p/<target>)
+				// carries two /p2p components; the peer we actually connect to — and must
+				// exempt from leave-network disconnect — is the FINAL one (the target), not
+				// the relay. Take the last /p2p component, never the first.
+				const p2pComponents = ma.getComponents().filter(c => c.code === 421);
+				const peerID = (p2pComponents.length > 0 ? p2pComponents[p2pComponents.length - 1]!.value : null) ?? null;
 				if (peerID && origin === 'configured') this.configuredBootstrapPeerIDs.add(peerID);
 				const alreadyKnown = !!peerID && this.bootstrapPeerIDs.has(peerID);
 				if (peerID && !alreadyKnown) {
