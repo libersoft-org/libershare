@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { KEEP_ALIVE } from '@libp2p/interface';
+import { multiaddr } from '@multiformats/multiaddr';
 import { Network } from '../../../src/protocol/network.ts';
 
 /**
@@ -15,6 +16,7 @@ function makeNetwork() {
 	const merges: Array<{ tags: Record<string, unknown> }> = [];
 	const hungUp: string[] = [];
 	const network = Object.create(Network.prototype) as Network;
+	(network as any).redialSuppressed = new Set<string>();
 	(network as any).node = {
 		peerStore: {
 			async merge(_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> {
@@ -55,5 +57,50 @@ describe('Network.disconnectPeer — keep-alive tag removal', () => {
 		await network.disconnectPeer('not-a-peer-id');
 		expect(merges).toEqual([]);
 		expect(hungUp).toEqual([]);
+	});
+
+	it('suppresses the hung-up peer from redial maintenance', async () => {
+		const { network } = makeNetwork();
+		await network.disconnectPeer(PEER_ID);
+		expect((network as any).redialSuppressed.has(PEER_ID)).toBe(true);
+	});
+});
+
+/**
+ * runRedialMaintenance must not re-dial peers that leave-network just hung up
+ * (they sit in redialSuppressed), and must drop that suppression the moment the
+ * peer is observed connected again so normal maintenance resumes.
+ */
+describe('Network.runRedialMaintenance — leave-peer suppression', () => {
+	function bareNetwork(suppressed: string[]) {
+		const dialed: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).redialBackoff = new Map();
+		(network as any).redialSuppressed = new Set<string>(suppressed);
+		(network as any).node = {
+			async dial(id: { toString(): string }): Promise<void> {
+				dialed.push(id.toString());
+			},
+			getConnections: () => [],
+		};
+		return { network, dialed };
+	}
+
+	const run = (network: Network, connected: any[], all: any[]): Promise<void> => (network as any).runRedialMaintenance(connected, all);
+
+	it('does not re-dial a peer suppressed by leave-network', async () => {
+		const { network, dialed } = bareNetwork(['pLeft']);
+		const peer = { id: { toString: () => 'pLeft' }, addresses: [{ multiaddr: multiaddr('/ip4/203.0.113.5/tcp/9090') }] };
+		await run(network, [], [peer]);
+		expect(dialed).toEqual([]);
+		expect((network as any).redialSuppressed.has('pLeft')).toBe(true);
+	});
+
+	it('clears suppression once the peer is observed connected again', async () => {
+		const { network, dialed } = bareNetwork(['pBack']);
+		const peer = { id: { toString: () => 'pBack' } };
+		await run(network, [{ toString: () => 'pBack' }], [peer]);
+		expect(dialed).toEqual([]);
+		expect((network as any).redialSuppressed.has('pBack')).toBe(false);
 	});
 });

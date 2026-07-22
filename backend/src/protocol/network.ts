@@ -201,6 +201,16 @@ export class Network {
 	 */
 	private readonly redialBackoff = new Map<string, { nextAttempt: number; failCount: number }>();
 
+	/**
+	 * Peers deliberately hung up by {@link disconnectPeer} (leave-network) that
+	 * redial maintenance must NOT proactively re-dial — otherwise a peer we just
+	 * left is re-connected within one status tick (~30s), defeating the leave.
+	 * Cleared the moment the peer is observed connected again by any legitimate
+	 * path (its own re-dial, or mesh reconnection after we re-join). Pruned when
+	 * the peer leaves the peerStore so the set stays bounded.
+	 */
+	private readonly redialSuppressed = new Set<string>();
+
 	// Tracked libp2p/pubsub event listeners for clean removal in stop().
 	// Each entry captures the exact handler reference so removeEventListener can unhook it.
 	private listeners: Array<{ target: EventTarget; event: string; handler: (evt: any) => void }> = [];
@@ -731,11 +741,19 @@ export class Network {
 		const candidates: Array<{ peer: any; pid: string; addrSummary: string; failCount: number }> = [];
 		let skippedBackoff = 0;
 		let skippedNoReachable = 0;
+		let skippedSuppressed = 0;
 		const localCidrs = getLocalCidrs(now);
 		for (const peer of allPeers) {
 			const pid = peer.id.toString();
 			if (connectedSet.has(pid)) {
 				this.redialBackoff.delete(pid); // clear on observed connection
+				this.redialSuppressed.delete(pid); // legitimately reconnected → resume maintenance
+				continue;
+			}
+			// Skip peers we deliberately left (leave-network) so maintenance does not
+			// silently re-dial them; cleared above once they reconnect on their own.
+			if (this.redialSuppressed.has(pid)) {
+				skippedSuppressed++;
 				continue;
 			}
 			const bo = this.redialBackoff.get(pid);
@@ -804,12 +822,13 @@ export class Network {
 		};
 		const workers = Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, () => worker());
 		await Promise.all(workers);
-		if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0) {
-			console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs)`);
+		if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0 || skippedSuppressed > 0) {
+			console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs, ${skippedSuppressed} skipped left-peer)`);
 		}
-		// Prune backoff entries for peers that are no longer in peerStore to prevent unbounded growth.
+		// Prune backoff / suppression entries for peers no longer in peerStore to prevent unbounded growth.
 		const storeSet = new Set(allPeers.map(p => p.id.toString()));
 		for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
+		for (const pid of this.redialSuppressed) if (!storeSet.has(pid)) this.redialSuppressed.delete(pid);
 	}
 
 	private async runZeroConnectionRecovery(connectedPeers: any[]): Promise<void> {
@@ -1172,6 +1191,9 @@ export class Network {
 		} catch (err: any) {
 			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
 		}
+		// Keep redial maintenance from re-dialing this just-left peer on the next
+		// status tick. Cleared automatically once it reconnects legitimately.
+		this.redialSuppressed.add(peerID);
 	}
 
 	/** Snapshot of all per-network bootstrap statuses. */
@@ -1571,6 +1593,7 @@ export class Network {
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
 		this.redialBackoff.clear();
+		this.redialSuppressed.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {
 			await this.node.stop();
