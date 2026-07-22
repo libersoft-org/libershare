@@ -98,6 +98,21 @@ export class PeerAnnounceManager {
 		this.deps = deps;
 	}
 
+	/**
+	 * Recently-seen subscribers of a topic (union of getSubscribers over the last
+	 * {@link PEER_ANNOUNCE_MEMBER_TTL_MS}), so a same-network peer that is momentarily
+	 * disconnected at query time is still reported. Used by leave-network to suppress
+	 * offline content peers that a live subscriber snapshot would miss.
+	 */
+	getRecentMembers(topic: string): string[] {
+		const members = this.topicMembers.get(topic);
+		if (!members) return [];
+		const now = Date.now();
+		const out: string[] = [];
+		for (const [pid, seen] of members) if (now - seen <= PEER_ANNOUNCE_MEMBER_TTL_MS) out.push(pid);
+		return out;
+	}
+
 	/** Start the periodic emitter. Safe to call only once per start/stop cycle. */
 	start(): void {
 		this.stopped = false;

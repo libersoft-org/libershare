@@ -11,12 +11,14 @@ import { Networks } from '../../../src/lishnet/lishnets.ts';
 
 interface MockNet {
 	topicPeers: Map<string, string[]>;
+	recentMembers: Map<string, string[]>;
 	unsubscribed: string[];
 	subscribed: string[];
 	disconnected: string[];
 	bootstrapOrRelay: Set<string>;
 	prunedBootstrap: string[];
 	getTopicPeers(id: string): string[];
+	getRecentTopicMembers(id: string): string[];
 	unsubscribeTopic(id: string): void;
 	subscribeTopic(id: string): void;
 	isBootstrapOrRelayPeer(pid: string): boolean;
@@ -29,6 +31,7 @@ interface MockNet {
 function makeMockNet(): MockNet {
 	return {
 		topicPeers: new Map(),
+		recentMembers: new Map(),
 		unsubscribed: [],
 		subscribed: [],
 		disconnected: [],
@@ -37,6 +40,9 @@ function makeMockNet(): MockNet {
 		suppressionClearedFor: [],
 		getTopicPeers(id) {
 			return this.topicPeers.get(id) ?? [];
+		},
+		getRecentTopicMembers(id) {
+			return this.recentMembers.get(id) ?? [];
 		},
 		unsubscribeTopic(id) {
 			this.unsubscribed.push(id);
@@ -88,6 +94,16 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		const networks = makeNetworks(net, ['net-a', 'net-b']);
 		await leave(networks, 'net-a');
 		expect(net.disconnected).toEqual(['p-only-a']);
+	});
+
+	it('disconnects a recently-seen content peer offline at leave time', async () => {
+		// Not a live subscriber right now, but seen within TTL and still in the peerStore —
+		// must be suppressed too, or maintenance would redial it after the leave.
+		net.topicPeers.set('net-a', ['p-live']);
+		net.recentMembers.set('net-a', ['p-live', 'p-offline']);
+		const networks = makeNetworks(net, ['net-a']);
+		await leave(networks, 'net-a');
+		expect(net.disconnected.sort()).toEqual(['p-live', 'p-offline']);
 	});
 
 	it('keeps bootstrap/relay peers even when exclusive to the left lishnet', async () => {

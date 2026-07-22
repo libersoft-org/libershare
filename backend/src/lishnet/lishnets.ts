@@ -199,7 +199,12 @@ export class Networks {
 
 		// Snapshot the topic subscribers BEFORE unsubscribing — unsubscribeTopic
 		// tears the topic out of pubsub, after which getTopicPeers(id) returns [].
-		const leftPeers = this.network.getTopicPeers(id);
+		// Union with recently-seen members (TTL) so a content peer that is momentarily
+		// disconnected at leave time — but still holds a peerStore entry — is also
+		// suppressed; a live-subscriber-only snapshot would miss it and maintenance
+		// could redial it back after we left.
+		const leftPeers = new Set<string>(this.network.getTopicPeers(id));
+		for (const pid of this.network.getRecentTopicMembers(id)) leftPeers.add(pid);
 
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
