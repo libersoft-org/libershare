@@ -338,8 +338,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			const network = networks.getRunningNetwork();
 			const joinedNetworks = networks.getEnabled().map(n => n.networkID);
 			if (joinedNetworks.length === 0) {
+				// No lishnet is joined to source this download. Keep the DB enabled flag
+				// ON — clearing it would permanently forget the user's intent so a later
+				// rejoin could never resume. Drop only the in-memory active flag and mark
+				// it suspended so onNetworkJoined resumes it once a lishnet is (re-)joined.
 				downloadEnabledLishs.delete(p.lishID);
-				persistDownloadEnabled?.(p.lishID, false);
+				networkSuspended.add(p.lishID);
 				return { success: false };
 			}
 			const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());
