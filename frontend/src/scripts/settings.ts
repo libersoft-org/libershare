@@ -103,16 +103,22 @@ export async function loadSettings(): Promise<void> {
 		volume.set(settings.audio.volume);
 		// Reconcile with the OS: use the live volume when a device is present,
 		// otherwise flag it unavailable so the widget shows no fabricated level.
-		try {
-			const status = await api.call<{ volume: number | null; available: boolean }>('system.getVolume');
-			volumeAvailable.set(status.available);
-			if (status.available && status.volume !== null) volume.set(status.volume);
-		} catch {
-			// Leave the persisted value on error; availability stays as-is.
-		} finally {
-			// First live fetch settled — the widget may now render the real state.
-			volumeKnown.set(true);
-		}
+		// Fire-and-forget — a wedged mixer helper (backend read can take seconds)
+		// must not hold loadSettings() and with it the rest of app initialization;
+		// the widget renders the persisted value until the live fetch settles.
+		void api
+			.call<{ volume: number | null; available: boolean }>('system.getVolume')
+			.then(status => {
+				volumeAvailable.set(status.available);
+				if (status.available && status.volume !== null) volume.set(status.volume);
+			})
+			.catch(() => {
+				// Leave the persisted value on error; availability stays as-is.
+			})
+			.finally(() => {
+				// First live fetch settled — the widget may now render the real state.
+				volumeKnown.set(true);
+			});
 		// Keep the UI in sync when the volume changes on the OS side.
 		subscribeVolumeChanges();
 
@@ -396,6 +402,10 @@ function subscribeVolumeChanges(): void {
 			if (!data.available || data.volume === null) return;
 			const remaining = LOCAL_EDIT_GUARD_MS - (Date.now() - lastLocalVolumeChange);
 			if (remaining <= 0) {
+				// A newer event supersedes any still-pending deferred level — drop it,
+				// or its timer would replay the stale value moments after this one.
+				deferredVolume = null;
+				clearTimeout(deferredVolumeTimer);
 				volume.set(data.volume);
 				return;
 			}
@@ -410,5 +420,5 @@ function subscribeVolumeChanges(): void {
 			}, remaining + 50);
 		});
 	}
-	api.subscribe('system:volumeChanged');
+	api.subscribe('system:volumeChanged').catch(() => {});
 }
