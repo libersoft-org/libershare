@@ -5,12 +5,14 @@ import { type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialS
  *
  * Outer key is networkID; inner key is the exact multiaddr string from the network
  * config. Populated by markBootstrapPending / recordBootstrapOutcome when called
- * with a networkID context (initial join + manual updates). Lets the UI surface
- * which SPECIFIC bootstrap entry is stale (identity-mismatch) or unreachable
- * (timeout), rather than flagging the whole network.
+ * with a networkID context. Lets the UI surface which SPECIFIC bootstrap entry is
+ * stale (identity-mismatch) or unreachable (timeout), rather than flagging the
+ * whole network.
  *
- * NOT populated for dynamic bootstrap additions from peer-announce gossip
- * (those have no single owning network and would dilute per-network stats).
+ * Populated both for configured bootstrap entries (initial join + manual updates)
+ * and for peers discovered via peer-announce gossip: the inbound handler passes the
+ * networkID of the topic the announce arrived on, so discovered peers are tracked
+ * under the network through which they were learned.
  */
 export class BootstrapStatusTracker {
 	private readonly stats: Map<string, Map<string, BootstrapPeerStatus>> = new Map();

@@ -133,7 +133,7 @@
 	"downloads": {
 		"title": "Stahování a sdílení",
 		"id": "ID",
-		"chunkSize": "Velikost části",
+		"chunks": "Části",
 		"targetDirectory": "Cílový adresář",
 		"downloadingFrom": "Stahování od",
 		"uploadingTo": "Odesílání k",
@@ -486,6 +486,7 @@
 			"right": "Vpravo"
 		},
 		"footerWidgets": {
+			"peerId": "ID účastníka",
 			"lishStatus": "Stav LISH sítě",
 			"gamepad": "Ovladač",
 			"connection": "Připojení",
