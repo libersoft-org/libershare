@@ -139,27 +139,33 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				dl.removeNetwork?.(networkID);
 				continue;
 			}
-			console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, disabling download`);
-			dl.disable();
-			// Drop the runtime enabled flag (no DB persist) so `lishs.list` reports
-			// the download as stopped and restartDownloadIfEnabled cannot silently
-			// revive it after verification while no usable lishnet is joined. The
-			// DB flag stays untouched, so an app restart with the lishnet re-joined
-			// resumes the download.
-			// Only a download that was actually enabled (persisted) may be resumed on
-			// rejoin. A transient download from the `download` handler lives in
-			// activeDownloaders but never in downloadEnabledLishs — resuming it would
-			// wrongly turn it into a persisted enabled download.
+			// Drop the runtime enabled flag (no DB persist) so `lishs.list` reports the
+			// download as stopped and restartDownloadIfEnabled cannot silently revive it
+			// while no usable lishnet is joined. The DB flag stays untouched, so an app
+			// restart with the lishnet re-joined resumes the download.
 			const wasEnabled = downloadEnabledLishs.has(lishID);
 			downloadEnabledLishs.delete(lishID);
-			// Remember it as suspended-by-leave so onNetworkJoined can resume it if a
-			// bound lishnet is re-joined in-process (without waiting for a restart).
-			if (wasEnabled) networkSuspended.add(lishID);
 			// Cancel any pending error-recovery timer for this LISH — otherwise
 			// ErrorRecovery, holding the captured downloadWasEnabled=true, could
 			// re-enable the download once the IO condition clears even though the
 			// user just stopped it by leaving the network.
 			recovery.stop(lishID);
+			if (wasEnabled) {
+				// Persisted download — retain the disabled downloader and remember it as
+				// suspended-by-leave so onNetworkJoined can resume it after rejoin.
+				console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, disabling download`);
+				dl.disable();
+				networkSuspended.add(lishID);
+			} else {
+				// Transient download (from the `download` handler, never enabled/persisted)
+				// has no resume claim — destroy it and drop it from the map instead of
+				// leaking a disabled downloader with a dangling download() promise and
+				// registered network handlers (a fresh start of the same LISH would
+				// otherwise overwrite the map entry without disposing this one).
+				console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, dropping transient download`);
+				dl.destroy().catch(err => console.error(`[Transfer] ${lishID.slice(0, 8)}: destroy on leave failed:`, err?.message ?? err));
+				activeDownloaders.delete(lishID);
+			}
 			// dl.disable() alone emits nothing over WS — tell the FE the download
 			// stopped.
 			broadcast?.('transfer.download:disabled', { lishID });
