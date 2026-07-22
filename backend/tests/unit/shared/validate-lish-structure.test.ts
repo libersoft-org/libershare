@@ -54,11 +54,23 @@ describe('validateLISHStructure', () => {
 	// payload cannot be both full-length and shorter; the duplicate-slot write path would
 	// write past the shorter file tail.
 	it('rejects a checksum shared by a full chunk and a shorter last chunk', () => {
-		const lish = makeLish({ chunkSize: 1024, files: [{ path: 'full.bin', size: 1024, checksums: ['dup'] }, { path: 'short.bin', size: 1, checksums: ['dup'] }] });
+		const lish = makeLish({
+			chunkSize: 1024,
+			files: [
+				{ path: 'full.bin', size: 1024, checksums: ['dup'] },
+				{ path: 'short.bin', size: 1, checksums: ['dup'] },
+			],
+		});
 		expect(() => validateLISHStructure(lish, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST);
 	});
 	it('rejects a checksum shared by two last chunks of different lengths', () => {
-		const lish = makeLish({ chunkSize: 1024, files: [{ path: 'a.bin', size: 1, checksums: ['dup'] }, { path: 'b.bin', size: 2, checksums: ['dup'] }] });
+		const lish = makeLish({
+			chunkSize: 1024,
+			files: [
+				{ path: 'a.bin', size: 1, checksums: ['dup'] },
+				{ path: 'b.bin', size: 2, checksums: ['dup'] },
+			],
+		});
 		expect(() => validateLISHStructure(lish, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST);
 	});
 	it('accepts duplicate checksums whose slots all expect the same length', () => {
@@ -72,4 +84,10 @@ describe('validateLISHStructure', () => {
 		});
 		expect(() => validateLISHStructure(lish, MAX)).not.toThrow();
 	});
+});
+
+describe('validateLISHStructure — optional arrays', () => {
+	it('rejects directories that is not an array', () => expect(() => validateLISHStructure({ ...makeLish(), directories: {} } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	it('rejects links that is not an array', () => expect(() => validateLISHStructure({ ...makeLish(), links: {} } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	it('accepts absent directories and links', () => expect(() => validateLISHStructure(makeLish(), MAX)).not.toThrow());
 });

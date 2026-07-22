@@ -22,6 +22,11 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 	if (!lish || typeof lish !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'manifest is not an object');
 	if (typeof lish.chunkSize !== 'number' || !Number.isInteger(lish.chunkSize) || lish.chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(lish.chunkSize));
 	if (lish.chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${formatBytes(lish.chunkSize)} > ${formatBytes(maxChunkSize)}`);
+	// Optional arrays get the same presence check as `files`: a truthy non-array
+	// (e.g. `directories: {}`) would crash downstream for..of iteration in
+	// dataServer.add with a raw TypeError instead of a coded rejection.
+	if (lish.directories !== undefined && !Array.isArray(lish.directories)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'directories is not an array');
+	if (lish.links !== undefined && !Array.isArray(lish.links)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'links is not an array');
 	// Presence check, not truthiness: `files: null` (or any other falsy non-array) is a
 	// malformed manifest, only a genuinely absent field means metadata-only.
 	if (lish.files !== undefined) {
