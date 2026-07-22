@@ -15,19 +15,25 @@ const PEER_ID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
 function makeNetwork() {
 	const merges: Array<{ tags: Record<string, unknown> }> = [];
 	const hungUp: string[] = [];
+	const deleted: string[] = [];
 	const network = Object.create(Network.prototype) as Network;
 	(network as any).redialSuppressed = new Set<string>();
+	(network as any).bootstrapPeerIDs = new Set<string>();
 	(network as any).node = {
+		getConnections: () => [],
 		peerStore: {
 			async merge(_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> {
 				merges.push(patch);
+			},
+			async delete(pid: { toString(): string }): Promise<void> {
+				deleted.push(pid.toString());
 			},
 		},
 		async hangUp(pid: { toString(): string }): Promise<void> {
 			hungUp.push(pid.toString());
 		},
 	};
-	return { network, merges, hungUp };
+	return { network, merges, hungUp, deleted };
 }
 
 describe('Network.disconnectPeer — keep-alive tag removal', () => {
@@ -63,6 +69,12 @@ describe('Network.disconnectPeer — keep-alive tag removal', () => {
 		const { network } = makeNetwork();
 		await network.disconnectPeer(PEER_ID);
 		expect((network as any).redialSuppressed.has(PEER_ID)).toBe(true);
+	});
+
+	it('forgets the peerStore entry so the disconnect survives a restart', async () => {
+		const { network, deleted } = makeNetwork();
+		await network.disconnectPeer(PEER_ID);
+		expect(deleted).toEqual([PEER_ID]);
 	});
 });
 

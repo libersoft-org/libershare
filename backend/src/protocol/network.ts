@@ -1208,10 +1208,12 @@ export class Network {
 	 * ReconnectQueue would re-dial the peer within seconds and the disconnect
 	 * would be pointless.
 	 *
-	 * Unlike {@link purgeStalePeer} this does NOT delete the peerStore entry: the
-	 * peer is legitimate (we just no longer have a reason to stay connected after
-	 * leaving its lishnet), so we keep its addresses cached for cheap re-dial if
-	 * the user re-joins. Best-effort: failures are logged at trace, never thrown.
+	 * Also forgets the peerStore entry (via {@link purgeStalePeer}): in-memory redial
+	 * suppression is lost on restart, but the persisted peerStore is not, so a leave
+	 * followed by a restart before rejoin would otherwise let redial maintenance dial
+	 * the left peer straight back. The sole caller (leaveNetwork) only passes peers
+	 * with no remaining reason to stay, and rejoin re-acquires the entry via
+	 * bootstrap/discovery. Best-effort: failures are logged at trace, never thrown.
 	 */
 	async disconnectPeer(peerID: string): Promise<void> {
 		if (!this.node) return;
@@ -1246,6 +1248,9 @@ export class Network {
 		// Keep redial maintenance from re-dialing this just-left peer on the next
 		// status tick. Cleared automatically once it reconnects legitimately.
 		this.redialSuppressed.add(peerID);
+		// Forget the persisted peerStore entry so the disconnect survives a restart —
+		// suppression is in-memory only, but the peerStore is on disk.
+		await this.purgeStalePeer(peerID, 'left-network exclusive peer');
 	}
 
 	/** Snapshot of all per-network bootstrap statuses. */
