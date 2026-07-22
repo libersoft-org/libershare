@@ -294,6 +294,10 @@ export interface VolumeWatcher {
 export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatus | null>; broadcast: (status: VolumeStatus) => void; persist: (volume: number) => void; isBusy: () => boolean }): VolumeWatcher {
 	let last: VolumeStatus | null = null;
 	let polling = false;
+	// A poll requested while one is already reading (e.g. a monitor push event
+	// during a slow mixer read) — run ONE trailing re-read instead of racing a
+	// second read that could resolve out of order and re-apply a stale level.
+	let pollPending = false;
 
 	// Diff a fresh status against the last one seen; on a real change persist and
 	// broadcast it. Shared by poll (fallback) and the instant push monitor.
@@ -319,17 +323,24 @@ export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatu
 			// A mixer write is in flight or settling — reading now could race it.
 			if (deps.isBusy()) return;
 			// A previous poll is still reading (a slow getter can outlast the poll
-			// interval) — skip so reads never overlap or resolve out of order.
-			if (polling) return;
+			// interval) — queue one trailing re-read so reads never overlap or resolve
+			// out of order, yet a change signalled mid-read is still picked up.
+			if (polling) {
+				pollPending = true;
+				return;
+			}
 			polling = true;
 			try {
-				const status = await deps.getStatus();
-				// Transient read error (indeterminate) — keep the last known state, do
-				// not broadcast, so a hiccup never reports a present device as gone.
-				if (status === null) return;
-				ingest(status);
+				do {
+					pollPending = false;
+					const status = await deps.getStatus();
+					// Transient read error (indeterminate) — keep the last known state, do
+					// not broadcast, so a hiccup never reports a present device as gone.
+					if (status !== null) ingest(status);
+				} while (pollPending);
 			} finally {
 				polling = false;
+				pollPending = false;
 			}
 		},
 	};
@@ -383,34 +394,16 @@ export function isSinkEvent(line: string): boolean {
 	return /on sink #/i.test(line);
 }
 
-function startLinuxMonitor(emit: (status: VolumeStatus) => void, onExit: () => void): VolumeMonitor {
+function startLinuxMonitor(requestRefresh: () => void, onExit: () => void): VolumeMonitor {
 	// pactl streams events; a sink change means the default sink volume may have
-	// moved — re-read it and diff. (amixer has no push; that path stays on poll.)
+	// moved. The monitor does NOT read the mixer itself — a private read would race
+	// the watcher's 5s fallback poll (two concurrent reads can resolve out of order
+	// and re-apply a stale level). It only signals the watcher, whose poll
+	// serializes reads and coalesces event bursts into one trailing re-read.
 	const proc = spawn('pactl', ['subscribe'], { stdio: ['ignore', 'pipe', 'ignore'] });
 	const rl = createInterface({ input: proc.stdout! });
-	// Sink events arrive in bursts (dragging a tray slider emits dozens); run one
-	// mixer read at a time and a single trailing re-read after a burst instead of
-	// spawning a reader process per event.
-	let reading = false;
-	let pending = false;
-	async function refresh(): Promise<void> {
-		if (reading) {
-			pending = true;
-			return;
-		}
-		reading = true;
-		try {
-			do {
-				pending = false;
-				const status = await getSystemVolumeStatus();
-				if (status) emit(status);
-			} while (pending);
-		} finally {
-			reading = false;
-		}
-	}
 	rl.on('line', line => {
-		if (isSinkEvent(line)) void refresh();
+		if (isSinkEvent(line)) requestRefresh();
 	});
 	let stopped = false;
 	const exit = (): void => {
@@ -432,16 +425,18 @@ function startLinuxMonitor(emit: (status: VolumeStatus) => void, onExit: () => v
 }
 
 /**
- * Start the platform's instant OS→FE volume monitor, calling `emit` the moment
- * the OS volume changes and `onExit` if the process dies (so the caller can
- * respawn). Returns a `stop()` handle. On platforms without a push source
- * (macOS, or Linux without pactl) returns a no-op monitor — the caller then
- * relies on the 5s poll fallback alone.
+ * Start the platform's instant OS→FE volume monitor and `onExit` if it dies (so
+ * the caller can respawn). Windows reads in-process (synchronous FFI — cannot
+ * interleave with an async poll read) and calls `emit` with the fresh status;
+ * Linux only signals `requestRefresh` so the watcher's serialized poll performs
+ * the actual mixer read. Returns a `stop()` handle. On platforms without a push
+ * source (macOS, or Linux without pactl) returns a no-op monitor — the caller
+ * then relies on the 5s poll fallback alone.
  */
-export function startVolumeMonitor(emit: (status: VolumeStatus) => void, onExit: () => void): VolumeMonitor {
+export function startVolumeMonitor(emit: (status: VolumeStatus) => void, requestRefresh: () => void, onExit: () => void): VolumeMonitor {
 	try {
 		if (process.platform === 'win32') return startWindowsMonitor(emit, onExit);
-		if (process.platform === 'linux') return startLinuxMonitor(emit, onExit);
+		if (process.platform === 'linux') return startLinuxMonitor(requestRefresh, onExit);
 	} catch (err) {
 		console.warn('[system-volume] Failed to start volume monitor:', (err as Error).message);
 	}

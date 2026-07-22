@@ -245,6 +245,9 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 			if (volumeWanted && volumeWatcher.available() && !volumeMonitor) {
 				volumeMonitor = startVolumeMonitor(
 					status => volumeWatcher.ingest(status),
+					// Linux push events only request a serialized watcher poll — the
+					// monitor never reads the mixer itself (read-ordering guarantee).
+					() => void volumeWatcher.poll(),
 					() => {
 						volumeMonitor = null;
 					}
