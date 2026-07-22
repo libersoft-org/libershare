@@ -188,6 +188,12 @@ export class Downloader {
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
 		if (this.lishID) unregisterHaveAnnouncementHandler(this.lishID);
+		// Terminal error is not always followed by destroy() — the transfer layer
+		// drops an errored downloader from its map without destroying it. Dispose the
+		// network peer:disconnect subscription here too (mirrors the HAVE handler
+		// unregister above), otherwise the handler closure leaks and pins this object.
+		this.peerDisconnectDisposer?.();
+		this.peerDisconnectDisposer = undefined;
 		// Fire-and-forget close — stream may already be reset/aborted, which is benign.
 		// Log at trace so real bugs (e.g. TypeError) can still be spotted in debug logs.
 		this.peerManager.closeAll('setError');
