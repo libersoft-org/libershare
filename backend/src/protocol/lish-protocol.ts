@@ -368,7 +368,7 @@ export function serveGateBlocks(sharesNetworkWith: ((peerID: string) => boolean)
 	return !remotePeerID || !sharesNetworkWith(remotePeerID);
 }
 
-export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean): Promise<void> {
+export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean): Promise<void> {
 	const servedLishIDs = new Set<string>();
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
 	const remotePeer = remotePeerID?.slice(0, 12) ?? 'unknown';
@@ -407,10 +407,12 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 
 			if (request.type === 'getLishs') {
-				// Serve the shared-LISH list only to peers we share a joined
-				// lishnet with. A bare transport connection (e.g. the peer re-dialed
-				// us right after we left its network) must not reveal what we share.
-				if (serveGateBlocks(sharesNetworkWith, remotePeerID)) {
+				// Serve the shared-LISH LISTING under the softer list-gate (canListShares):
+				// unlike the strict data gate it does not require a synced gossipsub
+				// SUBSCRIBE, so the unicast search fallback reaches freshly-connected peers.
+				// Still fail-closed on an unknown peer id and still refuses peers we left.
+				// Falls back to the strict gate when no list-gate was supplied.
+				if (serveGateBlocks(canListShares ?? sharesNetworkWith, remotePeerID)) {
 					trace(`[PROTO] getLishs from ${remotePeer} refused: no shared joined lishnet`);
 					const gated: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
 					sendLengthPrefixed(stream, codecEncode(gated));

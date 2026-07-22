@@ -472,7 +472,7 @@ export class Network {
 						}
 					}
 					const connType = remotePeerID ? classifyConnectionFn(remotePeerID, isRelay, this.dcutrPeers) : 'DIRECT';
-					await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType, pid => this.sharesJoinedTopicWith(pid));
+					await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType, pid => this.sharesJoinedTopicWith(pid), pid => this.canListSharesTo(pid));
 				} catch (err: any) {
 					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
 				}
@@ -1182,6 +1182,22 @@ export class Network {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Softer gate for the low-sensitivity shared-LISH LISTING (getLishs) only —
+	 * data requests (getLish/getChunk) stay on the strict {@link sharesJoinedTopicWith}
+	 * fail-closed gate. {@link sharesJoinedTopicWith} relies on gossipsub's subscriber
+	 * view, which lags for a freshly-connected peer whose SUBSCRIBE has not propagated
+	 * yet — the exact window the unicast search fallback targets, so the listing must
+	 * not be withheld there. Serve the listing to any peer over an authenticated stream
+	 * while we are in at least one lishnet, EXCEPT one we deliberately left (still in
+	 * redial suppression) — that preserves the leave-network browse privacy.
+	 */
+	canListSharesTo(peerID: string): boolean {
+		if (this.isRedialSuppressed(peerID)) return false;
+		if (!this.pubsub) return false;
+		return this.pubsub.getTopics().some((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
 	}
 
 	/**

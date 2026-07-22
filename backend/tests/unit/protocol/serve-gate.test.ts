@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { serveGateBlocks } from '../../../src/protocol/lish-protocol.ts';
+import { Network } from '../../../src/protocol/network.ts';
+import { lishTopic } from '../../../src/protocol/constants.ts';
 
 /**
  * The unicast LISH serve-gate must fail CLOSED: a stream that could not be mapped
@@ -24,5 +26,34 @@ describe('serveGateBlocks', () => {
 	it('blocks (fail closed) when the remote peer id is unknown', () => {
 		expect(serveGateBlocks(() => true, undefined)).toBe(true);
 		expect(serveGateBlocks(() => true, '')).toBe(true);
+	});
+});
+
+/**
+ * canListSharesTo is the softer LISTING gate: allow any peer while we hold a joined
+ * lishnet topic (so unicast search works before SUBSCRIBE syncs), except peers we
+ * deliberately left (still redial-suppressed) and except when we hold no lishnet.
+ */
+describe('Network.canListSharesTo', () => {
+	function bareNetwork(suppressed: string[], topics: string[]) {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).redialSuppressed = new Set<string>(suppressed);
+		(network as any).pubsub = { getTopics: () => topics };
+		return network;
+	}
+
+	it('allows a fresh peer while we hold a joined lishnet topic (subscribe may lag)', () => {
+		const net = bareNetwork([], [lishTopic('net-a')]);
+		expect((net as any).canListSharesTo('peer-a')).toBe(true);
+	});
+
+	it('refuses a peer we deliberately left (still suppressed)', () => {
+		const net = bareNetwork(['peer-left'], [lishTopic('net-a')]);
+		expect((net as any).canListSharesTo('peer-left')).toBe(false);
+	});
+
+	it('refuses when we hold no lishnet topic', () => {
+		const net = bareNetwork([], []);
+		expect((net as any).canListSharesTo('peer-a')).toBe(false);
 	});
 });
