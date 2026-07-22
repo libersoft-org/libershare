@@ -187,13 +187,7 @@ export class Downloader {
 		this.errorDetail = detail;
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
-		if (this.lishID) unregisterHaveAnnouncementHandler(this.lishID);
-		// Terminal error is not always followed by destroy() — the transfer layer
-		// drops an errored downloader from its map without destroying it. Dispose the
-		// network peer:disconnect subscription here too (mirrors the HAVE handler
-		// unregister above), otherwise the handler closure leaks and pins this object.
-		this.peerDisconnectDisposer?.();
-		this.peerDisconnectDisposer = undefined;
+		this.disposeNetworkHandlers();
 		// Fire-and-forget close — stream may already be reset/aborted, which is benign.
 		// Log at trace so real bugs (e.g. TypeError) can still be spotted in debug logs.
 		this.peerManager.closeAll('setError');
@@ -281,6 +275,19 @@ export class Downloader {
 		return this.disabled;
 	}
 
+	/**
+	 * Idempotently release network-level subscriptions: the peer:disconnect handler
+	 * and the unicast HAVE announcement handler. Called from every terminal path
+	 * (downloaded / error / destroy); a second call is a no-op. Without this a
+	 * completed/errored downloader dropped from the transfer map (never destroyed)
+	 * would pin itself and its peer/handler closures for the process lifetime.
+	 */
+	private disposeNetworkHandlers(): void {
+		this.peerDisconnectDisposer?.();
+		this.peerDisconnectDisposer = undefined;
+		if (this.lishID) unregisterHaveAnnouncementHandler(this.lishID);
+	}
+
 	async destroy(): Promise<void> {
 		console.debug(`[DL] destroy ${this.lishID.slice(0, 8)}, state=${this.state}, peers=${this.peerManager.size()}`);
 		this.disabled = true;
@@ -288,9 +295,7 @@ export class Downloader {
 		this.abortController.abort();
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
-		this.peerDisconnectDisposer?.();
-		this.peerDisconnectDisposer = undefined;
-		if (this.lishID) unregisterHaveAnnouncementHandler(this.lishID);
+		this.disposeNetworkHandlers();
 		await this.peerManager.closeAllAwait('destroy');
 		// Notify frontend to reset peers/speed immediately
 		const total = this.dataServer.getAllChunkCount(this.lishID) || 0;
@@ -422,6 +427,10 @@ export class Downloader {
 				this.downloadReject = reject;
 			});
 		}
+		// Terminal success: release network subscriptions. The transfer layer drops a
+		// completed downloader from its map without calling destroy(), so this is the
+		// only place the handlers get torn down on the happy path.
+		this.disposeNetworkHandlers();
 	}
 
 	async doWork(): Promise<void> {

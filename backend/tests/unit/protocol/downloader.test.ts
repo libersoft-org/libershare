@@ -1340,4 +1340,16 @@ describe('Downloader – network peer:disconnect handling', () => {
 		await downloader.destroy();
 		expect(net.peerDisconnectHandlers.size).toBe(0);
 	});
+
+	it('successful completion disposes the peer:disconnect subscription', async () => {
+		expect(net.peerDisconnectHandlers.size).toBe(1);
+		// needsManifest path parks download() on its internal completion promise
+		// without touching the filesystem; resolve it to simulate a finished download.
+		const done = downloader.download();
+		while (!priv(downloader)['downloadResolve']) await new Promise(r => setTimeout(r, 0));
+		priv(downloader)['state'] = 'downloaded';
+		(priv(downloader)['downloadResolve'] as () => void)();
+		await done;
+		expect(net.peerDisconnectHandlers.size).toBe(0);
+	});
 });
