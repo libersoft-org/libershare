@@ -106,6 +106,10 @@ export async function loadSettings(): Promise<void> {
 		// Fire-and-forget — a wedged mixer helper (backend read can take seconds)
 		// must not hold loadSettings() and with it the rest of app initialization;
 		// the widget renders the persisted value until the live fetch settles.
+		// Re-arm the gate on every (re)connect — the backend may have restarted or
+		// the OS level changed while disconnected, so +/- must wait for the fresh
+		// live read again instead of adjusting from the stale persisted value.
+		volumeKnown.set(false);
 		void api
 			.call<{ volume: number | null; available: boolean }>('system.getVolume')
 			.then(status => {
