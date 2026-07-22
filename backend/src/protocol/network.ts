@@ -519,6 +519,10 @@ export class Network {
 			// Skip if already connected (autoDial in v2 is unreliable; we dial actively
 			// for mDNS/bootstrap discoveries to ensure local peers form a mesh quickly).
 			if (peerID === this.node!.peerId.toString()) return;
+			// A peer we deliberately left (leave-network) must not be re-tagged or
+			// re-dialed by discovery (mDNS/identify/PX) — that would beat the disconnect.
+			// Suppression lifts on a legitimate inbound reconnect or on network rejoin.
+			if (this.isRedialSuppressed(peerID)) return;
 			// Stamp `keep-alive-fleet` on every discovered peer, regardless of how they
 			// surfaced (mDNS, bootstrap, autonat, identify, peer-announce). libp2p
 			// ReconnectQueue only acts on peers with a tag whose key starts with
