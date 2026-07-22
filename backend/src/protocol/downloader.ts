@@ -395,6 +395,13 @@ export class Downloader {
 					try {
 						manifest = await client.requestManifest(this.lishID);
 					} catch (error: any) {
+						// Over-limit chunkSize is terminal: every honest peer serves the same
+						// manifest, so retrying peers forever would leave the download stuck in
+						// awaiting-manifest with no user-visible error.
+						if (error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
+							this.setError(error.code, error.detail);
+							return;
+						}
 						console.warn(`[DL] Manifest request failed: ${error.message?.slice(0, 120) ?? error}`);
 					}
 					if (manifest && manifest.files && manifest.files.length > 0) {
@@ -571,6 +578,13 @@ export class Downloader {
 				try {
 					manifest = await probeClient.requestManifest(this.lishID);
 				} catch (error: any) {
+					// Terminal: the LISH's chunkSize exceeds the local limit — identical from
+					// every honest peer, so keep probing would loop forever without surfacing it.
+					if (error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
+						await probeClient.close();
+						this.setError(error.code, error.detail);
+						return;
+					}
 					console.debug(`[DL] probe ${peerID.slice(0, 12)}: manifest error ${error.code ?? error.message?.slice(0, 60) ?? error}`);
 					this.peerManager.remove(peerID, 'drop');
 				}
