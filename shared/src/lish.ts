@@ -22,7 +22,9 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 	if (!lish || typeof lish !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'manifest is not an object');
 	if (typeof lish.chunkSize !== 'number' || !Number.isFinite(lish.chunkSize) || lish.chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(lish.chunkSize));
 	if (lish.chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${formatBytes(lish.chunkSize)} > ${formatBytes(maxChunkSize)}`);
-	if (lish.files) {
+	// Presence check, not truthiness: `files: null` (or any other falsy non-array) is a
+	// malformed manifest, only a genuinely absent field means metadata-only.
+	if (lish.files !== undefined) {
 		if (!Array.isArray(lish.files)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'files is not an array');
 		for (const file of lish.files) {
 			if (!file || typeof file !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'file entry is not an object');
@@ -30,6 +32,32 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 			if (!Array.isArray(file.checksums) || file.checksums.length !== expected) {
 				const got = Array.isArray(file.checksums) ? file.checksums.length : 'invalid';
 				throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `${file.path}: expected ${expected} checksums for size ${file.size} / chunkSize ${lish.chunkSize}, got ${got}`);
+			}
+		}
+		// A checksum names exact content, so every slot sharing it must expect the same byte
+		// length — otherwise one verified payload cannot satisfy all its slots and the
+		// duplicate-slot write path would write a full chunk past a shorter file tail. Only a
+		// file's short last chunk can differ from chunkSize, so tracking those keeps this
+		// O(#files) in memory.
+		const shortLast = new Map<string, number>();
+		for (const file of lish.files) {
+			const rem = file.size % lish.chunkSize;
+			if (file.size > 0 && rem !== 0) {
+				const cs = file.checksums[file.checksums.length - 1]!;
+				const prev = shortLast.get(cs);
+				if (prev !== undefined && prev !== rem) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `${file.path}: duplicate checksum with conflicting chunk lengths (${prev} vs ${rem})`);
+				shortLast.set(cs, rem);
+			}
+		}
+		if (shortLast.size > 0) {
+			for (const file of lish.files) {
+				const rem = file.size % lish.chunkSize;
+				const shortLastIdx = file.size > 0 && rem !== 0 ? file.checksums.length - 1 : -1;
+				for (let i = 0; i < file.checksums.length; i++) {
+					if (i === shortLastIdx) continue; // consistency of short last chunks verified above
+					const shortLen = shortLast.get(file.checksums[i]!);
+					if (shortLen !== undefined) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `${file.path}: duplicate checksum with conflicting chunk lengths (${shortLen} vs ${lish.chunkSize})`);
+				}
 			}
 		}
 	}

@@ -40,4 +40,30 @@ describe('validateLISHStructure', () => {
 	it('rejects a non-object manifest', () => expect(() => validateLISHStructure(42 as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
 	it('rejects files that is not an array', () => expect(() => validateLISHStructure({ ...makeLish(), files: 5 } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
 	it('rejects a null file entry', () => expect(() => validateLISHStructure({ ...makeLish(), files: [null] } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	// Presence vs truthiness: falsy non-array `files` is malformed, only absence means metadata-only.
+	it('rejects files: null', () => expect(() => validateLISHStructure({ ...makeLish(), files: null } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	it('rejects files: false', () => expect(() => validateLISHStructure({ ...makeLish(), files: false } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+
+	// A checksum shared by slots with different expected lengths is unsatisfiable — one
+	// payload cannot be both full-length and shorter; the duplicate-slot write path would
+	// write past the shorter file tail.
+	it('rejects a checksum shared by a full chunk and a shorter last chunk', () => {
+		const lish = makeLish({ chunkSize: 1024, files: [{ path: 'full.bin', size: 1024, checksums: ['dup'] }, { path: 'short.bin', size: 1, checksums: ['dup'] }] });
+		expect(() => validateLISHStructure(lish, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST);
+	});
+	it('rejects a checksum shared by two last chunks of different lengths', () => {
+		const lish = makeLish({ chunkSize: 1024, files: [{ path: 'a.bin', size: 1, checksums: ['dup'] }, { path: 'b.bin', size: 2, checksums: ['dup'] }] });
+		expect(() => validateLISHStructure(lish, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST);
+	});
+	it('accepts duplicate checksums whose slots all expect the same length', () => {
+		const lish = makeLish({
+			chunkSize: 1024,
+			files: [
+				{ path: 'a.bin', size: 1500, checksums: ['f', 's'] }, // full + short last
+				{ path: 'copy.bin', size: 1500, checksums: ['f', 's'] }, // identical file — same lengths
+				{ path: 'rep.bin', size: 2048, checksums: ['x', 'x'] }, // repeated full block within one file
+			],
+		});
+		expect(() => validateLISHStructure(lish, MAX)).not.toThrow();
+	});
 });
