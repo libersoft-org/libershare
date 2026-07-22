@@ -993,7 +993,14 @@ export class Network {
 				// the relay. Take the last /p2p component, never the first.
 				const p2pComponents = ma.getComponents().filter(c => c.code === 421);
 				const peerID = (p2pComponents.length > 0 ? p2pComponents[p2pComponents.length - 1]!.value : null) ?? null;
-				if (peerID && origin === 'configured') this.configuredBootstrapPeerIDs.add(peerID);
+				if (peerID && origin === 'configured') {
+					this.configuredBootstrapPeerIDs.add(peerID);
+					// A re-configured bootstrap peer means its network was (re-)joined — it
+					// is no longer "left", so lift any redial suppression left by a prior
+					// leaveNetwork, otherwise maintenance would skip it forever if this one
+					// explicit dial fails or the connection drops before the next tick.
+					this.redialSuppressed.delete(peerID);
+				}
 				const alreadyKnown = !!peerID && this.bootstrapPeerIDs.has(peerID);
 				if (peerID && !alreadyKnown) {
 					this.bootstrapPeerIDs.add(peerID);

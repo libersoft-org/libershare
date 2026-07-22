@@ -142,3 +142,38 @@ describe('Network.runZeroConnectionRecovery — leave-peer suppression', () => {
 		expect(dialed).toEqual([multiaddr(ma).toString()]);
 	});
 });
+
+/**
+ * Re-configuring a bootstrap peer (network re-join) must lift any redial
+ * suppression left by a prior leaveNetwork — otherwise maintenance skips it
+ * forever if the single explicit join-dial fails or drops before the next tick.
+ */
+describe('Network.addBootstrapPeers — rejoin clears suppression', () => {
+	function bareNetwork(suppressed: string[]) {
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).redialSuppressed = new Set<string>(suppressed);
+		(network as any).configuredBootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapPeerIDs = new Set<string>();
+		(network as any).bootstrapMultiaddrs = [];
+		(network as any).bootstrapTracker = { markPending() {}, recordOutcome() {} };
+		(network as any).node = {
+			peerId: { toString: () => 'selfID' },
+			getConnections: () => [],
+			async dial(): Promise<void> {},
+			peerStore: { async merge(): Promise<void> {} },
+		};
+		return network;
+	}
+
+	it('lifts suppression for a re-configured bootstrap peer', async () => {
+		const network = bareNetwork([PEER_ID]);
+		await (network as any).addBootstrapPeers([`/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`], 'net-a', 'configured');
+		expect((network as any).redialSuppressed.has(PEER_ID)).toBe(false);
+	});
+
+	it('does not lift suppression for a discovered (non-configured) re-add', async () => {
+		const network = bareNetwork([PEER_ID]);
+		await (network as any).addBootstrapPeers([`/ip4/192.0.2.1/tcp/9090/p2p/${PEER_ID}`], 'net-a', 'discovered');
+		expect((network as any).redialSuppressed.has(PEER_ID)).toBe(true);
+	});
+});
