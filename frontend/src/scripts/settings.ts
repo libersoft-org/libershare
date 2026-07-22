@@ -110,18 +110,22 @@ export async function loadSettings(): Promise<void> {
 		// the OS level changed while disconnected, so +/- must wait for the fresh
 		// live read again instead of adjusting from the stale persisted value.
 		volumeKnown.set(false);
+		const volumeReadGen = volumeGeneration;
 		void api
 			.call<{ volume: number | null; available: boolean }>('system.getVolume')
 			.then(status => {
 				volumeAvailable.set(status.available);
-				if (status.available && status.volume !== null) volume.set(status.volume);
+				// Discard a stale level if a newer OS event / local edit already moved the
+				// store while this read was in flight (its generation would have advanced).
+				if (volumeGeneration === volumeReadGen && status.available && status.volume !== null) volume.set(status.volume);
+				// Open the +/- gate only on a successful read — we now know the live level.
+				// On rejection the gate stays closed so a key press cannot adjust from the
+				// stale persisted value before the next read settles.
+				volumeKnown.set(true);
 			})
 			.catch(() => {
-				// Leave the persisted value on error; availability stays as-is.
-			})
-			.finally(() => {
-				// First live fetch settled — the widget may now render the real state.
-				volumeKnown.set(true);
+				// Leave the persisted value and keep the gate closed; a newer event or the
+				// next reconnect's read will open it once a live level is actually known.
 			});
 		// Keep the UI in sync when the volume changes on the OS side.
 		subscribeVolumeChanges();
@@ -358,8 +362,15 @@ const LOCAL_EDIT_GUARD_MS = 1000;
 let deferredVolume: number | null = null;
 let deferredVolumeTimer: ReturnType<typeof setTimeout> | undefined;
 
+// Bumped whenever an authoritative source (an OS volumeChanged event or a local
+// edit) moves the volume store. A fire-and-forget startup system.getVolume read
+// captures this counter and discards its (possibly stale) level if a newer event
+// landed while it was in flight.
+let volumeGeneration = 0;
+
 function syncVolumeToBackend(value: number): void {
 	lastLocalVolumeChange = Date.now();
+	volumeGeneration++;
 	// A newer local edit supersedes any OS-side level captured before it — the
 	// backend write that follows will leave the mixer on the local value.
 	deferredVolume = null;
@@ -408,6 +419,10 @@ function subscribeVolumeChanges(): void {
 			// showing its local value forever (the backend suppresses the echo).
 			volumeAvailable.set(data.available);
 			if (!data.available || data.volume === null) return;
+			// Authoritative OS level: supersede any in-flight startup getVolume read and
+			// open the +/- gate — we now know the live level even mid-startup.
+			volumeGeneration++;
+			volumeKnown.set(true);
 			const remaining = LOCAL_EDIT_GUARD_MS - (Date.now() - lastLocalVolumeChange);
 			if (remaining <= 0) {
 				// A newer event supersedes any still-pending deferred level — drop it,
