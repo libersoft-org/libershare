@@ -222,6 +222,65 @@ describe('ChunkDownloader peerLoop — partial seeder behavior', () => {
 		expect(ds.downloadedChunks.has(slowChunkID)).toBe(true);
 	}, 15000);
 
+	it('rejects a wrong-length chunk before hashing and completes from a healthy peer', async () => {
+		// The bad peer serves a truncated payload for the only chunk. The length check
+		// (not the hash) must reject it, the chunk is requeued and the healthy peer
+		// finishes the download.
+		const { missing, data } = makeChunks(1);
+		const onlyID = missing[0]!.chunkID;
+		const truncated = data.get(onlyID)!.subarray(0, CHUNK_SIZE / 2);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const bad = new ScriptedClient(new Map<ChunkID, Reply>([[onlyID, truncated]]));
+		const good = new ScriptedClient(new Map<ChunkID, Reply>([[onlyID, data.get(onlyID)!]]), 100);
+		const cd = makeDownloader(ds, pm, 1);
+		pm.tryAdd('peer-bad-length0', bad as never, 'DIRECT');
+		pm.tryAdd('peer-good-00000', good as never, 'DIRECT');
+
+		const logs: string[] = [];
+		const origLog = console.log;
+		console.log = (...args: unknown[]) => logs.push(args.join(' '));
+		try {
+			await cd.run();
+		} finally {
+			console.log = origLog;
+		}
+
+		expect(ds.downloadedChunks.has(onlyID)).toBe(true);
+		expect(logs.some(l => l.includes('Rejected chunk') && l.includes('wrong length'))).toBe(true);
+	}, 15000);
+
+	it('bans a peer that keeps serving wrong-length chunks', async () => {
+		// Every reply from the bad peer is oversized. After MAX_CORRUPT_CHUNKS
+		// rejections the peer must be banned instead of being asked forever.
+		const { missing, data } = makeChunks(4);
+		const replies = new Map<ChunkID, Reply>();
+		for (const c of missing) {
+			const oversized = new Uint8Array(CHUNK_SIZE + 1);
+			oversized.set(data.get(c.chunkID)!);
+			replies.set(c.chunkID, oversized);
+		}
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const bad = new ScriptedClient(replies);
+		const cd = makeDownloader(ds, pm, 4);
+		pm.tryAdd('peer-oversize00', bad as never, 'DIRECT');
+
+		const logs: string[] = [];
+		const origLog = console.log;
+		console.log = (...args: unknown[]) => logs.push(args.join(' '));
+		try {
+			await cd.run();
+		} finally {
+			console.log = origLog;
+		}
+
+		expect(ds.downloadedChunks.size).toBe(0);
+		expect(logs.some(l => l.includes('banned') && l.includes('bad chunks'))).toBe(true);
+		// Banned after 3 rejected chunks — never probed the 4th.
+		expect(bad.requests.length).toBe(3);
+	}, 15000);
+
 	it('retries a cached miss when a connected peer announces the chunk in a new HAVE', async () => {
 		const { missing, data } = makeChunks(2);
 		const newlyAvailableID = missing[0]!.chunkID;
