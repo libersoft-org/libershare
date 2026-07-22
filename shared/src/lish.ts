@@ -20,7 +20,7 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 	// `lish` may come straight off the wire from an untrusted peer — reject malformed shapes with
 	// a coded error rather than letting a raw property access throw a native TypeError.
 	if (!lish || typeof lish !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'manifest is not an object');
-	if (typeof lish.chunkSize !== 'number' || !Number.isFinite(lish.chunkSize) || lish.chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(lish.chunkSize));
+	if (typeof lish.chunkSize !== 'number' || !Number.isInteger(lish.chunkSize) || lish.chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(lish.chunkSize));
 	if (lish.chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${formatBytes(lish.chunkSize)} > ${formatBytes(maxChunkSize)}`);
 	// Presence check, not truthiness: `files: null` (or any other falsy non-array) is a
 	// malformed manifest, only a genuinely absent field means metadata-only.
@@ -28,6 +28,10 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 		if (!Array.isArray(lish.files)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'files is not an array');
 		for (const file of lish.files) {
 			if (!file || typeof file !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'file entry is not an object');
+			// Explicit size validation — the checksum-count equation alone lets adversarial
+			// sizes through (e.g. size -5 with 0 checksums: ceil(-5/cs) is -0 and 0 !== -0 is
+			// false) and a float size makes every chunk "wrong length", banning honest peers.
+			if (typeof file.size !== 'number' || !Number.isInteger(file.size) || file.size < 0) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `${file.path}: invalid size ${String(file.size)}`);
 			const expected = file.size === 0 ? 0 : Math.ceil(file.size / lish.chunkSize);
 			if (!Array.isArray(file.checksums) || file.checksums.length !== expected) {
 				const got = Array.isArray(file.checksums) ? file.checksums.length : 'invalid';

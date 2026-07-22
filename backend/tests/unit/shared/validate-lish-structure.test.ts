@@ -40,6 +40,12 @@ describe('validateLISHStructure', () => {
 	it('rejects a non-object manifest', () => expect(() => validateLISHStructure(42 as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
 	it('rejects files that is not an array', () => expect(() => validateLISHStructure({ ...makeLish(), files: 5 } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
 	it('rejects a null file entry', () => expect(() => validateLISHStructure({ ...makeLish(), files: [null] } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	// Explicit size/chunkSize validation — the checksum-count equation alone lets these through.
+	it('rejects a negative file size (the ceil(-0) trick)', () => expect(() => validateLISHStructure(makeLish({ chunkSize: 1024, files: [{ path: 'a.bin', size: -5, checksums: [] }] }), MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	it('rejects a string file size', () => expect(() => validateLISHStructure({ ...makeLish({ chunkSize: 1024 }), files: [{ path: 'a.bin', size: '1024', checksums: ['h1'] }] } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	it('rejects a float file size', () => expect(() => validateLISHStructure(makeLish({ chunkSize: 1024, files: [{ path: 'a.bin', size: 1023.5, checksums: ['h1'] }] }), MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
+	it('rejects a float chunkSize', () => expect(() => validateLISHStructure(makeLish({ chunkSize: 1024.5 }), MAX)).toThrow(ErrorCodes.LISH_INVALID_CHUNK_SIZE));
+
 	// Presence vs truthiness: falsy non-array `files` is malformed, only absence means metadata-only.
 	it('rejects files: null', () => expect(() => validateLISHStructure({ ...makeLish(), files: null } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
 	it('rejects files: false', () => expect(() => validateLISHStructure({ ...makeLish(), files: false } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
