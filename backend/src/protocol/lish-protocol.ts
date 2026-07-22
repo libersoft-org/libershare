@@ -183,7 +183,16 @@ export class LISHClient {
 		if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
 		// A manifest from the network is untrusted input — validate chunk-size bounds and
 		// manifest consistency before it can reach any caller (DB persist / import / probe).
-		validateLISHStructure(response.manifest, maxChunkSize);
+		try {
+			validateLISHStructure(response.manifest, maxChunkSize);
+		} catch (e) {
+			// A structurally malformed manifest is this peer's fault — surface it as a peer
+			// protocol error so fallback loops move on to the next peer. An over-limit
+			// chunkSize is a property of the LISH itself (every honest peer serves the same
+			// manifest), so it stays a terminal local error.
+			if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: ${e.message}`);
+			throw e;
+		}
 		return response.manifest;
 	}
 
