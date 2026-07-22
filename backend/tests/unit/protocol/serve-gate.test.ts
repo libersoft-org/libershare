@@ -35,10 +35,14 @@ describe('serveGateBlocks', () => {
  * deliberately left (still redial-suppressed) and except when we hold no lishnet.
  */
 describe('Network.canListSharesTo', () => {
-	function bareNetwork(suppressed: string[], topics: string[]) {
+	function bareNetwork(suppressed: string[], topics: string[], infra: string[] = [], subscribers: string[] = []) {
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
-		(network as any).pubsub = { getTopics: () => topics };
+		(network as any).pubsub = {
+			getTopics: () => topics,
+			getSubscribers: () => subscribers.map(p => ({ toString: () => p })),
+		};
+		(network as any).isBootstrapOrRelayPeer = (pid: string) => infra.includes(pid);
 		return network;
 	}
 
@@ -55,5 +59,17 @@ describe('Network.canListSharesTo', () => {
 	it('refuses when we hold no lishnet topic', () => {
 		const net = bareNetwork([], []);
 		expect((net as any).canListSharesTo('peer-a')).toBe(false);
+	});
+
+	it('refuses a kept infrastructure peer that no longer shares a joined topic', () => {
+		// A relay/bootstrap of a left network is kept connected but must not browse our
+		// shares unless it currently shares a joined topic.
+		const net = bareNetwork([], [lishTopic('net-a')], ['relay-x'], []);
+		expect((net as any).canListSharesTo('relay-x')).toBe(false);
+	});
+
+	it('allows an infrastructure peer that still shares a joined topic', () => {
+		const net = bareNetwork([], [lishTopic('net-a')], ['relay-x'], ['relay-x']);
+		expect((net as any).canListSharesTo('relay-x')).toBe(true);
 	});
 });
