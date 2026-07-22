@@ -1,4 +1,5 @@
 import { CodedError, ErrorCodes } from './errors.ts';
+import { formatBytes } from './utils.ts';
 export type LISHid = string;
 export type ChunkID = string;
 export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
@@ -20,7 +21,7 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 	// a coded error rather than letting a raw property access throw a native TypeError.
 	if (!lish || typeof lish !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'manifest is not an object');
 	if (typeof lish.chunkSize !== 'number' || !Number.isFinite(lish.chunkSize) || lish.chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(lish.chunkSize));
-	if (lish.chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${lish.chunkSize} > ${maxChunkSize}`);
+	if (lish.chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${formatBytes(lish.chunkSize)} > ${formatBytes(maxChunkSize)}`);
 	if (lish.files) {
 		if (!Array.isArray(lish.files)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'files is not an array');
 		for (const file of lish.files) {
