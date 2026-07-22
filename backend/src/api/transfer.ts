@@ -167,19 +167,23 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	// pre-leave state without waiting for an app restart. Only downloads still bound
 	// to the re-joined network and still suspended are resumed.
 	networks.onNetworkJoined = (networkID: string) => {
-		for (const lishID of networkSuspended) {
+		// Drop the suspension ONLY once the resume actually succeeds — a transient
+		// failure (busy verifying, still no joined lishnet) must be retried on the next
+		// join, otherwise the resume is lost forever. A retained (disabled) downloader
+		// is resumed only when the rejoined network is one it sources from; a suspended
+		// entry without a downloader (e.g. startup with no joined lishnet) is attempted
+		// directly (enableDownload rebinds it to the currently joined lishnets).
+		for (const lishID of [...networkSuspended]) {
 			const dl = activeDownloaders.get(lishID);
-			if (!dl) {
-				// Downloader was destroyed while suspended — drop the stale entry.
-				networkSuspended.delete(lishID);
-				continue;
-			}
-			if (!dl.getNetworkIDs?.().includes(networkID)) continue;
-			networkSuspended.delete(lishID);
-			console.log(`[Transfer] ${lishID.slice(0, 8)}: lishnet re-joined, resuming download`);
-			enableDownload({ lishID }).catch(err => {
-				console.error(`[Transfer] resume-on-rejoin ${lishID.slice(0, 8)} failed:`, err?.message ?? err);
-			});
+			if (dl && !dl.getNetworkIDs?.().includes(networkID)) continue;
+			enableDownload({ lishID })
+				.then(r => {
+					if (r.success) {
+						networkSuspended.delete(lishID);
+						console.log(`[Transfer] ${lishID.slice(0, 8)}: lishnet re-joined, download resumed`);
+					}
+				})
+				.catch(err => console.error(`[Transfer] resume-on-rejoin ${lishID.slice(0, 8)} failed:`, err?.message ?? err));
 		}
 	};
 
@@ -264,7 +268,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
-		networkSuspended.delete(p.lishID);
 		if (isBusy(p.lishID)) return { success: false };
 		if (pendingDownloads.has(p.lishID)) return { success: true };
 		dataServer.clearError(p.lishID);
