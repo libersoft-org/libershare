@@ -15,6 +15,8 @@ export interface LishSearchSession {
 	readonly results: LishSearchResult[];
 	readonly error: string;
 	readonly searchID: string | null;
+	/** `performance.now()` timestamp of the last `start()`, or null if never started. Drives the search progress bar. */
+	readonly startedAt: number | null;
 	start(): Promise<void>;
 	cancel(): Promise<void>;
 	clear(): void;
@@ -27,6 +29,7 @@ export function createLishSearch(): LishSearchSession {
 	let searchID = $state<string | null>(null);
 	let error = $state('');
 	let results = $state<LishSearchResult[]>([]);
+	let startedAt = $state<number | null>(null);
 
 	function handleUpdate(data: unknown): void {
 		const d = data as { searchID: string; lishs: LishSearchResult[] };
@@ -79,6 +82,7 @@ export function createLishSearch(): LishSearchSession {
 		searching = true;
 		error = '';
 		results = [];
+		startedAt = performance.now();
 		try {
 			const res = await api.search.startSearch(trimmed);
 			searchID = res.searchID;
@@ -130,6 +134,9 @@ export function createLishSearch(): LishSearchSession {
 		},
 		get searchID(): string | null {
 			return searchID;
+		},
+		get startedAt(): number | null {
+			return startedAt;
 		},
 		start,
 		cancel,

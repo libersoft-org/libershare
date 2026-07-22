@@ -193,6 +193,11 @@ export class Downloader {
 		return this.lastServingPeerCount;
 	}
 
+	/** True while the downloader is creating the directory layout and zero-filling files (pre-download). */
+	isAllocating(): boolean {
+		return this.state === 'preparing';
+	}
+
 	setProgressCallback(cb: ProgressCallback): void {
 		this.progressReporter.setCallback(cb);
 	}
@@ -805,6 +810,7 @@ export class Downloader {
 			const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;
 			const hp = ann.chunks === 'all' ? 100 : Math.round((((ann.chunks as any[])?.length ?? 0) / totalChunks) * 100);
 			this.peerManager.updateHavePercent(ann.peerID, hp);
+			this.chunkDownloader?.notifyPeerHave(ann.peerID, ann.chunks);
 			return;
 		}
 		if (!this.peerManager.hasCapacity()) {

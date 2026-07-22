@@ -16,7 +16,7 @@ type BroadcastFn = (event: string, data: any) => void;
 
 interface ActiveTransfer {
 	lishID: string;
-	type: 'downloading' | 'uploading' | 'upload-disabled' | 'upload-enabled' | 'download-enabled';
+	type: 'downloading' | 'allocating' | 'uploading' | 'upload-disabled' | 'upload-enabled' | 'download-enabled';
 	peers: number;
 	bytesPerSecond: number;
 }
@@ -457,12 +457,15 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	function getActiveTransfers(): ActiveTransfer[] {
 		const transfers: ActiveTransfer[] = [];
 		const enabled = getEnabledUploads();
-		// Active downloads. A downloader disabled by leaving its last lishnet stays
-		// in the map (retained for resume on rejoin) but is stopped — skip it so the
-		// LISH is not reported as still downloading after transfer.download:disabled.
+		// Active downloads — report the allocation phase distinctly so the UI can show
+		// "allocating" after a reconnect instead of falling back to idle (no peers yet).
+		// A downloader disabled by leaving its last lishnet stays in the map (retained
+		// for resume on rejoin) but is stopped — skip it so the LISH is not reported as
+		// still downloading after transfer.download:disabled.
 		for (const [lishID, dl] of activeDownloaders) {
 			if (dl.isDisabled?.()) continue;
-			transfers.push({ lishID, type: 'downloading', peers: dl.getPeerCount?.() ?? 0, bytesPerSecond: 0 });
+			const type = dl.isAllocating?.() ? 'allocating' : 'downloading';
+			transfers.push({ lishID, type, peers: dl.getPeerCount?.() ?? 0, bytesPerSecond: 0 });
 		}
 		// Active uploads
 		for (const [lishID, info] of getActiveUploads()) {

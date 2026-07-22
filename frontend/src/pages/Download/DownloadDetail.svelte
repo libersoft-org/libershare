@@ -5,7 +5,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
-	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, computeEnabledMode } from '../../scripts/downloads.ts';
+	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, type PeerDetail, type DownloadFileData, computeEnabledMode } from '../../scripts/downloads.ts';
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
 	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
@@ -24,6 +24,7 @@
 	import DownloadFile from './DownloadFile.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import DownloadDetailDelete from './DownloadDetailDelete.svelte';
+	import DownloadDetailPeer from './DownloadDetailPeer.svelte';
 	import DownloadLISHExport from './DownloadLISHExport.svelte';
 	import DownloadDetailMove from './DownloadDetailMove.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
@@ -61,7 +62,16 @@
 	let selectedPeerIndex = $state(0);
 	let peerElements: HTMLElement[] = $state([]);
 	let itemElements: HTMLElement[] = $state([]);
-	let infoElement: HTMLElement | null = $state(null);
+	let containerElement: HTMLElement | null = $state(null);
+	let selectedInfoIndex = $state(0);
+	let infoRowElements: HTMLElement[] = $state([]);
+	type InfoRowKind = 'text' | 'description' | 'progress' | 'status' | 'allowed';
+	interface InfoRow {
+		label: string;
+		kind: InfoRowKind;
+		value?: string;
+	}
+	let infoRows = $derived<InfoRow[]>(download ? [{ label: $t('downloads.id'), kind: 'text' as InfoRowKind, value: download.id }, { label: $t('common.name'), kind: 'text' as InfoRowKind, value: download.name }, ...(download.description ? [{ label: $t('common.description'), kind: 'description' as InfoRowKind, value: download.description }] : []), { label: $t('downloads.targetDirectory'), kind: 'text' as InfoRowKind, value: download.directory ?? '-' }, { label: $t('common.size'), kind: 'text' as InfoRowKind, value: download.downloadedSize ? `${download.downloadedSize} / ${download.size}` : download.size }, { label: $t('downloads.chunks'), kind: 'text' as InfoRowKind, value: `${download.totalChunks} (${formatSize(download.chunkSize)})` }, { label: $t('common.progress'), kind: 'progress' as InfoRowKind }, { label: $t('common.status'), kind: 'status' as InfoRowKind }, { label: $t('downloads.allowed'), kind: 'allowed' as InfoRowKind }, { label: $t('downloads.downloadingFrom'), kind: 'text' as InfoRowKind, value: String(download.downloadPeers) }, { label: $t('downloads.uploadingTo'), kind: 'text' as InfoRowKind, value: String(download.uploadPeers) }, { label: $t('downloads.downloadSpeed'), kind: 'text' as InfoRowKind, value: download.downloadSpeed }, { label: $t('downloads.uploadSpeed'), kind: 'text' as InfoRowKind, value: download.uploadSpeed }, { label: $t('downloads.downloaded'), kind: 'text' as InfoRowKind, value: formatSize(download.totalDownloadedBytes) }, { label: $t('downloads.uploaded'), kind: 'text' as InfoRowKind, value: formatSize(download.totalUploadedBytes) }] : []);
 	// Per-peer data for this LISH
 	let currentPeers = $derived([...($peerDetails.get(lishID) ?? [])].sort((a, b) => a.peerID.localeCompare(b.peerID)));
 	let peerSnapshotLoaded = $derived($peerSnapshotReceived.get(lishID) === true);
@@ -70,6 +80,8 @@
 	let isMoving = $derived(download?.status === 'moving');
 	let isAllocating = $derived(download?.status === 'allocating');
 	let isBusy = $derived(isVerifying || isMoving || isAllocating);
+	// While allocating, file rows show the allocation overlay; real download progress otherwise.
+	const fileDisplayProgress = (file: DownloadFileData): number => (isAllocating && file.allocProgress != null ? file.allocProgress : file.progress);
 	let isDownloading = $derived(download?.downloadEnabled ?? false);
 	let isUploading = $derived(download?.uploadEnabled ?? false);
 	let downloadPaused = $derived(!isDownloading);
@@ -94,6 +106,11 @@
 	let now = $state(Date.now());
 	let showDeleteDialog = $state(false);
 	let deleteError = $state('');
+	// Peer detail dialog state
+	let showPeerDialog = $state(false);
+	let selectedPeerID = $state('');
+	// Snapshot captured at open time — shown if the peer is pruned from the store while the dialog is open.
+	let selectedPeerSnapshot = $state<PeerDetail | null>(null);
 	// Export state
 	let showExport = $state(false);
 	// Move state
@@ -165,8 +182,59 @@
 		scrollToSelected();
 	}
 
-	function scrollToInfo(): void {
-		if (infoElement) infoElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	// Mouse counterpart of the peer-list keyboard flow: hover selects, click opens the dialog.
+	function handlePeerHover(index: number): void {
+		if (!isMouseActive()) return;
+		activateArea(peerListAreaID);
+		selectedPeerIndex = index;
+	}
+
+	function handlePeerClick(index: number): void {
+		activateArea(peerListAreaID);
+		selectedPeerIndex = index;
+		openPeerDialog();
+	}
+
+	function scrollToSelectedInfoRow(): void {
+		scrollToElement(infoRowElements, selectedInfoIndex);
+	}
+
+	// Scrolls the files/peers container into view — on mobile it sits below the info table.
+	function scrollToContainer(): void {
+		if (containerElement) containerElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
+
+	// The files/peers panel sits to the RIGHT of the info table on desktop, so
+	// left/right arrows switch between the two panels from any row. Enters the
+	// active tab's table directly; falls back to the tab bar when it's empty.
+	function activateRightPanel(): void {
+		if (activeTab === 'files' && download && download.files.length > 0) {
+			activateArea(listAreaID);
+			scrollToSelected();
+			return;
+		}
+		if (activeTab === 'peers' && currentPeers.length > 0) {
+			activateArea(peerListAreaID);
+			return;
+		}
+		activateArea(tabAreaID);
+	}
+
+	function activateInfoPanel(): void {
+		activateArea(infoAreaID);
+		scrollToSelectedInfoRow();
+	}
+
+	function handleInfoRowHover(index: number): void {
+		if (!isMouseActive()) return;
+		activateArea(infoAreaID);
+		selectedInfoIndex = index;
+	}
+
+	function handleInfoRowClick(index: number): void {
+		activateArea(infoAreaID);
+		selectedInfoIndex = index;
+		scrollToSelectedInfoRow();
 	}
 
 	function handleBack(): void {
@@ -243,14 +311,30 @@
 		activateArea(toolbarAreaID);
 	}
 
+	function openPeerDialog(): void {
+		// Capture the peerID VALUE (not the index): sorting/pruning can reorder currentPeers,
+		// so the index is not stable while the dialog is open.
+		const peer = currentPeers[selectedPeerIndex];
+		if (!peer) return;
+		selectedPeerID = peer.peerID;
+		selectedPeerSnapshot = peer;
+		showPeerDialog = true;
+	}
+
+	function handlePeerDialogBack(): void {
+		showPeerDialog = false;
+		selectedPeerSnapshot = null;
+		activateArea(peerListAreaID);
+	}
+
 	const toolbarHandlers = {
 		up(): boolean {
 			return false;
 		},
 		down(): boolean {
 			if (download) {
-				activateArea(infoAreaID);
-				scrollToInfo();
+				selectedInfoIndex = 0;
+				activateInfoPanel();
 				return true;
 			}
 			return false;
@@ -282,22 +366,54 @@
 
 	const infoHandlers = {
 		up(): boolean {
+			if (selectedInfoIndex > 0) {
+				selectedInfoIndex--;
+				scrollToSelectedInfoRow();
+				return true;
+			}
 			activateArea(toolbarAreaID);
 			return true;
 		},
 		down(): boolean {
+			if (selectedInfoIndex < infoRows.length - 1) {
+				selectedInfoIndex++;
+				scrollToSelectedInfoRow();
+				return true;
+			}
 			activateArea(tabAreaID);
+			scrollToContainer();
 			return true;
 		},
 		left(): boolean {
 			return false;
 		},
 		right(): boolean {
-			return false;
+			activateRightPanel();
+			return true;
 		},
 		confirmDown(): void {},
 		confirmUp(): void {},
 		confirmCancel(): void {},
+		pageUp(): void {
+			if (infoRows.length === 0) return;
+			selectedInfoIndex = Math.max(0, selectedInfoIndex - 10);
+			scrollToSelectedInfoRow();
+		},
+		pageDown(): void {
+			if (infoRows.length === 0) return;
+			selectedInfoIndex = Math.min(infoRows.length - 1, selectedInfoIndex + 10);
+			scrollToSelectedInfoRow();
+		},
+		home(): void {
+			if (infoRows.length === 0) return;
+			selectedInfoIndex = 0;
+			scrollToSelectedInfoRow();
+		},
+		end(): void {
+			if (infoRows.length === 0) return;
+			selectedInfoIndex = infoRows.length - 1;
+			scrollToSelectedInfoRow();
+		},
 		back(): void {
 			handleBack();
 		},
@@ -322,7 +438,8 @@
 			return false;
 		},
 		left(): boolean {
-			return false;
+			activateInfoPanel();
+			return true;
 		},
 		right(): boolean {
 			return false;
@@ -359,6 +476,12 @@
 
 	const tabHandlers = {
 		up(): boolean {
+			if (infoRows.length > 0) {
+				selectedInfoIndex = infoRows.length - 1;
+				activateArea(infoAreaID);
+				scrollToSelectedInfoRow();
+				return true;
+			}
 			activateArea(toolbarAreaID);
 			return true;
 		},
@@ -380,7 +503,8 @@
 				activeTab = 'files';
 				return true;
 			}
-			return false;
+			activateInfoPanel();
+			return true;
 		},
 		right(): boolean {
 			if (selectedTabIndex < 1) {
@@ -419,13 +543,16 @@
 			return false;
 		},
 		left(): boolean {
-			return false;
+			activateInfoPanel();
+			return true;
 		},
 		right(): boolean {
 			return false;
 		},
 		confirmDown(): void {},
-		confirmUp(): void {},
+		confirmUp(): void {
+			openPeerDialog();
+		},
 		confirmCancel(): void {},
 		pageUp(): void {
 			if (currentPeers.length === 0) return;
@@ -505,11 +632,22 @@
 		border-radius: 2vh;
 		min-width: 35vh;
 		max-width: 50vh;
-		overflow: hidden;
+		overflow-y: auto;
 	}
 
 	.info.selected {
 		border-color: var(--primary-foreground);
+	}
+
+	/* Round the first/last row background so a selected row follows the panel's rounded corners. */
+	.info :global(.row:first-child) {
+		border-top-left-radius: 1.6vh;
+		border-top-right-radius: 1.6vh;
+	}
+
+	.info :global(.row:last-child) {
+		border-bottom-left-radius: 1.6vh;
+		border-bottom-right-radius: 1.6vh;
 	}
 
 	.info .progress-value {
@@ -653,12 +791,14 @@
 	@media (max-width: 1199px) {
 		.content {
 			flex-direction: column;
+			overflow-y: auto;
 		}
 
 		.info {
 			max-width: none;
 			min-width: auto;
 			flex-shrink: 0;
+			overflow-y: visible;
 		}
 
 		.container {
@@ -697,70 +837,29 @@
 		{/if}
 		{#if download}
 			<div class="content">
-				<div class="info" class:selected={infoActive} bind:this={infoElement}>
+				<div class="info" class:selected={infoActive}>
 					<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
-						<TableRow>
-							<Cell>{$t('downloads.id')}:</Cell>
-							<Cell align="right">{download.id}</Cell>
-						</TableRow>
-						<TableRow>
-							<Cell>{$t('common.name')}:</Cell>
-							<Cell align="right">{download.name}</Cell>
-						</TableRow>
-						{#if download.description}
-							<TableRow>
-								<Cell>{$t('common.description')}:</Cell>
-								<Cell align="right" wrap><span class="description">{download.description}</span></Cell>
+						{#each infoRows as row, index (row.label)}
+							{@const rowSelected = infoActive && selectedInfoIndex === index}
+							<TableRow bind:el={infoRowElements[index]} selected={rowSelected} onclick={() => handleInfoRowClick(index)} onmouseenter={() => handleInfoRowHover(index)}>
+								<Cell>{row.label}:</Cell>
+								{#if row.kind === 'description'}
+									<Cell align="right" wrap><span class="description">{row.value}</span></Cell>
+								{:else if row.kind === 'progress'}
+									<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating'} /></span></Cell>
+								{:else if row.kind === 'status'}
+									<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} status={download.status} /></Cell>
+								{:else if row.kind === 'allowed'}
+									<Cell align="right"><AllowedBadge mode={enabledMode} size="3vh" downloadColorVariable={rowSelected ? '--primary-background' : '--mode-download-fg'} uploadColorVariable={rowSelected ? '--primary-background' : '--mode-upload-fg'} disabledColorVariable={rowSelected ? '--primary-background' : '--mode-disabled-fg'} /></Cell>
+								{:else}
+									<Cell align="right">{row.value}</Cell>
+								{/if}
 							</TableRow>
-						{/if}
-						<TableRow>
-							<Cell>{$t('downloads.targetDirectory')}:</Cell>
-							<Cell align="right">{download.directory ?? '-'}</Cell>
-						</TableRow>
-						<TableRow>
-							<Cell>{$t('common.size')}:</Cell>
-							<Cell align="right">{download.downloadedSize ? `${download.downloadedSize} / ${download.size}` : download.size}</Cell>
-						</TableRow>
-						<TableRow>
-							<Cell>{$t('common.progress')}:</Cell>
-							<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating'} /></span></Cell>
-						</TableRow>
-						<TableRow>
-							<Cell>{$t('common.status')}:</Cell>
-							<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} status={download.status} /></Cell>
-						</TableRow>
-						<TableRow>
-							<Cell>{$t('downloads.allowed')}:</Cell>
-							<Cell align="right"><AllowedBadge mode={enabledMode} size="3vh" /></Cell>
-						</TableRow>
-						<TableRow>
-							<Cell>{$t('downloads.downloadingFrom')}:</Cell>
-							<Cell align="right">{download.downloadPeers}</Cell>
-						</TableRow>
-						<TableRow>
-							<Cell>{$t('downloads.uploadingTo')}:</Cell>
-							<Cell align="right">{download.uploadPeers}</Cell>
-						</TableRow>
-						<TableRow>
-							<Cell>{$t('downloads.downloadSpeed')}:</Cell>
-							<Cell align="right">{download.downloadSpeed}</Cell>
-						</TableRow>
-						<TableRow>
-							<Cell>{$t('downloads.uploadSpeed')}:</Cell>
-							<Cell align="right">{download.uploadSpeed}</Cell>
-						</TableRow>
-						<TableRow>
-							<Cell>{$t('downloads.downloaded')}:</Cell>
-							<Cell align="right">{formatSize(download.totalDownloadedBytes)}</Cell>
-						</TableRow>
-						<TableRow>
-							<Cell>{$t('downloads.uploaded')}:</Cell>
-							<Cell align="right">{formatSize(download.totalUploadedBytes)}</Cell>
-						</TableRow>
+						{/each}
 					</Table>
 				</div>
 				<!-- Tab header + content -->
-				<div class="container">
+				<div class="container" bind:this={containerElement}>
 					<Tabs tabs={tabDefs} bind:activeID={activeTab} selectedIndex={selectedTabIndex} selectionActive={tabActive} compact onChange={handleTabChange} />
 					{#if activeTab === 'files'}
 						<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
@@ -772,7 +871,7 @@
 							<div class="items">
 								{#each download.files as file, index (file.id)}
 									<div onclick={() => handleFileClick(index)} onmouseenter={() => handleFileHover(index)} onkeydown={e => e.key === 'Enter' && handleFileClick(index)} role="row" tabindex="-1">
-										<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={file.progress} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && file.progress < 100} />
+										<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={fileDisplayProgress(file)} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && fileDisplayProgress(file) < 100} />
 									</div>
 								{/each}
 							</div>
@@ -798,7 +897,7 @@
 									{@const rowSelected = peerListActive && selectedPeerIndex === index}
 									{@const downloadColor = rowSelected ? '--primary-background' : '--mode-download-fg'}
 									{@const uploadColor = rowSelected ? '--primary-background' : '--mode-upload-fg'}
-									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale}>
+									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale} onclick={() => handlePeerClick(index)} onmouseenter={() => handlePeerHover(index)}>
 										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
 										<Cell><span class="peer-id">{peer.peerID}</span></Cell>
 										<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
@@ -839,5 +938,8 @@
 	</div>
 	{#if showDeleteDialog && download}
 		<DownloadDetailDelete lishID={download.id} lishName={download.name} {position} onResult={handleDeleteResult} onBack={handleDeleteCancel} />
+	{/if}
+	{#if showPeerDialog && download && selectedPeerSnapshot}
+		<DownloadDetailPeer lishID={download.id} peerID={selectedPeerID} initialPeer={selectedPeerSnapshot} {position} onBack={handlePeerDialogBack} />
 	{/if}
 {/if}

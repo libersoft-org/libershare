@@ -9,13 +9,15 @@ import { type BootstrapPeerOrigin } from '@shared';
 /**
  * Gossip-based peer-discovery bootstrap.
  *
- * Periodically each node broadcasts its reachable multiaddrs (and a subset of its
- * known peerStore) on every lishnet topic it is subscribed to. Receivers parse the
- * list and pass it through `addBootstrapPeers`, which dedupes against known peers
- * and calls `dial()`. This augments gossipsub PX (which only propagates on PRUNE)
- * and libp2p autodial (which is gated by peerStore) in topologies where bootstrap
- * hubs are few and NATed fleet members rely on relay reservations that expire
- * before libp2p would normally re-dial.
+ * Periodically each node broadcasts, per lishnet topic it is subscribed to, its
+ * reachable multiaddrs plus the transitive multiaddrs of the peers subscribed to
+ * THAT topic. Scoping the transitive list to a topic's subscribers keeps peers of
+ * one network from being advertised into another. Receivers parse the list and
+ * pass it through `addBootstrapPeers`, which dedupes against known peers and calls
+ * `dial()`. This augments gossipsub PX (which only propagates on PRUNE) and libp2p
+ * autodial (which is gated by peerStore) in topologies where bootstrap hubs are
+ * few and NATed fleet members rely on relay reservations that expire before libp2p
+ * would normally re-dial.
  */
 export interface PeerAnnounceMessage {
 	type: 'peer-announce';
@@ -47,6 +49,17 @@ const PEER_ANNOUNCE_MAX_ADDRS = 32;
 const PEER_ANNOUNCE_MAX_TOTAL_ADDRS = 128;
 /** Max addrs we take from a single known peer when including transitive list. */
 const PEER_ANNOUNCE_MAX_ADDRS_PER_PEER = 3;
+/**
+ * How long a peer stays an eligible transitive-announce target for a topic after
+ * we last saw it in that topic's subscriber list. gossipsub drops a peer from
+ * getSubscribers the moment it disconnects — but that is exactly when the peer
+ * needs its addrs re-advertised so others can re-dial it (NAT / relay reservations
+ * expire on drop). We keep it eligible (scoped to peers of its OWN topic, so no
+ * cross-network leak) until this TTL lapses. Sized to a few saturated announce
+ * cycles + relay-reservation churn; the real ceiling is peerStore eviction — once
+ * its addrs are gone we cannot advertise it regardless.
+ */
+const PEER_ANNOUNCE_MEMBER_TTL_MS = PEER_ANNOUNCE_INTERVAL_SATURATED_MS * 3;
 
 /** Dependencies for PeerAnnounceManager. */
 export interface PeerAnnounceManagerDeps {
@@ -72,6 +85,14 @@ export class PeerAnnounceManager {
 	private readonly deps: PeerAnnounceManagerDeps;
 	private timer: NodeJS.Timeout | null = null;
 	private stopped = false;
+	/**
+	 * Per-topic recently-seen subscribers (peerID → last-seen ms). Lets a
+	 * momentarily-disconnected same-network peer stay an eligible transitive-announce
+	 * target (see PEER_ANNOUNCE_MEMBER_TTL_MS) without ever admitting a peer of
+	 * another network — a peerID only enters a topic's map via that topic's own
+	 * getSubscribers, so the cross-network leak stays closed. Pruned each emit().
+	 */
+	private readonly topicMembers = new Map<string, Map<string, number>>();
 
 	constructor(deps: PeerAnnounceManagerDeps) {
 		this.deps = deps;
@@ -197,20 +218,19 @@ export class PeerAnnounceManager {
 		if (!node || !pubsub) return;
 		const allPeers = await node.peerStore.all();
 		if (allPeers.length < PEER_ANNOUNCE_MIN_PEER_STORE) return;
-		// Include our full known peerStore in addition to our own reachable multiaddrs.
-		// This turns peer-announce into a transitive gossip protocol: edge-of-mesh
-		// peers learn about the whole fleet in one hop instead of waiting for mesh
-		// GRAFT to surface them. Total payload bounded by PEER_ANNOUNCE_MAX_TOTAL_ADDRS.
-		const collected = new Set<string>();
+		const lishTopics = pubsub.getTopics().filter((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
+		if (lishTopics.length === 0) return;
 		const localCidrs = getLocalCidrs();
+		const myID = node.peerId.toString();
+		// Our own multiaddrs (shared across all topics — we are a member of every
+		// topic we are subscribed to, so advertising self everywhere is correct).
+		// Filter loopback (127.0.0.0/8) and non-local private addresses through
+		// shouldDenyDial — a remote peer receiving our /ip4/127.0.0.1 would otherwise
+		// TCP-loop to itself and hit identity-mismatch on every dial (validated on a
+		// test node 2026-05-24: the moment debug logging landed it captured 3×
+		// back-to-back loopback dials from peer-announce intake within 3s of startup).
+		const selfAddrs: string[] = [];
 		let skippedSelf = 0;
-		let skippedTransitive = 0;
-		// Our own multiaddrs first (priority). Filter loopback (127.0.0.0/8) and
-		// non-local private addresses through shouldDenyDial — a remote peer
-		// receiving our /ip4/127.0.0.1 would otherwise TCP-loop to itself and
-		// hit identity-mismatch on every dial (validated on a test node 2026-05-24:
-		// the moment debug logging landed it captured 3× back-to-back loopback
-		// dials from peer-announce intake within 3s of startup).
 		for (const ma of node.getMultiaddrs()) {
 			const s = ma.toString();
 			if (s.includes('/p2p-circuit')) continue;
@@ -218,44 +238,72 @@ export class PeerAnnounceManager {
 				skippedSelf++;
 				continue;
 			}
-			collected.add(s);
-			if (collected.size >= PEER_ANNOUNCE_MAX_ADDRS) break;
+			selfAddrs.push(s);
+			if (selfAddrs.length >= PEER_ANNOUNCE_MAX_ADDRS) break;
 		}
-		// Transitive peerStore addrs.
-		const myID = node.peerId.toString();
-		for (const peer of allPeers) {
-			if (collected.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
-			const pid = peer.id.toString();
-			if (pid === myID) continue;
-			let perPeer = 0;
-			for (const addr of peer.addresses) {
-				if (perPeer >= PEER_ANNOUNCE_MAX_ADDRS_PER_PEER) break;
-				if (collected.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
-				const base = addr.multiaddr.toString();
-				if (base.includes('/p2p-circuit')) continue;
-				if (shouldDenyDial(addr.multiaddr, localCidrs)) {
-					skippedTransitive++;
-					continue;
-				}
-				const full = base.includes('/p2p/') ? base : `${base}/p2p/${pid}`;
-				collected.add(full);
-				perPeer++;
-			}
-		}
-		if (skippedSelf > 0 || skippedTransitive > 0) {
-			trace(`[NET] peer-announce filter: skipped ${skippedSelf} self + ${skippedTransitive} transitive non-routable addrs`);
-		}
-		if (collected.size === 0) return;
-		const lishTopics = pubsub.getTopics().filter((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
-		if (lishTopics.length === 0) return;
-		const msg: PeerAnnounceMessage = { type: 'peer-announce', multiaddrs: Array.from(collected) };
-		trace(`[NET] peer-announce emit: ${collected.size} addrs (self + ${allPeers.length} known peers)`);
+		// Broadcast per topic. The transitive peerStore addrs are scoped to the
+		// recently-seen subscribers of THAT topic so peers of one network are never
+		// advertised into another. Membership is the union of this topic's
+		// getSubscribers over the last PEER_ANNOUNCE_MEMBER_TTL_MS (same source as the
+		// participant count badge), not just the live snapshot — a peer that just
+		// dropped is still re-advertised so others can re-dial it, while a peer of
+		// another network never enters this topic's set. Edge-of-mesh peers thus learn
+		// the rest of their OWN network in one hop, without cross-network leak.
+		const now = Date.now();
+		for (const t of this.topicMembers.keys()) if (!lishTopics.includes(t)) this.topicMembers.delete(t);
+		let skippedTransitive = 0;
 		for (const topic of lishTopics) {
+			const current = new Set<string>();
+			try {
+				for (const p of pubsub.getSubscribers(topic)) current.add(p.toString());
+			} catch {}
+			// Refresh recently-seen membership from the live snapshot, then prune stale.
+			let members = this.topicMembers.get(topic);
+			if (!members) {
+				members = new Map<string, number>();
+				this.topicMembers.set(topic, members);
+			}
+			for (const pid of current) members.set(pid, now);
+			for (const [pid, seen] of members) if (now - seen > PEER_ANNOUNCE_MEMBER_TTL_MS) members.delete(pid);
+			// No one currently subscribed → the broadcast would reach nobody, skip it.
+			if (current.size === 0) continue;
+			const collected = new Set<string>(selfAddrs);
+			let transitiveAdded = 0;
+			for (const peer of allPeers) {
+				if (collected.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
+				const pid = peer.id.toString();
+				if (pid === myID) continue;
+				if (!members.has(pid)) continue;
+				let perPeer = 0;
+				for (const addr of peer.addresses) {
+					if (perPeer >= PEER_ANNOUNCE_MAX_ADDRS_PER_PEER) break;
+					if (collected.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
+					const base = addr.multiaddr.toString();
+					if (base.includes('/p2p-circuit')) continue;
+					if (shouldDenyDial(addr.multiaddr, localCidrs)) {
+						skippedTransitive++;
+						continue;
+					}
+					const full = base.includes('/p2p/') ? base : `${base}/p2p/${pid}`;
+					if (!collected.has(full)) transitiveAdded++;
+					collected.add(full);
+					perPeer++;
+				}
+			}
+			// Broadcast even if only self made it in — subscribers with unusable
+			// (e.g. /p2p-circuit-only) addresses still need our self addrs to
+			// reconnect to us. Only skip the edge where nothing routable exists.
+			if (collected.size === 0) continue;
+			const msg: PeerAnnounceMessage = { type: 'peer-announce', multiaddrs: Array.from(collected) };
+			trace(`[NET] peer-announce emit topic=${topic.slice(0, 16)}: ${collected.size} addrs (self + ${transitiveAdded} scoped transitive)`);
 			try {
 				await this.deps.broadcast(topic, msg as unknown as Record<string, any>);
 			} catch (err: any) {
 				trace(`[NET] peer-announce publish failed topic=${topic}: ${err?.message ?? err}`);
 			}
+		}
+		if (skippedSelf > 0 || skippedTransitive > 0) {
+			trace(`[NET] peer-announce filter: skipped ${skippedSelf} self + ${skippedTransitive} transitive non-routable addrs`);
 		}
 	}
 }

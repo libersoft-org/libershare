@@ -153,12 +153,14 @@ export class Network {
 	 * Per-network → per-bootstrap-peer dial outcome status. Outer key is
 	 * networkID; inner key is the exact multiaddr string from the network
 	 * config. Populated by addBootstrapPeers() when called with a networkID
-	 * context (initial join + manual updates). Lets the UI surface which
-	 * SPECIFIC bootstrap entry is stale (identity-mismatch) or unreachable
-	 * (timeout), rather than flagging the whole network.
+	 * context. Lets the UI surface which SPECIFIC bootstrap entry is stale
+	 * (identity-mismatch) or unreachable (timeout), rather than flagging the
+	 * whole network.
 	 *
-	 * NOT populated for dynamic bootstrap additions from peer-announce gossip
-	 * (those have no single owning network and would dilute per-network stats).
+	 * Populated both for configured bootstrap entries (initial join + manual
+	 * updates) and for peer-announce gossip: the inbound handler passes the
+	 * networkID of the topic the announce arrived on, so discovered peers are
+	 * tracked under the network through which they were learned.
 	 */
 	private readonly bootstrapTracker = new BootstrapStatusTracker();
 
@@ -1002,8 +1004,9 @@ export class Network {
 	 *
 	 * When `networkID` is provided, dial outcomes are recorded into per-network
 	 * bootstrap status counters (used by the UI to surface stale-config warnings).
-	 * Pass `null` for dynamic additions that have no single owning network
-	 * (e.g. peer-announce gossip), in which case stats are skipped.
+	 * peer-announce gossip passes the networkID of the topic the announce arrived
+	 * on, so discovered peers are tracked per-network too. Pass `null` only for
+	 * additions with no owning network, in which case stats are skipped.
 	 */
 	async addBootstrapPeers(peers: string[], networkID: string | null = null, origin: BootstrapPeerOrigin = 'discovered'): Promise<void> {
 		if (!this.node) {
