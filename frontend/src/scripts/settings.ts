@@ -112,27 +112,10 @@ export async function loadSettings(): Promise<void> {
 		// arrives as an event rather than being missed (the watcher would otherwise
 		// remember it and suppress later identical polls, stranding this tab).
 		subscribeVolumeChanges();
-		const volumeReadGen = volumeGeneration;
 		// Fire-and-forget — a wedged mixer helper (backend read can take seconds) must not
 		// hold loadSettings() and the rest of app init; the widget shows the persisted
 		// value until the live fetch settles.
-		void api
-			.call<{ volume: number | null; available: boolean; known: boolean }>('system.getVolume')
-			.then(status => {
-				// A newer OS event / local edit moved the store while this read was in flight
-				// (its generation advanced) — its level AND availability are stale, drop both.
-				if (volumeGeneration !== volumeReadGen) return;
-				volumeAvailable.set(status.available);
-				if (status.available && status.volume !== null) volume.set(status.volume);
-				// Open the +/- gate only on a definitive live read (known). A transient
-				// fallback (known:false) returns the persisted value, not a real level, so the
-				// gate stays closed until a real read or an OS event provides the live level.
-				if (status.known) volumeKnown.set(true);
-			})
-			.catch(() => {
-				// Leave the persisted value and keep the gate closed; a newer event or the
-				// next reconnect's read will open it once a live level is actually known.
-			});
+		reconcileVolumeWithOS(volumeGeneration);
 
 		// Storage
 		storagePath.set(settings.storage.downloadPath);
@@ -372,6 +355,39 @@ let deferredVolumeTimer: ReturnType<typeof setTimeout> | undefined;
 // landed while it was in flight.
 let volumeGeneration = 0;
 
+/** Retry cadence for the startup live-volume read while it keeps hitting the transient fallback. */
+const VOLUME_RECONCILE_RETRY_MS = 5000;
+
+/**
+ * One-shot OS volume reconciliation with retry. A `known:false` answer is the
+ * transient fallback (helper timed out) — and because the backend watcher
+ * suppresses polls equal to its remembered state, NO volumeChanged event may ever
+ * follow once the helper recovers. Without a retry the gate would stay closed and
+ * the footer stuck on "—" indefinitely, so re-ask until a definitive read lands
+ * or a newer event/local edit (generation change, gate already open) supersedes.
+ */
+function reconcileVolumeWithOS(gen: number): void {
+	void api
+		.call<{ volume: number | null; available: boolean; known: boolean }>('system.getVolume')
+		.then(status => {
+			// A newer OS event / local edit moved the store while this read was in flight
+			// (its generation advanced) — its level AND availability are stale, drop both.
+			if (volumeGeneration !== gen) return;
+			volumeAvailable.set(status.available);
+			if (status.available && status.volume !== null) volume.set(status.volume);
+			// Open the +/- gate only on a definitive live read; retry the transient fallback.
+			if (status.known) volumeKnown.set(true);
+			else
+				setTimeout(() => {
+					if (volumeGeneration === gen && !get(volumeKnown)) reconcileVolumeWithOS(gen);
+				}, VOLUME_RECONCILE_RETRY_MS);
+		})
+		.catch(() => {
+			// Leave the persisted value and keep the gate closed; the next reconnect's
+			// loadSettings() starts a fresh reconciliation.
+		});
+}
+
 function syncVolumeToBackend(value: number): void {
 	lastLocalVolumeChange = Date.now();
 	volumeGeneration++;
@@ -417,10 +433,17 @@ function subscribeVolumeChanges(): void {
 	if (!volumeChangeSubscribed) {
 		volumeChangeSubscribed = true;
 		api.on('system:volumeChanged', (data: { volume: number | null; available: boolean }) => {
-			// Every event is authoritative OS state (a level move OR a device plug/unplug):
-			// supersede any in-flight startup getVolume read BEFORE the availability-only
-			// early return, or a stale read could roll availability back. The gate opens
-			// too — the live state is known even mid-startup.
+			// Indeterminate echo (a transient write failure broadcasts available:true with
+			// volume:null): it carries NO live level and only a fallback availability, so it
+			// must neither open the +/- gate nor invalidate an in-flight startup read.
+			if (data.available && data.volume === null) {
+				volumeAvailable.set(true);
+				return;
+			}
+			// A definitive event (real level, or a confirmed no-device) is authoritative OS
+			// state: supersede any in-flight startup getVolume read BEFORE the early return,
+			// or a stale read could roll availability back. The gate opens too — the live
+			// state is known even mid-startup.
 			volumeGeneration++;
 			volumeKnown.set(true);
 			// Availability (device plug/unplug) always applies; the level is held
