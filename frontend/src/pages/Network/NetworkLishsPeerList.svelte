@@ -41,7 +41,8 @@
 
 	let offManifestProgress: (() => void) | void;
 	onMount(() => {
-		api.subscribe('lishnets:manifestProgress');
+		// Best-effort: with the WS down the call rejects — swallow it, the event just stays unsubscribed.
+		api.subscribe('lishnets:manifestProgress').catch(() => {});
 		offManifestProgress = api.on('lishnets:manifestProgress', (d: ManifestProgressEvent) => {
 			if (d.lishID !== row.id) return;
 			const idx = row.peers.findIndex(p => p.peerID === d.peerID);
@@ -50,7 +51,7 @@
 	});
 	onDestroy(() => {
 		offManifestProgress?.();
-		api.unsubscribe('lishnets:manifestProgress');
+		api.unsubscribe('lishnets:manifestProgress').catch(() => {});
 	});
 
 	function networkName(networkID: string): string {

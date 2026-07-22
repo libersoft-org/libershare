@@ -170,14 +170,23 @@ export class LISHClient {
 
 	// Request full LISH manifest from peer. When `onProgress` is given it reports manifest
 	// transfer bytes: `total` comes from the length prefix (onLength), `received` counts bytes
-	// flowing off the stream. Emits are throttled to ~100ms and a final (total, total) is
-	// guaranteed on SUCCESS only — a failed transfer must not report 100%. `received`
-	// includes the varint prefix, hence Math.min(received, total).
+	// flowing off the stream. Emits are throttled to ~100ms and stay below 100% during the
+	// stream — the final (total, total) is emitted on SUCCESS only, so neither a failed
+	// transfer nor a counted-through error response can flash a full bar. A throwing
+	// callback never breaks the transfer or poisons the shared decoder.
 	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void): Promise<import('@shared').IStoredLISH> {
 		const request: LISHGetLishRequest = { type: 'getLish', lishID };
 		if (!sendLengthPrefixed(this.stream, codecEncode(request))) {
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `getLish ${lishID}: stream ${this.stream.status}`);
 		}
+		const safeEmit = (r: number, t: number): void => {
+			if (!onProgress) return;
+			try {
+				onProgress(r, t);
+			} catch {
+				// Progress is best-effort UI reporting — a callback bug must not abort the transfer.
+			}
+		};
 		let total = 0;
 		let received = 0;
 		let lastEmit = 0;
@@ -188,9 +197,11 @@ export class LISHClient {
 			if (!onProgress) return;
 			received += n;
 			const now = Date.now();
-			if (total > 0 && (now - lastEmit >= 100 || received >= total)) {
+			// `received < total` keeps streaming emits below 100% — a peer error message is
+			// byte-counted too and would otherwise flash a full bar right before failing.
+			if (total > 0 && received < total && now - lastEmit >= 100) {
 				lastEmit = now;
-				onProgress(Math.min(received, total), total);
+				safeEmit(received, total);
 			}
 		};
 		try {
@@ -200,7 +211,7 @@ export class LISHClient {
 			const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
 			if ('error' in response) throw new CodedError(response.error, lishID);
 			if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
-			if (onProgress && total > 0) onProgress(total, total);
+			if (total > 0) safeEmit(total, total);
 			return response.manifest;
 		} finally {
 			this.lengthSink = null;
