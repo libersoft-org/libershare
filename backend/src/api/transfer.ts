@@ -292,6 +292,16 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		persistDownloadEnabled?.(p.lishID, true);
 		const dl = activeDownloaders.get(p.lishID);
 		if (dl) {
+			// A download suspended by leaving its last lishnet is retained (disabled) for
+			// resume on rejoin. Enabling it before a bound lishnet is re-joined would make
+			// it broadcast WANTs / probe on a topic we already left — keep it suspended.
+			const boundIDs = dl.getOriginalNetworkIDs?.() ?? dl.getNetworkIDs?.() ?? [];
+			if (networkSuspended.has(p.lishID) && boundIDs.length > 0 && !boundIDs.some((id: string) => networks.isJoined(id))) {
+				// Drop the runtime enabled flag we just set; the DB flag (persisted above)
+				// stays true so a later rejoin of a bound lishnet resumes the download.
+				downloadEnabledLishs.delete(p.lishID);
+				return { success: false };
+			}
 			// If downloader is in error state, destroy it and create a fresh one
 			if (dl.getError()) {
 				console.debug(`[Transfer] ${p.lishID.slice(0, 8)}: destroying error-state downloader, will create fresh`);
