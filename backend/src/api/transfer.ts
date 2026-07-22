@@ -146,10 +146,15 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			// revive it after verification while no usable lishnet is joined. The
 			// DB flag stays untouched, so an app restart with the lishnet re-joined
 			// resumes the download.
+			// Only a download that was actually enabled (persisted) may be resumed on
+			// rejoin. A transient download from the `download` handler lives in
+			// activeDownloaders but never in downloadEnabledLishs — resuming it would
+			// wrongly turn it into a persisted enabled download.
+			const wasEnabled = downloadEnabledLishs.has(lishID);
 			downloadEnabledLishs.delete(lishID);
 			// Remember it as suspended-by-leave so onNetworkJoined can resume it if a
 			// bound lishnet is re-joined in-process (without waiting for a restart).
-			networkSuspended.add(lishID);
+			if (wasEnabled) networkSuspended.add(lishID);
 			// Cancel any pending error-recovery timer for this LISH — otherwise
 			// ErrorRecovery, holding the captured downloadWasEnabled=true, could
 			// re-enable the download once the IO condition clears even though the
