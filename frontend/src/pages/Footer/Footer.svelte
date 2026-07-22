@@ -12,10 +12,10 @@
 	import Clock from './FooterClock.svelte';
 	import { gamepadConnected } from '../../scripts/input/gamepad.ts';
 	import { ramInfo, storageInfo, cpuInfo } from '../../scripts/systemStats.ts';
-	import { formatSize } from '../../scripts/utils.ts';
+	import { formatSize, splitPeerID } from '../../scripts/utils.ts';
 	import { transferStats } from '../../scripts/downloads.ts';
 	import { relayStats } from '../../scripts/relayStats.ts';
-	import { networkSummary, meshStatus } from '../../scripts/networks.ts';
+	import { networkSummary, meshStatus, nodeInfo } from '../../scripts/networks.ts';
 
 	type Widget = {
 		id: FooterWidget;
@@ -32,6 +32,18 @@
 				return {
 					topLabel: $t('common.version'),
 					bottomLabel: productVersion,
+				};
+			},
+		},
+		{
+			id: 'peerId',
+			component: Item,
+			props(): Record<string, any> {
+				return {
+					topIcon: 'img/person.svg',
+					topIconAlt: $t('settings.footerWidgets.peerId'),
+					topLabel: splitPeerID($nodeInfo?.peerID).head,
+					bottomLabel: splitPeerID($nodeInfo?.peerID).tail,
 				};
 			},
 		},

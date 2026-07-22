@@ -8,6 +8,7 @@
 	import { type BootstrapStatus, type BootstrapPeerStatus, type LISHNetworkConfig } from '@shared';
 	import { productNetworkList } from '@shared';
 	import { api } from '../../scripts/api.ts';
+	import { shortenPeerID } from '../../scripts/utils.ts';
 	import { fetchPublicNetworks } from '../../scripts/lishNetwork.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -107,12 +108,6 @@
 		return [...new Set(g.entries.map(p => p.origin))];
 	}
 
-	function short(s: string | null | undefined, head: number = 14, tail: number = 6): string {
-		if (!s) return '—';
-		if (s.length <= head + tail + 2) return s;
-		return `${s.slice(0, head)}…${s.slice(-tail)}`;
-	}
-
 	function statusLabel(status: BootstrapPeerStatus['status']): string {
 		switch (status) {
 			case 'connected':
@@ -158,7 +153,7 @@
 
 	function openPeerDetail(group: PeerGroup): void {
 		selectedGroup = group;
-		peerSubPage.enter(short(group.peerID), () => void closePeerDetail());
+		peerSubPage.enter(shortenPeerID(group.peerID), () => void closePeerDetail());
 	}
 
 	async function closePeerDetail(): Promise<void> {
@@ -290,7 +285,7 @@
 								<Icon img={STATUS_ICONS[groupStatus(group)]} size="2vh" padding="0" colorVariable={STATUS_COLORS[groupStatus(group)]} alt={statusLabel(groupStatus(group))} />
 							</TableCell>
 							<TableCell>
-								<span class="peer-id" title={group.peerID ?? ''} data-testid="bootstrap-peer-{network.networkID}-{group.key}" data-status={groupStatus(group)} data-origin={groupOrigins(group).join(',')}>{short(group.peerID)}</span>
+								<span class="peer-id" title={group.peerID ?? ''} data-testid="bootstrap-peer-{network.networkID}-{group.key}" data-status={groupStatus(group)} data-origin={groupOrigins(group).join(',')}>{shortenPeerID(group.peerID)}</span>
 							</TableCell>
 							<TableCell>
 								<div class="addresses">

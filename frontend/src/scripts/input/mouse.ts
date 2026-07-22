@@ -29,7 +29,7 @@ export function isMouseActive(): boolean {
 class MouseManager {
 	private hideTimeout: ReturnType<typeof setTimeout> | null = null;
 	private mouseMoveHandler: ((e: MouseEvent) => void) | null = null;
-	private mouseDownHandler: (() => void) | null = null;
+	private mouseDownHandler: ((e: MouseEvent) => void) | null = null;
 	private clickHandler: ((e: MouseEvent) => void) | null = null;
 	private mouseOverHandler: ((e: MouseEvent) => void) | null = null;
 	private contextmenuHandler: ((e: MouseEvent) => void) | null = null;
@@ -39,11 +39,13 @@ class MouseManager {
 	private pendingHoverTarget: EventTarget | null = null;
 	private lastHoveredItem: NavItem | null = null;
 	private lastActivatedAreaID: string | null = null;
+	private lastClientX = -1;
+	private lastClientY = -1;
 
 	start(): void {
 		if (this.mouseMoveHandler) return;
-		this.mouseMoveHandler = () => this.handleMouseMove();
-		this.mouseDownHandler = () => this.handleMouseDown();
+		this.mouseMoveHandler = (e: MouseEvent) => this.handleMouseMove(e);
+		this.mouseDownHandler = (e: MouseEvent) => this.handleMouseDown(e);
 		this.clickHandler = (e: MouseEvent) => this.handleDelegatedClick(e);
 		this.mouseOverHandler = (e: MouseEvent) => this.handleDelegatedMouseOver(e);
 		this.contextmenuHandler = (e: MouseEvent) => {
@@ -113,13 +115,22 @@ class MouseManager {
 		if (callback) callback();
 	}
 
-	private handleMouseMove(): void {
+	private handleMouseMove(e: MouseEvent): void {
+		// Chromium re-fires mousemove when content scrolls under a stationary cursor
+		// (e.g. keyboard-driven scrollIntoView). Same coordinates = the user did not
+		// move the mouse, so it must not flip input back to mouse mode and let hover
+		// steal the keyboard selection.
+		if (e.clientX === this.lastClientX && e.clientY === this.lastClientY) return;
+		this.lastClientX = e.clientX;
+		this.lastClientY = e.clientY;
 		mouseActive = true;
 		cursorVisible.set(true);
 		this.scheduleHide();
 	}
 
-	private handleMouseDown(): void {
+	private handleMouseDown(e: MouseEvent): void {
+		this.lastClientX = e.clientX;
+		this.lastClientY = e.clientY;
 		mouseActive = true;
 		cursorVisible.set(true);
 		this.scheduleHide();

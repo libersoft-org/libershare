@@ -3,6 +3,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { type IdentityBackup } from '@shared';
 	import { api } from '../../scripts/api.ts';
+	import { refreshNodeInfo } from '../../scripts/networks.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	interface Props {
@@ -18,6 +19,7 @@
 		try {
 			await api.identity.applyImported(data.privateKey);
 			addNotification(tt('settings.identity.imported'), 'success');
+			await refreshNodeInfo();
 		} catch (e) {
 			addNotification(translateError(e), 'error');
 		}
