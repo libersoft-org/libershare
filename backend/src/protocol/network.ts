@@ -478,7 +478,14 @@ export class Network {
 						}
 					}
 					const connType = remotePeerID ? classifyConnectionFn(remotePeerID, isRelay, this.dcutrPeers) : 'DIRECT';
-					await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType, pid => this.sharesJoinedTopicWith(pid), pid => this.canListSharesTo(pid));
+					await handleLISHProtocol(
+						stream,
+						this.dataServer,
+						remotePeerID,
+						connType,
+						pid => this.sharesJoinedTopicWith(pid),
+						pid => this.canListSharesTo(pid)
+					);
 				} catch (err: any) {
 					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
 				}
@@ -577,9 +584,12 @@ export class Network {
 					});
 					console.debug('   Tagged as KEEP_ALIVE (bootstrap peer)');
 				}
-				// A peer that reconnects (inbound or otherwise) is legitimately back —
-				// lift any leave-network redial suppression so maintenance resumes for it.
-				this.clearRedialSuppressionForPeer(peerID);
+				// A mere reconnect does NOT lift leave-network suppression: a peer we left can
+				// dial us back (its own keep-alive/mDNS) without rejoining a shared topic, and
+				// clearing here would remove the only marker canListSharesTo uses to refuse it.
+				// Suppression lifts only on an explicit rejoin (clearRedialSuppressionForNetwork)
+				// or once the peer is verifiably back on a joined topic (genuine mesh reconnect).
+				if (this.sharesJoinedTopicWith(peerID)) this.clearRedialSuppressionForPeer(peerID);
 				this.schedulePeerCountCheck();
 			} catch (err: any) {
 				trace(`[NET] peer:connect handler error: ${err?.message ?? err}`);
@@ -794,7 +804,7 @@ export class Network {
 			const pid = peer.id.toString();
 			if (connectedSet.has(pid)) {
 				this.redialBackoff.delete(pid); // clear on observed connection
-				this.clearRedialSuppressionForPeer(pid); // legitimately reconnected → resume maintenance
+				if (this.sharesJoinedTopicWith(pid)) this.clearRedialSuppressionForPeer(pid); // back on a shared topic → resume
 				continue;
 			}
 			// Skip peers we deliberately left (leave-network) so maintenance does not
@@ -970,6 +980,10 @@ export class Network {
 			for (const peer of allPeers) {
 				const pid = peer.id.toString();
 				if (pid === myID) continue;
+				// A left-network peer that lingers/reappears in the peerStore must not be
+				// added to the direct set either — its fast reconnect cadence would undo the
+				// leave-network disconnect (same guard as the bootstrap promotion above).
+				if (this.isRedialSuppressed(pid)) continue;
 				if (!gossipsub.direct.has(pid)) {
 					gossipsub.direct.add(pid);
 					added++;
@@ -1187,6 +1201,11 @@ export class Network {
 		}
 	}
 
+	/** Recently-seen subscribers of a lishnet's topic (TTL union, not just the live snapshot). */
+	getRecentTopicMembers(networkID: string): string[] {
+		return this.peerAnnounce.getRecentMembers(lishTopic(networkID));
+	}
+
 	/**
 	 * True if we currently share at least one joined lishnet topic with the
 	 * given peer — i.e. some lish topic WE are subscribed to lists the peer
@@ -1223,6 +1242,13 @@ export class Network {
 	canListSharesTo(peerID: string): boolean {
 		if (this.isRedialSuppressed(peerID)) return false;
 		if (!this.pubsub) return false;
+		// Infrastructure peers (active relay / bootstrap) are kept connected across a
+		// leave without being redial-suppressed, so the softer gate alone would let a
+		// relay of a network we just left browse our shares. Require such peers to
+		// currently share a joined topic. Ordinary content peers still get the soft
+		// gate — that is the freshly-connected-before-SUBSCRIBE window the search
+		// fallback depends on.
+		if (this.isBootstrapOrRelayPeer(peerID) && !this.sharesJoinedTopicWith(peerID)) return false;
 		return this.pubsub.getTopics().some((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
 	}
 

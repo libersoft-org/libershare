@@ -116,11 +116,17 @@ describe('Network per-network redial suppression', () => {
  * and must drop that suppression the moment the peer is observed connected again.
  */
 describe('Network.runRedialMaintenance — leave-peer suppression', () => {
-	function bareNetwork(suppressed: string[]) {
+	function bareNetwork(suppressed: string[], sharedTopicPeers: string[] = []) {
 		const dialed: string[] = [];
 		const network = Object.create(Network.prototype) as Network;
 		(network as any).redialBackoff = new Map();
 		(network as any).redialSuppressedByNet = new Map([['net-x', new Set<string>(suppressed)]]);
+		// A reconnected peer's suppression is lifted only if it currently shares a joined
+		// topic — model that via a pubsub whose subscribers list the "back on topic" peers.
+		(network as any).pubsub = {
+			getTopics: () => ['lish/net-x'],
+			getSubscribers: () => sharedTopicPeers.map(p => ({ toString: () => p })),
+		};
 		(network as any).node = {
 			async dial(id: { toString(): string }): Promise<void> {
 				dialed.push(id.toString());
@@ -140,12 +146,21 @@ describe('Network.runRedialMaintenance — leave-peer suppression', () => {
 		expect((network as any).isRedialSuppressed('pLeft')).toBe(true);
 	});
 
-	it('clears suppression once the peer is observed connected again', async () => {
-		const { network, dialed } = bareNetwork(['pBack']);
+	it('clears suppression when a reconnected peer is back on a shared topic', async () => {
+		const { network, dialed } = bareNetwork(['pBack'], ['pBack']);
 		const peer = { id: { toString: () => 'pBack' } };
 		await run(network, [{ toString: () => 'pBack' }], [peer]);
 		expect(dialed).toEqual([]);
 		expect((network as any).isRedialSuppressed('pBack')).toBe(false);
+	});
+
+	it('keeps suppression for a reconnected peer NOT back on a shared topic', async () => {
+		// A left peer dialing us back (keep-alive/mDNS) without rejoining a shared topic
+		// must stay suppressed — otherwise canListSharesTo would serve it our catalog.
+		const { network } = bareNetwork(['pBack'], []);
+		const peer = { id: { toString: () => 'pBack' } };
+		await run(network, [{ toString: () => 'pBack' }], [peer]);
+		expect((network as any).isRedialSuppressed('pBack')).toBe(true);
 	});
 });
 
