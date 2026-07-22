@@ -12,11 +12,13 @@ import { Networks } from '../../../src/lishnet/lishnets.ts';
 interface MockNet {
 	topicPeers: Map<string, string[]>;
 	unsubscribed: string[];
+	subscribed: string[];
 	disconnected: string[];
 	bootstrapOrRelay: Set<string>;
 	prunedBootstrap: string[];
 	getTopicPeers(id: string): string[];
 	unsubscribeTopic(id: string): void;
+	subscribeTopic(id: string): void;
 	isBootstrapOrRelayPeer(pid: string): boolean;
 	disconnectPeer(pid: string): Promise<void>;
 	pruneConfiguredBootstrapPeer(pid: string): void;
@@ -26,6 +28,7 @@ function makeMockNet(): MockNet {
 	return {
 		topicPeers: new Map(),
 		unsubscribed: [],
+		subscribed: [],
 		disconnected: [],
 		bootstrapOrRelay: new Set(),
 		prunedBootstrap: [],
@@ -36,6 +39,9 @@ function makeMockNet(): MockNet {
 			this.unsubscribed.push(id);
 			// Mirror real pubsub: after unsubscribe the topic reports no peers.
 			this.topicPeers.delete(id);
+		},
+		subscribeTopic(id) {
+			this.subscribed.push(id);
 		},
 		isBootstrapOrRelayPeer(pid) {
 			return this.bootstrapOrRelay.has(pid);
@@ -55,11 +61,13 @@ function makeNetworks(net: MockNet, joined: string[], configs: Record<string, st
 	(networks as any).network = net;
 	(networks as any).joinedNetworks = new Set(joined);
 	(networks as any)._onNetworkLeft = null;
+	(networks as any)._onNetworkJoined = null;
 	(networks as any).get = (id: string) => (configs[id] ? { networkID: id, bootstrapPeers: configs[id] } : undefined);
 	return networks;
 }
 
 const leave = (networks: Networks, id: string): Promise<void> => (networks as any).leaveNetwork(id);
+const join = (networks: Networks, id: string): Promise<void> => (networks as any).joinNetwork(id);
 
 describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 	let net: MockNet;
@@ -136,5 +144,32 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		});
 		await leave(networks, 'net-a');
 		expect(net.prunedBootstrap).toEqual(['pTarget']);
+	});
+});
+
+describe('Networks.joinNetwork — onNetworkJoined notification', () => {
+	let net: MockNet;
+
+	beforeEach(() => {
+		net = makeMockNet();
+	});
+
+	it('fires onNetworkJoined with the joined lishnet id and joins it', async () => {
+		const networks = makeNetworks(net, []);
+		const joinedIDs: string[] = [];
+		networks.onNetworkJoined = id => joinedIDs.push(id);
+		await join(networks, 'net-a');
+		expect(net.subscribed).toEqual(['net-a']);
+		expect(joinedIDs).toEqual(['net-a']);
+		expect((networks as any).joinedNetworks.has('net-a')).toBe(true);
+	});
+
+	it('does not fire onNetworkJoined for a lishnet already joined', async () => {
+		const networks = makeNetworks(net, ['net-a']);
+		let fired = 0;
+		networks.onNetworkJoined = () => fired++;
+		await join(networks, 'net-a');
+		expect(fired).toBe(0);
+		expect(net.subscribed).toEqual([]);
 	});
 });

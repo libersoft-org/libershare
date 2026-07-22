@@ -115,6 +115,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	const activeDownloaders = new Map<string, Downloader>();
 	setActiveDownloadersRef(activeDownloaders);
 
+	// LISHs whose download was suspended because their last joined lishnet was
+	// left. Their DB enabled flag stays on (see onNetworkLeft), so they are
+	// resumed by onNetworkJoined when a bound lishnet is re-joined in-process.
+	// Cleared when the user explicitly enables/disables the download so a rejoin
+	// never overrides a deliberate user action.
+	const networkSuspended = new Set<string>();
+
 	// When a lishnet is left, stop any download bound EXCLUSIVELY to it: a
 	// downloader keeps running as long as at least one of its networks is still
 	// joined (multi-network downloads can still source chunks elsewhere). Only
@@ -140,6 +147,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			// DB flag stays untouched, so an app restart with the lishnet re-joined
 			// resumes the download.
 			downloadEnabledLishs.delete(lishID);
+			// Remember it as suspended-by-leave so onNetworkJoined can resume it if a
+			// bound lishnet is re-joined in-process (without waiting for a restart).
+			networkSuspended.add(lishID);
 			// Cancel any pending error-recovery timer for this LISH — otherwise
 			// ErrorRecovery, holding the captured downloadWasEnabled=true, could
 			// re-enable the download once the IO condition clears even though the
@@ -148,6 +158,28 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			// dl.disable() alone emits nothing over WS — tell the FE the download
 			// stopped.
 			broadcast?.('transfer.download:disabled', { lishID });
+		}
+	};
+
+	// When a previously-left lishnet is re-joined in-process, resume downloads that
+	// were suspended because it was their last joined network. Their DB enabled flag
+	// was intentionally left on (see onNetworkLeft), so re-enabling here restores the
+	// pre-leave state without waiting for an app restart. Only downloads still bound
+	// to the re-joined network and still suspended are resumed.
+	networks.onNetworkJoined = (networkID: string) => {
+		for (const lishID of networkSuspended) {
+			const dl = activeDownloaders.get(lishID);
+			if (!dl) {
+				// Downloader was destroyed while suspended — drop the stale entry.
+				networkSuspended.delete(lishID);
+				continue;
+			}
+			if (!dl.getNetworkIDs?.().includes(networkID)) continue;
+			networkSuspended.delete(lishID);
+			console.log(`[Transfer] ${lishID.slice(0, 8)}: lishnet re-joined, resuming download`);
+			enableDownload({ lishID }).catch(err => {
+				console.error(`[Transfer] resume-on-rejoin ${lishID.slice(0, 8)} failed:`, err?.message ?? err);
+			});
 		}
 	};
 
@@ -217,6 +249,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	function disableDownload(p: { lishID: string }): { success: boolean } {
 		assert(p, ['lishID']);
+		networkSuspended.delete(p.lishID);
 		recovery.stop(p.lishID);
 		downloadEnabledLishs.delete(p.lishID);
 		persistDownloadEnabled?.(p.lishID, false);
@@ -231,6 +264,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	async function enableDownload(p: { lishID: string }, client?: any): Promise<{ success: boolean }> {
 		assert(p, ['lishID']);
+		networkSuspended.delete(p.lishID);
 		if (isBusy(p.lishID)) return { success: false };
 		if (pendingDownloads.has(p.lishID)) return { success: true };
 		dataServer.clearError(p.lishID);
@@ -525,6 +559,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		}
 		activeDownloaders.clear();
 		downloadEnabledLishs.clear();
+		networkSuspended.clear();
 		clearAllUploads();
 		recovery.stopAll();
 	}

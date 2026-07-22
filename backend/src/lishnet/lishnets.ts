@@ -24,6 +24,9 @@ export class Networks {
 	// Callback fired after a lishnet is left (topic unsubscribed). Lets higher
 	// layers (e.g. transfer) stop downloads bound exclusively to that lishnet.
 	private _onNetworkLeft: ((networkID: string) => void) | null = null;
+	// Callback fired after a lishnet is (re-)joined in-process. Lets higher layers
+	// resume downloads that were suspended when this lishnet was previously left.
+	private _onNetworkJoined: ((networkID: string) => void) | null = null;
 
 	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.db = db;
@@ -61,6 +64,17 @@ export class Networks {
 	 */
 	set onNetworkLeft(cb: ((networkID: string) => void) | null) {
 		this._onNetworkLeft = cb;
+	}
+
+	/**
+	 * Set a callback fired right after a lishnet is (re-)joined via {@link joinNetwork}
+	 * (its topic subscribed and added to {@link joinedNetworks}). Lets higher layers
+	 * (e.g. transfer) resume downloads that were suspended when the lishnet was
+	 * previously left. NOT fired for the initial startup join — startup has its own
+	 * auto-resume path.
+	 */
+	set onNetworkJoined(cb: ((networkID: string) => void) | null) {
+		this._onNetworkJoined = cb;
 	}
 
 	init(): void {
@@ -138,6 +152,10 @@ export class Networks {
 		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers, id, 'configured');
 
 		console.log(`✓ Joined lishnet: ${net?.name ?? id}`);
+
+		// Notify higher layers (e.g. transfer) so downloads suspended when this
+		// lishnet was last left can resume now that it is joined again.
+		this._onNetworkJoined?.(id);
 	}
 
 	/**
