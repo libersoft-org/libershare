@@ -145,6 +145,42 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		await leave(networks, 'net-a');
 		expect(net.prunedBootstrap).toEqual(['pTarget']);
 	});
+
+	it('disconnects an offline configured bootstrap peer of the left lishnet', async () => {
+		// pBootA is configured bootstrap for net-a only and is NOT a current topic
+		// subscriber (offline at leave time). It must still be disconnected so its
+		// keep-alive tag is stripped and redial maintenance cannot reconnect it.
+		net.topicPeers.set('net-a', []);
+		const networks = makeNetworks(net, ['net-a'], {
+			'net-a': ['/ip4/192.0.2.5/tcp/9090/p2p/pBootA'],
+		});
+		await leave(networks, 'net-a');
+		expect(net.disconnected).toEqual(['pBootA']);
+		expect(net.prunedBootstrap).toEqual(['pBootA']);
+	});
+
+	it('keeps an offline bootstrap peer still configured for another joined lishnet', async () => {
+		net.topicPeers.set('net-a', []);
+		const networks = makeNetworks(net, ['net-a', 'net-b'], {
+			'net-a': ['/ip4/192.0.2.5/tcp/9090/p2p/pShared'],
+			'net-b': ['/ip4/192.0.2.6/tcp/9090/p2p/pShared'],
+		});
+		await leave(networks, 'net-a');
+		expect(net.disconnected).toEqual([]);
+		expect(net.prunedBootstrap).toEqual([]);
+	});
+
+	it('keeps a left-lishnet bootstrap peer that is still an active circuit relay', async () => {
+		net.topicPeers.set('net-a', []);
+		net.bootstrapOrRelay.add('pRelayNode'); // still relaying another connection
+		const networks = makeNetworks(net, ['net-a'], {
+			'net-a': ['/ip4/192.0.2.7/tcp/9090/p2p/pRelayNode'],
+		});
+		await leave(networks, 'net-a');
+		expect(net.disconnected).toEqual([]);
+		// Exemption is still pruned — the relay status alone keeps it connected.
+		expect(net.prunedBootstrap).toEqual(['pRelayNode']);
+	});
 });
 
 describe('Networks.joinNetwork — onNetworkJoined notification', () => {

@@ -200,12 +200,20 @@ export class Networks {
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
 
-		// Drop the bootstrap-exemption for peers configured only for the lishnet we
-		// just left. Without this a stale exemption would make the disconnect loop
-		// below skip a peer that is no longer shared with any joined network.
+		// Drop the exemption AND actively disconnect every configured bootstrap peer
+		// exclusive to the left lishnet — including ones offline at leave time. Such
+		// a peer never appears in leftPeers (the topic-subscriber snapshot), so the
+		// content-peer loop below would miss it: its keep-alive tag would survive and
+		// redial maintenance / ReconnectQueue would reconnect it within ~30s. After
+		// pruning, isBootstrapOrRelayPeer is true only for an active circuit relay we
+		// still depend on — keep those. disconnectPeer is a safe no-op hangUp for an
+		// unconnected peer and always strips keep-alive + suppresses redial.
 		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of this.configuredBootstrapPeerIDsOf(id)) {
-			if (!stillConfigured.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid);
+			if (stillConfigured.has(pid)) continue;
+			this.network.pruneConfiguredBootstrapPeer(pid);
+			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
+			await this.network.disconnectPeer(pid);
 		}
 
 		// Disconnect peers that belonged exclusively to the lishnet we just left.
