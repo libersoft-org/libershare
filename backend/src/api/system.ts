@@ -37,29 +37,38 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		assert(p, ['volume']);
 		if (typeof p.volume !== 'number' || !Number.isFinite(p.volume)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'volume must be a number');
 		const pct = Math.min(100, Math.max(0, Math.round(p.volume)));
+		writeGeneration++;
 		await settings.set('audio.volume', pct);
 		const res = await setSystemVolume(pct);
-		// Seed the watcher with the value the mixer ACTUALLY ended on (res.volume,
-		// which under latest-wins may differ from pct) so its poll does not echo it.
-		volumeWatcher.remember({ volume: res.volume, available: res.available });
 		// A write is as authoritative as a read about device presence — but only its
 		// definitive outcomes (ok / no-device). A transient write failure reports
-		// available:true conservatively and must not overwrite a known false.
-		if (res.success || !res.available) lastKnownAvailable = res.available;
+		// available:true conservatively; carrying that into the watcher/broadcast
+		// would flip a known device-less host to "available", so an indeterminate
+		// result falls back to the last known availability everywhere below.
+		const definitive = res.success || !res.available;
+		if (definitive) lastKnownAvailable = res.available;
+		const available = definitive ? res.available : lastKnownAvailable;
+		// Seed the watcher with the value the mixer ACTUALLY ended on (res.volume,
+		// which under latest-wins may differ from pct) so its poll does not echo it.
+		volumeWatcher.remember({ volume: res.volume, available });
 		// The watcher now suppresses this write's echo, so other connected clients
 		// (a second window/tab) would never hear about it — tell them directly.
 		// Unconditional: a failed write still carries news (a device that vanished
 		// mid-write reports available:false, which the suppressed poll would never
 		// re-deliver). The originating client ignores the level while its own
 		// adjustment is fresh, so this cannot fight the user's in-progress input.
-		broadcast('system:volumeChanged', { volume: res.volume, available: res.available });
-		return { success: res.success, available: res.available };
+		broadcast('system:volumeChanged', { volume: res.volume, available });
+		return { success: res.success, available };
 	}
 
 	// Last availability we determined from an unambiguous read/write. A transient
 	// read error must never flip this to false, so getVolume reuses it as the
 	// fallback rather than reporting a present device as unavailable.
 	let lastKnownAvailable = true;
+	// Bumped on every setVolume — lets the startup adoption detect a client write
+	// that started AFTER its read began (isMixerWriteBusy alone misses a write that
+	// already finished settling while a slow read was still in flight).
+	let writeGeneration = 0;
 
 	/**
 	 * Report the live OS volume and whether a controllable audio device exists.
@@ -80,7 +89,13 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	// and broadcast them to connected clients so the UI stays in sync both ways.
 	const volumeWatcher = createVolumeWatcher({
 		getStatus: getSystemVolumeStatus,
-		broadcast: status => broadcast('system:volumeChanged', status),
+		broadcast: status => {
+			// The watcher only emits definitive statuses — keep the availability cache
+			// in sync so a later transient-read fallback reflects device plug/unplug
+			// observed through the poll/monitor path too.
+			lastKnownAvailable = status.available;
+			broadcast('system:volumeChanged', status);
+		},
 		persist: v => void settings.set('audio.volume', v),
 		isBusy: isMixerWriteBusy,
 	});
@@ -90,12 +105,15 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	// NEVER write to the OS mixer on start — launching the app while the user had
 	// set a level via the tray must not yank it back to a stale persisted value.
 	// Fire-and-forget; a device-less host logs a single info line.
+	const startupGeneration = writeGeneration;
 	void getSystemVolumeStatus().then(status => {
 		// Transient read error — leave seeding to the first successful poll.
 		if (status === null) return;
 		// A client write that landed while we were reading is authoritative and has
 		// already seeded the watcher — do not clobber it with a pre-write reading.
-		if (isMixerWriteBusy()) return;
+		// The generation check also catches a write that finished (and settled)
+		// while a slow startup read was still in flight.
+		if (isMixerWriteBusy() || writeGeneration !== startupGeneration) return;
 		lastKnownAvailable = status.available;
 		volumeWatcher.remember(status);
 		if (status.available && status.volume !== null) void settings.set('audio.volume', status.volume);
