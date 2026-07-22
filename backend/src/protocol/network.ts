@@ -744,6 +744,18 @@ export class Network {
 		return this.redialSuppressed.has(peerID);
 	}
 
+	/**
+	 * Lift ALL redial suppression — called on any network (re)join. A rejoin is an
+	 * explicit "I want peers back", and suppression is a flat set with no per-network
+	 * tracking, so we clear it wholesale rather than only the configured-bootstrap IDs
+	 * (which left content peers — mDNS/peer-announce — permanently maintenance-blocked).
+	 * Trade-off: leave A + leave B + rejoin A also unblocks B's peers, but B stays
+	 * unsubscribed and its content is serve-gated, so this is a benign over-clear.
+	 */
+	clearRedialSuppression(): void {
+		this.redialSuppressed.clear();
+	}
+
 	private async runRedialMaintenance(connectedPeers: any[], allPeers: any[]): Promise<void> {
 		// Dial known peers not currently connected (maintains relay connections to NATed peers)
 		const connectedSet = new Set(connectedPeers.map(p => p.toString()));

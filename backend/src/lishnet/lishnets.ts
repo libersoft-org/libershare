@@ -147,6 +147,10 @@ export class Networks {
 		// ordering — the process-level error handlers in app.ts are the safety net.
 		this.network.subscribeTopic(id);
 		this.joinedNetworks.add(id);
+		// Rejoin is an explicit "I want peers back" — lift any leave-network redial
+		// suppression so maintenance and discovery may reconnect this network's peers
+		// (both bootstrap and content peers), not just the re-dialed bootstrap IDs.
+		this.network.clearRedialSuppression();
 
 		const net = this.get(id);
 		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers, id, 'configured');
