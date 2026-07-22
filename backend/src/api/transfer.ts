@@ -115,12 +115,15 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	const activeDownloaders = new Map<string, Downloader>();
 	setActiveDownloadersRef(activeDownloaders);
 
-	// LISHs whose download was suspended because their last joined lishnet was
-	// left. Their DB enabled flag stays on (see onNetworkLeft), so they are
-	// resumed by onNetworkJoined when a bound lishnet is re-joined in-process.
-	// Cleared when the user explicitly enables/disables the download so a rejoin
-	// never overrides a deliberate user action.
-	const networkSuspended = new Set<string>();
+	// LISHs whose download was suspended because their last joined lishnet was left,
+	// mapped to the lishnets they were bound to. Their DB enabled flag stays on (see
+	// onNetworkLeft), so onNetworkJoined resumes them — but only when a BOUND lishnet
+	// re-joins, never rebinding to an unrelated one. An empty bound set means "no known
+	// binding" (startup with no joined lishnet, where the fresh downloader would bind
+	// to whatever is enabled at resume time) → resume on any join. Cleared when the
+	// user explicitly enables/disables the download so a rejoin never overrides a
+	// deliberate user action.
+	const networkSuspended = new Map<string, Set<string>>();
 
 	// When a lishnet is left, stop any download bound EXCLUSIVELY to it: a
 	// downloader keeps running as long as at least one of its networks is still
@@ -155,7 +158,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				// suspended-by-leave so onNetworkJoined can resume it after rejoin.
 				console.log(`[Transfer] ${lishID.slice(0, 8)}: last joined lishnet left, disabling download`);
 				dl.disable();
-				networkSuspended.add(lishID);
+				// Bind resume to the download's ORIGINAL lishnets (not the current set,
+				// which removeNetwork may have shrunk) so only a re-join of a lishnet this
+				// download actually belongs to resumes it.
+				networkSuspended.set(lishID, new Set(dl.getOriginalNetworkIDs?.() ?? dl.getNetworkIDs?.() ?? []));
 			} else {
 				// Transient download (from the `download` handler, never enabled/persisted)
 				// has no resume claim — destroy it and drop it from the map instead of
@@ -181,15 +187,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		// Re-attach the rejoined network to still-running multi-network downloaders
 		// that dropped it when it was left (no-op if never bound to it or already active).
 		for (const dl of activeDownloaders.values()) dl.addNetwork?.(networkID);
-		// Drop the suspension ONLY once the resume actually succeeds — a transient
-		// failure (busy verifying, still no joined lishnet) must be retried on the next
-		// join, otherwise the resume is lost forever. A retained (disabled) downloader
-		// is resumed only when the rejoined network is one it sources from; a suspended
-		// entry without a downloader (e.g. startup with no joined lishnet) is attempted
-		// directly (enableDownload rebinds it to the currently joined lishnets).
-		for (const lishID of [...networkSuspended]) {
-			const dl = activeDownloaders.get(lishID);
-			if (dl && !dl.getNetworkIDs?.().includes(networkID)) continue;
+		// Resume a suspended download only when a lishnet it is BOUND to re-joins (an
+		// empty bound set = no known binding → resume on any join). Drop the suspension
+		// ONLY once the resume actually succeeds — a transient failure (busy verifying,
+		// still no joined lishnet) must be retried on the next join.
+		for (const [lishID, bound] of [...networkSuspended]) {
+			if (bound.size > 0 && !bound.has(networkID)) continue;
 			enableDownload({ lishID })
 				.then(r => {
 					if (r.success) {
@@ -360,7 +363,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				// rejoin could never resume. Drop only the in-memory active flag and mark
 				// it suspended so onNetworkJoined resumes it once a lishnet is (re-)joined.
 				downloadEnabledLishs.delete(p.lishID);
-				networkSuspended.add(p.lishID);
+				// No active downloader and no joined lishnet → no known network binding
+				// (the fresh downloader would bind to getEnabled(), empty here). Store the
+				// empty bound set so onNetworkJoined resumes on any join, since the DB has
+				// no per-download network to restrict to.
+				networkSuspended.set(p.lishID, new Set(joinedNetworks));
 				return { success: false };
 			}
 			const downloadDir = lish.directory ?? join(dataDir, 'downloads', Date.now().toString());

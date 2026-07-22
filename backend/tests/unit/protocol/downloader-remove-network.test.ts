@@ -56,3 +56,13 @@ describe('Downloader.addNetwork', () => {
 		expect(dl.getNetworkIDs()).toEqual(['net-a', 'net-b']);
 	});
 });
+
+describe('Downloader.getOriginalNetworkIDs', () => {
+	it('stays the full original set even after removeNetwork shrinks the active set', () => {
+		const dl = makeDownloader(['net-a', 'net-b']);
+		dl.removeNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-b']);
+		// Resume-on-rejoin binds to this, so leaving+rejoining net-a can still resume.
+		expect(dl.getOriginalNetworkIDs()).toEqual(['net-a', 'net-b']);
+	});
+});

@@ -124,6 +124,15 @@ export class Downloader {
 	}
 
 	/**
+	 * The lishnets this download was originally created with, before any
+	 * {@link removeNetwork} shrank the active set. Used to decide which lishnet
+	 * re-joins may resume a suspended download. Defensive copy.
+	 */
+	getOriginalNetworkIDs(): string[] {
+		return [...this.originalNetworkIDs];
+	}
+
+	/**
 	 * Stop sourcing this download from a lishnet the node just left. Removes the
 	 * network from the set so subsequent WANT broadcasts and topic-peer probes no
 	 * longer reach the left lishnet; peers exclusive to it are hung up separately
