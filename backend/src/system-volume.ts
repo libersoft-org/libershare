@@ -57,7 +57,9 @@ export function classifyMixerReadings(outputs: Array<string | null>): MixerResul
 
 /** Run a binary with args, returning trimmed stdout. Throws on missing binary or non-zero exit. */
 async function run(cmd: string, args: string[]): Promise<string> {
-	const { stdout } = await execFileAsync(cmd, args, { timeout: EXEC_TIMEOUT_MS, windowsHide: true });
+	// SIGKILL: the promise settles only after the child actually exits, so a wedged
+	// helper ignoring the default SIGTERM would hang the poll loop forever.
+	const { stdout } = await execFileAsync(cmd, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true });
 	return stdout.toString();
 }
 
@@ -412,7 +414,11 @@ function startLinuxMonitor(emit: (status: VolumeStatus) => void, onExit: () => v
 	});
 	let stopped = false;
 	const exit = (): void => {
-		if (!stopped) onExit();
+		if (stopped) return;
+		// Latch: a child can emit both 'error' and 'exit' — onExit must run once,
+		// or the second call would tear down a replacement monitor already started.
+		stopped = true;
+		onExit();
 	};
 	proc.on('exit', exit);
 	proc.on('error', exit);

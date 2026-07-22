@@ -42,6 +42,10 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		// Seed the watcher with the value the mixer ACTUALLY ended on (res.volume,
 		// which under latest-wins may differ from pct) so its poll does not echo it.
 		volumeWatcher.remember({ volume: res.volume, available: res.available });
+		// A write is as authoritative as a read about device presence — but only its
+		// definitive outcomes (ok / no-device). A transient write failure reports
+		// available:true conservatively and must not overwrite a known false.
+		if (res.success || !res.available) lastKnownAvailable = res.available;
 		// The watcher now suppresses this write's echo, so other connected clients
 		// (a second window/tab) would never hear about it — tell them directly.
 		// Unconditional: a failed write still carries news (a device that vanished
