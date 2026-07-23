@@ -1184,6 +1184,22 @@ export class Network {
 			}
 			await this.node.peerStore.delete(pid);
 			console.log(`[NET] purged stale peerStore entry ${peerID.slice(0, 16)}… (reason: ${reason})`);
+			// TOCTOU healing: an inbound connection can land between the caller's
+			// liveness check and the delete above. The peer:connect handler resets
+			// failure counters but cannot restore the bootstrap/keep-alive state this
+			// purge just removed — so if the peer is connected NOW, rebuild its dial
+			// state from the live connections; otherwise reconnect would silently die
+			// with the first drop.
+			const after = this.node.getConnections(pid);
+			if (after.length > 0) {
+				this.bootstrapPeerIDs.add(peerID);
+				this.unreachableQuarantine.delete(peerID);
+				await this.node.peerStore.merge(pid, {
+					multiaddrs: after.map(c => c.remoteAddr),
+					tags: { [KEEP_ALIVE]: { value: 1 } },
+				});
+				console.log(`[NET] purge raced an inbound connection — restored ${peerID.slice(0, 16)}…`);
+			}
 		} catch (err: any) {
 			trace(`[NET] purgeStalePeer ${peerID.slice(0, 16)} failed: ${err?.message ?? err}`);
 		}
