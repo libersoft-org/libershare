@@ -82,6 +82,22 @@ const WANT_RESPONSE_CLEANUP_INTERVAL_MS = 5 * 60_000;
 /** Search query dedup window — same `searchID` arriving via mesh within this period is ignored. */
 const SEARCH_DEDUP_TTL_MS = 5 * 60_000;
 /**
+ * Consecutive re-dial failures after which a peer is treated as gone and evicted
+ * (peerStore + bootstrap sets + its discovered status rows). Combined with
+ * REDIAL_EVICT_MIN_MS so a burst of quick failures right after our own restart
+ * or a network partition cannot mass-purge peers that are merely slow to return.
+ */
+const REDIAL_EVICT_FAILS = 6;
+/** Minimum continuous unreachability (since the first recorded failure) before eviction. */
+const REDIAL_EVICT_MIN_MS = 30 * 60_000;
+/**
+ * How long an evicted-as-unreachable peer stays quarantined in addBootstrapPeers.
+ * Gossip from nodes that still remember the dead peer keeps mentioning it; without
+ * this window every mention would re-create its status row and burn a dial. Once
+ * the window lapses a single probe is allowed again (self-heals on peer return).
+ */
+const UNREACHABLE_QUARANTINE_MS = 60 * 60_000;
+/**
  * Maximum size (bytes) of an incoming pubsub payload we are willing to decode.
  * Our own control messages ride pubsub (WANT — tiny JSON), but older/foreign peers
  * still broadcast HAVE announcements and catalog inventories on the same topic and
@@ -187,7 +203,16 @@ export class Network {
 	 * capped at 10 min), so a persistently-unreachable peer does not saturate the
 	 * re-dial pool every 30s. Successful dial clears the entry.
 	 */
-	private readonly redialBackoff = new Map<string, { nextAttempt: number; failCount: number }>();
+	private readonly redialBackoff = new Map<string, { nextAttempt: number; failCount: number; firstFailure: number }>();
+	/** peerID → eviction time. Blocks re-adding a just-evicted unreachable peer from gossip for UNREACHABLE_QUARANTINE_MS. */
+	private readonly unreachableQuarantine = new Map<string, number>();
+	/**
+	 * Peer IDs that appear in at least one network's CONFIGURED bootstrap list.
+	 * These are user data — the unreachable-eviction path must never purge them,
+	 * or a bootstrap hub that is down for half an hour would lose its peerStore
+	 * entry and its addrs in bootstrapMultiaddrs until the next restart.
+	 */
+	private readonly configuredPeerIDs = new Set<string>();
 
 	// Tracked libp2p/pubsub event listeners for clean removal in stop().
 	// Each entry captures the exact handler reference so removeEventListener can unhook it.
@@ -508,6 +533,7 @@ export class Network {
 		this.addListener(this.node!, 'peer:connect', async (evt: any) => {
 			try {
 				const peerID = evt.detail.toString();
+				this.unreachableQuarantine.delete(peerID);
 				const connections = this.node!.getConnections(evt.detail);
 				const connTypes = connections.map(c => {
 					const isRelay = Circuit.matches(c.remoteAddr);
@@ -697,6 +723,7 @@ export class Network {
 			const pid = peer.id.toString();
 			if (connectedSet.has(pid)) {
 				this.redialBackoff.delete(pid); // clear on observed connection
+				this.unreachableQuarantine.delete(pid);
 				continue;
 			}
 			const bo = this.redialBackoff.get(pid);
@@ -758,8 +785,22 @@ export class Network {
 					// Exponential backoff: 30s × 2^failCount, capped at 10 min.
 					const nextFailCount = c.failCount + 1;
 					const delayMs = Math.min(30_000 * 2 ** c.failCount, 600_000);
-					this.redialBackoff.set(c.pid, { nextAttempt: Date.now() + delayMs, failCount: nextFailCount });
+					const firstFailure = this.redialBackoff.get(c.pid)?.firstFailure ?? Date.now();
+					this.redialBackoff.set(c.pid, { nextAttempt: Date.now() + delayMs, failCount: nextFailCount, firstFailure });
 					console.debug(`   ✗ Re-dial peer=${c.pid} failed: ${err.message ?? err} (tried: ${c.addrSummary}, next in ${Math.round(delayMs / 1000)}s)`);
+					// Enough consecutive failures over enough time ⇒ the peer is gone, not
+					// flaky. The dial above went by peer ID, so libp2p tried EVERY known
+					// address — one broken addr among working ones cannot trip this. Evict
+					// everywhere (peerStore, bootstrap sets, discovered status rows) and
+					// quarantine the ID so gossip mentions don't immediately re-add it.
+					// Configured bootstrap peers are exempt — user data, they must survive
+					// any outage and keep their red status row instead.
+					if (nextFailCount >= REDIAL_EVICT_FAILS && Date.now() - firstFailure >= REDIAL_EVICT_MIN_MS && !this.configuredPeerIDs.has(c.pid)) {
+						this.unreachableQuarantine.set(c.pid, Date.now());
+						this.redialBackoff.delete(c.pid);
+						this.bootstrapTracker.deleteDiscoveredByPeerID(c.pid);
+						await this.purgeStalePeer(c.pid, `unreachable after ${nextFailCount} re-dial failures over ${Math.round((Date.now() - firstFailure) / 60_000)} min`);
+					}
 				}
 			}
 		};
@@ -771,6 +812,10 @@ export class Network {
 		// Prune backoff entries for peers that are no longer in peerStore to prevent unbounded growth.
 		const storeSet = new Set(allPeers.map(p => p.id.toString()));
 		for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
+		// Quarantine entries for peers gossip never mentions again would leak — drop
+		// them once they are far past the window (re-entry from gossip self-cleans).
+		const quarantineCutoff = now - 2 * UNREACHABLE_QUARANTINE_MS;
+		for (const [pid, ts] of this.unreachableQuarantine) if (ts < quarantineCutoff) this.unreachableQuarantine.delete(pid);
 	}
 
 	private async runZeroConnectionRecovery(connectedPeers: any[]): Promise<void> {
@@ -918,6 +963,21 @@ export class Network {
 					continue;
 				}
 				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
+				if (peerID && origin === 'configured') this.configuredPeerIDs.add(peerID);
+				// Skip peers recently evicted as unreachable — nodes that still remember
+				// them keep gossiping their addrs, and without this window every mention
+				// would re-create the status row and burn a dial. Configured entries are
+				// exempt: the user asked for them explicitly.
+				if (peerID && origin === 'discovered') {
+					const quarantinedAt = this.unreachableQuarantine.get(peerID);
+					if (quarantinedAt !== undefined) {
+						if (Date.now() - quarantinedAt < UNREACHABLE_QUARANTINE_MS) {
+							trace(`[NET] addBootstrapPeers skip quarantined: ${peerID.slice(0, 16)}`);
+							continue;
+						}
+						this.unreachableQuarantine.delete(peerID);
+					}
+				}
 				const alreadyKnown = !!peerID && this.bootstrapPeerIDs.has(peerID);
 				if (peerID && !alreadyKnown) {
 					this.bootstrapPeerIDs.add(peerID);
@@ -1015,6 +1075,7 @@ export class Network {
 		// attempting a direct stream to the dead peer every directConnectTicks.
 		const gossipsub: any = this.pubsub;
 		if (gossipsub?.direct && typeof gossipsub.direct.delete === 'function') gossipsub.direct.delete(peerID);
+		this.redialBackoff.delete(peerID);
 		try {
 			const pid = peerIDFromString(peerID);
 			// Drop existing connections so libp2p considers the entry fully gone.
@@ -1430,6 +1491,8 @@ export class Network {
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
 		this.redialBackoff.clear();
+		this.unreachableQuarantine.clear();
+		this.configuredPeerIDs.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {
 			await this.node.stop();

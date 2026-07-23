@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { classifyBootstrapError, extractActualPeerID } from '../../../src/protocol/network.ts';
+import { BootstrapStatusTracker } from '../../../src/protocol/bootstrap-status.ts';
 
 // Deterministic unit tests for the bootstrap-peer dial classification — the pure
 // logic that decides whether a failed bootstrap dial is an identity-mismatch (stale
@@ -55,5 +56,52 @@ describe('extractActualPeerID', () => {
 	it('returns null when the mismatch message lacks the Payload-identity-key prefix', () => {
 		// Shape guard: a different phrasing must not yield a confident (wrong) replacement peerID.
 		expect(extractActualPeerID('does not match expected remote identity key only')).toBe(null);
+	});
+});
+
+describe('BootstrapStatusTracker.deleteDiscoveredByPeerID', () => {
+	const NET_A = 'netAAAA';
+	const NET_B = 'netBBBB';
+	const DEAD_ID = '12D3KooWDeadDeadDeadDeadDeadDeadDeadDeadDeadDeadDD';
+	const LIVE_ID = '12D3KooWLiveLiveLiveLiveLiveLiveLiveLiveLiveLiveLL';
+	const DEAD_ADDR_1 = `/ip4/192.0.2.10/tcp/9090/p2p/${DEAD_ID}`;
+	const DEAD_ADDR_2 = `/ip4/192.0.2.11/tcp/9090/p2p/${DEAD_ID}`;
+	const LIVE_ADDR = `/ip4/192.0.2.20/tcp/9090/p2p/${LIVE_ID}`;
+
+	it('removes discovered rows for the peer across all networks, keeps other peers', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET_A, DEAD_ADDR_1, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+		tracker.recordOutcome(NET_A, LIVE_ADDR, LIVE_ID, 'connected', null, null, 'discovered');
+		tracker.recordOutcome(NET_B, DEAD_ADDR_2, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+
+		tracker.deleteDiscoveredByPeerID(DEAD_ID);
+
+		expect(tracker.getStatus(NET_A)?.peers.map(p => p.multiaddr)).toEqual([LIVE_ADDR]);
+		expect(tracker.getStatus(NET_B)).toBe(null); // network map emptied entirely
+	});
+
+	it('keeps configured rows for the same peer identity', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET_A, DEAD_ADDR_1, DEAD_ID, 'timeout', 'The operation timed out', null, 'configured');
+		tracker.recordOutcome(NET_A, DEAD_ADDR_2, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+
+		tracker.deleteDiscoveredByPeerID(DEAD_ID);
+
+		expect(tracker.getStatus(NET_A)?.peers.map(p => p.multiaddr)).toEqual([DEAD_ADDR_1]);
+	});
+
+	it('matches rows by actualPeerID as well and fires onStatusChange per changed network', () => {
+		const tracker = new BootstrapStatusTracker();
+		const events: string[] = [];
+		tracker.setOnChange(networkID => events.push(networkID));
+		// Row whose expectedPeerID is null but whose dial revealed the dead identity.
+		tracker.recordOutcome(NET_A, '/ip4/192.0.2.30/tcp/9090', null, 'identity-mismatch', 'mismatch', DEAD_ID, 'discovered');
+		tracker.recordOutcome(NET_B, LIVE_ADDR, LIVE_ID, 'connected', null, null, 'discovered');
+		events.length = 0;
+
+		tracker.deleteDiscoveredByPeerID(DEAD_ID);
+
+		expect(tracker.getStatus(NET_A)).toBe(null);
+		expect(events).toEqual([NET_A]); // untouched NET_B emits nothing
 	});
 });

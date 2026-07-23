@@ -74,6 +74,27 @@ export class BootstrapStatusTracker {
 		this.onStatusChange?.(networkID, snap);
 	}
 
+	/**
+	 * Drop every discovered-origin entry recorded for the given peer identity, in
+	 * every network. Used when a peer is evicted as unreachable — its gossip-learned
+	 * rows are pure noise at that point. Configured rows are kept: they are user
+	 * data and must stay visible (red) so the user can fix or remove them.
+	 */
+	deleteDiscoveredByPeerID(peerID: string): void {
+		for (const [networkID, peers] of [...this.stats]) {
+			let changed = false;
+			for (const [addr, p] of [...peers]) {
+				if (p.origin !== 'discovered') continue;
+				if (p.expectedPeerID !== peerID && p.actualPeerID !== peerID) continue;
+				peers.delete(addr);
+				changed = true;
+			}
+			if (!changed) continue;
+			if (peers.size === 0) this.stats.delete(networkID);
+			this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+		}
+	}
+
 	/** Drop bootstrap status entries no longer in the configured peer list (after an update). */
 	pruneEntries(networkID: string, keepMultiaddrs: string[]): void {
 		const peers = this.stats.get(networkID);
