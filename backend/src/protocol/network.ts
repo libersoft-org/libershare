@@ -1053,7 +1053,13 @@ export class Network {
 		}
 		const myPeerID = this.node.peerId.toString();
 		const localCidrs = getLocalCidrs();
+		// Fire-and-forget callers (peer-announce intake, startup joins) run outside
+		// the status-tick epoch guard. Capture the epoch so a dial that settles after
+		// a stop()/restart cannot record outcomes on the cleared tracker or write
+		// peerStore state for the NEXT node instance.
+		const epoch = this.runEpoch;
 		for (const peer of peers) {
+			if (epoch !== this.runEpoch) return;
 			try {
 				const ma = Multiaddr(peer);
 				// Safety net: refuse to add loopback / unreachable-private bootstrap
@@ -1093,23 +1099,24 @@ export class Network {
 				console.debug('Adding bootstrap peer:', peer);
 				this.bootstrapTracker.markPending(networkID, peer, peerID, origin);
 				try {
-					// Skip re-dialing when libp2p already has an active connection to this peer
-					// (typical when the same bootstrap entry appears in multiple lishnets).
-					// We still record the outcome so per-network status reflects "connected"
-					// rather than leaving the entry stuck at "pending".
-					const reuseExisting = alreadyKnown && peerID && this.node.getConnections(peerIDFromString(peerID)).length > 0;
-					if (!reuseExisting) await this.node.dial(ma);
-					if (peerID) {
-						// Merge the address into peerStore ONLY when our own dial just
-						// verified it via Noise. On the reuseExisting path nothing proved
-						// this particular address belongs to the peer — merging it would
-						// let gossip poison a connected peer's address book with entries
-						// that later feed re-dials and can get the peer evicted.
-						await this.node.peerStore.merge(peerIDFromString(peerID), reuseExisting ? { tags: { [KEEP_ALIVE]: { value: 1 } } } : { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } });
+					// libp2p reuses an existing connection for dial(ma) WITHOUT contacting
+					// ma unless force:true. So a merge of ma is only "Noise-verified" when
+					// this call actually established a NEW connection — i.e. the peer had
+					// no connection before. If it was already connected (whether or not we
+					// tracked it as bootstrap), ma is unverified and must not enter the
+					// address book, or a topic subscriber could poison a connected peer's
+					// addresses with entries that later feed re-dials and cause eviction.
+					const pidObj = peerID ? peerIDFromString(peerID) : null;
+					const hadConnection = !!pidObj && this.node.getConnections(pidObj).length > 0;
+					if (!hadConnection) await this.node.dial(ma);
+					if (epoch !== this.runEpoch) return;
+					if (pidObj) {
+						await this.node.peerStore.merge(pidObj, hadConnection ? { tags: { [KEEP_ALIVE]: { value: 1 } } } : { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } });
 					}
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, origin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
+					if (epoch !== this.runEpoch) return;
 					const message = err?.message ?? String(err);
 					const kind = classifyBootstrapError(message);
 					const actualPeerID = kind === 'identity-mismatch' ? extractActualPeerID(message) : null;
@@ -1133,27 +1140,27 @@ export class Network {
 					if (kind === 'identity-mismatch' && peerID) {
 						const pid = peerIDFromString(peerID);
 						if (this.node.getConnections(pid).length > 0) {
-							// Compare in CANONICAL form (parsed multiaddr toString) — the raw
-							// gossiped string may differ from what peerStore stored (e.g.
-							// expanded IPv6), and a non-matching filter would silently keep
-							// the poisoned address while logging that it was dropped.
-							const canonical = ma.toString();
+							// Compare in a form that survives both multiaddr normalization
+							// (expanded → compressed IPv6) and DNS case / trailing-dot
+							// differences — otherwise a filter that fails to match silently
+							// keeps the poisoned address while logging that it was dropped.
+							const canonical = normalizeMultiaddrForCompare(ma.toString());
 							const canonicalBare = canonical.replace(/\/p2p\/[^/]+$/, '');
-							this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(m => {
-								const s = m.toString();
-								return s !== canonical && s !== canonicalBare;
-							});
+							const matches = (s: string): boolean => {
+								const n = normalizeMultiaddrForCompare(s);
+								return n === canonical || n === canonicalBare;
+							};
+							// Restrict the autodial-list filter to entries of THIS peer so a
+							// case-insensitive compare can never drop a different peer's addr.
+							this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(m => extractDestinationPeerID(m) !== peerID || !matches(m.toString()));
 							try {
 								const rec = await this.node.peerStore.get(pid);
-								const keep = rec.addresses.filter((a: any) => {
-									const s = a.multiaddr.toString();
-									return s !== canonical && s !== canonicalBare;
-								});
+								const keep = rec.addresses.filter((a: any) => !matches(a.multiaddr.toString()));
 								if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
 							} catch {
 								/* peer not in store — nothing to trim */
 							}
-							console.log(`[NET] dropped stale addr of connected peer ${peerID.slice(0, 16)}: ${canonical}`);
+							console.log(`[NET] dropped stale addr of connected peer ${peerID.slice(0, 16)}: ${ma.toString()}`);
 						} else {
 							await this.purgeStalePeer(peerID, `${origin} dial identity mismatch`);
 						}
@@ -1692,6 +1699,18 @@ export class Network {
  * protection would target the wrong peer. The last /p2p/ component is always
  * the dial target. Returns null when the multiaddr carries no peer ID at all.
  */
+/**
+ * Normalize a multiaddr STRING for equality comparison. Multiaddr.toString()
+ * already compresses IPv6, but leaves DNS host case and trailing dots intact —
+ * `/dns4/EXAMPLE.COM./tcp/...` and `/dns4/example.com/tcp/...` address the same
+ * endpoint. Lowercasing is safe here because callers only ever compare addresses
+ * of the SAME peer, so a case-folded base58 peer-ID collision cannot drop a
+ * different peer's address.
+ */
+export function normalizeMultiaddrForCompare(s: string): string {
+	return s.toLowerCase().replace(/\.(?=\/|$)/g, '');
+}
+
 export function extractDestinationPeerID(ma: any): string | null {
 	try {
 		const components: Array<{ code: number; value?: string }> = ma?.getComponents?.() ?? [];
