@@ -1028,8 +1028,6 @@ export class Network {
 		const myPeerID = this.node.peerId.toString();
 		const localCidrs = getLocalCidrs();
 		for (const peer of peers) {
-			// Skip our own address
-			if (peer.includes(myPeerID)) continue;
 			try {
 				const ma = Multiaddr(peer);
 				// Safety net: refuse to add loopback / unreachable-private bootstrap
@@ -1042,6 +1040,10 @@ export class Network {
 					continue;
 				}
 				const peerID = extractDestinationPeerID(ma);
+				// Skip our own address — compare the DESTINATION identity, not the raw
+				// string: `/p2p/<us>/p2p-circuit/p2p/<remote>` contains our ID as the
+				// relay hop yet targets a remote peer and must not be dropped as self.
+				if (peerID === myPeerID) continue;
 				if (peerID && origin === 'configured') this.configuredPeerIDs.add(peerID);
 				// Skip peers recently evicted as unreachable — nodes that still remember
 				// them keep gossiping their addrs, and without this window every mention
