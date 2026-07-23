@@ -1123,6 +1123,10 @@ export class Network {
 					if (pidObj) {
 						await this.node.peerStore.merge(pidObj, hadConnection ? { tags: { [KEEP_ALIVE]: { value: 1 } } } : { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } });
 					}
+					// Re-check after the merge await too: stop() may have cleared the
+					// tracker while it was pending, and recordOutcome would otherwise
+					// resurrect a network row for the old (or next) node instance.
+					if (epoch !== this.runEpoch) return;
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, origin);
 					console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
