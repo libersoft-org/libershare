@@ -271,7 +271,7 @@ Wire error codes returned in the `error` field:
 6. **Resume** — verified chunks are persisted; a restarted download requests only the missing chunks
 7. **Seed** — a peer can serve every chunk it has verified, even before its own download completes (partial seeding)
 
-**Peer penalties** (downloader-side, reference implementation): a peer that repeatedly delivers corrupt chunks is banned for the rest of the application session; a peer that repeatedly fails transiently (busy, I/O errors, missing chunks) is dropped into a temporary quarantine and retried after a few minutes — or immediately after it sends a fresh `announceHave`.
+**Peer penalties** (downloader-side, reference implementation): a peer that repeatedly delivers corrupt chunks is banned for the rest of the application session; a peer that repeatedly fails transiently (busy, I/O errors) is dropped into a temporary quarantine and retried after a few minutes — or immediately after it sends a fresh `announceHave`. A `PEER_CHUNK_NOT_FOUND` answer is not a failure: it is remembered per chunk (the peer is never asked for that chunk again) and keeps the partial seeder in rotation for the chunks it does have.
 
 ## Search flow
 
