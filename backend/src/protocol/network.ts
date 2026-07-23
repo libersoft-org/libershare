@@ -1001,6 +1001,20 @@ export class Network {
 	async purgeStalePeer(peerID: string, reason: string): Promise<void> {
 		if (!this.node) return;
 		this.bootstrapPeerIDs.delete(peerID);
+		// Drop the peer's addrs from the autodial list too — this array is otherwise
+		// push-only, so the zero-connection recovery loop would keep dialing addrs
+		// of an identity we just proved dead, and the array would grow until stop().
+		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => {
+			try {
+				return ma.getComponents().find((c: any) => c.code === 421)?.value !== peerID;
+			} catch {
+				return true;
+			}
+		});
+		// Remove from the gossipsub never-PRUNE direct set, or gossipsub keeps
+		// attempting a direct stream to the dead peer every directConnectTicks.
+		const gossipsub: any = this.pubsub;
+		if (gossipsub?.direct && typeof gossipsub.direct.delete === 'function') gossipsub.direct.delete(peerID);
 		try {
 			const pid = peerIDFromString(peerID);
 			// Drop existing connections so libp2p considers the entry fully gone.
