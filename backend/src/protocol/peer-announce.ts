@@ -1,7 +1,6 @@
 import { trace } from '../logger.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
-import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
 import { LISH_TOPIC_PREFIX } from './constants.ts';
 import { type Libp2p } from 'libp2p';
 import { type BootstrapPeerOrigin } from '@shared';
@@ -152,30 +151,16 @@ export class PeerAnnounceManager {
 		// Pass networkID so per-peer outcomes from gossiped entries surface in the
 		// UI under the network through which they arrived. Identity-mismatch
 		// outcomes inside addBootstrapPeers also trigger purgeStalePeer.
+		//
+		// Deliberately NO peerStore.merge / keep-alive tagging here: an announce is
+		// an unverified claim. Writing tags for every mentioned peerID would (a) let
+		// any topic subscriber inject arbitrary peerIDs that we then persist and
+		// re-dial forever, and (b) refresh peerStore maxPeerAge for long-dead peers
+		// on every cycle, so they never expire. Keep-alive tagging happens only
+		// after a dial actually succeeds (addBootstrapPeers, peer:connect, re-dial
+		// maintenance) — a dead peer mentioned by gossip is still dialed below, it
+		// just no longer leaves a permanent peerStore footprint when unreachable.
 		await this.deps.addBootstrapPeers(filtered, networkID, 'discovered');
-		// Stamp `keep-alive-fleet` on every peer the announce mentioned. libp2p
-		// ReconnectQueue only acts on peers carrying a tag whose key starts with
-		// `keep-alive`; without this tag, fleet-discovered peers that drop are
-		// not re-dialed automatically. addBootstrapPeers() above tags via KEEP_ALIVE
-		// only for peer IDs it successfully extracts from multiaddrs — this adds
-		// the same treatment for every known peer, driving mesh maintenance.
-		const node = this.deps.getNode();
-		if (node) {
-			for (const ma of filtered) {
-				try {
-					const mapath = Multiaddr(ma);
-					const pidComp = mapath.getComponents().find(c => c.code === 421);
-					const pid = pidComp?.value;
-					if (!pid) continue;
-					if (pid === node.peerId.toString()) continue;
-					await node.peerStore.merge(peerIDFromString(pid), {
-						tags: { 'keep-alive-fleet': { value: 50 } },
-					});
-				} catch {
-					/* invalid multiaddr — skip */
-				}
-			}
-		}
 	}
 
 	private async scheduleNext(): Promise<void> {
