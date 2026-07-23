@@ -137,6 +137,14 @@ export class Network {
 	/** Guards against overlapping status ticks — see setupStatusInterval. */
 	private statusTickInFlight = false;
 	/**
+	 * Lifecycle epoch, bumped by stop(). A status tick captures the epoch at
+	 * entry and refuses to write per-peer state once it differs — an in-flight
+	 * tick otherwise survives stop() and would repopulate freshly-cleared maps
+	 * or purge peers of the NEXT node instance (whose configuredPeerIDs are not
+	 * loaded yet) after a quick stop/start such as a factory reset.
+	 */
+	private runEpoch = 0;
+	/**
 	 * Per-(peer,lish) timestamp of the last `have` response we sent.
 	 * Used to rate-limit responses to repeated `want` queries from the same peer for the same LISH:
 	 * we respond at most once per WANT_RESPONSE_COOLDOWN_MS. Periodic cleanup removes stale entries.
@@ -729,6 +737,7 @@ export class Network {
 			// (and close connections of) a peer another tick just reconnected.
 			if (this.statusTickInFlight) return;
 			this.statusTickInFlight = true;
+			const epoch = this.runEpoch;
 			try {
 				const connectedPeers = this.node!.getPeers();
 				const allPeers = await this.node!.peerStore.all();
@@ -736,9 +745,12 @@ export class Network {
 				dumpGossipsubScores({ node: this.node, pubsub: this.pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers);
 				// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 				this.checkPeerCounts();
-				await this.runRedialMaintenance(connectedPeers, allPeers);
+				await this.runRedialMaintenance(connectedPeers, allPeers, epoch);
+				if (epoch !== this.runEpoch) return;
 				await this.runZeroConnectionRecovery(connectedPeers);
+				if (epoch !== this.runEpoch) return;
 				await this.maybePromotePeers();
+				if (epoch !== this.runEpoch) return;
 				// Fresh connection snapshot for the sweep — the tick-start snapshot is
 				// stale by now: a discovered peer that reconnected during the re-dial
 				// phase above must not have its status row swept as "not connected".
@@ -755,7 +767,7 @@ export class Network {
 		// churn at N≈100 without flooding logs or burning CPU on per-second probes.
 	}
 
-	private async runRedialMaintenance(connectedPeers: any[], allPeers: any[]): Promise<void> {
+	private async runRedialMaintenance(connectedPeers: any[], allPeers: any[], epoch: number = this.runEpoch): Promise<void> {
 		// Dial known peers not currently connected (maintains relay connections to NATed peers)
 		const connectedSet = new Set(connectedPeers.map(p => p.toString()));
 		const now = Date.now();
@@ -767,6 +779,7 @@ export class Network {
 		let skippedNoReachable = 0;
 		const localCidrs = getLocalCidrs(now);
 		for (const peer of allPeers) {
+			if (epoch !== this.runEpoch) return; // stop() hit — this run's state is gone
 			const pid = peer.id.toString();
 			if (connectedSet.has(pid)) {
 				this.redialBackoff.delete(pid); // clear on observed connection
@@ -817,6 +830,7 @@ export class Network {
 		let idx = 0;
 		const worker = async (): Promise<void> => {
 			while (idx < candidates.length) {
+				if (epoch !== this.runEpoch) return; // stop() hit — abandon remaining dials
 				const c = candidates[idx++]!;
 				console.debug(`   ↻ Re-dial attempt peer=${c.pid} addrs=${c.addrSummary} fails=${c.failCount}`);
 				try {
@@ -844,6 +858,10 @@ export class Network {
 						/* non-fatal */
 					}
 				} catch (err: any) {
+					// A dial aborted by stop() looks like any other failure — do not let
+					// it repopulate maps that stop() just cleared, or evict against the
+					// NEXT node instance.
+					if (epoch !== this.runEpoch) return;
 					// Exponential backoff: 30s × 2^failCount, capped at 10 min.
 					const nextFailCount = c.failCount + 1;
 					const delayMs = Math.min(30_000 * 2 ** c.failCount, 600_000);
@@ -1567,6 +1585,7 @@ export class Network {
 	}
 
 	async stop(): Promise<void> {
+		this.runEpoch++; // invalidate any in-flight status tick before touching state
 		if (this.statusInterval) {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;
