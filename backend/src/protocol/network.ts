@@ -1100,10 +1100,12 @@ export class Network {
 					const reuseExisting = alreadyKnown && peerID && this.node.getConnections(peerIDFromString(peerID)).length > 0;
 					if (!reuseExisting) await this.node.dial(ma);
 					if (peerID) {
-						await this.node.peerStore.merge(peerIDFromString(peerID), {
-							multiaddrs: [ma],
-							tags: { [KEEP_ALIVE]: { value: 1 } },
-						});
+						// Merge the address into peerStore ONLY when our own dial just
+						// verified it via Noise. On the reuseExisting path nothing proved
+						// this particular address belongs to the peer — merging it would
+						// let gossip poison a connected peer's address book with entries
+						// that later feed re-dials and can get the peer evicted.
+						await this.node.peerStore.merge(peerIDFromString(peerID), reuseExisting ? { tags: { [KEEP_ALIVE]: { value: 1 } } } : { multiaddrs: [ma], tags: { [KEEP_ALIVE]: { value: 1 } } });
 					}
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, null, origin);
 					console.log('✓ Connected to new bootstrap peer');
