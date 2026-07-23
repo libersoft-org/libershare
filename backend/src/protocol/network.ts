@@ -128,6 +128,8 @@ export class Network {
 	private statusInterval: NodeJS.Timeout | null = null;
 	/** Monotonic counter for status-interval ticks. Used by the periodic autodial promotion. */
 	private statusTickCount = 0;
+	/** Guards against overlapping status ticks — see setupStatusInterval. */
+	private statusTickInFlight = false;
 	/**
 	 * Per-(peer,lish) timestamp of the last `have` response we sent.
 	 * Used to rate-limit responses to repeated `want` queries from the same peer for the same LISH:
@@ -707,6 +709,12 @@ export class Network {
 
 	private setupStatusInterval(): void {
 		this.statusInterval = setInterval(async () => {
+			// Serialize ticks: with many unreachable peers the re-dial phase (5 s
+			// timeout × candidates ÷ concurrency) can exceed the 30 s cadence. Two
+			// interleaved ticks would race on redialBackoff — one tick could evict
+			// (and close connections of) a peer another tick just reconnected.
+			if (this.statusTickInFlight) return;
+			this.statusTickInFlight = true;
 			try {
 				const connectedPeers = this.node!.getPeers();
 				const allPeers = await this.node!.peerStore.all();
@@ -717,10 +725,15 @@ export class Network {
 				await this.runRedialMaintenance(connectedPeers, allPeers);
 				await this.runZeroConnectionRecovery(connectedPeers);
 				await this.maybePromotePeers();
-				const connectedIDs = new Set(connectedPeers.map((p: any) => p.toString()));
+				// Fresh connection snapshot for the sweep — the tick-start snapshot is
+				// stale by now: a discovered peer that reconnected during the re-dial
+				// phase above must not have its status row swept as "not connected".
+				const connectedIDs = new Set(this.node!.getPeers().map((p: any) => p.toString()));
 				this.bootstrapTracker.sweepStale(BOOTSTRAP_STATUS_STALE_MS, pid => connectedIDs.has(pid));
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
+			} finally {
+				this.statusTickInFlight = false;
 			}
 		}, 30000);
 		// Status interval 30 s. promoteKnownPeersToBootstrap + gossipsub.direct
