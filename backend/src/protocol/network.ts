@@ -897,8 +897,10 @@ export class Network {
 			if (peer.addresses.length === 0) continue;
 			const addr = peer.addresses[0]!;
 			const base = addr.multiaddr.toString();
-			// Ensure /p2p/<id> suffix — addBootstrapPeers extracts peer ID via multiaddr component 421.
-			const maStr = base.includes('/p2p/') ? base : `${base}/p2p/${pid}`;
+			// Ensure the address terminates in THIS peer's /p2p/<id> — a bare address
+			// gets the suffix appended, and so does a relay address whose only /p2p/
+			// component is the relay's own identity.
+			const maStr = extractDestinationPeerID(addr.multiaddr) === pid ? base : `${base}/p2p/${pid}`;
 			maStrings.push(maStr);
 		}
 		if (maStrings.length > 0) {
@@ -976,7 +978,7 @@ export class Network {
 					trace(`[NET] addBootstrapPeers skip non-routable: ${peer}`);
 					continue;
 				}
-				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
+				const peerID = extractDestinationPeerID(ma);
 				if (peerID && origin === 'configured') this.configuredPeerIDs.add(peerID);
 				// Skip peers recently evicted as unreachable — nodes that still remember
 				// them keep gossiping their addrs, and without this window every mention
@@ -1078,13 +1080,7 @@ export class Network {
 		// Drop the peer's addrs from the autodial list too — this array is otherwise
 		// push-only, so the zero-connection recovery loop would keep dialing addrs
 		// of an identity we just proved dead, and the array would grow until stop().
-		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => {
-			try {
-				return ma.getComponents().find((c: any) => c.code === 421)?.value !== peerID;
-			} catch {
-				return true;
-			}
-		});
+		this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(ma => extractDestinationPeerID(ma) !== peerID);
 		// Remove from the gossipsub never-PRUNE direct set, or gossipsub keeps
 		// attempting a direct stream to the dead peer every directConnectTicks.
 		const gossipsub: any = this.pubsub;
@@ -1553,6 +1549,26 @@ export class Network {
  * - `error`: every other reason (invalid multiaddr, connection refused, protocol
  *   negotiation failure, etc).
  */
+/**
+ * Extract the DESTINATION peer ID from a multiaddr. A circuit-relay address has
+ * the shape `/.../p2p/<relay>/p2p-circuit/p2p/<destination>` — taking the FIRST
+ * /p2p/ component would return the relay's identity, so eviction and configured
+ * protection would target the wrong peer. The last /p2p/ component is always
+ * the dial target. Returns null when the multiaddr carries no peer ID at all.
+ */
+export function extractDestinationPeerID(ma: any): string | null {
+	try {
+		const components: Array<{ code: number; value?: string }> = ma?.getComponents?.() ?? [];
+		for (let i = components.length - 1; i >= 0; i--) {
+			const c = components[i]!;
+			if (c.code === 421 && typeof c.value === 'string') return c.value;
+		}
+	} catch {
+		/* unparseable multiaddr — no ID */
+	}
+	return null;
+}
+
 export function classifyBootstrapError(message: string): BootstrapPeerDialStatus {
 	if (!message) return 'error';
 	if (message.includes('does not match expected remote identity key')) return 'identity-mismatch';

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
-import { classifyBootstrapError, extractActualPeerID } from '../../../src/protocol/network.ts';
+import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
+import { classifyBootstrapError, extractActualPeerID, extractDestinationPeerID } from '../../../src/protocol/network.ts';
 import { BootstrapStatusTracker } from '../../../src/protocol/bootstrap-status.ts';
 
 // Deterministic unit tests for the bootstrap-peer dial classification — the pure
@@ -56,6 +57,29 @@ describe('extractActualPeerID', () => {
 	it('returns null when the mismatch message lacks the Payload-identity-key prefix', () => {
 		// Shape guard: a different phrasing must not yield a confident (wrong) replacement peerID.
 		expect(extractActualPeerID('does not match expected remote identity key only')).toBe(null);
+	});
+});
+
+describe('extractDestinationPeerID', () => {
+	// Real base58 ed25519 peer IDs are required — the multiaddr parser validates them.
+	const RELAY_ID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const DST_ID = '12D3KooWAnfqA6Wap96ixVfxhHeGUDMriBG4Nncp5tqu8q71EVv2';
+
+	it('returns the terminal peer ID of a plain address', () => {
+		expect(extractDestinationPeerID(Multiaddr(`/ip4/192.0.2.1/tcp/9090/p2p/${DST_ID}`))).toBe(DST_ID);
+	});
+
+	it('returns the DESTINATION (not the relay) for a circuit address', () => {
+		expect(extractDestinationPeerID(Multiaddr(`/ip4/192.0.2.1/tcp/9090/p2p/${RELAY_ID}/p2p-circuit/p2p/${DST_ID}`))).toBe(DST_ID);
+	});
+
+	it('returns the relay ID when a circuit address has no destination component', () => {
+		expect(extractDestinationPeerID(Multiaddr(`/ip4/192.0.2.1/tcp/9090/p2p/${RELAY_ID}/p2p-circuit`))).toBe(RELAY_ID);
+	});
+
+	it('returns null for an address without any peer ID and for garbage input', () => {
+		expect(extractDestinationPeerID(Multiaddr('/ip4/192.0.2.1/tcp/9090'))).toBe(null);
+		expect(extractDestinationPeerID(null)).toBe(null);
 	});
 });
 
