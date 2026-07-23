@@ -108,7 +108,8 @@ Periodic peer-discovery broadcast. Contains the sender's own reachable multiaddr
 **Receiver behavior**:
 
 - Drop unparseable, loopback, and non-routable private addresses — every receiver must filter defensively regardless of sender-side filtering
-- Dial newly discovered peers; treat announced entries as unverified claims (no persistent trust before a successful dial)
+- Dial newly discovered peers; keep-alive / re-dial persistence is granted only after a successful dial
+- A cryptographically proven identity mismatch (the Noise handshake reports a different peer ID than the address claims) is definitive — the receiver purges the announced entry so the dead identity is not re-dialed or re-gossiped
 
 ## Data plane (`/lish/0.0.1` stream protocol)
 
@@ -192,7 +193,7 @@ Requests the binary data of one chunk.
 **Behavior**:
 
 - Chunks are identified by their **checksum**, not by a positional index. Chunks with identical content therefore share one identifier — a single received chunk can satisfy every position (in any file) that lists the same checksum
-- The requester MUST hash the received data with the manifest's `checksumAlgo` and compare the result to the requested `chunkID`; on mismatch it discards the data and requests the chunk from a different peer
+- The requester MUST hash the received data with the manifest's `checksumAlgo` and compare the result to the requested `chunkID`; on mismatch it discards the data and re-queues the chunk (typically retried via another peer), banning peers that repeatedly deliver corrupt data (see Peer penalties)
 - A LISH that is not shared (or that the peer does not have at all) is answered with `PEER_LISH_NOT_SHARED` — same non-revealing semantics as `getLish`
 - A peer that has the LISH but not this chunk (partial seeder) answers `PEER_CHUNK_NOT_FOUND` — the requester goes elsewhere for that chunk
 - A peer at its per-LISH upload capacity, or with the LISH temporarily busy, answers `PEER_BUSY` — the requester retries later
@@ -246,7 +247,7 @@ Sent by a peer in reply to a pubsub `searchLishs`, over a fresh stream to the se
 
 **Behavior**:
 
-- An empty `lishs` array is allowed — it is an explicit "no match" signal from that peer
+- An empty `lishs` array is accepted by receivers as an explicit "no match" signal; the reference implementation sends no response at all instead of an empty result
 
 ### Error codes
 
@@ -276,7 +277,7 @@ Wire error codes returned in the `error` field:
 
 1. The searcher broadcasts `searchLishs` with a unique `searchID`
 2. Matching peers reply with unicast `searchResult`
-3. As a fallback, the searcher may also dial known peers directly and issue `getLishs` with the same query — this covers freshly discovered peers not yet propagated through the gossipsub subscriber set
+3. As a fallback, the searcher may also issue `getLishs` with the same query directly to its currently connected peers (including peers that connect while the search is still running) — this covers peers not yet propagated through the gossipsub subscriber set
 
 ## Planned extensions
 
