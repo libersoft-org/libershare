@@ -124,7 +124,10 @@ describe('BootstrapStatusTracker.sweepStale', () => {
 
 		tracker.sweepStale(TTL, pid => pid === LIVE_ID, past);
 
-		const addrs = tracker.getStatus(NET)?.peers.map(p => p.multiaddr).sort();
+		const addrs = tracker
+			.getStatus(NET)
+			?.peers.map(p => p.multiaddr)
+			.sort();
 		// DEAD discovered row expired; LIVE row survives via connection; configured row untouchable.
 		expect(addrs).toEqual([CONF_ADDR, LIVE_ADDR].sort());
 	});
