@@ -1133,22 +1133,27 @@ export class Network {
 					if (kind === 'identity-mismatch' && peerID) {
 						const pid = peerIDFromString(peerID);
 						if (this.node.getConnections(pid).length > 0) {
-							const bare = peer.replace(/\/p2p\/[^/]+$/, '');
+							// Compare in CANONICAL form (parsed multiaddr toString) — the raw
+							// gossiped string may differ from what peerStore stored (e.g.
+							// expanded IPv6), and a non-matching filter would silently keep
+							// the poisoned address while logging that it was dropped.
+							const canonical = ma.toString();
+							const canonicalBare = canonical.replace(/\/p2p\/[^/]+$/, '');
 							this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(m => {
 								const s = m.toString();
-								return s !== peer && s !== bare;
+								return s !== canonical && s !== canonicalBare;
 							});
 							try {
 								const rec = await this.node.peerStore.get(pid);
 								const keep = rec.addresses.filter((a: any) => {
 									const s = a.multiaddr.toString();
-									return s !== peer && s !== bare;
+									return s !== canonical && s !== canonicalBare;
 								});
 								if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
 							} catch {
 								/* peer not in store — nothing to trim */
 							}
-							console.log(`[NET] dropped stale addr of connected peer ${peerID.slice(0, 16)}: ${peer}`);
+							console.log(`[NET] dropped stale addr of connected peer ${peerID.slice(0, 16)}: ${canonical}`);
 						} else {
 							await this.purgeStalePeer(peerID, `${origin} dial identity mismatch`);
 						}
