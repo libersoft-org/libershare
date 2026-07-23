@@ -108,7 +108,7 @@ Periodic peer-discovery broadcast. Contains the sender's own reachable multiaddr
 **Receiver behavior**:
 
 - Drop unparseable, loopback, and non-routable private addresses — every receiver must filter defensively regardless of sender-side filtering
-- Dial newly discovered peers; keep-alive / re-dial persistence is granted only after a successful dial
+- Dial newly discovered peers and tag them for automatic re-dial, so briefly dropped peers reconnect without waiting for the next announce
 - A cryptographically proven identity mismatch (the Noise handshake reports a different peer ID than the address claims) is definitive — the receiver purges the announced entry so the dead identity is not re-dialed or re-gossiped
 
 ## Data plane (`/lish/0.0.1` stream protocol)
@@ -271,7 +271,7 @@ Wire error codes returned in the `error` field:
 6. **Resume** — verified chunks are persisted; a restarted download requests only the missing chunks
 7. **Seed** — a peer can serve every chunk it has verified, even before its own download completes (partial seeding)
 
-**Peer penalties** (downloader-side, reference implementation): a peer that repeatedly delivers corrupt chunks is banned for the rest of the download session; a peer that repeatedly fails transiently (busy, I/O errors, missing chunks) is dropped into a temporary quarantine and retried after a few minutes — or immediately after it sends a fresh `announceHave`.
+**Peer penalties** (downloader-side, reference implementation): a peer that repeatedly delivers corrupt chunks is banned for the rest of the application session; a peer that repeatedly fails transiently (busy, I/O errors, missing chunks) is dropped into a temporary quarantine and retried after a few minutes — or immediately after it sends a fresh `announceHave`.
 
 ## Search flow
 
