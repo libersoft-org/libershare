@@ -215,6 +215,13 @@ export class Network {
 	/** peerID → eviction time. Blocks re-adding a just-evicted unreachable peer from gossip for UNREACHABLE_QUARANTINE_MS. */
 	private readonly unreachableQuarantine = new Map<string, number>();
 	/**
+	 * peerID → time we first saw the peer disconnected with ZERO reachable
+	 * addresses. Such peers never enter the re-dial path (nothing to dial), so
+	 * the failure counter cannot evict them — without this they would sit in
+	 * peerStore/bootstrap sets until maxPeerAge while every tick re-scans them.
+	 */
+	private readonly noReachableSince = new Map<string, number>();
+	/**
 	 * Peer IDs that appear in at least one network's CONFIGURED bootstrap list.
 	 * These are user data — the unreachable-eviction path must never purge them,
 	 * or a bootstrap hub that is down for half an hour would lose its peerStore
@@ -554,6 +561,7 @@ export class Network {
 				// gets evicted as "unreachable for 30 minutes" despite never being
 				// gone that long.
 				this.redialBackoff.delete(peerID);
+				this.noReachableSince.delete(peerID);
 				const connections = this.node!.getConnections(evt.detail);
 				const connTypes = connections.map(c => {
 					const isRelay = Circuit.matches(c.remoteAddr);
@@ -757,6 +765,7 @@ export class Network {
 			if (connectedSet.has(pid)) {
 				this.redialBackoff.delete(pid); // clear on observed connection
 				this.unreachableQuarantine.delete(pid);
+				this.noReachableSince.delete(pid);
 				continue;
 			}
 			const bo = this.redialBackoff.get(pid);
@@ -777,8 +786,22 @@ export class Network {
 			}
 			if (reachable.length === 0) {
 				skippedNoReachable++;
+				// No dialable address ⇒ the failure counter can never fire for this
+				// peer. Track how long it has been in this state; a disconnected peer
+				// with zero reachable addrs for the whole eviction window is as gone
+				// as one that failed every dial. Same exemptions as the dial path.
+				const since = this.noReachableSince.get(pid) ?? now;
+				if (!this.noReachableSince.has(pid)) this.noReachableSince.set(pid, now);
+				if (now - since >= REDIAL_EVICT_MIN_MS && !this.configuredPeerIDs.has(pid)) {
+					this.noReachableSince.delete(pid);
+					this.unreachableQuarantine.set(pid, now);
+					this.redialBackoff.delete(pid);
+					this.bootstrapTracker.deleteDiscoveredByPeerID(pid);
+					await this.purgeStalePeer(pid, `no reachable addresses for ${Math.round((now - since) / 60_000)} min`);
+				}
 				continue;
 			}
+			this.noReachableSince.delete(pid); // addresses came back — reset the clock
 			candidates.push({ peer, pid, addrSummary: reachable.join(' | '), failCount: bo?.failCount ?? 0 });
 		}
 		// Parallel dial with concurrency=10 via rolling promise pool; caps worst-case
@@ -853,6 +876,7 @@ export class Network {
 		// Prune backoff entries for peers that are no longer in peerStore to prevent unbounded growth.
 		const storeSet = new Set(allPeers.map(p => p.id.toString()));
 		for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
+		for (const pid of this.noReachableSince.keys()) if (!storeSet.has(pid)) this.noReachableSince.delete(pid);
 		// Quarantine entries for peers gossip never mentions again would leak — drop
 		// them once they are far past the window (re-entry from gossip self-cleans).
 		const quarantineCutoff = now - 2 * UNREACHABLE_QUARANTINE_MS;
@@ -1535,6 +1559,7 @@ export class Network {
 		this._lastScores.clear();
 		this.redialBackoff.clear();
 		this.unreachableQuarantine.clear();
+		this.noReachableSince.clear();
 		this.configuredPeerIDs.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {
