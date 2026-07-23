@@ -862,10 +862,8 @@ export class Network {
 
 	private async maybePromotePeers(): Promise<void> {
 		// Every 5th status tick (~150 s at 30 s status cadence) promote every
-		// peerStore entry back to bootstrap priority. Re-stamps KEEP_ALIVE tags
-		// and feeds libp2p a concrete multiaddr list to re-dial against, catching
-		// peers whose original dial cached a stale (unreachable) address — these
-		// would otherwise sit idle until they reappeared via identify/PX/announce.
+		// CONNECTED peer back to bootstrap priority (KEEP_ALIVE re-stamp + gossipsub
+		// direct set). Disconnected peers are handled by runRedialMaintenance.
 		this.statusTickCount++;
 		if (this.statusTickCount % 5 === 0) {
 			try {
@@ -877,19 +875,24 @@ export class Network {
 	}
 
 	/**
-	 * Promote every known peer (from libp2p peerStore) back to bootstrap priority so
-	 * KEEP_ALIVE tagging and direct-dial re-runs cover peers the ordinary re-dial loop
-	 * skipped because their cached multiaddrs looked like loopback/private-IP garbage.
-	 * Runs every ~45 s from the status tick.
+	 * Promote every CONNECTED peer back to bootstrap priority: KEEP_ALIVE tagging,
+	 * bootstrap dedup-set membership, and gossipsub direct-set fast reconnect.
+	 * Disconnected peers are deliberately excluded — runRedialMaintenance already
+	 * dials each of them every tick with exponential backoff and eviction, whereas
+	 * promotion dials have no backoff, so including them meant a burst of dials to
+	 * dead peers every promotion cycle and their permanent growth in the direct set.
+	 * Runs every ~150 s from the status tick.
 	 */
 	private async promoteKnownPeersToBootstrap(): Promise<void> {
 		if (!this.node) return;
 		const allPeers = await this.node.peerStore.all();
 		const myID = this.node.peerId.toString();
+		const connectedIDs = new Set(this.node.getPeers().map((p: any) => p.toString()));
 		const maStrings: string[] = [];
 		for (const peer of allPeers) {
 			const pid = peer.id.toString();
 			if (pid === myID) continue;
+			if (!connectedIDs.has(pid)) continue;
 			if (this.bootstrapPeerIDs.has(pid)) continue;
 			if (peer.addresses.length === 0) continue;
 			const addr = peer.addresses[0]!;
@@ -898,25 +901,28 @@ export class Network {
 			const maStr = base.includes('/p2p/') ? base : `${base}/p2p/${pid}`;
 			maStrings.push(maStr);
 		}
-		if (maStrings.length === 0) return;
-		trace(`[NET] periodic autodial: promoting ${maStrings.length} peer(s) to bootstrap`);
-		await this.addBootstrapPeers(maStrings);
-		// Also insert every known peer into the gossipsub `direct` Set at runtime.
-		// Direct peers are never PRUNED by D/Dhi and have their own fast reconnect
-		// cadence (directConnectTicks × heartbeatInterval). KEEP_ALIVE handles the
-		// TCP layer; gossipsub.direct handles the gossipsub-stream layer.
+		if (maStrings.length > 0) {
+			trace(`[NET] periodic autodial: promoting ${maStrings.length} connected peer(s) to bootstrap`);
+			await this.addBootstrapPeers(maStrings);
+		}
+		// Also insert every connected peer into the gossipsub `direct` Set at runtime.
+		// Direct peers have their own fast reconnect cadence (directConnectTicks ×
+		// heartbeatInterval). KEEP_ALIVE handles the TCP layer; gossipsub.direct
+		// handles the gossipsub-stream layer. Evicted peers are removed from the
+		// set in purgeStalePeer, so it no longer grows monotonically.
 		const gossipsub: any = this.pubsub;
 		if (gossipsub?.direct && typeof gossipsub.direct.add === 'function') {
 			let added = 0;
 			for (const peer of allPeers) {
 				const pid = peer.id.toString();
 				if (pid === myID) continue;
+				if (!connectedIDs.has(pid)) continue;
 				if (!gossipsub.direct.has(pid)) {
 					gossipsub.direct.add(pid);
 					added++;
 				}
 			}
-			if (added > 0) trace(`[NET] gossipsub direct: added ${added} known peer(s) to never-PRUNE set`);
+			if (added > 0) trace(`[NET] gossipsub direct: added ${added} connected peer(s) to fast-reconnect set`);
 		}
 	}
 
