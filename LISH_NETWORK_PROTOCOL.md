@@ -51,7 +51,7 @@ The protocol does not use a DHT. Peers are discovered through complementary mech
 
 ## Control plane (gossipsub messages)
 
-Control messages are JSON objects encoded as UTF-8, published on a network's `lish/<networkID>` topic. Receivers MUST drop payloads that exceed 256 KiB or fail to parse. The sender's peer ID is always taken from the verified gossipsub envelope, never from the payload — control messages carry no sender field that could be spoofed.
+Control messages are JSON objects encoded as UTF-8, published on a network's `lish/<networkID>` topic. Every message MUST be signed with the sender's peer key (gossipsub `StrictSign` policy) — unsigned or invalidly signed messages are rejected. Receivers MUST drop payloads that exceed 256 KiB or fail to parse. The sender's peer ID is always taken from the validated gossipsub envelope, never from the payload — control messages carry no sender field that could be spoofed.
 
 ### want
 
@@ -67,6 +67,7 @@ Broadcast by a peer that wants to download a LISH. Every subscriber that shares 
 **Receiver behavior**:
 
 - Ignore when the LISH is not shared (upload disabled), temporarily busy (verification or data move in progress), or its data directory is missing on disk
+- Ignore when the responder has no verified chunks of the LISH yet (nothing to serve)
 - Rate-limit responses per (peer, lishID) pair — at most one `announceHave` per 60 seconds
 
 ### searchLishs
@@ -84,7 +85,7 @@ Broadcast by a peer searching the network for content. Peers whose shared LISHs 
 **Receiver behavior**:
 
 - Drop empty queries and queries longer than 256 characters
-- Deduplicate by `searchID` — the same query can arrive via several gossipsub mesh paths, answer at most once
+- Deduplicate by `searchID` — the same query can arrive via several gossipsub mesh paths, answer at most once (the reference implementation remembers seen IDs for 5 minutes)
 - No matching LISH → no response (the searcher treats silence as "no result")
 
 ### peer-announce
@@ -113,9 +114,11 @@ Periodic peer-discovery broadcast. Contains the sender's own reachable multiaddr
 
 Request / response messages over a libp2p stream. Every message is a MessagePack-encoded object framed with an unsigned-varint length prefix. A single stream can carry any number of requests; the responder answers each request with exactly one response, in order. Binary chunk data uses the MessagePack native binary type — no base64 overhead.
 
-Message size is bounded by the receiving peer's configured maximum message size. It must cover the largest chunk plus encoding overhead, and manifests of many-file LISHs.
+Message size is bounded by the receiving peer's configured maximum message size (reference implementation default: 128 MiB). It must cover the largest chunk plus encoding overhead, and manifests of many-file LISHs.
 
 Requests are discriminated by a `type` field. A request the responder cannot parse is answered with `PEER_INVALID_REQUEST` and the stream stays open for further messages.
+
+Responders SHOULD answer promptly: the reference implementation treats a peer that does not respond within 15 seconds (list requests, acknowledgements) or 30 seconds (manifest and chunk requests) as unreachable and moves on.
 
 ### getLishs — list shared LISHs
 
@@ -158,14 +161,14 @@ Requests the full manifest (LISH data format structure) of a single LISH.
 }
 
 // Response
-{ manifest: ILISHData } // LISH data format structure (without responder-local state)
+{ manifest: ILISH } // LISH data format structure (see LISH_DATA_FORMAT.md)
 // or
 { error: string }
 ```
 
 **Behavior**:
 
-- The manifest contains the complete LISH data format structure — directory tree, file list, chunk checksums — but never responder-local state (local paths, per-chunk possession)
+- The manifest contains the complete LISH data format structure — directory tree, file list, chunk checksums — and MUST NOT include responder-local state (local paths, per-chunk possession)
 - A LISH that is not shared is answered with `PEER_LISH_NOT_SHARED`; a LISH the peer does not have at all is answered with the same code, so possession is not revealed
 
 ### getChunk — fetch chunk data
@@ -177,7 +180,7 @@ Requests the binary data of one chunk.
 {
 	type: 'getChunk', // May be omitted; a request without `type` is treated as getChunk
 	lishID: string,
-	chunkID: number // Chunk index (0-based)
+	chunkID: string // Chunk checksum from the manifest (a `files[].checksums[]` entry)
 }
 
 // Response
@@ -188,7 +191,9 @@ Requests the binary data of one chunk.
 
 **Behavior**:
 
-- The requester MUST verify the received data against the chunk checksum from the LISH manifest; on mismatch it discards the data and requests the chunk from a different peer
+- Chunks are identified by their **checksum**, not by a positional index. Chunks with identical content therefore share one identifier — a single received chunk can satisfy every position (in any file) that lists the same checksum
+- The requester MUST hash the received data with the manifest's `checksumAlgo` and compare the result to the requested `chunkID`; on mismatch it discards the data and requests the chunk from a different peer
+- A LISH that is not shared (or that the peer does not have at all) is answered with `PEER_LISH_NOT_SHARED` — same non-revealing semantics as `getLish`
 - A peer that has the LISH but not this chunk (partial seeder) answers `PEER_CHUNK_NOT_FOUND` — the requester goes elsewhere for that chunk
 - A peer at its per-LISH upload capacity, or with the LISH temporarily busy, answers `PEER_BUSY` — the requester retries later
 - A peer that fails to read the chunk from disk answers `PEER_IO_ERROR`
@@ -202,7 +207,7 @@ Sent by a seeder in reply to a pubsub `want`, over a fresh stream to the request
 {
 	type: 'announceHave',
 	lishID: string,
-	chunks: 'all' | number[], // Chunk IDs the seeder can serve ('all' = complete LISH)
+	chunks: 'all' | string[], // Chunk checksums the seeder can serve ('all' = complete LISH)
 	multiaddrs: string[]      // Seeder's dial addresses for the chunk-transfer connection
 }
 
@@ -258,12 +263,14 @@ Wire error codes returned in the `error` field:
 ## Transfer flow
 
 1. **Join** — subscribe to `lish/<networkID>`, dial the network's bootstrap peers
-2. **Want** — broadcast `want` with the LISH ID
+2. **Want** — broadcast `want` with the LISH ID; while seeders are missing, the `want` may be re-broadcast periodically (receivers rate-limit their responses, see above)
 3. **Have** — seeders reply with unicast `announceHave` (chunk availability + dial addresses)
 4. **Manifest** — the downloader dials a seeder and fetches the manifest via `getLish` (skipped when it already has the structure, e.g. from an imported `.lish` file)
 5. **Chunks** — the downloader requests chunks from multiple seeders in parallel via `getChunk`, verifying every chunk against its manifest checksum
 6. **Resume** — verified chunks are persisted; a restarted download requests only the missing chunks
 7. **Seed** — a peer can serve every chunk it has verified, even before its own download completes (partial seeding)
+
+**Peer penalties** (downloader-side, reference implementation): a peer that repeatedly delivers corrupt chunks is banned for the rest of the download session; a peer that repeatedly fails transiently (busy, I/O errors, missing chunks) is dropped into a temporary quarantine and retried after a few minutes — or immediately after it sends a fresh `announceHave`.
 
 ## Search flow
 
