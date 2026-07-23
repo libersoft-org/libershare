@@ -217,6 +217,12 @@ export class Network {
 	 * These are user data — the unreachable-eviction path must never purge them,
 	 * or a bootstrap hub that is down for half an hour would lose its peerStore
 	 * entry and its addrs in bootstrapMultiaddrs until the next restart.
+	 *
+	 * Grow-only by design: entries are not removed when a bootstrap row is
+	 * deleted or its network disabled, so a formerly-configured peer stays
+	 * eviction-exempt until restart. That errs on the safe side (a peer is
+	 * merely redialed longer than necessary); per-network refcounting would be
+	 * required to shrink it correctly and is not worth the bookkeeping.
 	 */
 	private readonly configuredPeerIDs = new Set<string>();
 
@@ -540,6 +546,12 @@ export class Network {
 			try {
 				const peerID = evt.detail.toString();
 				this.unreachableQuarantine.delete(peerID);
+				// Any verified connection resets the failure history — without this, a
+				// flappy NAT/relay peer that connects and drops BETWEEN status ticks
+				// keeps accumulating failCount across its live episodes and eventually
+				// gets evicted as "unreachable for 30 minutes" despite never being
+				// gone that long.
+				this.redialBackoff.delete(peerID);
 				const connections = this.node!.getConnections(evt.detail);
 				const connTypes = connections.map(c => {
 					const isRelay = Circuit.matches(c.remoteAddr);
@@ -804,6 +816,14 @@ export class Network {
 					// Configured bootstrap peers are exempt — user data, they must survive
 					// any outage and keep their red status row instead.
 					if (nextFailCount >= REDIAL_EVICT_FAILS && Date.now() - firstFailure >= REDIAL_EVICT_MIN_MS && !this.configuredPeerIDs.has(c.pid)) {
+						// Last-moment liveness check: the peer may have connected (inbound
+						// dial, another async path) while this worker was failing on stale
+						// state. purgeStalePeer closes connections, so evicting here would
+						// cut a LIVE peer — verify emptiness right before acting.
+						if (this.node && this.node.getConnections(c.peer.id).length > 0) {
+							this.redialBackoff.delete(c.pid);
+							continue;
+						}
 						this.unreachableQuarantine.set(c.pid, Date.now());
 						this.redialBackoff.delete(c.pid);
 						this.bootstrapTracker.deleteDiscoveredByPeerID(c.pid);
