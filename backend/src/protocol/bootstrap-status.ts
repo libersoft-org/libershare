@@ -1,6 +1,15 @@
 import { type BootstrapStatus, type BootstrapPeerStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 
 /**
+ * Hard ceiling on DISCOVERED (gossip-learned) rows kept per network. A hostile
+ * topic subscriber can announce unbounded unique addresses, all ending in one
+ * connected peer's ID; without a cap the tracker map, its snapshots, and the
+ * WebSocket updates grow without limit. Configured rows are never counted or
+ * dropped — they are finite user data.
+ */
+const MAX_DISCOVERED_PER_NETWORK = 256;
+
+/**
  * Tracks per-network, per-bootstrap-peer dial outcome status.
  *
  * Outer key is networkID; inner key is the exact multiaddr string from the network
@@ -48,6 +57,7 @@ export class BootstrapStatusTracker {
 		const previous = net.get(multiaddr);
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
 		net.set(multiaddr, { multiaddr, expectedPeerID, status: 'pending', origin: finalOrigin, actualPeerID: null, lastError: null, updatedAt: new Date().toISOString() });
+		this.capDiscovered(net);
 		const snapshot = this.buildStatus(networkID);
 		if (snapshot) this.onStatusChange?.(networkID, snapshot);
 	}
@@ -60,8 +70,18 @@ export class BootstrapStatusTracker {
 		const previous = net.get(multiaddr);
 		const finalOrigin: BootstrapPeerOrigin = previous?.origin === 'configured' ? 'configured' : origin;
 		net.set(multiaddr, { multiaddr, expectedPeerID, status, origin: finalOrigin, actualPeerID, lastError: truncated, updatedAt: new Date().toISOString() });
+		this.capDiscovered(net);
 		const snapshot = this.buildStatus(networkID);
 		if (snapshot) this.onStatusChange?.(networkID, snapshot);
+	}
+
+	/** Bound discovered rows per network (drop the oldest) — see MAX_DISCOVERED_PER_NETWORK. */
+	private capDiscovered(net: Map<string, BootstrapPeerStatus>): void {
+		let discovered = 0;
+		for (const p of net.values()) if (p.origin === 'discovered') discovered++;
+		if (discovered <= MAX_DISCOVERED_PER_NETWORK) return;
+		const oldestFirst = [...net.entries()].filter(([, p]) => p.origin === 'discovered').sort((a, b) => Date.parse(a[1].updatedAt) - Date.parse(b[1].updatedAt));
+		for (let i = 0; i < discovered - MAX_DISCOVERED_PER_NETWORK; i++) net.delete(oldestFirst[i]![0]);
 	}
 
 	/** Drop a single peer entry directly (used after identity-mismatch purge of discovered peers). */
@@ -97,18 +117,21 @@ export class BootstrapStatusTracker {
 
 	/**
 	 * Drop discovered-origin entries that have gone stale: no status refresh within
-	 * `ttlMs` AND no current connection to the peer. Dead peers stop being mentioned
-	 * by gossip, so their rows stop refreshing and expire here — including rows
-	 * frozen at 'connected' for a peer that silently died. Configured entries are
+	 * `ttlMs` AND the peer is not an active member of THAT network. Dead peers stop
+	 * being mentioned by gossip, so their rows stop refreshing and expire here —
+	 * including rows frozen at 'connected' for a peer that silently died. The
+	 * liveness predicate is scoped to the network (its topic subscribers), NOT the
+	 * shared libp2p connection: a peer that left network B but is still connected
+	 * through network A must not keep a stale row under B. Configured entries are
 	 * exempt (user data). `now` is injectable for tests.
 	 */
-	sweepStale(ttlMs: number, isConnected: (peerID: string) => boolean, now: number = Date.now()): void {
+	sweepStale(ttlMs: number, isMember: (networkID: string, peerID: string) => boolean, now: number = Date.now()): void {
 		for (const [networkID, peers] of [...this.stats]) {
 			let changed = false;
 			for (const [addr, p] of [...peers]) {
 				if (p.origin !== 'discovered') continue;
 				const pid = p.expectedPeerID ?? p.actualPeerID;
-				if (pid && isConnected(pid)) continue;
+				if (pid && isMember(networkID, pid)) continue;
 				const updated = Date.parse(p.updatedAt);
 				if (Number.isFinite(updated) && now - updated < ttlMs) continue;
 				peers.delete(addr);

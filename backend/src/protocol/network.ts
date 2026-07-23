@@ -751,11 +751,21 @@ export class Network {
 				if (epoch !== this.runEpoch) return;
 				await this.maybePromotePeers();
 				if (epoch !== this.runEpoch) return;
-				// Fresh connection snapshot for the sweep — the tick-start snapshot is
-				// stale by now: a discovered peer that reconnected during the re-dial
-				// phase above must not have its status row swept as "not connected".
-				const connectedIDs = new Set(this.node!.getPeers().map((p: any) => p.toString()));
-				this.bootstrapTracker.sweepStale(BOOTSTRAP_STATUS_STALE_MS, pid => connectedIDs.has(pid));
+				// Sweep by per-network membership (topic subscribers), not global
+				// connectivity: a peer that left this network but stays connected via
+				// another must still have its stale row here expire. Snapshot per topic
+				// lazily and freshly — the tick-start state is stale after the re-dial
+				// phase, and a peer that (re)subscribed during it must not be swept.
+				const topicMembers = new Map<string, Set<string>>();
+				const isMember = (networkID: string, pid: string): boolean => {
+					let set = topicMembers.get(networkID);
+					if (!set) {
+						set = new Set(this.getTopicPeers(networkID));
+						topicMembers.set(networkID, set);
+					}
+					return set.has(pid);
+				};
+				this.bootstrapTracker.sweepStale(BOOTSTRAP_STATUS_STALE_MS, isMember);
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
 			} finally {
