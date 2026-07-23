@@ -835,6 +835,9 @@ export class Network {
 				console.debug(`   ↻ Re-dial attempt peer=${c.pid} addrs=${c.addrSummary} fails=${c.failCount}`);
 				try {
 					await this.node!.dial(c.peer.id, { signal: AbortSignal.timeout(5000) });
+					// Same guard as the failure path: a dial resolving after stop() must
+					// not write into the next run's state or the next node's peerStore.
+					if (epoch !== this.runEpoch) return;
 					const conns = this.node!.getConnections(c.peer.id);
 					const connDetail = conns
 						.map(conn => {
@@ -941,14 +944,14 @@ export class Network {
 		}
 	}
 
-	private async maybePromotePeers(): Promise<void> {
+	private async maybePromotePeers(epoch: number = this.runEpoch): Promise<void> {
 		// Every 5th status tick (~150 s at 30 s status cadence) promote every
 		// CONNECTED peer back to bootstrap priority (KEEP_ALIVE re-stamp + gossipsub
 		// direct set). Disconnected peers are handled by runRedialMaintenance.
 		this.statusTickCount++;
 		if (this.statusTickCount % 5 === 0) {
 			try {
-				await this.promoteKnownPeersToBootstrap();
+				await this.promoteKnownPeersToBootstrap(epoch);
 			} catch (err: any) {
 				trace(`[NET] promoteKnownPeersToBootstrap failed: ${err?.message ?? err}`);
 			}
@@ -964,9 +967,13 @@ export class Network {
 	 * dead peers every promotion cycle and their permanent growth in the direct set.
 	 * Runs every ~150 s from the status tick.
 	 */
-	private async promoteKnownPeersToBootstrap(): Promise<void> {
+	private async promoteKnownPeersToBootstrap(epoch: number = this.runEpoch): Promise<void> {
 		if (!this.node) return;
 		const allPeers = await this.node.peerStore.all();
+		// stop() may have landed while peerStore.all() was pending — promoting now
+		// would repopulate bootstrap/tracker state the shutdown just cleared (or,
+		// after a fast restart, populate the NEXT node from the old snapshot).
+		if (epoch !== this.runEpoch) return;
 		const myID = this.node.peerId.toString();
 		const connectedIDs = new Set(this.node.getPeers().map((p: any) => p.toString()));
 		const maStrings: string[] = [];
@@ -987,6 +994,7 @@ export class Network {
 		if (maStrings.length > 0) {
 			trace(`[NET] periodic autodial: promoting ${maStrings.length} connected peer(s) to bootstrap`);
 			await this.addBootstrapPeers(maStrings);
+			if (epoch !== this.runEpoch) return;
 		}
 		// Also insert every connected peer into the gossipsub `direct` Set at runtime.
 		// Direct peers have their own fast reconnect cadence (directConnectTicks ×
