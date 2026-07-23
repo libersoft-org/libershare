@@ -1096,14 +1096,34 @@ export class Network {
 					} else {
 						console.log(`⚠️  Could not connect to bootstrap peer (${kind}): ${peer} — ${message}`);
 					}
-					// Crypto-verified identity mismatch ⇒ peerID stored in our peerStore
-					// is provably wrong for this address. Purge it so libp2p autodial
-					// stops retrying the dead identity. Safe because Noise handshake
-					// is unforgeable — a mismatch is definitive, never a transient
-					// network issue. Only triggers when we have an expected peerID
-					// to purge.
+					// Crypto-verified identity mismatch ⇒ THIS ADDRESS provably no longer
+					// belongs to the expected peer (Noise is unforgeable). It says nothing
+					// about the peer's other addresses: a peer healthy over a relay can
+					// still have one stale direct address that some other node now owns.
+					// So: peer alive through other connections → drop only the offending
+					// address; peer with no connections → full purge as before.
 					if (kind === 'identity-mismatch' && peerID) {
-						await this.purgeStalePeer(peerID, `${origin} dial identity mismatch`);
+						const pid = peerIDFromString(peerID);
+						if (this.node.getConnections(pid).length > 0) {
+							const bare = peer.replace(/\/p2p\/[^/]+$/, '');
+							this.bootstrapMultiaddrs = this.bootstrapMultiaddrs.filter(m => {
+								const s = m.toString();
+								return s !== peer && s !== bare;
+							});
+							try {
+								const rec = await this.node.peerStore.get(pid);
+								const keep = rec.addresses.filter((a: any) => {
+									const s = a.multiaddr.toString();
+									return s !== peer && s !== bare;
+								});
+								if (keep.length < rec.addresses.length) await this.node.peerStore.patch(pid, { multiaddrs: keep.map((a: any) => a.multiaddr) });
+							} catch {
+								/* peer not in store — nothing to trim */
+							}
+							console.log(`[NET] dropped stale addr of connected peer ${peerID.slice(0, 16)}: ${peer}`);
+						} else {
+							await this.purgeStalePeer(peerID, `${origin} dial identity mismatch`);
+						}
 						// For DISCOVERED entries (peer-announce gossip), also drop the
 						// status entry — there's no saved config row to "fix" and leaving
 						// it visible just adds UI noise. For CONFIGURED entries, keep
