@@ -349,6 +349,17 @@ export function clearAllUploads(): void {
 
 const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload
 
+/**
+ * Strip responder-local state from a stored LISH before sending it as a manifest.
+ * The wire manifest must contain only the LISH data format structure — local
+ * filesystem paths (`directory`, `finalDirectory`) and per-chunk possession
+ * (`chunks`) must never leave the node.
+ */
+export function toManifest(lish: import('@shared').IStoredLISH): import('@shared').IStoredLISH {
+	const { directory, finalDirectory, chunks, ...exportData } = lish;
+	return exportData as import('@shared').IStoredLISH;
+}
+
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType): Promise<void> {
 	const servedLishIDs = new Set<string>();
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
@@ -422,9 +433,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 						const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 						sendLengthPrefixed(stream, codecEncode(response));
 					} else {
-						const { directory, chunks, ...exportData } = lish;
-						const manifest = exportData as import('@shared').IStoredLISH;
-						const response: LISHGetLishResponse = { manifest };
+						const response: LISHGetLishResponse = { manifest: toManifest(lish) };
 						sendLengthPrefixed(stream, codecEncode(response));
 					}
 				}

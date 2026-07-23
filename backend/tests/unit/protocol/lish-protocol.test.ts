@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
+import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, toManifest, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
+import { type IStoredLISH } from '@shared';
 import { encode as codecEncode, decode as codecDecode } from '../../../src/protocol/codec.ts';
 
 // ---------------------------------------------------------------------------
@@ -267,6 +268,47 @@ describe('lish-protocol – upload state', () => {
 		const info = uploads.get(lishID)!;
 		info.peers = 3;
 		expect(uploads.get(lishID)!.peers).toBe(3);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Manifest sanitization (getLish response)
+// ---------------------------------------------------------------------------
+
+describe('lish-protocol – toManifest', () => {
+	const stored: IStoredLISH = {
+		id: 'lish-manifest-test',
+		name: 'Test LISH',
+		created: '2025-10-24T00:00:00.000Z',
+		chunkSize: 1024 * 1024,
+		checksumAlgo: 'sha256',
+		files: [{ path: 'a.bin', size: 1, checksums: ['ab'] }],
+		directory: '/local/temp/lish-manifest-test',
+		finalDirectory: '/local/final/lish-manifest-test',
+		chunks: ['ab'],
+	};
+
+	it('strips all responder-local fields (directory, finalDirectory, chunks)', () => {
+		const manifest = toManifest(stored);
+		expect('directory' in manifest).toBe(false);
+		expect('finalDirectory' in manifest).toBe(false);
+		expect('chunks' in manifest).toBe(false);
+	});
+
+	it('keeps the LISH data format fields intact', () => {
+		const manifest = toManifest(stored);
+		expect(manifest.id).toBe('lish-manifest-test');
+		expect(manifest.name).toBe('Test LISH');
+		expect(manifest.chunkSize).toBe(1024 * 1024);
+		expect(manifest.checksumAlgo).toBe('sha256');
+		expect(manifest.files).toHaveLength(1);
+	});
+
+	it('does not mutate the stored LISH', () => {
+		toManifest(stored);
+		expect(stored.directory).toBe('/local/temp/lish-manifest-test');
+		expect(stored.finalDirectory).toBe('/local/final/lish-manifest-test');
+		expect(stored.chunks).toEqual(['ab']);
 	});
 });
 
