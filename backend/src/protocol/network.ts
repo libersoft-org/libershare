@@ -101,8 +101,14 @@ const BOOTSTRAP_STATUS_STALE_MS = 30 * 60_000;
  * Gossip from nodes that still remember the dead peer keeps mentioning it; without
  * this window every mention would re-create its status row and burn a dial. Once
  * the window lapses a single probe is allowed again (self-heals on peer return).
+ *
+ * Kept equal to BOOTSTRAP_STATUS_STALE_MS deliberately: shorter would let stale
+ * gossip refresh rows faster than the sweep can expire them; longer would only
+ * delay re-discovery of a peer that genuinely came back (a returned peer that
+ * dials US escapes immediately via the peer:connect reset — this window matters
+ * only for peers that cannot initiate inbound connections).
  */
-const UNREACHABLE_QUARANTINE_MS = 60 * 60_000;
+const UNREACHABLE_QUARANTINE_MS = 30 * 60_000;
 /**
  * Maximum size (bytes) of an incoming pubsub payload we are willing to decode.
  * Our own control messages ride pubsub (WANT — tiny JSON), but older/foreign peers
