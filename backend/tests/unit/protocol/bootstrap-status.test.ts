@@ -105,3 +105,45 @@ describe('BootstrapStatusTracker.deleteDiscoveredByPeerID', () => {
 		expect(events).toEqual([NET_A]); // untouched NET_B emits nothing
 	});
 });
+
+describe('BootstrapStatusTracker.sweepStale', () => {
+	const NET = 'netAAAA';
+	const TTL = 30 * 60_000;
+	const DEAD_ID = '12D3KooWDeadDeadDeadDeadDeadDeadDeadDeadDeadDeadDD';
+	const LIVE_ID = '12D3KooWLiveLiveLiveLiveLiveLiveLiveLiveLiveLiveLL';
+	const DEAD_ADDR = `/ip4/192.0.2.10/tcp/9090/p2p/${DEAD_ID}`;
+	const LIVE_ADDR = `/ip4/192.0.2.20/tcp/9090/p2p/${LIVE_ID}`;
+	const CONF_ADDR = `/ip4/192.0.2.30/tcp/9090/p2p/${DEAD_ID}`;
+
+	it('drops stale discovered rows, keeps fresh, connected and configured ones', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+		tracker.recordOutcome(NET, LIVE_ADDR, LIVE_ID, 'connected', null, null, 'discovered');
+		tracker.recordOutcome(NET, CONF_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'configured');
+		const past = Date.now() + TTL + 60_000; // both rows are then older than TTL
+
+		tracker.sweepStale(TTL, pid => pid === LIVE_ID, past);
+
+		const addrs = tracker.getStatus(NET)?.peers.map(p => p.multiaddr).sort();
+		// DEAD discovered row expired; LIVE row survives via connection; configured row untouchable.
+		expect(addrs).toEqual([CONF_ADDR, LIVE_ADDR].sort());
+	});
+
+	it('drops a row frozen at connected once the peer has no live connection', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'connected', null, null, 'discovered');
+
+		tracker.sweepStale(TTL, () => false, Date.now() + TTL + 60_000);
+
+		expect(tracker.getStatus(NET)).toBe(null);
+	});
+
+	it('keeps rows within the TTL even without a connection', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+
+		tracker.sweepStale(TTL, () => false); // real clock — row was written moments ago
+
+		expect(tracker.getStatus(NET)?.peers.length).toBe(1);
+	});
+});

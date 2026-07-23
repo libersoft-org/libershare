@@ -95,6 +95,31 @@ export class BootstrapStatusTracker {
 		}
 	}
 
+	/**
+	 * Drop discovered-origin entries that have gone stale: no status refresh within
+	 * `ttlMs` AND no current connection to the peer. Dead peers stop being mentioned
+	 * by gossip, so their rows stop refreshing and expire here — including rows
+	 * frozen at 'connected' for a peer that silently died. Configured entries are
+	 * exempt (user data). `now` is injectable for tests.
+	 */
+	sweepStale(ttlMs: number, isConnected: (peerID: string) => boolean, now: number = Date.now()): void {
+		for (const [networkID, peers] of [...this.stats]) {
+			let changed = false;
+			for (const [addr, p] of [...peers]) {
+				if (p.origin !== 'discovered') continue;
+				const pid = p.expectedPeerID ?? p.actualPeerID;
+				if (pid && isConnected(pid)) continue;
+				const updated = Date.parse(p.updatedAt);
+				if (Number.isFinite(updated) && now - updated < ttlMs) continue;
+				peers.delete(addr);
+				changed = true;
+			}
+			if (!changed) continue;
+			if (peers.size === 0) this.stats.delete(networkID);
+			this.onStatusChange?.(networkID, this.buildStatus(networkID) ?? { networkID, peers: [] });
+		}
+	}
+
 	/** Drop bootstrap status entries no longer in the configured peer list (after an update). */
 	pruneEntries(networkID: string, keepMultiaddrs: string[]): void {
 		const peers = this.stats.get(networkID);

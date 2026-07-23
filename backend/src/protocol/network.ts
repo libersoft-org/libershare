@@ -91,6 +91,12 @@ const REDIAL_EVICT_FAILS = 6;
 /** Minimum continuous unreachability (since the first recorded failure) before eviction. */
 const REDIAL_EVICT_MIN_MS = 30 * 60_000;
 /**
+ * Discovered bootstrap-status rows older than this (and without a live connection)
+ * are dropped from the UI. Live peers keep refreshing their rows via gossip intake;
+ * dead ones stop being mentioned, freeze, and expire here.
+ */
+const BOOTSTRAP_STATUS_STALE_MS = 30 * 60_000;
+/**
  * How long an evicted-as-unreachable peer stays quarantined in addBootstrapPeers.
  * Gossip from nodes that still remember the dead peer keeps mentioning it; without
  * this window every mention would re-create its status row and burn a dial. Once
@@ -699,6 +705,8 @@ export class Network {
 				await this.runRedialMaintenance(connectedPeers, allPeers);
 				await this.runZeroConnectionRecovery(connectedPeers);
 				await this.maybePromotePeers();
+				const connectedIDs = new Set(connectedPeers.map((p: any) => p.toString()));
+				this.bootstrapTracker.sweepStale(BOOTSTRAP_STATUS_STALE_MS, pid => connectedIDs.has(pid));
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
 			}
