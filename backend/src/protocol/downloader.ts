@@ -398,7 +398,10 @@ export class Downloader {
 						console.warn(`[DL] Manifest request failed: ${error.message?.slice(0, 120) ?? error}`);
 					}
 					if (manifest && manifest.files && manifest.files.length > 0) {
-						this.lish = { ...manifest, directory: this.downloadDir };
+						// The manifest is sanitized (no peer-supplied local paths). Keep our own
+						// local state: the download directory, and any post-download move target
+						// the LISH was created with — the incoming manifest never carries it.
+						this.lish = { ...manifest, directory: this.downloadDir, ...(this.lish?.finalDirectory ? { finalDirectory: this.lish.finalDirectory } : {}) };
 						this.dataServer.add(this.lish);
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
@@ -586,7 +589,10 @@ export class Downloader {
 					// Protect manifest import with workMutex to prevent race with doWork()
 					await this.workMutex.runExclusive(async () => {
 						if (!this.needsManifest) return; // double-check after acquiring lock
-						this.lish = { ...manifest, directory: this.downloadDir };
+						// The manifest is sanitized (no peer-supplied local paths). Keep our own
+						// local state: the download directory, and any post-download move target
+						// the LISH was created with — the incoming manifest never carries it.
+						this.lish = { ...manifest, directory: this.downloadDir, ...(this.lish?.finalDirectory ? { finalDirectory: this.lish.finalDirectory } : {}) };
 						this.dataServer.add(this.lish);
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
