@@ -166,7 +166,11 @@ export class LISHClient {
 		const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
 		if ('error' in response) throw new CodedError(response.error, lishID);
 		if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
-		return response.manifest;
+		// Sanitize the peer-supplied manifest: a malicious or outdated peer could embed
+		// responder-local fields (`finalDirectory` → post-download move to an attacker-chosen
+		// path; `chunks` → chunks flagged have=1 and never fetched). We own the local paths and
+		// chunk state, so strip them at the trust boundary before the value reaches the DB.
+		return toManifest(response.manifest);
 	}
 
 	// Request list of shared LISHs from peer. `query` is an optional
@@ -350,10 +354,12 @@ export function clearAllUploads(): void {
 const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload
 
 /**
- * Strip responder-local state from a stored LISH before sending it as a manifest.
- * The wire manifest must contain only the LISH data format structure — local
- * filesystem paths (`directory`, `finalDirectory`) and per-chunk possession
- * (`chunks`) must never leave the node.
+ * Strip node-local state from a LISH so only the LISH data format structure remains.
+ * Local filesystem paths (`directory`, `finalDirectory`) and per-chunk possession
+ * (`chunks`) are node-owned and must never cross the wire — in EITHER direction:
+ * outbound (serving getLish) they must not leak; inbound (consuming a peer's manifest)
+ * they must not be trusted, or a hostile peer could redirect the post-download move or
+ * pre-flag chunks as already downloaded.
  */
 export function toManifest(lish: import('@shared').IStoredLISH): import('@shared').IStoredLISH {
 	const { directory, finalDirectory, chunks, ...exportData } = lish;
