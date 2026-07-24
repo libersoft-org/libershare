@@ -1,12 +1,13 @@
 # LISH Network protocol specification
 
-**Version**: 1  
+**Document version**: 1  
+**Protocol**: `/lish/0.0.1`  
 **Created**: 24 October 2025  
-**Last update**: 23 July 2026
+**Last update**: 24 July 2026
 
 ## Overview
 
-The LISH network protocol is a peer-to-peer communication protocol for sharing content described by the [**LISH data format**](./LISH_DATA_FORMAT.md). It enables decentralized, verifiable, and resumable file transfers with multi-source parallel downloading.
+The LISH network protocol is a peer-to-peer communication protocol for sharing content described by the [**LISH data structure format**](./LISH_DATA_FORMAT.md). It enables decentralized, verifiable, and resumable file transfers with multi-source parallel downloading.
 
 The protocol has two planes:
 
@@ -171,6 +172,8 @@ Requests the full manifest (LISH data format structure) of a single LISH.
 
 - The manifest contains the complete LISH data format structure — directory tree, file list, chunk checksums — and MUST NOT include responder-local state (local paths, per-chunk possession)
 - A LISH that is not shared is answered with `PEER_LISH_NOT_SHARED`; a LISH the peer does not have at all is answered with the same code, so possession is not revealed
+- A temporarily busy LISH (verification or data move in progress) is likewise answered with `PEER_LISH_NOT_SHARED` — `PEER_BUSY` is only used for chunk requests
+- The requester SHOULD validate manifest consistency before allocating: per-file checksum count equals `ceil(size / chunkSize)`, and `chunkSize` is within the requester's configured limits
 
 ### getChunk — fetch chunk data
 
@@ -258,7 +261,7 @@ Wire error codes returned in the `error` field:
 | `PEER_INVALID_REQUEST` | Malformed or unknown message                                                                                    |
 | `PEER_LISH_NOT_SHARED` | The LISH is not shared by this peer (also returned when the peer does not have it — deliberately indistinguishable) |
 | `PEER_CHUNK_NOT_FOUND` | The peer does not have the requested chunk (partial seeder)                                                     |
-| `PEER_BUSY`            | Transient rejection — verification / data move in progress, or upload peer capacity reached; retry later        |
+| `PEER_BUSY`            | Transient rejection, returned for chunk requests only — verification / data move in progress, or upload peer capacity reached; retry later |
 | `PEER_IO_ERROR`        | The peer failed to read the requested data from disk                                                            |
 
 ## Transfer flow
