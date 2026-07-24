@@ -173,6 +173,7 @@ Requests the full manifest (LISH data format structure) of a single LISH.
 - The manifest contains the complete LISH data format structure — directory tree, file list, chunk checksums — and MUST NOT include responder-local state (local paths, per-chunk possession)
 - A LISH that is not shared is answered with `PEER_LISH_NOT_SHARED`; a LISH the peer does not have at all is answered with the same code, so possession is not revealed
 - A temporarily busy LISH (verification or data move in progress) is likewise answered with `PEER_LISH_NOT_SHARED` — `PEER_BUSY` is only used for chunk requests
+- The requester MUST check that the returned manifest's `id` equals the requested `lishID` — otherwise a peer could answer with a different LISH and have it stored under the requested id
 - The requester SHOULD validate manifest consistency before allocating: per-file checksum count equals `ceil(size / chunkSize)`, and `chunkSize` is within the requester's configured limits
 
 ### getChunk — fetch chunk data
