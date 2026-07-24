@@ -7,6 +7,7 @@
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { api } from '../../scripts/api.ts';
 	import { withPeerFallback, type PeerAttemptStatus } from '../../scripts/peerFallback.ts';
+	import { formatSize } from '../../scripts/utils.ts';
 	import { type LishSearchResult, type LISHNetworkConfig, type IPeerLishDetail, type ManifestProgressEvent } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -35,9 +36,25 @@
 	let detail = $state<IPeerLishDetail | null>(null);
 	// Fallback progress per peer row (indexed like row.peers); outcomes persist until the next run.
 	let peerStatuses = $state<Array<PeerAttemptStatus | null>>([]);
-	// Real manifest-transfer progress (0–100) per peer row, fed by the backend
+	// Real manifest-transfer progress per peer row, fed by the backend
 	// `lishnets:manifestProgress` event and shown only while the row is 'downloading'.
-	let peerProgress = $state<Array<number>>([]);
+	// Raw byte counts rather than a percentage — the row shows both, and the bar derives from them.
+	let peerTransfer = $state<Array<{ received: number; total: number }>>([]);
+
+	/** Manifest transfer completion (0–100) for a peer row; 0 until the total size is known. */
+	function transferPercent(transfer?: { received: number; total: number }): number {
+		if (!transfer || transfer.total <= 0) return 0;
+		return Math.min(100, (transfer.received / transfer.total) * 100);
+	}
+
+	/**
+	 * True once the manifest bytes are all in. The peer stays 'downloading' past this point
+	 * while the backend parses the manifest and writes its chunks — seconds of apparent
+	 * standstill on a large LISH, so the row says it is processing rather than still transferring.
+	 */
+	function isTransferred(transfer?: { received: number; total: number }): boolean {
+		return !!transfer && transfer.total > 0 && transfer.received >= transfer.total;
+	}
 
 	let offManifestProgress: (() => void) | void;
 	onMount(() => {
@@ -46,7 +63,7 @@
 		offManifestProgress = api.on('lishnets:manifestProgress', (d: ManifestProgressEvent) => {
 			if (d.lishID !== row.id) return;
 			const idx = row.peers.findIndex(p => p.peerID === d.peerID);
-			if (idx >= 0 && peerStatuses[idx] === 'downloading') peerProgress[idx] = d.total > 0 ? Math.min(100, (d.received / d.total) * 100) : 0;
+			if (idx >= 0 && peerStatuses[idx] === 'downloading') peerTransfer[idx] = { received: d.received, total: d.total };
 		});
 	});
 	onDestroy(() => {
@@ -65,11 +82,11 @@
 	/** Run the shared peer-fallback loop over this row's peers, driving the per-row statuses. */
 	function tryPeers<T>(op: (peerID: string, networkID: string) => Promise<T>): Promise<T> {
 		peerStatuses = [];
-		peerProgress = [];
+		peerTransfer = [];
 		return withPeerFallback(row.peers, op, (index, status) => {
 			peerStatuses[index] = status;
 			// Reset the row's real progress bar as each new attempt starts.
-			if (status === 'downloading') peerProgress[index] = 0;
+			if (status === 'downloading') peerTransfer[index] = { received: 0, total: 0 };
 		});
 	}
 
@@ -193,6 +210,12 @@
 	.peer-progress .peer-status {
 		justify-content: center;
 	}
+	.peer-bytes {
+		text-align: center;
+		font-size: 1.5vh;
+		white-space: nowrap;
+		opacity: 0.8;
+	}
 
 	.button-bar-wrap {
 		width: 100%;
@@ -249,9 +272,13 @@
 					<TableCell align="center">{networkName(p.networkID)}</TableCell>
 					<TableCell align="center">
 						{#if peerStatuses[i] === 'downloading'}
+							{@const transfer = peerTransfer[i]}
 							<div class="peer-progress">
-								<span class="peer-status">{$t('network.statusDownloading')}</span>
-								<ProgressBar progress={peerProgress[i] ?? 0} showText={false} height="1.2vh" animated />
+								<span class="peer-status">{$t(isTransferred(transfer) ? 'network.statusProcessing' : 'network.statusDownloading')}</span>
+								<ProgressBar progress={transferPercent(transfer)} showText={false} height="1.2vh" animated />
+								{#if transfer && transfer.total > 0}
+									<span class="peer-bytes">{formatSize(transfer.received)} / {formatSize(transfer.total)}</span>
+								{/if}
 							</div>
 						{:else if peerStatuses[i] === 'downloaded'}
 							<span class="peer-status"><Icon img="/img/check.svg" size="2vh" padding="0" colorVariable="--color-success" />{$t('network.statusDownloaded')}</span>

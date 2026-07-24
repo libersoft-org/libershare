@@ -106,6 +106,7 @@
 		"noPeers": "Žádní připojení účastníci.",
 		"peerDeclined": "Účastník odmítl sdílet svůj seznam nebo neodpověděl.",
 		"statusDownloading": "Stahuji …",
+		"statusProcessing": "Zpracovávám …",
 		"statusDownloaded": "Staženo",
 		"statusUnavailable": "Nedostupné",
 		"noSharedLishs": "Tento účastník nesdílí žádné LISHe.",
