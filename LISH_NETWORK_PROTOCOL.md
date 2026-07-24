@@ -313,6 +313,18 @@ Planned synchronization messages:
 - If `lishIDFrom` is not provided, the whole database listing is returned
 - The requester then fetches unknown entries individually via `getLish`
 
+Each database entry carries the LISH structure plus optional publication metadata:
+
+```typescript
+{
+	lish: ILISH,        // LISH data format structure
+	publisher?: string, // Peer ID that published the entry (optional if not required by the network)
+	published?: string  // ISO 8601 timestamp of publication (optional if not required by the network)
+}
+```
+
+Publishing adds an entry to the database; removing an entry is restricted to the network's owners and admins.
+
 ### Network access control
 
 Per-network roles restricting who may write into the synchronized database:
@@ -321,6 +333,8 @@ Per-network roles restricting who may write into the synchronized database:
 - **Admins** — manage publishers and downloaders
 - **Publishers** — publish new entries into the database
 - **Downloaders** — download content when the network restricts downloading
+
+Both restrictions are independent per-network opt-ins: a network may restrict publishing (only publishers may add entries), downloading (only downloaders may fetch content), both, or neither — the default is open.
 
 ### Other planned features
 
