@@ -1,10 +1,11 @@
 import os from 'os';
 import { statfs } from 'fs/promises';
 import { readFileSync } from 'fs';
-import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, CodedError, ErrorCodes } from '@shared';
+import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type SystemTimeResult, type SystemTimeStatus, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
+import { getSystemTimeStatus, listSystemTimezones, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone } from '../system-time.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -20,6 +21,12 @@ interface SystemHandlers {
 	cpu: () => SystemCPUInfo;
 	setVolume: (p: { volume: number }) => Promise<{ success: boolean; available: boolean }>;
 	getVolume: () => Promise<{ volume: number | null; available: boolean }>;
+	getTime: () => Promise<SystemTimeStatus>;
+	listTimezones: () => string[];
+	setClock: (p: { hours: number; minutes: number; seconds: number }) => Promise<SystemTimeResult>;
+	setTimezone: (p: { timezone: string }) => Promise<SystemTimeResult>;
+	setNtpServer: (p: { server: string }) => Promise<SystemTimeResult>;
+	setNtpEnabled: (p: { enabled: boolean }) => Promise<SystemTimeResult>;
 	startPolling: () => void;
 	stopPolling: () => void;
 }
@@ -88,6 +95,66 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		lastKnownAvailable = status.available;
 		if (!status.available) return { volume: null, available: false, known: true };
 		return { volume: status.volume ?? (settings.get('audio.volume') as number), available: true, known: true };
+	}
+
+	/**
+	 * Read the host's live time configuration (clock, timezone, NTP state and what
+	 * this host is capable of). Never throws — an unsupported or unreadable host is
+	 * reported through `supported: false` and empty capabilities.
+	 */
+	function getTime(): Promise<SystemTimeStatus> {
+		return getSystemTimeStatus();
+	}
+
+	/** IANA timezone identifiers this host accepts, for the timezone picker. Empty on a runtime without a timezone database. */
+	function listTimezones(): string[] {
+		return listSystemTimezones();
+	}
+
+	/**
+	 * Run a system-time write and, when it changed something, push the resulting state
+	 * to every client. The event carries a freshly read status rather than the value
+	 * that was requested: the OS may normalise it (a timezone alias, an NTP peer the
+	 * daemon rejects), and a second window must show what the host actually has.
+	 */
+	async function applyTimeWrite(write: () => Promise<SystemTimeResult>): Promise<SystemTimeResult> {
+		const res = await write();
+		if (res.success) broadcast('system:timeChanged', await getSystemTimeStatus());
+		return res;
+	}
+
+	/**
+	 * Set the wall clock to the given local time, keeping today's date. Range checks
+	 * live in the core so an out-of-range value comes back as an `invalid-input`
+	 * outcome the UI can show inline, not as a thrown protocol error.
+	 */
+	function setClock(p: { hours: number; minutes: number; seconds: number }): Promise<SystemTimeResult> {
+		assert(p, ['hours', 'minutes', 'seconds']);
+		for (const key of ['hours', 'minutes', 'seconds'] as const) {
+			if (typeof p[key] !== 'number' || !Number.isFinite(p[key])) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${key} must be a number`);
+		}
+		return applyTimeWrite(() => setSystemClock(p.hours, p.minutes, p.seconds));
+	}
+
+	/** Set the system timezone from an IANA identifier. An unknown identifier comes back as an `invalid-input` outcome. */
+	function setTimezone(p: { timezone: string }): Promise<SystemTimeResult> {
+		assert(p, ['timezone']);
+		if (typeof p.timezone !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'timezone must be a string');
+		return applyTimeWrite(() => setSystemTimezone(p.timezone));
+	}
+
+	/** Point automatic time synchronisation at an NTP server (host name or IP address). */
+	function setNtpServer(p: { server: string }): Promise<SystemTimeResult> {
+		assert(p, ['server']);
+		if (typeof p.server !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'server must be a string');
+		return applyTimeWrite(() => setSystemNtpServer(p.server.trim()));
+	}
+
+	/** Switch automatic time synchronisation on or off. Setting the clock by hand requires it off. */
+	function setNtpEnabled(p: { enabled: boolean }): Promise<SystemTimeResult> {
+		assert(p, ['enabled']);
+		if (typeof p.enabled !== 'boolean') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'enabled must be a boolean');
+		return applyTimeWrite(() => setSystemNtpEnabled(p.enabled));
 	}
 
 	// Detect OS-side volume changes (system tray, media keys, device plug/unplug)
@@ -278,5 +345,5 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		}
 	}
 
-	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, startPolling, stopPolling };
+	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, getTime, listTimezones, setClock, setTimezone, setNtpServer, setNtpEnabled, startPolling, stopPolling };
 }

@@ -226,6 +226,12 @@ export class APIServer {
 			'system.cpu': _system.cpu,
 			'system.setVolume': _system.setVolume,
 			'system.getVolume': _system.getVolume,
+			'system.getTime': _system.getTime,
+			'system.listTimezones': _system.listTimezones,
+			'system.setClock': _system.setClock,
+			'system.setTimezone': _system.setTimezone,
+			'system.setNtpServer': _system.setNtpServer,
+			'system.setNtpEnabled': _system.setNtpEnabled,
 			// Relay
 			'relay.stats': _relay.stats,
 		};
