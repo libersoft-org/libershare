@@ -212,7 +212,7 @@
 	}
 	.peer-bytes {
 		text-align: center;
-		font-size: 1.5vh;
+		font-size: 1.3vh;
 		white-space: nowrap;
 		opacity: 0.8;
 	}
@@ -273,11 +273,14 @@
 					<TableCell align="center">
 						{#if peerStatuses[i] === 'downloading'}
 							{@const transfer = peerTransfer[i]}
+							{@const processing = isTransferred(transfer)}
 							<div class="peer-progress">
-								<span class="peer-status">{$t(isTransferred(transfer) ? 'network.statusProcessing' : 'network.statusDownloading')}</span>
-								<ProgressBar progress={transferPercent(transfer)} showText={false} height="1.2vh" animated />
-								{#if transfer && transfer.total > 0}
-									<span class="peer-bytes">{formatSize(transfer.received)} / {formatSize(transfer.total)}</span>
+								<span class="peer-status">{$t(processing ? 'network.statusProcessing' : 'network.statusDownloading')}</span>
+								{#if !processing}
+									<ProgressBar progress={transferPercent(transfer)} showText={false} height="1.2vh" animated />
+									{#if transfer && transfer.total > 0}
+										<span class="peer-bytes">{formatSize(transfer.received)} / {formatSize(transfer.total)}</span>
+									{/if}
 								{/if}
 							</div>
 						{:else if peerStatuses[i] === 'downloaded'}
