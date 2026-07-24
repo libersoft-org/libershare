@@ -119,6 +119,14 @@ export class Network {
 	 */
 	private readonly seenSearchIDs = new Map<string, number>();
 	private bootstrapPeerIDs: Set<string> = new Set();
+	/**
+	 * Peer IDs whose bootstrap entries came from explicit network config
+	 * ('configured' origin — startup config or a manual bootstrap edit). Kept
+	 * separate from bootstrapPeerIDs, which also collects peer-announce
+	 * discoveries: those are plain content peers and must remain
+	 * disconnectable by lishnet leave (isBootstrapOrRelayPeer).
+	 */
+	private configuredBootstrapPeerIDs: Set<string> = new Set();
 	private dcutrPeers: Set<string> = new Set();
 	private bootstrapMultiaddrs: any[] = [];
 
@@ -175,6 +183,12 @@ export class Network {
 	/** Per-instance dedup set for PX ingress log keys; owned here, passed into gossipsub-patches deps. */
 	private readonly pxIngressLogKeys = new Set<string>();
 
+	/**
+	 * Handlers subscribed via {@link onPeerDisconnect}. Held at Network level
+	 * (not bound to a node instance) so subscriptions survive node restarts.
+	 */
+	private readonly peerDisconnectHandlers = new Set<(peerID: string) => void>();
+
 	/** Handles incoming LISH-serving pubsub messages (want, searchLishs). */
 	private readonly lishHandlers: LISHServingHandlers;
 
@@ -188,6 +202,20 @@ export class Network {
 	 * re-dial pool every 30s. Successful dial clears the entry.
 	 */
 	private readonly redialBackoff = new Map<string, { nextAttempt: number; failCount: number }>();
+
+	/**
+	 * Peers deliberately hung up by {@link disconnectPeer} (leave-network), keyed by
+	 * the lishnet they were left with. Redial maintenance / discovery must NOT
+	 * proactively re-dial them — otherwise a peer we just left is re-connected within
+	 * one status tick (~30s), defeating the leave. Per-network so rejoining lishnet A
+	 * lifts only A's peers (not still-left B's — {@link clearRedialSuppressionForNetwork}).
+	 * A peer observed reconnecting by any path is lifted from ALL sets
+	 * ({@link clearRedialSuppressionForPeer}). Bounded by peers of currently-left
+	 * lishnets; drained on rejoin/reconnect and cleared in stop(). NOT pruned against
+	 * the peerStore: leave purges the peer from the store, which would drop the
+	 * suppression and let mDNS rediscovery reconnect within a tick.
+	 */
+	private readonly redialSuppressedByNet = new Map<string, Set<string>>();
 
 	// Tracked libp2p/pubsub event listeners for clean removal in stop().
 	// Each entry captures the exact handler reference so removeEventListener can unhook it.
@@ -266,6 +294,23 @@ export class Network {
 			const idx = this.listeners.findIndex(l => l.target === node && l.event === 'peer:connect' && l.handler === listener);
 			if (idx >= 0) this.listeners.splice(idx, 1);
 		};
+	}
+
+	/**
+	 * Subscribe to peer disconnects for the duration of the returned disposer.
+	 * The handler receives the disconnected peer's ID as a string.
+	 *
+	 * Handlers live at Network level, NOT on the current libp2p node: the
+	 * permanent `peer:disconnect` listener installed by {@link start} fans out
+	 * to this set, so subscriptions survive a node restart (identity
+	 * import/regenerate) that would otherwise silently drop them together with
+	 * the old node's listeners. Used by downloads to drop a vanished peer from
+	 * their per-LISH peer manager immediately, instead of waiting for the next
+	 * failed dial/probe to notice the dead connection.
+	 */
+	onPeerDisconnect(handler: (peerID: string) => void): () => void {
+		this.peerDisconnectHandlers.add(handler);
+		return () => this.peerDisconnectHandlers.delete(handler);
 	}
 
 	/**
@@ -354,6 +399,8 @@ export class Network {
 			myPeerID: privateKey.publicKey.toString(),
 		});
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
+		// Config-time bootstrap entries are by definition 'configured'.
+		this.configuredBootstrapPeerIDs = new Set(bootstrapPeerIDs);
 		this.bootstrapMultiaddrs = bootstrapMultiaddrs;
 
 		console.log('Creating libp2p node...');
@@ -431,7 +478,14 @@ export class Network {
 						}
 					}
 					const connType = remotePeerID ? classifyConnectionFn(remotePeerID, isRelay, this.dcutrPeers) : 'DIRECT';
-					await handleLISHProtocol(stream, this.dataServer, remotePeerID, connType);
+					await handleLISHProtocol(
+						stream,
+						this.dataServer,
+						remotePeerID,
+						connType,
+						pid => this.sharesJoinedTopicWith(pid),
+						pid => this.canListSharesTo(pid)
+					);
 				} catch (err: any) {
 					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
 				}
@@ -478,6 +532,10 @@ export class Network {
 			// Skip if already connected (autoDial in v2 is unreliable; we dial actively
 			// for mDNS/bootstrap discoveries to ensure local peers form a mesh quickly).
 			if (peerID === this.node!.peerId.toString()) return;
+			// A peer we deliberately left (leave-network) must not be re-tagged or
+			// re-dialed by discovery (mDNS/identify/PX) — that would beat the disconnect.
+			// Suppression lifts on a legitimate inbound reconnect or on network rejoin.
+			if (this.isRedialSuppressed(peerID)) return;
 			// Stamp `keep-alive-fleet` on every discovered peer, regardless of how they
 			// surfaced (mDNS, bootstrap, autonat, identify, peer-announce). libp2p
 			// ReconnectQueue only acts on peers with a tag whose key starts with
@@ -526,6 +584,12 @@ export class Network {
 					});
 					console.debug('   Tagged as KEEP_ALIVE (bootstrap peer)');
 				}
+				// A mere reconnect does NOT lift leave-network suppression: a peer we left can
+				// dial us back (its own keep-alive/mDNS) without rejoining a shared topic, and
+				// clearing here would remove the only marker canListSharesTo uses to refuse it.
+				// Suppression lifts only on an explicit rejoin (clearRedialSuppressionForNetwork)
+				// or once the peer is verifiably back on a joined topic (genuine mesh reconnect).
+				if (this.sharesJoinedTopicWith(peerID)) this.clearRedialSuppressionForPeer(peerID);
 				this.schedulePeerCountCheck();
 			} catch (err: any) {
 				trace(`[NET] peer:connect handler error: ${err?.message ?? err}`);
@@ -559,6 +623,14 @@ export class Network {
 				const now = Date.now();
 				for (const topic of this.pubsub.getTopics()) {
 					if (topic.startsWith(LISH_TOPIC_PREFIX)) this.lastMeshChange.set(topic, now);
+				}
+			}
+			// Fan out to Network-level subscribers (see onPeerDisconnect).
+			for (const h of this.peerDisconnectHandlers) {
+				try {
+					h(peerID);
+				} catch (err: any) {
+					trace(`[NET] peer-disconnect subscriber error: ${err?.message ?? err}`);
 				}
 			}
 			this.schedulePeerCountCheck();
@@ -682,6 +754,40 @@ export class Network {
 		// churn at N≈100 without flooding logs or burning CPU on per-second probes.
 	}
 
+	/**
+	 * Flat view over the per-network sets: whether a peer was deliberately hung up by
+	 * leave-network (via disconnectPeer) for ANY left lishnet, so no maintenance path
+	 * (redial loop, zero-connection recovery, promote, discovery) re-dials it.
+	 */
+	private isRedialSuppressed(peerID: string): boolean {
+		for (const set of this.redialSuppressedByNet.values()) if (set.has(peerID)) return true;
+		return false;
+	}
+
+	/** Record a peer as left with a specific lishnet so maintenance won't re-dial it. */
+	private addRedialSuppression(networkID: string, peerID: string): void {
+		let set = this.redialSuppressedByNet.get(networkID);
+		if (!set) {
+			set = new Set();
+			this.redialSuppressedByNet.set(networkID, set);
+		}
+		set.add(peerID);
+	}
+
+	/**
+	 * Lift suppression for one lishnet's peers — called on (re)join of that lishnet.
+	 * Scoped: rejoining A does not unblock still-left B's peers (nor lift the
+	 * canListSharesTo browse-privacy protecting B).
+	 */
+	clearRedialSuppressionForNetwork(networkID: string): void {
+		this.redialSuppressedByNet.delete(networkID);
+	}
+
+	/** Lift suppression for one peer across ALL left lishnets — a legitimate reconnect. */
+	private clearRedialSuppressionForPeer(peerID: string): void {
+		for (const set of this.redialSuppressedByNet.values()) set.delete(peerID);
+	}
+
 	private async runRedialMaintenance(connectedPeers: any[], allPeers: any[]): Promise<void> {
 		// Dial known peers not currently connected (maintains relay connections to NATed peers)
 		const connectedSet = new Set(connectedPeers.map(p => p.toString()));
@@ -692,11 +798,19 @@ export class Network {
 		const candidates: Array<{ peer: any; pid: string; addrSummary: string; failCount: number }> = [];
 		let skippedBackoff = 0;
 		let skippedNoReachable = 0;
+		let skippedSuppressed = 0;
 		const localCidrs = getLocalCidrs(now);
 		for (const peer of allPeers) {
 			const pid = peer.id.toString();
 			if (connectedSet.has(pid)) {
 				this.redialBackoff.delete(pid); // clear on observed connection
+				if (this.sharesJoinedTopicWith(pid)) this.clearRedialSuppressionForPeer(pid); // back on a shared topic → resume
+				continue;
+			}
+			// Skip peers we deliberately left (leave-network) so maintenance does not
+			// silently re-dial them; cleared above once they reconnect on their own.
+			if (this.isRedialSuppressed(pid)) {
+				skippedSuppressed++;
 				continue;
 			}
 			const bo = this.redialBackoff.get(pid);
@@ -765,10 +879,14 @@ export class Network {
 		};
 		const workers = Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, () => worker());
 		await Promise.all(workers);
-		if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0) {
-			console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs)`);
+		if (candidates.length > 0 || skippedBackoff > 0 || skippedNoReachable > 0 || skippedSuppressed > 0) {
+			console.debug(`   Re-dial: ${redialSuccess}/${candidates.length} succeeded (${skippedBackoff} skipped by backoff, ${skippedNoReachable} skipped no-reachable-addrs, ${skippedSuppressed} skipped left-peer)`);
 		}
-		// Prune backoff entries for peers that are no longer in peerStore to prevent unbounded growth.
+		// Prune backoff entries for peers no longer in peerStore to prevent unbounded growth.
+		// Suppression is NOT pruned this way: leave-network purges the peer from the
+		// peerStore, so pruning against it would drop the suppression and let mDNS
+		// rediscovery reconnect the left peer within a tick. Suppression is instead
+		// bounded by clear-on-rejoin / clear-on-reconnect / stop().
 		const storeSet = new Set(allPeers.map(p => p.id.toString()));
 		for (const pid of this.redialBackoff.keys()) if (!storeSet.has(pid)) this.redialBackoff.delete(pid);
 	}
@@ -795,6 +913,9 @@ export class Network {
 			console.log(`   [NET-CHURN] bootstrap stats net=${networkID.slice(0, 8)}: ${parts}`);
 		}
 		for (const ma of this.bootstrapMultiaddrs) {
+			const p2pComponents = ma.getComponents().filter((c: { code: number; value?: string }) => c.code === 421);
+			const pid: string | undefined = p2pComponents.length > 0 ? p2pComponents[p2pComponents.length - 1].value : undefined;
+			if (pid && this.isRedialSuppressed(pid)) continue; // deliberately left — don't resurrect it here
 			const maStr = ma?.toString?.() ?? String(ma);
 			try {
 				console.log(`   → Dialing ${maStr}`);
@@ -837,6 +958,7 @@ export class Network {
 		for (const peer of allPeers) {
 			const pid = peer.id.toString();
 			if (pid === myID) continue;
+			if (this.isRedialSuppressed(pid)) continue; // deliberately left — don't promote it back to bootstrap
 			if (this.bootstrapPeerIDs.has(pid)) continue;
 			if (peer.addresses.length === 0) continue;
 			const addr = peer.addresses[0]!;
@@ -858,6 +980,10 @@ export class Network {
 			for (const peer of allPeers) {
 				const pid = peer.id.toString();
 				if (pid === myID) continue;
+				// A left-network peer that lingers/reappears in the peerStore must not be
+				// added to the direct set either — its fast reconnect cadence would undo the
+				// leave-network disconnect (same guard as the bootstrap promotion above).
+				if (this.isRedialSuppressed(pid)) continue;
 				if (!gossipsub.direct.has(pid)) {
 					gossipsub.direct.add(pid);
 					added++;
@@ -917,7 +1043,20 @@ export class Network {
 					trace(`[NET] addBootstrapPeers skip non-routable: ${peer}`);
 					continue;
 				}
-				const peerID = ma.getComponents().find(c => c.code === 421)?.value ?? null;
+				// A relayed bootstrap multiaddr (.../p2p/<relay>/p2p-circuit/p2p/<target>)
+				// carries two /p2p components; the peer we actually connect to — and must
+				// exempt from leave-network disconnect — is the FINAL one (the target), not
+				// the relay. Take the last /p2p component, never the first.
+				const p2pComponents = ma.getComponents().filter(c => c.code === 421);
+				const peerID = (p2pComponents.length > 0 ? p2pComponents[p2pComponents.length - 1]!.value : null) ?? null;
+				if (peerID && origin === 'configured') {
+					this.configuredBootstrapPeerIDs.add(peerID);
+					// A re-configured bootstrap peer means its network was (re-)joined — it
+					// is no longer "left", so lift any redial suppression left by a prior
+					// leaveNetwork, otherwise maintenance would skip it forever if this one
+					// explicit dial fails or the connection drops before the next tick.
+					this.clearRedialSuppressionForPeer(peerID);
+				}
 				const alreadyKnown = !!peerID && this.bootstrapPeerIDs.has(peerID);
 				if (peerID && !alreadyKnown) {
 					this.bootstrapPeerIDs.add(peerID);
@@ -1017,6 +1156,157 @@ export class Network {
 		} catch (err: any) {
 			trace(`[NET] purgeStalePeer ${peerID.slice(0, 16)} failed: ${err?.message ?? err}`);
 		}
+	}
+
+	/**
+	 * True if the peer is one we must never voluntarily disconnect because it
+	 * provides infrastructure rather than being a plain content peer: an
+	 * explicitly configured bootstrap peer, or a relay some of our circuit
+	 * connections are routed THROUGH (dropping it would also kill transit for
+	 * any NAT'd peers reachable only via that relay).
+	 *
+	 * Peer-announce-discovered bootstrap entries and peers merely REACHED over
+	 * a relay are plain content peers — hanging those up touches only their own
+	 * connection, so lishnet leave may disconnect them.
+	 *
+	 * Used by lishnet leave to decide which topic peers are safe to hang up —
+	 * leaving an empty lishnet must not tear down shared bootstrap/relay links
+	 * that other still-joined lishnets depend on.
+	 */
+	/**
+	 * Drop a peer from the configured-bootstrap exemption set. Called by the
+	 * lishnet layer when a bootstrap entry is removed from config or belongs only
+	 * to a lishnet being left, so `isBootstrapOrRelayPeer` stops treating a peer
+	 * that is no longer configured (nor shared with another joined network) as
+	 * infrastructure that leave-network must keep connected.
+	 */
+	pruneConfiguredBootstrapPeer(peerID: string): void {
+		this.configuredBootstrapPeerIDs.delete(peerID);
+	}
+
+	isBootstrapOrRelayPeer(peerID: string): boolean {
+		if (this.configuredBootstrapPeerIDs.has(peerID)) return true;
+		if (!this.node) return false;
+		try {
+			// A relay's ID is the hop right before /p2p-circuit in a circuit address:
+			// /ip4/../tcp/../p2p/<relayID>/p2p-circuit/p2p/<targetID>
+			for (const c of this.node.getConnections()) {
+				if (!Circuit.matches(c.remoteAddr)) continue;
+				const relayPrefix = c.remoteAddr.toString().split('/p2p-circuit')[0]!;
+				if (relayPrefix.endsWith(`/p2p/${peerID}`)) return true;
+			}
+			return false;
+		} catch {
+			return false;
+		}
+	}
+
+	/** Recently-seen subscribers of a lishnet's topic (TTL union, not just the live snapshot). */
+	getRecentTopicMembers(networkID: string): string[] {
+		return this.peerAnnounce.getRecentMembers(lishTopic(networkID));
+	}
+
+	/**
+	 * True if we currently share at least one joined lishnet topic with the
+	 * given peer — i.e. some lish topic WE are subscribed to lists the peer
+	 * among its subscribers.
+	 *
+	 * Coarse serve-gate for unicast LISH discovery: a peer we no longer
+	 * share any lishnet with must not be able to browse or search our shared
+	 * LISHs just because a transport connection exists (e.g. the peer's
+	 * keep-alive re-dialed us right after we left its network).
+	 */
+	sharesJoinedTopicWith(peerID: string): boolean {
+		if (!this.pubsub) return false;
+		for (const topic of this.pubsub.getTopics()) {
+			if (!topic.startsWith(LISH_TOPIC_PREFIX)) continue;
+			try {
+				if (this.pubsub.getSubscribers(topic).some((p: any) => p.toString() === peerID)) return true;
+			} catch {
+				// topic may be tearing down — treat as not shared
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Softer gate for the low-sensitivity shared-LISH LISTING (getLishs) only —
+	 * data requests (getLish/getChunk) stay on the strict {@link sharesJoinedTopicWith}
+	 * fail-closed gate. {@link sharesJoinedTopicWith} relies on gossipsub's subscriber
+	 * view, which lags for a freshly-connected peer whose SUBSCRIBE has not propagated
+	 * yet — the exact window the unicast search fallback targets, so the listing must
+	 * not be withheld there. Serve the listing to any peer over an authenticated stream
+	 * while we are in at least one lishnet, EXCEPT one we deliberately left (still in
+	 * redial suppression) — that preserves the leave-network browse privacy.
+	 */
+	canListSharesTo(peerID: string): boolean {
+		if (this.isRedialSuppressed(peerID)) return false;
+		if (!this.pubsub) return false;
+		// Infrastructure peers (active relay / bootstrap) are kept connected across a
+		// leave without being redial-suppressed, so the softer gate alone would let a
+		// relay of a network we just left browse our shares. Require such peers to
+		// currently share a joined topic. Ordinary content peers still get the soft
+		// gate — that is the freshly-connected-before-SUBSCRIBE window the search
+		// fallback depends on.
+		if (this.isBootstrapOrRelayPeer(peerID) && !this.sharesJoinedTopicWith(peerID)) return false;
+		return this.pubsub.getTopics().some((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
+	}
+
+	/**
+	 * Gracefully disconnect from a single peer and stop libp2p from immediately
+	 * re-dialing it. This is the ONLY place that should call `node.hangUp()` so
+	 * the accompanying ReconnectQueue cleanup (removing the `keep-alive-fleet`
+	 * tag) is never forgotten — without dropping that tag, `peer:discovery` /
+	 * ReconnectQueue would re-dial the peer within seconds and the disconnect
+	 * would be pointless.
+	 *
+	 * Also forgets the peerStore entry (via {@link purgeStalePeer}): in-memory redial
+	 * suppression is lost on restart, but the persisted peerStore is not, so a leave
+	 * followed by a restart before rejoin would otherwise let redial maintenance dial
+	 * the left peer straight back. The sole caller (leaveNetwork) only passes peers
+	 * with no remaining reason to stay, and rejoin re-acquires the entry via
+	 * bootstrap/discovery. Best-effort: failures are logged at trace, never thrown.
+	 *
+	 * `networkID` is the lishnet the peer is being left with — the peer is suppressed
+	 * under it so rejoining that lishnet lifts exactly its peers.
+	 */
+	async disconnectPeer(peerID: string, networkID: string): Promise<void> {
+		if (!this.node) return;
+		let pid: PeerID;
+		try {
+			pid = peerIDFromString(peerID);
+		} catch (err: any) {
+			trace(`[NET] disconnectPeer: invalid peerID ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+			return;
+		}
+		// Remove the keep-alive tags FIRST so the imminent hangUp does not race
+		// the ReconnectQueue back into a re-dial. Both tags matter: the custom
+		// 'keep-alive-fleet' tag (peer-announce intake) and the native KEEP_ALIVE
+		// tag (stamped by addBootstrapPeers on every successfully dialed entry,
+		// including discovered ones) — libp2p itself re-dials any peer carrying a
+		// keep-alive tag, which would silently undo this disconnect. Passing
+		// undefined as the tag value removes it (per @libp2p/interface PeerStore
+		// merge semantics).
+		try {
+			await this.node.peerStore.merge(pid, {
+				tags: { 'keep-alive-fleet': undefined, [KEEP_ALIVE]: undefined },
+			});
+		} catch (err: any) {
+			trace(`[NET] disconnectPeer: tag removal failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+		}
+		try {
+			await this.node.hangUp(pid);
+			trace(`[NET] disconnectPeer: hung up ${peerID.slice(0, 16)}`);
+		} catch (err: any) {
+			trace(`[NET] disconnectPeer: hangUp failed for ${peerID.slice(0, 16)}: ${err?.message ?? err}`);
+		}
+		// Keep redial maintenance from re-dialing this just-left peer on the next
+		// status tick. Keyed by the left lishnet so rejoin lifts exactly its peers;
+		// cleared automatically once it reconnects legitimately.
+		this.addRedialSuppression(networkID, peerID);
+		// Forget the persisted peerStore entry so the disconnect survives a restart —
+		// suppression is in-memory only, but the peerStore is on disk.
+		await this.purgeStalePeer(peerID, 'left-network exclusive peer');
 	}
 
 	/** Snapshot of all per-network bootstrap statuses. */
@@ -1416,6 +1706,7 @@ export class Network {
 		this._lastPeerCounts.clear();
 		this._lastScores.clear();
 		this.redialBackoff.clear();
+		this.redialSuppressedByNet.clear();
 		this.pxIngressLogKeys.clear();
 		if (this.node) {
 			await this.node.stop();

@@ -1295,3 +1295,77 @@ describe('Downloader — inline ENOSPC retry', () => {
 		expect(pc.writeResolvers.length).toBe(0);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Network peer:disconnect handling
+// ---------------------------------------------------------------------------
+
+describe('Downloader – network peer:disconnect handling', () => {
+	type PeerManagerView = {
+		tryAdd: (peerID: string, client: unknown, connectionType: 'DIRECT' | 'RELAY' | 'DCUtR') => boolean;
+		has: (peerID: string) => boolean;
+		isDropped: (peerID: string) => boolean;
+		isBanned: (peerID: string) => boolean;
+		canDial: (peerID: string) => boolean;
+	};
+
+	let net: MockNetwork;
+	let downloader: Downloader;
+
+	const pm = (): PeerManagerView => priv(downloader)['peerManager'] as PeerManagerView;
+
+	beforeEach(async () => {
+		net = new MockNetwork();
+		const ds = new MockDataServer();
+		ds.missingChunks = [];
+		downloader = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
+		await downloader.initFromManifest(makeLISH());
+	});
+
+	afterEach(async () => {
+		await downloader.destroy();
+	});
+
+	it('initFromManifest subscribes exactly one peer:disconnect handler', () => {
+		expect(net.peerDisconnectHandlers.size).toBe(1);
+	});
+
+	it('a disconnected peer is removed from the peer manager', () => {
+		pm().tryAdd('peer-gone', new MockLISHClient() as never, 'DIRECT');
+		pm().tryAdd('peer-stays', new MockLISHClient() as never, 'DIRECT');
+		net.emitPeerDisconnect('peer-gone');
+		expect(pm().has('peer-gone')).toBe(false);
+		expect(pm().has('peer-stays')).toBe(true);
+	});
+
+	it('disconnect removal is plain — peer is neither dropped nor banned and may re-dial', () => {
+		pm().tryAdd('peer-flap', new MockLISHClient() as never, 'DIRECT');
+		net.emitPeerDisconnect('peer-flap');
+		expect(pm().isDropped('peer-flap')).toBe(false);
+		expect(pm().isBanned('peer-flap')).toBe(false);
+		expect(pm().canDial('peer-flap')).toBe(true);
+	});
+
+	it('disconnect of a peer not in the peer manager is a no-op', () => {
+		pm().tryAdd('peer-a', new MockLISHClient() as never, 'DIRECT');
+		expect(() => net.emitPeerDisconnect('peer-unknown')).not.toThrow();
+		expect(pm().has('peer-a')).toBe(true);
+	});
+
+	it('destroy() disposes the peer:disconnect subscription', async () => {
+		await downloader.destroy();
+		expect(net.peerDisconnectHandlers.size).toBe(0);
+	});
+
+	it('successful completion disposes the peer:disconnect subscription', async () => {
+		expect(net.peerDisconnectHandlers.size).toBe(1);
+		// needsManifest path parks download() on its internal completion promise
+		// without touching the filesystem; resolve it to simulate a finished download.
+		const done = downloader.download();
+		while (!priv(downloader)['downloadResolve']) await new Promise(r => setTimeout(r, 0));
+		priv(downloader)['state'] = 'downloaded';
+		(priv(downloader)['downloadResolve'] as () => void)();
+		await done;
+		expect(net.peerDisconnectHandlers.size).toBe(0);
+	});
+});

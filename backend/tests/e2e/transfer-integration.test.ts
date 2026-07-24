@@ -109,6 +109,13 @@ class MockNetwork {
 	subscribedTopics: Array<{ topic: string; handler: (data: Record<string, unknown>) => void }> = [];
 	broadcastMessages: Array<{ topic: string; data: Record<string, unknown> }> = [];
 	dialResults = new Map<string, unknown>();
+	/** Registered peer-disconnect handlers — mirrors Network.onPeerDisconnect. */
+	readonly peerDisconnectHandlers: Set<(peerID: string) => void> = new Set();
+
+	onPeerDisconnect(handler: (peerID: string) => void): () => void {
+		this.peerDisconnectHandlers.add(handler);
+		return () => this.peerDisconnectHandlers.delete(handler);
+	}
 
 	async subscribe(topic: string, handler: (data: Record<string, unknown>) => void): Promise<void> {
 		this.subscribedTopics.push({ topic, handler });

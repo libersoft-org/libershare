@@ -21,6 +21,12 @@ export class Networks {
 	private _onPeerCountChange: ((counts: { networkID: string; count: number }[]) => void) | null = null;
 	// Callback for bootstrap status changes
 	private _onBootstrapStatusChange: ((networkID: string, status: BootstrapStatus) => void) | null = null;
+	// Callback fired after a lishnet is left (topic unsubscribed). Lets higher
+	// layers (e.g. transfer) stop downloads bound exclusively to that lishnet.
+	private _onNetworkLeft: ((networkID: string) => void) | null = null;
+	// Callback fired after a lishnet is (re-)joined in-process. Lets higher layers
+	// resume downloads that were suspended when this lishnet was previously left.
+	private _onNetworkJoined: ((networkID: string) => void) | null = null;
 
 	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.db = db;
@@ -48,6 +54,27 @@ export class Networks {
 	 */
 	set onBootstrapStatusChange(cb: ((networkID: string, status: BootstrapStatus) => void) | null) {
 		this._onBootstrapStatusChange = cb;
+	}
+
+	/**
+	 * Set a callback fired right after a lishnet is left (its topic has been
+	 * unsubscribed and removed from {@link joinedNetworks}). The callback runs
+	 * synchronously from {@link leaveNetwork}; consumers should not assume any
+	 * particular peer/connection state beyond "this lishnet is no longer joined".
+	 */
+	set onNetworkLeft(cb: ((networkID: string) => void) | null) {
+		this._onNetworkLeft = cb;
+	}
+
+	/**
+	 * Set a callback fired right after a lishnet is (re-)joined via {@link joinNetwork}
+	 * (its topic subscribed and added to {@link joinedNetworks}). Lets higher layers
+	 * (e.g. transfer) resume downloads that were suspended when the lishnet was
+	 * previously left. NOT fired for the initial startup join — startup has its own
+	 * auto-resume path.
+	 */
+	set onNetworkJoined(cb: ((networkID: string) => void) | null) {
+		this._onNetworkJoined = cb;
 	}
 
 	init(): void {
@@ -120,24 +147,113 @@ export class Networks {
 		// ordering — the process-level error handlers in app.ts are the safety net.
 		this.network.subscribeTopic(id);
 		this.joinedNetworks.add(id);
+		// Rejoin is an explicit "I want peers back" — lift the redial suppression for
+		// THIS lishnet's left peers (bootstrap and content) so maintenance and discovery
+		// may reconnect them. Scoped per-network: still-left lishnets stay suppressed.
+		this.network.clearRedialSuppressionForNetwork(id);
 
 		const net = this.get(id);
 		if (net && net.bootstrapPeers.length > 0) await this.network.addBootstrapPeers(net.bootstrapPeers, id, 'configured');
 
 		console.log(`✓ Joined lishnet: ${net?.name ?? id}`);
+
+		// Notify higher layers (e.g. transfer) so downloads suspended when this
+		// lishnet was last left can resume now that it is joined again.
+		this._onNetworkJoined?.(id);
 	}
 
 	/**
 	 * Leave a lishnet (unsubscribe from its topic).
 	 */
+	/** Peer IDs (the /p2p/<id> component) of a list of bootstrap multiaddr strings. */
+	private static bootstrapPeerIDsOf(bootstrapPeers: string[]): string[] {
+		const ids: string[] = [];
+		for (const addr of bootstrapPeers) {
+			// Relayed multiaddrs (.../p2p/<relay>/p2p-circuit/p2p/<target>) carry two
+			// /p2p components; the bootstrap peer identity is the FINAL one (the target),
+			// not the relay. Match all and take the last.
+			const matches = [...addr.matchAll(/\/p2p\/([^/]+)/g)];
+			const last = matches[matches.length - 1];
+			if (last) ids.push(last[1]!);
+		}
+		return ids;
+	}
+
+	/** Configured-bootstrap peer IDs of a single network. */
+	private configuredBootstrapPeerIDsOf(networkID: string): Set<string> {
+		return new Set(Networks.bootstrapPeerIDsOf(this.get(networkID)?.bootstrapPeers ?? []));
+	}
+
+	/** Configured-bootstrap peer IDs of every joined network except `exceptID`. */
+	private configuredBootstrapPeerIDsElsewhere(exceptID: string): Set<string> {
+		const out = new Set<string>();
+		for (const nid of this.joinedNetworks) {
+			if (nid === exceptID) continue;
+			for (const pid of Networks.bootstrapPeerIDsOf(this.get(nid)?.bootstrapPeers ?? [])) out.add(pid);
+		}
+		return out;
+	}
+
 	private async leaveNetwork(id: string): Promise<void> {
 		if (!this.joinedNetworks.has(id)) return;
+
+		// Snapshot the topic subscribers BEFORE unsubscribing — unsubscribeTopic
+		// tears the topic out of pubsub, after which getTopicPeers(id) returns [].
+		// Union with recently-seen members (TTL) so a content peer that is momentarily
+		// disconnected at leave time — but still holds a peerStore entry — is also
+		// suppressed; a live-subscriber-only snapshot would miss it and maintenance
+		// could redial it back after we left.
+		const leftPeers = new Set<string>(this.network.getTopicPeers(id));
+		for (const pid of this.network.getRecentTopicMembers(id)) leftPeers.add(pid);
 
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
 
+		// Subscribers of any OTHER joined lishnet must stay connected (shared
+		// infrastructure). Compute this set BEFORE the bootstrap cleanup so that loop
+		// can skip them too — a bootstrap of the left net that also subscribes another
+		// joined net would otherwise be hung up here.
+		const stillJoinedPeers = new Set<string>();
+		for (const otherID of this.joinedNetworks) {
+			for (const pid of this.network.getTopicPeers(otherID)) stillJoinedPeers.add(pid);
+		}
+
+		// Drop the exemption AND actively disconnect every configured bootstrap peer
+		// exclusive to the left lishnet — including ones offline at leave time. Such
+		// a peer never appears in leftPeers (the topic-subscriber snapshot), so the
+		// content-peer loop below would miss it: its keep-alive tag would survive and
+		// redial maintenance / ReconnectQueue would reconnect it within ~30s. Keep it
+		// if it still subscribes another joined lishnet, or if it is an active circuit
+		// relay we depend on. disconnectPeer is a safe no-op hangUp for an unconnected
+		// peer and always strips keep-alive + suppresses redial.
+		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
+		for (const pid of this.configuredBootstrapPeerIDsOf(id)) {
+			if (stillConfigured.has(pid)) continue;
+			this.network.pruneConfiguredBootstrapPeer(pid);
+			if (stillJoinedPeers.has(pid)) continue;
+			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
+			await this.network.disconnectPeer(pid, id);
+		}
+
+		// Disconnect peers that belonged exclusively to the lishnet we just left.
+		// A peer is kept connected if it is still a subscriber of any OTHER joined
+		// lishnet, or if it is a bootstrap/relay peer (shared infrastructure other
+		// networks depend on). Everything else is a plain content peer with no
+		// remaining reason to stay connected, so hang it up via the single
+		// Network.disconnectPeer entry point (which also clears the keep-alive tag
+		// so ReconnectQueue does not immediately re-dial it).
+		for (const pid of leftPeers) {
+			if (stillJoinedPeers.has(pid)) continue;
+			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
+			await this.network.disconnectPeer(pid, id);
+		}
+
 		const net = this.get(id);
 		console.log(`✓ Left lishnet: ${net?.name ?? id}`);
+
+		// Notify higher layers (e.g. transfer) so downloads bound exclusively to
+		// this lishnet can be stopped.
+		this._onNetworkLeft?.(id);
 	}
 
 	/**
@@ -308,6 +424,15 @@ export class Networks {
 		const existing = this.get(id);
 		if (!existing) return null;
 		const cleaned = bootstrapPeers.filter(p => typeof p === 'string' && p.trim().length > 0);
+		// Drop the bootstrap-exemption for peer IDs removed from this network's
+		// config, unless still configured for another joined network. Prevents a
+		// removed bootstrap entry from lingering as infrastructure that a later
+		// leave-network would refuse to disconnect.
+		const nextIDs = new Set(Networks.bootstrapPeerIDsOf(cleaned));
+		const elsewhere = this.configuredBootstrapPeerIDsElsewhere(id);
+		for (const pid of Networks.bootstrapPeerIDsOf(existing.bootstrapPeers)) {
+			if (!nextIDs.has(pid) && !elsewhere.has(pid)) this.network.pruneConfiguredBootstrapPeer(pid);
+		}
 		const next: LISHNetworkConfig = { ...existing, bootstrapPeers: cleaned };
 		updateLISHnet(this.db, next);
 		this.network.pruneBootstrapStatus(id, cleaned);
