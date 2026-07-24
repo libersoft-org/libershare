@@ -314,6 +314,83 @@ export interface SystemCPUInfo {
 	usage: number;
 }
 
+// System time / clock configuration
+
+/**
+ * Where the list of selectable timezone identifiers comes from.
+ * - `intl`: the runtime's ICU database (`Intl.supportedValuesOf('timeZone')`) — the
+ *   same IANA identifiers Linux and macOS use natively, so the list is identical on
+ *   every platform.
+ * - `unavailable`: the runtime exposes no timezone list, so nothing can be offered
+ *   for selection and a timezone change cannot be validated.
+ */
+export type SystemTimezoneSource = 'intl' | 'unavailable';
+
+/**
+ * Which system-time facilities the host actually provides, probed from the OS
+ * (presence of the managing tool / sync daemon) and NOT inferred from a write that
+ * failed. A denied write means "run with more privileges", not "this host cannot do
+ * it" — the two must stay distinguishable or an unprivileged dev session would
+ * permanently mark a capable kiosk as incapable.
+ */
+export interface SystemTimeCapabilities {
+	/** The wall clock can be set (some managing tool exists for it). */
+	setClock: boolean;
+	/** The system timezone can be changed. */
+	setTimezone: boolean;
+	/** The NTP server address can be configured. */
+	setNtpServer: boolean;
+	/** Automatic time synchronisation can be switched on and off. */
+	setNtpEnabled: boolean;
+}
+
+/**
+ * A snapshot of the host's time configuration. Read live from the OS on every
+ * request — the OS owns this state (RTC, `/etc/localtime`, the sync daemon's
+ * config), so nothing here is cached or persisted by the application.
+ */
+export interface SystemTimeStatus {
+	/** False on a platform with no implemented time backend — every setter then reports `unsupported`. */
+	supported: boolean;
+	/** Current wall-clock time as a Unix timestamp in milliseconds. */
+	nowMs: number;
+	/** Active timezone as an IANA identifier (e.g. `Europe/Prague`). */
+	timezone: string;
+	/** Minutes to ADD to UTC to get local time — positive east of Greenwich (e.g. 120 for CEST). */
+	utcOffsetMinutes: number;
+	/** Where {@link SystemTimeStatus.timezone} and the selectable list come from. */
+	timezoneSource: SystemTimezoneSource;
+	/** Automatic time synchronisation (NTP) is switched on. While true the clock must not be set by hand. */
+	ntpEnabled: boolean;
+	/** The last synchronisation actually succeeded; null where the OS does not report it. */
+	ntpSynchronized: boolean | null;
+	/** Configured NTP server address, or null when none is configured / it cannot be read. */
+	ntpServer: string | null;
+	/** What this host can do, independent of whether the current process is privileged enough. */
+	capabilities: SystemTimeCapabilities;
+}
+
+/**
+ * How a system-time write ended.
+ * - `ok`: the OS applied the change.
+ * - `permission-denied`: the facility exists but the process lacks the privilege
+ *   (not root / not elevated) — actionable by the operator.
+ * - `unsupported`: this host has no such facility; retrying with privileges will not help.
+ * - `auto-sync-enabled`: the clock cannot be set by hand while NTP owns it — switch
+ *   automatic synchronisation off first.
+ * - `invalid-input`: the value failed validation and no command was ever run.
+ * - `error`: anything else; {@link SystemTimeResult.message} carries the underlying text.
+ */
+export type SystemTimeOutcome = 'ok' | 'permission-denied' | 'unsupported' | 'auto-sync-enabled' | 'invalid-input' | 'error';
+
+/** Result of a system-time write. `success` is exactly `outcome === 'ok'` — a failure is never reported as a success. */
+export interface SystemTimeResult {
+	success: boolean;
+	outcome: SystemTimeOutcome;
+	/** Underlying OS message or the validation reason; null when there is nothing to add. */
+	message: string | null;
+}
+
 // Relay (circuit-relay server) statistics — counts of reservations, active tunnels and bytes/sec going through us
 export interface RelayStats {
 	reservations: number;
