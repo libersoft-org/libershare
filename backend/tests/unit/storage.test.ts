@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import { isFatalStorageError, fatalStorageMessage, FATAL_STORAGE_CODES } from '../../src/storage.ts';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { isFatalStorageError, fatalStorageMessage, FATAL_STORAGE_CODES, JSONStorage } from '../../src/storage.ts';
 
 describe('storage fatal-error classifier', () => {
 	for (const code of FATAL_STORAGE_CODES) {
@@ -52,5 +55,24 @@ describe('storage fatal-error message', () => {
 		const joined = fatalStorageMessage(fixture, 'EISDIR').join('\n');
 		expect(joined).toContain('directory');
 		expect(joined).not.toContain('chown 0:0');
+	});
+});
+
+describe('JSONStorage concurrent writes', () => {
+	it('serializes a burst of set() calls and lands on the latest value', async () => {
+		const dir = join(tmpdir(), `storage-test-${process.pid}-${Date.now()}`);
+		mkdirSync(dir, { recursive: true });
+		try {
+			const storage = await JSONStorage.create(dir, 'settings.json', { audio: { volume: 50 } });
+			// Unawaited overlapping writes — the per-instance chain must keep the
+			// file valid JSON and finish on the newest value, never an older one.
+			const writes: Array<Promise<void>> = [];
+			for (let v = 1; v <= 20; v++) writes.push(storage.set('audio.volume', v));
+			await Promise.all(writes);
+			const onDisk = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'));
+			expect(onDisk.audio.volume).toBe(20);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

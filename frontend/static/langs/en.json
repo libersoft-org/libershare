@@ -495,6 +495,7 @@
 			"ram": "RAM usage",
 			"storage": "Storage usage",
 			"volume": "Volume",
+			"volumeUnavailable": "Audio device not available",
 			"clock": "Clock"
 		},
 		"audio": "Sound effects",

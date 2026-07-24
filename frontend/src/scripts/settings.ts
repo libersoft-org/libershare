@@ -1,4 +1,4 @@
-import { writable, type Writable } from 'svelte/store';
+import { get, writable, type Writable } from 'svelte/store';
 import { api } from './api.ts';
 import { defaultWidgetVisibility, type FooterPosition, type FooterWidget } from './footerWidgets.ts';
 import { currentLanguage, languages } from './language.ts';
@@ -18,6 +18,12 @@ export const inputInitialDelay = writable(400);
 export const inputRepeatDelay = writable(150);
 export const gamepadDeadzone = writable(0.5);
 export const volume = writable(50);
+// Whether the OS exposes a controllable audio device. False on headless/device-less
+// systems — the footer widget then shows an "unavailable" state instead of a level.
+export const volumeAvailable = writable(true);
+// False until the first live getVolume settles. Keeps the widget from briefly
+// painting the persisted value as if it were the OS state on refresh (flicker).
+export const volumeKnown = writable(false);
 export const footerVisible = writable(true);
 export const footerPosition = writable<FooterPosition>('right');
 export const footerWidgetVisibility = writable<Record<FooterWidget, boolean>>(defaultWidgetVisibility);
@@ -95,6 +101,21 @@ export async function loadSettings(): Promise<void> {
 		// Audio
 		audioEnabled.set(settings.audio.enabled);
 		volume.set(settings.audio.volume);
+		// Reconcile with the OS: use the live volume when a device is present,
+		// otherwise flag it unavailable so the widget shows no fabricated level.
+		// Re-arm the gate on every (re)connect — the backend may have restarted or
+		// the OS level changed while disconnected, so +/- must wait for the fresh
+		// live read again instead of adjusting from the stale persisted value.
+		volumeKnown.set(false);
+		// Subscribe BEFORE taking the one-shot snapshot so this tab is already in the
+		// broadcast set: an OS/other-client change between the snapshot and the subscribe
+		// arrives as an event rather than being missed (the watcher would otherwise
+		// remember it and suppress later identical polls, stranding this tab).
+		subscribeVolumeChanges();
+		// Fire-and-forget — a wedged mixer helper (backend read can take seconds) must not
+		// hold loadSettings() and the rest of app init; the widget shows the persisted
+		// value until the live fetch settles.
+		reconcileVolumeWithOS(volumeGeneration);
 
 		// Storage
 		storagePath.set(settings.storage.downloadPath);
@@ -311,19 +332,145 @@ export function setDefaultCompressionAlgorithm(algorithm: string): void {
 	updateSetting(defaultCompressionAlgorithm, 'export.compressionAlgorithm', algorithm);
 }
 
-// Volume helpers
+// Volume helpers. The +/- controls update the local store immediately (drives
+// the footer widget and local sound cues) and push the value to the backend,
+// which persists it and sets the OS master volume. The backend call is debounced
+// so holding a repeat key/button down does not spam the WebSocket.
+let volumeSyncTimer: ReturnType<typeof setTimeout> | undefined;
+// Timestamp of the last local +/- change. Used to hold back OS→FE volume events
+// that arrive while the user is actively adjusting, so their in-progress value
+// is not clobbered by a slightly stale poll.
+let lastLocalVolumeChange = 0;
+/** How long after a local +/- press incoming OS volume events are deferred instead of applied. */
+const LOCAL_EDIT_GUARD_MS = 1000;
+// The newest OS-side level that arrived inside the guard window — replayed once
+// the window expires (the backend suppresses its echo, so a dropped event would
+// otherwise never be re-delivered and this client would stay stale).
+let deferredVolume: number | null = null;
+let deferredVolumeTimer: ReturnType<typeof setTimeout> | undefined;
+
+// Bumped whenever an authoritative source (an OS volumeChanged event or a local
+// edit) moves the volume store. A fire-and-forget startup system.getVolume read
+// captures this counter and discards its (possibly stale) level if a newer event
+// landed while it was in flight.
+let volumeGeneration = 0;
+
+/** Retry cadence for the startup live-volume read while it keeps hitting the transient fallback. */
+const VOLUME_RECONCILE_RETRY_MS = 5000;
+
+/**
+ * One-shot OS volume reconciliation with retry. A `known:false` answer is the
+ * transient fallback (helper timed out) — and because the backend watcher
+ * suppresses polls equal to its remembered state, NO volumeChanged event may ever
+ * follow once the helper recovers. Without a retry the gate would stay closed and
+ * the footer stuck on "—" indefinitely, so re-ask until a definitive read lands
+ * or a newer event/local edit (generation change, gate already open) supersedes.
+ */
+function reconcileVolumeWithOS(gen: number): void {
+	void api
+		.call<{ volume: number | null; available: boolean; known: boolean }>('system.getVolume')
+		.then(status => {
+			// A newer OS event / local edit moved the store while this read was in flight
+			// (its generation advanced) — its level AND availability are stale, drop both.
+			if (volumeGeneration !== gen) return;
+			volumeAvailable.set(status.available);
+			if (status.available && status.volume !== null) volume.set(status.volume);
+			// Open the +/- gate only on a definitive live read; retry the transient fallback.
+			if (status.known) volumeKnown.set(true);
+			else
+				setTimeout(() => {
+					if (volumeGeneration === gen && !get(volumeKnown)) reconcileVolumeWithOS(gen);
+				}, VOLUME_RECONCILE_RETRY_MS);
+		})
+		.catch(() => {
+			// Leave the persisted value and keep the gate closed; the next reconnect's
+			// loadSettings() starts a fresh reconciliation.
+		});
+}
+
+function syncVolumeToBackend(value: number): void {
+	lastLocalVolumeChange = Date.now();
+	volumeGeneration++;
+	// A newer local edit supersedes any OS-side level captured before it — the
+	// backend write that follows will leave the mixer on the local value.
+	deferredVolume = null;
+	clearTimeout(volumeSyncTimer);
+	volumeSyncTimer = setTimeout(() => {
+		// The backend persists the preference even with no audio device; we refresh
+		// availability from its answer and never surface a per-keystroke error.
+		api
+			.call<{ success: boolean; available: boolean }>('system.setVolume', { volume: value })
+			.then(res => volumeAvailable.set(res.available))
+			.catch((err: unknown) => console.error('[Settings] Error saving volume:', err));
+	}, 150);
+}
+
 export function increaseVolume(): void {
+	// Until the live OS level is known the store holds the persisted value —
+	// adjusting from it would yank the mixer away from its actual current level.
+	if (!get(volumeKnown)) return;
 	volume.update(v => {
 		const newVal = Math.min(100, v + 1);
-		api.settings.set('audio.volume', newVal).catch((err: unknown) => console.error('[Settings] Error saving volume:', err));
+		syncVolumeToBackend(newVal);
 		return newVal;
 	});
 }
 
 export function decreaseVolume(): void {
+	if (!get(volumeKnown)) return; // see increaseVolume — no adjusting from a stale level
 	volume.update(v => {
 		const newVal = Math.max(0, v - 1);
-		api.settings.set('audio.volume', newVal).catch((err: unknown) => console.error('[Settings] Error saving volume:', err));
+		syncVolumeToBackend(newVal);
 		return newVal;
 	});
+}
+
+// Subscribe once to OS→FE volume changes (external tray/media-key adjustments or
+// a device being plugged/unplugged). Purely reflects backend state — never calls
+// setVolume back, so there is no feedback loop.
+let volumeChangeSubscribed = false;
+function subscribeVolumeChanges(): void {
+	if (!volumeChangeSubscribed) {
+		volumeChangeSubscribed = true;
+		api.on('system:volumeChanged', (data: { volume: number | null; available: boolean }) => {
+			// Indeterminate echo (a transient write failure broadcasts available:true with
+			// volume:null): it carries NO live level and only a fallback availability, so it
+			// must neither open the +/- gate nor invalidate an in-flight startup read.
+			if (data.available && data.volume === null) {
+				volumeAvailable.set(true);
+				return;
+			}
+			// A definitive event (real level, or a confirmed no-device) is authoritative OS
+			// state: supersede any in-flight startup getVolume read BEFORE the early return,
+			// or a stale read could roll availability back. The gate opens too — the live
+			// state is known even mid-startup.
+			volumeGeneration++;
+			volumeKnown.set(true);
+			// Availability (device plug/unplug) always applies; the level is held
+			// back while the user is mid-adjustment so a stale poll cannot fight
+			// their input — but deferred, not dropped, or this client would keep
+			// showing its local value forever (the backend suppresses the echo).
+			volumeAvailable.set(data.available);
+			if (!data.available || data.volume === null) return;
+			const remaining = LOCAL_EDIT_GUARD_MS - (Date.now() - lastLocalVolumeChange);
+			if (remaining <= 0) {
+				// A newer event supersedes any still-pending deferred level — drop it,
+				// or its timer would replay the stale value moments after this one.
+				deferredVolume = null;
+				clearTimeout(deferredVolumeTimer);
+				volume.set(data.volume);
+				return;
+			}
+			deferredVolume = data.volume;
+			clearTimeout(deferredVolumeTimer);
+			deferredVolumeTimer = setTimeout(() => {
+				// Only replay when no newer local edit re-armed the guard meanwhile.
+				if (deferredVolume !== null && Date.now() - lastLocalVolumeChange >= LOCAL_EDIT_GUARD_MS) {
+					volume.set(deferredVolume);
+					deferredVolume = null;
+				}
+			}, remaining + 50);
+		});
+	}
+	api.subscribe('system:volumeChanged').catch(() => {});
 }
