@@ -18,6 +18,7 @@ import DownloadDetail from '../pages/Download/DownloadDetail.svelte';
 import SettingsFooter from '../pages/Settings/SettingsFooter.svelte';
 import SettingsDownload from '../pages/Settings/SettingsDownload.svelte';
 import SettingsSystem from '../pages/Settings/SettingsSystem.svelte';
+import SettingsTime from '../pages/Settings/SettingsTime.svelte';
 import LISHNetworkList from '../pages/Settings/SettingsLISHNetworkList.svelte';
 import LISHNetworkImportFile from '../pages/Settings/SettingsLISHNetworkImportFile.svelte';
 import LISHNetworkImportWeb from '../pages/Settings/SettingsLISHNetworkImportWeb.svelte';
@@ -301,6 +302,12 @@ export const menuStructure = derived(
 						label: tt('settings.time.label'),
 						icon: '/img/time.svg',
 						submenu: [
+							{
+								id: 'time-system',
+								label: tt('settings.time.title'),
+								icon: '/img/time.svg',
+								component: SettingsTime,
+							},
 							{
 								id: 'time-format',
 								label: tt('settings.time.format'),

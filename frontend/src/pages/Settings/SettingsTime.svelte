@@ -1,0 +1,245 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { t, tt, translateError, withDetail } from '../../scripts/language.ts';
+	import { addNotification } from '../../scripts/notifications.ts';
+	import { type Position } from '../../scripts/navigationLayout.ts';
+	import { LAYOUT } from '../../scripts/navigationLayout.ts';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { api } from '../../scripts/api.ts';
+	import { type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
+	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
+	import Button from '../../components/Buttons/Button.svelte';
+	import Alert from '../../components/Alert/Alert.svelte';
+	import Input from '../../components/Input/Input.svelte';
+	import Select from '../../components/Input/Select.svelte';
+	import SelectOption from '../../components/Input/SelectOption.svelte';
+	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
+	interface Props {
+		areaID: string;
+		position?: Position | undefined;
+		onBack?: (() => void) | undefined;
+	}
+	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
+	let status = $state<SystemTimeStatus | null>(null);
+	let timezones = $state<string[]>([]);
+	let errorMessage = $state('');
+	let busy = $state(false);
+	// Editable copies of the host state
+	let autoSync = $state(false);
+	let ntpServer = $state('');
+	let timezone = $state('');
+	let hours = $state('');
+	let minutes = $state('');
+	let seconds = $state('');
+	// What the host reported when the form was last filled. Only fields the user
+	// actually changed get written — otherwise saving a timezone change alone would
+	// also rewind the clock to whatever it was when the page opened.
+	let loaded = $state({ autoSync: false, ntpServer: '', timezone: '', clock: '' });
+
+	function pad(value: number): string {
+		return String(value).padStart(2, '0');
+	}
+
+	// When the snapshot in `status` was taken, so the displayed clock can be advanced
+	// from it without asking the host again every second.
+	let readAt = 0;
+
+	/** Fill the form from a host status snapshot and remember it as the comparison baseline. */
+	function applyStatus(next: SystemTimeStatus): void {
+		status = next;
+		readAt = Date.now();
+		// The backend may run on a different machine (or in a different zone) than the
+		// browser, so the host's wall clock is reconstructed from its own UTC offset
+		// instead of the browser's local getters.
+		const hostLocal = new Date(next.nowMs + next.utcOffsetMinutes * 60000);
+		hours = pad(hostLocal.getUTCHours());
+		minutes = pad(hostLocal.getUTCMinutes());
+		seconds = pad(hostLocal.getUTCSeconds());
+		autoSync = next.ntpEnabled;
+		ntpServer = next.ntpServer ?? '';
+		timezone = next.timezone;
+		loaded = { autoSync, ntpServer, timezone, clock: `${hours}:${minutes}:${seconds}` };
+	}
+
+	async function load(): Promise<void> {
+		try {
+			const [next, zones] = await Promise.all([api.call<SystemTimeStatus>('system.getTime'), api.call<string[]>('system.listTimezones')]);
+			timezones = zones;
+			applyStatus(next);
+		} catch (e) {
+			errorMessage = translateError(e);
+		}
+	}
+
+	void load();
+
+	onMount(() => {
+		// Keep the clock fields on the host's current time until the user types in them.
+		// Filled once at load they would go stale while the page is open, and a save that
+		// only changed the timezone would write back the time the page was opened at.
+		const tick = setInterval(() => {
+			if (!status || busy || clockEdited) return;
+			const hostLocal = new Date(status.nowMs + (Date.now() - readAt) + status.utcOffsetMinutes * 60000);
+			hours = pad(hostLocal.getUTCHours());
+			minutes = pad(hostLocal.getUTCMinutes());
+			seconds = pad(hostLocal.getUTCSeconds());
+			// Move the baseline with them, or the tick itself would read as a user edit.
+			loaded = { ...loaded, clock: `${hours}:${minutes}:${seconds}` };
+		}, 1000);
+		// Another window writing the time must not leave this form showing the old host
+		// state — the backend broadcasts the fresh status after every successful write.
+		api.on('system:timeChanged', (next: SystemTimeStatus) => {
+			if (!busy) applyStatus(next);
+		});
+		api.subscribe('system:timeChanged').catch(() => {});
+		return () => clearInterval(tick);
+	});
+
+	function toggleAutoSync(): void {
+		if (busy || !status?.capabilities.setNtpEnabled) return;
+		autoSync = !autoSync;
+	}
+
+	/** Localized reason a write was refused, with the OS text appended when there is one. */
+	function outcomeMessage(res: SystemTimeResult): string {
+		const keys: Record<SystemTimeOutcome, string> = {
+			ok: 'settings.time.errorGeneric',
+			'permission-denied': 'settings.time.errorPermissionDenied',
+			unsupported: 'settings.time.errorUnsupported',
+			'auto-sync-enabled': 'settings.time.errorAutoSyncEnabled',
+			'invalid-input': 'settings.time.errorInvalidInput',
+			error: 'settings.time.errorGeneric',
+		};
+		return withDetail(tt(keys[res.outcome]), res.message);
+	}
+
+	/**
+	 * Run one write. On refusal the reason is shown and the form is re-filled from the
+	 * host, so a partially applied save never leaves the user editing stale values.
+	 */
+	async function apply(write: Promise<SystemTimeResult>): Promise<boolean> {
+		const res = await write;
+		if (res.success) return true;
+		errorMessage = outcomeMessage(res);
+		await load();
+		return false;
+	}
+
+	let clockEdited = $derived(`${hours}:${minutes}:${seconds}` !== loaded.clock);
+
+	/** Parse the three clock fields, or null when any of them is not a valid value. */
+	function parseClock(): { hours: number; minutes: number; seconds: number } | null {
+		// A number input reports a blank or unparseable entry as an empty string, and
+		// Number('') is 0 — without this guard a cleared field would silently set that
+		// part of the clock to zero instead of being reported as invalid.
+		const raw = [hours, minutes, seconds].map(v => v.trim());
+		if (raw.some(v => v === '')) return null;
+		const parts = raw.map(Number);
+		if (parts.some(v => !Number.isInteger(v))) return null;
+		const [h, m, s] = parts as [number, number, number];
+		if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return null;
+		return { hours: h, minutes: m, seconds: s };
+	}
+
+	async function saveSettings(): Promise<void> {
+		if (!status || busy) return;
+		errorMessage = '';
+		const clock = clockEdited ? parseClock() : null;
+		if (clockEdited && !clock) {
+			errorMessage = tt('settings.time.errorInvalidInput');
+			return;
+		}
+		busy = true;
+		try {
+			// Order matters: automatic synchronisation goes off before a manual clock set
+			// (the OS refuses one while NTP owns the clock) and back on only at the end,
+			// so a clock set in the same save is not immediately overwritten by a sync.
+			if (!autoSync && loaded.autoSync && !(await apply(api.call<SystemTimeResult>('system.setNtpEnabled', { enabled: false })))) return;
+			if (ntpServer.trim() !== loaded.ntpServer && !(await apply(api.call<SystemTimeResult>('system.setNtpServer', { server: ntpServer.trim() })))) return;
+			if (timezone !== loaded.timezone && !(await apply(api.call<SystemTimeResult>('system.setTimezone', { timezone })))) return;
+			if (clock && !(await apply(api.call<SystemTimeResult>('system.setClock', clock)))) return;
+			if (autoSync && !loaded.autoSync && !(await apply(api.call<SystemTimeResult>('system.setNtpEnabled', { enabled: true })))) return;
+			addNotification(tt('settings.time.saved'), 'success');
+			onBack?.();
+		} catch (e) {
+			errorMessage = translateError(e);
+		} finally {
+			busy = false;
+		}
+	}
+
+	// A host with no timezone database offers nothing to pick from — keep the active
+	// zone visible rather than showing an empty picker.
+	let selectableTimezones = $derived(timezones.length > 0 ? timezones : status ? [status.timezone] : []);
+	let clockDisabled = $derived(busy || autoSync || !status?.capabilities.setClock);
+
+	createNavArea(() => ({ areaID, position, onBack, activate: true }));
+</script>
+
+<style>
+	.settings {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		height: 100%;
+		padding: 2vh;
+		gap: 1vh;
+		overflow-y: auto;
+	}
+
+	.container {
+		display: flex;
+		flex-direction: column;
+		gap: 1vh;
+		width: 1000px;
+		max-width: 100%;
+	}
+
+	.clock {
+		display: flex;
+		gap: 1vh;
+	}
+
+	.hint {
+		font-size: 2vh;
+		color: var(--disabled-foreground);
+	}
+</style>
+
+<div class="settings">
+	<div class="container">
+		{#if errorMessage}
+			<Alert type="error" message={errorMessage} />
+		{/if}
+		{#if status && !status.supported}
+			<Alert type="warning" message={$t('settings.time.unsupported')} />
+		{/if}
+		{#if status}
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.time.autoSync') + ':'} checked={autoSync} disabled={busy || !status.capabilities.setNtpEnabled} position={[0, 0]} onToggle={toggleAutoSync} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={ntpServer} label={$t('settings.time.ntpServer')} placeholder={$t('settings.time.ntpServerPlaceholder')} disabled={busy || !status.capabilities.setNtpServer} position={[0, 1]} flex />
+			</div>
+			<div class="clock" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={hours} label={$t('settings.time.hours')} type="number" min={0} max={23} disabled={clockDisabled} position={[0, 2]} flex />
+				<Input bind:value={minutes} label={$t('settings.time.minutes')} type="number" min={0} max={59} disabled={clockDisabled} position={[1, 2]} flex />
+				<Input bind:value={seconds} label={$t('settings.time.seconds')} type="number" min={0} max={59} disabled={clockDisabled} position={[2, 2]} flex />
+			</div>
+			{#if autoSync}
+				<div class="hint">{$t('settings.time.autoSyncHint')}</div>
+			{/if}
+			<div role="group" data-mouse-activate-area={areaID}>
+				<Select bind:value={timezone} label={$t('settings.time.timezone')} disabled={busy || !status.capabilities.setTimezone || selectableTimezones.length === 0} position={[0, 3]} flex>
+					{#each selectableTimezones as zone (zone)}
+						<SelectOption value={zone} label={zone} />
+					{/each}
+				</Select>
+			</div>
+		{/if}
+	</div>
+	<ButtonBar justify="center" basePosition={[0, 4]}>
+		<Button icon="/img/save.svg" label={$t('common.save')} disabled={busy || !status} onConfirm={saveSettings} />
+		<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
+	</ButtonBar>
+</div>
