@@ -1,6 +1,9 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
-import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, LISHClient, setMaxChunkSize, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
 import { encode as codecEncode, decode as codecDecode } from '../../../src/protocol/codec.ts';
+import { encode as lpEncode } from 'it-length-prefixed';
+import { DEFAULT_MAX_CHUNK_SIZE } from '../../../src/settings.ts';
+import { ErrorCodes, type IStoredLISH } from '@shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -362,5 +365,69 @@ describe('lish-protocol – msgpack chunk encoding', () => {
 		const parsed = codecDecode<LISHGetChunkResponse>(codecEncode(response));
 		if (!('error' in parsed)) throw new Error('expected error variant');
 		expect(parsed.error).toBe('PEER_CHUNK_NOT_FOUND');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// requestManifest — validation of manifests received from peers
+// ---------------------------------------------------------------------------
+
+describe('LISHClient.requestManifest – manifest validation', () => {
+	/**
+	 * Minimal fake libp2p Stream that replays a single pre-built manifest response frame.
+	 * `send()` is a no-op (requestManifest only writes the request); iteration yields the
+	 * length-prefixed response the decoder reads back.
+	 */
+	function fakeStream(manifest: unknown): any {
+		const frame = lpEncode.single(codecEncode({ manifest })).subarray();
+		async function* source() {
+			yield frame;
+		}
+		return { status: 'open', send() {}, close: async () => {}, [Symbol.asyncIterator]: source };
+	}
+
+	function makeManifest(chunkSize: number): IStoredLISH {
+		return {
+			id: 'lish-manifest-test',
+			created: new Date().toISOString(),
+			chunkSize,
+			checksumAlgo: 'sha256',
+			files: [{ path: 'a.bin', size: chunkSize, checksums: ['h1'] }],
+		};
+	}
+
+	afterEach(() => {
+		setMaxChunkSize(DEFAULT_MAX_CHUNK_SIZE);
+	});
+
+	it('rejects a manifest whose chunkSize exceeds the configured maximum', async () => {
+		setMaxChunkSize(1024 * 1024);
+		const client = new LISHClient(fakeStream(makeManifest(2 * 1024 * 1024)));
+		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE });
+	});
+
+	it('accepts a manifest whose chunkSize is within the maximum', async () => {
+		setMaxChunkSize(1024 * 1024);
+		const client = new LISHClient(fakeStream(makeManifest(1024)));
+		const manifest = await client.requestManifest('lish-manifest-test');
+		expect(manifest.chunkSize).toBe(1024);
+	});
+
+	it('maps a structurally malformed manifest to a retryable peer error', async () => {
+		// Garbage from one peer must not abort peer-fallback loops — only PEER_* codes retry.
+		const client = new LISHClient(fakeStream({ ...makeManifest(1024), chunkSize: -5 }));
+		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+	});
+
+	it('rejects a manifest whose id does not match the requested LISH', async () => {
+		// A spoofing peer answering with a different LISH must not win the fallback.
+		const client = new LISHClient(fakeStream({ ...makeManifest(1024), id: 'some-other-lish' }));
+		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+	});
+
+	it('keeps chunk-size-too-large terminal (not a peer error)', async () => {
+		setMaxChunkSize(1024 * 1024);
+		const client = new LISHClient(fakeStream(makeManifest(2 * 1024 * 1024)));
+		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE });
 	});
 });

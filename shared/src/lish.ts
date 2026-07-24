@@ -1,4 +1,5 @@
 import { CodedError, ErrorCodes } from './errors.ts';
+import { formatBytes } from './utils.ts';
 export type LISHid = string;
 export type ChunkID = string;
 export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
@@ -16,17 +17,83 @@ export const DEFAULT_CHUNK_SIZE: number = 1024 * 1024;
  *    (zero-size files have zero checksums)
  */
 export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
-	if (typeof lish.chunkSize !== 'number' || !Number.isFinite(lish.chunkSize) || lish.chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(lish.chunkSize));
-	if (lish.chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${lish.chunkSize} > ${maxChunkSize}`);
-	if (lish.files) {
+	// `lish` may come straight off the wire from an untrusted peer — reject malformed shapes with
+	// a coded error rather than letting a raw property access throw a native TypeError.
+	if (!lish || typeof lish !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'manifest is not an object');
+	if (typeof lish.chunkSize !== 'number' || !Number.isInteger(lish.chunkSize) || lish.chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(lish.chunkSize));
+	if (lish.chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${formatBytes(lish.chunkSize)} > ${formatBytes(maxChunkSize)}`);
+	// An unsupported checksumAlgo would later crash `new Bun.CryptoHasher(algo)` during
+	// download/verify — reject the peer manifest here instead, matching validateImportedLISH.
+	if (typeof lish.checksumAlgo !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(lish.checksumAlgo)) throw new CodedError(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM, String(lish.checksumAlgo));
+	// Optional arrays get the same presence check as `files`: a truthy non-array
+	// (e.g. `directories: {}`) would crash downstream for..of iteration in
+	// dataServer.add with a raw TypeError instead of a coded rejection.
+	if (lish.directories !== undefined && !Array.isArray(lish.directories)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'directories is not an array');
+	if (lish.links !== undefined && !Array.isArray(lish.links)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'links is not an array');
+	// Presence check, not truthiness: `files: null` (or any other falsy non-array) is a
+	// malformed manifest, only a genuinely absent field means metadata-only.
+	if (lish.files !== undefined) {
+		if (!Array.isArray(lish.files)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'files is not an array');
 		for (const file of lish.files) {
+			if (!file || typeof file !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'file entry is not an object');
+			// path must be a string — a non-string (e.g. {}) would blow up the SQLite bind
+			// in dataServer.add with a raw error instead of a coded peer rejection.
+			if (typeof file.path !== 'string') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `file path is not a string: ${String(file.path)}`);
+			// Explicit size validation — the checksum-count equation alone lets adversarial
+			// sizes through (e.g. size -5 with 0 checksums: ceil(-5/cs) is -0 and 0 !== -0 is
+			// false) and a float size makes every chunk "wrong length", banning honest peers.
+			if (typeof file.size !== 'number' || !Number.isInteger(file.size) || file.size < 0) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `${file.path}: invalid size ${String(file.size)}`);
 			const expected = file.size === 0 ? 0 : Math.ceil(file.size / lish.chunkSize);
 			if (!Array.isArray(file.checksums) || file.checksums.length !== expected) {
 				const got = Array.isArray(file.checksums) ? file.checksums.length : 'invalid';
 				throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `${file.path}: expected ${expected} checksums for size ${file.size} / chunkSize ${lish.chunkSize}, got ${got}`);
 			}
+			// Each checksum must be a string too — the download path compares it to a hex
+			// digest and the DB binds it; a non-string entry would corrupt both.
+			for (const cs of file.checksums) if (typeof cs !== 'string') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `${file.path}: non-string checksum`);
+		}
+		// A checksum names exact content, so every slot sharing it must expect the same byte
+		// length — otherwise one verified payload cannot satisfy all its slots and the
+		// duplicate-slot write path would write a full chunk past a shorter file tail. Only a
+		// file's short last chunk can differ from chunkSize, so tracking those keeps this
+		// O(#files) in memory.
+		const shortLast = new Map<string, number>();
+		for (const file of lish.files) {
+			const rem = file.size % lish.chunkSize;
+			if (file.size > 0 && rem !== 0) {
+				const cs = file.checksums[file.checksums.length - 1]!;
+				const prev = shortLast.get(cs);
+				if (prev !== undefined && prev !== rem) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `${file.path}: duplicate checksum with conflicting chunk lengths (${prev} vs ${rem})`);
+				shortLast.set(cs, rem);
+			}
+		}
+		if (shortLast.size > 0) {
+			for (const file of lish.files) {
+				const rem = file.size % lish.chunkSize;
+				const shortLastIdx = file.size > 0 && rem !== 0 ? file.checksums.length - 1 : -1;
+				for (let i = 0; i < file.checksums.length; i++) {
+					if (i === shortLastIdx) continue; // consistency of short last chunks verified above
+					const shortLen = shortLast.get(file.checksums[i]!);
+					if (shortLen !== undefined) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `${file.path}: duplicate checksum with conflicting chunk lengths (${shortLen} vs ${lish.chunkSize})`);
+				}
+			}
 		}
 	}
+}
+
+/**
+ * Exact byte length of a single chunk as fixed by the manifest.
+ * The last chunk of a file may be shorter than `chunkSize`. Returns -1 when the length
+ * cannot be determined (no file metadata, invalid chunkSize/size, or out-of-range indices).
+ */
+export function expectedChunkLength(lish: ILISH, fileIndex: number, chunkIndex: number): number {
+	if (!lish.files || fileIndex < 0 || fileIndex >= lish.files.length) return -1;
+	if (typeof lish.chunkSize !== 'number' || !Number.isFinite(lish.chunkSize) || lish.chunkSize <= 0) return -1;
+	const size = lish.files[fileIndex]!.size;
+	if (typeof size !== 'number' || !Number.isFinite(size) || size < 0) return -1;
+	const numChunks = size === 0 ? 0 : Math.ceil(size / lish.chunkSize);
+	if (chunkIndex < 0 || chunkIndex >= numChunks) return -1;
+	return Math.min(lish.chunkSize, size - chunkIndex * lish.chunkSize);
 }
 
 export interface ILISH {

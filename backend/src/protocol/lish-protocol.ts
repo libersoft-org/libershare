@@ -1,8 +1,8 @@
 import { decode as lpDecode } from 'it-length-prefixed';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { type Stream } from '@libp2p/interface';
-import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError } from '@shared';
-import { DEFAULT_MAX_MESSAGE_SIZE } from '../settings.ts';
+import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError, validateLISHStructure } from '@shared';
+import { DEFAULT_MAX_MESSAGE_SIZE, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { Uint8ArrayList } from 'uint8arraylist';
 import { uploadLimiter } from './speed-limiter.ts';
@@ -24,6 +24,21 @@ export function setMaxMessageSize(size: number): void {
 
 export function getMaxMessageSize(): number {
 	return maxMessageSize;
+}
+
+/**
+ * Maximum chunk size accepted in a manifest received from a peer, in bytes.
+ * Mirrors the `network.maxChunkSize` bound enforced on locally created/imported LISHs so a
+ * malicious or malformed manifest can't push an oversized chunk size into the app. Read live
+ * on every manifest so settings changes take effect without a peer restart.
+ */
+let maxChunkSize: number = DEFAULT_MAX_CHUNK_SIZE;
+export function setMaxChunkSize(size: number): void {
+	if (typeof size === 'number' && Number.isFinite(size) && size > 0) maxChunkSize = size;
+}
+
+export function getMaxChunkSize(): number {
+	return maxChunkSize;
 }
 
 export type LISHRequest = LISHGetChunkRequest | LISHGetLishRequest | LISHGetLishsRequest | LISHAnnounceHaveRequest | LISHSearchResultRequest;
@@ -166,6 +181,22 @@ export class LISHClient {
 		const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
 		if ('error' in response) throw new CodedError(response.error, lishID);
 		if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
+		// The manifest must be for the LISH we asked for — a peer returning a different id
+		// would let a spoofing peer win the fallback loop and could import the wrong LISH
+		// under the requested id. Treat a mismatch as this peer's fault so fallback tries the next.
+		if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: manifest id mismatch (${String(response.manifest?.id)})`);
+		// A manifest from the network is untrusted input — validate chunk-size bounds and
+		// manifest consistency before it can reach any caller (DB persist / import / probe).
+		try {
+			validateLISHStructure(response.manifest, maxChunkSize);
+		} catch (e) {
+			// A structurally malformed manifest is this peer's fault — surface it as a peer
+			// protocol error so fallback loops move on to the next peer. An over-limit
+			// chunkSize is a property of the LISH itself (every honest peer serves the same
+			// manifest), so it stays a terminal local error.
+			if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: ${e.message}`);
+			throw e;
+		}
 		return response.manifest;
 	}
 

@@ -1,5 +1,5 @@
 import { Mutex } from 'async-mutex';
-import { type ChunkID, type IStoredLISH, type LISHid, ErrorCodes } from '@shared';
+import { type ChunkID, type IStoredLISH, type LISHid, ErrorCodes, expectedChunkLength } from '@shared';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { LISHClient, type HaveChunks } from './lish-protocol.ts';
 import { downloadLimiter } from './speed-limiter.ts';
@@ -299,18 +299,26 @@ export class ChunkDownloader {
 						}
 						continue;
 					}
-					// Verify chunk integrity before writing
+					// Reject bad chunk data before writing. The manifest fixes each chunk's exact byte
+					// length (a file's last chunk may be shorter than chunkSize); checking length before
+					// the O(n) hash stops a peer from forcing us to hash oversized payloads (bounded only
+					// by maxMessageSize) and rejects malformed data early.
 					const data = result.data;
-					const hasher = new Bun.CryptoHasher(lish.checksumAlgo as any);
-					hasher.update(data);
-					const actualHash = hasher.digest('hex');
-					if (actualHash !== chunk.chunkID) {
+					const expectedLen = expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex);
+					let rejectReason: string | null = expectedLen >= 0 && data.length !== expectedLen ? `wrong length: expected ${expectedLen}B, got ${data.length}B` : null;
+					if (!rejectReason) {
+						const hasher = new Bun.CryptoHasher(lish.checksumAlgo as any);
+						hasher.update(data);
+						const actualHash = hasher.digest('hex');
+						if (actualHash !== chunk.chunkID) rejectReason = `bad hash: expected ${chunk.chunkID.slice(0, 12)}, got ${actualHash.slice(0, 12)}`;
+					}
+					if (rejectReason) {
 						const count = (corruptCount.get(peerID) ?? 0) + 1;
 						corruptCount.set(peerID, count);
-						console.log(`[DL] Corrupt chunk from ${peerID.slice(0, 12)}: expected ${chunk.chunkID.slice(0, 12)}, got ${actualHash.slice(0, 12)} (${count}/${ChunkDownloader.MAX_CORRUPT_CHUNKS})`);
+						console.log(`[DL] Rejected chunk from ${peerID.slice(0, 12)} (${rejectReason}) (${count}/${ChunkDownloader.MAX_CORRUPT_CHUNKS})`);
 						await requeueChunk(chunk);
 						if (count >= ChunkDownloader.MAX_CORRUPT_CHUNKS) {
-							console.log(`[DL] Peer ${peerID.slice(0, 12)} banned: ${count} corrupt chunks`);
+							console.log(`[DL] Peer ${peerID.slice(0, 12)} banned: ${count} bad chunks`);
 							await peerManager.removeAwait(peerID, 'ban');
 							break;
 						}

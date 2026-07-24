@@ -1,6 +1,6 @@
 import { type SettingsData } from '../settings.ts';
 import { Downloader } from './downloader.ts';
-import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize } from './lish-protocol.ts';
+import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize, setMaxChunkSize } from './lish-protocol.ts';
 import { setMaxDownloadPeersPerLISH } from './peer-manager.ts';
 
 /**
@@ -16,4 +16,5 @@ export function applyNetworkLimits(net: SettingsData['network']): void {
 	setMaxDownloadPeersPerLISH(net.maxDownloadPeersPerLISH);
 	setMaxUploadPeersPerLISH(net.maxUploadPeersPerLISH);
 	setMaxMessageSize(net.maxMessageSize);
+	setMaxChunkSize(net.maxChunkSize);
 }
