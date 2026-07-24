@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, toManifest, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
 import { type IStoredLISH } from '@shared';
 import { encode as codecEncode, decode as codecDecode } from '../../../src/protocol/codec.ts';
@@ -309,6 +311,15 @@ describe('lish-protocol – toManifest', () => {
 		expect(stored.directory).toBe('/local/temp/lish-manifest-test');
 		expect(stored.finalDirectory).toBe('/local/final/lish-manifest-test');
 		expect(stored.chunks).toEqual(['ab']);
+	});
+
+	// The cases above pin the helper, not the wiring: drop either call site and they all
+	// still pass while the stripped fields silently cross the wire again. Both directions
+	// sit on lines other work also touches, so guard them at the source surface.
+	it('routes both wire directions through the helper', () => {
+		const source = readFileSync(join(__dirname, '../../../src/protocol/lish-protocol.ts'), 'utf-8');
+		expect(source).toContain('return toManifest(response.manifest)'); // inbound: peer manifest
+		expect(source).toContain('{ manifest: toManifest(lish) }'); // outbound: served manifest
 	});
 });
 
