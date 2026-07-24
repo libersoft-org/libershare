@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'bun:test';
-import { classifyBootstrapError, extractActualPeerID } from '../../../src/protocol/network.ts';
+import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
+import { classifyBootstrapError, extractActualPeerID, extractDestinationPeerID } from '../../../src/protocol/network.ts';
+import { BootstrapStatusTracker } from '../../../src/protocol/bootstrap-status.ts';
 
 // Deterministic unit tests for the bootstrap-peer dial classification — the pure
 // logic that decides whether a failed bootstrap dial is an identity-mismatch (stale
@@ -55,5 +57,150 @@ describe('extractActualPeerID', () => {
 	it('returns null when the mismatch message lacks the Payload-identity-key prefix', () => {
 		// Shape guard: a different phrasing must not yield a confident (wrong) replacement peerID.
 		expect(extractActualPeerID('does not match expected remote identity key only')).toBe(null);
+	});
+});
+
+describe('extractDestinationPeerID', () => {
+	// Real base58 ed25519 peer IDs are required — the multiaddr parser validates them.
+	const RELAY_ID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const DST_ID = '12D3KooWAnfqA6Wap96ixVfxhHeGUDMriBG4Nncp5tqu8q71EVv2';
+
+	it('returns the terminal peer ID of a plain address', () => {
+		expect(extractDestinationPeerID(Multiaddr(`/ip4/192.0.2.1/tcp/9090/p2p/${DST_ID}`))).toBe(DST_ID);
+	});
+
+	it('returns the DESTINATION (not the relay) for a circuit address', () => {
+		expect(extractDestinationPeerID(Multiaddr(`/ip4/192.0.2.1/tcp/9090/p2p/${RELAY_ID}/p2p-circuit/p2p/${DST_ID}`))).toBe(DST_ID);
+	});
+
+	it('returns the relay ID when a circuit address has no destination component', () => {
+		expect(extractDestinationPeerID(Multiaddr(`/ip4/192.0.2.1/tcp/9090/p2p/${RELAY_ID}/p2p-circuit`))).toBe(RELAY_ID);
+	});
+
+	it('returns null for an address without any peer ID and for garbage input', () => {
+		expect(extractDestinationPeerID(Multiaddr('/ip4/192.0.2.1/tcp/9090'))).toBe(null);
+		expect(extractDestinationPeerID(null)).toBe(null);
+	});
+});
+
+describe('BootstrapStatusTracker.deleteDiscoveredByPeerID', () => {
+	const NET_A = 'netAAAA';
+	const NET_B = 'netBBBB';
+	const DEAD_ID = '12D3KooWDeadDeadDeadDeadDeadDeadDeadDeadDeadDeadDD';
+	const LIVE_ID = '12D3KooWLiveLiveLiveLiveLiveLiveLiveLiveLiveLiveLL';
+	const DEAD_ADDR_1 = `/ip4/192.0.2.10/tcp/9090/p2p/${DEAD_ID}`;
+	const DEAD_ADDR_2 = `/ip4/192.0.2.11/tcp/9090/p2p/${DEAD_ID}`;
+	const LIVE_ADDR = `/ip4/192.0.2.20/tcp/9090/p2p/${LIVE_ID}`;
+
+	it('removes discovered rows for the peer across all networks, keeps other peers', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET_A, DEAD_ADDR_1, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+		tracker.recordOutcome(NET_A, LIVE_ADDR, LIVE_ID, 'connected', null, null, 'discovered');
+		tracker.recordOutcome(NET_B, DEAD_ADDR_2, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+
+		tracker.deleteDiscoveredByPeerID(DEAD_ID);
+
+		expect(tracker.getStatus(NET_A)?.peers.map(p => p.multiaddr)).toEqual([LIVE_ADDR]);
+		expect(tracker.getStatus(NET_B)).toBe(null); // network map emptied entirely
+	});
+
+	it('keeps configured rows for the same peer identity', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET_A, DEAD_ADDR_1, DEAD_ID, 'timeout', 'The operation timed out', null, 'configured');
+		tracker.recordOutcome(NET_A, DEAD_ADDR_2, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+
+		tracker.deleteDiscoveredByPeerID(DEAD_ID);
+
+		expect(tracker.getStatus(NET_A)?.peers.map(p => p.multiaddr)).toEqual([DEAD_ADDR_1]);
+	});
+
+	it('matches rows by actualPeerID as well and fires onStatusChange per changed network', () => {
+		const tracker = new BootstrapStatusTracker();
+		const events: string[] = [];
+		tracker.setOnChange(networkID => events.push(networkID));
+		// Row whose expectedPeerID is null but whose dial revealed the dead identity.
+		tracker.recordOutcome(NET_A, '/ip4/192.0.2.30/tcp/9090', null, 'identity-mismatch', 'mismatch', DEAD_ID, 'discovered');
+		tracker.recordOutcome(NET_B, LIVE_ADDR, LIVE_ID, 'connected', null, null, 'discovered');
+		events.length = 0;
+
+		tracker.deleteDiscoveredByPeerID(DEAD_ID);
+
+		expect(tracker.getStatus(NET_A)).toBe(null);
+		expect(events).toEqual([NET_A]); // untouched NET_B emits nothing
+	});
+});
+
+describe('BootstrapStatusTracker.sweepStale', () => {
+	const NET = 'netAAAA';
+	const TTL = 30 * 60_000;
+	const DEAD_ID = '12D3KooWDeadDeadDeadDeadDeadDeadDeadDeadDeadDeadDD';
+	const LIVE_ID = '12D3KooWLiveLiveLiveLiveLiveLiveLiveLiveLiveLiveLL';
+	const DEAD_ADDR = `/ip4/192.0.2.10/tcp/9090/p2p/${DEAD_ID}`;
+	const LIVE_ADDR = `/ip4/192.0.2.20/tcp/9090/p2p/${LIVE_ID}`;
+	const CONF_ADDR = `/ip4/192.0.2.30/tcp/9090/p2p/${DEAD_ID}`;
+
+	it('drops stale discovered rows, keeps fresh, connected and configured ones', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+		tracker.recordOutcome(NET, LIVE_ADDR, LIVE_ID, 'connected', null, null, 'discovered');
+		tracker.recordOutcome(NET, CONF_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'configured');
+		const past = Date.now() + TTL + 60_000; // both rows are then older than TTL
+
+		tracker.sweepStale(TTL, (_net, pid) => pid === LIVE_ID, past);
+
+		const addrs = tracker
+			.getStatus(NET)
+			?.peers.map(p => p.multiaddr)
+			.sort();
+		// DEAD discovered row expired; LIVE row survives via membership; configured row untouchable.
+		expect(addrs).toEqual([CONF_ADDR, LIVE_ADDR].sort());
+	});
+
+	it('drops a row frozen at connected once the peer is no longer a network member', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'connected', null, null, 'discovered');
+
+		tracker.sweepStale(TTL, () => false, Date.now() + TTL + 60_000);
+
+		expect(tracker.getStatus(NET)).toBe(null);
+	});
+
+	it('expires a row whose peer stays globally connected but left THIS network', () => {
+		// Membership predicate returns false for NET even though the peer is up
+		// elsewhere — the stale NET row must still expire past its TTL.
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'connected', null, null, 'discovered');
+
+		tracker.sweepStale(TTL, networkID => networkID !== NET, Date.now() + TTL + 60_000);
+
+		expect(tracker.getStatus(NET)).toBe(null);
+	});
+
+	it('keeps rows within the TTL even for a non-member', () => {
+		const tracker = new BootstrapStatusTracker();
+		tracker.recordOutcome(NET, DEAD_ADDR, DEAD_ID, 'timeout', 'The operation timed out', null, 'discovered');
+
+		tracker.sweepStale(TTL, () => false); // real clock — row was written moments ago
+
+		expect(tracker.getStatus(NET)?.peers.length).toBe(1);
+	});
+});
+
+describe('BootstrapStatusTracker discovered-row cap', () => {
+	const NET = 'netAAAA';
+	const PID = '12D3KooWCapCapCapCapCapCapCapCapCapCapCapCapCapCapCA';
+
+	it('bounds discovered rows per network and keeps configured rows', () => {
+		const tracker = new BootstrapStatusTracker();
+		// One configured row that must always survive.
+		tracker.recordOutcome(NET, `/ip4/198.51.100.1/tcp/9090/p2p/${PID}`, PID, 'connected', null, null, 'configured');
+		// Flood well past the 256 cap with unique discovered addresses.
+		for (let i = 0; i < 400; i++) tracker.recordOutcome(NET, `/ip4/203.0.113.${i % 254}/tcp/${9000 + i}/p2p/${PID}`, PID, 'connected', null, null, 'discovered');
+
+		const peers = tracker.getStatus(NET)!.peers;
+		const discovered = peers.filter(p => p.origin === 'discovered').length;
+		const configured = peers.filter(p => p.origin === 'configured').length;
+		expect(discovered).toBeLessThanOrEqual(256);
+		expect(configured).toBe(1);
 	});
 });

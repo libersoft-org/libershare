@@ -366,7 +366,11 @@ describe('subscribeTopic — peer count scheduling', () => {
 
 describe('unsubscribeTopic — peer count scheduling', () => {
 	it('calls schedulePeerCountCheck immediately', () => {
-		const unsubBlock = NETWORK_TS.slice(NETWORK_TS.indexOf('unsubscribeTopic(networkID: string)'), NETWORK_TS.indexOf('getTopicPeers'));
+		const unsubStart = NETWORK_TS.indexOf('unsubscribeTopic(networkID: string)');
+		// Anchor the end marker AFTER the method start — getTopicPeers is now also
+		// referenced earlier (status-tick membership sweep), so a global indexOf
+		// would slice an empty range.
+		const unsubBlock = NETWORK_TS.slice(unsubStart, NETWORK_TS.indexOf('getTopicPeers', unsubStart));
 		expect(unsubBlock).toContain('this.schedulePeerCountCheck()');
 	});
 });
