@@ -87,6 +87,19 @@ export interface LishSearchResult {
 	peers: Array<{ peerID: string; networkID: string }>;
 }
 
+/**
+ * Progress of a peer manifest transfer, broadcast as the `lishnets:manifestProgress`
+ * event while adding a LISH from a peer or loading its detail. `received`/`total` are
+ * byte counts of the length-prefixed manifest frame (received may briefly exceed total
+ * by the varint prefix; clamp when turning into a percentage).
+ */
+export interface ManifestProgressEvent {
+	lishID: string;
+	peerID: string;
+	received: number;
+	total: number;
+}
+
 // LISH detail for peer preview (no checksums, no chunks)
 export interface IPeerLishDetail {
 	id: string;

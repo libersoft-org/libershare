@@ -1,0 +1,23 @@
+diff --git a/dist/src/ssdp.js b/dist/src/ssdp.js
+index f186aa77bb50bc85650e220c842238b1b9da16d9..696a0e8ce3ac4488bc15cf16c42dc63a29741939 100644
+--- a/dist/src/ssdp.js
++++ b/dist/src/ssdp.js
+@@ -11,7 +11,17 @@ import { searchResponse } from './discover/search-response.js';
+ import { parseSsdpMessage } from './parse-ssdp-message.js';
+ import { sendSsdpMessage } from './send-ssdp-message.js';
+ const req = createRequire(import.meta.url);
+-const { name, version } = req('../../package.json');
++// Resolving package.json relatively fails inside single-file compiled bundles
++// (e.g. `bun build --compile`) where import.meta.url points at the executable.
++// Fall back to static identifiers — they only feed the SSDP signature string.
++let name = '@achingbrain/ssdp';
++let version = '4.2.4';
++try {
++    ({ name, version } = req('../../package.json'));
++}
++catch {
++    // keep fallback values
++}
+ const DEFAULT_SSDP_SIGNATURE = `node.js/${process.version.substring(1)} UPnP/1.1 ${name}/${version}`;
+ export class SSDP extends EventEmitter {
+     udn;
