@@ -3,9 +3,12 @@ import { api } from './api.ts';
 import { connected } from './ws-client.ts';
 import { tt } from './language.ts';
 import { addNotification } from './notifications.ts';
-import type { BootstrapStatus } from '@shared';
+import type { BootstrapStatus, NetworkNodeInfo } from '@shared';
 // Reactive store of peer counts per network, updated via push events from backend, key: networkID, value: number of connected peers
 export const peerCounts = writable<Record<string, number>>({});
+
+// Local node identity (own peerID + listen addresses). Populated on (re)connect; used by the Footer peer-ID widget.
+export const nodeInfo = writable<NetworkNodeInfo | null>(null);
 
 /**
  * Per-network mesh health snapshot taken at the moment the most recent
@@ -193,6 +196,15 @@ export async function initNetworkEvents(): Promise<void> {
 	api.subscribe('lishnets:joined');
 	api.subscribe('lishnets:left');
 	api.subscribe('internet:status');
+}
+
+// Fetch the local node's own identity (peerID + addresses). Safe to call on every (re)connect.
+export async function refreshNodeInfo(): Promise<void> {
+	try {
+		nodeInfo.set(await api.lishnets.getNodeInfo());
+	} catch {
+		nodeInfo.set(null);
+	}
 }
 
 // Subscribe to peer count updates from backend. Reference-counted so multiple callers (Footer widget + Settings page) can coexist.

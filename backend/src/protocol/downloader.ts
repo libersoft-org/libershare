@@ -717,6 +717,7 @@ export class Downloader {
 			const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;
 			const hp = ann.chunks === 'all' ? 100 : Math.round((((ann.chunks as any[])?.length ?? 0) / totalChunks) * 100);
 			this.peerManager.updateHavePercent(ann.peerID, hp);
+			this.chunkDownloader?.notifyPeerHave(ann.peerID, ann.chunks);
 			return;
 		}
 		if (!this.peerManager.hasCapacity()) {
