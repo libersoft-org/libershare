@@ -1477,7 +1477,9 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		const idB = sha256Hex(dataB) as ChunkID;
 
 		const ds = new MockDataServer();
-		const lish = makeLISH({ files: [{ path: 'f.bin', size: dataA.length + dataB.length, checksums: [idA, idB] }] });
+		// chunkSize must match the 1024-byte payloads — the downloader rejects chunk data
+		// whose length doesn't match the manifest, which would fail the write retry under test.
+		const lish = makeLISH({ chunkSize: 1024, files: [{ path: 'f.bin', size: dataA.length + dataB.length, checksums: [idA, idB] }] });
 		ds.add(lish);
 		ds.allChunkCount = 2;
 		ds.missingChunks = [makeMissingChunk(idA, 0, 0), makeMissingChunk(idB, 0, 1)];
