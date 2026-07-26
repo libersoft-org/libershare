@@ -59,7 +59,22 @@ abstract class BaseStorage<T> {
 		}
 	}
 
-	protected async saveFile(data: T): Promise<void> {
+	private saveChain: Promise<void> = Promise.resolve();
+
+	/**
+	 * Persist `data` as the whole JSON file. Writes are chained per instance so
+	 * concurrent `set()` calls can never interleave truncate+write on the same
+	 * file or finish out of order (an older write landing last would leave stale
+	 * values on disk). The snapshot is taken when the queued write runs, so
+	 * bursts collapse to the latest in-memory state.
+	 */
+	protected saveFile(data: T): Promise<void> {
+		const queued = this.saveChain.then(() => this.writeFile(data));
+		this.saveChain = queued.catch(() => {});
+		return queued;
+	}
+
+	private async writeFile(data: T): Promise<void> {
 		try {
 			await Bun.write(this.filePath, JSON.stringify(data, null, '\t'));
 		} catch (error) {

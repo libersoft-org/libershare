@@ -106,6 +106,7 @@
 		"noPeers": "Žádní připojení účastníci.",
 		"peerDeclined": "Účastník odmítl sdílet svůj seznam nebo neodpověděl.",
 		"statusDownloading": "Stahuji …",
+		"statusProcessing": "Zpracovávám …",
 		"statusDownloaded": "Staženo",
 		"statusUnavailable": "Nedostupné",
 		"noSharedLishs": "Tento účastník nesdílí žádné LISHe.",
@@ -133,7 +134,7 @@
 	"downloads": {
 		"title": "Stahování a sdílení",
 		"id": "ID",
-		"chunkSize": "Velikost části",
+		"chunks": "Části",
 		"targetDirectory": "Cílový adresář",
 		"downloadingFrom": "Stahování od",
 		"uploadingTo": "Odesílání k",
@@ -486,6 +487,7 @@
 			"right": "Vpravo"
 		},
 		"footerWidgets": {
+			"peerId": "ID účastníka",
 			"lishStatus": "Stav LISH sítě",
 			"gamepad": "Ovladač",
 			"connection": "Připojení",
@@ -494,6 +496,7 @@
 			"ram": "Využití RAM",
 			"storage": "Využití úložiště",
 			"volume": "Hlasitost",
+			"volumeUnavailable": "Zvukové zařízení není k dispozici",
 			"clock": "Hodiny"
 		},
 		"audio": "Zvukové efekty",

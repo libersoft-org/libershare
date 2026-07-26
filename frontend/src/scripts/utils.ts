@@ -61,6 +61,21 @@ export function truncateID(id: string, maxLength = 16): string {
 	return `${id.slice(0, 6)}...${id.slice(-6)}`;
 }
 
+// Shorten a peer ID keeping a head and tail slice, matching the bootstrap peer list format.
+export function shortenPeerID(id: string | null | undefined, head = 14, tail = 6): string {
+	if (!id) return '—';
+	if (id.length <= head + tail + 2) return id;
+	return `${id.slice(0, head)}…${id.slice(-tail)}`;
+}
+
+// Split a peer ID into a head and a tail (prefixed with an ellipsis), for two-line display.
+// The whole id is returned as the head with an empty tail when it already fits.
+export function splitPeerID(id: string | null | undefined, head = 11, tail = 11): { head: string; tail: string } {
+	if (!id) return { head: '—', tail: '' };
+	if (id.length <= head + tail + 2) return { head: id, tail: '' };
+	return { head: id.slice(0, head), tail: `…${id.slice(-tail)}` };
+}
+
 // Scroll an element into view with smooth animation.
 // @param elements - Array of elements to scroll within
 // @param index - Index of the element to scroll to
