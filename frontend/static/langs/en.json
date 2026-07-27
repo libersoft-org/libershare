@@ -32,6 +32,7 @@
 		"uploads": "Uploads",
 		"files": "Files",
 		"connections": "Connections",
+		"peers": "Peers",
 		"speed": "Speed",
 		"transferred": "Transferred",
 		"newDirectory": "New directory",
@@ -85,7 +86,6 @@
 	"network": {
 		"title": "Browse network",
 		"tabLishs": "LISHs",
-		"tabPeers": "Peers",
 		"searchPlaceholder": "Search by peer ID ...",
 		"searchLishsPlaceholder": "Search LISHs by name or ID ...",
 		"searching": "Searching network ...",
@@ -98,7 +98,6 @@
 		"openPeer": "Open peer",
 		"allNetworks": "All networks",
 		"peerID": "Peer ID",
-		"peerCount": "Peers",
 		"network": "Network",
 		"connections": "Connections",
 		"direct": "{count} direct",
@@ -376,7 +375,6 @@
 				"stable": "Mesh is stable — broadcasts will reach the fleet"
 			},
 			"bootstrap": {
-				"title": "Bootstrap peers",
 				"discoveredShort": "gossip",
 				"discoveredHelp": "Learned at runtime from gossip. Auto-removed when stale.",
 				"originConfigured": "saved",
