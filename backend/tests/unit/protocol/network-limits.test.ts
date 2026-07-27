@@ -31,6 +31,19 @@ describe('applyNetworkLimits', () => {
 		expect(getMaxChunkSize()).toBe(2 * 1024 * 1024);
 	});
 
+	it('lifts a message limit that would be too small to carry one chunk', () => {
+		// A chunk is delivered as a single message: a message limit at or below the chunk
+		// limit would reject every chunk on arrival, so the chunk limit must win.
+		applyNetworkLimits(netSlice({ maxChunkSize: 8 * 1024 * 1024, maxMessageSize: 1024 }));
+		expect(getMaxChunkSize()).toBe(8 * 1024 * 1024);
+		expect(getMaxMessageSize()).toBeGreaterThan(8 * 1024 * 1024);
+	});
+
+	it('leaves a message limit that already clears the chunk limit alone', () => {
+		applyNetworkLimits(netSlice({ maxChunkSize: 2 * 1024 * 1024, maxMessageSize: 64 * 1024 * 1024 }));
+		expect(getMaxMessageSize()).toBe(64 * 1024 * 1024);
+	});
+
 	it('is idempotent — re-applying the same snapshot keeps the same values', () => {
 		const net = netSlice({ maxDownloadSpeed: 64 });
 		applyNetworkLimits(net);

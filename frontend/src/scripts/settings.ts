@@ -243,13 +243,23 @@ export function setMaxUploadSpeed(value: number): void {
 	updateSetting(maxUploadSpeed, 'network.maxUploadSpeed', clampedValue);
 }
 
+// A chunk is sent as a single message together with its envelope, so the message limit
+// must stay this far above the chunk limit. Mirrors MESSAGE_SIZE_HEADROOM on the backend,
+// which enforces the same floor — this copy only keeps the UI honest without a round-trip.
+const MESSAGE_SIZE_HEADROOM = 1024 * 1024;
+
 export function setMaxChunkSize(value: number): void {
 	const clampedValue = Math.max(1, value || 1);
 	updateSetting(maxChunkSize, 'network.maxChunkSize', clampedValue);
+	// Raising the chunk limit above the message limit would break every transfer, so pull
+	// the message limit up with it instead of leaving an unusable pair on screen.
+	const floor = clampedValue + MESSAGE_SIZE_HEADROOM;
+	if (get(maxMessageSize) < floor) updateSetting(maxMessageSize, 'network.maxMessageSize', floor);
 }
 
 export function setMaxMessageSize(value: number): void {
-	const clampedValue = Math.max(1, value || 1);
+	const floor = get(maxChunkSize) + MESSAGE_SIZE_HEADROOM;
+	const clampedValue = Math.max(floor, value || 1);
 	updateSetting(maxMessageSize, 'network.maxMessageSize', clampedValue);
 }
 

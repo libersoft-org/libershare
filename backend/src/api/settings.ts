@@ -1,4 +1,4 @@
-import { type Settings, type SettingsData } from '../settings.ts';
+import { type Settings, type SettingsData, minMessageSizeFor } from '../settings.ts';
 import { applyNetworkLimits } from '../protocol/network-limits.ts';
 import { Utils } from '../utils.ts';
 import { type CompressionAlgorithm, type SuccessResponse, type ISettingsImportResult, CodedError, ErrorCodes } from '@shared';
@@ -62,6 +62,13 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		const rootKey = p.path.split('.')[0];
 		if (!rootKey || !ALLOWED_ROOT_KEYS.has(rootKey)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `Unknown settings key: ${p.path}`);
 		await settings.set(p.path, p.value);
+		// Persist the message-limit floor too, not just apply it at runtime — otherwise the
+		// UI would keep showing a stored value that the protocol layer silently overrides.
+		if (rootKey === 'network') {
+			const net = settings.get().network;
+			const floor = minMessageSizeFor(net.maxChunkSize);
+			if (net.maxMessageSize < floor) await settings.set('network.maxMessageSize', floor);
+		}
 		// Re-push all runtime limits on any network write (idempotent). Path-by-path
 		// matching used to miss whole-object writes such as path === 'network'.
 		if (rootKey === 'network') applyNetworkLimits(settings.get().network);
