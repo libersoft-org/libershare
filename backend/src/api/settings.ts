@@ -1,7 +1,7 @@
-import { type Settings, type SettingsData, minMessageSizeFor } from '../settings.ts';
+import { type Settings, type SettingsData } from '../settings.ts';
 import { applyNetworkLimits } from '../protocol/network-limits.ts';
 import { Utils } from '../utils.ts';
-import { type CompressionAlgorithm, type SuccessResponse, type ISettingsImportResult, CodedError, ErrorCodes } from '@shared';
+import { type CompressionAlgorithm, type SuccessResponse, type ISettingsImportResult, CodedError, ErrorCodes, minMessageSizeFor } from '@shared';
 const assert = Utils.assertParams;
 
 const ALLOWED_ROOT_KEYS = new Set(['language', 'ui', 'audio', 'storage', 'network', 'system', 'export', 'input']);
@@ -58,7 +58,11 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 	 * Push network limits into the protocol layer, first repairing a stored message-size
 	 * limit that could not carry one chunk. applyNetworkLimits() enforces the same floor at
 	 * runtime; persisting it here as well keeps the settings screen from showing a value the
-	 * protocol layer silently overrides. Every writer of `network.*` goes through this.
+	 * protocol layer silently overrides.
+	 *
+	 * Used by the paths that write arbitrary values — the WS `settings.set` call and the
+	 * settings import. Reset and factory reset write the defaults, which satisfy the floor
+	 * by construction, so they call applyNetworkLimits() directly.
 	 */
 	async function persistAndApplyNetworkLimits(): Promise<void> {
 		const floor = minMessageSizeFor(settings.get().network.maxChunkSize);

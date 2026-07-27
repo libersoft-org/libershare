@@ -8,6 +8,28 @@ export const DEFAULT_ALGO: HashAlgorithm = 'sha256';
 export const DEFAULT_CHUNK_SIZE: number = 1024 * 1024;
 
 /**
+ * A chunk travels as one message together with its envelope (type tag, LISH id, chunk id,
+ * msgpack framing), so the message-size limit must stay this far above the chunk-size limit.
+ */
+export const MESSAGE_SIZE_HEADROOM: number = 1024 * 1024;
+
+/** Smallest message limit that can still carry a chunk of the given size. */
+export function minMessageSizeFor(maxChunkSize: number): number {
+	return maxChunkSize + MESSAGE_SIZE_HEADROOM;
+}
+
+/**
+ * Render an "actual > limit" size pair for an error detail. formatBytes rounds, so a value
+ * one byte over the limit would print as "1 MB > 1 MB"; when both sides collapse to the same
+ * text, fall back to raw bytes so the message still tells the user something.
+ */
+export function formatSizeOverLimit(actual: number, limit: number): string {
+	const a = formatBytes(actual);
+	const l = formatBytes(limit);
+	return a === l ? `${actual} B > ${limit} B` : `${a} > ${l}`;
+}
+
+/**
  * Validate chunkSize bounds and manifest consistency.
  * Throws CodedError on the first violation.
  *
@@ -21,7 +43,7 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 	// a coded error rather than letting a raw property access throw a native TypeError.
 	if (!lish || typeof lish !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'manifest is not an object');
 	if (typeof lish.chunkSize !== 'number' || !Number.isInteger(lish.chunkSize) || lish.chunkSize <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE, String(lish.chunkSize));
-	if (lish.chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, `${formatBytes(lish.chunkSize)} > ${formatBytes(maxChunkSize)}`);
+	if (lish.chunkSize > maxChunkSize) throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, formatSizeOverLimit(lish.chunkSize, maxChunkSize));
 	// An unsupported checksumAlgo would later crash `new Bun.CryptoHasher(algo)` during
 	// download/verify — reject the peer manifest here instead, matching validateImportedLISH.
 	if (typeof lish.checksumAlgo !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(lish.checksumAlgo)) throw new CodedError(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM, String(lish.checksumAlgo));

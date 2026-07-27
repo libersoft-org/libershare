@@ -1,4 +1,5 @@
-import { type SettingsData, minMessageSizeFor } from '../settings.ts';
+import { type SettingsData } from '../settings.ts';
+import { minMessageSizeFor } from '@shared';
 import { Downloader } from './downloader.ts';
 import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize, setMaxChunkSize } from './lish-protocol.ts';
 import { setMaxDownloadPeersPerLISH } from './peer-manager.ts';
