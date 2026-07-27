@@ -22,6 +22,7 @@ class MockLISHClient {
 	requestChunkResult: ChunkResult = new Uint8Array(1024).fill(0xff);
 	requestManifestResult: ManifestResult = null;
 	requestManifestError: Error | null = null;
+	requestManifestCalls = 0;
 	closeCalled = false;
 	haveChunks: 'all' | ChunkID[] = 'all';
 
@@ -31,6 +32,7 @@ class MockLISHClient {
 	}
 
 	async requestManifest(_lishID: LISHid): Promise<IStoredLISH | null> {
+		this.requestManifestCalls++;
 		if (this.requestManifestError) throw this.requestManifestError;
 		return this.requestManifestResult;
 	}
@@ -1319,35 +1321,34 @@ describe('Downloader – oversized manifest across peers', () => {
 		return c;
 	}
 
-	it('imports a valid manifest from another peer when the first returns an over-limit one', async () => {
+	it('stops at the first over-limit manifest without asking the remaining peers', async () => {
 		const ds = new MockDataServer();
 		const dl = awaitingManifestDownloader(ds);
 		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
-		const good = new MockLISHClient();
-		good.requestManifestResult = makeLISH();
-		peers.set('peer-oversized-1', oversizedClient()); // first: forged/stale over-limit manifest
-		peers.set('peer-valid-00001', good); // second: serves the real manifest
+		const second = new MockLISHClient();
+		second.requestManifestResult = makeLISH();
+		peers.set('peer-oversized-1', oversizedClient()); // first peer answers: chunk size over limit
+		peers.set('peer-valid-00001', second); // must never be asked
 
 		await dl.doWork();
 
-		expect(ds.addedLishs.length).toBe(1); // manifest imported from the valid peer
-		expect(peers.has('peer-oversized-1')).toBe(false); // the over-limit peer was dropped
-		// Phase 1 did NOT surface a terminal over-limit error — a valid manifest was found.
-		// (errorCode may be set by a later phase's dir check; the over-limit path did not fire.)
-		expect(priv(dl)['errorCode']).not.toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
+		expect(priv(dl)['state']).toBe('error');
+		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
+		expect(ds.addedLishs.length).toBe(0); // nothing imported
+		expect(peers.has('peer-oversized-1')).toBe(false); // the answering peer was dropped
+		expect(second.requestManifestCalls ?? 0).toBe(0); // the rest were left alone
 	});
 
-	it('surfaces the terminal error only when every peer returns an over-limit manifest', async () => {
+	it('surfaces the terminal error when the only peer returns an over-limit manifest', async () => {
 		const ds = new MockDataServer();
 		const dl = awaitingManifestDownloader(ds);
 		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
 		peers.set('peer-oversized-1', oversizedClient());
-		peers.set('peer-oversized-2', oversizedClient());
 
 		await dl.doWork();
 
 		expect(ds.addedLishs.length).toBe(0); // nothing imported
-		expect(peers.size).toBe(0); // both over-limit peers dropped
+		expect(peers.size).toBe(0); // the over-limit peer dropped
 		expect(priv(dl)['state']).toBe('error');
 		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
 	});
@@ -1377,7 +1378,7 @@ describe('Downloader – malformed manifest peer handling', () => {
 	});
 });
 
-describe('Downloader – mixed manifest failures are not terminal', () => {
+describe('Downloader – peer-fault manifest failures are not terminal', () => {
 	function awaitingDl(ds: MockDataServer): Downloader {
 		const dl = new Downloader('/tmp/dl-mixed', new MockNetwork() as never, ds as never, 'net-001');
 		const p = priv(dl);
@@ -1388,22 +1389,38 @@ describe('Downloader – mixed manifest failures are not terminal', () => {
 		return dl;
 	}
 
-	it('one oversized + one malformed peer does not error the download', async () => {
+	it('malformed and unreachable peers keep the download awaiting discovery', async () => {
 		const ds = new MockDataServer();
 		const dl = awaitingDl(ds);
 		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
-		const oversized = new MockLISHClient();
-		oversized.requestManifestError = new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, '4.00 MB > 1.00 MB');
 		const malformed = new MockLISHClient();
 		malformed.requestManifestError = new CodedError(ErrorCodes.PEER_INVALID_REQUEST, 'getLish: malformed');
-		peers.set('peer-oversized-1', oversized);
+		const unreachable = new MockLISHClient();
+		unreachable.requestManifestError = new CodedError(ErrorCodes.PEER_UNREACHABLE, 'test-mixed-lish');
 		peers.set('peer-malformed-1', malformed);
+		peers.set('peer-unreach-001', unreachable);
 
 		await dl.doWork();
 
-		// Both dropped, but the evidence is mixed — keep awaiting discovery, no terminal error.
-		expect(peers.size).toBe(0);
+		// Neither failure says anything about the LISH itself — keep awaiting discovery.
 		expect(priv(dl)['state']).toBe('awaiting-manifest');
 		expect(priv(dl)['errorCode']).toBeUndefined();
+	});
+
+	it('an over-limit peer is terminal even when another peer failed for its own reason first', async () => {
+		const ds = new MockDataServer();
+		const dl = awaitingDl(ds);
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const malformed = new MockLISHClient();
+		malformed.requestManifestError = new CodedError(ErrorCodes.PEER_INVALID_REQUEST, 'getLish: malformed');
+		const oversized = new MockLISHClient();
+		oversized.requestManifestError = new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, '4.00 MB > 1.00 MB');
+		peers.set('peer-malformed-1', malformed);
+		peers.set('peer-oversized-1', oversized);
+
+		await dl.doWork();
+
+		expect(priv(dl)['state']).toBe('error');
+		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
 	});
 });
