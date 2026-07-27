@@ -54,6 +54,18 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		return settings.get(p.path);
 	}
 
+	/**
+	 * Push network limits into the protocol layer, first repairing a stored message-size
+	 * limit that could not carry one chunk. applyNetworkLimits() enforces the same floor at
+	 * runtime; persisting it here as well keeps the settings screen from showing a value the
+	 * protocol layer silently overrides. Every writer of `network.*` goes through this.
+	 */
+	async function persistAndApplyNetworkLimits(): Promise<void> {
+		const floor = minMessageSizeFor(settings.get().network.maxChunkSize);
+		if (settings.get().network.maxMessageSize < floor) await settings.set('network.maxMessageSize', floor);
+		applyNetworkLimits(settings.get().network);
+	}
+
 	async function set(p: { path: string; value: any }): Promise<boolean> {
 		assert(p, ['path', 'value']);
 		// Confine writes to known top-level settings groups. This rejects unknown
@@ -62,16 +74,9 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		const rootKey = p.path.split('.')[0];
 		if (!rootKey || !ALLOWED_ROOT_KEYS.has(rootKey)) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `Unknown settings key: ${p.path}`);
 		await settings.set(p.path, p.value);
-		// Persist the message-limit floor too, not just apply it at runtime — otherwise the
-		// UI would keep showing a stored value that the protocol layer silently overrides.
-		if (rootKey === 'network') {
-			const net = settings.get().network;
-			const floor = minMessageSizeFor(net.maxChunkSize);
-			if (net.maxMessageSize < floor) await settings.set('network.maxMessageSize', floor);
-		}
 		// Re-push all runtime limits on any network write (idempotent). Path-by-path
 		// matching used to miss whole-object writes such as path === 'network'.
-		if (rootKey === 'network') applyNetworkLimits(settings.get().network);
+		if (rootKey === 'network') await persistAndApplyNetworkLimits();
 		return true;
 	}
 
@@ -154,7 +159,9 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 				skipped.push(entry.path);
 			}
 		}
-		applyNetworkLimits(settings.get().network);
+		// An imported file can carry a message limit below the chunk limit — repair it here
+		// too, not just on interactive writes.
+		await persistAndApplyNetworkLimits();
 		console.log(`✓ Settings restored: ${applied} applied, ${skipped.length} skipped`);
 		return { applied, skipped };
 	}

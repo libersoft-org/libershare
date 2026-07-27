@@ -403,9 +403,10 @@ export class Downloader {
 							// declares a chunk size above our limit. Chunk size is a property of the LISH
 							// itself, so every honest peer serves the same value — asking the rest only
 							// makes the user watch each peer fail in turn before the same error appears.
-							// Surface it now and stop.
+							// Surface it now and stop — unless the download was torn down while we
+							// awaited the manifest, in which case there is no state left to fail.
 							this.peerManager.remove(peerID, 'drop');
-							this.setError(error.code, error.detail);
+							if (!this.destroyed) this.setError(error.code, error.detail);
 							return;
 						}
 						// A structurally malformed manifest (mapped to PEER_INVALID_REQUEST) is this
@@ -596,8 +597,10 @@ export class Downloader {
 					if (error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
 						// Same reasoning as the connected-peer loop: a delivered manifest that is over
 						// the limit answers the question for the whole LISH, so stop probing the rest.
+						// close() must not throw past this point — the outer catch would swallow the
+						// verdict, log it as an unreachable peer and let the probe loop carry on.
 						this.peerManager.remove(peerID, 'drop');
-						await probeClient.close();
+						await probeClient.close().catch(() => {});
 						if (!this.destroyed) this.setError(error.code, error.detail);
 						return;
 					}
