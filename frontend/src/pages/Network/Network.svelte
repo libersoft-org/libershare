@@ -26,7 +26,7 @@
 	let activeTab = $state<string>('lishs');
 	let tabDefs = $derived<TabDef[]>([
 		{ id: 'lishs', icon: '/img/share.svg', label: $t('network.tabLishs') },
-		{ id: 'peers', icon: '/img/person.svg', label: $t('network.tabPeers') },
+		{ id: 'peers', icon: '/img/person.svg', label: $t('common.peers') },
 	]);
 
 	// =================== Peers data (shared between Peers tab and the LISH-peers popup) ===================
