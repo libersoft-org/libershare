@@ -25,9 +25,9 @@ test('isRetryablePeerError classifies peer-side, flagged and local errors', () =
 	expect(isRetryablePeerError(codedError('PEER_LISH_NOT_SHARED'))).toBe(true);
 	expect(isRetryablePeerError(codedError('PEER_BUSY'))).toBe(true);
 	expect(isRetryablePeerError(Object.assign(new Error('declined'), { tryNextPeer: true }))).toBe(true);
-	// A spoofed oversized manifest must not block later honest peers; a genuine
-	// over-limit LISH still surfaces the same code as the loop's last error.
-	expect(isRetryablePeerError(codedError('LISH_CHUNK_SIZE_TOO_LARGE'))).toBe(true);
+	// Chunk size is a property of the LISH, identical from every honest peer — asking
+	// the rest would only repeat the same answer, so the error stops the loop at once.
+	expect(isRetryablePeerError(codedError('LISH_CHUNK_SIZE_TOO_LARGE'))).toBe(false);
 	expect(isRetryablePeerError(codedError('LISH_ALREADY_EXISTS'))).toBe(false);
 	expect(isRetryablePeerError(new Error('plain'))).toBe(false);
 	expect(isRetryablePeerError(null)).toBe(false);
