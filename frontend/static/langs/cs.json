@@ -277,7 +277,7 @@
 		"errorMissingCreated": "Neplatný LISH: chybí nebo prázdný časový údaj vytvoření",
 		"errorInvalidChunkSize": "Neplatný LISH: chybí nebo neplatná velikost části",
 		"errorChunkSizeTooLarge": "LISH odmítnut: velikost části přesahuje povolený limit ({detail})",
-		"errorInvalidManifest": "Neplatný LISH: počet kontrolních součtů neodpovídá deklarované velikosti souboru ({detail})",
+		"errorInvalidManifest": "Neplatný manifest LISHe: {detail}",
 		"errorUnsupportedChecksum": "Neplatný LISH: nepodporovaný hashovací algoritmus: {detail}",
 		"errorUnexpectedArray": "Očekáván jeden LISH objekt, obdrženo pole",
 		"errorPathAccessDenied": "Nelze přistoupit k cestě: {detail}",

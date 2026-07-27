@@ -277,7 +277,7 @@
 		"errorMissingCreated": "Invalid LISH: missing or empty created timestamp",
 		"errorInvalidChunkSize": "Invalid LISH: missing or invalid chunk size",
 		"errorChunkSizeTooLarge": "LISH rejected: chunk size exceeds the configured limit ({detail})",
-		"errorInvalidManifest": "Invalid LISH: number of checksums does not match declared file size ({detail})",
+		"errorInvalidManifest": "Invalid LISH manifest: {detail}",
 		"errorUnsupportedChecksum": "Invalid LISH: unsupported checksum algorithm: {detail}",
 		"errorUnexpectedArray": "Expected a single LISH object, got an array",
 		"errorPathAccessDenied": "Cannot access path: {detail}",
