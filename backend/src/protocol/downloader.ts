@@ -593,8 +593,12 @@ export class Downloader {
 					manifest = await probeClient.requestManifest(this.lishID);
 				} catch (error: any) {
 					// Any manifest error (unreachable, malformed) → drop this peer and let another
-					// serve it, except over-limit which is terminal for the whole LISH.
-					if (error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
+					// serve it, except over-limit which is terminal for the whole LISH — but only
+					// while we are still looking for a manifest. Probing also runs mid-download
+					// purely to find more peers, and there requestManifest is just a "do you have
+					// this LISH?" test whose answer is discarded; failing the transfer on it would
+					// hand any peer on the topic a way to kill a healthy download.
+					if (this.needsManifest && error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
 						// Same reasoning as the connected-peer loop: a delivered manifest that is over
 						// the limit answers the question for the whole LISH, so stop probing the rest.
 						// close() must not throw past this point — the outer catch would swallow the
