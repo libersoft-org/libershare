@@ -7,6 +7,17 @@ export const DEFAULT_MAX_CHUNK_SIZE: number = 100 * 1024 * 1024;
 // Default upper bound for a single P2P message on the wire (configurable via settings).
 // Must be >= maxChunkSize because a chunk is delivered as a single msgpack message.
 export const DEFAULT_MAX_MESSAGE_SIZE: number = 128 * 1024 * 1024;
+// A chunk travels as one message together with its envelope (type tag, LISH id, chunk id,
+// msgpack framing). The message limit must therefore stay this far above the chunk limit,
+// or the largest allowed chunk would not fit into the largest allowed message.
+export const MESSAGE_SIZE_HEADROOM: number = 1024 * 1024;
+
+/**
+ * Smallest message limit that can carry a chunk of the given size.
+ */
+export function minMessageSizeFor(maxChunkSize: number): number {
+	return maxChunkSize + MESSAGE_SIZE_HEADROOM;
+}
 
 export interface SettingsData {
 	language: string;

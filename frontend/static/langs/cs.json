@@ -105,6 +105,7 @@
 		"noPeers": "Žádní připojení účastníci.",
 		"peerDeclined": "Účastník odmítl sdílet svůj seznam nebo neodpověděl.",
 		"statusDownloading": "Stahuji …",
+		"statusProcessing": "Zpracovávám …",
 		"statusDownloaded": "Staženo",
 		"statusUnavailable": "Nedostupné",
 		"noSharedLishs": "Tento účastník nesdílí žádné LISHe.",
@@ -493,6 +494,7 @@
 			"ram": "Využití RAM",
 			"storage": "Využití úložiště",
 			"volume": "Hlasitost",
+			"volumeUnavailable": "Zvukové zařízení není k dispozici",
 			"clock": "Hodiny"
 		},
 		"audio": "Zvukové efekty",

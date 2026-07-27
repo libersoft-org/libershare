@@ -24,16 +24,15 @@ export const FALLBACK_DEADLINE_MS = 5 * 60 * 1000;
  * caller explicitly flagged `tryNextPeer`. Local errors (e.g. LISH already added)
  * are not retryable — they would fail identically on every peer.
  *
- * `LISH_CHUNK_SIZE_TOO_LARGE` is retryable on purpose: a single malicious peer could
- * spoof an oversized manifest to block the row, so later peers get their chance. When
- * the LISH genuinely exceeds the local limit every peer throws the same code, the loop
- * exhausts and the user still sees the specific limit error (the last one thrown).
+ * `LISH_CHUNK_SIZE_TOO_LARGE` counts as local: the chunk size is written in the LISH
+ * itself, so every honest peer answers with the same value. Walking the whole peer list
+ * only makes the user watch each row fail before the identical error appears at the end.
  */
 export function isRetryablePeerError(error: unknown): boolean {
 	if ((error as { tryNextPeer?: boolean } | null)?.tryNextPeer) return true;
 	const code = (error as { code?: unknown } | null)?.code;
 	if (typeof code !== 'string') return false;
-	return code.startsWith('PEER_') || code === 'LISH_CHUNK_SIZE_TOO_LARGE';
+	return code.startsWith('PEER_');
 }
 
 /**
