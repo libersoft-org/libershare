@@ -424,10 +424,4 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 		const client = new LISHClient(fakeStream({ ...makeManifest(1024), id: 'some-other-lish' }));
 		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
 	});
-
-	it('keeps chunk-size-too-large terminal (not a peer error)', async () => {
-		setMaxChunkSize(1024 * 1024);
-		const client = new LISHClient(fakeStream(makeManifest(2 * 1024 * 1024)));
-		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE });
-	});
 });

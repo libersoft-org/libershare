@@ -65,13 +65,11 @@ describe('expectedChunkLength', () => {
 	});
 
 	// The download path rejects any chunk whose byte length != expectedChunkLength before
-	// hashing — a peer sending an over- or under-sized payload is refused early.
-	it('flags a wrong-length payload as bad (over- and under-sized)', () => {
-		const lish = makeLish(CS, [CS * 2 + 100]); // last chunk = 100
-		const expected = expectedChunkLength(lish, 0, 2);
-		expect(expected).toBe(100);
-		expect(200 !== expected).toBe(true); // oversized payload rejected
-		expect(50 !== expected).toBe(true); // undersized payload rejected
-		expect(100 !== expected).toBe(false); // correct length accepted
+	// hashing, so the trailing chunk must report the remainder rather than a full chunk.
+	it('reports the remainder for a trailing partial chunk', () => {
+		const lish = makeLish(CS, [CS * 2 + 100]);
+		expect(expectedChunkLength(lish, 0, 2)).toBe(100);
+		expect(expectedChunkLength(lish, 0, 0)).toBe(CS);
+		expect(expectedChunkLength(lish, 0, 1)).toBe(CS);
 	});
 });
