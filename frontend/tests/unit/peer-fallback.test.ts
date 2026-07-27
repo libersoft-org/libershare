@@ -149,3 +149,28 @@ test('stops starting new attempts once the deadline has passed', async () => {
 	// Deadline already expired — only the first peer gets an attempt.
 	expect(tried).toEqual([PEERS[0]!.peerID]);
 });
+
+test('an over-limit LISH stops at the first peer and leaves the rest unmarked', async () => {
+	// Reproduces the reported case: a search result offered by five peers where the LISH
+	// declares a chunk size above the local limit. Only the first peer may be asked, and no
+	// row may be branded unavailable — the peers are fine, the LISH is simply too coarse.
+	const fivePeers: PeerRef[] = Array.from({ length: 5 }, (_, i) => ({ peerID: `peer-${i}`, networkID: 'net-1' }));
+	const asked: string[] = [];
+	const statuses: Array<[number, PeerAttemptStatus | null]> = [];
+
+	const err = await withPeerFallback(
+		fivePeers,
+		async peerID => {
+			asked.push(peerID);
+			throw codedError('LISH_CHUNK_SIZE_TOO_LARGE');
+		},
+		(i, s) => statuses.push([i, s])
+	).catch(e => e);
+
+	expect((err as { code?: string }).code).toBe('LISH_CHUNK_SIZE_TOO_LARGE');
+	expect(asked).toEqual(['peer-0']);
+	expect(statuses).toEqual([
+		[0, 'downloading'],
+		[0, null],
+	]);
+});
