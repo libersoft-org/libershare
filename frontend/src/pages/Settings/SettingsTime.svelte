@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { t, tt, translateError, withDetail } from '../../scripts/language.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
@@ -73,6 +73,8 @@
 
 	void load();
 
+	let offTimeChanged: (() => void) | void;
+
 	onMount(() => {
 		// Keep the clock fields on the host's current time until the user types in them.
 		// Filled once at load they would go stale while the page is open, and a save that
@@ -88,11 +90,17 @@
 		}, 1000);
 		// Another window writing the time must not leave this form showing the old host
 		// state — the backend broadcasts the fresh status after every successful write.
-		api.on('system:timeChanged', (next: SystemTimeStatus) => {
+		offTimeChanged = api.on('system:timeChanged', (next: SystemTimeStatus) => {
 			if (!busy) applyStatus(next);
 		});
+		// Best-effort: with the WS down the call rejects — swallow it, the event just stays unsubscribed.
 		api.subscribe('system:timeChanged').catch(() => {});
 		return () => clearInterval(tick);
+	});
+
+	onDestroy(() => {
+		offTimeChanged?.();
+		api.unsubscribe('system:timeChanged').catch(() => {});
 	});
 
 	function toggleAutoSync(): void {
