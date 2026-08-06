@@ -459,18 +459,29 @@ describe('buildSetNtpEnabledCommands', () => {
 		// toggle looks like it did not stick.
 		expect(buildSetNtpEnabledCommands('win32', true)).toEqual([
 			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'auto'] },
-			{ cmd: 'sc', args: ['start', 'w32time'] },
+			{ cmd: 'sc', args: ['start', 'w32time'], benignCodes: [1056] },
 			{ cmd: 'w32tm', args: ['/config', '/syncfromflags:manual', '/update'] },
 			{ cmd: 'w32tm', args: ['/resync'] },
 		]);
 		expect(buildSetNtpEnabledCommands('win32', false)).toEqual([
-			{ cmd: 'sc', args: ['stop', 'w32time'] },
+			{ cmd: 'sc', args: ['stop', 'w32time'], benignCodes: [1062] },
 			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'disabled'] },
 		]);
 	});
 
 	it('stops the service before disabling it, so the switch takes effect at once', () => {
 		expect(buildSetNtpEnabledCommands('win32', false).map(c => c.args[0])).toEqual(['stop', 'config']);
+	});
+
+	it('marks only the service run-state steps as tolerable, never the ones carrying the change', () => {
+		// A host whose service is already in the requested run state must still get its
+		// sync type and start mode written, so those steps may not sit behind an abort.
+		const tolerated = (enabled: boolean): string[] =>
+			buildSetNtpEnabledCommands('win32', enabled)
+				.filter(c => c.benignCodes !== undefined)
+				.map(c => [c.cmd, ...c.args].join(' '));
+		expect(tolerated(true)).toEqual(['sc start w32time']);
+		expect(tolerated(false)).toEqual(['sc stop w32time']);
 	});
 });
 
@@ -500,6 +511,24 @@ describe('runAll', () => {
 	it('stops at the first failure and reports it as a denial with its first output line', async () => {
 		const { exec, calls } = fakeRunner([{ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:\r\n\r\nAccess is denied.\r\n' }]);
 		expect(await runAll('win32', DISABLE, exec)).toEqual({ success: false, outcome: 'permission-denied', message: '[SC] OpenService FAILED 5:' });
+		expect(calls).toEqual(['sc stop w32time']);
+	});
+
+	it('carries on past a step that only failed because it had nothing to do', async () => {
+		// `sc start` exits 1056 when the service is already up. Aborting there would skip
+		// the /config step that clears a NoSync sync type, and enabling would report a
+		// failure on a host it could have fixed.
+		const { exec, calls } = fakeRunner([
+			{ kind: 'ok', output: '' },
+			{ kind: 'failed', code: 1056, output: '[SC] StartService FAILED 1056:\r\n\r\nAn instance of the service is already running.\r\n' },
+		]);
+		expect(await runAll('win32', buildSetNtpEnabledCommands('win32', true), exec)).toEqual({ success: true, outcome: 'ok', message: null });
+		expect(calls).toEqual(['sc config w32time start= auto', 'sc start w32time', 'w32tm /config /syncfromflags:manual /update', 'w32tm /resync']);
+	});
+
+	it('still reports a real refusal on a step whose benign code did not match', async () => {
+		const { exec, calls } = fakeRunner([{ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:\r\n' }]);
+		expect((await runAll('win32', DISABLE, exec)).outcome).toBe('permission-denied');
 		expect(calls).toEqual(['sc stop w32time']);
 	});
 

@@ -33,7 +33,19 @@ export type SystemPlatform = 'win32' | 'linux' | 'darwin';
 export interface SystemCommand {
 	cmd: string;
 	args: string[];
+	/**
+	 * Exit codes that mean "this step had nothing left to do" — the desired state was
+	 * already in place. They are treated as success so the steps behind them still run,
+	 * which a plain abort would skip (see {@link buildSetNtpEnabledCommands}).
+	 */
+	benignCodes?: number[];
 }
+
+/** ERROR_SERVICE_ALREADY_RUNNING — `sc start` against a service that is already up. */
+const SC_ALREADY_RUNNING = 1056;
+
+/** ERROR_SERVICE_NOT_ACTIVE — `sc stop` against a service that is already down. */
+const SC_NOT_ACTIVE = 1062;
 
 /** Local wall-clock date and time broken into parts. `month` is 1-12. */
 export interface LocalDateTime {
@@ -315,6 +327,13 @@ export function buildSetNtpServerCommands(platform: SystemPlatform, server: stri
  * `sc` rather than `net` for the service control: `sc` exits with the underlying
  * Win32 error code (5 for access denied), while `net` exits 2 for every problem and
  * only says which one in a localized message we must not parse.
+ *
+ * Those two service steps carry {@link SystemCommand.benignCodes}, because a service
+ * that is already in the requested run state makes `sc` exit non-zero. Aborting there
+ * would skip the steps that carry the actual change — the registry sync type on the
+ * way on, the start mode on the way off — and the toggle would report a failure while
+ * leaving the host half-configured. A real refusal still surfaces: the following
+ * steps hit the same permission and fail with it.
  */
 export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: boolean): SystemCommand[] {
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-ntp', enabled ? 'true' : 'false'] }];
@@ -322,7 +341,7 @@ export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: bo
 	if (enabled) {
 		return [
 			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'auto'] },
-			{ cmd: 'sc', args: ['start', 'w32time'] },
+			{ cmd: 'sc', args: ['start', 'w32time'], benignCodes: [SC_ALREADY_RUNNING] },
 			// Clears a registry Type of NoSync, which the service state alone does not
 			// touch. Without it, a host left on NoSync (domain policy, or set outside
 			// this app) reports synchronisation as still off right after we turned it
@@ -332,7 +351,7 @@ export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: bo
 		];
 	}
 	return [
-		{ cmd: 'sc', args: ['stop', 'w32time'] },
+		{ cmd: 'sc', args: ['stop', 'w32time'], benignCodes: [SC_NOT_ACTIVE] },
 		{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'disabled'] },
 	];
 }
@@ -421,7 +440,8 @@ export type CommandRunner = (cmd: string, args: string[]) => Promise<RunOutcome>
 
 /**
  * Run commands in order, stopping at the first one that does not succeed. Returns
- * `ok` only when every command exited 0.
+ * `ok` only when every command exited 0 or failed with one of its own
+ * {@link SystemCommand.benignCodes}.
  *
  * `exec` is injectable so the sequencing and the outcome mapping can be exercised
  * without spawning anything.
@@ -431,6 +451,7 @@ export async function runAll(platform: SystemPlatform, commands: SystemCommand[]
 	for (const command of commands) {
 		const r = await exec(command.cmd, command.args);
 		if (r.kind === 'ok') continue;
+		if (r.kind === 'failed' && r.code !== null && command.benignCodes?.includes(r.code)) continue;
 		if (r.kind === 'missing') return result('unsupported', `${command.cmd} is not installed`);
 		if (r.kind === 'timeout') return result('error', `${command.cmd} timed out`);
 		return result(classifyFailure(platform, r.code, r.output), firstLine(r.output) ?? `${command.cmd} exited with ${r.code}`);
