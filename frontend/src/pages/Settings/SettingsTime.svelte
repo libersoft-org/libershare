@@ -64,14 +64,14 @@
 		loaded = { autoSync, ntpServer, timezone, clock: `${hours}:${minutes}:${seconds}` };
 	}
 
+	// Settled, not all: a host that cannot list its timezones still has a clock and an
+	// NTP state worth showing, and failing the whole screen over the picker would hide
+	// them behind a bare error.
 	async function load(): Promise<void> {
-		try {
-			const [next, zones] = await Promise.all([api.call<SystemTimeStatus>('system.getTime'), api.call<string[]>('system.listTimezones')]);
-			timezones = zones;
-			applyStatus(next);
-		} catch (e) {
-			errorMessage = translateError(e);
-		}
+		const [statusResult, zonesResult] = await Promise.allSettled([api.call<SystemTimeStatus>('system.getTime'), api.call<string[]>('system.listTimezones')]);
+		timezones = zonesResult.status === 'fulfilled' ? zonesResult.value : [];
+		if (statusResult.status === 'fulfilled') applyStatus(statusResult.value);
+		else errorMessage = translateError(statusResult.reason);
 	}
 
 	void load();
@@ -179,9 +179,11 @@
 		}
 	}
 
-	// A host with no timezone database offers nothing to pick from — keep the active
-	// zone visible rather than showing an empty picker.
-	let selectableTimezones = $derived(timezones.length > 0 ? timezones : status ? [status.timezone] : []);
+	// The host's own zone always belongs in the list, even when the runtime's timezone
+	// database does not name it — several valid identifiers are aliases that
+	// `Intl.supportedValuesOf` omits, and a value with no matching option leaves the
+	// picker blank instead of showing where the host actually is.
+	let selectableTimezones = $derived(status && !timezones.includes(status.timezone) ? [status.timezone, ...timezones] : timezones);
 	let clockDisabled = $derived(busy || autoSync || !status?.capabilities.setClock);
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
