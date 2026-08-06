@@ -94,7 +94,10 @@
 		// Another window writing the time must not leave this form showing the old host
 		// state — the backend broadcasts the fresh status after every successful write.
 		offTimeChanged = api.on('system:timeChanged', (next: SystemTimeStatus) => {
-			if (!busy) applyStatus(next);
+			// Never over an edit in progress: re-filling the form here would throw away
+			// what the user has typed without saying so. They keep their values and the
+			// next save reports the conflict.
+			if (!busy && !hasChanges) applyStatus(next);
 		});
 		// Best-effort: with the WS down the call rejects — swallow it, the event just stays unsubscribed.
 		api.subscribe('system:timeChanged').catch(() => {});
