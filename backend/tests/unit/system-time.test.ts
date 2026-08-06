@@ -424,7 +424,7 @@ describe('buildSetNtpServerCommands', () => {
 
 	it('configures the peer and resyncs on windows while synchronisation is on', () => {
 		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', true)).toEqual([
-			{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x9', '/syncfromflags:manual', '/update'] },
+			{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/syncfromflags:manual', '/update'] },
 			{ cmd: 'w32tm', args: ['/resync'] },
 		]);
 	});
@@ -435,7 +435,7 @@ describe('buildSetNtpServerCommands', () => {
 	 * off before writing a server. Configuring the peer list is the whole change then.
 	 */
 	it('skips the resync on windows while synchronisation is off', () => {
-		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x9', '/syncfromflags:manual', '/update'] }]);
+		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/syncfromflags:manual', '/update'] }]);
 	});
 
 	it('sets the single supported server on macOS', () => {

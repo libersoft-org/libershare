@@ -326,7 +326,10 @@ export function buildTimesyncdDropIn(server: string): string {
 export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, syncRunning: boolean): SystemCommand[] {
 	if (platform === 'linux') return syncRunning ? [{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }] : [];
 	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-setnetworktimeserver', server] }];
-	const config: SystemCommand = { cmd: 'w32tm', args: ['/config', `/manualpeerlist:${server},0x9`, '/syncfromflags:manual', '/update'] };
+	// 0x8 is the plain client flag. 0x9 would add 0x1 (SpecialInterval), which makes the
+	// peer poll at SpecialPollInterval — a standalone host defaults that to 604800s, so
+	// the peer would be contacted weekly instead of on the normal poll interval.
+	const config: SystemCommand = { cmd: 'w32tm', args: ['/config', `/manualpeerlist:${server},0x8`, '/syncfromflags:manual', '/update'] };
 	return syncRunning ? [config, { cmd: 'w32tm', args: ['/resync'] }] : [config];
 }
 
