@@ -41,13 +41,16 @@
 	}
 
 	// When the snapshot in `status` was taken, so the displayed clock can be advanced
-	// from it without asking the host again every second.
+	// from it without asking the host again every second. Read off performance.now()
+	// rather than the wall clock: the browser's own clock can be stepped (by its NTP
+	// client, or by the very host change being made here) and the displayed time would
+	// jump with it.
 	let readAt = 0;
 
 	/** Fill the form from a host status snapshot and remember it as the comparison baseline. */
 	function applyStatus(next: SystemTimeStatus): void {
 		status = next;
-		readAt = Date.now();
+		readAt = performance.now();
 		// The backend may run on a different machine (or in a different zone) than the
 		// browser, so the host's wall clock is reconstructed from its own UTC offset
 		// instead of the browser's local getters.
@@ -81,7 +84,7 @@
 		// only changed the timezone would write back the time the page was opened at.
 		const tick = setInterval(() => {
 			if (!status || busy || clockEdited) return;
-			const hostLocal = new Date(status.nowMs + (Date.now() - readAt) + status.utcOffsetMinutes * 60000);
+			const hostLocal = new Date(status.nowMs + (performance.now() - readAt) + status.utcOffsetMinutes * 60000);
 			hours = pad(hostLocal.getUTCHours());
 			minutes = pad(hostLocal.getUTCMinutes());
 			seconds = pad(hostLocal.getUTCSeconds());
