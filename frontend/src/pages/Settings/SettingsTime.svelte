@@ -153,10 +153,13 @@
 	}
 
 	async function saveSettings(): Promise<void> {
-		if (!status || busy) return;
+		if (!status || busy || !hasChanges) return;
 		errorMessage = '';
-		const clock = clockEdited ? parseClock() : null;
-		if (clockEdited && !clock) {
+		// A hand-set clock only survives with synchronisation off, so a save that leaves
+		// it on discards the edit instead of writing a value the daemon overwrites
+		// seconds later — which would look like the clock silently refused to change.
+		const clock = clockEdited && !autoSync ? parseClock() : null;
+		if (clockEdited && !autoSync && !clock) {
 			errorMessage = tt('settings.time.errorInvalidInput');
 			return;
 		}
@@ -185,6 +188,9 @@
 	// picker blank instead of showing where the host actually is.
 	let selectableTimezones = $derived(status && !timezones.includes(status.timezone) ? [status.timezone, ...timezones] : timezones);
 	let clockDisabled = $derived(busy || autoSync || !status?.capabilities.setClock);
+	// Nothing to write means nothing to report: without this the button runs no request
+	// at all and still announces the settings as saved.
+	let hasChanges = $derived(autoSync !== loaded.autoSync || ntpServer.trim() !== loaded.ntpServer || timezone !== loaded.timezone || (clockEdited && !autoSync));
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
@@ -252,7 +258,7 @@
 		{/if}
 	</div>
 	<ButtonBar justify="center" basePosition={[0, 4]}>
-		<Button icon="/img/save.svg" label={$t('common.save')} disabled={busy || !status} onConfirm={saveSettings} />
+		<Button icon="/img/save.svg" label={$t('common.save')} disabled={busy || !status || !status.supported || !hasChanges} onConfirm={saveSettings} />
 		<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 	</ButtonBar>
 </div>
