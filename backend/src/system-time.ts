@@ -292,9 +292,16 @@ export function parseUnitInstalled(output: string, unit: string): boolean {
 	return false;
 }
 
-/** Content of the systemd-timesyncd drop-in pinning `server` as the NTP source. */
+/**
+ * Content of the systemd-timesyncd drop-in pinning `server` as the NTP source.
+ *
+ * `NTP=` is a list setting: a drop-in is parsed after the shipped configuration, so a
+ * bare assignment APPENDS to whatever the distribution already configured instead of
+ * replacing it. The empty assignment first resets the list, which is what makes this
+ * a pin rather than an addition.
+ */
 export function buildTimesyncdDropIn(server: string): string {
-	return `[Time]\nNTP=${server}\n`;
+	return `[Time]\nNTP=\nNTP=${server}\n`;
 }
 
 /**

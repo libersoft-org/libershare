@@ -393,7 +393,18 @@ describe('buildSetTimezoneCommands', () => {
 
 describe('buildTimesyncdDropIn', () => {
 	it('writes a [Time] section with the server', () => {
-		expect(buildTimesyncdDropIn('ntp.example.org')).toBe('[Time]\nNTP=ntp.example.org\n');
+		expect(buildTimesyncdDropIn('ntp.example.org')).toBe('[Time]\nNTP=\nNTP=ntp.example.org\n');
+	});
+
+	/**
+	 * A drop-in is parsed after the shipped configuration and `NTP=` is a list, so
+	 * without the empty assignment the distribution's own servers stay in the list and
+	 * the chosen one is merely added to them.
+	 */
+	it('resets the list before assigning, so the server is pinned and not appended', () => {
+		const lines = buildTimesyncdDropIn('ntp.example.org').split('\n');
+		expect(lines.indexOf('NTP=')).toBeGreaterThan(-1);
+		expect(lines.indexOf('NTP=')).toBeLessThan(lines.indexOf('NTP=ntp.example.org'));
 	});
 });
 
