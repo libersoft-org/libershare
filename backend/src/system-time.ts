@@ -309,14 +309,18 @@ export function buildTimesyncdDropIn(server: string): string {
  * stopped unit, so restarting here would switch the sync daemon back on behind the
  * user's back and let it step the clock they are about to set by hand. The drop-in
  * is on disk either way and is read the next time the daemon starts.
+ *
+ * Windows drops the resync for the same reason. `w32tm /resync` asks the Windows Time
+ * service to contact its peer now, so with the service stopped it can only fail — and
+ * the UI reaches this path exactly that way, by switching synchronisation off before
+ * writing a server. The peer list is in the registry either way and is read when the
+ * service next starts.
  */
 export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, syncRunning: boolean): SystemCommand[] {
 	if (platform === 'linux') return syncRunning ? [{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }] : [];
 	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-setnetworktimeserver', server] }];
-	return [
-		{ cmd: 'w32tm', args: ['/config', `/manualpeerlist:${server},0x9`, '/syncfromflags:manual', '/update'] },
-		{ cmd: 'w32tm', args: ['/resync'] },
-	];
+	const config: SystemCommand = { cmd: 'w32tm', args: ['/config', `/manualpeerlist:${server},0x9`, '/syncfromflags:manual', '/update'] };
+	return syncRunning ? [config, { cmd: 'w32tm', args: ['/resync'] }] : [config];
 }
 
 /**

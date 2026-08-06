@@ -411,13 +411,20 @@ describe('buildSetNtpServerCommands', () => {
 		expect(buildSetNtpServerCommands('linux', 'ntp.example.org', false)).toEqual([]);
 	});
 
-	it('configures the peer and resyncs on windows regardless of the sync state', () => {
-		const expected = [
+	it('configures the peer and resyncs on windows while synchronisation is on', () => {
+		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', true)).toEqual([
 			{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x9', '/syncfromflags:manual', '/update'] },
 			{ cmd: 'w32tm', args: ['/resync'] },
-		];
-		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', true)).toEqual(expected);
-		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false)).toEqual(expected);
+		]);
+	});
+
+	/**
+	 * A resync is a request to the Windows Time service, so with the service stopped it
+	 * can only fail — and the UI arrives here exactly that way, switching synchronisation
+	 * off before writing a server. Configuring the peer list is the whole change then.
+	 */
+	it('skips the resync on windows while synchronisation is off', () => {
+		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x9', '/syncfromflags:manual', '/update'] }]);
 	});
 
 	it('sets the single supported server on macOS', () => {
