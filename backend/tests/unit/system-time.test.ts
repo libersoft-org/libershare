@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseServiceRunning, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseWindowsNtpServer, parseWindowsSyncStatus, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, validateClockParts } from '../../src/system-time.ts';
+import { buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseServiceRunning, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsSyncStatus, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, validateClockParts } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -250,6 +250,19 @@ describe('classifyFailure', () => {
 		expect(classifyFailure('win32', 1, 'Pristup byl odepren.')).toBe('error');
 	});
 
+	/**
+	 * ERROR_NOT_SUPPORTED is an ordinary failure of one call, not a statement that the
+	 * platform lacks the feature. Reporting it as unsupported would tell the user to
+	 * stop trying on a host where the very next attempt might work.
+	 */
+	it('does not read a plain Windows ERROR_NOT_SUPPORTED as an unsupported platform', () => {
+		expect(classifyFailure('win32', 1, 'The following error occurred: The request is not supported. (0x80070032)')).toBe('error');
+	});
+
+	it('still detects the NTP-not-supported wording it is meant for', () => {
+		expect(classifyFailure('linux', 1, 'Failed to set ntp: NTP not supported')).toBe('unsupported');
+	});
+
 	it('detects a polkit denial on linux', () => {
 		expect(classifyFailure('linux', 1, 'Failed to set time: Interactive authentication required.')).toBe('permission-denied');
 	});
@@ -389,6 +402,15 @@ describe('buildSetNtpServerCommands', () => {
 		expect(buildSetNtpServerCommands('linux', 'ntp.example.org', true)).toEqual([{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }]);
 	});
 
+	/**
+	 * `systemctl restart` starts a stopped unit. Running it while the user has
+	 * synchronisation switched off would re-arm the daemon and let it step the clock
+	 * they are about to set by hand — the drop-in on disk is the whole change here.
+	 */
+	it('runs nothing on linux while synchronisation is off', () => {
+		expect(buildSetNtpServerCommands('linux', 'ntp.example.org', false)).toEqual([]);
+	});
+
 	it('configures the peer and resyncs on windows regardless of the sync state', () => {
 		const expected = [
 			{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x9', '/syncfromflags:manual', '/update'] },
@@ -400,6 +422,26 @@ describe('buildSetNtpServerCommands', () => {
 
 	it('sets the single supported server on macOS', () => {
 		expect(buildSetNtpServerCommands('darwin', 'ntp.example.org', true)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setnetworktimeserver', 'ntp.example.org'] }]);
+	});
+});
+
+describe('parseUnitInstalled', () => {
+	const HEADER = 'UNIT FILE                 STATE     PRESET';
+
+	it('accepts an installed unit', () => {
+		expect(parseUnitInstalled(`${HEADER}\nsystemd-timesyncd.service enabled   enabled\n\n1 unit files listed.`, 'systemd-timesyncd.service')).toBe(true);
+	});
+
+	it('accepts a disabled unit — the drop-in still applies when it is started', () => {
+		expect(parseUnitInstalled(`${HEADER}\nsystemd-timesyncd.service disabled  disabled\n\n1 unit files listed.`, 'systemd-timesyncd.service')).toBe(true);
+	});
+
+	it('rejects a masked unit, which can never start', () => {
+		expect(parseUnitInstalled(`${HEADER}\nsystemd-timesyncd.service masked    disabled\n\n1 unit files listed.`, 'systemd-timesyncd.service')).toBe(false);
+	});
+
+	it('rejects a host without the unit, e.g. one running chrony', () => {
+		expect(parseUnitInstalled(`${HEADER}\n\n0 unit files listed.`, 'systemd-timesyncd.service')).toBe(false);
 	});
 });
 
