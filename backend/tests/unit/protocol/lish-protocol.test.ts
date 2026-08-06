@@ -1,8 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, LISHClient, setMaxChunkSize, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
+import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, LISHClient, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
 import { encode as codecEncode, decode as codecDecode } from '../../../src/protocol/codec.ts';
 import { encode as lpEncode } from 'it-length-prefixed';
-import { DEFAULT_MAX_CHUNK_SIZE } from '../../../src/settings.ts';
+import { DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_MESSAGE_SIZE, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
+
+/** The chunk limit is read live from settings, so a test sets it by moving this. */
+let chunkLimit = DEFAULT_MAX_CHUNK_SIZE;
+useNetworkSettings(
+	() =>
+		({
+			maxDownloadSpeed: 0,
+			maxUploadSpeed: 0,
+			maxDownloadPeersPerLISH: 30,
+			maxUploadPeersPerLISH: 30,
+			maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE,
+			maxChunkSize: chunkLimit,
+		}) as SettingsData['network']
+);
 import { ErrorCodes, type IStoredLISH } from '@shared';
 
 // ---------------------------------------------------------------------------
@@ -397,17 +411,17 @@ describe('LISHClient.requestManifest – manifest validation', () => {
 	}
 
 	afterEach(() => {
-		setMaxChunkSize(DEFAULT_MAX_CHUNK_SIZE);
+		chunkLimit = DEFAULT_MAX_CHUNK_SIZE;
 	});
 
 	it('rejects a manifest whose chunkSize exceeds the configured maximum', async () => {
-		setMaxChunkSize(1024 * 1024);
+		chunkLimit = 1024 * 1024;
 		const client = new LISHClient(fakeStream(makeManifest(2 * 1024 * 1024)));
 		await expect(client.requestManifest('lish-manifest-test')).rejects.toMatchObject({ code: ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE });
 	});
 
 	it('accepts a manifest whose chunkSize is within the maximum', async () => {
-		setMaxChunkSize(1024 * 1024);
+		chunkLimit = 1024 * 1024;
 		const client = new LISHClient(fakeStream(makeManifest(1024)));
 		const manifest = await client.requestManifest('lish-manifest-test');
 		expect(manifest.chunkSize).toBe(1024);
