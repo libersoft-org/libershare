@@ -7,6 +7,15 @@ type MouseCallback = () => void;
 const CURSOR_HIDE_DELAY = 2000;
 export const cursorVisible = writable(true);
 
+// Is the mouse the active input? Gates hover-selection so a row scrolling under a stationary
+// cursor (keyboard nav fires mouseover without mousemove) can't hijack the keyboard selection.
+let mouseActive = true;
+
+/** True while the mouse is the active input — hover handlers should no-op when false. */
+export function isMouseActive(): boolean {
+	return mouseActive;
+}
+
 /**
  * Single global mouse-event delegator. Components register navigation items
  * via NavArea (and a global binding registry); this manager listens once on
@@ -20,31 +29,37 @@ export const cursorVisible = writable(true);
 class MouseManager {
 	private hideTimeout: ReturnType<typeof setTimeout> | null = null;
 	private mouseMoveHandler: ((e: MouseEvent) => void) | null = null;
-	private mouseDownHandler: (() => void) | null = null;
+	private mouseDownHandler: ((e: MouseEvent) => void) | null = null;
 	private clickHandler: ((e: MouseEvent) => void) | null = null;
 	private mouseOverHandler: ((e: MouseEvent) => void) | null = null;
 	private contextmenuHandler: ((e: MouseEvent) => void) | null = null;
+	private keydownHandler: (() => void) | null = null;
 	private callbacks: Map<string, MouseCallback> = new Map();
 	private hoverRafId: number | null = null;
 	private pendingHoverTarget: EventTarget | null = null;
 	private lastHoveredItem: NavItem | null = null;
 	private lastActivatedAreaID: string | null = null;
+	private lastClientX = -1;
+	private lastClientY = -1;
 
 	start(): void {
 		if (this.mouseMoveHandler) return;
-		this.mouseMoveHandler = () => this.handleMouseMove();
-		this.mouseDownHandler = () => this.handleMouseDown();
+		this.mouseMoveHandler = (e: MouseEvent) => this.handleMouseMove(e);
+		this.mouseDownHandler = (e: MouseEvent) => this.handleMouseDown(e);
 		this.clickHandler = (e: MouseEvent) => this.handleDelegatedClick(e);
 		this.mouseOverHandler = (e: MouseEvent) => this.handleDelegatedMouseOver(e);
 		this.contextmenuHandler = (e: MouseEvent) => {
 			e.preventDefault();
 			this.emit('back');
 		};
+		this.keydownHandler = () => this.handleKeyDown();
 		document.addEventListener('mousemove', this.mouseMoveHandler);
 		document.addEventListener('mousedown', this.mouseDownHandler);
 		document.addEventListener('click', this.clickHandler);
 		document.addEventListener('mouseover', this.mouseOverHandler);
 		window.addEventListener('contextmenu', this.contextmenuHandler);
+		// Capture so the flag flips before any per-component keydown handler reads it.
+		document.addEventListener('keydown', this.keydownHandler, true);
 		this.scheduleHide();
 	}
 
@@ -69,6 +84,10 @@ class MouseManager {
 			window.removeEventListener('contextmenu', this.contextmenuHandler);
 			this.contextmenuHandler = null;
 		}
+		if (this.keydownHandler) {
+			document.removeEventListener('keydown', this.keydownHandler, true);
+			this.keydownHandler = null;
+		}
 		if (this.hoverRafId !== null) {
 			cancelAnimationFrame(this.hoverRafId);
 			this.hoverRafId = null;
@@ -77,6 +96,7 @@ class MouseManager {
 		this.lastHoveredItem = null;
 		this.lastActivatedAreaID = null;
 		this.clearHideTimeout();
+		mouseActive = true;
 		cursorVisible.set(true);
 	}
 
@@ -95,14 +115,32 @@ class MouseManager {
 		if (callback) callback();
 	}
 
-	private handleMouseMove(): void {
+	private handleMouseMove(e: MouseEvent): void {
+		// Chromium re-fires mousemove when content scrolls under a stationary cursor
+		// (e.g. keyboard-driven scrollIntoView). Same coordinates = the user did not
+		// move the mouse, so it must not flip input back to mouse mode and let hover
+		// steal the keyboard selection.
+		if (e.clientX === this.lastClientX && e.clientY === this.lastClientY) return;
+		this.lastClientX = e.clientX;
+		this.lastClientY = e.clientY;
+		mouseActive = true;
 		cursorVisible.set(true);
 		this.scheduleHide();
 	}
 
-	private handleMouseDown(): void {
+	private handleMouseDown(e: MouseEvent): void {
+		this.lastClientX = e.clientX;
+		this.lastClientY = e.clientY;
+		mouseActive = true;
 		cursorVisible.set(true);
 		this.scheduleHide();
+	}
+
+	/** Keyboard activity → mouse inactive: suppress hover-selection and hide the cursor now. */
+	private handleKeyDown(): void {
+		mouseActive = false;
+		cursorVisible.set(false);
+		this.clearHideTimeout();
 	}
 
 	/**
@@ -147,6 +185,7 @@ class MouseManager {
 	}
 
 	private processHover(target: EventTarget | null): void {
+		if (!mouseActive) return;
 		const binding = findBindingForElement(target);
 		if (binding) {
 			if (this.lastHoveredItem === binding.item) return;
@@ -172,7 +211,11 @@ class MouseManager {
 
 	private scheduleHide(): void {
 		this.clearHideTimeout();
-		this.hideTimeout = setTimeout(() => cursorVisible.set(false), CURSOR_HIDE_DELAY);
+		// Idle hide also drops mouse-active, so hover stays suppressed until the next real move.
+		this.hideTimeout = setTimeout(() => {
+			mouseActive = false;
+			cursorVisible.set(false);
+		}, CURSOR_HIDE_DELAY);
 	}
 
 	private clearHideTimeout(): void {

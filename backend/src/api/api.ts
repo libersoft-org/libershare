@@ -67,6 +67,7 @@ export class APIServer {
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
 	private _search: ReturnType<typeof import('./search.ts').initSearchManager> | null = null;
+	private _system: ReturnType<typeof import('./system.ts').initSystemHandlers> | null = null;
 
 	constructor(dataDir: string, dataServer: DataServer, networks: Networks, settings: Settings, options: APIServerOptions, catalogManager?: CatalogManager | undefined) {
 		this.dataDir = dataDir;
@@ -106,6 +107,7 @@ export class APIServer {
 			return false;
 		};
 		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers);
+		this._system = _system;
 		_system.startPolling();
 		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
 		_relay.startPolling();
@@ -251,6 +253,8 @@ export class APIServer {
 			'system.ram': _system.ram,
 			'system.storage': _system.storage,
 			'system.cpu': _system.cpu,
+			'system.setVolume': _system.setVolume,
+			'system.getVolume': _system.getVolume,
 			// Relay
 			'relay.stats': _relay.stats,
 		};
@@ -326,6 +330,9 @@ export class APIServer {
 
 	stop(): void {
 		this._search?.stopAll();
+		// Stop the volume poll interval and the push monitor (a long-lived pactl
+		// subscribe child on Linux) — they must not outlive the API server.
+		this._system?.stopPolling();
 		if (this.server) {
 			this.server.stop();
 			this.server = null;

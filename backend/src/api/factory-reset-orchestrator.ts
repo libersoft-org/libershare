@@ -2,9 +2,8 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type Settings } from '../settings.ts';
 import { type FactoryResetResponse } from '@shared';
-import { Downloader } from '../protocol/downloader.ts';
-import { setMaxUploadSpeed, setMaxUploadPeersPerLISH, setMaxMessageSize, initUploadState } from '../protocol/lish-protocol.ts';
-import { setMaxDownloadPeersPerLISH } from '../protocol/peer-manager.ts';
+import { initUploadState } from '../protocol/lish-protocol.ts';
+import { applyNetworkLimits } from '../protocol/network-limits.ts';
 import { runFactoryReset } from './factory-reset.ts';
 import { initDownloadState, triggerEnableDownload } from './transfer.ts';
 
@@ -90,11 +89,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 				? async () => {
 						const defaults = await settings.reset();
 						// Re-apply runtime knobs from the restored defaults (limits are module state).
-						Downloader.setMaxDownloadSpeed(defaults.network.maxDownloadSpeed);
-						setMaxUploadSpeed(defaults.network.maxUploadSpeed);
-						setMaxDownloadPeersPerLISH(defaults.network.maxDownloadPeersPerLISH);
-						setMaxUploadPeersPerLISH(defaults.network.maxUploadPeersPerLISH);
-						setMaxMessageSize(defaults.network.maxMessageSize);
+						applyNetworkLimits(defaults.network);
 					}
 				: undefined,
 			restart: restartNode ? restartNodeAndTransfers : undefined,

@@ -141,6 +141,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		footerPosition: 'right',
 		footerWidgets: {
 			version: false,
+			peerId: true,
 			download: true,
 			upload: true,
 			relay: false,

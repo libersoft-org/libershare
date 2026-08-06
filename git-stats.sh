@@ -5,17 +5,18 @@ echo ""
 echo "=== Git Daily Stats ==="
 echo ""
 
-printf "%-12s %8s %8s %8s\n" "Date" "Added" "Removed" "Net"
-printf "%-12s %8s %8s %8s\n" "----------" "------" "------" "------"
+printf "%-12s %8s %8s %8s %8s\n" "Date" "Commits" "Added" "Removed" "Net"
+printf "%-12s %8s %8s %8s %8s\n" "----------" "-------" "------" "------" "------"
 
 total_added=0
 total_removed=0
 
 git log --reverse --format="%ad" --date=short | sort -u | while read -r day; do
+	commits=$(git log --after="$day 00:00:00" --before="$day 23:59:59" --date=short --format="%H" | wc -l | tr -d ' ')
 	added=$(git log --after="$day 00:00:00" --before="$day 23:59:59" --date=short --numstat --pretty="" | awk '{ if ($1 != "-") s += $1 } END { print s+0 }')
 	removed=$(git log --after="$day 00:00:00" --before="$day 23:59:59" --date=short --numstat --pretty="" | awk '{ if ($2 != "-") s += $2 } END { print s+0 }')
 	net=$((added - removed))
-	printf "%-12s %8d %8d %8d\n" "$day" "$added" "$removed" "$net"
+	printf "%-12s %8d %8d %8d %8d\n" "$day" "$commits" "$added" "$removed" "$net"
 	total_added=$((total_added + added))
 	total_removed=$((total_removed + removed))
 done

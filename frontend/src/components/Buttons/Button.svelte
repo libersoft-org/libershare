@@ -123,6 +123,14 @@
 		opacity: 1;
 	}
 
+	/* Hover is CSS-only, so the icon's colorVariable (bound to the JS `isSelected` state) can't
+	   follow it — recolor the masked icon to match the hovered text, same as the selected state.
+	   !important overrides the inline background-color the Icon component sets from colorVariable. */
+	.button:hover:not(.selected) :global(.icon-img),
+	.button:hover:not(.selected) :global(.badge-img) {
+		background-color: var(--primary-foreground) !important;
+	}
+
 	.button:active:not(.selected) {
 		transform: scale(0.97);
 	}

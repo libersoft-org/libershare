@@ -24,6 +24,23 @@ export function formatDate(isoDate?: string): string {
 	return new Date(isoDate).toLocaleDateString();
 }
 
+// Format ISO date to localized date + time string
+export function formatDateTime(isoDate?: string): string {
+	if (!isoDate) return '—';
+	return new Date(isoDate).toLocaleString();
+}
+
+// Format an elapsed duration in seconds as zero-padded hh:mm:ss
+// @param seconds - Elapsed seconds (negative values clamp to 0)
+export function formatDuration(seconds: number): string {
+	const total = Math.max(0, Math.floor(seconds));
+	const h = Math.floor(total / 3600);
+	const m = Math.floor((total % 3600) / 60);
+	const s = total % 60;
+	const pad = (n: number): string => String(n).padStart(2, '0');
+	return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
 // Format current time with localization options
 // @param hour12 - Use 12-hour format (true) or 24-hour format (false)
 // @param showSeconds - Include seconds in the output
@@ -42,6 +59,21 @@ export function formatTime(hour12: boolean, showSeconds: boolean): string {
 export function truncateID(id: string, maxLength = 16): string {
 	if (id.length <= maxLength) return id;
 	return `${id.slice(0, 6)}...${id.slice(-6)}`;
+}
+
+// Shorten a peer ID keeping a head and tail slice, matching the bootstrap peer list format.
+export function shortenPeerID(id: string | null | undefined, head = 14, tail = 6): string {
+	if (!id) return '—';
+	if (id.length <= head + tail + 2) return id;
+	return `${id.slice(0, head)}…${id.slice(-tail)}`;
+}
+
+// Split a peer ID into a head and a tail (prefixed with an ellipsis), for two-line display.
+// The whole id is returned as the head with an empty tail when it already fits.
+export function splitPeerID(id: string | null | undefined, head = 11, tail = 11): { head: string; tail: string } {
+	if (!id) return { head: '—', tail: '' };
+	if (id.length <= head + tail + 2) return { head: id, tail: '' };
+	return { head: id.slice(0, head), tail: `…${id.slice(-tail)}` };
 }
 
 // Scroll an element into view with smooth animation.

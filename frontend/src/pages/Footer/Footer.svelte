@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
 	import { productVersion } from '@shared';
-	import { volume, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
+	import { volume, volumeAvailable, volumeKnown, footerPosition, footerWidgetVisibility } from '../../scripts/settings.ts';
 	import { type FooterWidget, getVolumeIcon } from '../../scripts/footerWidgets.ts';
 	import Item from './FooterItem.svelte';
 	import LISHStatus from './FooterLISHStatus.svelte';
@@ -12,10 +12,10 @@
 	import Clock from './FooterClock.svelte';
 	import { gamepadConnected } from '../../scripts/input/gamepad.ts';
 	import { ramInfo, storageInfo, cpuInfo } from '../../scripts/systemStats.ts';
-	import { formatSize } from '../../scripts/utils.ts';
+	import { formatSize, splitPeerID } from '../../scripts/utils.ts';
 	import { transferStats } from '../../scripts/downloads.ts';
 	import { relayStats } from '../../scripts/relayStats.ts';
-	import { networkSummary, meshStatus } from '../../scripts/networks.ts';
+	import { networkSummary, meshStatus, nodeInfo } from '../../scripts/networks.ts';
 
 	type Widget = {
 		id: FooterWidget;
@@ -32,6 +32,18 @@
 				return {
 					topLabel: $t('common.version'),
 					bottomLabel: productVersion,
+				};
+			},
+		},
+		{
+			id: 'peerId',
+			component: Item,
+			props(): Record<string, any> {
+				return {
+					topIcon: 'img/person.svg',
+					topIconAlt: $t('settings.footerWidgets.peerId'),
+					topLabel: splitPeerID($nodeInfo?.peerID).head,
+					bottomLabel: splitPeerID($nodeInfo?.peerID).tail,
 				};
 			},
 		},
@@ -142,6 +154,24 @@
 			id: 'volume',
 			component: Item,
 			props(): Record<string, any> {
+				// Until the first live reading arrives, show a neutral placeholder
+				// rather than the persisted value (which would flicker to the OS value).
+				if (!$volumeKnown) {
+					return {
+						topIcon: `img/${getVolumeIcon($volume)}.svg`,
+						topIconAlt: $t('settings.footerWidgets.volume'),
+						bottomLabel: '—',
+					};
+				}
+				if (!$volumeAvailable) {
+					const label = $t('settings.footerWidgets.volumeUnavailable');
+					return {
+						topIcon: 'img/volumeOff.svg',
+						topIconAlt: label,
+						title: label,
+						bottomLabel: '—',
+					};
+				}
 				return {
 					topIcon: `img/${getVolumeIcon($volume)}.svg`,
 					topIconAlt: $t('settings.footerWidgets.volume'),

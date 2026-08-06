@@ -446,7 +446,7 @@ describe('Downloader – downloadChunk private method', () => {
 
 	// Access pattern: downloadChunk is now a private method on ChunkDownloader (refactored out of Downloader).
 	// Tests reach it via priv(downloader).chunkDownloader with any-cast for TS-private bypass.
-	type DownloadChunkResult = { data: Uint8Array } | 'skip-chunk' | 'drop-peer';
+	type DownloadChunkResult = { data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'drop-peer';
 	type ChunkDownloaderWithPrivates = { downloadChunk: (client: MockLISHClient, chunkID: ChunkID) => Promise<DownloadChunkResult> };
 	const getChunkDownloader = (dl: Downloader): ChunkDownloaderWithPrivates => priv(dl)['chunkDownloader'] as ChunkDownloaderWithPrivates;
 
@@ -465,6 +465,22 @@ describe('Downloader – downloadChunk private method', () => {
 		mockClient.requestChunkResult = new CodedError(ErrorCodes.PEER_BUSY, 'test');
 
 		const result = await getChunkDownloader(downloader).downloadChunk(mockClient, 'chunk-002' as ChunkID);
+
+		expect(result).toBe('skip-chunk');
+	});
+
+	it('returns "chunk-not-found" on PEER_CHUNK_NOT_FOUND (partial seeder)', async () => {
+		mockClient.requestChunkResult = new CodedError(ErrorCodes.PEER_CHUNK_NOT_FOUND, 'test');
+
+		const result = await getChunkDownloader(downloader).downloadChunk(mockClient, 'chunk-004' as ChunkID);
+
+		expect(result).toBe('chunk-not-found');
+	});
+
+	it('returns "skip-chunk" on PEER_IO_ERROR (chunk-specific transient)', async () => {
+		mockClient.requestChunkResult = new CodedError(ErrorCodes.PEER_IO_ERROR, 'test');
+
+		const result = await getChunkDownloader(downloader).downloadChunk(mockClient, 'chunk-005' as ChunkID);
 
 		expect(result).toBe('skip-chunk');
 	});

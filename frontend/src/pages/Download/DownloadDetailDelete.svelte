@@ -2,7 +2,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { t, tt } from '../../scripts/language.ts';
-	import { deleteDownload, setCurrentDetailLISHID } from '../../scripts/downloads.ts';
+	import { deleteDownload, setCurrentDetailLISHID, resetVerifyState } from '../../scripts/downloads.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
 	import Dialog from '../../components/Dialog/Dialog.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -36,6 +36,10 @@
 		if (option.deleteLISH) setCurrentDetailLISHID(null);
 		const success = await deleteDownload(lishID, option.deleteLISH, option.deleteData);
 		deleting = false;
+		// Data-only delete leaves the LISH entry but wipes its files. The backend resets
+		// verification and re-verifies, but until those events arrive the store still shows
+		// the stale per-file progress (100%). Optimistically reset to 0 to match disk state.
+		if (success && !option.deleteLISH && option.deleteData) resetVerifyState(lishID);
 		if (success) {
 			if (option.deleteLISH && option.deleteData) addNotification(tt('downloads.lishAndDataDeleted', { name }), 'warning');
 			else if (option.deleteLISH) addNotification(tt('downloads.lishDeleted', { name }), 'warning');

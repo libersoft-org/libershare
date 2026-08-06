@@ -111,6 +111,10 @@
 		"relayed": "{count} relayed",
 		"noPeers": "No connected peers found.",
 		"peerDeclined": "Peer declined to share their list or did not respond.",
+		"statusDownloading": "Downloading …",
+		"statusProcessing": "Processing …",
+		"statusDownloaded": "Downloaded",
+		"statusUnavailable": "Unavailable",
 		"noSharedLishs": "This peer is not sharing any LISHs.",
 		"addToDownloads": "Add to Downloads",
 		"details": "Details",
@@ -136,6 +140,7 @@
 	"downloads": {
 		"title": "Downloads and sharing",
 		"id": "ID",
+		"chunks": "Chunks",
 		"targetDirectory": "Target directory",
 		"downloadingFrom": "Downloading from",
 		"uploadingTo": "Uploading to",
@@ -147,6 +152,25 @@
 			"connection": "Type",
 			"availability": "Avail",
 			"activity": "Last seen"
+		},
+		"peerDetail": {
+			"title": "Peer detail",
+			"peerID": "Peer ID",
+			"connection": "Connection type",
+			"availability": "Availability",
+			"currentFile": "Current file",
+			"downloadSpeed": "Download speed",
+			"uploadSpeed": "Upload speed",
+			"downloaded": "Downloaded",
+			"uploaded": "Uploaded",
+			"connectedAt": "Connected",
+			"lastActivity": "Last activity",
+			"secondsAgo": "{seconds}s ago",
+			"stale": "This peer is currently inactive.",
+			"disconnected": "This peer has disconnected.",
+			"copyID": "Copy peer ID",
+			"close": "Close",
+			"peerIDCopied": "Peer ID copied to clipboard"
 		},
 		"uploaded": "Uploaded",
 		"downloaded": "Downloaded",
@@ -352,6 +376,12 @@
 				"unstable": "Mesh peers have low scores — degraded routing",
 				"stable": "Mesh is stable — broadcasts will reach the fleet"
 			},
+			"meshStateNetwork": {
+				"disabled": "Not connected — mesh inactive",
+				"forming": "Mesh is still forming — searches may be incomplete",
+				"unstable": "Mesh peers have low scores — degraded routing",
+				"stable": "Mesh is stable — broadcasts will reach the fleet"
+			},
 			"bootstrap": {
 				"title": "Bootstrap peers",
 				"discoveredShort": "gossip",
@@ -463,6 +493,7 @@
 			"right": "Right"
 		},
 		"footerWidgets": {
+			"peerId": "Peer ID",
 			"lishStatus": "LISH network status",
 			"gamepad": "Gamepad",
 			"connection": "Connection",
@@ -471,6 +502,7 @@
 			"ram": "RAM usage",
 			"storage": "Storage usage",
 			"volume": "Volume",
+			"volumeUnavailable": "Audio device not available",
 			"clock": "Clock"
 		},
 		"audio": "Sound effects",
