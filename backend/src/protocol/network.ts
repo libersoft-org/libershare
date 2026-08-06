@@ -1696,24 +1696,6 @@ export class Network {
 }
 
 /**
- * Classify a libp2p dial error into a coarse status the UI can render distinctly.
- *
- * - `identity-mismatch`: the remote completed Noise handshake but reported a
- *   different peer ID than the multiaddr's `/p2p/<id>` claimed. Always means
- *   the configured peerID is stale (or the address routes to a wrong node).
- * - `timeout`: the dial never completed — peer offline, behind NAT without relay,
- *   firewall, or unreachable network path.
- * - `error`: every other reason (invalid multiaddr, connection refused, protocol
- *   negotiation failure, etc).
- */
-/**
- * Extract the DESTINATION peer ID from a multiaddr. A circuit-relay address has
- * the shape `/.../p2p/<relay>/p2p-circuit/p2p/<destination>` — taking the FIRST
- * /p2p/ component would return the relay's identity, so eviction and configured
- * protection would target the wrong peer. The last /p2p/ component is always
- * the dial target. Returns null when the multiaddr carries no peer ID at all.
- */
-/**
  * Normalize a multiaddr STRING for equality comparison. Multiaddr.toString()
  * already compresses IPv6, but leaves DNS host case and trailing dots intact —
  * `/dns4/EXAMPLE.COM./tcp/...` and `/dns4/example.com/tcp/...` address the same
@@ -1725,6 +1707,13 @@ export function normalizeMultiaddrForCompare(s: string): string {
 	return s.toLowerCase().replace(/\.(?=\/|$)/g, '');
 }
 
+/**
+ * Extract the DESTINATION peer ID from a multiaddr. A circuit-relay address has
+ * the shape `/.../p2p/<relay>/p2p-circuit/p2p/<destination>` — taking the FIRST
+ * /p2p/ component would return the relay's identity, so eviction and configured
+ * protection would target the wrong peer. The last /p2p/ component is always
+ * the dial target. Returns null when the multiaddr carries no peer ID at all.
+ */
 export function extractDestinationPeerID(ma: any): string | null {
 	try {
 		const components: Array<{ code: number; value?: string }> = ma?.getComponents?.() ?? [];
@@ -1738,6 +1727,17 @@ export function extractDestinationPeerID(ma: any): string | null {
 	return null;
 }
 
+/**
+ * Classify a libp2p dial error into a coarse status the UI can render distinctly.
+ *
+ * - `identity-mismatch`: the remote completed Noise handshake but reported a
+ *   different peer ID than the multiaddr's `/p2p/<id>` claimed. Always means
+ *   the configured peerID is stale (or the address routes to a wrong node).
+ * - `timeout`: the dial never completed — peer offline, behind NAT without relay,
+ *   firewall, or unreachable network path.
+ * - `error`: every other reason (invalid multiaddr, connection refused, protocol
+ *   negotiation failure, etc).
+ */
 export function classifyBootstrapError(message: string): BootstrapPeerDialStatus {
 	if (!message) return 'error';
 	if (message.includes('does not match expected remote identity key')) return 'identity-mismatch';
