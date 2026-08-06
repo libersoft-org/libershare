@@ -769,7 +769,9 @@ export class Network {
 			} catch (err: any) {
 				trace(`[NET] statusInterval error: ${err?.message ?? err}`);
 			} finally {
-				this.statusTickInFlight = false;
+				// Only release the guard for the run we belong to — after a stop()/start()
+				// the flag belongs to the new run, whose own tick may already hold it.
+				if (epoch === this.runEpoch) this.statusTickInFlight = false;
 			}
 		}, 30000);
 		// Status interval 30 s. promoteKnownPeersToBootstrap + gossipsub.direct
@@ -1626,6 +1628,11 @@ export class Network {
 			clearInterval(this.statusInterval);
 			this.statusInterval = null;
 		}
+		// The epoch bump makes an in-flight tick bail out, but its `finally` runs
+		// asynchronously — a fast restart would otherwise find the flag still set and
+		// skip its own first tick. The tick only clears the flag for its own epoch, so
+		// clearing it here cannot be undone by the outgoing run.
+		this.statusTickInFlight = false;
 		this.peerAnnounce.stop();
 		if (this.wantResponseCleanupInterval) {
 			clearInterval(this.wantResponseCleanupInterval);
