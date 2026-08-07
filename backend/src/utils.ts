@@ -1,4 +1,13 @@
-import { type CompressionAlgorithm, isCompressed, CodedError, ErrorCodes } from '@shared';
+import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
+import { type CompressionAlgorithm, detectCompression, CodedError, ErrorCodes } from '@shared';
+
+/** Re-view a Buffer / Uint8Array as a plain `Uint8Array<ArrayBuffer>` without copying. */
+function asBytes(data: Uint8Array): Uint8Array<ArrayBuffer> {
+	return new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
+}
+
+/** HTTP `Content-Encoding` token that corresponds to each compression algorithm. */
+const CONTENT_ENCODING_TOKENS: Record<CompressionAlgorithm, string> = { gzip: 'gzip', brotli: 'br', zstd: 'zstd' };
 
 export class Utils {
 	static expandHome(path: string): string {
@@ -38,6 +47,10 @@ export class Utils {
 		switch (algorithm) {
 			case 'gzip':
 				return Bun.gzipSync(data);
+			case 'brotli':
+				return asBytes(brotliCompressSync(data));
+			case 'zstd':
+				return asBytes(Bun.zstdCompressSync(data));
 			default:
 				throw new CodedError(ErrorCodes.UNSUPPORTED_COMPRESSION, algorithm);
 		}
@@ -51,6 +64,10 @@ export class Utils {
 		switch (algorithm) {
 			case 'gzip':
 				return Bun.gunzipSync(data);
+			case 'brotli':
+				return asBytes(brotliDecompressSync(data));
+			case 'zstd':
+				return asBytes(Bun.zstdDecompressSync(data));
 			default:
 				throw new CodedError(ErrorCodes.UNSUPPORTED_DECOMPRESSION, algorithm);
 		}
@@ -58,12 +75,15 @@ export class Utils {
 
 	/**
 	 * Read a file, automatically decompressing compressed files.
+	 * Without an explicit `algorithm` the compression is detected from the file
+	 * extension; a path with no known extension is read as plain text.
 	 * Returns the file content as a string.
 	 */
-	static async readFileCompressed(filePath: string, algorithm: CompressionAlgorithm = 'gzip'): Promise<string> {
-		if (isCompressed(filePath)) {
+	static async readFileCompressed(filePath: string, algorithm?: CompressionAlgorithm): Promise<string> {
+		const resolved = algorithm ?? detectCompression(filePath);
+		if (resolved) {
 			const compressed = await Bun.file(filePath).arrayBuffer();
-			const decompressed = Utils.decompress(new Uint8Array(compressed), algorithm);
+			const decompressed = Utils.decompress(new Uint8Array(compressed), resolved);
 			return new TextDecoder().decode(decompressed);
 		}
 		return Bun.file(filePath).text();
@@ -71,7 +91,7 @@ export class Utils {
 
 	/**
 	 * Fetch a URL and return the response body as a string.
-	 * Automatically decompresses .gz URLs. Throws on non-OK responses.
+	 * Automatically decompresses compressed URLs (.gz, .br, .zst, …). Throws on non-OK responses.
 	 */
 	static async fetchURL(url: string, timeoutMs: number = 10000): Promise<string> {
 		const controller = new AbortController();
@@ -79,12 +99,14 @@ export class Utils {
 		try {
 			const response = await fetch(url, { signal: controller.signal });
 			if (!response.ok) throw new CodedError(ErrorCodes.HTTP_ERROR, String(response.status));
-			const isCompressedURL = isCompressed(url);
-			const contentEncoding = response.headers.get('content-encoding');
-			const isGzipEncoded = contentEncoding?.toLowerCase().includes('gzip');
-			if (isCompressedURL && !isGzipEncoded) {
+			const algorithm = detectCompression(url);
+			// When the server serves the file with the same codec as a transfer encoding,
+			// fetch() has already undone it — decompressing a second time would fail.
+			const contentEncoding = response.headers.get('content-encoding')?.toLowerCase() ?? '';
+			const alreadyDecoded = algorithm !== null && contentEncoding.includes(CONTENT_ENCODING_TOKENS[algorithm]);
+			if (algorithm && !alreadyDecoded) {
 				const compressed = await response.arrayBuffer();
-				const decompressed = Utils.decompress(new Uint8Array(compressed));
+				const decompressed = Utils.decompress(new Uint8Array(compressed), algorithm);
 				return new TextDecoder().decode(decompressed);
 			}
 			return response.text();
