@@ -298,6 +298,15 @@
 		"title": "Nastavení",
 		"system": {
 			"title": "Systém",
+			"programMode": "Režim programu",
+			"programModes": {
+				"system": "Systém (samostatné zařízení)",
+				"app": "Aplikace (počítač / telefon)"
+			},
+			"programModeInfo": {
+				"system": "LiberShare je celé zařízení — samostatná krabička, která nabootuje rovnou do aplikace (Linux s prohlížečem v režimu kiosku). Do aplikace proto patří i nastavení zařízení, jako je připojení k síti nebo obrazovka.",
+				"app": "LiberShare běží jako běžná aplikace vedle ostatních programů na počítači nebo v telefonu. O samotné zařízení — připojení k síti, obrazovku — se stará operační systém."
+			},
 			"autoStartOnBoot": "Spustit aplikaci po spuštění systému",
 			"showInTray": "Zobrazit v oznamovací oblasti",
 			"minimizeToTray": "Minimalizovat do oznamovací oblasti",
