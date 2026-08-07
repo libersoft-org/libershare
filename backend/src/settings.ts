@@ -108,6 +108,14 @@ export interface SettingsData {
 		};
 	};
 	system: {
+		/**
+		 * Which distribution this instance is. `system` means the product IS the device:
+		 * a dedicated box booting straight into a browser in kiosk mode, so device-level
+		 * settings (network connection, display) belong to the app. `app` means it is one
+		 * application among others on a computer or a phone (the desktop wrapper build),
+		 * where the operating system owns those device settings.
+		 */
+		programMode: 'system' | 'app';
 		autoStartOnBoot: boolean;
 		showInTray: boolean;
 		minimizeToTray: boolean;
@@ -205,6 +213,9 @@ const DEFAULT_SETTINGS: SettingsData = {
 		},
 	},
 	system: {
+		// Default to the application build: every desktop wrapper and browser run is
+		// app-shaped. A dedicated-device image is operator-provisioned and flips this once.
+		programMode: 'app',
 		autoStartOnBoot: true,
 		showInTray: true,
 		minimizeToTray: true,
