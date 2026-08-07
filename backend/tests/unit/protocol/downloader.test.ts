@@ -1319,6 +1319,44 @@ describe('Downloader — inline ENOSPC retry', () => {
 		expect(pc.writePaused).toBe(false);
 		expect(pc.writeResolvers.length).toBe(0);
 	});
+
+	it('stays paused until every holder releases', async () => {
+		const pc = priv(downloader)['pauseController'] as {
+			pauseWrites: () => void;
+			resumeWrites: () => void;
+			waitIfWritePaused: () => Promise<void>;
+			writeResolvers: unknown[];
+			writePaused: boolean;
+		};
+		// Two independent paths pause writes: the retained-write retry cycle and
+		// missing-file recovery. Whichever finishes first must not open the gate for
+		// the other, or a peer would claim a retry cycle someone else already owns.
+		pc.pauseWrites();
+		pc.pauseWrites();
+		const waiter = pc.waitIfWritePaused();
+		await new Promise(r => setTimeout(r, 0));
+		expect(pc.writeResolvers.length).toBe(1);
+
+		pc.resumeWrites();
+		await new Promise(r => setTimeout(r, 0));
+		expect(pc.writePaused).toBe(true); // one holder left
+		expect(pc.writeResolvers.length).toBe(1); // waiter still blocked
+
+		pc.resumeWrites();
+		await waiter;
+		expect(pc.writePaused).toBe(false);
+		expect(pc.writeResolvers.length).toBe(0);
+	});
+
+	it('ignores an unbalanced release instead of going negative', () => {
+		const pc = priv(downloader)['pauseController'] as { pauseWrites: () => void; resumeWrites: () => void; writePaused: boolean };
+		pc.resumeWrites(); // nobody was holding
+		expect(pc.writePaused).toBe(false);
+		pc.pauseWrites();
+		expect(pc.writePaused).toBe(true); // a stray release must not leave a negative debt
+		pc.resumeWrites();
+		expect(pc.writePaused).toBe(false);
+	});
 });
 
 // ---------------------------------------------------------------------------
