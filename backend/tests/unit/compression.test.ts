@@ -130,6 +130,14 @@ describe('compression extension helpers', () => {
 		expect(stripCompressionExtension('a.lish')).toBe('a.lish');
 	});
 
+	it('sees through a URL query string and fragment', () => {
+		expect(detectCompression(Utils.urlPath('https://example.com/a.lish.zst?token=1'))).toBe('zstd');
+		expect(detectCompression(Utils.urlPath('https://example.com/a.lish.br#part'))).toBe('brotli');
+		expect(detectCompression(Utils.urlPath('https://example.com/a.lish'))).toBeNull();
+		// A local path is not a URL — it must survive unchanged, including a '#' in the name.
+		expect(detectCompression(Utils.urlPath('C:\\data\\note#1.lish.gz'))).toBe('gzip');
+	});
+
 	it('expands a picker pattern with every recognised extension', () => {
 		const patterns = withCompressionExtensions(['*.lish']);
 		expect(patterns).toContain('*.lish');

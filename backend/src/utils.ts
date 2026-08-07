@@ -90,6 +90,21 @@ export class Utils {
 	}
 
 	/**
+	 * Path component of an http(s) URL, without query string or fragment.
+	 * Anything else — a local path in particular — is returned unchanged, because
+	 * `new URL()` would read a Windows drive letter as a scheme and a `#` in a file
+	 * name as a fragment.
+	 */
+	static urlPath(url: string): string {
+		try {
+			const parsed = new URL(url);
+			return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.pathname : url;
+		} catch {
+			return url;
+		}
+	}
+
+	/**
 	 * Fetch a URL and return the response body as a string.
 	 * Automatically decompresses compressed URLs (.gz, .br, .zst, …). Throws on non-OK responses.
 	 */
@@ -99,7 +114,8 @@ export class Utils {
 		try {
 			const response = await fetch(url, { signal: controller.signal });
 			if (!response.ok) throw new CodedError(ErrorCodes.HTTP_ERROR, String(response.status));
-			const algorithm = detectCompression(url);
+			// Detect on the path only — a query string or fragment would hide the extension.
+			const algorithm = detectCompression(Utils.urlPath(url));
 			// When the server serves the file with the same codec as a transfer encoding,
 			// fetch() has already undone it — decompressing a second time would fail.
 			const contentEncoding = response.headers.get('content-encoding')?.toLowerCase() ?? '';
