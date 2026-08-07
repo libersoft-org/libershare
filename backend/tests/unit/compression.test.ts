@@ -3,6 +3,7 @@ import { rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Utils } from '../../src/utils.ts';
+import { initFsHandlers } from '../../src/api/fs.ts';
 import { COMPRESSION_ALGORITHMS, compressionExtension, detectCompression, stripCompressionExtension, withCompressionExtensions, isCompressed, ErrorCodes } from '@shared';
 
 /** Mixed binary + UTF-8 payload — catches encoding-sensitive round-trip bugs. */
@@ -74,6 +75,41 @@ describe('Utils.writeJSONToFile / Utils.readFileCompressed', () => {
 		await Utils.writeJSONToFile({ a: 1 }, minified, true, false);
 		expect(await Bun.file(pretty).text()).toContain('\n');
 		expect(await Bun.file(minified).text()).toBe('{"a":1}');
+	});
+});
+
+describe('fs.decompressText / fs.readCompressed handlers', () => {
+	const fs = initFsHandlers();
+
+	for (const algorithm of COMPRESSION_ALGORITHMS) {
+		it(`${algorithm}: decompresses a base64 upload using the file name alone`, async () => {
+			const json = '{"name":"Kompresní test"}';
+			const compressed = Utils.compress(new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>, algorithm);
+			const base64 = Buffer.from(compressed).toString('base64');
+			const result = await fs.decompressText({ data: base64, fileName: `backup.lishset${compressionExtension(algorithm)}` });
+			expect(result.content).toBe(json);
+		});
+	}
+
+	it('returns an uncompressed upload unchanged', async () => {
+		const base64 = Buffer.from('plain text', 'utf-8').toString('base64');
+		expect((await fs.decompressText({ data: base64, fileName: 'notes.json' })).content).toBe('plain text');
+	});
+
+	it('pretty-prints JSON on request and leaves non-JSON alone', async () => {
+		const base64 = Buffer.from('{"a":1}', 'utf-8').toString('base64');
+		expect((await fs.decompressText({ data: base64, fileName: 'a.json', prettyJSON: true })).content).toBe('{\n\t"a": 1\n}');
+		const notJSON = Buffer.from('hello', 'utf-8').toString('base64');
+		expect((await fs.decompressText({ data: notJSON, fileName: 'a.txt', prettyJSON: true })).content).toBe('hello');
+	});
+
+	it('reads a compressed file and an uncompressed one through the same handler', async () => {
+		const compressedPath = tempFile('handler.lishset.zst');
+		const plainPath = tempFile('handler.lishset');
+		await Utils.writeJSONToFile({ a: 1 }, compressedPath, true, true, 'zstd');
+		await Utils.writeJSONToFile({ a: 1 }, plainPath, true, false);
+		expect((await fs.readCompressed({ path: compressedPath })).content).toBe('{"a":1}');
+		expect((await fs.readCompressed({ path: plainPath, prettyJSON: true })).content).toBe('{\n\t"a": 1\n}');
 	});
 });
 
