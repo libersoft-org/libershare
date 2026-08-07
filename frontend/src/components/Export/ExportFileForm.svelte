@@ -91,6 +91,9 @@
 
 	async function handleSave(): Promise<void> {
 		errorMessage = '';
+		// Imports detect the algorithm from the extension, so a hand-edited path must not
+		// keep a suffix that contradicts the selected algorithm.
+		updateFileExtension();
 		if (!filePath.trim()) {
 			errorMessage = $t('common.errorFilePathRequired');
 			return;

@@ -185,6 +185,9 @@
 	let errorMessage = $state('');
 
 	async function handleCreate(): Promise<void> {
+		// Imports detect the algorithm from the extension, so a hand-edited path must not
+		// keep a suffix that contradicts the selected algorithm.
+		if (saveToFile) updateLISHFileExtension();
 		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, chunkSize, threads });
 		errorMessage = validationError ? getLISHCreateErrorMessage(validationError, $t) : '';
 		if (!errorMessage) {
