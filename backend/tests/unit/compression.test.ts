@@ -113,6 +113,26 @@ describe('fs.decompressText / fs.readCompressed handlers', () => {
 	});
 });
 
+describe('Utils.fetchURL', () => {
+	it('decompresses according to the URL it was redirected to', async () => {
+		const json = '{"redirected":true}';
+		const body = Utils.compress(new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>, 'zstd');
+		const server = Bun.serve({
+			port: 0,
+			fetch(req): Response {
+				// The entry point carries no compression extension — only the target does.
+				if (new URL(req.url).pathname === '/latest.lish') return Response.redirect(new URL('/v2.lish.zst', req.url).href, 302);
+				return new Response(body);
+			},
+		});
+		try {
+			expect(await Utils.fetchURL(`http://localhost:${server.port}/latest.lish`)).toBe(json);
+		} finally {
+			await server.stop(true);
+		}
+	});
+});
+
 describe('compression extension helpers', () => {
 	it('detects every canonical extension and the legacy aliases', () => {
 		expect(detectCompression('a.lish.gz')).toBe('gzip');
