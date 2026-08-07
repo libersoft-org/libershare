@@ -3,6 +3,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { footerWidgets, getWidgetLabel } from '../../scripts/footerWidgets.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Table from '../../components/Table/Table.svelte';
@@ -52,11 +53,12 @@
 		{ keys: 'START + Y', action: $t('help.actions.reload') },
 	]);
 
-	// Row Y positions: back = 0, keyboard rows start at 1, mouse rows follow, gamepad rows follow.
+	// Row Y positions: back = 0, keyboard rows start at 1, mouse rows follow, then gamepad, then footer widgets.
 	let keyboardStartY = 1;
 	let mouseStartY = $derived(keyboardStartY + keyboardBindings.length);
 	let gamepadStartY = $derived(mouseStartY + mouseBindings.length);
-	let lastRowY = $derived(gamepadStartY + gamepadBindings.length - 1);
+	let footerWidgetStartY = $derived(gamepadStartY + gamepadBindings.length);
+	let lastRowY = $derived(footerWidgetStartY + footerWidgets.length - 1);
 
 	createNavArea(() => ({
 		areaID,
@@ -148,6 +150,17 @@
 					<TableRow position={[0, gamepadStartY + i]}>
 						<TableCell><span class="keys">{b.keys}</span></TableCell>
 						<TableCell>{b.action}</TableCell>
+					</TableRow>
+				{/each}
+			</Table>
+		</div>
+		<div class="heading">{$t('help.footerWidgets.title')}</div>
+		<div class="bindings">
+			<Table columns="30vh 1fr">
+				{#each footerWidgets as widget, i}
+					<TableRow position={[0, footerWidgetStartY + i]}>
+						<TableCell>{getWidgetLabel(widget, $t)}</TableCell>
+						<TableCell>{$t('help.footerWidgets.' + widget)}</TableCell>
 					</TableRow>
 				{/each}
 			</Table>

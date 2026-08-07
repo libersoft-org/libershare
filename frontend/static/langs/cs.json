@@ -603,6 +603,22 @@
 			"volumeDown": "Snížit hlasitost",
 			"reload": "Obnovit stránku",
 			"typeAhead": "Rychlé vyhledávání v seznamu"
+		},
+		"footerWidgets": {
+			"title": "Widgety v patičce",
+			"version": "Verze spuštěné aplikace.",
+			"peerId": "Vaše ID účastníka. Horní řádek je jeho prvních 11 znaků, spodní řádek posledních 11.",
+			"download": "Nahoře: počet účastníků, od kterých právě stahujete. Dole: celková rychlost stahování všech souborů.",
+			"upload": "Nahoře: počet účastníků, kteří právě stahují od vás. Dole: celková rychlost odesílání všech souborů.",
+			"relay": "Provoz cizích účastníků procházející přes váš uzel. Nahoře: otevřené tunely / rezervovaná místa. Dole: rychlost předávaných dat v obou směrech dohromady.",
+			"cpu": "Zatížení procesoru tohoto počítače. Plný pruh znamená 100 %.",
+			"ram": "Využitá a celková paměť tohoto počítače, pruh ukazuje, kolik je zabráno.",
+			"storage": "Zaplněné a celkové místo na disku, na kterém máte složku pro stahování, pruh ukazuje, kolik je zabráno.",
+			"lishStatus": "Nahoře: LISH sítě s alespoň jedním účastníkem / všechny připojené sítě. Dole: celkový počet účastníků ve všech těchto sítích. Barva ikony sítě ukazuje stav mesh sítě, po najetí myší se zobrazí jeho název.",
+			"gamepad": "Zelená tečka znamená připojený ovladač, červená žádný.",
+			"connection": "Sloupce signálu síťového připojení a pod nimi jeho síla, u kabelu místo toho Připojeno / Odpojeno.",
+			"volume": "Hlasitost systému v procentech. Pomlčka znamená, že není k dispozici žádné zvukové zařízení.",
+			"clock": "Aktuální čas ve 12 nebo 24hodinovém formátu, se sekundami nebo bez nich podle nastavení aplikace."
 		}
 	},
 	"about": {
