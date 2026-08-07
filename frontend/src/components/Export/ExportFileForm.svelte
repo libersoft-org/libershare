@@ -52,7 +52,9 @@
 	// user rewrote by hand is left alone.
 	function updateFileExtension(): void {
 		const ext = '.' + extension;
-		const base = stripCompressionExtension(filePath);
+		// The export writes the trimmed path, so match on the trimmed one — otherwise a
+		// stray trailing space hides the extension and the file is compressed without a suffix.
+		const base = stripCompressionExtension(filePath.trim());
 		if (!base.endsWith(ext)) return;
 		filePath = compress ? base + compressionExtension(compressionAlgorithm) : base;
 	}

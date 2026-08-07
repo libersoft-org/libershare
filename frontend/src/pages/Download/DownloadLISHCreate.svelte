@@ -157,7 +157,9 @@
 	// Keep the compression suffix of the .lish file name in sync with the switch and the
 	// chosen algorithm. A name the user rewrote to something else is left untouched.
 	function updateLISHFileExtension(): void {
-		const base = stripCompressionExtension(lishFile);
+		// Match on the trimmed name — a stray trailing space would hide the extension and
+		// the file would be compressed without a suffix, so no import could detect it.
+		const base = stripCompressionExtension(lishFile.trim());
 		if (!base.endsWith('.lish')) return;
 		lishFile = compress ? base + compressionExtension(compressionAlgorithm) : base;
 	}
