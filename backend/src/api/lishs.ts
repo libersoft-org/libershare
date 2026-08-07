@@ -1,5 +1,5 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, sanitizeFilename, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, sanitizeFilename, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
@@ -237,7 +237,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			try {
 				const fileStat = await stat(lishFilePath);
 				if (fileStat.isDirectory()) {
-					const ext = compress ? '.lish.gz' : '.lish';
+					const ext = compress ? '.lish' + compressionExtension(compressionAlgorithm) : '.lish';
 					let candidate = join(lishFilePath, lish.id + ext);
 					// Handle unlikely collision: append numeric suffix
 					let suffix = 1;
