@@ -113,6 +113,12 @@
 	.bindings {
 		font-size: 1.8vh;
 	}
+
+	/* Table cells wrap with word-break: break-all, which chops sentences mid-word — undo it for prose. */
+	.description {
+		word-break: normal;
+		overflow-wrap: break-word;
+	}
 </style>
 
 <div class="help">
@@ -160,7 +166,7 @@
 				{#each footerWidgets as widget, i}
 					<TableRow position={[0, footerWidgetStartY + i]}>
 						<TableCell>{getWidgetLabel(widget, $t)}</TableCell>
-						<TableCell>{$t('help.footerWidgets.' + widget)}</TableCell>
+						<TableCell wrap><span class="description">{$t('help.footerWidgets.' + widget)}</span></TableCell>
 					</TableRow>
 				{/each}
 			</Table>
