@@ -16,7 +16,9 @@ describe('settings program mode', () => {
 		try {
 			const settings = await Settings.create(dir);
 			expect(settings.get('system.programMode')).toBe('app');
-			expect(settings.getDefaults().system.programMode).toBe('app');
+			// The default must reach disk too, otherwise a fresh install has no stored mode.
+			const onDisk = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'));
+			expect(onDisk.system.programMode).toBe('app');
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
