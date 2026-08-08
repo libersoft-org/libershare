@@ -1,5 +1,5 @@
 import { dlopen, FFIType, ptr, read, toArrayBuffer, type Pointer } from 'bun:ffi';
-import type { NetAddress, NetInterfaceInfo, NetMedium, NetLink, NetAddressMode, NetWifiInfo } from '@shared';
+import type { NetAddress, NetInterfaceInfo, NetIPv4Config, NetMedium, NetLink, NetAddressMode, NetWifiInfo } from '@shared';
 
 /**
  * Windows host network state.
@@ -16,13 +16,28 @@ import type { NetAddress, NetInterfaceInfo, NetMedium, NetLink, NetAddressMode, 
  *    is no PowerShell cmdlet that reports signal quality, and `netsh wlan show
  *    interfaces` only prints a localized text table.
  *
- * Nothing here mutates configuration — every call is a query.
+ * Reading never mutates anything. Applying an IPv4 configuration goes through a
+ * second, separate one-shot ({@link windowsApplyIPv4Command}) built only from
+ * values the shared validator has already accepted.
+ *
+ * Wi-Fi on Windows is READ-ONLY here. Scanning and joining need either
+ * WlanScan/WlanGetAvailableNetworkList/WlanConnect over this FFI surface or the
+ * localized text tables of `netsh wlan`, and neither can be exercised on any
+ * machine available to this project — every host reachable from it is wired.
+ * Writing that blind would ship an unverified join path, so the capability is
+ * reported as false and the UI does not offer it.
  */
 
 // NDIS_PHYSICAL_MEDIUM values we can map with confidence (ntddndis.h). Anything
 // else (tunnels, WAN miniports, Hyper-V switches, Bluetooth PAN) stays 'other'.
 const NDIS_MEDIUM_NATIVE_802_11 = 9;
 const NDIS_MEDIUM_802_3 = 14;
+// NdisPhysicalMediumUnspecified. Very common on virtual NICs, so it means "the
+// driver did not say", never "not a real adapter".
+const NDIS_MEDIUM_UNSPECIFIED = 0;
+// IANA ifType (RFC 1213): 6 ethernetCsmacd, 71 ieee80211.
+const IF_TYPE_ETHERNET = 6;
+const IF_TYPE_IEEE80211 = 71;
 // MediaConnectionState (Get-NetAdapter): 0 Unknown, 1 Connected, 2 Disconnected.
 const MEDIA_STATE_CONNECTED = 1;
 const MEDIA_STATE_DISCONNECTED = 2;
@@ -43,7 +58,7 @@ const DHCP_ENABLED = 1;
  * because Windows PowerShell serializes an empty array inside a calculated
  * property as `{}` and a one-element array as a bare string.
  */
-export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', "$adapters = @(Get-NetAdapter -IncludeHidden | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='State';e={[int]$_.MediaConnectionState}})", "$addresses = @(Get-NetIPAddress | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}})", "$interfaces = @(Get-NetIPInterface | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; interfaces=$interfaces; routes=$routes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
+export const WINDOWS_STATE_COMMAND: string = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', "$adapters = @(Get-NetAdapter -IncludeHidden | Select-Object ifIndex, Name, InterfaceGuid, MacAddress, @{n='Media';e={[int]$_.NdisPhysicalMedium}}, @{n='IfType';e={[int]$_.InterfaceType}}, @{n='Hidden';e={[int]$_.Hidden}}, @{n='State';e={[int]$_.MediaConnectionState}})", "$addresses = @(Get-NetIPAddress | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, IPAddress, PrefixLength, @{n='State';e={[int]$_.AddressState}})", "$interfaces = @(Get-NetIPInterface | Select-Object ifIndex, @{n='Family';e={[int]$_.AddressFamily}}, @{n='Dhcp';e={[int]$_.Dhcp}})", "$routes = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object ifIndex, NextHop, RouteMetric, InterfaceMetric)", "$dns = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object InterfaceIndex, @{n='Servers';e={($_.ServerAddresses -join ',')}})", '[pscustomobject]@{adapters=$adapters; addresses=$addresses; interfaces=$interfaces; routes=$routes; dns=$dns} | ConvertTo-Json -Depth 6 -Compress'].join('; ');
 
 interface WindowsAdapterRow {
 	ifIndex: number;
@@ -51,6 +66,10 @@ interface WindowsAdapterRow {
 	InterfaceGuid: string;
 	MacAddress: string;
 	Media: number;
+	/** IANA interface type. Optional so a document captured before this field existed still parses. */
+	IfType?: number;
+	/** 1 when Windows hides the adapter from the network UI (miniports, tunnels). */
+	Hidden?: number;
 	State: number;
 }
 interface WindowsAddressRow {
@@ -92,9 +111,27 @@ function isUnusableAddress(address: string): boolean {
 	return address.startsWith('169.254.') || address.startsWith('127.') || address === '::1';
 }
 
-function mapMedium(media: number): NetMedium {
+/**
+ * Decide the medium of a Windows adapter.
+ *
+ * `NdisPhysicalMedium` is authoritative when the driver fills it in, but a great
+ * many do not: every VirtIO, Hyper-V and VMware NIC reports
+ * NdisPhysicalMediumUnspecified (0), which used to make a virtual machine report
+ * its only Ethernet card as `other` — and so made the footer widget say "state
+ * unknown" on a host that was plainly plugged in.
+ *
+ * The fallback is the IANA interface type, which those drivers do fill in
+ * correctly, restricted to adapters Windows does not hide. That restriction is
+ * what keeps the WFP/WAN miniports out: they are ethernetCsmacd too, but they are
+ * all `Hidden`, while real NICs are not.
+ */
+function mapMedium(media: number, ifType: number = 0, hidden: number = 0): NetMedium {
 	if (media === NDIS_MEDIUM_802_3) return 'wired';
 	if (media === NDIS_MEDIUM_NATIVE_802_11) return 'wireless';
+	if (media === NDIS_MEDIUM_UNSPECIFIED && hidden === 0) {
+		if (ifType === IF_TYPE_ETHERNET) return 'wired';
+		if (ifType === IF_TYPE_IEEE80211) return 'wireless';
+	}
 	return 'other';
 }
 
@@ -171,7 +208,7 @@ export function parseWindowsNetworkState(json: string, wifi: Map<string, NetWifi
 	const seen = new Set<number>();
 	for (const adapter of adapters) {
 		seen.add(adapter.ifIndex);
-		result.push(buildInterface(adapter.ifIndex, adapter.Name, mapMedium(adapter.Media), mapLink(adapter.State), adapter.MacAddress, adapter.InterfaceGuid ? normalizeGuid(adapter.InterfaceGuid) : null));
+		result.push(buildInterface(adapter.ifIndex, adapter.Name, mapMedium(adapter.Media, adapter.IfType, adapter.Hidden), mapLink(adapter.State), adapter.MacAddress, adapter.InterfaceGuid ? normalizeGuid(adapter.InterfaceGuid) : null));
 	}
 	// Addressed stacks with no adapter row (RAS/VPN) — keep them, medium unknown.
 	for (const ifIndex of addressesByIndex.keys()) {
@@ -373,4 +410,44 @@ export function readWindowsWifi(): Map<string, NetWifiInfo> {
 			api!.WlanFreeMemory(data);
 		}
 	}
+}
+
+/**
+ * Canonical braced GUID — the shape {@link normalizeGuid} produces and the only
+ * thing ever interpolated into a PowerShell script. Anything else is rejected
+ * before a child process is spawned.
+ */
+const GUID_PATTERN = /^\{[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\}$/i;
+
+/** True when an interface id is a well-formed adapter GUID. */
+export function isWindowsInterfaceID(id: string): boolean {
+	return GUID_PATTERN.test(id);
+}
+
+/**
+ * Build the PowerShell one-shot that applies an IPv4 configuration.
+ *
+ * The interface is resolved by GUID rather than by name because `netsh` and the
+ * `-InterfaceAlias` parameters take a localized, user-renameable string, while
+ * the GUID is what the reader already reports as the interface id.
+ *
+ * The existing address and default route are removed first so a repeated apply
+ * cannot stack a second address on the adapter — `New-NetIPAddress` adds, it does
+ * not replace. Both removals tolerate "there was nothing there", which is the
+ * normal state of an adapter currently on DHCP.
+ *
+ * Every interpolated value has been through the shared validator, so each one is
+ * a dotted-quad literal, a small integer, or a GUID. No quoting rule protects
+ * this string — the validation does.
+ */
+export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): string {
+	const steps = ['[Console]::OutputEncoding=[System.Text.Encoding]::UTF8', '$ErrorActionPreference = "Stop"', `$adapter = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceGuid -eq '${guid}' }`, 'if (-not $adapter) { throw "interface not found" }', '$i = $adapter.ifIndex', 'Remove-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue', "Remove-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue"];
+	if (config.mode === 'dhcp') {
+		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Enabled', 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
+	} else {
+		const gateway = config.gateway ? ` -DefaultGateway ${config.gateway}` : '';
+		const dns = config.dns ?? [];
+		steps.push('Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled', `New-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -IPAddress ${config.address} -PrefixLength ${config.prefixLength}${gateway} | Out-Null`, dns.length > 0 ? `Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses ${dns.join(',')}` : 'Set-DnsClientServerAddress -InterfaceIndex $i -ResetServerAddresses');
+	}
+	return steps.join('; ');
 }

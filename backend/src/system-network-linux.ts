@@ -1,18 +1,21 @@
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
-import type { NetAddress, NetInterfaceInfo, NetLink, NetWifiInfo } from '@shared';
+import type { NetAddress, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
 
 const execFileAsync = promisify(execFile);
 
 /**
  * Linux host network state, read entirely through `ip -j` (iproute2's JSON
- * output) plus two sysfs/procfs reads. Nothing here mutates configuration.
+ * output) plus two sysfs/procfs reads.
  *
- * `ip` is used rather than a stack-specific tool because it reports the kernel's
- * actual state — the same answer whether the box is driven by ifupdown,
- * systemd-networkd, NetworkManager or netplan. Detecting the owning stack only
- * matters for WRITING config, which this module deliberately does not do.
+ * `ip` is used for READING rather than a stack-specific tool because it reports
+ * the kernel's actual state — the same answer whether the box is driven by
+ * ifupdown, systemd-networkd, NetworkManager or netplan.
+ *
+ * WRITING is the opposite: it has to go through the stack that owns the device,
+ * so the apply half of this module speaks nmcli and refuses to act on a host
+ * NetworkManager does not run. See {@link isLinuxWritable}.
  */
 
 /** Hard cap on how long any `ip`/`iw` child process may run before we give up. */
@@ -58,6 +61,8 @@ export interface LinuxNetworkSources {
 	iwLinks?: Map<string, string>;
 	/** Resolver addresses from /etc/resolv.conf. Attributed to the default-route interface only. */
 	resolvers?: string[];
+	/** Per-interface resolvers as NetworkManager sees them. Preferred over {@link resolvers} when present. */
+	nmDns?: Map<string, string[]> | undefined;
 }
 
 /**
@@ -171,11 +176,13 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			addresses,
 			ipv4Mode,
 			gateway: entry.ifname === defaultDev ? (best?.gateway ?? null) : null,
-			// ponytail: /etc/resolv.conf is the system-wide resolver list, so it is
-			// attributed to the interface that actually reaches it (the default
-			// route). Per-link attribution needs resolvectl and only exists on
-			// systemd-resolved hosts.
-			dns: entry.ifname === defaultDev ? (sources.resolvers ?? []) : [],
+			// NetworkManager knows the resolvers PER LINK, which is the only correct
+			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
+			// 127.0.0.53 stub, so reporting it would show every machine the same
+			// fictional nameserver — and would contradict the servers the user had
+			// just set. Only when NM is absent do we fall back to resolv.conf, which
+			// is system-wide and so is attributed to the default-route interface.
+			dns: sources.nmDns?.get(entry.ifname) ?? (entry.ifname === defaultDev ? (sources.resolvers ?? []) : []),
 		};
 		if (wireless) {
 			const iw = sources.iwLinks?.get(entry.ifname);
@@ -188,11 +195,11 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 }
 
 /** Run the first candidate binary that exists, returning stdout. Throws when every candidate is missing or exits non-zero. */
-async function runFirst(candidates: string[], args: string[]): Promise<string> {
+async function runFirst(candidates: string[], args: string[], timeoutMs: number = EXEC_TIMEOUT_MS): Promise<string> {
 	let lastError: unknown = new Error(`no candidate found for ${args.join(' ')}`);
 	for (const bin of candidates) {
 		try {
-			const { stdout } = await execFileAsync(bin, args, { timeout: EXEC_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 });
+			const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 });
 			return stdout;
 		} catch (err) {
 			lastError = err;
@@ -236,5 +243,198 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 			// rather than being guessed from anything else.
 		}
 	}
-	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, resolvers: readResolvers() });
+	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, resolvers: readResolvers(), nmDns: await readNetworkManagerDns() });
+}
+
+/**
+ * Writing configuration, unlike reading it, must go through the stack that owns
+ * the device — an `ip addr add` would be silently reverted by whatever daemon is
+ * in charge. NetworkManager is the only stack supported here: it drives every
+ * desktop distribution the app targets, and it is the only one that persists a
+ * change and reapplies it after a reboot through a single command.
+ *
+ * A host running systemd-networkd, ifupdown or netplan reports `ipv4: false` and
+ * the UI keeps the read-only view rather than offering an edit that would not stick.
+ */
+const NMCLI_CANDIDATES = ['/usr/bin/nmcli', '/bin/nmcli', 'nmcli'];
+/** Reconfiguring an interface renegotiates DHCP and can rebuild routes, which is far slower than a read. */
+const APPLY_TIMEOUT_MS = 45000;
+/** A rescan has to wait for the radio to sweep every channel. */
+const WIFI_SCAN_TIMEOUT_MS = 30000;
+
+/**
+ * Split one `nmcli -t` output line into fields.
+ *
+ * Terse mode separates with `:` and backslash-escapes any `:` or backslash inside
+ * a value, so a naive `split(':')` tears apart every SSID containing a colon and
+ * every IPv6 address. Values are unescaped as they are split.
+ */
+export function splitNmcliFields(line: string): string[] {
+	const fields: string[] = [];
+	let current = '';
+	for (let i = 0; i < line.length; i++) {
+		const char = line[i];
+		if (char === '\\' && i + 1 < line.length) {
+			current += line[++i];
+			continue;
+		}
+		if (char === ':') {
+			fields.push(current);
+			current = '';
+			continue;
+		}
+		current += char;
+	}
+	fields.push(current);
+	return fields;
+}
+
+/** True when NetworkManager is installed and running, so configuration can actually be written. */
+export async function isLinuxWritable(): Promise<boolean> {
+	try {
+		return (await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'RUNNING', 'general'])).trim().startsWith('running');
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Per-interface resolvers from `nmcli -t -f GENERAL.DEVICE,IP4.DNS device show`.
+ *
+ * Returns undefined — not an empty map — when NetworkManager is absent or fails,
+ * so the caller can tell "NM says this link has no resolvers" apart from "there
+ * is no NM to ask" and fall back to /etc/resolv.conf only in the latter case.
+ */
+async function readNetworkManagerDns(): Promise<Map<string, string[]> | undefined> {
+	try {
+		return parseNmcliDns(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,IP4.DNS', 'device', 'show']));
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Parse the per-device blocks of `nmcli -t -f GENERAL.DEVICE,IP4.DNS device show`.
+ *
+ * Output is one blank-line-separated block per device: a `GENERAL.DEVICE` line
+ * followed by zero or more `IP4.DNS[n]` lines. A device with no resolvers still
+ * gets an entry (an empty array), which is what lets the caller distinguish it
+ * from a device NetworkManager does not manage at all.
+ */
+export function parseNmcliDns(text: string): Map<string, string[]> {
+	const result = new Map<string, string[]>();
+	let device: string | null = null;
+	for (const line of text.split('\n')) {
+		const fields = splitNmcliFields(line.trim());
+		const key = fields[0];
+		if (!key) continue;
+		if (key === 'GENERAL.DEVICE') {
+			device = fields[1] ?? null;
+			if (device) result.set(device, []);
+		} else if (device && key.startsWith('IP4.DNS')) {
+			if (fields[1]) result.get(device)?.push(fields[1]);
+		}
+	}
+	return result;
+}
+
+/**
+ * Name of the NetworkManager profile currently active on a device.
+ *
+ * Modifying the active profile (rather than creating a new one) is what makes an
+ * edit idempotent: applying twice leaves one profile, not two competing ones.
+ */
+async function activeConnection(device: string): Promise<string | null> {
+	const out = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'NAME,DEVICE', 'connection', 'show', '--active']);
+	for (const line of out.split('\n')) {
+		if (!line.trim()) continue;
+		const fields = splitNmcliFields(line);
+		if (fields[1] === device) return fields[0] ?? null;
+	}
+	return null;
+}
+
+/**
+ * Build the `nmcli connection modify` arguments for a desired IPv4 config.
+ *
+ * Switching to DHCP clears the manual fields explicitly: NetworkManager keeps a
+ * stale `ipv4.addresses` on a profile whose method changed, and that address
+ * comes back the moment the user switches to static again.
+ */
+export function nmcliModifyArgs(connection: string, config: NetIPv4Config): string[] {
+	const base = ['connection', 'modify', connection];
+	if (config.mode === 'dhcp') return [...base, 'ipv4.method', 'auto', 'ipv4.addresses', '', 'ipv4.gateway', '', 'ipv4.dns', '', 'ipv4.ignore-auto-dns', 'no'];
+	const dns = config.dns ?? [];
+	return [
+		...base,
+		'ipv4.method',
+		'manual',
+		'ipv4.addresses',
+		`${config.address}/${config.prefixLength}`,
+		'ipv4.gateway',
+		config.gateway ?? '',
+		'ipv4.dns',
+		dns.join(','),
+		// Without this a static profile still merges resolvers handed out by any
+		// other active connection, so the user's DNS choice silently does nothing.
+		'ipv4.ignore-auto-dns',
+		dns.length > 0 ? 'yes' : 'no',
+	];
+}
+
+/** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
+export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Promise<void> {
+	const connection = await activeConnection(device);
+	if (!connection) throw new Error(`no NetworkManager profile is active on ${device}`);
+	await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connection, config), APPLY_TIMEOUT_MS);
+	// `connection up` re-applies the edited profile in place. The device drops for
+	// a moment either way — that is inherent to changing an address, not to this.
+	await runFirst(NMCLI_CANDIDATES, ['connection', 'up', connection], APPLY_TIMEOUT_MS);
+}
+
+/**
+ * Parse `nmcli -t -f SSID,SIGNAL,SECURITY,IN-USE device wifi list`.
+ *
+ * Hidden networks report an empty SSID and are dropped: they cannot be joined by
+ * name, so offering an unnamed row would be offering something that fails.
+ * Duplicates (one row per access point for a roaming network) collapse to the strongest.
+ */
+export function parseNmcliWifiList(text: string): NetWifiNetwork[] {
+	const best = new Map<string, NetWifiNetwork>();
+	for (const line of text.split('\n')) {
+		if (!line.trim()) continue;
+		const [ssid, signal, security, inUse] = splitNmcliFields(line);
+		if (!ssid) continue;
+		const parsed = signal ? parseInt(signal, 10) : NaN;
+		const entry: NetWifiNetwork = {
+			ssid,
+			signal: Number.isFinite(parsed) ? Math.min(100, Math.max(0, parsed)) : null,
+			// nmcli leaves SECURITY empty for an open network and prints the key
+			// management (WPA2, WPA3, WEP, 802.1X) otherwise.
+			secured: !!security?.trim(),
+			active: inUse?.trim() === '*',
+		};
+		const previous = best.get(ssid);
+		if (!previous || (entry.signal ?? -1) > (previous.signal ?? -1)) best.set(ssid, previous ? { ...entry, active: previous.active || entry.active } : entry);
+	}
+	return [...best.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
+}
+
+/** Scan for Wi-Fi networks reachable from one device. */
+export async function scanLinuxWifi(device: string): Promise<NetWifiNetwork[]> {
+	return parseNmcliWifiList(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'SSID,SIGNAL,SECURITY,IN-USE', 'device', 'wifi', 'list', 'ifname', device, '--rescan', 'yes'], WIFI_SCAN_TIMEOUT_MS));
+}
+
+/**
+ * Join a Wi-Fi network.
+ *
+ * `device wifi connect` reuses a saved profile when one exists and creates one
+ * otherwise, so the same call covers both "reconnect to a known network" and
+ * "join a new one with a password". The password is passed as a separate argv
+ * entry — never interpolated into a command line — so no quoting rule applies to it.
+ */
+export async function connectLinuxWifi(device: string, ssid: string, password: string): Promise<void> {
+	const args = ['device', 'wifi', 'connect', ssid, 'ifname', device];
+	if (password) args.push('password', password);
+	await runFirst(NMCLI_CANDIDATES, args, APPLY_TIMEOUT_MS);
 }

@@ -1,11 +1,11 @@
 import os from 'os';
 import { statfs } from 'fs/promises';
 import { readFileSync } from 'fs';
-import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type NetworkStateInfo, CodedError, ErrorCodes } from '@shared';
+import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { readNetworkState } from '../system-network.ts';
+import { applyIPv4, connectWifi, readNetworkState, scanWifi } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -28,6 +28,9 @@ interface SystemHandlers {
 	setVolume: (p: { volume: number }) => Promise<{ success: boolean; available: boolean }>;
 	getVolume: () => Promise<{ volume: number | null; available: boolean }>;
 	network: () => Promise<NetworkStateInfo>;
+	networkApply: (p: { interfaceID: string; config: NetIPv4Config }) => Promise<NetworkStateInfo>;
+	wifiScan: (p: { interfaceID: string }) => Promise<NetWifiNetwork[]>;
+	wifiConnect: (p: { interfaceID: string; ssid: string; password?: string }) => Promise<NetworkStateInfo>;
 	startPolling: () => void;
 	stopPolling: () => void;
 }
@@ -247,6 +250,34 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return readNetworkState(settings.get('network.primaryInterface') ?? '');
 	}
 
+	/**
+	 * Apply an IPv4 configuration and answer with the state that resulted.
+	 *
+	 * The fresh state is read here rather than left to the next poll tick because
+	 * the caller has just changed the very interface it is watching and needs to
+	 * see the outcome — including the case where the address did not take.
+	 */
+	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config }): Promise<NetworkStateInfo> {
+		assert(p, ['interfaceID', 'config']);
+		await applyIPv4(p.interfaceID, p.config);
+		const state = await getNetworkState();
+		broadcast('system:network', state);
+		return state;
+	}
+
+	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {
+		assert(p, ['interfaceID']);
+		return await scanWifi(p.interfaceID);
+	}
+
+	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; password?: string }): Promise<NetworkStateInfo> {
+		assert(p, ['interfaceID', 'ssid']);
+		await connectWifi(p.interfaceID, p.ssid, p.password ?? '');
+		const state = await getNetworkState();
+		broadcast('system:network', state);
+		return state;
+	}
+
 	let networkTick = 0;
 	// A Windows read takes 1.4-1.8 s, so it is deliberately not awaited on the
 	// broadcast path — a slow read simply skips ticks until it settles.
@@ -305,5 +336,5 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		}
 	}
 
-	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, network: getNetworkState, startPolling, stopPolling };
+	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, network: getNetworkState, networkApply: applyNetworkConfig, wifiScan: scanWifiNetworks, wifiConnect: joinWifiNetwork, startPolling, stopPolling };
 }

@@ -7,7 +7,7 @@ function iface(overrides: Partial<NetInterfaceInfo> & { id: string }): NetInterf
 }
 
 function state(interfaces: NetInterfaceInfo[], overrides: Partial<NetworkStateInfo> = {}): NetworkStateInfo {
-	return { interfaces, primaryID: interfaces.find(i => i.defaultRoute)?.id ?? null, detail: 'full', known: true, ...overrides };
+	return { interfaces, primaryID: interfaces.find(i => i.defaultRoute)?.id ?? null, detail: 'full', known: true, capabilities: { ipv4: false, wifi: false }, ...overrides };
 }
 
 describe('deriveConnectionStatus', () => {
@@ -43,7 +43,7 @@ describe('deriveConnectionStatus', () => {
 
 	it('falls back to the default route when the user pick no longer exists', () => {
 		const interfaces = [iface({ id: 'wan', name: 'Ethernet', defaultRoute: true })];
-		const result = deriveConnectionStatus({ interfaces, primaryID: 'wan', detail: 'full', known: true });
+		const result = deriveConnectionStatus(state(interfaces, { primaryID: 'wan' }));
 		expect(result).toMatchObject({ kind: 'wired', interfaceName: 'Ethernet' });
 	});
 
@@ -53,13 +53,13 @@ describe('deriveConnectionStatus', () => {
 	});
 
 	it('reports unknown before the first read settles', () => {
-		const result = deriveConnectionStatus({ interfaces: [], primaryID: null, detail: 'full', known: false });
+		const result = deriveConnectionStatus(state([], { known: false }));
 		expect(result).toEqual({ kind: 'unknown', connected: false, signal: null, ssid: null, interfaceName: null });
 	});
 
 	it('reports unknown on a platform that only knows addresses', () => {
 		const interfaces = [iface({ id: 'en0', name: 'en0', medium: 'other', link: 'unknown' })];
-		const result = deriveConnectionStatus({ interfaces, primaryID: 'en0', detail: 'addressesOnly', known: true });
+		const result = deriveConnectionStatus(state(interfaces, { primaryID: 'en0', detail: 'addressesOnly' }));
 		expect(result).toMatchObject({ kind: 'unknown', connected: false, interfaceName: 'en0' });
 	});
 
@@ -67,7 +67,7 @@ describe('deriveConnectionStatus', () => {
 		// macOS and the degraded fallback report no default route at all, so `none`
 		// would render a perfectly connected machine as "Disconnected".
 		const interfaces = [iface({ id: 'en0', name: 'en0', medium: 'other', link: 'unknown', addresses: [{ family: 'ipv4', address: '192.0.2.2', prefixLength: 24 }] })];
-		const result = deriveConnectionStatus({ interfaces, primaryID: null, detail: 'addressesOnly', known: true });
+		const result = deriveConnectionStatus(state(interfaces, { primaryID: null, detail: 'addressesOnly' }));
 		expect(result.kind).toBe('unknown');
 	});
 
