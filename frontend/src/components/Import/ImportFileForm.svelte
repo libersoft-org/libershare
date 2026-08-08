@@ -63,6 +63,10 @@
 	async function handleFileSelected(e: Event): Promise<void> {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
+		// Cleared immediately: the picker fires no change event when the same file
+		// is chosen twice in a row, so after a failed upload or a failed parse the
+		// user could not retry with that file at all.
+		input.value = '';
 		if (!file) return;
 		// Picking a second file abandons the first one on the backend's disk.
 		if (uploadPath) void api.fs.delete(uploadPath).catch(() => {});
