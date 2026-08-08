@@ -51,11 +51,13 @@
 	// but only for paths that still end with the form's own extension — a name the
 	// user rewrote by hand is left alone.
 	function updateFileExtension(): void {
-		const ext = '.' + extension;
+		const ext = '.' + extension.toLowerCase();
 		// The export writes the trimmed path, so match on the trimmed one — otherwise a
 		// stray trailing space hides the extension and the file is compressed without a suffix.
 		const base = stripCompressionExtension(filePath.trim());
-		if (!base.endsWith(ext)) return;
+		// Case-insensitive, like stripCompressionExtension — otherwise "REPORT.LISH.GZ" keeps
+		// its .GZ suffix while brotli bytes are written under it and no import can read it back.
+		if (!base.toLowerCase().endsWith(ext)) return;
 		filePath = compress ? base + compressionExtension(compressionAlgorithm) : base;
 	}
 

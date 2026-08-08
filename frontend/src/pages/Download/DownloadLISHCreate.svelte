@@ -160,7 +160,9 @@
 		// Match on the trimmed name — a stray trailing space would hide the extension and
 		// the file would be compressed without a suffix, so no import could detect it.
 		const base = stripCompressionExtension(lishFile.trim());
-		if (!base.endsWith('.lish')) return;
+		// Case-insensitive, like stripCompressionExtension — otherwise "REPORT.LISH.GZ" keeps
+		// its .GZ suffix while brotli bytes are written under it and no import can read it back.
+		if (!base.toLowerCase().endsWith('.lish')) return;
 		lishFile = compress ? base + compressionExtension(compressionAlgorithm) : base;
 	}
 
