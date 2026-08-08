@@ -1,5 +1,5 @@
 <script lang="ts" generics="TData">
-	import { type Snippet } from 'svelte';
+	import { onDestroy, type Snippet } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -90,6 +90,14 @@
 	function toggleUploadMode(): void {
 		uploadMode = !uploadMode;
 	}
+
+	// Leaving the form after picking a file but before importing it — Back, a
+	// mode switch followed by a path import, any navigation away — would strand
+	// the uploaded copy on the backend's disk. The sweep only runs on the next
+	// upload, which on a node that imports twice a year is effectively never.
+	onDestroy(() => {
+		if (uploadPath) void api.fs.delete(uploadPath).catch(() => {});
+	});
 
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
