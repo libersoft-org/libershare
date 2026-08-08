@@ -294,7 +294,8 @@
 		"uploadFromLocal": "Nahrát z lokálního počítače",
 		"selectLocalFile": "Vybrat lokální soubor",
 		"uploadRequired": "Vyberte soubor k nahrání",
-		"importing": "Importuji ..."
+		"importing": "Importuji ...",
+		"uploading": "Nahrávám soubor ..."
 	},
 	"settings": {
 		"title": "Nastavení",

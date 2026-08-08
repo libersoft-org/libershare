@@ -294,7 +294,8 @@
 		"uploadFromLocal": "Upload from local computer",
 		"selectLocalFile": "Select local file",
 		"uploadRequired": "Please select a file to upload",
-		"importing": "Importing ..."
+		"importing": "Importing ...",
+		"uploading": "Uploading file ..."
 	},
 	"settings": {
 		"title": "Settings",

@@ -37,6 +37,34 @@ function getStatusURL(): string {
 	return parsed.toString();
 }
 
+function getUploadURL(name: string): string {
+	const parsed = new URL(apiURL);
+	parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
+	parsed.pathname = '/upload';
+	parsed.search = '';
+	parsed.searchParams.set('name', name);
+	if (backendToken) parsed.searchParams.set('token', backendToken);
+	return parsed.toString();
+}
+
+/**
+ * Send a locally picked file to the backend over plain HTTP and return the temp
+ * path it landed in. The bytes cross the wire once and raw; pushing them through
+ * the WebSocket instead would mean base64 inside a single frame, which caps an
+ * import at a fraction of the file sizes this handles.
+ */
+export async function uploadImportFile(file: File): Promise<string> {
+	const response = await fetch(getUploadURL(file.name), { method: 'POST', body: file });
+	const data = await response.json().catch(() => undefined);
+	if (response.ok && data?.path) return data.path as string;
+	// Keep the shape translateError() expects, so an upload failure reads like
+	// any other backend error instead of a raw HTTP status.
+	const error = new Error(data?.error ?? `HTTP ${response.status}`);
+	(error as any).code = data?.error ?? 'HTTP_ERROR';
+	(error as any).detail = data?.errorDetail ?? String(response.status);
+	throw error;
+}
+
 export const apiURL = getAPIURL();
 export const connected = writable(false);
 export const backendConnectionStatus = writable<BackendConnectionStatus>('connecting');

@@ -22,12 +22,6 @@
 		return await api.identity.parseFromFile(path);
 	}
 
-	async function parseJSON(content: string): Promise<IdentityBackup> {
-		const cur = await api.identity.get();
-		currentPeerID = cur.peerID;
-		return await api.identity.parseFromJSON(content);
-	}
-
 	function handleConfirmDone(): void {
 		onImport?.();
 		onBack?.();
@@ -35,7 +29,7 @@
 	}
 </script>
 
-<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={withCompressionExtensions(['*.lishid', '*.json'])} fileFilterName={'LISHID ' + $t('common.extensions')} {parseFile} {parseJSON} onConfirmDone={handleConfirmDone}>
+<ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageBackupPath} fileFilter={withCompressionExtensions(['*.lishid', '*.json'])} fileFilterName={'LISHID ' + $t('common.extensions')} {parseFile} onConfirmDone={handleConfirmDone}>
 	{#snippet confirm({ data, onDone })}
 		<SettingsIdentityImportConfirm data={data as IdentityBackup} {currentPeerID} {position} {onDone} />
 	{/snippet}

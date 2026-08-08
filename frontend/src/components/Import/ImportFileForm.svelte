@@ -6,9 +6,9 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { localFilesystem } from '../../scripts/localFilesystem.ts';
-	import { isCompressed } from '@shared';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
+	import { uploadImportFile } from '../../scripts/ws-client.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -32,7 +32,6 @@
 		fileFilterName: string;
 		filePathLabel?: string | undefined;
 		parseFile: (path: string) => Promise<TData>;
-		parseJSON: (content: string) => Promise<TData>;
 		downloadPath?: string | undefined;
 		downloadPathLabel?: string | undefined;
 		validate?: (() => string | null) | undefined;
@@ -40,16 +39,18 @@
 		onConfirmDone: () => void;
 	}
 
-	let { areaID, position = LAYOUT.content, onBack, defaultDirectory, fileFilter, fileFilterName, filePathLabel, parseFile, parseJSON, downloadPath = $bindable(), downloadPathLabel, validate, confirm, onConfirmDone }: Props = $props();
+	let { areaID, position = LAYOUT.content, onBack, defaultDirectory, fileFilter, fileFilterName, filePathLabel, parseFile, downloadPath = $bindable(), downloadPathLabel, validate, confirm, onConfirmDone }: Props = $props();
 
 	let filePath = $state('');
 	let uploadMode = $state(false);
 	let uploadFileName = $state('');
-	let uploadContent = $state('');
+	/** Path of the uploaded file in the backend's temp directory, empty until one is picked. */
+	let uploadPath = $state('');
 	let fileInput = $state<HTMLInputElement>();
 	let errorMessage = $state('');
 	let parsedData = $state<TData | null>(null);
-	let importing = $state(false);
+	/** Label shown in the blocking dialog, empty while nothing is running. */
+	let busyLabel = $state('');
 
 	const showDownloadPath = $derived(downloadPath !== undefined);
 	const effectiveFilePathLabel = $derived(filePathLabel ?? $t('common.file'));
@@ -59,33 +60,23 @@
 		fileInput?.click();
 	}
 
-	/** Base64 of the file content, via FileReader so large uploads do not blow the call stack. */
-	function readAsBase64(file: File): Promise<string> {
-		return new Promise((resolve, reject) => {
-			const reader = new FileReader();
-			reader.onload = () => {
-				const dataURL = String(reader.result);
-				resolve(dataURL.slice(dataURL.indexOf(',') + 1));
-			};
-			reader.onerror = () => reject(reader.error);
-			reader.readAsDataURL(file);
-		});
-	}
-
 	async function handleFileSelected(e: Event): Promise<void> {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
 		uploadFileName = file.name;
 		errorMessage = '';
+		busyLabel = $t('import.uploading');
 		try {
-			// Decompression belongs to the backend — the browser only knows gzip and deflate,
-			// so a .br or .zst upload could never be handled here.
-			if (isCompressed(file.name)) uploadContent = await api.fs.decompressText(await readAsBase64(file), file.name);
-			else uploadContent = await file.text();
+			// The file goes to the backend as-is and is parsed there from its path.
+			// Reading it here would also mean decompressing it here, and the browser
+			// only knows gzip and deflate — a .br or .zst upload has no chance.
+			uploadPath = await uploadImportFile(file);
 		} catch (err) {
 			errorMessage = translateError(err);
-			uploadContent = '';
+			uploadPath = '';
+		} finally {
+			busyLabel = '';
 		}
 	}
 
@@ -96,7 +87,7 @@
 	async function handleImport(): Promise<void> {
 		errorMessage = '';
 		if (uploadMode) {
-			if (!uploadContent.trim()) {
+			if (!uploadPath) {
 				errorMessage = $t('import.uploadRequired');
 				return;
 			}
@@ -118,12 +109,20 @@
 			}
 		}
 		try {
-			importing = true;
-			parsedData = uploadMode ? await parseJSON(uploadContent) : await parseFile(filePath);
+			busyLabel = $t('import.importing');
+			parsedData = await parseFile(uploadMode ? uploadPath : filePath);
 		} catch (e) {
 			errorMessage = translateError(e);
 		} finally {
-			importing = false;
+			busyLabel = '';
+			// The parsed data lives in memory from here on, so the temp copy is done
+			// either way. Dropping it on failure too means a bad file cannot linger.
+			if (uploadMode && uploadPath) {
+				const uploaded = uploadPath;
+				uploadPath = '';
+				uploadFileName = '';
+				void api.fs.delete(uploaded).catch(() => {});
+			}
 		}
 	}
 
@@ -245,11 +244,11 @@
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>
 	</div>
-	{#if importing}
+	{#if busyLabel}
 		<Dialog title={$t('common.import')}>
 			<div class="loading">
 				<Spinner size="8vh" />
-				<div class="loading-label">{$t('import.importing')}</div>
+				<div class="loading-label">{busyLabel}</div>
 			</div>
 		</Dialog>
 	{/if}
