@@ -30,5 +30,9 @@ export async function initNetworkState(): Promise<void> {
 		networkState.set(await api.call<NetworkStateInfo>('system.network'));
 	} catch (error) {
 		console.error('[NetworkState] Error loading network state:', error);
+		// The snapshot we still hold predates a backend restart or a failed read, so
+		// it may describe a machine state that no longer exists. Fall back to
+		// "unknown" rather than keep presenting it as current.
+		networkState.update(state => ({ ...state, known: false }));
 	}
 }
