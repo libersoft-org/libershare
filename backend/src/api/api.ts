@@ -274,6 +274,11 @@ export class APIServer {
 		const serverConfig: Parameters<typeof Bun.serve<ClientData>>[0] = {
 			port: this.port,
 			hostname: this.host,
+			// Upper bound on an uploaded import file. Bun's default happens to be
+			// the same 128 MiB, but it is stated here because it is the ceiling the
+			// client checks against before it starts sending — an import larger
+			// than one API message could not be answered anyway.
+			maxRequestBodySize: MAX_API_MESSAGE_SIZE,
 			fetch(req, server): Response | Promise<Response> | undefined {
 				const url = new URL(req.url);
 				// Liveness probe used by docker-compose healthcheck and external

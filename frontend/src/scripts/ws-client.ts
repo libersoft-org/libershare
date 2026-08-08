@@ -1,5 +1,5 @@
 import { get, writable } from 'svelte/store';
-import { WsClient } from '@shared';
+import { WsClient, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, formatBytes } from '@shared';
 import { addNotification } from './notifications.ts';
 import { tt } from './language.ts';
 import { getAPIURL } from './api-url.ts';
@@ -54,9 +54,14 @@ function getUploadURL(name: string): string {
  * import at a fraction of the file sizes this handles.
  */
 export async function uploadImportFile(file: File): Promise<string> {
+	// Checked before sending: the backend rejects an oversized body by resetting
+	// the connection, which surfaces as an unreadable network error rather than
+	// as the size problem it actually is.
+	if (file.size > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
 	const response = await fetch(getUploadURL(file.name), { method: 'POST', body: file });
 	const data = await response.json().catch(() => undefined);
 	if (response.ok && data?.path) return data.path as string;
+	if (response.status === 413) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
 	// Keep the shape translateError() expects, so an upload failure reads like
 	// any other backend error instead of a raw HTTP status.
 	const error = new Error(data?.error ?? `HTTP ${response.status}`);
