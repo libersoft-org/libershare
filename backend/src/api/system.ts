@@ -1,14 +1,21 @@
 import os from 'os';
 import { statfs } from 'fs/promises';
 import { readFileSync } from 'fs';
-import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, CodedError, ErrorCodes } from '@shared';
+import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type NetworkStateInfo, CodedError, ErrorCodes } from '@shared';
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
+import { readNetworkState } from '../system-network.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
 const POLL_INTERVAL_MS = 5000;
+/**
+ * Broadcast the network state on every Nth poll tick (5 s × 2 = 10 s). A read
+ * costs a PowerShell spawn on Windows and link state does not change faster than
+ * a user notices, so the slower cadence is deliberate.
+ */
+const NETWORK_POLL_EVERY_N_TICKS = 2;
 /** A single CPU-times sample: accumulated idle ticks and total ticks across all cores. */
 interface ICpuSample {
 	idle: number;
@@ -20,6 +27,7 @@ interface SystemHandlers {
 	cpu: () => SystemCPUInfo;
 	setVolume: (p: { volume: number }) => Promise<{ success: boolean; available: boolean }>;
 	getVolume: () => Promise<{ volume: number | null; available: boolean }>;
+	network: () => Promise<NetworkStateInfo>;
 	startPolling: () => void;
 	stopPolling: () => void;
 }
@@ -234,6 +242,16 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return { used: total - free, total };
 	}
 
+	/** Live host network state, with the user's primary-interface preference applied. */
+	function getNetworkState(): Promise<NetworkStateInfo> {
+		return readNetworkState(settings.get('network.primaryInterface') ?? '');
+	}
+
+	let networkTick = 0;
+	// A Windows read takes ~700 ms, so it is deliberately not awaited on the
+	// broadcast path — a slow read simply skips ticks until it settles.
+	let networkReadInFlight = false;
+
 	function startPolling(): void {
 		if (pollInterval) return;
 		pollInterval = setInterval(async () => {
@@ -243,6 +261,15 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 				try {
 					broadcast('system:storage', await getStorageInfo());
 				} catch {}
+			}
+			if (++networkTick % NETWORK_POLL_EVERY_N_TICKS === 0 && hasSubscribers('system:network') && !networkReadInFlight) {
+				networkReadInFlight = true;
+				void getNetworkState()
+					.then(state => broadcast('system:network', state))
+					.catch(() => {})
+					.finally(() => {
+						networkReadInFlight = false;
+					});
 			}
 			const volumeWanted = hasSubscribers('system:volumeChanged');
 			// Run the instant push monitor while a client listens and a device is
@@ -278,5 +305,5 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		}
 	}
 
-	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, startPolling, stopPolling };
+	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, network: getNetworkState, startPolling, stopPolling };
 }

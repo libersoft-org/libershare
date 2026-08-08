@@ -226,6 +226,7 @@ export class APIServer {
 			'system.cpu': _system.cpu,
 			'system.setVolume': _system.setVolume,
 			'system.getVolume': _system.getVolume,
+			'system.network': _system.network,
 			// Relay
 			'relay.stats': _relay.stats,
 		};

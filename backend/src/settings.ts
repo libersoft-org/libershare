@@ -58,6 +58,15 @@ export interface SettingsData {
 		 */
 		autoConnectNewNetworks: boolean;
 		announceAddresses: string[];
+		/**
+		 * Which host interface the UI treats as primary (its `id`: ifIndex on
+		 * Windows, device name elsewhere). Empty = follow the IPv4 default route.
+		 *
+		 * Display-only: it selects what the Settings screen highlights and what the
+		 * footer connection widget reports. It deliberately does NOT influence
+		 * libp2p announce or address filtering.
+		 */
+		primaryInterface: string;
 		mdnsEnabled: boolean;
 		mdnsInterval: number;
 		/**
@@ -185,6 +194,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		autoErrorRecovery: true,
 		autoConnectNewNetworks: true,
 		announceAddresses: [],
+		primaryInterface: '',
 		mdnsEnabled: true,
 		mdnsInterval: 30000,
 		// UPnP enabled by default so NAT'd nodes auto-open their port for reachability.
