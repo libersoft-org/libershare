@@ -197,6 +197,10 @@ export class ChunkDownloader {
 					// Another peer owns the pause — wait it out, then retry our retained buffer once.
 					await pauseController.waitIfWritePaused();
 					if (this.deps.isDestroyed() || this.deps.isDisabled()) return 'abort';
+					// A new holder can claim the pause between the drain and our wake-up (the
+					// resolvers only queue microtasks). Writing anyway would push bytes into files
+					// that ENOENT recovery is re-allocating and verifying — go back to waiting.
+					if (pauseController.writePaused) continue;
 					try {
 						await writeChunkToAllSlots(c, payload);
 						return 'written';
