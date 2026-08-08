@@ -7,7 +7,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
-import { CodedError, ErrorCodes, sanitizeFilename } from '@shared';
+import { CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, sanitizeFilename } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
@@ -297,6 +297,11 @@ export class APIServer {
 				return new Response('Expected WebSocket', { status: 400 });
 			},
 			websocket: {
+				// Bun's default is 16 MiB, and an oversized frame closes the socket
+				// with nothing the caller can read as an error. Must live inside the
+				// `websocket` object — at the top level of the config it type-checks
+				// and is then ignored at runtime.
+				maxPayloadLength: MAX_API_MESSAGE_SIZE,
 				open(ws): void {
 					self.clients.add(ws);
 					console.log(`[API] Client connected (${self.clients.size} total)`);

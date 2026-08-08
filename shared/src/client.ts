@@ -1,3 +1,7 @@
+import { CodedError, ErrorCodes } from './errors.ts';
+import { MAX_API_MESSAGE_SIZE } from './product.ts';
+import { formatBytes } from './utils.ts';
+
 type EventCallback = (data: any) => void;
 
 interface PendingRequest {
@@ -139,10 +143,16 @@ export class WsClient {
 	async call<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
 		await this.ensureConnected();
 		const id = crypto.randomUUID();
-		const request = { id, method, params };
+		const request = JSON.stringify({ id, method, params });
+		// The server closes the socket outright on an oversized frame, and the
+		// caller only ever sees "disconnected" — so refuse here and hand back a
+		// real error code. The check counts UTF-16 code units rather than UTF-8
+		// bytes: exact for the ASCII manifests and JSON this carries, and a frame
+		// that needs the difference to fit is already past any sane import.
+		if (request.length > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
 		return new Promise<T>((resolve, reject) => {
 			this.pendingRequests.set(id, { resolve, reject });
-			this.ws!.send(JSON.stringify(request));
+			this.ws!.send(request);
 		});
 	}
 

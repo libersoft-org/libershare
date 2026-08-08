@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import product from './product.json';
+import { productName, MAX_API_MESSAGE_SIZE } from './product.ts';
 
 const root = '/app/build';
 const port = Number(process.env['PORT'] ?? 6003);
@@ -151,6 +151,9 @@ Bun.serve({
 		});
 	},
 	websocket: {
+		// Match the backend's limit — otherwise this proxy is the one that quietly
+		// drops the connection on a large frame, before the backend ever sees it.
+		maxPayloadLength: MAX_API_MESSAGE_SIZE,
 		open(ws) {
 			connectUpstream(ws);
 		},
@@ -186,4 +189,4 @@ Bun.serve({
 });
 
 const protocol = tlsEnabled ? 'https' : 'http';
-console.log(`${product.name} frontend listening on ${protocol}://0.0.0.0:${port}`);
+console.log(`${productName} frontend listening on ${protocol}://0.0.0.0:${port}`);

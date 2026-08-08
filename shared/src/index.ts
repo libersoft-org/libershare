@@ -1,19 +1,8 @@
 // Product info
-export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL } from './product.ts';
+export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE } from './product.ts';
 
 // Utils
 export { formatBytes, parseBytes, sanitizeFilename } from './utils.ts';
-
-/**
- * Largest single WebSocket message the API accepts, in bytes. Bun defaults to
- * 16 MiB and drops the whole connection on a bigger frame, which reads as a
- * silent failure — so the backend sets this explicitly and the client refuses
- * to send anything larger with a real error instead.
- *
- * It doubles as the decompression output cap: a payload that could never travel
- * back over the API is not worth expanding in memory first.
- */
-export const MAX_API_MESSAGE_SIZE: number = 128 * 1024 * 1024;
 
 // Compression
 
