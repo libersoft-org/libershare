@@ -617,7 +617,7 @@
 			"lishStatus": "Top: LISH networks with at least one peer / all joined networks. Bottom: total number of peers across them. The colour of the network icon shows the mesh state, hover it for the exact name.",
 			"gamepad": "A green dot means a gamepad is connected, a red one means none is.",
 			"connection": "Signal bars of the network connection with its strength below, or Connected / Disconnected for a cable.",
-			"volume": "System volume in percent. A dash means no audio device is available.",
+			"volume": "System volume in percent. A dash means the volume is not known yet or no audio device is available.",
 			"clock": "Current time, shown in the 12 or 24-hour format and with or without seconds according to the application settings."
 		}
 	},
