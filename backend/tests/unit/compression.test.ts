@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { Utils } from '../../src/utils.ts';
 import { initFsHandlers } from '../../src/api/fs.ts';
-import { COMPRESSION_ALGORITHMS, compressionExtension, detectCompression, stripCompressionExtension, withCompressionExtensions, isCompressed, ErrorCodes } from '@shared';
+import { COMPRESSION_ALGORITHMS, compressionExtension, detectCompression, stripCompressionExtension, withCompressionExtensions, isCompressed, ErrorCodes, MAX_API_MESSAGE_SIZE } from '@shared';
 
 /** Mixed binary + UTF-8 payload — catches encoding-sensitive round-trip bugs. */
 function samplePayload(): Uint8Array<ArrayBuffer> {
@@ -54,6 +54,21 @@ describe('Utils.compress / Utils.decompress', () => {
 		expect(elapsedMs).toBeLessThan(5000);
 		expect(Array.from(Utils.decompress(compressed, 'brotli'))).toEqual(Array.from(raw));
 	});
+
+	for (const algorithm of COMPRESSION_ALGORITHMS) {
+		it(`${algorithm}: refuses to expand past the output cap`, () => {
+			// A few hundred bytes of compressed zeroes expand past the cap. Without
+			// the guard this allocation is what kills the process instead of the call.
+			const bomb = Utils.compress(new Uint8Array(MAX_API_MESSAGE_SIZE + 1024 * 1024) as Uint8Array<ArrayBuffer>, algorithm);
+			expect(bomb.length).toBeLessThan(1024 * 1024);
+			expect(() => Utils.decompress(bomb, algorithm)).toThrow(ErrorCodes.DECOMPRESSED_TOO_LARGE);
+		});
+
+		it(`${algorithm}: still decompresses a payload that fits`, () => {
+			const raw = new Uint8Array(4 * 1024 * 1024).fill(7) as Uint8Array<ArrayBuffer>;
+			expect(Utils.decompress(Utils.compress(raw, algorithm), algorithm).length).toBe(raw.length);
+		});
+	}
 
 	it('rejects an unsupported algorithm instead of silently passing data through', () => {
 		const data = samplePayload();

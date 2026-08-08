@@ -1,5 +1,5 @@
-import { brotliCompressSync, brotliDecompressSync, constants as zlibConstants } from 'node:zlib';
-import { type CompressionAlgorithm, detectCompression, CodedError, ErrorCodes } from '@shared';
+import { brotliCompressSync, brotliDecompressSync, gunzipSync, zstdDecompressSync, constants as zlibConstants } from 'node:zlib';
+import { type CompressionAlgorithm, detectCompression, formatBytes, CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE } from '@shared';
 
 /**
  * Brotli encoder quality. The library default is 11 (maximum), which costs about
@@ -67,17 +67,29 @@ export class Utils {
 	/**
 	 * Decompress data using the specified algorithm.
 	 * Single unified decompression point for the entire project.
+	 *
+	 * Output is capped at {@link MAX_API_MESSAGE_SIZE}: a small compressed file
+	 * can expand to gigabytes, and every caller here decompresses synchronously,
+	 * so an uncapped expansion is an out-of-memory kill rather than an error.
+	 * All three algorithms go through node:zlib because Bun's own
+	 * `gunzipSync` / `zstdDecompressSync` accept no options.
 	 */
 	static decompress(data: Uint8Array<ArrayBuffer>, algorithm: CompressionAlgorithm = 'gzip'): Uint8Array<ArrayBuffer> {
-		switch (algorithm) {
-			case 'gzip':
-				return Bun.gunzipSync(data);
-			case 'brotli':
-				return asBytes(brotliDecompressSync(data));
-			case 'zstd':
-				return asBytes(Bun.zstdDecompressSync(data));
-			default:
-				throw new CodedError(ErrorCodes.UNSUPPORTED_DECOMPRESSION, algorithm);
+		const options = { maxOutputLength: MAX_API_MESSAGE_SIZE };
+		try {
+			switch (algorithm) {
+				case 'gzip':
+					return asBytes(gunzipSync(data, options));
+				case 'brotli':
+					return asBytes(brotliDecompressSync(data, options));
+				case 'zstd':
+					return asBytes(zstdDecompressSync(data, options));
+				default:
+					throw new CodedError(ErrorCodes.UNSUPPORTED_DECOMPRESSION, algorithm);
+			}
+		} catch (err: any) {
+			if (err?.code === 'ERR_BUFFER_TOO_LARGE') throw new CodedError(ErrorCodes.DECOMPRESSED_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
+			throw err;
 		}
 	}
 

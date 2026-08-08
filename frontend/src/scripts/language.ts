@@ -156,6 +156,8 @@ const errorCodeKeys: Record<string, string> = {
 	MISSING_PARAMETER: 'common.errorMissingParameter',
 	UNSUPPORTED_COMPRESSION: 'common.errorUnsupportedCompression',
 	UNSUPPORTED_DECOMPRESSION: 'common.errorUnsupportedDecompression',
+	DECOMPRESSED_TOO_LARGE: 'common.errorDecompressedTooLarge',
+	MESSAGE_TOO_LARGE: 'common.errorMessageTooLarge',
 	HTTP_ERROR: 'common.errorHTTP',
 	INVALID_SIZE_FORMAT: 'common.errorInvalidSizeFormat',
 	// Filesystem (FileBrowser) → fileBrowser
