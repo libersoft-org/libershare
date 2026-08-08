@@ -309,7 +309,6 @@
 		"network": {
 			"title": "Síť",
 			"automatic": "Automaticky (výchozí trasa)",
-			"primaryInterface": "Hlavní rozhraní",
 			"dhcp": "DHCP",
 			"static": "Statická adresa",
 			"modeUnknown": "Neznámé nastavení adresy",

@@ -309,7 +309,6 @@
 		"network": {
 			"title": "Network",
 			"automatic": "Automatic (default route)",
-			"primaryInterface": "Primary interface",
 			"dhcp": "DHCP",
 			"static": "Static",
 			"modeUnknown": "Addressing unknown",
