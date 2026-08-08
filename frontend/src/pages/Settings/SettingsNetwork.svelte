@@ -113,44 +113,44 @@
 	<div class="settings">
 		<div class="container">
 			<div class="note">{editable ? $t('settings.network.editableNote') : $t('settings.network.readOnlyNote')}</div>
-		{#if $networkState.detail === 'addressesOnly'}
-			<div class="note">{$t('settings.network.detailLimited')}</div>
-		{/if}
-		<div role="group" data-mouse-activate-area={areaID}>
-			<SwitchRow label={$t('settings.network.automatic')} checked={$primaryInterface === ''} position={[0, 0]} onToggle={() => setPrimaryInterface('')} />
-		</div>
-		{#each interfaces as iface, index (iface.id)}
-			<div class="iface">
-				<div class="head">
-					<Icon img={iconFor(iface)} alt="" size="3vh" padding="0" colorVariable="--primary-foreground" />
-					<div role="group" data-mouse-activate-area={areaID} style="flex: 1 1 auto;">
-						<SwitchRow label="{iface.name} — {linkLabel(iface)}" checked={$primaryInterface === iface.id} position={[0, index + 1]} onToggle={() => pick(iface.id)} />
+			{#if $networkState.detail === 'addressesOnly'}
+				<div class="note">{$t('settings.network.detailLimited')}</div>
+			{/if}
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.network.automatic')} checked={$primaryInterface === ''} position={[0, 0]} onToggle={() => setPrimaryInterface('')} />
+			</div>
+			{#each interfaces as iface, index (iface.id)}
+				<div class="iface">
+					<div class="head">
+						<Icon img={iconFor(iface)} alt="" size="3vh" padding="0" colorVariable="--primary-foreground" />
+						<div role="group" data-mouse-activate-area={areaID} style="flex: 1 1 auto;">
+							<SwitchRow label="{iface.name} — {linkLabel(iface)}" checked={$primaryInterface === iface.id} position={[0, index + 1]} onToggle={() => pick(iface.id)} />
+						</div>
 					</div>
-				</div>
-				<div class="detail">
-					<span>{modeLabel(iface)}</span>
-					{#each iface.addresses as address (address.address)}
-						<span>{address.address}/{address.prefixLength}</span>
-					{/each}
-					{#if iface.gateway}<span>{$t('settings.network.gateway')}: {iface.gateway}</span>{/if}
-					{#if iface.dns.length > 0}<span>{$t('settings.network.dns')}: {iface.dns.join(', ')}</span>{/if}
-					{#if iface.wifi}
-						<span>{$t('settings.network.ssid')}: {iface.wifi.ssid ?? '—'}</span>
-						<span>{$t('settings.network.signal')}: {iface.wifi.signal !== null ? `${iface.wifi.signal}%` : '—'}</span>
+					<div class="detail">
+						<span>{modeLabel(iface)}</span>
+						{#each iface.addresses as address (address.address)}
+							<span>{address.address}/{address.prefixLength}</span>
+						{/each}
+						{#if iface.gateway}<span>{$t('settings.network.gateway')}: {iface.gateway}</span>{/if}
+						{#if iface.dns.length > 0}<span>{$t('settings.network.dns')}: {iface.dns.join(', ')}</span>{/if}
+						{#if iface.wifi}
+							<span>{$t('settings.network.ssid')}: {iface.wifi.ssid ?? '—'}</span>
+							<span>{$t('settings.network.signal')}: {iface.wifi.signal !== null ? `${iface.wifi.signal}%` : '—'}</span>
+						{/if}
+					</div>
+					{#if editable}
+						<div role="group" data-mouse-activate-area={areaID} class="configure">
+							<Button icon="/img/edit.svg" label={$t('settings.network.configure')} position={[1, index + 1]} onConfirm={() => (editing = iface.id)} />
+						</div>
 					{/if}
 				</div>
-				{#if editable}
-					<div role="group" data-mouse-activate-area={areaID} class="configure">
-						<Button icon="/img/edit.svg" label={$t('settings.network.configure')} position={[1, index + 1]} onConfirm={() => (editing = iface.id)} />
-					</div>
-				{/if}
-			</div>
-		{:else}
-			<!-- Only after a read has settled — before that the list is empty because
+			{:else}
+				<!-- Only after a read has settled — before that the list is empty because
 			     nothing has been asked yet, not because the host has no interfaces. -->
-			{#if $networkState.known}
-				<div class="note">{$t('settings.network.noInterfaces')}</div>
-			{/if}
+				{#if $networkState.known}
+					<div class="note">{$t('settings.network.noInterfaces')}</div>
+				{/if}
 			{/each}
 		</div>
 		<ButtonBar justify="center" basePosition={[0, interfaces.length + 1]}>
