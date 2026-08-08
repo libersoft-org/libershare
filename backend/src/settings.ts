@@ -59,7 +59,7 @@ export interface SettingsData {
 		autoConnectNewNetworks: boolean;
 		announceAddresses: string[];
 		/**
-		 * Which host interface the UI treats as primary (its `id`: ifIndex on
+		 * Which host interface the UI treats as primary (its `id`: adapter GUID on
 		 * Windows, device name elsewhere). Empty = follow the IPv4 default route.
 		 *
 		 * Display-only: it selects what the Settings screen highlights and what the
