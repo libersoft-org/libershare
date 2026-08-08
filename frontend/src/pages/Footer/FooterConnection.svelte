@@ -9,8 +9,14 @@
 	// Wired shows a cable icon, everything else the bar glyph. An unknown medium
 	// (tunnel as primary, or a platform that only reports addresses) uses the cable
 	// icon in a neutral colour so it does not read as a healthy connection.
-	let showBars = $derived(kind === 'wifi' || kind === 'wifiOff');
+	//
+	// Bars state a strength, so they are only drawn when one is known: an
+	// associated network whose quality the OS withholds would otherwise render as
+	// four empty bars, which reads as "no signal" — a measurement nobody took.
+	let signalUnknown = $derived(kind === 'wifi' && connected && signal === null);
+	let showBars = $derived((kind === 'wifi' || kind === 'wifiOff') && !signalUnknown);
 	let activeBars = $derived(kind === 'wifi' && signal !== null ? getActiveBars(signal, connected) : 0);
+	let icon = $derived(signalUnknown ? '/img/wifi.svg' : '/img/ethernet.svg');
 	let iconColor = $derived(kind === 'unknown' ? '--secondary-softer-background' : connected ? '--color-success' : '--color-error');
 	let label = $derived.by(() => {
 		if (kind === 'wifiOff') return $t('settings.footerWidgets.connectionWifiOff');
@@ -78,7 +84,7 @@
 <div class="connection">
 	<div class="icon">
 		{#if !showBars}
-			<Icon img="/img/ethernet.svg" alt={label} size="2.4vh" padding="0" colorVariable={iconColor} />
+			<Icon img={icon} alt={label} size="2.4vh" padding="0" colorVariable={iconColor} />
 		{:else}
 			<div class="wifi-bars">
 				{#each [0, 1, 2, 3] as barIndex}
