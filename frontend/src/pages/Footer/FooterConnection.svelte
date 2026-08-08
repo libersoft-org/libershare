@@ -28,6 +28,10 @@
 		if (signal !== null) return `${signal}%`;
 		return ssid ?? '—';
 	});
+	// The unknown state can only show the interface name (or a dash), which does
+	// not say why — the tooltip does, the same way the volume widget explains its
+	// own unavailable state.
+	let title = $derived(kind === 'unknown' ? $t('settings.footerWidgets.connectionUnknown') : undefined);
 </script>
 
 <style>
@@ -81,7 +85,7 @@
 	}
 </style>
 
-<div class="connection">
+<div class="connection" {title}>
 	<div class="icon">
 		{#if !showBars}
 			<Icon img={icon} alt={label} size="2.4vh" padding="0" colorVariable={iconColor} />
