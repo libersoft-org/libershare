@@ -17,7 +17,10 @@
 	let showBars = $derived((kind === 'wifi' || kind === 'wifiOff') && !signalUnknown);
 	let activeBars = $derived(kind === 'wifi' && signal !== null ? getActiveBars(signal, connected) : 0);
 	let icon = $derived(signalUnknown ? '/img/wifi.svg' : '/img/ethernet.svg');
-	let iconColor = $derived(kind === 'unknown' ? '--secondary-softer-background' : connected ? '--color-success' : '--color-error');
+	// Neutral only while the carrier state is genuinely unknown. A tunnel or bridge
+	// as primary still reports its link, and greying out a live VPN would understate
+	// a connection the OS confirmed.
+	let iconColor = $derived(kind === 'unknown' && !connected ? '--secondary-softer-background' : connected ? '--color-success' : '--color-error');
 	let label = $derived.by(() => {
 		if (kind === 'wifiOff') return $t('settings.footerWidgets.connectionWifiOff');
 		if (kind === 'unknown') return interfaceName ?? '—';
