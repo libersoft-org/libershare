@@ -392,7 +392,12 @@ export class APIServer {
 		const path = join(this.uploadDir, uploadFileName(url.searchParams.get('name') ?? 'upload'));
 		try {
 			await mkdir(this.uploadDir, { recursive: true });
-			await Bun.write(path, new Response(req.body));
+			// Streamed chunk by chunk so a large import never has to sit in memory
+			// as a whole. `Bun.write(path, new Response(req.body))` would read
+			// better but deadlocks on Bun 1.3.13 — measured, not guessed.
+			const writer = Bun.file(path).writer();
+			if (req.body) for await (const chunk of req.body) writer.write(chunk);
+			await writer.end();
 			console.log(`[API] Upload stored: ${path} (${Bun.file(path).size} bytes)`);
 			return this.jsonResponse({ path });
 		} catch (err: any) {
