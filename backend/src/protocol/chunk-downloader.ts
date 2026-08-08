@@ -433,16 +433,18 @@ export class ChunkDownloader {
 								break;
 							}
 							// Mark recovery in progress, pause all peer writes AND progress emissions.
-							// Everything below this line MUST run inside try/finally so destroy/disable
-							// during the 10s sleep can't leak pause state or the fileReallocInProgress flag.
+							// The pause is a holder COUNT, so a leaked hold never self-heals — it wedges
+							// every peer loop for the rest of this Downloader's life. Everything the
+							// finally undoes therefore has to be taken inside the try, including the
+							// onRetry callback: it is set by an outside caller and may throw.
 							this.fileReallocInProgress.add(-1);
-							pauseController.pauseWrites();
-							pauseController.pauseProgress();
-							progressReporter.resetLastFile();
-							console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${ChunkDownloader.MAX_FILE_REALLOC})`);
-							this.deps.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: downloadDir, retryCount: globalAttempts, maxRetries: ChunkDownloader.MAX_FILE_REALLOC });
 							let aborted = false;
 							try {
+								pauseController.pauseWrites();
+								pauseController.pauseProgress();
+								progressReporter.resetLastFile();
+								console.warn(`[DL] File deleted detected, pausing all transfers for 10s before recovery (attempt ${globalAttempts}/${ChunkDownloader.MAX_FILE_REALLOC})`);
+								this.deps.onRetry?.({ errorCode: ErrorCodes.IO_NOT_FOUND, errorDetail: downloadDir, retryCount: globalAttempts, maxRetries: ChunkDownloader.MAX_FILE_REALLOC });
 								// FE shows retrying badge during the 10s pause — no progress override
 								// 10s delay — let the user finish deleting files before we scan
 								await new Promise<void>(resolve => {

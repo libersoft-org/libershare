@@ -1438,7 +1438,7 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 			emitAllocProgress: () => {},
 		};
 
-		return { cd: new ChunkDownloader(deps), client, ds, retries, errors, chunkID, data };
+		return { cd: new ChunkDownloader(deps), client, ds, retries, errors, chunkID, data, pauseController, deps };
 	}
 
 	it('write fails once → retries from the SAME buffer, no second network request', async () => {
@@ -1453,6 +1453,21 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(h.retries.some(r => !r.resolved)).toBe(true); // FE got a retry notification
 		expect(h.retries.some(r => r.resolved)).toBe(true); // …and a resolved one
 		expect(h.errors).toHaveLength(0);
+	});
+
+	it('onRetry throws while taking the recovery pause → hold is released, not leaked', async () => {
+		const h = harness(0);
+		// The write pause is a holder count, so a hold leaked by a throwing callback would
+		// never self-heal — every later peer loop would block on it for this Downloader's life.
+		h.ds.writeChunkOutcomes = [Object.assign(new Error('ENOENT'), { code: 'ENOENT' })];
+		h.deps.onRetry = () => {
+			throw new Error('callback blew up');
+		};
+		await h.cd.run();
+
+		expect((h.pauseController as unknown as { writePauseHolders: number })['writePauseHolders']).toBe(0);
+		expect(h.pauseController.writePaused).toBe(false);
+		expect(h.pauseController.progressPaused).toBe(false);
 	});
 
 	it('write fails several times → buffer held across all retries, still one fetch', async () => {
