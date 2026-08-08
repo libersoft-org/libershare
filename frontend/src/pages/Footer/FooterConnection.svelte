@@ -1,18 +1,26 @@
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
-	import { type ConnectionType, getActiveBars, getBarColor } from '../../scripts/footerWidgets.ts';
+	import { getActiveBars, getBarColor } from '../../scripts/footerWidgets.ts';
+	import type { ConnectionStatus } from '@shared';
 	import Icon from '../../components/Icon/Icon.svelte';
-	interface Props {
-		type: ConnectionType;
-		connected: boolean;
-		signal?: number; // 0-100 for wifi, ignored for ethernet
-	}
-	const { type = 'ethernet', connected = false, signal = 0 }: Props = $props();
-	let activeBars = $derived(type === 'ethernet' ? (connected ? 4 : 0) : getActiveBars(signal, connected));
+	/** The projected {@link ConnectionStatus}, spread by the Footer. Never synthesized. */
+	type Props = ConnectionStatus;
+	const { kind = 'unknown', connected = false, signal = null, ssid = null, interfaceName = null }: Props = $props();
+	// Wired shows a cable icon, everything else the bar glyph. An unknown medium
+	// (tunnel as primary, or a platform that only reports addresses) uses the cable
+	// icon in a neutral colour so it does not read as a healthy connection.
+	let showBars = $derived(kind === 'wifi' || kind === 'wifiOff');
+	let activeBars = $derived(kind === 'wifi' && signal !== null ? getActiveBars(signal, connected) : 0);
+	let iconColor = $derived(kind === 'unknown' ? '--secondary-softer-background' : connected ? '--color-success' : '--color-error');
 	let label = $derived.by(() => {
+		if (kind === 'wifiOff') return $t('settings.footerWidgets.connectionWifiOff');
+		if (kind === 'unknown') return interfaceName ?? '—';
 		if (!connected) return $t('common.disconnected');
-		if (type === 'ethernet') return $t('common.connected');
-		return `${signal}%`;
+		if (kind === 'wired') return $t('common.connected');
+		// Associated Wi-Fi: a real quality reading, or the network name when the OS
+		// (or a missing tool) withholds it. Never a fabricated percentage.
+		if (signal !== null) return `${signal}%`;
+		return ssid ?? '—';
 	});
 </script>
 
@@ -69,8 +77,8 @@
 
 <div class="connection">
 	<div class="icon">
-		{#if type === 'ethernet'}
-			<Icon img="/img/ethernet.svg" alt={label} size="2.4vh" padding="0" colorVariable={connected ? '--color-success' : '--color-error'} />
+		{#if !showBars}
+			<Icon img="/img/ethernet.svg" alt={label} size="2.4vh" padding="0" colorVariable={iconColor} />
 		{:else}
 			<div class="wifi-bars">
 				{#each [0, 1, 2, 3] as barIndex}
