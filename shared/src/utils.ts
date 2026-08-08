@@ -1,5 +1,5 @@
 import { CodedError, ErrorCodes } from './errors.ts';
-import type { ConnectionStatus, NetInterfaceInfo, NetworkStateInfo } from './index.ts';
+import type { ConnectionStatus, NetInterfaceInfo, NetIPv4Config, NetworkStateInfo } from './index.ts';
 
 export function formatBytes(bytes: number, decimals: number = 2): string {
 	if (bytes === 0) return '0 Bytes';
@@ -67,6 +67,44 @@ export function deriveConnectionStatus(state: NetworkStateInfo): ConnectionStatu
 export function isSelectableInterface(iface: NetInterfaceInfo): boolean {
 	if (iface.medium !== 'other' || iface.defaultRoute) return true;
 	return iface.addresses.some(a => !a.address.toLowerCase().startsWith('fe80') && !a.address.startsWith('169.254.'));
+}
+
+/** True for a dotted-quad IPv4 literal: four octets, 0-255, no leading zeros. */
+export function isIPv4(value: string): boolean {
+	const parts = value.split('.');
+	if (parts.length !== 4) return false;
+	return parts.every(part => /^(0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255);
+}
+
+/**
+ * Validate a desired IPv4 configuration. Returns the name of the offending field,
+ * or null when the whole config is usable.
+ *
+ * The strictness here is a security boundary rather than politeness: on Windows
+ * these values are interpolated into a PowerShell script, so anything that is not
+ * a plain IPv4 literal or a small integer must never get that far. Callers on
+ * every platform validate before touching a child process.
+ */
+export function validateIPv4Config(config: NetIPv4Config): string | null {
+	if (config.mode !== 'dhcp' && config.mode !== 'static') return 'mode';
+	for (const server of config.dns ?? []) if (!isIPv4(server)) return 'dns';
+	if (config.mode === 'dhcp') return null;
+	if (!config.address || !isIPv4(config.address)) return 'address';
+	if (!Number.isInteger(config.prefixLength) || (config.prefixLength as number) < 1 || (config.prefixLength as number) > 32) return 'prefixLength';
+	// An interface on an isolated segment legitimately has no gateway, so only a
+	// present-but-malformed value is an error.
+	if (config.gateway && !isIPv4(config.gateway)) return 'gateway';
+	return null;
+}
+
+/**
+ * True for an SSID the 802.11 standard can actually carry: 1-32 octets once
+ * encoded as UTF-8. Length is counted in bytes, not characters, because a
+ * 20-character name with accents already exceeds the field.
+ */
+export function isValidSSID(ssid: string): boolean {
+	const length = new TextEncoder().encode(ssid).length;
+	return length >= 1 && length <= 32;
 }
 
 // Sanitize filename - remove invalid characters and normalize spaces
