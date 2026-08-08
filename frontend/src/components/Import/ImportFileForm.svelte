@@ -51,6 +51,8 @@
 	let parsedData = $state<TData | null>(null);
 	/** Label shown in the blocking dialog, empty while nothing is running. */
 	let busyLabel = $state('');
+	/** Set once the form is gone, so an upload that finishes later cleans up after itself. */
+	let destroyed = false;
 
 	const showDownloadPath = $derived(downloadPath !== undefined);
 	const effectiveFilePathLabel = $derived(filePathLabel ?? $t('common.file'));
@@ -78,7 +80,11 @@
 			// The file goes to the backend as-is and is parsed there from its path.
 			// Reading it here would also mean decompressing it here, and the browser
 			// only knows gzip and deflate — a .br or .zst upload has no chance.
-			uploadPath = await uploadImportFile(file);
+			const path = await uploadImportFile(file);
+			// The form can be closed mid-upload; the file that lands afterwards has
+			// nobody left to import or delete it, so drop it here instead.
+			if (destroyed) void api.fs.delete(path).catch(() => {});
+			else uploadPath = path;
 		} catch (err) {
 			errorMessage = translateError(err);
 			uploadFileName = '';
@@ -96,6 +102,7 @@
 	// the uploaded copy on the backend's disk. The sweep only runs on the next
 	// upload, which on a node that imports twice a year is effectively never.
 	onDestroy(() => {
+		destroyed = true;
 		if (uploadPath) void api.fs.delete(uploadPath).catch(() => {});
 	});
 
