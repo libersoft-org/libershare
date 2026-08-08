@@ -25,9 +25,10 @@ const execFileAsync = promisify(execFile);
 /** Hard cap on how long the PowerShell one-shot may run. */
 const WINDOWS_TIMEOUT_MS = 15000;
 /**
- * How long a successful read is reused. A Windows read costs one ~700 ms
- * PowerShell spawn, and the poll broadcasts every 10 s, so this keeps a client
- * opening the settings screen right after a tick from paying for a second spawn.
+ * How long a successful read is reused. A Windows read costs one PowerShell
+ * spawn (measured 1.4-1.8 s on a 31-adapter workstation), and the poll
+ * broadcasts every 10 s, so this keeps a client opening the settings screen
+ * right after a tick from paying for a second spawn.
  */
 const CACHE_TTL_MS = 5000;
 

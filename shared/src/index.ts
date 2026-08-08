@@ -356,7 +356,7 @@ export interface NetWifiInfo {
 
 /** One network interface of the host, as reported by the OS. */
 export interface NetInterfaceInfo {
-	/** Stable key used by settings + the widget. Windows: ifIndex. Linux/macOS: device name. */
+	/** Stable key used by settings + the widget. Windows: adapter GUID. Linux/macOS: device name. */
 	id: string;
 	/** OS friendly name, already localized by the OS — display only, never matched against. */
 	name: string;
