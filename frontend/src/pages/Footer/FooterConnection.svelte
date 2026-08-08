@@ -6,8 +6,8 @@
 	/** The projected {@link ConnectionStatus}, spread by the Footer. Never synthesized. */
 	type Props = ConnectionStatus;
 	const { kind = 'unknown', connected = false, signal = null, ssid = null, interfaceName = null }: Props = $props();
-	// Wi-Fi gets the bar glyph, everything else (cable, tunnel, unknown medium) the
-	// cable icon.
+	// Wi-Fi gets the bar glyph, a cable its own icon, an unclassified medium the
+	// generic network one.
 	//
 	// Bars state a strength, so they are only drawn when one is known: an
 	// associated network whose quality the OS withholds would otherwise render as
@@ -15,7 +15,10 @@
 	let signalUnknown = $derived(kind === 'wifi' && connected && signal === null);
 	let showBars = $derived((kind === 'wifi' || kind === 'wifiOff') && !signalUnknown);
 	let activeBars = $derived(kind === 'wifi' && signal !== null ? getActiveBars(signal, connected) : 0);
-	let icon = $derived(signalUnknown ? '/img/wifi.svg' : '/img/ethernet.svg');
+	// A cable icon is itself a claim about the medium, so an unknown one gets the
+	// generic network glyph — the same icon the settings screen uses for a medium
+	// it could not classify.
+	let icon = $derived(kind === 'unknown' ? '/img/network.svg' : signalUnknown ? '/img/wifi.svg' : '/img/ethernet.svg');
 	// Neutral only while the carrier state is genuinely unknown. A tunnel or bridge
 	// as primary still reports its link, and greying out a live VPN would understate
 	// a connection the OS confirmed.
