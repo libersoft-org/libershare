@@ -1,5 +1,5 @@
 import { type ServerWebSocket } from 'bun';
-import { mkdir } from 'fs/promises';
+import { mkdir, readdir, stat, unlink } from 'fs/promises';
 import { rmSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
@@ -56,6 +56,9 @@ export function handleHealthProbe(req: globalThis.Request): Response | null {
 
 /** Longest original file name kept in a temp upload name, so a pathological name cannot blow the OS limit. */
 const MAX_UPLOAD_NAME_LENGTH = 100;
+
+/** How long an uploaded file that was never imported is kept before it is swept. */
+const UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
 
 /**
  * Temp file name for an uploaded import file. The random prefix keeps concurrent
@@ -388,6 +391,27 @@ export class APIServer {
 	}
 
 	/**
+	 * Drop uploads nobody ever imported. The client removes its own temp file once
+	 * the import is parsed, but a closed tab, a refresh or a lost response leaves
+	 * one behind — and on a node that runs for months the startup wipe alone would
+	 * let those pile up until the disk is full. Runs on each upload rather than on
+	 * a timer, because uploads are the only thing that creates them. Never throws:
+	 * a failed sweep must not fail the upload it was making room for.
+	 */
+	private async sweepUploads(): Promise<void> {
+		const cutoff = Date.now() - UPLOAD_MAX_AGE_MS;
+		try {
+			for (const name of await readdir(this.uploadDir)) {
+				const path = join(this.uploadDir, name);
+				// A file still being uploaded has a current mtime, so it is never swept.
+				try {
+					if ((await stat(path)).mtimeMs < cutoff) await unlink(path);
+				} catch {}
+			}
+		} catch {}
+	}
+
+	/**
 	 * Accept one import file over plain HTTP and land it in a temp file under the
 	 * data directory. The client then imports it through the existing
 	 * `*.parseFromFile` handlers, so the file crosses the wire once instead of
@@ -397,6 +421,7 @@ export class APIServer {
 		const path = join(this.uploadDir, uploadFileName(url.searchParams.get('name') ?? 'upload'));
 		try {
 			await mkdir(this.uploadDir, { recursive: true });
+			await this.sweepUploads();
 			const writer = Bun.file(path).writer();
 			try {
 				// Streamed chunk by chunk so a large import never has to sit in
