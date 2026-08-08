@@ -1,5 +1,13 @@
-import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
+import { brotliCompressSync, brotliDecompressSync, constants as zlibConstants } from 'node:zlib';
 import { type CompressionAlgorithm, detectCompression, CodedError, ErrorCodes } from '@shared';
+
+/**
+ * Brotli encoder quality. The library default is 11 (maximum), which costs about
+ * 100x the CPU of quality 5 for roughly 20% smaller output — and since every
+ * compression call here is synchronous, that time is the whole backend frozen.
+ * Quality only affects the encoder; any quality decodes with the same reader.
+ */
+const BROTLI_QUALITY = 5;
 
 /** Re-view a Buffer / Uint8Array as a plain `Uint8Array<ArrayBuffer>` without copying. */
 function asBytes(data: Uint8Array): Uint8Array<ArrayBuffer> {
@@ -48,7 +56,7 @@ export class Utils {
 			case 'gzip':
 				return Bun.gzipSync(data);
 			case 'brotli':
-				return asBytes(brotliCompressSync(data));
+				return asBytes(brotliCompressSync(data, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: data.byteLength } }));
 			case 'zstd':
 				return asBytes(Bun.zstdCompressSync(data));
 			default:

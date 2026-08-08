@@ -44,6 +44,17 @@ describe('Utils.compress / Utils.decompress', () => {
 		});
 	}
 
+	it('compresses brotli fast enough not to freeze the backend', () => {
+		// Every compression call here is synchronous. At the library default quality (11)
+		// this payload takes tens of seconds; the ceiling keeps that regression out.
+		const raw = new TextEncoder().encode(JSON.stringify(Array.from({ length: 120000 }, (_, i) => ({ i, h: i.toString(16).padStart(64, 'a') })))) as Uint8Array<ArrayBuffer>;
+		const started = Bun.nanoseconds();
+		const compressed = Utils.compress(raw, 'brotli');
+		const elapsedMs = (Bun.nanoseconds() - started) / 1e6;
+		expect(elapsedMs).toBeLessThan(5000);
+		expect(Array.from(Utils.decompress(compressed, 'brotli'))).toEqual(Array.from(raw));
+	});
+
 	it('rejects an unsupported algorithm instead of silently passing data through', () => {
 		const data = samplePayload();
 		expect(() => Utils.compress(data, 'bzip2' as any)).toThrow(ErrorCodes.UNSUPPORTED_COMPRESSION);
