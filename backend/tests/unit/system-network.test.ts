@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { ptr, type Pointer } from 'bun:ffi';
 import { parseWindowsNetworkState, readConnectionAttributes, WINDOWS_STATE_COMMAND } from '../../src/system-network-windows.ts';
 import { dbmToQuality, parseIwLink, parseLinuxNetworkState } from '../../src/system-network-linux.ts';
-import { prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache } from '../../src/system-network.ts';
+import { assertReadProducedSomething, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache } from '../../src/system-network.ts';
 import type { NetInterfaceInfo } from '@shared';
 
 /**
@@ -322,6 +322,21 @@ describe('resolvePrimaryID', () => {
 
 	it('reports nothing when there is no default route either', () => {
 		expect(resolvePrimaryID([list[0]!], '')).toBeNull();
+	});
+});
+
+describe('assertReadProducedSomething', () => {
+	const list: NetInterfaceInfo[] = [{ id: 'a', name: 'a', medium: 'wired', link: 'up', defaultRoute: true, mac: null, addresses: [], ipv4Mode: 'unknown', gateway: null, dns: [] }];
+
+	it('passes a non-empty read straight through', () => {
+		expect(assertReadProducedSomething(list)).toBe(list);
+	});
+
+	it('rejects an empty read so it degrades to addresses-only instead of claiming "disconnected"', () => {
+		// PowerShell emits a well-formed document with empty collections when a
+		// Get-Net* cmdlet fails non-terminatingly, which would otherwise be reported
+		// as full detail with no interfaces — and render as a confident Disconnected.
+		expect(() => assertReadProducedSomething([])).toThrow();
 	});
 });
 

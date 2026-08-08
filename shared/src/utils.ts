@@ -1,5 +1,5 @@
 import { CodedError, ErrorCodes } from './errors.ts';
-import type { ConnectionStatus, NetworkStateInfo } from './index.ts';
+import type { ConnectionStatus, NetInterfaceInfo, NetworkStateInfo } from './index.ts';
 
 export function formatBytes(bytes: number, decimals: number = 2): string {
 	if (bytes === 0) return '0 Bytes';
@@ -52,6 +52,21 @@ export function deriveConnectionStatus(state: NetworkStateInfo): ConnectionStatu
 	}
 	if (primary.link === 'unknown' || primary.medium === 'other') return { kind: 'unknown', ...blank, connected: primary.link === 'up', interfaceName };
 	return { kind: 'wired', ...blank, connected: primary.link === 'up', interfaceName };
+}
+
+/**
+ * True when an interface is worth offering the user as a primary pick.
+ *
+ * Real hardware always qualifies. A virtual device only qualifies once it either
+ * carries the default route or holds an address the host can actually be reached
+ * on — a link-local one (IPv6 fe80::/10, IPv4 APIPA) means the interface never
+ * got a real address. Without that distinction a container host drowns the
+ * picker: on a Docker node 111 of 137 interfaces are `veth*` pairs whose only
+ * address is fe80::, and the two the user might actually choose are lost in them.
+ */
+export function isSelectableInterface(iface: NetInterfaceInfo): boolean {
+	if (iface.medium !== 'other' || iface.defaultRoute) return true;
+	return iface.addresses.some(a => !a.address.toLowerCase().startsWith('fe80') && !a.address.startsWith('169.254.'));
 }
 
 // Sanitize filename - remove invalid characters and normalize spaces

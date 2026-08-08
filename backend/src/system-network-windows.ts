@@ -8,7 +8,7 @@ import type { NetAddress, NetInterfaceInfo, NetMedium, NetLink, NetAddressMode, 
  *
  * 1. A single `powershell.exe` one-shot ({@link WINDOWS_STATE_COMMAND}) that
  *    emits adapters, addresses, per-family DHCP mode, the IPv4 default route and
- *    the DNS servers as one compact JSON document. One spawn (~700 ms) instead
+ *    the DNS servers as one compact JSON document. One spawn (1.4-1.8 s) instead
  *    of five, and every enum is projected to `[int]` so the parser never depends
  *    on the OS display language.
  * 2. `wlanapi.dll` through `bun:ffi` for the SSID / signal quality / radio state

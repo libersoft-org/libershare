@@ -5,7 +5,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { networkState } from '../../scripts/networkState.ts';
 	import { primaryInterface, setPrimaryInterface } from '../../scripts/settings.ts';
-	import type { NetInterfaceInfo } from '@shared';
+	import { isSelectableInterface, type NetInterfaceInfo } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
@@ -17,9 +17,9 @@
 	}
 	let { areaID, position = LAYOUT.content, onBack }: Props = $props();
 
-	// Tunnels, bridges and disconnected virtual adapters would flood the picker,
-	// so an 'other' interface is only listed when it actually carries traffic.
-	let interfaces = $derived($networkState.interfaces.filter(i => i.medium !== 'other' || i.defaultRoute || i.addresses.length > 0));
+	// Tunnels, bridges and container veth pairs would flood the picker, so an
+	// 'other' interface is only listed when it actually carries traffic.
+	let interfaces = $derived($networkState.interfaces.filter(isSelectableInterface));
 
 	function iconFor(iface: NetInterfaceInfo): string {
 		if (iface.medium === 'wired') return '/img/ethernet.svg';

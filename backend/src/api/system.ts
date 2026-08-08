@@ -248,7 +248,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	}
 
 	let networkTick = 0;
-	// A Windows read takes ~700 ms, so it is deliberately not awaited on the
+	// A Windows read takes 1.4-1.8 s, so it is deliberately not awaited on the
 	// broadcast path — a slow read simply skips ticks until it settles.
 	let networkReadInFlight = false;
 

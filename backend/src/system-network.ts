@@ -25,9 +25,10 @@ const execFileAsync = promisify(execFile);
 /** Hard cap on how long the PowerShell one-shot may run. */
 const WINDOWS_TIMEOUT_MS = 15000;
 /**
- * How long a successful read is reused. A Windows read costs one ~700 ms
- * PowerShell spawn, and the poll broadcasts every 10 s, so this keeps a client
- * opening the settings screen right after a tick from paying for a second spawn.
+ * How long a successful read is reused. A Windows read costs one PowerShell
+ * spawn (measured 1.4-1.8 s on a 31-adapter workstation), and the poll
+ * broadcasts every 10 s, so this keeps a client opening the settings screen
+ * right after a tick from paying for a second spawn.
  */
 const CACHE_TTL_MS = 5000;
 
@@ -96,6 +97,7 @@ export async function readNetworkState(primaryInterface: string = ''): Promise<N
 		if (!inFlight) {
 			const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' ? 'full' : 'addressesOnly';
 			inFlight = readPlatform()
+				.then(assertReadProducedSomething)
 				.then(interfaces => {
 					cached = { at: Date.now(), interfaces, detail };
 					return interfaces;
@@ -120,6 +122,23 @@ function readPlatform(): Promise<NetInterfaceInfo[]> {
 	if (process.platform === 'win32') return readWindows();
 	if (process.platform === 'linux') return readLinuxNetworkState();
 	return Promise.resolve(readGenericInterfaces());
+}
+
+/**
+ * Reject a read that produced nothing.
+ *
+ * An empty list is not evidence that the host is offline — it is a reader that
+ * failed quietly. PowerShell keeps going after a non-terminating `Get-Net*`
+ * failure (missing NetAdapter module, broken CIM/NSI service) and still emits a
+ * well-formed document with empty collections, and `ip -j addr` on a host with
+ * only loopback yields nothing after loopback is dropped. Accepting either as
+ * `detail: 'full'` would have the footer state a confident "Disconnected" on a
+ * perfectly connected machine; throwing degrades it to the address-only reader,
+ * whose honest answer is "unknown".
+ */
+export function assertReadProducedSomething(interfaces: NetInterfaceInfo[]): NetInterfaceInfo[] {
+	if (interfaces.length === 0) throw new Error('platform reader returned no interfaces');
+	return interfaces;
 }
 
 /** The user's pick when it still exists, else the default-route interface, else nothing. */
