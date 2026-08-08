@@ -6,9 +6,8 @@
 	/** The projected {@link ConnectionStatus}, spread by the Footer. Never synthesized. */
 	type Props = ConnectionStatus;
 	const { kind = 'unknown', connected = false, signal = null, ssid = null, interfaceName = null }: Props = $props();
-	// Wired shows a cable icon, everything else the bar glyph. An unknown medium
-	// (tunnel as primary, or a platform that only reports addresses) uses the cable
-	// icon in a neutral colour so it does not read as a healthy connection.
+	// Wi-Fi gets the bar glyph, everything else (cable, tunnel, unknown medium) the
+	// cable icon.
 	//
 	// Bars state a strength, so they are only drawn when one is known: an
 	// associated network whose quality the OS withholds would otherwise render as
