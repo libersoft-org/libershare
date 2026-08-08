@@ -114,9 +114,10 @@ export class Utils {
 		try {
 			const response = await fetch(url, { signal: controller.signal });
 			if (!response.ok) throw new CodedError(ErrorCodes.HTTP_ERROR, String(response.status));
-			// Detect on the final URL's path — a redirect can change the extension, and a
-			// query string or fragment would hide it.
-			const algorithm = detectCompression(Utils.urlPath(response.url || url));
+			// Detect on the final URL's path first — a redirect can change the extension, and a
+			// query string or fragment would hide it. Fall back to the requested URL, because a
+			// CDN or release redirect often lands on an opaque blob path that carries no extension.
+			const algorithm = detectCompression(Utils.urlPath(response.url || url)) ?? detectCompression(Utils.urlPath(url));
 			// When the server serves the file with the same codec as a transfer encoding,
 			// fetch() has already undone it — decompressing a second time would fail.
 			const contentEncoding = response.headers.get('content-encoding')?.toLowerCase() ?? '';

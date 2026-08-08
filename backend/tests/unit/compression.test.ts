@@ -131,6 +131,24 @@ describe('Utils.fetchURL', () => {
 			await server.stop(true);
 		}
 	});
+
+	it('falls back to the requested URL when the redirect target has no extension', async () => {
+		const json = '{"cdn":true}';
+		const body = Utils.compress(new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>, 'gzip');
+		const server = Bun.serve({
+			port: 0,
+			fetch(req): Response {
+				// A release/CDN redirect: the request names .lish.gz, the target is an opaque blob.
+				if (new URL(req.url).pathname === '/dl/project.lish.gz') return Response.redirect(new URL('/objects/9f3a2b1c', req.url).href, 302);
+				return new Response(body);
+			},
+		});
+		try {
+			expect(await Utils.fetchURL(`http://localhost:${server.port}/dl/project.lish.gz`)).toBe(json);
+		} finally {
+			await server.stop(true);
+		}
+	});
 });
 
 describe('compression extension helpers', () => {
