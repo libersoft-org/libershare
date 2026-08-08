@@ -306,6 +306,24 @@
 			"defaultCompress": "Compress (default)",
 			"notificationTimeout": "Notification timeout (in seconds, 0 = unlimited)"
 		},
+		"network": {
+			"title": "Network",
+			"automatic": "Automatic (default route)",
+			"primaryInterface": "Primary interface",
+			"dhcp": "DHCP",
+			"static": "Static",
+			"modeUnknown": "Addressing unknown",
+			"gateway": "Gateway",
+			"dns": "DNS",
+			"ssid": "Network name",
+			"signal": "Signal",
+			"linkUp": "Connected",
+			"linkDown": "Disconnected",
+			"linkUnknown": "State unknown",
+			"noInterfaces": "No network interfaces found.",
+			"readOnlyNote": "Addressing is shown as reported by the system.",
+			"detailLimited": "This system only reports addresses, so link state and addressing mode are unavailable."
+		},
 		"download": {
 			"directoryDownload": "Finished download directory",
 			"directoryTemp": "Unfinished downloads directory",
@@ -497,6 +515,8 @@
 			"storage": "Storage usage",
 			"volume": "Volume",
 			"volumeUnavailable": "Audio device not available",
+			"connectionWifiOff": "Wi-Fi off",
+			"connectionUnknown": "Connection state unknown",
 			"clock": "Clock"
 		},
 		"audio": "Sound effects",
