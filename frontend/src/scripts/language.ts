@@ -138,6 +138,10 @@ const errorCodeKeys: Record<string, string> = {
 	NO_VALID_NETWORKS: 'settings.lishNetwork.errorNoValidNetworks',
 	NETWORK_NOT_STARTED: 'settings.lishNetwork.errorNotStarted',
 	NETWORK_PORT_IN_USE: 'settings.lishNetwork.errorPortInUse',
+	// Host network configuration → settings.network
+	NETCONFIG_INVALID: 'settings.network.errorInvalid',
+	NETCONFIG_UNSUPPORTED: 'settings.network.errorUnsupported',
+	NETCONFIG_FAILED: 'settings.network.errorFailed',
 	PEER_UNREACHABLE: 'network.errorUnreachable',
 	PEER_LISH_NOT_SHARED: 'network.errorLishNotShared',
 	PEER_CHUNK_NOT_FOUND: 'network.errorChunkNotFound',

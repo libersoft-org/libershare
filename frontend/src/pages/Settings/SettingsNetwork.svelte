@@ -10,6 +10,7 @@
 	import Button from '../../components/Buttons/Button.svelte';
 	import SwitchRow from '../../components/Switch/SwitchRow.svelte';
 	import Icon from '../../components/Icon/Icon.svelte';
+	import SettingsNetworkEdit from './SettingsNetworkEdit.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -20,6 +21,10 @@
 	// Tunnels, bridges and container veth pairs would flood the picker, so an
 	// 'other' interface is only listed when it actually carries traffic.
 	let interfaces = $derived($networkState.interfaces.filter(isSelectableInterface));
+	// Editing is offered only where the host can actually carry it out, so the app
+	// never presents a form whose Save would always fail.
+	let editable = $derived($networkState.capabilities.ipv4);
+	let editing = $state<string | null>(null);
 
 	function iconFor(iface: NetInterfaceInfo): string {
 		if (iface.medium === 'wired') return '/img/ethernet.svg';
@@ -88,6 +93,10 @@
 		flex: 0 0 auto;
 	}
 
+	.configure {
+		padding: 0 0 1vh 4vh;
+	}
+
 	.detail {
 		display: flex;
 		flex-wrap: wrap;
@@ -98,9 +107,12 @@
 	}
 </style>
 
-<div class="settings">
-	<div class="container">
-		<div class="note">{$t('settings.network.readOnlyNote')}</div>
+{#if editing}
+	<SettingsNetworkEdit areaID="{areaID}-edit" interfaceID={editing} onBack={() => (editing = null)} />
+{:else}
+	<div class="settings">
+		<div class="container">
+			<div class="note">{editable ? $t('settings.network.editableNote') : $t('settings.network.readOnlyNote')}</div>
 		{#if $networkState.detail === 'addressesOnly'}
 			<div class="note">{$t('settings.network.detailLimited')}</div>
 		{/if}
@@ -127,6 +139,11 @@
 						<span>{$t('settings.network.signal')}: {iface.wifi.signal !== null ? `${iface.wifi.signal}%` : '—'}</span>
 					{/if}
 				</div>
+				{#if editable}
+					<div role="group" data-mouse-activate-area={areaID} class="configure">
+						<Button icon="/img/edit.svg" label={$t('settings.network.configure')} position={[1, index + 1]} onConfirm={() => (editing = iface.id)} />
+					</div>
+				{/if}
 			</div>
 		{:else}
 			<!-- Only after a read has settled — before that the list is empty because
@@ -134,9 +151,10 @@
 			{#if $networkState.known}
 				<div class="note">{$t('settings.network.noInterfaces')}</div>
 			{/if}
-		{/each}
+			{/each}
+		</div>
+		<ButtonBar justify="center" basePosition={[0, interfaces.length + 1]}>
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
+		</ButtonBar>
 	</div>
-	<ButtonBar justify="center" basePosition={[0, interfaces.length + 1]}>
-		<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
-	</ButtonBar>
-</div>
+{/if}
