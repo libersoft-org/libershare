@@ -397,16 +397,24 @@ export class APIServer {
 		const path = join(this.uploadDir, uploadFileName(url.searchParams.get('name') ?? 'upload'));
 		try {
 			await mkdir(this.uploadDir, { recursive: true });
-			// Streamed chunk by chunk so a large import never has to sit in memory
-			// as a whole. `Bun.write(path, new Response(req.body))` would read
-			// better but deadlocks on Bun 1.3.13 — measured, not guessed.
 			const writer = Bun.file(path).writer();
-			if (req.body) for await (const chunk of req.body) writer.write(chunk);
-			await writer.end();
+			try {
+				// Streamed chunk by chunk so a large import never has to sit in
+				// memory as a whole. `Bun.write(path, new Response(req.body))` would
+				// read better but deadlocks on Bun 1.3.13 — measured, not guessed.
+				if (req.body) for await (const chunk of req.body) writer.write(chunk);
+			} finally {
+				// Also releases the file handle, which Windows needs before the
+				// half-written file can be removed on the error path below.
+				await writer.end();
+			}
 			console.log(`[API] Upload stored: ${path} (${Bun.file(path).size} bytes)`);
 			return this.jsonResponse({ path });
 		} catch (err: any) {
-			rmSync(path, { force: true });
+			// A failed cleanup must not replace the error that caused it.
+			try {
+				rmSync(path, { force: true });
+			} catch {}
 			console.error(`[API] Upload failed: ${err.message}`);
 			return this.jsonResponse({ error: ErrorCodes.FS_ERROR, errorDetail: err.message }, 500);
 		}
