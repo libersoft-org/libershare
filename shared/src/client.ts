@@ -146,10 +146,11 @@ export class WsClient {
 		const request = JSON.stringify({ id, method, params });
 		// The server closes the socket outright on an oversized frame, and the
 		// caller only ever sees "disconnected" — so refuse here and hand back a
-		// real error code. The check counts UTF-16 code units rather than UTF-8
-		// bytes: exact for the ASCII manifests and JSON this carries, and a frame
-		// that needs the difference to fit is already past any sane import.
-		if (request.length > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
+		// real error code. The server counts UTF-8 bytes, so the string length is
+		// only a cheap pre-filter: one UTF-16 unit is at most three UTF-8 bytes,
+		// so anything under a third of the limit provably fits and skips the copy
+		// that measuring the real byte length costs.
+		if (request.length * 3 > MAX_API_MESSAGE_SIZE && new Blob([request]).size > MAX_API_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, formatBytes(MAX_API_MESSAGE_SIZE));
 		return new Promise<T>((resolve, reject) => {
 			this.pendingRequests.set(id, { resolve, reject });
 			this.ws!.send(request);
