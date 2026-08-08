@@ -1,9 +1,13 @@
 import { type ServerWebSocket } from 'bun';
+import { mkdir } from 'fs/promises';
+import { rmSync } from 'fs';
+import { join } from 'path';
+import { randomUUID } from 'crypto';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
-import { CodedError, ErrorCodes } from '@shared';
+import { CodedError, ErrorCodes, sanitizeFilename } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
@@ -50,6 +54,20 @@ export function handleHealthProbe(req: globalThis.Request): Response | null {
 	return null;
 }
 
+/** Longest original file name kept in a temp upload name, so a pathological name cannot blow the OS limit. */
+const MAX_UPLOAD_NAME_LENGTH = 100;
+
+/**
+ * Temp file name for an uploaded import file. The random prefix keeps concurrent
+ * uploads apart; the original name is appended verbatim because
+ * `detectCompression()` reads the trailing extension — losing it would make a
+ * brotli upload get read as UTF-8 and fail later as a JSON parse error.
+ */
+export function uploadFileName(originalName: string): string {
+	const safe = sanitizeFilename(originalName).slice(-MAX_UPLOAD_NAME_LENGTH) || 'upload';
+	return `${randomUUID()}-${safe}`;
+}
+
 /** Longest params blob written to the log; enough to identify a call, short of dumping a file upload. */
 const MAX_LOGGED_PARAMS = 1000;
 
@@ -75,6 +93,7 @@ export class APIServer {
 	private readonly certFile?: string | undefined;
 	private readonly apiToken?: string | undefined;
 	private readonly dataDir: string;
+	private readonly uploadDir: string;
 	private readonly dataServer: DataServer;
 	private readonly networks: Networks;
 	private _search: ReturnType<typeof import('./search.ts').initSearchManager> | null = null;
@@ -82,6 +101,7 @@ export class APIServer {
 
 	constructor(dataDir: string, dataServer: DataServer, networks: Networks, settings: Settings, options: APIServerOptions) {
 		this.dataDir = dataDir;
+		this.uploadDir = join(dataDir, 'tmp');
 		this.dataServer = dataServer;
 		this.networks = networks;
 		this.settings = settings;
@@ -247,10 +267,15 @@ export class APIServer {
 
 	start(): void {
 		const self = this;
+		// Uploads are client-supplied bytes on our disk; a form abandoned between
+		// picking a file and importing it leaves one behind. Wiping at startup is
+		// cheaper and more reliable than a TTL sweeper, and synchronous so no
+		// upload can race the removal.
+		rmSync(this.uploadDir, { recursive: true, force: true });
 		const serverConfig: Parameters<typeof Bun.serve<ClientData>>[0] = {
 			port: this.port,
 			hostname: this.host,
-			fetch(req, server): Response | undefined {
+			fetch(req, server): Response | Promise<Response> | undefined {
 				const url = new URL(req.url);
 				// Liveness probe used by docker-compose healthcheck and external
 				// orchestrators. Placed before auth + per-request log so probes
@@ -258,9 +283,12 @@ export class APIServer {
 				const probe = handleHealthProbe(req);
 				if (probe) return probe;
 				console.log(`[API] Incoming request: ${req.method} ${url.pathname}`);
-				if (req.method === 'OPTIONS' && url.pathname === '/status') return self.statusOptionsResponse();
+				// A CORS preflight carries no credentials and no body, so it is
+				// answered before the token check — the real request still isn't.
+				if (req.method === 'OPTIONS') return self.corsOptionsResponse();
 				if (url.pathname === '/status') return self.statusResponse(url);
 				if (!self.isAuthorized(url)) return self.unauthorizedResponse();
+				if (req.method === 'POST' && url.pathname === '/upload') return self.handleUpload(req, url);
 				const clientIP = server.requestIP(req)?.address ?? '';
 				const upgraded = server.upgrade(req, {
 					data: { subscribedEvents: new Set<string>(), isLocalClient: self.localAddresses.has(clientIP) },
@@ -339,15 +367,35 @@ export class APIServer {
 		});
 	}
 
-	private statusOptionsResponse(): Response {
+	private corsOptionsResponse(): Response {
 		return new Response(null, {
 			status: 204,
 			headers: {
 				'access-control-allow-origin': '*',
-				'access-control-allow-methods': 'GET, OPTIONS',
+				'access-control-allow-methods': 'GET, POST, OPTIONS',
 				'access-control-allow-headers': 'content-type',
 			},
 		});
+	}
+
+	/**
+	 * Accept one import file over plain HTTP and land it in a temp file under the
+	 * data directory. The client then imports it through the existing
+	 * `*.parseFromFile` handlers, so the file crosses the wire once instead of
+	 * being base64'd into a WebSocket frame and echoed back as text.
+	 */
+	private async handleUpload(req: globalThis.Request, url: URL): Promise<Response> {
+		const path = join(this.uploadDir, uploadFileName(url.searchParams.get('name') ?? 'upload'));
+		try {
+			await mkdir(this.uploadDir, { recursive: true });
+			await Bun.write(path, new Response(req.body));
+			console.log(`[API] Upload stored: ${path} (${Bun.file(path).size} bytes)`);
+			return this.jsonResponse({ path });
+		} catch (err: any) {
+			rmSync(path, { force: true });
+			console.error(`[API] Upload failed: ${err.message}`);
+			return this.jsonResponse({ error: ErrorCodes.FS_ERROR, errorDetail: err.message }, 500);
+		}
 	}
 
 	private unauthorizedResponse(): Response {
