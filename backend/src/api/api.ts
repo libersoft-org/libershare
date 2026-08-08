@@ -246,7 +246,6 @@ export class APIServer {
 			'fs.list': _fs.list,
 			'fs.readText': _fs.readText,
 			'fs.readCompressed': _fs.readCompressed,
-			'fs.decompressText': _fs.decompressText,
 			'fs.delete': _fs.delete,
 			'fs.mkdir': _fs.mkdir,
 			'fs.open': _fs.open,

@@ -4,7 +4,7 @@ import { homedir, platform } from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Utils } from '../utils.ts';
-import { CodedError, ErrorCodes, detectCompression, type ErrorCode, type FsInfo, type FsEntry, type FsListResult, type IPathExistsResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
+import { CodedError, ErrorCodes, type ErrorCode, type FsInfo, type FsEntry, type FsListResult, type IPathExistsResult, type SuccessResponse, type CompressionAlgorithm } from '@shared';
 import { isContainer } from '../container.ts';
 const assert = Utils.assertParams;
 const isWindows = platform() === 'win32';
@@ -71,7 +71,6 @@ interface FsHandlers {
 	list: (p: { path?: string }) => Promise<FsListResult>;
 	readText: (p: { path: string }) => Promise<{ content: string }>;
 	readCompressed: (p: { path: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }) => Promise<{ content: string }>;
-	decompressText: (p: { data: string; fileName?: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }) => Promise<{ content: string }>;
 	delete: (p: { path: string }) => Promise<void>;
 	mkdir: (p: { path: string }) => Promise<void>;
 	open: (p: { path: string }) => Promise<void>;
@@ -157,20 +156,6 @@ export function initFsHandlers(): FsHandlers {
 		});
 	}
 
-	/**
-	 * Decompress a base64-encoded file uploaded from the client's own machine.
-	 * The algorithm is taken from `algorithm`, else detected from `fileName`;
-	 * an uncompressed upload is returned as-is.
-	 */
-	async function decompressText(p: { data: string; fileName?: string; algorithm?: CompressionAlgorithm; prettyJSON?: boolean }): Promise<{ content: string }> {
-		assert(p, ['data']);
-		const bytes = Buffer.from(p.data, 'base64');
-		const algorithm = p.algorithm ?? detectCompression(p.fileName ?? '');
-		const decoded = algorithm ? Utils.decompress(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), algorithm) : bytes;
-		const content = new TextDecoder().decode(decoded);
-		return { content: p.prettyJSON ? prettyPrintJSON(content) : content };
-	}
-
 	async function del(p: { path: string }): Promise<void> {
 		assert(p, ['path']);
 		return fsCall(p.path, async () => {
@@ -237,5 +222,5 @@ export function initFsHandlers(): FsHandlers {
 		});
 	}
 
-	return { info, list, readText, readCompressed, decompressText, delete: del, mkdir: mkdirFn, open, rename: renameFn, exists, writeText, writeCompressed };
+	return { info, list, readText, readCompressed, delete: del, mkdir: mkdirFn, open, rename: renameFn, exists, writeText, writeCompressed };
 }

@@ -104,29 +104,27 @@ describe('Utils.writeJSONToFile / Utils.readFileCompressed', () => {
 	});
 });
 
-describe('fs.decompressText / fs.readCompressed handlers', () => {
+describe('fs.readCompressed handler', () => {
 	const fs = initFsHandlers();
 
 	for (const algorithm of COMPRESSION_ALGORITHMS) {
-		it(`${algorithm}: decompresses a base64 upload using the file name alone`, async () => {
+		it(`${algorithm}: reads an uploaded file using its name alone`, async () => {
+			// This is the path an upload takes now: it lands in a temp file and is
+			// read back, so the algorithm has to come from the extension.
 			const json = '{"name":"Kompresní test"}';
-			const compressed = Utils.compress(new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>, algorithm);
-			const base64 = Buffer.from(compressed).toString('base64');
-			const result = await fs.decompressText({ data: base64, fileName: `backup.lishset${compressionExtension(algorithm)}` });
-			expect(result.content).toBe(json);
+			const path = tempFile(`upload.lishset${compressionExtension(algorithm)}`);
+			await Bun.write(path, Utils.compress(new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>, algorithm));
+			expect((await fs.readCompressed({ path })).content).toBe(json);
 		});
 	}
 
-	it('returns an uncompressed upload unchanged', async () => {
-		const base64 = Buffer.from('plain text', 'utf-8').toString('base64');
-		expect((await fs.decompressText({ data: base64, fileName: 'notes.json' })).content).toBe('plain text');
-	});
-
 	it('pretty-prints JSON on request and leaves non-JSON alone', async () => {
-		const base64 = Buffer.from('{"a":1}', 'utf-8').toString('base64');
-		expect((await fs.decompressText({ data: base64, fileName: 'a.json', prettyJSON: true })).content).toBe('{\n\t"a": 1\n}');
-		const notJSON = Buffer.from('hello', 'utf-8').toString('base64');
-		expect((await fs.decompressText({ data: notJSON, fileName: 'a.txt', prettyJSON: true })).content).toBe('hello');
+		const jsonPath = tempFile('pretty.json');
+		const textPath = tempFile('plain.txt');
+		await Bun.write(jsonPath, '{"a":1}');
+		await Bun.write(textPath, 'hello');
+		expect((await fs.readCompressed({ path: jsonPath, prettyJSON: true })).content).toBe('{\n\t"a": 1\n}');
+		expect((await fs.readCompressed({ path: textPath, prettyJSON: true })).content).toBe('hello');
 	});
 
 	it('reads a compressed file and an uncompressed one through the same handler', async () => {
