@@ -129,7 +129,11 @@
 				</div>
 			</div>
 		{:else}
-			<div class="note">{$t('settings.network.noInterfaces')}</div>
+			<!-- Only after a read has settled — before that the list is empty because
+			     nothing has been asked yet, not because the host has no interfaces. -->
+			{#if $networkState.known}
+				<div class="note">{$t('settings.network.noInterfaces')}</div>
+			{/if}
 		{/each}
 	</div>
 	<ButtonBar justify="center" basePosition={[0, interfaces.length + 1]}>
