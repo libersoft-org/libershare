@@ -64,6 +64,9 @@
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
+		// Picking a second file abandons the first one on the backend's disk.
+		if (uploadPath) void api.fs.delete(uploadPath).catch(() => {});
+		uploadPath = '';
 		uploadFileName = file.name;
 		errorMessage = '';
 		busyLabel = $t('import.uploading');
@@ -74,7 +77,7 @@
 			uploadPath = await uploadImportFile(file);
 		} catch (err) {
 			errorMessage = translateError(err);
-			uploadPath = '';
+			uploadFileName = '';
 		} finally {
 			busyLabel = '';
 		}
