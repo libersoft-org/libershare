@@ -7,7 +7,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import type { PeerCountEntry } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
-import { CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, sanitizeFilename } from '@shared';
+import { CodedError, ErrorCodes, MAX_API_MESSAGE_SIZE, formatBytes, sanitizeFilename } from '@shared';
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
@@ -423,15 +423,35 @@ export class APIServer {
 			await mkdir(this.uploadDir, { recursive: true });
 			await this.sweepUploads();
 			const writer = Bun.file(path).writer();
+			let written = 0;
+			let tooLarge = false;
 			try {
 				// Streamed chunk by chunk so a large import never has to sit in
 				// memory as a whole. `Bun.write(path, new Response(req.body))` would
 				// read better but deadlocks on Bun 1.3.13 — measured, not guessed.
-				if (req.body) for await (const chunk of req.body) writer.write(chunk);
+				if (req.body) {
+					for await (const chunk of req.body) {
+						written += chunk.byteLength;
+						// `maxRequestBodySize` only covers a body that declares its
+						// length; a chunked upload carries none and would otherwise be
+						// free to fill the disk. Measured on Bun 1.3.13: 320 MiB written
+						// against a 128 MiB limit before this check existed.
+						if (written > MAX_API_MESSAGE_SIZE) {
+							tooLarge = true;
+							break;
+						}
+						writer.write(chunk);
+					}
+				}
 			} finally {
 				// Also releases the file handle, which Windows needs before the
 				// half-written file can be removed on the error path below.
 				await writer.end();
+			}
+			if (tooLarge) {
+				rmSync(path, { force: true });
+				console.error(`[API] Upload rejected: body exceeds ${MAX_API_MESSAGE_SIZE} bytes`);
+				return this.jsonResponse({ error: ErrorCodes.MESSAGE_TOO_LARGE, errorDetail: formatBytes(MAX_API_MESSAGE_SIZE) }, 413);
 			}
 			console.log(`[API] Upload stored: ${path} (${Bun.file(path).size} bytes)`);
 			return this.jsonResponse({ path });
