@@ -237,6 +237,11 @@ export class LISHClient {
 	}
 
 	// Request a single chunk (can be called multiple times on same stream)
+	// TODO(out of scope): thread an AbortSignal through requestChunk so a
+	// download disabled mid-flight (e.g. by leaving its last lishnet) can cancel
+	// an in-progress chunk read immediately instead of waiting for the stream
+	// read to complete or time out. Requires plumbing the downloader's
+	// abortController.signal down through ChunkDownloader → LISHClient.
 	async requestChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array> {
 		// Bail early if stream is already closed/aborted — treat as transient (peer unreachable),
 		// not as a reason to permanently ban the peer.
@@ -399,7 +404,21 @@ export function clearAllUploads(): void {
 
 const IO_ERROR_THRESHOLD = 3; // consecutive I/O errors before auto-disabling upload
 
-export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType): Promise<void> {
+/**
+ * Serve-gate predicate for the unicast LISH protocol. Returns true when a served
+ * response (LISH list / manifest / chunk) must be withheld because we do not share
+ * a joined lishnet with the remote peer. Fail CLOSED: when the gate is active
+ * (`sharesNetworkWith` provided) but the stream could not be mapped to a peer id
+ * (`remotePeerID` absent), block exactly like a not-shared peer — a bare or
+ * unauthenticated transport connection must never be served. Mirrors handleWant,
+ * which drops a WANT that has no verified sender peerID.
+ */
+export function serveGateBlocks(sharesNetworkWith: ((peerID: string) => boolean) | undefined, remotePeerID: string | undefined): boolean {
+	if (!sharesNetworkWith) return false;
+	return !remotePeerID || !sharesNetworkWith(remotePeerID);
+}
+
+export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean): Promise<void> {
 	const servedLishIDs = new Set<string>();
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
 	const remotePeer = remotePeerID?.slice(0, 12) ?? 'unknown';
@@ -438,6 +457,17 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 
 			if (request.type === 'getLishs') {
+				// Serve the shared-LISH LISTING under the softer list-gate (canListShares):
+				// unlike the strict data gate it does not require a synced gossipsub
+				// SUBSCRIBE, so the unicast search fallback reaches freshly-connected peers.
+				// Still fail-closed on an unknown peer id and still refuses peers we left.
+				// Falls back to the strict gate when no list-gate was supplied.
+				if (serveGateBlocks(canListShares ?? sharesNetworkWith, remotePeerID)) {
+					trace(`[PROTO] getLishs from ${remotePeer} refused: no shared joined lishnet`);
+					const gated: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
+					sendLengthPrefixed(stream, codecEncode(gated));
+					continue;
+				}
 				// Return list of all shared (upload_enabled) LISHs — id and name only.
 				// Newest first — matches the order shown locally in "Download and Sharing".
 				const allLishs = dataServer.list();
@@ -460,8 +490,9 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				};
 				sendLengthPrefixed(stream, codecEncode(response));
 			} else if (request.type === 'getLish') {
-				// Only return manifest for LISHs with upload enabled
-				if (!isUploadAdvertisable(request.lishID)) {
+				// Only return manifest for LISHs with upload enabled — and only to
+				// peers we share a joined lishnet with (same gate as getLishs).
+				if (serveGateBlocks(sharesNetworkWith, remotePeerID) || !isUploadAdvertisable(request.lishID)) {
 					const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					sendLengthPrefixed(stream, codecEncode(response));
 				} else {
@@ -481,6 +512,16 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			} else if (request.type === 'getChunk' || request.type === undefined) {
 				// Chunk request (type may be omitted for legacy compatibility)
 				const chunkReq = request as LISHGetChunkRequest;
+				// Stop serving chunks to peers we no longer share a joined
+				// lishnet with. Without this a downloader re-dials our stored
+				// address after we left its network and the transfer silently
+				// continues over the fresh transport connection.
+				if (serveGateBlocks(sharesNetworkWith, remotePeerID)) {
+					trace(`[PROTO] getChunk from ${remotePeer} refused: no shared joined lishnet`);
+					const gatedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
+					sendLengthPrefixed(stream, codecEncode(gatedResponse));
+					continue;
+				}
 				if (!uploadEnabled.has(chunkReq.lishID)) {
 					const blockedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					sendLengthPrefixed(stream, codecEncode(blockedResponse));
