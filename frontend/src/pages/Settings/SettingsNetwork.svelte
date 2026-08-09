@@ -26,7 +26,20 @@
 	// as the capability: when a platform read fails we fall back to the generic
 	// reader, whose ids are device names rather than the identifiers the apply path
 	// resolves, so every save from that state would be rejected.
-	let editable = $derived($networkState.capabilities.ipv4 && $networkState.detail === 'full');
+	//
+	// The two capabilities are independent — Windows lets any user join a Wi-Fi
+	// network but only an elevated one change an address — so an interface is
+	// configurable when EITHER applies to it. Wi-Fi alone opens the screen for an
+	// interface with a radio only, since that is all there would be to do on it:
+	// `wifi` is present exactly when the platform reader found a real radio behind
+	// the interface, which is what keeps out the Wi-Fi Direct virtual adapters that
+	// call themselves wireless and cannot scan.
+	let canEditIPv4 = $derived($networkState.capabilities.ipv4 && $networkState.detail === 'full');
+	let canEditWifi = $derived($networkState.capabilities.wifi && $networkState.detail === 'full');
+	let editable = $derived(canEditIPv4 || canEditWifi);
+	function isConfigurable(iface: NetInterfaceInfo): boolean {
+		return canEditIPv4 || (canEditWifi && !!iface.wifi);
+	}
 	let editing = $state<string | null>(null);
 
 	function iconFor(iface: NetInterfaceInfo): string {
@@ -144,7 +157,7 @@
 					</div>
 					<!-- The host-wide capability says the tooling is usable; an interface may
 					     still be owned by another stack, whose edit would only ever fail. -->
-					{#if editable && iface.configurable !== false}
+					{#if isConfigurable(iface) && iface.configurable !== false}
 						<div role="group" data-mouse-activate-area={areaID} class="configure">
 							<Button icon="/img/edit.svg" label={$t('settings.network.configure')} position={[1, index + 1]} onConfirm={() => (editing = iface.id)} />
 						</div>

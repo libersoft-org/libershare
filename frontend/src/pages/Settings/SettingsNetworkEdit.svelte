@@ -19,7 +19,13 @@
 	let { areaID, interfaceID, position = LAYOUT.content, onBack }: Props = $props();
 
 	let iface = $derived($networkState.interfaces.find(i => i.id === interfaceID));
-	let canEditWifi = $derived(!!iface && iface.medium === 'wireless' && $networkState.capabilities.wifi);
+	// Independent capabilities: Windows lets any user join a Wi-Fi network but only
+	// an elevated one change an address, so this screen can legitimately offer the
+	// Wi-Fi half and not the addressing half.
+	let canEditIPv4 = $derived($networkState.capabilities.ipv4);
+	// `wifi` present means the platform reader found a real radio, which is what
+	// separates a Wi-Fi adapter from a Wi-Fi Direct virtual one that cannot scan.
+	let canEditWifi = $derived(!!iface?.wifi && $networkState.capabilities.wifi);
 
 	let mode = $state<'dhcp' | 'static'>('dhcp');
 	let address = $state('');
@@ -135,7 +141,9 @@
 
 	// Row positions shift with the mode: the static fields exist only in 'static'.
 	let staticRows = $derived(mode === 'static' ? 4 : 0);
-	let wifiBaseY = $derived(1 + staticRows + 1);
+	// ...and with the addressing half being absent altogether on a host that cannot
+	// change an address, in which case the Wi-Fi section starts at the top.
+	let wifiBaseY = $derived(canEditIPv4 ? 1 + staticRows + 1 : 0);
 	let buttonsY = $derived(canEditWifi ? wifiBaseY + 2 + networks.length + (joinSSID ? 1 : 0) : wifiBaseY);
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
@@ -191,25 +199,27 @@
 		<div class="title">{iface?.name ?? interfaceID}</div>
 		<div class="note">{$t('settings.network.applyWarning')}</div>
 
-		<div role="group" data-mouse-activate-area={areaID}>
-			<Select bind:value={mode} label={$t('settings.network.addressing')} position={[0, 0]} flex>
-				<SelectOption value="dhcp" label={$t('settings.network.dhcp')} />
-				<SelectOption value="static" label={$t('settings.network.static')} />
-			</Select>
-		</div>
-
-		{#if mode === 'static'}
+		{#if canEditIPv4}
 			<div role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} flex />
-				<Input bind:value={prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} flex />
-				<Input bind:value={gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} flex />
-				<Input bind:value={dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 1.1.1.1" position={[0, 4]} flex />
+				<Select bind:value={mode} label={$t('settings.network.addressing')} position={[0, 0]} flex>
+					<SelectOption value="dhcp" label={$t('settings.network.dhcp')} />
+					<SelectOption value="static" label={$t('settings.network.static')} />
+				</Select>
 			</div>
-		{/if}
 
-		<ButtonBar justify="center" basePosition={[0, 1 + staticRows]}>
-			<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy} onConfirm={save} />
-		</ButtonBar>
+			{#if mode === 'static'}
+				<div role="group" data-mouse-activate-area={areaID}>
+					<Input bind:value={address} label={$t('settings.network.field.address')} placeholder="192.168.1.10" position={[0, 1]} flex />
+					<Input bind:value={prefix} label={$t('settings.network.field.prefixLength')} type="number" min={1} max={32} position={[0, 2]} flex />
+					<Input bind:value={gateway} label={$t('settings.network.field.gateway')} placeholder="192.168.1.1" position={[0, 3]} flex />
+					<Input bind:value={dns} label={$t('settings.network.field.dns')} placeholder="192.168.1.1, 1.1.1.1" position={[0, 4]} flex />
+				</div>
+			{/if}
+
+			<ButtonBar justify="center" basePosition={[0, 1 + staticRows]}>
+				<Button icon="/img/check.svg" label={busy ? $t('settings.network.applying') : $t('common.save')} disabled={busy} onConfirm={save} />
+			</ButtonBar>
+		{/if}
 
 		{#if canEditWifi}
 			<div class="title">{$t('settings.network.wifi')}</div>
