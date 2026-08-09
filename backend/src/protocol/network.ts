@@ -1465,7 +1465,16 @@ export class Network {
 			// purge just removed — so if the peer is connected NOW, rebuild its dial
 			// state from the live connections; otherwise reconnect would silently die
 			// with the first drop.
-			const after = this.node.getConnections(pid);
+			//
+			// Except when the purge was DELIBERATE. disconnectPeer strips the
+			// keep-alive tags and then purges, and a left peer re-dials us on its own
+			// keep-alive almost immediately — precisely the race this heals. Healing
+			// it would restore the tag that was just removed and hand the peer back to
+			// our ReconnectQueue, so leaving a lishnet would not stick. The inbound
+			// connection itself is left alone (fighting the remote's retry loop buys
+			// nothing); it stays untagged and unserved — canListSharesTo and
+			// sharesJoinedTopicWith both refuse a suppressed peer.
+			const after = this.isRedialSuppressed(peerID) ? [] : this.node.getConnections(pid);
 			if (after.length > 0) {
 				this.bootstrapPeerIDs.add(peerID);
 				this.unreachableQuarantine.delete(peerID);
