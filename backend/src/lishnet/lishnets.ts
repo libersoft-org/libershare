@@ -213,9 +213,17 @@ export class Networks {
 		// infrastructure). Compute this set BEFORE the bootstrap cleanup so that loop
 		// can skip them too — a bootstrap of the left net that also subscribes another
 		// joined net would otherwise be hung up here.
+		//
+		// Widened by the same TTL as `leftPeers` above, and that symmetry is the
+		// whole point: comparing a TTL-widened "leaving" set against a live-only
+		// "staying" set makes a peer that belongs to BOTH look exclusive to the one
+		// we left, purely because it happens to be disconnected at this moment. It
+		// would then be hung up, purged and redial-suppressed despite our still
+		// sharing a lishnet with it.
 		const stillJoinedPeers = new Set<string>();
 		for (const otherID of this.joinedNetworks) {
 			for (const pid of this.network.getTopicPeers(otherID)) stillJoinedPeers.add(pid);
+			for (const pid of this.network.getRecentTopicMembers(otherID)) stillJoinedPeers.add(pid);
 		}
 
 		// Drop the exemption AND actively disconnect every configured bootstrap peer

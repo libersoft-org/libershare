@@ -106,6 +106,30 @@ describe('Networks.leaveNetwork — exclusive peer disconnect', () => {
 		expect(net.disconnected.sort()).toEqual(['p-live', 'p-offline']);
 	});
 
+	it('keeps a momentarily offline peer that also belongs to a still-joined lishnet', async () => {
+		// The left network is measured with the TTL widening (live subscribers plus
+		// recently-seen members), so the still-joined networks must be measured the
+		// same way. Comparing a widened set against a live-only one made a peer that
+		// belongs to BOTH look exclusive to the one we left, purely because it was
+		// disconnected at that moment — and it was hung up and redial-suppressed
+		// despite our still sharing a lishnet with it.
+		net.recentMembers.set('net-a', ['p-shared-offline']);
+		net.recentMembers.set('net-b', ['p-shared-offline']);
+		const networks = makeNetworks(net, ['net-a', 'net-b']);
+		await leave(networks, 'net-a');
+		expect(net.disconnected).toEqual([]);
+	});
+
+	it('still disconnects a recently-seen peer that belongs only to the left lishnet', async () => {
+		// The widening must not make the leave path toothless: a peer seen only in
+		// the network we left is still hung up.
+		net.recentMembers.set('net-a', ['p-only-a']);
+		net.recentMembers.set('net-b', ['p-other']);
+		const networks = makeNetworks(net, ['net-a', 'net-b']);
+		await leave(networks, 'net-a');
+		expect(net.disconnected).toEqual(['p-only-a']);
+	});
+
 	it('keeps bootstrap/relay peers even when exclusive to the left lishnet', async () => {
 		net.topicPeers.set('net-a', ['p-bootstrap', 'p-plain']);
 		net.bootstrapOrRelay.add('p-bootstrap');
