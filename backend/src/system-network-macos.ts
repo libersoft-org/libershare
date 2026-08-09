@@ -15,13 +15,10 @@ const execFileAsync = promisify(execFile);
  * while everything else speaks DEVICE names (en0, bridge0).
  *
  * Wi-Fi is READ-ONLY and partially blind, by the operating system's design:
- * since macOS 14 the SSID is withheld from any process that has not been granted
- * Location Services access, and both `ipconfig getsummary` and `system_profiler`
- * return the literal string `<redacted>` instead. Measured on macOS 15.7.4 even
- * when running as root. A scan is therefore a list of unnamed networks, which
- * cannot be offered as something to join — so {@link isMacWifiConfigurable} is
- * false and the UI does not show Wi-Fi actions on this platform. The signal
- * strength, security and connection state are NOT redacted and are reported.
+ * since macOS 14 the name of a network on the air is withheld from any process
+ * that has not been granted Location Services access. The signal strength,
+ * security and connection state are NOT withheld and are reported.
+ * {@link isMacWifiConfigurable} explains why that makes joining unofferable.
  */
 
 /** Hard cap on any single tool invocation. These are local BSD utilities; a slow one is a hung one. */
@@ -377,11 +374,47 @@ export async function isMacWritable(): Promise<boolean> {
 /**
  * Wi-Fi configuration is not offered on macOS.
  *
- * Joining needs a network name, and macOS withholds every name from a process
- * without Location Services access — a scan comes back as a list of `<redacted>`
- * entries. Rather than ship a picker that cannot name anything, the capability is
- * reported as false. This is a constant, not a probe: the answer cannot change
- * without the user granting the permission to this binary in System Settings.
+ * WHAT IS BLOCKED: the name of any network on the air. Not the signal, not the
+ * security, not whether the radio is associated — just the name, which is the one
+ * thing a join needs.
+ *
+ * WHAT WAS MEASURED, on macOS 15.7.4 (arm64), as ROOT, on a machine whose Wi-Fi
+ * was associated and carrying the default route:
+ *
+ *  - `ipconfig getsummary <device>` prints `SSID : <redacted>`, and the same for
+ *    BSSID and NetworkID.
+ *  - `system_profiler SPAirPortDataType` prints `<redacted>` where the current
+ *    network's name belongs.
+ *  - `wdutil info` prints `SSID : <redacted>` and `BSSID : <redacted>` while
+ *    giving the RSSI in dBm and the security mode in full.
+ *  - `networksetup -getairportnetwork <device>` does not redact but DENIES:
+ *    it answers "You are not associated with an AirPort network" on an interface
+ *    that `ifconfig` reports as `status: active` and that owns the default route.
+ *  - The private `airport` tool still exists under Apple80211.framework but has
+ *    been emptied out: both `-I` and `-s` print only their deprecation notice and
+ *    no data at all.
+ *  - Location Services is ENABLED system-wide on that machine
+ *    (`LocationServicesEnabled = 1`) and the names are withheld anyway, which
+ *    places the gate on per-application authorization rather than on the system
+ *    switch.
+ *  - `networksetup -listpreferredwirelessnetworks <device>` DOES return real
+ *    names. The withholding covers what is on the air, not what is on disk.
+ *
+ * WHAT WOULD HAVE TO CHANGE: the process asking would need CoreLocation
+ * authorization attributed to it — a signed application bundle that declares
+ * NSLocationWhenInUseUsageDescription, asks CLLocationManager at runtime, and is
+ * granted it by the user. Only then does CoreWLAN's scan return named networks.
+ * This backend is a helper process spawned by such a bundle and cannot request
+ * that for itself.
+ *
+ * A join could in principle be offered without any scan, since
+ * `networksetup -setairportnetwork` takes a name typed by hand or taken from the
+ * preferred list above. It is not offered because its outcome cannot be checked:
+ * after joining, the reader still cannot name the network it is on, and
+ * `-getairportnetwork` denies the association outright — so the app could not
+ * tell the user whether it had worked. Shipping that is worse than not offering
+ * it, so the capability stays false. A constant, not a probe: nothing this
+ * process can do at runtime changes the answer.
  */
 export function isMacWifiConfigurable(): boolean {
 	return false;
