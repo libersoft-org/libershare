@@ -211,6 +211,13 @@ export class LISHClient {
 			const response = this.parseResponse<LISHGetLishResponse>(responseData, `getLish ${lishID}`);
 			if ('error' in response) throw new CodedError(response.error, lishID);
 			if (!('manifest' in response)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: missing manifest`);
+			// The manifest must be for the LISH we asked for. Callers key their local state on the
+			// requested id but persist the manifest under the id it carries, so a foreign id lands
+			// in another LISH's DB row — an upsert that repoints its directory, drops its move
+			// target and replaces its file/chunk state. Honest peers always answer with the
+			// requested LISH, so rejecting a mismatch costs nothing and this peer's answer is
+			// unusable either way: treat it as a peer fault so fallback moves to the next one.
+			if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: manifest id mismatch (${String(response.manifest?.id)})`);
 			if (total > 0) safeEmit(total, total);
 			return response.manifest;
 		} finally {
