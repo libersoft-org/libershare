@@ -1230,26 +1230,48 @@ export class Network {
 	}
 
 	/**
+	 * Membership evidence for a lishnet WE are joined to, tolerant of the gossipsub
+	 * subscriber view lagging: the live snapshot ({@link sharesJoinedTopicWith}), or
+	 * peer-announce's recently-seen subscriber union for the same topic, which keeps
+	 * a member for PEER_ANNOUNCE_MEMBER_TTL_MS after it was last seen subscribed.
+	 *
+	 * Only topics we are currently subscribed to are consulted, so a lishnet we left
+	 * can never grant membership. The union is additive evidence, never a substitute:
+	 * peer-announce only populates it once we have a populated peerStore, so a small
+	 * node simply falls back to the live snapshot.
+	 */
+	private sharesJoinedOrRecentTopicWith(peerID: string): boolean {
+		if (this.sharesJoinedTopicWith(peerID)) return true;
+		if (!this.pubsub) return false;
+		for (const topic of this.pubsub.getTopics()) {
+			if (!topic.startsWith(LISH_TOPIC_PREFIX)) continue;
+			if (this.peerAnnounce.getRecentMembers(topic).includes(peerID)) return true;
+		}
+		return false;
+	}
+
+	/**
 	 * Softer gate for the low-sensitivity shared-LISH LISTING (getLishs) only —
 	 * data requests (getLish/getChunk) stay on the strict {@link sharesJoinedTopicWith}
-	 * fail-closed gate. {@link sharesJoinedTopicWith} relies on gossipsub's subscriber
-	 * view, which lags for a freshly-connected peer whose SUBSCRIBE has not propagated
-	 * yet — the exact window the unicast search fallback targets, so the listing must
-	 * not be withheld there. Serve the listing to any peer over an authenticated stream
-	 * while we are in at least one lishnet, EXCEPT one we deliberately left (still in
-	 * redial suppression) — that preserves the leave-network browse privacy.
+	 * fail-closed gate, which needs a synced gossipsub SUBSCRIBE.
+	 *
+	 * The listing is scoped to peers of a lishnet we are in, but accepts the wider
+	 * {@link sharesJoinedOrRecentTopicWith} evidence so the unicast search fallback
+	 * still reaches a member whose subscription is momentarily missing from the live
+	 * snapshot. Membership is what authorizes the listing: a bare transport connection
+	 * — a relay client, a bootstrap dial, a peer of a lishnet we are not in, or one we
+	 * deliberately left before a restart dropped the in-memory redial suppression —
+	 * carries no such evidence and learns nothing about what we share.
 	 */
 	canListSharesTo(peerID: string): boolean {
 		if (this.isRedialSuppressed(peerID)) return false;
 		if (!this.pubsub) return false;
 		// Infrastructure peers (active relay / bootstrap) are kept connected across a
-		// leave without being redial-suppressed, so the softer gate alone would let a
-		// relay of a network we just left browse our shares. Require such peers to
-		// currently share a joined topic. Ordinary content peers still get the soft
-		// gate — that is the freshly-connected-before-SUBSCRIBE window the search
-		// fallback depends on.
-		if (this.isBootstrapOrRelayPeer(peerID) && !this.sharesJoinedTopicWith(peerID)) return false;
-		return this.pubsub.getTopics().some((t: string) => t.startsWith(LISH_TOPIC_PREFIX));
+		// leave without being redial-suppressed, and peer-announce may still list one
+		// as a recent member of a topic it serves. Hold them to the live snapshot so a
+		// relay of a network we just left cannot browse our shares.
+		if (this.isBootstrapOrRelayPeer(peerID)) return this.sharesJoinedTopicWith(peerID);
+		return this.sharesJoinedOrRecentTopicWith(peerID);
 	}
 
 	/**
