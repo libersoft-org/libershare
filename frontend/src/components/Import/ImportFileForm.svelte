@@ -9,6 +9,7 @@
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { uploadImportFile } from '../../scripts/ws-client.ts';
+	import { createImportUploader } from '../../scripts/importUpload.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -51,8 +52,27 @@
 	let parsedData = $state<TData | null>(null);
 	/** Label shown in the blocking dialog, empty while nothing is running. */
 	let busyLabel = $state('');
-	/** Set once the form is gone, so an upload that finishes later cleans up after itself. */
-	let destroyed = false;
+
+	/** Drops a backend temp file we no longer own; a failed delete has nothing left to report. */
+	function discardUpload(path: string): void {
+		void api.fs.delete(path).catch(() => {});
+	}
+
+	const uploader = createImportUploader(
+		{
+			getPath: () => uploadPath,
+			setPath: path => (uploadPath = path),
+			setFileName: name => (uploadFileName = name),
+			setError: message => (errorMessage = message),
+			setBusy: label => (busyLabel = label),
+		},
+		{
+			upload: uploadImportFile,
+			discard: discardUpload,
+			uploadingLabel: () => $t('import.uploading'),
+			formatError: translateError,
+		}
+	);
 
 	const showDownloadPath = $derived(downloadPath !== undefined);
 	const effectiveFilePathLabel = $derived(filePathLabel ?? $t('common.file'));
@@ -70,27 +90,7 @@
 		// user could not retry with that file at all.
 		input.value = '';
 		if (!file) return;
-		// Picking a second file abandons the first one on the backend's disk.
-		if (uploadPath) void api.fs.delete(uploadPath).catch(() => {});
-		uploadPath = '';
-		uploadFileName = file.name;
-		errorMessage = '';
-		busyLabel = $t('import.uploading');
-		try {
-			// The file goes to the backend as-is and is parsed there from its path.
-			// Reading it here would also mean decompressing it here, and the browser
-			// only knows gzip and deflate — a .br or .zst upload has no chance.
-			const path = await uploadImportFile(file);
-			// The form can be closed mid-upload; the file that lands afterwards has
-			// nobody left to import or delete it, so drop it here instead.
-			if (destroyed) void api.fs.delete(path).catch(() => {});
-			else uploadPath = path;
-		} catch (err) {
-			errorMessage = translateError(err);
-			uploadFileName = '';
-		} finally {
-			busyLabel = '';
-		}
+		await uploader.pick(file);
 	}
 
 	function toggleUploadMode(): void {
@@ -102,8 +102,8 @@
 	// the uploaded copy on the backend's disk. The sweep only runs on the next
 	// upload, which on a node that imports twice a year is effectively never.
 	onDestroy(() => {
-		destroyed = true;
-		if (uploadPath) void api.fs.delete(uploadPath).catch(() => {});
+		uploader.unmount();
+		if (uploadPath) discardUpload(uploadPath);
 	});
 
 	async function handleImport(): Promise<void> {
@@ -143,7 +143,7 @@
 				const uploaded = uploadPath;
 				uploadPath = '';
 				uploadFileName = '';
-				void api.fs.delete(uploaded).catch(() => {});
+				discardUpload(uploaded);
 			}
 		}
 	}
