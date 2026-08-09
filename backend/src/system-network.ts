@@ -1,6 +1,7 @@
 import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, isValidSSID, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, isLinuxWritable, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
@@ -58,6 +59,18 @@ const APPLY_TIMEOUT_MS = 45000;
 
 let cached: { at: number; interfaces: NetInterfaceInfo[]; detail: NetworkStateInfo['detail'] } | null = null;
 let inFlight: Promise<NetInterfaceInfo[]> | null = null;
+
+/**
+ * Serializes every host reconfiguration.
+ *
+ * An apply is several destructive steps — flush the address, set the new one,
+ * rewrite the route, bring the profile back up — and two clients running them at
+ * once interleave those steps and leave the interface with both configurations
+ * stacked. One lock for the whole host rather than one per interface: a Wi-Fi
+ * join and an IPv4 apply on different interfaces still contend over the default
+ * route and the resolver list.
+ */
+const applyLock = new Mutex();
 
 /**
  * Addresses and MACs from the Node/Bun runtime — everything every platform can
@@ -226,17 +239,19 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 	if (invalid) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, `invalid ${invalid}`);
 	const supported = await readCapabilities();
 	if (!supported.ipv4) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'this host does not expose a writable network configuration');
-	await run(async () => {
-		if (process.platform === 'win32') {
-			if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-			await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
-		} else if (process.platform === 'darwin') {
-			await applyMacIPv4(assertDeviceName(interfaceID), config);
-		} else {
-			await applyLinuxIPv4(assertDeviceName(interfaceID), config);
-		}
+	await applyLock.runExclusive(async () => {
+		await run(async () => {
+			if (process.platform === 'win32') {
+				if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+				await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
+			} else if (process.platform === 'darwin') {
+				await applyMacIPv4(assertDeviceName(interfaceID), config);
+			} else {
+				await applyLinuxIPv4(assertDeviceName(interfaceID), config);
+			}
+		});
+		resetNetworkStateCache();
 	});
-	resetNetworkStateCache();
 }
 
 /** Scan for joinable Wi-Fi networks on one interface. */
@@ -249,8 +264,10 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 export async function connectWifi(interfaceID: string, ssid: string, password: string): Promise<void> {
 	await assertWirelessInterface(interfaceID);
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
-	await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
-	resetNetworkStateCache();
+	await applyLock.runExclusive(async () => {
+		await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
+		resetNetworkStateCache();
+	});
 }
 
 /**
