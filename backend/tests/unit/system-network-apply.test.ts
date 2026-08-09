@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
 import { nmcliModifyArgs, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
-import { isWindowsInterfaceID, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
+import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
+import { firstLine } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
 	it('accepts ordinary dotted quads', () => {
@@ -271,5 +272,39 @@ describe('parseNmcliPermission', () => {
 
 	it('returns null when the permission is absent', () => {
 		expect(parseNmcliPermission(AS_ROOT, 'org.freedesktop.NetworkManager.wifi.share.open')).toBeNull();
+	});
+});
+
+describe('firstLine', () => {
+	it('keeps only the reason out of a PowerShell error block', () => {
+		// Captured shape: the message, then the offending command, then a caret
+		// ruler. Showing all three would put our own script in the user's dialog.
+		const blob = 'Set-NetIPInterface : Access is denied.\nAt line:1 char:507\n+ ... Continue; Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 ...\n+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~';
+		expect(firstLine(blob)).toBe('Set-NetIPInterface : Access is denied.');
+	});
+
+	it('keeps a single-line message from a Unix tool intact', () => {
+		expect(firstLine('** Error: Command requires admin privileges.')).toBe('** Error: Command requires admin privileges.');
+	});
+
+	it('skips leading blank lines rather than returning nothing', () => {
+		expect(firstLine('\n\n   Not authorized to control networking.\n')).toBe('Not authorized to control networking.');
+	});
+
+	it('yields an empty string for nothing at all, so the caller can fall back', () => {
+		expect(firstLine(undefined)).toBe('');
+		expect(firstLine('   \n  \n')).toBe('');
+	});
+});
+
+describe('parseElevation', () => {
+	it('accepts the PowerShell boolean in either case, with trailing CRLF', () => {
+		expect(parseElevation('True\r\n')).toBe(true);
+		expect(parseElevation('true')).toBe(true);
+	});
+
+	it('treats anything else as not elevated', () => {
+		expect(parseElevation('False\r\n')).toBe(false);
+		expect(parseElevation('')).toBe(false);
 	});
 });

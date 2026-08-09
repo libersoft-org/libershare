@@ -451,3 +451,19 @@ export function windowsApplyIPv4Command(guid: string, config: NetIPv4Config): st
 	}
 	return steps.join('; ');
 }
+
+/**
+ * One-shot that answers whether this process holds an elevated token.
+ *
+ * Applying an address needs it: measured on a standard account, the very first
+ * privileged step answers "Access is denied" and nothing is changed. Being an
+ * administrator is not enough on its own — with UAC split tokens a member of the
+ * Administrators group still runs unelevated, and the write fails just the same,
+ * so the role check has to be against the CURRENT token rather than the account.
+ */
+export const WINDOWS_ELEVATION_COMMAND: string = '[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)';
+
+/** True when the one-shot above reported an elevated token. */
+export function parseElevation(stdout: string): boolean {
+	return stdout.trim().toLowerCase() === 'true';
+}

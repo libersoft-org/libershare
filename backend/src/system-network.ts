@@ -2,7 +2,7 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { CodedError, ErrorCodes, isValidSSID, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
-import { isWindowsInterfaceID, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
+import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, isLinuxWritable, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
 
@@ -14,9 +14,12 @@ const execFileAsync = promisify(execFile);
  * Writing is narrower than reading and says so through {@link NetCapabilities},
  * which the UI uses to decide whether to offer an edit at all:
  *
- *  - IPv4 (address, gateway, DNS) applies on Windows and on a Linux host running
- *    NetworkManager. Both need privileges; a refusal surfaces as NETCONFIG_FAILED
- *    rather than being pre-flighted, because probing costs a spawn on every read.
+ *  - IPv4 (address, gateway, DNS) applies on Windows, on a Linux host running
+ *    NetworkManager, and on macOS. All three need privileges, and each answers
+ *    that question differently — an elevated token on Windows, a polkit verdict
+ *    of `yes` on Linux, membership of the `admin` group on macOS. The answer is
+ *    probed once and cached, so the UI can hide an edit the process could never
+ *    complete instead of letting the user discover it when Save fails.
  *  - Wi-Fi scan/join applies on Linux only. See system-network-windows.ts and
  *    system-network-macos.ts for why the other two are deliberately absent rather
  *    than written blind — on macOS the operating system withholds every network
@@ -187,10 +190,10 @@ let capabilities: NetCapabilities | null = null;
 async function readCapabilities(): Promise<NetCapabilities> {
 	if (capabilities) return capabilities;
 	if (process.platform === 'win32') {
-		// IPv4 applies through Get/Set-Net* and only needs elevation, which is
-		// reported when the apply fails rather than probed up front — probing it
-		// would cost a second spawn on every read. Wi-Fi is deliberately read-only.
-		capabilities = { ipv4: true, wifi: false };
+		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
+		// capability is that token — probed once here rather than discovered by the
+		// user when Save fails. Wi-Fi is deliberately read-only.
+		capabilities = { ipv4: await isWindowsElevated(), wifi: false };
 	} else if (process.platform === 'linux') {
 		const managed = await isLinuxWritable();
 		capabilities = { ipv4: managed, wifi: managed };
@@ -205,6 +208,16 @@ async function readCapabilities(): Promise<NetCapabilities> {
 		capabilities = { ipv4: false, wifi: false };
 	}
 	return capabilities;
+}
+
+/** True when this process can actually run the privileged cmdlets. One spawn, cached with the capabilities. */
+async function isWindowsElevated(): Promise<boolean> {
+	try {
+		const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_ELEVATION_COMMAND], { timeout: WINDOWS_TIMEOUT_MS, maxBuffer: 1024, windowsHide: true });
+		return parseElevation(stdout);
+	} catch {
+		return false;
+	}
 }
 
 /** Apply an IPv4 configuration to one interface, then drop the cache so the next read reflects it. */
@@ -282,6 +295,23 @@ function assertDeviceName(interfaceID: string): string {
  * would leave a macOS user with "Command failed: /usr/sbin/networksetup …" and no
  * reason. Our own coded errors pass through untouched.
  */
+/**
+ * The first meaningful line of a tool's error output.
+ *
+ * PowerShell follows its message with the offending command and a caret ruler,
+ * so the raw text would fill a dialog with our own script; only the first line
+ * carries the reason.
+ */
+export function firstLine(text: string | undefined): string {
+	return (
+		(text ?? '')
+			.split(/\r?\n/)
+			.map(line => line.trim())
+			.find(line => line.length > 0)
+			?.slice(0, 300) ?? ''
+	);
+}
+
 async function run<T>(action: () => Promise<T>): Promise<T> {
 	try {
 		return await action();
@@ -289,6 +319,6 @@ async function run<T>(action: () => Promise<T>): Promise<T> {
 		if (err instanceof CodedError) throw err;
 		const failure = err as { stderr?: string | Buffer; stdout?: string | Buffer };
 		const detail = failure.stderr?.toString().trim() || failure.stdout?.toString().trim();
-		throw new CodedError(ErrorCodes.NETCONFIG_FAILED, (detail || (err as Error).message || 'command failed').slice(0, 300));
+		throw new CodedError(ErrorCodes.NETCONFIG_FAILED, firstLine(detail) || (err as Error).message || 'command failed');
 	}
 }
