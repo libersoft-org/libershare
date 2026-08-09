@@ -480,7 +480,12 @@ export function parseNmcliWifiList(text: string): NetWifiNetwork[] {
 			active: inUse?.trim() === '*',
 		};
 		const previous = best.get(ssid);
-		if (!previous || (entry.signal ?? -1) > (previous.signal ?? -1)) best.set(ssid, previous ? { ...entry, active: previous.active || entry.active } : entry);
+		if (!previous) best.set(ssid, entry);
+		// The strongest access point wins the signal, but IN-USE belongs to the
+		// network, not to that row: on a roaming network the host is regularly
+		// associated with the weaker of two access points, and dropping the marker
+		// with the losing row stops the UI showing which network it is on.
+		else best.set(ssid, { ...((entry.signal ?? -1) > (previous.signal ?? -1) ? entry : previous), active: previous.active || entry.active });
 	}
 	return [...best.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }

@@ -112,6 +112,14 @@ describe('parseNmcliWifiList', () => {
 		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, active: true }]);
 	});
 
+	it('keeps the active flag when the associated row is listed after the strongest', () => {
+		// Same roaming network, rows the other way round. nmcli does not order
+		// access points, so the marker has to survive whichever row wins the signal
+		// — otherwise a host on the weaker access point shows no active network.
+		const result = parseNmcliWifiList('home:88:WPA2:\nhome:40:WPA2:*');
+		expect(result).toEqual([{ ssid: 'home', signal: 88, secured: true, active: true }]);
+	});
+
 	it('sorts strongest first', () => {
 		expect(parseNmcliWifiList('weak:10:WPA2:\nstrong:90:WPA2:\nmid:50:WPA2:').map(n => n.ssid)).toEqual(['strong', 'mid', 'weak']);
 	});
