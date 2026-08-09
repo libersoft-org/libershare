@@ -1446,6 +1446,11 @@ export class Network {
 		const gossipsub: any = this.pubsub;
 		if (gossipsub?.direct && typeof gossipsub.direct.delete === 'function') gossipsub.direct.delete(peerID);
 		this.redialBackoff.delete(peerID);
+		// Both eviction clocks, not just the backoff one. A stale noReachableSince
+		// left behind here is measured in wall-clock, so a peer purged now and back
+		// in the peerStore later would be judged against a window that started
+		// before it ever went away, and evicted on the first tick that sees it.
+		this.noReachableSince.delete(peerID);
 		try {
 			const pid = peerIDFromString(peerID);
 			// Drop existing connections so libp2p considers the entry fully gone.
