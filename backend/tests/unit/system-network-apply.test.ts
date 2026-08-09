@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliModifyArgs, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { nmcliModifyArgs, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 
 describe('isIPv4', () => {
@@ -244,5 +244,32 @@ describe('parseProcNetWireless', () => {
 
 	it('yields nothing when no wireless driver is loaded', () => {
 		expect(parseProcNetWireless('Inter-| sta-|   Quality\n face | tus | link level noise\n').size).toBe(0);
+	});
+});
+
+describe('parseNmcliPermission', () => {
+	// Captured from a Debian 12 host: the same command run as root and as an
+	// unprivileged user. Values are not localized even on a Czech-locale system.
+	const AS_ROOT = 'org.freedesktop.NetworkManager.network-control:yes\norg.freedesktop.NetworkManager.settings.modify.system:yes\n';
+	const AS_USER = 'org.freedesktop.NetworkManager.network-control:auth\norg.freedesktop.NetworkManager.settings.modify.system:auth\n';
+	const KEY = 'org.freedesktop.NetworkManager.settings.modify.system';
+
+	it('reads the verdict for a privileged process', () => {
+		expect(parseNmcliPermission(AS_ROOT, KEY)).toBe('yes');
+	});
+
+	it('reads "auth" for a process that would need a password prompt', () => {
+		// A backend has no polkit agent, so "auth" means the write would fail —
+		// the caller must treat it as not writable rather than as permitted.
+		expect(parseNmcliPermission(AS_USER, KEY)).toBe('auth');
+	});
+
+	it('does not confuse one permission with another', () => {
+		expect(parseNmcliPermission(AS_ROOT, 'org.freedesktop.NetworkManager.network-control')).toBe('yes');
+		expect(parseNmcliPermission(AS_USER, 'org.freedesktop.NetworkManager.network-control')).toBe('auth');
+	});
+
+	it('returns null when the permission is absent', () => {
+		expect(parseNmcliPermission(AS_ROOT, 'org.freedesktop.NetworkManager.wifi.share.open')).toBeNull();
 	});
 });

@@ -326,10 +326,38 @@ export function splitNmcliFields(line: string): string[] {
 	return fields;
 }
 
-/** True when NetworkManager is installed and running, so configuration can actually be written. */
+/** The polkit action that persisting a connection change needs. */
+const NM_MODIFY_PERMISSION = 'org.freedesktop.NetworkManager.settings.modify.system';
+
+/**
+ * Read one permission verdict out of `nmcli -t -f PERMISSION,VALUE general permissions`.
+ *
+ * The values (`yes`, `no`, `auth`) are NOT localized even though the table form
+ * of the same command is — verified against a Czech-locale host, where the table
+ * printed "ano" and the terse form still printed "yes".
+ */
+export function parseNmcliPermission(text: string, permission: string): string | null {
+	for (const line of text.split('\n')) {
+		const fields = splitNmcliFields(line.trim());
+		if (fields[0] === permission) return fields[1] ?? null;
+	}
+	return null;
+}
+
+/**
+ * True when NetworkManager is running AND this process may actually persist a
+ * change to it.
+ *
+ * The second half matters as much as the first. polkit answers `auth` for an
+ * unprivileged process — meaning "a human would have to type an admin password" —
+ * and a backend with no polkit agent cannot answer that prompt, so the write
+ * fails. Reporting the capability from "nmcli exists" alone would put an edit
+ * form in front of the user whose Save could never succeed.
+ */
 export async function isLinuxWritable(): Promise<boolean> {
 	try {
-		return (await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'RUNNING', 'general'])).trim().startsWith('running');
+		if (!(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'RUNNING', 'general'])).trim().startsWith('running')) return false;
+		return parseNmcliPermission(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'PERMISSION,VALUE', 'general', 'permissions']), NM_MODIFY_PERMISSION) === 'yes';
 	} catch {
 		return false;
 	}
