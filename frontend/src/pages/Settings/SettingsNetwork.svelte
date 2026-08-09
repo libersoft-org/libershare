@@ -36,7 +36,6 @@
 	// call themselves wireless and cannot scan.
 	let canEditIPv4 = $derived($networkState.capabilities.ipv4 && $networkState.detail === 'full');
 	let canEditWifi = $derived($networkState.capabilities.wifi && $networkState.detail === 'full');
-	let editable = $derived(canEditIPv4 || canEditWifi);
 	function isConfigurable(iface: NetInterfaceInfo): boolean {
 		return canEditIPv4 || (canEditWifi && !!iface.wifi);
 	}
@@ -128,7 +127,11 @@
 {:else}
 	<div class="settings">
 		<div class="container">
-			<div class="note">{editable ? $t('settings.network.editableNote') : $t('settings.network.readOnlyNote')}</div>
+			<!-- The note is about ADDRESSING specifically, so it follows the addressing
+			     capability alone — a host that can only join Wi-Fi networks still shows
+			     its addresses read-only, and saying otherwise would be a promise the
+			     Save button could not keep. -->
+			<div class="note">{canEditIPv4 ? $t('settings.network.editableNote') : $t('settings.network.readOnlyNote')}</div>
 			{#if $networkState.detail === 'addressesOnly'}
 				<div class="note">{$t('settings.network.detailLimited')}</div>
 			{/if}
