@@ -342,6 +342,7 @@
 			"noWifiFound": "Nebyla nalezena žádná síť.",
 			"secured": "Vyžaduje heslo",
 			"open": "Otevřená",
+			"connected": "Připojeno",
 			"passwordFor": "Heslo pro síť {ssid}",
 			"join": "Připojit",
 			"joined": "Připojeno k síti {ssid}.",

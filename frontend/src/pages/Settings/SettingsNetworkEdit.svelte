@@ -218,7 +218,7 @@
 			</ButtonBar>
 			{#each networks as network, index (network.ssid)}
 				<div role="group" data-mouse-activate-area={areaID}>
-					<Button label="{network.ssid}{network.active ? ' ✓' : ''}" position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy} />
+					<Button label={network.ssid} icon={network.active ? '/img/check.svg' : undefined} alt={network.active ? $t('settings.network.connected') : ''} position={[0, wifiBaseY + 1 + index]} onConfirm={() => selectNetwork(network)} disabled={busy} />
 					<div class="network">
 						<span>{network.secured ? $t('settings.network.secured') : $t('settings.network.open')}</span>
 						<span>{network.signal !== null ? `${network.signal}%` : '—'}</span>

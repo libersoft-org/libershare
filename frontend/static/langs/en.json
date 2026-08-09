@@ -342,6 +342,7 @@
 			"noWifiFound": "No networks found.",
 			"secured": "Password required",
 			"open": "Open",
+			"connected": "Connected",
 			"passwordFor": "Password for {ssid}",
 			"join": "Connect",
 			"joined": "Connected to {ssid}.",
