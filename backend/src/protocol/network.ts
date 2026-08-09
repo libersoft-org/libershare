@@ -109,6 +109,33 @@ const BOOTSTRAP_STATUS_STALE_MS = 30 * 60_000;
  * only for peers that cannot initiate inbound connections).
  */
 const UNREACHABLE_QUARANTINE_MS = 30 * 60_000;
+
+/**
+ * Where the eviction window should run from after a re-dial failure.
+ *
+ * A failure only says something about the PEER when this node can reach anyone
+ * at all. While we are the disconnected one — laptop asleep, Wi-Fi off, VPN
+ * dropped — every dial fails, so the window is slid forward instead of
+ * accumulating. Without this, a local outage longer than REDIAL_EVICT_MIN_MS
+ * would evict the whole non-configured peerStore on the first dial after the
+ * connection came back.
+ */
+export function nextEvictionWindowStart(reachable: boolean, previous: number | undefined, now: number): number {
+	return reachable ? (previous ?? now) : now;
+}
+
+/**
+ * Whether a run of re-dial failures has earned an eviction.
+ *
+ * Eviction is destructive — it purges the peerStore entry, drops the status row
+ * and quarantines the ID — so it needs all four conditions at once: we are
+ * demonstrably online, the peer has failed enough times, it has been failing for
+ * long enough, and it is not one the operator configured by hand.
+ */
+export function shouldEvictUnreachablePeer(input: { reachable: boolean; failCount: number; unreachableForMs: number; configured: boolean }): boolean {
+	if (!input.reachable || input.configured) return false;
+	return input.failCount >= REDIAL_EVICT_FAILS && input.unreachableForMs >= REDIAL_EVICT_MIN_MS;
+}
 /**
  * Maximum size (bytes) of an incoming pubsub payload we are willing to decode.
  * Our own control messages ride pubsub (WANT — tiny JSON), but older/foreign peers
@@ -880,7 +907,8 @@ export class Network {
 					// Exponential backoff: 30s × 2^failCount, capped at 10 min.
 					const nextFailCount = c.failCount + 1;
 					const delayMs = Math.min(30_000 * 2 ** c.failCount, 600_000);
-					const firstFailure = this.redialBackoff.get(c.pid)?.firstFailure ?? Date.now();
+					const reachable = this.hasConnectionOtherThan(c.peer.id);
+					const firstFailure = nextEvictionWindowStart(reachable, this.redialBackoff.get(c.pid)?.firstFailure, Date.now());
 					this.redialBackoff.set(c.pid, { nextAttempt: Date.now() + delayMs, failCount: nextFailCount, firstFailure });
 					console.debug(`   ✗ Re-dial peer=${c.pid} failed: ${err.message ?? err} (tried: ${c.addrSummary}, next in ${Math.round(delayMs / 1000)}s)`);
 					// Enough consecutive failures over enough time ⇒ the peer is gone, not
@@ -890,7 +918,7 @@ export class Network {
 					// quarantine the ID so gossip mentions don't immediately re-add it.
 					// Configured bootstrap peers are exempt — user data, they must survive
 					// any outage and keep their red status row instead.
-					if (nextFailCount >= REDIAL_EVICT_FAILS && Date.now() - firstFailure >= REDIAL_EVICT_MIN_MS && !this.configuredPeerIDs.has(c.pid)) {
+					if (shouldEvictUnreachablePeer({ reachable, failCount: nextFailCount, unreachableForMs: Date.now() - firstFailure, configured: this.configuredPeerIDs.has(c.pid) })) {
 						// Last-moment liveness check: the peer may have connected (inbound
 						// dial, another async path) while this worker was failing on stale
 						// state. purgeStalePeer closes connections, so evicting here would
@@ -1202,6 +1230,19 @@ export class Network {
 	 */
 	set onBootstrapStatusChange(cb: ((networkID: string, status: BootstrapStatus) => void) | null) {
 		this.bootstrapTracker.setOnChange(cb);
+	}
+
+	/**
+	 * True when this node holds a live connection to somebody OTHER than the given
+	 * peer.
+	 *
+	 * This is the difference between "that peer is gone" and "we are the ones who
+	 * are offline", and eviction is only ever entitled to the first reading. The
+	 * peer being judged is excluded because a connection to it would make the
+	 * question moot — that case is handled separately, right before the purge.
+	 */
+	private hasConnectionOtherThan(peer: PeerID): boolean {
+		return !!this.node && this.node.getConnections().some(connection => !connection.remotePeer.equals(peer));
 	}
 
 	/**
