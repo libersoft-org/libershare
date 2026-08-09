@@ -59,6 +59,8 @@ export interface LinuxNetworkSources {
 	wireless?: Set<string>;
 	/** Per-interface `iw dev <if> link` output, when `iw` is installed. */
 	iwLinks?: Map<string, string>;
+	/** Signal quality per interface from `/proc/net/wireless`. Used when `iw` reported none. */
+	procSignals?: Map<string, number>;
 	/** Resolver addresses from /etc/resolv.conf. Attributed to the default-route interface only. */
 	resolvers?: string[];
 	/** Per-interface resolvers as NetworkManager sees them. Preferred over {@link resolvers} when present. */
@@ -83,12 +85,13 @@ export function dbmToQuality(dbm: number): number {
  * Two forms exist: `Not connected.` for an idle adapter, and a `Connected to
  * <bssid>` block with indented `SSID:` / `signal:` lines. A connected adapter
  * whose driver does not report a signal level yields `signal: null` rather than
- * a guessed number.
+ * a guessed number — and {@link parseProcNetWireless} then backfills it.
  *
- * ponytail: the expected shapes are documented, not captured — the Linux node
- * available for this work has no wireless hardware. Both the "not connected"
- * and "no signal line" branches degrade to nulls, so a shape mismatch surfaces
- * as "signal unknown" in the UI, never as a wrong percentage.
+ * The connected shape is captured from a real associated adapter (brcmfmac on
+ * Debian 12/arm64), where this and `/proc/net/wireless` reported the same level
+ * at the same moment. The "not connected" branch is still shape-only, but it
+ * degrades to nulls, so a mismatch surfaces as "signal unknown" in the UI rather
+ * than as a wrong percentage.
  */
 export function parseIwLink(text: string): { ssid: string | null; signal: number | null } {
 	if (/^\s*Not connected\.?\s*$/m.test(text)) return { ssid: null, signal: null };
@@ -98,6 +101,27 @@ export function parseIwLink(text: string): { ssid: string | null; signal: number
 		ssid: ssidMatch?.[1] ?? null,
 		signal: signalMatch?.[1] ? dbmToQuality(parseFloat(signalMatch[1])) : null,
 	};
+}
+
+/**
+ * Signal levels from `/proc/net/wireless`, keyed by interface.
+ *
+ * The kernel writes this file whenever a wireless driver is loaded, so it needs
+ * no userspace tool at all — which is why it is the fallback for a host that does
+ * not ship `iw`. The columns are `status link level noise`; only `level` is used,
+ * and only when it is negative, because that is the form drivers report in dBm.
+ * A positive level is a driver-relative unit with no documented scale, and
+ * turning that into a percentage would be inventing a number.
+ */
+export function parseProcNetWireless(text: string): Map<string, number> {
+	const result = new Map<string, number>();
+	for (const line of text.split('\n')) {
+		const match = line.match(/^\s*([a-zA-Z0-9._-]+):\s*[0-9a-f]+\s+(-?\d+)\.?\s+(-?\d+)\.?/);
+		if (!match || !match[1] || !match[3]) continue;
+		const level = parseInt(match[3], 10);
+		if (level < 0) result.set(match[1], dbmToQuality(level));
+	}
+	return result;
 }
 
 /** Map an `ip` entry's operstate/flags to a carrier state. NO-CARRIER wins over an administratively UP flag. */
@@ -187,6 +211,10 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 		if (wireless) {
 			const iw = sources.iwLinks?.get(entry.ifname);
 			const parsed: NetWifiInfo = iw ? { ...parseIwLink(iw), radio: 'unknown' } : { ssid: null, signal: null, radio: 'unknown' };
+			// `iw` gives both the name and the level, but it is not installed
+			// everywhere; the kernel's own file always is, so it backfills the level
+			// on a host that has no `iw`. The SSID has no such fallback and stays null.
+			if (parsed.signal === null) parsed.signal = sources.procSignals?.get(entry.ifname) ?? null;
 			info.wifi = parsed;
 		}
 		result.push(info);
@@ -217,6 +245,15 @@ function isWireless(ifname: string): boolean {
 	return existsSync(`/sys/class/net/${ifname}/phy80211`);
 }
 
+/** Signal levels straight from the kernel. Empty when no wireless driver is loaded. */
+function readProcSignals(): Map<string, number> {
+	try {
+		return parseProcNetWireless(readFileSync('/proc/net/wireless', 'utf8'));
+	} catch {
+		return new Map();
+	}
+}
+
 /** Nameserver addresses from /etc/resolv.conf. Empty when the file is missing or has none. */
 function readResolvers(): string[] {
 	try {
@@ -243,7 +280,7 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 			// rather than being guessed from anything else.
 		}
 	}
-	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, resolvers: readResolvers(), nmDns: await readNetworkManagerDns() });
+	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: await readNetworkManagerDns() });
 }
 
 /**

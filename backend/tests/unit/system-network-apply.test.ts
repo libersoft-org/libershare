@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliModifyArgs, parseNmcliWifiList, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { nmcliModifyArgs, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 
 describe('isIPv4', () => {
@@ -205,5 +205,44 @@ describe('windowsApplyIPv4Command', () => {
 		// Without this a failed Set-NetIPInterface would be followed by a
 		// New-NetIPAddress that silently lands on the wrong configuration.
 		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain('$ErrorActionPreference = "Stop"');
+	});
+});
+
+describe('parseProcNetWireless', () => {
+	// Captured verbatim from an associated brcmfmac adapter on Debian 12/arm64.
+	// Only the interface name and levels matter; the trailing counters vary per host.
+	const PROC = `Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE
+ face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22
+ wlan0: 0000   59.  -51.  -256        0      0      0   1077      0        0
+`;
+
+	it('reads the level of a real associated adapter', () => {
+		// The same moment's `iw dev wlan0 link` reported -51 dBm, so both sources
+		// must land on the same percentage or the UI would flicker between them.
+		expect(parseProcNetWireless(PROC)).toEqual(new Map([['wlan0', 98]]));
+	});
+
+	it('ignores the two header lines', () => {
+		expect(parseProcNetWireless(PROC).size).toBe(1);
+	});
+
+	it('reads several adapters at once', () => {
+		const two = PROC + ' wlan1: 0000   30.  -75.  -256        0      0      0      0      0        0\n';
+		expect(parseProcNetWireless(two)).toEqual(
+			new Map([
+				['wlan0', 98],
+				['wlan1', 50],
+			])
+		);
+	});
+
+	it('refuses to turn a driver-relative level into a percentage', () => {
+		// A positive level has no documented scale; inventing a number from it would
+		// be worse than admitting the signal is unknown.
+		expect(parseProcNetWireless(' wlan0: 0000   59.  144.  0        0      0      0      0      0        0').size).toBe(0);
+	});
+
+	it('yields nothing when no wireless driver is loaded', () => {
+		expect(parseProcNetWireless('Inter-| sta-|   Quality\n face | tus | link level noise\n').size).toBe(0);
 	});
 });
