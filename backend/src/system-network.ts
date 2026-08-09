@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, isValidSSID, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
-import { isWindowsInterfaceID, parseElevation, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
+import { connectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, windowsApplyIPv4Command, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, isLinuxWritable, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
 
@@ -21,10 +21,10 @@ const execFileAsync = promisify(execFile);
  *    of `yes` on Linux, membership of the `admin` group on macOS. The answer is
  *    probed once and cached, so the UI can hide an edit the process could never
  *    complete instead of letting the user discover it when Save fails.
- *  - Wi-Fi scan/join applies on Linux only. See system-network-windows.ts and
- *    system-network-macos.ts for why the other two are deliberately absent rather
- *    than written blind — on macOS the operating system withholds every network
- *    name from a process without Location access, so there is nothing to offer.
+ *  - Wi-Fi scan/join applies on Windows (wlanapi, no elevation needed) and on a
+ *    Linux host running NetworkManager. It does not apply on macOS, where the
+ *    operating system withholds every network name from a process without
+ *    Location access — see system-network-macos.ts for the measurements.
  *
  * Applying can drop the very interface the caller reached us on. That is inherent
  * to changing an address and is the user's decision to make, so it is not
@@ -234,8 +234,9 @@ async function readCapabilities(): Promise<NetCapabilities> {
 	if (process.platform === 'win32') {
 		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
 		// capability is that token — probed once here rather than discovered by the
-		// user when Save fails. Wi-Fi is deliberately read-only.
-		capabilities = { ipv4: await isWindowsElevated(), wifi: false };
+		// user when Save fails. Wi-Fi goes through wlanapi instead, which asks for no
+		// elevation at all, so the two are probed separately.
+		capabilities = { ipv4: await isWindowsElevated(), wifi: isWindowsWifiConfigurable() };
 	} else if (process.platform === 'linux') {
 		const managed = await isLinuxWritable();
 		capabilities = { ipv4: managed, wifi: managed };
@@ -271,8 +272,7 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 	await applyLock.runExclusive(async () => {
 		await run(async () => {
 			if (process.platform === 'win32') {
-				if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-				await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
+				await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(assertWindowsGuid(interfaceID), config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
 			} else if (process.platform === 'darwin') {
 				await applyMacIPv4(assertDeviceName(interfaceID), config);
 			} else {
@@ -286,6 +286,7 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 /** Scan for joinable Wi-Fi networks on one interface. */
 export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	await assertWirelessInterface(interfaceID);
+	if (process.platform === 'win32') return run(() => scanWindowsWifi(assertWindowsGuid(interfaceID)));
 	return run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
 }
 
@@ -294,9 +295,16 @@ export async function connectWifi(interfaceID: string, ssid: string, password: s
 	await assertWirelessInterface(interfaceID);
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
 	await applyLock.runExclusive(async () => {
-		await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
+		if (process.platform === 'win32') await run(() => connectWindowsWifi(assertWindowsGuid(interfaceID), ssid, password));
+		else await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
 		resetNetworkStateCache();
 	});
+}
+
+/** Validate a Windows interface id before it addresses an adapter. Same boundary check as {@link assertDeviceName}. */
+function assertWindowsGuid(interfaceID: string): string {
+	if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+	return interfaceID;
 }
 
 /**
