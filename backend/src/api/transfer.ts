@@ -142,6 +142,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				dl.removeNetwork?.(networkID);
 				continue;
 			}
+			// Drop the left lishnet here too. The download is about to be disabled, but
+			// disabled is not discarded: rejoining a DIFFERENT lishnet of this download
+			// resumes it, and anything left in the set would then be broadcast on
+			// again — a topic we are no longer part of.
+			dl.removeNetwork?.(networkID);
 			// Drop the runtime enabled flag (no DB persist) so `lishs.list` reports the
 			// download as stopped and restartDownloadIfEnabled cannot silently revive it
 			// while no usable lishnet is joined. The DB flag stays untouched, so an app

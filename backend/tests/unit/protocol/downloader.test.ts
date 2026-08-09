@@ -1369,3 +1369,66 @@ describe('Downloader – network peer:disconnect handling', () => {
 		expect(net.peerDisconnectHandlers.size).toBe(0);
 	});
 });
+
+describe('Downloader – lishnet membership across leave and rejoin', () => {
+	function make(networkIDs: string[]): Downloader {
+		return new Downloader('/tmp/dl', new MockNetwork() as never, new MockDataServer() as never, networkIDs);
+	}
+
+	it('drops a left lishnet from the set it broadcasts on', () => {
+		const dl = make(['net-a', 'net-b']);
+		dl.removeNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-b']);
+	});
+
+	it('ignores a lishnet this download was never bound to', () => {
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-z');
+		expect(dl.getNetworkIDs()).toEqual(['net-a']);
+	});
+
+	it('drops the last lishnet too, leaving nothing to broadcast on', () => {
+		// It used to keep the last one, on the grounds that the caller disables the
+		// download — but a disabled download can still be resumed by a rejoin.
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual([]);
+	});
+
+	it('does not resurrect a left lishnet when a different one is rejoined', () => {
+		// The reported defect, end to end: bound to A and B, leave both, rejoin only
+		// A. Before the fix B survived the second leave and addNetwork appended A
+		// beside it, so the resumed download broadcast WANTs on B — a topic the node
+		// had left.
+		const dl = make(['net-a', 'net-b']);
+		dl.removeNetwork('net-a');
+		dl.removeNetwork('net-b');
+		dl.addNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-a']);
+		expect(dl.getNetworkIDs()).not.toContain('net-b');
+	});
+
+	it('rejoining restores only lishnets the download actually belongs to', () => {
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-a');
+		dl.addNetwork('net-stranger');
+		expect(dl.getNetworkIDs()).toEqual([]);
+	});
+
+	it('keeps the original binding so a rejoin can still resume the download', () => {
+		// removeNetwork must not touch the original set — that is what the resume
+		// path matches a rejoined lishnet against.
+		const dl = make(['net-a', 'net-b']);
+		dl.removeNetwork('net-a');
+		dl.removeNetwork('net-b');
+		expect(dl.getOriginalNetworkIDs().sort()).toEqual(['net-a', 'net-b']);
+	});
+
+	it('adding a lishnet twice does not duplicate it', () => {
+		const dl = make(['net-a']);
+		dl.removeNetwork('net-a');
+		dl.addNetwork('net-a');
+		dl.addNetwork('net-a');
+		expect(dl.getNetworkIDs()).toEqual(['net-a']);
+	});
+});

@@ -136,11 +136,17 @@ export class Downloader {
 	 * Stop sourcing this download from a lishnet the node just left. Removes the
 	 * network from the set so subsequent WANT broadcasts and topic-peer probes no
 	 * longer reach the left lishnet; peers exclusive to it are hung up separately
-	 * by the leave path. No-op if it was not one of this download's networks or if
-	 * it is the only one left (the caller disables the whole download in that case).
+	 * by the leave path. No-op if it was not one of this download's networks.
+	 *
+	 * The LAST network is removable too, leaving the set empty. It used to be kept
+	 * on the grounds that the caller disables the download anyway — but a disabled
+	 * download is not a discarded one: rejoining a DIFFERENT lishnet resumes it and
+	 * {@link addNetwork} appends to whatever survived, so the stale entry came back
+	 * with it and the download resumed broadcasting WANTs on a lishnet we had left.
+	 * An empty set is harmless: every peer-facing loop iterates it.
 	 */
 	removeNetwork(networkID: string): void {
-		if (this.networkIDs.length <= 1 || !this.networkIDs.includes(networkID)) return;
+		if (!this.networkIDs.includes(networkID)) return;
 		this.networkIDs = this.networkIDs.filter(id => id !== networkID);
 	}
 
