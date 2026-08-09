@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { CodedError, ErrorCodes, isValidSSID, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetworkStateInfo, type NetWifiNetwork } from '@shared';
 import { isWindowsInterfaceID, parseWindowsNetworkState, readWindowsWifi, windowsApplyIPv4Command, WINDOWS_STATE_COMMAND } from './system-network-windows.ts';
 import { applyLinuxIPv4, connectLinuxWifi, isLinuxWritable, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
+import { applyMacIPv4, isMacWifiConfigurable, isMacWritable, readMacNetworkState } from './system-network-macos.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -16,19 +17,24 @@ const execFileAsync = promisify(execFile);
  *  - IPv4 (address, gateway, DNS) applies on Windows and on a Linux host running
  *    NetworkManager. Both need privileges; a refusal surfaces as NETCONFIG_FAILED
  *    rather than being pre-flighted, because probing costs a spawn on every read.
- *  - Wi-Fi scan/join applies on Linux only. See system-network-windows.ts for why
- *    the Windows path is deliberately absent rather than written unverified.
- *  - macOS is read-only in both respects.
+ *  - Wi-Fi scan/join applies on Linux only. See system-network-windows.ts and
+ *    system-network-macos.ts for why the other two are deliberately absent rather
+ *    than written blind — on macOS the operating system withholds every network
+ *    name from a process without Location access, so there is nothing to offer.
  *
  * Applying can drop the very interface the caller reached us on. That is inherent
  * to changing an address and is the user's decision to make, so it is not
  * prevented here — but every value is validated before a child process sees it.
  *
- * Windows and Linux report full detail (medium, carrier, DHCP mode, gateway,
- * DNS, Wi-Fi). Every other platform — macOS included — falls back to
- * `os.networkInterfaces()`, which is real data but only addresses and MACs;
- * that is reported honestly as `detail: 'addressesOnly'` rather than padded
- * out with invented fields.
+ * Windows, Linux and macOS all report full detail (medium, carrier, DHCP mode,
+ * gateway, DNS, Wi-Fi signal). Any other platform falls back to
+ * `os.networkInterfaces()`, which is real data but only addresses and MACs; that
+ * is reported honestly as `detail: 'addressesOnly'` rather than padded out with
+ * invented fields.
+ *
+ * Every platform reader uses only tools that ship with the operating system —
+ * PowerShell and wlanapi on Windows, iproute2 on Linux, networksetup/ifconfig/
+ * ipconfig on macOS. Nothing here requires the user to install anything.
  */
 
 /** Hard cap on how long the PowerShell one-shot may run. */
@@ -110,7 +116,7 @@ export async function readNetworkState(primaryInterface: string = ''): Promise<N
 	const now = Date.now();
 	if (!cached || now - cached.at >= CACHE_TTL_MS) {
 		if (!inFlight) {
-			const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' ? 'full' : 'addressesOnly';
+			const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
 			inFlight = readPlatform()
 				.then(assertReadProducedSomething)
 				.then(interfaces => {
@@ -136,6 +142,7 @@ export async function readNetworkState(primaryInterface: string = ''): Promise<N
 function readPlatform(): Promise<NetInterfaceInfo[]> {
 	if (process.platform === 'win32') return readWindows();
 	if (process.platform === 'linux') return readLinuxNetworkState();
+	if (process.platform === 'darwin') return readMacNetworkState();
 	return Promise.resolve(readGenericInterfaces());
 }
 
@@ -187,10 +194,14 @@ async function readCapabilities(): Promise<NetCapabilities> {
 	} else if (process.platform === 'linux') {
 		const managed = await isLinuxWritable();
 		capabilities = { ipv4: managed, wifi: managed };
+	} else if (process.platform === 'darwin') {
+		// networksetup persists a change and is present on every macOS install, so
+		// addressing is editable. Wi-Fi is not: see isMacWifiConfigurable.
+		capabilities = { ipv4: await isMacWritable(), wifi: isMacWifiConfigurable() };
 	} else {
-		// macOS and everything else read through os.networkInterfaces(), which
-		// cannot even report whether an address came from DHCP. Offering to edit a
-		// configuration we cannot describe would be worse than not offering it.
+		// Everything else reads through os.networkInterfaces(), which cannot even
+		// report whether an address came from DHCP. Offering to edit a configuration
+		// we cannot describe would be worse than not offering it.
 		capabilities = { ipv4: false, wifi: false };
 	}
 	return capabilities;
@@ -206,8 +217,10 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 		if (process.platform === 'win32') {
 			if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 			await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, config)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true });
+		} else if (process.platform === 'darwin') {
+			await applyMacIPv4(assertDeviceName(interfaceID), config);
 		} else {
-			await applyLinuxIPv4(assertLinuxDevice(interfaceID), config);
+			await applyLinuxIPv4(assertDeviceName(interfaceID), config);
 		}
 	});
 	resetNetworkStateCache();
@@ -216,14 +229,14 @@ export async function applyIPv4(interfaceID: string, config: NetIPv4Config): Pro
 /** Scan for joinable Wi-Fi networks on one interface. */
 export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	await assertWirelessInterface(interfaceID);
-	return run(() => scanLinuxWifi(assertLinuxDevice(interfaceID)));
+	return run(() => scanLinuxWifi(assertDeviceName(interfaceID)));
 }
 
 /** Join a Wi-Fi network on one interface. An empty password means an open network. */
 export async function connectWifi(interfaceID: string, ssid: string, password: string): Promise<void> {
 	await assertWirelessInterface(interfaceID);
 	if (!isValidSSID(ssid)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid ssid');
-	await run(() => connectLinuxWifi(assertLinuxDevice(interfaceID), ssid, password));
+	await run(() => connectLinuxWifi(assertDeviceName(interfaceID), ssid, password));
 	resetNetworkStateCache();
 }
 
@@ -245,14 +258,15 @@ async function assertWirelessInterface(interfaceID: string): Promise<void> {
 }
 
 /**
- * Validate a Linux interface id before it reaches a child process.
+ * Validate a Unix interface id before it reaches a child process.
  *
  * A device name is what the kernel exposes, so the accepted set is the kernel's:
- * up to IFNAMSIZ-1 bytes of anything but `/` and NUL. The check exists because
- * the id crosses the API boundary from a client, not because nmcli would
- * misparse it — arguments are passed as argv, never through a shell.
+ * up to IFNAMSIZ-1 bytes of anything but `/` and NUL — the same limit on Linux
+ * and macOS. The check exists because the id crosses the API boundary from a
+ * client, not because the tools would misparse it: arguments are passed as argv,
+ * never through a shell.
  */
-function assertLinuxDevice(interfaceID: string): string {
+function assertDeviceName(interfaceID: string): string {
 	if (!interfaceID || interfaceID.length > 15 || /[/\0]/.test(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
 	return interfaceID;
 }
