@@ -366,6 +366,13 @@ describe('readGenericInterfaces (every platform, including macOS)', () => {
 // Live shape-only smoke test. It asserts the document is well formed, never a
 // specific address, so it is stable on any machine and leaks nothing. Read-only:
 // readNetworkState has no code path that changes configuration.
+//
+// A cold read on Windows spawns PowerShell twice — the state document and the
+// elevation probe — and the code allows each of them 15 s. The default per-test
+// budget of 5 s would fail the test for a spawn the code is still legitimately
+// waiting on, so these two cases carry their own, wider than what they wait for.
+const LIVE_READ_TIMEOUT_MS = 40_000;
+
 describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('readNetworkState (live)', () => {
 	it('returns a valid, internally consistent document', async () => {
 		resetNetworkStateCache();
@@ -390,13 +397,17 @@ describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('r
 			if (iface.wifi) expect(['on', 'off', 'unknown']).toContain(iface.wifi.radio);
 		}
 		expect(state.primaryID === null || ids.includes(state.primaryID)).toBe(true);
-	});
+	}, LIVE_READ_TIMEOUT_MS);
 
-	it('serves a second read from cache instead of spawning again', async () => {
-		resetNetworkStateCache();
-		await readNetworkState('');
-		const started = Date.now();
-		await readNetworkState('');
-		expect(Date.now() - started).toBeLessThan(100);
-	});
+	it(
+		'serves a second read from cache instead of spawning again',
+		async () => {
+			resetNetworkStateCache();
+			await readNetworkState('');
+			const started = Date.now();
+			await readNetworkState('');
+			expect(Date.now() - started).toBeLessThan(100);
+		},
+		LIVE_READ_TIMEOUT_MS
+	);
 });
