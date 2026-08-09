@@ -22,8 +22,11 @@
 	// 'other' interface is only listed when it actually carries traffic.
 	let interfaces = $derived($networkState.interfaces.filter(isSelectableInterface));
 	// Editing is offered only where the host can actually carry it out, so the app
-	// never presents a form whose Save would always fail.
-	let editable = $derived($networkState.capabilities.ipv4);
+	// never presents a form whose Save would always fail. `detail` matters as much
+	// as the capability: when a platform read fails we fall back to the generic
+	// reader, whose ids are device names rather than the identifiers the apply path
+	// resolves, so every save from that state would be rejected.
+	let editable = $derived($networkState.capabilities.ipv4 && $networkState.detail === 'full');
 	let editing = $state<string | null>(null);
 
 	function iconFor(iface: NetInterfaceInfo): string {
