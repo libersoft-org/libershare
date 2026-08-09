@@ -333,11 +333,26 @@ export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
 	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, serviceInfo, serviceDns, dhcpPacket, airport });
 }
 
-/** True when `networksetup` is present, which is the only supported way to persist a change. */
+/**
+ * True when `networksetup` is present AND this process may actually use it to
+ * write.
+ *
+ * macOS gates the write on membership of the `admin` group rather than on root:
+ * measured on 15.7.4, an ordinary admin user applies a configuration with no
+ * prompt at all, while a non-admin gets "** Error: Command requires admin
+ * privileges." and exit status 14. Probing the group is what keeps the edit form
+ * away from a standard user, for whom every Save would fail.
+ */
 export async function isMacWritable(): Promise<boolean> {
 	try {
 		await run(NETWORKSETUP, ['-getcomputername']);
-		return true;
+	} catch {
+		return false;
+	}
+	// root is allowed regardless of which groups it happens to carry.
+	if (typeof process.getuid === 'function' && process.getuid() === 0) return true;
+	try {
+		return (await run('/usr/bin/id', ['-Gn'])).split(/\s+/).includes('admin');
 	} catch {
 		return false;
 	}

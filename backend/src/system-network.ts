@@ -275,16 +275,20 @@ function assertDeviceName(interfaceID: string): string {
  * Turn a failed configuration command into one coded error the UI can show.
  *
  * The useful part of such a failure is what the tool printed — "Access is
- * denied", "Connection activation failed: Secrets were required" — and that lands
- * on stderr, which a plain Error message does not carry. Our own coded errors
- * pass through untouched.
+ * denied", "Connection activation failed: Secrets were required", "Command
+ * requires admin privileges" — and which stream carries it depends on the tool:
+ * nmcli and PowerShell use stderr, but macOS `networksetup` prints its errors to
+ * STDOUT and signals the failure only through the exit code. Reading stderr alone
+ * would leave a macOS user with "Command failed: /usr/sbin/networksetup …" and no
+ * reason. Our own coded errors pass through untouched.
  */
 async function run<T>(action: () => Promise<T>): Promise<T> {
 	try {
 		return await action();
 	} catch (err) {
 		if (err instanceof CodedError) throw err;
-		const stderr = (err as { stderr?: string | Buffer }).stderr?.toString().trim();
-		throw new CodedError(ErrorCodes.NETCONFIG_FAILED, (stderr || (err as Error).message || 'command failed').slice(0, 300));
+		const failure = err as { stderr?: string | Buffer; stdout?: string | Buffer };
+		const detail = failure.stderr?.toString().trim() || failure.stdout?.toString().trim();
+		throw new CodedError(ErrorCodes.NETCONFIG_FAILED, (detail || (err as Error).message || 'command failed').slice(0, 300));
 	}
 }
