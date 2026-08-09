@@ -59,6 +59,12 @@ const APPLY_TIMEOUT_MS = 45000;
 
 let cached: { at: number; interfaces: NetInterfaceInfo[]; detail: NetworkStateInfo['detail'] } | null = null;
 let inFlight: Promise<NetInterfaceInfo[]> | null = null;
+/**
+ * Bumped by {@link resetNetworkStateCache}. A read carries the generation it
+ * started under, so a read still in flight when a configuration change lands
+ * publishes nothing — its answer describes the host as it was before the change.
+ */
+let cacheGeneration = 0;
 
 /**
  * Serializes every host reconfiguration.
@@ -129,30 +135,48 @@ async function readWindows(): Promise<NetInterfaceInfo[]> {
  * rather than throwing — a settings screen showing addresses beats an error.
  */
 export async function readNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
-	const now = Date.now();
-	if (!cached || now - cached.at >= CACHE_TTL_MS) {
-		if (!inFlight) {
-			const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
-			inFlight = readPlatform()
-				.then(assertReadProducedSomething)
-				.then(interfaces => {
-					cached = { at: Date.now(), interfaces, detail };
-					return interfaces;
-				})
-				.catch(err => {
-					console.warn('[system-network] Platform read failed, falling back to addresses only:', (err as Error).message);
-					const interfaces = readGenericInterfaces();
-					cached = { at: Date.now(), interfaces, detail: 'addressesOnly' };
-					return interfaces;
-				})
-				.finally(() => {
-					inFlight = null;
-				});
-		}
-		await inFlight;
-	}
+	// Two attempts at most. An apply landing mid-read invalidates that read — its
+	// answer describes the host before the change — which leaves the cache empty,
+	// and the caller deserves the state after the change rather than "unknown".
+	for (let attempt = 0; attempt < 2 && isCacheStale(); attempt++) await startOrJoinRead();
 	const interfaces = cached?.interfaces ?? [];
 	return { interfaces, primaryID: resolvePrimaryID(interfaces, primaryInterface), detail: cached?.detail ?? 'addressesOnly', known: cached !== null, capabilities: await readCapabilities() };
+}
+
+function isCacheStale(): boolean {
+	return !cached || Date.now() - cached.at >= CACHE_TTL_MS;
+}
+
+/** Start a platform read, or join the one already running. Never rejects. */
+function startOrJoinRead(): Promise<NetInterfaceInfo[]> {
+	if (!inFlight) {
+		const generation = cacheGeneration;
+		const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
+		inFlight = readPlatform()
+			.then(assertReadProducedSomething)
+			.then(interfaces => {
+				publish(generation, interfaces, detail);
+				return interfaces;
+			})
+			.catch(err => {
+				console.warn('[system-network] Platform read failed, falling back to addresses only:', (err as Error).message);
+				const interfaces = readGenericInterfaces();
+				publish(generation, interfaces, 'addressesOnly');
+				return interfaces;
+			})
+			.finally(() => {
+				// Only clear the slot we own: after an invalidation it has already been
+				// cleared, and a newer read may be sitting in it.
+				if (cacheGeneration === generation) inFlight = null;
+			});
+	}
+	return inFlight;
+}
+
+/** Store a completed read, unless a configuration change has since invalidated it. */
+function publish(generation: number, interfaces: NetInterfaceInfo[], detail: NetworkStateInfo['detail']): void {
+	if (generation !== cacheGeneration) return;
+	cached = { at: Date.now(), interfaces, detail };
 }
 
 function readPlatform(): Promise<NetInterfaceInfo[]> {
@@ -185,10 +209,15 @@ export function resolvePrimaryID(interfaces: NetInterfaceInfo[], primaryInterfac
 	return interfaces.find(i => i.defaultRoute)?.id ?? null;
 }
 
-/** Drop the cached reading — used by tests so a stale entry cannot leak between cases. */
+/**
+ * Drop the cached reading — after an apply, and in tests so a stale entry cannot
+ * leak between cases. A read already in flight cannot be cancelled, so instead the
+ * generation is bumped and that read is left to finish and publish nothing.
+ */
 export function resetNetworkStateCache(): void {
 	cached = null;
 	inFlight = null;
+	cacheGeneration++;
 }
 
 /**
