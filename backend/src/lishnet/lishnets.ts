@@ -387,8 +387,21 @@ export class Networks {
 		return updateLISHnet(this.db, network);
 	}
 
+	/**
+	 * Delete a lishnet: leave it first (which disconnects and redial-suppresses its
+	 * exclusive peers), then drop the row.
+	 *
+	 * The suppression those peers pick up is keyed by this lishnet's ID, and a
+	 * rejoin is what normally releases it. After the row is gone there is no rejoin
+	 * to come, so releasing it here is the only remaining opportunity — otherwise
+	 * those peer IDs stay undialable for the rest of the process, including from
+	 * lishnets that have nothing to do with this one. Releasing is safe: the leave
+	 * has already hung the peers up, stripped their keep-alive tags and forgotten
+	 * their peerStore entries.
+	 */
 	async delete(id: string): Promise<boolean> {
 		await this.setEnabled(id, false);
+		this.network.clearRedialSuppressionForNetwork(id);
 		return deleteLISHnet(this.db, id);
 	}
 
