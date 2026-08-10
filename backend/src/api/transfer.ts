@@ -418,6 +418,20 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			}
 			const downloader = new Downloader(downloadDir, network, dataServer, joinedNetworks);
 			await downloader.initFromManifest(lish);
+			// `joinedNetworks` was sampled before the awaits above. onNetworkLeft only walks
+			// activeDownloaders, and this downloader is not in it yet, so a leave during that
+			// window reaches neither — without this re-check the download would start on a
+			// lishnet we have already left. Suspend it exactly as the no-lishnet path does,
+			// so a re-join resumes it.
+			const stillJoined = joinedNetworks.filter(id => networks.isJoined(id));
+			if (stillJoined.length === 0) {
+				console.log(`[Transfer] ${p.lishID.slice(0, 8)}: lishnet left while starting, suspending download`);
+				await downloader.destroy();
+				downloadEnabledLishs.delete(p.lishID);
+				networkSuspended.set(p.lishID, new Set(joinedNetworks));
+				return { success: false };
+			}
+			for (const id of joinedNetworks) if (!stillJoined.includes(id)) downloader.removeNetwork?.(id);
 			activeDownloaders.set(p.lishID, downloader);
 			const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
 			downloader.setProgressCallback?.((info: { downloadedChunks: number; totalChunks: number; peers: number; bytesPerSecond: number }) => {
