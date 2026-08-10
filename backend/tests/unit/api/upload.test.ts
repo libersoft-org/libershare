@@ -35,6 +35,21 @@ describe('uploadFileName', () => {
 		expect(detectCompression(name)).toBe('brotli');
 	});
 
+	it('keeps a multi-byte name inside the filesystem limit', () => {
+		// A filesystem counts bytes, not characters. These characters take three bytes
+		// each in UTF-8, so a name that looks short enough is three times its size on
+		// disk — and a Linux path component holds only 255 bytes, prefix included.
+		const name = uploadFileName('漢'.repeat(300) + '.lish.br');
+		expect(new TextEncoder().encode(name).length).toBeLessThanOrEqual(255);
+		expect(detectCompression(name)).toBe('brotli');
+	});
+
+	it('does not split a character when trimming to the byte budget', () => {
+		const name = uploadFileName('漢'.repeat(400) + '.lish');
+		expect(name).not.toContain('�');
+		expect(detectCompression(name)).toBe(detectCompression('x.lish'));
+	});
+
 	it('falls back to a usable name when nothing survives sanitising', () => {
 		expect(uploadFileName('///')).toEndWith('-upload');
 	});

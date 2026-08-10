@@ -54,8 +54,37 @@ export function handleHealthProbe(req: globalThis.Request): Response | null {
 	return null;
 }
 
-/** Longest original file name kept in a temp upload name, so a pathological name cannot blow the OS limit. */
-const MAX_UPLOAD_NAME_LENGTH = 100;
+/**
+ * Longest original file name kept in a temp upload name, in UTF-8 BYTES — that is
+ * what a filesystem counts. Linux caps a path component at 255 bytes and the random
+ * prefix takes 37 of them, so a name measured in characters could still overflow:
+ * 100 three-byte characters are 300 bytes on disk.
+ */
+const MAX_UPLOAD_NAME_BYTES = 100;
+
+/** UTF-8 byte length of a string. */
+function utf8Length(value: string): number {
+	return new TextEncoder().encode(value).length;
+}
+
+/**
+ * Keep the last {@link MAX_UPLOAD_NAME_BYTES} bytes of a name without splitting a
+ * character. The tail is what matters: `detectCompression()` reads the trailing
+ * extension.
+ */
+function truncateNameTail(name: string): string {
+	if (utf8Length(name) <= MAX_UPLOAD_NAME_BYTES) return name;
+	const chars = [...name];
+	let bytes = 0;
+	let start = chars.length;
+	while (start > 0) {
+		const size = utf8Length(chars[start - 1]!);
+		if (bytes + size > MAX_UPLOAD_NAME_BYTES) break;
+		bytes += size;
+		start--;
+	}
+	return chars.slice(start).join('');
+}
 
 /** How long an uploaded file that was never imported is kept before it is swept. */
 const UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
@@ -67,7 +96,7 @@ const UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
  * brotli upload get read as UTF-8 and fail later as a JSON parse error.
  */
 export function uploadFileName(originalName: string): string {
-	const safe = sanitizeFilename(originalName).slice(-MAX_UPLOAD_NAME_LENGTH) || 'upload';
+	const safe = truncateNameTail(sanitizeFilename(originalName)) || 'upload';
 	return `${randomUUID()}-${safe}`;
 }
 
