@@ -583,7 +583,11 @@ export function wlanErrorMessage(code: number): string {
 		case 1062:
 			return 'the WLAN AutoConfig service is not running';
 		case 1168:
-			return 'no saved profile for this network';
+			// ERROR_NOT_FOUND. Whether the missing thing is a saved profile or the
+			// interface itself depends on the call — a scan on a Wi-Fi Direct virtual
+			// adapter answers with this too, and naming only the profile there would
+			// describe a cause that has nothing to do with what was asked.
+			return 'Windows found no matching interface or saved profile';
 		case 1223:
 			return 'the request was cancelled';
 		case 2150899714:
@@ -728,6 +732,18 @@ function* availableNetworks(list: Pointer): Generator<AvailableNetwork> {
 	}
 }
 
+/**
+ * Explain a refused scan.
+ *
+ * Windows gates the available-network APIs on the location permission, so a scan
+ * that comes back access-denied is almost never about privileges — it is the
+ * location setting, and saying only "access denied" sends the user looking in the
+ * wrong place. Every other code keeps its ordinary description.
+ */
+export function wlanScanErrorMessage(code: number): string {
+	return code === 5 ? 'Windows refused the scan: allow location access for this app in Windows privacy settings' : wlanErrorMessage(code);
+}
+
 /** Scan for the Wi-Fi networks one adapter can see. */
 export async function scanWindowsWifi(guid: string): Promise<NetWifiNetwork[]> {
 	const guidBytes = guidToBytes(guid);
@@ -736,7 +752,7 @@ export async function scanWindowsWifi(guid: string): Promise<NetWifiNetwork[]> {
 	const networks = withWlanHandle((api, handle) => {
 		const listOut = new BigUint64Array(1);
 		const rc = api.WlanGetAvailableNetworkList(handle, ptr(guidBytes), 0, null, ptr(listOut));
-		if (rc !== 0) throw new Error(wlanErrorMessage(rc));
+		if (rc !== 0) throw new Error(wlanScanErrorMessage(rc));
 		const list = Number(listOut[0]) as Pointer;
 		try {
 			return parseAvailableNetworks(list);
@@ -747,7 +763,7 @@ export async function scanWindowsWifi(guid: string): Promise<NetWifiNetwork[]> {
 	// A refused scan is only worth reporting when it left us with nothing to show.
 	// Windows declines a rescan that comes too soon after the last one, and in that
 	// case the list it already holds is a perfectly good answer.
-	if (networks.length === 0 && scanResult !== 0) throw new Error(wlanErrorMessage(scanResult));
+	if (networks.length === 0 && scanResult !== 0) throw new Error(wlanScanErrorMessage(scanResult));
 	return networks;
 }
 

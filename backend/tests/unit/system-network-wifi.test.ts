@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ptr, type Pointer } from 'bun:ffi';
-import { encodeConnectionParameters, findAuthAlgorithm, guidToBytes, parseAvailableNetworks, utf16z, windowsWifiProfileXml, wlanErrorMessage } from '../../src/system-network-windows.ts';
+import { encodeConnectionParameters, findAuthAlgorithm, guidToBytes, parseAvailableNetworks, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -239,7 +239,7 @@ describe('windowsWifiProfileXml', () => {
 describe('wlanErrorMessage', () => {
 	it('explains the codes these calls actually return', () => {
 		expect(wlanErrorMessage(5)).toBe('access denied by Windows');
-		expect(wlanErrorMessage(1168)).toBe('no saved profile for this network');
+		expect(wlanErrorMessage(1168)).toBe('Windows found no matching interface or saved profile');
 		expect(wlanErrorMessage(2150899714)).toBe('the Wi-Fi radio is switched off');
 	});
 
@@ -247,5 +247,18 @@ describe('wlanErrorMessage', () => {
 	// described as something it might not be.
 	it('falls back to the raw code rather than guessing', () => {
 		expect(wlanErrorMessage(0x1234)).toBe('Wi-Fi error 0x1234');
+	});
+});
+
+describe('wlanScanErrorMessage', () => {
+	it('names the location permission for a refused scan', () => {
+		// Windows gates the available-network APIs on location access, so plain
+		// "access denied" would send the user hunting for a privilege problem.
+		expect(wlanScanErrorMessage(5)).toContain('location');
+	});
+
+	it('leaves every other code with its ordinary description', () => {
+		expect(wlanScanErrorMessage(1062)).toBe(wlanErrorMessage(1062));
+		expect(wlanScanErrorMessage(2150899714)).toBe('the Wi-Fi radio is switched off');
 	});
 });
