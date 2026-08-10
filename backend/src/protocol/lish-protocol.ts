@@ -457,11 +457,13 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			}
 
 			if (request.type === 'getLishs') {
-				// Serve the shared-LISH LISTING under the softer list-gate (canListShares):
-				// unlike the strict data gate it does not require a synced gossipsub
-				// SUBSCRIBE, so the unicast search fallback reaches freshly-connected peers.
-				// Still fail-closed on an unknown peer id and still refuses peers we left.
-				// Falls back to the strict gate when no list-gate was supplied.
+				// Serve the shared-LISH LISTING under the softer list-gate (canListShares).
+				// Soft means it accepts wider EVIDENCE of lishnet membership than the strict
+				// data gate — a recently-seen subscriber counts even while the gossipsub
+				// SUBSCRIBE is missing from the live snapshot, which is what keeps the
+				// unicast search fallback working — not that membership stops being
+				// required. Still fail-closed on an unknown peer id and still refuses peers
+				// we left. Falls back to the strict gate when no list-gate was supplied.
 				if (serveGateBlocks(canListShares ?? sharesNetworkWith, remotePeerID)) {
 					trace(`[PROTO] getLishs from ${remotePeer} refused: no shared joined lishnet`);
 					const gated: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
