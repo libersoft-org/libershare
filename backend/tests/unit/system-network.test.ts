@@ -39,6 +39,25 @@ describe('WINDOWS_STATE_COMMAND', () => {
 
 describe('parseWindowsNetworkState', () => {
 	const result = parseWindowsNetworkState(fixture('network-windows.json'));
+
+	it('keeps a secondary interface own gateway, not just the default route one', () => {
+		// Two default routes: Ethernet wins on effective metric, the VPN tunnel keeps a
+		// gateway of its own. Reporting the loser's as null would seed the edit form
+		// empty and clear its real gateway on the next save.
+		const doc = JSON.parse(fixture('network-windows.json'));
+		doc.routes = [
+			{ ifIndex: 20, NextHop: '192.0.2.1', RouteMetric: 0, InterfaceMetric: 25 },
+			{ ifIndex: 63, NextHop: '198.51.100.1', RouteMetric: 0, InterfaceMetric: 5 },
+		];
+		const parsed = parseWindowsNetworkState(JSON.stringify(doc));
+		const tunnel = byID(parsed, '{FC01FCD5-2B9D-2FD8-78D8-CB78B313E2B2}');
+		const ethernet = byID(parsed, '{901F20ED-4B31-4803-B655-ED47D47AD070}');
+		expect(tunnel.defaultRoute).toBe(true);
+		expect(tunnel.gateway).toBe('198.51.100.1');
+		expect(ethernet.defaultRoute).toBe(false);
+		expect(ethernet.gateway).toBe('192.0.2.1');
+	});
+
 	// Public ids are the adapters' persistent GUIDs (ifIndex is not stable across
 	// reboots and the id is persisted as the user's primary-interface preference).
 	const ID = {
@@ -154,6 +173,18 @@ describe('parseWindowsNetworkState', () => {
 });
 
 describe('parseLinuxNetworkState', () => {
+	it('keeps a secondary interface own gateway, not just the default route one', () => {
+		// A multi-homed host: eth0 wins the default route, docker0 has a router of its
+		// own. Reporting docker0 gateway as null would seed the edit form empty, and
+		// saving any change there would clear the gateway the interface really has.
+		const twoRoutes = '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","metric":100,"flags":[]},{"dst":"default","gateway":"198.51.100.1","dev":"docker0","metric":200,"flags":[]}]';
+		const parsed = parseLinuxNetworkState({ ...sources, route: twoRoutes });
+		expect(byID(parsed, 'eth0').gateway).toBe('192.0.2.1');
+		expect(byID(parsed, 'eth0').defaultRoute).toBe(true);
+		expect(byID(parsed, 'docker0').gateway).toBe('198.51.100.1');
+		expect(byID(parsed, 'docker0').defaultRoute).toBe(false);
+	});
+
 	const sources = { addr: fixture('network-linux-addr.json'), link: fixture('network-linux-link.json'), route: '[{"dst":"default","gateway":"192.0.2.1","dev":"eth0","flags":[]}]', resolvers: ['192.0.2.1'] };
 	const result = parseLinuxNetworkState(sources);
 
@@ -374,30 +405,34 @@ describe('readGenericInterfaces (every platform, including macOS)', () => {
 const LIVE_READ_TIMEOUT_MS = 40_000;
 
 describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('readNetworkState (live)', () => {
-	it('returns a valid, internally consistent document', async () => {
-		resetNetworkStateCache();
-		const state = await readNetworkState('');
-		expect(state.known).toBe(true);
-		expect(['full', 'addressesOnly']).toContain(state.detail);
-		const ids = state.interfaces.map(i => i.id);
-		expect(new Set(ids).size).toBe(ids.length);
-		for (const iface of state.interfaces) {
-			expect(iface.id.length).toBeGreaterThan(0);
-			expect(['wired', 'wireless', 'other']).toContain(iface.medium);
-			expect(['up', 'down', 'unknown']).toContain(iface.link);
-			expect(['dhcp', 'static', 'unknown']).toContain(iface.ipv4Mode);
-			for (const address of iface.addresses) {
-				expect(address.address.length).toBeGreaterThan(0);
-				expect(address.prefixLength).toBeGreaterThanOrEqual(0);
+	it(
+		'returns a valid, internally consistent document',
+		async () => {
+			resetNetworkStateCache();
+			const state = await readNetworkState('');
+			expect(state.known).toBe(true);
+			expect(['full', 'addressesOnly']).toContain(state.detail);
+			const ids = state.interfaces.map(i => i.id);
+			expect(new Set(ids).size).toBe(ids.length);
+			for (const iface of state.interfaces) {
+				expect(iface.id.length).toBeGreaterThan(0);
+				expect(['wired', 'wireless', 'other']).toContain(iface.medium);
+				expect(['up', 'down', 'unknown']).toContain(iface.link);
+				expect(['dhcp', 'static', 'unknown']).toContain(iface.ipv4Mode);
+				for (const address of iface.addresses) {
+					expect(address.address.length).toBeGreaterThan(0);
+					expect(address.prefixLength).toBeGreaterThanOrEqual(0);
+				}
+				if (iface.wifi?.signal !== null && iface.wifi?.signal !== undefined) {
+					expect(iface.wifi.signal).toBeGreaterThanOrEqual(0);
+					expect(iface.wifi.signal).toBeLessThanOrEqual(100);
+				}
+				if (iface.wifi) expect(['on', 'off', 'unknown']).toContain(iface.wifi.radio);
 			}
-			if (iface.wifi?.signal !== null && iface.wifi?.signal !== undefined) {
-				expect(iface.wifi.signal).toBeGreaterThanOrEqual(0);
-				expect(iface.wifi.signal).toBeLessThanOrEqual(100);
-			}
-			if (iface.wifi) expect(['on', 'off', 'unknown']).toContain(iface.wifi.radio);
-		}
-		expect(state.primaryID === null || ids.includes(state.primaryID)).toBe(true);
-	}, LIVE_READ_TIMEOUT_MS);
+			expect(state.primaryID === null || ids.includes(state.primaryID)).toBe(true);
+		},
+		LIVE_READ_TIMEOUT_MS
+	);
 
 	it(
 		'serves a second read from cache instead of spawning again',

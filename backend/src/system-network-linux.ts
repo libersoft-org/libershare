@@ -167,10 +167,17 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 	for (const entry of linkEntries) linkByName.set(entry.ifname, entry);
 
 	// Lowest-metric default route wins; an absent metric means 0 (kernel default).
+	// Kept per device as well: only one interface carries the host's default route,
+	// but a multi-homed host gives several of them a gateway of their own. Reporting
+	// those as null would seed the edit form with an empty gateway field, and saving
+	// any other change on that interface would then clear the gateway it really has.
 	let best: IpRouteEntry | null = null;
+	const bestByDev = new Map<string, IpRouteEntry>();
 	for (const route of routeEntries) {
 		if (!route.dev) continue;
 		if (!best || (route.metric ?? 0) < (best.metric ?? 0)) best = route;
+		const previous = bestByDev.get(route.dev);
+		if (!previous || (route.metric ?? 0) < (previous.metric ?? 0)) bestByDev.set(route.dev, route);
 	}
 	const defaultDev = best?.dev ?? null;
 
@@ -199,7 +206,7 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			mac: entry.address ?? link?.address ?? null,
 			addresses,
 			ipv4Mode,
-			gateway: entry.ifname === defaultDev ? (best?.gateway ?? null) : null,
+			gateway: bestByDev.get(entry.ifname)?.gateway ?? null,
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
 			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
 			// 127.0.0.53 stub, so reporting it would show every machine the same
