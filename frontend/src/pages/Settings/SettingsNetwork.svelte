@@ -36,8 +36,18 @@
 	// call themselves wireless and cannot scan.
 	let canEditIPv4 = $derived($networkState.capabilities.ipv4 && $networkState.detail === 'full');
 	let canEditWifi = $derived($networkState.capabilities.wifi && $networkState.detail === 'full');
+	/**
+	 * The addressing form holds ONE IPv4 address, and applying it replaces every
+	 * address the interface had. An interface carrying aliases would therefore lose
+	 * the rest the moment it was opened and saved, so its addressing is left alone —
+	 * a radio on the same interface is still offered, as joining a network touches
+	 * no address.
+	 */
+	function ipv4Representable(iface: NetInterfaceInfo): boolean {
+		return iface.addresses.filter(a => a.family === 'ipv4').length <= 1;
+	}
 	function isConfigurable(iface: NetInterfaceInfo): boolean {
-		return canEditIPv4 || (canEditWifi && !!iface.wifi);
+		return (canEditIPv4 && ipv4Representable(iface)) || (canEditWifi && !!iface.wifi);
 	}
 	let editing = $state<string | null>(null);
 
