@@ -82,6 +82,13 @@ const WANT_RESPONSE_CLEANUP_INTERVAL_MS = 5 * 60_000;
 /** Search query dedup window — same `searchID` arriving via mesh within this period is ignored. */
 const SEARCH_DEDUP_TTL_MS = 5 * 60_000;
 /**
+ * How far back a recently-seen subscription may be used as evidence that a peer is
+ * still a lishnet member. Covers a SUBSCRIBE that has not propagated to our snapshot
+ * yet; deliberately far shorter than peer-announce's re-advertising TTL, which is a
+ * discovery aid and would keep a remotely-unsubscribed peer authorized for minutes.
+ */
+const RECENT_MEMBERSHIP_AUTH_MS = 60_000;
+/**
  * Maximum size (bytes) of an incoming pubsub payload we are willing to decode.
  * Our own control messages ride pubsub (WANT — tiny JSON), but older/foreign peers
  * still broadcast HAVE announcements and catalog inventories on the same topic and
@@ -1232,20 +1239,23 @@ export class Network {
 	/**
 	 * Membership evidence for a lishnet WE are joined to, tolerant of the gossipsub
 	 * subscriber view lagging: the live snapshot ({@link sharesJoinedTopicWith}), or
-	 * peer-announce's recently-seen subscriber union for the same topic, which keeps
-	 * a member for PEER_ANNOUNCE_MEMBER_TTL_MS after it was last seen subscribed.
+	 * peer-announce's recently-seen subscriber union for the same topic.
+	 *
+	 * The union is read with a much shorter window than the one peer-announce keeps for
+	 * re-advertising. The gap this has to cover is a SUBSCRIBE that has not propagated
+	 * yet — seconds — whereas the discovery TTL is minutes, and a discovery cache read
+	 * that far back is not evidence of present membership: a peer that unsubscribed
+	 * remotely would keep its access for the rest of that window.
 	 *
 	 * Only topics we are currently subscribed to are consulted, so a lishnet we left
-	 * can never grant membership. The union is additive evidence, never a substitute:
-	 * peer-announce only populates it once we have a populated peerStore, so a small
-	 * node simply falls back to the live snapshot.
+	 * can never grant membership.
 	 */
 	private sharesJoinedOrRecentTopicWith(peerID: string): boolean {
 		if (this.sharesJoinedTopicWith(peerID)) return true;
 		if (!this.pubsub) return false;
 		for (const topic of this.pubsub.getTopics()) {
 			if (!topic.startsWith(LISH_TOPIC_PREFIX)) continue;
-			if (this.peerAnnounce.getRecentMembers(topic).includes(peerID)) return true;
+			if (this.peerAnnounce.getRecentMembers(topic, RECENT_MEMBERSHIP_AUTH_MS).includes(peerID)) return true;
 		}
 		return false;
 	}
