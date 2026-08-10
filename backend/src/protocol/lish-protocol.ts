@@ -217,7 +217,10 @@ export class LISHClient {
 			// target and replaces its file/chunk state. Honest peers always answer with the
 			// requested LISH, so rejecting a mismatch costs nothing and this peer's answer is
 			// unusable either way: treat it as a peer fault so fallback moves to the next one.
-			if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: manifest id mismatch (${String(response.manifest?.id)})`);
+			// The reported id is truncated: it is peer-controlled and bounded only by the
+			// message size limit, so echoing it whole would copy a hostile multi-megabyte
+			// string into the error and on through every layer that logs or forwards it.
+			if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${lishID}: manifest id mismatch (${String(response.manifest?.id).slice(0, 64)})`);
 			if (total > 0) safeEmit(total, total);
 			return response.manifest;
 		} finally {

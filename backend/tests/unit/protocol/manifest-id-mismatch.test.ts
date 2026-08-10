@@ -76,6 +76,21 @@ describe('LISHClient.requestManifest – manifest id check', () => {
 		expect(legacyReadManifest(data).id).toBeUndefined();
 	});
 
+	it('does not echo a huge peer-supplied id into the error message', async () => {
+		// The id is peer-controlled and bounded only by the message size limit, so the
+		// rejection must not copy it whole into an error that later layers log or forward.
+		const hostile = 'A'.repeat(100_000);
+		const client = new LISHClient(makeStream(manifestResponse(createTestLISH({ id: hostile })).frame));
+
+		const error = await client.requestManifest(TEST_LISH_ID).then(
+			() => null,
+			(e: unknown) => e
+		);
+
+		expect((error as CodedError).code).toBe(ErrorCodes.PEER_INVALID_REQUEST);
+		expect(String((error as CodedError).message).length).toBeLessThan(500);
+	});
+
 	it('accepts the manifest of the requested LISH', async () => {
 		const client = new LISHClient(makeStream(manifestResponse(createTestLISH(TEST_LISH_ID)).frame));
 
