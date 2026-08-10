@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliModifyArgs, parseNmcliActiveUUID, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { nmcliModifyArgs, parseNmcliActiveUUID, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { firstLine } from '../../src/system-network.ts';
 
@@ -330,5 +330,21 @@ describe('parseNmcliActiveUUID', () => {
 		// A networkd-managed NIC or a Docker bridge has no active profile, and an
 		// apply must fail loudly rather than edit some other device's profile.
 		expect(parseNmcliActiveUUID(ACTIVE, 'docker0')).toBeNull();
+	});
+});
+
+describe('parseNmcliManagedDevices', () => {
+	// `nmcli -t -f DEVICE,STATE device status`, colon-separated.
+	const STATUS = 'eth0:connected\nwlan0:disconnected\ndocker0:unmanaged\nlo:unmanaged\n';
+
+	it('keeps every device NetworkManager owns, whatever its state', () => {
+		const managed = parseNmcliManagedDevices(STATUS);
+		expect(managed.has('eth0')).toBe(true);
+		expect(managed.has('wlan0')).toBe(true);
+	});
+
+	it('drops a device another stack owns, so no edit is offered for it', () => {
+		const managed = parseNmcliManagedDevices(STATUS);
+		expect(managed.has('docker0')).toBe(false);
 	});
 });

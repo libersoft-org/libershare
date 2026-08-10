@@ -173,6 +173,20 @@ describe('parseWindowsNetworkState', () => {
 });
 
 describe('parseLinuxNetworkState', () => {
+	it('marks a device NetworkManager does not own as not configurable', () => {
+		// The interface list comes from the kernel, so it holds devices another stack
+		// manages. Offering Configure for those shows an action that can only fail.
+		const parsed = parseLinuxNetworkState({ ...sources, managed: new Set(['eth0']) });
+		expect(byID(parsed, 'eth0').configurable).toBe(true);
+		expect(byID(parsed, 'docker0').configurable).toBe(false);
+	});
+
+	it('claims nothing about configurability when NetworkManager could not be asked', () => {
+		// An unavailable answer is not evidence that a device is unmanaged.
+		const parsed = parseLinuxNetworkState(sources);
+		expect(byID(parsed, 'eth0').configurable).toBeUndefined();
+	});
+
 	it('keeps a secondary interface own gateway, not just the default route one', () => {
 		// A multi-homed host: eth0 wins the default route, docker0 has a router of its
 		// own. Reporting docker0 gateway as null would seed the edit form empty, and

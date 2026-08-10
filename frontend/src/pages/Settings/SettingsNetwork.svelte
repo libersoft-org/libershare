@@ -142,7 +142,9 @@
 							<span>{$t('settings.network.signal')}: {iface.wifi.signal !== null ? `${iface.wifi.signal}%` : '—'}</span>
 						{/if}
 					</div>
-					{#if editable}
+					<!-- The host-wide capability says the tooling is usable; an interface may
+					     still be owned by another stack, whose edit would only ever fail. -->
+					{#if editable && iface.configurable !== false}
 						<div role="group" data-mouse-activate-area={areaID} class="configure">
 							<Button icon="/img/edit.svg" label={$t('settings.network.configure')} position={[1, index + 1]} onConfirm={() => (editing = iface.id)} />
 						</div>

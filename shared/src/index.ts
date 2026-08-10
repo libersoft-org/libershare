@@ -369,6 +369,16 @@ export interface NetInterfaceInfo {
 	ipv4Mode: NetAddressMode;
 	gateway: string | null;
 	dns: string[];
+	/**
+	 * False when this interface cannot be reconfigured even though the host can be.
+	 *
+	 * The host-wide {@link NetCapabilities} answer only says the tooling is present
+	 * and we may use it. On Linux that tooling is NetworkManager, while the list of
+	 * interfaces comes from the kernel — so it also contains devices NetworkManager
+	 * does not own (networkd NICs, container bridges), whose edit would be offered
+	 * and then fail. Absent means "no per-interface objection".
+	 */
+	configurable?: boolean;
 	/** Present only when medium === 'wireless'. */
 	wifi?: NetWifiInfo;
 }

@@ -65,6 +65,12 @@ export interface LinuxNetworkSources {
 	resolvers?: string[];
 	/** Per-interface resolvers as NetworkManager sees them. Preferred over {@link resolvers} when present. */
 	nmDns?: Map<string, string[]> | undefined;
+	/**
+	 * Devices NetworkManager owns. Undefined when it could not be asked, in which
+	 * case no interface is marked unconfigurable — an unavailable answer is not
+	 * evidence that a device is unmanaged.
+	 */
+	managed?: Set<string> | undefined;
 }
 
 /**
@@ -207,6 +213,9 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 			addresses,
 			ipv4Mode,
 			gateway: bestByDev.get(entry.ifname)?.gateway ?? null,
+			// Only claimed when NetworkManager answered: without its device list we
+			// cannot tell an unmanaged device from one it simply did not mention.
+			...(sources.managed ? { configurable: sources.managed.has(entry.ifname) } : {}),
 			// NetworkManager knows the resolvers PER LINK, which is the only correct
 			// answer on a systemd-resolved host: there /etc/resolv.conf holds the
 			// 127.0.0.53 stub, so reporting it would show every machine the same
@@ -287,7 +296,7 @@ export async function readLinuxNetworkState(): Promise<NetInterfaceInfo[]> {
 			// rather than being guessed from anything else.
 		}
 	}
-	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: await readNetworkManagerDns() });
+	return parseLinuxNetworkState({ addr, link, route, wireless, iwLinks, procSignals: readProcSignals(), resolvers: readResolvers(), nmDns: await readNetworkManagerDns(), managed: await readManagedDevices() });
 }
 
 /**
@@ -377,6 +386,35 @@ export async function isLinuxWritable(): Promise<boolean> {
  * so the caller can tell "NM says this link has no resolvers" apart from "there
  * is no NM to ask" and fall back to /etc/resolv.conf only in the latter case.
  */
+/**
+ * Devices NetworkManager actually owns, or undefined when it cannot be asked.
+ *
+ * The interface list comes from the kernel and includes devices another stack
+ * manages — a networkd NIC, a container bridge. Offering an edit for those shows
+ * the user an action that can only end in an error, because the apply needs an
+ * active NetworkManager profile on the device.
+ */
+async function readManagedDevices(): Promise<Set<string> | undefined> {
+	try {
+		return parseNmcliManagedDevices(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'DEVICE,STATE', 'device', 'status']));
+	} catch {
+		return undefined;
+	}
+}
+
+/** Devices from `nmcli -t -f DEVICE,STATE device status` that NetworkManager is not ignoring. */
+export function parseNmcliManagedDevices(text: string): Set<string> {
+	const managed = new Set<string>();
+	for (const line of text.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		const [device, state] = splitNmcliFields(line);
+		// "unmanaged" is NetworkManager saying the device belongs to something else;
+		// every other state (connected, disconnected, unavailable) is still its own.
+		if (device && state && state !== 'unmanaged') managed.add(device);
+	}
+	return managed;
+}
+
 async function readNetworkManagerDns(): Promise<Map<string, string[]> | undefined> {
 	try {
 		return parseNmcliDns(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,IP4.DNS', 'device', 'show']));
