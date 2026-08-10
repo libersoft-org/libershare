@@ -9,7 +9,7 @@
  * clear the busy label while the newer transfer is still running.
  */
 import { test, expect } from 'bun:test';
-import { createImportUploader, importCleanup, type ImportUploadForm, type ImportUploadDeps } from '../../src/scripts/importUpload.ts';
+import { createImportUploader, importCleanup, importOwnsForm, type ImportUploadForm, type ImportUploadDeps } from '../../src/scripts/importUpload.ts';
 
 /** A file pick the test resolves or rejects by hand, so two picks can be interleaved. */
 interface PendingUpload {
@@ -131,4 +131,17 @@ test('an import clears the form when it still shows the file it parsed', () => {
 	const cleanup = importCleanup('/tmp/parsed.lish', '/tmp/parsed.lish');
 	expect(cleanup.discard).toBe('/tmp/parsed.lish');
 	expect(cleanup.clearForm).toBe(true);
+});
+
+test('an import that lost the form keeps its parse result to itself', () => {
+	// File B was picked while A was parsing: A must not open its confirmation screen,
+	// clear B's spinner or report its own error over B.
+	expect(importOwnsForm(true, '/tmp/newer.lish', '/tmp/parsed.lish')).toBe(false);
+	expect(importOwnsForm(true, '', '/tmp/parsed.lish')).toBe(false); // B still uploading
+});
+
+test('an import still owns the form when nothing newer was picked', () => {
+	expect(importOwnsForm(true, '/tmp/parsed.lish', '/tmp/parsed.lish')).toBe(true);
+	// Path mode has no picker to lose to, so the import always owns the form.
+	expect(importOwnsForm(false, '', '/data/some.lish')).toBe(true);
 });

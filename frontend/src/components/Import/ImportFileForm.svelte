@@ -9,7 +9,7 @@
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { uploadImportFile } from '../../scripts/ws-client.ts';
-	import { createImportUploader, importCleanup } from '../../scripts/importUpload.ts';
+	import { createImportUploader, importCleanup, importOwnsForm } from '../../scripts/importUpload.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -131,16 +131,23 @@
 			}
 		}
 		// Capture what we are about to parse: the picker stays reachable during the
-		// await, so reading the state again afterwards could clean up a file the user
+		// await, so reading the state again afterwards would act on a file the user
 		// picked meanwhile instead of the one this import consumed.
 		const parsing = uploadMode ? uploadPath : filePath;
+		// Whether the form still shows the file this import is parsing. A pick made
+		// during the parse takes the form over, and this import must then keep its
+		// result to itself: opening a confirmation screen for the old file, clearing
+		// the new pick's spinner or reporting the old file's error would all overrule
+		// the choice the user just made.
+		const ownsForm = (): boolean => importOwnsForm(uploadMode, uploadPath, parsing);
 		try {
 			busyLabel = $t('import.importing');
-			parsedData = await parseFile(parsing);
+			const parsed = await parseFile(parsing);
+			if (ownsForm()) parsedData = parsed;
 		} catch (e) {
-			errorMessage = translateError(e);
+			if (ownsForm()) errorMessage = translateError(e);
 		} finally {
-			busyLabel = '';
+			if (ownsForm()) busyLabel = '';
 			// The parsed data lives in memory from here on, so the temp copy is done
 			// either way. Dropping it on failure too means a bad file cannot linger.
 			if (uploadMode && parsing) {

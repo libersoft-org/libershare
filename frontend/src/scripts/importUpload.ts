@@ -64,6 +64,18 @@ export function importCleanup(parsed: string, current: string): ImportCleanup {
 }
 
 /**
+ * Whether an import that is parsing `parsing` may still write to the form.
+ *
+ * A pick made during the parse takes the form over. The import must then keep its
+ * result to itself — a confirmation screen for the old file, a cleared spinner or
+ * an error from the old file would all overrule the choice the user just made.
+ * Outside upload mode there is no picker to lose to, so the import always owns it.
+ */
+export function importOwnsForm(uploadMode: boolean, current: string, parsing: string): boolean {
+	return !uploadMode || current === parsing;
+}
+
+/**
  * Sequence file picks so only the newest one may write to the form.
  * A pick that has been superseded, or whose form has been destroyed, discards the
  * copy it uploaded instead of handing it to a form that no longer wants it.
