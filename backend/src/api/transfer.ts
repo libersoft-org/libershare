@@ -59,6 +59,12 @@ let _activeDownloaders: Map<string, any> | null = null;
 export function setActiveDownloadersRef(ref: Map<string, any>): void {
 	_activeDownloaders = ref;
 }
+// Same indirection for the suspended-by-leave map: it lives in the handler closure,
+// but LISH deletion happens outside it and must be able to forget the LISH.
+let _networkSuspended: Map<string, Set<string>> | null = null;
+export function setNetworkSuspendedRef(ref: Map<string, Set<string>>): void {
+	_networkSuspended = ref;
+}
 export async function forceDisableDownload(lishID: string): Promise<void> {
 	downloadEnabledLishs.delete(lishID);
 	persistDownloadEnabled?.(lishID, false);
@@ -77,6 +83,11 @@ export async function destroyActiveDownloader(lishID: string): Promise<void> {
 /** Remove in-memory download state without DB persist (for LISH deletion). */
 export async function removeDownloadState(lishID: string): Promise<void> {
 	downloadEnabledLishs.delete(lishID);
+	// A LISH deleted while its download was suspended by a leave must drop its resume
+	// claim too. Left behind, the entry survives the LISH: every later lishnet join
+	// retries a LISH that no longer exists, and re-importing the same id would resume
+	// a download the user never asked for again.
+	_networkSuspended?.delete(lishID);
 	await destroyActiveDownloader(lishID);
 }
 
@@ -124,6 +135,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	// user explicitly enables/disables the download so a rejoin never overrides a
 	// deliberate user action.
 	const networkSuspended = new Map<string, Set<string>>();
+	setNetworkSuspendedRef(networkSuspended);
 
 	// When a lishnet is left, stop any download bound EXCLUSIVELY to it: a
 	// downloader keeps running as long as at least one of its networks is still
