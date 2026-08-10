@@ -391,7 +391,7 @@ export class APIServer {
 			const result = await this.execute(client, req.method, req.params || {});
 			client.send(JSON.stringify({ id: req.id, result }));
 		} catch (err: any) {
-			console.error(`[API] Error executing ${req.method}, params=${JSON.stringify(req.params)}: ${err.message}`);
+			console.error(`[API] Error executing ${req.method}, params=${formatParamsForLog(req.params)}: ${err.message}`);
 			if (err instanceof CodedError) client.send(JSON.stringify({ id: req.id, error: err.code, ...(err.detail !== undefined && { errorDetail: err.detail }) }));
 			else client.send(JSON.stringify({ id: req.id, error: ErrorCodes.INTERNAL_ERROR, errorDetail: err.message }));
 		}
