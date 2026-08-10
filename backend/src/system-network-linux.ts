@@ -417,8 +417,16 @@ export function parseNmcliDns(text: string): Map<string, string[]> {
  * edit idempotent: applying twice leaves one profile, not two competing ones.
  */
 async function activeConnection(device: string): Promise<string | null> {
-	const out = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'NAME,DEVICE', 'connection', 'show', '--active']);
-	for (const line of out.split('\n')) {
+	// Asked for by UUID, not NAME: profile names are not unique, so a host with two
+	// profiles of the same name would leave `connection modify` free to pick either
+	// — and the one it picks may not be the one on this device.
+	const out = await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'UUID,DEVICE', 'connection', 'show', '--active']);
+	return parseNmcliActiveUUID(out, device);
+}
+
+/** Pick the UUID of the profile active on `device` out of `nmcli -t -f UUID,DEVICE` output. */
+export function parseNmcliActiveUUID(text: string, device: string): string | null {
+	for (const line of text.split(/\r?\n/)) {
 		if (!line.trim()) continue;
 		const fields = splitNmcliFields(line);
 		if (fields[1] === device) return fields[0] ?? null;
@@ -433,8 +441,11 @@ async function activeConnection(device: string): Promise<string | null> {
  * stale `ipv4.addresses` on a profile whose method changed, and that address
  * comes back the moment the user switches to static again.
  */
-export function nmcliModifyArgs(connection: string, config: NetIPv4Config): string[] {
-	const base = ['connection', 'modify', connection];
+export function nmcliModifyArgs(uuid: string, config: NetIPv4Config): string[] {
+	// `uuid <UUID>` rather than a bare argument: nmcli would otherwise match the
+	// value against names first, and a profile named like another one's UUID — or
+	// simply two profiles sharing a name — makes the target ambiguous.
+	const base = ['connection', 'modify', 'uuid', uuid];
 	if (config.mode === 'dhcp') return [...base, 'ipv4.method', 'auto', 'ipv4.addresses', '', 'ipv4.gateway', '', 'ipv4.dns', '', 'ipv4.ignore-auto-dns', 'no'];
 	const dns = config.dns ?? [];
 	return [
@@ -461,7 +472,7 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config): Pro
 	await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connection, config), APPLY_TIMEOUT_MS);
 	// `connection up` re-applies the edited profile in place. The device drops for
 	// a moment either way — that is inherent to changing an address, not to this.
-	await runFirst(NMCLI_CANDIDATES, ['connection', 'up', connection], APPLY_TIMEOUT_MS);
+	await runFirst(NMCLI_CANDIDATES, ['connection', 'up', 'uuid', connection], APPLY_TIMEOUT_MS);
 }
 
 /**

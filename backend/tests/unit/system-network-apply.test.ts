@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { isIPv4, isValidSSID, validateIPv4Config, type NetIPv4Config } from '@shared';
-import { nmcliModifyArgs, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
+import { nmcliModifyArgs, parseNmcliActiveUUID, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields } from '../../src/system-network-linux.ts';
 import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
 import { firstLine } from '../../src/system-network.ts';
 
@@ -133,8 +133,8 @@ describe('nmcliModifyArgs', () => {
 	it('clears the manual fields when switching to DHCP', () => {
 		// NetworkManager keeps a stale ipv4.addresses on a profile whose method
 		// changed, and it comes back the moment the user switches to static again.
-		const args = nmcliModifyArgs('Wired connection 1', { mode: 'dhcp' });
-		expect(args.slice(0, 3)).toEqual(['connection', 'modify', 'Wired connection 1']);
+		const args = nmcliModifyArgs('4b8a1f2c-0000-4000-8000-000000000001', { mode: 'dhcp' });
+		expect(args.slice(0, 4)).toEqual(['connection', 'modify', 'uuid', '4b8a1f2c-0000-4000-8000-000000000001']);
 		expect(args).toContain('auto');
 		expect(args[args.indexOf('ipv4.addresses') + 1]).toBe('');
 		expect(args[args.indexOf('ipv4.gateway') + 1]).toBe('');
@@ -156,11 +156,12 @@ describe('nmcliModifyArgs', () => {
 		expect(args[args.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('no');
 	});
 
-	it('passes an SSID-shaped connection name as a single argument', () => {
-		// Arguments reach nmcli as argv, so a name with spaces or quotes needs no
-		// escaping — this pins that it is never flattened into one string.
-		const args = nmcliModifyArgs('my "odd" name', { mode: 'dhcp' });
-		expect(args[2]).toBe('my "odd" name');
+	it('names the profile by uuid so a duplicate name cannot be picked instead', () => {
+		// Profile names are not unique. Addressed as `uuid <UUID>`, nmcli cannot fall
+		// back to matching the value against names.
+		const args = nmcliModifyArgs('4b8a1f2c-0000-4000-8000-000000000001', { mode: 'dhcp' });
+		expect(args[2]).toBe('uuid');
+		expect(args[3]).toBe('4b8a1f2c-0000-4000-8000-000000000001');
 	});
 });
 
@@ -314,5 +315,20 @@ describe('parseElevation', () => {
 	it('treats anything else as not elevated', () => {
 		expect(parseElevation('False\r\n')).toBe(false);
 		expect(parseElevation('')).toBe(false);
+	});
+});
+
+describe('parseNmcliActiveUUID', () => {
+	// `nmcli -t -f UUID,DEVICE connection show --active`, colon-separated.
+	const ACTIVE = '4b8a1f2c-0000-4000-8000-000000000001:eth0\n7c2d9e40-0000-4000-8000-000000000002:wlan0\n';
+
+	it('picks the profile active on the device asked for', () => {
+		expect(parseNmcliActiveUUID(ACTIVE, 'wlan0')).toBe('7c2d9e40-0000-4000-8000-000000000002');
+	});
+
+	it('reports nothing for a device NetworkManager does not own', () => {
+		// A networkd-managed NIC or a Docker bridge has no active profile, and an
+		// apply must fail loudly rather than edit some other device's profile.
+		expect(parseNmcliActiveUUID(ACTIVE, 'docker0')).toBeNull();
 	});
 });
