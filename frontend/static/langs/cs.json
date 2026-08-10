@@ -311,6 +311,7 @@
 			"automatic": "Automaticky (výchozí trasa)",
 			"dhcp": "DHCP",
 			"static": "Statická adresa",
+			"address": "Adresa",
 			"modeUnknown": "Neznámé nastavení adresy",
 			"gateway": "Brána",
 			"dns": "DNS",

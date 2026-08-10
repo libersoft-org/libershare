@@ -311,6 +311,7 @@
 			"automatic": "Automatic (default route)",
 			"dhcp": "DHCP",
 			"static": "Static",
+			"address": "Address",
 			"modeUnknown": "Addressing unknown",
 			"gateway": "Gateway",
 			"dns": "DNS",
