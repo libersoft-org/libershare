@@ -9,7 +9,7 @@
  * clear the busy label while the newer transfer is still running.
  */
 import { test, expect } from 'bun:test';
-import { createImportUploader, type ImportUploadForm, type ImportUploadDeps } from '../../src/scripts/importUpload.ts';
+import { createImportUploader, importCleanup, type ImportUploadForm, type ImportUploadDeps } from '../../src/scripts/importUpload.ts';
 
 /** A file pick the test resolves or rejects by hand, so two picks can be interleaved. */
 interface PendingUpload {
@@ -117,4 +117,18 @@ test('a lone failing upload still reports its error and clears the spinner', asy
 	expect(h.state.error).toBe('error:boom');
 	expect(h.state.fileName).toBe('');
 	expect(h.state.busy).toBe('');
+});
+
+test('an import deletes the copy it parsed, not whatever the form holds now', () => {
+	// The user picked a second file while the first one was being parsed. The import
+	// must clean up its own copy and leave the newer pick showing in the form.
+	const cleanup = importCleanup('/tmp/parsed.lish', '/tmp/newer.lish');
+	expect(cleanup.discard).toBe('/tmp/parsed.lish');
+	expect(cleanup.clearForm).toBe(false);
+});
+
+test('an import clears the form when it still shows the file it parsed', () => {
+	const cleanup = importCleanup('/tmp/parsed.lish', '/tmp/parsed.lish');
+	expect(cleanup.discard).toBe('/tmp/parsed.lish');
+	expect(cleanup.clearForm).toBe(true);
 });

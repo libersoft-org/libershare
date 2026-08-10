@@ -9,7 +9,7 @@
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { uploadImportFile } from '../../scripts/ws-client.ts';
-	import { createImportUploader } from '../../scripts/importUpload.ts';
+	import { createImportUploader, importCleanup } from '../../scripts/importUpload.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -130,20 +130,26 @@
 				return;
 			}
 		}
+		// Capture what we are about to parse: the picker stays reachable during the
+		// await, so reading the state again afterwards could clean up a file the user
+		// picked meanwhile instead of the one this import consumed.
+		const parsing = uploadMode ? uploadPath : filePath;
 		try {
 			busyLabel = $t('import.importing');
-			parsedData = await parseFile(uploadMode ? uploadPath : filePath);
+			parsedData = await parseFile(parsing);
 		} catch (e) {
 			errorMessage = translateError(e);
 		} finally {
 			busyLabel = '';
 			// The parsed data lives in memory from here on, so the temp copy is done
 			// either way. Dropping it on failure too means a bad file cannot linger.
-			if (uploadMode && uploadPath) {
-				const uploaded = uploadPath;
-				uploadPath = '';
-				uploadFileName = '';
-				discardUpload(uploaded);
+			if (uploadMode && parsing) {
+				const cleanup = importCleanup(parsing, uploadPath);
+				if (cleanup.clearForm) {
+					uploadPath = '';
+					uploadFileName = '';
+				}
+				discardUpload(cleanup.discard);
 			}
 		}
 	}

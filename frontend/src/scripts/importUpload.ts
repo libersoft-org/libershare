@@ -43,6 +43,26 @@ export interface ImportUploader {
 	unmount: () => void;
 }
 
+/** What an import must do with the temp copy it consumed, once parsing has ended. */
+export interface ImportCleanup {
+	/** The temp path to delete — always the one that was parsed, never the current state. */
+	discard: string;
+	/** Whether the form still shows that file, and so may be cleared. */
+	clearForm: boolean;
+}
+
+/**
+ * Decide the cleanup for an import that has finished parsing `parsed`.
+ *
+ * The picker stays reachable while the import runs, so by the time parsing ends the
+ * form may already hold a newer pick. The copy to delete is the one this import
+ * consumed; the fields may only be cleared if they still describe it, otherwise the
+ * import would wipe a file the user has just chosen.
+ */
+export function importCleanup(parsed: string, current: string): ImportCleanup {
+	return { discard: parsed, clearForm: current === parsed };
+}
+
 /**
  * Sequence file picks so only the newest one may write to the form.
  * A pick that has been superseded, or whose form has been destroyed, discards the
