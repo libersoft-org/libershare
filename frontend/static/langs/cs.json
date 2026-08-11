@@ -485,6 +485,7 @@
 			"seconds": "Sekundy",
 			"timezone": "Časové pásmo",
 			"saved": "Nastavení systémových hodin bylo uloženo",
+			"clockEditDiscarded": "Ručně zadaný čas byl zahozen - hodiny nastavuje automatická synchronizace.",
 			"unsupported": "Tento systém neumožňuje měnit nastavení hodin.",
 			"syncUnknown": "Stav automatické synchronizace se na tomto počítači nepodařilo zjistit, hodiny proto nelze nastavit ručně. Nejprve automatickou synchronizaci výslovně zapněte nebo vypněte.",
 			"errorPermissionDenied": "Nedostatečná oprávnění pro změnu systémových hodin. Spusťte aplikaci jako správce (root)",

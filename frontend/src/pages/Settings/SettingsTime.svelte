@@ -86,12 +86,7 @@
 		// only changed the timezone would write back the time the page was opened at.
 		const tick = setInterval(() => {
 			if (!status || busy || clockEdited) return;
-			const hostLocal = new Date(status.nowMs + (performance.now() - readAt) + status.utcOffsetMinutes * 60000);
-			hours = pad(hostLocal.getUTCHours());
-			minutes = pad(hostLocal.getUTCMinutes());
-			seconds = pad(hostLocal.getUTCSeconds());
-			// Move the baseline with them, or the tick itself would read as a user edit.
-			loaded = { ...loaded, clock: `${hours}:${minutes}:${seconds}` };
+			resyncClockFields();
 		}, 1000);
 		// Another window writing the time must not leave this form showing the old host
 		// state — the backend broadcasts the fresh status after every successful write.
@@ -111,8 +106,26 @@
 		api.unsubscribe('system:timeChanged').catch(() => {});
 	});
 
+	/** Put the clock fields back on the host's current time and re-baseline them. */
+	function resyncClockFields(): void {
+		if (!status) return;
+		const hostLocal = new Date(status.nowMs + (performance.now() - readAt) + status.utcOffsetMinutes * 60000);
+		hours = pad(hostLocal.getUTCHours());
+		minutes = pad(hostLocal.getUTCMinutes());
+		seconds = pad(hostLocal.getUTCSeconds());
+		// Move the baseline with them, or the change itself would read as a user edit.
+		loaded = { ...loaded, clock: `${hours}:${minutes}:${seconds}` };
+	}
+
 	function toggleAutoSync(): void {
 		if (busy || !status?.capabilities.setNtpEnabled) return;
+		// A hand-set clock cannot survive automatic synchronisation, so switching it on
+		// gives up the edit. Do that visibly — put the live time back and say so — rather
+		// than leaving the typed value on screen for the save to quietly ignore.
+		if (!autoSync && clockEdited) {
+			resyncClockFields();
+			addNotification(tt('settings.time.clockEditDiscarded'), 'info');
+		}
 		autoSync = !autoSync;
 	}
 

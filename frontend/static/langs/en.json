@@ -485,6 +485,7 @@
 			"seconds": "Seconds",
 			"timezone": "Time zone",
 			"saved": "System clock settings were saved",
+			"clockEditDiscarded": "The manually entered time was discarded - automatic synchronization sets the clock.",
 			"unsupported": "This system does not allow the clock settings to be changed.",
 			"syncUnknown": "The state of automatic synchronization could not be read on this host, so the clock cannot be set by hand. Switch automatic synchronization explicitly on or off first.",
 			"errorPermissionDenied": "Insufficient permissions to change the system clock. Run the application as an administrator (root)",
