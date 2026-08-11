@@ -102,6 +102,18 @@ test('rapid back-and-forth changes converge on the final selection', async () =>
 	expect(applied).toEqual([{ lang: 'en' }, { lang: 'en' }]);
 });
 
+/**
+ * A key present in one language file and missing from the other renders as the raw key
+ * on screen. The time screen's messages are the ones a user only ever sees when
+ * something already went wrong, so a missing one is never noticed in normal use.
+ */
+test('every language file carries the system time messages', async () => {
+	const langs = await Promise.all(['en', 'cs'].map(async id => (await Bun.file(new URL(`../../static/langs/${id}.json`, import.meta.url)).json()).settings.time));
+	for (const key of ['errorPartial', 'errorGeneric', 'errorPermissionDenied', 'errorAutoSyncEnabled', 'saved']) {
+		for (const lang of langs) expect(typeof lang[key]).toBe('string');
+	}
+});
+
 test('reselecting the same language still applies', async () => {
 	const { loader, resolveAll } = deferredLoader();
 	const applied: any[] = [];

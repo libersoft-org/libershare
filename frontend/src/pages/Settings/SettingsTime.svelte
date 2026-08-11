@@ -194,7 +194,13 @@
 			addNotification(tt('settings.time.saved'), 'success');
 			onBack?.();
 		} catch (e) {
-			errorMessage = translateError(e);
+			// The save is up to five separate calls, so an exception here can land between
+			// two of them with the earlier ones already applied on the host. What the form
+			// shows is then a mixture of what was written and what was not — re-read the
+			// host and say so, instead of leaving the user looking at values that are only
+			// half true.
+			errorMessage = withDetail(tt('settings.time.errorPartial'), translateError(e));
+			await load();
 		} finally {
 			busy = false;
 		}

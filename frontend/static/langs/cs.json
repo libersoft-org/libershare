@@ -492,7 +492,8 @@
 			"errorUnsupported": "Tento systém tuto možnost nepodporuje",
 			"errorAutoSyncEnabled": "Hodiny nelze nastavit ručně, dokud je zapnutá automatická synchronizace",
 			"errorInvalidInput": "Neplatná hodnota",
-			"errorGeneric": "Změna systémových hodin selhala"
+			"errorGeneric": "Změna systémových hodin selhala",
+			"errorPartial": "Ukládání bylo přerušeno. Některá nastavení už mohla být použita – aktuální stav systému byl načten znovu."
 		},
 		"footer": "Patička",
 		"footerVisible": "Zobrazovat patičku",
