@@ -568,7 +568,7 @@ async function readLinuxStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 
 		// implemented — the hosts that lack timedatectl are containers, which have
 		// no CAP_SYS_TIME and cannot set the clock at all. Add it if a non-systemd
 		// bare-metal target ever appears.
-		return { ntpEnabled: false, ntpSynchronized: null, ntpServer: null, capabilities: NO_CAPABILITIES };
+		return { ntpEnabled: null, ntpSynchronized: null, ntpServer: null, capabilities: NO_CAPABILITIES };
 	}
 	const map = parseTimedatectlShow(show);
 	const canNtp = parseYesNo(map['CanNTP']) ?? false;
@@ -584,7 +584,7 @@ async function readLinuxStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 
 	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer).
 	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', ...COMPETING_NTP_UNITS]) : null;
 	return {
-		ntpEnabled: parseYesNo(map['NTP']) ?? false,
+		ntpEnabled: parseYesNo(map['NTP']),
 		ntpSynchronized: parseYesNo(map['NTPSynchronized']),
 		ntpServer: timesync === null ? null : parseTimesyncServer(timesync),
 		capabilities: { setClock: true, setTimezone: true, setNtpEnabled: canNtp, setNtpServer: canConfigureTimesyncdServer(timesync !== null, unit, competing) },
@@ -602,7 +602,7 @@ async function readWindowsStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' 
 	const syncType = type === null ? null : parseRegValue(type, 'Type');
 	const running = service !== null && parseServiceRunning(service);
 	return {
-		ntpEnabled: running && syncType !== null && syncType !== 'NoSync',
+		ntpEnabled: type === null || service === null || syncType === null ? null : running && syncType !== 'NoSync',
 		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
 		ntpServer: parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')),
 		capabilities: { setClock: true, setTimezone: canConvertTimezoneId(), setNtpServer: true, setNtpEnabled: true },
@@ -617,7 +617,7 @@ async function readMacStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 'n
 	// the capabilities stay true so the UI keeps offering the controls and the write
 	// reports the permission problem.
 	return {
-		ntpEnabled: using === null ? false : (parseSystemsetupOnOff(using) ?? false),
+		ntpEnabled: using === null ? null : parseSystemsetupOnOff(using),
 		// macOS exposes no "last sync succeeded" flag.
 		ntpSynchronized: null,
 		ntpServer: server === null ? null : parseSystemsetupValue(server),
@@ -642,13 +642,13 @@ export async function getSystemTimeStatus(): Promise<SystemTimeStatus> {
 		utcOffsetMinutes: -new Date().getTimezoneOffset(),
 		timezoneSource: getTimezoneSource(),
 	};
-	if (!isSupportedPlatform(platform)) return { ...base, supported: false, ntpEnabled: false, ntpSynchronized: null, ntpServer: null, capabilities: NO_CAPABILITIES };
+	if (!isSupportedPlatform(platform)) return { ...base, supported: false, ntpEnabled: null, ntpSynchronized: null, ntpServer: null, capabilities: NO_CAPABILITIES };
 	try {
 		const specific = platform === 'linux' ? await readLinuxStatus() : platform === 'win32' ? await readWindowsStatus() : await readMacStatus();
 		return { ...base, supported: true, ...specific };
 	} catch (err) {
 		console.warn('[system-time] Failed to read time status:', (err as Error).message);
-		return { ...base, supported: true, ntpEnabled: false, ntpSynchronized: null, ntpServer: null, capabilities: NO_CAPABILITIES };
+		return { ...base, supported: true, ntpEnabled: null, ntpSynchronized: null, ntpServer: null, capabilities: NO_CAPABILITIES };
 	}
 }
 
@@ -663,9 +663,15 @@ export async function getSystemTimeStatus(): Promise<SystemTimeStatus> {
  * that rejects it itself: Linux refuses outright, while Windows and macOS accept the
  * write and let the sync daemon overwrite it minutes later. Reported as
  * `auto-sync-enabled` so the caller can offer the actual fix (switch it off first).
+ *
+ * An UNKNOWN sync state blocks it too. Treating "could not read" as "off" is the
+ * dangerous direction: the write would be accepted, the daemon would step the clock
+ * back moments later, and the user would be left with a change that silently undid
+ * itself. Only a definite `false` releases the clock.
  */
 export function clockWriteRefusal(status: SystemTimeStatus): SystemTimeResult | null {
 	if (!status.capabilities.setClock) return result('unsupported', 'this host has no facility for setting the clock');
+	if (status.ntpEnabled === null) return result('error', 'cannot determine whether automatic time synchronisation is enabled, so the clock is left alone');
 	if (status.ntpEnabled) return result('auto-sync-enabled', 'automatic time synchronisation is enabled');
 	return null;
 }
@@ -722,8 +728,8 @@ export async function setSystemNtpServer(server: string): Promise<SystemTimeResu
 	if (!isSupportedPlatform(platform)) return result('unsupported', `configuring an NTP server is not implemented on ${platform}`);
 	const status = await getSystemTimeStatus();
 	if (!status.capabilities.setNtpServer) return result('unsupported', 'the NTP server can only be configured where this application owns the time synchronisation service');
-	if (platform === 'linux') return applyTimesyncdDropIn(server, status.ntpEnabled);
-	const commands = buildSetNtpServerCommands(platform, server, status.ntpEnabled);
+	if (platform === 'linux') return applyTimesyncdDropIn(server, status.ntpEnabled === true);
+	const commands = buildSetNtpServerCommands(platform, server, status.ntpEnabled === true);
 	// A platform whose whole change is the file write above has no command to run, and
 	// runAll would read the empty list as "unsupported on this platform".
 	if (commands.length === 0) return result('ok');

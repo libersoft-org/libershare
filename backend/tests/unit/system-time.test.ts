@@ -819,6 +819,18 @@ describe('clockWriteRefusal', () => {
 		expect(refusal?.success).toBe(false);
 	});
 
+	/**
+	 * The dangerous direction. A read that failed says nothing about whether a daemon
+	 * owns the clock, and accepting the write would let it be stepped back seconds later
+	 * — looking to the user as though the clock had silently refused to change.
+	 */
+	it('refuses while the sync state could not be read at all', () => {
+		const refusal = clockWriteRefusal(statusFixture({ ntpEnabled: null }));
+		expect(refusal?.success).toBe(false);
+		expect(refusal?.outcome).toBe('error');
+		expect(refusal?.message).toContain('cannot determine');
+	});
+
 	it('refuses a synchronised host even though it has already reached a peer', () => {
 		// The refusal is about ownership of the clock, not about the sync having worked.
 		expect(clockWriteRefusal(statusFixture({ ntpEnabled: true, ntpSynchronized: true }))?.outcome).toBe('auto-sync-enabled');
@@ -874,7 +886,8 @@ describe('on a platform with no time backend', () => {
 			const status = await getSystemTimeStatus();
 			expect(status.supported).toBe(false);
 			expect(status.capabilities).toEqual({ setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false });
-			expect(status.ntpEnabled).toBe(false);
+			// Unknown, not "off": nothing was read, so nothing may be claimed.
+			expect(status.ntpEnabled).toBeNull();
 			expect(status.ntpServer).toBeNull();
 			// The clock and the zone come from the process itself, so they stay real.
 			expect(status.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);

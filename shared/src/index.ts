@@ -360,8 +360,17 @@ export interface SystemTimeStatus {
 	utcOffsetMinutes: number;
 	/** Where {@link SystemTimeStatus.timezone} and the selectable list come from. */
 	timezoneSource: SystemTimezoneSource;
-	/** Automatic time synchronisation (NTP) is switched on. While true the clock must not be set by hand. */
-	ntpEnabled: boolean;
+	/**
+	 * Automatic time synchronisation (NTP) is switched on, or null when the host's
+	 * state could not be determined (the managing tool is missing, wedged, refused the
+	 * read, or printed something unparseable).
+	 *
+	 * Tri-state deliberately: collapsing an unreadable state to false would let the UI
+	 * offer a manual clock set while synchronisation is in fact running, and the daemon
+	 * would step the clock back seconds later. A hand-set clock requires a definite
+	 * false — never merely "not known to be true".
+	 */
+	ntpEnabled: boolean | null;
 	/** The last synchronisation actually succeeded; null where the OS does not report it. */
 	ntpSynchronized: boolean | null;
 	/** Configured NTP server address, or null when none is configured / it cannot be read. */

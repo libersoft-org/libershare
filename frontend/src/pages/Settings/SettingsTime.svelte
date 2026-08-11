@@ -58,7 +58,9 @@
 		hours = pad(hostLocal.getUTCHours());
 		minutes = pad(hostLocal.getUTCMinutes());
 		seconds = pad(hostLocal.getUTCSeconds());
-		autoSync = next.ntpEnabled;
+		// An unreadable sync state shows the switch off, but `syncUnknown` keeps the clock
+		// locked: the baseline matches, so merely opening the page never writes anything.
+		autoSync = next.ntpEnabled ?? false;
 		ntpServer = next.ntpServer ?? '';
 		timezone = next.timezone;
 		loaded = { autoSync, ntpServer, timezone, clock: `${hours}:${minutes}:${seconds}` };
@@ -190,7 +192,11 @@
 	// `Intl.supportedValuesOf` omits, and a value with no matching option leaves the
 	// picker blank instead of showing where the host actually is.
 	let selectableTimezones = $derived(status && !timezones.includes(status.timezone) ? [status.timezone, ...timezones] : timezones);
-	let clockDisabled = $derived(busy || autoSync || !status?.capabilities.setClock);
+	// The host could not say whether something else owns the clock. Setting it by hand
+	// would be accepted and then quietly stepped back by the daemon, so the fields stay
+	// locked until the user resolves the state by switching synchronisation either way.
+	let syncUnknown = $derived(status !== null && status.supported && status.ntpEnabled === null);
+	let clockDisabled = $derived(busy || autoSync || syncUnknown || !status?.capabilities.setClock);
 	// Nothing to write means nothing to report: without this the button runs no request
 	// at all and still announces the settings as saved.
 	let hasChanges = $derived(autoSync !== loaded.autoSync || ntpServer.trim() !== loaded.ntpServer || timezone !== loaded.timezone || (clockEdited && !autoSync));
@@ -235,6 +241,9 @@
 		{/if}
 		{#if status && !status.supported}
 			<Alert type="warning" message={$t('settings.time.unsupported')} />
+		{/if}
+		{#if syncUnknown}
+			<Alert type="warning" message={$t('settings.time.syncUnknown')} />
 		{/if}
 		{#if status}
 			<div role="group" data-mouse-activate-area={areaID}>
