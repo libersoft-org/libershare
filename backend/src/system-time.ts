@@ -18,8 +18,13 @@ const MAC_SYSTEMSETUP = '/usr/sbin/systemsetup';
  * Drop-in that carries our NTP server on systemd hosts. A drop-in is used instead of
  * editing the shipped `timesyncd.conf` so a distribution package upgrade never fights
  * our value and removing the feature is a single file deletion.
+ *
+ * The `90-` prefix is not cosmetic: drop-ins are applied in lexicographic order and a
+ * later file re-overrides the same key, so a distribution's `50-*.conf` would silently
+ * beat a `10-` prefix while the API still reported success. systemd reserves 60-90 for
+ * local administrative overrides in `/etc`, which is exactly what this is.
  */
-export const TIMESYNCD_DROPIN_PATH = '/etc/systemd/timesyncd.conf.d/10-libershare.conf';
+export const TIMESYNCD_DROPIN_PATH = '/etc/systemd/timesyncd.conf.d/90-libershare.conf';
 
 /** systemd unit that reads {@link TIMESYNCD_DROPIN_PATH}. */
 export const TIMESYNCD_UNIT = 'systemd-timesyncd.service';

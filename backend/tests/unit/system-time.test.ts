@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseServiceRunning, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsSyncStatus, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, validateClockParts } from '../../src/system-time.ts';
+import { buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseServiceRunning, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsSyncStatus, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, validateClockParts } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -436,6 +436,26 @@ describe('buildTimesyncdDropIn', () => {
 		const lines = buildTimesyncdDropIn('ntp.example.org').split('\n');
 		expect(lines.indexOf('NTP=')).toBeGreaterThan(-1);
 		expect(lines.indexOf('NTP=')).toBeLessThan(lines.indexOf('NTP=ntp.example.org'));
+	});
+});
+
+describe('TIMESYNCD_DROPIN_PATH', () => {
+	/**
+	 * Drop-ins are applied in lexicographic order and a later file re-overrides the same
+	 * key, so a prefix below the distribution's own `50-*.conf` loses silently while the
+	 * API still reports the server as configured.
+	 */
+	it('sorts after a distribution drop-in, in the range systemd reserves for /etc overrides', () => {
+		const name = TIMESYNCD_DROPIN_PATH.split('/').pop() ?? '';
+		const prefix = Number(/^(\d+)-/.exec(name)?.[1]);
+		expect(prefix).toBeGreaterThanOrEqual(60);
+		expect(prefix).toBeLessThanOrEqual(90);
+		for (const other of ['10-distro.conf', '50-distro.conf']) expect(name > other).toBe(true);
+	});
+
+	it('lives in the timesyncd drop-in directory and is ours alone', () => {
+		expect(TIMESYNCD_DROPIN_PATH.startsWith('/etc/systemd/timesyncd.conf.d/')).toBe(true);
+		expect(TIMESYNCD_DROPIN_PATH).toContain('libershare');
 	});
 });
 
