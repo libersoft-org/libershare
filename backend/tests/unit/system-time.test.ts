@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -863,6 +863,45 @@ describe('setSystemNtpServer', () => {
 			expect((await setSystemNtpServer('ntp.example.org', capable, policyApplied, exec)).outcome).toBe('unsupported');
 			expect(calls).toEqual([]);
 		});
+	});
+});
+
+describe('readWindowsPolicyManaged', () => {
+	/** Answer each `reg query <key>` from a map; anything not listed is a key that is not there. */
+	function registry(present: Record<string, RunOutcome>): { exec: CommandRunner; keys: string[] } {
+		const keys: string[] = [];
+		const exec: CommandRunner = async (_cmd, args) => {
+			const key = args[args.length - 1] ?? '';
+			keys.push(key);
+			return present[key] ?? { kind: 'failed', code: 1, output: 'ERROR: The system was unable to find the specified registry key or value.\r\n' };
+		};
+		return { exec, keys };
+	}
+
+	it('reports an unmanaged host when no policy branch exists', async () => {
+		const { exec, keys } = registry({});
+		expect(await readWindowsPolicyManaged(exec)).toBe(false);
+		// Every branch a policy can land in, not just Parameters.
+		expect(keys.map(k => k.split('\\').slice(4).join('\\'))).toEqual(['W32Time\\Parameters', 'W32Time\\TimeProviders\\NtpClient', 'W32Time\\Config']);
+	});
+
+	/** Where "Configure Windows NTP Client" actually writes. Checking Parameters alone missed it. */
+	it('reports a managed host from the NtpClient policy branch', async () => {
+		const { exec } = registry({ 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\TimeProviders\\NtpClient': { kind: 'ok', output: '    NtpServer    REG_SZ    policy.example.org,0x9\r\n' } });
+		expect(await readWindowsPolicyManaged(exec)).toBe(true);
+	});
+
+	it('reports a managed host from the global Config policy branch', async () => {
+		const { exec } = registry({ 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\Config': { kind: 'ok', output: '    MaxPollInterval    REG_DWORD    0xa\r\n' } });
+		expect(await readWindowsPolicyManaged(exec)).toBe(true);
+	});
+
+	/** Fail closed: a branch that could not be read may be the policy about to be overridden. */
+	it('treats an unreadable branch as managed', async () => {
+		for (const outcome of [{ kind: 'failed', code: 5, output: 'ERROR: Access is denied.\r\n' }, { kind: 'missing' }, { kind: 'timeout' }] as RunOutcome[]) {
+			const { exec } = registry({ 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\Parameters': outcome });
+			expect(await readWindowsPolicyManaged(exec)).toBe(true);
+		}
 	});
 });
 

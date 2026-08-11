@@ -39,11 +39,21 @@ const W32TIME_PARAMS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\
 const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time';
 
 /**
- * Group policy's own W32Time configuration. When this key exists at all, an
+ * Group policy's own W32Time configuration. When ANY of these keys exists, an
  * administrator's policy owns the settings and the values under
- * {@link W32TIME_PARAMS_KEY} need not be the ones in effect.
+ * {@link W32TIME_PARAMS_KEY} need not be the ones in effect — policy values override the
+ * local W32Time configuration.
+ *
+ * All three branches matter and checking only the first one misses the common case: the
+ * "Configure Windows NTP Client" policy writes `TimeProviders\NtpClient` (the peer list,
+ * the sync type and the poll interval), "Global Configuration Settings" writes `Config`,
+ * and `Parameters` is only where a couple of the older values land. A machine managed
+ * through the usual policy was therefore classified as locally writable.
  */
-const W32TIME_POLICY_KEY = 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\Parameters';
+const W32TIME_POLICY_KEYS: string[] = ['HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\Parameters', 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\TimeProviders\\NtpClient', 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\Config'];
+
+/** `reg query` exit code for a key that is simply not there, as opposed to one it could not read. */
+const REG_KEY_NOT_FOUND = 1;
 
 /** Platforms with an implemented time backend. Anything else is reported as unsupported. */
 export type SystemPlatform = 'win32' | 'linux' | 'darwin';
@@ -776,6 +786,35 @@ async function readLinuxStatus(): Promise<PlatformStatus> {
 	};
 }
 
+/**
+ * What one `reg query <policy key>` says about that policy branch.
+ *
+ * `absent` is only the exit code that means "no such key". Every other failure — `reg`
+ * missing, a timeout, an access denied on the branch — is `unreadable`, which is NOT the
+ * same answer: a branch we could not read may well be a policy we are about to override.
+ */
+export function policyBranchState(outcome: RunOutcome): 'present' | 'absent' | 'unreadable' {
+	if (outcome.kind === 'ok') return 'present';
+	if (outcome.kind === 'failed' && outcome.code === REG_KEY_NOT_FOUND) return 'absent';
+	return 'unreadable';
+}
+
+/**
+ * True when group policy owns this host's time configuration — or when that could not be
+ * established, which is treated the same way.
+ *
+ * Failing closed is the whole point: "no policy" lets the application stop, disable and
+ * reconfigure W32Time, so it may only be concluded from branches that definitely are not
+ * there. An unreadable registry yields a managed host, the capabilities go false and the
+ * UI shows the controls as somebody else's to change.
+ */
+export async function readWindowsPolicyManaged(exec: CommandRunner = run): Promise<boolean> {
+	for (const key of W32TIME_POLICY_KEYS) {
+		if (policyBranchState(await exec('reg', ['query', key])) !== 'absent') return true;
+	}
+	return false;
+}
+
 /** The Windows time source and service start type, as read from the registry. */
 export interface WindowsModeState {
 	mode: WindowsSyncMode;
@@ -793,8 +832,8 @@ export type WindowsModeReader = () => Promise<WindowsModeState>;
 async function readWindowsMode(): Promise<WindowsModeState> {
 	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
 	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
-	const policy = await tryRead('reg', ['query', W32TIME_POLICY_KEY]);
-	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policy !== null), start: parseWindowsStartMode(start) };
+	const policyManaged = await readWindowsPolicyManaged();
+	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start) };
 }
 
 /** Read the Windows (W32Time) part of the status. */
