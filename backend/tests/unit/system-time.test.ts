@@ -949,6 +949,18 @@ describe('writeFileAtomically', () => {
 		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
 	});
 
+	/**
+	 * A staging name shared by concurrent calls is not a staging name: the second write
+	 * truncates the first one's file, the first renames the second's content into place
+	 * and the second then fails with ENOENT on a name that is already gone.
+	 */
+	it('stages concurrent writes under separate temporary names', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await Promise.all([writeFileAtomically(path, 'first\n'), writeFileAtomically(path, 'second\n')]);
+		expect(['first\n', 'second\n']).toContain(await readFile(path, 'utf8'));
+		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
+	});
+
 	it('rolls a creation back by removing the file it created', async () => {
 		const path = join(dir, '90-libershare.conf');
 		const rollback = await writeFileAtomically(path, 'new\n');
@@ -1002,6 +1014,28 @@ describe('applyTimesyncdDropIn', () => {
 		const { exec } = fakeRunner([{ kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' }]);
 		expect((await applyTimesyncdDropIn('new.example.org', true, path, exec)).success).toBe(false);
 		expect(await readdir(dir)).toEqual([]);
+	});
+
+	/**
+	 * Two saves in flight at once must not interleave. The daemon restart is what makes
+	 * a drop-in take effect, so each call has to restart onto the file IT wrote — if both
+	 * restarts see the same content, one caller was told its server is live while the
+	 * other's file is the one on disk.
+	 */
+	it('keeps two concurrent writes from interleaving', async () => {
+		const seenAtRestart: string[] = [];
+		const exec: CommandRunner = async () => {
+			// Wide enough that an unserialized second write would land first — both
+			// writes finish in well under a millisecond.
+			await new Promise(resolve => setTimeout(resolve, 10));
+			seenAtRestart.push(await readFile(path, 'utf8'));
+			return { kind: 'ok', output: '' };
+		};
+		const [a, b] = await Promise.all([applyTimesyncdDropIn('a.example.org', true, path, exec), applyTimesyncdDropIn('b.example.org', true, path, exec)]);
+		expect([a.success, b.success]).toEqual([true, true]);
+		expect(seenAtRestart.map(text => text.trim().split('NTP=').pop()).sort()).toEqual(['a.example.org', 'b.example.org']);
+		// The loser's content is gone, and neither call left a staging file behind.
+		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
 	});
 
 	it('reports an unwritable drop-in as a permission problem and runs nothing', async () => {

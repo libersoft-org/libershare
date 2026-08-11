@@ -1,8 +1,11 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { dirname } from 'node:path';
 import { promisify } from 'node:util';
+import { Mutex } from 'async-mutex';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from './system-time-windows.ts';
 import type { SystemTimeCapabilities, SystemTimeOutcome, SystemTimeResult, SystemTimeStatus, SystemTimezoneSource } from '@shared';
 
@@ -859,6 +862,35 @@ export async function getSystemTimeStatus(): Promise<SystemTimeStatus> {
 // Writes
 // ---------------------------------------------------------------------------
 
+/** Serializes every system-time mutation in this process. See {@link withSystemTimeLock}. */
+const systemTimeWriteLock = new Mutex();
+
+/** Set while the current async context already owns {@link systemTimeWriteLock}. */
+const lockHeld = new AsyncLocalStorage<true>();
+
+/**
+ * Run `fn` as the only system-time mutation in flight in this process.
+ *
+ * The whole "read the current state → decide → write → restart → read back →
+ * broadcast" sequence has to be one critical section, not just the file write. Two
+ * concurrent requests otherwise interleave their halves: both verify against the same
+ * pre-state, the second one's file lands before the first one's daemon restart, and the
+ * first request reports success for a configuration that is no longer on disk. A
+ * rollback running against a newer successful write is the same bug with the older
+ * value winning.
+ *
+ * Re-entrant: the API layer takes the lock around the entire request, and the writers it
+ * calls take it again for their own sake (they are exported and used directly). A nested
+ * acquisition runs inline instead of waiting for a lock this very call stack is holding.
+ *
+ * ponytail: one process-wide lock, not one per resource. System-time writes are rare,
+ * human-driven and already seconds long; split it per path only if that ever changes.
+ */
+export function withSystemTimeLock<T>(fn: () => Promise<T>): Promise<T> {
+	if (lockHeld.getStore()) return fn();
+	return systemTimeWriteLock.runExclusive(() => lockHeld.run(true, fn));
+}
+
 /**
  * Reason a clock write must be refused given `status`, or null when it may proceed.
  *
@@ -950,14 +982,20 @@ export async function setSystemNtpServer(server: string): Promise<SystemTimeResu
  * flushing it and renaming makes the swap atomic — and the `fsync` is not optional: a
  * rename only guarantees the *name* change, so without it a power loss can leave the
  * new name pointing at an empty file.
+ *
+ * The temporary name is unique per call and created with `wx` (fail if it exists). A
+ * name shared by every call — a bare pid suffix is shared by every call in one process —
+ * lets a second write truncate the first one's staging file and then rename it away, so
+ * the first write publishes the second's content and the second fails with ENOENT.
  */
 export async function writeFileAtomically(path: string, content: string): Promise<() => Promise<void>> {
 	const previous = await readFile(path, 'utf8').catch(() => null);
 	await mkdir(dirname(path), { recursive: true });
 	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
-	const temp = `${path}.libershare-${process.pid}.tmp`;
+	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
 	try {
-		const handle = await open(temp, 'w');
+		// `wx`, not `w`: an existing name is a collision to report, never one to overwrite.
+		const handle = await open(temp, 'wx');
 		try {
 			await handle.writeFile(content, 'utf8');
 			await handle.sync();
@@ -985,26 +1023,34 @@ export async function writeFileAtomically(path: string, content: string): Promis
  *
  * `path` and `exec` are injectable so the rollback can be exercised without a systemd
  * host.
+ *
+ * The write, the restart and the rollback are one critical section
+ * ({@link withSystemTimeLock}): a second request landing between the write and the
+ * restart would have the daemon pick up ITS file while this call reports success for a
+ * server that is no longer on disk, and a rollback interleaved that way restores an old
+ * configuration over a newer successful write.
  */
 export async function applyTimesyncdDropIn(server: string, syncRunning: boolean, path: string = TIMESYNCD_DROPIN_PATH, exec: CommandRunner = run): Promise<SystemTimeResult> {
-	let rollback: () => Promise<void>;
-	try {
-		rollback = await writeFileAtomically(path, buildTimesyncdDropIn(server));
-	} catch (err) {
-		const e = err as { code?: string; message?: string };
-		if (e.code === 'EACCES' || e.code === 'EPERM') return result('permission-denied', `cannot write ${path}`);
-		return result('error', e.message ?? `cannot write ${path}`);
-	}
-	const commands = buildSetNtpServerCommands('linux', server, syncRunning);
-	// Synchronisation is off, so there is deliberately no restart — the drop-in on disk
-	// IS the whole change and is read when the daemon next starts. Nothing to roll back.
-	if (commands.length === 0) return result('ok');
-	const r = await runAll('linux', commands, exec);
-	if (!r.success) {
-		await rollback();
-		await runAll('linux', commands, exec);
-	}
-	return r;
+	return withSystemTimeLock(async () => {
+		let rollback: () => Promise<void>;
+		try {
+			rollback = await writeFileAtomically(path, buildTimesyncdDropIn(server));
+		} catch (err) {
+			const e = err as { code?: string; message?: string };
+			if (e.code === 'EACCES' || e.code === 'EPERM') return result('permission-denied', `cannot write ${path}`);
+			return result('error', e.message ?? `cannot write ${path}`);
+		}
+		const commands = buildSetNtpServerCommands('linux', server, syncRunning);
+		// Synchronisation is off, so there is deliberately no restart — the drop-in on disk
+		// IS the whole change and is read when the daemon next starts. Nothing to roll back.
+		if (commands.length === 0) return result('ok');
+		const r = await runAll('linux', commands, exec);
+		if (!r.success) {
+			await rollback();
+			await runAll('linux', commands, exec);
+		}
+		return r;
+	});
 }
 
 /**

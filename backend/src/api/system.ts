@@ -5,7 +5,7 @@ import { type SystemRAMInfo, type SystemStorageInfo, type SystemCPUInfo, type Sy
 import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWriteBusy, startVolumeMonitor, type VolumeMonitor } from '../system-volume.ts';
-import { getSystemTimeStatus, listSystemTimezones, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone } from '../system-time.ts';
+import { getSystemTimeStatus, listSystemTimezones, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, withSystemTimeLock } from '../system-time.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -42,16 +42,24 @@ interface SystemHandlers {
  * from the re-read or from a dead client's socket escape would report a successful clock
  * or NTP-mode change as an INTERNAL_ERROR — and invite the client to retry it, which is
  * the one thing a clock change must not be.
+ *
+ * The write, the read-back and the broadcast are one critical section. Requests arrive
+ * concurrently on the WebSocket API, and without the lock a second write lands between
+ * this one's write and its read-back — so both clients are told the host looks like
+ * whatever the LAST write left, and the earlier request claims an end state it did not
+ * produce.
  */
-export async function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus: () => Promise<SystemTimeStatus>, broadcast: BroadcastFn): Promise<SystemTimeResult> {
-	const res = await write();
-	if (!res.success) return res;
-	try {
-		broadcast('system:timeChanged', await readStatus());
-	} catch (err) {
-		console.warn('[system-time] Applied, but could not announce the new time status:', (err as Error).message);
-	}
-	return res;
+export function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus: () => Promise<SystemTimeStatus>, broadcast: BroadcastFn): Promise<SystemTimeResult> {
+	return withSystemTimeLock(async () => {
+		const res = await write();
+		if (!res.success) return res;
+		try {
+			broadcast('system:timeChanged', await readStatus());
+		} catch (err) {
+			console.warn('[system-time] Applied, but could not announce the new time status:', (err as Error).message);
+		}
+		return res;
+	});
 }
 
 export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn): SystemHandlers {
