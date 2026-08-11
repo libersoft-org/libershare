@@ -6,6 +6,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
+	import { connected } from '../../scripts/ws-client.ts';
 	import { type SystemTimeOutcome, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -98,7 +99,26 @@
 		});
 		// Best-effort: with the WS down the call rejects — swallow it, the event just stays unsubscribed.
 		api.subscribe('system:timeChanged').catch(() => {});
-		return () => clearInterval(tick);
+		// The backend keeps subscriptions per connection, so a dropped socket takes this
+		// one with it and the page would sit there silently stale for as long as it is
+		// open. Re-subscribe on every reconnect and re-read what was missed while down —
+		// never over an edit in progress, which is the same rule the event handler follows.
+		let firstEmission = true;
+		const offConnected = connected.subscribe(isConnected => {
+			// The store replays its current value on subscribe; the initial subscribe above
+			// has that covered.
+			if (firstEmission) {
+				firstEmission = false;
+				return;
+			}
+			if (!isConnected) return;
+			api.subscribe('system:timeChanged').catch(() => {});
+			if (!busy && !hasChanges) void load();
+		});
+		return () => {
+			clearInterval(tick);
+			offConnected();
+		};
 	});
 
 	onDestroy(() => {
