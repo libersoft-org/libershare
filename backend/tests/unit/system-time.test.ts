@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -655,20 +655,47 @@ describe('buildSetNtpEnabledCommands', () => {
 		expect(buildSetNtpEnabledCommands('darwin', false)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setusingnetworktime', 'off'] }]);
 	});
 
-	it('sets the start mode, the running state and the sync type on windows', () => {
-		// The /config step is what clears a registry Type of NoSync. Without it the
-		// status read still reports synchronisation as off on such a host, and the
-		// toggle looks like it did not stick.
-		expect(buildSetNtpEnabledCommands('win32', true)).toEqual([
+	/**
+	 * The one mode where "switch synchronisation on" has to invent a time source: the
+	 * host has none, so the /config step is what clears Type=NoSync. Without it the
+	 * status read still reports synchronisation as off and the toggle looks like it did
+	 * not stick.
+	 */
+	it('gives a host with no time source one, on windows', () => {
+		expect(buildSetNtpEnabledCommands('win32', true, 'none')).toEqual([
 			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'auto'] },
 			{ cmd: 'sc', args: ['start', 'w32time'], benignCodes: [1056] },
 			{ cmd: 'w32tm', args: ['/config', '/syncfromflags:manual', '/update'], failOnOutput: W32TM_ERROR_RE },
 			{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE },
 		]);
-		expect(buildSetNtpEnabledCommands('win32', false)).toEqual([
-			{ cmd: 'sc', args: ['stop', 'w32time'], benignCodes: [1062] },
-			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'disabled'] },
-		]);
+	});
+
+	/**
+	 * The destructive case. On a domain member Type is NT5DS and the machine takes its
+	 * time from the Active Directory hierarchy; rewriting syncfromflags to manual
+	 * detaches it from the forest's time and eventually breaks Kerberos. Switching
+	 * synchronisation on must start the service and nothing else.
+	 */
+	it('never rewrites a time source it did not create, on windows', () => {
+		for (const mode of ['domain-hierarchy', 'manual', 'all', 'managed', 'unknown'] as const) {
+			const commands = buildSetNtpEnabledCommands('win32', true, mode);
+			expect(commands.map(c => [c.cmd, ...c.args].join(' '))).toEqual(['sc config w32time start= auto', 'sc start w32time', 'w32tm /resync']);
+			expect(commands.some(c => c.args.some(a => a.startsWith('/syncfromflags')))).toBe(false);
+		}
+	});
+
+	/** A caller that could not determine the mode must get the harmless behaviour. */
+	it('rewrites nothing when the mode was not given at all', () => {
+		expect(buildSetNtpEnabledCommands('win32', true).some(c => c.args.includes('/syncfromflags:manual'))).toBe(false);
+	});
+
+	it('stops and disables the service on windows, whatever the source was', () => {
+		for (const mode of ['none', 'manual', 'all'] as const) {
+			expect(buildSetNtpEnabledCommands('win32', false, mode)).toEqual([
+				{ cmd: 'sc', args: ['stop', 'w32time'], benignCodes: [1062] },
+				{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'disabled'] },
+			]);
+		}
 	});
 
 	it('stops the service before disabling it, so the switch takes effect at once', () => {
@@ -679,11 +706,30 @@ describe('buildSetNtpEnabledCommands', () => {
 		// A host whose service is already in the requested run state must still get its
 		// sync type and start mode written, so those steps may not sit behind an abort.
 		const tolerated = (enabled: boolean): string[] =>
-			buildSetNtpEnabledCommands('win32', enabled)
+			buildSetNtpEnabledCommands('win32', enabled, 'none')
 				.filter(c => c.benignCodes !== undefined)
 				.map(c => [c.cmd, ...c.args].join(' '));
 		expect(tolerated(true)).toEqual(['sc start w32time']);
 		expect(tolerated(false)).toEqual(['sc stop w32time']);
+	});
+});
+
+describe('windowsSyncIsOurs', () => {
+	it('allows a change only where this application configured the source itself', () => {
+		expect(windowsSyncIsOurs('manual')).toBe(true);
+		expect(windowsSyncIsOurs('all')).toBe(true);
+		expect(windowsSyncIsOurs('none')).toBe(true);
+	});
+
+	/**
+	 * A domain member, a policy-managed host and an unidentifiable one are all somebody
+	 * else's configuration. The capability being false is what keeps the UI from
+	 * offering a change that would detach the machine from its domain's time.
+	 */
+	it('refuses a domain, policy-managed or unidentified host', () => {
+		expect(windowsSyncIsOurs('domain-hierarchy')).toBe(false);
+		expect(windowsSyncIsOurs('managed')).toBe(false);
+		expect(windowsSyncIsOurs('unknown')).toBe(false);
 	});
 });
 
@@ -724,7 +770,7 @@ describe('runAll', () => {
 			{ kind: 'ok', output: '' },
 			{ kind: 'failed', code: 1056, output: '[SC] StartService FAILED 1056:\r\n\r\nAn instance of the service is already running.\r\n' },
 		]);
-		expect(await runAll('win32', buildSetNtpEnabledCommands('win32', true), exec)).toEqual({ success: true, outcome: 'ok', message: null });
+		expect(await runAll('win32', buildSetNtpEnabledCommands('win32', true, 'none'), exec)).toEqual({ success: true, outcome: 'ok', message: null });
 		expect(calls).toEqual(['sc config w32time start= auto', 'sc start w32time', 'w32tm /config /syncfromflags:manual /update', 'w32tm /resync']);
 	});
 

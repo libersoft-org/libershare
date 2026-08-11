@@ -291,6 +291,19 @@ export function parseWindowsStartMode(output: string | null): WindowsStartMode {
  * reading the live run state would show synchronisation as off, let the UI offer a
  * manual clock set, and have W32Time overwrite it at the next trigger.
  */
+/**
+ * True when this application may change the host's time source.
+ *
+ * False for a domain member, for a group-policy-managed host and whenever the mode
+ * could not be read. Those are configurations an administrator owns: switching a domain
+ * member off `NT5DS`, or disabling W32Time on one, detaches it from the forest's time
+ * and eventually breaks Kerberos, and neither the previous mode nor the peer list is
+ * anywhere we could restore it from.
+ */
+export function windowsSyncIsOurs(mode: WindowsSyncMode): boolean {
+	return mode === 'manual' || mode === 'all' || mode === 'none';
+}
+
 export function windowsSyncEnabled(mode: WindowsSyncMode, start: WindowsStartMode): boolean | null {
 	if (start === 'disabled') return false;
 	if (mode === 'none') return false;
@@ -507,23 +520,30 @@ export function buildSetNtpServerCommands(platform: SystemPlatform, server: stri
  *
  * Those two service steps carry {@link SystemCommand.benignCodes}, because a service
  * that is already in the requested run state makes `sc` exit non-zero. Aborting there
- * would skip the steps that carry the actual change — the registry sync type on the
- * way on, the start mode on the way off — and the toggle would report a failure while
- * leaving the host half-configured. A real refusal still surfaces: the following
- * steps hit the same permission and fail with it.
+ * would skip the steps that carry the actual change — the sync type on the way on, the
+ * start mode on the way off — and the toggle would report a failure while leaving the
+ * host half-configured. A real refusal still surfaces: the following steps hit the same
+ * permission and fail with it.
+ *
+ * `mode` is the host's CURRENT Windows time source and decides whether the source is
+ * rewritten at all. It defaults to `unknown`, which rewrites nothing — the safe default
+ * for a caller that could not determine it.
  */
-export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: boolean): SystemCommand[] {
+export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: boolean, mode: WindowsSyncMode = 'unknown'): SystemCommand[] {
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-ntp', enabled ? 'true' : 'false'] }];
 	if (platform === 'darwin') return [{ cmd: MAC_SYSTEMSETUP, args: ['-setusingnetworktime', enabled ? 'on' : 'off'] }];
 	if (enabled) {
 		return [
 			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'auto'] },
 			{ cmd: 'sc', args: ['start', 'w32time'], benignCodes: [SC_ALREADY_RUNNING] },
-			// Clears a registry Type of NoSync, which the service state alone does not
-			// touch. Without it, a host left on NoSync (domain policy, or set outside
-			// this app) reports synchronisation as still off right after we turned it
-			// on, and the toggle looks like it did not stick.
-			w32tm('/config', '/syncfromflags:manual', '/update'),
+			// ONLY for a host with no time source at all (Type=NoSync), which is the one
+			// case where "switch synchronisation on" has to invent one. On every other
+			// mode this REPLACES the source: run unconditionally on a domain member it
+			// switches Type from NT5DS to a manual peer list, detaching the machine from
+			// the Active Directory time hierarchy — which is what Kerberos ticket
+			// validity depends on. Enabling synchronisation must never mean "and also
+			// change where the time comes from".
+			...(mode === 'none' ? [w32tm('/config', '/syncfromflags:manual', '/update')] : []),
 			w32tm('/resync'),
 		];
 	}
@@ -680,6 +700,18 @@ async function readLinuxStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 
 	};
 }
 
+/**
+ * Read the Windows time source and service start type. Both the status read and the
+ * enable/disable write need them — the write to decide whether it may rewrite the
+ * source at all, which is not something it can infer from the requested value.
+ */
+async function readWindowsMode(): Promise<{ mode: WindowsSyncMode; start: WindowsStartMode }> {
+	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
+	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
+	const policy = await tryRead('reg', ['query', W32TIME_POLICY_KEY]);
+	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policy !== null), start: parseWindowsStartMode(start) };
+}
+
 /** Read the Windows (W32Time) part of the status. */
 async function readWindowsStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 'ntpSynchronized' | 'ntpServer' | 'capabilities'>> {
 	// Everything here is read from the registry rather than from `sc query` / `w32tm
@@ -687,17 +719,16 @@ async function readWindowsStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' 
 	// (a German host prints `ZUSTAND`, not `STATE`), and the second needs elevation.
 	// Registry value names are identifiers and are the same in every language.
 	const params = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'NtpServer']);
-	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
-	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
-	const policy = await tryRead('reg', ['query', W32TIME_POLICY_KEY]);
 	const status = await tryRead('w32tm', ['/query', '/status']);
-	const mode = parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policy !== null);
-	const startMode = parseWindowsStartMode(start);
+	const { mode, start } = await readWindowsMode();
+	// A time source an administrator owns is read-only here, so the UI disables the
+	// controls instead of offering a change that would detach the host from its domain.
+	const ours = windowsSyncIsOurs(mode);
 	return {
-		ntpEnabled: windowsSyncEnabled(mode, startMode),
+		ntpEnabled: windowsSyncEnabled(mode, start),
 		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
 		ntpServer: parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')),
-		capabilities: { setClock: true, setTimezone: canConvertTimezoneId(), setNtpServer: true, setNtpEnabled: true },
+		capabilities: { setClock: true, setTimezone: canConvertTimezoneId(), setNtpServer: ours, setNtpEnabled: ours },
 	};
 }
 
@@ -907,8 +938,11 @@ export async function setSystemNtpEnabled(enabled: boolean): Promise<SystemTimeR
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `time synchronisation cannot be switched on ${platform}`);
 	const status = await getSystemTimeStatus();
-	if (!status.capabilities.setNtpEnabled) return result('unsupported', 'this host has no time synchronisation service');
-	const r = await runAll(platform, buildSetNtpEnabledCommands(platform, enabled));
+	if (!status.capabilities.setNtpEnabled) return result('unsupported', 'time synchronisation here is not ours to switch: this host has no such service, or its time source is managed by a domain or by group policy');
+	// Windows needs its CURRENT time source to decide whether it may be rewritten; every
+	// other platform has a single switch that changes nothing else.
+	const mode = platform === 'win32' ? (await readWindowsMode()).mode : 'unknown';
+	const r = await runAll(platform, buildSetNtpEnabledCommands(platform, enabled, mode));
 	if (r.success || r.outcome !== 'error') return r;
 	const after = await getSystemTimeStatus();
 	return after.ntpEnabled === enabled ? result('ok') : r;
