@@ -1228,7 +1228,7 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
  * lets a second write truncate the first one's staging file and then rename it away, so
  * the first write publishes the second's content and the second fails with ENOENT.
  */
-export async function writeFileAtomically(path: string, content: string): Promise<() => Promise<void>> {
+export async function writeFileAtomically(path: string, content: string): Promise<() => Promise<boolean>> {
 	const previous = await readFile(path, 'utf8').catch(() => null);
 	await mkdir(dirname(path), { recursive: true });
 	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
@@ -1247,9 +1247,18 @@ export async function writeFileAtomically(path: string, content: string): Promis
 		await unlink(temp).catch(() => {});
 		throw err;
 	}
-	return async () => {
-		if (previous === null) await unlink(path).catch(() => {});
-		else await writeFileAtomically(path, previous).catch(() => {});
+	// Reports whether the previous state is actually back. Swallowing that told the caller
+	// the host had been left as it was found while the new configuration was still on disk,
+	// to be adopted at the next boot — long after the user was told nothing had happened.
+	return async (): Promise<boolean> => {
+		try {
+			if (previous !== null) await writeFileAtomically(path, previous);
+			// Already gone is the state being restored to, not a failure.
+			else await unlink(path).catch((err: { code?: string }) => (err.code === 'ENOENT' ? undefined : Promise.reject(err)));
+			return true;
+		} catch {
+			return false;
+		}
 	};
 }
 
@@ -1272,7 +1281,7 @@ export async function writeFileAtomically(path: string, content: string): Promis
  */
 export async function applyTimesyncdDropIn(server: string, syncRunning: boolean, path: string = TIMESYNCD_DROPIN_PATH, exec: CommandRunner = run): Promise<SystemTimeResult> {
 	return withSystemTimeLock(async () => {
-		let rollback: () => Promise<void>;
+		let rollback: () => Promise<boolean>;
 		try {
 			rollback = await writeFileAtomically(path, buildTimesyncdDropIn(server));
 		} catch (err) {
@@ -1286,8 +1295,12 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
 		if (commands.length === 0) return result('ok');
 		const r = await runAll('linux', commands, exec);
 		if (!r.success) {
-			await rollback();
+			const restored = await rollback();
 			await runAll('linux', commands, exec);
+			// The failure is reported either way, but a drop-in still holding the new server
+			// is a different situation for the user: the host will adopt it at the next boot
+			// unless they remove it by hand, so the message has to say so.
+			if (!restored) return { ...r, message: `${r.message ?? 'the change could not be applied'} (and ${path} still holds the new server — it could not be restored)` };
 		}
 		return r;
 	});

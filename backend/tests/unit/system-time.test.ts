@@ -1207,6 +1207,28 @@ describe('writeFileAtomically', () => {
 		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
 	});
 
+	/**
+	 * A rollback that could not put the old file back used to look exactly like one that
+	 * did. The caller then reports "nothing happened" while the new configuration is still
+	 * on disk, waiting to be adopted at the next boot.
+	 */
+	it('says so when it could not restore the previous content', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n', 'utf8');
+		const rollback = await writeFileAtomically(path, 'replacement\n');
+		// Replace the whole directory with a file: nothing can be written under it again.
+		await rm(dir, { recursive: true, force: true });
+		await writeFile(dir, 'in the way', 'utf8');
+		expect(await rollback()).toBe(false);
+	});
+
+	it('treats a file that is already gone as restored', async () => {
+		const path = join(dir, '90-libershare.conf');
+		const rollback = await writeFileAtomically(path, 'new\n');
+		await rm(path, { force: true });
+		expect(await rollback()).toBe(true);
+	});
+
 	it('rolls a creation back by removing the file it created', async () => {
 		const path = join(dir, '90-libershare.conf');
 		const rollback = await writeFileAtomically(path, 'new\n');
