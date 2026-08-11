@@ -869,7 +869,6 @@ describe('setSystemNtpServer', () => {
 describe('windowsSyncIsOurs', () => {
 	it('allows a change only where this application configured the source itself', () => {
 		expect(windowsSyncIsOurs('manual')).toBe(true);
-		expect(windowsSyncIsOurs('all')).toBe(true);
 		expect(windowsSyncIsOurs('none')).toBe(true);
 	});
 
@@ -882,6 +881,15 @@ describe('windowsSyncIsOurs', () => {
 		expect(windowsSyncIsOurs('domain-hierarchy')).toBe(false);
 		expect(windowsSyncIsOurs('managed')).toBe(false);
 		expect(windowsSyncIsOurs('unknown')).toBe(false);
+	});
+
+	/**
+	 * AllSync is every available source at once, the AD hierarchy included. It used to be
+	 * treated as ours, which let the toggle stop and disable W32Time on a domain member
+	 * configured that way.
+	 */
+	it('refuses a host synchronising from every available source', () => {
+		expect(windowsSyncIsOurs('all')).toBe(false);
 	});
 });
 

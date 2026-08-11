@@ -302,9 +302,16 @@ export function parseWindowsStartMode(output: string | null): WindowsStartMode {
  * member off `NT5DS`, or disabling W32Time on one, detaches it from the forest's time
  * and eventually breaks Kerberos, and neither the previous mode nor the peer list is
  * anywhere we could restore it from.
+ *
+ * `AllSync` is in that group too. Windows defines it as using EVERY available source,
+ * which on a domain member includes the AD hierarchy — so it is not the "just a peer
+ * list" that `NTP` is, and disabling W32Time on such a host detaches it exactly as
+ * disabling it on an `NT5DS` one does. Nothing here can tell an AllSync workgroup
+ * machine from an AllSync domain member (that needs a separate domain-membership probe),
+ * so the ambiguous case is refused rather than guessed at.
  */
 export function windowsSyncIsOurs(mode: WindowsSyncMode): boolean {
-	return mode === 'manual' || mode === 'all' || mode === 'none';
+	return mode === 'manual' || mode === 'none';
 }
 
 export function windowsSyncEnabled(mode: WindowsSyncMode, start: WindowsStartMode): boolean | null {
