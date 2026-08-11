@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, type PlatformStatusReader, readNtpUnitsList, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, type PlatformStatusReader, readNtpUnitsList, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -1480,6 +1480,21 @@ describe('getSystemTimeStatus (live, read-only)', () => {
 		expect(status.timezone.length).toBeGreaterThan(0);
 		expect(timezoneOffsetMinutes(status.timezone, new Date(status.nowMs))).not.toBeNull();
 		expect(status.utcOffsetMinutes).toBe(timezoneOffsetMinutes(status.timezone, new Date(status.nowMs)) ?? Number.NaN);
+	});
+});
+
+describe('windowsToIanaTimezone caching', () => {
+	/**
+	 * Several IANA zones map to one Windows identifier, so a zone change need not change
+	 * what `tzutil /g` answers. The cache was keyed on that identifier alone and kept
+	 * reporting the zone from before the change — the UI showed the user's own change
+	 * reverting itself.
+	 */
+	it('reports the zone last written for a shared windows identifier', () => {
+		rememberWindowsZone('Central Europe Standard Time', 'Europe/Prague');
+		expect(windowsToIanaTimezone('Central Europe Standard Time')).toBe('Europe/Prague');
+		rememberWindowsZone('Central Europe Standard Time', 'Europe/Budapest');
+		expect(windowsToIanaTimezone('Central Europe Standard Time')).toBe('Europe/Budapest');
 	});
 });
 

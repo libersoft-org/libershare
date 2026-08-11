@@ -724,6 +724,19 @@ let windowsZoneCache: { windowsId: string; iana: string } | null = null;
  * Windows ID: several IANA zones share one, and picking CLDR's representative would
  * rename the user's `Europe/Prague` to another city in the same Windows zone.
  */
+/**
+ * Point the cache at the zone that was just written.
+ *
+ * Several IANA zones share one Windows identifier, so a change from `Europe/Prague` to
+ * `Europe/Budapest` leaves `tzutil /g` answering exactly as before — and the cache, keyed
+ * on that identifier, kept handing back the zone from before the change. The host was
+ * correctly reconfigured while the UI showed the old city and the user's change looked
+ * like it had been undone.
+ */
+export function rememberWindowsZone(windowsId: string, iana: string): void {
+	windowsZoneCache = { windowsId, iana };
+}
+
 export function windowsToIanaTimezone(windowsId: string): string | null {
 	if (windowsZoneCache?.windowsId === windowsId) return windowsZoneCache.iana;
 	const own = processTimezone();
@@ -1161,7 +1174,12 @@ export async function setSystemTimezone(timezone: string): Promise<SystemTimeRes
 	// Only so this process FORMATS in the new zone: writing the OS timezone does not
 	// invalidate a running process's ICU cache. What the status reports is read back
 	// from the OS, so an inherited or stale TZ can no longer misrepresent the host.
-	if (r.success) process.env['TZ'] = timezone;
+	if (r.success) {
+		process.env['TZ'] = timezone;
+		// The next status read maps the host's Windows identifier back to IANA through a
+		// cache keyed on that identifier — which this change need not have altered.
+		if (windowsId) rememberWindowsZone(windowsId, timezone);
+	}
 	return r;
 }
 
