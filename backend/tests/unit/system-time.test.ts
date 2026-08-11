@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, type PlatformStatusReader, readNtpUnitsList, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, hostDateParts, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, type PlatformStatusReader, readNtpUnitsList, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -1304,6 +1304,27 @@ describe('applyTimesyncdDropIn', () => {
 		expect(seenAtRestart.map(text => text.trim().split('NTP=').pop()).sort()).toEqual(['a.example.org', 'b.example.org']);
 		// The loser's content is gone, and neither call left a staging file behind.
 		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
+	});
+
+	/**
+	 * The way the lock itself could fail. The API layer takes it around the whole request
+	 * and the writer takes it again inside — so if the re-entrant check ever stops seeing
+	 * that this call stack already holds it, the inner acquisition waits for the outer one
+	 * forever and every system-time request hangs. The test's own timeout is the assertion.
+	 */
+	it('does not deadlock when a locked write nests inside another', async () => {
+		const { exec, calls } = fakeRunner([]);
+		const r = await withSystemTimeLock(async () => applyTimesyncdDropIn('ntp.example.org', true, path, exec));
+		expect(r.success).toBe(true);
+		expect(calls).toEqual(['systemctl restart systemd-timesyncd']);
+	});
+
+	/** And still serializes afterwards: the nesting must release the lock, not leak it. */
+	it('serializes again once a nested write is done', async () => {
+		const { exec } = fakeRunner([]);
+		await withSystemTimeLock(async () => applyTimesyncdDropIn('first.example.org', false, path, exec));
+		expect((await applyTimesyncdDropIn('second.example.org', false, path, exec)).success).toBe(true);
+		expect(await readFile(path, 'utf8')).toContain('second.example.org');
 	});
 
 	it('reports an unwritable drop-in as a permission problem and runs nothing', async () => {
