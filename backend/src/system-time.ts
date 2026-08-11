@@ -32,6 +32,16 @@ export const TIMESYNCD_UNIT = 'systemd-timesyncd.service';
 /** Registry key holding the Windows Time service configuration (NTP peers and sync type). */
 const W32TIME_PARAMS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters';
 
+/** The service key itself, whose `Start` value is the start type (`sc qc` localizes its output). */
+const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time';
+
+/**
+ * Group policy's own W32Time configuration. When this key exists at all, an
+ * administrator's policy owns the settings and the values under
+ * {@link W32TIME_PARAMS_KEY} need not be the ones in effect.
+ */
+const W32TIME_POLICY_KEY = 'HKLM\\SOFTWARE\\Policies\\Microsoft\\W32Time\\Parameters';
+
 /** Platforms with an implemented time backend. Anything else is reported as unsupported. */
 export type SystemPlatform = 'win32' | 'linux' | 'darwin';
 
@@ -230,11 +240,62 @@ export function parseWindowsNtpServer(value: string | null): string | null {
 }
 
 /**
- * True when `sc query <service>` reports the service as running. Matched on the
- * numeric state (`STATE : 4 RUNNING`) because the word next to it is localized.
+ * How Windows Time is configured to obtain the time, from the `Type` registry value.
+ *
+ * - `domain-hierarchy` (`NT5DS`): the Active Directory time hierarchy. The default on
+ *   a domain member and the one thing this application must never overwrite.
+ * - `manual` (`NTP`): a configured peer list.
+ * - `all` (`AllSync`): the domain hierarchy plus the peer list.
+ * - `none` (`NoSync`): no time source at all.
+ * - `managed`: group policy owns the configuration, so the registry under
+ *   `Services\W32Time` is not the effective one and writing it is pointless at best.
+ * - `unknown`: the value could not be read, which is never assumed to be safe.
  */
-export function parseServiceRunning(output: string): boolean {
-	return /STATE\s*:\s*4\b/.test(output);
+export type WindowsSyncMode = 'domain-hierarchy' | 'manual' | 'all' | 'none' | 'managed' | 'unknown';
+
+/** Service start type from the `Start` registry value. `disabled` means it cannot run at all. */
+export type WindowsStartMode = 'automatic' | 'on-demand' | 'disabled' | 'unknown';
+
+/**
+ * Classify the Windows time source. Group policy wins over the service's own registry
+ * values: when a policy is present those values need not be the effective configuration
+ * (finding: the raw key is not the same thing as what W32Time actually uses).
+ */
+export function parseWindowsSyncMode(typeValue: string | null, policyManaged: boolean): WindowsSyncMode {
+	if (policyManaged) return 'managed';
+	if (typeValue === 'NT5DS') return 'domain-hierarchy';
+	if (typeValue === 'NTP') return 'manual';
+	if (typeValue === 'AllSync') return 'all';
+	if (typeValue === 'NoSync') return 'none';
+	return 'unknown';
+}
+
+/**
+ * Read the service start type out of `reg query ...\Services\W32Time /v Start`.
+ * `0x0`-`0x2` all start without being asked, `0x3` is trigger/demand start and `0x4`
+ * is disabled.
+ */
+export function parseWindowsStartMode(output: string | null): WindowsStartMode {
+	const raw = output === null ? null : parseRegValue(output, 'Start');
+	if (raw === '0x0' || raw === '0x1' || raw === '0x2') return 'automatic';
+	if (raw === '0x3') return 'on-demand';
+	if (raw === '0x4') return 'disabled';
+	return 'unknown';
+}
+
+/**
+ * Whether Windows is set up to synchronise the clock, or null when that cannot be told.
+ *
+ * Deliberately NOT "the service is running right now". Windows Time is trigger-started
+ * on a workgroup machine: it synchronises, stops again, and is still fully configured —
+ * reading the live run state would show synchronisation as off, let the UI offer a
+ * manual clock set, and have W32Time overwrite it at the next trigger.
+ */
+export function windowsSyncEnabled(mode: WindowsSyncMode, start: WindowsStartMode): boolean | null {
+	if (start === 'disabled') return false;
+	if (mode === 'none') return false;
+	if (mode === 'unknown' || start === 'unknown') return null;
+	return true;
 }
 
 /**
@@ -621,16 +682,19 @@ async function readLinuxStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 
 
 /** Read the Windows (W32Time) part of the status. */
 async function readWindowsStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 'ntpSynchronized' | 'ntpServer' | 'capabilities'>> {
-	// The registry and `sc query` are readable unelevated; `w32tm /query /configuration`
-	// is not, which is why the peer list is taken from the registry instead.
+	// Everything here is read from the registry rather than from `sc query` / `w32tm
+	// /query /configuration`: the first localizes its field NAMES as well as its values
+	// (a German host prints `ZUSTAND`, not `STATE`), and the second needs elevation.
+	// Registry value names are identifiers and are the same in every language.
 	const params = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'NtpServer']);
 	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
-	const service = await tryRead('sc', ['query', 'w32time']);
+	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
+	const policy = await tryRead('reg', ['query', W32TIME_POLICY_KEY]);
 	const status = await tryRead('w32tm', ['/query', '/status']);
-	const syncType = type === null ? null : parseRegValue(type, 'Type');
-	const running = service !== null && parseServiceRunning(service);
+	const mode = parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policy !== null);
+	const startMode = parseWindowsStartMode(start);
 	return {
-		ntpEnabled: type === null || service === null || syncType === null ? null : running && syncType !== 'NoSync',
+		ntpEnabled: windowsSyncEnabled(mode, startMode),
 		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
 		ntpServer: parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')),
 		capabilities: { setClock: true, setTimezone: canConvertTimezoneId(), setNtpServer: true, setNtpEnabled: true },

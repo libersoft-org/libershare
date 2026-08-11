@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseServiceRunning, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsSyncStatus, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -20,11 +20,13 @@ const TIMEDATECTL_TIMESYNC = 'LinkNTPServers=\nSystemNTPServers=ntp1.example.org
 /** `reg query HKLM\\...\\W32Time\\Parameters`, CRLF and mixed value kinds as captured. */
 const REG_QUERY_PARAMS = '\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters\r\n    NtpServer    REG_SZ    time.windows.com,0x9\r\n    ServiceDll    REG_EXPAND_SZ    %systemroot%\\system32\\w32time.dll\r\n    ServiceDllUnloadOnStop    REG_DWORD    0x1\r\n    ServiceMain    REG_SZ    SvchostEntry_W32Time\r\n    Type    REG_SZ    NTP\r\n\r\n';
 
-/** `sc query w32time` for a running service, trailing spaces included. */
-const SC_QUERY_RUNNING = '\r\nSERVICE_NAME: w32time \r\n        TYPE               : 30  WIN32  \r\n        STATE              : 4  RUNNING \r\n                                (STOPPABLE, NOT_PAUSABLE, ACCEPTS_SHUTDOWN)\r\n        WIN32_EXIT_CODE    : 0  (0x0)\r\n        SERVICE_EXIT_CODE  : 0  (0x0)\r\n        CHECKPOINT         : 0x0\r\n        WAIT_HINT          : 0x0\r\n';
+/** The same key on a domain member, where the Active Directory hierarchy is the source. */
+const REG_QUERY_PARAMS_DOMAIN = '\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters\r\n    NtpServer    REG_SZ    dc1.example.org,0x9 dc2.example.org,0x9\r\n    Type    REG_SZ    NT5DS\r\n\r\n';
 
-/** The same service stopped. Other fields carry a 4, which must not be read as the state. */
-const SC_QUERY_STOPPED = '\r\nSERVICE_NAME: w32time \r\n        TYPE               : 30  WIN32  \r\n        STATE              : 1  STOPPED \r\n        WIN32_EXIT_CODE    : 1077  (0x435)\r\n        SERVICE_EXIT_CODE  : 4  (0x4)\r\n        CHECKPOINT         : 0x4\r\n        WAIT_HINT          : 0x0\r\n';
+/** `reg query HKLM\\...\\Services\\W32Time /v Start`, one per start type. */
+const REG_QUERY_START_AUTO = '\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\W32Time\r\n    Start    REG_DWORD    0x2\r\n\r\n';
+const REG_QUERY_START_DEMAND = '\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\W32Time\r\n    Start    REG_DWORD    0x3\r\n\r\n';
+const REG_QUERY_START_DISABLED = '\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\W32Time\r\n    Start    REG_DWORD    0x4\r\n\r\n';
 
 /** `w32tm /query /status` on a host with a localized date format: only the timestamp is translated. */
 const W32TM_STATUS = 'Leap Indicator: 0(no warning)\r\nStratum: 5 (secondary reference - syncd by (S)NTP)\r\nPrecision: -23 (119.209ns per tick)\r\nRoot Delay: 0.0161789s\r\nRoot Dispersion: 7.7770884s\r\nReferenceId: 0xC0000210 (source IP:  192.0.2.16)\r\nLast Successful Sync Time: 14.08.2026 20:55:55\r\nSource: ntp1.example.org,0x9 \r\nPoll Interval: 15 (32768s)\r\n';
@@ -155,21 +157,87 @@ describe('parseWindowsNtpServer', () => {
 	});
 });
 
-describe('parseServiceRunning', () => {
-	it('reads a running service out of real sc query output', () => {
-		expect(parseServiceRunning(SC_QUERY_RUNNING)).toBe(true);
+describe('parseWindowsStartMode', () => {
+	it('reads the start type out of reg query output', () => {
+		expect(parseWindowsStartMode(REG_QUERY_START_AUTO)).toBe('automatic');
+		expect(parseWindowsStartMode(REG_QUERY_START_DEMAND)).toBe('on-demand');
+		expect(parseWindowsStartMode(REG_QUERY_START_DISABLED)).toBe('disabled');
 	});
 
-	it('matches the numeric state, not the localized word', () => {
-		expect(parseServiceRunning('        STATE              : 4  SPUSTENO\n')).toBe(true);
+	it('treats boot and system start as starting by itself', () => {
+		expect(parseWindowsStartMode('    Start    REG_DWORD    0x0\r\n')).toBe('automatic');
+		expect(parseWindowsStartMode('    Start    REG_DWORD    0x1\r\n')).toBe('automatic');
 	});
 
-	it('is false for a stopped service whose other fields contain a 4', () => {
-		expect(parseServiceRunning(SC_QUERY_STOPPED)).toBe(false);
+	it('is unknown when the value is absent, unreadable or nonsense', () => {
+		expect(parseWindowsStartMode(null)).toBe('unknown');
+		expect(parseWindowsStartMode('')).toBe('unknown');
+		expect(parseWindowsStartMode('ERROR: The system was unable to find the specified registry key or value.\r\n')).toBe('unknown');
+		expect(parseWindowsStartMode('    Start    REG_DWORD    0x9\r\n')).toBe('unknown');
+	});
+});
+
+describe('parseWindowsSyncMode', () => {
+	it('maps every documented Type value', () => {
+		expect(parseWindowsSyncMode('NT5DS', false)).toBe('domain-hierarchy');
+		expect(parseWindowsSyncMode('NTP', false)).toBe('manual');
+		expect(parseWindowsSyncMode('AllSync', false)).toBe('all');
+		expect(parseWindowsSyncMode('NoSync', false)).toBe('none');
 	});
 
-	it('is false for empty output', () => {
-		expect(parseServiceRunning('')).toBe(false);
+	it('reads the mode straight out of registry output', () => {
+		expect(parseWindowsSyncMode(parseRegValue(REG_QUERY_PARAMS, 'Type'), false)).toBe('manual');
+		expect(parseWindowsSyncMode(parseRegValue(REG_QUERY_PARAMS_DOMAIN, 'Type'), false)).toBe('domain-hierarchy');
+	});
+
+	/** With a policy present the service's own registry values need not be the effective ones. */
+	it('lets group policy override whatever the service key says', () => {
+		expect(parseWindowsSyncMode('NTP', true)).toBe('managed');
+		expect(parseWindowsSyncMode('NT5DS', true)).toBe('managed');
+		expect(parseWindowsSyncMode(null, true)).toBe('managed');
+	});
+
+	it('is unknown rather than a guess when the value could not be read', () => {
+		expect(parseWindowsSyncMode(null, false)).toBe('unknown');
+		expect(parseWindowsSyncMode('', false)).toBe('unknown');
+		expect(parseWindowsSyncMode('Something', false)).toBe('unknown');
+	});
+});
+
+describe('windowsSyncEnabled', () => {
+	/**
+	 * The case a "is the service running" check gets wrong. Windows Time is trigger
+	 * started on a workgroup machine: it syncs, stops, and is still fully configured.
+	 * Reading it as "off" would let the UI offer a manual clock set that W32Time then
+	 * overwrites at the next trigger.
+	 */
+	it('is on for a configured service that is not running right now', () => {
+		expect(windowsSyncEnabled('manual', 'on-demand')).toBe(true);
+		expect(windowsSyncEnabled('domain-hierarchy', 'on-demand')).toBe(true);
+	});
+
+	it('is on for every mode that names a time source', () => {
+		for (const mode of ['domain-hierarchy', 'manual', 'all', 'managed'] as const) expect(windowsSyncEnabled(mode, 'automatic')).toBe(true);
+	});
+
+	it('is definitively off when the service is disabled or has no source', () => {
+		expect(windowsSyncEnabled('manual', 'disabled')).toBe(false);
+		expect(windowsSyncEnabled('domain-hierarchy', 'disabled')).toBe(false);
+		expect(windowsSyncEnabled('none', 'automatic')).toBe(false);
+		expect(windowsSyncEnabled('none', 'on-demand')).toBe(false);
+	});
+
+	/** An unreadable registry says nothing about the host — never that synchronisation is off. */
+	it('is unknown when either half could not be read', () => {
+		expect(windowsSyncEnabled('unknown', 'automatic')).toBeNull();
+		expect(windowsSyncEnabled('manual', 'unknown')).toBeNull();
+		expect(windowsSyncEnabled('unknown', 'unknown')).toBeNull();
+	});
+
+	/** A disabled service cannot sync however the source is configured, so that answer stays definite. */
+	it('prefers the definite answers over unknown', () => {
+		expect(windowsSyncEnabled('unknown', 'disabled')).toBe(false);
+		expect(windowsSyncEnabled('none', 'unknown')).toBe(false);
 	});
 });
 
