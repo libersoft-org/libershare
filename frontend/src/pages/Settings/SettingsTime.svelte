@@ -93,8 +93,11 @@
 		// state — the backend broadcasts the fresh status after every successful write.
 		offTimeChanged = api.on('system:timeChanged', (next: SystemTimeStatus) => {
 			// Never over an edit in progress: re-filling the form here would throw away
-			// what the user has typed without saying so. They keep their values and the
-			// next save reports the conflict.
+			// what the user has typed without saying so. They keep their values, and the
+			// save that follows overwrites whatever the other window wrote — last write
+			// wins. There is no conflict detection: the values carry no revision, so this
+			// screen cannot tell "changed underneath me" from "unchanged". Detecting it
+			// needs a revision on the status and a precondition on the write.
 			if (!busy && !hasChanges) applyStatus(next);
 		});
 		// Best-effort: with the WS down the call rejects — swallow it, the event just stays unsubscribed.
