@@ -405,6 +405,20 @@ describe('isValidNtpServer', () => {
 		expect(isValidNtpServer('a')).toBe(true);
 	});
 
+	/**
+	 * Accepted by `net.isIP()` and useless as a peer: nothing answers, so the daemon just
+	 * stops synchronising while the UI shows a configured server and no error at all.
+	 */
+	it('rejects the unspecified address and the broadcast address', () => {
+		expect(isValidNtpServer('0.0.0.0')).toBe(false);
+		expect(isValidNtpServer('255.255.255.255')).toBe(false);
+		expect(isValidNtpServer('::')).toBe(false);
+		expect(isValidNtpServer('0:0:0:0:0:0:0:0')).toBe(false);
+		// Still a perfectly good peer, digits and all.
+		expect(isValidNtpServer('192.0.2.0')).toBe(true);
+		expect(isValidNtpServer('::1')).toBe(true);
+	});
+
 	it('rejects whitespace and shell metacharacters', () => {
 		expect(isValidNtpServer('ntp.example.org; rm -rf /')).toBe(false);
 		expect(isValidNtpServer('ntp.example.org two.example.org')).toBe(false);
@@ -429,7 +443,9 @@ describe('isValidNtpServer', () => {
 		expect(isValidNtpServer('192.0.2.999')).toBe(false);
 		expect(isValidNtpServer('1.2.3.4.5')).toBe(false);
 		expect(isValidNtpServer('2001:db8:::1')).toBe(false);
-		expect(isValidNtpServer('::')).toBe(true);
+		// `::` used to be asserted as valid here; it parses, but see the unspecified-address
+		// test above for why it is not an address anything can synchronise from.
+		expect(isValidNtpServer('2001:db8::1')).toBe(true);
 	});
 
 	it('rejects a name with an empty or over-long label', () => {

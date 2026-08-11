@@ -148,6 +148,21 @@ function isValidDnsName(name: string): boolean {
 }
 
 /**
+ * True for an IP literal that is syntactically fine and still cannot be an NTP peer: the
+ * unspecified address in either family, and the IPv4 limited broadcast.
+ *
+ * `net.isIP()` accepts all of them, so without this `0.0.0.0` and `::` were saved as the
+ * host's time source. Nothing ever answers there — the daemon simply stops synchronising,
+ * with the UI showing a configured server and no error anywhere. IPv6 is matched on the
+ * digits rather than on the literal `::`, because the same address also spells as
+ * `0:0:0:0:0:0:0:0` and `0000:...`.
+ */
+function isUnusableNtpAddress(address: string): boolean {
+	if (isIP(address) === 4) return address === '0.0.0.0' || address === '255.255.255.255';
+	return /^[0:]+$/.test(address);
+}
+
+/**
  * True when `server` is a usable NTP host name or IP address.
  *
  * IP literals are checked with `net.isIP()` rather than a character class, so
@@ -157,7 +172,7 @@ function isValidDnsName(name: string): boolean {
  */
 export function isValidNtpServer(server: string): boolean {
 	if (!NTP_SERVER_CHARSET_RE.test(server)) return false;
-	if (isIP(server) !== 0) return true;
+	if (isIP(server) !== 0) return !isUnusableNtpAddress(server);
 	// Zone index: only ever valid on an IPv6 literal, so `%` cannot reach a host name
 	// or a drop-in line through this branch.
 	const percent = server.indexOf('%');
