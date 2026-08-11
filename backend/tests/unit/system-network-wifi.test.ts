@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ptr, type Pointer } from 'bun:ffi';
-import { encodeConnectionParameters, findAuthAlgorithm, guidToBytes, parseAvailableNetworks, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
+import { encodeConnectionParameters, findAuthAlgorithm, guidToBytes, parseAvailableNetworks, readUtf16z, utf16z, windowsWifiProfileXml, wlanErrorMessage, wlanScanErrorMessage } from '../../src/system-network-windows.ts';
 
 /**
  * The Windows Wi-Fi surface is FFI, so most of what can go wrong is a struct
@@ -165,6 +165,30 @@ describe('guidToBytes', () => {
 		for (const bad of ['', 'wlan0', '00112233-4455-6677-8899-AABBCCDDEEFF', '{00112233-4455-6677-8899-AABBCCDDEEF}', '{zz112233-4455-6677-8899-AABBCCDDEEFF}']) {
 			expect(() => guidToBytes(bad)).toThrow();
 		}
+	});
+});
+
+describe('readUtf16z', () => {
+	// The profile document is handed back as a pointer Windows allocated, so the
+	// reader has to find its own end — a restore writes back exactly what it read.
+	function widePointer(text: string, extra = 8): Pointer {
+		const buffer = new Uint16Array(text.length + extra);
+		for (let i = 0; i < text.length; i++) buffer[i] = text.charCodeAt(i);
+		return ptr(buffer);
+	}
+
+	it('reads back exactly what utf16z wrote', () => {
+		const profile = '<?xml version="1.0"?><WLANProfile><name>Example Net</name></WLANProfile>';
+		expect(readUtf16z(ptr(utf16z(profile)))).toBe(profile);
+	});
+
+	it('stops at the terminator and ignores what follows', () => {
+		expect(readUtf16z(widePointer('abc'))).toBe('abc');
+	});
+
+	it('stops at the cap when there is no terminator at all', () => {
+		const buffer = new Uint16Array(4).fill(0x41);
+		expect(readUtf16z(ptr(buffer), 4)).toBe('AAAA');
 	});
 });
 

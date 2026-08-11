@@ -827,6 +827,9 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 	// ADDRESS of the profile name, so the array behind it has to outlive the call.
 	const profileName = utf16z(ssid);
 	const parameters = encodeConnectionParameters(BigInt(ptr(profileName)));
+	// The document Windows held for this network before we touched it, kept so a
+	// join that never lands can put it back. Null when there was nothing stored.
+	let replacedProfile: string | null = null;
 	withWlanHandle((api, handle) => {
 		const connect = (): number => api.WlanConnect(handle, ptr(guidBytes), ptr(parameters), null);
 		const writeProfile = (overwrite: number): number => {
@@ -835,6 +838,9 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 			return api.WlanSetProfile(handle, ptr(guidBytes), 0, ptr(xml), null, overwrite, null, ptr(reasonCode));
 		};
 		if (password) {
+			// Read before overwriting: the typed key may be wrong, and the profile
+			// being replaced may be the working one the user has had for years.
+			replacedProfile = readStoredProfile(api, handle, guidBytes, ssid);
 			const set = writeProfile(1);
 			if (set !== 0) throw new Error(wlanErrorMessage(set));
 			const rc = connect();
@@ -852,7 +858,59 @@ export async function connectWindowsWifi(guid: string, ssid: string, password: s
 		const retry = connect();
 		if (retry !== 0) throw new Error(wlanErrorMessage(retry));
 	});
-	await waitForAssociation(guid, ssid);
+	try {
+		await waitForAssociation(guid, ssid);
+	} catch (err) {
+		// The join failed, and the profile we wrote to attempt it is now standing
+		// where a working one used to. Put the old one back: the usual reason to be
+		// here is a mistyped key, and losing a saved network to a typo would be a
+		// worse outcome than the failure the user is about to be told about.
+		if (replacedProfile) restoreStoredProfile(guidBytes, replacedProfile);
+		throw err;
+	}
+}
+
+/**
+ * The stored profile document for one network, or null when Windows holds none.
+ *
+ * The key material comes back encrypted (reading it in the clear needs elevation
+ * this app does not have), which is exactly what {@link restoreStoredProfile}
+ * needs: the same user on the same machine can hand that ciphertext straight
+ * back, so the saved key survives without ever being seen.
+ */
+function readStoredProfile(api: WlanApi, handle: Pointer, guidBytes: Uint8Array, ssid: string): string | null {
+	const name = utf16z(ssid);
+	const xmlOut = new BigUint64Array(1);
+	// In/out: zero asks for the profile as stored, without the plaintext key.
+	const flags = new Uint32Array(1);
+	const rc = api.WlanGetProfile(handle, ptr(guidBytes), ptr(name), null, ptr(xmlOut), ptr(flags), null);
+	if (rc !== 0 || xmlOut[0] === 0n) return null;
+	const xmlPointer = Number(xmlOut[0]) as Pointer;
+	try {
+		return readUtf16z(xmlPointer);
+	} finally {
+		api.WlanFreeMemory(xmlPointer);
+	}
+}
+
+/**
+ * Write a profile document back, replacing whatever stands in its place.
+ *
+ * Best-effort by design: this runs while an error is already on its way to the
+ * user, and a failure to restore must not replace that error with one about the
+ * restore. It opens its own handle because the one used for the join is long
+ * closed by the time the association times out.
+ */
+function restoreStoredProfile(guidBytes: Uint8Array, profileXml: string): void {
+	try {
+		withWlanHandle((api, handle) => {
+			const xml = utf16z(profileXml);
+			const reasonCode = new Uint32Array(1);
+			api.WlanSetProfile(handle, ptr(guidBytes), 0, ptr(xml), null, 1, null, ptr(reasonCode));
+		});
+	} catch {
+		// Nothing better to do: the join failure is the error worth reporting.
+	}
 }
 
 /**
