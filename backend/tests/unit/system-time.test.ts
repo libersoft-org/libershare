@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, readNtpUnitsList, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, readWindowsPolicyManaged, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -543,12 +543,28 @@ describe('canConfigureTimesyncdServer', () => {
 	const CHRONY_ACTIVE = 'active\n\ninactive\n\ninactive\n\ninactive\n\ninactive\n';
 	const NONE_ACTIVE = 'inactive\n\ninactive\n\ninactive\n\ninactive\n\ninactive\n';
 
-	it('allows the write when timesyncd is the running sync service', () => {
-		expect(canConfigureTimesyncdServer(true, null, NONE_ACTIVE)).toBe(true);
+	const BOTH_INSTALLED = 'UNIT FILE                 STATE     PRESET\nchronyd.service           disabled  disabled\nsystemd-timesyncd.service disabled  disabled\n\n2 unit files listed.';
+	const TIMESYNCD_FIRST = ['systemd-timesyncd.service', 'chronyd.service'];
+	const CHRONY_FIRST = ['chronyd.service', 'systemd-timesyncd.service'];
+
+	it('allows the write when timesyncd is the provider timedated would use', () => {
+		expect(canConfigureTimesyncdServer(TIMESYNCD_FIRST, INSTALLED, NONE_ACTIVE)).toBe(true);
+		expect(canConfigureTimesyncdServer(TIMESYNCD_FIRST, BOTH_INSTALLED, NONE_ACTIVE)).toBe(true);
 	});
 
-	it('allows the write when timesyncd is merely installed, as it is while sync is off', () => {
-		expect(canConfigureTimesyncdServer(false, INSTALLED, NONE_ACTIVE)).toBe(true);
+	/**
+	 * The case that used to slip through. chrony is INSTALLED but stopped, so no active
+	 * unit gives it away — yet its `50-chronyd.list` sorts ahead of timesyncd's, so
+	 * `timedatectl set-ntp true` starts chrony and the drop-in we just wrote is read by
+	 * nobody.
+	 */
+	it('refuses when an installed but stopped daemon comes first in the provider order', () => {
+		expect(canConfigureTimesyncdServer(CHRONY_FIRST, BOTH_INSTALLED, NONE_ACTIVE)).toBe(false);
+	});
+
+	/** A provider ordered ahead of timesyncd but not installed is skipped, as timedated skips it. */
+	it('looks past a leading provider the host does not have', () => {
+		expect(canConfigureTimesyncdServer(CHRONY_FIRST, INSTALLED, NONE_ACTIVE)).toBe(true);
 	});
 
 	/**
@@ -556,19 +572,74 @@ describe('canConfigureTimesyncdServer', () => {
 	 * drop-in changes nothing and restarting timesyncd would only add a second daemon.
 	 */
 	it('refuses while another NTP daemon is the active backend', () => {
-		expect(canConfigureTimesyncdServer(false, INSTALLED, CHRONY_ACTIVE)).toBe(false);
-		expect(canConfigureTimesyncdServer(true, INSTALLED, CHRONY_ACTIVE)).toBe(false);
+		expect(canConfigureTimesyncdServer(TIMESYNCD_FIRST, INSTALLED, CHRONY_ACTIVE)).toBe(false);
+		expect(canConfigureTimesyncdServer([], INSTALLED, CHRONY_ACTIVE)).toBe(false);
 	});
 
 	it('refuses on a host with no timesyncd unit at all', () => {
-		expect(canConfigureTimesyncdServer(false, ABSENT, NONE_ACTIVE)).toBe(false);
-		expect(canConfigureTimesyncdServer(false, null, NONE_ACTIVE)).toBe(false);
+		expect(canConfigureTimesyncdServer(TIMESYNCD_FIRST, ABSENT, NONE_ACTIVE)).toBe(false);
+		expect(canConfigureTimesyncdServer(TIMESYNCD_FIRST, null, NONE_ACTIVE)).toBe(false);
+	});
+
+	/** No provider ordering on the host at all: `set-ntp` has nothing to hand the clock to, so the installed check stands alone. */
+	it('falls back to the installed check when the host ships no provider ordering', () => {
+		expect(canConfigureTimesyncdServer([], INSTALLED, NONE_ACTIVE)).toBe(true);
+		expect(canConfigureTimesyncdServer([], ABSENT, NONE_ACTIVE)).toBe(false);
 	});
 
 	it('names every implementation timedated can hand the clock to', () => {
 		expect(COMPETING_NTP_UNITS).toContain('chronyd.service');
 		expect(COMPETING_NTP_UNITS).toContain('ntpd.service');
 		expect(COMPETING_NTP_UNITS.every(u => u.endsWith('.service'))).toBe(true);
+	});
+});
+
+describe('readNtpUnitsList', () => {
+	let root = '';
+
+	beforeEach(async () => {
+		root = await mkdtemp(join(tmpdir(), 'lish-ntpunits-'));
+	});
+
+	afterEach(async () => {
+		await rm(root, { recursive: true, force: true });
+	});
+
+	/** Write `files` into `<root>/<dir>` and return the path, so directory precedence can be exercised. */
+	async function dir(name: string, files: Record<string, string>): Promise<string> {
+		const path = join(root, name);
+		await mkdir(path, { recursive: true });
+		for (const [file, content] of Object.entries(files)) await writeFile(join(path, file), content, 'utf8');
+		return path;
+	}
+
+	/**
+	 * The ordering that decides which daemon `set-ntp` starts. chrony's list file carries
+	 * a lower numeric prefix than timesyncd's on every distribution that ships both.
+	 */
+	it('orders the providers by list file name, not by directory', async () => {
+		const lib = await dir('lib', { '80-systemd-timesync.list': 'systemd-timesyncd.service\n', '50-chronyd.list': 'chronyd.service\n' });
+		expect(await readNtpUnitsList([lib], {})).toEqual(['chronyd.service', 'systemd-timesyncd.service']);
+	});
+
+	it('lets an earlier directory shadow the same file name in a later one', async () => {
+		const etc = await dir('etc', { '50-chronyd.list': 'replacement.service\n' });
+		const lib = await dir('lib', { '50-chronyd.list': 'chronyd.service\n', '80-systemd-timesync.list': 'systemd-timesyncd.service\n' });
+		expect(await readNtpUnitsList([etc, lib], {})).toEqual(['replacement.service', 'systemd-timesyncd.service']);
+	});
+
+	it('skips comments, blank lines and repeats, and ignores files that are not lists', async () => {
+		const lib = await dir('lib', { '50-a.list': '# a comment\n\nchronyd.service\nchronyd.service\n', README: 'ntpd.service\n' });
+		expect(await readNtpUnitsList([lib], {})).toEqual(['chronyd.service']);
+	});
+
+	it('takes the environment override in place of the directories', async () => {
+		const lib = await dir('lib', { '50-chronyd.list': 'chronyd.service\n' });
+		expect(await readNtpUnitsList([lib], { SYSTEMD_TIMEDATED_NTP_SERVICES: 'ntpsec.service:systemd-timesyncd.service' })).toEqual(['ntpsec.service', 'systemd-timesyncd.service']);
+	});
+
+	it('reports no ordering at all on a host without the directories', async () => {
+		expect(await readNtpUnitsList([join(root, 'nowhere')], {})).toEqual([]);
 	});
 });
 

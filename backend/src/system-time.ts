@@ -1,9 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import { isIP } from 'node:net';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from './system-time-windows.ts';
@@ -472,20 +472,82 @@ export function parseAnyUnitActive(output: string): boolean {
 }
 
 /**
+ * Directories systemd-timedated reads its ordered NTP provider list from, most specific
+ * first. A file name present in an earlier directory shadows the same name in a later
+ * one; across different names the whole set is ordered lexicographically by file name,
+ * which is what the numeric prefixes (`50-chronyd.list`, `80-systemd-timesync.list`) are
+ * for.
+ */
+const NTP_UNITS_DIRS: string[] = ['/etc/systemd/ntp-units.d', '/run/systemd/ntp-units.d', '/usr/local/lib/systemd/ntp-units.d', '/usr/lib/systemd/ntp-units.d'];
+
+/** Environment override timedated honours in place of the directories above; colon-separated. */
+const NTP_SERVICES_ENV = 'SYSTEMD_TIMEDATED_NTP_SERVICES';
+
+/**
+ * The NTP providers systemd-timedated would consider, in ITS order.
+ *
+ * This matters because `timedatectl set-ntp true` does not start systemd-timesyncd — it
+ * starts the FIRST unit in this list that exists on the host. A machine with chrony
+ * installed but stopped has `50-chronyd.list` sorting ahead of `80-systemd-timesync.list`,
+ * so writing a timesyncd drop-in and switching synchronisation on hands the clock to
+ * chrony, which never reads that file. Checking only which daemons are currently ACTIVE
+ * misses exactly that case.
+ *
+ * `dirs` and `env` are injectable so the ordering rules can be exercised off a systemd host.
+ */
+export async function readNtpUnitsList(dirs: string[] = NTP_UNITS_DIRS, env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
+	const override = env[NTP_SERVICES_ENV];
+	if (override !== undefined)
+		return override
+			.split(':')
+			.map(unit => unit.trim())
+			.filter(unit => unit.length > 0);
+	// Basename -> path, first directory wins: the shadowing rule every systemd drop-in
+	// directory set follows.
+	const files = new Map<string, string>();
+	for (const dir of dirs) {
+		for (const name of await readdir(dir).catch(() => [] as string[])) {
+			if (name.endsWith('.list') && !files.has(name)) files.set(name, join(dir, name));
+		}
+	}
+	const units: string[] = [];
+	for (const name of [...files.keys()].sort()) {
+		const content = await readFile(files.get(name)!, 'utf8').catch(() => '');
+		for (const line of content.split('\n')) {
+			const unit = line.trim();
+			if (unit.length > 0 && !unit.startsWith('#') && !units.includes(unit)) units.push(unit);
+		}
+	}
+	return units;
+}
+
+/**
+ * The provider `timedatectl set-ntp true` would actually start: the first unit of
+ * `ordered` that is installed and not masked. Null when none of them is usable.
+ */
+export function firstUsableNtpUnit(ordered: string[], unitOutput: string | null): string | null {
+	if (unitOutput === null) return null;
+	return ordered.find(unit => parseUnitInstalled(unitOutput, unit)) ?? null;
+}
+
+/**
  * Whether writing the timesyncd drop-in would actually change the host's time source.
  *
- * Two things must hold: timesyncd has to be usable here at all, and no other NTP daemon
- * may be the one in charge. Without the second check a host running chrony would get a
- * drop-in nothing reads, timesyncd restarted alongside chrony, and a success reported
- * for a server that never became effective.
+ * Only true when timesyncd is the provider this host would use. Otherwise the drop-in is
+ * read by nobody: the file lands, the API reports success, and the clock keeps coming
+ * from whichever daemon timedated hands it to.
  *
- * `timesyncReadable` comes from `timedatectl show-timesync`, which only answers while
- * the daemon runs — and the UI switches synchronisation off before writing a server, so
- * the unit catalogue (`unitOutput`) is what answers for a stopped daemon.
+ * An EMPTY `ordered` list is not a competitor — it means the host ships no provider
+ * ordering at all, so `set-ntp` has nothing to hand the clock to and restarting timesyncd
+ * ourselves is the whole mechanism. There the older test stands: timesyncd installed, and
+ * no other NTP daemon currently running.
  */
-export function canConfigureTimesyncdServer(timesyncReadable: boolean, unitOutput: string | null, competingOutput: string | null): boolean {
+export function canConfigureTimesyncdServer(ordered: string[], unitOutput: string | null, competingOutput: string | null): boolean {
+	// Belt to the ordered list's braces: a daemon someone started outside timedated's
+	// ordering owns the clock just as effectively.
 	if (competingOutput !== null && parseAnyUnitActive(competingOutput)) return false;
-	return timesyncReadable || (unitOutput !== null && parseUnitInstalled(unitOutput, TIMESYNCD_UNIT));
+	if (ordered.length > 0) return firstUsableNtpUnit(ordered, unitOutput) === TIMESYNCD_UNIT;
+	return unitOutput !== null && parseUnitInstalled(unitOutput, TIMESYNCD_UNIT);
 }
 
 /**
@@ -789,13 +851,13 @@ async function readLinuxStatus(): Promise<PlatformStatus> {
 	const map = parseTimedatectlShow(show);
 	const canNtp = parseYesNo(map['CanNTP']) ?? false;
 	const timesync = canNtp ? await tryRead('timedatectl', ['show-timesync', '--all']) : null;
-	// Only timesyncd's configuration file is written by us, so the capability is
-	// "is timesyncd the sync service here" — a chrony host would ignore the drop-in.
-	// `show-timesync` answers that, but ONLY while the daemon runs, and the UI turns
-	// synchronisation off before writing a server. Asking the unit catalogue instead
-	// answers the same question about a stopped daemon, which is exactly the state
-	// the write happens in.
-	const unit = canNtp ? await tryRead('systemctl', ['list-unit-files', TIMESYNCD_UNIT]) : null;
+	// Only timesyncd's configuration file is written by us, so the capability is "would
+	// this host's timedated actually use timesyncd" — a chrony host ignores the drop-in.
+	// That is decided by the provider ordering timedated itself reads, checked against the
+	// unit catalogue: `show-timesync` would only answer while the daemon runs, and the UI
+	// turns synchronisation off before writing a server.
+	const ordered = canNtp ? await readNtpUnitsList() : [];
+	const unit = canNtp ? await tryRead('systemctl', ['list-unit-files', ...(ordered.length > 0 ? ordered : [TIMESYNCD_UNIT])]) : null;
 	// timedated manages several NTP implementations; a host where chrony is the active
 	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer).
 	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', ...COMPETING_NTP_UNITS]) : null;
@@ -805,7 +867,7 @@ async function readLinuxStatus(): Promise<PlatformStatus> {
 		ntpEnabled: parseYesNo(map['NTP']),
 		ntpSynchronized: parseYesNo(map['NTPSynchronized']),
 		ntpServer: timesync === null ? null : parseTimesyncServer(timesync),
-		capabilities: { setClock: true, setTimezone: true, setNtpEnabled: canNtp, setNtpServer: canConfigureTimesyncdServer(timesync !== null, unit, competing) },
+		capabilities: { setClock: true, setTimezone: true, setNtpEnabled: canNtp, setNtpServer: canConfigureTimesyncdServer(ordered, unit, competing) },
 	};
 }
 
