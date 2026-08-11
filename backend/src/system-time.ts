@@ -769,12 +769,21 @@ async function readLinuxStatus(): Promise<PlatformStatus> {
 	};
 }
 
+/** The Windows time source and service start type, as read from the registry. */
+export interface WindowsModeState {
+	mode: WindowsSyncMode;
+	start: WindowsStartMode;
+}
+
+/** Reads {@link WindowsModeState}. Injectable so a write's safety check can be tested off a real host. */
+export type WindowsModeReader = () => Promise<WindowsModeState>;
+
 /**
  * Read the Windows time source and service start type. Both the status read and the
  * enable/disable write need them — the write to decide whether it may rewrite the
  * source at all, which is not something it can infer from the requested value.
  */
-async function readWindowsMode(): Promise<{ mode: WindowsSyncMode; start: WindowsStartMode }> {
+async function readWindowsMode(): Promise<WindowsModeState> {
 	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
 	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
 	const policy = await tryRead('reg', ['query', W32TIME_POLICY_KEY]);
@@ -891,6 +900,27 @@ export function withSystemTimeLock<T>(fn: () => Promise<T>): Promise<T> {
 	return systemTimeWriteLock.runExclusive(() => lockHeld.run(true, fn));
 }
 
+/** Why a host whose time source somebody else owns is left alone. */
+const NOT_OURS_MESSAGE = 'time synchronisation here is not ours to switch: this host has no such service, or its time source is managed by a domain or by group policy';
+
+/**
+ * Re-read the Windows time source immediately before mutating it and refuse when it is
+ * not ours to change.
+ *
+ * The capability in a previously read status is a snapshot: between reading it and
+ * running the commands the host can be joined to a domain, have a policy applied or have
+ * its source switched by another administrator, and every one of those turns the write
+ * into an act of detaching the machine from a time source it depends on. So ownership is
+ * decided on a read taken inside the write lock, not on the one the decision started from.
+ *
+ * Returns the fresh state alongside the refusal so the caller builds its commands from
+ * the same read it was authorised by.
+ */
+async function checkWindowsWritable(readMode: WindowsModeReader): Promise<WindowsModeState & { refusal: SystemTimeResult | null }> {
+	const state = await readMode();
+	return { ...state, refusal: windowsSyncIsOurs(state.mode) ? null : result('unsupported', NOT_OURS_MESSAGE) };
+}
+
 /**
  * Reason a clock write must be refused given `status`, or null when it may proceed.
  *
@@ -958,18 +988,29 @@ export async function setSystemTimezone(timezone: string): Promise<SystemTimeRes
  * Point the host's time synchronisation at `server`. A single server is configured;
  * that is all macOS supports through `systemsetup`, and it is what the UI offers.
  */
-export async function setSystemNtpServer(server: string): Promise<SystemTimeResult> {
+export async function setSystemNtpServer(server: string, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, readMode: WindowsModeReader = readWindowsMode, exec: CommandRunner = run): Promise<SystemTimeResult> {
 	if (!isValidNtpServer(server)) return result('invalid-input', 'the NTP server must be a host name or IP address without spaces or special characters');
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `configuring an NTP server is not implemented on ${platform}`);
-	const status = await getSystemTimeStatus();
-	if (!status.capabilities.setNtpServer) return result('unsupported', 'the NTP server can only be configured where this application owns the time synchronisation service');
-	if (platform === 'linux') return applyTimesyncdDropIn(server, status.ntpEnabled === true);
-	const commands = buildSetNtpServerCommands(platform, server, status.ntpEnabled === true);
-	// A platform whose whole change is the file write above has no command to run, and
-	// runAll would read the empty list as "unsupported on this platform".
-	if (commands.length === 0) return result('ok');
-	return runAll(platform, commands);
+	return withSystemTimeLock(async () => {
+		const status = await readStatus();
+		if (!status.capabilities.setNtpServer) return result('unsupported', 'the NTP server can only be configured where this application owns the time synchronisation service');
+		if (platform === 'linux') return applyTimesyncdDropIn(server, status.ntpEnabled === true, TIMESYNCD_DROPIN_PATH, exec);
+		// Windows writes the peer list into the service's own registry key, so the source
+		// has to still be ours at the moment of writing — not merely when the status the
+		// capability came from was read (see checkWindowsWritable).
+		let syncRunning = status.ntpEnabled === true;
+		if (platform === 'win32') {
+			const state = await checkWindowsWritable(readMode);
+			if (state.refusal) return state.refusal;
+			syncRunning = windowsSyncEnabled(state.mode, state.start) === true;
+		}
+		const commands = buildSetNtpServerCommands(platform, server, syncRunning);
+		// A platform whose whole change is the file write above has no command to run, and
+		// runAll would read the empty list as "unsupported on this platform".
+		if (commands.length === 0) return result('ok');
+		return runAll(platform, commands, exec);
+	});
 }
 
 /**
@@ -1070,13 +1111,23 @@ export async function applyTimesyncdDropIn(server: string, syncRunning: boolean,
  * `readStatus` and `exec` are injectable so the sequencing and the outcome mapping can
  * be exercised without touching the host's time service.
  */
-export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run): Promise<SystemTimeResult> {
+export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = run, readMode: WindowsModeReader = readWindowsMode): Promise<SystemTimeResult> {
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `time synchronisation cannot be switched on ${platform}`);
-	const status = await readStatus();
-	if (!status.capabilities.setNtpEnabled) return result('unsupported', 'time synchronisation here is not ours to switch: this host has no such service, or its time source is managed by a domain or by group policy');
-	// Windows needs its CURRENT time source to decide whether it may be rewritten; every
-	// other platform has a single switch that changes nothing else.
-	const mode = platform === 'win32' ? (await readWindowsMode()).mode : 'unknown';
-	return runAll(platform, buildSetNtpEnabledCommands(platform, enabled, mode), exec);
+	return withSystemTimeLock(async () => {
+		const status = await readStatus();
+		if (!status.capabilities.setNtpEnabled) return result('unsupported', NOT_OURS_MESSAGE);
+		// Windows needs its CURRENT time source to decide whether it may be rewritten; every
+		// other platform has a single switch that changes nothing else. The re-read also has
+		// to be re-judged: the capability above came from an earlier snapshot, and stopping
+		// and disabling W32Time on a host that has since become a domain member or gained a
+		// policy is exactly the change this must never make.
+		let mode: WindowsSyncMode = 'unknown';
+		if (platform === 'win32') {
+			const state = await checkWindowsWritable(readMode);
+			if (state.refusal) return state.refusal;
+			mode = state.mode;
+		}
+		return runAll(platform, buildSetNtpEnabledCommands(platform, enabled, mode), exec);
+	});
 }

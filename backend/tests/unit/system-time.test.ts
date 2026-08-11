@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, type WindowsModeState, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -728,6 +728,9 @@ describe('setSystemNtpEnabled', () => {
 
 	const capable = async (): Promise<SystemTimeStatus> => statusFixture();
 
+	/** A Windows host whose time source this application configured itself. */
+	const ourWindowsHost = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic' });
+
 	it('reports success once every step has succeeded', async () => {
 		await onPlatform('linux', async () => {
 			const { exec, calls } = fakeRunner([]);
@@ -763,7 +766,7 @@ describe('setSystemNtpEnabled', () => {
 				calls.push(line);
 				return line === 'w32tm /resync' ? { kind: 'ok', output: 'The computer did not resync because no time data was available. (0x800705B4)\r\n' } : { kind: 'ok', output: '' };
 			};
-			const r = await setSystemNtpEnabled(true, capable, exec);
+			const r = await setSystemNtpEnabled(true, capable, exec, ourWindowsHost);
 			expect(r.success).toBe(false);
 			expect(r.outcome).toBe('error');
 			expect(calls).toContain('w32tm /resync');
@@ -778,7 +781,7 @@ describe('setSystemNtpEnabled', () => {
 				{ kind: 'ok', output: '' },
 				{ kind: 'failed', code: 1056, output: '[SC] StartService FAILED 1056:\r\n' },
 			]);
-			expect((await setSystemNtpEnabled(true, capable, exec)).success).toBe(true);
+			expect((await setSystemNtpEnabled(true, capable, exec, ourWindowsHost)).success).toBe(true);
 		});
 	});
 
@@ -787,6 +790,77 @@ describe('setSystemNtpEnabled', () => {
 			const { exec, calls } = fakeRunner([]);
 			const managed = async (): Promise<SystemTimeStatus> => statusFixture({ capabilities: { setClock: true, setTimezone: true, setNtpServer: false, setNtpEnabled: false } });
 			expect((await setSystemNtpEnabled(true, managed, exec)).outcome).toBe('unsupported');
+			expect(calls).toEqual([]);
+		});
+	});
+
+	/**
+	 * The capability came from a status read before the write started. A host joined to a
+	 * domain in between must not have W32Time stopped and disabled on the strength of it,
+	 * so ownership is decided again on a read taken immediately before the commands run.
+	 */
+	it('refuses when the host stopped being ours between the status read and the write', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const joinedADomain = async (): Promise<WindowsModeState> => ({ mode: 'domain-hierarchy', start: 'automatic' });
+			expect((await setSystemNtpEnabled(false, capable, exec, joinedADomain)).outcome).toBe('unsupported');
+			expect(calls).toEqual([]);
+		});
+	});
+
+	it('refuses when a group policy arrived between the status read and the write', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const policyApplied = async (): Promise<WindowsModeState> => ({ mode: 'managed', start: 'automatic' });
+			expect((await setSystemNtpEnabled(true, capable, exec, policyApplied)).outcome).toBe('unsupported');
+			expect(calls).toEqual([]);
+		});
+	});
+});
+
+describe('setSystemNtpServer', () => {
+	/** Run `body` with `process.platform` reporting the given host. */
+	async function onPlatform(platform: string, body: () => Promise<void>): Promise<void> {
+		const original = Object.getOwnPropertyDescriptor(process, 'platform');
+		Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+		try {
+			await body();
+		} finally {
+			if (original) Object.defineProperty(process, 'platform', original);
+		}
+	}
+
+	const capable = async (): Promise<SystemTimeStatus> => statusFixture();
+
+	it('writes the peer list on a host whose time source is ours', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const ours = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled' });
+			expect((await setSystemNtpServer('ntp.example.org', capable, ours, exec)).success).toBe(true);
+			// Start mode `disabled` means the service is not running, so no resync is asked for.
+			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /syncfromflags:manual /update']);
+		});
+	});
+
+	/**
+	 * This check did not exist at all: the write went off the capability in the status and
+	 * never looked at the mode, so a domain member could have its peer list and sync flags
+	 * overwritten — which is what detaches it from the forest's time.
+	 */
+	it('refuses a host whose time source stopped being ours before the write', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const joinedADomain = async (): Promise<WindowsModeState> => ({ mode: 'domain-hierarchy', start: 'automatic' });
+			expect((await setSystemNtpServer('ntp.example.org', capable, joinedADomain, exec)).outcome).toBe('unsupported');
+			expect(calls).toEqual([]);
+		});
+	});
+
+	it('refuses a host that became policy-managed before the write', async () => {
+		await onPlatform('win32', async () => {
+			const { exec, calls } = fakeRunner([]);
+			const policyApplied = async (): Promise<WindowsModeState> => ({ mode: 'managed', start: 'automatic' });
+			expect((await setSystemNtpServer('ntp.example.org', capable, policyApplied, exec)).outcome).toBe('unsupported');
 			expect(calls).toEqual([]);
 		});
 	});
