@@ -835,10 +835,13 @@ const NO_CAPABILITIES: SystemTimeCapabilities = { setClock: false, setTimezone: 
  * The half of the status that comes from the OS. `timezone` is the host's own setting,
  * null when it could not be read — the process's zone then stands in for it.
  */
-type PlatformStatus = Pick<SystemTimeStatus, 'ntpEnabled' | 'ntpSynchronized' | 'ntpServer' | 'capabilities'> & { timezone: string | null };
+export type PlatformStatus = Pick<SystemTimeStatus, 'ntpEnabled' | 'ntpSynchronized' | 'ntpServer' | 'capabilities'> & { timezone: string | null };
 
 /** Nothing could be read: every value unknown and every capability off. */
 const UNREADABLE_STATUS: PlatformStatus = { ntpEnabled: null, ntpSynchronized: null, ntpServer: null, timezone: null, capabilities: NO_CAPABILITIES };
+
+/** Reads the OS half of the status. Injectable so the assembly around it can be tested on any host. */
+export type PlatformStatusReader = (platform: SystemPlatform) => Promise<PlatformStatus>;
 
 /** Read the Linux (systemd-timedated) part of the status. */
 async function readLinuxStatus(): Promise<PlatformStatus> {
@@ -965,6 +968,13 @@ async function readMacStatus(): Promise<PlatformStatus> {
 	};
 }
 
+/** Dispatch the OS half of the status read to the backend for this platform. */
+function readPlatformStatus(platform: SystemPlatform): Promise<PlatformStatus> {
+	if (platform === 'linux') return readLinuxStatus();
+	if (platform === 'win32') return readWindowsStatus();
+	return readMacStatus();
+}
+
 /**
  * Read the host's current time configuration. Never throws — an unreadable or
  * unsupported host yields a status with `supported: false` and no capabilities, so
@@ -973,18 +983,23 @@ async function readMacStatus(): Promise<PlatformStatus> {
  * The clock and the timezone always come from the process itself (`Date.now()` and
  * ICU); only the NTP state needs the OS tooling.
  */
-export async function getSystemTimeStatus(): Promise<SystemTimeStatus> {
+export async function getSystemTimeStatus(readPlatform: PlatformStatusReader = readPlatformStatus): Promise<SystemTimeStatus> {
 	const platform = process.platform;
-	const nowMs = Date.now();
 	const supported = isSupportedPlatform(platform);
 	let specific: PlatformStatus = UNREADABLE_STATUS;
 	if (supported) {
 		try {
-			specific = platform === 'linux' ? await readLinuxStatus() : platform === 'win32' ? await readWindowsStatus() : await readMacStatus();
+			specific = await readPlatform(platform);
 		} catch (err) {
 			console.warn('[system-time] Failed to read time status:', (err as Error).message);
 		}
 	}
+	// Sampled AFTER the reads, not before. Those are up to six child processes — registry
+	// queries, `w32tm`, `systemctl` — and a clock read taken before them is already that
+	// much in the past by the time it is sent, so the UI starts its own second-by-second
+	// count from a time the host had a moment ago and stays behind it for as long as the
+	// page is open.
+	const nowMs = Date.now();
 	// The process's own zone is the fallback only: it is fixed at startup and an
 	// inherited TZ can override the host's real setting (see processTimezone).
 	const timezone = specific.timezone ?? processTimezone();
