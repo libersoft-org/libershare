@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseTzutilZone, parseUnitInstalled, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, W32TM_ERROR_RE, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -1134,6 +1134,75 @@ describe('on a platform with no time backend', () => {
 	});
 });
 
+describe('timezoneOffsetMinutes', () => {
+	const SUMMER = new Date('2026-08-14T12:00:00Z');
+	const WINTER = new Date('2026-01-14T12:00:00Z');
+
+	it('counts minutes to add to UTC, positive east of Greenwich', () => {
+		expect(timezoneOffsetMinutes('UTC', SUMMER)).toBe(0);
+		expect(timezoneOffsetMinutes('Europe/Prague', SUMMER)).toBe(120);
+		expect(timezoneOffsetMinutes('America/New_York', SUMMER)).toBe(-240);
+	});
+
+	it('follows daylight saving for the given instant', () => {
+		expect(timezoneOffsetMinutes('Europe/Prague', WINTER)).toBe(60);
+		expect(timezoneOffsetMinutes('America/New_York', WINTER)).toBe(-300);
+	});
+
+	it('handles zones that are not a whole number of hours from UTC', () => {
+		expect(timezoneOffsetMinutes('Asia/Kolkata', SUMMER)).toBe(330);
+		expect(timezoneOffsetMinutes('Asia/Kathmandu', SUMMER)).toBe(345);
+	});
+
+	it('returns null for a zone the runtime does not know', () => {
+		expect(timezoneOffsetMinutes('Mars/Olympus_Mons', SUMMER)).toBeNull();
+		expect(timezoneOffsetMinutes('', SUMMER)).toBeNull();
+	});
+
+	/**
+	 * The reason the offset is computed for the NAMED zone: once the host's zone is read
+	 * from the OS it can differ from the process's, and `Date.getTimezoneOffset()` would
+	 * answer for the process, putting the displayed clock hours out.
+	 */
+	it('answers for the zone it was given, not for the process', () => {
+		const own = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		const other = own === 'Asia/Tokyo' ? 'America/Denver' : 'Asia/Tokyo';
+		expect(timezoneOffsetMinutes(other, SUMMER)).not.toBe(timezoneOffsetMinutes(own, SUMMER) ?? 0);
+	});
+});
+
+describe('parseTzutilZone', () => {
+	it('reads the identifier tzutil /g prints', () => {
+		expect(parseTzutilZone('Central Europe Standard Time\r\n')).toBe('Central Europe Standard Time');
+		expect(parseTzutilZone('UTC')).toBe('UTC');
+	});
+
+	/** Windows appends this when daylight saving is switched off; it is not part of the ID. */
+	it('drops the daylight-saving-off suffix', () => {
+		expect(parseTzutilZone('Central Europe Standard Time_dstoff\r\n')).toBe('Central Europe Standard Time');
+	});
+
+	it('returns null when nothing was read', () => {
+		expect(parseTzutilZone(null)).toBeNull();
+		expect(parseTzutilZone('')).toBeNull();
+		expect(parseTzutilZone('  \r\n')).toBeNull();
+	});
+});
+
+describe('getSystemTimeStatus (live, read-only)', () => {
+	/**
+	 * The invariant that finding "the offset is the process's, the zone is the host's"
+	 * would break: whatever zone the status reports, the offset next to it has to be that
+	 * zone's, or the clock the UI reconstructs from the pair is hours out.
+	 */
+	it('reports an offset that belongs to the timezone it reports', async () => {
+		const status = await getSystemTimeStatus();
+		expect(status.timezone.length).toBeGreaterThan(0);
+		expect(timezoneOffsetMinutes(status.timezone, new Date(status.nowMs))).not.toBeNull();
+		expect(status.utcOffsetMinutes).toBe(timezoneOffsetMinutes(status.timezone, new Date(status.nowMs)) ?? Number.NaN);
+	});
+});
+
 describe('listSystemTimezones', () => {
 	it('returns the IANA list the runtime resolves against', () => {
 		const zones = listSystemTimezones();
@@ -1165,5 +1234,35 @@ describe.skipIf(process.platform !== 'win32')('windows ICU timezone conversion (
 	it('feeds the converted identifier into the tzutil argv', () => {
 		const zone = 'America/New_York';
 		expect(buildSetTimezoneCommands('win32', zone, ianaToWindowsTimezoneId(zone))).toEqual([{ cmd: 'tzutil', args: ['/s', 'Eastern Standard Time'] }]);
+	});
+
+	/**
+	 * What turns `tzutil /g` into something the rest of the application understands. The
+	 * zone here is deliberately not the host's, so the answer cannot come from the
+	 * process's own timezone.
+	 *
+	 * The mapping is many-to-one — five IANA zones share `Tokyo Standard Time` — so the
+	 * assertion is that the answer maps BACK to the same Windows zone, not that it is one
+	 * particular city. Only the host's own zone gets to be exact (next test).
+	 */
+	it('maps a Windows identifier back to an IANA one in the same zone', () => {
+		const iana = windowsToIanaTimezone('Tokyo Standard Time');
+		expect(iana).not.toBeNull();
+		expect(ianaToWindowsTimezoneId(iana!)).toBe('Tokyo Standard Time');
+		expect(timezoneOffsetMinutes(iana!, new Date('2026-08-14T12:00:00Z'))).toBe(540);
+		expect(windowsToIanaTimezone('UTC')).toBe('UTC');
+	});
+
+	it('round-trips whatever tzutil reports for this host', () => {
+		const own = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		const windowsId = ianaToWindowsTimezoneId(own);
+		expect(windowsId).not.toBeNull();
+		// Several IANA zones share one Windows zone, so the host's own must win over
+		// CLDR's representative city — otherwise a status read renames the user's zone.
+		expect(windowsToIanaTimezone(windowsId!)).toBe(own);
+	});
+
+	it('returns null for a Windows identifier no IANA zone maps to', () => {
+		expect(windowsToIanaTimezone('Not A Real Standard Time')).toBeNull();
 	});
 });

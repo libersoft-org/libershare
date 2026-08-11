@@ -581,9 +581,64 @@ export function getTimezoneSource(): SystemTimezoneSource {
 	return listSystemTimezones().length > 0 ? 'intl' : 'unavailable';
 }
 
-/** The timezone the process currently resolves to, as an IANA identifier. */
-function currentTimezone(): string {
+/**
+ * The timezone this PROCESS resolves to. Only a fallback for a host that could not be
+ * asked: it is fixed at startup, an inherited `TZ` overrides the real host setting, and
+ * a zone changed outside this application never reaches it.
+ */
+function processTimezone(): string {
 	return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+/**
+ * Minutes to ADD to UTC to get local time in `zone` at the given instant — positive
+ * east of Greenwich. Null when the runtime does not know the zone.
+ *
+ * Computed for the named zone rather than taken from `Date.getTimezoneOffset()`, which
+ * answers for the PROCESS: once the host's zone is read from the OS the two can differ,
+ * and pairing an OS zone with a process offset would put the displayed clock hours out.
+ */
+export function timezoneOffsetMinutes(zone: string, at: Date = new Date()): number | null {
+	try {
+		const parts: Record<string, string> = {};
+		for (const part of new Intl.DateTimeFormat('en-US', { timeZone: zone, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(at)) parts[part.type] = part.value;
+		// `hour12: false` renders midnight as 24 in some ICU versions.
+		const local = Date.UTC(Number(parts['year']), Number(parts['month']) - 1, Number(parts['day']), Number(parts['hour']) % 24, Number(parts['minute']), Number(parts['second']));
+		if (!Number.isFinite(local)) return null;
+		// Both sides truncated to the second: the reconstruction carries no milliseconds.
+		return Math.round((local - Math.floor(at.getTime() / 1000) * 1000) / 60000);
+	} catch {
+		return null;
+	}
+}
+
+/** Last resolved Windows-to-IANA pair. The scan below is not free, and the zone rarely changes. */
+let windowsZoneCache: { windowsId: string; iana: string } | null = null;
+
+/**
+ * IANA identifier for a Windows timezone ID, found by scanning the runtime's zone list
+ * for one that converts back to it — CLDR maps only IANA to Windows, and the reverse is
+ * many-to-one.
+ *
+ * The zone the process already reports is tried first and wins when it maps to the same
+ * Windows ID: several IANA zones share one, and picking CLDR's representative would
+ * rename the user's `Europe/Prague` to another city in the same Windows zone.
+ */
+export function windowsToIanaTimezone(windowsId: string): string | null {
+	if (windowsZoneCache?.windowsId === windowsId) return windowsZoneCache.iana;
+	const own = processTimezone();
+	const match = ianaToWindowsTimezoneId(own) === windowsId ? own : (listSystemTimezones().find(zone => ianaToWindowsTimezoneId(zone) === windowsId) ?? null);
+	if (match !== null) windowsZoneCache = { windowsId, iana: match };
+	return match;
+}
+
+/**
+ * Read the host timezone out of `tzutil /g`. The suffix Windows appends when daylight
+ * saving is switched off for the zone is not part of the identifier.
+ */
+export function parseTzutilZone(output: string | null): string | null {
+	const id = (output ?? '').trim().replace(/_dstoff$/, '');
+	return id.length > 0 ? id : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -668,8 +723,17 @@ export async function runAll(platform: SystemPlatform, commands: SystemCommand[]
 /** All capabilities off — the shape returned for a platform with no time backend. */
 const NO_CAPABILITIES: SystemTimeCapabilities = { setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false };
 
+/**
+ * The half of the status that comes from the OS. `timezone` is the host's own setting,
+ * null when it could not be read — the process's zone then stands in for it.
+ */
+type PlatformStatus = Pick<SystemTimeStatus, 'ntpEnabled' | 'ntpSynchronized' | 'ntpServer' | 'capabilities'> & { timezone: string | null };
+
+/** Nothing could be read: every value unknown and every capability off. */
+const UNREADABLE_STATUS: PlatformStatus = { ntpEnabled: null, ntpSynchronized: null, ntpServer: null, timezone: null, capabilities: NO_CAPABILITIES };
+
 /** Read the Linux (systemd-timedated) part of the status. */
-async function readLinuxStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 'ntpSynchronized' | 'ntpServer' | 'capabilities'>> {
+async function readLinuxStatus(): Promise<PlatformStatus> {
 	const show = await tryRead('timedatectl', ['show']);
 	if (show === null) {
 		// ponytail: no systemd-timedated means no supported backend here. The
@@ -677,7 +741,7 @@ async function readLinuxStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 
 		// implemented — the hosts that lack timedatectl are containers, which have
 		// no CAP_SYS_TIME and cannot set the clock at all. Add it if a non-systemd
 		// bare-metal target ever appears.
-		return { ntpEnabled: null, ntpSynchronized: null, ntpServer: null, capabilities: NO_CAPABILITIES };
+		return UNREADABLE_STATUS;
 	}
 	const map = parseTimedatectlShow(show);
 	const canNtp = parseYesNo(map['CanNTP']) ?? false;
@@ -693,6 +757,8 @@ async function readLinuxStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 
 	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer).
 	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', ...COMPETING_NTP_UNITS]) : null;
 	return {
+		// `timedatectl show` was read above and already carries it — no extra probe.
+		timezone: map['Timezone'] ?? null,
 		ntpEnabled: parseYesNo(map['NTP']),
 		ntpSynchronized: parseYesNo(map['NTPSynchronized']),
 		ntpServer: timesync === null ? null : parseTimesyncServer(timesync),
@@ -713,18 +779,21 @@ async function readWindowsMode(): Promise<{ mode: WindowsSyncMode; start: Window
 }
 
 /** Read the Windows (W32Time) part of the status. */
-async function readWindowsStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 'ntpSynchronized' | 'ntpServer' | 'capabilities'>> {
+async function readWindowsStatus(): Promise<PlatformStatus> {
 	// Everything here is read from the registry rather than from `sc query` / `w32tm
 	// /query /configuration`: the first localizes its field NAMES as well as its values
 	// (a German host prints `ZUSTAND`, not `STATE`), and the second needs elevation.
 	// Registry value names are identifiers and are the same in every language.
 	const params = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'NtpServer']);
 	const status = await tryRead('w32tm', ['/query', '/status']);
+	// tzutil answers with a Windows identifier, which has to be mapped back to IANA.
+	const zone = parseTzutilZone(await tryRead('tzutil', ['/g']));
 	const { mode, start } = await readWindowsMode();
 	// A time source an administrator owns is read-only here, so the UI disables the
 	// controls instead of offering a change that would detach the host from its domain.
 	const ours = windowsSyncIsOurs(mode);
 	return {
+		timezone: zone === null ? null : windowsToIanaTimezone(zone),
 		ntpEnabled: windowsSyncEnabled(mode, start),
 		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
 		ntpServer: parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')),
@@ -733,13 +802,15 @@ async function readWindowsStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' 
 }
 
 /** Read the macOS (`systemsetup`) part of the status. Every subcommand, reads included, needs root. */
-async function readMacStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 'ntpSynchronized' | 'ntpServer' | 'capabilities'>> {
+async function readMacStatus(): Promise<PlatformStatus> {
+	const zone = await tryRead(MAC_SYSTEMSETUP, ['-gettimezone']);
 	const server = await tryRead(MAC_SYSTEMSETUP, ['-getnetworktimeserver']);
 	const using = await tryRead(MAC_SYSTEMSETUP, ['-getusingnetworktime']);
 	// An unreadable systemsetup is an unprivileged process, not a missing facility:
 	// the capabilities stay true so the UI keeps offering the controls and the write
 	// reports the permission problem.
 	return {
+		timezone: zone === null ? null : parseSystemsetupValue(zone),
 		ntpEnabled: using === null ? null : parseSystemsetupOnOff(using),
 		// macOS exposes no "last sync succeeded" flag.
 		ntpSynchronized: null,
@@ -758,21 +829,30 @@ async function readMacStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 'n
  */
 export async function getSystemTimeStatus(): Promise<SystemTimeStatus> {
 	const platform = process.platform;
-	const base = {
-		nowMs: Date.now(),
-		timezone: currentTimezone(),
-		// getTimezoneOffset() counts the other way (minutes to add to LOCAL to get UTC).
-		utcOffsetMinutes: -new Date().getTimezoneOffset(),
+	const nowMs = Date.now();
+	const supported = isSupportedPlatform(platform);
+	let specific: PlatformStatus = UNREADABLE_STATUS;
+	if (supported) {
+		try {
+			specific = platform === 'linux' ? await readLinuxStatus() : platform === 'win32' ? await readWindowsStatus() : await readMacStatus();
+		} catch (err) {
+			console.warn('[system-time] Failed to read time status:', (err as Error).message);
+		}
+	}
+	// The process's own zone is the fallback only: it is fixed at startup and an
+	// inherited TZ can override the host's real setting (see processTimezone).
+	const timezone = specific.timezone ?? processTimezone();
+	const { timezone: _osZone, ...rest } = specific;
+	return {
+		...rest,
+		supported,
+		nowMs,
+		timezone,
+		// getTimezoneOffset() counts the other way (minutes to add to LOCAL to get UTC)
+		// and answers for the process, so it is only the fallback for an unknown zone.
+		utcOffsetMinutes: timezoneOffsetMinutes(timezone) ?? -new Date().getTimezoneOffset(),
 		timezoneSource: getTimezoneSource(),
 	};
-	if (!isSupportedPlatform(platform)) return { ...base, supported: false, ntpEnabled: null, ntpSynchronized: null, ntpServer: null, capabilities: NO_CAPABILITIES };
-	try {
-		const specific = platform === 'linux' ? await readLinuxStatus() : platform === 'win32' ? await readWindowsStatus() : await readMacStatus();
-		return { ...base, supported: true, ...specific };
-	} catch (err) {
-		console.warn('[system-time] Failed to read time status:', (err as Error).message);
-		return { ...base, supported: true, ntpEnabled: null, ntpSynchronized: null, ntpServer: null, capabilities: NO_CAPABILITIES };
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -835,8 +915,9 @@ export async function setSystemTimezone(timezone: string): Promise<SystemTimeRes
 	}
 
 	const r = await runAll(platform, buildSetTimezoneCommands(platform, timezone, windowsId));
-	// Pin the identifier the user picked, never one read back from the OS: the
-	// Windows to IANA reverse mapping is lossy and would report a different zone.
+	// Only so this process FORMATS in the new zone: writing the OS timezone does not
+	// invalidate a running process's ICU cache. What the status reports is read back
+	// from the OS, so an inherited or stale TZ can no longer misrepresent the host.
 	if (r.success) process.env['TZ'] = timezone;
 	return r;
 }
