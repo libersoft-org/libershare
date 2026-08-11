@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { isIP } from 'node:net';
 import { dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from './system-time-windows.ts';
@@ -67,16 +68,53 @@ export function isSupportedPlatform(platform: string): platform is SystemPlatfor
 // ---------------------------------------------------------------------------
 
 /**
- * Hostname, IPv4 or IPv6 literal. Deliberately a strict allow-list of
- * alphanumerics, dot, hyphen and colon: it rejects whitespace and every shell
- * metacharacter, so the value stays harmless even though it is only ever passed
- * as a single argv element (defence in depth — see {@link buildSetNtpServerCommands}).
+ * Characters an NTP address may consist of at all. Checked before anything else so
+ * whitespace, newlines and every shell metacharacter are gone regardless of which
+ * branch below accepts the value — the address is passed as a single argv element,
+ * but it is also written verbatim into a systemd drop-in, where a newline would
+ * inject a configuration directive (see {@link buildTimesyncdDropIn}).
  */
-const NTP_SERVER_RE = /^[A-Za-z0-9]([A-Za-z0-9.:-]{0,251}[A-Za-z0-9])?$/;
+const NTP_SERVER_CHARSET_RE = /^[A-Za-z0-9._:%-]+$/;
 
-/** True when `server` is a plausible, safely quotable NTP host name or IP address. */
+/** One DNS label: 1-63 alphanumerics and hyphens, never starting or ending with a hyphen. */
+const DNS_LABEL_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+
+/**
+ * True when `name` is a syntactically valid DNS name: at most 253 characters, each
+ * label at most 63. A single trailing dot (the explicit root, `ntp.example.org.`) is
+ * accepted and ignored.
+ *
+ * An all-digit last label is rejected: such a name can only have been meant as an IPv4
+ * address, and `1.2.3.999` reaching the resolver as a host name produces a late and
+ * confusing failure instead of the input error it is.
+ */
+function isValidDnsName(name: string): boolean {
+	const bare = name.endsWith('.') ? name.slice(0, -1) : name;
+	if (bare.length === 0 || bare.length > 253) return false;
+	const labels = bare.split('.');
+	if (!labels.every(label => DNS_LABEL_RE.test(label))) return false;
+	return !/^\d+$/.test(labels[labels.length - 1]!);
+}
+
+/**
+ * True when `server` is a usable NTP host name or IP address.
+ *
+ * IP literals are checked with `net.isIP()` rather than a character class, so
+ * `192.0.2.999` and `2001:db8:::1` are rejected where a "digits, dots and colons"
+ * pattern would let them through and fail much later, inside the OS tooling. A
+ * link-local IPv6 address may carry a zone index (`fe80::1%eth0`).
+ */
 export function isValidNtpServer(server: string): boolean {
-	return NTP_SERVER_RE.test(server);
+	if (!NTP_SERVER_CHARSET_RE.test(server)) return false;
+	if (isIP(server) !== 0) return true;
+	// Zone index: only ever valid on an IPv6 literal, so `%` cannot reach a host name
+	// or a drop-in line through this branch.
+	const percent = server.indexOf('%');
+	if (percent >= 0) {
+		const zone = server.slice(percent + 1);
+		return isIP(server.slice(0, percent)) === 6 && zone.length > 0 && /^[A-Za-z0-9._-]+$/.test(zone);
+	}
+	return isValidDnsName(server);
 }
 
 /**

@@ -349,9 +349,40 @@ describe('isValidNtpServer', () => {
 		expect(isValidNtpServer('trailing.example.org-')).toBe(false);
 	});
 
+	it('accepts an explicit root dot and a zone index', () => {
+		expect(isValidNtpServer('ntp.example.org.')).toBe(true);
+		expect(isValidNtpServer('fe80::1%eth0')).toBe(true);
+	});
+
+	it('rejects an IP literal that is out of range or malformed', () => {
+		expect(isValidNtpServer('192.0.2.999')).toBe(false);
+		expect(isValidNtpServer('1.2.3.4.5')).toBe(false);
+		expect(isValidNtpServer('2001:db8:::1')).toBe(false);
+		expect(isValidNtpServer('::')).toBe(true);
+	});
+
+	it('rejects a name with an empty or over-long label', () => {
+		expect(isValidNtpServer('ntp..example.org')).toBe(false);
+		expect(isValidNtpServer('.example.org')).toBe(false);
+		expect(isValidNtpServer(`${'a'.repeat(64)}.example.org`)).toBe(false);
+		expect(isValidNtpServer(`${'a'.repeat(63)}.example.org`)).toBe(true);
+	});
+
 	it('rejects a name longer than a DNS name can be', () => {
-		expect(isValidNtpServer(`${'a'.repeat(253)}`)).toBe(true);
-		expect(isValidNtpServer(`${'a'.repeat(254)}`)).toBe(false);
+		// 63-char labels: four of them plus the separators is 255 characters.
+		const long = Array(4).fill('a'.repeat(63)).join('.');
+		expect(long.length).toBe(255);
+		expect(isValidNtpServer(long)).toBe(false);
+		// A single label may not exceed 63 characters either, whatever the total length.
+		expect(isValidNtpServer('a'.repeat(253))).toBe(false);
+		expect(isValidNtpServer('a'.repeat(63))).toBe(true);
+	});
+
+	it('rejects a stray colon or zone index that is not part of an IPv6 literal', () => {
+		expect(isValidNtpServer('a:b:c')).toBe(false);
+		expect(isValidNtpServer('ntp.example.org:123')).toBe(false);
+		expect(isValidNtpServer('ntp.example.org%eth0')).toBe(false);
+		expect(isValidNtpServer('fe80::1%')).toBe(false);
 	});
 });
 
