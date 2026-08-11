@@ -215,6 +215,11 @@
 	// would be accepted and then quietly stepped back by the daemon, so the fields stay
 	// locked until the user resolves the state by switching synchronisation either way.
 	let syncUnknown = $derived(status !== null && status.supported && status.ntpEnabled === null);
+	// The advice to switch synchronisation on or off only works while that switch is
+	// usable. When the host will not let this application touch its time source either,
+	// the two messages together are a dead end — nothing on this screen can resolve the
+	// state, so say where it can be resolved instead of asking for the impossible.
+	let syncUnknownLocked = $derived(syncUnknown && !status?.capabilities.setNtpEnabled);
 	let clockDisabled = $derived(busy || autoSync || syncUnknown || !status?.capabilities.setClock);
 	// Nothing to write means nothing to report: without this the button runs no request
 	// at all and still announces the settings as saved.
@@ -262,7 +267,7 @@
 			<Alert type="warning" message={$t('settings.time.unsupported')} />
 		{/if}
 		{#if syncUnknown}
-			<Alert type="warning" message={$t('settings.time.syncUnknown')} />
+			<Alert type="warning" message={syncUnknownLocked ? $t('settings.time.syncUnknownLocked') : $t('settings.time.syncUnknown')} />
 		{/if}
 		{#if status}
 			<div role="group" data-mouse-activate-area={areaID}>

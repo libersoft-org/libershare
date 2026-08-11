@@ -109,7 +109,7 @@ test('rapid back-and-forth changes converge on the final selection', async () =>
  */
 test('every language file carries the system time messages', async () => {
 	const langs = await Promise.all(['en', 'cs'].map(async id => (await Bun.file(new URL(`../../static/langs/${id}.json`, import.meta.url)).json()).settings.time));
-	for (const key of ['errorPartial', 'errorGeneric', 'errorPermissionDenied', 'errorAutoSyncEnabled', 'saved']) {
+	for (const key of ['errorPartial', 'errorGeneric', 'errorPermissionDenied', 'errorAutoSyncEnabled', 'saved', 'syncUnknown', 'syncUnknownLocked']) {
 		for (const lang of langs) expect(typeof lang[key]).toBe('string');
 	}
 });

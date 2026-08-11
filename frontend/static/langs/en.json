@@ -488,6 +488,7 @@
 			"clockEditDiscarded": "The manually entered time was discarded - automatic synchronization sets the clock.",
 			"unsupported": "This system does not allow the clock settings to be changed.",
 			"syncUnknown": "The state of automatic synchronization could not be read on this host, so the clock cannot be set by hand. Switch automatic synchronization explicitly on or off first.",
+			"syncUnknownLocked": "The state of automatic synchronization could not be read on this host, and this application is not allowed to change it here, so the clock cannot be set by hand. Change the time settings in the operating system.",
 			"errorPermissionDenied": "Insufficient permissions to change the system clock. Run the application as an administrator (root)",
 			"errorUnsupported": "This system does not support this setting",
 			"errorAutoSyncEnabled": "The clock cannot be set by hand while automatic synchronization is on",
