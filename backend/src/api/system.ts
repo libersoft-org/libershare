@@ -31,6 +31,29 @@ interface SystemHandlers {
 	stopPolling: () => void;
 }
 
+/**
+ * Run a system-time write and, when it changed something, push the resulting state to
+ * every client. The event carries a freshly read status rather than the value that was
+ * requested: the OS may normalise it (a timezone alias, an NTP peer the daemon rejects),
+ * and a second window must show what the host actually has.
+ *
+ * The refresh and the broadcast are best-effort and happen strictly AFTER the outcome is
+ * decided. The system change is already applied at that point, so letting an exception
+ * from the re-read or from a dead client's socket escape would report a successful clock
+ * or NTP-mode change as an INTERNAL_ERROR — and invite the client to retry it, which is
+ * the one thing a clock change must not be.
+ */
+export async function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus: () => Promise<SystemTimeStatus>, broadcast: BroadcastFn): Promise<SystemTimeResult> {
+	const res = await write();
+	if (!res.success) return res;
+	try {
+		broadcast('system:timeChanged', await readStatus());
+	} catch (err) {
+		console.warn('[system-time] Applied, but could not announce the new time status:', (err as Error).message);
+	}
+	return res;
+}
+
 export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn): SystemHandlers {
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let volumeMonitor: VolumeMonitor | null = null;
@@ -111,16 +134,9 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return listSystemTimezones();
 	}
 
-	/**
-	 * Run a system-time write and, when it changed something, push the resulting state
-	 * to every client. The event carries a freshly read status rather than the value
-	 * that was requested: the OS may normalise it (a timezone alias, an NTP peer the
-	 * daemon rejects), and a second window must show what the host actually has.
-	 */
-	async function applyTimeWrite(write: () => Promise<SystemTimeResult>): Promise<SystemTimeResult> {
-		const res = await write();
-		if (res.success) broadcast('system:timeChanged', await getSystemTimeStatus());
-		return res;
+	/** Run a system-time write and tell every client what the host looks like afterwards. */
+	function applyTimeWrite(write: () => Promise<SystemTimeResult>): Promise<SystemTimeResult> {
+		return runTimeWrite(write, getSystemTimeStatus, broadcast);
 	}
 
 	/**
