@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'bun:test';
-import { buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseServiceRunning, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsSyncStatus, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, validateClockParts } from '../../src/system-time.ts';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { applyTimesyncdDropIn, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseServiceRunning, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsSyncStatus, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -619,6 +622,106 @@ describe('runAll', () => {
 	it('runs nothing and reports unsupported when the platform yields no command', async () => {
 		const { exec, calls } = fakeRunner([]);
 		expect(await runAll('win32', buildSetTimezoneCommands('win32', 'Europe/Prague', null), exec)).toEqual({ success: false, outcome: 'unsupported', message: 'no command available for this platform' });
+		expect(calls).toEqual([]);
+	});
+});
+
+describe('writeFileAtomically', () => {
+	let dir = '';
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), 'lish-time-'));
+	});
+
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	it('creates the file and leaves no temporary behind', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFileAtomically(path, 'first\n');
+		expect(await readFile(path, 'utf8')).toBe('first\n');
+		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
+	});
+
+	it('creates a missing parent directory', async () => {
+		const path = join(dir, 'timesyncd.conf.d', '90-libershare.conf');
+		await writeFileAtomically(path, 'x\n');
+		expect(await readFile(path, 'utf8')).toBe('x\n');
+	});
+
+	it('rolls an overwrite back to the previous content', async () => {
+		const path = join(dir, '90-libershare.conf');
+		await writeFile(path, 'original\n', 'utf8');
+		const rollback = await writeFileAtomically(path, 'replacement\n');
+		expect(await readFile(path, 'utf8')).toBe('replacement\n');
+		await rollback();
+		expect(await readFile(path, 'utf8')).toBe('original\n');
+		expect(await readdir(dir)).toEqual(['90-libershare.conf']);
+	});
+
+	it('rolls a creation back by removing the file it created', async () => {
+		const path = join(dir, '90-libershare.conf');
+		const rollback = await writeFileAtomically(path, 'new\n');
+		await rollback();
+		expect(await readdir(dir)).toEqual([]);
+	});
+});
+
+describe('applyTimesyncdDropIn', () => {
+	let path = '';
+	let dir = '';
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), 'lish-time-'));
+		path = join(dir, '90-libershare.conf');
+	});
+
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	it('pins the server and restarts the daemon while synchronisation is on', async () => {
+		const { exec, calls } = fakeRunner([]);
+		expect(await applyTimesyncdDropIn('ntp.example.org', true, path, exec)).toEqual({ success: true, outcome: 'ok', message: null });
+		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=ntp.example.org\n');
+		expect(calls).toEqual(['systemctl restart systemd-timesyncd']);
+	});
+
+	it('writes the drop-in and runs nothing while synchronisation is off', async () => {
+		const { exec, calls } = fakeRunner([]);
+		expect((await applyTimesyncdDropIn('ntp.example.org', false, path, exec)).outcome).toBe('ok');
+		expect(await readFile(path, 'utf8')).toContain('NTP=ntp.example.org');
+		expect(calls).toEqual([]);
+	});
+
+	/**
+	 * The API reported a failure, so the host must not quietly adopt the new server at
+	 * the next boot — the file goes back and the daemon is restarted onto it again.
+	 */
+	it('restores the previous drop-in when the restart fails', async () => {
+		await writeFile(path, '[Time]\nNTP=\nNTP=old.example.org\n', 'utf8');
+		const { exec, calls } = fakeRunner([{ kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' }]);
+		const r = await applyTimesyncdDropIn('new.example.org', true, path, exec);
+		expect(r.success).toBe(false);
+		expect(r.outcome).toBe('error');
+		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=old.example.org\n');
+		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
+	});
+
+	it('removes a drop-in it created when the restart fails', async () => {
+		const { exec } = fakeRunner([{ kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' }]);
+		expect((await applyTimesyncdDropIn('new.example.org', true, path, exec)).success).toBe(false);
+		expect(await readdir(dir)).toEqual([]);
+	});
+
+	it('reports an unwritable drop-in as a permission problem and runs nothing', async () => {
+		const { exec, calls } = fakeRunner([]);
+		// A path whose parent is an existing FILE cannot be created on any platform.
+		const blocked = join(path, 'nested.conf');
+		await writeFile(path, 'x', 'utf8');
+		const r = await applyTimesyncdDropIn('ntp.example.org', true, blocked, exec);
+		expect(r.success).toBe(false);
 		expect(calls).toEqual([]);
 	});
 });

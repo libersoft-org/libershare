@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { dirname } from 'node:path';
 import { promisify } from 'node:util';
@@ -683,22 +683,79 @@ export async function setSystemNtpServer(server: string): Promise<SystemTimeResu
 	if (!isSupportedPlatform(platform)) return result('unsupported', `configuring an NTP server is not implemented on ${platform}`);
 	const status = await getSystemTimeStatus();
 	if (!status.capabilities.setNtpServer) return result('unsupported', 'this host has no configurable time synchronisation service');
-	if (platform === 'linux') {
-		try {
-			await mkdir(dirname(TIMESYNCD_DROPIN_PATH), { recursive: true });
-			await writeFile(TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn(server), 'utf8');
-		} catch (err) {
-			const e = err as { code?: string; message?: string };
-			if (e.code === 'EACCES' || e.code === 'EPERM') return result('permission-denied', `cannot write ${TIMESYNCD_DROPIN_PATH}`);
-			return result('error', e.message ?? `cannot write ${TIMESYNCD_DROPIN_PATH}`);
-		}
-	}
+	if (platform === 'linux') return applyTimesyncdDropIn(server, status.ntpEnabled);
 	const commands = buildSetNtpServerCommands(platform, server, status.ntpEnabled);
-	// Linux with synchronisation switched off has no command to run — writing the
-	// drop-in above IS the whole operation, and runAll would read the empty list as
-	// "unsupported on this platform".
+	// A platform whose whole change is the file write above has no command to run, and
+	// runAll would read the empty list as "unsupported on this platform".
 	if (commands.length === 0) return result('ok');
 	return runAll(platform, commands);
+}
+
+/**
+ * Replace `path` with `content` so a reader never observes a partial file, and return
+ * a rollback that restores whatever was there before (deleting the file when there was
+ * nothing).
+ *
+ * A plain `writeFile` to the final path truncates it first, so a crash or a full disk
+ * mid-write leaves the live configuration truncated. Writing a sibling temporary file,
+ * flushing it and renaming makes the swap atomic — and the `fsync` is not optional: a
+ * rename only guarantees the *name* change, so without it a power loss can leave the
+ * new name pointing at an empty file.
+ */
+export async function writeFileAtomically(path: string, content: string): Promise<() => Promise<void>> {
+	const previous = await readFile(path, 'utf8').catch(() => null);
+	await mkdir(dirname(path), { recursive: true });
+	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
+	const temp = `${path}.libershare-${process.pid}.tmp`;
+	try {
+		const handle = await open(temp, 'w');
+		try {
+			await handle.writeFile(content, 'utf8');
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+		await rename(temp, path);
+	} catch (err) {
+		await unlink(temp).catch(() => {});
+		throw err;
+	}
+	return async () => {
+		if (previous === null) await unlink(path).catch(() => {});
+		else await writeFileAtomically(path, previous).catch(() => {});
+	};
+}
+
+/**
+ * Pin `server` in the systemd-timesyncd drop-in and make the daemon read it.
+ *
+ * The file is written atomically and rolled back when the restart fails: leaving it
+ * on disk after a failed save would apply the change at the next boot anyway, long
+ * after the user was told nothing had happened. The daemon is restarted a second time
+ * on that path so it also goes back to the configuration it was running with.
+ *
+ * `path` and `exec` are injectable so the rollback can be exercised without a systemd
+ * host.
+ */
+export async function applyTimesyncdDropIn(server: string, syncRunning: boolean, path: string = TIMESYNCD_DROPIN_PATH, exec: CommandRunner = run): Promise<SystemTimeResult> {
+	let rollback: () => Promise<void>;
+	try {
+		rollback = await writeFileAtomically(path, buildTimesyncdDropIn(server));
+	} catch (err) {
+		const e = err as { code?: string; message?: string };
+		if (e.code === 'EACCES' || e.code === 'EPERM') return result('permission-denied', `cannot write ${path}`);
+		return result('error', e.message ?? `cannot write ${path}`);
+	}
+	const commands = buildSetNtpServerCommands('linux', server, syncRunning);
+	// Synchronisation is off, so there is deliberately no restart — the drop-in on disk
+	// IS the whole change and is read when the daemon next starts. Nothing to roll back.
+	if (commands.length === 0) return result('ok');
+	const r = await runAll('linux', commands, exec);
+	if (!r.success) {
+		await rollback();
+		await runAll('linux', commands, exec);
+	}
+	return r;
 }
 
 /**
