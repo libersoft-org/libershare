@@ -957,7 +957,7 @@ describe('runAll', () => {
 
 	it('stops at the first failure and reports it as a denial with its first output line', async () => {
 		const { exec, calls } = fakeRunner([{ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:\r\n\r\nAccess is denied.\r\n' }]);
-		expect(await runAll('win32', DISABLE, exec)).toEqual({ success: false, outcome: 'permission-denied', message: '[SC] OpenService FAILED 5:' });
+		expect(await runAll('win32', DISABLE, exec)).toEqual({ success: false, outcome: 'permission-denied', message: '[SC] OpenService FAILED 5:', changed: false, stateMayHaveChanged: true, steps: [{ command: 'sc stop w32time', ok: false }] });
 		expect(calls).toEqual(['sc stop w32time']);
 	});
 
@@ -973,6 +973,37 @@ describe('runAll', () => {
 		expect(calls).toEqual(['sc config w32time start= auto', 'sc start w32time', 'w32tm /config /syncfromflags:manual /update', 'w32tm /resync']);
 	});
 
+	/**
+	 * The failure that used to look like "nothing happened": the service is already down
+	 * and its start mode is already changed by the time the next step refuses. A caller
+	 * that shows the old state after this is showing something the host no longer is.
+	 */
+	it('reports what a sequence already applied before it stopped', async () => {
+		const { exec } = fakeRunner([
+			{ kind: 'ok', output: '' },
+			{ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:\r\n' },
+		]);
+		const r = await runAll('win32', DISABLE, exec);
+		expect(r.success).toBe(false);
+		expect(r.changed).toBe(true);
+		expect(r.stateMayHaveChanged).toBe(true);
+		expect(r.steps).toEqual([
+			{ command: 'sc stop w32time', ok: true },
+			{ command: 'sc config w32time start= disabled', ok: false },
+		]);
+	});
+
+	/** A step tolerated by its benign code still counts as run, so it is reported as such. */
+	it('counts a tolerated step among the ones that ran', async () => {
+		const { exec } = fakeRunner([
+			{ kind: 'failed', code: 1062, output: '[SC] ControlService FAILED 1062:\r\n' },
+			{ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:\r\n' },
+		]);
+		const r = await runAll('win32', DISABLE, exec);
+		expect(r.changed).toBe(true);
+		expect(r.steps?.map(step => step.ok)).toEqual([true, false]);
+	});
+
 	it('still reports a real refusal on a step whose benign code did not match', async () => {
 		const { exec, calls } = fakeRunner([{ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:\r\n' }]);
 		expect((await runAll('win32', DISABLE, exec)).outcome).toBe('permission-denied');
@@ -981,17 +1012,19 @@ describe('runAll', () => {
 
 	it('reports a missing binary as unsupported, naming it', async () => {
 		const { exec } = fakeRunner([{ kind: 'missing' }]);
-		expect(await runAll('linux', buildSetNtpEnabledCommands('linux', true), exec)).toEqual({ success: false, outcome: 'unsupported', message: 'timedatectl is not installed' });
+		// A binary that does not exist never ran, so nothing on the host can have moved.
+		expect(await runAll('linux', buildSetNtpEnabledCommands('linux', true), exec)).toEqual({ success: false, outcome: 'unsupported', message: 'timedatectl is not installed', changed: false, stateMayHaveChanged: false, steps: [{ command: 'timedatectl set-ntp true', ok: false }] });
 	});
 
 	it('reports a wedged command as a transient error, never as an absence', async () => {
 		const { exec } = fakeRunner([{ kind: 'timeout' }]);
-		expect(await runAll('linux', buildSetNtpEnabledCommands('linux', true), exec)).toEqual({ success: false, outcome: 'error', message: 'timedatectl timed out' });
+		// A killed command DID start, so it may have applied part of its change.
+		expect(await runAll('linux', buildSetNtpEnabledCommands('linux', true), exec)).toEqual({ success: false, outcome: 'error', message: 'timedatectl timed out', changed: false, stateMayHaveChanged: true, steps: [{ command: 'timedatectl set-ntp true', ok: false }] });
 	});
 
 	it('falls back to the exit code when the command said nothing', async () => {
 		const { exec } = fakeRunner([{ kind: 'failed', code: 9009, output: '   \n' }]);
-		expect(await runAll('win32', [{ cmd: 'w32tm', args: ['/resync'] }], exec)).toEqual({ success: false, outcome: 'error', message: 'w32tm exited with 9009' });
+		expect(await runAll('win32', [{ cmd: 'w32tm', args: ['/resync'] }], exec)).toEqual({ success: false, outcome: 'error', message: 'w32tm exited with 9009', changed: false, stateMayHaveChanged: true, steps: [{ command: 'w32tm /resync', ok: false }] });
 	});
 
 	/**

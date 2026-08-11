@@ -52,7 +52,11 @@ interface SystemHandlers {
 export function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus: () => Promise<SystemTimeStatus>, broadcast: BroadcastFn): Promise<SystemTimeResult> {
 	return withSystemTimeLock(async () => {
 		const res = await write();
-		if (!res.success) return res;
+		// A failure is not "nothing happened". A sequence that stopped part-way left the
+		// steps before it applied — the service already stopped, the start mode already
+		// changed — so the clients are told what the host looks like NOW. Skipping that
+		// leaves every open window showing a state the host no longer has.
+		if (!res.success && !res.stateMayHaveChanged) return res;
 		try {
 			broadcast('system:timeChanged', await readStatus());
 		} catch (err) {

@@ -46,6 +46,43 @@ describe('runTimeWrite', () => {
 	});
 
 	/**
+	 * A sequence that stopped part-way DID change the host — the service is down, the
+	 * start mode is written — so every open window has to be told what it looks like now.
+	 * Staying silent because the request failed leaves them showing the state before it.
+	 */
+	it('announces the real state after a write that failed part-way through', async () => {
+		const events: Array<{ event: string; data: unknown }> = [];
+		const partial: SystemTimeResult = {
+			...denied,
+			changed: true,
+			stateMayHaveChanged: true,
+			steps: [
+				{ command: 'sc stop w32time', ok: true },
+				{ command: 'sc config w32time start= disabled', ok: false },
+			],
+		};
+		const res = await runTimeWrite(
+			async () => partial,
+			async () => statusFixture(),
+			(event, data) => events.push({ event, data })
+		);
+		// The failure is still a failure: the refresh reports, it does not reconcile.
+		expect(res).toEqual(partial);
+		expect(events.map(e => e.event)).toEqual(['system:timeChanged']);
+	});
+
+	it('announces the real state even when nothing is known to have succeeded yet', async () => {
+		const events: string[] = [];
+		const attempted: SystemTimeResult = { ...denied, changed: false, stateMayHaveChanged: true, steps: [{ command: 'sc stop w32time', ok: false }] };
+		await runTimeWrite(
+			async () => attempted,
+			async () => statusFixture(),
+			event => events.push(event)
+		);
+		expect(events).toEqual(['system:timeChanged']);
+	});
+
+	/**
 	 * The change is already applied on the host when the refresh runs. Letting the
 	 * refresh decide the outcome would report an applied clock change as a protocol
 	 * error and invite the client to retry it.

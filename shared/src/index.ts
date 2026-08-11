@@ -392,12 +392,34 @@ export interface SystemTimeStatus {
  */
 export type SystemTimeOutcome = 'ok' | 'permission-denied' | 'unsupported' | 'auto-sync-enabled' | 'invalid-input' | 'error';
 
-/** Result of a system-time write. `success` is exactly `outcome === 'ok'` — a failure is never reported as a success. */
+/** One command of a multi-step system-time write, and how it went. */
+export interface SystemTimeStep {
+	/** The command line as run, for a log or an error detail. Never contains user input beyond a validated value. */
+	command: string;
+	ok: boolean;
+}
+
+/**
+ * Result of a system-time write. `success` is exactly `outcome === 'ok'` — a failure is
+ * never reported as a success.
+ *
+ * A failure is not the same as "nothing happened". Several of these writes are sequences
+ * (`sc config` then `sc start`; `sc stop` then `sc config`), and the sequence stops at the
+ * first step that fails — with every step before it already applied. `changed` and
+ * `stateMayHaveChanged` say which of the two a caller is looking at, so a failed request
+ * still refreshes what it shows instead of leaving a stale screen.
+ */
 export interface SystemTimeResult {
 	success: boolean;
 	outcome: SystemTimeOutcome;
 	/** Underlying OS message or the validation reason; null when there is nothing to add. */
 	message: string | null;
+	/** At least one step completed, so the host is definitely not as it was. */
+	changed?: boolean;
+	/** At least one step was attempted. A step that failed may still have applied part of its change. */
+	stateMayHaveChanged?: boolean;
+	/** Per-step outcome, in order, for a sequence that stopped part-way. Absent when nothing ran. */
+	steps?: SystemTimeStep[];
 }
 
 // Relay (circuit-relay server) statistics — counts of reservations, active tunnels and bytes/sec going through us

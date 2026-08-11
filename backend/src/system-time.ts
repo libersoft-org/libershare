@@ -7,7 +7,7 @@ import { dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from './system-time-windows.ts';
-import type { SystemTimeCapabilities, SystemTimeOutcome, SystemTimeResult, SystemTimeStatus, SystemTimezoneSource } from '@shared';
+import type { SystemTimeCapabilities, SystemTimeOutcome, SystemTimeResult, SystemTimeStatus, SystemTimeStep, SystemTimezoneSource } from '@shared';
 
 const execFileAsync = promisify(execFile);
 
@@ -715,23 +715,46 @@ export type CommandRunner = (cmd: string, args: string[]) => Promise<RunOutcome>
  * `ok` only when every command exited 0 or failed with one of its own
  * {@link SystemCommand.benignCodes}.
  *
+ * A failure carries what already happened. Stopping at the first bad step does not undo
+ * the steps before it — `sc config w32time start= auto` succeeding and `sc start` failing
+ * leaves the start mode changed, and `sc stop` succeeding before `sc config ... disabled`
+ * fails leaves the service down — so the result reports `changed`, `stateMayHaveChanged`
+ * and the per-step outcomes instead of a bare "it failed". A successful result implies
+ * all of it and carries none of the extra fields.
+ *
  * `exec` is injectable so the sequencing and the outcome mapping can be exercised
  * without spawning anything.
  */
 export async function runAll(platform: SystemPlatform, commands: SystemCommand[], exec: CommandRunner = run): Promise<SystemTimeResult> {
 	if (commands.length === 0) return result('unsupported', 'no command available for this platform');
+	const steps: SystemTimeStep[] = [];
+	/** A stopped sequence: the failing step is recorded, and everything before it already ran. */
+	const stopped = (command: SystemCommand, outcome: SystemTimeOutcome, message: string, ran = true): SystemTimeResult => {
+		steps.push({ command: [command.cmd, ...command.args].join(' '), ok: false });
+		// `ran` is false only for a binary that does not exist, which cannot have touched
+		// anything. Every other failure was a process that started and refused part-way —
+		// as capable of leaving a change behind as one that exited 0.
+		return { ...result(outcome, message), changed: steps.some(step => step.ok), stateMayHaveChanged: ran || steps.some(step => step.ok), steps };
+	};
 	for (const command of commands) {
 		const r = await exec(command.cmd, command.args);
+		const done = (): void => void steps.push({ command: [command.cmd, ...command.args].join(' '), ok: true });
 		if (r.kind === 'ok') {
 			// Exit 0 is not the whole story for w32tm: it prints the HRESULT of a refusal
 			// and returns zero anyway, so the output has to be read before believing it.
-			if (!command.failOnOutput?.test(r.output)) continue;
-			return result(classifyFailure(platform, 0, r.output), firstLine(r.output) ?? `${command.cmd} reported a failure`);
+			if (!command.failOnOutput?.test(r.output)) {
+				done();
+				continue;
+			}
+			return stopped(command, classifyFailure(platform, 0, r.output), firstLine(r.output) ?? `${command.cmd} reported a failure`);
 		}
-		if (r.kind === 'failed' && r.code !== null && command.benignCodes?.includes(r.code)) continue;
-		if (r.kind === 'missing') return result('unsupported', `${command.cmd} is not installed`);
-		if (r.kind === 'timeout') return result('error', `${command.cmd} timed out`);
-		return result(classifyFailure(platform, r.code, r.output), firstLine(r.output) ?? `${command.cmd} exited with ${r.code}`);
+		if (r.kind === 'failed' && r.code !== null && command.benignCodes?.includes(r.code)) {
+			done();
+			continue;
+		}
+		if (r.kind === 'missing') return stopped(command, 'unsupported', `${command.cmd} is not installed`, false);
+		if (r.kind === 'timeout') return stopped(command, 'error', `${command.cmd} timed out`);
+		return stopped(command, classifyFailure(platform, r.code, r.output), firstLine(r.output) ?? `${command.cmd} exited with ${r.code}`);
 	}
 	return result('ok');
 }
