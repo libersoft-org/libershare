@@ -336,6 +336,42 @@ export function parseUnitInstalled(output: string, unit: string): boolean {
 }
 
 /**
+ * systemd units of the other NTP implementations systemd-timedated can hand the clock
+ * to. `NTP=yes` only says that SOME managed service is synchronising; when one of these
+ * is the one running, a timesyncd drop-in is read by nobody.
+ */
+export const COMPETING_NTP_UNITS: string[] = ['chronyd.service', 'chrony.service', 'ntpd.service', 'ntpsec.service', 'openntpd.service'];
+
+/**
+ * True when `systemctl show -p ActiveState --value <units...>` reports any of them as
+ * running. A unit that does not exist on the host reports `inactive`, so an absent
+ * chrony is indistinguishable from a stopped one — which is the correct answer here.
+ */
+export function parseAnyUnitActive(output: string): boolean {
+	return output.split(/\r?\n/).some(line => {
+		const state = line.trim();
+		return state === 'active' || state === 'activating' || state === 'reloading';
+	});
+}
+
+/**
+ * Whether writing the timesyncd drop-in would actually change the host's time source.
+ *
+ * Two things must hold: timesyncd has to be usable here at all, and no other NTP daemon
+ * may be the one in charge. Without the second check a host running chrony would get a
+ * drop-in nothing reads, timesyncd restarted alongside chrony, and a success reported
+ * for a server that never became effective.
+ *
+ * `timesyncReadable` comes from `timedatectl show-timesync`, which only answers while
+ * the daemon runs — and the UI switches synchronisation off before writing a server, so
+ * the unit catalogue (`unitOutput`) is what answers for a stopped daemon.
+ */
+export function canConfigureTimesyncdServer(timesyncReadable: boolean, unitOutput: string | null, competingOutput: string | null): boolean {
+	if (competingOutput !== null && parseAnyUnitActive(competingOutput)) return false;
+	return timesyncReadable || (unitOutput !== null && parseUnitInstalled(unitOutput, TIMESYNCD_UNIT));
+}
+
+/**
  * Content of the systemd-timesyncd drop-in pinning `server` as the NTP source.
  *
  * `NTP=` is a list setting: a drop-in is parsed after the shipped configuration, so a
@@ -544,11 +580,14 @@ async function readLinuxStatus(): Promise<Pick<SystemTimeStatus, 'ntpEnabled' | 
 	// answers the same question about a stopped daemon, which is exactly the state
 	// the write happens in.
 	const unit = canNtp ? await tryRead('systemctl', ['list-unit-files', TIMESYNCD_UNIT]) : null;
+	// timedated manages several NTP implementations; a host where chrony is the active
+	// one would ignore our drop-in entirely (see canConfigureTimesyncdServer).
+	const competing = canNtp ? await tryRead('systemctl', ['show', '-p', 'ActiveState', '--value', ...COMPETING_NTP_UNITS]) : null;
 	return {
 		ntpEnabled: parseYesNo(map['NTP']) ?? false,
 		ntpSynchronized: parseYesNo(map['NTPSynchronized']),
 		ntpServer: timesync === null ? null : parseTimesyncServer(timesync),
-		capabilities: { setClock: true, setTimezone: true, setNtpEnabled: canNtp, setNtpServer: timesync !== null || (unit !== null && parseUnitInstalled(unit, TIMESYNCD_UNIT)) },
+		capabilities: { setClock: true, setTimezone: true, setNtpEnabled: canNtp, setNtpServer: canConfigureTimesyncdServer(timesync !== null, unit, competing) },
 	};
 }
 
@@ -682,7 +721,7 @@ export async function setSystemNtpServer(server: string): Promise<SystemTimeResu
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `configuring an NTP server is not implemented on ${platform}`);
 	const status = await getSystemTimeStatus();
-	if (!status.capabilities.setNtpServer) return result('unsupported', 'this host has no configurable time synchronisation service');
+	if (!status.capabilities.setNtpServer) return result('unsupported', 'the NTP server can only be configured where this application owns the time synchronisation service');
 	if (platform === 'linux') return applyTimesyncdDropIn(server, status.ntpEnabled);
 	const commands = buildSetNtpServerCommands(platform, server, status.ntpEnabled);
 	// A platform whose whole change is the file write above has no command to run, and

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseServiceRunning, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsSyncStatus, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, buildSetClockCommands, canConfigureTimesyncdServer, COMPETING_NTP_UNITS, parseAnyUnitActive, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, buildTimesyncdDropIn, classifyFailure, clockWriteRefusal, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listSystemTimezones, parseRegValue, parseServiceRunning, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, parseTimesyncServer, parseUnitInstalled, parseWindowsNtpServer, parseWindowsSyncStatus, parseYesNo, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type RunOutcome, type SystemCommand, TIMESYNCD_DROPIN_PATH, validateClockParts, writeFileAtomically } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId } from '../../src/system-time-windows.ts';
 import type { SystemTimeStatus } from '@shared';
 
@@ -439,6 +439,68 @@ describe('buildTimesyncdDropIn', () => {
 		const lines = buildTimesyncdDropIn('ntp.example.org').split('\n');
 		expect(lines.indexOf('NTP=')).toBeGreaterThan(-1);
 		expect(lines.indexOf('NTP=')).toBeLessThan(lines.indexOf('NTP=ntp.example.org'));
+	});
+});
+
+describe('parseAnyUnitActive', () => {
+	/** `systemctl show -p ActiveState --value chronyd.service ... ` on a chrony host. */
+	const CHRONY_ACTIVE = 'active\n\ninactive\n\ninactive\n\ninactive\n\ninactive\n';
+	const NONE_ACTIVE = 'inactive\n\ninactive\n\ninactive\n\ninactive\n\ninactive\n';
+
+	it('spots the one running daemon among the stopped ones', () => {
+		expect(parseAnyUnitActive(CHRONY_ACTIVE)).toBe(true);
+		expect(parseAnyUnitActive('inactive\n\nactive\n')).toBe(true);
+	});
+
+	it('counts a daemon that is still coming up', () => {
+		expect(parseAnyUnitActive('activating\n\ninactive\n')).toBe(true);
+		expect(parseAnyUnitActive('reloading\n')).toBe(true);
+	});
+
+	it('is false when every unit is stopped, failed or absent', () => {
+		expect(parseAnyUnitActive(NONE_ACTIVE)).toBe(false);
+		expect(parseAnyUnitActive('failed\n\ninactive\n')).toBe(false);
+		expect(parseAnyUnitActive('')).toBe(false);
+	});
+
+	it('does not match a state that merely contains the word', () => {
+		expect(parseAnyUnitActive('inactive (dead)\n')).toBe(false);
+		expect(parseAnyUnitActive('deactivating\n')).toBe(false);
+	});
+});
+
+describe('canConfigureTimesyncdServer', () => {
+	const INSTALLED = 'UNIT FILE                 STATE     PRESET\nsystemd-timesyncd.service disabled  disabled\n\n1 unit files listed.';
+	const ABSENT = 'UNIT FILE                 STATE     PRESET\n\n0 unit files listed.';
+	const CHRONY_ACTIVE = 'active\n\ninactive\n\ninactive\n\ninactive\n\ninactive\n';
+	const NONE_ACTIVE = 'inactive\n\ninactive\n\ninactive\n\ninactive\n\ninactive\n';
+
+	it('allows the write when timesyncd is the running sync service', () => {
+		expect(canConfigureTimesyncdServer(true, null, NONE_ACTIVE)).toBe(true);
+	});
+
+	it('allows the write when timesyncd is merely installed, as it is while sync is off', () => {
+		expect(canConfigureTimesyncdServer(false, INSTALLED, NONE_ACTIVE)).toBe(true);
+	});
+
+	/**
+	 * The case the capability is really for: chrony holds the clock, so a timesyncd
+	 * drop-in changes nothing and restarting timesyncd would only add a second daemon.
+	 */
+	it('refuses while another NTP daemon is the active backend', () => {
+		expect(canConfigureTimesyncdServer(false, INSTALLED, CHRONY_ACTIVE)).toBe(false);
+		expect(canConfigureTimesyncdServer(true, INSTALLED, CHRONY_ACTIVE)).toBe(false);
+	});
+
+	it('refuses on a host with no timesyncd unit at all', () => {
+		expect(canConfigureTimesyncdServer(false, ABSENT, NONE_ACTIVE)).toBe(false);
+		expect(canConfigureTimesyncdServer(false, null, NONE_ACTIVE)).toBe(false);
+	});
+
+	it('names every implementation timedated can hand the clock to', () => {
+		expect(COMPETING_NTP_UNITS).toContain('chronyd.service');
+		expect(COMPETING_NTP_UNITS).toContain('ntpd.service');
+		expect(COMPETING_NTP_UNITS.every(u => u.endsWith('.service'))).toBe(true);
 	});
 });
 
