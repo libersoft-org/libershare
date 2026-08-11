@@ -268,6 +268,10 @@ const RADIO_OFF = 2;
 const ERROR_INVALID_STATE = 5023;
 /** WLAN_CONNECTION_ATTRIBUTES: isState(4) + wlanConnectionMode(4) + strProfileName[256] (512) = 520. */
 const CONN_ASSOCIATION_OFFSET = 520;
+/** WLAN_CONNECTION_ATTRIBUTES.isState is the first member. */
+const CONN_STATE_OFFSET = 0;
+/** WLAN_INTERFACE_STATE: 1 = wlan_interface_state_connected. Every other value is on the way to or from it. */
+const INTERFACE_STATE_CONNECTED = 1;
 /** WLAN_ASSOCIATION_ATTRIBUTES: DOT11_SSID = ULONG uSSIDLength + UCHAR ucSSID[32]. */
 const ASSOC_SSID_LENGTH_OFFSET = CONN_ASSOCIATION_OFFSET;
 const ASSOC_SSID_OFFSET = CONN_ASSOCIATION_OFFSET + 4;
@@ -284,6 +288,7 @@ interface WlanApi {
 	WlanScan: (handle: Pointer, guid: Pointer, ssid: null, ieData: null, reserved: null) => number;
 	WlanGetAvailableNetworkList: (handle: Pointer, guid: Pointer, flags: number, reserved: null, list: Pointer) => number;
 	WlanSetProfile: (handle: Pointer, guid: Pointer, flags: number, xml: Pointer, security: null, overwrite: number, reserved: null, reasonCode: Pointer) => number;
+	WlanGetProfile: (handle: Pointer, guid: Pointer, name: Pointer, reserved: null, xml: Pointer, flags: Pointer, access: null) => number;
 	WlanConnect: (handle: Pointer, guid: Pointer, parameters: Pointer, reserved: null) => number;
 	WlanFreeMemory: (memory: Pointer) => void;
 }
@@ -304,6 +309,7 @@ function getWlanApi(): WlanApi | null {
 				WlanScan: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 				WlanGetAvailableNetworkList: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 				WlanSetProfile: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
+				WlanGetProfile: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 				WlanConnect: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.u32 },
 				WlanFreeMemory: { args: [FFIType.ptr], returns: FFIType.void },
 			});
@@ -360,15 +366,27 @@ function readRadioState(data: Pointer, size: number): NetWifiInfo['radio'] {
  * is what makes that acceptable: an out-of-range signal or SSID length yields
  * `null` (widget renders "unknown"), never a plausible-looking wrong percentage.
  */
-export function readConnectionAttributes(data: Pointer, size: number): { ssid: string | null; signal: number | null } {
-	if (size < ASSOC_SIGNAL_QUALITY_OFFSET + 4) return { ssid: null, signal: null };
+export function readConnectionAttributes(data: Pointer, size: number): { ssid: string | null; signal: number | null; connected: boolean } {
+	if (size < ASSOC_SIGNAL_QUALITY_OFFSET + 4) return { ssid: null, signal: null, connected: false };
+	// The SSID is filled in while the adapter is still ASSOCIATING, so its presence
+	// is a statement of intent, not of success. Only `isState` says whether the
+	// adapter is actually on the network.
+	const connected = read.u32(data, CONN_STATE_OFFSET) === INTERFACE_STATE_CONNECTED;
 	const signalRaw = read.u32(data, ASSOC_SIGNAL_QUALITY_OFFSET);
 	const ssidLength = read.u32(data, ASSOC_SSID_LENGTH_OFFSET);
-	if (signalRaw > 100 || ssidLength > MAX_SSID_LENGTH) return { ssid: null, signal: null };
+	if (signalRaw > 100 || ssidLength > MAX_SSID_LENGTH) return { ssid: null, signal: null, connected };
 	const ssidBytes = new Uint8Array(toArrayBuffer(data, ASSOC_SSID_OFFSET, MAX_SSID_LENGTH)).subarray(0, ssidLength);
 	const ssid = ssidLength > 0 ? new TextDecoder().decode(ssidBytes) : null;
-	return { ssid, signal: signalRaw };
+	return { ssid, signal: signalRaw, connected };
 }
+
+/**
+ * Adapters the last {@link readWindowsWifi} found actually associated, as opposed
+ * to merely attempting it. Kept beside the map rather than inside `NetWifiInfo`
+ * because it answers a question only the join path asks, and `link` already tells
+ * the UI the same thing.
+ */
+const connectedGuids = new Set<string>();
 
 /**
  * Read the Wi-Fi state of every WLAN adapter, keyed by canonical interface GUID.
@@ -379,6 +397,7 @@ export function readWindowsWifi(): Map<string, NetWifiInfo> {
 	try {
 		return withWlanHandle((api, handle) => {
 			const result = new Map<string, NetWifiInfo>();
+			connectedGuids.clear();
 			const listOut = new BigUint64Array(1);
 			if (api.WlanEnumInterfaces(handle, null, ptr(listOut)) !== 0) return result;
 			const list = Number(listOut[0]) as Pointer;
@@ -391,6 +410,7 @@ export function readWindowsWifi(): Map<string, NetWifiInfo> {
 					const radio = query(guidPtr, OPCODE_RADIO_STATE, readRadioState) ?? 'unknown';
 					const connection = query(guidPtr, OPCODE_CURRENT_CONNECTION, readConnectionAttributes);
 					result.set(guid, { ssid: connection?.ssid ?? null, signal: connection?.signal ?? null, radio });
+					if (connection?.connected) connectedGuids.add(guid);
 				}
 			} finally {
 				api.WlanFreeMemory(list);
@@ -626,6 +646,22 @@ export function utf16z(text: string): Uint16Array {
 }
 
 /**
+ * Read a NUL-terminated UTF-16LE string back out of a pointer the WLAN API
+ * allocated. The counterpart of {@link utf16z}, for the profile document
+ * WlanGetProfile hands back.
+ *
+ * The length is not known up front, so the buffer is walked to the terminator; the
+ * cap is a safety stop for a pointer that is not the string we think it is, well
+ * above any real profile (a WLAN profile is a few hundred characters).
+ */
+export function readUtf16z(pointer: Pointer, maxChars: number = 65536): string {
+	const view = new Uint16Array(toArrayBuffer(pointer, 0, maxChars * 2));
+	let length = 0;
+	while (length < view.length && view[length] !== 0) length++;
+	return String.fromCharCode(...view.subarray(0, length));
+}
+
+/**
  * A WLAN_CONNECTION_PARAMETERS for a connect-by-profile, x64:
  *
  *   wlanConnectionMode   4  @  0   (4 bytes of padding follow, the next member is a pointer)
@@ -843,7 +879,11 @@ function usesSae(api: WlanApi, handle: Pointer, guidBytes: Uint8Array, ssid: str
 async function waitForAssociation(guid: string, ssid: string): Promise<void> {
 	const deadline = Date.now() + JOIN_TIMEOUT_MS;
 	for (;;) {
-		if (readWindowsWifi().get(guid)?.ssid === ssid) return;
+		// Both conditions matter: the adapter has to be ON a network, and it has to be
+		// THIS one. WlanConnect only queues the attempt, and the SSID shows up in the
+		// connection attributes while the adapter is still associating — so a check on
+		// the name alone reports a join that never happened.
+		if (readWindowsWifi().get(guid)?.ssid === ssid && connectedGuids.has(guid)) return;
 		if (Date.now() >= deadline) throw new Error('the adapter did not join the network — check the password');
 		await delay(JOIN_POLL_MS);
 	}

@@ -293,9 +293,10 @@ describe('readConnectionAttributes sanity gate', () => {
 	const buffers: Uint8Array[] = [];
 
 	/** Build a WLAN_CONNECTION_ATTRIBUTES-shaped buffer with the given SSID length and signal. */
-	function buffer(ssidLength: number, signal: number, ssid = 'Example Net'): { pointer: Pointer; size: number } {
+	function buffer(ssidLength: number, signal: number, ssid = 'Example Net', state = 0): { pointer: Pointer; size: number } {
 		const bytes = new Uint8Array(640);
 		const view = new DataView(bytes.buffer);
+		view.setUint32(0, state, true); // WLAN_CONNECTION_ATTRIBUTES.isState
 		view.setUint32(520, ssidLength, true);
 		new Uint8Array(bytes.buffer, 524, 32).set(new TextEncoder().encode(ssid).subarray(0, 32));
 		view.setUint32(576, signal, true);
@@ -304,29 +305,42 @@ describe('readConnectionAttributes sanity gate', () => {
 		return { pointer: ptr(bytes), size: bytes.length };
 	}
 
+	it('reports an adapter still associating as not connected, SSID and all', () => {
+		// Windows fills the SSID in while the adapter is only ATTEMPTING the network,
+		// so a join confirmed on the name alone would report a connection that never
+		// happened. State 5 is wlan_interface_state_associating.
+		const b = buffer(11, 73, 'Example Net', 5);
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73, connected: false });
+	});
+
+	it('reports an adapter that really is on the network as connected', () => {
+		const b = buffer(11, 73, 'Example Net', 1);
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73, connected: true });
+	});
+
 	it('accepts a plausible reading', () => {
 		const b = buffer(11, 73);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73 });
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: 'Example Net', signal: 73, connected: false });
 	});
 
 	it('reports an associated adapter with a hidden SSID as signal-only', () => {
 		const b = buffer(0, 42);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: 42 });
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: 42, connected: false });
 	});
 
 	it('rejects an out-of-range signal rather than reporting a wrong percentage', () => {
 		const b = buffer(11, 4294967295);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null });
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null, connected: false });
 	});
 
 	it('rejects an impossible SSID length', () => {
 		const b = buffer(99, 50);
-		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null });
+		expect(readConnectionAttributes(b.pointer, b.size)).toEqual({ ssid: null, signal: null, connected: false });
 	});
 
 	it('rejects a buffer too small to hold the fields it would read', () => {
 		const b = buffer(11, 73);
-		expect(readConnectionAttributes(b.pointer, 64)).toEqual({ ssid: null, signal: null });
+		expect(readConnectionAttributes(b.pointer, 64)).toEqual({ ssid: null, signal: null, connected: false });
 	});
 });
 
