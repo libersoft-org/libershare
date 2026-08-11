@@ -2,9 +2,16 @@ import { dlopen, FFIType, ptr } from 'bun:ffi';
 
 /**
  * IANA to Windows timezone identifier conversion, done in-process through the ICU
- * library Windows itself ships (`icu.dll`, present since Windows 10 1703) via
- * `bun:ffi`. No child process, no PowerShell, and no CLDR table bundled into the
- * repository that would go stale with every timezone rule change.
+ * library Windows itself ships (`icu.dll`) via `bun:ffi`. No child process, no
+ * PowerShell, and no CLDR table bundled into the repository that would go stale with
+ * every timezone rule change.
+ *
+ * `icu.dll` arrived in Windows 10 1903. The releases before it (1703-1809) did expose
+ * ICU, but as `icuuc.dll`/`icuin.dll` with version-suffixed export names
+ * (`ucal_getWindowsTimeZoneID_63`) that differ per build and cannot be bound blindly, so
+ * they are deliberately not attempted. Those hosts land in the same place as a host with
+ * no ICU at all: {@link canConvertTimezoneId} is false, the timezone capability is off
+ * and the UI disables the picker rather than offering a change that cannot be expressed.
  *
  * The conversion is needed because `tzutil` only understands Windows identifiers
  * ("Central Europe Standard Time") while every other platform — and our UI — speaks
@@ -29,7 +36,7 @@ interface Icu {
 // null means "tried and unavailable" — the probe runs at most once either way.
 let icu: Icu | null | undefined;
 
-/** Load the system ICU once, lazily. Returns null when the host has no `icu.dll` (pre-1703 Windows). */
+/** Load the system ICU once, lazily. Returns null when the host has no `icu.dll` (anything before Windows 10 1903). */
 function getIcu(): Icu | null {
 	if (icu === undefined) {
 		try {
