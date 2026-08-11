@@ -1090,16 +1090,33 @@ export function clockWriteRefusal(status: SystemTimeStatus): SystemTimeResult | 
 	return null;
 }
 
-/** Set the wall clock to `hours:minutes:seconds`, keeping today's date. */
+/**
+ * Today's date in the zone that is `utcOffsetMinutes` from UTC at `nowMs`.
+ *
+ * Not `new Date().getFullYear()` and friends: those answer in the PROCESS's zone, which
+ * is fixed at startup and can be overridden by an inherited `TZ`, while the clock being
+ * set belongs to the HOST's zone. The two disagree for part of every day, and near
+ * midnight they disagree about the date — so a user in one zone setting 00:10 on a host
+ * in another would have the time written onto yesterday's or tomorrow's date, moving the
+ * clock by a whole day.
+ */
+export function hostDateParts(nowMs: number, utcOffsetMinutes: number): Pick<LocalDateTime, 'year' | 'month' | 'day'> {
+	const local = new Date(nowMs + utcOffsetMinutes * 60000);
+	return { year: local.getUTCFullYear(), month: local.getUTCMonth() + 1, day: local.getUTCDate() };
+}
+
+/** Set the wall clock to `hours:minutes:seconds`, keeping the host's current date. */
 export async function setSystemClock(hours: number, minutes: number, seconds: number): Promise<SystemTimeResult> {
 	const invalid = validateClockParts(hours, minutes, seconds);
 	if (invalid) return result('invalid-input', invalid);
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `setting the clock is not implemented on ${platform}`);
-	const refusal = clockWriteRefusal(await getSystemTimeStatus());
+	const status = await getSystemTimeStatus();
+	const refusal = clockWriteRefusal(status);
 	if (refusal) return refusal;
-	const now = new Date();
-	return runAll(platform, buildSetClockCommands(platform, { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate(), hours, minutes, seconds }));
+	// The same status the refusal was decided from carries the host's zone offset, so the
+	// date comes from the host rather than from this process.
+	return runAll(platform, buildSetClockCommands(platform, { ...hostDateParts(status.nowMs, status.utcOffsetMinutes), hours, minutes, seconds }));
 }
 
 /**
