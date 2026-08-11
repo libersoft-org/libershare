@@ -50,6 +50,35 @@ export function handleHealthProbe(req: globalThis.Request): Response | null {
 	return null;
 }
 
+/** The bit of a client a broadcast needs: what it listens to, and how to reach it. */
+export interface BroadcastTarget {
+	data: { subscribedEvents: Set<string> };
+	send: (msg: string) => unknown;
+}
+
+/**
+ * Deliver `msg` to every client subscribed to `event` and return how many received it.
+ *
+ * Each send is isolated. A socket that has already gone away throws on `send`, and
+ * without the guard that exception would abort the loop — so every client after the
+ * dead one silently misses the event, and the throw escapes into whichever caller
+ * happened to trigger the broadcast, turning an unrelated completed operation into an
+ * error. Pure so it stays unit-testable without the full APIServer dependency graph.
+ */
+export function fanOutEvent(clients: Iterable<BroadcastTarget>, event: string, msg: string): number {
+	let sent = 0;
+	for (const client of clients) {
+		if (!client.data.subscribedEvents.has(event) && !client.data.subscribedEvents.has('*')) continue;
+		try {
+			client.send(msg);
+			sent++;
+		} catch (err) {
+			console.warn(`[API] Dropping ${event} for one client:`, (err as Error).message);
+		}
+	}
+	return sent;
+}
+
 export class APIServer {
 	private clients: Set<ClientSocket> = new Set();
 	private server: ReturnType<typeof Bun.serve<ClientData>> | null = null;
@@ -418,13 +447,7 @@ export class APIServer {
 
 	private broadcast(event: string, data: any): void {
 		const msg = JSON.stringify({ event, data });
-		let sent = 0;
-		for (const client of this.clients) {
-			if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) {
-				client.send(msg);
-				sent++;
-			}
-		}
+		const sent = fanOutEvent(this.clients, event, msg);
 		if (event.startsWith('transfer.')) {
 			const d = data as any;
 			const extra = d.peers !== undefined ? ` peers=${d.peers}` : '';
