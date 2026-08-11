@@ -575,11 +575,13 @@ export function buildTimesyncdDropIn(server: string): string {
  * user's back and let it step the clock they are about to set by hand. The drop-in
  * is on disk either way and is read the next time the daemon starts.
  *
- * Windows drops the resync for the same reason. `w32tm /resync` asks the Windows Time
- * service to contact its peer now, so with the service stopped it can only fail — and
- * the UI reaches this path exactly that way, by switching synchronisation off before
- * writing a server. The peer list is in the registry either way and is read when the
- * service next starts.
+ * Windows drops the resync AND the `/update` for the same reason. Both are requests to
+ * the RUNNING Windows Time service — `/update` is documented as notifying it that the
+ * configuration changed — so with the service stopped they can only fail, and the UI
+ * reaches this path exactly that way: it switches synchronisation off before writing a
+ * server. Sending them anyway is how a peer list that WAS written came back as an error.
+ * Without them `w32tm /config` still writes the registry, and the service reads it when
+ * it next starts (which is what switching synchronisation back on does).
  */
 export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, syncRunning: boolean): SystemCommand[] {
 	if (platform === 'linux') return syncRunning ? [{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }] : [];
@@ -587,8 +589,9 @@ export function buildSetNtpServerCommands(platform: SystemPlatform, server: stri
 	// 0x8 is the plain client flag. 0x9 would add 0x1 (SpecialInterval), which makes the
 	// peer poll at SpecialPollInterval — a standalone host defaults that to 604800s, so
 	// the peer would be contacted weekly instead of on the normal poll interval.
-	const config: SystemCommand = w32tm('/config', `/manualpeerlist:${server},0x8`, '/syncfromflags:manual', '/update');
-	return syncRunning ? [config, w32tm('/resync')] : [config];
+	const peers = `/manualpeerlist:${server},0x8`;
+	if (!syncRunning) return [w32tm('/config', peers, '/syncfromflags:manual')];
+	return [w32tm('/config', peers, '/syncfromflags:manual', '/update'), w32tm('/resync')];
 }
 
 /**

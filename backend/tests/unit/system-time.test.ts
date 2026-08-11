@@ -688,9 +688,14 @@ describe('buildSetNtpServerCommands', () => {
 	 * A resync is a request to the Windows Time service, so with the service stopped it
 	 * can only fail — and the UI arrives here exactly that way, switching synchronisation
 	 * off before writing a server. Configuring the peer list is the whole change then.
+	 *
+	 * `/update` goes with it: it notifies the RUNNING service that the configuration
+	 * changed, so against a stopped one it is the same failed request — which is how a
+	 * peer list that had in fact been written came back to the user as an error. The
+	 * registry write happens without it, and the service reads it when it next starts.
 	 */
-	it('skips the resync on windows while synchronisation is off', () => {
-		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/syncfromflags:manual', '/update'], failOnOutput: W32TM_ERROR_RE }]);
+	it('skips the resync and the update notification on windows while synchronisation is off', () => {
+		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/syncfromflags:manual'], failOnOutput: W32TM_ERROR_RE }]);
 	});
 
 	it('sets the single supported server on macOS', () => {
@@ -908,8 +913,8 @@ describe('setSystemNtpServer', () => {
 			const { exec, calls } = fakeRunner([]);
 			const ours = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled' });
 			expect((await setSystemNtpServer('ntp.example.org', capable, ours, exec)).success).toBe(true);
-			// Start mode `disabled` means the service is not running, so no resync is asked for.
-			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /syncfromflags:manual /update']);
+			// Start mode `disabled` means the service is not running, so nothing is asked of it.
+			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /syncfromflags:manual']);
 		});
 	});
 
